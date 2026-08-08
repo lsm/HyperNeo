@@ -162,6 +162,44 @@ describe('resolveSpaceMcpSessionPolicy', () => {
     expect(missingMcpServers(undefined, policy.requiredServers)).toEqual(['space-agent-tools']);
   });
 
+  test('an execution-less designated merger requires the merge_pr TOOL too (#879 3741226991)', () => {
+    // The freshly spawned built-in merger is execution-less (no NodeExecution
+    // row, id has no `:exec:` segment) so it resolves as an ad-hoc member — but
+    // it IS this task's designated post-approval merger, so the query-time
+    // invariant must ALSO assert the qualified merge_pr tool (a live
+    // config.tools.update can disallow it while space-agent-tools stays
+    // mounted). Without this, the primary CREATE-path merger runs unguarded.
+    const session = makeSession({
+      id: 'space:space-1:task:task-1:post-approval:merger',
+      type: 'worker',
+      context: { spaceId: 'space-1', taskId: 'task-1' },
+    });
+    const policy = resolveSpaceMcpSessionPolicy(session, {
+      nodeExecutionRepo: {
+        getByAgentSessionId: () => null,
+        getById: () => null,
+      },
+      taskRepo: {
+        getTask: () =>
+          makeTask({
+            id: 'task-1',
+            spaceId: 'space-1',
+            status: 'approved',
+            postApprovalSessionId: session.id,
+            postApprovalRequiresMerge: true,
+          }),
+      },
+    });
+
+    expect(policy).toMatchObject({
+      role: 'ad_hoc_member',
+      owner: 'space-runtime',
+      attachGenericSpaceTools: true,
+      isWorkflowWorker: false,
+    });
+    expect(policy.requiredTools).toEqual(['mcp__space-agent-tools__merge_pr']);
+  });
+
   test('routes workflow workers by node execution ownership, not session ID shape', () => {
     const session = makeSession({
       id: 'opaque-worker-session',

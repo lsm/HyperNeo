@@ -78,9 +78,13 @@ export function resolveSpaceMcpSessionPolicy(
   }
 
   const workflowExecution = resolveWorkflowExecution(session, context.nodeExecutionRepo);
+  // Resolve the designated-merger identity from the task alone so it applies
+  // to BOTH the execution-backed reuse path and the execution-less fresh
+  // post-approval merger (no NodeExecution row, task-agent-manager.ts:2059).
+  const taskId = session.context?.taskId;
+  const task = taskId ? (context.taskRepo?.getTask(taskId) ?? null) : null;
+  const isDesignatedMerger = isDesignatedMergerSession(task, session.id);
   if (workflowExecution) {
-    const taskId = session.context?.taskId;
-    const task = taskId ? (context.taskRepo?.getTask(taskId) ?? null) : null;
     const resolvedSpaceId = spaceId ?? task?.spaceId;
     // A workflow worker that is THIS task's designated post-approval MERGER —
     // a reused `:exec:` session the PostApprovalRouter injected the merge
@@ -103,7 +107,6 @@ export function resolveSpaceMcpSessionPolicy(
     // attaches `space-agent-tools`, so this check is TRUE from the very first
     // turn; this branch then re-affirms it on every subsequent turn and pairs
     // with the rehydrate path for post-restart restore.
-    const isDesignatedMerger = isDesignatedMergerSession(task, session.id);
     return {
       role: 'workflow_worker',
       spaceId: resolvedSpaceId,
@@ -154,6 +157,12 @@ export function resolveSpaceMcpSessionPolicy(
     spaceId,
     owner: 'space-runtime',
     requiredServers: SPACE_AD_HOC_MEMBER_REQUIRED_MCP_SERVERS,
+    // #879 (3741226991): the freshly spawned built-in merger is execution-less
+    // (no NodeExecution row), so it resolves here as an ad-hoc member — but it
+    // is STILL this task's designated merger, so the query-time invariant must
+    // assert the qualified merge_pr tool (a live config.tools.update can
+    // disallow it while the server stays mounted).
+    requiredTools: isDesignatedMerger ? [MERGE_PR_TOOL] : undefined,
     attachGenericSpaceTools: true,
     attachCoordinatorTools: false,
     attachLongTermAgentTools: false,
