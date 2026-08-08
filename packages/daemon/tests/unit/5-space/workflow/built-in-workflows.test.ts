@@ -52,6 +52,7 @@ import {
   CODING_WITH_QA_WORKFLOW,
   CODING_WITH_QA_MERGER_WORKFLOW,
   CODER_NO_MERGE_GUARD,
+  CODER_RAW_MERGE_GUARD,
   FULLSTACK_QA_LOOP_WORKFLOW,
   LEGACY_CODING_TEMPLATE_IDENTITIES,
   MERGER_RAW_MERGE_GUARD,
@@ -190,21 +191,68 @@ describe('stable coding workflow templates', () => {
     ]);
   });
 
-  test('stable coder slots can reach merge_pr but not raw gh pr merge', () => {
-    // The stable coder owns the post-approval merge, so its tool guard must be
-    // the raw-merge blocker (MERGER_RAW_MERGE_GUARD — steers toward merge_pr)
-    // rather than the merger-variant coder's blanket CODER_NO_MERGE_GUARD, which
-    // would also block the audited merge_pr path. Compare guards structurally,
-    // not by reason prose.
+  test('stable coder slots use the anchored raw-merge guard (not the over-broad merger guard)', () => {
+    // The stable coder owns the post-approval merge, so its tool guard must
+    // block raw merges (steering toward merge_pr) — but the coder also spends
+    // most of its session on ordinary implementation, including editing
+    // merge-related source/tests/docs. MERGER_RAW_MERGE_GUARD matches the merge
+    // tokens UNANCHORED (anywhere in the command), which would deny legit work
+    // like `rg mergePullRequest`; the stable coder therefore uses the anchored
+    // CODER_RAW_MERGE_GUARD. Compare guards structurally, not by reason prose.
     const assertCoderGuard = (wf: SpaceWorkflow) => {
       const coder = wf.nodes
         .flatMap((node) => node.agents)
         .find((agent) => agent.name === 'coder')!;
-      expect(coder.toolGuards).toContainEqual(MERGER_RAW_MERGE_GUARD);
+      expect(coder.toolGuards).toContainEqual(CODER_RAW_MERGE_GUARD);
+      expect(coder.toolGuards).not.toContainEqual(MERGER_RAW_MERGE_GUARD);
       expect(coder.toolGuards).not.toContainEqual(CODER_NO_MERGE_GUARD);
     };
     assertCoderGuard(STABLE_CODING_WORKFLOW);
     assertCoderGuard(CODING_WITH_QA_WORKFLOW);
+  });
+
+  test('CODER_RAW_MERGE_GUARD blocks merge invocations but not bare literals', () => {
+    // The guard is applied as `new RegExp(pattern).test(command)` (no flags), so
+    // verify it directly: deny actual gh merge invocations (CLI + GraphQL + REST,
+    // including separator/env/command-prefix forms), allow commands that merely
+    // inspect or edit the merge literals.
+    const re = new RegExp(CODER_RAW_MERGE_GUARD.pattern);
+    const deny = (cmd: string) => expect(re.test(cmd)).toBe(true);
+    const allow = (cmd: string) => expect(re.test(cmd)).toBe(false);
+
+    // CLI form — direct, indented, after separator, subshell, env prefix, command builtin.
+    deny('gh pr merge --squash');
+    deny('   gh pr merge');
+    deny('git fetch && gh pr merge');
+    deny('$(gh pr merge)');
+    deny('GH_TOKEN=token gh pr merge');
+    deny('command gh pr merge');
+
+    // GraphQL mergePullRequest mutation via gh api.
+    deny(
+      'gh api graphql -f query=\'mutation{mergePullRequest(input:{pullRequestId:"x"}){mergeCommit{oid}}}\''
+    );
+    deny(
+      "gh api graphql -f query='mutation($i:MergePullRequestInput!){mergePullRequest(input:$i){}}'"
+    );
+
+    // REST pulls/<n>/merge endpoint via gh api.
+    deny('gh api -X PUT repos/owner/repo/pulls/42/merge');
+    deny('GH_TOKEN=x gh api repos/o/r/pulls/7/merge -f merge_method=squash');
+
+    // Bare literals in non-merge commands — must be ALLOWED (the over-broad fix).
+    allow('rg mergePullRequest packages');
+    allow('rg "pulls/5/merge" packages');
+    allow('git add fixtures/pulls/5/merge.json');
+    allow('cat src/pulls/5/merge.txt');
+    allow('echo mergePullRequest');
+    allow('grep -r mergePullRequest src');
+
+    // Non-merge gh invocations — must be allowed.
+    allow('gh pr view 42');
+    allow('gh pr view 42 --json state,mergeable');
+    allow('gh api repos/owner/repo/pulls/42');
+    allow("gh api graphql -f query='query{repository{pullRequests{nodes{mergeable}}}}'");
   });
 
   test('stable Coding Review is the end node and calls approve_task', () => {
@@ -347,6 +395,17 @@ describe('stable coding workflow templates', () => {
     // HEAD == origin/$BASE so a stray-commit "Already up to date" doesn't leave
     // future task worktrees on an unmerged base.
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('space-checkout-ahead');
+  });
+
+  test('coder-owned merge-queue poll inspects queue status and is bounded', () => {
+    // Step 2b must not poll `--json state` alone (it can't see a removed queue
+    // entry or a failed merge-group check — both leave the PR OPEN) nor loop
+    // forever. It must (a) query merge-group/queue status fields and (b) impose
+    // a poll cap that routes a stuck queue to step 2c.
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('mergeStateStatus');
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('autoMergeRequest');
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).not.toMatch(/--json state --jq \.state/);
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toMatch(/~10 attempts|up to ~10/);
   });
 });
 

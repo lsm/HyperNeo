@@ -106,6 +106,38 @@ export const MERGER_RAW_MERGE_GUARD: DeclarativeToolGuard = {
     'merge through merge_pr.',
 };
 
+/**
+ * Coder-scoped variant of MERGER_RAW_MERGE_GUARD for the stable coder-owned
+ * workflows, where the Coder is also the post-approval Merger but spends most of
+ * its session on ordinary implementation — including editing merge-related
+ * source/tests/docs. MERGER_RAW_MERGE_GUARD matches the merge tokens UNANCHORED
+ * (anywhere in the command), so on the Coder it also denies commands that merely
+ * inspect or edit those literals (e.g. `rg mergePullRequest`,
+ * `git add …/pulls/5/merge.json`). That over-blocks legitimate coding.
+ *
+ * This guard blocks the same three raw-merge INVOCATIONS (`gh pr merge`, the
+ * GraphQL `mergePullRequest` mutation, and the REST `pulls/<n>/merge` endpoint)
+ * but ANCHORED to command-execution positions (start of command, or after a
+ * shell separator/subshell, with optional env/command prefixes) — so a bare
+ * literal in `rg`/`cat`/`git add` is allowed while an actual `gh` merge call is
+ * denied. Same defense-in-depth caveat as MERGER_RAW_MERGE_GUARD: not airtight
+ * (a determined shell user evades any command regex), paired with `merge_pr` as
+ * the authoritative gate.
+ */
+export const CODER_RAW_MERGE_GUARD: DeclarativeToolGuard = {
+  matcher: 'Bash',
+  pattern:
+    '(?:^|[;&|()\\n`])\\s*(?:(?:env\\s+)?(?:[A-Za-z_][A-Za-z0-9_]*=[^\\s;&|()`]+|command)\\s+)*' +
+    '(?:gh[\\s\\\\]+pr[\\s\\\\]+merge\\b' +
+    '|gh[\\s\\\\]+api\\b[^\\n]*?(?:\\bmergePullRequest\\b|pulls\\/[^\\/\\s"]+\\/merge\\b))',
+  decision: 'deny',
+  reason:
+    'Direct PR merges are blocked — use the merge_pr tool instead. merge_pr is the authoritative, audited merge ' +
+    'path: it verifies the approval covers the current head before merging bound to that head. This Bash guard ' +
+    'is defense-in-depth (it blocks the common/direct raw-merge invocations); it is not the enforcement — ' +
+    'always merge through merge_pr.',
+};
+
 // ---------------------------------------------------------------------------
 // Gate writer validation
 // ---------------------------------------------------------------------------
@@ -750,10 +782,18 @@ export const CODING_WITH_MERGER_WORKFLOW: SpaceWorkflow = {
   ],
 };
 
+// Behavioral only (CLAUDE.md L170): it does NOT name the Review peer or the
+// pr_url handoff field — buildCustomAgentTaskMessage injects those centrally
+// via "Outbound gated handoffs" (buildHookValidatedHandoffLines), since the
+// stable workflows' Coding → Review channel carries the inherited code-pr-ready
+// pr_ready hook. Restating the target/field here would create a second source of
+// truth that drifts (same issue fixed for CODER_OWNED_QA_REVIEW_PROMPT).
 const CODER_OWNED_MERGE_PROMPT =
-  'You are the Coder. Implement the task, add focused tests, keep one pull request updated, and ' +
-  'send it to Review with the required pr_url data. Address each valid review comment, reply on the ' +
-  'PR, resolve review threads, rerun relevant tests, and send the same PR back for review. During ' +
+  'You are the Coder. Implement the task, add focused tests, and keep one pull request updated. ' +
+  'When the PR is ready for review, hand it off via the gated handoff described in Your Role in This ' +
+  'Workflow — the runtime supplies the target and the pr_url field, so follow that contract exactly ' +
+  'and do not restate or assume it here. Address each valid review comment, reply on the PR, resolve ' +
+  'review threads, rerun relevant tests, then resend the PR for review the same way. During ' +
   'implementation and review, do not merge or call task-completion tools. After the task is approved, ' +
   'the runtime may send you the post-approval merge procedure. In that phase only, use merge_pr, ' +
   'complete its cleanup and workspace-sync steps, and call mark_complete. Never approve your own ' +
@@ -805,7 +845,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
           agents: node.agents.map((agent) => ({
             ...agent,
             customPrompt: { value: CODER_OWNED_MERGE_PROMPT },
-            toolGuards: [MERGER_RAW_MERGE_GUARD],
+            toolGuards: [CODER_RAW_MERGE_GUARD],
           })),
           postApproval: {
             targetAgent: 'coder',
@@ -1542,7 +1582,7 @@ export const CODING_WITH_QA_WORKFLOW: SpaceWorkflow = {
           agents: node.agents.map((agent) => ({
             ...agent,
             customPrompt: { value: CODER_OWNED_MERGE_PROMPT },
-            toolGuards: [MERGER_RAW_MERGE_GUARD],
+            toolGuards: [CODER_RAW_MERGE_GUARD],
           })),
           postApproval: {
             targetAgent: 'coder',
