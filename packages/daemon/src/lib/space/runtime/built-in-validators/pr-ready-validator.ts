@@ -81,8 +81,15 @@ export function createPrReadyValidator(
 ): (context: HookExecutorContext) => Promise<WorkflowHookResult> {
   return async (context: HookExecutorContext): Promise<WorkflowHookResult> => {
     // Exempt post-approval merge-blocker reports / fix-push notices from the
-    // readiness gate (see POST_APPROVAL_MERGE_REASONS above).
-    if (POST_APPROVAL_MERGE_REASONS.has(readSendReason(context) ?? '')) {
+    // readiness gate — but ONLY while the task is `approved` (post-approval
+    // phase). The initial implementation handoff runs while the task is still
+    // in-progress, so gating on `approved` prevents a sender from spoofing one
+    // of these reasons to bypass the gate and activate Review with an unready
+    // PR.
+    if (
+      context.taskStatus === 'approved' &&
+      POST_APPROVAL_MERGE_REASONS.has(readSendReason(context) ?? '')
+    ) {
       return { type: 'allow' };
     }
     const deadlineMs = Date.now() + DEFAULT_TIMEOUT_MS;

@@ -1652,18 +1652,22 @@ export function resolveBuiltInWorkflowTemplate(templateName: string): SpaceWorkf
 }
 
 export function getBuiltInWorkflows(): SpaceWorkflow[] {
-  // CODING_WORKFLOW is first so it becomes the default workflow selected by
-  // spaceWorkflowRun.start (which picks workflows[0] ordered by created_at ASC).
-  // It is tagged `default` and covers the most common case — a single implementation
-  // task with one engineer and one reviewer.
+  // CODING_WORKFLOW is first so a freshly seeded space persists it earliest
+  // (lowest created_at) — and it is the only template tagged `default`. Default
+  // selection is tag-driven, not position-driven: both `spaceWorkflowRun.start`
+  // (auto-select) and `selectDeterministicWorkflowFallback` prefer a
+  // `default`-tagged workflow, so the stable Coding template is the default for
+  // newly created AND upgraded spaces (the merger variants are no longer
+  // `default`).
   //
-  // PLAN_AND_DECOMPOSE_WORKFLOW is tagged `planning` / `decomposition` (NOT `default`)
-  // so the LLM picks it explicitly for multi-task goals that should be broken down
-  // before coding starts.
+  // PLAN_AND_DECOMPOSE_WORKFLOW is tagged `planning` / `decomposition` (NOT
+  // `default`) so the LLM picks it explicitly for multi-task goals that should
+  // be broken down before coding starts.
   //
-  // Note: this ordering only affects *newly created* spaces. seedBuiltInWorkflows is
-  // insert-only (it skips if any workflows already exist), so existing spaces keep
-  // whatever ordering was seeded when they were first created.
+  // Note: this ordering only affects *newly created* spaces — seedBuiltInWorkflows
+  // adds missing templates to existing spaces rather than reordering them, so
+  // upgraded spaces keep their historical created_at order (and rely on the
+  // `default` tag, not position, to resolve the default).
   const workflows = [
     CODING_WORKFLOW,
     CODING_WITH_QA_WORKFLOW,

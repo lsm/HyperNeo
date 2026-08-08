@@ -489,6 +489,33 @@ describe('space-workflow-run-handlers', () => {
       );
     });
 
+    it('auto-select prefers a default-tagged workflow over the first by created_at', async () => {
+      // Upgraded-space shape: the renamed merger row (oldest, no longer
+      // `default`) sorts first, and the newly seeded stable Coding template
+      // (`default`) sorts last. Auto-select must honor the `default` tag, not
+      // workflows[0], so upgraded spaces switch to the stable workflow.
+      const mergerRow = {
+        ...mockWorkflow,
+        id: 'wf-merger',
+        name: 'Coding with Merger',
+        tags: ['coding'],
+      };
+      const stableRow = {
+        ...mockWorkflow,
+        id: 'wf-stable',
+        name: 'Coding',
+        tags: ['coding', 'default'],
+      };
+      setup({ workflows: [mergerRow, stableRow], singleWorkflow: stableRow });
+      await call('spaceWorkflowRun.start', { spaceId: 'space-1', title: 'Auto' });
+      expect(runtime.startWorkflowRun).toHaveBeenCalledWith(
+        'space-1',
+        'wf-stable',
+        'Auto',
+        undefined
+      );
+    });
+
     it('auto-select throws when all workflows are disabled', async () => {
       const disabledWf = { ...mockWorkflow, disabled: true };
       setup({ workflows: [disabledWf], singleWorkflow: disabledWf });

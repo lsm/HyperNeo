@@ -220,7 +220,12 @@ export function setupSpaceWorkflowRunHandlers(
     const space = await spaceManager.getSpace(params.spaceId);
     if (!space) throw new Error(`Space not found: ${params.spaceId}`);
 
-    // Resolve workflow: explicit workflowId or auto-select first workflow
+    // Resolve workflow: explicit workflowId or auto-select. Prefer a
+    // `default`-tagged workflow (the stable Coding template) so upgraded spaces
+    // — where the new stable template is seeded after the historical rows —
+    // switch their auto-started runs to it rather than staying on the renamed
+    // merger row (the oldest by created_at). Fall back to the first workflow
+    // for spaces without a default-tagged workflow.
     let workflowId = params.workflowId;
     if (!workflowId) {
       const workflows = spaceWorkflowManager
@@ -229,7 +234,8 @@ export function setupSpaceWorkflowRunHandlers(
       if (workflows.length === 0) {
         throw new Error(`No workflows found for space: ${params.spaceId}`);
       }
-      workflowId = workflows[0].id;
+      const defaultWorkflow = workflows.find((w) => (w.tags ?? []).includes('default'));
+      workflowId = (defaultWorkflow ?? workflows[0]).id;
     } else {
       // Validate provided workflow exists and belongs to this space
       const workflow = spaceWorkflowManager.getWorkflow(workflowId);

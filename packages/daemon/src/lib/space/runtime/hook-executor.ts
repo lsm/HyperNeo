@@ -57,6 +57,15 @@ export interface HookExecutorContext {
   sessionId: string;
   taskId: string;
   workflowRunCreatedAt?: number;
+  /**
+   * Current status of the owning Space task (e.g. `'in_progress'`, `'approved'`,
+   * `'done'`). Built-in validators use this to distinguish execution phases —
+   * e.g. a `pr_ready` exemption for post-approval merge-blocker reports must
+   * only fire while the task is `approved`, so an initial implementation
+   * handoff cannot spoof it. Optional: omitted when the engine has no task
+   * status provider.
+   */
+  taskStatus?: string;
   targetNode?: string;
   hookLocalState: Record<string, unknown>;
   currentArtifacts: Record<string, unknown>[];

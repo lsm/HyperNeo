@@ -953,6 +953,7 @@ export class WorkflowHookEngine {
       nodeName,
       sessionId: meta.sessionId,
       taskId: meta.taskId,
+      taskStatus: this.config.getTaskStatus?.(meta.taskId),
       targetNode: hook.targetNode ?? meta.targetNode,
       hookLocalState: this.boundHookLocalState(hookLocalState),
       currentArtifacts: mappedArtifacts,
