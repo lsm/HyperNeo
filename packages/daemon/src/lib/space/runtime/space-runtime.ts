@@ -124,6 +124,7 @@ import {
   type PostApprovalRouteResult,
   PostApprovalRouter,
   clearPendingCompletionState,
+  isPostApprovalKickoffMessage,
 } from './post-approval-router';
 
 import type { TaskAgentManager } from './task-agent-manager';
@@ -5164,6 +5165,18 @@ export class SpaceRuntime {
         // also invokes it after `provisionExistingSpaces`; whichever
         // fires first wins, the other becomes a no-op.
         await this.recoverStalledRuns();
+        // #879 (3741226987): repair approved tasks whose post-approval dispatch
+        // died between the role stamp and the kickoff persistence (process
+        // termination, not a caught throw). The task keeps
+        // `postApprovalSessionId` with no replayable kickoff and, because the
+        // terminal reconciliation skips `approved` tasks, would otherwise stall
+        // until an operator manually re-routes. Runs EARLY in the first tick —
+        // before any dispatch this tick — so a task dispatched during THIS
+        // daemon lifetime (whose real spawner already persisted its kickoff) is
+        // never mistaken for an incomplete dispatch. Re-dispatch the incomplete
+        // ones (the router's already-routed guard no-ops alive sessions with a
+        // kickoff).
+        await this.recoverIncompletePostApprovalDispatches();
         this.rehydrated = true;
         this.acceptingExternalEvents = true;
       }
@@ -9759,6 +9772,62 @@ export class SpaceRuntime {
             `SpaceRuntime: failed to auto-resume paused task ${task.id}: ${err instanceof Error ? err.message : String(err)}`
           );
         }
+      }
+    }
+  }
+
+  /**
+   * #879 (3741226987): repair approved tasks whose post-approval dispatch
+   * never completed. The spawner stamps `postApprovalSessionId` /
+   * `postApprovalRequiresMerge` BEFORE injecting the kickoff; if the daemon
+   * exits in that window (process termination, not a caught throw) the task
+   * retains the role with no replayable kickoff. Because terminal
+   * reconciliation skips `approved` tasks (they are assumed already-routed),
+   * such a task stalls behind the router's already-routed guard until an
+   * operator manually re-routes.
+   *
+   * The dispatched kickoff is the authoritative record of a completed
+   * dispatch: if the designated session has one, the dispatch landed (leave it
+   * alone — the rehydrate/guard paths own the alive/dead-session recovery). If
+   * it does NOT, the dispatch died mid-flight: clear the dangling role so the
+   * router's already-routed guard no longer matches, then re-dispatch. The
+   * router re-invocation is safe: an alive session with a kickoff no-ops via
+   * `already-routed`, and a session that never got its kickoff is re-injected
+   * (reuse) or re-spawned (create).
+   */
+  private async recoverIncompletePostApprovalDispatches(): Promise<void> {
+    for (const task of this.config.taskRepo.listActive()) {
+      if (task.status !== 'approved' || !task.postApprovalSessionId) continue;
+      const sessionId = task.postApprovalSessionId;
+      try {
+        if (
+          this.getSdkMessageRepo()
+            .getUserMessages(sessionId)
+            .some((m) => isPostApprovalKickoffMessage(m.content))
+        ) {
+          continue; // dispatch completed — a kickoff is persisted.
+        }
+      } catch {
+        // Message read failed; be conservative and repair (a live dispatch
+        // with a kickoff will be re-skipped by the already-routed guard).
+      }
+      log.warn(
+        `SpaceRuntime: task ${task.id} has postApprovalSessionId=${sessionId} but no dispatched ` +
+          `kickoff — clearing the role and re-dispatching the post-approval route (crash between ` +
+          `role stamp and kickoff persist, #879 3741226987)`
+      );
+      this.config.taskRepo.updateTask(task.id, {
+        postApprovalSessionId: null,
+        postApprovalRequiresMerge: null,
+        postApprovalStartedAt: null,
+      });
+      try {
+        await this.dispatchPostApproval(task.id, 'agent');
+      } catch (err) {
+        log.warn(
+          `SpaceRuntime: re-dispatch of incomplete post-approval route for task ${task.id} failed: ` +
+            `${err instanceof Error ? err.message : String(err)}`
+        );
       }
     }
   }

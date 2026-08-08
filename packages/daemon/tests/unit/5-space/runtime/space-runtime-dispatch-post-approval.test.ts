@@ -35,6 +35,8 @@ import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-w
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
+import { appendPostApprovalCompletionInstructions } from '../../../../src/lib/space/runtime/post-approval-router.ts';
+import type { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository.ts';
 import type { SpaceTask } from '@hyperneo/shared';
 
 const SPACE_ID = 'space-dispatch-pa';
@@ -233,5 +235,93 @@ describe('SpaceRuntime.dispatchPostApproval — end-to-end', () => {
     expect(final?.pendingCompletionSubmittedByNodeId).toBeNull();
     expect(final?.pendingCompletionSubmittedAt).toBeNull();
     expect(final?.pendingCompletionReason).toBeNull();
+  });
+
+  // ---------------------------------------------------------------------------
+  // #879 (3741226987) — role-without-kickoff crash-window recovery
+  // ---------------------------------------------------------------------------
+
+  test('recovers an approved task whose role was stamped but kickoff never persisted (#879 3741226987)', async () => {
+    // The spawner stamps postApprovalSessionId/requiresMerge BEFORE persisting
+    // the kickoff. A daemon exit in that window leaves the task `approved` with
+    // the role but no replayable kickoff; since terminal reconciliation skips
+    // `approved` tasks, without this recovery it stalls behind the
+    // already-routed guard until an operator manually re-routes. The recovery
+    // must clear the dangling role and re-dispatch.
+    const taskA = ctx.taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'Half-dispatched',
+      description: '',
+    });
+    ctx.taskRepo.updateTask(taskA.id, {
+      status: 'approved',
+      approvalSource: 'agent',
+      approvedAt: Date.now(),
+      postApprovalSessionId: 'session-a',
+      postApprovalRequiresMerge: true,
+      postApprovalStartedAt: Date.now(),
+    });
+
+    // Inject a stub sdkMessageRepo: 'session-a' has NO dispatched kickoff
+    // (the crash window); 'session-b' HAS one (a completed dispatch).
+    const stubRepo = {
+      getUserMessages: (sessionId: string) =>
+        sessionId === 'session-b'
+          ? [
+              {
+                uuid: 'k-1',
+                timestamp: 1,
+                content: appendPostApprovalCompletionInstructions(
+                  'Call merge_pr(pr_url="https://x", task_id="t")'
+                ),
+              },
+            ]
+          : [],
+    } as unknown as SDKMessageRepository;
+    (ctx.runtime as unknown as { sdkMessageRepo: SDKMessageRepository | null }).sdkMessageRepo =
+      stubRepo;
+
+    // A completed dispatch must be left alone.
+    const taskB = ctx.taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'Dispatched',
+      description: '',
+    });
+    ctx.taskRepo.updateTask(taskB.id, {
+      status: 'approved',
+      approvalSource: 'agent',
+      approvedAt: Date.now(),
+      postApprovalSessionId: 'session-b',
+      postApprovalRequiresMerge: true,
+      postApprovalStartedAt: Date.now(),
+    });
+
+    const redispatched: string[] = [];
+    (
+      ctx.runtime as unknown as {
+        dispatchPostApproval: (taskId: string, source: string) => Promise<unknown>;
+      }
+    ).dispatchPostApproval = async (taskId: string) => {
+      redispatched.push(taskId);
+      return { mode: 'spawn', postApprovalSessionId: 'stub' };
+    };
+
+    await (
+      ctx.runtime as unknown as {
+        recoverIncompletePostApprovalDispatches: () => Promise<void>;
+      }
+    ).recoverIncompletePostApprovalDispatches();
+
+    // Task A: role cleared + re-dispatched.
+    const a = ctx.taskRepo.getTask(taskA.id);
+    expect(a?.postApprovalSessionId).toBeNull();
+    expect(a?.postApprovalRequiresMerge).toBeNull();
+    expect(a?.postApprovalStartedAt).toBeNull();
+    expect(redispatched).toEqual([taskA.id]);
+
+    // Task B: a persisted kickoff means the dispatch completed — untouched.
+    const b = ctx.taskRepo.getTask(taskB.id);
+    expect(b?.postApprovalSessionId).toBe('session-b');
+    expect(b?.postApprovalRequiresMerge).toBe(true);
   });
 });
