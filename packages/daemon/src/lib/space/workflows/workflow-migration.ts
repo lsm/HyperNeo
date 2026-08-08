@@ -744,22 +744,36 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
     const fromNode = resolveChannelNodeName(channel.from, workflow.nodes);
     const sourceNode = workflow.nodes?.find((node) => node.name === fromNode);
     if (sourceNode?.requireCodexApproval !== true) continue;
-    const hasCodexHook = Array.from(hooksById.values()).some(
-      (hook) =>
-        hook.sourceNode === fromNode &&
-        hook.validator.kind === 'built_in' &&
-        hook.validator.id === 'codex_review_approved'
-    );
-    if (!hasCodexHook) {
-      emitCodexHooksForChannel(
-        hooksById,
-        'send_message',
-        channel,
-        workflow.nodes,
-        Array.from(requiringCodexNodeNames),
-        keptCodexHookIds,
-        false
+    // Match an existing hook to the current source/TARGET route (not just
+    // source) so a node with multiple outgoing channels gets a hook on each
+    // route, not just the first one encountered.
+    const targetNames =
+      typeof channel.to === 'string'
+        ? [channel.to]
+        : Array.isArray(channel.to)
+          ? channel.to.filter((t): t is string => typeof t === 'string')
+          : [];
+    for (const targetRef of targetNames) {
+      const targetNode =
+        targetRef === '*' ? undefined : resolveChannelNodeName(targetRef, workflow.nodes);
+      const hasRouteHook = Array.from(hooksById.values()).some(
+        (hook) =>
+          hook.sourceNode === fromNode &&
+          hook.targetNode === targetNode &&
+          hook.validator.kind === 'built_in' &&
+          hook.validator.id === 'codex_review_approved'
       );
+      if (!hasRouteHook) {
+        emitCodexHooksForChannel(
+          hooksById,
+          'send_message',
+          channel,
+          workflow.nodes,
+          Array.from(requiringCodexNodeNames),
+          keptCodexHookIds,
+          false
+        );
+      }
     }
   }
 
