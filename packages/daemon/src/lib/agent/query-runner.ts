@@ -1083,6 +1083,19 @@ export class QueryRunner {
           messageQueue.enqueueWithId(startupRetryMsg.uuid, startupRetryMsg.content).catch(() => {});
         }
 
+        // Restart the queue before recursing: the pre-throw stop('retry_pending')
+        // halted it (running=false) and runQuery never restarts it — without
+        // this, the retried generator yields nothing, the re-enqueued prompt is
+        // never consumed by the retry, and it leaks into the NEXT turn's queue
+        // drain (out-of-order duplicate delivery — round-13 P1). start() also
+        // bumps the queue generation, so a generator still parked from the
+        // aborted attempt exits (handing any shifted message back to the queue)
+        // instead of consuming the re-enqueued message into the dead query.
+        // The transient/provider branches don't need this: their errors throw
+        // mid-for-await, before the success-tail stop, so their queue is still
+        // running when they re-enqueue.
+        messageQueue.start();
+
         // Use `return await` so this call's finally{} runs only after the retry
         // completes. Otherwise finally{} would race the retry and can tear down
         // shared state (queue/controller/queryObject) while it is still running.

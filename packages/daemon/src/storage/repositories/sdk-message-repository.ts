@@ -412,9 +412,11 @@ export class SDKMessageRepository {
     for (const id of rowIds) {
       try {
         this.deleteMessageSearchRow(id);
-      } catch {
+      } catch (error) {
         // Best-effort: search maintenance failure never blocks the durable
-        // delete or the caller's post-delete lifecycle cleanup.
+        // delete or the caller's post-delete lifecycle cleanup — but log it so
+        // a persistently corrupt index is visible to operators (round-13 P2).
+        this.logger.warn('[Database] Search-index delete failed (continuing):', error);
       }
     }
   }
@@ -433,9 +435,11 @@ export class SDKMessageRepository {
   private upsertMessageSearchRowBestEffort(rowId: string): void {
     try {
       this.upsertMessageSearchRow(rowId);
-    } catch {
+    } catch (error) {
       // Best-effort: search maintenance failure never blocks the durable write
-      // or the caller's post-write lifecycle recording.
+      // or the caller's post-write lifecycle recording — but log it so a
+      // persistently corrupt index is visible to operators (round-13 P2).
+      this.logger.warn('[Database] Search-index upsert failed (continuing):', error);
     }
   }
 

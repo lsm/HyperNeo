@@ -176,6 +176,31 @@ describe('MessageQueue', () => {
       queue.stop();
       expect(queue.isRunning()).toBe(false);
     });
+
+    it('delivers a message enqueued while stopped only after start() (round-13 P1 primitive)', async () => {
+      queue.start();
+      queue.stop();
+
+      // The startup-timeout retry shape: a message re-enqueued while the queue
+      // is stopped. A generator created now yields nothing — without a restart
+      // the message would sit until the NEXT turn's start() drained it out of
+      // order (the round-13 leak).
+      const promise = queue.enqueueWithId('retry-msg', 'prompt');
+      const stoppedGen = queue.messageGenerator('test-session');
+      expect((await stoppedGen.next()).done).toBe(true);
+      expect(queue.size()).toBe(1);
+
+      // After start(), a fresh generator consumes it in order.
+      queue.start();
+      const gen = queue.messageGenerator('test-session');
+      const result = await gen.next();
+      expect(result.done).toBe(false);
+      expect(result.value.message.uuid).toBe('retry-msg');
+      result.value.onSent();
+      await expect(promise).resolves.toBeUndefined();
+
+      queue.stop();
+    });
   });
 
   describe('messageGenerator', () => {

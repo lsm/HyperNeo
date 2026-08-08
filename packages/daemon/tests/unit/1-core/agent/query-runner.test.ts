@@ -1274,6 +1274,30 @@ describe('QueryRunner', () => {
       expect(clearSpy).toHaveBeenCalled();
     });
 
+    it('restarts the queue after re-enqueueing on startup-timeout retry (round-13 P1)', async () => {
+      const consumedUuid = 'startup-consumed-uuid';
+      const consumedContent = [{ type: 'text' as const, text: 'Hello' }];
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      // Simulate the SDK having pulled a user message before the startup timer
+      // fired (set by createMessageGeneratorWrapper in production).
+      (runner as unknown as { _lastConsumedUserMessage: unknown })._lastConsumedUserMessage = {
+        uuid: consumedUuid,
+        content: consumedContent,
+      };
+
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      // The pre-throw stop('retry_pending') halts the queue and runQuery never
+      // restarts it — the retry branch must re-start the queue after
+      // re-enqueueing, or the re-enqueued prompt is never consumed by the retry
+      // and leaks into the next turn's queue drain (round-13 P1).
+      expect(enqueueWithIdSpy).toHaveBeenCalledWith(consumedUuid, consumedContent);
+      expect(startSpy).toHaveBeenCalledTimes(2); // runner.start() + retry restart
+    });
+
     it('should call messageQueue.clear() on startup-timeout AbortError', async () => {
       const abortError = new Error('SDK startup timeout - query aborted');
       abortError.name = 'AbortError';
