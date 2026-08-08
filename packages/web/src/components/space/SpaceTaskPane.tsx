@@ -384,9 +384,13 @@ export function SpaceTaskPane({
     );
     let composerPostApprovalTarget: string | null =
       // Prefer the current worker member's own slot name (mirrors handleNodeClick)
-      // so the durable fallback works even when the workflow detail isn't loaded.
+      // so the durable fallback works even when the workflow detail isn't loaded
+      // and survives a post-spawn route edit (provenanceName != new targetAgent).
       composerWorkerMember?.nodeExecution?.agentName ?? null;
-    if (workflow) {
+    // Fall back to the workflow route ONLY when no durable member identity is
+    // available — an unconditional overwrite would let an edited route rename
+    // the target and strip the actual worker slot of its durable protection.
+    if (!composerPostApprovalTarget && workflow) {
       for (const n of workflow.nodes) {
         const t = n.postApproval?.targetAgent;
         if (t && t !== 'task-agent') {
