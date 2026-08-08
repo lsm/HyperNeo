@@ -149,8 +149,10 @@ describe('ChannelCycleRepository — resetAllForRun (human touch)', () => {
     repo.incrementCycleCount(RUN_ID_A, 0, 5);
     const before = repo.get(RUN_ID_A, 0)!.updatedAt;
 
-    // Yield so Date.now() has a chance to advance (1ms resolution on most platforms).
-    await new Promise((resolve) => setTimeout(resolve, 2));
+    // Yield so Date.now() has a chance to advance (1ms resolution on most
+    // platforms). 5ms is generous enough to absorb CI timer jitter that flaked a
+    // 2ms sleep (a same-ms updatedAt is not a reset failure).
+    await new Promise((resolve) => setTimeout(resolve, 5));
 
     repo.resetAllForRun(RUN_ID_A);
 
