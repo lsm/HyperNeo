@@ -207,11 +207,11 @@ export class SDKMessageHandler {
       // intact so the retried delivery can still record first_progress/
       // completed (round-5 P2, round-12).
       if (reason === 'retry_pending') return;
-      // 'startup_timeout' keeps the attribution accurate for an unretried
-      // second startup timeout — no user interrupt happened (round-12 P2).
-      this.recordDeliveryTerminal('failed', {
-        reason: reason === 'startup_timeout' ? 'startup_timeout' : 'interrupted',
-      });
+      // An explicit reason is a terminal error category from the runner
+      // ('startup_timeout', a classified ErrorCategory, or the error on a
+      // clear-skip ownership transfer) — record it so the 'why' is accurate
+      // instead of a blanket 'interrupted' (round-12 P2, round-16 P3).
+      this.recordDeliveryTerminal('failed', { reason: reason ?? 'interrupted' });
     };
 
     // Delivery-lifecycle: clear() (and ONLY clear()) rejects the still-queued

@@ -194,6 +194,32 @@ describe('MessageDeliveryLifecycleRepository.getDiagnostics', () => {
     expect(staleIds).not.toContain(fresh);
   });
 
+  test('messages parked on an sdk_resume_choice prompt are not flagged stranded (round-16)', () => {
+    const repo = db.messageDeliveryLifecycle;
+    const now = Date.now();
+    const staleMs = 5_000;
+
+    // A message waked, then parked on sdk_resume_choice: the wake carries the
+    // blocked marker and the enqueued row waits for the user's choice. It is
+    // NOT unclaimed (it IS waked) and NOT stale (delivery is expected).
+    const parked = generateUUID();
+    insertEvent(SESSION_ID, parked, 'persisted', now - staleMs - 2_000);
+    insertEvent(SESSION_ID, parked, 'wake_requested', now - staleMs - 1_000, {
+      blocked: 'sdk_resume_choice',
+    });
+
+    // A genuinely stranded wake (no marker) still surfaces.
+    const stranded = generateUUID();
+    insertEvent(SESSION_ID, stranded, 'persisted', now - staleMs - 2_000);
+    insertEvent(SESSION_ID, stranded, 'wake_requested', now - staleMs - 1_000);
+
+    const diag = repo.getDiagnostics({ sessionId: SESSION_ID, staleMs });
+    expect(diag.unclaimed.map((u) => u.messageId)).not.toContain(parked);
+    expect(diag.stale.map((s) => s.messageId)).not.toContain(parked);
+    expect(diag.unclaimed.map((u) => u.messageId)).toContain(stranded);
+    expect(diag.stale.map((s) => s.messageId)).toContain(stranded);
+  });
+
   test('latency summaries compute inter-stage deltas', () => {
     const repo = db.messageDeliveryLifecycle;
     const base = Date.now();

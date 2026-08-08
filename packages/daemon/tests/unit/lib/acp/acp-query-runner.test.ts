@@ -1130,9 +1130,11 @@ describe('AcpQueryRunner', () => {
     await ctx.queryPromise;
 
     // Not a 429 — the watchdog is never consulted and the teardown is a
-    // genuine terminal: clear()/stop() fire onClear without a retry reason.
+    // genuine terminal: clear() carries the classified category so onClear
+    // records the real 'why' ('system' here); the finally's stop() carries no
+    // retry reason (round-16 P3).
     expect(onRateLimitExhausted).not.toHaveBeenCalled();
-    expect(messageQueue.clear).toHaveBeenCalledWith(undefined);
+    expect(messageQueue.clear).toHaveBeenCalledWith('system');
     expect(stopSpy).toHaveBeenCalledWith(undefined);
     expect(ctx.errorManager.handleError).toHaveBeenCalled();
   });
@@ -1172,6 +1174,46 @@ describe('AcpQueryRunner', () => {
     expect(startSpy).toHaveBeenCalledTimes(2); // start() + ownership transfer
     expect(createClient).toHaveBeenCalledTimes(2); // the transfer launches a fresh query
     expect(messageQueue.clear).toHaveBeenCalledTimes(1); // only the genuinely-failed fresh query clears
+  });
+
+  test('transfer gives the preserved input a fresh retry budget (round-16 P2)', async () => {
+    const terminalClient = createMockClient();
+    terminalClient.initialize.mockImplementation(async () => {
+      throw new Error('ACP agent process exited unexpectedly');
+    });
+    const startupTimeoutClient = createMockClient();
+    startupTimeoutClient.initialize.mockImplementation(async () => {
+      throw new Error('ACP startup timeout - query aborted');
+    });
+    const stopClient = createMockClient();
+    stopClient.initialize.mockImplementation(async () => {
+      throw new Error('stop after retry');
+    });
+    const clients = [terminalClient, startupTimeoutClient, stopClient];
+    let seq = 0;
+    let bumped = false;
+    const { ctx, messageQueue } = createRunnerFixture({ client: terminalClient });
+    (messageQueue as unknown as { getEnqueueSeq: ReturnType<typeof mock> }).getEnqueueSeq = mock(
+      () => seq
+    );
+    (ctx.errorManager.handleError as ReturnType<typeof mock>).mockImplementation(async () => {
+      if (!bumped) {
+        seq = 1;
+        bumped = true;
+      }
+    });
+    const createClient = mock(
+      (_options: AcpClientOptions) => clients.shift() as unknown as AcpClient
+    );
+    const runner = new AcpQueryRunner(ctx, createClient);
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    // The transfer launches a FRESH query (isRetry=false), so it gets the full
+    // retry budget — its ACP startup timeout is auto-retried. With the old
+    // isRetry=true the transferred attempt would not retry → 2 clients.
+    expect(createClient).toHaveBeenCalledTimes(3);
   });
 
   test('stops retry_pending across a startup-timeout auto-retry (round-12 P2)', async () => {

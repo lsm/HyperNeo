@@ -596,8 +596,22 @@ export class SpaceRuntimeService {
         content: [{ type: 'text' as const, text: message }],
       },
     };
-    await session.ensureQueryStarted();
-    this.config.reactiveDb?.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+    // Persist + record wake BEFORE awaiting startup, mirroring the instrumented
+    // injectMessageIntoSession chokepoint: a startup rejection still leaves a
+    // wake_requested marker and the row is abandoned (marked failed) rather than
+    // stranded. See task #859 round-16 P3 (Space injector wake).
+    const db = this.config.reactiveDb?.db;
+    const dbId = db?.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+    db?.messageDeliveryLifecycle?.record(sessionId, id, 'wake_requested');
+    try {
+      await session.ensureQueryStarted();
+    } catch (err) {
+      if (db && dbId) db.updateMessageStatus([dbId], 'failed');
+      db?.messageDeliveryLifecycle?.record(sessionId, id, 'failed', {
+        reason: 'startup_rejected',
+      });
+      throw err;
+    }
     await session.messageQueue.enqueueWithId(id, message);
     return id;
   }

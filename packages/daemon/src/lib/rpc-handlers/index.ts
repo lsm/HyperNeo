@@ -880,8 +880,21 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         content: [{ type: 'text' as const, text: message }],
       },
     };
-    await session.ensureQueryStarted();
-    deps.reactiveDb.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+    // Persist + record wake BEFORE awaiting startup, mirroring the instrumented
+    // injectMessageIntoSession chokepoint: a startup rejection still leaves a
+    // wake_requested marker and the row is abandoned (marked failed) rather than
+    // stranded. See task #859 round-16 P3 (Space injector wake).
+    const dbId = deps.reactiveDb.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+    deps.reactiveDb.db.messageDeliveryLifecycle?.record(sessionId, messageId, 'wake_requested');
+    try {
+      await session.ensureQueryStarted();
+    } catch (err) {
+      deps.reactiveDb.db.updateMessageStatus([dbId], 'failed');
+      deps.reactiveDb.db.messageDeliveryLifecycle?.record(sessionId, messageId, 'failed', {
+        reason: 'startup_rejected',
+      });
+      throw err;
+    }
     await session.messageQueue.enqueueWithId(messageId, message);
   };
 

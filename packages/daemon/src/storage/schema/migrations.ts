@@ -11704,9 +11704,12 @@ export function runMigration174(db: BunDatabase): void {
 // databases (new databases get it from createTables()). Append-only event log
 // keyed by the stable SDK message UUID; see MessageDeliveryLifecycleRepository
 // and task #859. Idempotent.
+//
+// NOTE: no `if (tableExists) return` guard — runMarkedMigration marks AFTER the
+// function, so a crash between the table create and the index creates would
+// re-run this and the guard would skip the indexes permanently. All statements
+// are IF NOT EXISTS, so re-running is safe (round-16 P3).
 export function runMigration179(db: BunDatabase): void {
-  if (tableExists(db, 'message_delivery_lifecycle')) return;
-
   db.exec(`
     CREATE TABLE IF NOT EXISTS message_delivery_lifecycle (
       id TEXT PRIMARY KEY,

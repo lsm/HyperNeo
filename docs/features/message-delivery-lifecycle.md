@@ -37,7 +37,7 @@ stop point implies a different failure mode and a different fix.
 | `consumed` | SDK pulled the message from the input generator — the turn begins | `SDKMessageHandler` yielded/ack callbacks (`handleMessageYielded`, `consumePersistedUserMessage`, `acknowledgeOldestQueuedUserOnTurnEnd`) |
 | `first_progress` | First assistant output for this message's turn | `SDKMessageHandler.handleMessage` on the first assistant message of the turn |
 | `completed` | SDK emitted a terminal result for this message's turn (success or error) | `SDKMessageHandler.handleMessage` on a result message |
-| `failed` | Delivery did not complete (timeout / orphaned-after-restart / delivery error / circuit-breaker trip / interrupt) | `QueryLifecycleManager` failure paths + `MessageRecoveryHandler` orphan recovery + `SDKMessageHandler` circuit-breaker trip + `MessageQueue.onClear`/`onMessagesRejected` (interrupt/reset) |
+| `failed` | Delivery did not complete (timeout / orphaned-after-restart / delivery error / circuit-breaker trip / interrupt). `detail.reason` carries the 'why' — the classified error category for runner teardowns (e.g. `provider_auth_error`, `connection`), `startup_timeout`, `interrupted`, etc. | `QueryLifecycleManager` failure paths + `MessageRecoveryHandler` orphan recovery + `SDKMessageHandler` circuit-breaker trip + `MessageQueue.onClear`/`onMessagesRejected` (interrupt/reset/error teardown) |
 
 ### Mapping to the delivery concept
 
@@ -93,10 +93,13 @@ chokepoints, **every delivered message enters the ledger regardless of which
 channel it arrived through**, including the Space/external-event paths that do
 not go through `startQueryAndEnqueue`.
 
-`wake_requested` is recorded at the two primary submit entry points
-(`startQueryAndEnqueue`, `injectMessageIntoSession`); the recovery-replay path
-(`QueryModeHandler`) and the rare inline injector paths rely on the
-`accepted`/`consumed` chokepoints for coverage.
+`wake_requested` is recorded at the primary submit entry points
+(`startQueryAndEnqueue`, `TaskAgentManager.injectMessageIntoSession`, and the
+Space `spaceAgentInjector` / long-horizon injector routes, which persist +
+record wake before awaiting startup so a successful Space delivery shows up in
+`wakeToAccept`); the recovery-replay path (`QueryModeHandler`) and any remaining
+inline injector paths rely on the `accepted`/`consumed` chokepoints for
+coverage.
 
 ## Querying
 
@@ -174,6 +177,10 @@ diagnostics surface this directly:
   is busy/rate-limited) are excluded from `unclaimed`/`stale`: their `persisted`
   event carries `sendStatus: 'deferred'`, and no delivery was expected until
   replay. They surface again once waked/accepted.
+- **Resume-choice parked** messages are excluded too: when
+  `ensureQueryStarted()` returns `blocked` (an `sdk_resume_choice` prompt), the
+  wake carries `{ blocked: 'sdk_resume_choice' }` and the enqueued row is
+  expected to be delivered once the user answers — not stranded.
 
 **Phase 1 does not add automatic retry.** The ledger exists to produce reliable
 evidence and correlation first; the next phase builds idempotent ownership and

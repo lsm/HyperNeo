@@ -2862,6 +2862,57 @@ describe('SDKMessageHandler', () => {
       ).toBe(false);
     });
 
+    it('clear-skip transfer attributes the dying turn failed and only the new turn completed (round-16 P2)', async () => {
+      const msgA = 'msg-transfer-a';
+      const msgB = 'msg-transfer-b';
+      getMessageByStatusAndUuidSpy.mockImplementation(
+        (_sid: string, _status: string, id: string) =>
+          id === msgA || id === msgB
+            ? {
+                dbId: `db-${id}`,
+                uuid: id,
+                type: 'user',
+                message: { role: 'user', content: [{ type: 'text', text: 'x' }] },
+              }
+            : null
+      );
+
+      // A was consumed by the dying query.
+      getStateSpy.mockReturnValue({ status: 'processing', messageId: msgA });
+      mockContext.messageQueue.onMessageYielded?.(msgA, Date.now());
+
+      // The transfer terminalizes A's consumed set with the classified error
+      // reason (mirrors handleCircuitBreakerTrip's pre-clear record). B is NOT
+      // in the consumed set yet — it stays tracked as accepted.
+      mockContext.messageQueue.onMessageEnqueued?.(msgB, Date.now(), false);
+      mockContext.messageQueue.onClear?.('provider_auth_error');
+
+      // The fresh query consumes B and completes.
+      getStateSpy.mockReturnValue({ status: 'processing', messageId: msgB });
+      mockContext.messageQueue.onMessageYielded?.(msgB, Date.now());
+      await handler.handleMessage({
+        type: 'result',
+        subtype: 'success',
+        uuid: 'result-b',
+        usage: { input_tokens: 1, output_tokens: 1 },
+        total_cost_usd: 0,
+        modelUsage: {},
+      } as unknown as SDKMessage);
+
+      // A is failed with the transfer error reason — NOT completed by B's
+      // success (the round-16 attribution leak).
+      expect(recordLifecycleSpy).toHaveBeenCalledWith('test-session-id', msgA, 'failed', {
+        reason: 'provider_auth_error',
+      });
+      expect(recordLifecycleSpy.mock.calls.some((c) => c[1] === msgA && c[2] === 'completed')).toBe(
+        false
+      );
+      // B completed normally.
+      expect(recordLifecycleSpy.mock.calls.some((c) => c[1] === msgB && c[2] === 'completed')).toBe(
+        true
+      );
+    });
+
     it('keeps accepted-but-unconsumed messages across a retry-pending clear (round-10 P2 #2)', () => {
       const msgQueued = 'msg-retry-accepted';
       getMessageByStatusAndUuidSpy.mockImplementation(

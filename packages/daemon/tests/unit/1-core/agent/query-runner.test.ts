@@ -1333,6 +1333,36 @@ describe('QueryRunner', () => {
       expect(clearSpy).toHaveBeenCalledTimes(1); // only the genuinely-failed fresh query clears
     });
 
+    it('transfer gives the preserved input a fresh retry budget (round-16 P2)', async () => {
+      // Initial query fails terminally while fresh input arrives → transfer.
+      buildSpy.mockRejectedValueOnce(new Error('authentication failed'));
+      let seq = 0;
+      let bumped = false;
+      getEnqueueSeqSpy.mockImplementation(() => seq);
+      handleErrorSpy.mockImplementation(async () => {
+        if (!bumped) {
+          seq = 1;
+          bumped = true;
+        }
+      });
+
+      // The transfer launches a FRESH query — it must get the full retry budget
+      // (retryAttempt 0), so a startup-timeout on it is still auto-retried. With
+      // the old retryAttempt+1 the transferred attempt was 1 → no startup-timeout
+      // retry → buildSpy would stop at 2.
+      buildSpy.mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'));
+      buildSpy.mockRejectedValueOnce(new Error('stop after retry'));
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      // 1 = initial, 2 = transferred fresh query (attempt 0), 3 = its
+      // startup-timeout auto-retry — proving the fresh budget.
+      expect(buildSpy).toHaveBeenCalledTimes(3);
+    });
+
     it('should call messageQueue.clear() on startup-timeout AbortError', async () => {
       const abortError = new Error('SDK startup timeout - query aborted');
       abortError.name = 'AbortError';

@@ -108,8 +108,10 @@ export class MessageQueue {
    * a shutdown the runner will retry (e.g. `'retry_pending'` for a rate-limit
    * cooldown or auto-retry that re-enqueues the turn's message), in which case
    * the terminal record + clear must be skipped so the retry can still
-   * complete. `'startup_timeout'` is terminal but keeps attribution accurate
-   * (recorded failed/startup_timeout, not interrupted).
+   * complete. Any other explicit reason is the classified error category and is
+   * recorded as the terminal's detail.reason (e.g. 'startup_timeout', a
+   * provider/connection/auth category, or a clear-skip ownership transfer's
+   * error) so the 'why' is accurate rather than a blanket 'interrupted'.
    */
   onClear?: (reason?: string) => void;
 

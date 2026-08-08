@@ -860,6 +860,11 @@ export class AcpQueryRunner {
     // the post-classification clear() must then be skipped or it rejects that
     // input with no query left to consume it (round-13 P1, ACP twin).
     const enqueueSeqAtError = messageQueue.getEnqueueSeq();
+    // The classified error category, threaded through clear/stop so onClear
+    // records the real 'why' instead of 'interrupted' — and used to terminalize
+    // the dying turn's consumed set on a clear-skip ownership transfer
+    // (round-16 P3/P2, ACP twin).
+    let terminalReason: string | undefined;
 
     const errorMessage = String(error);
     const isAbortError = error instanceof Error && error.name === 'AbortError';
@@ -958,6 +963,7 @@ export class AcpQueryRunner {
       this.rateLimitCooldownPending =
         is429Error &&
         !!(await this.ctx.onRateLimitExhausted?.(errorMessage, this._lastConsumedUserMessage));
+      terminalReason = category;
       const userMessage = isStartupTimeout
         ? `The ACP agent failed to start (workspace: ${session.workspacePath ?? 'unbound'}). Check HYPERNEO_ACP_COMMAND and resend your message.`
         : errorMessage.includes('[MCP invariant]')
@@ -997,7 +1003,7 @@ export class AcpQueryRunner {
     // classification (enqueue counter changed) — clearing would reject those
     // just-sent messages with no query left to consume them (round-13 P1).
     if (messageQueue.getEnqueueSeq() === enqueueSeqAtError) {
-      messageQueue.clear(this.rateLimitCooldownPending ? 'retry_pending' : undefined);
+      messageQueue.clear(this.rateLimitCooldownPending ? 'retry_pending' : terminalReason);
     } else {
       logger.warn(
         'Skipping post-error queue clear: new input arrived during error classification.'
@@ -1006,11 +1012,20 @@ export class AcpQueryRunner {
       // stops the queue + nulls queryPromise — leaving it with no generator
       // (stalls until the 30s queue timeout or the next turn's start() drains
       // it out of order). Transfer ownership now, mirroring the retry branch:
-      // close the dead transport and recurse so a live query consumes the fresh
-      // input (already queued — no re-enqueue). A rate-limit cooldown is
-      // excluded: the watchdog delivers it after the cooldown, and a query
-      // during it would just 429 again (round-15 P2, ACP twin).
+      // terminalize the dying turn's consumed set with the error reason, close
+      // the dead transport, restart the queue, and recurse so a live query
+      // consumes the fresh input (already queued — no re-enqueue). A rate-limit
+      // cooldown is excluded: the watchdog delivers it after the cooldown, and
+      // a query during it would just 429 again (round-15 P2, ACP twin).
+      //
+      // Recursing with isRetry=false gives the preserved input a FULL retry
+      // budget (startup-timeout + transient) — a fresh delivery, not a retry of
+      // the dying one (round-16 P2).
       if (!this.rateLimitCooldownPending && this.ctx.getQueryGeneration() === queryGeneration) {
+        // stop() fires onClear which terminalizes + clears the consumed set —
+        // B stays in deliveryAcceptedIds (stop() never fires onMessagesRejected),
+        // so the fresh query's completion attributes only to it (round-16 P2).
+        messageQueue.stop(terminalReason);
         if (this.ctx.queryObject) {
           try {
             this.ctx.queryObject.close();
@@ -1030,9 +1045,8 @@ export class AcpQueryRunner {
           ]);
           this.ctx.resetProcessExitedPromise();
         }
-        this.autoRetryPending = true;
         messageQueue.start();
-        return await this.runQuery(queryGeneration, true);
+        return await this.runQuery(queryGeneration, false);
       }
     }
   }

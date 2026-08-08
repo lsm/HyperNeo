@@ -289,6 +289,15 @@ export class MessageDeliveryLifecycleRepository {
         continue;
       }
 
+      // A message parked on an sdk_resume_choice prompt is enqueued and WILL be
+      // delivered once the user answers — not stranded. The wake carries the
+      // parked marker. See task #859 round-16 P3.
+      const parkedOnResumeChoice =
+        row.stage === 'wake_requested' && parseDetail(row.detail)?.blocked === 'sdk_resume_choice';
+      if (parkedOnResumeChoice) {
+        continue;
+      }
+
       // Persisted but never claimed by the daemon queue (no accepted/consumed/...).
       if (row.stage === 'persisted' || row.stage === 'wake_requested') {
         unclaimed.push({

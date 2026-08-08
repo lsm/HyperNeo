@@ -690,6 +690,13 @@ export class QueryLifecycleManager {
     }
     if (queryStartResult === 'blocked') {
       await stateManager.setQueued(messageId);
+      // Re-record the wake with a parked marker: the message IS enqueued and
+      // will be delivered once the user answers the sdk_resume_choice prompt,
+      // so it must not read as stranded. getDiagnostics skips wake_requested
+      // rows carrying this marker. See task #859 round-16 P3.
+      this.ctx.db.messageDeliveryLifecycle?.record(session.id, messageId, 'wake_requested', {
+        blocked: 'sdk_resume_choice',
+      });
       this.logger.debug(
         `startQueryAndEnqueue: session ${session.id} is blocked on sdk_resume_choice; ` +
           `leaving message ${messageId} persisted as enqueued for replay after the choice.`

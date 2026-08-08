@@ -983,6 +983,11 @@ export class QueryRunner {
       // failure handler) with no query left to consume it — stranded until
       // replay. See the clear site below (task #859 round-13 P1).
       const enqueueSeqAtError = messageQueue.getEnqueueSeq();
+      // The classified error category, threaded through clear/stop so onClear
+      // records the real 'why' (provider_error / connection / …) instead of a
+      // blanket 'interrupted' — and used to terminalize the dying turn's
+      // consumed set on a clear-skip ownership transfer (round-16 P3/P2).
+      let terminalReason: string | undefined;
 
       // Use String(error) rather than error.message so TypeError instances
       // (e.g. "fetch failed") include their name prefix.  All downstream
@@ -1457,6 +1462,7 @@ export class QueryRunner {
           this.rateLimitCooldownPending =
             is429Error &&
             !!(await this.ctx.onRateLimitExhausted?.(errorMessage, this._lastConsumedUserMessage));
+          terminalReason = category;
 
           // For startup timeouts / resume failures, provide actionable recovery hints.
           // Keep the hints distinct: HYPERNEO_SDK_STARTUP_TIMEOUT_MS is irrelevant to a
@@ -1533,7 +1539,7 @@ export class QueryRunner {
       // in FIFO order on the next start(); acceptable, the alternative strands
       // fresh input.
       if (messageQueue.getEnqueueSeq() === enqueueSeqAtError) {
-        messageQueue.clear(this.rateLimitCooldownPending ? 'retry_pending' : undefined);
+        messageQueue.clear(this.rateLimitCooldownPending ? 'retry_pending' : terminalReason);
       } else {
         logger.warn(
           'Skipping post-error queue clear: new input arrived during error classification.'
@@ -1542,13 +1548,23 @@ export class QueryRunner {
         // below stops the queue and nulls queryPromise — leaving it with no
         // generator (stalls until the 30s queue timeout or the next turn's
         // start() drains it out of order). Transfer ownership now, mirroring the
-        // startup-timeout retry: close the dead transport, restart the queue,
-        // and recurse so a live query consumes the fresh input. It is already
+        // startup-timeout retry: terminalize the dying turn's consumed set (A)
+        // with the error reason, close the dead transport, restart the queue,
+        // and recurse so a live query consumes the fresh input (B). B is already
         // queued (startQueryAndEnqueue enqueued it onto the then-running queue),
         // so no re-enqueue is needed. A rate-limit cooldown is excluded: the
         // watchdog's retry will deliver the preserved input after the cooldown,
         // and starting a query during it would just 429 again (round-15 P2).
+        //
+        // The transfer recurses with retryAttempt 0 so the preserved input gets
+        // a FULL retry budget (startup-timeout + transient + provider) — it is a
+        // fresh delivery episode, not a retry of the dying one (round-16 P2).
         if (!this.rateLimitCooldownPending && this.ctx.getQueryGeneration() === queryGeneration) {
+          // stop() fires onClear which terminalizes + clears the consumed set —
+          // mirroring handleCircuitBreakerTrip's pre-clear record. B stays in
+          // deliveryAcceptedIds (stop() never fires onMessagesRejected), so the
+          // fresh query's completion attributes ONLY to B, not A (round-16 P2).
+          messageQueue.stop(terminalReason);
           if (this.ctx.queryObject) {
             try {
               this.ctx.queryObject.close();
@@ -1568,9 +1584,8 @@ export class QueryRunner {
           // A fresh query arms its own startup timer — reset the received flag so
           // a hung resume is caught by it (mirrors the startup-timeout retry).
           this.ctx.firstMessageReceived = false;
-          this.autoRetryPending = true;
           messageQueue.start();
-          return await this.runQuery(queryGeneration, retryAttempt + 1);
+          return await this.runQuery(queryGeneration, 0);
         }
       }
     } finally {
