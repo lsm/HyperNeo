@@ -291,11 +291,12 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
   });
 
   test('approved Coding task: dispatchPostApproval threads artifact.data.prUrl into kickoff; mark_complete closes it', async () => {
-    // Pull the seeded Coding workflow — its Post-Approval (merger) node carries
-    // postApproval.targetAgent='merger' (the PR Merger runs the merge) and an
-    // interpolated template. Approval is a task-level event now: the route lives
-    // on the merger node, not the end (Review) node, and the router fans out to
-    // whichever node declares it.
+    // Pull the seeded stable Coding workflow — its Coding node carries
+    // postApproval.targetAgent='coder' (the original coder owns the audited
+    // post-approval merge) and an interpolated template. Approval is a
+    // task-level event: the route lives on the Coding node (there is no separate
+    // Post-Approval/merger node in the stable workflow), and the router fans out
+    // to whichever node declares it.
     const coding = h.workflowManager
       .listWorkflows(SPACE_ID)
       .find((w) => w.name === CODING_WORKFLOW.name);

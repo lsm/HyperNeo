@@ -318,6 +318,20 @@ export class SpaceWorkflowManager {
     return this.repo.updateWorkflow(id, { templateName });
   }
 
+  /**
+   * Stamp only the `tags` on a built-in workflow row — no validation and no
+   * structural migration. Used by the legacy identity migration to drop a stale
+   * `default` tag from merger-variant rows (the stable `Coding` workflow is the
+   * default now), so the deterministic workflow fallback does not pick the
+   * legacy merger flow over the stable one. Like {@link stampBuiltInTemplateName},
+   * this writes a single column and cannot mangle the row's structure.
+   */
+  stampBuiltInTags(id: string, tags: string[]): SpaceWorkflow | null {
+    const existing = this.repo.getWorkflow(id);
+    if (!existing) return null;
+    return this.repo.updateWorkflow(id, { tags });
+  }
+
   updateWorkflow(id: string, params: UpdateSpaceWorkflowParams): SpaceWorkflow | null {
     const existing = this.repo.getWorkflow(id);
     if (!existing) return null;

@@ -650,7 +650,11 @@ export const CODING_WITH_MERGER_WORKFLOW: SpaceWorkflow = {
   ],
   startNodeId: CODING_CODE_NODE,
   endNodeId: CODING_REVIEW_NODE,
-  tags: ['coding', 'default'],
+  // NOT tagged `default`: the stable `Coding` workflow is the default now. The
+  // deterministic workflow fallback (selectDeterministicWorkflowFallback) ranks
+  // `default`-tagged workflows by updatedAt, so leaving `default` here would let
+  // a recently restamped merger row win over the stable coder-owned flow.
+  tags: ['coding'],
   createdAt: 0,
   updatedAt: 0,
   // Default coding loop — reviewer may auto-close when space runs at the
@@ -753,15 +757,16 @@ const CODER_OWNED_MERGE_PROMPT =
   'implementation and review, do not merge or call task-completion tools. After the task is approved, ' +
   'the runtime may send you the post-approval merge procedure. In that phase only, use merge_pr, ' +
   'complete its cleanup and workspace-sync steps, and call mark_complete. Never approve your own ' +
-  'changed head; Review is the approval and re-approval authority.';
+  'changed head; the approval and re-approval authority is named in your Runtime Execution Contract ' +
+  'and the post-approval merge procedure (it differs by workflow), so never assume a specific one.';
 
 const CODER_OWNED_REVIEW_PROMPT =
-  'You are the Reviewer. Inspect the pull request and relevant code, run checks when useful, and post ' +
-  'a visible GitHub review. If changes are needed, send Coding actionable feedback with pr_url, ' +
-  'review_url, and comment_urls, then stop. When the current head is clean and all review threads are ' +
-  'resolved, save the PR link artifact and call approve_task, or submit_for_approval when autonomy ' +
-  'requires human approval. Do not merge. If Coding later reports a post-approval merge blocker, ' +
-  're-check the current head, coordinate any fix, post a fresh approval, and signal Coding to continue.';
+  'You are the Reviewer. Inspect the pull request and relevant code and post a visible GitHub review. ' +
+  'If changes are needed, send Coding actionable feedback with pr_url, review_url, and comment_urls, ' +
+  'then stop. When the current head is clean and all review threads are resolved, save the PR link ' +
+  'artifact and call approve_task, or submit_for_approval when autonomy requires human approval. Do ' +
+  'not merge. If Coding later reports a post-approval merge blocker, re-check the current head, ' +
+  'coordinate any fix, post a fresh approval, and signal Coding to continue.';
 
 // Reviewer prompt for the stable `Coding with QA` workflow, where Review is an
 // INTERMEDIATE node (QA is the end node / approval authority). It must hand the
@@ -771,9 +776,9 @@ const CODER_OWNED_REVIEW_PROMPT =
 const CODER_OWNED_QA_REVIEW_PROMPT =
   'You are the Reviewer in a Coding → Review → QA workflow. Review is an intermediate step, not the ' +
   'end node, so you do NOT call approve_task or submit_for_approval — QA owns final approval. Inspect ' +
-  'the pull request and relevant code, run checks when useful, and post a visible GitHub review. If ' +
-  'changes are needed, send Coding actionable feedback with pr_url, review_url, and comment_urls, then ' +
-  'stop. When the current head is clean and all review threads are resolved, hand the PR to QA: call ' +
+  'the pull request and relevant code and post a visible GitHub review. If changes are needed, send ' +
+  'Coding actionable feedback with pr_url, review_url, and comment_urls, then stop. When the current ' +
+  'head is clean and all review threads are resolved, hand the PR to QA: call ' +
   'send_message(target="QA", message="<short summary>", data: { approved: true, pr_url: "<url>" }) to ' +
   'open the Review → QA gate and start QA validation, then stop and wait for QA. Do not merge. If ' +
   'Coding later reports a post-approval merge blocker, re-check the current head, coordinate any fix, ' +
@@ -2405,7 +2410,7 @@ const RETIRED_VALIDATION_HOOK_IDS = new Set([
 
 /**
  * Strips the retired Validation Complete node and everything that touched it
- * from a restamped Coding Workflow row.
+ * from a restamped `Coding with Merger` row.
  *
  * The merge helpers (`mergeNodeStructuralFieldsFromTemplate`,
  * `mergeChannelsFromTemplate`, `mergeHooksFromTemplate`,
@@ -2417,17 +2422,20 @@ const RETIRED_VALIDATION_HOOK_IDS = new Set([
  * forever. This pass excises the retired pieces so restamp converges to the
  * two-node Coding ↔ Review graph.
  *
- * Scoped to the built-in Coding Workflow by `templateName`; user-created
- * workflows never reach restamp (no `templateName`), and no other built-in ever
- * carried these identifiers.
+ * Scoped to the merger-variant Coding workflow (`CODING_WITH_MERGER_WORKFLOW`,
+ * name `'Coding with Merger'`) by `templateName` — the only built-in that ever
+ * carried the Validation Complete topology (the stable `Coding` workflow was
+ * derived after the node was retired). User-created workflows never reach
+ * restamp (no `templateName`), and no other built-in ever carried these
+ * identifiers.
  *
  * Precision guard: the node is matched by the relatively generic name
  * "Validation Complete", so the strip only fires when the row also carries a
  * built-in validation marker — the `validation-complete-gate` or one of the
- * generated validation hooks. A user who customized a Coding Workflow and
- * either repurposed the name or kept a standalone node (removing the built-in
- * gate/hooks) has no marker and is left untouched, drifting for explicit
- * user-driven sync instead of being silently edited.
+ * generated validation hooks. A user who customized a Coding with Merger row
+ * and either repurposed the name or kept a standalone node (removing the
+ * built-in gate/hooks) has no marker and is left untouched, drifting for
+ * explicit user-driven sync instead of being silently edited.
  */
 function stripRetiredValidationComplete({
   templateName,
@@ -2809,6 +2817,13 @@ export function seedBuiltInWorkflows(
   for (const identity of LEGACY_CODING_TEMPLATE_IDENTITIES) {
     const legacyRows = existing.filter((workflow) => workflow.templateName === identity.legacyName);
     if (legacyRows.length === 0) continue;
+    const canonicalTemplate = templatesByName.get(identity.name);
+    // The merger variants are no longer `default` (the stable Coding workflow
+    // is). Strip a stale `default` tag from migrated rows so the deterministic
+    // workflow fallback (selectDeterministicWorkflowFallback, which ranks
+    // `default`-tagged workflows by updatedAt) does not pick the legacy merger
+    // flow over the stable coder-owned flow.
+    const canonicalIsDefault = (canonicalTemplate?.tags ?? []).includes('default');
     // Newest first: the dedup machinery keeps the newest row, so it gets the
     // full canonical identity. Older duplicates cannot take the (unique)
     // name/handle, but we still point their templateName at the canonical
@@ -2816,8 +2831,9 @@ export function seedBuiltInWorkflows(
     // stranded under the legacy name.
     const sorted = [...legacyRows].sort((a, b) => b.createdAt - a.createdAt);
     for (const row of sorted) {
+      let migrated: SpaceWorkflow | null = row;
       try {
-        workflowManager.updateBuiltInIdentity(row.id, {
+        migrated = workflowManager.updateBuiltInIdentity(row.id, {
           name: identity.name,
           handle: identity.handle,
           templateName: identity.name,
@@ -2827,12 +2843,24 @@ export function seedBuiltInWorkflows(
         // holding the canonical name) — stamp templateName only so the row
         // still groups under the canonical template for dedup.
         try {
-          workflowManager.stampBuiltInTemplateName(row.id, identity.name);
+          migrated = workflowManager.stampBuiltInTemplateName(row.id, identity.name);
         } catch (innerErr) {
+          migrated = null;
           identityErrors.push({
             name: identity.legacyName,
             error: innerErr instanceof Error ? innerErr.message : String(innerErr),
           });
+        }
+      }
+      // Drop a stale `default` tag (best-effort — non-fatal if it fails).
+      if (migrated && !canonicalIsDefault && (migrated.tags ?? []).includes('default')) {
+        try {
+          workflowManager.stampBuiltInTags(
+            row.id,
+            migrated.tags!.filter((tag) => tag !== 'default')
+          );
+        } catch {
+          // Non-fatal: tag normalization does not block the migration.
         }
       }
     }

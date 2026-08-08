@@ -271,6 +271,44 @@ describe('stable coding workflow templates', () => {
       expect(canonical.gates?.length ?? 0).toBeGreaterThan(0);
     }
   });
+
+  test('stable coder prompt does not hard-code a specific approval authority', () => {
+    // The coder slot prompt is shared by Coding (authority=Review) and Coding
+    // with QA (authority=QA). It must NOT name a specific authority — that is
+    // injected via the Runtime Execution Contract / post-approval procedure —
+    // or the QA workflow's coder would seek re-approval from Review and
+    // merge_pr could accept Review's GitHub approval, bypassing QA revalidation.
+    const prompt = STABLE_CODING_WORKFLOW.nodes
+      .find((n) => n.name === 'Coding')!
+      .agents.find((a) => a.name === 'coder')!.customPrompt!.value;
+    expect(prompt).not.toContain('Review is the approval and re-approval authority');
+    expect(prompt).toMatch(/Runtime Execution Contract/i);
+  });
+
+  test('stable reviewer prompts defer execution to the central contract', () => {
+    // The reviewer role has no shell (Reviewer System Contract forbids running
+    // tests/builds), so a slot-prompt "run checks when useful" wastes turns on
+    // unavailable tools. Keep slot prompts behavioral.
+    for (const wf of [STABLE_CODING_WORKFLOW, CODING_WITH_QA_WORKFLOW]) {
+      const prompt = wf.nodes.find((n) => n.name === 'Review')!.agents[0]!.customPrompt!.value;
+      expect(prompt).not.toMatch(/run checks/i);
+    }
+  });
+
+  test('only the stable Coding template is tagged default', () => {
+    // selectDeterministicWorkflowFallback ranks default-tagged workflows by
+    // updatedAt, so two defaults could let a restamped merger row win over the
+    // stable coder-owned flow.
+    expect(STABLE_CODING_WORKFLOW.tags).toContain('default');
+    expect(CODING_WITH_MERGER_WORKFLOW.tags).not.toContain('default');
+  });
+
+  test('coder-owned merge instructions verify the Space checkout is not ahead of origin', () => {
+    // Mirrors the dedicated-merger procedure: after `git pull --ff-only`, verify
+    // HEAD == origin/$BASE so a stray-commit "Already up to date" doesn't leave
+    // future task worktrees on an unmerged base.
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('space-checkout-ahead');
+  });
 });
 
 describe('legacy CODING_WORKFLOW merger template assertions', () => {
@@ -4058,6 +4096,35 @@ describe('seedBuiltInWorkflows()', () => {
     expect(after.find((w) => w.id === older.id)!.templateName).toBe('Coding with Merger');
   });
 
+  test('legacy identity migration strips the stale default tag from merger rows', () => {
+    // A pre-split 'Coding Workflow' row carries the 'default' tag. After it is
+    // migrated to 'Coding with Merger' (no longer the default — the stable
+    // Coding workflow is), the tag must be stripped, or the deterministic
+    // fallback (selectDeterministicWorkflowFallback, ranks default-tagged rows
+    // by updatedAt) could pick the legacy merger flow over the stable one.
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const seeded = manager.listWorkflows(SPACE_ID);
+    const mergerCoding = seeded.find((w) => w.name === CODING_WITH_MERGER_WORKFLOW.name)!;
+    const stableCoding = seeded.find((w) => w.name === STABLE_CODING_WORKFLOW.name)!;
+    // Simulate the pre-split row: revert to legacy identity + restore the
+    // default tag the old 'Coding Workflow' seed carried.
+    revertToLegacyIdentity(mergerCoding.id, 'Coding Workflow', 'coding-workflow');
+    db.prepare(`UPDATE space_workflows SET tags = ? WHERE id = ?`).run(
+      JSON.stringify(['coding', 'default']),
+      mergerCoding.id
+    );
+    db.prepare(`DELETE FROM space_workflows WHERE id = ?`).run(stableCoding.id);
+
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+
+    const after = manager.listWorkflows(SPACE_ID);
+    const migrated = after.find((w) => w.id === mergerCoding.id)!;
+    expect(migrated.name).toBe('Coding with Merger');
+    expect(migrated.tags).not.toContain('default');
+    // The re-created stable Coding template keeps the default tag.
+    expect(after.find((w) => w.name === STABLE_CODING_WORKFLOW.name)!.tags).toContain('default');
+  });
+
   test('throws if resolveAgentId returns undefined for a required role', () => {
     // Resolver that cannot resolve any role
     const brokenResolver = (_role: string): string | undefined => undefined;
@@ -4228,11 +4295,14 @@ describe('seedBuiltInWorkflows()', () => {
     }
   });
 
-  test('CODING_WORKFLOW seeded with coding and default tags', () => {
+  test('CODING_WITH_MERGER_WORKFLOW seeded with coding tag but NOT default', () => {
+    // Only the stable Coding template is `default` now; the merger variant must
+    // not carry `default` or selectDeterministicWorkflowFallback could pick it
+    // over the stable coder-owned flow.
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
     expect(wf.tags).toContain('coding');
-    expect(wf.tags).toContain('default');
+    expect(wf.tags).not.toContain('default');
   });
 
   test('RESEARCH_WORKFLOW seeded with research tag', () => {
