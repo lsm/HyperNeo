@@ -1536,9 +1536,7 @@ export function mergeNodeStructuralFieldsFromTemplate(
           ...(templateAgent.resetContextPerTurn === undefined
             ? {}
             : { resetContextPerTurn: templateAgent.resetContextPerTurn }),
-          ...(finalPrompt === existingCustomPrompt
-            ? {}
-            : { customPrompt: finalPrompt }),
+          ...(finalPrompt === existingCustomPrompt ? {} : { customPrompt: finalPrompt }),
         };
       }),
     };

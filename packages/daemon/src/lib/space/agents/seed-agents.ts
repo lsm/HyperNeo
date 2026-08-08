@@ -12,8 +12,7 @@
  *   - General     — general-purpose worker
  *   - Planner     — planning/orchestration worker
  *   - Research    — research specialist (investigates topics, writes findings, opens PRs)
- *   - Reviewer    — code review specialist (no shell — posts reviews via `post_review`)
- *   - Merger      — post-approval PR merge specialist (the designated shell agent)
+ *   - Reviewer    — code review specialist (bash for read-only inspection; posts reviews via gh)
  *   - QA          — quality assurance specialist
  *
  * The Coordinator is a SpaceLongHorizonAgent and is managed separately; it does
@@ -69,27 +68,21 @@ const PLANNER_TOOLS = PERMISSIVE_TOOLS;
 const RESEARCH_TOOLS = PERMISSIVE_TOOLS;
 
 /**
- * Reviewers: explicit non-mutating profile with NO shell.
+ * Reviewers: non-mutating profile that keeps Bash for read-only inspection.
  *
- * The runtime denies Write/Edit/MultiEdit/NotebookEdit/Bash whenever a
- * non-empty tool profile omits them. The Reviewer is a pure static-review
- * role — it never runs code. It posts PR reviews and line comments through
- * the `post_review` node-agent MCP tool (which calls the GitHub API
- * server-side), NOT via `gh api` in a shell, so Bash is intentionally absent.
- * The `Task`/* tools let the Reviewer dispatch exploration to the built-in
- * `general-purpose` sub-agent that ships with the `claude_code` preset.
- *
- * `post_review` is NOT listed here on purpose: the tools profile only accepts
- * SDK built-ins (KNOWN_TOOLS) and gates deniable built-ins (DENIABLE_TOOLS).
- * MCP tools like `post_review` are inherited regardless of the profile (see
- * DENIABLE_TOOLS), and the tool is registered for the Reviewer session by
- * `TaskAgentManager.buildNodeAgentMcpServerForSession` (detected by handle).
- *
- * Role separation (Option C): the post-approval PR merge — which DOES need a
- * shell — is handled by the dedicated "PR Merger" agent, not the Reviewer.
+ * The Reviewer uses Bash for GitHub inspection (`gh pr view`, `gh pr diff`,
+ * `gh pr checks`, `gh api graphql` reviewThreads) and for posting reviews via
+ * `gh pr review` — there are no PR-process MCP tools (get_pr_diff /
+ * post_review were removed; the reviewer uses the CLI directly). The runtime
+ * denies Write/Edit/MultiEdit/NotebookEdit whenever a non-empty tool profile
+ * omits them, so the Reviewer still cannot edit code. The prompt (Reviewer
+ * System Contract) restrains it from running the code under review (tests,
+ * builds, app) and from merging. `Task`/* tools dispatch exploration to the
+ * built-in `general-purpose` sub-agent, and Cron* allow scheduled follow-ups.
  */
 const REVIEWER_TOOLS: string[] = [
   'Read',
+  'Bash',
   'Grep',
   'Glob',
   'WebFetch',
@@ -99,22 +92,10 @@ const REVIEWER_TOOLS: string[] = [
   'Task',
   'TaskOutput',
   'TaskStop',
+  'CronCreate',
+  'CronDelete',
+  'CronList',
 ];
-
-/**
- * PR Merger: the designated shell-capable execution agent for post-approval
- * PR merges. It runs `gh pr merge` (+ branch cleanup, worktree sync, conflict
- * routing) via Bash, so Bash is present. It has NO Write/Edit — merging is a
- * git/shell operation, not code editing. The node-agent MCP tools it needs
- * (save_artifact, send_message, mark_complete, list_reachable_agents, etc.)
- * are attached to its post-approval session by `spawnPostApprovalSubSession`
- * and are NOT listed here (the visible profile only gates SDK built-ins).
- *
- * Spawned post-approval only — declared as a dedicated "Post-Approval" node
- * slot in each merge-capable workflow so it is never activated during a normal
- * review cycle.
- */
-const MERGER_TOOLS: string[] = ['Bash', 'Read', 'Grep', 'Glob'];
 
 /** QA: read/search/web + bash for running tests — no Write/Edit/MultiEdit/NotebookEdit. */
 const QA_TOOLS: string[] = [
@@ -137,7 +118,6 @@ export const PRESET_AGENT_TOOLS: Record<string, string[]> = {
   planner: PLANNER_TOOLS,
   research: RESEARCH_TOOLS,
   reviewer: REVIEWER_TOOLS,
-  merger: MERGER_TOOLS,
   qa: QA_TOOLS,
 };
 
@@ -241,25 +221,9 @@ const PRESET_AGENTS: PresetDefinition[] = [
     handle: 'reviewer',
     description:
       'Code review specialist. Reviews pull requests for correctness, style, and test coverage. ' +
-      'Has no shell — posts reviews via the post_review tool.',
+      'Has bash for read-only inspection and posts reviews via the gh CLI.',
     tools: REVIEWER_TOOLS,
     customPrompt: REVIEWER_CUSTOM_PROMPT,
-  },
-  {
-    name: 'PR Merger',
-    handle: 'merger',
-    description:
-      'Post-approval PR merge specialist. The designated execution agent: it runs gh pr merge, ' +
-      'branch cleanup, worktree sync, and conflict routing. Spawned only after a task is approved.',
-    tools: MERGER_TOOLS,
-    customPrompt:
-      'You are the PR Merger — the designated execution agent for post-approval PR merges. ' +
-      'You run after a task has been approved. Your sole job is to merge the approved PR using ' +
-      '`gh pr merge`, clean up the branch, sync the worktree, and route any merge conflicts back ' +
-      'to the implementation agent. You are given the exact merge procedure as your first message; ' +
-      'follow it precisely. Do NOT review code, do NOT write features, and do NOT call approve_task ' +
-      'or submit_for_approval — the task is already approved. When the merge and sync are complete, ' +
-      'call mark_complete to close the task.',
   },
   {
     name: 'QA',
