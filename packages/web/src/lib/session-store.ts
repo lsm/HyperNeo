@@ -1294,6 +1294,20 @@ export class SessionStore {
   }
 
   /**
+   * Synchronously mark this session as recovering (no async work). Used by the
+   * soft-resume path so the composer is disabled the instant a tab foregrounds —
+   * BEFORE the ≤3s health check + channel joins that precede `recover()`. The
+   * `recoverySeq` token this bumps is superseded when `performRecovery` later
+   * takes its own token (clearing it on success); the dead-socket sub-case
+   * (forceReconnect) clears it via the transport path. No-op for a destroyed
+   * store or one with no active session.
+   */
+  markRecovering(): void {
+    if (this.destroyed || !this.activeSessionId.value) return;
+    this.beginRecovery();
+  }
+
+  /**
    * Clear the recovering flag iff `token` is still the freshest recovery.
    * A stale recovery that settles after a fresher one already cleared the flag
    * is a no-op, so out-of-order / duplicate reconnect events can't resurrect or
@@ -1663,4 +1677,21 @@ export const sessionStore = new SessionStore();
  */
 export async function refreshAllSessionStores(): Promise<void> {
   await Promise.all([...activeStores].map((store) => store.recover().catch(() => {})));
+}
+
+/**
+ * Synchronously mark every live SessionStore recovering — called by
+ * `connectionManager.validateConnectionOnResume` the instant a tab foregrounds
+ * (before the health check + channel joins), so the composer/drop-zone/rewind/
+ * question affordances are disabled during the resume-validation window on a
+ * possibly-stale connection. `performRecovery` (via `refreshAllSessionStores`)
+ * supersedes each mark with its own token and clears it on success; the
+ * forceReconnect sub-case clears it via the transport path. Parity with the
+ * transport-reconnect path, where the `onConnection('disconnected')` handler
+ * marks recovering immediately.
+ */
+export function markAllSessionStoresRecovering(): void {
+  for (const store of activeStores) {
+    store.markRecovering();
+  }
 }

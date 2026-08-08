@@ -18,6 +18,7 @@ import {
   SessionStore,
   refreshAllSessionStores,
   mergeSnapshotIntoTranscript,
+  markAllSessionStoresRecovering,
 } from '../session-store';
 
 // A single controllable hub that connectionManager.getHub() resolves to. Both
@@ -956,6 +957,30 @@ describe('SessionStore multi-instance isolation', () => {
     await selectWithSnapshot(storeB, hub, 'session-b', [
       { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
     ]);
+    expect(storeB.isRecovering.value).toBe(false);
+  });
+
+  it('markAllSessionStoresRecovering flags active stores synchronously (resume window)', async () => {
+    // Soft-resume marks every active store recovering the instant a tab
+    // foregrounds, BEFORE the ≤3s health check + joins, so the composer can't
+    // be used on a possibly-stale connection. performRecovery later supersedes
+    // the early mark and clears it on success.
+    await selectWithSnapshot(storeA, hub, 'session-a', [
+      { id: 'a1', uuid: 'a1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+    await selectWithSnapshot(storeB, hub, 'session-b', [
+      { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+    expect(storeA.isRecovering.value).toBe(false);
+    expect(storeB.isRecovering.value).toBe(false);
+
+    markAllSessionStoresRecovering();
+    expect(storeA.isRecovering.value).toBe(true);
+    expect(storeB.isRecovering.value).toBe(true);
+
+    // The later recovery supersedes the early mark and clears on success.
+    await refreshAllSessionStores();
+    expect(storeA.isRecovering.value).toBe(false);
     expect(storeB.isRecovering.value).toBe(false);
   });
 
