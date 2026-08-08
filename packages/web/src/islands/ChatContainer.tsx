@@ -98,11 +98,12 @@ export function shouldBlockForPendingQuestion(
  * Recovery (a connection drop/resume on a session that ALREADY loaded) must
  * NOT relapse into the skeleton: the transcript stays visible and read-only
  * while we rejoin the channel and re-sync. But this bypass applies ONLY when
- * the session had completed its initial load (`messagesLoaded`): if the
- * connection drops BEFORE the first snapshot arrives, `messagesLoaded` is still
- * false and we must keep the skeleton — otherwise the chat would render the
- * "No messages yet" empty state for a conversation that still has messages in
- * flight, lying about an existing transcript throughout the reconnect window.
+ * the session had completed its FULL initial load — i.e. BOTH halves
+ * (`sessionStateLoaded && messagesLoaded`). A drop that lands after only one
+ * half (state loaded but no snapshot yet, OR snapshot arrived but no metadata
+ * yet) must keep the skeleton: rendering with a half-loaded session would show
+ * missing metadata or an empty transcript for a conversation that is still in
+ * flight (and `isInitialLoad` stays true, so no recovery banner either).
  *
  * Exported for unit tests.
  */
@@ -113,7 +114,8 @@ export function computeChatLoading(opts: {
   messagesLoaded: boolean;
 }): boolean {
   const { error, isRecovering, sessionStateLoaded, messagesLoaded } = opts;
-  const recoveringWithTranscript = isRecovering && messagesLoaded;
+  const fullyLoaded = sessionStateLoaded && messagesLoaded;
+  const recoveringWithTranscript = isRecovering && fullyLoaded;
   return !error && (!sessionStateLoaded || !messagesLoaded) && !recoveringWithTranscript;
 }
 

@@ -587,6 +587,21 @@ describe('ChatContainer session-scoped recovery', () => {
       ).toBe(true);
     });
 
+    it('keeps the skeleton when a disconnect lands after the snapshot but before state.session', () => {
+      // Inverse arrival order: messages snapshot arrived first, state.session
+      // has not, then the connection drops. The initial load is still incomplete
+      // (no metadata), so the skeleton must stay — recovery preserves the
+      // transcript only once BOTH load halves completed.
+      expect(
+        computeChatLoading({
+          error: null,
+          isRecovering: true,
+          sessionStateLoaded: false,
+          messagesLoaded: true,
+        })
+      ).toBe(true);
+    });
+
     it('short-circuits to the error UI (no skeleton) when there is an error', () => {
       expect(
         computeChatLoading({

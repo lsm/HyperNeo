@@ -61,6 +61,8 @@ interface MultiHubApi {
   setStateSessionError: (error: unknown) => void;
   /** Force liveQuery.subscribe to reject (null clears it). */
   setLiveQuerySubscribeError: (error: unknown) => void;
+  /** Force channel.join to reject (null clears it). */
+  setChannelJoinError: (error: unknown) => void;
   /**
    * Queue distinct `state.session` RPC responses. Each request shifts the next
    * queued promise, letting two concurrent fetches for the same session resolve
@@ -90,6 +92,9 @@ function installHub(): MultiHubApi {
   // When set, liveQuery.subscribe rejects (simulating a failed re-subscribe
   // during recovery, so the "stay recovering" path can be exercised).
   let liveQuerySubscribeError: unknown = null;
+  // When set, channel.join rejects (simulating a session-channel rejoin that
+  // never settles successfully during recovery).
+  let channelJoinError: unknown = null;
 
   multiHub.onEvent.mockImplementation((channel: string, cb: (data: unknown) => void) => {
     const list = handlers.get(channel) ?? [];
@@ -141,6 +146,10 @@ function installHub(): MultiHubApi {
       return Promise.resolve({ ok: true });
     }
     if (channel === 'message.count') return Promise.resolve({ count: 0 });
+    if (channel === 'channel.join') {
+      if (channelJoinError) return Promise.reject(channelJoinError);
+      return Promise.resolve({ ok: true });
+    }
     return Promise.resolve(undefined);
   });
 
@@ -168,6 +177,9 @@ function installHub(): MultiHubApi {
     },
     setLiveQuerySubscribeError: (e) => {
       liveQuerySubscribeError = e;
+    },
+    setChannelJoinError: (e) => {
+      channelJoinError = e;
     },
     queueStateSession: (p) => {
       stateSessionQueue.push(p);
@@ -526,13 +538,19 @@ describe('SessionStore multi-instance isolation', () => {
     await selectWithSnapshot(storeB, hub, 'session-b', [
       { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
     ]);
-    multiHub.joinChannel.mockClear();
+    multiHub.request.mockClear();
 
     hub.fireConnection('disconnected');
     hub.fireConnection('connected');
 
+    // Recovery re-issues channel.join via hub.request (so it can retry and gate
+    // readiness on a settled join), not the fire-and-forget joinChannel.
     await vi.waitFor(() => {
-      expect(multiHub.joinChannel).toHaveBeenCalledWith('session:session-b');
+      expect(multiHub.request).toHaveBeenCalledWith(
+        'channel.join',
+        { channel: 'session:session-b' },
+        expect.anything()
+      );
     });
   });
 
@@ -1104,14 +1122,20 @@ describe('SessionStore multi-instance isolation', () => {
     await selectWithSnapshot(storeB, hub, 'session-b', [
       { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
     ]);
-    multiHub.joinChannel.mockClear();
+    multiHub.request.mockClear();
     const subscribesBefore = multiHub.request.mock.calls.filter(
       (c) => c[0] === 'liveQuery.subscribe'
     ).length;
 
     await storeB.recover();
 
-    expect(multiHub.joinChannel).toHaveBeenCalledWith('session:session-b');
+    // Recovery restores BOTH the session channel (via channel.join) and the
+    // message stream for the SAME session.
+    expect(multiHub.request).toHaveBeenCalledWith(
+      'channel.join',
+      { channel: 'session:session-b' },
+      expect.anything()
+    );
     const subscribesAfter = multiHub.request.mock.calls.filter(
       (c) => c[0] === 'liveQuery.subscribe'
     ).length;
@@ -1154,6 +1178,69 @@ describe('SessionStore multi-instance isolation', () => {
     hub.setLiveQuerySubscribeError(null);
     hub.fireConnection('connected');
     await vi.waitFor(() => expect(storeB.isRecovering.value).toBe(false));
+  });
+
+  it('stays recovering when the session-channel rejoin never succeeds', async () => {
+    // P2: if the channel rejoin keeps failing, state.session/context.updated
+    // pushes would be missed — recovery must not report readiness. The rejoin
+    // retries 3x (3 channel.join attempts) before giving up.
+    await selectWithSnapshot(storeB, hub, 'session-b', [
+      { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+    const joinsBefore = multiHub.request.mock.calls.filter((c) => c[0] === 'channel.join').length;
+    hub.setChannelJoinError(new Error('join rejected'));
+
+    hub.fireConnection('disconnected');
+    hub.fireConnection('connected');
+
+    // Wait for the 3 rejoin attempts to elapse.
+    await vi.waitFor(
+      () =>
+        expect(
+          multiHub.request.mock.calls.filter((c) => c[0] === 'channel.join').length
+        ).toBeGreaterThanOrEqual(joinsBefore + 3),
+      { timeout: 5000 }
+    );
+    await new Promise((r) => setTimeout(r, 30));
+
+    // isRecovering stays true — the composer must stay disabled.
+    expect(storeB.isRecovering.value).toBe(true);
+    expect(storeB.activeSessionId.value).toBe('session-b');
+    expect(storeB.sdkMessages.value.map((m) => m.uuid)).toEqual(['b1']);
+
+    // A later recovery where the join succeeds clears the flag.
+    hub.setChannelJoinError(null);
+    hub.fireConnection('connected');
+    await vi.waitFor(() => expect(storeB.isRecovering.value).toBe(false));
+  });
+
+  it('a recovery snapshot preserves older rows the user paginated in', async () => {
+    // P2: recover() re-subscribes the messages LiveQuery; the fresh snapshot is
+    // the recent window and must NOT evict rows the user prepended via "Load
+    // More" (older than the window) — otherwise they lose their deep-link/scroll
+    // position on every visibility resume.
+    await selectWithSnapshot(storeB, hub, 'session-b', [
+      { id: 'w1', uuid: 'w1', type: 'text', role: 'user', timestamp: 100 },
+    ]);
+    // User paginated older history above the window.
+    storeB.prependMessages([
+      { id: 'p1', uuid: 'p1', type: 'text', role: 'user', timestamp: 10 } as never,
+      { id: 'p2', uuid: 'p2', type: 'text', role: 'user', timestamp: 20 } as never,
+    ]);
+    expect(storeB.sdkMessages.value.map((m) => m.id)).toEqual(['p1', 'p2', 'w1']);
+
+    const subId = hub.subIdFor('session-b');
+    // Recovery/refresh delivers a fresh window snapshot (timestamp 100+).
+    hub.fire('liveQuery.snapshot', {
+      subscriptionId: subId,
+      rows: [
+        { id: 'w1', uuid: 'w1', type: 'text', role: 'user', timestamp: 100 },
+        { id: 'w2', uuid: 'w2', type: 'text', role: 'assistant', timestamp: 110 },
+      ],
+    });
+
+    // Paginated prefix preserved; window refreshed in place.
+    expect(storeB.sdkMessages.value.map((m) => m.id)).toEqual(['p1', 'p2', 'w1', 'w2']);
   });
 
   it('does not recover a session switched away from before recover() runs', async () => {
