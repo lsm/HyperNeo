@@ -415,6 +415,17 @@ export interface QueryRunnerContext {
     errorMessage: string,
     lastUserMessage: { uuid: string; content: string | MessageContent[] } | null
   ) => Promise<boolean>;
+
+  /**
+   * True when the rate-limit watchdog actually has recovery pending (a cooldown
+   * timer or an in-flight fallback switch). onRateLimitExhausted returning true
+   * is NOT sufficient — scheduleRetry can return true on a superseded generation
+   * (a fresh message cancelled the episode) without arming anything. The
+   * clear-skip transfer guard must know whether a retry is genuinely coming
+   * (skip transfer) or the schedule was superseded (transfer the fresh input).
+   * See task #859 round-20 P2.
+   */
+  isRateLimitRecoveryPending?: () => boolean;
 }
 
 /**
@@ -1087,6 +1098,18 @@ export class QueryRunner {
           this.ctx.resetProcessExitedPromise();
         }
 
+        // Re-check ownership before re-enqueueing: a fresh message may have
+        // started a newer query while we awaited the subprocess exit (its start()
+        // bumped the ctx generation). Re-enqueueing + messageQueue.start() +
+        // recursing here would invalidate that query's generator and could let
+        // the stale retry consume the fresh input via the wrong process or strand
+        // it — abandon this retry instead (the outer finally's generation guard
+        // skips cleanup for the stale frame). Round-20 P1.
+        if (this.ctx.getQueryGeneration() !== queryGeneration) {
+          logger.warn('Abandoning startup-timeout retry: a newer query owns the session.');
+          return;
+        }
+
         // Re-enqueue immediately before recursing (not earlier) so the message
         // doesn't expire in the queue (enqueueWithId has a ~30s TTL) during the
         // close/exit wait — mirrors the provider-retry branch's ordering.
@@ -1559,7 +1582,16 @@ export class QueryRunner {
         // The transfer recurses with retryAttempt 0 so the preserved input gets
         // a FULL retry budget (startup-timeout + transient + provider) — it is a
         // fresh delivery episode, not a retry of the dying one (round-16 P2).
-        if (!this.rateLimitCooldownPending && this.ctx.getQueryGeneration() === queryGeneration) {
+        // A rate-limit cooldown or in-flight fallback genuinely has recovery
+        // pending, so we DON'T transfer (the watchdog will deliver the fresh
+        // input after it resolves). But onRateLimitExhausted can return true on
+        // a SUPERSEDED schedule — a fresh message cancelled the watchdog episode
+        // mid-resolution without arming any cooldown — in which case nothing
+        // will retry and the fresh input MUST be transferred. isRateLimitRecoveryPending
+        // distinguishes the two (round-20 P2).
+        const rateLimitRecoveryPending =
+          this.ctx.isRateLimitRecoveryPending?.() ?? this.rateLimitCooldownPending;
+        if (!rateLimitRecoveryPending && this.ctx.getQueryGeneration() === queryGeneration) {
           // stop() fires onClear which terminalizes + clears the consumed set —
           // mirroring handleCircuitBreakerTrip's pre-clear record. B stays in
           // deliveryAcceptedIds (stop() never fires onMessagesRejected), so the

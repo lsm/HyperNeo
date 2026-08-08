@@ -934,6 +934,16 @@ export class AcpQueryRunner {
         this.ctx.resetProcessExitedPromise();
       }
 
+      // Re-check ownership before recursing: a fresh message may have started a
+      // newer query while we awaited the subprocess exit (its start() bumped the
+      // ctx generation). messageQueue.start() + recursing here would invalidate
+      // that query's generator — abandon this retry instead (round-20 P1, ACP
+      // twin).
+      if (this.ctx.getQueryGeneration() !== queryGeneration) {
+        logger.warn('Abandoning startup-timeout retry: a newer query owns the session.');
+        return;
+      }
+
       return await this.runQuery(queryGeneration, true);
     }
 
@@ -1028,7 +1038,13 @@ export class AcpQueryRunner {
       // Recursing with isRetry=false gives the preserved input a FULL retry
       // budget (startup-timeout + transient) — a fresh delivery, not a retry of
       // the dying one (round-16 P2).
-      if (!this.rateLimitCooldownPending && this.ctx.getQueryGeneration() === queryGeneration) {
+      // Distinguish an armed cooldown/fallback (watchdog will deliver the fresh
+      // input — don't transfer) from a superseded schedule (onRateLimitExhausted
+      // returned true on a cancelled generation without arming anything — the
+      // fresh input MUST be transferred). Round-20 P2 (ACP twin).
+      const rateLimitRecoveryPending =
+        this.ctx.isRateLimitRecoveryPending?.() ?? this.rateLimitCooldownPending;
+      if (!rateLimitRecoveryPending && this.ctx.getQueryGeneration() === queryGeneration) {
         // stop() fires onClear which terminalizes + clears the consumed set —
         // B stays in deliveryAcceptedIds (stop() never fires onMessagesRejected),
         // so the fresh query's completion attributes only to it (round-16 P2).

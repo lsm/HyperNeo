@@ -1301,6 +1301,40 @@ describe('QueryRunner', () => {
       expect(startSpy).toHaveBeenCalledTimes(2); // runner.start() + retry restart
     });
 
+    it('abandons the startup-timeout retry when a newer query claims the session during the exit wait (round-20 P1)', async () => {
+      const consumedUuid = 'startup-consumed-uuid';
+      const consumedContent = [{ type: 'text' as const, text: 'Hello' }];
+      buildSpy.mockRejectedValue(new Error('SDK startup timeout - query aborted'));
+      let gen = 0;
+      // A fresh message C starts a newer query while this branch awaits the
+      // subprocess exit: C's start() bumps the ctx generation. The stale retry
+      // must abandon (no re-enqueue, no recursion) instead of invalidating C's
+      // generator. resetProcessExitedPromise runs right after the exit wait —
+      // it simulates C's generation bump deterministically.
+      const ctx = createContext({
+        incrementQueryGeneration: () => ++gen,
+        getQueryGeneration: () => gen,
+        processExitedPromise: Promise.resolve(),
+        resetProcessExitedPromise: () => {
+          gen++;
+        },
+      });
+      runner = new QueryRunner(ctx);
+      (runner as unknown as { _lastConsumedUserMessage: unknown })._lastConsumedUserMessage = {
+        uuid: consumedUuid,
+        content: consumedContent,
+      };
+
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      // The initial attempt threw the startup timeout; the retry was abandoned
+      // (generation changed during the exit wait) — no re-enqueue and no second
+      // buildSpy call.
+      expect(enqueueWithIdSpy).not.toHaveBeenCalledWith(consumedUuid, consumedContent);
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+    });
+
     it('transfers fresh input to a fresh query on the clear-skip (round-15 P2)', async () => {
       // A genuine terminal error (not startup-timeout/transient, which have
       // their own retry branches) whose awaited classification races a fresh
@@ -1450,6 +1484,33 @@ describe('QueryRunner', () => {
       await ctx.queryPromise?.catch(() => {});
 
       expect(ctx.queryPromise).toBe(sentinel);
+    });
+
+    it('transfers fresh input when the rate-limit schedule was superseded (round-20 P2)', async () => {
+      buildSpy.mockRejectedValueOnce(new Error('429 rate limit exceeded'));
+      buildSpy.mockRejectedValueOnce(new Error('stop after retry'));
+      let seq = 0;
+      getEnqueueSeqSpy.mockImplementation(() => seq);
+      const ctx = createContext({
+        // scheduleRetry returns true (rateLimitCooldownPending set) but the
+        // schedule was SUPERSEDED — a fresh message cancelled the watchdog
+        // episode without arming any cooldown/fallback (isRateLimitRecoveryPending
+        // false). The fresh input must still be transferred.
+        onRateLimitExhausted: async () => {
+          seq++;
+          return true;
+        },
+        isRateLimitRecoveryPending: () => false,
+      });
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      // The superseded-cooldown guard did NOT skip the transfer: a fresh query
+      // was launched to consume the fresh input. (Without the fix the
+      // rateLimitCooldownPending guard would skip it and buildSpy would stop at 1.)
+      expect(buildSpy).toHaveBeenCalledTimes(2);
+      expect(startSpy).toHaveBeenCalledTimes(2);
     });
 
     it('should call messageQueue.clear() on startup-timeout AbortError', async () => {

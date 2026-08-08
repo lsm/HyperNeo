@@ -1731,6 +1731,17 @@ export class AgentSession
     return this.rateLimitWatchdog.scheduleRetry(errorMessage, lastUserMessage);
   }
 
+  /**
+   * True when the watchdog actually has recovery pending (cooldown timer armed
+   * or fallback switch in flight). Distinguishes an armed schedule from a
+   * superseded one (scheduleRetry returns true on a generation mismatch after a
+   * fresh message cancelled the episode, without arming anything). The runner's
+   * clear-skip transfer guard uses this. See task #859 round-20 P2.
+   */
+  isRateLimitRecoveryPending(): boolean {
+    return this.rateLimitWatchdog.getState().status !== 'idle';
+  }
+
   // ============================================================================
   // QueryLifecycleManagerContext methods
   // ============================================================================
