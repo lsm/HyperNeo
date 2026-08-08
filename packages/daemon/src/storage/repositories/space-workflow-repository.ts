@@ -557,37 +557,42 @@ export class SpaceWorkflowRepository {
   }
 
   /**
-   * Backfill a definition-version snapshot for every workflow that has none yet.
+   * Ensure the CURRENT head of every workflow has a recorded version snapshot.
    *
    * Captures pre-existing definition heads at rollout so that, if a workflow is later
    * edited, the version that existed at rollout is preserved (`updateWorkflow` records
    * only the post-edit version). This is the rollout-time capture the history needs for
    * the future Phase-1 read cutover (RFC §11.1).
    *
+   * The predicate keys on the current head's computed hash, not on "has any version": a
+   * workflow can hold an older version yet lack its current head's — if a prior
+   * `updateWorkflow` committed the head but the version append was swallowed (best-effort
+   * try/catch) or the daemon crashed between the head write and the append. Only the
+   * current head matters for pinning a run created from it, so we repair that gap.
+   *
    * Uses the live `computeDefinitionVersion` hash on the canonical domain object
    * (`getWorkflow`), so backfilled versions are byte-consistent with later writes. A
    * migration-time backfill cannot do this: migrations must stay self-contained (m94
    * principle), and a raw-row hash would diverge from the domain-object hash.
    *
-   * Idempotent: re-runs are near-free — the NOT EXISTS filter yields only workflows with
-   * no version row, so subsequent boots touch zero rows once every head is captured.
+   * Idempotent — a head whose version is already recorded is skipped. Cost is
+   * O(workflows) per boot (acceptable for a startup hook); full atomicity — head + version
+   * in one transaction, which would eliminate the partial-write window and restore a
+   * cheaper predicate — is deferred to the Phase-1 read cutover alongside the broader
+   * transactional model (RFC §6.1).
    */
   backfillExistingDefinitionVersions(): number {
     const rows = this.db
-      .prepare(
-        `SELECT w.id AS id FROM space_workflows w
-         WHERE NOT EXISTS (
-           SELECT 1 FROM space_workflow_definition_versions v WHERE v.workflow_id = w.id
-         )`
-      )
+      .prepare(`SELECT id FROM space_workflows ORDER BY created_at ASC, rowid ASC`)
       .all() as Array<{ id: string }>;
     let count = 0;
     for (const { id } of rows) {
       const workflow = this.getWorkflow(id);
-      if (workflow) {
-        this.recordDefinitionVersion(workflow, 'backfill');
-        count += 1;
-      }
+      if (!workflow) continue;
+      const { versionHash } = computeDefinitionVersion(workflow);
+      if (this.definitionVersions.getVersion(id, versionHash)) continue;
+      this.recordDefinitionVersion(workflow, 'backfill');
+      count += 1;
     }
     return count;
   }

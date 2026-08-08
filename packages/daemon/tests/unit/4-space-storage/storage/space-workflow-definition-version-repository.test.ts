@@ -367,6 +367,29 @@ describe('SpaceWorkflowRepository — shadow definition-version recording', () =
     expect(v?.source).toBe('backfill');
   });
 
+  test('backfillExistingDefinitionVersions repairs a missing CURRENT head even when an older version exists (partial write)', () => {
+    const created = wfRepo.createWorkflow({
+      spaceId,
+      name: 'WF',
+      nodes: [{ name: 'Only', agentId: 'agent-1' }],
+    });
+    // Edit the head (records the edit version), then wipe ONLY that edit version —
+    // simulating a head committed whose version append was swallowed. An older version
+    // (the create version) remains, so a naive "has any version" predicate would skip it.
+    wfRepo.updateWorkflow(created.id, { name: 'Edited' });
+    const editHash = computeDefinitionVersion(wfRepo.getWorkflow(created.id)!).versionHash;
+    db.prepare(`DELETE FROM space_workflow_definition_versions WHERE version_hash = ?`).run(
+      editHash
+    );
+    expect(versionCount(db, created.id)).toBe(1); // only the create version remains
+
+    // Backfill keys on the current head's hash and captures the missing edit version.
+    const captured = wfRepo.backfillExistingDefinitionVersions();
+    expect(captured).toBe(1);
+    expect(versionRepo.getVersion(created.id, editHash)).not.toBeNull();
+    expect(versionCount(db, created.id)).toBe(2);
+  });
+
   test('backfillExistingDefinitionVersions is idempotent — a no-op once heads are captured', () => {
     const created = wfRepo.createWorkflow({
       spaceId,
