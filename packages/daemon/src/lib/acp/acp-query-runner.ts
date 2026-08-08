@@ -855,6 +855,12 @@ export class AcpQueryRunner {
       return;
     }
 
+    // Snapshot the enqueue counter now: the classification below AWAITS with
+    // the queue still running, so fresh user input can land on it mid-handler;
+    // the post-classification clear() must then be skipped or it rejects that
+    // input with no query left to consume it (round-13 P1, ACP twin).
+    const enqueueSeqAtError = messageQueue.getEnqueueSeq();
+
     const errorMessage = String(error);
     const isAbortError = error instanceof Error && error.name === 'AbortError';
     const isQueryInterrupted =
@@ -986,7 +992,17 @@ export class AcpQueryRunner {
     // Genuine non-retryable errors (and aborts/interrupts, which skip the
     // classification above) clear with no reason and record the turn as failed
     // (via onClear). Mirrors QueryRunner. See task #859 round-10 (P2 #1).
-    messageQueue.clear(this.rateLimitCooldownPending ? 'retry_pending' : undefined);
+    //
+    // Skip the clear entirely when fresh input arrived during the awaited
+    // classification (enqueue counter changed) — clearing would reject those
+    // just-sent messages with no query left to consume them (round-13 P1).
+    if (messageQueue.getEnqueueSeq() === enqueueSeqAtError) {
+      messageQueue.clear(this.rateLimitCooldownPending ? 'retry_pending' : undefined);
+    } else {
+      logger.warn(
+        'Skipping post-error queue clear: new input arrived during error classification.'
+      );
+    }
   }
 
   private async handleSDKMessage(message: SDKMessage): Promise<void> {

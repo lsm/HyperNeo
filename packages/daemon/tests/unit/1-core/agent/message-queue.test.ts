@@ -122,6 +122,18 @@ describe('MessageQueue', () => {
 
       expect(reasons).toEqual([]);
     });
+
+    it('increments the enqueue sequence per enqueue (round-13 P1 watermark)', async () => {
+      expect(queue.getEnqueueSeq()).toBe(0);
+      const p1 = queue.enqueue('Message 1');
+      expect(queue.getEnqueueSeq()).toBe(1);
+      const p2 = queue.enqueue('Message 2');
+      expect(queue.getEnqueueSeq()).toBe(2);
+
+      queue.clear();
+      await p1.catch(() => {});
+      await p2.catch(() => {});
+    });
   });
 
   describe('remove', () => {

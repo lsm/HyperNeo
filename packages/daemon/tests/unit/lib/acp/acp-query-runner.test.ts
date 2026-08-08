@@ -115,6 +115,7 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
   const messageQueue = {
     isRunning: mock(() => false),
     getGeneration: mock(() => 0),
+    getEnqueueSeq: mock(() => 0),
     start: startSpy,
     stop: stopSpy,
     clear: mock(() => {}),
@@ -1134,6 +1135,30 @@ describe('AcpQueryRunner', () => {
     expect(messageQueue.clear).toHaveBeenCalledWith(undefined);
     expect(stopSpy).toHaveBeenCalledWith(undefined);
     expect(ctx.errorManager.handleError).toHaveBeenCalled();
+  });
+
+  test('skips the post-classification clear when fresh input arrives mid-classification (round-13 P1)', async () => {
+    const client = createMockClient();
+    client.initialize.mockImplementation(async () => {
+      throw new Error('ACP agent process exited unexpectedly');
+    });
+    let seq = 0;
+    const { ctx, messageQueue } = createRunnerFixture({ client });
+    (messageQueue as unknown as { getEnqueueSeq: ReturnType<typeof mock> }).getEnqueueSeq = mock(
+      () => seq
+    );
+    // A fresh user message lands on the still-running queue while the awaited
+    // error classification is in flight.
+    (ctx.errorManager.handleError as ReturnType<typeof mock>).mockImplementation(async () => {
+      seq = 1;
+    });
+    const runner = new AcpQueryRunner(ctx, () => client as unknown as AcpClient);
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    expect(ctx.errorManager.handleError).toHaveBeenCalled();
+    expect(messageQueue.clear).not.toHaveBeenCalled();
   });
 
   test('stops retry_pending across a startup-timeout auto-retry (round-12 P2)', async () => {

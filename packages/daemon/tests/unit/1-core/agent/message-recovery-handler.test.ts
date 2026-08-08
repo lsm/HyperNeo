@@ -23,6 +23,7 @@ describe('MessageRecoveryHandler', () => {
   let updateMessageStatusSpy: ReturnType<typeof mock>;
   let recordLifecycleSpy: ReturnType<typeof mock>;
   let getLatestStageSpy: ReturnType<typeof mock>;
+  let lifecycleReadableSpy: ReturnType<typeof mock>;
 
   beforeEach(() => {
     mockSession = {
@@ -53,6 +54,7 @@ describe('MessageRecoveryHandler', () => {
     updateMessageStatusSpy = mock(() => {});
     recordLifecycleSpy = mock(() => {});
     getLatestStageSpy = mock(() => null);
+    lifecycleReadableSpy = mock(() => true);
     mockDb = {
       getConsumedUserMessagesAfterLatestInit: getConsumedUserMessagesAfterLatestInitSpy,
       getMessagesByStatus: getMessagesByStatusSpy,
@@ -61,6 +63,7 @@ describe('MessageRecoveryHandler', () => {
       messageDeliveryLifecycle: {
         record: recordLifecycleSpy,
         getLatestStage: getLatestStageSpy,
+        isReadable: lifecycleReadableSpy,
       },
     } as unknown as Database;
 
@@ -402,6 +405,41 @@ describe('MessageRecoveryHandler', () => {
       expect(recordLifecycleSpy).toHaveBeenCalledWith('test-session-id', 'uuid-orphan', 'failed', {
         reason: 'orphaned_after_restart',
       });
+      expect(recordLifecycleSpy).not.toHaveBeenCalledWith(
+        'test-session-id',
+        'uuid-done',
+        'failed',
+        expect.anything()
+      );
+    });
+
+    it('skips real-UUID candidates when the ledger is unreadable (round-13)', () => {
+      const delivered = {
+        dbId: 'db-done',
+        uuid: 'uuid-done',
+        type: 'user',
+        message: { role: 'user', content: 'done' },
+        timestamp: 2000,
+      } as unknown as SDKMessage;
+      const legacy = {
+        dbId: 'db-legacy',
+        uuid: 'unknown',
+        type: 'user',
+        message: { role: 'user', content: 'legacy' },
+        timestamp: 3000,
+      } as unknown as SDKMessage;
+
+      getConsumedUserMessagesAfterLatestInitSpy.mockReturnValue([delivered, legacy]);
+      // A corrupt ledger makes getLatestStage return null (its internal catch) —
+      // which must NOT read as "no evidence" for real-UUID candidates.
+      lifecycleReadableSpy.mockReturnValue(false);
+
+      handler.recoverOrphanedConsumedMessages();
+
+      // The real-UUID candidate is left alone (the ledger meant to protect it
+      // could not be read); only the UUID-less legacy row recovers as before.
+      expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-legacy'], 'failed');
+      expect(updateMessageStatusSpy).not.toHaveBeenCalledWith(['db-done'], 'failed');
       expect(recordLifecycleSpy).not.toHaveBeenCalledWith(
         'test-session-id',
         'uuid-done',

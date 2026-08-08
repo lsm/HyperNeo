@@ -194,6 +194,14 @@ establishing evidence and correlation before adding retries/ownership:
   attempts; under the existing queue-timeout retry the aggregate can overstate
   latency by the retry gap. `getTimeline` is per-attempt authoritative; phase 2
   (delivery-attempt IDs) makes the aggregates attempt-correct.
+- **Latency aggregates exclude window-crossing deliveries** — the pivot filters
+  ledger rows to `created_at >= sinceMs` BEFORE grouping, so a delivery whose
+  source stage (e.g. `accepted`) landed just before the cutoff and whose target
+  (`first_progress`) landed just after is dropped from the pair count entirely.
+  This systematically under-counts boundary-crossing — often the slowest —
+  deliveries in `wakeToAccept`/`acceptToFirstProgress`. Cohort-first selection
+  (recent messages, all their stages) is a phase-2 refinement alongside
+  attempt IDs; the aggregates are advisory and `getTimeline` is unaffected.
 - **Retention is caller-driven** — `deleteOlderThan` is provided but not
   auto-invoked; retention policy (cadence + age) is phase 2. It preserves
   terminal (`completed`/`failed`) evidence for any message whose sdk_messages row

@@ -103,6 +103,16 @@ describe('MessageDeliveryLifecycleRepository.getLatestStage', () => {
   });
 });
 
+describe('MessageDeliveryLifecycleRepository.isReadable', () => {
+  test('true on a healthy ledger, false after the table is dropped (round-13)', () => {
+    const repo = db.messageDeliveryLifecycle;
+    expect(repo.isReadable()).toBe(true);
+
+    db.getDatabase().exec('DROP TABLE message_delivery_lifecycle');
+    expect(repo.isReadable()).toBe(false);
+  });
+});
+
 describe('MessageDeliveryLifecycleRepository.getDiagnostics', () => {
   test('totalsByLatestStage counts messages by their latest stage', () => {
     const repo = db.messageDeliveryLifecycle;

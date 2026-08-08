@@ -222,6 +222,31 @@ export class MessageDeliveryLifecycleRepository {
   }
 
   /**
+   * True when the ledger can be read at all. getLatestStage swallows per-read
+   * failures and returns null — which a destructive caller could misread as
+   * "no lifecycle evidence" (message-recovery-handler would then fail even
+   * messages the ledger would have proven delivered, when the table/index is
+   * corrupt). Probe once per recovery pass; unreadable → skip ledger-gated
+   * candidates instead of failing them blindly. See task #859 round-13.
+   */
+  isReadable(): boolean {
+    try {
+      this.db
+        .prepare(
+          `SELECT stage, created_at
+             FROM message_delivery_lifecycle
+            ORDER BY created_at DESC, rowid DESC
+            LIMIT 1`
+        )
+        .get();
+      return true;
+    } catch (error) {
+      this.logger.warn('Delivery lifecycle ledger is unreadable:', error);
+      return false;
+    }
+  }
+
+  /**
    * Queryable diagnostics: where are messages stuck, and how long do the
    * inter-stage transitions take?
    */

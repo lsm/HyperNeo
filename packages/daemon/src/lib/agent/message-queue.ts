@@ -71,6 +71,19 @@ export class MessageQueue {
   // When incrementing, old generators will skip yielding messages
   private generation: number = 0;
 
+  // Monotonic enqueue counter. Runners snapshot it at error-catch entry and
+  // compare before the post-classification clear(): fresh user input enqueued
+  // during the awaited classification must not be rejected by that clear — the
+  // dying query will never consume it and the rejection ('Interrupted by user')
+  // is intentionally ignored by the failure handler, stranding the persisted
+  // row (task #859 round-13 P1).
+  private enqueueSeq: number = 0;
+
+  /** Current enqueue counter value (see enqueueSeq). */
+  getEnqueueSeq(): number {
+    return this.enqueueSeq;
+  }
+
   /**
    * Callback fired when the generator yields a message to the SDK.
    * Used to broadcast the message to UI and update DB timestamp at yield time
@@ -198,6 +211,7 @@ export class MessageQueue {
       }, MESSAGE_QUEUE_TIMEOUT_MS);
 
       this.queue.push(queuedMessage);
+      this.enqueueSeq++;
       this.onMessageEnqueued?.(queuedMessage.id, queuedMessage.queuedAt, !!queuedMessage.internal);
 
       // Wake up any waiting message generators

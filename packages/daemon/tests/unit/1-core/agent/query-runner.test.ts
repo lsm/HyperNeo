@@ -57,6 +57,7 @@ describe('QueryRunner', () => {
   let setCanUseToolSpy: ReturnType<typeof mock>;
   let createCanUseToolCallbackSpy: ReturnType<typeof mock>;
   let enqueueWithIdSpy: ReturnType<typeof mock>;
+  let getEnqueueSeqSpy: ReturnType<typeof mock>;
 
   // State variables (mutable context properties)
   let queryGeneration: number;
@@ -142,6 +143,7 @@ describe('QueryRunner', () => {
     });
     sizeSpy = mock(() => 0);
     enqueueWithIdSpy = mock(async () => {});
+    getEnqueueSeqSpy = mock(() => 0);
     mockMessageQueue = {
       isRunning: isRunningSpy,
       start: startSpy,
@@ -149,6 +151,7 @@ describe('QueryRunner', () => {
       stop: stopSpy,
       size: sizeSpy,
       getGeneration: mock(() => 0),
+      getEnqueueSeq: getEnqueueSeqSpy,
       enqueueWithId: enqueueWithIdSpy,
       messageGenerator: mock(async function* () {
         // Empty generator for tests
@@ -1296,6 +1299,29 @@ describe('QueryRunner', () => {
       // and leaks into the next turn's queue drain (round-13 P1).
       expect(enqueueWithIdSpy).toHaveBeenCalledWith(consumedUuid, consumedContent);
       expect(startSpy).toHaveBeenCalledTimes(2); // runner.start() + retry restart
+    });
+
+    it('skips the post-classification clear when fresh input arrived mid-classification (round-13 P1)', async () => {
+      let seq = 0;
+      getEnqueueSeqSpy.mockImplementation(() => seq);
+      // A fresh user message lands on the still-running queue while the
+      // awaited error classification is in flight.
+      handleErrorSpy.mockImplementation(async () => {
+        seq = 1;
+      });
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      // The first attempt retries (startup timeout, attempt 0); the nested
+      // attempt classifies the error and — because the enqueue counter changed
+      // during the awaited classification — must NOT clear the shared queue:
+      // clearing would reject the fresh message with no query left to consume
+      // it (round-13 P1).
+      expect(handleErrorSpy).toHaveBeenCalled();
+      expect(clearSpy).not.toHaveBeenCalled();
     });
 
     it('should call messageQueue.clear() on startup-timeout AbortError', async () => {

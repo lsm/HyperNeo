@@ -975,6 +975,15 @@ export class QueryRunner {
         return;
       }
 
+      // Snapshot the enqueue counter at catch entry. The classification below
+      // AWAITS (rate-limit callback, error broadcast, setIdle) with the queue
+      // still running, so a fresh user message can land on it mid-catch; the
+      // post-classification clear() must be skipped in that case or it rejects
+      // the fresh input ('Interrupted by user', intentionally ignored by the
+      // failure handler) with no query left to consume it — stranded until
+      // replay. See the clear site below (task #859 round-13 P1).
+      const enqueueSeqAtError = messageQueue.getEnqueueSeq();
+
       // Use String(error) rather than error.message so TypeError instances
       // (e.g. "fetch failed") include their name prefix.  All downstream
       // pattern checks use includes() on substrings, so the "Error: " /
@@ -1514,7 +1523,22 @@ export class QueryRunner {
       // UUID and the retry still needs to record first_progress/completed.
       // Genuine non-retryable errors clear with no reason and record the turn as
       // failed (via onClear). See task #859 round-9.
-      messageQueue.clear(this.rateLimitCooldownPending ? 'retry_pending' : undefined);
+      //
+      // Skip the clear entirely when fresh input arrived during the awaited
+      // classification (enqueue counter changed): clearing would reject those
+      // just-sent messages with 'Interrupted by user' — which
+      // handleQueuedMessageFailure intentionally ignores — leaving the
+      // persisted rows 'enqueued' with no query to consume them (round-13 P1).
+      // The failed query's own stale messages then stay queued too and drain
+      // in FIFO order on the next start(); acceptable, the alternative strands
+      // fresh input.
+      if (messageQueue.getEnqueueSeq() === enqueueSeqAtError) {
+        messageQueue.clear(this.rateLimitCooldownPending ? 'retry_pending' : undefined);
+      } else {
+        logger.warn(
+          'Skipping post-error queue clear: new input arrived during error classification.'
+        );
+      }
     } finally {
       // Check for stale query FIRST to avoid race conditions.
       // When a query is restarted (e.g., model switch), the old query's finally block
