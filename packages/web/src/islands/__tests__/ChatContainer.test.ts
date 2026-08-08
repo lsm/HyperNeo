@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { shouldBlockForPendingQuestion } from '../ChatContainer.tsx';
+import { shouldBlockForPendingQuestion, computeChatLoading } from '../ChatContainer.tsx';
 import type { AgentProcessingState } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 // Vite-native raw import — works in both Node and browser-like test environments
@@ -484,6 +484,153 @@ describe('Passive Event Listener', () => {
  *   3. Watch `spaceStore.taskActivity` for a live session; when found, call
  *      `replaceOverlayHistory(sessionId, agentName, undefined, taskContext)` to hand off.
  */
+/**
+ * Session-scoped reconnect recovery (#872). Source-level guards for the
+ * per-session recovering state: the transcript must stay visible (loading
+ * skeleton cannot relapse during recovery), the composer must stay disabled
+ * until THIS session is ready (not merely when the socket reports ready), and a
+ * non-blocking indicator marks the recovery. Behavioral coverage lives in the
+ * SessionStore multi-instance suite.
+ */
+describe('ChatContainer session-scoped recovery', () => {
+  const source = chatContainerSource;
+
+  it('syncs the per-session isRecovering flag from the store', () => {
+    expect(source).toMatch(/setIsRecovering\(store\.isRecovering\.value\)/);
+  });
+
+  it('renders a non-blocking recovering banner with a stable test id', () => {
+    expect(source).toMatch(/data-testid="session-recovering-banner"/);
+    // Non-blocking: role=status + polite live region, shown only outside the
+    // initial load and when there is no error.
+    expect(source).toMatch(/role="status"/);
+    expect(source).toMatch(/aria-live="polite"/);
+    expect(source).toMatch(/isRecovering && !error && !isInitialLoad/);
+  });
+
+  it('forwards isRecovering to the composer', () => {
+    expect(source).toMatch(/isRecovering=\{isRecovering\}/);
+  });
+
+  it('disables the content-wide drop zone while recovering', () => {
+    // composerDisabled gates the parent image drop zone; it must include
+    // isRecovering so a file drop is not advertised then silently discarded
+    // while MessageInput is disabled.
+    const block = source.match(/const composerDisabled =[\s\S]*?sandboxSwitching;/)?.[0] ?? '';
+    expect(block).toContain('isRecovering');
+  });
+
+  it('disables rewind controls while recovering', () => {
+    // The rewind affordance must be hidden during recovery (onRewind undefined)
+    // so the advertised read-only state covers this mutation too.
+    expect(source).toMatch(/onRewind=\{isRecovering \? undefined : handleRewindClick\}/);
+    // And the confirm path bails on the store flag, in case a modal was already
+    // open when recovery started.
+    expect(source).toMatch(/if \(store\.isRecovering\.value\)[\s\S]*?Please wait/);
+  });
+
+  it('hides the active question prompt while recovering', () => {
+    // A pre-disconnect waiting_for_input question must not be answerable during
+    // recovery (its Submit/Skip call question.respond/cancel); pendingQuestion
+    // is nulled so no active QuestionPrompt renders until recovery completes.
+    expect(source).toMatch(/pendingQuestion=\{isRecovering \? null : pendingQuestion\}/);
+  });
+
+  describe('computeChatLoading', () => {
+    it('shows the skeleton until session state and the first snapshot arrive', () => {
+      expect(
+        computeChatLoading({
+          error: null,
+          isRecovering: false,
+          sessionStateLoaded: false,
+          messagesLoaded: false,
+        })
+      ).toBe(true);
+      expect(
+        computeChatLoading({
+          error: null,
+          isRecovering: false,
+          sessionStateLoaded: true,
+          messagesLoaded: false,
+        })
+      ).toBe(true);
+      expect(
+        computeChatLoading({
+          error: null,
+          isRecovering: false,
+          sessionStateLoaded: false,
+          messagesLoaded: true,
+        })
+      ).toBe(true);
+    });
+
+    it('hides the skeleton once fully loaded (not recovering)', () => {
+      expect(
+        computeChatLoading({
+          error: null,
+          isRecovering: false,
+          sessionStateLoaded: true,
+          messagesLoaded: true,
+        })
+      ).toBe(false);
+    });
+
+    it('keeps the transcript visible (no skeleton) when recovering an already-loaded session', () => {
+      // The headline recovery invariant: a reconnecting chat that had loaded
+      // must not flash the skeleton.
+      expect(
+        computeChatLoading({
+          error: null,
+          isRecovering: true,
+          sessionStateLoaded: true,
+          messagesLoaded: true,
+        })
+      ).toBe(false);
+    });
+
+    it('keeps the skeleton when a disconnect lands before the first messages snapshot', () => {
+      // Reviewer finding: state.session loaded, first snapshot NOT yet arrived,
+      // then the connection drops. isRecovering flips true but messagesLoaded is
+      // still false — the skeleton must stay so we don't render "No messages
+      // yet" for a conversation whose messages are still in flight.
+      expect(
+        computeChatLoading({
+          error: null,
+          isRecovering: true,
+          sessionStateLoaded: true,
+          messagesLoaded: false,
+        })
+      ).toBe(true);
+    });
+
+    it('keeps the skeleton when a disconnect lands after the snapshot but before state.session', () => {
+      // Inverse arrival order: messages snapshot arrived first, state.session
+      // has not, then the connection drops. The initial load is still incomplete
+      // (no metadata), so the skeleton must stay — recovery preserves the
+      // transcript only once BOTH load halves completed.
+      expect(
+        computeChatLoading({
+          error: null,
+          isRecovering: true,
+          sessionStateLoaded: false,
+          messagesLoaded: true,
+        })
+      ).toBe(true);
+    });
+
+    it('short-circuits to the error UI (no skeleton) when there is an error', () => {
+      expect(
+        computeChatLoading({
+          error: 'boom',
+          isRecovering: false,
+          sessionStateLoaded: false,
+          messagesLoaded: false,
+        })
+      ).toBe(false);
+    });
+  });
+});
+
 describe('Pending Agent Mode', () => {
   const source = chatContainerSource;
 
