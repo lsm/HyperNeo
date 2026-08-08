@@ -6,11 +6,17 @@
  */
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'preact/hooks';
-import { sessionStore } from '../lib/session-store.ts';
+import { sessionStore, type SessionStore } from '../lib/session-store.ts';
 
 export interface UseCommandAutocompleteOptions {
   content: string;
   onSelect: (command: string) => void;
+  /**
+   * SessionStore whose slash commands this autocomplete reads. Defaults to the
+   * singleton; an overlaid chat passes its dedicated instance so the dropdown
+   * reflects that view's session, not the primary chat's.
+   */
+  store?: SessionStore;
 }
 
 export interface UseCommandAutocompleteResult {
@@ -29,16 +35,18 @@ export interface UseCommandAutocompleteResult {
 export function useCommandAutocomplete({
   content,
   onSelect,
+  store = sessionStore,
 }: UseCommandAutocompleteOptions): UseCommandAutocompleteResult {
   const [showAutocomplete, setShowAutocomplete] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [filteredCommands, setFilteredCommands] = useState<string[]>([]);
 
   // Read per-session commands signal in render scope to subscribe to changes.
-  // Uses sessionStore.commandsData (computed from sessionState) rather than the
-  // global slashCommandsSignal, so it always reflects the active session's commands.
-  // Guard with Array.isArray: corrupted sessions may have a string stored in DB.
-  const rawCommands = sessionStore.commandsData.value;
+  // Uses the (optionally injected) store's commandsData (computed from
+  // sessionState) rather than the global slashCommandsSignal, so it always
+  // reflects THIS view's session's commands. Guard with Array.isArray:
+  // corrupted sessions may have a string stored in DB.
+  const rawCommands = store.commandsData.value;
 
   // Stabilize the array reference: only return a new reference when command values
   // actually change. This prevents the useEffect below from re-running (and

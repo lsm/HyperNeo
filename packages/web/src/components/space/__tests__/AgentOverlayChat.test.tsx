@@ -20,6 +20,11 @@ import { cleanup, fireEvent, render } from '@testing-library/preact';
 
 const mockSendTaskMessage = vi.hoisted(() => vi.fn());
 
+// Captures the `store` prop forwarded to the mocked ChatContainer so tests can
+// assert the overlay owns a dedicated SessionStore instance (not the singleton)
+// and tears it down on unmount.
+const captured = vi.hoisted(() => ({ current: null as unknown, history: [] as unknown[] }));
+
 // Mock ChatContainer — it relies on WebSocket/stores not available in unit
 // tests. Expose `onBack` via a data-attribute so tests can assert it was
 // forwarded, and render a button that invokes it so the dismiss path through
@@ -29,44 +34,51 @@ vi.mock('../../../islands/ChatContainer', () => ({
     sessionId,
     onBack,
     onSendOverride,
+    store,
   }: {
     sessionId: string;
     onBack?: () => void;
     onSendOverride?: (message: string, images?: unknown) => Promise<boolean>;
-  }) => (
-    <div
-      data-testid="mock-chat-container"
-      data-has-on-back={onBack ? '1' : '0'}
-      data-has-send-override={onSendOverride ? '1' : '0'}
-    >
-      <button type="button" data-testid="mock-chat-header-back" onClick={onBack}>
-        back
-      </button>
-      {onSendOverride ? (
-        <>
-          <button
-            type="button"
-            data-testid="mock-chat-send-override"
-            onClick={() => void onSendOverride(' hello node ')}
-          >
-            send
-          </button>
-          <button
-            type="button"
-            data-testid="mock-chat-send-override-with-images"
-            onClick={() =>
-              void onSendOverride(' hello with screenshot ', [
-                { media_type: 'image/png', data: 'AAAAB' },
-              ])
-            }
-          >
-            send-with-images
-          </button>
-        </>
-      ) : null}
-      {sessionId}
-    </div>
-  ),
+    store?: unknown;
+  }) => {
+    captured.current = store;
+    captured.history.push(store);
+    return (
+      <div
+        data-testid="mock-chat-container"
+        data-has-on-back={onBack ? '1' : '0'}
+        data-has-send-override={onSendOverride ? '1' : '0'}
+        data-has-store={store ? '1' : '0'}
+      >
+        <button type="button" data-testid="mock-chat-header-back" onClick={onBack}>
+          back
+        </button>
+        {onSendOverride ? (
+          <>
+            <button
+              type="button"
+              data-testid="mock-chat-send-override"
+              onClick={() => void onSendOverride(' hello node ')}
+            >
+              send
+            </button>
+            <button
+              type="button"
+              data-testid="mock-chat-send-override-with-images"
+              onClick={() =>
+                void onSendOverride(' hello with screenshot ', [
+                  { media_type: 'image/png', data: 'AAAAB' },
+                ])
+              }
+            >
+              send-with-images
+            </button>
+          </>
+        ) : null}
+        {sessionId}
+      </div>
+    );
+  },
 }));
 
 vi.mock('../../../lib/space-store', () => ({
@@ -81,8 +93,10 @@ vi.mock('../../../lib/utils', () => ({
 }));
 
 import { AgentOverlayChat } from '../AgentOverlayChat';
+import { SessionStore, sessionStore } from '../../../lib/session-store';
 
 const SESSION_ID = 'abcdef12-0000-0000-0000-000000000000';
+const OTHER_SESSION_ID = 'fedcba98-0000-0000-0000-000000000000';
 
 describe('AgentOverlayChat', () => {
   let onClose: ReturnType<typeof vi.fn>;
@@ -92,6 +106,8 @@ describe('AgentOverlayChat', () => {
     mockSendTaskMessage.mockReset();
     mockSendTaskMessage.mockResolvedValue({ delivered: true });
     onClose = vi.fn();
+    captured.current = null;
+    captured.history = [];
   });
 
   afterEach(() => {
@@ -217,4 +233,44 @@ describe('AgentOverlayChat', () => {
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(onClose).not.toHaveBeenCalled();
   });
+
+  describe('dedicated SessionStore ownership', () => {
+    it('passes a dedicated SessionStore to ChatContainer — not the singleton', () => {
+      render(<AgentOverlayChat sessionId={SESSION_ID} onClose={onClose} />);
+      expect(getStoreFromMock()).toBeTruthy();
+      // The overlay must NOT share the process-wide singleton — that is the
+      // bug that lets an overlay clobber the base chat's state.
+      expect(getStoreFromMock()).not.toBe(sessionStore);
+      expect(getStoreFromMock()).toBeInstanceOf(SessionStore);
+    });
+
+    it('reuses the same store across a B→C sessionId switch (no per-switch churn)', () => {
+      const { rerender } = render(<AgentOverlayChat sessionId={SESSION_ID} onClose={onClose} />);
+      const firstStore = getStoreFromMock();
+
+      rerender(<AgentOverlayChat sessionId={OTHER_SESSION_ID} onClose={onClose} />);
+
+      // The overlay owns ONE store for its lifetime; switching the displayed
+      // session must reuse it (the embedded ChatContainer's key handles the
+      // internal select(null)→select(C) transition).
+      expect(getStoreFromMock()).toBe(firstStore);
+    });
+
+    it('destroys the dedicated store on unmount, releasing only the overlay resources', async () => {
+      const { unmount } = render(<AgentOverlayChat sessionId={SESSION_ID} onClose={onClose} />);
+      const store = getStoreFromMock();
+      expect(store).toBeInstanceOf(SessionStore);
+      const destroySpy = vi.spyOn(store as SessionStore, 'destroy').mockResolvedValue(undefined);
+
+      unmount();
+      await vi.waitFor(() => {
+        expect(destroySpy).toHaveBeenCalledTimes(1);
+      });
+    });
+  });
 });
+
+/** Reads the store captured by the mocked ChatContainer on its latest render. */
+function getStoreFromMock(): SessionStore {
+  return captured.current as SessionStore;
+}

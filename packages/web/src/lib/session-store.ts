@@ -16,6 +16,35 @@
  *
  * Computed accessors (derived state):
  * - sessionInfo, agentState, contextInfo, commandsData, error, isCompacting, isWorking
+ *
+ * ===========================================================================
+ * MULTI-INSTANCE OWNERSHIP (simultaneously-mounted chats)
+ * ===========================================================================
+ * A SessionStore instance owns the state and subscriptions for ONE chat view.
+ * The process-wide singleton (`sessionStore`, exported below) backs the primary
+ * chat (main content, base Space chat) plus its non-ChatContainer consumers:
+ * `App.tsx` navigation, `RightPanel`, and the autocomplete hooks' default.
+ *
+ * When a second chat mounts simultaneously — e.g. an `AgentOverlayChat`
+ * slide-over on top of a base Space chat — it would otherwise `select()` the
+ * same singleton, clearing/clobbering the base chat's transcript and
+ * deselecting it on unmount. To prevent that, the overlay creates a DEDICATED
+ * `SessionStore` instance and threads it down to its `ChatContainer` via the
+ * `store` prop. Each instance owns its own signals, subscriptions, and
+ * lifecycle; `select()`/unmount on one instance never touches another.
+ *
+ * Reconnect parity for every instance:
+ * - Transport reconnect (WebSocket drop + re-establish): handled inside each
+ *   instance's own `onConnection('connected')` handler (LiveQuery re-subscribe
+ *   + session-state refresh), so all instances self-recover.
+ * - Soft staleness (Safari background-tab resume, no transport event):
+ *   `connectionManager.validateConnectionOnResume` calls the module-level
+ *   `refreshAllSessionStores()`, which iterates `activeStores` so the overlay
+ *   instance is refreshed alongside the singleton.
+ *
+ * Migration implication for new consumers: read session state from a store
+ * instance passed in (prop/arg), defaulting to the singleton — never import and
+ * mutate the singleton directly from inside a chat view that might be overlaid.
  */
 
 import { signal, computed } from '@preact/signals';
@@ -46,7 +75,41 @@ const logger = new Logger('kai:web:sessionstore');
 
 const HYPERNEO_BUILT_IN_COMMANDS = ['merge-session'];
 
-class SessionStore {
+/**
+ * Live SessionStore instances.
+ *
+ * Every constructed instance registers itself here (including the singleton).
+ * `refreshAllSessionStores()` iterates this set so connection-manager's
+ * soft-staleness reconnect (tab-resume) refreshes every mounted chat — the
+ * singleton AND any simultaneously-mounted overlay instance — instead of only
+ * the primary chat. `refresh()` no-ops when an instance has no active session,
+ * so registering long-lived instances (the singleton) is harmless.
+ */
+const activeStores = new Set<SessionStore>();
+
+/**
+ * Monotonic counter for LiveQuery subscription IDs.
+ *
+ * IDs must be unique per client connection (the daemon silently replaces a
+ * colliding handle — live-query-handlers.ts). `messages:${sessionId}:${Date.now()}`
+ * collides when two stores select the SAME session within one millisecond
+ * (e.g. base + overlay restored on initial render), which would let either
+ * store's cleanup unsubscribe the survivor. The counter guarantees uniqueness
+ * across every store and subscribe call in this client.
+ */
+let messageSubscriptionSeq = 0;
+
+export class SessionStore {
+  constructor() {
+    // Register so refreshAllSessionStores() (soft-staleness reconnect) covers
+    // this instance from the moment it exists — matching the previous
+    // unconditional sessionStore.refresh() semantics for the singleton. The
+    // doSelect() toggle and destroy() keep membership accurate: an instance
+    // with no active session no-ops inside refresh(), so over-registration is
+    // harmless. Re-added by doSelect() if an instance is reused after teardown.
+    activeStores.add(this);
+  }
+
   // ========================================
   // Core Signals
   // ========================================
@@ -153,6 +216,78 @@ class SessionStore {
   /** Promise-chain lock for atomic session switching */
   private selectPromise: Promise<void> = Promise.resolve();
 
+  /**
+   * Once true, this instance is torn down: select()/doSelect()/refresh()
+   * no-op and destroy() is idempotent, so a queued or in-flight selection
+   * can't resurrect an unmounted overlay store or re-register it for
+   * reconnect refresh.
+   */
+  private destroyed = false;
+
+  /**
+   * Monotonic selection epoch, bumped on every doSelect (including a reselect
+   * of the SAME session via Retry). In-flight state.session fetches capture it
+   * at start and discard their result if a newer selection superseded them —
+   * the activeSessionId check alone can't distinguish two concurrent fetches
+   * for one session (reconnect refresh racing with a same-session Retry).
+   */
+  private selectGeneration = 0;
+
+  /**
+   * Per-fetch versioning (companion to selectGeneration).
+   *
+   * selectGeneration versions SELECTIONS, not individual in-flight fetches, so
+   * two concurrent `state.session` fetches for the SAME session (no intervening
+   * select) share one epoch — `refresh()` is fire-and-forget via
+   * refreshAllSessionStores and is NOT chained through selectPromise, so it can
+   * overlap an in-flight startSubscriptions fetch, and the reconnect fetch can
+   * overlap a just-started selection's fetch. Last-resolver-wins would let a
+   * slower-resolving older snapshot overwrite a fresher one.
+   *
+   * `fetchSeq` issues a monotonic ticket at every fetchInitialSessionState
+   * entry; `lastCommittedFetchSeq` records the highest ticket whose result was
+   * actually committed. A fetch commits only when its ticket is strictly newer
+   * than every committed ticket — so the freshest-issued SUCCESSFUL fetch wins
+   * regardless of resolve order. Crucially, a `retainOnError` fetch that fails
+   * returns BEFORE the commit and never advances lastCommittedFetchSeq, so its
+   * failure does not invalidate a concurrent fetch with an older ticket.
+   */
+  private fetchSeq = 0;
+  private lastCommittedFetchSeq = 0;
+
+  /**
+   * Server-stamped capture-order revision tracking (fetch-vs-PUSH ordering).
+   *
+   * fetchSeq orders concurrent FETCHES against each other but cannot see a PUSH,
+   * and an arrival-counter cannot tell a NEWER push from an OLDER one: the
+   * daemon captures the `state.session` snapshot BEFORE an internal await
+   * (`getSlashCommands`) but SENDS it only after, so an older broadcast (captured
+   * earlier) can land AFTER a newer refresh RPC — arrival order ≠ newness order.
+   *
+   * The daemon stamps a monotonic per-session `revision` inside getSessionState
+   * BEFORE that await, carried on BOTH the state.session RPC response and the
+   * state.session push. We apply any state.session update — push handler OR
+   * fetchInitialSessionState commit — only when `incoming.revision >
+   * lastAppliedRevision`, which is correct regardless of arrival order in both
+   * directions. Reset to 0 on session switch (revisions are per-session).
+   *
+   * `contextPushVersion` is a SEPARATE arrival-counter for the PARTIAL
+   * `context.updated` push (which carries only contextInfo and is forwarded
+   * synchronously by the bridge, so arrival order IS newness order for it). It
+   * guards only the fetch's `_contextInfo` write, so a partial push never
+   * discards a good full-state fetch.
+   */
+  private lastAppliedRevision = 0;
+  /**
+   * The daemon-instance boot epoch last seen. When an incoming state.session
+   * carries a different epoch, the daemon restarted — its in-memory revision
+   * counter reset — so we clear `lastAppliedRevision` to accept the fresh low
+   * revisions. See reconcileDaemonEpoch. Daemon-level (not reset on session
+   * switch, only on epoch change).
+   */
+  private lastDaemonEpoch: string | null = null;
+  private contextPushVersion = 0;
+
   /** Subscription cleanup functions */
   private cleanupFunctions: Array<() => void> = [];
 
@@ -195,6 +330,11 @@ class SessionStore {
    * - Reduces subscription operations from 50+ to 6 per switch
    */
   select(sessionId: string | null): Promise<void> {
+    // A destroyed instance (unmounted overlay) must ignore later selections
+    // so a queued select can't resurrect it after teardown.
+    if (this.destroyed) {
+      return Promise.resolve();
+    }
     // Chain the new selection onto the previous one
     this.selectPromise = this.selectPromise.then(() => this.doSelect(sessionId));
     return this.selectPromise;
@@ -204,6 +344,11 @@ class SessionStore {
    * Internal selection logic (called within promise chain)
    */
   private async doSelect(sessionId: string | null): Promise<void> {
+    // Bail if destroyed between being queued and running — prevents an
+    // in-flight/queued selection from reactivating a torn-down instance.
+    if (this.destroyed) {
+      return;
+    }
     // Skip if already on this session and it loaded successfully (no error, not stuck loading).
     // Allow re-selection when there is an error or when the session is still loading
     // (e.g. timed out) so that the Retry button can restart the load.
@@ -216,12 +361,7 @@ class SessionStore {
 
     // 1. Stop current subscriptions and leave old room
     await this.stopSubscriptions();
-    if (oldSessionId) {
-      const hub = connectionManager.getHubIfConnected();
-      if (hub) {
-        hub.leaveChannel(`session:${oldSessionId}`);
-      }
-    }
+    this.releaseSessionChannel(oldSessionId);
 
     // 2. Clear state
     this.sessionState.value = null;
@@ -231,6 +371,10 @@ class SessionStore {
     this._initialMessageCount.value = 0;
     this._hasMoreMessages.value = false;
     this._contextInfo.value = null; // Clear context info on session switch
+    // Reset the per-session revision tracker — revisions are per-session on the
+    // server, so the previous session's lastAppliedRevision must not gate the
+    // new session's (lower-numbered) first state.
+    this.lastAppliedRevision = 0;
     // Reset the messages-loaded gate so ChatContainer shows the loading
     // skeleton (not the empty-state placeholder) until the new session's
     // LiveQuery snapshot arrives.
@@ -245,6 +389,18 @@ class SessionStore {
 
     // 3. Update active session
     this.activeSessionId.value = sessionId;
+    // Bump the selection epoch so in-flight state.session fetches for the
+    // previous (or same-id reselected) session discard their results.
+    this.selectGeneration++;
+    // Track registry membership alongside the active session so reconnect
+    // refresh covers exactly the instances with a live session. Tying this to
+    // activeSessionId (rather than construction) means a remounted instance
+    // re-registers when it re-selects, surviving StrictMode-like teardown.
+    if (sessionId) {
+      activeStores.add(this);
+    } else {
+      activeStores.delete(this);
+    }
 
     // 4. Start new subscriptions if session selected
     if (sessionId) {
@@ -277,10 +433,32 @@ class SessionStore {
       const hub = await connectionManager.getHub();
 
       // Join the session room first - this subscribes to all session-scoped events
-      hub.joinChannel(`session:${sessionId}`);
+      this.joinSessionChannel(hub, sessionId);
 
       // 1. Session state subscription (unified: metadata + agent + commands + error)
-      const unsubSessionState = hub.onEvent<SessionState>('state.session', (state) => {
+      const unsubSessionState = hub.onEvent<SessionState>('state.session', (state, context) => {
+        // Filter by channel: MessageHub.dispatchToChannelEventHandlers fires
+        // EVERY handler registered for a method name regardless of channel,
+        // and a single connection joins multiple session channels when chats
+        // are simultaneously mounted. Without this guard, a state.session
+        // event for session A would also land in session B's store (and
+        // vice-versa), overwriting metadata/agent/context/commands/error.
+        // The daemon emits these on channel `session:${sessionId}`.
+        if (context?.channel !== `session:${sessionId}`) return;
+        // A changed daemon epoch (daemon restart) resets the server's in-memory
+        // revision counter — clear our gate before the revision check so the
+        // fresh low revisions apply.
+        this.reconcileDaemonEpoch(state.daemonEpoch);
+        // Apply only if newer than the last applied state. The daemon stamps a
+        // capture-order revision (before its async gap) on every state.session
+        // update, so this is correct regardless of arrival order — an OLDER
+        // push that lands late (stalled in the daemon's await) is dropped
+        // instead of reverting a newer RPC. Absent revision (older daemon) =>
+        // apply unconditionally.
+        if (state.revision !== undefined && state.revision <= this.lastAppliedRevision) {
+          return;
+        }
+        if (state.revision !== undefined) this.lastAppliedRevision = state.revision;
         this.sessionState.value = state;
 
         // Sync contextInfo from metadata to direct signal for fast access.
@@ -314,9 +492,19 @@ class SessionStore {
       this.cleanupFunctions.push(unsubSessionState);
 
       // 2. Context updates (fast path - bypasses full state.session round-trip)
-      const unsubContextUpdated = hub.onEvent<ContextInfo>('context.updated', (contextInfo) => {
-        this._contextInfo.value = contextInfo;
-      });
+      // Same channel guard as state.session: the handler fires for every
+      // session's context.updated event when multiple chats are mounted.
+      const unsubContextUpdated = hub.onEvent<ContextInfo>(
+        'context.updated',
+        (contextInfo, context) => {
+          if (context?.channel !== `session:${sessionId}`) return;
+          // A partial context push supersedes ONLY an in-flight fetch's
+          // _contextInfo write (not its full-state commit). Bump so the fetch
+          // skips reverting this fresher value. See lastAppliedRevision docs.
+          this.contextPushVersion++;
+          this._contextInfo.value = contextInfo;
+        }
+      );
       this.cleanupFunctions.push(unsubContextUpdated);
 
       // 3. API retry attempt events (from SDK retry handling)
@@ -376,7 +564,7 @@ class SessionStore {
     hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
     sessionId: string
   ): Promise<void> {
-    const subscriptionId = `messages:${sessionId}:${Date.now()}`;
+    const subscriptionId = `messages:${sessionId}:${Date.now()}:${messageSubscriptionSeq++}`;
     this.activeMessagesSubscriptionId = subscriptionId;
 
     // Snapshot handler
@@ -396,9 +584,20 @@ class SessionStore {
     this.cleanupFunctions.push(unsubDelta);
 
     // Reconnect handler — re-subscribe with the same subscriptionId on reconnect.
+    // This fires on transport-level reconnect (WebSocket drop + re-establish),
+    // which is distinct from connection-manager's soft-staleness tab-resume
+    // path. We re-subscribe the LiveQuery AND re-fetch session state (agent
+    // state / context) so every instance — including simultaneously-mounted
+    // overlay instances unknown to connection-manager — self-recovers here.
     const unsubReconnect = hub.onConnection((state) => {
       if (state !== 'connected') return;
       if (this.activeMessagesSubscriptionId !== subscriptionId) return;
+      // A transport drop hands the client a new connection/clientId, which
+      // wipes server-side channel membership (validateConnectionOnResume only
+      // rejoins global+space). Re-join this session's channel first, or the
+      // LiveQuery snapshot below is the last update we'd ever receive —
+      // subsequent state.session/context.updated pushes would stop arriving.
+      this.joinSessionChannel(hub, sessionId);
       hub
         .request('liveQuery.subscribe', {
           queryName: 'messages.bySession',
@@ -408,6 +607,9 @@ class SessionStore {
         .catch((err) => {
           logger.warn('Messages LiveQuery re-subscribe failed:', err);
         });
+      this.fetchInitialSessionState(hub, sessionId, { retainOnError: true }).catch((err) => {
+        logger.warn('Session state refresh on reconnect failed:', err);
+      });
     });
     this.cleanupFunctions.push(unsubReconnect);
 
@@ -565,31 +767,51 @@ class SessionStore {
    * stream: the client no longer has to coordinate a "first RPC then delta"
    * handoff, so there's no window where messages could be dropped.
    */
+
+  /**
+   * Detect a daemon restart via the per-boot `daemonEpoch`. The server's
+   * capture-order revision counter is in-memory, so a restart resets it to 1;
+   * without this, our `lastAppliedRevision` (e.g. 50) would discard every
+   * post-restart snapshot (revision 1..50) and freeze the view. On an epoch
+   * change, clear the revision gate so the fresh low revisions apply. Called
+   * before the revision check on every state.session update (push + fetch).
+   * Absent epoch (older daemon) => no-op, preserving revision gating.
+   */
+  private reconcileDaemonEpoch(daemonEpoch: string | undefined): void {
+    if (daemonEpoch !== undefined && daemonEpoch !== this.lastDaemonEpoch) {
+      this.lastAppliedRevision = 0;
+      this.lastDaemonEpoch = daemonEpoch;
+    }
+  }
+
   private async fetchInitialSessionState(
     hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
-    sessionId: string
+    sessionId: string,
+    options?: { retainOnError?: boolean }
   ): Promise<void> {
+    const retainOnError = options?.retainOnError ?? false;
+    // Capture the selection epoch so a same-session reselect (e.g. a reconnect
+    // refresh in flight + a Retry that reselects X) can't let an older
+    // response overwrite the newer state — the activeSessionId check alone
+    // can't distinguish two concurrent fetches for one session.
+    const generation = this.selectGeneration;
+    // Issue a per-fetch ticket so two concurrent fetches for the SAME session
+    // (same epoch) still order by issue time. See fetchSeq docs.
+    const ticket = ++this.fetchSeq;
+    // Snapshot the partial-push counter so a context.updated push that lands
+    // while this RPC is in flight supersedes only the _contextInfo write below.
+    const contextPushAtStart = this.contextPushVersion;
+    let result: SessionState;
     try {
       const sessionState = await hub.request<SessionState>('state.session', { sessionId });
-
       if (sessionState) {
-        this.sessionState.value = sessionState;
-
-        // Persist contextInfo from metadata to direct signal so it survives page refresh.
-        // Without this, _contextInfo stays null until the next context.updated event
-        // (which only fires after a new agent turn).
-        if (sessionState.sessionInfo?.metadata?.lastContextInfo) {
-          this._contextInfo.value = sessionState.sessionInfo.metadata.lastContextInfo;
-        }
-
-        const initialCmds = sessionState.commandsData?.availableCommands;
-        if (Array.isArray(initialCmds) && initialCmds.length > 0) {
-          slashCommandsSignal.value = initialCmds;
-        }
+        result = sessionState;
       } else {
-        // sessionState RPC returned null - set error state so UI shows error instead of infinite loading
+        // RPC returned null — the session was deleted or never existed. This
+        // is a definitive "not found", not a transient blip, so surface it as
+        // an error regardless of caller.
         logger.error('Session state RPC returned null for session:', sessionId);
-        this.sessionState.value = {
+        result = {
           sessionInfo: null,
           agentState: { status: 'idle' },
           commandsData: { availableCommands: [] },
@@ -602,9 +824,17 @@ class SessionStore {
         };
       }
     } catch (err) {
+      // Reconnect/refresh callers pass retainOnError so a transient RPC
+      // failure during reconnect PRESERVES the last valid state (letting the
+      // push-based state.session subscription recover it) instead of
+      // clobbering a restored transcript with a fatal load error. Initial
+      // load still sets the error so ChatContainer shows the load screen.
+      if (retainOnError) {
+        logger.warn('Session state refresh failed; retaining last valid state:', err);
+        return;
+      }
       logger.error('Failed to fetch initial session state:', err);
-      // Set error state so UI shows error instead of infinite loading
-      this.sessionState.value = {
+      result = {
         sessionInfo: null,
         agentState: { status: 'idle' },
         commandsData: { availableCommands: [] },
@@ -615,6 +845,54 @@ class SessionStore {
         },
         timestamp: Date.now(),
       };
+    }
+
+    // Discard if the active session changed while the request was in flight
+    // (e.g., a transport reconnect fired a refresh for B, then the store
+    // switched to C). Committing now would overwrite C's metadata/status/
+    // context/commands/error while C's messages stay displayed. The generation
+    // check also covers a same-session reselect (reconnect refresh + Retry on
+    // the same id) — two fetches with the same sessionId but different epochs.
+    // The ticket check then orders any concurrent same-session fetches: only
+    // the freshest-issued SUCCESSFUL fetch commits, so a slower-resolving older
+    // snapshot can't overwrite a fresher one. (A retainOnError failure returns
+    // before this point, so it never claims the slot and can't block another.)
+    // A changed daemon epoch (daemon restart resets the server's in-memory
+    // revision counter) clears the gate first, then the revision check handles
+    // the fetch-vs-PUSH race in BOTH directions: a newer push that landed during
+    // the RPC (revision higher than this fetch's) leaves lastAppliedRevision
+    // ahead of this fetch, discarding it; an OLDER push that landed late does
+    // not overtake this fetch's revision, so this fresher fetch applies. Absent
+    // revision/epoch (older daemon) => the checks are skipped.
+    this.reconcileDaemonEpoch(result.daemonEpoch);
+    if (
+      this.destroyed ||
+      this.activeSessionId.value !== sessionId ||
+      this.selectGeneration !== generation ||
+      ticket <= this.lastCommittedFetchSeq ||
+      (result.revision !== undefined && result.revision <= this.lastAppliedRevision)
+    ) {
+      return;
+    }
+    this.lastCommittedFetchSeq = ticket;
+    if (result.revision !== undefined) this.lastAppliedRevision = result.revision;
+
+    this.sessionState.value = result;
+
+    // Persist contextInfo from metadata to direct signal so it survives page refresh.
+    // Without this, _contextInfo stays null until the next context.updated event
+    // (which only fires after a new agent turn). Skip if a PARTIAL context.updated
+    // push landed during the RPC — its value is fresher than this snapshot's.
+    if (
+      result.sessionInfo?.metadata?.lastContextInfo &&
+      this.contextPushVersion === contextPushAtStart
+    ) {
+      this._contextInfo.value = result.sessionInfo.metadata.lastContextInfo;
+    }
+
+    const initialCmds = result.commandsData?.availableCommands;
+    if (Array.isArray(initialCmds) && initialCmds.length > 0) {
+      slashCommandsSignal.value = initialCmds;
     }
   }
 
@@ -672,6 +950,55 @@ class SessionStore {
   }
 
   /**
+   * Leave a session channel only when no OTHER live store still holds it.
+   *
+   * The server's ChannelManager keys membership per connection (a deduped
+   * Set of clientId), not per store. Two simultaneously-mounted chats that
+   * happen to select the same session share one membership, so an
+   * unconditional leave here would evict the surviving chat. Guard against
+   * that by checking `activeStores` first.
+   */
+  private releaseSessionChannel(sessionId: string | null): void {
+    if (!sessionId) return;
+    const stillOwned = [...activeStores].some(
+      (s) => s !== this && s.activeSessionId.value === sessionId
+    );
+    if (stillOwned) return;
+    const hub = connectionManager.getHubIfConnected();
+    hub?.leaveChannel(`session:${sessionId}`);
+  }
+
+  /**
+   * Join `session:${sessionId}` and release it again if the store moves off
+   * that session while the join is still settling.
+   *
+   * `MessageHub.joinChannel` retries failed joins with exponential backoff and
+   * returns a promise that the call sites deliberately do NOT await (awaiting
+   * it would gate the subsequent state fetch on up to ~3 retries, regressing
+   * reconnect-recovery latency). But a join issued for X can therefore SUCCEED
+   * — rejoin — after the store has already switched to Y, leaking a stray X
+   * membership until the next reconnect wipes client memberships. Attaching a
+   * release-on-supersede keeps the call fire-and-forget while closing that
+   * leak: when the join settles, if this store no longer holds `sessionId`
+   * (switched away or destroyed), release the membership it just acquired.
+   *
+   * `Promise.resolve(...)` tolerates a non-promise return (the join may resolve
+   * synchronously when already connected); the callback never throws because
+   * joinChannel logs internally and never rejects.
+   */
+  private joinSessionChannel(
+    hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
+    sessionId: string
+  ): void {
+    const joinPromise = hub.joinChannel(`session:${sessionId}`);
+    Promise.resolve(joinPromise).then(() => {
+      if (this.destroyed || this.activeSessionId.value !== sessionId) {
+        this.releaseSessionChannel(sessionId);
+      }
+    });
+  }
+
+  /**
    * Stop all current subscriptions
    */
   private async stopSubscriptions(): Promise<void> {
@@ -686,6 +1013,37 @@ class SessionStore {
     this.cleanupFunctions = [];
   }
 
+  /**
+   * Tear down this instance: stop subscriptions, leave the session channel
+   * (only if no other live store still holds it), deselect, and unregister
+   * from `activeStores` so reconnect refresh no longer touches it.
+   *
+   * Used by simultaneously-mounted chat owners (e.g. `AgentOverlayChat`) when
+   * their view unmounts. The primary chat's singleton is never destroyed.
+   * Safe to call multiple times.
+   *
+   * Teardown is chained through `selectPromise` and gated by `destroyed` so
+   * that a `select()` whose `doSelect`/`startSubscriptions` is mid-await (or
+   * queued) when the parent unmounts cannot resume after teardown, re-register
+   * the store, or leak freshly-installed handlers/server subscriptions. The
+   * in-flight selection completes first, then `stopSubscriptions` reaps
+   * whatever it installed.
+   */
+  async destroy(): Promise<void> {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    this.selectPromise = this.selectPromise.then(() => this.doDestroy());
+    await this.selectPromise;
+  }
+
+  private async doDestroy(): Promise<void> {
+    const oldSessionId = this.activeSessionId.value;
+    await this.stopSubscriptions();
+    this.releaseSessionChannel(oldSessionId);
+    this.activeSessionId.value = null;
+    activeStores.delete(this);
+  }
+
   // ========================================
   // Refresh (for reconnection)
   // ========================================
@@ -698,18 +1056,34 @@ class SessionStore {
    * instead of staying at "Online" after Safari background tab resume.
    */
   async refresh(): Promise<void> {
+    if (this.destroyed) return;
     const sessionId = this.activeSessionId.value;
     if (!sessionId) {
       return;
     }
+    // Capture the selection epoch before awaiting so a session switch (or a
+    // same-session reselect via Retry) during the await aborts the rejoin
+    // instead of leaving an obsolete channel membership.
+    const epoch = this.selectGeneration;
 
     try {
       const hub = await connectionManager.getHub();
+      if (this.destroyed || this.selectGeneration !== epoch) return;
+      // Re-join the session channel: a soft resume (Safari pausing the socket
+      // without closing it) can expire server-side channel memberships while
+      // the client believes it's still connected, and that path does NOT fire
+      // the transport onConnection('connected') handler that normally rejoins.
+      // Without this, refreshAllSessionStores (called on resume) would leave
+      // every chat current for one snapshot then silently stale for
+      // state.session/context.updated pushes. joinChannel is idempotent.
+      this.joinSessionChannel(hub, sessionId);
       // Refresh session state only; the LiveQuery already re-subscribes on
       // reconnect (via the onConnection handler wired in
       // subscribeToMessagesLiveQuery), so messages do not need a separate
-      // refresh path.
-      await this.fetchInitialSessionState(hub, sessionId);
+      // refresh path. retainOnError: a transient failure here (e.g. tab
+      // resume racing with a flaky socket) must not wipe the last valid
+      // state — the push subscription will recover it.
+      await this.fetchInitialSessionState(hub, sessionId, { retainOnError: true });
     } catch (err) {
       logger.error('Failed to refresh state:', err);
       // Don't throw - subscriptions will still receive updates
@@ -848,3 +1222,16 @@ class SessionStore {
 
 /** Singleton session store instance */
 export const sessionStore = new SessionStore();
+
+/**
+ * Refresh every live SessionStore instance's session state.
+ *
+ * Called by `connectionManager.validateConnectionOnResume` on soft-staleness
+ * reconnect (Safari background-tab resume) so ALL mounted chats — the primary
+ * singleton-backed chat AND any simultaneously-mounted overlay instance —
+ * re-sync agent state/context, not just the primary one. Instances with no
+ * active session no-op inside `refresh()`.
+ */
+export async function refreshAllSessionStores(): Promise<void> {
+  await Promise.all([...activeStores].map((store) => store.refresh().catch(() => {})));
+}
