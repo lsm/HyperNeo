@@ -306,12 +306,32 @@ export class MessageDeliveryLifecycleRepository {
    * Retention sweep: delete rows older than `cutoffMs` (epoch ms). The ledger is
    * append-only with no automatic TTL; this lets a caller bound growth. NOTE: it
    * is NOT auto-invoked in phase 1 — retention policy (cadence + age) is phase 2.
+   *
+   * Preserves terminal (`completed`/`failed`) evidence for any message whose
+   * sdk_messages row is still `send_status = 'consumed'`. `send_status` has no
+   * delivered/finished state, so a delivered-and-completed message can remain
+   * `consumed`; MessageRecoveryHandler relies on this ledger's terminal record
+   * (task #859 N6/F13) to avoid re-orphaning it after a restart. Deleting that
+   * evidence here would make recovery wrongly flip a delivered message to
+   * `failed`. See task #859 round-5 P2 (retention vs recovery).
+   *
    * Returns the number of rows deleted.
    */
   deleteOlderThan(cutoffMs: number): number {
     try {
       const result = this.db
-        .prepare('DELETE FROM message_delivery_lifecycle WHERE created_at < ?')
+        .prepare(
+          `DELETE FROM message_delivery_lifecycle
+           WHERE created_at < ?
+             AND NOT (
+               stage IN ('completed', 'failed')
+               AND EXISTS (
+                 SELECT 1 FROM sdk_messages s
+                 WHERE s.sdk_uuid = message_delivery_lifecycle.message_id
+                   AND COALESCE(s.send_status, 'consumed') = 'consumed'
+               )
+             )`
+        )
         .run(cutoffMs);
       return result.changes;
     } catch (error) {

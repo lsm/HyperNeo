@@ -287,4 +287,45 @@ describe('MessageDeliveryLifecycleRepository retention (F3/F7)', () => {
     expect(repo.getLatestStage(old)).toBeNull();
     expect(repo.getLatestStage(recent)?.stage).toBe('persisted');
   });
+
+  test('deleteOlderThan preserves terminal evidence for still-consumed rows', () => {
+    const repo = db.messageDeliveryLifecycle;
+    const now = Date.now();
+
+    // A delivered-and-completed message whose sdk_messages row REMAINS
+    // send_status='consumed' (send_status has no delivered/finished value).
+    // MessageRecoveryHandler relies on this ledger's terminal record to avoid
+    // re-orphaning it after a restart; retention must not prune that evidence.
+    // Insert the sdk_messages row directly (not via saveUserMessage, which would
+    // add a live `persisted` event at NOW and mask the preserved terminal state).
+    const deliveredId = generateUUID();
+    db.getDatabase()
+      .prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, sdk_uuid, send_status)
+         VALUES (?, ?, 'user', ?, ?, ?, 'consumed')`
+      )
+      .run(
+        generateUUID(),
+        SESSION_ID,
+        JSON.stringify({ type: 'user', uuid: deliveredId, message: { role: 'user', content: [] } }),
+        new Date(now - 11_000).toISOString(),
+        deliveredId
+      );
+    insertEvent(SESSION_ID, deliveredId, 'persisted', now - 10_000);
+    insertEvent(SESSION_ID, deliveredId, 'consumed', now - 9_000);
+    insertEvent(SESSION_ID, deliveredId, 'completed', now - 8_000);
+
+    // An unrelated old non-terminal row the sweep should still remove.
+    const other = generateUUID();
+    insertEvent(SESSION_ID, other, 'persisted', now - 10_000);
+
+    // Sweeps the non-terminal rows (deliveredId's persisted+consumed and other),
+    // but preserves the terminal `completed` evidence for the consumed row.
+    const deleted = repo.deleteOlderThan(now - 5_000);
+    expect(deleted).toBe(3);
+    // Terminal evidence preserved even though older than the cutoff…
+    expect(repo.getLatestStage(deliveredId)?.stage).toBe('completed');
+    // …while the non-terminal rows are swept, so recovery still sees a genuine gap.
+    expect(repo.getLatestStage(other)).toBeNull();
+  });
 });

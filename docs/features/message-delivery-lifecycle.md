@@ -185,7 +185,11 @@ establishing evidence and correlation before adding retries/ownership:
   latency by the retry gap. `getTimeline` is per-attempt authoritative; phase 2
   (delivery-attempt IDs) makes the aggregates attempt-correct.
 - **Retention is caller-driven** — `deleteOlderThan` is provided but not
-  auto-invoked; retention policy (cadence + age) is phase 2.
+  auto-invoked; retention policy (cadence + age) is phase 2. It preserves
+  terminal (`completed`/`failed`) evidence for any message whose sdk_messages row
+  is still `send_status = 'consumed'`: since `send_status` has no delivered
+  state, recovery relies on that ledger record to avoid re-orphaning a delivered
+  message after a restart, so retention must not prune it.
 - **Synthetic Space deliveries and orphan recovery** — node-to-node and
   long-horizon injectors persist ordinary text inputs with `isSynthetic: true`,
   and `MessageRecoveryHandler`'s pre-existing `isSynthetic` exclusion skips them

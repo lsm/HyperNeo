@@ -729,19 +729,15 @@ export class SDKMessageHandler {
       return; // Skip persistence and broadcast - this is internal tracking only
     }
 
-    // Automatically update phase based on message type
-    await stateManager.detectPhaseFromMessage(message);
-
-    // For persisted user messages, mark consumed + publish now and skip duplicate DB inserts.
-    if (await this.acknowledgePersistedUserMessage(message)) {
-      this.maybeRefreshContextOnEvent(message);
-      return;
-    }
-
-    // Delivery-lifecycle: record progress/completion ON RECEIPT, before the
-    // fallible saveSDKMessage/publish paths below. Otherwise a result whose
-    // saveSDKMessage returns false (e.g. late FTS failure) or whose publish
-    // rejects would exit early and leave the turn stuck at `consumed` (N11).
+    // Delivery-lifecycle: record progress/completion ON RECEIPT, before any of
+    // the fallible paths below (detectPhaseFromMessage's session.updated publish,
+    // saveSDKMessage, message publish). Otherwise a received result whose
+    // phase publish rejects or whose saveSDKMessage returns false (e.g. late FTS
+    // failure) would exit early and leave the turn stuck at `consumed`, which the
+    // query error path then mis-reports as `failed`/`interrupted` — despite the
+    // turn actually having been delivered (N11 + round-5 P2). This block only
+    // acts on assistant/result messages, so persisting it ahead of phase
+    // detection is safe.
     if (
       isSDKAssistantMessage(message) &&
       !this.deliveryFirstProgressRecorded &&
@@ -759,6 +755,15 @@ export class SDKMessageHandler {
       this.recordDeliveryTerminal('completed', {
         success: isSDKResultSuccess(message),
       });
+    }
+
+    // Automatically update phase based on message type
+    await stateManager.detectPhaseFromMessage(message);
+
+    // For persisted user messages, mark consumed + publish now and skip duplicate DB inserts.
+    if (await this.acknowledgePersistedUserMessage(message)) {
+      this.maybeRefreshContextOnEvent(message);
+      return;
     }
 
     // Mark unmatched SDK user messages as synthetic.
