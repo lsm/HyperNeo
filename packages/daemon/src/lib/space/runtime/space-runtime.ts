@@ -8252,7 +8252,16 @@ export class SpaceRuntime {
       targetAgentName: string,
       rowsForCurrentAttempt: typeof pending
     ): void => {
-      const first = rowsForCurrentAttempt
+      // The scoped flush (listPendingForTarget with workflowNodeId) also drains
+      // legacy null-node rows (workflow_node_id IS NULL) for the same target, so
+      // a failure in those rows isn't visible in `rowsForCurrentAttempt`. Include
+      // every pending row for the target — from the original snapshot plus the
+      // attempt's rows — so a failed handoff always blocks the run as intended.
+      const targetRows = [
+        ...rowsForCurrentAttempt,
+        ...pending.filter((row) => row.targetAgentName === targetAgentName),
+      ];
+      const first = targetRows
         .map((row) => repo.getById(row.id))
         .find((row) => row?.status === 'failed');
       if (!first) return;

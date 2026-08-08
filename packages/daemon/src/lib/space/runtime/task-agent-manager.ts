@@ -2071,6 +2071,11 @@ export class TaskAgentManager {
           e.agentName === agentName &&
           e.agentSessionId &&
           e.status !== 'cancelled' &&
+          // A pending execution may retain a dead agentSessionId from
+          // resetWorkflowNodeExecutionForSpawnRetry — selecting it would
+          // rehydrate/inject into the failed session instead of letting
+          // activation spawn a replacement.
+          e.status !== 'pending' &&
           (!workflowNodeId || e.workflowNodeId === workflowNodeId)
       )
       .at(-1);
