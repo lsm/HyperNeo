@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed — Revision 11. All human + codex-connector review rounds to date; every
+Proposed — Revision 12. All human + codex-connector review rounds to date; every
 code-level claim re-verified directly against current source. States complete invariants +
 phase boundaries; all mechanism deferred to phase PRs. Re-requesting review.
 Phase 0 (architecture only); no runtime changes. Companion RFC:
@@ -128,7 +128,8 @@ legacy removal before parity.**
 ## Design-review decisions (resolved/revised across 3 rounds)
 
 1. **Definition versioning** → in-row content hash **pinned at run creation** + append-only
-   history table + **read cutover** (run reads resolve through the pinned version, not the
+   history table **(every version, including the current pinned one, appended before a run
+   references it)** + **read cutover** (run reads resolve through the pinned version, not the
    mutable head). **Deletion-safety** (no `workflow_id` FK — orphan, not erase; guard all
    delete paths + version-FK). **Phase 1e** delays run-`done` until post-approval resolves
    (today `space-runtime.ts:7814` sets `done` before `dispatchPostApproval`).

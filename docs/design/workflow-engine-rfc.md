@@ -1,6 +1,6 @@
 # RFC: Data-Defined Workflow Engine
 
-Status: Proposed — Revision 11 (Phase 0, architecture only; no runtime changes).
+Status: Proposed — Revision 12 (Phase 0, architecture only; no runtime changes).
 Incorporates all human + codex-connector review rounds to date. Every
 code-level claim below was re-verified directly against the current source this
 revision. Per the agreed scope rule, this revision states **complete invariants +
@@ -127,7 +127,8 @@ activation); mechanism deferred to the phase PR.
 **the only tombstone (non-reopenable) is `SpaceTask.archivedAt`.** Three distinct durability
 signals, not one: (a) **finalization** — release leases / stop timers / stop active dispatch
 when the canonical task is terminal (`done`/`cancelled`) **and** post-approval has resolved
-(the `task.status==='done'` guard in §6.6); (b) **delivery hard-fail** — only on **archive**
+(§6.6 finalize transition: task-terminal triggers; re-entry short-circuits on
+`run.status==='done'`); (b) **delivery hard-fail** — only on **archive**
 (the sole hard-failure condition — `cancelled` reopens, so there is no separate "hard-cancel"
 signal; a user cancel that should discard handoffs archives the task), **not** on
 run-`done`/`cancelled`; (c) **reopen prevention** — archive only. (v4 conflated (a)
@@ -210,9 +211,11 @@ crash during spawn leaves no guard and recovery can spawn a second merger.
 
 **Decision:**
 1. `definition_version` = in-row content hash, **pinned on the run row at creation**
-   (atomically with the initial run insert), with prior versions in an append-only
-   `space_workflow_definition_versions` history table. (In-row avoids indirection on the
-   hot-path `getWorkflow` reads.)
+   (atomically with the initial run insert). **Every version — including the one a new run
+   pins — is appended to the immutable `space_workflow_definition_versions` history table
+   *before* the run row references it**, so the version-level FK (§4 #5) always targets an
+   immutable row, never the mutable head. (In-row hash avoids indirection on the hot-path
+   `getWorkflow` reads; the history row is the immutable FK target.)
 2. Built-in re-stamping becomes version-bumping, not in-place mutation. **Caveat (verified gap): built-in gate scripts are NOT pinned today** — `ChannelRouter.doEvaluateGate` (`channel-router.ts:1516`) overrides the stored gate script with `getBuiltInGateScript(workflow.templateName, …)` from the **current** template on every eval, so a template update changes an older run's gate behavior even with pinned reads. Phase 1 must resolve gate scripts from the **pinned template version** (or remove the live override); the pinning invariant does not hold for built-in gates until then.
 3. **Deletion-safety (no cascade to "remove" — there is none):**
    - add a **not-archived guard** to **every** deletion/replacement path
@@ -332,7 +335,8 @@ a non-polled gate.
 
 `SpaceRuntimeService.start()` recovers (long-term inbox → `recoverStalledRuns`): skip if
 in-flight; **finalize when the canonical task is terminal (`done`/`cancelled`) AND
-post-approval has resolved** — consistent with §6.6's `task.status==='done'` guard. Archive
+post-approval has resolved** — the §6.6 finalize transition
+(re-entry short-circuits on `run.status==='done'`). Archive
 is a *separate* concern — the non-reopenable tombstone (§3.1), not the finalize trigger: a
 crash after `mark_complete` (task `done`) but before the run-transition commits must not
 strand the run. `reportedStatus`/`CompletionDetector` alone is not a finalize signal
@@ -348,7 +352,7 @@ path move behind connector capabilities (Phase 5).
 | Claim a work item | lease CAS + fencing token checked on every **leased-worker** write (unleased human/kernel commands use status/generation guards) |
 | Mutating connector op | command key (logical identity, stable across attempts) + reconcile-unknown |
 | Post-approval dispatch | **persist dispatch work-item before spawn**; reconcile on recovery |
-| Finalize run | task-status guard (re-entry short-circuits on `task.status==='done'`) |
+| Finalize run | task-terminal (`done`/`cancelled`) + post-approval-resolved **triggers** the transition; re-entry short-circuits on `run.status==='done'` |
 | Gate open cache | `gate_open_state` + staleness guard |
 | Connector/gate retry | persisted deadline, rehydrated on restart |
 
@@ -419,7 +423,7 @@ that depend on them.
 | 5 | Full GitHub external-event path **+ the GitHub `post_review` outbound tool** (registered today for every end/approval-authority node via `isApprovalAuthorityNode` `task-agent-manager.ts:4779`, block `:4762-4818`; schema `node-agent-tool-schemas.ts:527`, registry `:623`) behind connector capabilities — node-declared tool grants, not hardcoded predicates | legacy retained until proven | fall back |
 | 5b | **Connector-action step primitive** (durable connector-op steps; command key + activation ordinal; each action references the run-creation pin, §5) | new node/work-item kind behind flag | drain per §11.8 |
 | 5c | **In-run pause/resume timer** primitive + recovery | new timer type | drain per §11.8 |
-| 6 | ecommerce-return, manufacturing-defect, travel definitions + connectors as **in-tree `reference/` fixtures** (not seeded) + tests — using **sandbox/fake mutating connectors** with observable idempotent effects for ecommerce/travel (they're the workflows that forced connector-action + idempotency; read-only fixtures couldn't prove those primitives) | read-only; no production seeding | remove fixture |
+| 6 | ecommerce-return, manufacturing-defect, travel definitions + connectors as **in-tree `reference/` fixtures** (not seeded) + tests — using **sandbox/fake mutating connectors** with observable idempotent effects for ecommerce/travel (they're the workflows that forced connector-action + idempotency; read-only fixtures couldn't prove those primitives) | fixture-only/unseeded (mutating fakes); no production seeding | remove fixture |
 | 7 | Goal-system unification audit (`goals`/`mission_executions` are dormant; decide migrate vs formal-freeze from evidence) | investigation + design first | n/a |
 
 ## 10. Deferred features
@@ -432,8 +436,10 @@ import; process mining. (The premature run-`done` is NOT deferred — Phase 1e o
 
 1. A run executes its pinned definition version (pinned at **creation**); edits/deletions
    never mutate or orphan in-flight runs (Phase 1). **Upgrade invariant:** Phase 1 backfills
-   a resolvable version for every pre-existing run (they pre-date the column) before the
-   cutover/FK is enabled, so no active run is stranded.
+   a resolvable version for every pre-existing **non-archived** run (they pre-date the column)
+   before the cutover/FK is enabled, so no active run is stranded — consistent with §4.4's
+   non-archived backfill scope. Archived orphans (whose definition was deleted before the
+   guard) may have no payload to reconstruct and are permitted to remain unpinned.
 2. No legacy removal before parity.
 3. One invariant/capability per PR; each independently revertible.
 4. Migration + restart/concurrency tests for every runtime change.
@@ -442,8 +448,8 @@ import; process mining. (The premature run-`done` is NOT deferred — Phase 1e o
    `space-runtime.ts`) returns nothing outside adapters/plugins.
 6. **Three distinct durability signals — don't conflate** (reconciles §3.1/§6.5/§6.6):
    **finalization** (release leases / stop timers) keys off task terminal (`done`/`cancelled`)
-   + post-approval resolved; **delivery hard-fail** keys off archive or explicit hard-cancel
-   (NOT run-`done`/`cancelled`, which reopen); **reopen-prevention / tombstone** =
+   + post-approval resolved; **delivery hard-fail** keys off **archive only** (no separate hard-cancel signal — §3.1;
+   `done`/`cancelled` reopen, so they are NOT hard-fail); **reopen-prevention / tombstone** =
    `SpaceTask.archivedAt` only.
 7. **Idempotency keys are stable across attempts**; fencing tokens guard every
    **leased-worker** write (unleased human/kernel commands use status/generation guards).
@@ -457,7 +463,8 @@ import; process mining. (The premature run-`done` is NOT deferred — Phase 1e o
 ## 12. Design-review decisions (resolved / revised across 3 rounds)
 
 1. **Definition versioning** → in-row content hash **pinned at run creation** + append-only
-   history table + **read cutover** (route run reads through the pinned version). **Deletion-
+   history table **(every version, including the current pinned one, appended before a run
+   references it)** + **read cutover** (route run reads through the pinned version). **Deletion-
    safety** (no `workflow_id` FK — orphan, not erase; guard all delete paths + version-FK).
    **Phase 1e** delays run-`done` until post-approval resolves (v3 wrongly claimed `done` is
    post-`mark_complete`; verified `space-runtime.ts:7814` sets it before `dispatchPostApproval`).
