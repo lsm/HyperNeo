@@ -570,6 +570,10 @@ export class SDKMessageHandler {
     // `completed` block already ran and cleared the consumed set, so the set
     // now holds exactly these fallback IDs — terminalize them so their latest
     // stage isn't `consumed` (which would read as stale). See task #859 N1.
+    // Known limitation (phase 1): these IDs get no `first_progress` — they
+    // entered the consumed set only now, after the turn's assistant frames
+    // recorded progress for the then-current set. See
+    // docs/features/message-delivery-lifecycle.md (round-11 P2, decision (b)).
     if (enqueuedUsers.length > 0) {
       this.recordDeliveryTerminal('completed', { success: true });
     }

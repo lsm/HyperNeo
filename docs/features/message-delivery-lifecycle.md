@@ -225,4 +225,16 @@ establishing evidence and correlation before adding retries/ownership:
   session stops) leaves the turn's latest stage non-terminal (e.g. `consumed`)
   and it surfaces as stale — hardening the cooldown cancellation terminal is
   phase 2 (delivery-attempt ownership).
+- **Fallback-acknowledged messages omit `first_progress`** — the
+  `acknowledgeOldestQueuedUserOnTurnEnd` safety net registers its IDs into the
+  turn's consumed set only at turn end, after the turn's assistant frames
+  already recorded `first_progress` for the then-current set. A message
+  consumed only via this fallback gets `consumed` → `completed` (both
+  authoritative — the message IS delivered and non-stranded) but its timeline
+  omits the assistant-output marker, and it is excluded from the
+  `acceptToFirstProgress` aggregate. Replaying `first_progress` at turn end
+  would stamp it with the turn-end time and overstate the latency by the full
+  turn; an accurate record needs the turn's first-assistant-output timestamp
+  captured during the turn and threaded into the ledger write. Deferred to
+  phase 2 (delivery-attempt IDs), which already owns attempt-correct latency.
 
