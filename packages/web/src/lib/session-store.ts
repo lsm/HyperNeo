@@ -737,6 +737,18 @@ export class SessionStore {
         }
         return;
       }
+      if (state === 'failed') {
+        // Reconnect attempts exhausted (WebSocketClientTransport emits 'failed'
+        // after maxReconnectAttempts). Recovery is impossible until a manual
+        // reconnect, so don't leave isRecovering (and the "Reconnecting…"
+        // banner) up forever — the global ConnectionStatus already reports the
+        // permanent failure. A manual reconnect re-arms recovery via the
+        // 'disconnected' → 'connected' sequence.
+        if (this.activeMessagesSubscriptionId === subscriptionId) {
+          this.isRecovering.value = false;
+        }
+        return;
+      }
       if (state !== 'connected') return;
       if (this.activeMessagesSubscriptionId !== subscriptionId) return;
       // performRecovery is the shared recovery routine (also used by the

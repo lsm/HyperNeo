@@ -978,6 +978,21 @@ describe('SessionStore multi-instance isolation', () => {
     });
   });
 
+  it('clears isRecovering when reconnects are permanently exhausted (failed)', async () => {
+    // WebSocketClientTransport emits 'failed' after maxReconnectAttempts. The
+    // earlier 'reconnecting' set isRecovering; 'failed' must clear it so the
+    // "Reconnecting…" banner does not outlive the (abandoned) reconnect cycle —
+    // the global ConnectionStatus reports the permanent failure instead.
+    await selectWithSnapshot(storeB, hub, 'session-b', [
+      { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+    hub.fireConnection('reconnecting');
+    expect(storeB.isRecovering.value).toBe(true);
+
+    hub.fireConnection('failed');
+    expect(storeB.isRecovering.value).toBe(false);
+  });
+
   it('does not strand isRecovering on duplicate reconnect events', async () => {
     await selectWithSnapshot(storeB, hub, 'session-b', [
       { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
