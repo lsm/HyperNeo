@@ -398,6 +398,15 @@ export default function ChatContainer({
 
   const handleRewindConfirm = useCallback(async () => {
     if (!rewindTargetUuid) return;
+    // Read-only while recovering: a rewind deletes messages (and may restore
+    // files) while the message subscription is still being re-established, so
+    // the change would not be reflected until recovery completes. The rewind
+    // affordance is also hidden during recovery, but guard the confirm path in
+    // case a modal was already open when recovery started.
+    if (store.isRecovering.value) {
+      toast.warning('Please wait — this session is reconnecting.');
+      return;
+    }
 
     setIsRewinding(true);
     try {
@@ -1534,7 +1543,7 @@ export default function ChatContainer({
                     sessionId={sessionId}
                     resolvedQuestions={allResolvedQuestions}
                     pendingQuestion={pendingQuestion}
-                    onRewind={handleRewindClick}
+                    onRewind={isRecovering ? undefined : handleRewindClick}
                     rewindingMessageUuid={isRewinding ? rewindTargetUuid : null}
                     onQuestionResolved={handleQuestionResolved}
                     replacementStatus={

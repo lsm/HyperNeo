@@ -520,6 +520,15 @@ describe('ChatContainer session-scoped recovery', () => {
     expect(block).toContain('isRecovering');
   });
 
+  it('disables rewind controls while recovering', () => {
+    // The rewind affordance must be hidden during recovery (onRewind undefined)
+    // so the advertised read-only state covers this mutation too.
+    expect(source).toMatch(/onRewind=\{isRecovering \? undefined : handleRewindClick\}/);
+    // And the confirm path bails on the store flag, in case a modal was already
+    // open when recovery started.
+    expect(source).toMatch(/if \(store\.isRecovering\.value\)[\s\S]*?Please wait/);
+  });
+
   describe('computeChatLoading', () => {
     it('shows the skeleton until session state and the first snapshot arrive', () => {
       expect(

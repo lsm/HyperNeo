@@ -14,7 +14,11 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { SessionStore, refreshAllSessionStores } from '../session-store';
+import {
+  SessionStore,
+  refreshAllSessionStores,
+  mergeSnapshotIntoTranscript,
+} from '../session-store';
 
 // A single controllable hub that connectionManager.getHub() resolves to. Both
 // stores share it; each store's handlers self-filter LiveQuery events by
@@ -1207,6 +1211,10 @@ describe('SessionStore multi-instance isolation', () => {
     expect(storeB.isRecovering.value).toBe(true);
     expect(storeB.activeSessionId.value).toBe('session-b');
     expect(storeB.sdkMessages.value.map((m) => m.uuid)).toEqual(['b1']);
+    // P2: a delayed/ambiguous join failure must NOT actively leave the channel
+    // (the server may already have restored the membership); only the next
+    // recovery re-confirms it.
+    expect(multiHub.leaveChannel).not.toHaveBeenCalledWith('session:session-b');
 
     // A later recovery where the join succeeds clears the flag.
     hub.setChannelJoinError(null);
@@ -1214,33 +1222,76 @@ describe('SessionStore multi-instance isolation', () => {
     await vi.waitFor(() => expect(storeB.isRecovering.value).toBe(false));
   });
 
-  it('a recovery snapshot preserves older rows the user paginated in', async () => {
-    // P2: recover() re-subscribes the messages LiveQuery; the fresh snapshot is
-    // the recent window and must NOT evict rows the user prepended via "Load
-    // More" (older than the window) — otherwise they lose their deep-link/scroll
-    // position on every visibility resume.
-    await selectWithSnapshot(storeB, hub, 'session-b', [
-      { id: 'w1', uuid: 'w1', type: 'text', role: 'user', timestamp: 100 },
+  it('mergeSnapshotIntoTranscript: preserves the paginated prefix when the snapshot fills the window', () => {
+    // Snapshot fills the bounded window (limit=2) → server-side history exists
+    // above it; rows the user paginated in (older than the oldest snapshot row)
+    // are preserved while the window refreshes in place.
+    const existing = [
+      { id: 'p1', uuid: 'p1', timestamp: 10, rowid: 1 },
+      { id: 'p2', uuid: 'p2', timestamp: 20, rowid: 2 },
+      { id: 'w1', uuid: 'w1', timestamp: 100, rowid: 3 },
+    ] as never[];
+    const snapshot = [
+      { id: 'w1', uuid: 'w1', timestamp: 100, rowid: 3 },
+      { id: 'w2', uuid: 'w2', timestamp: 110, rowid: 4 },
+    ] as never[];
+    expect(mergeSnapshotIntoTranscript(existing, snapshot, 2).map((m) => m.id)).toEqual([
+      'p1',
+      'p2',
+      'w1',
+      'w2',
     ]);
-    // User paginated older history above the window.
-    storeB.prependMessages([
-      { id: 'p1', uuid: 'p1', type: 'text', role: 'user', timestamp: 10 } as never,
-      { id: 'p2', uuid: 'p2', type: 'text', role: 'user', timestamp: 20 } as never,
+  });
+
+  it('mergeSnapshotIntoTranscript: keeps same-ms prefix rows via the (timestamp, rowid) cursor', () => {
+    // The window boundary cuts through a same-millisecond burst: the snapshot's
+    // oldest row shares ts=100 with a paginated row, but the cursor orders by
+    // (timestamp, rowid), so the older-rowid paginated row must be retained.
+    const existing = [
+      { id: 'p1', uuid: 'p1', timestamp: 100, rowid: 2 }, // same ms, older rowid
+      { id: 'w1', uuid: 'w1', timestamp: 100, rowid: 5 },
+    ] as never[];
+    const snapshot = [
+      { id: 'w1', uuid: 'w1', timestamp: 100, rowid: 5 },
+      { id: 'w2', uuid: 'w2', timestamp: 110, rowid: 6 },
+    ] as never[];
+    expect(mergeSnapshotIntoTranscript(existing, snapshot, 2).map((m) => m.id)).toEqual([
+      'p1',
+      'w1',
+      'w2',
     ]);
-    expect(storeB.sdkMessages.value.map((m) => m.id)).toEqual(['p1', 'p2', 'w1']);
+  });
 
-    const subId = hub.subIdFor('session-b');
-    // Recovery/refresh delivers a fresh window snapshot (timestamp 100+).
-    hub.fire('liveQuery.snapshot', {
-      subscriptionId: subId,
-      rows: [
-        { id: 'w1', uuid: 'w1', type: 'text', role: 'user', timestamp: 100 },
-        { id: 'w2', uuid: 'w2', type: 'text', role: 'assistant', timestamp: 110 },
-      ],
-    });
+  it('mergeSnapshotIntoTranscript: replaces wholesale when the snapshot is the complete transcript (< limit)', () => {
+    // A short snapshot is authoritative (the whole transcript, incl. empty) —
+    // there is no server-side prefix, so deleted/rewound rows are cleared, not
+    // frozen on screen.
+    const existing = [
+      { id: 'p1', uuid: 'p1', timestamp: 10, rowid: 1 },
+      { id: 'w1', uuid: 'w1', timestamp: 100, rowid: 3 },
+    ] as never[];
+    const snapshot = [
+      { id: 'w1', uuid: 'w1', timestamp: 100, rowid: 3 },
+      { id: 'w2', uuid: 'w2', timestamp: 110, rowid: 4 },
+    ] as never[];
+    // limit=5 → snapshot (2 rows) does not fill the window → wholesale replace.
+    expect(mergeSnapshotIntoTranscript(existing, snapshot, 5).map((m) => m.id)).toEqual([
+      'w1',
+      'w2',
+    ]);
+  });
 
-    // Paginated prefix preserved; window refreshed in place.
-    expect(storeB.sdkMessages.value.map((m) => m.id)).toEqual(['p1', 'p2', 'w1', 'w2']);
+  it('mergeSnapshotIntoTranscript: an empty snapshot clears the transcript', () => {
+    const existing = [{ id: 'p1', uuid: 'p1', timestamp: 10, rowid: 1 }] as never[];
+    expect(mergeSnapshotIntoTranscript(existing, [] as never[], 200)).toEqual([]);
+  });
+
+  it('mergeSnapshotIntoTranscript: an empty existing transcript just takes the snapshot', () => {
+    const snapshot = [
+      { id: 'a', uuid: 'a', timestamp: 1, rowid: 1 },
+      { id: 'b', uuid: 'b', timestamp: 2, rowid: 2 },
+    ] as never[];
+    expect(mergeSnapshotIntoTranscript([], snapshot, 200).map((m) => m.id)).toEqual(['a', 'b']);
   });
 
   it('does not recover a session switched away from before recover() runs', async () => {

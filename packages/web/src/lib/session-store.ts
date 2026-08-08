@@ -124,6 +124,53 @@ const activeStores = new Set<SessionStore>();
  */
 let messageSubscriptionSeq = 0;
 
+/** Row-shape accessors shared by snapshot/delta merging (see ChatMessage). */
+type MessageRow = ChatMessage & { id?: unknown; timestamp?: number; rowid?: number };
+const rowTimestamp = (m: ChatMessage): number => (m as MessageRow).timestamp || 0;
+const rowRowid = (m: ChatMessage): number => (m as MessageRow).rowid ?? 0;
+const rowId = (m: ChatMessage): unknown => (m as MessageRow).id;
+
+/**
+ * Merge a fresh LiveQuery snapshot into the visible transcript.
+ *
+ * The snapshot is the canonical recent window — the server's most recent
+ * `limit` rows, ordered by `(timestamp, rowid)`. It refreshes that window in
+ * place. A paginated prefix (rows the user loaded above the window via "Load
+ * More") is preserved ONLY when the snapshot fills the bounded window
+ * (`rows.length >= limit`): that is the one case where server-side history
+ * exists above the snapshot. When the snapshot is shorter it is the COMPLETE
+ * transcript (including empty), so it replaces wholesale — clearing rows that
+ * were deleted or rewound while this client was disconnected, rather than
+ * freezing them on screen.
+ *
+ * Preserved prefix rows are those older than the snapshot's oldest row by the
+ * SAME `(timestamp, rowid)` cursor the daemon paginates by, so a window
+ * boundary that cuts through a same-millisecond burst does not drop the older
+ * rows the cursor would have loaded.
+ *
+ * Exported for unit tests.
+ */
+export function mergeSnapshotIntoTranscript(
+  existing: ChatMessage[],
+  rows: ChatMessage[],
+  limit: number
+): ChatMessage[] {
+  const sorted = rows.slice().sort((a, b) => rowTimestamp(a) - rowTimestamp(b));
+  if (sorted.length < limit) return sorted;
+  const oldestTs = rowTimestamp(sorted[0]);
+  const oldestRowid = rowRowid(sorted[0]);
+  const snapshotIds = new Set(sorted.map(rowId).filter((id) => id != null));
+  const prefix = existing.filter((m) => {
+    const id = rowId(m);
+    if (id != null && snapshotIds.has(id)) return false;
+    const ts = rowTimestamp(m);
+    if (ts < oldestTs) return true;
+    // Same-ms boundary: keep rows the (timestamp, rowid) cursor treats as older.
+    return ts === oldestTs && rowRowid(m) < oldestRowid;
+  });
+  return [...prefix, ...sorted];
+}
+
 export class SessionStore {
   constructor() {
     // Register so refreshAllSessionStores() (soft-staleness reconnect) covers
@@ -706,49 +753,25 @@ export class SessionStore {
   /**
    * Apply a LiveQuery snapshot to the sdkMessages signal.
    *
-   * The snapshot is the canonical recent window (up to LIVE_QUERY_MESSAGE_LIMIT
-   * rows). It REPLACES that window wholesale — but PRESERVES any older rows the
-   * user paginated in above the window (via `prependMessages`/`loadOlderMessages`).
-   * Without this, a recovery/resume snapshot would evict the paginated prefix
-   * and a user deep-linked into older history would lose their position.
-   *
-   * On the initial load (`sdkMessages` is empty) there is no prefix, so this is
-   * equivalent to a wholesale replace.
+   * Delegates to `mergeSnapshotIntoTranscript` (see its docs for the
+   * prefix-preservation rules): the snapshot refreshes the recent window in
+   * place and, only when it fills the bounded window, preserves the older rows
+   * the user paginated in above it.
    */
   private _applyMessagesSnapshot(rows: ChatMessage[], metadata?: Record<string, unknown>): void {
-    const sorted = rows
-      .slice()
-      .sort(
-        (a, b) =>
-          ((a as ChatMessage & { timestamp?: number }).timestamp || 0) -
-          ((b as ChatMessage & { timestamp?: number }).timestamp || 0)
-      );
-
-    // Keep rows the user paginated above the window: anything strictly older
-    // than the snapshot's oldest row (and not already refreshed by it). Same-ms
-    // boundary rows are treated as in-window and replaced, matching the
-    // "snapshot replaces stale in-window content" semantics.
-    const oldestSnapshotTs = sorted.length
-      ? (sorted[0] as ChatMessage & { timestamp?: number }).timestamp || 0
-      : Infinity;
-    const snapshotIds = new Set(
-      sorted.map((r) => (r as ChatMessage & { id?: unknown }).id).filter((id) => id != null)
+    const merged = mergeSnapshotIntoTranscript(
+      this.sdkMessages.value,
+      rows,
+      LIVE_QUERY_MESSAGE_LIMIT
     );
-    const prefix = this.sdkMessages.value.filter((m) => {
-      const id = (m as ChatMessage & { id?: unknown }).id;
-      if (id != null && snapshotIds.has(id)) return false;
-      const ts = (m as ChatMessage & { timestamp?: number }).timestamp || 0;
-      return ts < oldestSnapshotTs;
-    });
-
-    this.sdkMessages.value = [...prefix, ...sorted];
+    this.sdkMessages.value = merged;
     this.backgroundTaskMessages.value = this.extractBackgroundTaskMessages(metadata);
     this._hasMoreMessages.value = rows.length >= LIVE_QUERY_MESSAGE_LIMIT;
     this._initialMessageCount.value = rows.length;
     // Mark the messages as loaded so the UI can transition from the loading
     // skeleton to either the message list or the empty-state placeholder.
     this.messagesLoaded.value = true;
-    this._syncCommandsFromSDKMessages(sorted);
+    this._syncCommandsFromSDKMessages(merged);
   }
 
   /**
@@ -1321,8 +1344,12 @@ export class SessionStore {
    *
    * Bails (returns false) once the session is switched away or destroyed — a
    * stale recovery must not churn the active session's membership. On final
-   * failure it releases any partial membership so a slow/failed join does not
-   * leak a stray membership to the next switch.
+   * failure it does NOT leave the channel: a `channel.join` ACK can be delayed
+   * past the client timeout while the server has already restored the
+   * membership, and an explicit `channel.leave` here would evict that valid
+   * membership. Staying "recovering" (without leaving) lets the next reconnect
+   * or resume re-confirm it; the release-on-supersede above still cleans up a
+   * membership acquired for a session this store no longer owns.
    */
   private async rejoinSessionChannelForRecovery(
     hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
@@ -1351,10 +1378,9 @@ export class SessionStore {
         }
       }
     }
-    // Exhausted — release the membership attempt so it does not leak.
-    if (!this.destroyed && this.activeSessionId.value === sessionId) {
-      this.releaseSessionChannel(sessionId);
-    }
+    // Exhausted — do NOT leave the channel (see docblock): the server may
+    // already have the membership from a delayed ACK. Stay recovering; the next
+    // reconnect/resume re-confirms it.
     return false;
   }
 
