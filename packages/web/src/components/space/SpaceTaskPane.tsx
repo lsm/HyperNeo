@@ -199,6 +199,15 @@ export function SpaceTaskPane({
   // continuation can detect that a newer click superseded it (not just a task
   // switch) and bail before overwriting the newer node's result.
   const nodeClickGenRef = useRef(0);
+  // Cleared on unmount so an async handleNodeClick continuation (the
+  // workflow-detail fetch) can't push overlay state after the pane is gone.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
   // Modal-local error feedback. Separate from `threadSendError` because
   // `threadSendError` is rendered inside `TaskSessionChatComposer`, which is
   // only mounted when the inline composer is visible. A failed submit-for-
@@ -698,9 +707,15 @@ export function SpaceTaskPane({
     let wf = workflow;
     if (!wf && task.postApprovalSessionId && canvasWorkflowId) {
       wf = await spaceStore.fetchWorkflowDetail(canvasWorkflowId).catch(() => null);
-      // The await may have spanned a task switch OR another node click; bail if
-      // the user has moved on so a slow fetch can't complete an obsolete click.
-      if (currentTaskIdRef.current !== task.id || nodeClickGenRef.current !== clickGen) return;
+      // The await may have spanned a task switch, another node click, OR an
+      // unmount; bail if the user has moved on so a slow fetch can't complete
+      // an obsolete click or push overlay state after unmount.
+      if (
+        !mountedRef.current ||
+        currentTaskIdRef.current !== task.id ||
+        nodeClickGenRef.current !== clickGen
+      )
+        return;
     }
     const clickedNode = wf?.nodes.find((n) => n.id === nodeId) ?? null;
     const slotLabel = (agentName: string): string => {
@@ -847,7 +862,17 @@ export function SpaceTaskPane({
         ...(clickedNodeId ? { workflowNodeId: clickedNodeId } : {}),
         ...(choice.nodeExecutionId ? { nodeExecutionId: choice.nodeExecutionId } : {}),
       };
-      pushOverlayHistory(choice.sessionId, choice.label, undefined, taskContext);
+      // Revalidate the session id at selection time: nodeChoice.choices is
+      // snapshotted at click time, so an execution that rebinds while the modal
+      // is open (restart/recovery/spawn) would otherwise open a stale session
+      // while taskContext.nodeExecutionId maps to the new one. Prefer the
+      // current agentSessionId for the choice's execution; execution-less
+      // merger choices (no nodeExecutionId) fall back to the durable snapshot.
+      const liveSessionId =
+        (choice.nodeExecutionId
+          ? nodeExecutions.find((e) => e.id === choice.nodeExecutionId)?.agentSessionId
+          : undefined) ?? choice.sessionId;
+      pushOverlayHistory(liveSessionId, choice.label, undefined, taskContext);
     } else {
       pushOverlayHistoryForPendingAgent(task.id, choice.agentName, choice.nodeId || clickedNodeId);
     }

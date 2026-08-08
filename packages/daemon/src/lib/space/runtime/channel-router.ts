@@ -548,6 +548,12 @@ export class ChannelRouter {
     );
 
     for (const agentEntry of agents) {
+      // Slot-targeted activation (ensureWorkflowNodeActivationForAgent): only
+      // create/reactivate the requested slot, never its siblings. Without this,
+      // targeting one missing/terminal slot in a partially-active multi-agent
+      // node would createOrIgnore every other missing/terminal sibling too,
+      // spawning agents the caller never selected.
+      if (options?.targetAgentName && agentEntry.name !== options.targetAgentName) continue;
       const agentName = agentEntry.name;
       const existing = existingByAgentName.get(agentName);
       if (existing) {
