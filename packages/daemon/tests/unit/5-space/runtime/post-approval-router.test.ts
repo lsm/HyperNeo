@@ -205,11 +205,12 @@ describe('PostApprovalRouter.route', () => {
     // — that tool is not registered on the post-approval node-agent surface, so
     // referencing it sends the reviewer into an unregistered tool.
     expect(delegates.spawned[0].kickoffMessage).not.toContain('request_human_input');
-    // A blocked-path artifact must be a NON-result type — mark_complete derives
-    // the task result from the latest result-artifact summary, so a "blocked"
-    // result artifact would poison a later successful completion.
+    // A blocked-path artifact must be a NON-terminal shape — mark_complete derives
+    // the task result from the latest kindless-decision summary, so a "blocked"
+    // decision would poison a later successful completion. A keyed note is the
+    // non-terminal form.
     expect(delegates.spawned[0].kickoffMessage).toMatch(/NON-result artifact/);
-    expect(delegates.spawned[0].kickoffMessage).toContain('type:"blocked"');
+    expect(delegates.spawned[0].kickoffMessage).toContain('shape:"note", kind:"blocked"');
 
     const final = taskRepo.getTask(task.id);
     expect(final?.postApprovalSessionId).toBe('spawned-session-1');
@@ -277,14 +278,10 @@ describe('PostApprovalRouter.route', () => {
       ],
     });
 
-    const result = await router.route(
-      { ...task, pendingCompletionSubmittedByNodeId: 'n2' },
-      workflow,
-      {
-        approvalSource: 'agent',
-        task_title: task.title,
-      }
-    );
+    const result = await router.route({ ...task, postApprovalSourceNodeId: 'n2' }, workflow, {
+      approvalSource: 'agent',
+      task_title: task.title,
+    });
 
     expect(result.mode).toBe('spawn');
     expect(delegates.spawned).toHaveLength(1);
@@ -327,14 +324,10 @@ describe('PostApprovalRouter.route', () => {
 
     // Task submitted by n1 (no postApproval of its own). Approval is a
     // task-level event: the router scans every node, so n2's route fires.
-    const result = await router.route(
-      { ...task, pendingCompletionSubmittedByNodeId: 'n1' },
-      workflow,
-      {
-        approvalSource: 'human',
-        task_title: task.title,
-      }
-    );
+    const result = await router.route({ ...task, postApprovalSourceNodeId: 'n1' }, workflow, {
+      approvalSource: 'human',
+      task_title: task.title,
+    });
 
     expect(result.mode).toBe('spawn');
     expect(delegates.spawned).toHaveLength(1);

@@ -22,6 +22,7 @@ import { SpaceAgentRepository } from '../../../../src/storage/repositories/space
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { GateDataRepository } from '../../../../src/storage/repositories/gate-data-repository.ts';
 import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';
+import { CodingArtifactProfile } from '../../../../src/lib/space/workflows/coding-artifact-profile.ts';
 import { ToolContinuationRecoveryRepository } from '../../../../src/storage/repositories/tool-continuation-recovery-repository.ts';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
@@ -101,6 +102,8 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
   const STEP_B = 'step-b';
 
   function makeRuntime(overrides?: Partial<SpaceRuntimeConfig>): SpaceRuntime {
+    const artifactRepo = overrides?.artifactRepo;
+    const artifactProfile = new CodingArtifactProfile(artifactRepo ? { db, artifactRepo } : { db });
     return new SpaceRuntime({
       db,
       spaceManager,
@@ -109,6 +112,7 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
       workflowRunRepo,
       taskRepo,
       nodeExecutionRepo: new NodeExecutionRepository(db),
+      artifactProfile,
       ...overrides,
     });
   }

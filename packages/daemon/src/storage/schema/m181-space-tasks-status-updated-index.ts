@@ -1,5 +1,8 @@
 /**
- * Migration 176 — covering index for the post-approval reconciler sweep (task #868).
+ * Migration 181 — covering index for the post-approval reconciler sweep (task #868).
+ *
+ * Originally authored as 176; renumbered to 181 because dev shipped intervening
+ * migrations 174–178 while this branch was in review.
  *
  * Context: `SpaceTaskRepository.listApprovedTasks` runs
  *   `SELECT * FROM space_tasks WHERE status = 'approved' ORDER BY updated_at DESC, id DESC`
@@ -30,7 +33,7 @@ function tableHasColumn(db: BunDatabase, tableName: string, columnName: string):
   return !!result;
 }
 
-export function runMigration176(db: BunDatabase): void {
+export function runMigration181(db: BunDatabase): void {
   if (!tableExists(db, 'space_tasks')) return;
   if (!tableHasColumn(db, 'space_tasks', 'updated_at')) return;
   db.exec(

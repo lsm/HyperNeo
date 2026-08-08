@@ -89,13 +89,29 @@ export interface ReviewPayload {
 }
 
 /**
+ * Match GitHub's self-review rejection across every form `gh` has been observed
+ * to surface on stderr. The API returns HTTP 422; the message text is not part
+ * of any stability guarantee and has appeared as both human prose
+ * ("reviewer cannot review their own pull request") and snake_case error codes
+ * (`user_can_not_review_own_pr`, which contains `own_pr`). Matching only the
+ * prose — as this previously did — silently misses the snake_case form, so the
+ * own-PR fallback in {@link postGitHubReview} never fired: no `Recommendation:`
+ * marker review was created, and the `merge_pr` gate (which consumes that
+ * marker) blocked every own-PR merge (task #857). `own[ _-]pr` is the broad
+ * catch-all; the explicit phrases are kept for readability/audit. This only
+ * runs after a review POST already exited non-zero, so the false-positive risk
+ * (some unrelated 422 that coincidentally mentions "own pr") is negligible.
+ */
+const OWN_PR_REJECTION_RE =
+  /own pull request|own[ _-]pr|cannot review (?:your|their) own|review(?:er)? cannot review|review_own_pr|cannot_review_own_pr|user_can_not_review_own_pr/i;
+
+/**
  * Detect whether a `gh api` failure is GitHub rejecting the caller's own PR
  * review (APPROVE / REQUEST_CHANGES are forbidden from the PR author). GitHub
- * returns HTTP 422 with a "reviewer cannot review their own pull request"
- * message, which `gh` surfaces on stderr.
+ * returns HTTP 422; `gh` surfaces the message on stderr.
  */
 export function isOwnPrRejection(error: string): boolean {
-  return /own pull request|cannot review your own|reviewer cannot review/i.test(error);
+  return OWN_PR_REJECTION_RE.test(error);
 }
 
 /**

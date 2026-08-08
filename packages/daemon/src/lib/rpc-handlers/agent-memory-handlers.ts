@@ -26,6 +26,20 @@ export function setupAgentMemoryHandlers(
     });
   });
 
+  // Atomic insert-only create: fails when the (spaceId, key) already exists, so
+  // the management UI's "New Memory" flow can never silently overwrite. Edits
+  // go through agentMemory.write (upsert) instead.
+  messageHub.onRequest('agentMemory.create', async (payload: unknown) => {
+    const request = parseSpaceScopedRequest(payload);
+    return deps.memoryRepo.create({
+      spaceId: request.spaceId,
+      key: readRequiredString(payload, 'key'),
+      content: readRequiredString(payload, 'content'),
+      tags: readOptionalStringArray(payload, 'tags'),
+      createdBySession: null,
+    });
+  });
+
   messageHub.onRequest('agentMemory.search', async (payload: unknown) => {
     const request = parseSpaceScopedRequest(payload);
     return deps.memoryRepo.search(
@@ -37,7 +51,9 @@ export function setupAgentMemoryHandlers(
 
   messageHub.onRequest('agentMemory.read', async (payload: unknown) => {
     const request = parseSpaceScopedRequest(payload);
-    return deps.memoryRepo.read(request.spaceId, readRequiredString(payload, 'key'));
+    return deps.memoryRepo.read(request.spaceId, readRequiredString(payload, 'key'), {
+      recordAccess: readOptionalBoolean(payload, 'recordAccess'),
+    });
   });
 
   messageHub.onRequest('agentMemory.delete', async (payload: unknown) => {
@@ -51,6 +67,9 @@ export function setupAgentMemoryHandlers(
       query: readOptionalString(payload, 'query') ?? undefined,
       limit: readOptionalInteger(payload, 'limit') ?? 50,
       offset: readOptionalInteger(payload, 'offset') ?? 0,
+      // Management reads must not mutate agent telemetry (access_count /
+      // last_accessed_at), which drives core-ranking and stale-pruning.
+      recordAccess: false,
     });
   });
 }
@@ -97,6 +116,13 @@ function readOptionalInteger(payload: unknown, key: string): number | undefined 
   if (!Number.isSafeInteger(value)) {
     throw new Error(`${key} must be a safe integer.`);
   }
+  return value;
+}
+
+function readOptionalBoolean(payload: unknown, key: string): boolean | undefined {
+  const value = readRecord(payload)[key];
+  if (value === undefined) return undefined;
+  if (typeof value !== 'boolean') throw new Error(`${key} must be a boolean.`);
   return value;
 }
 

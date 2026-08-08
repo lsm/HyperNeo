@@ -12,6 +12,7 @@ import type {
   EvolutionImpact,
   EvolutionLesson,
   EvolutionLessonStatus,
+  EvolutionListPagination,
   EvolutionScope,
   SpaceTaskPriority,
   MetricSnapshot,
@@ -34,6 +35,7 @@ import type {
   WorkflowRunArtifactRepository,
 } from '../../storage/repositories/workflow-run-artifact-repository';
 import type { SpaceGoalService } from './goals/goal-service';
+import type { WorkflowArtifactProfile } from './runtime/artifact-profile';
 import { isRunningUnderBun, resolveSDKCliPath } from '../agent/sdk-cli-resolver';
 import { Logger } from '../logger';
 import { getProviderService, mergeProviderEnvVars } from '../provider-service';
@@ -118,6 +120,12 @@ export interface EvolutionEpisodeServiceDeps {
   taskRepo: SpaceTaskRepository;
   workflowRunRepo: SpaceWorkflowRunRepository;
   artifactRepo: WorkflowRunArtifactRepository;
+  /**
+   * Domain artifact profile. Used by the result-artifact gap detector to read
+   * a run's terminal outcome (coding: the kindless `decision` summary) without
+   * this service naming domain kinds.
+   */
+  artifactProfile?: WorkflowArtifactProfile;
   goalService?: Pick<SpaceGoalService, 'getGoal' | 'updateGoal'>;
   taskIdFactory?: () => string;
   db?: BunDatabase;
@@ -249,9 +257,9 @@ export class EvolutionEpisodeService {
     };
   }
 
-  listEpisodes(scopeId: string): EvolutionEpisode[] {
+  listEpisodes(scopeId: string, pagination?: EvolutionListPagination): EvolutionEpisode[] {
     this.requireScope(scopeId);
-    return this.deps.evolutionRepo.listEpisodes(scopeId);
+    return this.deps.evolutionRepo.listEpisodes(scopeId, pagination);
   }
 
   getEpisode(id: string): EvolutionEpisode | null {
@@ -268,18 +276,22 @@ export class EvolutionEpisodeService {
     return this.deps.evolutionRepo.updateEpisode(id, safeParams);
   }
 
-  listReviewBundle(scopeId: string): EpisodeReviewBundle {
+  listReviewBundle(scopeId: string, pagination?: EvolutionListPagination): EpisodeReviewBundle {
     this.requireScope(scopeId);
     return {
-      episodes: this.deps.evolutionRepo.listEpisodes(scopeId),
+      episodes: this.deps.evolutionRepo.listEpisodes(scopeId, pagination),
       lessons: this.deps.evolutionRepo.listLessons(scopeId),
       proposals: this.deps.evolutionRepo.listTaskProposals(scopeId),
     };
   }
 
-  listLessons(scopeId: string, status?: EvolutionLessonStatus): EvolutionLesson[] {
+  listLessons(
+    scopeId: string,
+    status?: EvolutionLessonStatus,
+    pagination?: EvolutionListPagination
+  ): EvolutionLesson[] {
     this.requireScope(scopeId);
-    return this.deps.evolutionRepo.listLessons(scopeId, status);
+    return this.deps.evolutionRepo.listLessons(scopeId, status, pagination);
   }
 
   getLesson(id: string): EvolutionLesson | null {
@@ -290,9 +302,13 @@ export class EvolutionEpisodeService {
     return this.deps.evolutionRepo.updateLesson(id, params);
   }
 
-  listTaskProposals(scopeId: string, status?: TaskProposalStatus): TaskProposal[] {
+  listTaskProposals(
+    scopeId: string,
+    status?: TaskProposalStatus,
+    pagination?: EvolutionListPagination
+  ): TaskProposal[] {
     this.requireScope(scopeId);
-    return this.deps.evolutionRepo.listTaskProposals(scopeId, status);
+    return this.deps.evolutionRepo.listTaskProposals(scopeId, status, pagination);
   }
 
   getTaskProposal(id: string): TaskProposal | null {
@@ -473,18 +489,9 @@ export class EvolutionEpisodeService {
 
       let hasResultArtifact = runHasResultArtifact.get(runId);
       if (hasResultArtifact === undefined) {
-        // The terminal "result" is a kind-less `decision` carrying a summary
-        // (legacy result→decision has no kind; review/gate decisions carry a
-        // kind and are not terminal).
-        const decisions = this.deps.artifactRepo.listByRun(runId, {
-          artifactType: 'decision',
-        });
-        hasResultArtifact = decisions.some(
-          (artifact) =>
-            !artifact.data.kind &&
-            typeof artifact.data.summary === 'string' &&
-            artifact.data.summary.trim().length > 0
-        );
+        // Delegated to the domain artifact profile (coding: the kindless
+        // terminal `decision` summary).
+        hasResultArtifact = this.deps.artifactProfile?.summarizeRunOutcome(runId) != null;
         runHasResultArtifact.set(runId, hasResultArtifact);
       }
       if (!hasResultArtifact) return;

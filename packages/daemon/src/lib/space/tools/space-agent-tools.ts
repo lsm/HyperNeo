@@ -37,6 +37,7 @@ import type {
   SpaceGoalStatus,
   SpaceGoalType,
   SpaceAgentAutonomyLevel,
+  SpaceApprovalSource,
   SpaceLongHorizonAgent,
   SpaceLongHorizonAgentStatus,
   SpaceLongHorizonAgentTemplate,
@@ -79,8 +80,12 @@ import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types
 import type { ActorResolver } from '../../../../../messaging/src/contracts';
 import type { SpaceRuntime } from '../runtime/space-runtime';
 import type { TaskAgentManager } from '../runtime/task-agent-manager';
+import { mapPostApprovalDispatchWarning } from '../runtime/post-approval-router';
+import type { SpaceMcpSessionRole } from '../runtime/space-mcp-session-policy';
 import type { ToolResult } from './tool-result';
 import { jsonResult } from './tool-result';
+import { runMergePr } from './merge-pr-handler';
+import type { MergePrDeps } from '../runtime/merge-pr-gh';
 import { validateGlobPattern, validateSource } from '../../external-events/topic-validator';
 import type { ExternalEventStore } from '../../external-events/external-event-store';
 import { getAvailableModels, getModelInfoUnfiltered, isValidModel } from '../../model-service';
@@ -571,6 +576,13 @@ export interface SpaceAgentToolsConfig {
    * created via `create_standalone_task`.
    */
   mySessionId?: string;
+  /**
+   * The calling session's Space MCP role (coordinator, ad-hoc member, long-term
+   * agent, …). `approve_pending_completion` is gated to the `coordinator` and
+   * `legacy_task_agent` roles only — worker node agents must self-close via
+   * `approve_task`. When omitted, `approve_pending_completion` rejects the caller.
+   */
+  callerRole?: SpaceMcpSessionRole;
 
   /**
    * Optional self-heal callback exposed as the `restore_node_agent` tool.
@@ -634,6 +646,13 @@ export interface SpaceAgentToolsConfig {
    * the current space so events never leak across spaces.
    */
   externalEventStore?: ExternalEventStore;
+  /**
+   * Injected dependencies for the `merge_pr` deterministic merge gate. When
+   * omitted, the handler builds production deps from `Bun.spawn` + the Space
+   * workspace path. Tests inject a fully-mocked {@link MergePrDeps} (no gh /
+   * network).
+   */
+  mergePrDeps?: MergePrDeps;
 }
 
 // ---------------------------------------------------------------------------
@@ -665,6 +684,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     myAgentNameAliases,
     myAgentId,
     mySessionId,
+    callerRole,
     replyRoutingRegistry,
     messageResolver,
     longTermAgentDelivery,
@@ -3568,6 +3588,119 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     },
 
     /**
+     * Human-approval path for tasks paused at a `submit_for_approval` checkpoint
+     * (`pendingCheckpointType === 'task_completion'`). This is the MCP surface for
+     * the coordinator to close the human-approval loop programmatically — the
+     * same path the UI "Approve" banner triggers via the
+     * `spaceTask.approvePendingCompletion` RPC.
+     *
+     * NOT autonomy-gated: it represents an explicit human decision routed through
+     * the coordinator (the coordinator's own autonomy is enforced by its prompt,
+     * not here). Restricted to the `coordinator` / `legacy_task_agent` caller
+     * roles — worker node agents self-close via `approve_task` instead.
+     *
+     * - approved: true  → review → approved via `runtime.dispatchPostApproval`,
+     *   which stamps approval metadata and fires the PostApprovalRouter.
+     * - approved: false → review → in_progress (rejection); reason recorded as
+     *   approvalReason.
+     */
+    async approve_pending_completion(args: {
+      task_id: string;
+      approved: boolean;
+      reason?: string | null;
+    }): Promise<ToolResult> {
+      if (callerRole !== 'coordinator' && callerRole !== 'legacy_task_agent') {
+        return jsonResult({
+          success: false,
+          error:
+            'approve_pending_completion is only available to the coordinator and task-agent sessions. Worker node agents must use approve_task to self-close.',
+        });
+      }
+
+      const task = taskRepo.getTask(args.task_id);
+      if (!task) {
+        return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
+      }
+      if (task.spaceId !== spaceId) {
+        return jsonResult({
+          success: false,
+          error: `Task ${args.task_id} does not belong to this space.`,
+        });
+      }
+      if (task.pendingCheckpointType !== 'task_completion') {
+        return jsonResult({
+          success: false,
+          error: `Task ${args.task_id} is not awaiting submit_for_approval review (pendingCheckpointType=${task.pendingCheckpointType ?? 'null'}).`,
+        });
+      }
+      if (task.status !== 'review') {
+        return jsonResult({
+          success: false,
+          error: `Task ${args.task_id} is not in 'review' status (current: ${task.status}).`,
+        });
+      }
+
+      try {
+        let updated: SpaceTask;
+        if (args.approved) {
+          // Delegate review → approved + PostApprovalRouter to the runtime. This
+          // is the sole approval path — `setTaskStatus('approved')` is never
+          // called directly here so the centralised transition + router
+          // invariant holds. The `approvalSource` is always 'human' for this
+          // tool: it exists precisely to route an explicit human decision.
+          //
+          // Layer C robustness (task #848): the status transition commits inside
+          // dispatchPostApproval BEFORE the async post-approval dispatch. If that
+          // dispatch throws (e.g. an SDK "user interrupted" abort during
+          // sub-session spawn), the approval is nonetheless durable — capture the
+          // failure as a post-approval-blocked reason rather than surfacing the
+          // raw throw (which would make the caller retry and hit the
+          // double-approval guard). Only rethrow when the task never reached
+          // `approved` (the transition itself failed).
+          try {
+            await runtime.dispatchPostApproval(args.task_id, 'human' as SpaceApprovalSource, {
+              approvalReason: args.reason ?? null,
+            });
+          } catch (dispatchErr) {
+            const afterCommit = taskRepo.getTask(args.task_id);
+            if (afterCommit?.status !== 'approved') throw dispatchErr;
+            const detail = dispatchErr instanceof Error ? dispatchErr.message : String(dispatchErr);
+            log.warn(
+              `approve_pending_completion: post-approval dispatch failed for task ${args.task_id} after status commit (${detail}); capturing as post-approval-blocked`
+            );
+            await taskManager.updateTask(args.task_id, {
+              postApprovalBlockedReason: mapPostApprovalDispatchWarning(detail),
+            });
+          }
+          const refreshed = taskRepo.getTask(args.task_id);
+          if (!refreshed) throw new Error(`Task not found: ${args.task_id}`);
+          updated = refreshed;
+        } else {
+          // review → in_progress (reject). setTaskStatus clears the pending-
+          // completion fields in the same UPDATE (centralised "exit review"
+          // cleanup), so the follow-up updateTask only stamps the rejection
+          // reason. Mirrors the RPC handler's reject branch.
+          updated = await taskManager.setTaskStatus(args.task_id, 'in_progress');
+          updated = await taskManager.updateTask(args.task_id, {
+            approvalReason: args.reason ?? null,
+          });
+        }
+
+        emitTaskUpdated(updated);
+        logAudit(
+          'approve_pending_completion',
+          { approved: args.approved, reason: args.reason, previousStatus: task.status },
+          args.task_id
+        );
+
+        return jsonResult({ success: true, task: updated });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return jsonResult({ success: false, error: message });
+      }
+    },
+
+    /**
      * List goals for this space, optionally filtered by status.
      */
     async list_goals(args: { status?: SpaceGoalStatus } = {}): Promise<ToolResult> {
@@ -4903,6 +5036,46 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
         reason: z.string().optional().describe('Reason for approval'),
       },
       (args) => handlers.approve_task(args)
+    ),
+    tool(
+      'approve_pending_completion',
+      "Approve or reject a task paused at a submit_for_approval checkpoint (the human-approval path). This is the coordinator's programmatic equivalent of the UI 'Approve' banner: approved transitions review → approved and fires the post-approval router; rejected transitions review → in_progress. Coordinator/task-agent sessions only — worker node agents use approve_task to self-close.",
+      {
+        task_id: z.string().describe('ID of the task awaiting submit_for_approval review'),
+        approved: z
+          .boolean()
+          .describe(
+            'true to approve (review → approved, fires post-approval router); false to reject (review → in_progress)'
+          ),
+        reason: z
+          .string()
+          .nullable()
+          .optional()
+          .describe('Optional approval/rejection note; recorded on the task as approvalReason'),
+      },
+      (args) => handlers.approve_pending_completion(args)
+    ),
+    tool(
+      'merge_pr',
+      'Deterministic post-approval PR merge gate (task #866). This is the supported, audited way ' +
+        'to merge a PR after task approval — direct `gh pr merge` is blocked on the Merger slot ' +
+        '(defense-in-depth; this tool is the authoritative gate). The tool verifies the PR is open, ' +
+        'the current head has a covering approval (real GitHub APPROVED review, or an own-PR ' +
+        '"Recommendation: APPROVE" comment from the PR author whose commit_id equals the current ' +
+        'head), required CI is passing, there are no unresolved review conversations, no ' +
+        'outstanding CHANGES_REQUESTED, and branch-protection review requirements are satisfied — ' +
+        'then merges bound to the validated head via --match-head-commit. A Space task approval ' +
+        '(approval_source) does NOT authorize a merge; only a current-head GitHub approval does. ' +
+        'Restricted to the designated post-approval merger session for this task, and bound to ' +
+        'the PR recorded for that task; returns structured blockers (relay them to the approval ' +
+        'authority) or the merge result.',
+      {
+        pr_url: z.string().describe('GitHub PR URL to merge'),
+        task_id: z
+          .string()
+          .describe('The approved Space task whose PR is being merged (authorizes the call)'),
+      },
+      (args) => runMergePr(args, config)
     ),
   ];
 

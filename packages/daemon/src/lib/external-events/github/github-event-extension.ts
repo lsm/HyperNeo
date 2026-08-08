@@ -183,10 +183,29 @@ const WEBHOOK_EVENTS = [
   'check_suite',
   'deployment',
   'deployment_status',
+  'branch_protection_rule',
+  // App-only webhook (spec #2320 row 6): GitHub delivers merge_group only via
+  // App webhooks, never repo/org. Included so an app-webhook-configured hook
+  // requests it; excluded from REQUIRED_WEBHOOK_EVENTS because repo-webhook users
+  // can never receive it (otherwise the health panel flags it missing for all).
+  'merge_group',
 ];
 // GitHub does not send issue/PR webhooks for reactions on the PR itself.
 // Codex approval reactions are therefore polling-only via /issues/{number}/reactions.
-const REQUIRED_WEBHOOK_EVENTS = WEBHOOK_EVENTS.filter((event) => event !== 'push');
+// `push` carries no PR signal; `merge_group` is app-only and undeliverable for
+// repo-webhook users, so neither counts toward health-completeness. The other
+// webhook events (incl. branch_protection_rule / deployment*) ARE deliverable
+// via repo webhooks and stay required.
+const REQUIRED_WEBHOOK_EVENTS = WEBHOOK_EVENTS.filter(
+  (event) => event !== 'push' && event !== 'merge_group'
+);
+// Events actually requestable on a REPOSITORY hook. App-only events
+// (`merge_group`) are excluded — GitHub rejects them on repo hooks (422) and
+// never delivers them there. `merge_group` stays in WEBHOOK_EVENTS above so the
+// normalizer handles it and so a future app-webhook delivery path can request
+// it; it just must not be sent to the repo-hook API (createRemoteWebhook /
+// updateRemoteWebhook).
+const REPO_HOOK_WEBHOOK_EVENTS = WEBHOOK_EVENTS.filter((event) => event !== 'merge_group');
 const WEBHOOK_PATH = '/webhook/github/space';
 
 interface GitHubEventExtensionOptions {
@@ -242,6 +261,69 @@ interface GitHubHookResponse {
     content_type?: string;
   };
 }
+
+/**
+ * The merge-blocking event ingest paths surfaced in the health panel (spec
+ * #2320 rows 1/2/4/5/6/7). The `mergeStateStatus` poller (row 3, #2323) is a
+ * separate source that has not landed yet, so it is intentionally absent here
+ * — surfacing it before the source exists would be dead UI over no data.
+ */
+export type GitHubHealthEventTypeKey =
+  | 'status'
+  | 'review_thread'
+  | 'deployment'
+  | 'check_suite'
+  | 'merge_group'
+  | 'branch_protection';
+
+/** Surfaced event types in display order, with their operator-facing labels. */
+const GITHUB_HEALTH_EVENT_TYPES: ReadonlyArray<{ key: GitHubHealthEventTypeKey; label: string }> = [
+  { key: 'status', label: 'Commit status' },
+  { key: 'review_thread', label: 'Review threads' },
+  { key: 'deployment', label: 'Deployments' },
+  { key: 'check_suite', label: 'Check suites' },
+  { key: 'merge_group', label: 'Merge queue' },
+  { key: 'branch_protection', label: 'Branch protection' },
+];
+
+/**
+ * Maps a topic-action suffix (the segment after the final `.`) to one of the
+ * surfaced event types. `deployment` rolls up both `deployment_created` and the
+ * state-bearing `deployment_status_*` actions (spec row 4 covers both). Any
+ * suffix not listed here is an older/other ingest path (issue comments, generic
+ * pull_request actions, …) and is intentionally left out of this breakdown.
+ *
+ * `merge_group` also rolls up the `pull_request` `.enqueued` / `.dequeued`
+ * topics (spec row 8): `merge_group` is an app-only webhook undeliverable over a
+ * repo/org hook (excluded from REPO_HOOK_WEBHOOK_EVENTS), so for the common
+ * PAT/repo-webhook installation those queue-transition topics are the only
+ * merge-queue signal that ever arrives. Without them the "Merge queue" row would
+ * read zero even while queue traffic is being ingested.
+ */
+const TOPIC_SUFFIX_TO_HEALTH_TYPE: Record<string, GitHubHealthEventTypeKey> = {
+  status_pending: 'status',
+  status_success: 'status',
+  status_failure: 'status',
+  status_error: 'status',
+  thread_resolved: 'review_thread',
+  thread_unresolved: 'review_thread',
+  deployment_created: 'deployment',
+  deployment_status_success: 'deployment',
+  deployment_status_failure: 'deployment',
+  deployment_status_error: 'deployment',
+  deployment_status_in_progress: 'deployment',
+  deployment_status_queued: 'deployment',
+  deployment_status_pending: 'deployment',
+  suite_failed: 'check_suite',
+  merge_group_checks_requested: 'merge_group',
+  merge_group_destroyed: 'merge_group',
+  // Repo-webhook fallback for the app-only merge_group webhook (spec row 8).
+  enqueued: 'merge_group',
+  dequeued: 'merge_group',
+  branch_protection_created: 'branch_protection',
+  branch_protection_edited: 'branch_protection',
+  branch_protection_deleted: 'branch_protection',
+};
 
 /**
  * Per-repository rollup included in {@link GitHubHealthSnapshot}. Mirrors the
@@ -386,6 +468,22 @@ export interface GitHubHealthSnapshot {
   }>;
   /** True count of recent failed deliveries (recentErrors is capped at 5). */
   recentErrorTotal: number;
+  /**
+   * Recent ingestion activity for the merge-blocking event paths the panel
+   * surfaces (spec #2320 rows 1/2/4/5/6/7), each over the same recency window
+   * as {@link recentErrors}. One entry per surfaced type (count 0 / lastAt null
+   * when none observed in the window) so the panel can render a stable layout.
+   * The mergeStateStatus poller (row 3) is tracked separately (#2323) and is
+   * omitted until that source lands.
+   */
+  eventTypes: Array<{
+    type: GitHubHealthEventTypeKey;
+    label: string;
+    /** Events of this type ingested within the recency window. */
+    count: number;
+    /** Most recent `ingested_at` of this type in the window; null if none. */
+    lastAt: number | null;
+  }>;
   repositories: GitHubHealthRepoSummary[];
 }
 
@@ -493,10 +591,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     this.context = context;
     this.stopped = false;
     // Best-effort, non-blocking: bring existing daemon-managed hooks into sync
-    // with the current WEBHOOK_EVENTS set (e.g. a new event type added since the
-    // hook was registered). Never blocks or fails startup; per-repo errors are
-    // logged and skipped inside the sweep. Opt-in (app.ts) so unit tests don't
-    // fire background API calls.
+    // with the current repo-hook event set (REPO_HOOK_WEBHOOK_EVENTS — e.g. a
+    // new event type added since the hook was registered; app-only events are
+    // excluded). Never blocks or fails startup; per-repo errors are logged and
+    // skipped inside the sweep. Opt-in (app.ts) so unit tests don't fire
+    // background API calls.
     if (this.options.autoReconcileWebhooks) {
       this.reconcileSweepPromise = this.reconcileManagedWebhooks()
         .catch((error) => {
@@ -2174,6 +2273,42 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       updatedSince: recentCutoff,
     });
 
+    // Recent ingestion activity per merge-blocking event type. Reuse the same
+    // recency window as recentErrors so the breakdown and the error rollup
+    // describe the same horizon. The store returns raw per-topic counts; reduce
+    // them here by the topic-action suffix so the source-agnostic store never
+    // has to know a GitHub kind. Types with no events in the window still emit a
+    // 0-count entry so the panel renders a stable layout.
+    const eventTypeBuckets = this.eventStore.listEventCountsByTopic({
+      spaceId,
+      source: 'github',
+      since: recentCutoff,
+    });
+    const eventTypeAccumulators = GITHUB_HEALTH_EVENT_TYPES.reduce(
+      (acc, { key }) => {
+        acc[key] = { count: 0, lastAt: 0 };
+        return acc;
+      },
+      {} as Record<GitHubHealthEventTypeKey, { count: number; lastAt: number }>
+    );
+    for (const bucket of eventTypeBuckets) {
+      // The action suffix is the segment after the final `.` — repo names may
+      // contain dots, but the action itself never does, so lastIndexOf lands on
+      // the entityId/action separator regardless of owner/repo naming.
+      const suffix = bucket.topic.slice(bucket.topic.lastIndexOf('.') + 1);
+      const type = TOPIC_SUFFIX_TO_HEALTH_TYPE[suffix];
+      if (!type) continue;
+      const acc = eventTypeAccumulators[type];
+      acc.count += bucket.count;
+      if (bucket.lastAt > acc.lastAt) acc.lastAt = bucket.lastAt;
+    }
+    const eventTypes = GITHUB_HEALTH_EVENT_TYPES.map(({ key, label }) => ({
+      type: key,
+      label,
+      count: eventTypeAccumulators[key].count,
+      lastAt: eventTypeAccumulators[key].lastAt > 0 ? eventTypeAccumulators[key].lastAt : null,
+    }));
+
     return {
       source: 'github',
       spaceId,
@@ -2228,6 +2363,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       })),
       // True count of recent failures (recentErrors is capped at 5 for display).
       recentErrorTotal,
+      eventTypes,
       repositories: watched.map((repo) => ({
         owner: repo.owner,
         repo: repo.repo,
@@ -2725,10 +2861,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
   /**
    * Best-effort: if a daemon-managed (auto-registered) hook is missing required
-   * events, PATCH it back to the full `WEBHOOK_EVENTS` set. Closes the gap left
-   * when `WEBHOOK_EVENTS` grows (e.g. a new event type like
-   * `pull_request_review_thread`) but the hook was registered before that event
-   * existed and has not been re-registered since.
+   * events, PATCH it back to the repo-hook event set (`REPO_HOOK_WEBHOOK_EVENTS`,
+   * which excludes app-only events like `merge_group` — GitHub rejects those on
+   * repo hooks). Closes the gap left when the set grows (e.g. a new event type
+   * like `pull_request_review_thread`) but the hook was registered before that
+   * event existed and has not been re-registered since.
    *
    * Only daemon-managed hooks are touched; only when events are actually
    * missing (steady state does one GET, no PATCH). Reuses `updateRemoteWebhook`,
@@ -2934,7 +3071,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       body: JSON.stringify({
         name: 'web',
         active: true,
-        events: WEBHOOK_EVENTS,
+        events: REPO_HOOK_WEBHOOK_EVENTS,
         config: {
           url: webhookUrl,
           content_type: 'json',
@@ -2956,7 +3093,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       method: 'PATCH',
       body: JSON.stringify({
         active: true,
-        events: WEBHOOK_EVENTS,
+        events: REPO_HOOK_WEBHOOK_EVENTS,
         config: {
           url: webhookUrl,
           content_type: 'json',
@@ -4125,11 +4262,12 @@ function validateRemoteHook(watched: GitHubWatchedRepo, hook: GitHubHookResponse
 /**
  * True when the ONLY thing wrong with `hook` is missing required events — it is
  * active, points at this daemon's endpoint (when one is stored) with JSON
- * content type, and is merely behind the WEBHOOK_EVENTS set. Reconciliation is
- * event-only drift repair: it must NOT fire when the hook is also disabled or
- * has been repointed on GitHub, since `updateRemoteWebhook` would force
- * `active: true` and restore the stored URL/secret, silently reverting a
- * deliberate change. Mirrors the non-event preconditions of `validateRemoteHook`.
+ * content type, and is merely behind the repo-hook event set
+ * (`REPO_HOOK_WEBHOOK_EVENTS`). Reconciliation is event-only drift repair: it
+ * must NOT fire when the hook is also disabled or has been repointed on GitHub,
+ * since `updateRemoteWebhook` would force `active: true` and restore the stored
+ * URL/secret, silently reverting a deliberate change. Mirrors the non-event
+ * preconditions of `validateRemoteHook`.
  */
 function isOnlyMissingEvents(watched: GitHubWatchedRepo, hook: GitHubHookResponse): boolean {
   if (!hook.active) return false;

@@ -600,7 +600,7 @@ jobs:
 
       - name: Run CLI tests
         working-directory: packages/cli
-        run: ../../node_modules/.bin/vitest run
+        run: bunx vitest run
 
   # ============================================
   # COVERALLS FINALIZATION

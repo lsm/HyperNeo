@@ -1,8 +1,8 @@
 /**
- * Migration 176 Tests — covering index for the post-approval reconciler sweep.
+ * Migration 181 Tests — covering index for the post-approval reconciler sweep.
  *
  * `listApprovedTasks` runs `WHERE status='approved' ORDER BY updated_at DESC,
- * id DESC` every reconciler sweep. Migration 176 adds a covering index
+ * id DESC` every reconciler sweep. Migration 181 adds a covering index
  * `idx_space_tasks_status_updated` on `(status, updated_at DESC, id DESC)`.
  *
  * Covers:
@@ -17,7 +17,7 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
-import { runMigration176 } from '../../../../../src/storage/schema/m176-space-tasks-status-updated-index';
+import { runMigration181 } from '../../../../../src/storage/schema/m181-space-tasks-status-updated-index';
 
 function indexExists(db: BunDatabase, name: string): boolean {
   const row = db
@@ -44,7 +44,7 @@ function seedSpaceTasks(db: BunDatabase): void {
   `);
 }
 
-describe('Migration 176: idx_space_tasks_status_updated covering index', () => {
+describe('Migration 181: idx_space_tasks_status_updated covering index', () => {
   let testDir: string;
   let db: BunDatabase;
 
@@ -74,13 +74,13 @@ describe('Migration 176: idx_space_tasks_status_updated covering index', () => {
 
   test('creates the covering index when updated_at exists', () => {
     seedSpaceTasks(db);
-    runMigration176(db);
+    runMigration181(db);
     expect(indexExists(db, 'idx_space_tasks_status_updated')).toBe(true);
   });
 
   test('the index serves the listApprovedTasks query', () => {
     seedSpaceTasks(db);
-    runMigration176(db);
+    runMigration181(db);
     // Seed a mix of statuses so the planner has a reason to use the index.
     const stmt = db.prepare(`INSERT INTO space_tasks (id, status, updated_at) VALUES (?, ?, ?)`);
     stmt.run('t1', 'approved', 3);
@@ -99,8 +99,8 @@ describe('Migration 176: idx_space_tasks_status_updated covering index', () => {
 
   test('is idempotent — a second run does not throw and the index remains', () => {
     seedSpaceTasks(db);
-    runMigration176(db);
-    expect(() => runMigration176(db)).not.toThrow();
+    runMigration181(db);
+    expect(() => runMigration181(db)).not.toThrow();
     expect(indexExists(db, 'idx_space_tasks_status_updated')).toBe(true);
   });
 
@@ -113,12 +113,12 @@ describe('Migration 176: idx_space_tasks_status_updated covering index', () => {
         task_agent_session_id TEXT
       )
     `);
-    expect(() => runMigration176(db)).not.toThrow();
+    expect(() => runMigration181(db)).not.toThrow();
     expect(indexExists(db, 'idx_space_tasks_status_updated')).toBe(false);
   });
 
   test('is a no-op when space_tasks does not exist', () => {
-    expect(() => runMigration176(db)).not.toThrow();
+    expect(() => runMigration181(db)).not.toThrow();
     expect(tableExists(db, 'space_tasks')).toBe(false);
     expect(indexExists(db, 'idx_space_tasks_status_updated')).toBe(false);
   });

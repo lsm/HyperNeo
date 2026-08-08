@@ -1,5 +1,5 @@
 /**
- * Migration 174 Tests — post-approval completion resumability columns (task #868).
+ * Migration 179 Tests — post-approval completion resumability columns (task #868).
  *
  * Adds four nullable `space_tasks` columns backing the daemon-side deterministic
  * completion tail: `post_approval_progress` (JSON), `post_approval_lease_owner`,
@@ -7,7 +7,7 @@
  *
  * Covers:
  *   - Fresh, fully-migrated DB has all four columns.
- *   - Pre-M174 schema (columns absent) gains them after the migration.
+ *   - Pre-M179 schema (columns absent) gains them after the migration.
  *   - The migration is idempotent (re-running is a no-op).
  *   - `tableExists` guard: skipped cleanly when `space_tasks` is absent.
  */
@@ -15,7 +15,7 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../../src/storage/schema/migrations.ts';
-import { runMigration174 } from '../../../../../src/storage/schema/m174-post-approval-completion-columns';
+import { runMigration179 } from '../../../../../src/storage/schema/m179-post-approval-completion-columns';
 
 function columnNames(db: BunDatabase, table: string): string[] {
   const rows = db.prepare(`PRAGMA table_info('${table}')`).all() as Array<{ name: string }>;
@@ -29,7 +29,7 @@ const EXPECTED = [
   'post_approval_completion_status',
 ];
 
-describe('Migration 174 — post-approval completion columns', () => {
+describe('Migration 179 — post-approval completion columns', () => {
   let db: BunDatabase;
   beforeEach(() => {
     db = new BunDatabase(':memory:');
@@ -42,9 +42,9 @@ describe('Migration 174 — post-approval completion columns', () => {
     for (const c of EXPECTED) expect(cols).toContain(c);
   });
 
-  test('adds the columns when absent (pre-M174 schema)', () => {
-    // Minimal pre-M174 space_tasks with the M103 post-approval columns present
-    // (so we are simulating a DB that ran M103 but not M174).
+  test('adds the columns when absent (pre-M179 schema)', () => {
+    // Minimal pre-M179 space_tasks with the M103 post-approval columns present
+    // (so we are simulating a DB that ran M103 but not M179).
     db.exec(`
       CREATE TABLE spaces (id TEXT PRIMARY KEY, workspace_path TEXT, slug TEXT, name TEXT);
       CREATE TABLE space_tasks (
@@ -60,7 +60,7 @@ describe('Migration 174 — post-approval completion columns', () => {
     const before = columnNames(db, 'space_tasks');
     for (const c of EXPECTED) expect(before).not.toContain(c);
 
-    runMigration174(db);
+    runMigration179(db);
 
     const after = columnNames(db, 'space_tasks');
     for (const c of EXPECTED) expect(after).toContain(c);
@@ -73,16 +73,16 @@ describe('Migration 174 — post-approval completion columns', () => {
         id TEXT PRIMARY KEY, space_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open'
       );
     `);
-    runMigration174(db);
+    runMigration179(db);
     const afterFirst = columnNames(db, 'space_tasks');
-    runMigration174(db); // second run must not throw / not duplicate
+    runMigration179(db); // second run must not throw / not duplicate
     const afterSecond = columnNames(db, 'space_tasks');
     expect(afterSecond).toEqual(afterFirst);
   });
 
   test('no-op when space_tasks does not exist', () => {
     // Should not throw.
-    runMigration174(db);
+    runMigration179(db);
     expect(columnNames(db, 'space_tasks')).toEqual([]);
   });
 });

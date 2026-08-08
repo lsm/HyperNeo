@@ -103,10 +103,10 @@ describe('composeGitHubSubscriptionPattern', () => {
         'must match supported shape "owner/repo/pull_request/<id>.<action>"'
       );
     });
-    test('rejects unsupported resources (only pull_request is supported)', () => {
+    test('rejects unsupported resources (supported: pull_request, repo)', () => {
       expect(() =>
         composeGitHubSubscriptionPattern('github', 'github/owner/repo/issues/42.opened')
-      ).toThrow('uses unsupported resource "issues"; supported resources: pull_request');
+      ).toThrow('uses unsupported resource "issues"; supported resources: pull_request, repo');
     });
     test('rejects a bare action with no dotted entity on a source-prefixed 3-segment topic', () => {
       expect(() =>
@@ -128,6 +128,45 @@ describe('composeGitHubSubscriptionPattern', () => {
         'uses unsupported resource "something"; supported resources: pull_request'
       );
     });
+  });
+});
+
+describe('repo resource (branch_protection_rule, spec row 7)', () => {
+  test('accepts the repo resource in a fully-qualified 5-segment topic', () => {
+    expect(
+      composeGitHubSubscriptionPattern(
+        'github',
+        'github/acme/widgets/repo/main.branch_protection_created'
+      )
+    ).toBe('github/acme/widgets/repo/main.branch_protection_created');
+  });
+  test('accepts the repo resource in the owner/repo/resource.action shorthand', () => {
+    expect(
+      composeGitHubSubscriptionPattern('github', 'acme/widgets/repo/main.branch_protection_edited')
+    ).toBe('github/acme/widgets/repo/main.branch_protection_edited');
+  });
+  test('owner literally named "repo" expands owner/repo/resource (bare third), not resource-first', () => {
+    // Must NOT become github/*/*/repo/widgets.pull_request.
+    expect(composeGitHubSubscriptionPattern('github', 'github/repo/widgets/pull_request')).toBe(
+      'github/repo/widgets/pull_request/*'
+    );
+  });
+  test('owner literally named "repo" expands owner/repo/resource.action (dotted third)', () => {
+    expect(
+      composeGitHubSubscriptionPattern(
+        'github',
+        'github/repo/widgets/repo.branch_protection_edited'
+      )
+    ).toBe('github/repo/widgets/repo/*.branch_protection_edited');
+  });
+  test('resource-first shorthand allows a resource-named entity (branch "pull_request")', () => {
+    // entity segment may legitimately be a resource name.
+    expect(
+      composeGitHubSubscriptionPattern(
+        'github',
+        'github/repo/pull_request/branch_protection_created'
+      )
+    ).toBe('github/*/*/repo/pull_request.branch_protection_created');
   });
 });
 

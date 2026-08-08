@@ -1,5 +1,8 @@
 /**
- * Migration 175 — persist the dispatched post-approval route target (task #868).
+ * Migration 180 — persist the dispatched post-approval route target (task #868).
+ *
+ * Originally authored as 175; renumbered to 180 because dev shipped intervening
+ * migrations 174–178 while this branch was in review.
  *
  * Context: the completion reconciler gates recovery on the post-approval route
  * being the merger route. Resolving that from the (mutable) current workflow is
@@ -27,7 +30,7 @@ function tableHasColumn(db: BunDatabase, tableName: string, columnName: string):
   return !!result;
 }
 
-export function runMigration175(db: BunDatabase): void {
+export function runMigration180(db: BunDatabase): void {
   if (!tableExists(db, 'space_tasks')) return;
   if (!tableHasColumn(db, 'space_tasks', 'post_approval_route_target_agent')) {
     db.exec(

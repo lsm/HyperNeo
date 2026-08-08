@@ -55,6 +55,34 @@ const SCOPE_TABS: ScopeTab[] = ['overview', 'evidence', 'metrics', 'lessons', 'e
 const METRIC_DIRECTIONS: MetricDirection[] = ['increase', 'decrease', 'target', 'maintain'];
 const EPISODE_JUDGE_TIMEOUT_MS = 120000;
 const DEFAULT_COMPLETED_TASK_THRESHOLD = 10;
+/** Page size for the paginated Evidence/Episodes evidence lists. */
+const EVIDENCE_PAGE_SIZE = 50;
+
+/**
+ * Merge two preflight contexts produced by separate `evolution.evidence.list`
+ * pages. `tasks` carry unique evidenceIds so a plain concat is correct;
+ * workflow-run contexts are deduped by run id, unioning their evidenceIds.
+ */
+function mergePreflightContext(
+  a: EvolutionEvidenceListResponse['preflightContext'],
+  b: EvolutionEvidenceListResponse['preflightContext']
+): EvolutionEvidenceListResponse['preflightContext'] {
+  if (!a) return b;
+  if (!b) return a;
+  const runsById = new Map(a.workflowRuns.map((entry) => [entry.run.id, entry]));
+  for (const entry of b.workflowRuns) {
+    const existing = runsById.get(entry.run.id);
+    if (existing) {
+      runsById.set(entry.run.id, {
+        ...existing,
+        evidenceIds: Array.from(new Set([...existing.evidenceIds, ...entry.evidenceIds])),
+      });
+    } else {
+      runsById.set(entry.run.id, entry);
+    }
+  }
+  return { tasks: [...a.tasks, ...b.tasks], workflowRuns: [...runsById.values()] };
+}
 
 interface SpaceForgeProps {
   spaceId: string;
@@ -483,6 +511,8 @@ function GoalSummary({ goal }: { goal: SpaceGoal }) {
 function EvidenceTab({ scope }: { scope: EvolutionScope }) {
   const { request } = useMessageHub();
   const [evidence, setEvidence] = useState<EvidenceRef[]>([]);
+  const [exhausted, setExhausted] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [note, setNote] = useState('');
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -496,8 +526,13 @@ function EvidenceTab({ scope }: { scope: EvolutionScope }) {
     try {
       const response = await request<EvolutionEvidenceListResponse>('evolution.evidence.list', {
         scopeId: scope.id,
+        limit: EVIDENCE_PAGE_SIZE,
+        offset: 0,
       });
-      if (requestVersion.current === version) setEvidence(response.evidence ?? []);
+      if (requestVersion.current === version) {
+        setEvidence(response.evidence ?? []);
+        setExhausted((response.evidence ?? []).length < EVIDENCE_PAGE_SIZE);
+      }
     } catch (err) {
       if (requestVersion.current === version) {
         setError(err instanceof Error ? err.message : 'Failed to load evidence');
@@ -510,6 +545,31 @@ function EvidenceTab({ scope }: { scope: EvolutionScope }) {
   useEffect(() => {
     loadEvidence().catch(() => undefined);
   }, [loadEvidence]);
+
+  const loadMoreEvidence = async () => {
+    if (loadingMore || exhausted) return;
+    // Claim a version so a concurrent reload (e.g. attach-note) can invalidate
+    // a stale page before it appends to a freshly-reset page-1.
+    const version = ++requestVersion.current;
+    setLoadingMore(true);
+    try {
+      const response = await request<EvolutionEvidenceListResponse>('evolution.evidence.list', {
+        scopeId: scope.id,
+        limit: EVIDENCE_PAGE_SIZE,
+        offset: evidence.length,
+      });
+      if (requestVersion.current !== version) return;
+      const next = response.evidence ?? [];
+      setEvidence((current) => [...current, ...next]);
+      setExhausted(next.length < EVIDENCE_PAGE_SIZE);
+    } catch (err) {
+      if (requestVersion.current === version) {
+        setError(err instanceof Error ? err.message : 'Failed to load more evidence');
+      }
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   const handleAddNote = async (event: Event) => {
     event.preventDefault();
@@ -584,6 +644,13 @@ function EvidenceTab({ scope }: { scope: EvolutionScope }) {
                 <p class="text-sm text-gray-200">{item.summary}</p>
               </div>
             ))}
+            {!exhausted && (
+              <div class="pt-1">
+                <Button variant="ghost" size="sm" onClick={loadMoreEvidence} disabled={loadingMore}>
+                  {loadingMore ? 'Loading…' : 'Load more evidence'}
+                </Button>
+              </div>
+            )}
           </div>
         )}
       </section>
@@ -599,6 +666,8 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
   const [evidence, setEvidence] = useState<EvidenceRef[]>([]);
   const [preflightContext, setPreflightContext] =
     useState<EvolutionEvidenceListResponse['preflightContext']>();
+  const [evidenceExhausted, setEvidenceExhausted] = useState(false);
+  const [loadingMoreEvidence, setLoadingMoreEvidence] = useState(false);
   const [metricSnapshots, setMetricSnapshots] = useState<MetricSnapshot[]>([]);
   const [selectedEvidenceIds, setSelectedEvidenceIds] = useState<string[]>([]);
   const [confirmLowConfidence, setConfirmLowConfidence] = useState(false);
@@ -625,10 +694,14 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
       const [reviewResponse, evidenceResponse, metricResponse] = await Promise.all([
         request<EvolutionEpisodeReviewBundleResponse>('evolution.review.get', {
           scopeId: scope.id,
+          // Only the newest episodes feed the review; bound the query.
+          limit: EVIDENCE_PAGE_SIZE,
         }),
         request<EvolutionEvidenceListResponse>('evolution.evidence.list', {
           scopeId: scope.id,
           includePreflightContext: true,
+          limit: EVIDENCE_PAGE_SIZE,
+          offset: 0,
         }),
         metricSnapshotsPromise,
       ]);
@@ -638,6 +711,7 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
       setProposals(reviewResponse.proposals ?? []);
       setEvidence(evidenceResponse.evidence ?? []);
       setPreflightContext(evidenceResponse.preflightContext);
+      setEvidenceExhausted((evidenceResponse.evidence ?? []).length < EVIDENCE_PAGE_SIZE);
       setMetricSnapshots(metricResponse.snapshots ?? []);
       setSelectedEvidenceIds((current) =>
         current.filter((id) => evidenceResponse.evidence.some((item) => item.id === id))
@@ -650,6 +724,33 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
       if (requestVersion.current === version) setLoading(false);
     }
   }, [request, scope.id]);
+
+  const loadMoreEvidence = async () => {
+    if (loadingMoreEvidence || evidenceExhausted) return;
+    // Claim a version so a concurrent reload (loadReview) can invalidate a
+    // stale page-2 before it appends to / merges into a freshly-reset page-1.
+    const version = ++requestVersion.current;
+    setLoadingMoreEvidence(true);
+    try {
+      const response = await request<EvolutionEvidenceListResponse>('evolution.evidence.list', {
+        scopeId: scope.id,
+        includePreflightContext: true,
+        limit: EVIDENCE_PAGE_SIZE,
+        offset: evidence.length,
+      });
+      if (requestVersion.current !== version) return;
+      const next = response.evidence ?? [];
+      setEvidence((current) => [...current, ...next]);
+      setPreflightContext((current) => mergePreflightContext(current, response.preflightContext));
+      setEvidenceExhausted(next.length < EVIDENCE_PAGE_SIZE);
+    } catch (err) {
+      if (requestVersion.current === version) {
+        setError(err instanceof Error ? err.message : 'Failed to load more evidence');
+      }
+    } finally {
+      setLoadingMoreEvidence(false);
+    }
+  };
 
   useEffect(() => {
     setSelectedEvidenceIds([]);
@@ -886,6 +987,18 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
                 </label>
               ))}
             </div>
+            {!evidenceExhausted && (
+              <div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={loadMoreEvidence}
+                  disabled={loadingMoreEvidence}
+                >
+                  {loadingMoreEvidence ? 'Loading…' : 'Load more evidence'}
+                </Button>
+              </div>
+            )}
             {preflight && (
               <div
                 class={`rounded-lg border px-3 py-2 text-sm ${

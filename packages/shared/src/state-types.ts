@@ -253,6 +253,30 @@ export interface SessionState {
   error: SessionError | null;
 
   timestamp: number;
+
+  /**
+   * Capture-order revision, stamped server-side inside getSessionState BEFORE
+   * its internal `await getSlashCommands()` gap. Used by the client to order
+   * state.session updates regardless of network arrival order: an in-flight
+   * state.session RPC and a state.session push that both pass through
+   * getSessionState carry revisions reflecting when their data was captured,
+   * not when it was sent — so the client can tell a newer push from an older
+   * one even when the older one lands later (the daemon captures data before
+   * the await but sends only after it). Optional for backward compatibility
+   * with older daemons; absent => client applies unconditionally.
+   */
+  revision?: number;
+
+  /**
+   * Daemon-instance boot epoch (a per-boot id generated once at daemon
+   * startup). The capture-order `revision` counter is in-memory, so a daemon
+   * restart resets it to 1 — without this epoch the client would keep its
+   * pre-restart `lastAppliedRevision` and discard every post-restart snapshot
+   * (revision 1..N <= the stale high watermark) freezing the view. The client
+   * resets its revision gate whenever this epoch changes. Optional for older
+   * daemons; absent => client skips the reset (preserves revision gating).
+   */
+  daemonEpoch?: string;
 }
 
 // State channel: {sessionId}:state.sdkMessages

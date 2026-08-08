@@ -15,6 +15,7 @@ import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';
+import { CodingArtifactProfile } from '../../../../src/lib/space/workflows/coding-artifact-profile.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import { EvolutionScopeService } from '../../../../src/lib/space/evolution-scope-service.ts';
@@ -115,6 +116,7 @@ function makeDb(): BunDatabase {
 		origin TEXT,
 		is_renderable INTEGER NOT NULL DEFAULT 1,
 		is_terminal INTEGER NOT NULL DEFAULT 0,
+		conversation_turn_index INTEGER,
 		parent_tool_use_id TEXT
 	)`);
 
@@ -380,6 +382,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
       taskRepo,
       artifactRepo,
       nodeExecutionRepo,
+      artifactProfile: new CodingArtifactProfile({ db, artifactRepo }),
       internalEventBus: bus,
       taskAgentManager: new MockTaskAgentManager(nodeExecutionRepo) as unknown as TaskAgentManager,
       ...extraConfig,
@@ -1440,6 +1443,11 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
         status: 'in_progress',
         reportedStatus: 'done',
         pendingCompletionSubmittedByNodeId: 'vt-checker',
+        // The sweep reads the durable source field, so stamp it too — vt-checker
+        // is a NON-end node (end is vt-review); without this the sweep would
+        // fall back to the end node and interrupt vt-checker instead of
+        // excluding it. Mirrors what `onApproveTask` writes in production.
+        postApprovalSourceNodeId: 'vt-checker',
       });
 
       const checkerExecId = seedNodeExec(db, run.id, 'vt-checker', 'Checker', 'in_progress');
@@ -1587,6 +1595,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
         status: 'in_progress',
         reportedStatus: 'done',
         pendingCompletionSubmittedByNodeId: 'pa-review',
+        postApprovalSourceNodeId: 'pa-review',
       });
 
       // Genuine pre-existing sibling: a coder still in flight. Must be quiesced.

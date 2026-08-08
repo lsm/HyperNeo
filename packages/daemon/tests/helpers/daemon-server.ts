@@ -62,6 +62,14 @@ export interface DaemonServerOptions {
    * When provided, the workspace is NOT deleted in waitForExit.
    */
   workspacePath?: string;
+
+  /**
+   * Budget (ms) for waitForModelsReady during startup. Defaults to 8000.
+   * Tests that deliberately stress the daemon (e.g. an artificially short SDK
+   * startup timeout that thrashes subprocess spawn) slow down the daemon's model
+   * fetch and need a larger readiness budget to avoid flaking on startup.
+   */
+  modelsReadyTimeoutMs?: number;
 }
 
 export interface DaemonServerContext {
@@ -112,6 +120,17 @@ export interface DaemonServerContext {
    * Exposed so restart helpers can spin up a new daemon on the same workspace/DB.
    */
   workspacePath?: string;
+
+  /**
+   * Combined captured stdout+stderr of the spawned daemon process. Returns ''
+   * for in-process daemons (no child output to capture). Spawn the daemon with
+   * LOG_LEVEL=warn to surface daemon log lines — both the error-level startup
+   * timeout ("SDK startup timeout:") and the warn-level retry log ("Auto-retrying
+   * query after startup timeout"); error alone suppresses the latter — so a test
+   * can assert a code path was actually reached rather than passing vacuously on
+   * timing.
+   */
+  getCapturedOutput?: () => string;
 }
 
 function getDevProxyPort(options?: DevProxyOptions): number {
@@ -392,7 +411,12 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
   let actualPort = userPort;
   await new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error('Daemon server startup timeout')), 20000);
+    let portResolved = false;
 
+    // Continuously buffer the child's stdout/stderr for the daemon's full
+    // lifetime (NOT just startup) so tests can assert on log lines emitted later
+    // — e.g. "SDK startup timeout" during a query. The handler is intentionally
+    // kept attached; only the one-shot port parse is gated.
     const onData = (data: Buffer) => {
       const output = data.toString();
       stderrOutput += output;
@@ -400,14 +424,15 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
       if (process.env.TEST_VERBOSE) {
         console.error(`[DAEMON-PROCESS] ${output.trim()}`);
       }
-      // Parse actual port from "Running on port XXXX" output
-      const portMatch = output.match(/Running on port (\d+)/);
-      if (portMatch) {
-        actualPort = Number.parseInt(portMatch[1], 10);
-        clearTimeout(timeout);
-        daemonProcess.stdout!.off('data', onData);
-        daemonProcess.stderr!.off('data', onData);
-        resolve();
+      // Parse actual port from "Running on port XXXX" output (one-shot).
+      if (!portResolved) {
+        const portMatch = output.match(/Running on port (\d+)/);
+        if (portMatch) {
+          actualPort = Number.parseInt(portMatch[1], 10);
+          portResolved = true;
+          clearTimeout(timeout);
+          resolve();
+        }
       }
     };
 
@@ -463,6 +488,9 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
     messageHub,
     baseUrl: `http://127.0.0.1:${actualPort}`,
     devProxy,
+    // Combined stdout+stderr buffered by the startup onData handler. Both
+    // streams append to the same buffers, so either is the full transcript.
+    getCapturedOutput: () => stdoutOutput,
     kill: (signal: NodeJS.Signals = 'SIGTERM') => daemonProcess.kill(signal),
     waitForExit: async () => {
       // Cleanup tracked sessions before exiting
@@ -627,6 +655,8 @@ async function createInProcessDaemonServer(
     daemonContext, // Expose for advanced usage
     devProxy,
     workspacePath: workspace,
+    // In-process daemon shares the test process — no child output to capture.
+    getCapturedOutput: () => '',
     kill: () => {
       // For in-process, cleanup happens in waitForExit - just return true
       return true;
@@ -885,7 +915,7 @@ export async function createDaemonServer(
       : await createInProcessDaemonServer(options);
 
   try {
-    await waitForModelsReady(context);
+    await waitForModelsReady(context, options.modelsReadyTimeoutMs);
   } catch (error) {
     // Clean up the daemon so partial startup (transport, dev-proxy lease,
     // in-process server/workspace/env mutations) does not leak into later tests.

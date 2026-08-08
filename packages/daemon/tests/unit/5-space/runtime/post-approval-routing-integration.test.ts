@@ -64,6 +64,7 @@ import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';
+import { CodingArtifactProfile } from '../../../../src/lib/space/workflows/coding-artifact-profile.ts';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
@@ -195,6 +196,7 @@ function buildHarness(opts: { spawnerThrows?: boolean } = {}): Harness {
     taskRepo,
     nodeExecutionRepo,
     artifactRepo,
+    artifactProfile: new CodingArtifactProfile({ db, artifactRepo }),
     onTaskUpdated: async ({ task }) => {
       emitted.push({ taskId: task.id, status: task.status });
     },

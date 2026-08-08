@@ -15,9 +15,9 @@ import { runMigration106 as runMigration106External } from './m106-backfill-agen
 import { runMigration170 as runMigration170External } from './m170-backfill-missing-preset-agents';
 import { runMigration171 } from './m171-backfill-post-approval-review-channels';
 import { runMigration172 as runMigration172External } from './m172-backfill-orphaned-preset-agents';
-import { runMigration174 } from './m174-post-approval-completion-columns';
-import { runMigration175 } from './m175-post-approval-route-target';
-import { runMigration176 } from './m176-space-tasks-status-updated-index';
+import { runMigration179 } from './m179-post-approval-completion-columns';
+import { runMigration180 } from './m180-post-approval-route-target';
+import { runMigration181 } from './m181-space-tasks-status-updated-index';
 import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug';
 import {
   deriveArtifactKey,
@@ -26,6 +26,7 @@ import {
   resolveLegacyShape,
   type ArtifactShape,
 } from '@hyperneo/shared';
+import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
 import { createEvolutionTables } from './evolution';
 import { createLongHorizonAgentTables } from './long-horizon-agents';
 import { migrateLegacyLongHorizonAgentData } from '../../lib/space/agents/legacy-long-horizon-migration';
@@ -846,30 +847,73 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // M173 because dev shipped M170/M171/M172 for preset/template backfills.)
   run(migrationMarkerKey(173), () => runMigration173(db));
 
-  // Migration 174: Post-approval completion resumability columns (task #868).
+  // Migration 174: Add a composite (space_id, status, updated_at, id) index on
+  // space_tasks to back the Tasks-view queries (listByStatus /
+  // listBySpaceAndStatus / listBySpace), which all filter by space_id (+ an
+  // optional status equality) and ORDER BY updated_at DESC, id DESC. The legacy
+  // single-column idx_space_tasks_status was dropped years ago and never
+  // replaced, so every render scanned all non-archived rows in the space and
+  // post-filtered on status. (Renumbered 168→169→172→174 as dev shipped
+  // intervening migrations in #2343/#2349/#2370/#2374/#2363/#2357.)
+  run(migrationMarkerKey(174), () => runMigration174(db));
+
+  // Migration 175: index space_external_events by (space_id, source, ingested_at)
+  // for the GitHub health snapshot's per-event-type recency scan.
+  run(migrationMarkerKey(175), () => runMigration175(db));
+
+  // Migration 176: Add space_tasks.post_approval_source_node_id — the durable
+  // source-node field the post-approval router reads (informational sourceNodeId
+  // + approval_authority token + sibling-quiesce source) instead of the (now
+  // atomically-cleared) pending_completion_submitted_by_node_id. Closes the
+  // post-approval crash window (task #851). Idempotent ADD COLUMN + scoped
+  // backfill; see runMigration176. (Renumbered from 171/172/174/175 — dev
+  // shipped those for other backfills + index drops.)
+  run(migrationMarkerKey(176), () => runMigration176(db));
+
+  // Migration 177: Maintain sessions.visible_message_count so the
+  // space-sessions badge (spaceSessions.bySpace) reads a column instead of
+  // running a correlated COUNT(*) over sdk_messages for every session on every
+  // (150ms-debounced) re-evaluation. Adds the column and backfills it from the
+  // current visible totals; SDKMessageRepository maintains it thereafter.
+  // (Renumbered 169→170→171→175→176→177 as dev shipped intervening migrations.)
+  run(migrationMarkerKey(177), () => runMigration177(db));
+
+  // Migration 178: Add conversation_turn_index (global, per-task) to
+  // sdk_messages and backfill it, so spaceTaskMessages.byTask.compact and the
+  // active roster can seek conversation turns instead of recomputing them via 6
+  // window-function passes over every task message (#2338). Stored (not
+  // generated — depends on sibling rows); backfilled once via temp table +
+  // UPDATE…FROM. Rewind-safe at runtime (inserts are append-only relative to
+  // survivors). New databases get the column + idx_sdk_messages_task_turn via
+  // createTables(); this brings existing databases up to parity. (Renumbered
+  // 171→174→175→176→178 as dev shipped intervening migrations.)
+  run(migrationMarkerKey(178), () => runMigration178(db));
+
+  // Migration 179: Post-approval completion resumability columns (task #868).
   //   Adds four nullable `space_tasks` columns backing the daemon-side
   //   deterministic completion tail: `post_approval_progress` (JSON checkpoint
   //   blob), `post_approval_lease_owner` + `post_approval_lease_expires_at`
   //   (compare-and-swap lease), and `post_approval_completion_status`
   //   (denormalised human-facing status). No backfill — pre-existing tasks get
   //   no progress until the completion service first touches them. Idempotent.
-  //   (Renumbered from 173 — dev took 173 for sdk_messages index cleanup.)
-  //   See m174-post-approval-completion-columns.ts.
-  run(migrationMarkerKey(174), () => runMigration174(db));
+  //   (Originally authored as 174; renumbered to 179 — dev shipped intervening
+  //   migrations 174–178 while this branch was in review.)
+  //   See m179-post-approval-completion-columns.ts.
+  run(migrationMarkerKey(179), () => runMigration179(db));
 
-  // Migration 175: persist the dispatched post-approval route target_agent
+  // Migration 180: persist the dispatched post-approval route target_agent
   //   (task #868). Immutable value set at PostApprovalRouter dispatch so the
   //   completion reconciler gates on the route actually dispatched, not the
   //   mutable current workflow. Nullable, no backfill. Idempotent.
-  //   See m175-post-approval-route-target.ts.
-  run(migrationMarkerKey(175), () => runMigration175(db));
+  //   (Originally 175; renumbered to 180.) See m180-post-approval-route-target.ts.
+  run(migrationMarkerKey(180), () => runMigration180(db));
 
-  // Migration 176: covering index for the post-approval reconciler's approved-
+  // Migration 181: covering index for the post-approval reconciler's approved-
   //   task sweep (task #868). `listApprovedTasks` filters to status='approved'
   //   and orders by (updated_at DESC, id DESC) every sweep; this index serves
-  //   it without a full-table sort. Idempotent.
-  //   See m176-space-tasks-status-updated-index.ts.
-  run(migrationMarkerKey(176), () => runMigration176(db));
+  //   it without a full-table sort. Idempotent. (Originally 176; renumbered to 181.)
+  //   See m181-space-tasks-status-updated-index.ts.
+  run(migrationMarkerKey(181), () => runMigration181(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -11643,4 +11687,272 @@ export function runMigration173(db: BunDatabase): void {
   if (!tableExists(db, 'sdk_messages')) return;
   db.exec(`DROP INDEX IF EXISTS idx_sdk_messages_session`);
   db.exec(`DROP INDEX IF EXISTS idx_sdk_messages_uuid_status`);
+}
+
+/**
+ * Migration 174: Add a composite index on space_tasks(space_id, status,
+ * updated_at DESC, id DESC).
+ *
+ * The Tasks view renders through listByStatus / listBySpaceAndStatus /
+ * listBySpace, which all filter by space_id (plus an optional status equality)
+ * and ORDER BY updated_at DESC, id DESC. The old single-column
+ * idx_space_tasks_status was dropped and never re-added, so every render
+ * scanned all non-archived rows in the space and post-filtered on status. This
+ * composite index covers the equality-prefix + sort shape of those queries
+ * directly, and the (space_id, status) prefix also helps listBySpace's
+ * `status != 'archived'` scan within a space.
+ *
+ * Idempotent and safe to re-run across the table-rebuild migrations (M98/M103/
+ * M167), which preserve it via capturedIndexDdl since every referenced column
+ * survives the rebuild.
+ */
+export function runMigration174(db: BunDatabase): void {
+  if (!tableExists(db, 'space_tasks')) return;
+  // Sentinel/mock schemas (e.g. the baseline-schema sentinels in
+  // migration-markers-runner) carry a stub space_tasks with only a few columns.
+  // Skip silently when any indexed column is absent rather than throwing — a
+  // real space_tasks always has all four.
+  const required = ['space_id', 'status', 'updated_at', 'id'];
+  if (required.some((col) => !tableHasColumn(db, 'space_tasks', col))) return;
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_tasks_space_status_updated ON space_tasks(space_id, status, updated_at DESC, id DESC)`
+  );
+}
+
+/**
+ * Migration 175: index space_external_events by (space_id, source, ingested_at).
+ *
+ * The GitHub health snapshot's per-event-type recency scan
+ * (ExternalEventStore.listEventCountsByTopic) filters on exactly these three
+ * columns once per minute per open panel. The pre-existing indexes cover only
+ * (space_id, source, dedupe_key) and (state, updated_at) — neither includes
+ * ingested_at — so without this index the scan reads every historical row for
+ * the space/source to apply the recency cutoff. External events have no
+ * retention cleanup, so the table grows unboundedly and that per-minute scan
+ * would grow with it. The index turns the cutoff into a range seek within the
+ * (space_id, source) prefix.
+ */
+export function runMigration175(db: BunDatabase): void {
+  if (!tableExists(db, 'space_external_events')) return;
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_external_events_recency
+     ON space_external_events(space_id, source, ingested_at)`
+  );
+}
+
+/**
+ * Migration 176 — decouple the post-approval router's source node from the
+ * pending-completion fields (task #851).
+ *
+ * `setTaskStatus` clears the four pending-completion fields atomically in the
+ * same UPDATE that commits `approved` (closing the crash window where a task
+ * could be observed `approved` with stale pending state). The router's
+ * `sourceNodeId` (logging + the no-route audit write), the `approval_authority`
+ * template token, and the sibling-quiesce source previously read
+ * `pending_completion_submitted_by_node_id` — which is now null by the time the
+ * router runs. This migration adds a dedicated durable column,
+ * `space_tasks.post_approval_source_node_id`, that those reads use instead. It
+ * survives into `approved` (cleared on leaving `approved`, on review-abort, and
+ * on reactivation), which also makes the router crash-safe for reconciliation
+ * retries.
+ *
+ * Backfill: a database upgraded mid-flight may contain a task in an in-flight
+ * approval attempt whose submitting node lives only in
+ * `pending_completion_submitted_by_node_id`. Once approved, the atomic clear
+ * nulls that field — so we copy it into the new column for IN-FLIGHT rows only:
+ * `review` (awaiting human approval), `approved` (dispatch in progress /
+ * crash-stranded), or the transient `approve_task` state (`in_progress` with
+ * `reported_status='done'`, awaiting the tick that advances it to `approved`).
+ * Terminal rows (`done`/`cancelled`/`archived`) and plain `in_progress` rows
+ * are excluded: the no-route branch leaves the pending field populated on
+ * `done` as an audit write (copying it would seed a stale durable source), and
+ * a plain `in_progress` task cannot reach `approved` without a fresh
+ * submit/approve that re-stamps the source.
+ *
+ * Idempotent — ADD COLUMN guarded by `tableHasColumn`, backfill guarded on the
+ * columns and copy-once (`post_approval_source_node_id IS NULL`). Fresh
+ * databases get the column from this migration too (the base `CREATE TABLE`
+ * predates it, and `runMigrations` runs every step on a new DB).
+ */
+export function runMigration176(db: BunDatabase): void {
+  if (
+    tableExists(db, 'space_tasks') &&
+    !tableHasColumn(db, 'space_tasks', 'post_approval_source_node_id')
+  ) {
+    db.exec(`ALTER TABLE space_tasks ADD COLUMN post_approval_source_node_id TEXT DEFAULT NULL`);
+  }
+  if (
+    tableHasColumn(db, 'space_tasks', 'post_approval_source_node_id') &&
+    tableHasColumn(db, 'space_tasks', 'pending_completion_submitted_by_node_id')
+  ) {
+    const completionSignalledInProgress = tableHasColumn(db, 'space_tasks', 'reported_status')
+      ? ` OR (status = 'in_progress' AND reported_status = 'done')`
+      : '';
+    db.exec(
+      `UPDATE space_tasks
+         SET post_approval_source_node_id = pending_completion_submitted_by_node_id
+       WHERE pending_completion_submitted_by_node_id IS NOT NULL
+         AND post_approval_source_node_id IS NULL
+         AND (status IN ('review', 'approved')${completionSignalledInProgress})`
+    );
+  }
+  // Clear the four pending-completion fields on crash-stranded `approved` rows
+  // (data-consistency cleanup). Pre-#851 a review → approved transition left
+  // these set (the router/finally cleared them later); a crash between the
+  // commit and the cleanup parked the task in `approved` with pending state —
+  // the very shape #851 eliminates for new approvals. The runtime treats
+  // `approved` as already-resolved and won't clean it up (and an
+  // `approved → done` via `mark_complete` doesn't clear pending fields either),
+  // so without this step the migration only preserves the source while leaving
+  // the pending fields set, violating this PR's own invariant — "never observed
+  // in `approved` with any pending-completion field set" — on upgraded DBs
+  // until the next reconciler tick re-dispatches. The source was already copied
+  // to `postApprovalSourceNodeId` above, so nulling
+  // `pendingCompletionSubmittedByNodeId` here is safe. Scoped to `approved`
+  // only: `review` rows legitimately carry pending state, and a transient
+  // `in_progress` + `reported_status='done'` row self-clears on its next tick.
+  if (tableHasColumn(db, 'space_tasks', 'pending_checkpoint_type')) {
+    db.exec(
+      `UPDATE space_tasks
+         SET pending_checkpoint_type = NULL,
+             pending_completion_submitted_by_node_id = NULL,
+             pending_completion_submitted_at = NULL,
+             pending_completion_reason = NULL
+       WHERE status = 'approved'
+         AND (pending_checkpoint_type IS NOT NULL
+              OR pending_completion_submitted_by_node_id IS NOT NULL
+              OR pending_completion_submitted_at IS NOT NULL
+              OR pending_completion_reason IS NOT NULL)`
+    );
+  }
+}
+
+/**
+ * Migration 177: Add `sessions.visible_message_count` and backfill it.
+ *
+ * The space-sessions sidebar badge (spaceSessions.bySpace) used to compute a
+ * correlated COUNT(*) over sdk_messages for every session in a space on every
+ * (150ms-debounced) re-evaluation — ~92ms warm for dev-neokai, scaling with
+ * sessions × messages-per-session. This migration introduces a maintained
+ * counter on sessions that the query reads directly instead.
+ *
+ * The backfill predicate mirrors the former subquery exactly: top-level rows
+ * (parent_tool_use_id IS NULL), non-deferred user rows
+ * (send_status IN ('consumed', 'failed')), and non-hidden subtypes (the
+ * HIDDEN_SYSTEM_SUBTYPES set plus 'thinking_tokens'). SDKMessageRepository
+ * maintains the same predicate incrementally after this.
+ *
+ * Idempotent: re-running just recomputes the same totals. (Renumbered
+ * 169→170→171→175→176→177 as dev shipped intervening migrations.)
+ */
+export function runMigration177(db: BunDatabase): void {
+  if (!tableExists(db, 'sessions')) return;
+  if (!tableHasColumn(db, 'sessions', 'visible_message_count')) {
+    db.exec(`ALTER TABLE sessions ADD COLUMN visible_message_count INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!tableExists(db, 'sdk_messages')) return;
+
+  const excludedSubtypes = [...HIDDEN_SYSTEM_SUBTYPES, 'thinking_tokens']
+    .map((s) => `'${s.replace(/'/g, "''")}'`)
+    .join(', ');
+
+  db.exec(`
+    UPDATE sessions
+       SET visible_message_count = COALESCE((
+         SELECT COUNT(*) FROM sdk_messages sm
+          WHERE sm.session_id = sessions.id
+            AND sm.parent_tool_use_id IS NULL
+            AND (sm.message_type != 'user'
+                 OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
+            AND COALESCE(sm.message_subtype, '') NOT IN (${excludedSubtypes})
+       ), 0)
+  `);
+}
+
+/**
+ * Migration 178: Add `conversation_turn_index` (global, per-task) to
+ * `sdk_messages` and backfill it (#2338). Lets spaceTaskMessages.byTask.compact
+ * and the active roster seek conversation turns instead of recomputing them via
+ * 6 window-function passes over every task message.
+ */
+export function runMigration178(db: BunDatabase): void {
+  if (!tableExists(db, 'sdk_messages')) return;
+
+  // conversation_turn_index: global, per-task conversation-turn number (#2338).
+  // Stored (not generated) because it depends on other rows (the running count
+  // of anchors), so it must be backfilled — unlike the VIRTUAL message_subtype_norm.
+  if (!tableHasColumn(db, 'sdk_messages', 'conversation_turn_index')) {
+    db.exec(`ALTER TABLE sdk_messages ADD COLUMN conversation_turn_index INTEGER`);
+  }
+
+  // Backfill via a temp table + UPDATE … FROM (SQLite >= 3.33; bun:sqlite 3.51).
+  // Turn NUMBERS are global per task (so the recent-M-turn cap is one window
+  // across sessions), but turn MEMBERSHIP is per-session — mirrors the insert
+  // rule in SDKMessageRepository.resolveConversationTurnIndex (#2338):
+  //   - anchors (a consumed/failed renderable user message) get the task-wide
+  //     running count of anchors (global monotonic turn number);
+  //   - non-anchor rows inherit their OWN session's most recent anchor's turn
+  //     (carry-forward via a partitioned MAX window), so interleaved sessions
+  //     don't have one session's response inherit another session's turn.
+  // Pre-first-anchor rows are turn 0; rows with no task_id stay NULL.
+  db.exec(`DROP TABLE IF EXISTS _m178_turn_backfill`);
+  db.exec(`
+    CREATE TEMP TABLE _m178_turn_backfill AS
+    WITH base AS (
+      SELECT
+        id, task_id, session_id, timestamp, rowid,
+        CASE
+          WHEN message_type = 'user'
+            AND is_renderable = 1
+            AND COALESCE(send_status, 'consumed') IN ('consumed', 'failed')
+            THEN 1
+          ELSE 0
+        END AS is_anchor
+      FROM sdk_messages
+      WHERE task_id IS NOT NULL
+    ),
+    anchor_numbered AS (
+      SELECT
+        id, task_id, session_id, timestamp, rowid, is_anchor,
+        SUM(is_anchor) OVER (
+          PARTITION BY task_id
+          ORDER BY timestamp, rowid
+          ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        ) AS global_turn
+      FROM base
+    )
+    SELECT id,
+      CASE
+        WHEN is_anchor = 1 THEN global_turn
+        ELSE COALESCE(
+          MAX(CASE WHEN is_anchor = 1 THEN global_turn END) OVER (
+            PARTITION BY task_id, session_id
+            ORDER BY timestamp, rowid
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+          ),
+          0
+        )
+      END AS turn_idx
+    FROM anchor_numbered
+  `);
+
+  db.exec(`
+    UPDATE sdk_messages
+    SET conversation_turn_index = b.turn_idx
+    FROM _m178_turn_backfill b
+    WHERE sdk_messages.id = b.id
+  `);
+
+  db.exec(`DROP TABLE _m178_turn_backfill`);
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_turn
+    ON sdk_messages(task_id, conversation_turn_index)
+  `);
+  // Per-session turn-inheritance seek: MAX(conversation_turn_index) WHERE
+  // task_id = ? AND session_id = ? — used on every non-anchor insert (#2338).
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_session_turn
+    ON sdk_messages(task_id, session_id, conversation_turn_index)
+  `);
 }

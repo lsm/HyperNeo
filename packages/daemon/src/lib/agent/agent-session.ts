@@ -795,6 +795,11 @@ export class AgentSession
     if (this.session.config.queryMode === 'manual') return;
     const restoredState = this.stateManager.getState();
     if (restoredState.status === 'waiting_for_input') return;
+    // Note: rate_limit_cooldown is NOT preserved across a restart —
+    // restoreFromDatabase() resets it to 'idle' — so there is no cooldown case
+    // to guard here. Real flood protection on restore is the inject-path
+    // parentLimited gate, not replay (which only completes in-flight tool
+    // flows for an idle session).
     await this.queryModeHandler.replayPendingMessagesForImmediateMode();
   }
 

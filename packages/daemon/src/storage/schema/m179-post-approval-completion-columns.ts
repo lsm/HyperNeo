@@ -1,5 +1,9 @@
 /**
- * Migration 174 — Post-approval completion resumability columns (task #868).
+ * Migration 179 — Post-approval completion resumability columns (task #868).
+ *
+ * Originally authored as 174; renumbered to 179 because dev shipped intervening
+ * migrations 174–178 (composite indexes, post_approval_source_node_id, etc.)
+ * while this branch was in review.
  *
  * Context: the deterministic post-approval COMPLETION tail (the steps that run
  * once a PR is merged: branch cleanup, worktree fetch, Space checkout sync,
@@ -44,7 +48,7 @@ function tableHasColumn(db: BunDatabase, tableName: string, columnName: string):
   return !!result;
 }
 
-export function runMigration174(db: BunDatabase): void {
+export function runMigration179(db: BunDatabase): void {
   if (!tableExists(db, 'space_tasks')) return;
 
   if (!tableHasColumn(db, 'space_tasks', 'post_approval_progress')) {

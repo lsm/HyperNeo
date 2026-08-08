@@ -18,6 +18,8 @@ import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/sp
 import { WorkflowRunArtifactRepository } from '../../../src/storage/repositories/workflow-run-artifact-repository';
 import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository';
 import { SpaceGoalService } from '../../../src/lib/space/goals/goal-service';
+import { CodingArtifactProfile } from '../../../src/lib/space/workflows/coding-artifact-profile';
+import type { WorkflowArtifactProfile } from '../../../src/lib/space/runtime/artifact-profile';
 import { createSpaceTables } from '../helpers/space-test-db';
 
 describe('EvolutionEpisodeService', () => {
@@ -26,6 +28,7 @@ describe('EvolutionEpisodeService', () => {
   let taskRepo: SpaceTaskRepository;
   let workflowRunRepo: SpaceWorkflowRunRepository;
   let artifactRepo: WorkflowRunArtifactRepository;
+  let artifactProfile: WorkflowArtifactProfile;
   let workflowRepo: SpaceWorkflowRepository;
   let goalRepo: SpaceGoalRepository;
   let spaceRepo: SpaceRepository;
@@ -43,6 +46,7 @@ describe('EvolutionEpisodeService', () => {
       new GateOpenStateRepository(db as never)
     );
     artifactRepo = new WorkflowRunArtifactRepository(db as never);
+    artifactProfile = new CodingArtifactProfile({ db: db as never, artifactRepo });
     workflowRepo = new SpaceWorkflowRepository(db as never);
     spaceId = spaceRepo.createSpace({
       workspacePath: '/workspace/episode-service-test',
@@ -255,6 +259,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       judgeEpisode: async () => {
         judgeCalled = true;
         return { title: 'Should not run', outcomeSummary: 'Nope', findings: [] };
@@ -346,11 +351,12 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
     });
     const listedWithoutContext = scopeService.listEvidence(scope.id);
     expect(listedWithoutContext.preflightContext).toBeUndefined();
 
-    const listed = scopeService.listEvidence(scope.id, true);
+    const listed = scopeService.listEvidence(scope.id, { includePreflightContext: true });
     const taskContext = listed.preflightContext?.tasks.find(
       (item) => item.evidenceId === taskEvidence.id
     )?.task;
@@ -392,13 +398,16 @@ describe('EvolutionEpisodeService', () => {
         data: { summary: 'later artifact outside preflight window' },
       });
     }
-    const listedWithArtifacts = scopeService.listEvidence(scope.id, true);
+    const listedWithArtifacts = scopeService.listEvidence(scope.id, {
+      includePreflightContext: true,
+    });
     const cappedRunContext = listedWithArtifacts.preflightContext?.workflowRuns[0];
     const service = new EvolutionEpisodeService({
       evolutionRepo,
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
     });
 
     const input = service.buildEpisodeInput({
@@ -424,6 +433,122 @@ describe('EvolutionEpisodeService', () => {
     expect(cappedRunContext?.artifacts.some((artifact) => 'large' in artifact.data)).toBe(false);
   });
 
+  it('builds preflight context with one batched query per kind (no per-item N+1)', () => {
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      kind: 'custom',
+      name: 'Batched preflight',
+      objective: 'Bound preflight round-trips',
+    });
+    const workflow = workflowRepo.createWorkflow({ spaceId, name: 'Batched workflow' });
+    // Three tasks + three runs + artifacts each, each referenced by evidence.
+    const taskIds: string[] = [];
+    const runIds: string[] = [];
+    for (let index = 0; index < 3; index++) {
+      const task = taskRepo.createTask({
+        spaceId,
+        title: `Task ${index}`,
+        description: 'd',
+        evolutionScopeId: scope.id,
+      });
+      taskIds.push(task.id);
+      evolutionRepo.createEvidence({
+        scopeId: scope.id,
+        kind: 'task',
+        sourceId: task.id,
+        summary: `task evidence ${index}`,
+      });
+      const run = workflowRunRepo.createRun({
+        spaceId,
+        workflowId: workflow.id,
+        title: `Run ${index}`,
+      });
+      runIds.push(run.id);
+      artifactRepo.upsert({
+        id: `art-${index}`,
+        runId: run.id,
+        nodeId: 'n',
+        artifactType: 'decision',
+        artifactKey: `k-${index}`,
+        data: { summary: `artifact ${index}` },
+      });
+      evolutionRepo.createEvidence({
+        scopeId: scope.id,
+        kind: 'artifact',
+        sourceId: run.id,
+        summary: `run evidence ${index}`,
+      });
+    }
+
+    // Count every repo round-trip the preflight builder can make.
+    const calls = {
+      getTask: 0,
+      getTasksByIds: 0,
+      getRun: 0,
+      getRunsByIds: 0,
+      listByWorkflowRunIncludingArchived: 0,
+      listByWorkflowRunIdsIncludingArchived: 0,
+      listByRun: 0,
+      listByRuns: 0,
+    };
+    const wrap = <T extends object, K extends string>(
+      target: T,
+      key: K,
+      tally: keyof typeof calls
+    ) => {
+      const original = (target[key] as (...args: unknown[]) => unknown).bind(target);
+      Object.assign(target, {
+        [key]: (...args: unknown[]) => {
+          calls[tally]++;
+          return original(...args);
+        },
+      });
+    };
+    wrap(taskRepo, 'getTask', 'getTask');
+    wrap(taskRepo, 'getTasksByIds', 'getTasksByIds');
+    wrap(taskRepo, 'listByWorkflowRunIncludingArchived', 'listByWorkflowRunIncludingArchived');
+    wrap(
+      taskRepo,
+      'listByWorkflowRunIdsIncludingArchived',
+      'listByWorkflowRunIdsIncludingArchived'
+    );
+    wrap(workflowRunRepo, 'getRun', 'getRun');
+    wrap(workflowRunRepo, 'getRunsByIds', 'getRunsByIds');
+    wrap(artifactRepo, 'listByRun', 'listByRun');
+    wrap(artifactRepo, 'listByRuns', 'listByRuns');
+
+    const scopeService = new EvolutionScopeService({
+      evolutionRepo,
+      spaceRepo,
+      goalRepo,
+      taskRepo,
+      workflowRunRepo,
+      artifactRepo,
+    });
+    const listed = scopeService.listEvidence(scope.id, { includePreflightContext: true });
+
+    // The per-item methods must never run; the batch methods run exactly once.
+    expect(calls.getTask).toBe(0);
+    expect(calls.getRun).toBe(0);
+    expect(calls.listByWorkflowRunIncludingArchived).toBe(0);
+    expect(calls.listByRun).toBe(0);
+    expect(calls.getTasksByIds).toBe(1);
+    expect(calls.getRunsByIds).toBe(1);
+    expect(calls.listByWorkflowRunIdsIncludingArchived).toBe(1);
+    expect(calls.listByRuns).toBe(1);
+
+    // Behaviour is unchanged: every task + run still surfaces in the context.
+    expect(listed.preflightContext?.tasks).toHaveLength(3);
+    expect(listed.preflightContext?.workflowRuns).toHaveLength(3);
+    expect(
+      listed.preflightContext?.workflowRuns.every((entry) => runIds.includes(entry.run.id))
+    ).toBe(true);
+    // One artifact per run survived the batched fetch + per-run cap.
+    expect(listed.preflightContext?.workflowRuns.flatMap((entry) => entry.artifacts)).toHaveLength(
+      3
+    );
+  });
+
   it('metric snapshot improves evidence readiness', () => {
     const scope = evolutionRepo.createScope({
       spaceId,
@@ -441,6 +566,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
     });
     const before = service.buildEpisodeInput({
       scopeId: scope.id,
@@ -547,6 +673,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
     });
 
     const input = service.buildEpisodeInput({
@@ -617,6 +744,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
     });
 
     const input = service.buildEpisodeInput({
@@ -720,6 +848,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
     });
 
     const prompt = buildEpisodeJudgePrompt(
@@ -748,6 +877,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
     });
 
     const prompt = buildEpisodeJudgePrompt(
@@ -836,6 +966,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
     });
 
     const input = service.buildEpisodeInput({ scopeId: scope.id, evidenceIds: [evidence.id] });
@@ -970,6 +1101,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       db,
       taskCreatedEventHub: {
         publish: async (event, data) => {
@@ -1044,6 +1176,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       goalService: createGoalService(),
     });
 
@@ -1089,6 +1222,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
     });
 
     expect(() => service.createTaskFromProposal(dismissed.id)).toThrow(
@@ -1126,6 +1260,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
     });
 
     expect(() =>
@@ -1163,6 +1298,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       taskIdFactory: () => taskId,
     });
 
@@ -1219,12 +1355,14 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
     });
     const service = new EvolutionEpisodeService({
       evolutionRepo,
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       goalService: createGoalService(),
     });
     const serviceOnlyEpisode = evolutionRepo.createEpisode({
@@ -1243,6 +1381,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       goalService: failingGoalService,
     });
     const applied = service.applyRollupGoalUpdate({
@@ -1300,6 +1439,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
     });
     const scope = scopeService.createScopeFromGoal({
       spaceGoalId: goal.id,
@@ -1369,6 +1509,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       goalService: createGoalService(),
       judgeEpisode: async (input) => ({
         title: 'Forge evidence lifecycle episode',
@@ -1557,6 +1698,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       goalService: createGoalService(),
       judgeEpisode: async (input) => ({
         title: 'Forge MVP dogfood episode',
@@ -1671,6 +1813,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       judgeEpisode: async (input) => {
         judgePreflight = input.preflight;
         return {
@@ -1782,6 +1925,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
     });
     const input = service.buildEpisodeInput({
       scopeId: scope.id,
@@ -1881,6 +2025,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       judgeEpisode: async () => ({
         title: 'Episode',
         outcomeSummary: '',
@@ -1947,6 +2092,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       judgeEpisode: async () => ({
         title: 'Episode',
         outcomeSummary: '',
@@ -2011,6 +2157,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       judgeEpisode: async () => ({
         title: 'Episode',
         outcomeSummary: '',
@@ -2061,6 +2208,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       judgeEpisode: async () => ({
         title: 'Episode',
         outcomeSummary: '',
@@ -2135,6 +2283,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       judgeEpisode: async () => ({
         title: 'Episode',
         outcomeSummary: '',
@@ -2198,6 +2347,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       judgeEpisode: async () => ({
         title: 'Episode',
         outcomeSummary: '',
@@ -2256,6 +2406,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       judgeEpisode: async () => ({
         title: 'Episode',
         outcomeSummary: '',
@@ -2317,6 +2468,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       judgeEpisode: async () => ({
         title: 'Episode',
         outcomeSummary: '',
@@ -2381,6 +2533,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       judgeEpisode: async () => ({
         title: 'Episode',
         outcomeSummary: '',
@@ -2439,6 +2592,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       judgeEpisode: async () => ({
         title: 'Episode',
         outcomeSummary: '',
@@ -2500,6 +2654,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       judgeEpisode: async () => ({
         title: 'Episode',
         outcomeSummary: '',
@@ -2558,6 +2713,7 @@ describe('EvolutionEpisodeService', () => {
       taskRepo,
       workflowRunRepo,
       artifactRepo,
+      artifactProfile,
       judgeEpisode: async () => ({
         title: 'Episode',
         outcomeSummary: '',

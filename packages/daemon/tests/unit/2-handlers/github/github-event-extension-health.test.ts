@@ -481,6 +481,73 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     }
   });
 
+  test('eventTypes rolls up recent ingestion counts per merge-blocking path', async () => {
+    const db = setupDb();
+    seedSpace(db, 'space-1');
+    const extension = new GitHubEventExtension(db, 'ghp_token', {
+      fetchImpl: fakeUserFetch('octocat'),
+    });
+    const store = new ExternalEventStore(db);
+    const now = Date.now();
+    const seed = (topic: string, id: string, occurredAt = now) =>
+      store.store({
+        id,
+        spaceId: 'space-1',
+        source: 'github',
+        topic,
+        occurredAt,
+        ingestedAt: occurredAt,
+        summary: topic,
+        dedupeKey: `github:${id}`,
+        payload: {},
+      });
+
+    // Two status events of different states → status count 2.
+    seed('github/acme/widgets/pull_request/42.status_failure', 's1');
+    seed('github/acme/widgets/pull_request/42.status_success', 's2', now - 60_000);
+    // review_thread + deployment_status + branch_protection, one each.
+    seed('github/acme/widgets/pull_request/42.thread_resolved', 't1');
+    seed('github/acme/widgets/pull_request/42.deployment_status_success', 'd1');
+    seed('github/acme/widgets/repo/main.branch_protection_edited', 'b1');
+    // The app-only merge_group webhook is undeliverable over a repo hook; the
+    // row-8 `.enqueued` fallback must roll up into the merge_group type.
+    seed('github/acme/widgets/pull_request/42.enqueued', 'q1');
+    // check_suite intentionally unseeded — asserts the 0/null stable-layout entry.
+    // An older-type event must NOT appear in the breakdown.
+    seed('github/acme/widgets/pull_request/42.comment_created', 'x1');
+    // A status event outside the 24h window must not count toward `status`.
+    seed('github/acme/widgets/pull_request/42.status_error', 'old1', now - 48 * 60 * 60 * 1000);
+
+    try {
+      const clientHub = await setupHub(extension, new HealthConfigStore());
+      const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
+        spaceId: 'space-1',
+      });
+      // One entry per surfaced type, in display order (stable layout).
+      expect(snapshot.eventTypes.map((e) => e.type)).toEqual([
+        'status',
+        'review_thread',
+        'deployment',
+        'check_suite',
+        'merge_group',
+        'branch_protection',
+      ]);
+      const byType = new Map(snapshot.eventTypes.map((e) => [e.type, e]));
+      expect(byType.get('status')?.count).toBe(2);
+      expect(byType.get('status')?.lastAt).toBe(now);
+      expect(byType.get('review_thread')?.count).toBe(1);
+      expect(byType.get('deployment')?.count).toBe(1);
+      // .enqueued rolls up into merge_group (repo-webhook fallback).
+      expect(byType.get('merge_group')?.count).toBe(1);
+      expect(byType.get('branch_protection')?.count).toBe(1);
+      // The unseeded type still emits a stable 0 / null entry.
+      expect(byType.get('check_suite')?.count).toBe(0);
+      expect(byType.get('check_suite')?.lastAt).toBeNull();
+    } finally {
+      await extension.stop();
+    }
+  });
+
   test('recentErrors surfaces GitHub failures even when newer failures are from another source', async () => {
     // The source filter must apply before the LIMIT, otherwise 5 newer
     // non-GitHub failures would crowd out a still-recent GitHub failure.

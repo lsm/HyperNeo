@@ -168,6 +168,12 @@ const BUILT_IN_PROVIDER_ENV_MAP: BuiltInProviderEnvMapping[] = [
   },
   { providerId: 'minimax', displayName: 'MiniMax', envVar: 'MINIMAX_API_KEY', authType: 'api_key' },
   {
+    providerId: 'deepseek',
+    displayName: 'DeepSeek',
+    envVar: 'DEEPSEEK_API_KEY',
+    authType: 'api_key',
+  },
+  {
     providerId: 'openrouter',
     displayName: 'OpenRouter',
     envVar: 'OPENROUTER_API_KEY',
@@ -317,6 +323,40 @@ export async function migrateProvidersIfNeeded(
         customEndpointConfigJson: JSON.stringify(endpoint),
       });
     }
+  }
+}
+
+/**
+ * Seed DeepSeek on upgraded databases that predate the built-in provider.
+ * The general migration intentionally runs only for an empty providers table,
+ * so new built-ins need an idempotent startup backfill of their own.
+ */
+export async function backfillDeepSeekProvider(
+  db: Database,
+  credentialManager: Pick<ProviderCredentialManager, 'getCredentials' | 'storeApiKey'>
+): Promise<void> {
+  const apiKey = process.env.DEEPSEEK_API_KEY;
+  if (!apiKey) return;
+
+  if (!db.providers.getProviderByProviderId('deepseek')) {
+    db.providers.createProvider({
+      providerId: 'deepseek',
+      displayName: 'DeepSeek',
+      kind: 'built_in',
+      authType: 'api_key',
+      isEnabled: true,
+      isDefault: false,
+      sortOrder: db.providers.countProviders(),
+    });
+  }
+
+  try {
+    const existingCredentials = await credentialManager.getCredentials('deepseek');
+    if (!existingCredentials) {
+      await credentialManager.storeApiKey('deepseek', apiKey);
+    }
+  } catch {
+    // Non-fatal: retry on the next startup when the credential store recovers.
   }
 }
 
