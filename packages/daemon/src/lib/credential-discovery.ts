@@ -327,6 +327,35 @@ export async function migrateProvidersIfNeeded(
 }
 
 /**
+ * Seed DeepSeek on upgraded databases that predate the built-in provider.
+ * The general migration intentionally runs only for an empty providers table,
+ * so new built-ins need an idempotent startup backfill of their own.
+ */
+export async function backfillDeepSeekProvider(
+  db: Database,
+  credentialManager: Pick<ProviderCredentialManager, 'storeApiKey'>
+): Promise<void> {
+  const apiKey = process.env.DEEPSEEK_API_KEY;
+  if (!apiKey || db.providers.getProviderByProviderId('deepseek')) return;
+
+  db.providers.createProvider({
+    providerId: 'deepseek',
+    displayName: 'DeepSeek',
+    kind: 'built_in',
+    authType: 'api_key',
+    isEnabled: true,
+    isDefault: false,
+    sortOrder: db.providers.countProviders(),
+  });
+
+  try {
+    await credentialManager.storeApiKey('deepseek', apiKey);
+  } catch {
+    // Non-fatal: the provider row is visible and the key can be re-entered.
+  }
+}
+
+/**
  * Prior default display names persisted for the `glm` provider before it was
  * relabelled to "Z.ai". Used by {@link refreshGlmDisplayName} to recognise rows
  * that still carry a stale built-in label (and only those — any user custom

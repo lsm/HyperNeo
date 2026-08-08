@@ -409,14 +409,14 @@ describe('ProviderRegistry', () => {
       const reg2 = initializeProviders();
       // The global singleton must be the same reference — not a new instance
       expect(reg1).toBe(reg2);
-      expect(reg2.size).toBe(10);
+      expect(reg2.size).toBe(11);
     });
 
     it('should use the global registry singleton', async () => {
       initializeProviders();
       await waitForOptionalProviderRegistration();
       const globalReg = getProviderRegistry();
-      expect(globalReg.size).toBe(10);
+      expect(globalReg.size).toBe(11);
     });
 
     it('should restore all providers after the registry is reset without factory reset', async () => {
@@ -438,6 +438,7 @@ describe('ProviderRegistry', () => {
           'anthropic',
           'anthropic-codex',
           'anthropic-copilot',
+          'deepseek',
           'glm',
           'kimi',
           'minimax',

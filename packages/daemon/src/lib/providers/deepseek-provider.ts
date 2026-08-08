@@ -150,6 +150,7 @@ export class DeepSeekProvider implements Provider {
         ANTHROPIC_API_KEY: '',
         API_TIMEOUT_MS: '3000000',
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000',
         ANTHROPIC_DEFAULT_HAIKU_MODEL: routingModelId,
         ANTHROPIC_DEFAULT_SONNET_MODEL: routingModelId,
         ANTHROPIC_DEFAULT_OPUS_MODEL: routingModelId,
@@ -159,8 +160,10 @@ export class DeepSeekProvider implements Provider {
     };
   }
 
-  translateModelIdForSdk(_modelId: string): string {
-    return 'default';
+  translateModelIdForSdk(modelId: string): string {
+    return modelId.toLowerCase() === 'deepseek-v4-pro'
+      ? 'claude-opus-4-6[1m]'
+      : 'claude-sonnet-4-6[1m]';
   }
 
   getTitleGenerationModel(): string {

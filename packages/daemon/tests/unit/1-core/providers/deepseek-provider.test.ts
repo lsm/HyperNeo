@@ -34,8 +34,10 @@ describe('DeepSeekProvider', () => {
     expect(config.envVars.ANTHROPIC_BASE_URL).toBe('https://api.deepseek.com/anthropic');
     expect(config.envVars.ANTHROPIC_AUTH_TOKEN).toBe('test-key');
     expect(config.envVars.ANTHROPIC_API_KEY).toBe('');
+    expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1000000');
     expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('deepseek-v4-flash');
-    expect(provider.translateModelIdForSdk('deepseek-v4-flash')).toBe('default');
+    expect(provider.translateModelIdForSdk('deepseek-v4-flash')).toBe('claude-sonnet-4-6[1m]');
+    expect(provider.translateModelIdForSdk('deepseek-v4-pro')).toBe('claude-opus-4-6[1m]');
   });
 
   it('supports stored credentials and rejects missing credentials', async () => {

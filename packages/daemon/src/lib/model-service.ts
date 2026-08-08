@@ -18,6 +18,7 @@ import type { Provider } from '@hyperneo/shared/provider';
 import { getCodexBridgeModelInfos, resolveCodexBridgeModelId } from './providers/codex-models.js';
 import { GlmProvider } from './providers/glm-provider.js';
 import { KimiProvider } from './providers/kimi-provider.js';
+import { DeepSeekProvider } from './providers/deepseek-provider.js';
 
 /**
  * Legacy model ID mappings to SDK model IDs
@@ -119,6 +120,7 @@ const STATIC_MODEL_METADATA: ModelInfo[] = [
   ...getCodexBridgeModelInfos(),
   ...GlmProvider.MODELS,
   ...KimiProvider.MODELS,
+  ...DeepSeekProvider.MODELS,
 ];
 const CODEX_STATIC_MODEL_METADATA = getCodexBridgeModelInfos();
 const COPILOT_LEGACY_CODEX_STATIC_METADATA: ModelInfo[] = [
