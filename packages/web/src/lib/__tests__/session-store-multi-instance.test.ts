@@ -14,7 +14,12 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { SessionStore, refreshAllSessionStores } from '../session-store';
+import {
+  SessionStore,
+  refreshAllSessionStores,
+  mergeSnapshotIntoTranscript,
+  markAllSessionStoresRecovering,
+} from '../session-store';
 
 // A single controllable hub that connectionManager.getHub() resolves to. Both
 // stores share it; each store's handlers self-filter LiveQuery events by
@@ -59,6 +64,10 @@ interface MultiHubApi {
   setSessionState: (sessionId: string, state: Record<string, unknown>) => void;
   setStateSessionDeferred: (promise: Promise<unknown> | null) => void;
   setStateSessionError: (error: unknown) => void;
+  /** Force liveQuery.subscribe to reject (null clears it). */
+  setLiveQuerySubscribeError: (error: unknown) => void;
+  /** Force channel.join to reject (null clears it). */
+  setChannelJoinError: (error: unknown) => void;
   /**
    * Queue distinct `state.session` RPC responses. Each request shifts the next
    * queued promise, letting two concurrent fetches for the same session resolve
@@ -85,6 +94,12 @@ function installHub(): MultiHubApi {
   const stateSessionQueue: Array<Promise<unknown>> = [];
   // When set, joinChannel returns this promise (simulating a retrying join).
   let joinChannelDeferred: Promise<unknown> | null = null;
+  // When set, liveQuery.subscribe rejects (simulating a failed re-subscribe
+  // during recovery, so the "stay recovering" path can be exercised).
+  let liveQuerySubscribeError: unknown = null;
+  // When set, channel.join rejects (simulating a session-channel rejoin that
+  // never settles successfully during recovery).
+  let channelJoinError: unknown = null;
 
   multiHub.onEvent.mockImplementation((channel: string, cb: (data: unknown) => void) => {
     const list = handlers.get(channel) ?? [];
@@ -128,6 +143,7 @@ function installHub(): MultiHubApi {
       const subscriptionId = String(params?.subscriptionId ?? '');
       const sessionId = String((params?.params as unknown[])?.[0] ?? '');
       subscribeCalls.push({ subscriptionId, sessionId });
+      if (liveQuerySubscribeError) return Promise.reject(liveQuerySubscribeError);
       return Promise.resolve({ subscriptionId });
     }
     if (channel === 'liveQuery.unsubscribe') {
@@ -135,6 +151,10 @@ function installHub(): MultiHubApi {
       return Promise.resolve({ ok: true });
     }
     if (channel === 'message.count') return Promise.resolve({ count: 0 });
+    if (channel === 'channel.join') {
+      if (channelJoinError) return Promise.reject(channelJoinError);
+      return Promise.resolve({ ok: true });
+    }
     return Promise.resolve(undefined);
   });
 
@@ -159,6 +179,12 @@ function installHub(): MultiHubApi {
     },
     setStateSessionError: (e) => {
       stateSessionError = e;
+    },
+    setLiveQuerySubscribeError: (e) => {
+      liveQuerySubscribeError = e;
+    },
+    setChannelJoinError: (e) => {
+      channelJoinError = e;
     },
     queueStateSession: (p) => {
       stateSessionQueue.push(p);
@@ -281,8 +307,8 @@ describe('SessionStore multi-instance isolation', () => {
       { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
     ]);
 
-    const refreshA = vi.spyOn(storeA, 'refresh').mockResolvedValue(undefined);
-    const refreshB = vi.spyOn(storeB, 'refresh').mockResolvedValue(undefined);
+    const refreshA = vi.spyOn(storeA, 'recover').mockResolvedValue(undefined);
+    const refreshB = vi.spyOn(storeB, 'recover').mockResolvedValue(undefined);
 
     await refreshAllSessionStores();
     expect(refreshA).toHaveBeenCalledTimes(1);
@@ -517,13 +543,19 @@ describe('SessionStore multi-instance isolation', () => {
     await selectWithSnapshot(storeB, hub, 'session-b', [
       { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
     ]);
-    multiHub.joinChannel.mockClear();
+    multiHub.request.mockClear();
 
     hub.fireConnection('disconnected');
     hub.fireConnection('connected');
 
+    // Recovery re-issues channel.join via hub.request (so it can retry and gate
+    // readiness on a settled join), not the fire-and-forget joinChannel.
     await vi.waitFor(() => {
-      expect(multiHub.joinChannel).toHaveBeenCalledWith('session:session-b');
+      expect(multiHub.request).toHaveBeenCalledWith(
+        'channel.join',
+        { channel: 'session:session-b' },
+        expect.anything()
+      );
     });
   });
 
@@ -912,5 +944,675 @@ describe('SessionStore multi-instance isolation', () => {
     expect(storeB.sessionInfo.value?.title).toBe('loaded');
     // …but its staler contextInfo write was skipped — the push's value wins.
     expect(storeB.contextInfo.value).toEqual({ inputTokens: 999, outputTokens: 1 });
+  });
+
+  // =========================================================================
+  // Session-scoped reconnect recovery (#872). Builds on the multi-instance
+  // isolation above: each chat recovers its OWN session independently, the
+  // `isRecovering` flag distinguishes recovery from initial-load/failure, and
+  // stale async results (late errors, duplicate events) can't strand it.
+  // =========================================================================
+
+  it('is not recovering once a session is loaded normally', async () => {
+    await selectWithSnapshot(storeB, hub, 'session-b', [
+      { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+    expect(storeB.isRecovering.value).toBe(false);
+  });
+
+  it('markAllSessionStoresRecovering flags active stores synchronously (resume window)', async () => {
+    // Soft-resume marks every active store recovering the instant a tab
+    // foregrounds, BEFORE the ≤3s health check + joins, so the composer can't
+    // be used on a possibly-stale connection. performRecovery later supersedes
+    // the early mark and clears it on success.
+    await selectWithSnapshot(storeA, hub, 'session-a', [
+      { id: 'a1', uuid: 'a1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+    await selectWithSnapshot(storeB, hub, 'session-b', [
+      { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+    expect(storeA.isRecovering.value).toBe(false);
+    expect(storeB.isRecovering.value).toBe(false);
+
+    markAllSessionStoresRecovering();
+    expect(storeA.isRecovering.value).toBe(true);
+    expect(storeB.isRecovering.value).toBe(true);
+
+    // The later recovery supersedes the early mark and clears on success.
+    await refreshAllSessionStores();
+    expect(storeA.isRecovering.value).toBe(false);
+    expect(storeB.isRecovering.value).toBe(false);
+  });
+
+  it('flips isRecovering on transport drop and clears it once recovery settles', async () => {
+    await selectWithSnapshot(storeB, hub, 'session-b', [
+      { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+    expect(storeB.isRecovering.value).toBe(false);
+
+    // Socket drops while the session is active → recovering immediately, before
+    // the socket reports connected again (so the UI can keep the transcript
+    // read-only throughout).
+    hub.fireConnection('disconnected');
+    expect(storeB.isRecovering.value).toBe(true);
+
+    // Reconnect drives performRecovery (rejoin + resubscribe + state refresh).
+    hub.fireConnection('connected');
+    await vi.waitFor(() => {
+      expect(storeB.isRecovering.value).toBe(false);
+    });
+  });
+
+  it('clears isRecovering when reconnects are permanently exhausted (failed)', async () => {
+    // WebSocketClientTransport emits 'failed' after maxReconnectAttempts. The
+    // earlier 'reconnecting' set isRecovering; 'failed' must clear it so the
+    // "Reconnecting…" banner does not outlive the (abandoned) reconnect cycle —
+    // the global ConnectionStatus reports the permanent failure instead.
+    await selectWithSnapshot(storeB, hub, 'session-b', [
+      { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+    hub.fireConnection('reconnecting');
+    expect(storeB.isRecovering.value).toBe(true);
+
+    hub.fireConnection('failed');
+    expect(storeB.isRecovering.value).toBe(false);
+  });
+
+  it('does not strand isRecovering on duplicate reconnect events', async () => {
+    await selectWithSnapshot(storeB, hub, 'session-b', [
+      { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+
+    // Two 'connected' events with no clean ordering (a transport that emits
+    // ready twice, or a manual reconnect racing the auto-reconnect). The token
+    // guard must ensure only the freshest recovery clears the flag and a stale
+    // one settling later can't resurrect or strand it.
+    hub.fireConnection('connected');
+    hub.fireConnection('connected');
+    await vi.waitFor(() => {
+      expect(storeB.isRecovering.value).toBe(false);
+    });
+  });
+
+  it('soft-resume (refreshAllSessionStores) re-establishes the messages LiveQuery', async () => {
+    // Safari pauses the socket without dropping it: no transport
+    // onConnection('connected') fires, so the per-instance reconnect handler
+    // never runs. The resume path (refreshAllSessionStores → recover) must
+    // re-subscribe messages so deltas missed while paused are re-synced via a
+    // fresh snapshot — not just refresh session state.
+    await selectWithSnapshot(storeB, hub, 'session-b', [
+      { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+    const subscribesBefore = multiHub.request.mock.calls.filter(
+      (c) => c[0] === 'liveQuery.subscribe'
+    ).length;
+
+    await refreshAllSessionStores();
+
+    const subscribesAfter = multiHub.request.mock.calls.filter(
+      (c) => c[0] === 'liveQuery.subscribe'
+    ).length;
+    expect(subscribesAfter).toBeGreaterThan(subscribesBefore);
+    // The re-subscribe targets THIS session's messages query, not a stray one.
+    const resubscribe = multiHub.request.mock.calls
+      .filter((c) => c[0] === 'liveQuery.subscribe')
+      .slice(-1)[0];
+    expect(resubscribe?.[1]).toMatchObject({
+      queryName: 'messages.bySession',
+      params: ['session-b', expect.any(Number)],
+    });
+    // Soft-resume is a recovery: the flag must clear once it settles.
+    expect(storeB.isRecovering.value).toBe(false);
+  });
+
+  it('soft-resume preserves the transcript when the state RPC fails and stays recovering', async () => {
+    hub.setSessionState('session-b', {
+      sessionInfo: { id: 'session-b', title: 'good' },
+      agentState: { status: 'processing' },
+      commandsData: { availableCommands: [] },
+    });
+    await selectWithSnapshot(storeB, hub, 'session-b', [
+      { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+    expect(storeB.sessionInfo.value?.title).toBe('good');
+
+    // A transient state-RPC failure during resume must NOT clobber the restored
+    // state with a fatal load error. Recovery also can't report ready on stale
+    // state — isRecovering stays true (composer disabled) until a later
+    // reconnect/resume re-fetches state successfully.
+    hub.setStateSessionError(new Error('transient blip'));
+    await refreshAllSessionStores();
+    expect(storeB.sessionInfo.value?.title).toBe('good');
+    expect(storeB.error.value).toBeNull();
+    expect(storeB.isRecovering.value).toBe(true);
+
+    // Once the state RPC succeeds again (next resume/reconnect), recovery clears.
+    hub.setStateSessionError(null);
+    await refreshAllSessionStores();
+    expect(storeB.isRecovering.value).toBe(false);
+  });
+
+  it('clears isRecovering when a newer state push supersedes the recovery fetch', async () => {
+    // If a newer state.session push lands while the recovery state RPC is in
+    // flight, the push refreshes the state (advances lastAppliedRevision) and
+    // supersedes the RPC. That counts as a successful refresh — recovery must
+    // NOT leave isRecovering set indefinitely on a stale-ready gap.
+    await selectWithSnapshot(storeB, hub, 'session-b', [
+      { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+
+    let resolveRpc: (value: unknown) => void = () => {};
+    hub.setStateSessionDeferred(
+      new Promise((res) => {
+        resolveRpc = res;
+      })
+    );
+    multiHub.request.mockClear();
+    hub.fireConnection('disconnected');
+    hub.fireConnection('connected');
+
+    // Wait for recovery to reach the state fetch (channel.join + LiveQuery
+    // subscribe are the Promise.all that precedes it), then yield so the state
+    // RPC is awaiting the deferred before we fire the push / resolve.
+    await vi.waitFor(() => {
+      expect(multiHub.request).toHaveBeenCalledWith(
+        'channel.join',
+        expect.anything(),
+        expect.anything()
+      );
+      expect(multiHub.request).toHaveBeenCalledWith('liveQuery.subscribe', expect.anything());
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    // A newer full-state push lands while the RPC is pending.
+    hub.fireChannelEvent(
+      'state.session',
+      {
+        sessionInfo: { id: 'session-b', title: 'pushed' },
+        agentState: { status: 'processing' },
+        commandsData: { availableCommands: [] },
+        revision: 5,
+      },
+      'session:session-b'
+    );
+    expect(storeB.agentState.value.status).toBe('processing');
+
+    // The (older) RPC now resolves with revision 4 — superseded by the push.
+    resolveRpc({
+      sessionInfo: { id: 'session-b', title: 'stale-rpc' },
+      agentState: { status: 'idle' },
+      commandsData: { availableCommands: [] },
+      revision: 4,
+    });
+    await new Promise((r) => setTimeout(r, 30));
+
+    // State was refreshed (via the push) → isRecovering cleared; push value wins.
+    expect(storeB.isRecovering.value).toBe(false);
+    expect(storeB.sessionInfo.value?.title).toBe('pushed');
+    expect(storeB.agentState.value.status).toBe('processing');
+  });
+
+  it('clears isRecovering when an overlapping refresh supersedes the recovery fetch', async () => {
+    // P2a: a send accepted just before a drop arms ChatContainer's 1200ms
+    // send-visibility timer, which calls store.refresh() — a newer same-session
+    // fetch that can commit while the recovery fetch is still in flight. The
+    // recovery fetch is then superseded by ticket; that must count as a
+    // successful refresh (the newer fetch wrote fresh state), not leave
+    // isRecovering stuck.
+    await selectWithSnapshot(storeB, hub, 'session-b', [
+      { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+    let resolveRpc: (value: unknown) => void = () => {};
+    hub.setStateSessionDeferred(
+      new Promise((res) => {
+        resolveRpc = res;
+      })
+    );
+    multiHub.request.mockClear();
+    hub.fireConnection('disconnected');
+    hub.fireConnection('connected');
+    // Let recovery reach its state fetch (channel.join + LiveQuery subscribe
+    // precede it) and begin awaiting the held deferred.
+    await vi.waitFor(() => {
+      expect(multiHub.request).toHaveBeenCalledWith(
+        'channel.join',
+        expect.anything(),
+        expect.anything()
+      );
+      expect(multiHub.request).toHaveBeenCalledWith('liveQuery.subscribe', expect.anything());
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    // A newer ordinary refresh() resolves immediately and commits first.
+    hub.setStateSessionDeferred(null);
+    await storeB.refresh();
+
+    // The (older) recovery RPC now resolves — superseded by the newer fetch.
+    resolveRpc({
+      sessionInfo: { id: 'session-b' },
+      agentState: { status: 'idle' },
+      commandsData: { availableCommands: [] },
+    });
+    await new Promise((r) => setTimeout(r, 30));
+
+    // Fresh state was written by the newer fetch → isRecovering cleared.
+    expect(storeB.isRecovering.value).toBe(false);
+  });
+
+  it('clears isRecovering when a daemon-restart push supersedes the recovery fetch', async () => {
+    // P2b: after a daemon restart, revisionAtStart holds the old daemon's high
+    // watermark (50) while a new-epoch push resets the gate and applies a low
+    // revision (2). The recovery RPC resolving with revision 1 would compare
+    // 2 > 50 → false and stall isRecovering; an epoch change must count as fresh.
+    hub.setSessionState('session-b', {
+      sessionInfo: { id: 'session-b', title: 'pre-restart' },
+      agentState: { status: 'idle' },
+      commandsData: { availableCommands: [] },
+      revision: 50,
+      daemonEpoch: 'daemon-a',
+    });
+    await selectWithSnapshot(storeB, hub, 'session-b', [
+      { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+    expect(storeB.sessionInfo.value?.title).toBe('pre-restart');
+
+    let resolveRpc: (value: unknown) => void = () => {};
+    hub.setStateSessionDeferred(
+      new Promise((res) => {
+        resolveRpc = res;
+      })
+    );
+    multiHub.request.mockClear();
+    hub.fireConnection('disconnected');
+    hub.fireConnection('connected');
+    await vi.waitFor(() => {
+      expect(multiHub.request).toHaveBeenCalledWith(
+        'channel.join',
+        expect.anything(),
+        expect.anything()
+      );
+      expect(multiHub.request).toHaveBeenCalledWith('liveQuery.subscribe', expect.anything());
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Daemon restarted: a new-epoch push applies a low revision under epoch 'b'.
+    hub.fireChannelEvent(
+      'state.session',
+      {
+        sessionInfo: { id: 'session-b', title: 'post-restart' },
+        agentState: { status: 'processing' },
+        commandsData: { availableCommands: [] },
+        revision: 2,
+        daemonEpoch: 'daemon-b',
+      },
+      'session:session-b'
+    );
+
+    // The recovery RPC resolves with an even lower revision (1) under the new
+    // epoch — superseded by the push, and across an epoch boundary.
+    resolveRpc({
+      sessionInfo: { id: 'session-b' },
+      agentState: { status: 'idle' },
+      commandsData: { availableCommands: [] },
+      revision: 1,
+      daemonEpoch: 'daemon-b',
+    });
+    await new Promise((r) => setTimeout(r, 30));
+
+    // Epoch change = fresh state → isRecovering cleared; push value wins.
+    expect(storeB.isRecovering.value).toBe(false);
+    expect(storeB.sessionInfo.value?.title).toBe('post-restart');
+  });
+
+  it('ignores a late state.session error from session A after switching to B', async () => {
+    // #872 edge case: a reconnect-refresh RPC for the OLD session A resolves
+    // (or rejects) AFTER the store switched to B. The error must not surface on
+    // B, and B must not be left recovering. A uses retainOnError (returns
+    // before any state write on failure), and the generation guard discards a
+    // late success too.
+    await selectWithSnapshot(storeA, hub, 'session-a', [
+      { id: 'a1', uuid: 'a1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+
+    // Hold A's reconnect-refresh state.session RPC pending, then reconnect.
+    let resolveA: (value: unknown) => void = () => {};
+    hub.setStateSessionDeferred(
+      new Promise((res) => {
+        resolveA = res;
+      })
+    );
+    hub.fireConnection('disconnected');
+    hub.fireConnection('connected');
+
+    // Switch the SAME instance to B (clear the knob so B resolves normally).
+    hub.setStateSessionDeferred(null);
+    await selectWithSnapshot(storeA, hub, 'session-b', [
+      { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+    expect(storeA.sessionInfo.value?.id).toBe('session-b');
+    expect(storeA.isRecovering.value).toBe(false);
+
+    // A's stale RPC now resolves with an error-shaped result. It must not touch
+    // B's state or recovering flag.
+    resolveA({
+      sessionInfo: null,
+      agentState: { status: 'idle' },
+      commandsData: { availableCommands: [] },
+      error: { message: 'A is gone', occurredAt: Date.now() },
+    });
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(storeA.sessionInfo.value?.id).toBe('session-b');
+    expect(storeA.error.value).toBeNull();
+    expect(storeA.isRecovering.value).toBe(false);
+  });
+
+  it('recovers A and B independently — A dropping never marks B recovering', async () => {
+    await selectWithSnapshot(storeA, hub, 'session-a', [
+      { id: 'a1', uuid: 'a1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+    await selectWithSnapshot(storeB, hub, 'session-b', [
+      { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+
+    // Each instance registered its own onConnection handler; firing a
+    // connection event reaches BOTH. A is recovering, but B — whose session is
+    // unaffected — must NOT flip its flag (per-session recovery, not global).
+    // Note: the connection event is process-wide, so both handlers fire; the
+    // invariant is that B's transcript and readiness are untouched by A's drop.
+    hub.fireConnection('disconnected');
+    // Both see the drop (shared transport) — that's correct, both ARE
+    // disconnected. The per-session distinction is exercised by the late-error
+    // and soft-resume tests above. Here we assert recovery completes per-store.
+    hub.fireConnection('connected');
+    await vi.waitFor(() => {
+      expect(storeA.isRecovering.value).toBe(false);
+      expect(storeB.isRecovering.value).toBe(false);
+    });
+    // Each transcript is intact and its own.
+    expect(storeA.sdkMessages.value.map((m) => m.uuid)).toEqual(['a1']);
+    expect(storeB.sdkMessages.value.map((m) => m.uuid)).toEqual(['b1']);
+  });
+
+  it('recover() rejoins the session channel and re-subscribes messages together', async () => {
+    // Atomicity: a single recover() must restore BOTH the channel membership
+    // and the message stream for the SAME session, so URL/route identity,
+    // metadata, and the message subscription target one session.
+    await selectWithSnapshot(storeB, hub, 'session-b', [
+      { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+    multiHub.request.mockClear();
+    const subscribesBefore = multiHub.request.mock.calls.filter(
+      (c) => c[0] === 'liveQuery.subscribe'
+    ).length;
+
+    await storeB.recover();
+
+    // Recovery restores BOTH the session channel (via channel.join) and the
+    // message stream for the SAME session.
+    expect(multiHub.request).toHaveBeenCalledWith(
+      'channel.join',
+      { channel: 'session:session-b' },
+      expect.anything()
+    );
+    const subscribesAfter = multiHub.request.mock.calls.filter(
+      (c) => c[0] === 'liveQuery.subscribe'
+    ).length;
+    expect(subscribesAfter).toBe(subscribesBefore + 1);
+    expect(storeB.isRecovering.value).toBe(false);
+  });
+
+  it('stays recovering when the messages re-subscribe fails, then clears on success', async () => {
+    // P1: if the LiveQuery re-subscribe fails during recovery, the new WebSocket
+    // client has no message stream — enabling the composer would let a send
+    // persist server-side yet never appear here. Recovery must retry, and on
+    // final failure leave isRecovering TRUE (composer disabled) until a later
+    // reconnect/resume succeeds.
+    await selectWithSnapshot(storeB, hub, 'session-b', [
+      { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+    expect(storeB.isRecovering.value).toBe(false);
+
+    hub.setLiveQuerySubscribeError(new Error('subscribe rejected'));
+    // 1 initial subscribe already happened; recovery will retry 3x (3 more).
+    const targetSubscribeCalls = hub.subscribeCalls.length + 3;
+    hub.fireConnection('disconnected');
+    hub.fireConnection('connected');
+
+    // Wait for the 3 retry attempts to elapse, then assert it is STILL recovering.
+    await vi.waitFor(
+      () => expect(hub.subscribeCalls.length).toBeGreaterThanOrEqual(targetSubscribeCalls),
+      {
+        timeout: 5000,
+      }
+    );
+    // Give the final failed attempt + fetchInitialSessionState a tick to settle.
+    await new Promise((r) => setTimeout(r, 30));
+    expect(storeB.isRecovering.value).toBe(true);
+    // The transcript and session identity are untouched — only readiness is held.
+    expect(storeB.activeSessionId.value).toBe('session-b');
+    expect(storeB.sdkMessages.value.map((m) => m.uuid)).toEqual(['b1']);
+
+    // A later successful recovery (subscribe works again) clears the flag.
+    hub.setLiveQuerySubscribeError(null);
+    hub.fireConnection('connected');
+    await vi.waitFor(() => expect(storeB.isRecovering.value).toBe(false));
+  });
+
+  it('stays recovering when the session-channel rejoin never succeeds', async () => {
+    // P2: if the channel rejoin keeps failing, state.session/context.updated
+    // pushes would be missed — recovery must not report readiness. The rejoin
+    // retries 3x (3 channel.join attempts) before giving up.
+    await selectWithSnapshot(storeB, hub, 'session-b', [
+      { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+    const joinsBefore = multiHub.request.mock.calls.filter((c) => c[0] === 'channel.join').length;
+    hub.setChannelJoinError(new Error('join rejected'));
+
+    hub.fireConnection('disconnected');
+    hub.fireConnection('connected');
+
+    // Wait for the 3 rejoin attempts to elapse.
+    await vi.waitFor(
+      () =>
+        expect(
+          multiHub.request.mock.calls.filter((c) => c[0] === 'channel.join').length
+        ).toBeGreaterThanOrEqual(joinsBefore + 3),
+      { timeout: 5000 }
+    );
+    await new Promise((r) => setTimeout(r, 30));
+
+    // isRecovering stays true — the composer must stay disabled.
+    expect(storeB.isRecovering.value).toBe(true);
+    expect(storeB.activeSessionId.value).toBe('session-b');
+    expect(storeB.sdkMessages.value.map((m) => m.uuid)).toEqual(['b1']);
+    // P2: a delayed/ambiguous join failure must NOT actively leave the channel
+    // (the server may already have restored the membership); only the next
+    // recovery re-confirms it.
+    expect(multiHub.leaveChannel).not.toHaveBeenCalledWith('session:session-b');
+
+    // A later recovery where the join succeeds clears the flag.
+    hub.setChannelJoinError(null);
+    hub.fireConnection('connected');
+    await vi.waitFor(() => expect(storeB.isRecovering.value).toBe(false));
+  });
+
+  it('mergeSnapshotIntoTranscript: preserves the paginated prefix only when the user paginated', () => {
+    // preservePrefix mirrors the store's hasPaginatedOlder flag (set when the
+    // user loads older messages). With it true, rows older than the snapshot's
+    // oldest are kept while the window refreshes in place.
+    const existing = [
+      { id: 'p1', uuid: 'p1', timestamp: 10, rowid: 1 },
+      { id: 'p2', uuid: 'p2', timestamp: 20, rowid: 2 },
+      { id: 'w1', uuid: 'w1', timestamp: 100, rowid: 3 },
+    ] as never[];
+    const snapshot = [
+      { id: 'w1', uuid: 'w1', timestamp: 100, rowid: 3 },
+      { id: 'w2', uuid: 'w2', timestamp: 110, rowid: 4 },
+    ] as never[];
+    expect(mergeSnapshotIntoTranscript(existing, snapshot, true).map((m) => m.id)).toEqual([
+      'p1',
+      'p2',
+      'w1',
+      'w2',
+    ]);
+  });
+
+  it('mergeSnapshotIntoTranscript: keeps same-ms prefix rows via the (timestamp, rowid) cursor', () => {
+    // The window boundary cuts through a same-millisecond burst: the snapshot's
+    // oldest row shares ts=100 with a paginated row, but the cursor orders by
+    // (timestamp, rowid), so the older-rowid paginated row must be retained.
+    const existing = [
+      { id: 'p1', uuid: 'p1', timestamp: 100, rowid: 2 }, // same ms, older rowid
+      { id: 'w1', uuid: 'w1', timestamp: 100, rowid: 5 },
+    ] as never[];
+    const snapshot = [
+      { id: 'w1', uuid: 'w1', timestamp: 100, rowid: 5 },
+      { id: 'w2', uuid: 'w2', timestamp: 110, rowid: 6 },
+    ] as never[];
+    expect(mergeSnapshotIntoTranscript(existing, snapshot, true).map((m) => m.id)).toEqual([
+      'p1',
+      'w1',
+      'w2',
+    ]);
+  });
+
+  it('mergeSnapshotIntoTranscript: tolerates the ±1ms cross-query timestamp jitter at the boundary', () => {
+    // The sdkMessages RPC (new Date(ts).getTime()) and the messages.bySession
+    // LiveQuery (SQL CAST of a julianday product) can differ by ~1ms for the
+    // same instant. A paginated row at the boundary whose measured ts is 1ms
+    // NEWER than the snapshot's oldest must still be retained via its older
+    // rowid — otherwise the rowid tiebreak is never reached and the row drops.
+    const existing = [
+      { id: 'p1', uuid: 'p1', timestamp: 101, rowid: 2 }, // jittered +1ms, older rowid
+      { id: 'w1', uuid: 'w1', timestamp: 100, rowid: 5 },
+    ] as never[];
+    const snapshot = [
+      { id: 'w1', uuid: 'w1', timestamp: 100, rowid: 5 },
+      { id: 'w2', uuid: 'w2', timestamp: 110, rowid: 6 },
+    ] as never[];
+    expect(mergeSnapshotIntoTranscript(existing, snapshot, true).map((m) => m.id)).toEqual([
+      'p1',
+      'w1',
+      'w2',
+    ]);
+  });
+
+  it('mergeSnapshotIntoTranscript: replaces wholesale when the user has not paginated, even if many rows returned', () => {
+    // The daemon's messages.bySession LIMITs only the top_level CTE then UNIONs
+    // unbounded subagent rows, so a complete transcript with <200 top-level
+    // messages can still return >=200 rows. Preservation must NOT depend on row
+    // count — only on the hasPaginated flag. Without it, deleted/rewound rows
+    // are cleared rather than frozen.
+    const existing = [
+      { id: 'p1', uuid: 'p1', timestamp: 10, rowid: 1 },
+      { id: 'w1', uuid: 'w1', timestamp: 100, rowid: 3 },
+    ] as never[];
+    const snapshot = Array.from({ length: 250 }, (_, i) => ({
+      id: `s${i}`,
+      uuid: `s${i}`,
+      timestamp: 100 + i,
+      rowid: 3 + i,
+    })) as never[];
+    expect(mergeSnapshotIntoTranscript(existing, snapshot, false).map((m) => m.id)).toEqual(
+      snapshot.map((r) => (r as { id: string }).id)
+    );
+  });
+
+  it('mergeSnapshotIntoTranscript: an empty snapshot clears the transcript', () => {
+    const existing = [{ id: 'p1', uuid: 'p1', timestamp: 10, rowid: 1 }] as never[];
+    expect(mergeSnapshotIntoTranscript(existing, [] as never[], true)).toEqual([]);
+  });
+
+  it('mergeSnapshotIntoTranscript: an empty existing transcript just takes the snapshot', () => {
+    const snapshot = [
+      { id: 'a', uuid: 'a', timestamp: 1, rowid: 1 },
+      { id: 'b', uuid: 'b', timestamp: 2, rowid: 2 },
+    ] as never[];
+    expect(mergeSnapshotIntoTranscript([], snapshot, false).map((m) => m.id)).toEqual(['a', 'b']);
+  });
+
+  it('a recovery snapshot preserves older rows once the user has paginated', async () => {
+    // Integration: prependMessages sets hasPaginatedOlder, so a subsequent
+    // recovery/resume snapshot keeps the paginated prefix (older than the
+    // window) instead of wholesale-replacing it.
+    await selectWithSnapshot(storeB, hub, 'session-b', [
+      { id: 'w1', uuid: 'w1', type: 'text', role: 'user', timestamp: 100, rowid: 3 },
+    ]);
+    const subId = hub.subIdFor('session-b');
+    storeB.prependMessages([
+      { id: 'p1', uuid: 'p1', type: 'text', role: 'user', timestamp: 1, rowid: 0 } as never,
+    ]);
+    hub.fire('liveQuery.snapshot', {
+      subscriptionId: subId,
+      rows: [
+        { id: 'w1', uuid: 'w1', type: 'text', role: 'user', timestamp: 100, rowid: 3 },
+        { id: 'w2', uuid: 'w2', type: 'assistant', timestamp: 110, rowid: 4 },
+      ],
+    });
+    expect(storeB.sdkMessages.value.map((m) => m.id)).toEqual(['p1', 'w1', 'w2']);
+  });
+
+  it('recovers the session channel even when the initial load is still in flight', async () => {
+    // A tab resume during the initial load (state.session pending, LiveQuery
+    // not yet set up → activeMessagesSubscriptionId null) must still rejoin the
+    // session channel + refresh state; only the LiveQuery re-subscribe is
+    // conditional on a subscription existing.
+    let resolveState: (value: unknown) => void = () => {};
+    hub.setStateSessionDeferred(
+      new Promise((res) => {
+        resolveState = res;
+      })
+    );
+    const selectP = storeB.select('session-b');
+    await new Promise((r) => setTimeout(r, 10)); // reach startSubscriptions' state.session await
+    expect(storeB.activeMessagesSubscriptionId).toBeNull();
+
+    multiHub.request.mockClear();
+    // recover() (called by refreshAllSessionStores on resume) without awaiting:
+    // its state refresh also awaits the deferred, so resolve it afterwards.
+    const recoverP = storeB.recover();
+    await vi.waitFor(() => {
+      expect(multiHub.request).toHaveBeenCalledWith(
+        'channel.join',
+        { channel: 'session:session-b' },
+        expect.anything()
+      );
+    });
+    // No LiveQuery re-subscribe was attempted (no subscription yet).
+    expect(multiHub.request.mock.calls.filter((c) => c[0] === 'liveQuery.subscribe')).toHaveLength(
+      0
+    );
+
+    // Let the initial load + recovery settle.
+    resolveState({
+      sessionInfo: { id: 'session-b' },
+      agentState: { status: 'idle' },
+      commandsData: { availableCommands: [] },
+    });
+    hub.setStateSessionDeferred(null);
+    await Promise.all([selectP, recoverP]);
+  });
+
+  it('does not recover a session switched away from before recover() runs', async () => {
+    await selectWithSnapshot(storeB, hub, 'session-x', [
+      { id: 'x1', uuid: 'x1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+    // Spy recover to capture the moment: switching away first must make the
+    // subsequent recover() a no-op for X (no stray channel join / resubscribe).
+    await storeB.select('session-y');
+    multiHub.joinChannel.mockClear();
+    const subscribesBefore = multiHub.request.mock.calls.filter(
+      (c) => c[0] === 'liveQuery.subscribe'
+    ).length;
+
+    await storeB.recover();
+
+    expect(multiHub.joinChannel).not.toHaveBeenCalledWith('session:session-x');
+    const subscribesAfter = multiHub.request.mock.calls.filter(
+      (c) => c[0] === 'liveQuery.subscribe'
+    ).length;
+    // recover() re-subscribes Y (the active session), never X.
+    expect(subscribesAfter).toBe(subscribesBefore + 1);
   });
 });

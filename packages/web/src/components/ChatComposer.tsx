@@ -38,6 +38,14 @@ export interface ChatComposerProps {
   sandboxSwitching: boolean;
   isWaitingForInput: boolean;
   isConnected: boolean;
+  /**
+   * True while THIS session is mid-recovery after a connection drop/resume —
+   * distinct from `isConnected` (socket-level). The composer stays disabled
+   * until the session channel is rejoined and state/messages are re-synced, so
+   * a user can't send into a session whose `session:${id}` membership hasn't
+   * been restored yet (the socket can report "ready" before that completes).
+   */
+  isRecovering?: boolean;
   onModelSwitch: (model: ModelInfo) => void;
   onAutoScrollChange: (enabled: boolean) => void;
   onCoordinatorModeChange: (enabled: boolean) => void;
@@ -97,6 +105,7 @@ export function ChatComposer({
   sandboxSwitching,
   isWaitingForInput,
   isConnected,
+  isRecovering,
   onModelSwitch,
   onAutoScrollChange,
   onCoordinatorModeChange,
@@ -184,6 +193,7 @@ export function ChatComposer({
               disabled={
                 isWaitingForInput ||
                 !isConnected ||
+                isRecovering ||
                 modelSwitching ||
                 coordinatorSwitching ||
                 sandboxSwitching
