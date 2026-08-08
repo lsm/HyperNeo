@@ -387,7 +387,7 @@ export function setupSpaceTaskMessageHandlers(
     const inClickedNode = (e: { workflowNodeId?: string }) =>
       target.workflowNodeId ? e.workflowNodeId === target.workflowNodeId : true;
     const matches = target.sessionId
-      ? executions.filter((e) => e.agentSessionId === target.sessionId)
+      ? executions.filter((e) => e.agentSessionId === target.sessionId && inClickedNode(e))
       : target.nodeExecutionId
         ? executions.filter((e) => e.id === target.nodeExecutionId)
         : executions.filter(

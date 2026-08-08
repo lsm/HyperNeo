@@ -176,7 +176,11 @@ export function resolveNodeClick(args: ResolveNodeClickArgs): NodeClickOutcome {
       // live, but their execution id still maps authoritatively to NO live
       // session — record a tombstone so a lagging activity member (whose status
       // snapshot hasn't caught up) can't re-add the dead session via source 2.
-      if (!exec.agentSessionId || exec.status === 'cancelled') {
+      // Tombstone: detached (no session), cancelled, or pending-with-retained
+      // session (resetWorkflowNodeExecutionForSpawnRetry keeps the dead pointer
+      // on a pending row). A pending execution with a session id is NOT live —
+      // it's awaiting a fresh spawn.
+      if (!exec.agentSessionId || exec.status === 'cancelled' || exec.status === 'pending') {
         if (exec.id) sessionByExecId.set(exec.id, null);
         continue;
       }
@@ -197,8 +201,10 @@ export function resolveNodeClick(args: ResolveNodeClickArgs): NodeClickOutcome {
   // identity cannot be tied to this node and is skipped (no guesswork).
   for (const member of activityMembers) {
     if (member.kind !== 'node_agent' || !member.sessionId) continue;
-    // Exclude cancelled executions (stale session retained in the activity feed).
-    if (member.nodeExecution?.status === 'cancelled') continue;
+    // Exclude cancelled / pending-with-retained-session executions (stale
+    // session retained in the activity feed / spawn-retry pending row).
+    if (member.nodeExecution?.status === 'cancelled' || member.nodeExecution?.status === 'pending')
+      continue;
     const execNodeId = member.nodeExecution?.nodeId;
     if (!execNodeId || execNodeId !== nodeId) continue;
     const slotName = member.nodeExecution?.agentName ?? member.role;

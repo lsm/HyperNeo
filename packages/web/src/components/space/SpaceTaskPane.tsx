@@ -785,7 +785,14 @@ export function SpaceTaskPane({
     // while the daemon knows the worker by its provenance name, breaking
     // matchesPostApproval and misrouting the reply.
     const currentWorkerMember = currentActivityMembers.find(
-      (m) => m.kind === 'node_agent' && m.nodeExecution?.isCurrentPostApproval === true
+      (m) =>
+        m.kind === 'node_agent' &&
+        m.nodeExecution?.isCurrentPostApproval === true &&
+        // Accept the member only when its session matches the DURABLE pointer —
+        // a snapshot-lagging member (W1) for a task whose postApprovalSessionId
+        // already advanced to W2 would otherwise open W2 with W1's node/agent
+        // context. Withhold until the matching activity identity arrives.
+        (!task.postApprovalSessionId || m.sessionId === task.postApprovalSessionId)
     );
     let postApprovalTargetAgent: string | null =
       currentWorkerMember?.nodeExecution?.agentName ?? null;
@@ -938,14 +945,20 @@ export function SpaceTaskPane({
         if (!liveExec?.agentSessionId || liveExec.status === 'cancelled') return;
         liveSessionId = liveExec.agentSessionId;
       } else {
-        // Execution-less (merger) choice: revalidate against the task's CURRENT
-        // postApprovalSessionId — a repeated approval may have replaced the
-        // snapshotted worker (W1→W2) while the modal was open, and opening the
-        // stale W1 snapshot would diverge from where sends route (W2).
-        // Reject when the current pointer is cleared (worker completed / task
-        // exited approved) — don't reopen the stale snapshot.
-        if (!task.postApprovalSessionId) return;
-        liveSessionId = task.postApprovalSessionId;
+        // Execution-less (merger) choice. If the current pointer is set, use it
+        // (a W1→W2 swap while the modal was open must not open the stale W1
+        // snapshot — it would diverge from where sends route). If the pointer is
+        // cleared on a TERMINAL task (worker completed / task done), the
+        // historical workers are still viewable read-only — open the choice's
+        // snapshot. On a non-terminal task a cleared pointer mid-flow is stale —
+        // reject.
+        if (task.postApprovalSessionId) {
+          liveSessionId = task.postApprovalSessionId;
+        } else if (isTerminalTask) {
+          liveSessionId = choice.sessionId;
+        } else {
+          return;
+        }
       }
       taskContext.sessionId = liveSessionId;
       pushOverlayHistory(liveSessionId, choice.label, undefined, taskContext);
