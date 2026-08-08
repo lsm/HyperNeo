@@ -228,8 +228,9 @@ describe('resolveSpaceMcpSessionPolicy', () => {
   test('a reused :exec: session designated as the merger requires space-agent-tools (#879)', () => {
     // When PostApprovalRouter reuses a live `:exec:` workflow-worker session for
     // the merge kickoff, that session IS the task's designated post-approval
-    // merger (task.postApprovalSessionId === session.id). It must therefore
-    // require `space-agent-tools` (hosts merge_pr) — otherwise
+    // merger (task.postApprovalSessionId === session.id AND the route requires
+    // the merge gate, postApprovalRequiresMerge). It must therefore require
+    // `space-agent-tools` (hosts merge_pr) — otherwise
     // ensureMemberSpaceMcpInvariant treats it as a plain worker (node-agent
     // only) and the merger's turn lacks merge_pr. attachGenericSpaceTools must
     // also be true so reattachMemberSpaceTools can self-heal the server after
@@ -253,6 +254,7 @@ describe('resolveSpaceMcpSessionPolicy', () => {
             spaceId: 'space-1',
             status: 'approved',
             postApprovalSessionId: mergerSessionId,
+            postApprovalRequiresMerge: true,
           }),
       },
     });
@@ -270,6 +272,39 @@ describe('resolveSpaceMcpSessionPolicy', () => {
     expect(missingMcpServers({ 'node-agent': {} }, policy.requiredServers)).toEqual([
       'space-agent-tools',
     ]);
+  });
+
+  test('a reused post-approval worker that is NOT a merge route is not classified as the merger (#879 P1-2)', () => {
+    // The router stamps postApprovalSessionId for EVERY dispatched route, not
+    // just merges. A non-merge reused post-approval worker has this session id
+    // matching but postApprovalRequiresMerge false — it must NOT be required to
+    // carry space-agent-tools (which would throw in ensureMemberSpaceMcpInvariant
+    // for a server it was never given). This is the P1-2 regression guard.
+    const session = makeSession({
+      id: 'space:space-1:task:task-1:exec:exec-9',
+      type: 'worker',
+      context: { spaceId: 'space-1', taskId: 'task-1' },
+    });
+    const policy = resolveSpaceMcpSessionPolicy(session, {
+      nodeExecutionRepo: {
+        getByAgentSessionId: (sid) =>
+          sid === session.id ? makeNodeExecution({ agentSessionId: sid }) : null,
+        getById: () => null,
+      },
+      taskRepo: {
+        getTask: () =>
+          makeTask({
+            id: 'task-1',
+            spaceId: 'space-1',
+            // SAME session id, but the route is NOT a merge route.
+            postApprovalSessionId: session.id,
+            postApprovalRequiresMerge: false,
+          }),
+      },
+    });
+
+    expect(policy.attachGenericSpaceTools).toBe(false);
+    expect(policy.requiredServers).toBe(SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS);
   });
 
   test('a non-designated :exec: worker still requires only node-agent (#879 regression guard)', () => {

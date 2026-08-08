@@ -62,6 +62,7 @@ import {
 } from '../workflows/post-approval-template';
 import { Logger } from '../../logger';
 import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator';
+import { inferRequiredMcpToolsFromProcedure, MERGE_PR_TOOL } from './post-approval-tool-invariant';
 
 const log = new Logger('post-approval-router');
 
@@ -456,6 +457,15 @@ export class PostApprovalRouter {
       kickoffMessage,
     });
 
+    // Derive PRECISELY whether this route requires the deterministic merge gate,
+    // from the procedure we just dispatched (not from postApprovalSessionId,
+    // which the router stamps for every dispatched route). Persisted so
+    // resolveSpaceMcpSessionPolicy and rehydrateSubSession can recognise the
+    // designated merger without mis-classifying a non-merge reused post-approval
+    // worker (#879 P1-2).
+    const requiresMerge =
+      inferRequiredMcpToolsFromProcedure(interpolatedInstructions).includes(MERGE_PR_TOOL);
+
     this.deps.taskRepo.updateTask(task.id, {
       pendingCheckpointType: null,
       pendingCompletionSubmittedByNodeId: null,
@@ -464,6 +474,7 @@ export class PostApprovalRouter {
       postApprovalSessionId: sessionId,
       postApprovalStartedAt: startedAt,
       postApprovalBlockedReason: null,
+      postApprovalRequiresMerge: requiresMerge,
     });
 
     log.info(

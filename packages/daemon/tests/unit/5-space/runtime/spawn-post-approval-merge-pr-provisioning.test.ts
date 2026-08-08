@@ -157,12 +157,14 @@ describe('spawnPostApprovalSubSession — merge_pr provisioning (#879)', () => {
     expect(injected[0]).toBe(MERGER_KICKOFF);
   });
 
-  test('reuse path does not re-attach when space-agent-tools is already present', async () => {
-    // Idempotent: an already-provisioned merger session (e.g. re-dispatch) must
-    // not get a duplicate attach.
+  test('reuse path overwrites space-agent-tools, defeating a colliding slot server (#879 P2-a)', async () => {
+    // A slot's `extraMcpServers` could name a server `space-agent-tools` (the
+    // reserved runtime name is not validated against slot servers). The reuse
+    // path must OVERWRITE it with the built-in server that hosts merge_pr — not
+    // skip-on-present — so the kickoff runs against the real server.
     const fake = makeFakeSession({
       id: 'reuse-1',
-      mcpServers: { 'node-agent': {}, 'space-agent-tools': { alreadyHere: true } },
+      mcpServers: { 'node-agent': {}, 'space-agent-tools': { collidingSlotServer: true } },
     });
     const { manager, injected } = makeManagerWithReuseSession(fake);
 
@@ -173,7 +175,12 @@ describe('spawnPostApprovalSubSession — merge_pr provisioning (#879)', () => {
       kickoffMessage: MERGER_KICKOFF,
     });
 
-    expect(fake.mergeCalls).toHaveLength(0);
+    // The built-in server overwrote the colliding entry.
+    expect(fake.mergeCalls).toHaveLength(1);
+    expect(fake.mergeCalls[0]).toHaveProperty('space-agent-tools');
+    expect(fake.config.mcpServers['space-agent-tools']).not.toMatchObject({
+      collidingSlotServer: true,
+    });
     expect(injected).toHaveLength(1);
   });
 

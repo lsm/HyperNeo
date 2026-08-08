@@ -634,6 +634,10 @@ export class SpaceTaskRepository {
       fields.push('post_approval_source_node_id = ?');
       values.push(params.postApprovalSourceNodeId ?? null);
     }
+    if (params.postApprovalRequiresMerge !== undefined) {
+      fields.push('post_approval_requires_merge = ?');
+      values.push(params.postApprovalRequiresMerge ? 1 : 0);
+    }
     if (params.restrictions !== undefined) {
       fields.push('restrictions = ?');
       values.push(params.restrictions ? JSON.stringify(params.restrictions) : null);
@@ -868,6 +872,7 @@ export class SpaceTaskRepository {
       postApprovalStartedAt: (row.post_approval_started_at as number | null) ?? null,
       postApprovalBlockedReason: (row.post_approval_blocked_reason as string | null) ?? null,
       postApprovalSourceNodeId: (row.post_approval_source_node_id as string | null) ?? null,
+      postApprovalRequiresMerge: Boolean(row.post_approval_requires_merge),
       restrictions: parseRestrictions(row.restrictions),
       createdAt: row.created_at as number,
       startedAt: (row.started_at as number | null) ?? null,

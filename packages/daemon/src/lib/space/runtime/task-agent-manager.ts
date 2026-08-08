@@ -4155,6 +4155,22 @@ export class TaskAgentManager {
       ...this.buildAgentMemoryMcpServers(spaceId, subSessionId),
     };
 
+    // #879 P1-1: if this rehydrated worker is THIS task's designated post-approval
+    // merger, it ALSO needs `space-agent-tools` (hosts merge_pr) — the spawn path
+    // attached it eagerly but that merge is in-memory only and was stripped on
+    // restart. Re-attach it here so the resumed first turn does not throw in
+    // ensureMemberSpaceMcpInvariant (which now requires it for the designated
+    // merger via resolveSpaceMcpSessionPolicy). Precise: only genuine merge routes
+    // (postApprovalRequiresMerge), not every reused post-approval worker.
+    const isRehydratedDesignatedMerger =
+      !!parentTask &&
+      parentTask.postApprovalSessionId === subSessionId &&
+      !!parentTask.postApprovalRequiresMerge;
+    if (isRehydratedDesignatedMerger) {
+      mergedMcpServers['space-agent-tools'] =
+        this.config.spaceRuntimeService.buildMemberSpaceToolsMcpServer(space, subSessionId);
+    }
+
     // Use merge semantics: the restored session has no in-memory MCP servers
     // (stripped from DB) so this is effectively a full set, but mergeRuntimeMcpServers
     // is safer than the deprecated replace-all setRuntimeMcpServers.
@@ -4196,6 +4212,16 @@ export class TaskAgentManager {
     agentSession.onMissingWorkflowMcpServers = async (cbSessionId: string, missing: string[]) => {
       await this.mcpSelfHeal(cbSessionId, missing);
     };
+
+    // #879 P1-1: for a rehydrated designated merger, also wire the Space-member
+    // self-heal so a cache eviction / reload that drops `space-agent-tools`
+    // re-attaches it (reattachMemberSpaceTools honours the designated-merger
+    // policy and re-attaches space-agent-tools). Mirrors spawnPostApprovalSubSession.
+    if (isRehydratedDesignatedMerger) {
+      agentSession.onMissingMemberSpaceMcpServers = async (sid: string) => {
+        await this.config.spaceRuntimeService.reattachMemberSpaceTools(sid);
+      };
+    }
 
     // Rehydration must publish the AgentSession in every runtime map before any
     // continuation replay can run. Starting the SDK query is intentionally last:
@@ -5642,15 +5668,16 @@ export class TaskAgentManager {
       // and skipping avoids touching the session surface unnecessarily.
       if (requiredTools.length > 0) {
         if (requiredTools.includes(MERGE_PR_TOOL)) {
-          const existingServers = existing.getSessionData().config?.mcpServers ?? {};
-          if (!('space-agent-tools' in existingServers)) {
-            existing.mergeRuntimeMcpServers({
-              'space-agent-tools': this.config.spaceRuntimeService.buildMemberSpaceToolsMcpServer(
-                space,
-                existingSessionId
-              ),
-            });
-          }
+          // Always (re-)attach the built-in space-agent-tools — overwrite, not
+          // skip-on-present — so a colliding slot `extraMcpServers` entry named
+          // 'space-agent-tools' cannot shadow the built-in server that hosts
+          // merge_pr (#879 P2-a). mergeRuntimeMcpServers is last-writer-wins.
+          existing.mergeRuntimeMcpServers({
+            'space-agent-tools': this.config.spaceRuntimeService.buildMemberSpaceToolsMcpServer(
+              space,
+              existingSessionId
+            ),
+          });
         }
         // #879 provisioning invariant: a procedure that requires a tool must
         // not run without it. Fail clearly before the kickoff is delivered
@@ -5733,20 +5760,6 @@ export class TaskAgentManager {
       },
     };
 
-    // #879 provisioning invariant (create path): assert the procedure-required
-    // tools are in the init's effective surface BEFORE creating the session, so
-    // a tool-missing configuration fails fast at spawn time (no dangling
-    // session, no degraded first turn). `init.mcpServers` carries
-    // `space-agent-tools` (which unconditionally registers `merge_pr`) and the
-    // merger's `disallowedTools` never targets `mcp__*`, so a correctly
-    // provisioned merger passes; this catches drift (missing server or a
-    // disallow entry) loudly.
-    assertRequiredMcpToolsAvailable(
-      { mcpServers: init.mcpServers, disallowedTools: init.disallowedTools },
-      requiredTools,
-      { sessionId, agentName: matchedSlot.name, taskId }
-    );
-
     const actualSessionId = await this.createSubSession(taskId, sessionId, init, {
       agentId: matchedSlot.agentId,
       agentName: matchedSlot.name,
@@ -5758,6 +5771,31 @@ export class TaskAgentManager {
       throw new Error(
         `spawnPostApprovalSubSession: spawned session ${actualSessionId} not registered in memory`
       );
+    }
+
+    // #879 provisioning invariant (create path): validate the ACTUAL session
+    // returned by createSubSession — not the init — because createSubSession may
+    // reuse/rehydrate a prior session that does NOT receive init.mcpServers, in
+    // which case space-agent-tools would be absent on the session that actually
+    // runs the kickoff. Always (re-)attach the built-in space-agent-tools for
+    // merge procedures (overwrites any colliding slot server, #879 P2-a), then
+    // assert the required tools are in the session's effective surface. Uses
+    // actualSessionId (may differ from sessionId when createSubSession reused a
+    // prior session) so the server is bound to the session that will run.
+    if (requiredTools.length > 0) {
+      if (requiredTools.includes(MERGE_PR_TOOL)) {
+        spawned.mergeRuntimeMcpServers({
+          'space-agent-tools': this.config.spaceRuntimeService.buildMemberSpaceToolsMcpServer(
+            space,
+            actualSessionId
+          ),
+        });
+      }
+      assertRequiredMcpToolsAvailable(spawned.getSessionData().config ?? {}, requiredTools, {
+        sessionId: actualSessionId,
+        agentName: matchedSlot.name,
+        taskId,
+      });
     }
 
     // #852: wire the Space-member MCP self-heal so a future regression (cache

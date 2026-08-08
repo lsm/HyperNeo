@@ -885,6 +885,15 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // createTables(); this brings existing databases up to parity. (Renumbered
   // 171→174→175→176→178 as dev shipped intervening migrations.)
   run(migrationMarkerKey(178), () => runMigration178(db));
+
+  // Migration 179: Add `space_tasks.post_approval_requires_merge` — a flag set
+  // by PostApprovalRouter at dispatch when the route's procedure requires the
+  // deterministic merge_pr gate. resolveSpaceMcpSessionPolicy and
+  // rehydrateSubSession read it to recognise the designated merger PRECISELY
+  // (a post-approval route is not necessarily a merge route), so a non-merge
+  // reused post-approval worker is not mis-classified as requiring
+  // space-agent-tools (#879).
+  run(migrationMarkerKey(179), () => runMigration179(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -11926,4 +11935,23 @@ export function runMigration178(db: BunDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_session_turn
     ON sdk_messages(task_id, session_id, conversation_turn_index)
   `);
+}
+
+/**
+ * Migration 179: Add `space_tasks.post_approval_requires_merge` (#879).
+ *
+ * A 0/1 flag set by PostApprovalRouter at dispatch when the route's procedure
+ * requires the deterministic `merge_pr` gate (derived from the interpolated
+ * route instructions). `resolveSpaceMcpSessionPolicy` and
+ * `rehydrateSubSession` read it to recognise the designated merger PRECISELY:
+ * a post-approval route is not necessarily a merge route, so a non-merge reused
+ * post-approval worker must not be mis-classified as requiring `space-agent-tools`.
+ */
+export function runMigration179(db: BunDatabase): void {
+  if (!tableExists(db, 'space_tasks')) return;
+  if (!tableHasColumn(db, 'space_tasks', 'post_approval_requires_merge')) {
+    db.exec(
+      `ALTER TABLE space_tasks ADD COLUMN post_approval_requires_merge INTEGER NOT NULL DEFAULT 0`
+    );
+  }
 }

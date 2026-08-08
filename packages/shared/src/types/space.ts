@@ -860,6 +860,16 @@ export interface SpaceTask {
    */
   postApprovalSourceNodeId?: string | null;
   /**
+   * True when this task's post-approval route's procedure requires the
+   * deterministic `merge_pr` gate (derived by `PostApprovalRouter` at dispatch
+   * from the interpolated route instructions). Lets `resolveSpaceMcpSessionPolicy`
+   * and `rehydrateSubSession` recognise the designated merger PRECISELY — a
+   * post-approval route is not necessarily a merge route — so a non-merge reused
+   * post-approval worker is not mis-classified as requiring `space-agent-tools`.
+   * Default false (#879).
+   */
+  postApprovalRequiresMerge?: boolean | null;
+  /**
    * Restriction data when a task is paused due to an API rate or usage limit
    * (`status` is `rate_limited` or `usage_limited`). Null when the task is not
    * paused. Persisted so the UI can show the reset time and the runtime can
@@ -1095,6 +1105,11 @@ export interface UpdateSpaceTaskParams {
    * See `SpaceTask.postApprovalSourceNodeId`.
    */
   postApprovalSourceNodeId?: string | null;
+  /**
+   * Whether the post-approval route requires the merge gate; set at dispatch.
+   * See `SpaceTask.postApprovalRequiresMerge`.
+   */
+  postApprovalRequiresMerge?: boolean | null;
   /**
    * Restriction data for a task paused on a rate/usage limit; null to clear
    * (restoring the task to in_progress). Set together with `status`
