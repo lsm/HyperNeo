@@ -376,7 +376,10 @@ export function SpaceTaskPane({
     const composerWorkerMember = activityMembers.find(
       (m) => m.kind === 'node_agent' && m.nodeExecution?.isCurrentPostApproval === true
     );
-    let composerPostApprovalTarget: string | null = null;
+    let composerPostApprovalTarget: string | null =
+      // Prefer the current worker member's own slot name (mirrors handleNodeClick)
+      // so the durable fallback works even when the workflow detail isn't loaded.
+      composerWorkerMember?.nodeExecution?.agentName ?? null;
     if (workflow) {
       for (const n of workflow.nodes) {
         const t = n.postApproval?.targetAgent;
