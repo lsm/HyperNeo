@@ -732,6 +732,17 @@ export function SpaceTaskPane({
       )
         return;
     }
+    // Re-read reactive values from the CURRENT store/refs after the await — the
+    // render-time closure captured `task`, `activityMembers`, `nodeExecutions`
+    // which may have been superseded by a reactive rebind during the fetch.
+    const currentTask = taskId
+      ? (spaceStore.tasks.value.find((t) => t.id === taskId) ?? null)
+      : null;
+    if (!currentTask) return;
+    const currentActivityMembers: SpaceTaskActivityMember[] = taskId
+      ? (spaceStore.taskActivity.value.get(taskId) ?? [])
+      : [];
+    const currentNodeExecutions = spaceStore.nodeExecutions.value;
     const clickedNode = wf?.nodes.find((n) => n.id === nodeId) ?? null;
     const slotLabel = (agentName: string): string => {
       // Exact match (the resolver/labels preserve separator-distinct slots):
@@ -751,7 +762,7 @@ export function SpaceTaskPane({
     // workflow route — re-deriving from `wf` would send a stale/edited name
     // while the daemon knows the worker by its provenance name, breaking
     // matchesPostApproval and misrouting the reply.
-    const currentWorkerMember = activityMembers.find(
+    const currentWorkerMember = currentActivityMembers.find(
       (m) => m.kind === 'node_agent' && m.nodeExecution?.isCurrentPostApproval === true
     );
     let postApprovalTargetAgent: string | null =
@@ -786,14 +797,14 @@ export function SpaceTaskPane({
         : null);
 
     const outcome = resolveNodeClick({
-      taskId: task.id,
+      taskId: currentTask.id,
       nodeId,
       nodeName,
       agentSlotNames,
-      workflowRunId: task.workflowRunId,
-      nodeExecutions,
-      activityMembers,
-      postApprovalSessionId: task.postApprovalSessionId,
+      workflowRunId: currentTask.workflowRunId,
+      nodeExecutions: currentNodeExecutions,
+      activityMembers: currentActivityMembers,
+      postApprovalSessionId: currentTask.postApprovalSessionId,
       postApprovalTargetAgent,
       postApprovalNodeId,
       resolveLabel: slotLabel,
@@ -812,7 +823,7 @@ export function SpaceTaskPane({
         // worker with its node-agent tools. workflowNodeId keeps both paths
         // node-scoped.
         const taskContext = {
-          taskId: task.id,
+          taskId: currentTask.id,
           agentName: outcome.session.agentName,
           workflowNodeId: nodeId,
           sessionId: outcome.session.sessionId,
@@ -836,32 +847,32 @@ export function SpaceTaskPane({
         // availability (postApprovalNodeId), not on wf alone — durable worker
         // identity can exist without wf, so !wf would wrongly block an
         // unrelated unstarted node's activation until the fetch recovers.
-        if (task.postApprovalSessionId && !postApprovalNodeId) {
-          setNodeChoice({ taskId: task.id, nodeName, nodeId, choices: [] });
+        if (currentTask.postApprovalSessionId && !postApprovalNodeId) {
+          setNodeChoice({ taskId: currentTask.id, nodeName, nodeId, choices: [] });
           return;
         }
         // Unstarted single-slot node: open its OWN pending-agent overlay,
         // carrying the node ID so the first message activates only this node
         // (not another node that reuses the same slot name).
-        pushOverlayHistoryForPendingAgent(task.id, outcome.agentName, outcome.nodeId);
+        pushOverlayHistoryForPendingAgent(currentTask.id, outcome.agentName, outcome.nodeId);
         return;
       case 'choose':
         // Same identity-unavailability guard as activate_slot (postApprovalNodeId,
         // not wf): don't offer pending choices that could activate a duplicate
         // merger when identity is unavailable. Preserve live choices — they
         // can't activate a duplicate and may belong to an unrelated node.
-        if (task.postApprovalSessionId && !postApprovalNodeId) {
+        if (currentTask.postApprovalSessionId && !postApprovalNodeId) {
           const safeChoices = outcome.choices.filter((c) => c.kind === 'live');
-          setNodeChoice({ taskId: task.id, nodeName, nodeId, choices: safeChoices });
+          setNodeChoice({ taskId: currentTask.id, nodeName, nodeId, choices: safeChoices });
           return;
         }
         // Multi-agent node (several live) or multi-slot unstarted node: let
         // the user pick rather than silently selecting an arbitrary slot.
-        setNodeChoice({ taskId: task.id, nodeName, nodeId, choices: outcome.choices });
+        setNodeChoice({ taskId: currentTask.id, nodeName, nodeId, choices: outcome.choices });
         return;
       case 'empty':
         // Zero-agent node: present a clear empty state, no fallback.
-        setNodeChoice({ taskId: task.id, nodeName, nodeId, choices: [] });
+        setNodeChoice({ taskId: currentTask.id, nodeName, nodeId, choices: [] });
         return;
     }
   };
@@ -876,12 +887,19 @@ export function SpaceTaskPane({
       // live execution-less post-approval worker (no nodeExecutionId) is
       // restored + delivered via matchesPostApproval, and a real node-execution
       // choice is selected by id. workflowNodeId keeps both node-scoped.
-      const taskContext = {
+      const taskContext: {
+        taskId: string;
+        agentName: string;
+        workflowNodeId?: string;
+        nodeExecutionId?: string;
+        sessionId?: string;
+      } = {
         taskId: task.id,
         agentName: choice.agentName,
         ...(clickedNodeId ? { workflowNodeId: clickedNodeId } : {}),
         ...(choice.nodeExecutionId ? { nodeExecutionId: choice.nodeExecutionId } : {}),
       };
+      // sessionId is set below after revalidation and merged into taskContext.
       // Revalidate the session id at selection time: nodeChoice.choices is
       // snapshotted at click time, so an execution that rebinds while the modal
       // is open (restart/recovery/spawn) would otherwise open a stale session.
@@ -902,8 +920,12 @@ export function SpaceTaskPane({
         // postApprovalSessionId — a repeated approval may have replaced the
         // snapshotted worker (W1→W2) while the modal was open, and opening the
         // stale W1 snapshot would diverge from where sends route (W2).
-        liveSessionId = task.postApprovalSessionId ?? choice.sessionId;
+        // Reject when the current pointer is cleared (worker completed / task
+        // exited approved) — don't reopen the stale snapshot.
+        if (!task.postApprovalSessionId) return;
+        liveSessionId = task.postApprovalSessionId;
       }
+      taskContext.sessionId = liveSessionId;
       pushOverlayHistory(liveSessionId, choice.label, undefined, taskContext);
     } else {
       pushOverlayHistoryForPendingAgent(task.id, choice.agentName, choice.nodeId || clickedNodeId);

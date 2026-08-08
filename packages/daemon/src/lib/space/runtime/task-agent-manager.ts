@@ -2198,7 +2198,13 @@ export class TaskAgentManager {
     if (!this.sessionIsWorkerForTask(sessionId, taskId)) return null;
     const provenance = this.readProvenanceFromSessionRow(sessionId);
     const agentName = provenance?.agentName ?? this.legacyWorkflowRouteAgentName(task);
-    return agentName ? { sessionId, agentName, nodeId: provenance?.nodeId ?? null } : null;
+    return agentName
+      ? {
+          sessionId,
+          agentName,
+          nodeId: provenance?.nodeId ?? this.legacyWorkflowRouteNodeId(task) ?? null,
+        }
+      : null;
   }
 
   /**
