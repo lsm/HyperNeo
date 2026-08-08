@@ -278,6 +278,14 @@ export class SessionStore {
    * discards a good full-state fetch.
    */
   private lastAppliedRevision = 0;
+  /**
+   * The daemon-instance boot epoch last seen. When an incoming state.session
+   * carries a different epoch, the daemon restarted — its in-memory revision
+   * counter reset — so we clear `lastAppliedRevision` to accept the fresh low
+   * revisions. See reconcileDaemonEpoch. Daemon-level (not reset on session
+   * switch, only on epoch change).
+   */
+  private lastDaemonEpoch: string | null = null;
   private contextPushVersion = 0;
 
   /** Subscription cleanup functions */
@@ -437,6 +445,10 @@ export class SessionStore {
         // vice-versa), overwriting metadata/agent/context/commands/error.
         // The daemon emits these on channel `session:${sessionId}`.
         if (context?.channel !== `session:${sessionId}`) return;
+        // A changed daemon epoch (daemon restart) resets the server's in-memory
+        // revision counter — clear our gate before the revision check so the
+        // fresh low revisions apply.
+        this.reconcileDaemonEpoch(state.daemonEpoch);
         // Apply only if newer than the last applied state. The daemon stamps a
         // capture-order revision (before its async gap) on every state.session
         // update, so this is correct regardless of arrival order — an OLDER
@@ -755,6 +767,23 @@ export class SessionStore {
    * stream: the client no longer has to coordinate a "first RPC then delta"
    * handoff, so there's no window where messages could be dropped.
    */
+
+  /**
+   * Detect a daemon restart via the per-boot `daemonEpoch`. The server's
+   * capture-order revision counter is in-memory, so a restart resets it to 1;
+   * without this, our `lastAppliedRevision` (e.g. 50) would discard every
+   * post-restart snapshot (revision 1..50) and freeze the view. On an epoch
+   * change, clear the revision gate so the fresh low revisions apply. Called
+   * before the revision check on every state.session update (push + fetch).
+   * Absent epoch (older daemon) => no-op, preserving revision gating.
+   */
+  private reconcileDaemonEpoch(daemonEpoch: string | undefined): void {
+    if (daemonEpoch !== undefined && daemonEpoch !== this.lastDaemonEpoch) {
+      this.lastAppliedRevision = 0;
+      this.lastDaemonEpoch = daemonEpoch;
+    }
+  }
+
   private async fetchInitialSessionState(
     hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
     sessionId: string,
@@ -828,12 +857,14 @@ export class SessionStore {
     // the freshest-issued SUCCESSFUL fetch commits, so a slower-resolving older
     // snapshot can't overwrite a fresher one. (A retainOnError failure returns
     // before this point, so it never claims the slot and can't block another.)
-    // The revision check then handles the fetch-vs-PUSH race in BOTH directions
-    // using the server-stamped capture-order revision: a newer push that landed
-    // during the RPC (revision higher than this fetch's) leaves lastAppliedRevision
-    // ahead of this fetch, discarding it; an OLDER push that landed late does not
-    // overtake this fetch's revision, so this fresher fetch applies. Absent
-    // revision (older daemon) => the check is skipped.
+    // A changed daemon epoch (daemon restart resets the server's in-memory
+    // revision counter) clears the gate first, then the revision check handles
+    // the fetch-vs-PUSH race in BOTH directions: a newer push that landed during
+    // the RPC (revision higher than this fetch's) leaves lastAppliedRevision
+    // ahead of this fetch, discarding it; an OLDER push that landed late does
+    // not overtake this fetch's revision, so this fresher fetch applies. Absent
+    // revision/epoch (older daemon) => the checks are skipped.
+    this.reconcileDaemonEpoch(result.daemonEpoch);
     if (
       this.destroyed ||
       this.activeSessionId.value !== sessionId ||

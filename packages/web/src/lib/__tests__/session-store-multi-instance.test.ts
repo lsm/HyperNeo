@@ -843,6 +843,35 @@ describe('SessionStore multi-instance isolation', () => {
     expect(storeB.agentState.value.status).toBe('processing');
   });
 
+  it('accepts a post-restart snapshot whose revision is below the stale watermark (daemon epoch)', async () => {
+    // P1 regression: the server revision counter is in-memory, so a daemon
+    // restart resets it to 1. Without an epoch, lastAppliedRevision (e.g. 50)
+    // would discard every post-restart snapshot (revision 1..50) and freeze.
+    hub.setSessionState('session-x', {
+      sessionInfo: { id: 'session-x', title: 'pre-restart' },
+      agentState: { status: 'idle' },
+      commandsData: { availableCommands: [] },
+      revision: 50,
+      daemonEpoch: 'daemon-a',
+    });
+    await storeB.select('session-x');
+    expect(storeB.sessionInfo.value?.title).toBe('pre-restart');
+
+    // Daemon restarts: fresh counter (revision 1) under a new boot epoch.
+    hub.setSessionState('session-x', {
+      sessionInfo: { id: 'session-x', title: 'post-restart' },
+      agentState: { status: 'processing' },
+      commandsData: { availableCommands: [] },
+      revision: 1,
+      daemonEpoch: 'daemon-b',
+    });
+    await storeB.refresh();
+
+    // The epoch change reset the revision gate, so the low revision applies.
+    expect(storeB.sessionInfo.value?.title).toBe('post-restart');
+    expect(storeB.agentState.value.status).toBe('processing');
+  });
+
   it('a partial context.updated push guards only contextInfo, not the full-state fetch', async () => {
     // Initial load: hold the state.session RPC in flight so sessionState is
     // still null when a PARTIAL context.updated push lands mid-fetch.

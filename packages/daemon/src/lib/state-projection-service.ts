@@ -62,6 +62,16 @@ export class StateProjectionService {
    * existing snapshot/meta versioning.
    */
   private sessionRevisions = new Map<string, number>();
+  /**
+   * Per-boot epoch identifying this daemon instance. The capture-order
+   * `sessionRevisions` counter is in-memory and resets to 1 on a daemon
+   * restart, so the client must recognize a new daemon instance and reset its
+   * revision gate — otherwise it discards every post-restart snapshot (low
+   * revision <= its stale high watermark) and freezes. Generated once per
+   * instance (constructor) so it changes on every boot. Carried on every
+   * state.session emission alongside `revision`.
+   */
+  private readonly bootEpoch: string;
   private logger = new Logger('StateProjectionService');
 
   /**
@@ -108,6 +118,9 @@ export class StateProjectionService {
     private reactiveDb?: ReactiveDatabase
   ) {
     this.clientEvents = clientEvents ?? new ClientEventGateway({ hub: messageHub });
+    // Per-boot instance id: changes on every daemon (re)start so clients can
+    // reset their in-memory revision gate when the daemon's counter restarts.
+    this.bootEpoch = crypto.randomUUID();
     this.setupHandlers();
     this.setupEventBusSubscriptions();
   }
@@ -566,6 +579,7 @@ export class StateProjectionService {
           error: null,
           timestamp: Date.now(),
           revision: this.nextSessionRevision(sessionId),
+          daemonEpoch: this.bootEpoch,
         };
       }
       throw new Error('Session not found');
@@ -604,6 +618,7 @@ export class StateProjectionService {
       error: error,
       timestamp: Date.now(),
       revision,
+      daemonEpoch: this.bootEpoch,
     };
   }
 
@@ -709,6 +724,12 @@ export class StateProjectionService {
             error: this.errorCache.get(sessionId) ?? null,
             timestamp: Date.now(),
             version,
+            // Stamp the same ordering fields as the primary emission so the
+            // client's revision/epoch gating covers this path too — otherwise
+            // an undefined revision lets a concurrent stale RPC revert this
+            // fresher fallback state.
+            revision: this.nextSessionRevision(sessionId),
+            daemonEpoch: this.bootEpoch,
           };
           this.messageHub.event(STATE_CHANNELS.SESSION, fallbackState, {
             channel: `session:${sessionId}`,

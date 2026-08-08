@@ -363,6 +363,41 @@ describe('StateProjectionService', () => {
       // session-a's second call advances only its own counter.
       expect(a2.revision).toBe(2);
     });
+
+    it('stamps a stable daemon-instance epoch alongside the revision', async () => {
+      // The epoch lets the client detect a daemon restart (counter reset).
+      (mockSessionManager.getSessionAsync as ReturnType<typeof mock>).mockResolvedValue(
+        mockAgent()
+      );
+      const a = await service.getSessionState('rev-session');
+      const b = await service.getSessionState('rev-session');
+      expect(typeof a.daemonEpoch).toBe('string');
+      expect(a.daemonEpoch).toBeTruthy();
+      // Same daemon instance => same epoch across calls.
+      expect(b.daemonEpoch).toBe(a.daemonEpoch);
+    });
+  });
+
+  describe('broadcastSessionStateChange fallback ordering fields', () => {
+    // The catch-block fallback must carry revision + daemonEpoch (ordering
+    // parity with the primary emission) so the client's gating covers it.
+    it('stamps revision + daemonEpoch on the fallback state when getSessionState throws', async () => {
+      // Populate caches via session.created so the fallback has data to emit.
+      const createdHandler = eventSubscribers.get('session.created')?.[0];
+      await createdHandler!({ session: { id: 'fall-session', title: 'Fall' } });
+      // getSessionState throws (no AgentSession) -> fallback path.
+      (mockSessionManager.getSessionAsync as ReturnType<typeof mock>).mockResolvedValue(null);
+
+      await service.broadcastSessionStateChange('fall-session');
+
+      const sessionEmissions = (mockMessageHub.event as ReturnType<typeof mock>).mock.calls.filter(
+        (c) => c[0] === STATE_CHANNELS.SESSION
+      );
+      expect(sessionEmissions.length).toBeGreaterThan(0);
+      const fallback = sessionEmissions[sessionEmissions.length - 1][1] as Record<string, unknown>;
+      expect(typeof fallback.revision).toBe('number');
+      expect(typeof fallback.daemonEpoch).toBe('string');
+    });
   });
 
   describe('getSessionSnapshot', () => {

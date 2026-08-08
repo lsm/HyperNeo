@@ -266,6 +266,17 @@ export interface SessionState {
    * with older daemons; absent => client applies unconditionally.
    */
   revision?: number;
+
+  /**
+   * Daemon-instance boot epoch (a per-boot id generated once at daemon
+   * startup). The capture-order `revision` counter is in-memory, so a daemon
+   * restart resets it to 1 — without this epoch the client would keep its
+   * pre-restart `lastAppliedRevision` and discard every post-restart snapshot
+   * (revision 1..N <= the stale high watermark) freezing the view. The client
+   * resets its revision gate whenever this epoch changes. Optional for older
+   * daemons; absent => client skips the reset (preserves revision gating).
+   */
+  daemonEpoch?: string;
 }
 
 // State channel: {sessionId}:state.sdkMessages
