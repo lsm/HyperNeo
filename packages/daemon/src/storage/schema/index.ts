@@ -141,6 +141,8 @@ export { runMigration176 } from './migrations';
 export { runMigration177 } from './migrations';
 // knip-ignore-next-line
 export { runMigration178 } from './migrations';
+// knip-ignore-next-line
+export { runMigration179 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults
@@ -171,7 +173,13 @@ export function createTables(db: BunDatabase): void {
         archived_at TEXT,
         parent_id TEXT,
         type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room_chat', 'planner', 'coder', 'leader', 'general', 'lobby', 'spaces_global', 'space_task_agent', 'space_chat')),
-        session_context TEXT
+        session_context TEXT,
+        -- Maintained counter of visible top-level SDK messages (the badge
+        -- predicate: non-subagent, non-deferred user, non-hidden subtype). Read
+        -- directly by spaceSessions.bySpace instead of a correlated COUNT(*)
+        -- per session per poll. Maintained by SDKMessageRepository on every
+        -- sdk_messages mutation. See migration 177 for the backfill.
+        visible_message_count INTEGER NOT NULL DEFAULT 0
       )
     `);
 

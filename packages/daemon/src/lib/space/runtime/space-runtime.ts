@@ -1103,7 +1103,7 @@ export class SpaceRuntime {
    */
   private getSdkMessageRepo(): SDKMessageRepository {
     if (!this.sdkMessageRepo) {
-      this.sdkMessageRepo = new SDKMessageRepository(this.config.db);
+      this.sdkMessageRepo = new SDKMessageRepository(this.config.db, this.config.reactiveDb);
     }
     return this.sdkMessageRepo;
   }
