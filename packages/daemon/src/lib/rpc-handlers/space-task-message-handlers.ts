@@ -109,6 +109,12 @@ export interface TaskAgentManagerInterface {
    */
   getWorkflowDeclaredAgentNamesForTask?(taskId: string): string[];
   /**
+   * Check whether a specific workflow node declares an agent slot. Used for
+   * pre-enqueue validation so a row scoped to an obsolete nodeId (the agent
+   * moved to another node) is rejected before it's persisted.
+   */
+  isAgentDeclaredOnNode?(taskId: string, workflowNodeId: string, agentName: string): boolean;
+  /**
    * Optional: look up a live sub-session by agent name within a task. Used
    * by `space.task.activateNodeAgent` to short-circuit when the target is
    * already spawned and to return its sessionId to the caller.
@@ -163,14 +169,23 @@ export interface PendingAgentMessageQueue {
     workflowNodeId?: string | null;
     idempotencyKey?: string | null;
   }): { record: { id: string }; deduped: boolean };
-  /** Optional: mark a queued row failed (no further drain). Used to clean up a
-   * row whose activation was rejected so the client isn't left waiting. */
-  markFailed?(id: string, error: string): unknown;
 }
 
 type SpaceTaskMessageTarget =
-  | { kind: 'node_agent'; agentName: string; nodeExecutionId?: string; workflowNodeId?: string }
-  | { kind: 'node_agent'; nodeExecutionId: string; agentName?: string; workflowNodeId?: string }
+  | {
+      kind: 'node_agent';
+      agentName: string;
+      nodeExecutionId?: string;
+      workflowNodeId?: string;
+      sessionId?: string;
+    }
+  | {
+      kind: 'node_agent';
+      nodeExecutionId: string;
+      agentName?: string;
+      workflowNodeId?: string;
+      sessionId?: string;
+    }
   | { kind: 'generic'; target: string };
 
 /**
@@ -323,7 +338,7 @@ export function setupSpaceTaskMessageHandlers(
           (!target.sessionId &&
             !target.nodeExecutionId &&
             !!target.agentName &&
-            target.agentName.toLowerCase() === postApproval.agentName.toLowerCase()));
+            target.agentName === postApproval.agentName));
       if (matchesPostApproval) {
         // Deliver into the live worker session. If it is not in memory (e.g.
         // after a daemon restart — the worker has no node_executions row to
@@ -809,6 +824,22 @@ export function setupSpaceTaskMessageHandlers(
     // No live session. Optionally queue the message so the future spawn
     // drains it via `flushPendingMessagesForTarget`.
     let queuedMessageId: string | null = null;
+    // Pre-enqueue validation: if a specific node is targeted, verify it
+    // declares this agent so a row scoped to an obsolete nodeId (the agent
+    // moved to another node) is rejected before it's persisted and stranded.
+    if (params.workflowNodeId && taskAgentManager.isAgentDeclaredOnNode) {
+      if (
+        !taskAgentManager.isAgentDeclaredOnNode(
+          params.taskId,
+          params.workflowNodeId,
+          params.agentName
+        )
+      ) {
+        throw new Error(
+          `Node ${params.workflowNodeId} does not declare agent "${params.agentName}"`
+        );
+      }
+    }
     if (params.message && pendingMessageQueue) {
       const { record } = pendingMessageQueue.enqueue({
         workflowRunId,

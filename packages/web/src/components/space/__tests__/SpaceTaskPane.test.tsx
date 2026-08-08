@@ -822,6 +822,7 @@ describe('SpaceTaskPane — canvas toggle', () => {
       agentName: 'coder',
       nodeExecutionId: 'exec-coder-1',
       workflowNodeId: 'node-1',
+      sessionId: 'session-node-agent',
     });
   });
 
@@ -990,7 +991,12 @@ describe('SpaceTaskPane — canvas toggle', () => {
         'session-merger',
         expect.any(String),
         undefined,
-        { taskId: 'task-1', agentName: 'merger', workflowNodeId: 'node-merger' }
+        {
+          taskId: 'task-1',
+          agentName: 'merger',
+          workflowNodeId: 'node-merger',
+          sessionId: 'session-merger',
+        }
       );
     });
 

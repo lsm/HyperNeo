@@ -6737,6 +6737,7 @@ export class SpaceRuntime {
         sourceAgentName: lastAgentName,
         targetKind: 'node_agent',
         targetAgentName: agentEntry.name,
+        workflowNodeId: targetNode.id,
         message,
         idempotencyKey: `daemon-restart-recovery:${targetNode.id}:${agentEntry.name}`,
       });

@@ -1742,7 +1742,6 @@ export class TaskAgentManager {
         (e) =>
           e.agentName === agentName &&
           e.agentSessionId &&
-          e.status !== 'cancelled' &&
           (!workflowNodeId || e.workflowNodeId === workflowNodeId)
       )
       .at(-1);
@@ -2083,6 +2082,23 @@ export class TaskAgentManager {
     const executions = this.config.nodeExecutionRepo.listByWorkflowRun(task.workflowRunId);
     const names = new Set(executions.filter((e) => e.agentSessionId).map((e) => e.agentName));
     return [...names];
+  }
+
+  isAgentDeclaredOnNode(taskId: string, workflowNodeId: string, agentName: string): boolean {
+    const task = this.config.taskRepo.getTask(taskId);
+    if (!task?.workflowRunId) return false;
+    const run = this.config.workflowRunRepo.getRun(task.workflowRunId);
+    if (!run?.workflowId) return false;
+    const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+    if (!workflow) return false;
+    const node = workflow.nodes.find((n) => n.id === workflowNodeId);
+    if (!node) return false;
+    try {
+      const slots = resolveNodeAgents(node);
+      return slots.some((slot) => slot.name === agentName);
+    } catch {
+      return false;
+    }
   }
 
   /**

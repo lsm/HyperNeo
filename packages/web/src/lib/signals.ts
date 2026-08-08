@@ -91,6 +91,10 @@ export interface SpaceOverlayTaskContext {
    * nodes reuse the same agent slot name. Only set on the pending path.
    */
   workflowNodeId?: string | null;
+  /** The displayed session ID — pins overlay sends to the conversation the user
+   * sees, preventing a rebind/worker-replacement mid-overlay from diverting the
+   * message to a different session via nodeExecutionId lookup. */
+  sessionId?: string | null;
 }
 
 export const spaceOverlayTaskContextSignal = signal<SpaceOverlayTaskContext | null>(null);

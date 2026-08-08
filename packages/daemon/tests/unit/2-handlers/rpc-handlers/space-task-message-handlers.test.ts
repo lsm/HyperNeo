@@ -673,7 +673,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
         expect(injectSubSession.mock.calls[0][0]).toBe(mergerSessionId);
       });
 
-      it('matches the post-approval session case-insensitively by agentName', async () => {
+      it('matches the post-approval session exactly by agentName', async () => {
         const { injectSubSession } = setupPostApproval({
           postApproval: { sessionId: mergerSessionId, agentName: 'merger' },
         });
@@ -682,7 +682,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
           spaceId: 'space-1',
           taskId: 'task-1',
           message: 'go',
-          target: { kind: 'node_agent', agentName: 'Merger' },
+          target: { kind: 'node_agent', agentName: 'merger' },
         });
 
         expect(res).toEqual({ ok: true, routedTo: ['merger'] });

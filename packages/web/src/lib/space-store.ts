@@ -2399,6 +2399,7 @@ class SpaceStore {
       agentName: string;
       nodeExecutionId?: string;
       workflowNodeId?: string;
+      sessionId?: string;
     },
     images?: MessageImage[]
   ): Promise<{

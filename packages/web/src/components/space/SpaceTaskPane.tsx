@@ -815,6 +815,7 @@ export function SpaceTaskPane({
           taskId: task.id,
           agentName: outcome.session.agentName,
           workflowNodeId: nodeId,
+          sessionId: outcome.session.sessionId,
           ...(outcome.session.nodeExecutionId
             ? { nodeExecutionId: outcome.session.nodeExecutionId }
             : {}),
@@ -892,11 +893,10 @@ export function SpaceTaskPane({
       // the durable postApprovalSessionId.
       let liveSessionId: string;
       if (choice.nodeExecutionId) {
-        const liveAgentSessionId = nodeExecutions.find(
-          (e) => e.id === choice.nodeExecutionId
-        )?.agentSessionId;
-        if (!liveAgentSessionId) return;
-        liveSessionId = liveAgentSessionId;
+        const liveExec = nodeExecutions.find((e) => e.id === choice.nodeExecutionId);
+        // A cancelled execution retains its stale agentSessionId — don't open it.
+        if (!liveExec?.agentSessionId || liveExec.status === 'cancelled') return;
+        liveSessionId = liveExec.agentSessionId;
       } else {
         // Execution-less (merger) choice: revalidate against the task's CURRENT
         // postApprovalSessionId — a repeated approval may have replaced the
