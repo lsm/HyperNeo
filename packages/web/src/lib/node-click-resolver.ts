@@ -167,6 +167,10 @@ export function resolveNodeClick(args: ResolveNodeClickArgs): NodeClickOutcome {
       if (exec.workflowRunId !== workflowRunId) continue;
       if (exec.workflowNodeId !== nodeId) continue;
       if (!exec.agentSessionId) continue;
+      // A cancelled execution retains its stale agentSessionId (channel-router's
+      // validation-cancel sets status:'cancelled' without clearing it); exclude
+      // it so a click doesn't open a dead conversation.
+      if (exec.status === 'cancelled') continue;
       if (!declaredSlotNamesExact.has(exec.agentName)) continue;
       if (exec.id) sessionByExecId.set(exec.id, exec.agentSessionId);
       liveBySession.set(exec.agentSessionId, {
@@ -185,6 +189,8 @@ export function resolveNodeClick(args: ResolveNodeClickArgs): NodeClickOutcome {
   // identity cannot be tied to this node and is skipped (no guesswork).
   for (const member of activityMembers) {
     if (member.kind !== 'node_agent' || !member.sessionId) continue;
+    // Exclude cancelled executions (stale session retained in the activity feed).
+    if (member.nodeExecution?.status === 'cancelled') continue;
     const execNodeId = member.nodeExecution?.nodeId;
     if (!execNodeId || execNodeId !== nodeId) continue;
     const slotName = member.nodeExecution?.agentName ?? member.role;

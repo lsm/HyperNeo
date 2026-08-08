@@ -844,21 +844,17 @@ export function setupSpaceTaskMessageHandlers(
         `node=${params.workflowNodeId ?? 'any'} activated=${activated} queuedMessageId=${queuedMessageId ?? 'none'}`
     );
 
-    // If activation was rejected (e.g. a stale/mismatched workflowNodeId whose
-    // node doesn't declare this agent), the queued message can never drain for
-    // this node. Fail the row and surface an error so the client doesn't clear
-    // its draft and wait for a session that will never come.
+    // If activation failed, surface an error to the client but do NOT markFailed
+    // the queued row — the failure may be transient (db/router/dependency error
+    // swallowed by ensureWorkflowNodeActivationForAgent's catch → false), and
+    // terminalizing the row would bypass the queue's retry/recovery. The row
+    // stays pending so the tick loop / recovery re-attempts, or it expires via
+    // TTL if truly permanent.
     if (!activated) {
-      if (queuedMessageId) {
-        pendingMessageQueue?.markFailed?.(
-          queuedMessageId,
-          `Activation rejected for node ${params.workflowNodeId ?? '(any)'}`
-        );
-      }
       throw new Error(
         `Could not activate "${params.agentName}"` +
           (params.workflowNodeId ? ` on node ${params.workflowNodeId}` : '') +
-          '. The node may not declare this agent.'
+          '. The node may not declare this agent, or activation is temporarily unavailable.'
       );
     }
 

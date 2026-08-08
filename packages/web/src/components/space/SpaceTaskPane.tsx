@@ -841,9 +841,11 @@ export function SpaceTaskPane({
       case 'choose':
         // Same identity-unavailability guard as activate_slot (postApprovalNodeId,
         // not wf): don't offer pending choices that could activate a duplicate
-        // merger when identity is unavailable.
+        // merger when identity is unavailable. Preserve live choices — they
+        // can't activate a duplicate and may belong to an unrelated node.
         if (task.postApprovalSessionId && !postApprovalNodeId) {
-          setNodeChoice({ nodeName, nodeId, choices: [] });
+          const safeChoices = outcome.choices.filter((c) => c.kind === 'live');
+          setNodeChoice({ nodeName, nodeId, choices: safeChoices });
           return;
         }
         // Multi-agent node (several live) or multi-slot unstarted node: let
