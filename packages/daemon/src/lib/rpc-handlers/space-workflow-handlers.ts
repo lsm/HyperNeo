@@ -30,7 +30,11 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager';
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
-import { getBuiltInWorkflows, seedBuiltInWorkflows } from '../space/workflows/built-in-workflows';
+import {
+  getBuiltInWorkflows,
+  resolveBuiltInWorkflowTemplate,
+  seedBuiltInWorkflows,
+} from '../space/workflows/built-in-workflows';
 import { computeWorkflowHash } from '../space/workflows/template-hash';
 import { getPresetAgentTemplates } from '../space/agents/seed-agents';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
@@ -247,9 +251,6 @@ export async function checkBuiltInWorkflowDriftOnStartup(
     const spaces = await spaceManager.listSpaces();
     if (spaces.length === 0) return;
 
-    const templates = getBuiltInWorkflows();
-    const templateMap = new Map(templates.map((t) => [t.name, t]));
-
     const updatesAvailable: Array<{
       spaceName: string;
       workflowName: string;
@@ -262,7 +263,7 @@ export async function checkBuiltInWorkflowDriftOnStartup(
       const workflows = workflowManager.listWorkflows(space.id);
       for (const workflow of workflows) {
         if (!workflow.templateName) continue;
-        const template = templateMap.get(workflow.templateName);
+        const template = resolveBuiltInWorkflowTemplate(workflow.templateName);
         if (!template) continue;
 
         const currentTemplateHash = computeWorkflowHash(template);
@@ -636,8 +637,7 @@ export function setupSpaceWorkflowHandlers(
     }
 
     // Find the current template by name
-    const templates = getBuiltInWorkflows();
-    const template = templates.find((t) => t.name === workflow.templateName);
+    const template = resolveBuiltInWorkflowTemplate(workflow.templateName);
     if (!template) {
       // Template no longer exists — can't detect drift
       return {
@@ -698,7 +698,7 @@ export function setupSpaceWorkflowHandlers(
       );
     }
 
-    const template = getBuiltInWorkflows().find((t) => t.name === workflow.templateName);
+    const template = resolveBuiltInWorkflowTemplate(workflow.templateName);
     if (!template) {
       throw new Error(
         `Built-in template "${workflow.templateName}" not found. It may have been removed.`
@@ -768,8 +768,7 @@ export function setupSpaceWorkflowHandlers(
     }
 
     // Find the template
-    const templates = getBuiltInWorkflows();
-    const template = templates.find((t) => t.name === workflow.templateName);
+    const template = resolveBuiltInWorkflowTemplate(workflow.templateName);
     if (!template) {
       throw new Error(
         `Built-in template "${workflow.templateName}" not found. It may have been removed.`
@@ -903,8 +902,7 @@ export function setupSpaceWorkflowHandlers(
 
     // Only built-in templates can be resynced — other templateNames have
     // no canonical source to pull from.
-    const builtInTemplates = getBuiltInWorkflows();
-    const template = builtInTemplates.find((t) => t.name === params.templateName);
+    const template = resolveBuiltInWorkflowTemplate(params.templateName);
     if (!template) {
       throw new Error(
         `Built-in template "${params.templateName}" not found. Resync is only available for built-in workflows.`

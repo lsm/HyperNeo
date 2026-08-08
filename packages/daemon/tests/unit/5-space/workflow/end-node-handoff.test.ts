@@ -34,6 +34,7 @@ import { describe, test, expect } from 'bun:test';
 import type { SpaceWorkflow } from '@hyperneo/shared';
 import {
   CODING_WORKFLOW,
+  CODING_WITH_MERGER_WORKFLOW,
   FULLSTACK_QA_LOOP_WORKFLOW,
   PLAN_AND_DECOMPOSE_WORKFLOW,
   RESEARCH_WORKFLOW,
@@ -80,7 +81,7 @@ function postApprovalRoute(wf: SpaceWorkflow) {
 
 /** Workflows whose terminal node MUST declare a reviewer post-approval merge route. */
 const MERGE_ROUTED_WORKFLOWS: Array<[string, SpaceWorkflow]> = [
-  ['CODING_WORKFLOW', CODING_WORKFLOW],
+  ['CODING_WORKFLOW', CODING_WITH_MERGER_WORKFLOW],
   ['RESEARCH_WORKFLOW', RESEARCH_WORKFLOW],
   ['FULLSTACK_QA_LOOP_WORKFLOW', FULLSTACK_QA_LOOP_WORKFLOW],
 ];
@@ -96,6 +97,13 @@ const NO_POST_APPROVAL_WORKFLOWS: Array<[string, SpaceWorkflow]> = [
 // ---------------------------------------------------------------------------
 
 describe('Post-approval route declarations', () => {
+  test('stable Coding routes post-approval to its coder slot', () => {
+    expect(postApprovalRoute(CODING_WORKFLOW)).toEqual({
+      targetAgent: 'coder',
+      instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
+    });
+  });
+
   for (const [label, wf] of MERGE_ROUTED_WORKFLOWS) {
     test(`${label} declares node-level postApproval targeting the merger role`, () => {
       const route = postApprovalRoute(wf);
@@ -467,7 +475,7 @@ describe('Post-approval slot prompts are behavioural-only', () => {
   }
 
   test('merger slot prompt does not prescribe "Reviewer" — defers to the runtime contract', () => {
-    for (const wf of [CODING_WORKFLOW, FULLSTACK_QA_LOOP_WORKFLOW]) {
+    for (const wf of [CODING_WITH_MERGER_WORKFLOW, FULLSTACK_QA_LOOP_WORKFLOW]) {
       const prompt = mergerSlotPrompt(wf);
       // Generic authority, not a hard-coded "Reviewer".
       expect(prompt).toContain('approval authority');

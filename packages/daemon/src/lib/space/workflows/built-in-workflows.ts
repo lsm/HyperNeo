@@ -521,11 +521,11 @@ const PR_MERGER_SLOT_PROMPT = {
  * For tasks that produce code changes (a PR). Validation-only tasks (no code
  * changes) belong in the Review-Only workflow, not here.
  */
-export const CODING_WORKFLOW: SpaceWorkflow = {
+export const CODING_WITH_MERGER_WORKFLOW: SpaceWorkflow = {
   id: '',
   spaceId: '',
-  name: 'Coding Workflow',
-  handle: 'coding-workflow',
+  name: 'Coding with Merger',
+  handle: 'coding-with-merger',
   description:
     'Iterative coding workflow with Coding ↔ Review loop. Engineer implements and opens a PR; Reviewer reviews and either requests changes or signals completion.',
   nodes: [
@@ -741,6 +741,65 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
       label: 'Review → Post-Approval (re-approved, continue)',
     },
   ],
+};
+
+const CODER_OWNED_MERGE_PROMPT =
+  'You are the Coder. Implement the task, add focused tests, keep one pull request updated, and ' +
+  'send it to Review with the required pr_url data. Address each valid review comment, reply on the ' +
+  'PR, resolve review threads, rerun relevant tests, and send the same PR back for review. During ' +
+  'implementation and review, do not merge or call task-completion tools. After the task is approved, ' +
+  'the runtime may send you the post-approval merge procedure. In that phase only, use merge_pr, ' +
+  'complete its cleanup and workspace-sync steps, and call mark_complete. Never approve your own ' +
+  'changed head; Review is the approval and re-approval authority.';
+
+const CODER_OWNED_REVIEW_PROMPT =
+  'You are the Reviewer. Inspect the pull request and relevant code, run checks when useful, and post ' +
+  'a visible GitHub review. If changes are needed, send Coding actionable feedback with pr_url, ' +
+  'review_url, and comment_urls, then stop. When the current head is clean and all review threads are ' +
+  'resolved, save the PR link artifact and call approve_task, or submit_for_approval when autonomy ' +
+  'requires human approval. Do not merge. If Coding later reports a post-approval merge blocker, ' +
+  're-check the current head, coordinate any fix, post a fresh approval, and signal Coding to continue.';
+
+/** Stable daily coding workflow. The original coder owns the audited post-approval merge. */
+export const CODING_WORKFLOW: SpaceWorkflow = {
+  ...CODING_WITH_MERGER_WORKFLOW,
+  name: 'Coding',
+  handle: 'coding',
+  description:
+    'Stable coding workflow with a Coder ↔ Reviewer loop. The coder implements and owns the audited post-approval merge.',
+  nodes: CODING_WITH_MERGER_WORKFLOW.nodes
+    .filter((node) => node.name !== 'Post-Approval')
+    .map((node) => {
+      if (node.name === 'Coding') {
+        return {
+          ...node,
+          id: 'tpl-stable-coding-code',
+          agents: node.agents.map((agent) => ({
+            ...agent,
+            customPrompt: { value: CODER_OWNED_MERGE_PROMPT },
+            toolGuards: [MERGER_RAW_MERGE_GUARD],
+          })),
+          postApproval: {
+            targetAgent: 'coder',
+            instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
+          },
+        };
+      }
+      return {
+        ...node,
+        id: 'tpl-stable-coding-review',
+        agents: node.agents.map((agent) => ({
+          ...agent,
+          customPrompt: { value: CODER_OWNED_REVIEW_PROMPT },
+        })),
+      };
+    }),
+  startNodeId: 'tpl-stable-coding-code',
+  endNodeId: 'tpl-stable-coding-review',
+  tags: ['coding', 'default'],
+  channels: CODING_WITH_MERGER_WORKFLOW.channels?.filter(
+    (channel) => channel.from !== 'Post-Approval' && channel.to !== 'Post-Approval'
+  ),
 };
 
 /**
@@ -1189,11 +1248,11 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
  * For tasks that produce code changes (a PR). Validation-only tasks (no code
  * changes) are misrouted here — the Coder should escalate to space-agent instead.
  */
-export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
+export const CODING_WITH_QA_MERGER_WORKFLOW: SpaceWorkflow = {
   id: '',
   spaceId: '',
-  name: 'Coding with QA Workflow',
-  handle: 'coding-with-qa-workflow',
+  name: 'Coding with QA Merger',
+  handle: 'coding-with-qa-merger',
   description:
     'Coder ↔ Reviewer loop with explicit QA validation before completion. ' +
     'Designed for backend+frontend changes that require thorough test coverage, including browser tests.',
@@ -1427,6 +1486,74 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
   ],
 };
 
+/** @deprecated Use CODING_WITH_QA_MERGER_WORKFLOW. */
+export const FULLSTACK_QA_LOOP_WORKFLOW = CODING_WITH_QA_MERGER_WORKFLOW;
+
+const CODER_OWNED_QA_PROMPT =
+  'You are QA. Validate the reviewer-approved pull request using the project QA instructions and ' +
+  'the relevant backend, frontend, browser, and CI checks. If validation fails, send Coding concrete ' +
+  'failures and reproduction steps, save a non-terminal QA note, and stop. When the current head is ' +
+  'green, save the PR link and a passing decision artifact, then call approve_task or ' +
+  'submit_for_approval. Do not merge. If Coding later reports a post-approval merge blocker, ' +
+  'revalidate the changed head, post fresh approval evidence, and signal Coding to continue.';
+
+/** Stable coding workflow with explicit QA. The original coder owns post-approval merge. */
+export const CODING_WITH_QA_WORKFLOW: SpaceWorkflow = {
+  ...CODING_WITH_QA_MERGER_WORKFLOW,
+  name: 'Coding with QA',
+  handle: 'coding-with-qa',
+  description:
+    'Stable Coder → Reviewer → QA workflow. The coder owns the audited post-approval merge after QA approval.',
+  nodes: CODING_WITH_QA_MERGER_WORKFLOW.nodes
+    .filter((node) => node.name !== 'Post-Approval')
+    .map((node) => {
+      if (node.name === 'Coding') {
+        return {
+          ...node,
+          id: 'tpl-stable-qa-coding',
+          agents: node.agents.map((agent) => ({
+            ...agent,
+            customPrompt: { value: CODER_OWNED_MERGE_PROMPT },
+            toolGuards: [MERGER_RAW_MERGE_GUARD],
+          })),
+          postApproval: {
+            targetAgent: 'coder',
+            instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
+          },
+        };
+      }
+      if (node.name === 'Review') {
+        return {
+          ...node,
+          id: 'tpl-stable-qa-review',
+          agents: node.agents.map((agent) => ({
+            ...agent,
+            customPrompt: { value: CODER_OWNED_REVIEW_PROMPT },
+          })),
+        };
+      }
+      return {
+        ...node,
+        id: 'tpl-stable-qa-qa',
+        agents: node.agents.map((agent) => ({
+          ...agent,
+          customPrompt: { value: CODER_OWNED_QA_PROMPT },
+        })),
+      };
+    }),
+  startNodeId: 'tpl-stable-qa-coding',
+  endNodeId: 'tpl-stable-qa-qa',
+  tags: ['fullstack', 'qa', 'browser-testing'],
+  layout: {
+    'tpl-stable-qa-coding': { x: 80, y: 160 },
+    'tpl-stable-qa-review': { x: 420, y: 80 },
+    'tpl-stable-qa-qa': { x: 760, y: 160 },
+  },
+  channels: CODING_WITH_QA_MERGER_WORKFLOW.channels?.filter(
+    (channel) => channel.from !== 'Post-Approval' && channel.to !== 'Post-Approval'
+  ),
+};
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -1445,13 +1572,7 @@ export const FULLSTACK_QA_LOOP_WORKFLOW: SpaceWorkflow = {
  * in that case.
  */
 export function getBuiltInGateScript(templateName: string, gateId: string): GateScript | undefined {
-  const template = [
-    CODING_WORKFLOW,
-    PLAN_AND_DECOMPOSE_WORKFLOW,
-    FULLSTACK_QA_LOOP_WORKFLOW,
-    RESEARCH_WORKFLOW,
-    REVIEW_ONLY_WORKFLOW,
-  ].find((t) => t.name === templateName);
+  const template = resolveBuiltInWorkflowTemplate(templateName);
   if (!template) return undefined;
   const gate = (template.gates ?? []).find((g) => g.id === gateId);
   return gate?.script;
@@ -1465,6 +1586,16 @@ export function getBuiltInGateScript(templateName: string, gateId: string): Gate
  * They are templates, not persisted entities. Call `seedBuiltInWorkflows`
  * to persist them with real worker agent IDs for a given space.
  */
+const LEGACY_BUILT_IN_TEMPLATE_NAMES = new Map([
+  ['Coding Workflow', 'Coding with Merger'],
+  ['Coding with QA Workflow', 'Coding with QA Merger'],
+]);
+
+export function resolveBuiltInWorkflowTemplate(templateName: string): SpaceWorkflow | undefined {
+  const canonicalName = LEGACY_BUILT_IN_TEMPLATE_NAMES.get(templateName) ?? templateName;
+  return getBuiltInWorkflows().find((workflow) => workflow.name === canonicalName);
+}
+
 export function getBuiltInWorkflows(): SpaceWorkflow[] {
   // CODING_WORKFLOW is first so it becomes the default workflow selected by
   // spaceWorkflowRun.start (which picks workflows[0] ordered by created_at ASC).
@@ -1480,8 +1611,10 @@ export function getBuiltInWorkflows(): SpaceWorkflow[] {
   // whatever ordering was seeded when they were first created.
   const workflows = [
     CODING_WORKFLOW,
+    CODING_WITH_QA_WORKFLOW,
+    CODING_WITH_MERGER_WORKFLOW,
+    CODING_WITH_QA_MERGER_WORKFLOW,
     PLAN_AND_DECOMPOSE_WORKFLOW,
-    FULLSTACK_QA_LOOP_WORKFLOW,
     RESEARCH_WORKFLOW,
     REVIEW_ONLY_WORKFLOW,
   ];
@@ -2265,7 +2398,7 @@ function stripRetiredValidationComplete({
   hooks: SpaceWorkflow['hooks'];
   channelsChanged: boolean;
 } {
-  if (templateName !== CODING_WORKFLOW.name) {
+  if (templateName !== CODING_WITH_MERGER_WORKFLOW.name) {
     return { nodes, channels, gates, hooks, channelsChanged: false };
   }
 
@@ -2612,16 +2745,44 @@ export function seedBuiltInWorkflows(
 ): SeedBuiltInWorkflowsResult {
   const templates = getBuiltInWorkflows();
   const templatesByName = new Map(templates.map((t) => [t.name, t]));
-  const existing = workflowManager.listWorkflows(spaceId);
+  let existing = workflowManager.listWorkflows(spaceId);
+  const identityErrors: Array<{ name: string; error: string }> = [];
 
-  // Branch 1 (re-stamp path): rows already exist. Walk them and update any
-  // template-seeded rows whose stored `templateHash` no longer matches the
-  // current template. This migration path moves built-in post-approval routes
-  // onto nodes for spaces that were seeded before node-level routes existed.
+  const legacyIdentities = [
+    {
+      legacyName: 'Coding Workflow',
+      name: 'Coding with Merger',
+      handle: 'coding-with-merger',
+    },
+    {
+      legacyName: 'Coding with QA Workflow',
+      name: 'Coding with QA Merger',
+      handle: 'coding-with-qa-merger',
+    },
+  ];
+  for (const identity of legacyIdentities) {
+    const row = existing.find((workflow) => workflow.templateName === identity.legacyName);
+    if (!row) continue;
+    try {
+      workflowManager.updateBuiltInIdentity(row.id, {
+        name: identity.name,
+        handle: identity.handle,
+        templateName: identity.name,
+      });
+    } catch (err) {
+      identityErrors.push({
+        name: identity.legacyName,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  existing = workflowManager.listWorkflows(spaceId);
+
+  const restamped: string[] = [];
+  const errors: Array<{ name: string; error: string }> = [...identityErrors];
+
+  // Re-stamp template-seeded rows whose stored hash no longer matches.
   if (existing.length > 0) {
-    const restamped: string[] = [];
-    const errors: Array<{ name: string; error: string }> = [];
-
     for (const row of existing) {
       if (!row.templateName) continue;
       const template = templatesByName.get(row.templateName);
@@ -2741,7 +2902,19 @@ export function seedBuiltInWorkflows(
         });
       }
     }
+  }
 
+  // Create canonical templates missing from either a fresh or an existing space.
+  const installedTemplateNames = new Set(
+    workflowManager
+      .listWorkflows(spaceId)
+      .map((workflow) => workflow.templateName)
+      .filter((name): name is string => !!name)
+  );
+  const templatesToCreate = templates.filter(
+    (template) => !installedTemplateNames.has(template.name)
+  );
+  if (templatesToCreate.length === 0) {
     return {
       seeded: [],
       restamped,
@@ -2750,12 +2923,12 @@ export function seedBuiltInWorkflows(
     };
   }
 
-  // Branch 2 (fresh seed path): no rows yet. Create all five templates.
+  // Create missing templates.
   //
   // Pre-validate: resolve every agent name needed across ALL templates before
   // persisting anything. This guarantees all-or-nothing behaviour.
   const neededNames = new Set<string>();
-  for (const template of templates) {
+  for (const template of templatesToCreate) {
     for (const node of template.nodes) {
       for (const agent of node.agents) {
         if (agent.agentId) neededNames.add(agent.agentId);
@@ -2776,9 +2949,8 @@ export function seedBuiltInWorkflows(
 
   // All names resolved — safe to persist.
   const seeded: string[] = [];
-  const errors: Array<{ name: string; error: string }> = [];
 
-  for (const template of templates) {
+  for (const template of templatesToCreate) {
     try {
       // Assign real UUIDs to template node IDs
       const nodeIdMap = new Map<string, string>(); // templateId -> realUUID
@@ -2855,5 +3027,5 @@ export function seedBuiltInWorkflows(
     }
   }
 
-  return { seeded, restamped: [], errors, skipped: false };
+  return { seeded, restamped, errors, skipped: false };
 }
