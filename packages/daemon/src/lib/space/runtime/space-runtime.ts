@@ -8341,10 +8341,14 @@ export class SpaceRuntime {
               execution.agentSessionId
             );
             recordBlockedFlushFailure(targetAgentName, rowsForTarget);
-            // Mark this group's legacy null-node rows as attempted so a later
-            // scoped group doesn't retry a transiently-failed legacy row.
-            for (const row of rowsForTarget) {
-              if (!row.workflowNodeId) attemptedLegacyIds.add(row.id);
+            // The flush drains legacy null-node rows for this target alongside
+            // the scoped rows (listPendingForTarget includes IS NULL). Mark ALL
+            // of the target's pending legacy rows attempted so a later scoped
+            // group in this sweep doesn't re-drain a transiently-failed one.
+            for (const row of pending) {
+              if (row.targetAgentName === targetAgentName && !row.workflowNodeId) {
+                attemptedLegacyIds.add(row.id);
+              }
             }
             continue;
           }
@@ -8393,8 +8397,10 @@ export class SpaceRuntime {
           });
           await tam.flushPendingMessagesForTarget(runId, execution.agentName, sessionId);
           recordBlockedFlushFailure(targetAgentName, rowsForTarget);
-          for (const row of rowsForTarget) {
-            if (!row.workflowNodeId) attemptedLegacyIds.add(row.id);
+          for (const row of pending) {
+            if (row.targetAgentName === targetAgentName && !row.workflowNodeId) {
+              attemptedLegacyIds.add(row.id);
+            }
           }
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : String(err);
@@ -8418,6 +8424,16 @@ export class SpaceRuntime {
             const updated = repo.markAttemptFailed(row.id, errMsg);
             if (updated?.status === 'failed') {
               blockedReason = `Queued workflow handoff to ${targetAgentName} failed after ${updated.attempts} attempt(s): ${errMsg}`;
+            }
+          }
+          // Mark the target's pending legacy null-node rows attempted on ANY
+          // outcome (including transient errors) so a later scoped group in the
+          // same sweep doesn't re-drain them — a retry storm would consume all
+          // attempts and block the run. The flush drains legacy rows alongside
+          // the scoped ones, so they belong to this group's attempt too.
+          for (const row of pending) {
+            if (row.targetAgentName === targetAgentName && !row.workflowNodeId) {
+              attemptedLegacyIds.add(row.id);
             }
           }
         }
