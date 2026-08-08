@@ -203,4 +203,12 @@ establishing evidence and correlation before adding retries/ownership:
   for the resumed answer turn (overlapping-send risk), so phase 1 accepts the
   low-signal phantom; it never receives `completed` (terminal attribution uses
   the consumed set only).
+- **Rate-limit cooldown retries** — a 429 that schedules watchdog recovery does
+  not record a terminal for the turn at teardown (it is `'retry_pending'`, so the
+  retried delivery re-records `consumed` and can still reach `completed`). The
+  watchdog's re-enqueue re-registers the UUID via the idempotent consumed
+  primitive, so a success ends at `completed`; a cooldown that is never retried
+  (user cancels, session stops) leaves the turn's latest stage non-terminal
+  (e.g. `consumed`) and it surfaces as stale — hardening the cooldown
+  cancellation terminal is phase 2 (delivery-attempt ownership).
 

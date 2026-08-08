@@ -1270,12 +1270,11 @@ export class QueryRunner {
         return await this.runQuery(queryGeneration, retryAttempt + 1);
       }
 
-      // Clear the queue on non-retryable errors so stale messages don't bleed into the next session.
-      messageQueue.clear();
-
       // True when a retryable provider error (5xx/overloaded/unavailable) has
       // exhausted all bounded retry attempts and is now going terminal. Used to
       // surface a dedicated user-facing message distinct from generic SYSTEM errors.
+      // (The queue is cleared just before the finally, once the rate-limit
+      // cooldown decision is known — see below.)
       const isProviderRetryExhausted =
         retryAttempt >= maxProviderRetries && isRetryableProviderError(errorMessage);
 
@@ -1427,6 +1426,16 @@ export class QueryRunner {
           await stateManager.setIdle();
         }
       }
+
+      // Clear the queue on non-retryable errors so stale messages don't bleed
+      // into the next session. Run AFTER the rate-limit cooldown classification
+      // (not at the top of the catch) so a 429 that schedules watchdog recovery
+      // can clear with 'retry_pending' — the delivered turn must NOT be
+      // terminalized + cleared here, because the watchdog re-enqueues the same
+      // UUID and the retry still needs to record first_progress/completed.
+      // Genuine non-retryable errors clear with no reason and record the turn as
+      // failed (via onClear). See task #859 round-9.
+      messageQueue.clear(rateLimitCooldownScheduled ? 'retry_pending' : undefined);
     } finally {
       // Check for stale query FIRST to avoid race conditions.
       // When a query is restarted (e.g., model switch), the old query's finally block
