@@ -306,7 +306,16 @@ export class PostApprovalRouter {
       return { mode: 'skipped', reason };
     }
 
-    const sourceNodeId = task.pendingCompletionSubmittedByNodeId || workflow?.endNodeId || null;
+    // Source node is informational only (logging + the no-route audit write):
+    // route RESOLUTION is task-level via `collectPostApprovalRoutes` above, so
+    // it does not depend on this value. Read it from the DURABLE
+    // `postApprovalSourceNodeId` field — NOT `pendingCompletionSubmittedByNodeId`,
+    // which is cleared atomically in the same UPDATE that commits `approved`
+    // (task #851) and is therefore null by the time the router runs. The
+    // durable field also survives a crashed dispatch, so a reconciliation retry
+    // still logs/audits the correct submitting node. Falls back to the workflow
+    // end node when no node submitted (Task Agent / UI self-submit).
+    const sourceNodeId = task.postApprovalSourceNodeId || workflow?.endNodeId || null;
 
     // Approval is a task-level event: collect post-approval routes from EVERY
     // node (plus the legacy workflow-level route), independent of which node
@@ -341,6 +350,11 @@ export class PostApprovalRouter {
         postApprovalSessionId: null,
         postApprovalStartedAt: null,
         postApprovalBlockedReason: null,
+        // The task is leaving `approved` → done: drop the durable source field
+        // alongside the other post-approval tracking fields. (This branch writes
+        // status directly via taskRepo, bypassing setTaskStatus' centralised
+        // approved-exit clear, so it must null the field itself.)
+        postApprovalSourceNodeId: null,
       };
       this.deps.taskRepo.updateTask(task.id, updates);
       // Best-effort Forge evidence capture — must not block approval routing.

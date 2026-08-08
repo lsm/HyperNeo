@@ -289,19 +289,45 @@ export class SpaceTaskManager {
       updates.approvalSource = null;
       updates.approvalReason = null;
       updates.approvedAt = null;
+      // Clear the durable post-approval source too — it belongs to a prior
+      // approval attempt and must not survive reactivation. Mirrors
+      // `recoverWorkflowBackedTask` (space-runtime.ts) and realises the
+      // backfill-restriction intent that this field is only meaningful during
+      // an in-flight approval attempt (task #851).
+      updates.postApprovalSourceNodeId = null;
     }
 
-    // Clear pending-completion fields on terminal/non-approval exits from `review`.
+    // Clear pending-completion fields when leaving `review` for any non-review
+    // status, AND when entering `approved` from any source (review → approved,
+    // in_progress → approved).
     //
-    // Keep `pendingCompletionSubmittedByNodeId` while transitioning into
-    // `approved`: PostApprovalRouter still needs the submitting workflow node to
-    // choose the node-level route. The router clears pending state after route
-    // dispatch. Other exits still clear immediately so banner state cannot leak.
-    if (task.status === 'review' && newStatus !== 'review' && newStatus !== 'approved') {
+    // Previously the `review → approved` transition deliberately kept
+    // `pendingCompletionSubmittedByNodeId` set so PostApprovalRouter could read
+    // the submitting workflow node during the `approved` state — the router/finally
+    // cleared it later. That was a non-atomic multi-step state change: a crash
+    // between the `approved` commit and the cleanup stranded the task in
+    // `approved` with stale pending fields (the parked shape from #816/#848).
+    // The router now resolves its source from the dedicated durable
+    // `postApprovalSourceNodeId` field (NOT one of these), so the pending fields
+    // no longer need to survive into `approved` and are cleared in the same
+    // UPDATE that commits the status. A task can never be observed in `approved`
+    // with any pending-completion field set (task #851).
+    if ((task.status === 'review' && newStatus !== 'review') || newStatus === 'approved') {
       updates.pendingCheckpointType = null;
       updates.pendingCompletionSubmittedByNodeId = null;
       updates.pendingCompletionSubmittedAt = null;
       updates.pendingCompletionReason = null;
+    }
+
+    // Clear the durable source node when a review attempt is ABORTED — i.e. any
+    // exit from `review` that does not reach `approved` (human reject →
+    // in_progress, cancel, direct-done, archive). `postApprovalSourceNodeId` is
+    // stamped for the CURRENT approval attempt, so aborting that attempt must
+    // not leave a stale submitter that a later dispatch could read. It
+    // deliberately survives `review → approved` (the router reads it while the
+    // task is `approved`) and is cleared on leaving `approved`. (task #851.)
+    if (task.status === 'review' && newStatus !== 'review' && newStatus !== 'approved') {
+      updates.postApprovalSourceNodeId = null;
     }
 
     // Clear post-approval tracking fields on any transition out of `approved`.
@@ -318,6 +344,7 @@ export class SpaceTaskManager {
       updates.postApprovalSessionId = null;
       updates.postApprovalStartedAt = null;
       updates.postApprovalBlockedReason = null;
+      updates.postApprovalSourceNodeId = null;
     }
 
     const updated = this.taskRepo.updateTask(taskId, updates);
@@ -458,6 +485,10 @@ export class SpaceTaskManager {
       pendingCompletionSubmittedAt: Date.now(),
       pendingCompletionReason: opts.reason,
       blockReason: null,
+      // Stamp the durable source node in the same UPDATE so the post-approval
+      // router/dispatch can resolve it after the pending fields are atomically
+      // cleared on entering `approved` (task #851).
+      postApprovalSourceNodeId: opts.submittedByNodeId,
     });
     if (!updated) {
       throw new Error(`Failed to submit task for review: ${taskId}`);

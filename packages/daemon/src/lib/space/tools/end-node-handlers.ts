@@ -274,13 +274,17 @@ export function createEndNodeHandlers(deps: EndNodeHandlerDeps): EndNodeHandlers
       try {
         const updated = taskRepo.updateTask(taskId, {
           reportedStatus: 'done',
-          // Preserve the approving node as the completion source so post-approval
-          // routing resolves against this terminal node instead of falling back
-          // to the workflow end node.
+          // Preserve the approving node as the DURABLE completion source so
+          // post-approval routing resolves against this terminal node instead
+          // of falling back to the workflow end node. The router/dispatch read
+          // this field (not the pending-completion fields, which are atomically
+          // cleared on entering `approved` — task #851) for sourceNodeId +
+          // approval_authority + sibling-quiesce source.
           pendingCheckpointType: null,
           pendingCompletionSubmittedByNodeId: workflowNodeId,
           pendingCompletionSubmittedAt: null,
           pendingCompletionReason: null,
+          postApprovalSourceNodeId: workflowNodeId,
         });
         if (updated) emitTaskUpdated(updated);
         return jsonResult({
