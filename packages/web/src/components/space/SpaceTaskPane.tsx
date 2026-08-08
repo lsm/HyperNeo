@@ -523,12 +523,24 @@ export function SpaceTaskPane({
                   (!task.postApprovalSessionId || other.sessionId === task.postApprovalSessionId)
               ) ?? m);
         seen.add(name);
+        // When the chosen member is flagged isCurrentPostApproval but its
+        // session differs from the durable pointer (snapshot-lag W1 while the
+        // durable is W2), DROP its nodeExecutionId — the pinned id would defeat
+        // both resolveTargetSessionId's durable override and the daemon's
+        // matchesPostApproval, pinning display+send to W1. With no execution
+        // pin, the durable session carry below dominates.
+        const currentWorkerMismatch =
+          preferred.nodeExecution?.isCurrentPostApproval === true &&
+          !!task.postApprovalSessionId &&
+          preferred.sessionId !== task.postApprovalSessionId;
         fallbackTargets.push({
           id: `activity:${preferred.sessionId ?? preferred.role}`,
           kind: 'node_agent',
           label: preferred.label,
           agentName: preferred.role,
-          nodeExecutionId: preferred.nodeExecution?.nodeExecutionId,
+          nodeExecutionId: currentWorkerMismatch
+            ? undefined
+            : preferred.nodeExecution?.nodeExecutionId,
           // For the current worker, carry the DURABLE pointer so
           // resolveTargetSessionId's durable override fires even on this
           // degraded path (a transient W1 id would otherwise let the composer
