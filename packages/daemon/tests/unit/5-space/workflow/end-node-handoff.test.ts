@@ -41,7 +41,10 @@ import {
   RESEARCH_WORKFLOW,
   REVIEW_ONLY_WORKFLOW,
 } from '../../../../src/lib/space/workflows/built-in-workflows.ts';
-import { PR_MERGE_POST_APPROVAL_INSTRUCTIONS } from '../../../../src/lib/space/workflows/post-approval-merge-template.ts';
+import {
+  CODER_OWNED_MERGE_INSTRUCTIONS,
+  PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
+} from '../../../../src/lib/space/workflows/post-approval-merge-template.ts';
 import { interpolatePostApprovalTemplate } from '../../../../src/lib/space/workflows/post-approval-template.ts';
 import { ChannelResolver } from '../../../../src/lib/space/runtime/channel-resolver.ts';
 
@@ -101,7 +104,7 @@ describe('Post-approval route declarations', () => {
   test('stable Coding routes post-approval to its coder slot', () => {
     expect(postApprovalRoute(CODING_WORKFLOW)).toEqual({
       targetAgent: 'coder',
-      instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
+      instructions: CODER_OWNED_MERGE_INSTRUCTIONS,
     });
   });
 
@@ -116,7 +119,9 @@ describe('Post-approval route declarations', () => {
     test(`${label} routes post-approval to a real coder slot (no merger node)`, () => {
       expect(postApprovalRoute(wf)).toEqual({
         targetAgent: 'coder',
-        instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
+        // Coder-owned instructions (not the merger-only PR_MERGE_POST_APPROVAL_
+        // INSTRUCTIONS) so the coder may fix conflict/rebase blockers itself.
+        instructions: CODER_OWNED_MERGE_INSTRUCTIONS,
       });
       expect(wf.nodes.map((node) => node.name)).not.toContain('Post-Approval');
       expect(wf.nodes.flatMap((node) => node.agents).some((agent) => agent.name === 'merger')).toBe(

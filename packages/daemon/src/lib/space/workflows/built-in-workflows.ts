@@ -35,7 +35,10 @@ import { Logger } from '../../logger';
 import { QA_SYSTEM_CONTRACT } from '../agents/system-contracts.ts';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import { isApprovalGate } from '../runtime/gate-features';
-import { PR_MERGE_POST_APPROVAL_INSTRUCTIONS } from './post-approval-merge-template.ts';
+import {
+  CODER_OWNED_MERGE_INSTRUCTIONS,
+  PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
+} from './post-approval-merge-template.ts';
 import { computeWorkflowHash } from './template-hash.ts';
 import { migrateWorkflowGateProgressionToHooks } from './workflow-migration.ts';
 
@@ -43,7 +46,7 @@ import { migrateWorkflowGateProgressionToHooks } from './workflow-migration.ts';
 // Declarative tool guard: prevent coder agents from merging PRs
 // ---------------------------------------------------------------------------
 
-const CODER_NO_MERGE_GUARD: DeclarativeToolGuard = {
+export const CODER_NO_MERGE_GUARD: DeclarativeToolGuard = {
   matcher: 'Bash',
   // Matches `gh pr merge` in all common shell forms:
   // - Direct: gh pr merge ...
@@ -91,7 +94,7 @@ const CODER_NO_MERGE_GUARD: DeclarativeToolGuard = {
  * e.g. char concatenation in another interpreter — is deeply adversarial and out
  * of scope; `merge_pr` is the authoritative gate regardless.)
  */
-const MERGER_RAW_MERGE_GUARD: DeclarativeToolGuard = {
+export const MERGER_RAW_MERGE_GUARD: DeclarativeToolGuard = {
   matcher: 'Bash',
   pattern: 'gh\\b[^\\n]*?pr\\s+merge\\b|\\bmergePullRequest\\b|pulls\\/[^\\/\\s"]+\\/merge\\b',
   decision: 'deny',
@@ -760,6 +763,22 @@ const CODER_OWNED_REVIEW_PROMPT =
   'requires human approval. Do not merge. If Coding later reports a post-approval merge blocker, ' +
   're-check the current head, coordinate any fix, post a fresh approval, and signal Coding to continue.';
 
+// Reviewer prompt for the stable `Coding with QA` workflow, where Review is an
+// INTERMEDIATE node (QA is the end node / approval authority). It must hand the
+// approved PR to QA by writing the `review-approval-gate` field instead of
+// calling the end-node-only approve_task — otherwise the gate never opens and
+// QA never activates.
+const CODER_OWNED_QA_REVIEW_PROMPT =
+  'You are the Reviewer in a Coding → Review → QA workflow. Review is an intermediate step, not the ' +
+  'end node, so you do NOT call approve_task or submit_for_approval — QA owns final approval. Inspect ' +
+  'the pull request and relevant code, run checks when useful, and post a visible GitHub review. If ' +
+  'changes are needed, send Coding actionable feedback with pr_url, review_url, and comment_urls, then ' +
+  'stop. When the current head is clean and all review threads are resolved, hand the PR to QA: call ' +
+  'send_message(target="QA", message="<short summary>", data: { approved: true, pr_url: "<url>" }) to ' +
+  'open the Review → QA gate and start QA validation, then stop and wait for QA. Do not merge. If ' +
+  'Coding later reports a post-approval merge blocker, re-check the current head, coordinate any fix, ' +
+  'post a fresh approval, and signal Coding to continue.';
+
 /** Stable daily coding workflow. The original coder owns the audited post-approval merge. */
 export const CODING_WORKFLOW: SpaceWorkflow = {
   ...CODING_WITH_MERGER_WORKFLOW,
@@ -781,7 +800,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
           })),
           postApproval: {
             targetAgent: 'coder',
-            instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
+            instructions: CODER_OWNED_MERGE_INSTRUCTIONS,
           },
         };
       }
@@ -1518,7 +1537,7 @@ export const CODING_WITH_QA_WORKFLOW: SpaceWorkflow = {
           })),
           postApproval: {
             targetAgent: 'coder',
-            instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
+            instructions: CODER_OWNED_MERGE_INSTRUCTIONS,
           },
         };
       }
@@ -1528,7 +1547,10 @@ export const CODING_WITH_QA_WORKFLOW: SpaceWorkflow = {
           id: 'tpl-stable-qa-review',
           agents: node.agents.map((agent) => ({
             ...agent,
-            customPrompt: { value: CODER_OWNED_REVIEW_PROMPT },
+            // Review is intermediate here (QA is the end node), so it must hand
+            // the approved PR to QA instead of calling the end-node-only
+            // approve_task — see CODER_OWNED_QA_REVIEW_PROMPT.
+            customPrompt: { value: CODER_OWNED_QA_REVIEW_PROMPT },
           })),
         };
       }
@@ -1549,9 +1571,22 @@ export const CODING_WITH_QA_WORKFLOW: SpaceWorkflow = {
     'tpl-stable-qa-review': { x: 420, y: 80 },
     'tpl-stable-qa-qa': { x: 760, y: 160 },
   },
-  channels: CODING_WITH_QA_MERGER_WORKFLOW.channels?.filter(
-    (channel) => channel.from !== 'Post-Approval' && channel.to !== 'Post-Approval'
-  ),
+  channels: [
+    ...(CODING_WITH_QA_MERGER_WORKFLOW.channels?.filter(
+      (channel) => channel.from !== 'Post-Approval' && channel.to !== 'Post-Approval'
+    ) ?? []),
+    // Post-approval merge-blocker path. With the coder reused as the merger on
+    // the Coding node, it needs a Coding → QA channel to report merge blockers
+    // to QA (the approval authority for this workflow); QA replies over the
+    // existing QA → Coding channel. Without this, the blocker send_message is
+    // rejected as unauthorized and the approved task stalls.
+    {
+      from: 'Coding',
+      to: 'QA',
+      maxCycles: 5,
+      label: 'Coding → QA (post-approval merge blocker)',
+    },
+  ],
 };
 
 // ---------------------------------------------------------------------------
@@ -1586,10 +1621,25 @@ export function getBuiltInGateScript(templateName: string, gateId: string): Gate
  * They are templates, not persisted entities. Call `seedBuiltInWorkflows`
  * to persist them with real worker agent IDs for a given space.
  */
-const LEGACY_BUILT_IN_TEMPLATE_NAMES = new Map([
-  ['Coding Workflow', 'Coding with Merger'],
-  ['Coding with QA Workflow', 'Coding with QA Merger'],
-]);
+/**
+ * Single source of truth for the pre-split coding-template identities that were
+ * renamed when the stable coder-owned workflows were introduced. Used both to
+ * resolve legacy `templateName` values to their canonical template
+ * (`resolveBuiltInWorkflowTemplate`) and to migrate persisted legacy rows in
+ * `seedBuiltInWorkflows`. Keep the two consumers in sync via THIS table.
+ */
+export const LEGACY_CODING_TEMPLATE_IDENTITIES = [
+  { legacyName: 'Coding Workflow', name: 'Coding with Merger', handle: 'coding-with-merger' },
+  {
+    legacyName: 'Coding with QA Workflow',
+    name: 'Coding with QA Merger',
+    handle: 'coding-with-qa-merger',
+  },
+] as const;
+
+const LEGACY_BUILT_IN_TEMPLATE_NAMES = new Map<string, string>(
+  LEGACY_CODING_TEMPLATE_IDENTITIES.map((identity) => [identity.legacyName, identity.name])
+);
 
 export function resolveBuiltInWorkflowTemplate(templateName: string): SpaceWorkflow | undefined {
   const canonicalName = LEGACY_BUILT_IN_TEMPLATE_NAMES.get(templateName) ?? templateName;
@@ -2713,7 +2763,7 @@ const RESTAMP_FIELDS = [
  * placeholder string as an `agentId` would create broken workflow data.
  *
  * Idempotency & drift re-stamping:
- *   - If NO built-in workflow rows exist yet in this space, all five templates
+ *   - If NO built-in workflow rows exist yet in this space, all seven templates
  *     are created from scratch.
  *   - If rows already exist that were seeded from a built-in template
  *     (matched via `templateName`), their stored `templateHash` is compared
@@ -2748,32 +2798,43 @@ export function seedBuiltInWorkflows(
   let existing = workflowManager.listWorkflows(spaceId);
   const identityErrors: Array<{ name: string; error: string }> = [];
 
-  const legacyIdentities = [
-    {
-      legacyName: 'Coding Workflow',
-      name: 'Coding with Merger',
-      handle: 'coding-with-merger',
-    },
-    {
-      legacyName: 'Coding with QA Workflow',
-      name: 'Coding with QA Merger',
-      handle: 'coding-with-qa-merger',
-    },
-  ];
-  for (const identity of legacyIdentities) {
-    const row = existing.find((workflow) => workflow.templateName === identity.legacyName);
-    if (!row) continue;
-    try {
-      workflowManager.updateBuiltInIdentity(row.id, {
-        name: identity.name,
-        handle: identity.handle,
-        templateName: identity.name,
-      });
-    } catch (err) {
-      identityErrors.push({
-        name: identity.legacyName,
-        error: err instanceof Error ? err.message : String(err),
-      });
+  // Rename pre-split legacy coding templates to their canonical merger identity.
+  // `LEGACY_CODING_TEMPLATE_IDENTITIES` is the single source of truth shared with
+  // `resolveBuiltInWorkflowTemplate`. Process EVERY row carrying a legacy
+  // templateName: a space can hold duplicate legacy seeds (the condition the
+  // duplicate-drift cleanup exists for), and renaming only the first (`find`)
+  // would strand the rest under a name no built-in recognises —
+  // `detectDuplicateDrift` filters out non-canonical templateNames, so they would
+  // never group for cleanup.
+  for (const identity of LEGACY_CODING_TEMPLATE_IDENTITIES) {
+    const legacyRows = existing.filter((workflow) => workflow.templateName === identity.legacyName);
+    if (legacyRows.length === 0) continue;
+    // Newest first: the dedup machinery keeps the newest row, so it gets the
+    // full canonical identity. Older duplicates cannot take the (unique)
+    // name/handle, but we still point their templateName at the canonical
+    // template so they group under it for duplicate cleanup rather than being
+    // stranded under the legacy name.
+    const sorted = [...legacyRows].sort((a, b) => b.createdAt - a.createdAt);
+    for (const row of sorted) {
+      try {
+        workflowManager.updateBuiltInIdentity(row.id, {
+          name: identity.name,
+          handle: identity.handle,
+          templateName: identity.name,
+        });
+      } catch {
+        // Name/handle clash (an older duplicate, or a user workflow already
+        // holding the canonical name) — stamp templateName only so the row
+        // still groups under the canonical template for dedup.
+        try {
+          workflowManager.stampBuiltInTemplateName(row.id, identity.name);
+        } catch (innerErr) {
+          identityErrors.push({
+            name: identity.legacyName,
+            error: innerErr instanceof Error ? innerErr.message : String(innerErr),
+          });
+        }
+      }
     }
   }
   existing = workflowManager.listWorkflows(spaceId);

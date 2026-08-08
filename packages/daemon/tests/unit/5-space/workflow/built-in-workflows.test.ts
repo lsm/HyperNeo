@@ -40,7 +40,10 @@ import {
   isApprovalGate,
   resolveCodexPollIntervalMs,
 } from '../../../../src/lib/space/runtime/gate-features.ts';
-import { PR_MERGE_POST_APPROVAL_INSTRUCTIONS } from '../../../../src/lib/space/workflows/post-approval-merge-template.ts';
+import {
+  CODER_OWNED_MERGE_INSTRUCTIONS,
+  PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
+} from '../../../../src/lib/space/workflows/post-approval-merge-template.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import {
   CODING_WORKFLOW as STABLE_CODING_WORKFLOW,
@@ -48,7 +51,10 @@ import {
   CODING_WITH_MERGER_WORKFLOW as CODING_WORKFLOW,
   CODING_WITH_QA_WORKFLOW,
   CODING_WITH_QA_MERGER_WORKFLOW,
+  CODER_NO_MERGE_GUARD,
   FULLSTACK_QA_LOOP_WORKFLOW,
+  LEGACY_CODING_TEMPLATE_IDENTITIES,
+  MERGER_RAW_MERGE_GUARD,
   mergeChannelsFromTemplate,
   mergeNodeStructuralFieldsFromTemplate,
   getBuiltInGateScript,
@@ -143,9 +149,11 @@ describe('stable coding workflow templates', () => {
     expect(STABLE_CODING_WORKFLOW.name).toBe('Coding');
     expect(STABLE_CODING_WORKFLOW.handle).toBe('coding');
     expect(STABLE_CODING_WORKFLOW.nodes.map((node) => node.name)).toEqual(['Coding', 'Review']);
+    // Coder-owned merge instructions (not the merger-only template) so the coder
+    // may fix conflict/rebase blockers itself — see post-approval-merge-template.
     expect(STABLE_CODING_WORKFLOW.nodes[0]?.postApproval).toEqual({
       targetAgent: 'coder',
-      instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
+      instructions: CODER_OWNED_MERGE_INSTRUCTIONS,
     });
     expect(
       STABLE_CODING_WORKFLOW.nodes
@@ -160,7 +168,10 @@ describe('stable coding workflow templates', () => {
       'Review',
       'QA',
     ]);
-    expect(CODING_WITH_QA_WORKFLOW.nodes[0]?.postApproval?.targetAgent).toBe('coder');
+    expect(CODING_WITH_QA_WORKFLOW.nodes[0]?.postApproval).toEqual({
+      targetAgent: 'coder',
+      instructions: CODER_OWNED_MERGE_INSTRUCTIONS,
+    });
   });
 
   test('preserve the previous definitions as merger variants', () => {
@@ -180,20 +191,85 @@ describe('stable coding workflow templates', () => {
   });
 
   test('stable coder slots can reach merge_pr but not raw gh pr merge', () => {
-    // The stable coder owns the post-approval merge, so its tool guard must steer
-    // it toward merge_pr (MERGER_RAW_MERGE_GUARD) rather than the blanket
-    // CODER_NO_MERGE_GUARD that the merger-variant coder carries — which would
-    // also block the audited merge_pr path.
+    // The stable coder owns the post-approval merge, so its tool guard must be
+    // the raw-merge blocker (MERGER_RAW_MERGE_GUARD — steers toward merge_pr)
+    // rather than the merger-variant coder's blanket CODER_NO_MERGE_GUARD, which
+    // would also block the audited merge_pr path. Compare guards structurally,
+    // not by reason prose.
     const assertCoderGuard = (wf: SpaceWorkflow) => {
       const coder = wf.nodes
         .flatMap((node) => node.agents)
         .find((agent) => agent.name === 'coder')!;
-      const reasons = (coder.toolGuards ?? []).map((guard) => guard.reason);
-      expect(reasons.some((reason) => reason.includes('use the merge_pr tool instead'))).toBe(true);
-      expect(reasons.some((reason) => reason.includes('must not merge PRs'))).toBe(false);
+      expect(coder.toolGuards).toContainEqual(MERGER_RAW_MERGE_GUARD);
+      expect(coder.toolGuards).not.toContainEqual(CODER_NO_MERGE_GUARD);
     };
     assertCoderGuard(STABLE_CODING_WORKFLOW);
     assertCoderGuard(CODING_WITH_QA_WORKFLOW);
+  });
+
+  test('stable Coding Review is the end node and calls approve_task', () => {
+    // In the 2-node Coding workflow, Review IS the end node, so its prompt
+    // instructs the end-node-only approve_task/submit_for_approval.
+    expect(STABLE_CODING_WORKFLOW.endNodeId).toBe(
+      STABLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'Review')!.id
+    );
+    const prompt = STABLE_CODING_WORKFLOW.nodes.find((n) => n.name === 'Review')!.agents[0]!
+      .customPrompt!.value;
+    expect(prompt).toContain('approve_task');
+  });
+
+  test('stable Coding-with-QA Review is intermediate and hands off to QA, not approve_task', () => {
+    // Review is intermediate (QA is the end node), so it must NOT call the
+    // end-node-only approve_task; instead it writes the review-approval-gate
+    // field by sending approved:true to QA. Otherwise the gate never opens and
+    // QA never activates.
+    expect(CODING_WITH_QA_WORKFLOW.endNodeId).toBe(
+      CODING_WITH_QA_WORKFLOW.nodes.find((n) => n.name === 'QA')!.id
+    );
+    const reviewPrompt = CODING_WITH_QA_WORKFLOW.nodes.find((n) => n.name === 'Review')!.agents[0]!
+      .customPrompt!.value;
+    // It explicitly forbids the end-node-only approve_task and hands off to QA
+    // by writing the review-approval-gate field instead.
+    expect(reviewPrompt).toMatch(/do not call approve_task/i);
+    expect(reviewPrompt).toMatch(/send_message\(target="?QA"?/);
+    expect(reviewPrompt).toContain('approved: true');
+  });
+
+  test('stable Coding-with-QA has a Coding → QA post-approval blocker channel', () => {
+    // The post-approval coder (merged onto the Coding node) reports merge
+    // blockers to QA (the approval authority) over Coding → QA. QA replies over
+    // the existing QA → Coding channel. Without Coding → QA the blocker
+    // send_message is unauthorized and the task stalls.
+    const channels = CODING_WITH_QA_WORKFLOW.channels ?? [];
+    expect(channels.some((c) => c.from === 'Coding' && c.to === 'QA')).toBe(true);
+    expect(channels.some((c) => c.from === 'QA' && c.to === 'Coding')).toBe(true);
+    // ...and the QA slot prompt expects to receive such blocker reports.
+    const qaPrompt = CODING_WITH_QA_WORKFLOW.nodes.find((n) => n.name === 'QA')!.agents[0]!
+      .customPrompt!.value;
+    expect(qaPrompt).toContain('post-approval merge blocker');
+  });
+
+  test('legacy template identities map to canonical merger templates that carry gates', () => {
+    // C4: SpaceWorkflowManager.BUILT_IN_TEMPLATE_GATES is keyed by every current
+    // built-in name PLUS the legacy aliases below, using the RAW template gates
+    // (pre gate→hook migration) so legacy review-posted-gate / review-approval-
+    // gate rows converge to hooks at load time instead of being left with a
+    // stale gated channel + a duplicated open route. Verify the single source of
+    // truth covers both legacy names and that each canonical merger template
+    // carries gates. (getBuiltInWorkflows() returns gate→hook-migrated copies
+    // with no gates, so check the raw consts the manager registers.)
+    expect(LEGACY_CODING_TEMPLATE_IDENTITIES.map((i) => i.legacyName)).toEqual([
+      'Coding Workflow',
+      'Coding with QA Workflow',
+    ]);
+    const canonicalByName = new Map<string, SpaceWorkflow>([
+      [CODING_WITH_MERGER_WORKFLOW.name, CODING_WITH_MERGER_WORKFLOW],
+      [CODING_WITH_QA_MERGER_WORKFLOW.name, CODING_WITH_QA_MERGER_WORKFLOW],
+    ]);
+    for (const identity of LEGACY_CODING_TEMPLATE_IDENTITIES) {
+      const canonical = canonicalByName.get(identity.name)!;
+      expect(canonical.gates?.length ?? 0).toBeGreaterThan(0);
+    }
   });
 });
 
@@ -3891,7 +3967,7 @@ describe('seedBuiltInWorkflows()', () => {
     expect(manager.listWorkflows(SPACE_ID)).toHaveLength(7);
   });
 
-  test('partial legacy migration: a rename collision leaves the legacy row intact and still creates stable templates', () => {
+  test('partial legacy migration: a rename collision stamps templateName so the row still groups for cleanup', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const seeded = manager.listWorkflows(SPACE_ID);
     const mergerCoding = seeded.find((w) => w.name === CODING_WITH_MERGER_WORKFLOW.name)!;
@@ -3904,8 +3980,8 @@ describe('seedBuiltInWorkflows()', () => {
     db.prepare(`DELETE FROM space_workflows WHERE id IN (?, ?)`).run(stableCoding.id, stableQa.id);
 
     // A user workflow already owns the `Coding with Merger` name, so the legacy
-    // `Coding Workflow` → `Coding with Merger` rename must fail (the QA rename
-    // targets a free name and still succeeds).
+    // `Coding Workflow` → `Coding with Merger` rename cannot take the unique
+    // name/handle. The QA rename targets a free name and still succeeds.
     manager.createWorkflow({
       spaceId: SPACE_ID,
       name: 'Coding with Merger',
@@ -3914,19 +3990,72 @@ describe('seedBuiltInWorkflows()', () => {
 
     const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 
-    // The QA-side migration succeeded; the Coding-side row was left as-is.
     const after = manager.listWorkflows(SPACE_ID);
+    // QA-side migration fully renamed; Coding-side name stayed (collision)...
     expect(after.find((w) => w.id === mergerQa.id)!.name).toBe('Coding with QA Merger');
     expect(after.find((w) => w.id === mergerCoding.id)!.name).toBe('Coding Workflow');
-    // No duplicate `Coding with Merger` — only the user workflow keeps that name.
+    // ...but its templateName was stamped to the canonical merger template, so
+    // it is NOT stranded under the legacy name — detectDuplicateDrift (which
+    // filters non-canonical templateNames) can still see and group it.
+    expect(after.find((w) => w.id === mergerCoding.id)!.templateName).toBe('Coding with Merger');
+    // No duplicate `Coding with Merger` name — only the user workflow keeps it.
     expect(after.filter((w) => w.name === 'Coding with Merger')).toHaveLength(1);
-    expect(after.filter((w) => w.name === 'Coding Workflow')).toHaveLength(1);
-
-    // Stable templates were still created; the rename failure was captured, not
-    // thrown.
+    // Stable templates were still created; the collision was handled by the
+    // templateName-stamp fallback, not thrown.
     expect(result.seeded).toContain(STABLE_CODING_WORKFLOW.name);
     expect(result.seeded).toContain(CODING_WITH_QA_WORKFLOW.name);
-    expect(result.errors.some((e) => e.name === 'Coding Workflow')).toBe(true);
+    expect(result.errors).toEqual([]);
+  });
+
+  test('duplicate legacy rows: every row is migrated, not just the newest', () => {
+    // A space can hold DUPLICATE legacy seeds (the condition the duplicate-drift
+    // cleanup exists for). The identity migration must reconcile the whole group:
+    // rename the newest fully, and stamp templateName on the older duplicates so
+    // they group under the canonical template for cleanup instead of being
+    // stranded under a name no built-in recognises. createWorkflow requires
+    // unique names, so seed two distinct-named rows that share the legacy
+    // templateName.
+    const older = manager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: 'Coding Workflow (dup-a)',
+      nodes: [
+        { id: 'o-c', name: 'Coding', agents: [{ agentId: CODER_ID, name: 'coder' }] },
+        { id: 'o-r', name: 'Review', agents: [{ agentId: REVIEWER_ID, name: 'reviewer' }] },
+      ],
+      startNodeId: 'o-c',
+      endNodeId: 'o-r',
+      templateName: 'Coding Workflow',
+    });
+    const newer = manager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: 'Coding Workflow (dup-b)',
+      nodes: [
+        { id: 'n-c', name: 'Coding', agents: [{ agentId: CODER_ID, name: 'coder' }] },
+        { id: 'n-r', name: 'Review', agents: [{ agentId: REVIEWER_ID, name: 'reviewer' }] },
+      ],
+      startNodeId: 'n-c',
+      endNodeId: 'n-r',
+      templateName: 'Coding Workflow',
+    });
+    db.prepare(`UPDATE space_workflows SET created_at = ? WHERE id = ?`).run(1000, older.id);
+    db.prepare(`UPDATE space_workflows SET created_at = ? WHERE id = ?`).run(2000, newer.id);
+    expect(
+      manager.listWorkflows(SPACE_ID).filter((w) => w.templateName === 'Coding Workflow')
+    ).toHaveLength(2);
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.errors).toEqual([]);
+
+    // BOTH rows now point their templateName at the canonical merger template —
+    // neither is stranded under the legacy name.
+    const after = manager.listWorkflows(SPACE_ID);
+    expect(after.filter((w) => w.templateName === 'Coding Workflow')).toHaveLength(0);
+    expect(after.filter((w) => w.templateName === 'Coding with Merger')).toHaveLength(2);
+    // The newest got the full canonical name; the older duplicate kept its
+    // unique name (collision fallback) but its templateName was still stamped.
+    expect(after.find((w) => w.id === newer.id)!.name).toBe('Coding with Merger');
+    expect(after.find((w) => w.id === older.id)!.name).toBe('Coding Workflow (dup-a)');
+    expect(after.find((w) => w.id === older.id)!.templateName).toBe('Coding with Merger');
   });
 
   test('throws if resolveAgentId returns undefined for a required role', () => {
