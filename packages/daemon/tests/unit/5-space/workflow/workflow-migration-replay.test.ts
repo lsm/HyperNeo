@@ -834,6 +834,55 @@ const FIXTURES: ReplayFixture[] = [
     },
     replayWarningCodes: ['legacy_custom_gate_deprecated', 'legacy_custom_gate_deprecated'],
   },
+  {
+    name: 'custom approval gate with a poll falls back to per-source hooks (no validator+poll)',
+    build: () => ({
+      nodes: [
+        {
+          id: 'custom-plan-node',
+          name: 'Plan',
+          agents: [{ name: 'planner' }],
+          requireCodexApproval: true,
+        },
+        { id: 'custom-build-node', name: 'Build', agents: [{ name: 'builder' }] },
+      ],
+      gates: [
+        {
+          id: 'polled-approval-gate',
+          label: 'Approvals',
+          fields: [
+            {
+              name: 'approved',
+              type: 'boolean',
+              writers: ['Plan'],
+              check: { op: '==', value: true },
+            },
+          ],
+          // A retained custom gate may configure a POLL. `validateGate` forbids
+          // validator+poll, so codex must attach as a per-source hook instead of
+          // a gate validator — otherwise the migrated gate becomes unsaveable.
+          poll: { intervalMs: 30_000, target: 'to', script: 'echo \'{"type":"allow"}\'' },
+        },
+      ],
+      channels: [{ from: 'Plan', to: 'Build', gateId: 'polled-approval-gate' }],
+    }),
+    verify: ({ workflow }) => {
+      const gate = workflow.gates?.find((g) => g.id === 'polled-approval-gate');
+      // No validator attached (would collide with the poll in validateGate).
+      expect(gate?.validator).toBeUndefined();
+      // The poll is preserved.
+      expect(gate?.poll).toBeDefined();
+      // Codex is enforced via a per-source send_message hook.
+      const codexHooks =
+        workflow.hooks?.filter(
+          (hook) =>
+            hook.validator.kind === 'built_in' && hook.validator.id === 'codex_review_approved'
+        ) ?? [];
+      expect(codexHooks.length).toBe(1);
+      expect(codexHooks[0]?.sourceNode).toBe('Plan');
+    },
+    replayWarningCodes: ['legacy_custom_gate_deprecated'],
+  },
 ];
 
 describe('workflow hook migration replay suite', () => {

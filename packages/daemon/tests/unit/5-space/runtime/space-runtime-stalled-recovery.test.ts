@@ -50,6 +50,7 @@ import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agen
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
+import { registerBuiltInValidator } from '../../../../src/lib/space/runtime/built-in-validator-registry.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { PermanentSpawnError } from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
 import type { SpaceWorkflow, NodeExecutionStatus } from '@hyperneo/shared';
@@ -1787,6 +1788,71 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       expect(findExec(run.id, STEP_B)).toBeUndefined();
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
       expect(taskRepo.getTask(task.id)?.blockReason).toBe('execution_failed');
+    });
+
+    test('retryable gate validator during recovery keeps the run blocked and rearms a re-check', async () => {
+      // A retained-gate validator that returns a RETRYABLE block (e.g. codex
+      // pending) must: keep the run blocked (no downstream activation), AND
+      // schedule a restart-recovery rearm so a later +1 / timeout-allow is
+      // observed post-restart — the in-memory GateRetryScheduler timers were
+      // lost on daemon restart.
+      const RETRYABLE_VALIDATOR = 'test-retryable-validator';
+      registerBuiltInValidator(RETRYABLE_VALIDATOR, async () => ({
+        type: 'retryable_block',
+        reason: 'codex review bot approval missing',
+        retryAfterMs: 60_000,
+      }));
+      const workflow = buildLinearWorkflow(
+        SPACE_ID,
+        workflowManager,
+        [
+          { id: STEP_A, name: 'Coding', agentId: AGENT },
+          { id: STEP_B, name: 'Review', agentId: AGENT },
+        ],
+        {
+          channels: [
+            { id: 'codex-to-review', from: 'Coding', to: 'Review', gateId: 'codex-ready' },
+          ],
+          gates: [
+            {
+              id: 'codex-ready',
+              resetOnCycle: false,
+              fields: [],
+              validator: { kind: 'built_in', id: RETRYABLE_VALIDATOR },
+            },
+          ],
+        }
+      );
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Retryable validator gate',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+      taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Retryable validator gate',
+        description: '',
+        workflowRunId: run.id,
+        workflowNodeId: STEP_A,
+        status: 'in_progress',
+      });
+      seedExec(run.id, STEP_A, 'Coding', 'idle');
+
+      const rt = makeRuntime({
+        pendingMessageRepo: new PendingAgentMessageRepository(db),
+      });
+      await rt.recoverStalledRuns();
+
+      // The gate stays closed → no downstream activation, run blocked.
+      expect(findExec(run.id, STEP_B)).toBeUndefined();
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+      // A rearm timer for the space was scheduled (the recovery sweep re-runs
+      // after the gate's retryAfterMs).
+      expect(
+        (rt as unknown as { restartRecoveryRearmTimers: Set<unknown> }).restartRecoveryRearmTimers
+          .size
+      ).toBeGreaterThan(0);
     });
 
     test('single-node run with idle execution → run blocked, task blocked, notifications emitted', async () => {

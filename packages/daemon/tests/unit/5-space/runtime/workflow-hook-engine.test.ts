@@ -1609,6 +1609,109 @@ describe('wrapHandlerWithHooks', () => {
     );
   });
 
+  test('queueing one terminal action clears a queued OTHER terminal action of the same owner', async () => {
+    // The Coding workflow's two codex terminal hooks have DIFFERENT ids
+    // (submit-for-approval vs approve-task). A reviewer that is codex-blocked on
+    // submit_for_approval, then tries approve_task, must not leave BOTH queued —
+    // otherwise both replay concurrently once codex passes and a stale
+    // approve_task can self-complete a task the agent chose for human review.
+    const hookStateRepo = makeMockHookStateRepo();
+    const { engine, mockExecutor } = makeEngine(
+      [
+        makeHook({ id: 'codex-submit', method: 'submit_for_approval', order: 0 }),
+        makeHook({ id: 'codex-approve', method: 'approve_task', order: 0 }),
+      ],
+      { hookStateRepo }
+    );
+    hookStateRepo.ensure('run-1', 'codex-submit');
+    hookStateRepo.ensure('run-1', 'codex-approve');
+    const blocked: WorkflowHookResult = {
+      type: 'retryable_block',
+      reason: 'codex review bot approval missing',
+      retryAfterMs: 30_000,
+    };
+    const handler = async () => ({
+      content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
+    });
+
+    // First: submit_for_approval is codex-blocked → queued.
+    mockExecutor.setResult('codex-submit', blocked);
+    mockExecutor.setResult('codex-approve', blocked);
+    const submitWrapped = wrapHandlerWithHooks(
+      'submit_for_approval',
+      handler,
+      engine,
+      {},
+      defaultMeta
+    );
+    await submitWrapped({});
+    expect(
+      hookStateRepo.get('run-1', 'codex-submit')?.localState[QUEUED_RETRYABLE_ACTION_STATE_KEY]
+    ).toBeDefined();
+
+    // Then: approve_task for the SAME owner → the prior submit queued action is
+    // cleared (mutually exclusive terminal methods).
+    const approveWrapped = wrapHandlerWithHooks('approve_task', handler, engine, {}, defaultMeta);
+    await approveWrapped({});
+    expect(
+      hookStateRepo.get('run-1', 'codex-submit')?.localState[QUEUED_RETRYABLE_ACTION_STATE_KEY]
+    ).toBeNull();
+    expect(
+      hookStateRepo.get('run-1', 'codex-approve')?.localState[QUEUED_RETRYABLE_ACTION_STATE_KEY]
+    ).toBeDefined();
+  });
+
+  test('a queued terminal action for a DIFFERENT owner is not cleared', async () => {
+    const hookStateRepo = makeMockHookStateRepo();
+    const { engine, mockExecutor } = makeEngine(
+      [
+        makeHook({ id: 'codex-submit', method: 'submit_for_approval', order: 0 }),
+        makeHook({ id: 'codex-approve', method: 'approve_task', order: 0 }),
+      ],
+      { hookStateRepo }
+    );
+    hookStateRepo.ensure('run-1', 'codex-submit');
+    hookStateRepo.ensure('run-1', 'codex-approve');
+    const blocked: WorkflowHookResult = {
+      type: 'retryable_block',
+      reason: 'codex review bot approval missing',
+      retryAfterMs: 30_000,
+    };
+    const handler = async () => ({
+      content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
+    });
+
+    mockExecutor.setResult('codex-submit', blocked);
+    mockExecutor.setResult('codex-approve', blocked);
+    const submitWrapped = wrapHandlerWithHooks(
+      'submit_for_approval',
+      handler,
+      engine,
+      {},
+      defaultMeta
+    );
+    await submitWrapped({});
+    expect(
+      hookStateRepo.get('run-1', 'codex-submit')?.localState[QUEUED_RETRYABLE_ACTION_STATE_KEY]
+    ).toBeDefined();
+
+    // A DIFFERENT owner (different task) queues approve_task — the prior
+    // submit_for_approval for owner O is left intact.
+    const otherOwner: HookActionMeta = {
+      sessionId: 'session-other',
+      agentName: 'reviewer',
+      nodeId: 'node-review',
+      taskId: 'task-2',
+    };
+    mockExecutor.setResult('codex-submit', { type: 'allow' });
+    mockExecutor.setResult('codex-approve', blocked);
+    const approveWrapped = wrapHandlerWithHooks('approve_task', handler, engine, {}, otherOwner);
+    await approveWrapped({});
+    expect(
+      hookStateRepo.get('run-1', 'codex-submit')?.localState[QUEUED_RETRYABLE_ACTION_STATE_KEY]
+    ).toBeDefined();
+  });
+
   test('persists hook results to state repo', async () => {
     const hookStateRepo = makeMockHookStateRepo();
     const mockExecutor = new MockHookExecutor();
