@@ -1,6 +1,6 @@
 # RFC: Data-Defined Workflow Engine
 
-Status: Proposed — Revision 12 (Phase 0, architecture only; no runtime changes).
+Status: Proposed — Revision 13 (Phase 0, architecture only; no runtime changes).
 Incorporates all human + codex-connector review rounds to date. Every
 code-level claim below was re-verified directly against the current source this
 revision. Per the agreed scope rule, this revision states **complete invariants +
@@ -127,8 +127,8 @@ activation); mechanism deferred to the phase PR.
 **the only tombstone (non-reopenable) is `SpaceTask.archivedAt`.** Three distinct durability
 signals, not one: (a) **finalization** — release leases / stop timers / stop active dispatch
 when the canonical task is terminal (`done`/`cancelled`) **and** post-approval has resolved
-(§6.6 finalize transition: task-terminal triggers; re-entry short-circuits on
-`run.status==='done'`); (b) **delivery hard-fail** — only on **archive**
+(§6.6 finalize transition: task-terminal triggers; re-entry short-circuits once the run is
+terminal — `done`/`cancelled`); (b) **delivery hard-fail** — only on **archive**
 (the sole hard-failure condition — `cancelled` reopens, so there is no separate "hard-cancel"
 signal; a user cancel that should discard handoffs archives the task), **not** on
 run-`done`/`cancelled`; (c) **reopen prevention** — archive only. (v4 conflated (a)
@@ -282,7 +282,8 @@ must be non-empty).
 ### 6.1 Transactional outbox (target + verified gap)
 
 **Target:** every transition is one SQLite transaction that atomically (1) validates the
-guard (CAS `WHERE status=?` AND fencing token, §6.3), (2) writes status + append-only
+guard (CAS on `current_status`; a fencing token for leased-worker writes only — unleased
+commands use status/generation guards, §6.3), (2) writes status + append-only
 attempt/transition rows, (3) **enqueues every resulting delivery (live + inactive)**, (4)
 persists any retry deadline, (5) releases/acquires leases. This is the existing pattern for
 cycle-increment + gate-reset (`channel-router.ts:1752`) but **not** for delivery: today the
@@ -336,7 +337,7 @@ a non-polled gate.
 `SpaceRuntimeService.start()` recovers (long-term inbox → `recoverStalledRuns`): skip if
 in-flight; **finalize when the canonical task is terminal (`done`/`cancelled`) AND
 post-approval has resolved** — the §6.6 finalize transition
-(re-entry short-circuits on `run.status==='done'`). Archive
+(re-entry short-circuits once the run is terminal — `done`/`cancelled`). Archive
 is a *separate* concern — the non-reopenable tombstone (§3.1), not the finalize trigger: a
 crash after `mark_complete` (task `done`) but before the run-transition commits must not
 strand the run. `reportedStatus`/`CompletionDetector` alone is not a finalize signal
@@ -352,7 +353,7 @@ path move behind connector capabilities (Phase 5).
 | Claim a work item | lease CAS + fencing token checked on every **leased-worker** write (unleased human/kernel commands use status/generation guards) |
 | Mutating connector op | command key (logical identity, stable across attempts) + reconcile-unknown |
 | Post-approval dispatch | **persist dispatch work-item before spawn**; reconcile on recovery |
-| Finalize run | task-terminal (`done`/`cancelled`) + post-approval-resolved **triggers** the transition; re-entry short-circuits on `run.status==='done'` |
+| Finalize run | canonical task terminal (`done`/`cancelled`) + post-approval-resolved **triggers** the run-`done` transition; re-entry short-circuits once the **run** is terminal (`done`/`cancelled`) |
 | Gate open cache | `gate_open_state` + staleness guard |
 | Connector/gate retry | persisted deadline, rehydrated on restart |
 
@@ -418,6 +419,7 @@ that depend on them.
 | 1f | Durable post-approval dispatch: persist the dispatch work-item BEFORE spawning the merger sub-session; reconcile on recovery — closes the spawn→stamp crash window that today lets recovery spawn a second merger (§3.6/§6.6) | new durability row | drain per §11.8 |
 | 2 | Generic `runtime_context`; extract `pr_url` handoff | dual-read | flip back |
 | 3 | Generic `gateFeatureOverrides`; extract `codex_review_bot` (3 type copies + projection **+ the export format**: `export-format.ts` validates/serializes only the legacy codex fields today, so the override must be added to `exportedWorkflowNodeSchema` + `exportWorkflow` or it's stripped on round-trip) | deprecated alias | alias honored |
+| 3b | Remove the deprecated `codex_review_bot` legacy fields from the 3 generic node types + projection + export schema, once the Phase 3 cutover is proven (confines compatibility parsing to an adapter; satisfies the §11.5 acceptance grep that domain concepts vanish from generic types) | removal after parity | fields already unused post-cutover |
 | 4 | Append-only attempts + leases/**fencing on leased-worker writes** (flag-gated); preserve idle/reactivation | flag off = no-op | drain per §11.8 (active leases) |
 | 4b | Mutating-connector readiness: command key (logical identity, stable across attempts) + reconcile-unknown | read-only connectors unaffected | capability flag |
 | 5 | Full GitHub external-event path **+ the GitHub `post_review` outbound tool** (registered today for every end/approval-authority node via `isApprovalAuthorityNode` `task-agent-manager.ts:4779`, block `:4762-4818`; schema `node-agent-tool-schemas.ts:527`, registry `:623`) behind connector capabilities — node-declared tool grants, not hardcoded predicates | legacy retained until proven | fall back |
@@ -431,6 +433,28 @@ that depend on them.
 Subprocesses/nested calls; complex event correlation; distributed execution (leases are the
 seam); compensation/saga (use corrective nodes); org/role modeling; visual designer/BPMN
 import; process mining. (The premature run-`done` is NOT deferred — Phase 1e owns it.)
+
+### 10.1 Scope-pending runtime invariants (escalated to human — round 12)
+
+Four invariants surfaced in round-12 review and are verified real, but their **scope is
+unresolved**: each may be Phase-0-defining (state here) or an implementation-phase detail
+(defer to the phase PR / §10). Drafted as one-line invariant statements only — no mechanism —
+so any can be moved to §10 wholesale on the human's call.
+
+- **Drain durable deliveries through finalization** (§3.1/§6.1): finalization stops workers
+  and timers but **continues draining** outbox deliveries — a delivery committed just before
+  the task terminals may be the event that reopens the run, and §3.4 permits delivery failure
+  only on archive.
+- **Lease renewal on an ownership heartbeat, not SDK progress** (§6.3): a working agent paused
+  on a long model call yields no SDK progress and would be reclaimed, causing duplicate side
+  effects; renew from an alive heartbeat with a separate execution timeout for stuck workers.
+- **Deletion safety for pre-run references** (§4 #3): the not-archived deletion guard protects
+  **runs**, not schedules or queued standalone tasks naming the workflow via
+  `preferredWorkflowId` (which silently fall back to auto-select); deletion must reject,
+  pause, or rebind these durable pre-run references.
+- **Armed in-run timer counts as in-flight work for recovery** (§6.5/Phase 5c): a run paused
+  on the in-run timer has idle/cancelled node-executions but an in-progress task; recovery
+  must rehydrate timers first and exclude timer-waiting runs from stalled-run detection.
 
 ## 11. Migration safety invariants
 
