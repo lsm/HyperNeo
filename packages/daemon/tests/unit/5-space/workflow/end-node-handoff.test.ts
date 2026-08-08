@@ -169,12 +169,12 @@ describe('End-node prompts save runtime post-approval data before approve_task',
       // Anchor on the final `save_artifact(` instruction — the runtime reads
       // its `data.pr_url` before dispatching the post-approval route.
       const signalIdx = prompt.lastIndexOf('save_artifact(');
-      // Use lastIndexOf: the first `approve_task()` occurrence in every
+      // Use lastIndexOf: the first `approve_task(` occurrence in every
       // prompt lives in the "TOOL CONTRACT" block at the top, which is a
       // description of the tool — not the operational instruction. The
-      // LAST occurrence is the step-level "Call approve_task()" directive,
+      // LAST occurrence is the step-level "Call approve_task(...)" directive,
       // which is what must follow the task-agent signal.
-      const approveIdx = prompt.lastIndexOf('approve_task()');
+      const approveIdx = prompt.lastIndexOf('approve_task(');
       expect(signalIdx).toBeGreaterThan(-1);
       expect(approveIdx).toBeGreaterThan(-1);
       // Artifact must appear BEFORE the operational approve_task — ordering

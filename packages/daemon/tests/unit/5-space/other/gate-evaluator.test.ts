@@ -1206,13 +1206,16 @@ describe('validateGate', () => {
     expect(errors).toHaveLength(0);
   });
 
-  test('gate with codex review bot feature is valid', () => {
+  test('gate with the retired codex_review_bot feature is rejected as unknown', () => {
+    // The codex gate feature was removed (epic #2299 #2304) — codex approval is
+    // now a declarative `codex_review_approved` preset. A gate still carrying the
+    // legacy feature is rejected as an unregistered feature.
     const errors = validateGate({
       id: 'g1',
       features: { codex_review_bot: true },
       resetOnCycle: false,
     });
-    expect(errors).toHaveLength(0);
+    expect(errors.some((e) => e.includes('unknown feature "codex_review_bot"'))).toBe(true);
   });
 
   test('gate with empty features and no fields or script returns error', () => {
@@ -1251,18 +1254,17 @@ describe('validateGate', () => {
     expect(errors.some((e) => e.includes('at least one'))).toBe(true);
   });
 
-  test('gate with registered feature and custom script returns error', () => {
+  test('gate with a legacy feature and custom script reports the unknown feature', () => {
     const errors = validateGate({
       id: 'g1',
       features: { codex_review_bot: true },
       script: { interpreter: 'bash', source: 'echo hi' },
       resetOnCycle: false,
     });
-    expect(errors.length).toBeGreaterThan(0);
-    expect(errors.some((e) => e.includes('cannot combine'))).toBe(true);
+    expect(errors.some((e) => e.includes('unknown feature "codex_review_bot"'))).toBe(true);
   });
 
-  test('gate with registered feature and custom poll returns error', () => {
+  test('gate with a legacy feature and custom poll reports the unknown feature', () => {
     const errors = validateGate({
       id: 'g1',
       features: { codex_review_bot: true },
@@ -1270,18 +1272,20 @@ describe('validateGate', () => {
       poll: { intervalMs: 30_000, target: 'to', script: 'echo poll' },
       resetOnCycle: false,
     });
-    expect(errors.length).toBeGreaterThan(0);
-    expect(errors.some((e) => e.includes('cannot combine'))).toBe(true);
+    expect(errors.some((e) => e.includes('unknown feature "codex_review_bot"'))).toBe(true);
   });
 
-  test('gate with multiple features defining scripts returns error', () => {
-    // Register a second dummy feature so validation can detect the conflict.
+  test('gate with multiple registered features defining scripts returns error', () => {
+    // Register two dummy features so validation can detect the conflict.
+    registerGateFeature('first_script_feature', {
+      script: () => ({ interpreter: 'bash', source: 'echo first', timeoutMs: 30000 }),
+    });
     registerGateFeature('second_script_feature', {
       script: () => ({ interpreter: 'bash', source: 'echo second', timeoutMs: 30000 }),
     });
     const errors = validateGate({
       id: 'g1',
-      features: { codex_review_bot: true, second_script_feature: true },
+      features: { first_script_feature: true, second_script_feature: true },
       fields: [{ name: 'done', type: 'boolean', writers: ['*'], check: { op: 'exists' } }],
       resetOnCycle: false,
     });

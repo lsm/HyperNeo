@@ -48,7 +48,6 @@ import {
 import { PermanentSpawnError } from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
 import type { Gate, SpaceWorkflow, WorkflowChannel } from '@hyperneo/shared';
 import { computeGateDefaults } from '@hyperneo/shared';
-import { registerGateFeature } from '../../../../src/lib/space/runtime/gate-features.ts';
 import { registerBuiltInValidator } from '../../../../src/lib/space/runtime/built-in-validator-registry.ts';
 
 /**
@@ -1816,17 +1815,17 @@ describe('ChannelRouter', () => {
 
     // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
     test.skipIf(!isBun)(
-      'gated wildcard channel: canDeliver uses concrete sender for dynamic Codex gate',
+      'gated wildcard channel: canDeliver blocks while the gate is closed',
       async () => {
         const gate: Gate = {
-          id: 'wildcard-codex-gate',
+          id: 'wildcard-gate',
           fields: [
             { name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
           ],
           resetOnCycle: false,
         };
         const channels: WorkflowChannel[] = [
-          { id: 'ch-1', from: '*', to: 'planner', gateId: 'wildcard-codex-gate' },
+          { id: 'ch-1', from: '*', to: 'planner', gateId: 'wildcard-gate' },
         ];
         const workflow = buildWorkflowWithGates(
           SPACE_ID,
@@ -1836,7 +1835,6 @@ describe('ChannelRouter', () => {
               id: NODE_A,
               name: 'Coder Node',
               agents: [{ agentId: AGENT_CODER, name: 'coder' }],
-              requireCodexApproval: true,
             },
             {
               id: NODE_B,
@@ -1851,20 +1849,20 @@ describe('ChannelRouter', () => {
         const run = workflowRunRepo.createRun({
           spaceId: SPACE_ID,
           workflowId: workflow.id,
-          title: 'Wildcard Codex canDeliver Run',
+          title: 'Wildcard canDeliver Run',
         });
         workflowRunRepo.transitionStatus(run.id, 'in_progress');
-        gateDataRepo.set(run.id, 'wildcard-codex-gate', { approved: true });
+        // approved is not true → the field gate stays closed → delivery blocked.
+        gateDataRepo.set(run.id, 'wildcard-gate', { approved: false });
 
         const result = await router.canDeliver(run.id, 'coder', 'planner');
         expect(result.allowed).toBe(false);
-        expect(result.reason).toContain('codex review bot');
       }
     );
 
-    test('onGateDataChanged: wildcard channel uses concrete sources for dynamic Codex gate', async () => {
+    test('onGateDataChanged: wildcard channel does not activate while the gate is closed', async () => {
       const gate: Gate = {
-        id: 'wildcard-codex-activation-gate',
+        id: 'wildcard-activation-gate',
         fields: [
           { name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
         ],
@@ -1881,7 +1879,6 @@ describe('ChannelRouter', () => {
             id: NODE_A,
             name: 'Coder Node',
             agents: [{ agentId: AGENT_CODER, name: 'coder' }],
-            requireCodexApproval: true,
           },
           {
             id: NODE_B,
@@ -1896,10 +1893,11 @@ describe('ChannelRouter', () => {
       const run = workflowRunRepo.createRun({
         spaceId: SPACE_ID,
         workflowId: workflow.id,
-        title: 'Wildcard Codex onGateDataChanged Run',
+        title: 'Wildcard onGateDataChanged Run',
       });
       workflowRunRepo.transitionStatus(run.id, 'in_progress');
-      gateDataRepo.set(run.id, gate.id, { approved: true });
+      // approved is not true → the field gate stays closed → no activation.
+      gateDataRepo.set(run.id, gate.id, { approved: false });
 
       const activated = await router.onGateDataChanged(run.id, gate.id);
       expect(activated).toHaveLength(0);
@@ -4488,19 +4486,10 @@ describe('ChannelRouter', () => {
 
       // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
       test.skipIf(!isBun)(
-        'template-backed feature gate bypasses cache and re-evaluates effective script',
+        'template-backed script gate bypasses cache and re-evaluates',
         async () => {
-          // Register a test feature whose script always passes so the gate can open
-          registerGateFeature('test_always_pass', {
-            script: () => ({
-              interpreter: 'bash',
-              source: 'true',
-              timeoutMs: 30000,
-            }),
-          });
-
           const gate: Gate = {
-            id: 'feature-cache-gate',
+            id: 'script-cache-gate',
             fields: [
               {
                 name: 'approved',
@@ -4509,11 +4498,11 @@ describe('ChannelRouter', () => {
                 check: { op: '==', value: true },
               },
             ],
+            script: { interpreter: 'bash', source: 'true', timeoutMs: 30000 },
             resetOnCycle: false,
-            features: { test_always_pass: true },
           };
           const channels: WorkflowChannel[] = [
-            { id: 'ch-1', from: 'coder', to: 'planner', gateId: 'feature-cache-gate' },
+            { id: 'ch-1', from: 'coder', to: 'planner', gateId: 'script-cache-gate' },
           ];
           const workflow = buildWorkflowWithGates(
             SPACE_ID,
@@ -4534,21 +4523,20 @@ describe('ChannelRouter', () => {
           const run = workflowRunRepo.createRun({
             spaceId: SPACE_ID,
             workflowId: workflow.id,
-            title: 'Feature Cache Test Run',
+            title: 'Script Cache Test Run',
           });
           workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
           // Open the gate — script passes and field passes
-          gateDataRepo.set(run.id, 'feature-cache-gate', { approved: true });
+          gateDataRepo.set(run.id, 'script-cache-gate', { approved: true });
           await router.deliverMessage(run.id, 'coder', 'planner', 'first msg');
 
           // Close the gate by changing field data
-          gateDataRepo.set(run.id, 'feature-cache-gate', { approved: false });
+          gateDataRepo.set(run.id, 'script-cache-gate', { approved: false });
 
-          // Because this is a template-backed gate whose effective definition
-          // includes a script (from the feature), mustReevaluateGate returns true
-          // and the cache is bypassed. canDeliver should re-evaluate and find
-          // the gate closed.
+          // Because this is a template-backed script gate, mustReevaluateGate
+          // returns true and the open-cache is bypassed. canDeliver should
+          // re-evaluate and find the gate closed.
           const result = await router.canDeliver(run.id, 'coder', 'planner');
           expect(result.allowed).toBe(false);
         }

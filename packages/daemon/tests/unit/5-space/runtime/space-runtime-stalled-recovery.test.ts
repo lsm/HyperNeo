@@ -1677,7 +1677,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       expect(taskRepo.getTask(task.id)?.blockReason).toBe('execution_failed');
     });
 
-    test('coder idle with feature-backed gate whose script blocks → run blocked', async () => {
+    test('coder idle with a field gate that stays closed → run blocked', async () => {
       const workflow = buildLinearWorkflow(
         SPACE_ID,
         workflowManager,
@@ -1687,11 +1687,11 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         ],
         {
           channels: [
-            { id: 'coding-to-review', from: 'Coding', to: 'Review', gateId: 'feature-ready' },
+            { id: 'coding-to-review', from: 'Coding', to: 'Review', gateId: 'handoff-ready' },
           ],
           gates: [
             {
-              id: 'feature-ready',
+              id: 'handoff-ready',
               resetOnCycle: false,
               fields: [
                 {
@@ -1701,7 +1701,6 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
                   check: { op: '==', value: true },
                 },
               ],
-              features: { codex_review_bot: true },
             },
           ],
         }
@@ -1709,12 +1708,12 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       const run = workflowRunRepo.createRun({
         spaceId: SPACE_ID,
         workflowId: workflow.id,
-        title: 'Feature gate blocked handoff',
+        title: 'Handoff gate blocked',
       });
       workflowRunRepo.transitionStatus(run.id, 'in_progress');
       const task = taskRepo.createTask({
         spaceId: SPACE_ID,
-        title: 'Feature gate blocked handoff',
+        title: 'Handoff gate blocked',
         description: '',
         workflowRunId: run.id,
         workflowNodeId: STEP_A,
@@ -1723,7 +1722,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       seedExec(run.id, STEP_A, 'Coding', 'idle');
       db.prepare(
         `INSERT INTO gate_data (run_id, gate_id, data, updated_at) VALUES (?, ?, ?, ?)`
-      ).run(run.id, 'feature-ready', JSON.stringify({ approved: true }), Date.now());
+      ).run(run.id, 'handoff-ready', JSON.stringify({ approved: false }), Date.now());
 
       await makeRuntime({
         pendingMessageRepo: new PendingAgentMessageRepository(db),
@@ -1734,21 +1733,21 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       expect(taskRepo.getTask(task.id)?.blockReason).toBe('execution_failed');
     });
 
-    test('wildcard feature-backed gate uses recovered source node during restart recovery', async () => {
+    test('wildcard channel gate stays closed during restart recovery', async () => {
       const workflow = buildLinearWorkflow(
         SPACE_ID,
         workflowManager,
         [
-          { id: STEP_A, name: 'Coding', agentId: AGENT, requireCodexApproval: true },
+          { id: STEP_A, name: 'Coding', agentId: AGENT },
           { id: STEP_B, name: 'Review', agentId: AGENT },
         ],
         {
           channels: [
-            { id: 'wildcard-to-review', from: '*', to: 'Review', gateId: 'feature-ready' },
+            { id: 'wildcard-to-review', from: '*', to: 'Review', gateId: 'handoff-ready' },
           ],
           gates: [
             {
-              id: 'feature-ready',
+              id: 'handoff-ready',
               resetOnCycle: false,
               fields: [
                 {
@@ -1765,12 +1764,12 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       const run = workflowRunRepo.createRun({
         spaceId: SPACE_ID,
         workflowId: workflow.id,
-        title: 'Wildcard feature gate blocked handoff',
+        title: 'Wildcard handoff gate blocked',
       });
       workflowRunRepo.transitionStatus(run.id, 'in_progress');
       const task = taskRepo.createTask({
         spaceId: SPACE_ID,
-        title: 'Wildcard feature gate blocked handoff',
+        title: 'Wildcard handoff gate blocked',
         description: '',
         workflowRunId: run.id,
         workflowNodeId: STEP_A,
@@ -1779,7 +1778,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       seedExec(run.id, STEP_A, 'Coding', 'idle');
       db.prepare(
         `INSERT INTO gate_data (run_id, gate_id, data, updated_at) VALUES (?, ?, ?, ?)`
-      ).run(run.id, 'feature-ready', JSON.stringify({ approved: true }), Date.now());
+      ).run(run.id, 'handoff-ready', JSON.stringify({ approved: false }), Date.now());
 
       await makeRuntime({
         pendingMessageRepo: new PendingAgentMessageRepository(db),

@@ -41,20 +41,6 @@ import {
   migrateWorkflowGateProgressionToHooks,
   type WorkflowMigrationWarning,
 } from '../../../../src/lib/space/workflows/workflow-migration.ts';
-import { CODEX_REVIEW_BOT_TIMEOUT_SECONDS } from '../../../../src/lib/space/runtime/gate-features.ts';
-
-/**
- * The migration bakes the env-resolved default Codex timeout into generated
- * hook scripts at module load. Assert against the RESOLVED value (and its
- * human label, mirroring formatCodexTimeoutLabel) rather than hard-coding
- * 7200/`2-hour`, so this suite still passes when the test process inherits
- * HYPERNEO_CODEX_REVIEW_BOT_TIMEOUT_SECONDS.
- */
-const DEFAULT_TIMEOUT = CODEX_REVIEW_BOT_TIMEOUT_SECONDS;
-const DEFAULT_TIMEOUT_LABEL =
-  DEFAULT_TIMEOUT >= 3600 && DEFAULT_TIMEOUT % 3600 === 0
-    ? `${DEFAULT_TIMEOUT / 3600}-hour`
-    : `${Math.max(1, Math.round(DEFAULT_TIMEOUT / 60))}-minute`;
 
 // ---------------------------------------------------------------------------
 // Harness
@@ -120,8 +106,30 @@ function hookBetween(
   sourceNode: string,
   targetNode: string
 ): WorkflowHook | undefined {
+  // Prefer the SCRIPT approval hook — the migration now also emits a separate
+  // `codex_review_approved` BUILT_IN hook on the same route (order 1), which
+  // must not be mistaken for the approval script hook.
   return workflow.hooks?.find(
-    (hook) => hook.sourceNode === sourceNode && hook.targetNode === targetNode
+    (hook) =>
+      hook.sourceNode === sourceNode &&
+      hook.targetNode === targetNode &&
+      hook.validator.kind === 'script'
+  );
+}
+
+/** The migrated codex hook on an approval route, if the source node carries
+ *  the legacy `requireCodexApproval` flag. */
+function codexHookBetween(
+  workflow: MigrationOutput['workflow'],
+  sourceNode: string,
+  targetNode: string
+): WorkflowHook | undefined {
+  return workflow.hooks?.find(
+    (hook) =>
+      hook.sourceNode === sourceNode &&
+      hook.targetNode === targetNode &&
+      hook.validator.kind === 'built_in' &&
+      hook.validator.id === 'codex_review_approved'
   );
 }
 
@@ -172,25 +180,32 @@ function makeUserScriptHook(overrides: Partial<WorkflowHook> & { id: string }): 
 
 const FIXTURES: ReplayFixture[] = [
   {
-    name: 'built-in plan approval hook (codex) migrates and replays identically',
+    name: 'built-in plan approval hook migrates with a separate codex_review_approved hook',
     build: () => ({
       ...PLAN_AND_DECOMPOSE_WORKFLOW,
       ...PLAN_TEMPLATE_PROPS,
     }),
     verify: ({ workflow, warnings }) => {
+      // The approval hook is approval-count only — codex is a separate
+      // declarative hook (the epic #2299 #2304 unification).
       const hook = hookBetween(workflow, 'Plan Review', 'Task Dispatcher');
       expect(hook).toBeDefined();
       expect(hook!.id).toStartWith('plan-approval:');
       const source = scriptSource(hook);
-      // Approval-count expression and timeout comparison coexist in the same
-      // script — the anchored post-pass regex must only ever match the latter.
       expect(source).toContain('if [ "$COUNT" -lt 4 ]');
-      expect(source).toContain(`((NOW_EPOCH - START_EPOCH)) -lt ${DEFAULT_TIMEOUT} `);
-      expect(source).toContain(`${DEFAULT_TIMEOUT_LABEL} timeout`);
-      expect(source).toContain('gh pr view');
+      expect(source).not.toContain('gh pr view');
+      expect(source).not.toContain('Codex');
       expect(scriptTimeoutMs(hook)).toBe(30_000);
       expect(scriptInterpreter(hook)).toBe('bash');
-      expect(scriptExternalLookups(hook)).toEqual(['github']);
+      expect(scriptExternalLookups(hook)).toBeUndefined();
+
+      // Codex is a built_in preset ordered AFTER the approval hook (order 1),
+      // so its wait window starts at the approval handoff.
+      const codex = codexHookBetween(workflow, 'Plan Review', 'Task Dispatcher');
+      expect(codex).toBeDefined();
+      expect(codex!.id).toStartWith('codex-approval:');
+      expect(codex!.validator).toEqual({ kind: 'built_in', id: 'codex_review_approved' });
+      expect(codex!.order).toBe(1);
 
       const channel = workflow.channels?.find(
         (candidate) => candidate.from === 'Plan Review' && candidate.to === 'Task Dispatcher'
@@ -206,7 +221,7 @@ const FIXTURES: ReplayFixture[] = [
     },
   },
   {
-    name: 'built-in plan approval hook without codex keeps the approval-count script',
+    name: 'built-in plan approval hook without codex emits no codex hook',
     build: () => ({
       ...PLAN_AND_DECOMPOSE_WORKFLOW,
       nodes: PLAN_AND_DECOMPOSE_WORKFLOW.nodes.map((node) =>
@@ -222,9 +237,9 @@ const FIXTURES: ReplayFixture[] = [
       expect(source).toContain('Plan dispatch requires four approved plan-review votes');
       expect(source).not.toContain('gh pr view');
       expect(source).not.toContain('Codex');
-      // externalLookups is declared on the gate pattern (not inferred from
-      // script identity), so the without-codex variant keeps it too.
-      expect(scriptExternalLookups(hook)).toEqual(['github']);
+      expect(scriptExternalLookups(hook)).toBeUndefined();
+      // No codex hook when the source node does not require codex approval.
+      expect(codexHookBetween(workflow, 'Plan Review', 'Task Dispatcher')).toBeUndefined();
 
       const resetHook = workflow.hooks?.find((candidate) => candidate.id === 'plan-approval-reset');
       expect(resetHook?.targetNode).toBe('Planning');
@@ -232,7 +247,7 @@ const FIXTURES: ReplayFixture[] = [
     },
   },
   {
-    name: 'built-in review approval hook (codex) migrates and replays identically',
+    name: 'built-in review approval hook migrates with a separate codex_review_approved hook',
     build: () => ({
       ...FULLSTACK_QA_LOOP_WORKFLOW,
       ...FULLSTACK_TEMPLATE_PROPS,
@@ -243,10 +258,15 @@ const FIXTURES: ReplayFixture[] = [
       expect(hook!.id).toStartWith('review-approval:');
       const source = scriptSource(hook);
       expect(source).toContain('if [ "$APPROVED" != "true" ]');
-      expect(source).toContain(`((NOW_EPOCH - START_EPOCH)) -lt ${DEFAULT_TIMEOUT} `);
-      expect(source).toContain(`${DEFAULT_TIMEOUT_LABEL} timeout`);
-      expect(source).toContain('gh pr view');
-      expect(scriptExternalLookups(hook)).toEqual(['github']);
+      expect(source).not.toContain('gh pr view');
+      expect(source).not.toContain('Codex');
+      expect(scriptExternalLookups(hook)).toBeUndefined();
+
+      const codex = codexHookBetween(workflow, 'Review', 'QA');
+      expect(codex).toBeDefined();
+      expect(codex!.id).toStartWith('codex-approval:');
+      expect(codex!.validator).toEqual({ kind: 'built_in', id: 'codex_review_approved' });
+      expect(codex!.order).toBe(1);
 
       const channel = workflow.channels?.find(
         (candidate) => candidate.from === 'Review' && candidate.to === 'QA'
@@ -287,43 +307,6 @@ const FIXTURES: ReplayFixture[] = [
         warnings.filter((warning) => warning.code === 'known_gate_migrated_to_hook')
       ).toHaveLength(1);
       expect(workflow.hooks?.some((candidate) => candidate.id === 'code-pr-ready')).toBe(true);
-    },
-  },
-  {
-    name: 'custom per-node codex timeout (minutes) is baked into the migrated hook',
-    build: () => ({
-      ...FULLSTACK_QA_LOOP_WORKFLOW,
-      nodes: FULLSTACK_QA_LOOP_WORKFLOW.nodes.map((node) =>
-        node.name === 'Review'
-          ? { ...node, requireCodexApproval: true, codexTimeoutSeconds: 300 }
-          : node
-      ),
-      ...FULLSTACK_TEMPLATE_PROPS,
-    }),
-    verify: ({ workflow }) => {
-      const hook = hookBetween(workflow, 'Review', 'QA');
-      const source = scriptSource(hook);
-      expect(source).toContain('((NOW_EPOCH - START_EPOCH)) -lt 300 ');
-      expect(source).not.toContain('-lt 7200 ');
-      expect(source).toContain('5-minute timeout');
-      expect(scriptExternalLookups(hook)).toEqual(['github']);
-    },
-  },
-  {
-    name: 'custom per-node codex timeout (hours) is baked into the migrated hook',
-    build: () => ({
-      ...PLAN_AND_DECOMPOSE_WORKFLOW,
-      nodes: PLAN_AND_DECOMPOSE_WORKFLOW.nodes.map((node) =>
-        node.name === 'Plan Review' ? { ...node, codexTimeoutSeconds: 3600 } : node
-      ),
-      ...PLAN_TEMPLATE_PROPS,
-    }),
-    verify: ({ workflow }) => {
-      const hook = hookBetween(workflow, 'Plan Review', 'Task Dispatcher');
-      const source = scriptSource(hook);
-      expect(source).toContain('((NOW_EPOCH - START_EPOCH)) -lt 3600 ');
-      expect(source).not.toContain('-lt 7200 ');
-      expect(source).toContain('1-hour timeout');
     },
   },
   {
@@ -687,43 +670,6 @@ describe('workflow hook migration replay suite', () => {
       expect(replay.workflow).toEqual(first.workflow);
       expect(replay.warnings).toEqual([]);
     }
-  });
-
-  test('custom timeout drift rebuild converges after one re-migration', () => {
-    // Once a channel is migrated its gateId is stripped, so the post-pass
-    // rebuilds the hook when codexTimeoutSeconds drifts. The rebuild must
-    // CONVERGE: after one re-migration at the new value, further replays
-    // are byte-identical (no oscillating rebuilds).
-    const withReviewTimeout = (
-      base: MigrationInput,
-      seconds: number | undefined
-    ): MigrationInput => ({
-      ...base,
-      nodes: base.nodes?.map((node) =>
-        node.name === 'Review'
-          ? { ...node, requireCodexApproval: true, codexTimeoutSeconds: seconds }
-          : node
-      ),
-    });
-
-    const initial = migrateWorkflowGateProgressionToHooks(
-      withReviewTimeout({ ...FULLSTACK_QA_LOOP_WORKFLOW, ...FULLSTACK_TEMPLATE_PROPS }, 300)
-    ).workflow;
-    expect(scriptSource(hookBetween(initial, 'Review', 'QA'))).toContain('-lt 300 ');
-
-    const rebuilt = migrateWorkflowGateProgressionToHooks(
-      withReviewTimeout({ ...initial, ...FULLSTACK_TEMPLATE_PROPS }, 900)
-    ).workflow;
-    const rebuiltSource = scriptSource(hookBetween(rebuilt, 'Review', 'QA'));
-    expect(rebuiltSource).toContain('-lt 900 ');
-    expect(rebuiltSource).not.toContain('-lt 300 ');
-    expect(rebuiltSource).toContain('15-minute timeout');
-
-    const replay = migrateWorkflowGateProgressionToHooks(
-      withReviewTimeout({ ...rebuilt, ...FULLSTACK_TEMPLATE_PROPS }, 900)
-    );
-    expect(replay.workflow).toEqual(rebuilt);
-    expect(replay.warnings).toEqual([]);
   });
 
   test('plan-approval hook replay converges across multiple rounds', () => {

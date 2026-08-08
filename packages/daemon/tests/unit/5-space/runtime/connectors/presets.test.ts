@@ -14,11 +14,10 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import {
   clearConnectorRegistry,
-  createCodexReviewBotValidator,
+  createCodexApprovalValidator,
   createPrMergedValidator,
   createPrReadyValidatorV2,
   createReviewPostedValidator,
-  pollUntilAllow,
 } from '../../../../../src/lib/space/runtime/connectors';
 import type { HookExecutorContext } from '../../../../../src/lib/space/runtime/hook-executor';
 import { RATE_LIMIT_MIN_BACKOFF_MS } from '../../../../../src/lib/space/runtime/rate-limit-detector';
@@ -209,129 +208,139 @@ describe('pr_merged preset (mark_complete merge gate)', () => {
   });
 });
 
-describe('codex_review_bot preset (codex +1 reaction gate)', () => {
+describe('codex_review_approved preset (codex +1 gate)', () => {
   beforeEach(() => clearConnectorRegistry());
 
-  const FRESH = '2026-08-02T12:00:00Z';
+  const HEAD = 'headsha123';
+  // Times are relative to now so the 2h timeout window is never already elapsed.
+  const WAIT = new Date(Date.now() - 60_000).toISOString();
+  const NOW = new Date().toISOString();
+  const BEFORE_WAIT = new Date(Date.now() - 300_000).toISOString();
 
+  // getCodexApproval runs THREE gh calls in order: pr view (headRefOid), then
+  // reactions, then comments.
+  function prView(headRefOid = HEAD) {
+    return {
+      stdout: JSON.stringify({ number: 42, headRefOid, url: PR_URL }),
+      stderr: '',
+      exitCode: 0,
+    };
+  }
   function reactions(...rxns: Array<{ login: string; content: string; at: string }>) {
-    return rxns.map((r) => ({
-      user: { login: r.login },
-      content: r.content,
-      created_at: r.at,
-    }));
+    return {
+      stdout: JSON.stringify(
+        rxns.map((r) => ({ user: { login: r.login }, content: r.content, created_at: r.at }))
+      ),
+      stderr: '',
+      exitCode: 0,
+    };
+  }
+  function comments(...cmts: Array<{ login: string; body: string; at: string }>) {
+    return {
+      stdout: JSON.stringify(
+        cmts.map((c) => ({ user: { login: c.login }, body: c.body, created_at: c.at }))
+      ),
+      stderr: '',
+      exitCode: 0,
+    };
   }
 
-  test('fresh codex-bot +1 → allow', async () => {
-    const validate = createCodexReviewBotValidator(
+  test('codex comment on the current head → allow (no wait started yet)', async () => {
+    const validate = createCodexApprovalValidator(
       mockSpawn([
-        {
-          stdout: JSON.stringify(
-            reactions({ login: 'codex[bot]', content: '+1', at: '2026-08-02T12:00:05Z' })
-          ),
-          stderr: '',
-          exitCode: 0,
-        },
+        prView(),
+        reactions(),
+        comments({ login: 'codex[bot]', body: `reviewed ${HEAD}`, at: NOW }),
       ])
     );
-    const result = await validate(ctx({ hookLocalState: { freshnessIso: FRESH } }));
+    const result = await validate(ctx({}));
     expect(result.type).toBe('allow');
+    expect((result as { data?: Record<string, unknown> }).data?.codex_approved).toBe(true);
   });
 
-  test('stale codex-bot +1 (before freshness) → retryable_block (filtered out)', async () => {
-    const validate = createCodexReviewBotValidator(
+  test('fresh codex +1 after wait started, head unchanged → allow', async () => {
+    const validate = createCodexApprovalValidator(
+      mockSpawn([prView(), reactions({ login: 'codex[bot]', content: '+1', at: NOW }), comments()])
+    );
+    const result = await validate(
+      ctx({ hookLocalState: { codex_wait_started_at: WAIT, codex_wait_head_oid: HEAD } })
+    );
+    expect(result.type).toBe('allow');
+    expect((result as { data?: Record<string, unknown> }).data?.codex_approved).toBe(true);
+  });
+
+  test('no +1/comment → block and record the wait start', async () => {
+    const validate = createCodexApprovalValidator(mockSpawn([prView(), reactions(), comments()]));
+    const result = await validate(ctx({}));
+    expect(result.type).toBe('block');
+    const data = (result as { data?: Record<string, unknown> }).data ?? {};
+    expect(typeof data.codex_wait_started_at).toBe('string');
+    expect(data.codex_wait_head_oid).toBe(HEAD);
+  });
+
+  test('stale +1 (before wait started) does NOT satisfy; block continues the wait', async () => {
+    const validate = createCodexApprovalValidator(
       mockSpawn([
-        {
-          stdout: JSON.stringify(
-            reactions({ login: 'codex[bot]', content: '+1', at: '2026-08-02T11:00:00Z' })
-          ),
-          stderr: '',
-          exitCode: 0,
-        },
+        prView(),
+        reactions({ login: 'codex[bot]', content: '+1', at: BEFORE_WAIT }),
+        comments(),
       ])
     );
-    const result = await validate(ctx({ hookLocalState: { freshnessIso: FRESH } }));
-    expect(result.type).toBe('retryable_block');
+    const result = await validate(
+      ctx({ hookLocalState: { codex_wait_started_at: WAIT, codex_wait_head_oid: HEAD } })
+    );
+    expect(result.type).toBe('block');
+    const data = (result as { data?: Record<string, unknown> }).data ?? {};
+    expect(data.codex_wait_started_at).toBe(WAIT);
   });
 
-  test('eyes only (no +1) → retryable_block (poll)', async () => {
-    const validate = createCodexReviewBotValidator(
+  test('head changed since the wait started → restart the wait window', async () => {
+    const validate = createCodexApprovalValidator(
+      mockSpawn([prView('newsha456'), reactions(), comments()])
+    );
+    const result = await validate(
+      ctx({ hookLocalState: { codex_wait_started_at: WAIT, codex_wait_head_oid: HEAD } })
+    );
+    expect(result.type).toBe('block');
+    const data = (result as { data?: Record<string, unknown> }).data ?? {};
+    expect(data.codex_wait_head_oid).toBe('newsha456');
+  });
+
+  test('non-codex +1 does not satisfy', async () => {
+    const validate = createCodexApprovalValidator(
       mockSpawn([
-        {
-          stdout: JSON.stringify(
-            reactions({ login: 'codex[bot]', content: 'eyes', at: '2026-08-02T12:00:05Z' })
-          ),
-          stderr: '',
-          exitCode: 0,
-        },
+        prView(),
+        reactions({ login: 'dependabot[bot]', content: '+1', at: NOW }),
+        comments(),
       ])
     );
-    const result = await validate(ctx({ hookLocalState: { freshnessIso: FRESH } }));
-    expect(result.type).toBe('retryable_block');
-  });
-
-  test('non-codex +1 does not satisfy the predicate', async () => {
-    const validate = createCodexReviewBotValidator(
-      mockSpawn([
-        {
-          stdout: JSON.stringify(
-            reactions({ login: 'dependabot[bot]', content: '+1', at: '2026-08-02T12:00:05Z' })
-          ),
-          stderr: '',
-          exitCode: 0,
-        },
-      ])
+    const result = await validate(
+      ctx({ hookLocalState: { codex_wait_started_at: WAIT, codex_wait_head_oid: HEAD } })
     );
-    const result = await validate(ctx({ hookLocalState: { freshnessIso: FRESH } }));
-    expect(result.type).toBe('retryable_block');
+    expect(result.type).toBe('block');
   });
 
-  test('rate-limited gh → retryable_block', async () => {
-    const validate = createCodexReviewBotValidator(
+  test('wait elapsed → allow with codex_timed_out', async () => {
+    const longAgo = new Date(Date.now() - 3 * 3600 * 1000).toISOString();
+    const validate = createCodexApprovalValidator(mockSpawn([prView(), reactions(), comments()]));
+    const result = await validate(
+      ctx({ hookLocalState: { codex_wait_started_at: longAgo, codex_wait_head_oid: HEAD } })
+    );
+    expect(result.type).toBe('allow');
+    const data = (result as { data?: Record<string, unknown> }).data ?? {};
+    expect(data.codex_timed_out).toBe(true);
+    expect(data.codex_approved).toBe(false);
+  });
+
+  test('rate-limited gh → retryable_block (never opens the gate on an outage)', async () => {
+    const validate = createCodexApprovalValidator(
       mockSpawn([
         { stdout: '', stderr: 'HTTP 403: rate limit exceeded', exitCode: 1 },
         RATE_LIMIT_PROBE_OK,
       ])
     );
-    const result = await validate(ctx({ hookLocalState: { freshnessIso: FRESH } }));
+    const result = await validate(ctx({}));
     expect(result.type).toBe('retryable_block');
-  });
-
-  test('pollUntilAllow converts a pending result to allow once expired (timeout semantics)', async () => {
-    const inner = createCodexReviewBotValidator(
-      mockSpawn([
-        {
-          stdout: JSON.stringify(
-            reactions({ login: 'codex[bot]', content: 'eyes', at: '2026-08-02T12:00:05Z' })
-          ),
-          stderr: '',
-          exitCode: 0,
-        },
-      ])
-    );
-    const validate = pollUntilAllow(inner, (c) => c.hookLocalState?.expired === true, {
-      codex_bot_reaction: 'timeout',
-      codex_bot_warning: '+1 missing after timeout; allowing',
-    });
-    const result = await validate(ctx({ hookLocalState: { freshnessIso: FRESH, expired: true } }));
-    expect(result.type).toBe('allow');
-    expect((result as { data?: Record<string, unknown> }).data?.codex_bot_reaction).toBe('timeout');
-  });
-
-  test('pollUntilAllow does NOT open the gate on a connector failure (rate limit)', async () => {
-    // Inner validator hits a rate limit → retryable_block that is NOT a
-    // predicate-pending result. Even past the deadline, an outage must not
-    // open the approval gate — it stays retryable_block.
-    const inner = createCodexReviewBotValidator(
-      mockSpawn([{ stdout: '', stderr: 'HTTP 429: secondary rate limit', exitCode: 1 }])
-    );
-    const validate = pollUntilAllow(inner, () => true, {
-      codex_bot_reaction: 'timeout',
-      codex_bot_warning: 'should not happen',
-    });
-    const result = await validate(ctx({ hookLocalState: { freshnessIso: FRESH } }));
-    expect(result.type).toBe('retryable_block');
-    expect((result as { data?: Record<string, unknown> }).data?.codex_bot_reaction).toBeUndefined();
   });
 });
 

@@ -872,7 +872,7 @@ describe('SpaceWorkflowManager', () => {
       ).toThrow('gates[0]');
     });
 
-    it('createWorkflow rejects a gate with feature + custom script', () => {
+    it('createWorkflow rejects a gate with the retired codex_review_bot feature', () => {
       expect(() =>
         manager.createWorkflow({
           spaceId: 'space-1',
@@ -888,7 +888,7 @@ describe('SpaceWorkflowManager', () => {
           ],
           completionAutonomyLevel: 3,
         })
-      ).toThrow('cannot combine');
+      ).toThrow('unknown feature "codex_review_bot"');
     });
 
     it('updateWorkflow rejects gates with invalid features', () => {
@@ -906,7 +906,7 @@ describe('SpaceWorkflowManager', () => {
       ).toThrow('gates[0]');
     });
 
-    it('updateWorkflow accepts valid feature-only gates', () => {
+    it('updateWorkflow rejects the retired codex_review_bot feature as unknown', () => {
       const wf = manager.createWorkflow({
         spaceId: 'space-1',
         name: 'Updatable',
@@ -914,11 +914,14 @@ describe('SpaceWorkflowManager', () => {
         completionAutonomyLevel: 3,
       });
 
-      const updated = manager.updateWorkflow(wf.id, {
-        gates: [{ id: 'g1', features: { codex_review_bot: true }, resetOnCycle: false }],
-      });
-      expect(updated).not.toBeNull();
-      expect(updated!.gates![0].features).toEqual({ codex_review_bot: true });
+      // The gate-feature mechanism was retired (epic #2299 #2304) — codex
+      // approval is a declarative preset now, so a legacy feature gate is
+      // rejected as unregistered.
+      expect(() =>
+        manager.updateWorkflow(wf.id, {
+          gates: [{ id: 'g1', features: { codex_review_bot: true }, resetOnCycle: false }],
+        })
+      ).toThrow('unknown feature "codex_review_bot"');
     });
   });
 });

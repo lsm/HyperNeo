@@ -239,28 +239,27 @@ describe('ChannelRouter rate-limit deferral', () => {
     scheduler.cancel(run.id, 'rate-limit-gate');
   });
 
-  test('onGateDataChanged schedules retry even when another channel opens', async () => {
-    // Wildcard channel guarded by an approval gate. One source node has
-    // requireCodexApproval (codex script injected only for that source); the
-    // other source is field-only. The field-only source opens the channel while
-    // the codex source is rate-limited — the retry must still be scheduled.
+  test('onGateDataChanged schedules retry when a rate-limited script gate stays closed', async () => {
+    // Wildcard channel guarded by a script gate. The script returns a rate
+    // limit, so the gate stays closed and a deferred retry must be scheduled
+    // (an outage must never be treated as a terminal block).
     const gate: Gate = {
-      id: 'mixed-rate-limit-gate',
+      id: 'rate-limit-gate',
       fields: [
         { name: 'approved', type: 'boolean', writers: [], check: { op: '==', value: true } },
       ],
+      script: { interpreter: 'bash', source: 'exit 1', timeoutMs: 5000 },
       resetOnCycle: false,
     };
     const workflow = workflowManager.createWorkflow({
       spaceId: SPACE_ID,
-      name: `Mixed RL Workflow ${Date.now()}`,
+      name: `Rate-limit Workflow ${Date.now()}`,
       description: '',
       nodes: [
         {
           id: NODE_A,
           name: 'coder',
           agents: [{ agentId: AGENT_CODER, name: 'coder' }],
-          requireCodexApproval: true,
         },
         {
           id: NODE_B,
@@ -294,12 +293,13 @@ describe('ChannelRouter rate-limit deferral', () => {
     });
 
     const result = await router.onGateDataChanged(run.id, gate.id);
-    // The field-only source opens the gate, so planner may be activated.
-    expect(scriptCalls).toBe(1);
+    // The rate-limited script keeps the gate closed; the retry is scheduled.
+    // (A wildcard channel evaluates per concrete source, so the script runs
+    // once per source node.)
+    expect(scriptCalls).toBeGreaterThan(0);
 
     const scheduler = (router as unknown as { gateRetryScheduler: GateRetryScheduler })
       .gateRetryScheduler;
-    const retryKey = `${run.id}:${gate.id}`;
     expect(scheduler.has(run.id, gate.id)).toBe(true);
 
     scheduler.cancel(run.id, gate.id);
