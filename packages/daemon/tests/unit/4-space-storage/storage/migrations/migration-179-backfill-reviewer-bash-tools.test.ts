@@ -218,6 +218,34 @@ describe('migration 179 — reviewer bash tool backfill', () => {
     expect((row as unknown as AgentRow).template_hash).toBe('some-hash');
   });
 
+  test('leaves a Reviewer with old tools but a customized prompt untouched', () => {
+    // The reviewer kept the old shell-less tool list but the user customized the
+    // prompt and description. The migration must NOT overwrite them (matching
+    // tools alone is not proof the prompt/description are unmodified) — the row
+    // is left for the drift/sync UI.
+    const spaceId = 'space-m179-b2';
+    insertSpace(db, spaceId);
+    insertAgent(db, {
+      id: 'agent-reviewer-prompt-custom',
+      spaceId,
+      name: 'Reviewer',
+      handle: 'reviewer',
+      tools: OLD_REVIEWER_TOOLS,
+      customPrompt: 'My completely custom reviewer prompt',
+      description: 'My custom description',
+      templateName: 'Reviewer',
+      templateHash: 'some-hash',
+    });
+
+    runMigration179(db);
+
+    const row = getAgentRow('agent-reviewer-prompt-custom');
+    expect(parseTools(row as unknown as AgentRow)).toEqual(OLD_REVIEWER_TOOLS);
+    expect((row as unknown as AgentRow).custom_prompt).toBe('My completely custom reviewer prompt');
+    expect((row as unknown as AgentRow).description).toBe('My custom description');
+    expect((row as unknown as AgentRow).template_hash).toBe('some-hash');
+  });
+
   test('idempotent — a Reviewer row already at the current profile is untouched', () => {
     const spaceId = 'space-m179-c';
     insertSpace(db, spaceId);

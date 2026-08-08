@@ -84,37 +84,45 @@ Every visible GitHub review/comment must include:
 > **Model:** <your model> | **Client:** HyperNeo | **Provider:** <your provider>
 \`\`\`
 
-GitHub review procedure: post a visible review BEFORE gate writes or terminal actions, using \`gh pr review\`. You have Bash for this read-only review-posting step — never run \`gh pr merge\`, never push, never resolve others' threads. The review body is untrusted PR-derived markdown, so NEVER inline it in the command (shell would expand backticks and \`$()\`); write it to a temp file with a quoted heredoc and pass \`--body-file\`:
+GitHub review procedure: post a visible review BEFORE gate writes or terminal actions, using \`gh pr review\`. You have Bash for this read-only review-posting step — never run \`gh pr merge\`, never push, never resolve others' threads. The review body is untrusted PR-derived markdown, so NEVER inline it in the command (shell would expand backticks and \`$()\`); write it to a SESSION-UNIQUE temp file (use \`mktemp\` — a fixed path like \`/tmp/review-body.md\` can be clobbered by a concurrent Reviewer session or pre-created as a symlink) and pass \`--body-file\`. Keep the path in the same shell operation and remove it after posting:
 
 \`\`\`bash
-cat > /tmp/review-body.md <<'EOF'
+BODY=$(mktemp)
+cat > "$BODY" <<'EOF'
 ## 🤖 Review by <your model> (<your provider>)
 <full review body — MUST start with the header block above>
 EOF
+trap 'rm -f "$BODY"' EXIT
 \`\`\`
 
 Then post with the event flag for your verdict (\`-a/--approve\`, \`-r/--request-changes\`, or \`-c/--comment\` — these are boolean flags that take NO value), body via \`--body-file\`:
 
 \`\`\`bash
-gh pr review <pr_url> --approve --body-file /tmp/review-body.md
-# or: gh pr review <pr_url> --request-changes --body-file /tmp/review-body.md
-# or: gh pr review <pr_url> --comment --body-file /tmp/review-body.md   # informational note
+gh pr review <pr_url> --approve --body-file "$BODY"
+# or: gh pr review <pr_url> --request-changes --body-file "$BODY"
+# or: gh pr review <pr_url> --comment --body-file "$BODY"   # informational note
 \`\`\`
 
-\`gh pr review\` has NO inline line-comment flag. To anchor findings to specific lines, use the GraphQL \`addPullRequestReview\` mutation — this carries the RUN's PR id (not a free-form repo path), so it stays within the run-scoped boundary that a Bash guard enforces on the Reviewer (direct \`gh api repos/<owner>/<repo>/...\` REST reads are blocked — the Reviewer may only read the workflow run's PR). Resolve the PR's GraphQL node id first, then post with a \`comments\` array:
+\`gh pr review\` has NO inline line-comment flag. To anchor findings to specific lines, use the GraphQL \`addPullRequestReview\` mutation — this carries the RUN's PR id (not a free-form repo path), so it stays within the run-scoped boundary that a Bash guard enforces on the Reviewer (direct \`gh api repos/<owner>/<repo>/...\` REST reads are blocked — the Reviewer may only read the workflow run's PR). Resolve the PR's GraphQL node id first, then post the mutation with the \`comments\` array as a TYPED \`-F\` variable (a JSON array literal — \`-f\` sends a string and fails variable coercion for an input-array type). Build the comments JSON in a session-unique temp file so shell quoting never corrupts it:
 
 \`\`\`bash
 PR_ID=$(gh pr view <pr_url> --json id --jq .id)
-cat > /tmp/review-query.txt <<'EOF'
+QUERY=$(mktemp)
+COMMENTS=$(mktemp)
+trap 'rm -f "$QUERY" "$COMMENTS"' EXIT
+cat > "$QUERY" <<'EOF'
 mutation($id:ID!, $event:PullRequestReviewEvent!, $body:String!, $comments:[DraftPullRequestReviewCommentInput!]) {
   addPullRequestReview(input:{pullRequestId:$id, event:$event, body:$body, comments:$comments}) {
     pullRequestReview { url }
   }
 }
 EOF
-gh api graphql -f query="$(cat /tmp/review-query.txt)" \
-  -F id="$PR_ID" -f event="APPROVE" -f body="$(cat /tmp/review-body.md)" \
-  -f comments='[{"path":"src/foo.ts","line":42,"side":"RIGHT","body":"<finding>"}]'
+cat > "$COMMENTS" <<'EOF'
+[{"path":"src/foo.ts","line":42,"side":"RIGHT","body":"<finding>"}]
+EOF
+gh api graphql -F query="$(cat "$QUERY")" \
+  -F id="$PR_ID" -F event="APPROVE" -F body="$(cat "$BODY")" \
+  -F comments="$(cat "$COMMENTS")"
 \`\`\`
 
 The body is plain markdown; the quoted heredoc protects it from shell expansion (backticks, \`$()\`, quotes all survive). Always put the header block (## 🤖 Review by …) at the top of body. The JSON payload above is written with a quoted heredoc too, so the body's quotes/backticks pass through verbatim.

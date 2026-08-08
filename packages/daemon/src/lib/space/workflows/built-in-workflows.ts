@@ -120,33 +120,45 @@ const LEGACY_PR_READY_TEMPLATE_ROUTES = new Set([
  * MCPs were removed, and `gh pr view` / `gh pr diff` / `gh pr checks` / the
  * run-scoped `gh api graphql` reviewThreads query cover the legitimate read
  * surface). But a prompt-injected reviewer could otherwise run `gh api
- * repos/<owner>/<repo>/...` against ANY repository the daemon's credentials
- * can reach — the removed `get_pr_diff` handler bound reads to the workflow
- * run's PR (an `isSamePrIdentity` guard); the CLI has no such binding. This
- * guard closes the cross-repo REST read vector while allowing the run-scoped
- * `gh pr *` subcommands (which default to the current branch's PR) and the
- * GraphQL mutation form (which carries the run's PR id, not a free repo path).
+ * repos/<owner>/<repo>/...` or `gh -R other/repo pr ...` against ANY
+ * repository the daemon's credentials can reach — the removed `get_pr_diff`
+ * handler bound reads to the workflow run's PR (an `isSamePrIdentity` guard);
+ * the CLI has no such binding. This guard closes the two clear cross-repo
+ * read vectors (REST `repos/<owner>/<repo>/...` paths and the `-R`/`--repo`
+ * flag) while allowing the run-scoped `gh pr *` subcommands (which default to
+ * the current branch's PR) and the GraphQL mutation form (which carries the
+ * run's PR id, not a free repo path).
  *
- * Matches `gh api` calls that target a REST `repos/<owner>/<repo>/...` path —
- * the cross-repo read/write vector. It does NOT block:
- *   - `gh pr view|diff|checks|review` (scoped to the run's PR by default),
+ * Matches:
+ *   - `gh api` calls targeting a REST `repos/<owner>/<repo>/...` path, and
+ *   - `gh <subcommand> -R|--repo <owner>/<repo>` (cross-repo via the flag).
+ * It does NOT block:
+ *   - `gh pr view|diff|checks|review` without `-R`/`--repo` (scoped to the
+ *     run's PR by default),
  *   - `gh api graphql` (the reviewThreads query uses the run's owner/name/number,
  *     and review posting uses the `addPullRequestReview` mutation keyed on the
  *     run's PR id — no free-form repo path),
  *   - non-`gh` commands (the reviewer still reads the worktree via Read/Grep).
  *
- * Defense-in-depth only — the reviewer prompt additionally instructs it to
- * inspect only the workflow run's PR. A determined shell user can evade any
- * command regex; this guard removes the accidental / prompt-injected vector.
+ * Defense-in-depth only, and NOT a complete run-scoped boundary: a regex
+ * guard cannot validate a command against the workflow run's PR identity (an
+ * explicit `gh pr view <other-repo-url>` or an arbitrary `gh api graphql`
+ * repository query are indistinguishable from the legitimate run-PR forms).
+ * The reviewer prompt therefore also instructs it to read ONLY the workflow
+ * run's PR; the removed `get_pr_diff` MCP was the only hard run-scoped read
+ * mechanism, and the pivot removed it in favor of Bash per the product
+ * direction. This guard removes the accidental / prompt-injected vectors that
+ * ARE regex-detectable.
  */
 export const REVIEWER_GH_API_REPO_GUARD: DeclarativeToolGuard = {
   matcher: 'Bash',
-  pattern: 'gh\\b[^\\n]*?\\bapi\\b[^\\n]*?repos\\/',
+  pattern: 'gh\\b[^\\n]*?(?:\\bapi\\b[^\\n]*?repos\\/|(?:^|[\\s])(-R|--repo)(?:[\\s=]|$))',
   decision: 'deny',
   reason:
-    'Reviewer Bash reads are scoped to the workflow run’s PR. Direct `gh api repos/<owner>/<repo>/...` calls can read other repositories ' +
-    'through the daemon’s credentials — use `gh pr view` / `gh pr diff` / `gh pr checks` for the run’s PR, and `gh api graphql` ' +
-    '(reviewThreads query or the addPullRequestReview mutation keyed on the run’s PR id) for threads and review posting.',
+    'Reviewer Bash reads are scoped to the workflow run’s PR. Direct `gh api repos/<owner>/<repo>/...` calls and the `-R`/`--repo` flag can read ' +
+    'other repositories through the daemon’s credentials — use `gh pr view` / `gh pr diff` / `gh pr checks` (without `-R`/`--repo`) for the run’s PR, ' +
+    'and `gh api graphql` (reviewThreads query or the addPullRequestReview mutation keyed on the run’s PR id) for threads and review posting. ' +
+    'Only the workflow run’s PR may be inspected.',
 };
 
 // ---------------------------------------------------------------------------
@@ -848,7 +860,16 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
               'areas to investigate and stop. If satisfied, post approval review, ' +
               REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE +
               ' Call save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } }) then approve_task() or submit_for_approval. ' +
-              'Do NOT attempt to merge the PR yourself. Do not set auto-merge.',
+              'Do NOT attempt to merge the PR yourself. Do not set auto-merge.\n\n' +
+              'Post-approval merge support: after you approve, the Research agent may report a ' +
+              'post-approval merge blocker (a "merge_blocked" / "merge_fix_pushed" message with a ' +
+              'blockers list). When it does: re-check the PR and re-approve the CURRENT head on ' +
+              'GitHub (post a fresh APPROVED review via `gh pr review` — or, for an own-PR where ' +
+              'GitHub rejects self-approval, a COMMENTED review carrying the "Recommendation: ' +
+              'APPROVE" marker), then signal the Research agent to continue via the runtime-supplied ' +
+              'handoff in Your Role in This Workflow. You are the re-approval authority for changed ' +
+              'heads; the Research agent merges. Do not mark the task complete — only the Research ' +
+              'agent merges and closes.',
           },
           toolGuards: [REVIEWER_GH_API_REPO_GUARD],
         },

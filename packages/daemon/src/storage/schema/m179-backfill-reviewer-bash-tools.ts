@@ -43,6 +43,14 @@ const OLD_REVIEWER_TOOLS = [
   'TaskStop',
 ];
 
+// Distinctive markers of the OLD (pre-change) Reviewer seed prompt + description.
+// A row whose stored prompt/description still carry these is a pristine old seed;
+// a row without them has a user-customized prompt/description and must NOT be
+// overwritten. (Exact-string matching against the full old contract would be
+// brittle; these markers are unique to the old seed's no-shell / post_review text.)
+const OLD_REVIEWER_PROMPT_MARKER = 'You have no shell in workflow reviewer sessions';
+const OLD_REVIEWER_DESCRIPTION_MARKER = 'Has no shell — posts reviews via the post_review tool.';
+
 function tableExists(db: BunDatabase, tableName: string): boolean {
   const result = db
     .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`)
@@ -84,8 +92,16 @@ export function runMigration179(db: BunDatabase): void {
   if (!reviewer) return;
 
   const rows = db
-    .prepare(`SELECT id, tools, template_hash FROM space_agents WHERE template_name = 'Reviewer'`)
-    .all() as Array<{ id: string; tools: string | null; template_hash: string | null }>;
+    .prepare(
+      `SELECT id, tools, custom_prompt, description, template_hash FROM space_agents WHERE template_name = 'Reviewer'`
+    )
+    .all() as Array<{
+    id: string;
+    tools: string | null;
+    custom_prompt: string | null;
+    description: string | null;
+    template_hash: string | null;
+  }>;
 
   const update = db.prepare(
     `UPDATE space_agents SET tools = ?, custom_prompt = ?, description = ?, template_hash = ? WHERE id = ?`
@@ -101,9 +117,26 @@ export function runMigration179(db: BunDatabase): void {
       // Malformed tools JSON — not a clean seed; leave it for drift/sync.
       continue;
     }
-    // Only unmodified seeds (exact old profile) are re-stamped. A row whose
-    // tools differ is a user customization — never overwrite it.
-    if (!arraysEqual(storedTools, OLD_REVIEWER_TOOLS)) continue;
+    // Only pristine unmodified seeds are fully re-stamped. A row is an
+    // unmodified seed ONLY when BOTH the tool list AND the prompt/description
+    // still carry the old seed's values — matching tools alone is NOT proof the
+    // prompt/description are unchanged (a user may have customized them while
+    // keeping the tool list). A row whose tools differ, or whose prompt/
+    // description no longer carry the old seed markers, is a user customization
+    // and is left to the drift/sync UI (which already flags it update-available).
+    const promptIsOldSeed =
+      typeof row.custom_prompt === 'string' &&
+      row.custom_prompt.includes(OLD_REVIEWER_PROMPT_MARKER);
+    const descriptionIsOldSeed =
+      typeof row.description === 'string' &&
+      row.description.includes(OLD_REVIEWER_DESCRIPTION_MARKER);
+    if (
+      !arraysEqual(storedTools, OLD_REVIEWER_TOOLS) ||
+      !promptIsOldSeed ||
+      !descriptionIsOldSeed
+    ) {
+      continue;
+    }
 
     // Migrate the WHOLE preset for an unmodified seed, not just tools: the old
     // seed's customPrompt still says the reviewer has no shell and must use the
