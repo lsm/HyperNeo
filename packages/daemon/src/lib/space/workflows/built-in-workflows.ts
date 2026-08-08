@@ -235,7 +235,7 @@ const CODEX_REACTION_APPROVAL_GUIDANCE =
   'before closing or handing off. Use the run-scoped GraphQL reaction lookup ' +
   '(the Reviewer Bash guard permits `gh api graphql`; direct `gh api repos/...` REST reads are ' +
   'blocked), resolving the PR number from the run PR URL and reading `reactions`: ' +
-  '`gh api graphql -f query="query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){issueOrPullRequest(number:$number){... on PullRequest {reactions(first:100){nodes{content user{login}}}}}}}" -f owner=<owner> -f name=<repo> -F number=<number>` ' +
+  "`gh api graphql -f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){issueOrPullRequest(number:$number){... on PullRequest {reactions(first:100){nodes{content user{login}}}}}}}' -f owner=<owner> -f name=<repo> -F number=<number>` " +
   'and inspect reactions from any login containing `codex` (case-insensitive — GitHub ' +
   'ships multiple variants such as `codex[bot]` and `chatgpt-codex-connector[bot]`, and ' +
   'the matcher accepts any of them): content `+1` means Codex passed, content `eyes` ' +
@@ -2278,23 +2278,34 @@ function stripRetiredPostApproval({
     return { nodes, channels, hooks, channelsChanged: false };
   }
 
-  // Only strip when a node named "Post-Approval" still carries the FULL retired
-  // seed identity: a `merger` slot whose prompt is the pristine PR-Merger
-  // prompt, AND a node-level postApproval route targeting `merger`. A node that
-  // only matches by name (repurposed) or whose slot/route was customized is the
-  // user's own and must not be touched — leave it as drift for explicit sync.
-  const hasBuiltInMergerMarker = nodes.some(
-    (node) =>
-      node.name === RETIRED_POST_APPROVAL_NODE &&
-      node.postApproval?.targetAgent === 'merger' &&
-      (node.agents ?? []).some(
-        (agent) =>
-          agent.name &&
-          RETIRED_MERGER_SLOT_NAMES.has(agent.name) &&
-          typeof agent.customPrompt?.value === 'string' &&
-          agent.customPrompt.value.includes(RETIRED_PR_MERGER_SLOT_PROMPT_MARKER)
-      )
-  );
+  // Only strip when a node named "Post-Approval" still carries the COMPLETE
+  // retired seed identity:
+  //   - the node has EXACTLY one agent slot: the `merger` slot with the pristine
+  //     PR-Merger prompt, NO model override, and NO replaceAgentPrompt (any of
+  //     these — prompt text, model, mode — marks a customization; the agentId
+  //     is a per-space UUID for persisted rows, so it is not a distinguishing
+  //     signal);
+  //   - the node's postApproval route targets `merger` (the seeded route).
+  // A node that only matches by name, or whose slot/route was customized in any
+  // way, is the user's own and must not be touched — leave it as drift for
+  // explicit sync instead of silently destroying the customization.
+  const isPristineMergerNode = (node: WorkflowNode): boolean => {
+    if (node.name !== RETIRED_POST_APPROVAL_NODE) return false;
+    if (node.postApproval?.targetAgent !== 'merger') return false;
+    const mergerAgents = (node.agents ?? []).filter(
+      (agent) => agent.name && RETIRED_MERGER_SLOT_NAMES.has(agent.name)
+    );
+    // Exactly one merger slot, with the seeded identity.
+    return (
+      mergerAgents.length === 1 &&
+      (node.agents?.length ?? 0) === 1 &&
+      mergerAgents[0].model === undefined &&
+      mergerAgents[0].replaceAgentPrompt !== true &&
+      typeof mergerAgents[0].customPrompt?.value === 'string' &&
+      mergerAgents[0].customPrompt.value.includes(RETIRED_PR_MERGER_SLOT_PROMPT_MARKER)
+    );
+  };
+  const hasBuiltInMergerMarker = nodes.some(isPristineMergerNode);
   if (!hasBuiltInMergerMarker) {
     return { nodes, channels, hooks, channelsChanged: false };
   }

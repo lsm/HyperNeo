@@ -3546,6 +3546,53 @@ describe('seedBuiltInWorkflows()', () => {
     expect(customPa.agents[0].customPrompt?.value).toBe('My custom merger prompt (user-edited)');
   });
 
+  test('preserves a Post-Approval node whose merger slot was model-customized', () => {
+    // The node keeps the seeded name/slot/prompt/route but the user overrode the
+    // slot's model. The strip guard requires the COMPLETE retired seed identity
+    // (including no model override), so this customized node is preserved.
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const seededCoding = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === STABLE_CODING_WORKFLOW.name)!;
+    const codingId = seededCoding.id;
+    revertToLegacyIdentity(codingId, 'Coding Workflow', 'coding-workflow');
+    repo.updateWorkflow(codingId, {
+      nodes: [
+        ...seededCoding.nodes.map((n) =>
+          n.name === 'Coding' ? { ...n, postApproval: undefined } : n
+        ),
+        {
+          id: 'model-pa',
+          name: 'Post-Approval',
+          agents: [
+            {
+              agentId: MERGER_ID,
+              name: 'merger',
+              model: 'claude-sonnet-4-6',
+              customPrompt: {
+                value:
+                  'You are the PR Merger — the designated shell-capable agent for post-approval merges.',
+              },
+            },
+          ],
+          postApproval: { targetAgent: 'merger', instructions: 'merge' },
+        },
+      ],
+    });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'stale-pre-upgrade-hash',
+      codingId
+    );
+
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+
+    const after = manager.listWorkflows(SPACE_ID).find((w) => w.id === codingId)!;
+    // The model-customized Post-Approval node survives — not stripped.
+    expect(after.nodes.some((n) => n.name === 'Post-Approval')).toBe(true);
+    const modelPa = after.nodes.find((n) => n.name === 'Post-Approval')!;
+    expect(modelPa.agents[0].model).toBe('claude-sonnet-4-6');
+  });
+
   test('handle collision on a new stable template fails safely without aborting the seed', () => {
     // A user workflow already holds the stable `coding` handle.
     manager.createWorkflow({

@@ -88,10 +88,15 @@ GitHub review procedure: post a visible review BEFORE gate writes or terminal ac
 
 \`\`\`bash
 BODY=$(mktemp)
-cat > "$BODY" <<'EOF'
+# Use an UNPREDICTABLE quoted heredoc delimiter so untrusted PR-derived prose
+# containing a literal "EOF" (or any fixed terminator) cannot terminate the
+# heredoc early and leak into the shell. The delimiter is generated once and
+# reused in the same shell operation.
+DELIM="REVIEW_$(openssl rand -hex 8)"
+cat > "$BODY" <<"$DELIM"
 ## 🤖 Review by <your model> (<your provider>)
 <full review body — MUST start with the header block above>
-EOF
+"$DELIM"
 trap 'rm -f "$BODY"' EXIT
 \`\`\`
 
@@ -102,6 +107,14 @@ gh pr review <pr_url> --approve --body-file "$BODY"
 # or: gh pr review <pr_url> --request-changes --body-file "$BODY"
 # or: gh pr review <pr_url> --comment --body-file "$BODY"   # informational note
 \`\`\`
+
+\`gh pr review\` does NOT return the review URL, but the gated Review → Coding handoff and the \`---REVIEW_POSTED---\` block require \`review_url\`. Retrieve it with the run-scoped GraphQL query (the Reviewer Bash guard permits \`gh api graphql\`) — this lists the PR's reviews; the first entry is the most recently created (the one you just posted):
+
+\`\`\`bash
+REVIEW_URL=$(gh api graphql -f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviews(first:1,orderBy:{field:CREATED_AT,direction:DESC}){nodes{url}}}}}' -f owner=<owner> -f name=<repo> -F number=<number> --jq '.data.repository.pullRequest.reviews.nodes[0].url')
+\`\`\`
+
+Use \`$REVIEW_URL\` as the \`review_url\` in the feedback handoff and the \`url:\` in the ---REVIEW_POSTED--- block.
 
 \`gh pr review\` has NO inline line-comment flag. To anchor findings to specific lines, use the GraphQL \`addPullRequestReview\` mutation — this carries the RUN's PR id (not a free-form repo path), so it stays within the run-scoped boundary that a Bash guard enforces on the Reviewer (direct \`gh api repos/<owner>/<repo>/...\` REST reads are blocked — the Reviewer may only read the workflow run's PR). Submit the mutation as a COMPLETE JSON request body via \`gh api graphql --input\` (a file with \`{query, variables}\`, where \`variables.comments\` is a real JSON array — \`-F\` cannot coerce an arbitrary JSON-array string into an input-array GraphQL variable, and \`-f\` sends a string). The \`event\` variable MUST match your verdict (\`APPROVE\`, \`REQUEST_CHANGES\`, or \`COMMENT\` for the own-PR fallback). Parse the PR's host (for GitHub Enterprise) and pass \`--hostname\` so the enterprise PR id goes to the right endpoint. Keep every piece of untrusted finding prose in a file and load it with \`jq --rawfile\` — NEVER interpolate it into a shell command:
 

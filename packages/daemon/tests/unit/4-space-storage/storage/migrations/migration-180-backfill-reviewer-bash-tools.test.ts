@@ -20,7 +20,12 @@ import { rmSync, mkdirSync, copyFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../../src/storage/schema/index.ts';
-import { runMigration180 } from '../../../../../src/storage/schema/m180-backfill-reviewer-bash-tools.ts';
+import {
+  runMigration180,
+  OLD_REVIEWER_PROMPT,
+  OLD_REVIEWER_DESCRIPTION,
+  OLD_REVIEWER_TOOLS,
+} from '../../../../../src/storage/schema/m180-backfill-reviewer-bash-tools.ts';
 import { getPresetAgentTemplates } from '../../../../../src/lib/space/agents/seed-agents.ts';
 import { computeAgentTemplateHash } from '../../../../../src/lib/space/agents/agent-template-hash.ts';
 
@@ -38,36 +43,6 @@ interface AgentRow {
 const PRESETS = getPresetAgentTemplates();
 const REVIEWER_PRESET = PRESETS.find((p) => p.name === 'Reviewer')!;
 const CODER_PRESET = PRESETS.find((p) => p.name === 'Coder')!;
-
-/** The pre-change shell-less Reviewer profile M179 recognizes as an unmodified seed. */
-const OLD_REVIEWER_TOOLS = [
-  'Read',
-  'Grep',
-  'Glob',
-  'WebFetch',
-  'WebSearch',
-  'Skill',
-  'ToolSearch',
-  'Task',
-  'TaskOutput',
-  'TaskStop',
-];
-
-/**
- * The pre-change Reviewer system contract (shell-less: "You have no shell in
- * workflow reviewer sessions", posts via the removed post_review tool). M179
- * must replace this obsolete prompt on unmodified seeds, or existing reviewers
- * get contradictory instructions with a hash that hides the drift.
- */
-const OLD_REVIEWER_PROMPT =
-  '## Reviewer System Contract\n\nYou are a critical reviewer. ' +
-  'You have no shell in workflow reviewer sessions — do not run gh, git, test, build, or app commands. ' +
-  'Read the PR diff via the get_pr_diff tool and post your review via the post_review tool.';
-
-/** The pre-change Reviewer preset description (still carried by old seed rows). */
-const OLD_REVIEWER_DESCRIPTION =
-  'Code review specialist. Reviews pull requests for correctness, style, and test coverage. ' +
-  'Has no shell — posts reviews via the post_review tool.';
 
 function insertSpace(db: BunDatabase, id: string): void {
   const now = Date.now();
@@ -243,6 +218,37 @@ describe('migration 179 — reviewer bash tool backfill', () => {
     expect(parseTools(row as unknown as AgentRow)).toEqual(OLD_REVIEWER_TOOLS);
     expect((row as unknown as AgentRow).custom_prompt).toBe('My completely custom reviewer prompt');
     expect((row as unknown as AgentRow).description).toBe('My custom description');
+    expect((row as unknown as AgentRow).template_hash).toBe('some-hash');
+  });
+
+  test('leaves a Reviewer with old tools + appended prompt untouched (exact-match guard)', () => {
+    // The reviewer kept the old tools AND the old prompt but APPENDED custom
+    // instructions. The migration must NOT overwrite the appended prompt — it
+    // uses exact full-prompt equality (not a substring match), so even a
+    // prompt that still contains the old marker is recognized as customized.
+    const spaceId = 'space-m179-b3';
+    insertSpace(db, spaceId);
+    const appended = OLD_REVIEWER_PROMPT + '\n\n### My team instructions\nAlways run extra checks.';
+    insertAgent(db, {
+      id: 'agent-reviewer-appended',
+      spaceId,
+      name: 'Reviewer',
+      handle: 'reviewer',
+      tools: OLD_REVIEWER_TOOLS,
+      customPrompt: appended,
+      description: OLD_REVIEWER_DESCRIPTION,
+      templateName: 'Reviewer',
+      templateHash: 'some-hash',
+    });
+
+    runMigration180(db);
+
+    const row = getAgentRow('agent-reviewer-appended');
+    expect(parseTools(row as unknown as AgentRow)).toEqual(OLD_REVIEWER_TOOLS);
+    // The appended prompt is preserved byte-for-byte (not replaced with the
+    // current preset prompt), and the hash is left stale for drift/sync.
+    expect((row as unknown as AgentRow).custom_prompt).toBe(appended);
+    expect((row as unknown as AgentRow).custom_prompt).not.toBe(REVIEWER_PRESET.customPrompt);
     expect((row as unknown as AgentRow).template_hash).toBe('some-hash');
   });
 
