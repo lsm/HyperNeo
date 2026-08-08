@@ -68,8 +68,11 @@ export interface ReactiveDatabase {
   /**
    * Manually notify that a table has changed.
    * Used for tables whose writes bypass the proxy (e.g., direct SQL via external repos).
+   * Pass a `scope` when known so the change can batch cleanly inside a reactive
+   * transaction — an unscoped notify forces the whole flushed batch to undefined
+   * scope, poisoning properly-scoped writes in the same batch.
    */
-  notifyChange(table: string): void;
+  notifyChange(table: string, scope?: TableChangeScope): void;
 }
 
 // Mapping from facade method name to table name + optional scope extractor.
@@ -408,8 +411,8 @@ export function createReactiveDatabase(db: Database): ReactiveDatabase {
         pendingTableScopes.clear();
       }
     },
-    notifyChange(table: string): void {
-      incrementAndEmit(table);
+    notifyChange(table: string, scope?: TableChangeScope): void {
+      incrementAndEmit(table, scope);
     },
   };
   return reactiveDb as ReactiveDatabase;

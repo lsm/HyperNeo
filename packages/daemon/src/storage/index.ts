@@ -140,7 +140,7 @@ export class Database {
     this.shortIdAllocator = new ShortIdAllocator(db);
     const shortIdAllocator = this.shortIdAllocator;
     this.sessionRepo = new SessionRepository(db);
-    this.sdkMessageRepo = new SDKMessageRepository(db);
+    this.sdkMessageRepo = new SDKMessageRepository(db, reactiveDb);
     this.settingsRepo = new SettingsRepository(db);
     this.githubMappingRepo = new GitHubMappingRepository(db);
     this.inboxItemRepo = new InboxItemRepository(db);
