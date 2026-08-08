@@ -739,14 +739,15 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
   // (toggle cleared then re-enabled on an already-migrated channel). Without
   // this pass, re-enabling `requireCodexApproval` on a gateless channel would
   // silently leave the route without codex enforcement.
+  // SCOPED to routes that have an approval hook (script validator) — the old
+  // runtime's `requireCodexApproval` only affected approval gates, so a
+  // feedback/post-approval route should NOT get codex enforcement even if the
+  // source node carries the flag.
   for (const channel of workflow.channels ?? []) {
     if (channel.gateId) continue;
     const fromNode = resolveChannelNodeName(channel.from, workflow.nodes);
     const sourceNode = workflow.nodes?.find((node) => node.name === fromNode);
     if (sourceNode?.requireCodexApproval !== true) continue;
-    // Match an existing hook to the current source/TARGET route (not just
-    // source) so a node with multiple outgoing channels gets a hook on each
-    // route, not just the first one encountered.
     const targetNames =
       typeof channel.to === 'string'
         ? [channel.to]
@@ -756,6 +757,18 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
     for (const targetRef of targetNames) {
       const targetNode =
         targetRef === '*' ? undefined : resolveChannelNodeName(targetRef, workflow.nodes);
+      // Only re-emit on routes that have an approval hook (the migration's
+      // signal that this WAS an approval channel). Non-approval routes
+      // (feedback, post-approval) are skipped — requireCodexApproval never
+      // applied to them.
+      const hasApprovalHook = Array.from(hooksById.values()).some(
+        (hook) =>
+          hook.sourceNode === fromNode &&
+          hook.targetNode === targetNode &&
+          hook.method === 'send_message' &&
+          hook.validator.kind === 'script'
+      );
+      if (!hasApprovalHook) continue;
       const hasRouteHook = Array.from(hooksById.values()).some(
         (hook) =>
           hook.sourceNode === fromNode &&

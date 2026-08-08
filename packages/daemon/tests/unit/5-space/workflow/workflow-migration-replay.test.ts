@@ -925,7 +925,7 @@ const FIXTURES: ReplayFixture[] = [
     replayWarningCodes: ['legacy_custom_gate_deprecated'],
   },
   {
-    name: 're-emit codex hooks on EVERY gateless route when a source requires codex (multi-route)',
+    name: 're-emit codex hooks on EVERY gateless approval route when a source requires codex (multi-route)',
     build: () => ({
       nodes: [
         {
@@ -937,15 +937,41 @@ const FIXTURES: ReplayFixture[] = [
         { id: 'node-build', name: 'Build', agents: [{ name: 'builder' }] },
         { id: 'node-test', name: 'Test', agents: [{ name: 'tester' }] },
       ],
-      // Two gateless channels from the same requiring source — the re-emit
-      // pass must emit a codex hook on EACH route, not just the first one.
+      // Two gateless channels from the same requiring source, each with an
+      // approval hook (script validator) — the re-emit pass must emit a codex
+      // hook on EACH approval route. A non-approval route (no script hook) is
+      // skipped — requireCodexApproval only affects approval channels.
       channels: [
         { from: 'Plan', to: 'Build', label: 'Plan → Build' },
         { from: 'Plan', to: 'Test', label: 'Plan → Test' },
       ],
+      hooks: [
+        makeUserScriptHook({
+          id: 'approval-build',
+          sourceNode: 'Plan',
+          targetNode: 'Build',
+          validator: {
+            kind: 'script',
+            interpreter: 'bash',
+            source: 'jq -n \'{"type":"allow"}\'',
+          },
+          authorizedCallers: [{ sourceNode: 'Plan' }],
+        }),
+        makeUserScriptHook({
+          id: 'approval-test',
+          sourceNode: 'Plan',
+          targetNode: 'Test',
+          validator: {
+            kind: 'script',
+            interpreter: 'bash',
+            source: 'jq -n \'{"type":"allow"}\'',
+          },
+          authorizedCallers: [{ sourceNode: 'Plan' }],
+        }),
+      ],
     }),
     verify: ({ workflow }) => {
-      // A codex hook exists on BOTH routes.
+      // A codex hook exists on BOTH approval routes.
       const buildHook = codexHookBetween(workflow, 'Plan', 'Build');
       expect(buildHook).toBeDefined();
       const testHook = codexHookBetween(workflow, 'Plan', 'Test');
