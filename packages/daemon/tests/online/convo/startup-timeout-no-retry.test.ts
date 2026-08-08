@@ -14,9 +14,10 @@
  *   module with the env var already set to a very short value (10 ms). The SDK
  *   subprocess cannot respond within 10 ms, so the startup timer fires on the
  *   first attempt; the retry spawns a fresh subprocess that also cannot respond
- *   in time. assertStartupTimeoutFired() verifies the timeout actually fired —
- *   otherwise the suite could pass vacuously if the SDK ever responded within
- *   the window (both tests also accept the no-error outcome).
+ *   in time. assertRetryOnceSequenceRan() verifies the timeout fired on BOTH
+ *   attempts and the retry-once branch ran exactly once — otherwise the suite
+ *   could pass vacuously if the SDK ever responded within the window (both tests
+ *   also accept the no-error outcome).
  *
  * MODES:
  *   - Dev Proxy (preferred, offline): HYPERNEO_USE_DEV_PROXY=1
@@ -33,11 +34,12 @@ import { getProcessingState, waitForIdle } from '../../helpers/daemon-actions';
 
 const IS_MOCK = !!process.env.HYPERNEO_USE_DEV_PROXY;
 // Spawned daemon startup is slower than in-process; allow extra time.
-// Budgets are generous because the forced startup timeout below makes the
-// daemon abort+respawn the SDK subprocess, which both slows the daemon's own
-// model fetch (waitForModelsReady) and adds up to one RETRY_EXIT_TIMEOUT_MS
-// (5 s) subprocess-exit wait before the query reaches idle.
-const SETUP_TIMEOUT = IS_MOCK ? 45000 : 60000;
+// SETUP_TIMEOUT must exceed the aggregate inner budgets so the hook doesn't
+// time out mid-startup (leaving the child + dev-proxy lease alive): the spawned
+// server's port-startup timeout (20 s) + waitForModelsReady (MODELS_READY_TIMEOUT_MS)
+// + dev-proxy acquisition / WebSocket init / cleanup. The values below leave
+// headroom over that aggregate.
+const SETUP_TIMEOUT = IS_MOCK ? 60000 : 75000;
 const TEST_TIMEOUT = IS_MOCK ? 60000 : 90000;
 const IDLE_TIMEOUT = IS_MOCK ? 45000 : 60000;
 // Extra readiness budget for createDaemonServer: the thrashed subprocess spawns
@@ -49,7 +51,7 @@ const MODELS_READY_TIMEOUT_MS = IS_MOCK ? 25000 : 30000;
 // within tens of ms, so 100 ms does NOT fire (verified — the test passed
 // vacuously). 10 ms reliably fires on every machine we run on. The resulting
 // subprocess abort/respawn churn is absorbed by the generous wait budgets and
-// modelsReadyTimeoutMs above, and assertStartupTimeoutFired() fails the test
+// modelsReadyTimeoutMs above, and assertRetryOnceSequenceRan() fails the test
 // outright if the timeout ever stops firing (no silent vacuous pass).
 const FORCED_STARTUP_TIMEOUT_MS = '10';
 
@@ -68,31 +70,33 @@ async function getSessionError(
 }
 
 /**
- * Assert the spawned daemon logged an "SDK startup timeout" — i.e. the forced
- * short STARTUP_TIMEOUT_MS actually fired and the startup timer callback ran
- * (query-runner.ts:808). This alone does NOT prove the retry ran (that is a
- * separate conditional at query-runner.ts:989 — see countStartupRetries).
- * Without this the suite could pass green while the SDK responded within the
- * window and no timeout occurred (a vacuous pass). Requires the daemon spawned
- * with LOG_LEVEL=warn so the line reaches the captured child output.
+ * Verify the full startup-timeout → retry-once sequence ran to completion by
+ * counting daemon log lines in the captured child output (requires the daemon
+ * spawned with LOG_LEVEL=warn — the daemon Logger is SILENT under
+ * NODE_ENV=test by default):
+ *   - "SDK startup timeout"           fires once per attempt whose startup timer
+ *                                     elapses (query-runner.ts:808, timer cb).
+ *   - "Auto-retrying query after      fires once per retry-once branch entry
+ *     startup timeout"                 (query-runner.ts:990 — a SEPARATE
+ *                                     conditional from the timer callback).
+ * At the forced 10ms timeout the SDK cannot respond on either attempt, so both
+ * time out: expect exactly 2 timeout logs (attempt 1 + the retry's attempt 2)
+ * and exactly 1 retry log. The 2-timeout count proves the retry's second attempt
+ * actually ran — not merely that the retry branch was entered — and the whole
+ * check fails the suite if the timeout ever stops firing (no vacuous pass).
  */
-function assertStartupTimeoutFired(daemon: DaemonServerContext): void {
+function assertRetryOnceSequenceRan(daemon: DaemonServerContext): void {
   const output = daemon.getCapturedOutput?.() ?? '';
+  const timeouts = output.split('SDK startup timeout').length - 1;
+  const retries = output.split('Auto-retrying query after startup timeout').length - 1;
   expect(
-    output,
-    'expected the daemon to log an "SDK startup timeout"; if absent, the forced ' +
-      'startup timeout did not fire and the retry-once path was not exercised'
-  ).toContain('SDK startup timeout');
-}
-
-/**
- * Count how many times the daemon logged "Auto-retrying query after startup
- * timeout" — one per execution of the retry-once branch (query-runner.ts:990).
- * The branch is gated on retryAttempt === 0, so the retry fires exactly once.
- */
-function countStartupRetries(daemon: DaemonServerContext): number {
-  const output = daemon.getCapturedOutput?.() ?? '';
-  return output.split('Auto-retrying query after startup timeout').length - 1;
+    timeouts,
+    `expected 2 "SDK startup timeout" logs (attempt 1 + the retry's attempt 2); got ${timeouts}`
+  ).toBe(2);
+  expect(
+    retries,
+    `expected the retry-once branch to run exactly once; got ${retries} retry log(s)`
+  ).toBe(1);
 }
 
 describe('Startup Timeout Error Surfacing', () => {
@@ -183,11 +187,10 @@ describe('Startup Timeout Error Surfacing', () => {
         // Wait for the session to return to idle.
         await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
-        // ── Assertion 1: the startup timeout fired AND the system retried exactly
-        //    once — guards against a vacuous pass and against a silently-removed
-        //    retry branch (the timeout log alone would not catch the latter). ──
-        assertStartupTimeoutFired(daemon);
-        expect(countStartupRetries(daemon)).toBe(1);
+        // ── Assertion 1: the startup timeout fired on BOTH attempts and the
+        //    retry-once branch ran exactly once — guards against a vacuous pass,
+        //    a silently-removed retry, or teardown before the 2nd attempt. ──────
+        assertRetryOnceSequenceRan(daemon);
 
         // ── Assertion 2: session reaches idle (no infinite loop) ──────────────────
         const finalState = await getProcessingState(daemon, sessionId);
@@ -248,10 +251,10 @@ describe('Startup Timeout Error Surfacing', () => {
         // Session reaches idle after retry (succeed or fail).
         await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
-        // ── Assertion 1: the startup timeout fired and retried EXACTLY once —
-        //    directly proves "not more than once" and that the retry path ran. ──
-        assertStartupTimeoutFired(daemon);
-        expect(countStartupRetries(daemon)).toBe(1);
+        // ── Assertion 1: the startup timeout fired on BOTH attempts and retried
+        //    EXACTLY once — directly proves "not more than once" and that the
+        //    retry's second attempt actually ran. ────────────────────────────────
+        assertRetryOnceSequenceRan(daemon);
 
         // ── Assertion 2: session is idle ──────────────────────────────────────────
         const finalState = await getProcessingState(daemon, sessionId);
