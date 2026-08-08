@@ -272,6 +272,38 @@ describe('resolveSpaceMcpSessionPolicy', () => {
     expect(missingMcpServers({ 'node-agent': {} }, policy.requiredServers)).toEqual([
       'space-agent-tools',
     ]);
+    // #879 (3741142853): the merger's invariant must ALSO assert the qualified
+    // merge_pr tool is callable (not just its server present), so a live
+    // config.tools.update that disallows it is caught on the next turn.
+    expect(policy.requiredTools).toEqual(['mcp__space-agent-tools__merge_pr']);
+  });
+
+  test('a designated merger requires the merge_pr TOOL, not just the server (#879 3741142853)', () => {
+    const mergerSessionId = 'space:space-1:task:task-1:exec:exec-9';
+    const session = makeSession({
+      id: mergerSessionId,
+      type: 'worker',
+      context: { spaceId: 'space-1', taskId: 'task-1' },
+    });
+    const policy = resolveSpaceMcpSessionPolicy(session, {
+      nodeExecutionRepo: {
+        getByAgentSessionId: (sid) =>
+          sid === mergerSessionId ? makeNodeExecution({ agentSessionId: sid }) : null,
+        getById: () => null,
+      },
+      taskRepo: {
+        getTask: () =>
+          makeTask({
+            id: 'task-1',
+            spaceId: 'space-1',
+            status: 'approved',
+            postApprovalSessionId: mergerSessionId,
+            postApprovalRequiresMerge: true,
+          }),
+      },
+    });
+
+    expect(policy.requiredTools).toEqual(['mcp__space-agent-tools__merge_pr']);
   });
 
   test('a reused post-approval worker that is NOT a merge route is not classified as the merger (#879 P1-2)', () => {

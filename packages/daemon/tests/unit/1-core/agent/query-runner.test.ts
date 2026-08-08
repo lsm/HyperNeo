@@ -575,6 +575,64 @@ describe('QueryRunner', () => {
       });
     });
 
+    it('throws when a designated merger has the server but merge_pr is disallowed (#879 3741142853)', async () => {
+      // A live `config.tools.update` can add an exact/wildcard disallowedTools
+      // entry while `space-agent-tools` stays mounted. A server-name-only
+      // invariant would pass (the server is present) and let the degraded
+      // merger turn start without merge_pr → #870 fallback to the forbidden
+      // raw merge path. The invariant must also check the qualified tool.
+      await withAnthropicApiKey(async () => {
+        const mergerSessionId = 'space:s1:task:t1:exec:e1';
+        mockSession.id = mergerSessionId;
+        mockSession.workspacePath = tmpdir();
+        mockSession.type = 'worker';
+        mockSession.context = { spaceId: 's1', taskId: 't1' };
+        mockSession.config.mcpServers = {};
+        // The designated merger requires BOTH node-agent and space-agent-tools;
+        // both servers are present — only the tool-level disallow is the defect.
+        const servers = {
+          'node-agent': { type: 'sdk', name: 'node-agent', instance: {} },
+          'space-agent-tools': { type: 'sdk', name: 'space-agent-tools', instance: {} },
+        };
+        buildSpy.mockResolvedValueOnce({
+          model: 'claude-sonnet-4-20250514',
+          mcpServers: servers,
+          // The conflicting live config update: server present, tool disallowed.
+          disallowedTools: ['mcp__space-agent-tools__*'],
+        });
+
+        const db = {
+          ...mockDb,
+          getNodeExecutionRepo: mock(() => ({
+            getByAgentSessionId: (sessionId: string) =>
+              sessionId === mergerSessionId ? { id: 'exec-1' } : null,
+          })),
+          getSpaceTaskRepo: mock(() => ({
+            getTask: (taskId: string) =>
+              taskId === 't1'
+                ? {
+                    id: 't1',
+                    spaceId: 's1',
+                    workflowRunId: 'run-1',
+                    postApprovalSessionId: mergerSessionId,
+                    postApprovalRequiresMerge: true,
+                  }
+                : null,
+          })),
+        } as unknown as Database;
+
+        const ctx = createContext({ db });
+        runner = new QueryRunner(ctx);
+        runner.start();
+        await ctx.queryPromise?.catch(() => {});
+
+        expect(handleErrorSpy).toHaveBeenCalled();
+        const error = handleErrorSpy.mock.calls[0][1] as Error;
+        expect(error.message).toContain('[MCP invariant]');
+        expect(error.message).toContain('merge_pr');
+      });
+    });
+
     it('skips member Space MCP invariant for sessions without spaceId', async () => {
       await withAnthropicApiKey(async () => {
         mockSession.id = 'plain-worker-1';

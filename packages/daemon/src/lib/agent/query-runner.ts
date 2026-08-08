@@ -29,6 +29,10 @@ import {
   SPACE_COORDINATOR_REQUIRED_MCP_SERVERS,
   SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS,
 } from '../space/runtime/space-mcp-session-policy';
+import {
+  findMissingRequiredMcpTools,
+  type McpToolSurface,
+} from '../space/runtime/post-approval-tool-invariant';
 import type { AskUserQuestionHandler } from './ask-user-question-handler';
 import type { MessageQueue } from './message-queue';
 import type { ProcessingStateManager } from './processing-state-manager';
@@ -1576,12 +1580,23 @@ export class QueryRunner {
     });
     if (!policy.attachGenericSpaceTools && !policy.attachLongTermAgentTools) return queryOptions;
 
+    const surface = queryOptions as McpToolSurface;
     const serverNames = Object.keys(queryOptions.mcpServers ?? {}).sort();
     const missingServers = missingMcpServers(
       queryOptions.mcpServers as Record<string, unknown> | undefined,
       policy.requiredServers
     );
-    if (missingServers.length === 0) return queryOptions;
+    // #879 (3741142853): a designated merger must also have the qualified tool
+    // CALLABLE, not just its server present — a live `config.tools.update`
+    // that adds an exact/wildcard `disallowedTools` entry removes `merge_pr`
+    // while `space-agent-tools` stays mounted, and a server-only check would
+    // let the degraded merger turn start (falling back to the forbidden raw
+    // merge path). `findMissingRequiredMcpTools` covers both server absence
+    // and disallowedTools.
+    const missingTools = policy.requiredTools?.length
+      ? findMissingRequiredMcpTools(surface, policy.requiredTools)
+      : [];
+    if (missingServers.length === 0 && missingTools.length === 0) return queryOptions;
 
     const payload = {
       event: 'member_space.mcp.missing',
@@ -1592,14 +1607,16 @@ export class QueryRunner {
       owner: policy.owner,
       requiredServers: policy.requiredServers,
       missingServers,
+      missingTools,
       presentServers: serverNames,
       liveSdkServers: this.getLiveSdkMcpServerNames(queryOptions),
       selfHealAttempted: !!this.ctx.onMissingMemberSpaceMcpServers,
     };
 
     logger.error(
-      `QueryRunner.start(): Space member session ${session.id} is MISSING required MCP servers. ` +
-        `Missing: [${missingServers.join(', ')}]. Present: [${serverNames.join(', ')}]. ` +
+      `QueryRunner.start(): Space member session ${session.id} is MISSING required MCP servers/tools. ` +
+        `Missing servers: [${missingServers.join(', ')}]; missing tools: [${missingTools.join(', ')}]. ` +
+        `Present: [${serverNames.join(', ')}]. ` +
         `This would remove Space coordination tools after cache eviction / DB reload. ${JSON.stringify(payload)}`
     );
 
@@ -1607,23 +1624,27 @@ export class QueryRunner {
       await this.ctx.onMissingMemberSpaceMcpServers(session.id, missingServers);
       const rebuilt = await this.ctx.optionsBuilder.build();
       const repairedOptions = this.ctx.optionsBuilder.addSessionStateOptions(rebuilt);
-      const stillMissing = missingMcpServers(
+      const stillMissingServers = missingMcpServers(
         repairedOptions.mcpServers as Record<string, unknown> | undefined,
         policy.requiredServers
       );
-      if (stillMissing.length > 0) {
+      const stillMissingTools = policy.requiredTools?.length
+        ? findMissingRequiredMcpTools(repairedOptions as McpToolSurface, policy.requiredTools)
+        : [];
+      if (stillMissingServers.length > 0 || stillMissingTools.length > 0) {
         throw new Error(
-          `[MCP invariant] Space member session ${session.id} still missing required MCP servers ` +
-            `after self-heal: [${stillMissing.join(', ')}]. Refusing to start a degraded ` +
-            `Space member turn.`
+          `[MCP invariant] Space member session ${session.id} still missing required MCP servers/tools ` +
+            `after self-heal: servers [${stillMissingServers.join(', ')}], tools [${stillMissingTools.join(', ')}]. ` +
+            `Refusing to start a degraded Space member turn.`
         );
       }
       return repairedOptions;
     }
 
     throw new Error(
-      `[MCP invariant] Space member session ${session.id} missing required MCP servers: ` +
-        `[${missingServers.join(', ')}]. Refusing to start a degraded Space member turn.`
+      `[MCP invariant] Space member session ${session.id} missing required MCP servers/tools: ` +
+        `servers [${missingServers.join(', ')}], tools [${missingTools.join(', ')}]. ` +
+        `Refusing to start a degraded Space member turn.`
     );
   }
 

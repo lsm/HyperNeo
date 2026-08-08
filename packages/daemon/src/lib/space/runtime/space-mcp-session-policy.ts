@@ -2,7 +2,7 @@ import type { Session } from '@hyperneo/shared';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import { longTermAgentSessionId } from '../long-term-agent-session';
-import { isDesignatedMergerSession } from './post-approval-tool-invariant';
+import { isDesignatedMergerSession, MERGE_PR_TOOL } from './post-approval-tool-invariant';
 
 export type SpaceMcpSessionRole =
   | 'coordinator'
@@ -22,6 +22,8 @@ export interface SpaceMcpSessionPolicy {
   readonly spaceId?: string;
   readonly owner: 'space-runtime' | 'task-agent-manager' | 'none';
   readonly requiredServers: readonly string[];
+  /** Fully-qualified tools that must be callable (server present AND not disallowed). */
+  readonly requiredTools?: readonly string[];
   readonly attachGenericSpaceTools: boolean;
   readonly attachCoordinatorTools: boolean;
   readonly attachLongTermAgentTools: boolean;
@@ -109,6 +111,12 @@ export function resolveSpaceMcpSessionPolicy(
       requiredServers: isDesignatedMerger
         ? SPACE_DESIGNATED_MERGER_REQUIRED_MCP_SERVERS
         : SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS,
+      // #879 (3741142853): the invariant must ALSO verify the qualified tool is
+      // callable, not just that `space-agent-tools` is present — a live
+      // `config.tools.update` that adds an exact/wildcard disallowedTools entry
+      // removes `merge_pr` while the server map is unchanged, and a
+      // server-only check would let the degraded merger turn start.
+      requiredTools: isDesignatedMerger ? [MERGE_PR_TOOL] : undefined,
       attachGenericSpaceTools: isDesignatedMerger,
       attachCoordinatorTools: false,
       attachLongTermAgentTools: false,
