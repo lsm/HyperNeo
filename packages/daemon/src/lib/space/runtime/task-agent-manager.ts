@@ -4506,7 +4506,22 @@ export class TaskAgentManager {
     // When images are present, enqueue the multi-modal content array so the SDK
     // sees image blocks alongside the text. Otherwise pass the plain string to
     // preserve the existing behaviour for callers that don't supply images.
-    await session.messageQueue.enqueueWithId(messageId, hasImages ? sdkContent : message);
+    try {
+      await session.messageQueue.enqueueWithId(messageId, hasImages ? sdkContent : message);
+    } catch (err) {
+      // Enqueue rejected after the row was persisted (queue timeout, interrupt,
+      // or clear during the gap). The caller (flushPendingMessagesForTarget)
+      // marks its pending handoff retryable, so this attempt's row must be
+      // terminalized here too — otherwise a later retry mints a fresh UUID while
+      // this 'enqueued' row is replayed by QueryModeHandler, delivering the same
+      // handoff twice. Mirrors the ensureQueryStarted rejection path above.
+      // See task #859 N12 + round-5 P1.
+      this.config.db.updateMessageStatus([dbId], 'failed');
+      this.config.db.messageDeliveryLifecycle?.record(sessionId, messageId, 'failed', {
+        reason: 'enqueue_rejected',
+      });
+      throw err;
+    }
     return dbId;
   }
 

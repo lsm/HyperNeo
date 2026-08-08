@@ -2586,6 +2586,44 @@ describe('SDKMessageHandler', () => {
       });
     });
 
+    it('records first_progress once per consumed message, not per batch (round-5 P2)', async () => {
+      const msgA = 'msg-progress-a';
+      const msgB = 'msg-progress-b';
+      const enqueuedFor = (id: string) => ({
+        dbId: `db-${id}`,
+        uuid: id,
+        type: 'user',
+        message: { role: 'user', content: [{ type: 'text', text: 'x' }] },
+      });
+      getMessageByStatusAndUuidSpy.mockImplementation(
+        (_sid: string, _status: string, id: string) =>
+          id === msgA || id === msgB ? enqueuedFor(id) : null
+      );
+      const assistant = (n: number) =>
+        ({
+          type: 'assistant',
+          uuid: `assist-${n}`,
+          message: { role: 'assistant', content: [] },
+        }) as unknown as SDKMessage;
+
+      // msgA consumed -> first assistant output -> first_progress for A.
+      getStateSpy.mockReturnValue({ status: 'processing', messageId: msgA });
+      mockContext.messageQueue.onMessageYielded?.(msgA, Date.now());
+      await handler.handleMessage(assistant(1));
+
+      // msgB consumed mid-turn (a post-progress steer) -> next assistant output
+      // must record first_progress for B, and NOT duplicate it for A.
+      getStateSpy.mockReturnValue({ status: 'processing', messageId: msgB });
+      mockContext.messageQueue.onMessageYielded?.(msgB, Date.now());
+      await handler.handleMessage(assistant(2));
+
+      const progressCallsFor = (id: string) =>
+        recordLifecycleSpy.mock.calls.filter((c) => c[1] === id && c[2] === 'first_progress')
+          .length;
+      expect(progressCallsFor(msgA)).toBe(1);
+      expect(progressCallsFor(msgB)).toBe(1);
+    });
+
     it('fails and clears the consumed set when the turn is interrupted (N4/F11)', () => {
       const msgA = 'msg-interrupt-a';
       getMessageByStatusAndUuidSpy.mockImplementation(

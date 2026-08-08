@@ -99,12 +99,13 @@ export class SDKMessageHandler {
   private contextFetcher: ContextFetcher;
   private circuitBreaker: ApiErrorCircuitBreaker;
   private acknowledgedPersistedUserThisTurn: boolean = false;
-  // Delivery-lifecycle: whether first_progress has been recorded for the
-  // current "progress batch" (since the last consume or terminal). Reset on
-  // each consume (a steered message starts a new batch) and at terminal, so
-  // the first assistant output attributes first_progress to every consumed
-  // message in the shared turn. See task #859 (8506).
-  private deliveryFirstProgressRecorded: boolean = false;
+  // Delivery-lifecycle: the consumed message UUIDs that have already received
+  // first_progress in this turn. Tracked per ID (not a batch boolean) so a
+  // post-progress steer — a later message consumed after the first assistant
+  // output — records first_progress only for the NEWLY consumed message, and
+  // does not append a duplicate first_progress for messages that already got it.
+  // Cleared at terminal. See task #859 (8506 + round-5 P2).
+  private deliveryFirstProgressIds: Set<string> = new Set();
   // Delivery-lifecycle: every message UUID consumed since the last terminal
   // result. A single SDK turn can consume several steered messages before one
   // terminal result ends it; the terminal event (completed/failed) must be
@@ -534,7 +535,6 @@ export class SDKMessageHandler {
   private recordDeliveryConsumed(messageId: string | null | undefined): void {
     this.recordDelivery(messageId, 'consumed');
     if (messageId) {
-      this.deliveryFirstProgressRecorded = false;
       this.deliveryTurnConsumedIds.add(messageId);
     }
   }
@@ -558,7 +558,7 @@ export class SDKMessageHandler {
       this.recordDelivery(id, stage, detail);
     }
     this.deliveryTurnConsumedIds.clear();
-    this.deliveryFirstProgressRecorded = false;
+    this.deliveryFirstProgressIds.clear();
   }
 
   /**
@@ -738,18 +738,18 @@ export class SDKMessageHandler {
     // turn actually having been delivered (N11 + round-5 P2). This block only
     // acts on assistant/result messages, so persisting it ahead of phase
     // detection is safe.
-    if (
-      isSDKAssistantMessage(message) &&
-      !this.deliveryFirstProgressRecorded &&
-      this.deliveryTurnConsumedIds.size > 0
-    ) {
-      // Attribute first progress to every consumed message in the shared turn,
-      // not just the latest — otherwise an earlier steered message lacks
-      // first_progress and drops out of acceptToFirstProgress latency (8506).
+    if (isSDKAssistantMessage(message) && this.deliveryTurnConsumedIds.size > 0) {
+      // Attribute first progress to every consumed message in the shared turn
+      // that hasn't already received it — not just the latest (otherwise an
+      // earlier steered message lacks first_progress and drops out of the
+      // acceptToFirstProgress latency, 8506), and NOT again to messages that
+      // already got first_progress before a post-progress steer (round-5 P2).
       for (const id of this.deliveryTurnConsumedIds) {
-        this.recordDelivery(id, 'first_progress');
+        if (!this.deliveryFirstProgressIds.has(id)) {
+          this.recordDelivery(id, 'first_progress');
+          this.deliveryFirstProgressIds.add(id);
+        }
       }
-      this.deliveryFirstProgressRecorded = true;
     }
     if (isSDKResultMessage(message)) {
       this.recordDeliveryTerminal('completed', {
