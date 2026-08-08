@@ -431,7 +431,10 @@ export function SpaceTaskPane({
                 // while postApprovalSessionId already points at W2.
                 (!task.postApprovalSessionId || m.sessionId === task.postApprovalSessionId)
             ) ??
-            matchingMembers[0] ??
+            // Fallback to a NON-worker member; a stale current W1 (session !=
+            // durable) must NOT be trusted — matchingMembers[0] could select it
+            // and its isCurrentPostApproval flag would drop the old slot's pin.
+            matchingMembers.find((m) => m.nodeExecution?.isCurrentPostApproval !== true) ??
             null;
           // nodeExecutions is ORDER BY created_at ASC; the NEWEST matching
           // execution is authoritative (mirror the daemon's .at(-1) reuse
@@ -533,18 +536,24 @@ export function SpaceTaskPane({
         // both resolveTargetSessionId's durable override and the daemon's
         // matchesPostApproval, pinning display+send to W1. With no execution
         // pin, the durable session carry below dominates.
-        const currentWorkerMismatch =
+        // When the only member for this role is a snapshot-lagging W1 (flagged
+        // current but session != durable W2), WITHHOLD the target entirely —
+        // pairing W2's session with W1's node/role would send a provenance that
+        // the daemon rejects (or that lazy-activates the wrong ordinary slot).
+        // Wait for W2's provenance to arrive instead of offering a broken target.
+        if (
           preferred.nodeExecution?.isCurrentPostApproval === true &&
           !!task.postApprovalSessionId &&
-          preferred.sessionId !== task.postApprovalSessionId;
+          preferred.sessionId !== task.postApprovalSessionId
+        ) {
+          continue;
+        }
         fallbackTargets.push({
           id: `activity:${preferred.sessionId ?? preferred.role}`,
           kind: 'node_agent',
           label: preferred.label,
           agentName: preferred.role,
-          nodeExecutionId: currentWorkerMismatch
-            ? undefined
-            : preferred.nodeExecution?.nodeExecutionId,
+          nodeExecutionId: preferred.nodeExecution?.nodeExecutionId,
           // For the current worker, carry the DURABLE pointer so
           // resolveTargetSessionId's durable override fires even on this
           // degraded path (a transient W1 id would otherwise let the composer
@@ -961,6 +970,8 @@ export function SpaceTaskPane({
           agentName: outcome.session.agentName,
           workflowNodeId: nodeId,
           sessionId: outcome.session.sessionId,
+          // A terminal task's canvas session is historical — open read-only.
+          ...(isTerminalTask ? { readonly: true } : {}),
           ...(outcome.session.nodeExecutionId
             ? { nodeExecutionId: outcome.session.nodeExecutionId }
             : {}),
@@ -1085,10 +1096,15 @@ export function SpaceTaskPane({
           liveSessionId = task.postApprovalSessionId;
         } else if (isTerminalTask) {
           liveSessionId = choice.sessionId;
-          // Historical worker on a terminal task: open it WITHOUT a task context
-          // so the overlay renders read-only (no send override) — the daemon
-          // would otherwise restore + inject into the completed worker.
-          pushOverlayHistory(liveSessionId, choice.label, undefined, null);
+          // Historical worker on a terminal task: open it with an explicit
+          // readonly marker (no send override / composer) — the daemon would
+          // otherwise restore + inject into the completed worker.
+          pushOverlayHistory(liveSessionId, choice.label, undefined, {
+            taskId: task.id,
+            agentName: choice.agentName,
+            sessionId: liveSessionId,
+            readonly: true,
+          });
           return;
         } else {
           return;
@@ -1322,11 +1338,16 @@ export function SpaceTaskPane({
             member.sessionId,
             member.label,
             undefined,
-            // On a TERMINAL task, open historical workers READ-ONLY (null task
-            // context → AgentOverlayChat readonly) — a live context would keep
-            // the composer active and inject into the completed worker.
+            // On a TERMINAL task, open historical workers READ-ONLY (explicit
+            // readonly marker) — a live context would keep the composer active
+            // and inject into the completed worker.
             isTerminalTask || member.kind !== 'node_agent'
-              ? null
+              ? {
+                  taskId: task.id,
+                  agentName: member.role ?? '',
+                  sessionId: member.sessionId,
+                  readonly: true,
+                }
               : {
                   taskId: task.id,
                   agentName: member.role,

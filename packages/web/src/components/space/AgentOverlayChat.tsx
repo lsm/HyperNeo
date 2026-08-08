@@ -242,10 +242,10 @@ export function AgentOverlayChat({
               pendingAgent={pendingAgent ?? null}
               onSendOverride={handleTaskContextSend}
               store={storeRef.current ?? undefined}
-              // A session opened without task context (e.g. a historical
-              // terminal-task worker) is read-only: no send override, no
-              // composer/drop affordances.
-              readonly={!taskContext && !pendingAgent}
+              // Read-only only when the terminal-worker path explicitly marks
+              // the overlay as history — contextless overlays opened from the
+              // feed (Task Agent / Space Agent) stay writable via message.send.
+              readonly={(taskContext?.readonly ?? false) && !pendingAgent}
             />
           </div>
         </div>
