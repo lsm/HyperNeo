@@ -83,7 +83,6 @@ import {
 } from '../managers/space-workflow-manager';
 import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format';
 import { getBuiltInGateScript } from '../workflows/built-in-workflows';
-import { getEffectiveGate } from './gate-features';
 import { buildPrEventTopicPattern, parsePrUrl } from './parse-pr-url';
 import { deliveryModeFromFailureReason } from './delivery-mode';
 import { CompletionDetector } from './completion-detector';
@@ -6712,7 +6711,7 @@ export class SpaceRuntime {
     runId: string,
     workflow: SpaceWorkflow,
     channel: WorkflowChannel,
-    sourceName?: string
+    _sourceName?: string
   ): Promise<{ open: boolean; reason?: string }> {
     if (!channel.gateId) return { open: true };
     const storedGate = (workflow.gates ?? []).find((candidate) => candidate.id === channel.gateId);
@@ -6727,7 +6726,6 @@ export class SpaceRuntime {
       const liveScript = getBuiltInGateScript(workflow.templateName, storedGate.id);
       if (liveScript && storedGate.script) gate = { ...storedGate, script: liveScript };
     }
-    gate = getEffectiveGate(gate, workflow, sourceName ?? channel.from);
     const gateDataRepo = new GateDataRepository(this.config.db);
     const gateDataRecord = gateDataRepo.get(runId, gate.id);
     const runtimeData = gateDataRecord?.data ?? computeGateDefaults(gate.fields ?? []);

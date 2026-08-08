@@ -2302,22 +2302,23 @@ export interface WorkflowNode {
    */
   postApproval?: PostApprovalRoute;
   /**
-   * When true, gated channels from this node that have an approval gate will
-   * also require a codex[bot] +1 reaction before opening. Defaults to false.
+   * @deprecated Legacy codex review gating flag (epic #2299 #2304). Codex
+   * approval is now a declarative `codex_review_approved` built-in hook on the
+   * template. This field is retained only as a data-compat signal: the
+   * `workflow-migration.ts` compat shim reads it to resolve OLD workflows into
+   * the new codex hook; the runtime no longer infers codex from it.
    */
   requireCodexApproval?: boolean;
   /**
-   * Custom poll interval (ms) for the codex review bot when
-   * `requireCodexApproval` is true. Defaults to 300 000 (5 minutes).
+   * @deprecated Legacy codex poll interval. The codex gate is now a preset
+   * (`codex_review_approved`) with no poll side-channel; retained only for
+   * backward-compatible parsing of old rows.
    */
   codexPollIntervalMs?: number;
   /**
-   * Custom timeout (seconds) for the codex review bot reaction check when
-   * `requireCodexApproval` is true. After this many seconds without a +1
-   * reaction since `cycle_start_at`, the gate is allowed to open with a
-   * `codex_bot_reaction: "timeout"` warning. Defaults to 7200 (2 hours) —
-   * Codex reviews on large PRs routinely take 20–30 minutes, so the previous
-   * 600s default timed out before the bot posted its +1.
+   * @deprecated Legacy per-node codex timeout override. The preset uses the
+   * global `HYPERNEO_CODEX_REVIEW_BOT_TIMEOUT_SECONDS` (default 7200s);
+   * retained only for backward-compatible parsing of old rows.
    */
   codexTimeoutSeconds?: number;
 }
@@ -2338,16 +2339,16 @@ export interface WorkflowNodeInput {
   agents: WorkflowNodeAgent[];
   /** Optional node-level post-approval route. See {@link WorkflowNode.postApproval}. */
   postApproval?: PostApprovalRoute;
-  /** Require codex[bot] +1 on approval gates for channels from this node. */
+  /**
+   * @deprecated Legacy codex flag — see {@link WorkflowNode.requireCodexApproval}.
+   */
   requireCodexApproval?: boolean;
   /**
-   * Custom poll interval (ms) for the codex review bot when
-   * `requireCodexApproval` is true. Defaults to 300 000 (5 minutes).
+   * @deprecated Legacy codex poll interval — see {@link WorkflowNode.codexPollIntervalMs}.
    */
   codexPollIntervalMs?: number;
   /**
-   * Custom timeout (seconds) for the codex review bot reaction check when
-   * `requireCodexApproval` is true. See {@link WorkflowNode.codexTimeoutSeconds}.
+   * @deprecated Legacy per-node codex timeout — see {@link WorkflowNode.codexTimeoutSeconds}.
    */
   codexTimeoutSeconds?: number;
 }
@@ -2819,16 +2820,16 @@ export interface ExportedWorkflowNode {
   name: string;
   /** Optional node-level post-approval route. */
   postApproval?: PostApprovalRoute;
-  /** Require codex[bot] +1 on approval gates for channels from this node. */
+  /**
+   * @deprecated Legacy codex flag — see {@link WorkflowNode.requireCodexApproval}.
+   */
   requireCodexApproval?: boolean;
   /**
-   * Custom poll interval (ms) for the codex review bot when
-   * `requireCodexApproval` is true. Defaults to 300 000 (5 minutes).
+   * @deprecated Legacy codex poll interval — see {@link WorkflowNode.codexPollIntervalMs}.
    */
   codexPollIntervalMs?: number;
   /**
-   * Custom timeout (seconds) for the codex review bot reaction check when
-   * `requireCodexApproval` is true. See {@link WorkflowNode.codexTimeoutSeconds}.
+   * @deprecated Legacy per-node codex timeout — see {@link WorkflowNode.codexTimeoutSeconds}.
    */
   codexTimeoutSeconds?: number;
 }

@@ -6,76 +6,18 @@ import type {
   WorkflowHookValidatorId,
   WorkflowNode,
 } from '@hyperneo/shared';
-import { GITHUB_CONNECTOR_ID } from '../runtime/connectors/github-connector.js';
-import {
-  CODEX_REVIEW_BOT_TIMEOUT_SECONDS,
-  resolveCodexTimeoutSeconds,
-} from '../runtime/gate-features.js';
 
 const MIGRATION_DOCS_URL = 'docs/features/space-workflows.md#workflow-hooks';
 
 /**
- * Human label for a codex reaction timeout (seconds), embedded in the block
- * reason text of migrated plan/review approval hooks. Uses "N-hour" when the
- * value divides evenly into hours, otherwise "N-minute" (rounded up) so a
- * custom per-node override (e.g. 300s) reads as "5-minute", not "0.1-hour".
+ * Plan-approval hook script: accumulates the four plan-review votes and opens
+ * the Plan Review → Task Dispatcher channel once all four reviewers approved.
+ * The codex +1 check is a SEPARATE `codex_review_approved` hook (see
+ * `makeCodexApprovalHook`) ordered after this one — the epic #2299 #2304
+ * unification moved the codex requirement out of the approval bash into a
+ * declarative preset, so this script is approval-count-only.
  */
-function formatCodexTimeoutLabel(seconds: number): string {
-  if (seconds >= 3600 && seconds % 3600 === 0) return `${seconds / 3600}-hour`;
-  return `${Math.max(1, Math.round(seconds / 60))}-minute`;
-}
-
-/**
- * Builds the plan-approval hook script with a Codex reaction timeout window
- * of `timeoutSeconds` (default 7200 / env-overridable via
- * `HYPERNEO_CODEX_REVIEW_BOT_TIMEOUT_SECONDS`). Per-node `codexTimeoutSeconds`
- * overrides are honored at migration time by passing the resolved value here.
- */
-function buildApprovalsScript(timeoutSeconds: number = CODEX_REVIEW_BOT_TIMEOUT_SECONDS): string {
-  const label = formatCodexTimeoutLabel(timeoutSeconds);
-  return [
-    'STATE=$(jq -c \'.approvals // {}\' <<< "${HYPERNEO_HOOK_LOCAL_STATE_JSON:-{}}" 2>/dev/null || echo {})',
-    'WAIT_STARTED=$(jq -r \'.codex_wait_started_at // empty\' <<< "${HYPERNEO_HOOK_LOCAL_STATE_JSON:-{}}" 2>/dev/null || true)',
-    'WAIT_HEAD=$(jq -r \'.codex_wait_head_oid // empty\' <<< "${HYPERNEO_HOOK_LOCAL_STATE_JSON:-{}}" 2>/dev/null || true)',
-    'INCOMING=$(jq -c \'(.data.approvals // .approvals // {})\' <<< "${HYPERNEO_PARAMS_JSON:-{}}" 2>/dev/null || echo {})',
-    'MERGED=$(jq -c -n --argjson a "$STATE" --argjson b "$INCOMING" \'$a * $b\')',
-    'COUNT=$(jq \'to_entries | map(select(.value == "approved" or .value == true)) | length\' <<< "$MERGED")',
-    'if [ "$COUNT" -lt 4 ]; then jq -n --argjson approvals "$MERGED" --argjson count "$COUNT" \'{"type":"block","reason":"Plan dispatch requires four approved plan-review votes","data":{"approvals":$approvals,"approval_count":$count}}\'; exit 0; fi',
-    'PR_URL=$(jq -r \'(.data.pr_url // .pr_url // empty)\' <<< "${HYPERNEO_PARAMS_JSON:-{}}" 2>/dev/null || true)',
-    'if [ -z "$PR_URL" ]; then echo "Plan approval requires pr_url for Codex validation" >&2; exit 1; fi',
-    'if ! PR_JSON=$(gh pr view "$PR_URL" --json number,headRefOid,url 2>/dev/null); then echo "Failed to fetch plan PR for Codex validation" >&2; exit 1; fi',
-    'PR_NUMBER=$(jq -r \'.number\' <<< "$PR_JSON")',
-    'HEAD_OID=$(jq -r \'.headRefOid // empty\' <<< "$PR_JSON")',
-    'PR_API_URL=$(jq -r \'.url // empty\' <<< "$PR_JSON")',
-    'PR_HOST=$(sed -E "s#https://([^/]+)/.*#\\1#" <<< "$PR_API_URL")',
-    'OWNER=$(sed -E "s#https://[^/]+/([^/]+)/([^/]+)/pull/[0-9]+.*#\\1#" <<< "$PR_API_URL")',
-    'REPO=$(sed -E "s#https://[^/]+/([^/]+)/([^/]+)/pull/[0-9]+.*#\\2#" <<< "$PR_API_URL")',
-    'if [ -z "$PR_HOST" ] || [ -z "$OWNER" ] || [ -z "$REPO" ] || [ "$OWNER" = "$PR_API_URL" ]; then echo "Failed to resolve repository from PR URL" >&2; exit 1; fi',
-    'ALLOWED_HOST="${GH_HOST:-github.com}"',
-    'if [ "$PR_HOST" != "github.com" ] && [ "$PR_HOST" != "$ALLOWED_HOST" ]; then echo "PR host ${PR_HOST} is not allowed for GitHub lookups" >&2; exit 1; fi',
-    'COMMENTS=$(gh api --hostname "$PR_HOST" --paginate --slurp "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/comments?per_page=100") || { echo "Failed to fetch Codex comments" >&2; exit 1; }',
-    'REACTIONS=$(gh api --hostname "$PR_HOST" --paginate --slurp "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/reactions?per_page=100") || { echo "Failed to fetch Codex reactions" >&2; exit 1; }',
-    'COMMENT_OK=$(jq --arg head "$HEAD_OID" \'[.[][] | select(((.user.login // "") | test("codex"; "i")) and ((.user.login // "") | endswith("[bot]")) and ((.body // "") | contains($head)))] | length\' <<< "$COMMENTS")',
-    'REACTION_OK=$(jq \'[.[][] | select(((.user.login // "") | test("codex"; "i")) and ((.user.login // "") | endswith("[bot]")) and .content == "+1")] | length\' <<< "$REACTIONS")',
-    'FRESH_REACTION_OK=$(jq --arg since "$WAIT_STARTED" \'[.[][] | select(((.user.login // "") | test("codex"; "i")) and ((.user.login // "") | endswith("[bot]")) and .content == "+1" and (.created_at // "") > $since)] | length\' <<< "$REACTIONS")',
-    'if [ "$COMMENT_OK" != "0" ] || { [ -n "$WAIT_STARTED" ] && [ "$WAIT_HEAD" = "$HEAD_OID" ] && [ "$FRESH_REACTION_OK" != "0" ]; }; then jq -n --argjson approvals "$MERGED" --argjson reaction_count "$REACTION_OK" --argjson fresh_reaction_count "$FRESH_REACTION_OK" \'{"type":"allow","data":{"approvals":$approvals,"codex_approved":true,"codex_reaction_count":$reaction_count,"codex_fresh_reaction_count":$fresh_reaction_count}}\'; exit 0; fi',
-    'NOW_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)',
-    `if [ -z "$WAIT_STARTED" ] || [ "$WAIT_HEAD" != "$HEAD_OID" ]; then jq -n --argjson approvals "$MERGED" --arg started "$NOW_ISO" --arg head "$HEAD_OID" '{"type":"block","reason":"Plan approval requires fresh Codex bot approval for current head or ${label} timeout from approval handoff","data":{"approvals":$approvals,"approval_count":4,"codex_wait_started_at":$started,"codex_wait_head_oid":$head}}'; exit 0; fi`,
-    'WAIT_STARTED_PARSE=${WAIT_STARTED%%.*}; WAIT_STARTED_PARSE=${WAIT_STARTED_PARSE%Z}Z',
-    'START_EPOCH=$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$WAIT_STARTED_PARSE" +%s 2>/dev/null || date -u -d "$WAIT_STARTED" +%s 2>/dev/null || echo 0)',
-    'NOW_EPOCH=$(date -u +%s)',
-    `if [ $((NOW_EPOCH - START_EPOCH)) -lt ${timeoutSeconds} ]; then jq -n --argjson approvals "$MERGED" --arg started "$WAIT_STARTED" --arg head "$HEAD_OID" '{"type":"block","reason":"Plan approval requires fresh Codex bot approval for current head or ${label} timeout from approval handoff","data":{"approvals":$approvals,"approval_count":4,"codex_wait_started_at":$started,"codex_wait_head_oid":$head}}'; exit 0; fi`,
-    'jq -n --argjson approvals "$MERGED" \'{"type":"allow","data":{"approvals":$approvals,"codex_approved":false,"codex_timed_out":true,"codex_warning":"No current-head Codex approval found before timeout"}}\'',
-  ].join('\n');
-}
-
-const APPROVALS_SCRIPT = buildApprovalsScript();
-
-const PLAN_APPROVAL_RESET_SCRIPT = [
-  'jq -n \'{"type":"record_state","stateForHook":{"__PLAN_APPROVAL_HOOK_ID__":{"approvals":null,"approval_count":0,"codex_wait_started_at":null,"codex_wait_head_oid":null}}}\'',
-].join('\n');
-
-const APPROVALS_WITHOUT_CODEX_SCRIPT = [
+const APPROVALS_SCRIPT = [
   'STATE=$(jq -c \'.approvals // {}\' <<< "${HYPERNEO_HOOK_LOCAL_STATE_JSON:-{}}" 2>/dev/null || echo {})',
   'INCOMING=$(jq -c \'(.data.approvals // .approvals // {})\' <<< "${HYPERNEO_PARAMS_JSON:-{}}" 2>/dev/null || echo {})',
   'MERGED=$(jq -c -n --argjson a "$STATE" --argjson b "$INCOMING" \'$a * $b\')',
@@ -84,56 +26,21 @@ const APPROVALS_WITHOUT_CODEX_SCRIPT = [
   'jq -n --argjson approvals "$MERGED" \'{"type":"allow","data":{"approvals":$approvals}}\'',
 ].join('\n');
 
-const REVIEW_APPROVAL_WITHOUT_CODEX_SCRIPT = [
+const PLAN_APPROVAL_RESET_SCRIPT = [
+  'jq -n \'{"type":"record_state","stateForHook":{"__PLAN_APPROVAL_HOOK_ID__":{"approvals":null,"approval_count":0}}}\'',
+].join('\n');
+
+/**
+ * Review-approval hook script: the reviewer's `approved: true` verdict on the
+ * Review → QA channel. The codex +1 check is the separate
+ * `codex_review_approved` hook ordered after this one.
+ */
+const REVIEW_APPROVAL_SCRIPT = [
   'APPROVED=$(jq -r \'(.data.approved // .approved // false)\' <<< "${HYPERNEO_PARAMS_JSON:-{}}" 2>/dev/null || true)',
   'PR_URL=$(jq -r \'(.data.pr_url // .pr_url // empty)\' <<< "${HYPERNEO_PARAMS_JSON:-{}}" 2>/dev/null || true)',
   'if [ "$APPROVED" != "true" ]; then echo "Review handoff requires approved=true" >&2; exit 1; fi',
   'if [ -n "$PR_URL" ]; then jq -n --arg url "$PR_URL" \'{"type":"allow","data":{"approved":true,"pr_url":$url}}\'; else jq -n \'{"type":"allow","data":{"approved":true}}\'; fi',
 ].join('\n');
-
-/**
- * Builds the review-approval hook script. Same parameterization contract as
- * {@link buildApprovalsScript}: `timeoutSeconds` defaults to the global
- * (env-overridable) constant and can be overridden per source node.
- */
-function buildReviewApprovalScript(
-  timeoutSeconds: number = CODEX_REVIEW_BOT_TIMEOUT_SECONDS
-): string {
-  const label = formatCodexTimeoutLabel(timeoutSeconds);
-  return [
-    'APPROVED=$(jq -r \'(.data.approved // .approved // false)\' <<< "${HYPERNEO_PARAMS_JSON:-{}}" 2>/dev/null || true)',
-    'PR_URL=$(jq -r \'(.data.pr_url // .pr_url // empty)\' <<< "${HYPERNEO_PARAMS_JSON:-{}}" 2>/dev/null || true)',
-    'if [ "$APPROVED" != "true" ]; then echo "Review handoff requires approved=true" >&2; exit 1; fi',
-    'if [ -z "$PR_URL" ]; then echo "Review approval handoff requires pr_url for Codex validation" >&2; exit 1; fi',
-    'WAIT_STARTED=$(jq -r \'.codex_wait_started_at // empty\' <<< "${HYPERNEO_HOOK_LOCAL_STATE_JSON:-{}}" 2>/dev/null || true)',
-    'WAIT_HEAD=$(jq -r \'.codex_wait_head_oid // empty\' <<< "${HYPERNEO_HOOK_LOCAL_STATE_JSON:-{}}" 2>/dev/null || true)',
-    'if ! PR_JSON=$(gh pr view "$PR_URL" --json number,headRefOid,url 2>/dev/null); then echo "Failed to fetch PR for Codex validation" >&2; exit 1; fi',
-    'PR_NUMBER=$(jq -r \'.number\' <<< "$PR_JSON")',
-    'HEAD_OID=$(jq -r \'.headRefOid // empty\' <<< "$PR_JSON")',
-    'PR_API_URL=$(jq -r \'.url // empty\' <<< "$PR_JSON")',
-    'PR_HOST=$(sed -E "s#https://([^/]+)/.*#\\1#" <<< "$PR_API_URL")',
-    'OWNER=$(sed -E "s#https://[^/]+/([^/]+)/([^/]+)/pull/[0-9]+.*#\\1#" <<< "$PR_API_URL")',
-    'REPO=$(sed -E "s#https://[^/]+/([^/]+)/([^/]+)/pull/[0-9]+.*#\\2#" <<< "$PR_API_URL")',
-    'if [ -z "$PR_HOST" ] || [ -z "$OWNER" ] || [ -z "$REPO" ] || [ "$OWNER" = "$PR_API_URL" ]; then echo "Failed to resolve repository from PR URL" >&2; exit 1; fi',
-    'ALLOWED_HOST="${GH_HOST:-github.com}"',
-    'if [ "$PR_HOST" != "github.com" ] && [ "$PR_HOST" != "$ALLOWED_HOST" ]; then echo "PR host ${PR_HOST} is not allowed for GitHub lookups" >&2; exit 1; fi',
-    'COMMENTS=$(gh api --hostname "$PR_HOST" --paginate --slurp "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/comments?per_page=100") || { echo "Failed to fetch Codex comments" >&2; exit 1; }',
-    'REACTIONS=$(gh api --hostname "$PR_HOST" --paginate --slurp "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/reactions?per_page=100") || { echo "Failed to fetch Codex reactions" >&2; exit 1; }',
-    'COMMENT_OK=$(jq --arg head "$HEAD_OID" \'[.[][] | select(((.user.login // "") | test("codex"; "i")) and ((.user.login // "") | endswith("[bot]")) and ((.body // "") | contains($head)))] | length\' <<< "$COMMENTS")',
-    'REACTION_OK=$(jq \'[.[][] | select(((.user.login // "") | test("codex"; "i")) and ((.user.login // "") | endswith("[bot]")) and .content == "+1")] | length\' <<< "$REACTIONS")',
-    'FRESH_REACTION_OK=$(jq --arg since "$WAIT_STARTED" \'[.[][] | select(((.user.login // "") | test("codex"; "i")) and ((.user.login // "") | endswith("[bot]")) and .content == "+1" and (.created_at // "") > $since)] | length\' <<< "$REACTIONS")',
-    'if [ "$COMMENT_OK" != "0" ] || { [ -n "$WAIT_STARTED" ] && [ "$WAIT_HEAD" = "$HEAD_OID" ] && [ "$FRESH_REACTION_OK" != "0" ]; }; then jq -n --arg url "$PR_URL" --argjson reaction_count "$REACTION_OK" --argjson fresh_reaction_count "$FRESH_REACTION_OK" \'{"type":"allow","data":{"approved":true,"pr_url":$url,"codex_approved":true,"codex_reaction_count":$reaction_count,"codex_fresh_reaction_count":$fresh_reaction_count}}\'; exit 0; fi',
-    'NOW_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)',
-    `if [ -z "$WAIT_STARTED" ] || [ "$WAIT_HEAD" != "$HEAD_OID" ]; then jq -n --arg started "$NOW_ISO" --arg head "$HEAD_OID" '{"type":"block","reason":"Review approval requires fresh Codex bot approval for current head or ${label} timeout from approval handoff","data":{"codex_wait_started_at":$started,"codex_wait_head_oid":$head}}'; exit 0; fi`,
-    'WAIT_STARTED_PARSE=${WAIT_STARTED%%.*}; WAIT_STARTED_PARSE=${WAIT_STARTED_PARSE%Z}Z',
-    'START_EPOCH=$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$WAIT_STARTED_PARSE" +%s 2>/dev/null || date -u -d "$WAIT_STARTED" +%s 2>/dev/null || echo 0)',
-    'NOW_EPOCH=$(date -u +%s)',
-    `if [ $((NOW_EPOCH - START_EPOCH)) -lt ${timeoutSeconds} ]; then jq -n --arg started "$WAIT_STARTED" --arg head "$HEAD_OID" '{"type":"block","reason":"Review approval requires fresh Codex bot approval for current head or ${label} timeout from approval handoff","data":{"codex_wait_started_at":$started,"codex_wait_head_oid":$head}}'; exit 0; fi`,
-    'jq -n --arg url "$PR_URL" \'{"type":"allow","data":{"approved":true,"pr_url":$url,"codex_approved":false,"codex_timed_out":true,"codex_warning":"No current-head Codex approval found before timeout"}}\'',
-  ].join('\n');
-}
-
-const REVIEW_APPROVAL_SCRIPT = buildReviewApprovalScript();
 
 type Pattern = {
   gateId: string;
@@ -149,14 +56,13 @@ type Pattern = {
   from?: string;
   to?: string;
   /**
-   * When true, generated SCRIPT hooks declare `externalLookups: ['github']` so
-   * the hook executor preserves GitHub auth env (GH_TOKEN, GITHUB_TOKEN,
-   * GH_HOST, GH_CONFIG_DIR). Declared on the pattern (rather than inferred from
-   * script identity in makeHook) so custom-timeout variants built via the script
-   * builders also receive the lookup. Irrelevant for `builtInId` hooks (built-in
-   * validators resolve connectors via the registry, not env injection).
+   * When true and the source node carries the legacy `requireCodexApproval`
+   * flag, the migration additionally emits a `codex_review_approved` built-in
+   * hook ordered after the approval hook. This is the #2303/#2304 compat shim:
+   * it resolves the legacy node flag into a declarative hook on the workflow
+   * data so old spaces converge to the same shape as new templates.
    */
-  githubLookup?: boolean;
+  codexApproval?: boolean;
 };
 
 const KNOWN_GATE_PATTERNS: Record<string, Pattern> = {
@@ -175,7 +81,7 @@ const KNOWN_GATE_PATTERNS: Record<string, Pattern> = {
     label: 'Plan Approval',
     method: 'send_message',
     script: APPROVALS_SCRIPT,
-    githubLookup: true,
+    codexApproval: true,
   },
   'plan-approval-feedback-reset': {
     gateId: 'plan-approval-feedback-reset',
@@ -193,7 +99,7 @@ const KNOWN_GATE_PATTERNS: Record<string, Pattern> = {
     label: 'Review Approval',
     method: 'send_message',
     script: REVIEW_APPROVAL_SCRIPT,
-    githubLookup: true,
+    codexApproval: true,
   },
 };
 
@@ -341,8 +247,7 @@ function makeHook(
   const agentSlot = channelAgentSlot(channel, nodes);
   // A `builtInId` pattern emits a declarative built-in validator hook (e.g. the
   // `review_posted` external_state preset) — no script. Otherwise emit the bash
-  // script-validator hook, with `externalLookups` declared on the pattern so
-  // custom-timeout variants keep GitHub auth env in the executor.
+  // script-validator hook.
   const validator: WorkflowHook['validator'] = pattern.builtInId
     ? { kind: 'built_in', id: pattern.builtInId }
     : {
@@ -354,7 +259,6 @@ function makeHook(
         // `string | undefined` only because Pattern.script is now optional.
         source: script!,
         timeoutMs: 30000,
-        externalLookups: pattern.githubLookup ? [GITHUB_CONNECTOR_ID] : undefined,
       };
   return {
     id: routeHookId(pattern, sourceNode, targetNode, agentSlot),
@@ -366,6 +270,44 @@ function makeHook(
     classification: 'validation',
     order: 0,
     validator,
+    authorizedCallers: [
+      {
+        sourceNode,
+        ...(agentSlot ? { agentSlots: [agentSlot] } : {}),
+      },
+    ],
+  };
+}
+
+/**
+ * Builds the `codex_review_approved` hook for an approval channel whose source
+ * node carries the legacy `requireCodexApproval` flag. It is ordered AFTER the
+ * approval hook (order 1 vs 0): the approval hook's non-retryable block
+ * short-circuits the codex hook until the votes / reviewer-approved condition
+ * passes, so the codex wait window starts at the approval handoff — identical
+ * to the legacy combined bash.
+ */
+function makeCodexApprovalHook(
+  pattern: Pattern,
+  channel: WorkflowChannel,
+  nodes: WorkflowNode[] | undefined
+): WorkflowHook {
+  const sourceNode = resolveChannelNodeName(channel.from, nodes)!;
+  const targetNode = resolveChannelNodeName(channel.to as string, nodes)!;
+  const agentSlot = channelAgentSlot(channel, nodes);
+  const sourceComponent = hookIdComponent(sourceNode);
+  const targetComponent = hookIdComponent(targetNode);
+  const slotComponent = agentSlot ? `:${hookIdComponent(agentSlot)}` : '';
+  return {
+    id: `codex-approval:${sourceComponent}:${targetComponent}${slotComponent}`,
+    enabled: true,
+    label: 'Codex Review',
+    sourceNode,
+    targetNode,
+    method: pattern.method,
+    classification: 'validation',
+    order: 1,
+    validator: { kind: 'built_in', id: 'codex_review_approved' },
     authorizedCallers: [
       {
         sourceNode,
@@ -463,30 +405,14 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
       ] ?? KNOWN_GATE_PATTERNS[channel.gateId];
     const gate = gatesById.get(channel.gateId);
     const sourceNode = workflow.nodes?.find((node) => node.name === fromNode);
-    const codexRequired = sourceNode?.requireCodexApproval === true;
-    // Resolve the Codex reaction timeout for migrated plan/review approval
-    // hooks: honor a per-source-node `codexTimeoutSeconds` override, else the
-    // global env-overridable default. Without this, an operator who shortened
-    // the window via `HYPERNEO_CODEX_REVIEW_BOT_TIMEOUT_SECONDS` or per-node
-    // config would still wait the baked-in 2h on a migrated workflow.
-    const codexTimeoutSeconds =
-      sourceNode?.codexTimeoutSeconds !== undefined
-        ? resolveCodexTimeoutSeconds(sourceNode.codexTimeoutSeconds)
-        : CODEX_REVIEW_BOT_TIMEOUT_SECONDS;
-    const script =
-      pattern?.gateId === 'plan-approval-gate' && !codexRequired
-        ? APPROVALS_WITHOUT_CODEX_SCRIPT
-        : pattern?.gateId === 'review-approval-gate' && !codexRequired
-          ? REVIEW_APPROVAL_WITHOUT_CODEX_SCRIPT
-          : pattern?.gateId === 'plan-approval-gate' && codexRequired
-            ? codexTimeoutSeconds === CODEX_REVIEW_BOT_TIMEOUT_SECONDS
-              ? APPROVALS_SCRIPT
-              : buildApprovalsScript(codexTimeoutSeconds)
-            : pattern?.gateId === 'review-approval-gate' && codexRequired
-              ? codexTimeoutSeconds === CODEX_REVIEW_BOT_TIMEOUT_SECONDS
-                ? REVIEW_APPROVAL_SCRIPT
-                : buildReviewApprovalScript(codexTimeoutSeconds)
-              : pattern?.script;
+    // The legacy `requireCodexApproval` node flag — when the pattern supports
+    // codex approval — is resolved into a separate `codex_review_approved`
+    // hook (the #2303/#2304 compat shim). The approval hook stays
+    // approval-only; codex is a declarative preset ordered after it (see
+    // makeCodexApprovalHook). The runtime no longer infers codex from the flag.
+    const codexRequired =
+      pattern?.codexApproval === true && sourceNode?.requireCodexApproval === true;
+    const script = pattern?.script;
     // A `builtInId` pattern (e.g. review-posted → `review_posted`) emits a
     // declarative validator hook and carries no bash script, so a missing
     // `script` is expected for those — only fail when a script pattern has none.
@@ -513,6 +439,11 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
     if (existingRouteHookId && !workflow.templateName) return channel;
     const hookId = existingRouteHookId ?? hook.id;
     if (!existingRouteHookId) hooksById.set(hook.id, hook);
+    if (codexRequired) {
+      const codexHook = makeCodexApprovalHook(pattern, channel, workflow.nodes);
+      const existingCodexId = findExistingRouteHookId(hooksById.values(), codexHook);
+      if (!existingCodexId) hooksById.set(codexHook.id, codexHook);
+    }
     if (pattern.gateId === 'plan-approval-gate') {
       planApprovalHookIds.add(hookId);
       planApprovalSourceNodes.add(hook.sourceNode);
@@ -549,17 +480,14 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
     });
     for (const planFeedbackChannel of planFeedbackChannels) {
       const stateForHook = Array.from(planApprovalHookIds)
-        .map(
-          (hookId) =>
-            `"${hookId}":{"approvals":null,"approval_count":0,"codex_wait_started_at":null,"codex_wait_head_oid":null}`
-        )
+        .map((hookId) => `"${hookId}":{"approvals":null,"approval_count":0}`)
         .join(',');
       const hook = makeHook(
         planFeedbackResetPattern,
         planFeedbackChannel,
         workflow.nodes,
         PLAN_APPROVAL_RESET_SCRIPT.replace(
-          '"__PLAN_APPROVAL_HOOK_ID__":{"approvals":null,"approval_count":0,"codex_wait_started_at":null,"codex_wait_head_oid":null}',
+          '"__PLAN_APPROVAL_HOOK_ID__":{"approvals":null,"approval_count":0}',
           stateForHook
         )
       );
@@ -576,51 +504,6 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
         );
       }
     }
-  }
-
-  // Post-pass: regenerate already-migrated plan/review approval hooks when
-  // the source node's codexTimeoutSeconds has changed since the hook was
-  // built. Once a channel is migrated, its gateId is stripped, so the main
-  // migration loop above can no longer reach it; without this pass, an
-  // RPC/import/editor update that changes codexTimeoutSeconds would persist
-  // on the node but leave the existing hook source baked with the old
-  // timeout (typically the 7200s default).
-  //
-  // Scope guard: the regex is anchored to the timeout comparison
-  // `((NOW_EPOCH - START_EPOCH)) -lt N`, which is emitted ONLY by
-  // buildApprovalsScript / buildReviewApprovalScript. This uniquely
-  // identifies the timeout check rather than any `-lt N` in the script —
-  // buildApprovalsScript also emits `if [ "$COUNT" -lt 4 ]` for the
-  // approval-vote count, and a naive `/-lt (\d+) /` would match that first
-  // (returning 4) and either always rebuild (when 4 != expectedTimeout) or
-  // silently clobber a custom hook that happens to use `-lt N` for an
-  // unrelated shell comparison.
-  const TIMEOUT_CMP_RE = /\(\(NOW_EPOCH - START_EPOCH\)\) -lt (\d+) /;
-  for (const hook of hooksById.values()) {
-    if (hook.validator.kind !== 'script') continue;
-    const isPlan = hook.id.startsWith('plan-approval:') || hook.id === 'plan-approval';
-    const isReview = hook.id.startsWith('review-approval:') || hook.id === 'review-approval';
-    if (!isPlan && !isReview) continue;
-    const sourceNode = workflow.nodes?.find((node) => node.name === hook.sourceNode);
-    if (!sourceNode?.requireCodexApproval) continue;
-    const match = hook.validator.source.match(TIMEOUT_CMP_RE);
-    if (!match) continue; // not a generated codex script; leave custom hooks alone
-    const bakedTimeout = Number.parseInt(match[1]!, 10);
-    // Treat a cleared (`undefined`) override as the global default so a
-    // save that removes codexTimeoutSeconds still rebuilds the hook back
-    // to the default window instead of leaving the prior custom value.
-    const expectedTimeout =
-      sourceNode.codexTimeoutSeconds === undefined
-        ? CODEX_REVIEW_BOT_TIMEOUT_SECONDS
-        : resolveCodexTimeoutSeconds(sourceNode.codexTimeoutSeconds);
-    if (bakedTimeout === expectedTimeout) continue;
-    const rebuiltScript = isPlan
-      ? buildApprovalsScript(expectedTimeout)
-      : buildReviewApprovalScript(expectedTimeout);
-    hooksById.set(hook.id, {
-      ...hook,
-      validator: { ...hook.validator, source: rebuiltScript },
-    });
   }
 
   const retainedGateIds = new Set(

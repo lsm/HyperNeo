@@ -58,7 +58,6 @@ import { evaluateGate, type GateEvalResult, type GateScriptExecutorFn } from './
 import type { GateScriptContext } from './gate-script-executor';
 import { executeGateScript } from './gate-script-executor';
 import { getBuiltInGateScript } from '../workflows/built-in-workflows';
-import { getEffectiveGate } from './gate-features';
 import { RATE_LIMIT_MIN_BACKOFF_MS } from './rate-limit-detector';
 import { GateRetryScheduler } from './gate-retry-scheduler';
 import type {
@@ -1367,7 +1366,7 @@ export class ChannelRouter {
     gateId: string,
     channelIsCyclic: boolean,
     workflow: SpaceWorkflow,
-    sourceNodeName?: string
+    _sourceNodeName?: string
   ): boolean {
     // Check gate existence BEFORE the cyclic-channel shortcut — if the gate
     // definition was removed from the workflow (e.g. by a workflow edit),
@@ -1384,7 +1383,7 @@ export class ChannelRouter {
     // change via getBuiltInGateScript / the feature registry. Caching any of
     // these would create a fail-open path where a once-open gate bypasses
     // evaluation after the underlying state or script changes.
-    const effectiveGateDef = getEffectiveGate(gateDef, workflow, sourceNodeName);
+    const effectiveGateDef = gateDef;
     if (effectiveGateDef.validator) return true;
     if (effectiveGateDef.script && (workflow.templateName || !gateDef.script)) return true;
     // Known limitation (deferred, #835 follow-up): forcing re-evaluation here
@@ -1497,7 +1496,7 @@ export class ChannelRouter {
     runId: string,
     gateId: string,
     workflow: SpaceWorkflow,
-    sourceNodeName?: string
+    _sourceNodeName?: string
   ): Promise<GateEvalResult> {
     const storedGateDef = (workflow.gates ?? []).find((g) => g.id === gateId);
     if (!storedGateDef) {
@@ -1519,7 +1518,6 @@ export class ChannelRouter {
         gateDef = { ...storedGateDef, script: liveScript };
       }
     }
-    gateDef = getEffectiveGate(gateDef, workflow, sourceNodeName);
 
     // Load runtime data from DB; fall back to computed defaults from fields
     const record = this.config.gateDataRepo?.get(runId, gateId);

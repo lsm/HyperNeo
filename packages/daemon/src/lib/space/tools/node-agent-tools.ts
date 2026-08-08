@@ -118,7 +118,6 @@ import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-au
 import type { ExternalEventStore } from '../../external-events/external-event-store';
 import { parseAddress } from '../../../../../messaging/src/address';
 import { translateLegacyNodeTargets } from '../messaging-adapter';
-import { getEffectiveGate, hasInjectedGateFeature } from '../runtime/gate-features';
 import { buildPrEventTopicPattern, parsePrUrl } from '../runtime/parse-pr-url';
 import type { WorkflowArtifactProfile } from '../runtime/artifact-profile';
 import type { WorkflowHookEngine } from '../runtime/workflow-hook-engine';
@@ -220,43 +219,43 @@ export async function evaluateTerminalGateFeatures(
   for (const gate of workflow.gates ?? []) {
     const sources = relevantGateSources.get(gate.id);
     if (scopingComputed && !sources) continue;
-    for (const sourceName of sources ?? [undefined]) {
-      // Admit feature/codex-injected gates (hasInjectedGateFeature) OR built-in
-      // validator gates — a validator-backed terminal channel must be rechecked
-      // before the terminal action too, since its external state can flip closed
-      // after activation. Without the `!gate.validator` leg a validator terminal
-      // gate is skipped here and the action proceeds on a closed validator.
-      if (!hasInjectedGateFeature(gate, workflow, sourceName) && !gate.validator) continue;
-      const effectiveGate = getEffectiveGate(gate, workflow, sourceName);
-      if (!effectiveGate.script && !effectiveGate.validator) continue;
+    // Admit built-in validator gates — a validator-backed terminal channel
+    // must be rechecked before the terminal action too, since its external
+    // state can flip closed after activation. Without the `!gate.validator`
+    // leg a validator terminal gate is skipped here and the action proceeds
+    // on a closed validator. (The legacy codex gate feature — formerly
+    // admitted via hasInjectedGateFeature — was removed in #2304; codex is
+    // now a hook-based preset.)
+    if (!gate.validator) continue;
+    const effectiveGate = gate;
+    if (!effectiveGate.script && !effectiveGate.validator) continue;
 
-      const gateDataRecord = gateDataRepo.get(workflowRunId, gate.id);
-      const data = gateDataRecord?.data ?? computeGateDefaults(gate.fields);
-      const result = await evaluateGate(effectiveGate, data, scriptExecutor, {
-        ...scriptContext,
+    const gateDataRecord = gateDataRepo.get(workflowRunId, gate.id);
+    const data = gateDataRecord?.data ?? computeGateDefaults(gate.fields);
+    const result = await evaluateGate(effectiveGate, data, scriptExecutor, {
+      ...scriptContext,
+      gateId: gate.id,
+      gateData: data,
+      gateDataUpdatedIso: gateDataRecord
+        ? new Date(gateDataRecord.updatedAt).toISOString()
+        : undefined,
+      prUrl: freshPrUrl || scriptContext.prUrl,
+    });
+    if (!result.open) {
+      const rateLimited = result.rateLimited ?? false;
+      const retryAfterMs = rateLimited
+        ? (result.retryAfterMs ?? RATE_LIMIT_MIN_BACKOFF_MS)
+        : undefined;
+      const baseReason = result.reason ?? `Gate "${gate.id}" blocked terminal action.`;
+      return jsonResult({
+        success: false,
+        error: rateLimited
+          ? `${baseReason} (rate-limited: retry after ${retryAfterMs}ms)`
+          : baseReason,
         gateId: gate.id,
-        gateData: data,
-        gateDataUpdatedIso: gateDataRecord
-          ? new Date(gateDataRecord.updatedAt).toISOString()
-          : undefined,
-        prUrl: freshPrUrl || scriptContext.prUrl,
+        rateLimited,
+        retryAfterMs,
       });
-      if (!result.open) {
-        const rateLimited = result.rateLimited ?? false;
-        const retryAfterMs = rateLimited
-          ? (result.retryAfterMs ?? RATE_LIMIT_MIN_BACKOFF_MS)
-          : undefined;
-        const baseReason = result.reason ?? `Gate "${gate.id}" blocked terminal action.`;
-        return jsonResult({
-          success: false,
-          error: rateLimited
-            ? `${baseReason} (rate-limited: retry after ${retryAfterMs}ms)`
-            : baseReason,
-          gateId: gate.id,
-          rateLimited,
-          retryAfterMs,
-        });
-      }
     }
   }
 
@@ -528,15 +527,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
     }
   };
   const uniqueTargetRefs = (values: string[]): string[] => [...new Set(values)];
-  const resolveCurrentGateSource = (gateId: string): string => {
-    if (!workflow) return myAgentName;
-    const fromRefs = new Set([myAgentName, myNodeName]);
-    const channel = (workflow.channels ?? []).find(
-      (ch) => ch.gateId === gateId && (ch.from === '*' || fromRefs.has(ch.from))
-    );
-    if (channel?.from === '*') return myNodeName;
-    return channel?.from ?? myNodeName;
-  };
 
   const agentNameAliases = new Set(
     [myAgentName, myNodeName, ...(myAgentNameAliases ?? [])]
@@ -1038,7 +1028,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
                 const freshPrUrl =
                   config.artifactProfile?.resolvePrimaryLinkUrl(workflowRunId) ?? '';
                 const evalResult = await evaluateGate(
-                  getEffectiveGate(gateDef, workflow, gatedChannel.from),
+                  gateDef,
                   updated.data,
                   scriptExecutor,
                   scriptContext
@@ -1428,9 +1418,8 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       // Evaluate current gate status. Uses scriptExecutor when available for
       // async script-based gates; otherwise falls back to field-only evaluation.
       const freshPrUrl = config.artifactProfile?.resolvePrimaryLinkUrl(workflowRunId) ?? '';
-      const sourceName = resolveCurrentGateSource(gateId);
       const evalResult = await evaluateGate(
-        getEffectiveGate(gateDef, workflow ?? undefined, sourceName),
+        gateDef,
         currentData,
         scriptExecutor,
         scriptContext
