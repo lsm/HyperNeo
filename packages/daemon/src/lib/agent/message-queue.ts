@@ -98,6 +98,29 @@ export class MessageQueue {
    */
   onClear?: (reason?: string) => void;
 
+  /**
+   * Callback fired ONLY by clear() — the one path that rejects the still-queued
+   * (accepted-but-unconsumed) messages alongside the in-flight ones. stop()
+   * leaves queued messages deliverable (the next query's generator picks them
+   * up), so it must NOT fire this: terminalizing them there would record a
+   * spurious failed/interrupted for a message that is delivered moments later.
+   * Used by delivery-lifecycle observability to terminalize the accepted set.
+   * `reason` mirrors onClear: `'retry_pending'` skips the terminal because the
+   * rate-limit watchdog re-drives the rejected deliveries from their persisted
+   * rows.
+   */
+  onMessagesRejected?: (reason?: string) => void;
+
+  /**
+   * Callback fired when a message leaves the queue WITHOUT being consumed or
+   * cleared: cancelled via remove() or ejected by the stuck-message timeout
+   * while still queued. Used by delivery-lifecycle observability to drop the
+   * message from the accepted-but-unconsumed set — the caller owns any terminal
+   * record (cancel ends the timeline intentionally; the timeout path retries or
+   * fails via handleQueuedMessageFailure), so this callback must NOT record one.
+   */
+  onMessageRemoved?: (messageId: string) => void;
+
   private wakeWaiters(): void {
     this.waiters.forEach((waiter) => waiter());
     this.waiters = [];
@@ -163,6 +186,7 @@ export class MessageQueue {
         const index = this.queue.indexOf(queuedMessage);
         if (index !== -1) {
           this.queue.splice(index, 1);
+          this.onMessageRemoved?.(messageId);
           queuedMessage.reject(timeoutError);
           return;
         }
@@ -201,6 +225,7 @@ export class MessageQueue {
       msg.reject(new Error('Interrupted by user'));
     }
     this.inFlight.clear();
+    this.onMessagesRejected?.(reason);
     this.onClear?.(reason);
   }
 
@@ -220,6 +245,7 @@ export class MessageQueue {
     if (msg.timeoutId) {
       clearTimeout(msg.timeoutId);
     }
+    this.onMessageRemoved?.(messageId);
     msg.resolve(messageId);
     return true;
   }

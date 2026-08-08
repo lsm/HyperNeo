@@ -37,7 +37,7 @@ stop point implies a different failure mode and a different fix.
 | `consumed` | SDK pulled the message from the input generator — the turn begins | `SDKMessageHandler` yielded/ack callbacks (`handleMessageYielded`, `consumePersistedUserMessage`, `acknowledgeOldestQueuedUserOnTurnEnd`) |
 | `first_progress` | First assistant output for this message's turn | `SDKMessageHandler.handleMessage` on the first assistant message of the turn |
 | `completed` | SDK emitted a terminal result for this message's turn (success or error) | `SDKMessageHandler.handleMessage` on a result message |
-| `failed` | Delivery did not complete (timeout / orphaned-after-restart / delivery error / circuit-breaker trip / interrupt) | `QueryLifecycleManager` failure paths + `MessageRecoveryHandler` orphan recovery + `SDKMessageHandler` circuit-breaker trip + `MessageQueue.onClear` (interrupt/reset) |
+| `failed` | Delivery did not complete (timeout / orphaned-after-restart / delivery error / circuit-breaker trip / interrupt) | `QueryLifecycleManager` failure paths + `MessageRecoveryHandler` orphan recovery + `SDKMessageHandler` circuit-breaker trip + `MessageQueue.onClear`/`onMessagesRejected` (interrupt/reset) |
 
 ### Mapping to the delivery concept
 
@@ -157,6 +157,16 @@ diagnostics surface this directly:
   already reached a terminal stage (`completed`/`failed`) in the ledger.
 - A turn interrupted/reset before a terminal result has its consumed messages
   marked `failed` with `detail.reason = 'interrupted'` via `MessageQueue.onClear`.
+  **Accepted-but-unconsumed** messages — still in the in-memory queue when a
+  `clear()` rejects them — are terminalized the same way via
+  `MessageQueue.onMessagesRejected`, so an intentional cancel/interrupt doesn't
+  leave them stuck at `accepted` reading as stale. `stop()` alone (normal turn
+  end, session teardown) does NOT terminalize them: it leaves queued messages
+  deliverable, so a steered message yielded just after its predecessor's result
+  would otherwise collect a spurious `failed` before its `consumed`. A
+  user-cancelled pending message (`session.messages.removePending`) is exempt:
+  it leaves the queue via `MessageQueue.remove`, its ledger rows are deleted,
+  and a later clear does not resurrect it.
 - **Intentionally-deferred** messages (manual mode, or deferred while the session
   is busy/rate-limited) are excluded from `unclaimed`/`stale`: their `persisted`
   event carries `sendStatus: 'deferred'`, and no delivery was expected until
@@ -205,10 +215,14 @@ establishing evidence and correlation before adding retries/ownership:
   the consumed set only).
 - **Rate-limit cooldown retries** — a 429 that schedules watchdog recovery does
   not record a terminal for the turn at teardown (it is `'retry_pending'`, so the
-  retried delivery re-records `consumed` and can still reach `completed`). The
-  watchdog's re-enqueue re-registers the UUID via the idempotent consumed
-  primitive, so a success ends at `completed`; a cooldown that is never retried
-  (user cancels, session stops) leaves the turn's latest stage non-terminal
-  (e.g. `consumed`) and it surfaces as stale — hardening the cooldown
-  cancellation terminal is phase 2 (delivery-attempt ownership).
+  retried delivery re-records `consumed` and can still reach `completed`). Both
+  runners (`QueryRunner`, `AcpQueryRunner`) clear/stop the queue with the
+  `'retry_pending'` reason only AFTER the 429 classification, and carry the flag
+  across the provider/startup retry recursion so a cooldown classified in a
+  nested attempt is respected by the outer frame's teardown too. The watchdog's
+  re-enqueue re-registers the UUID via the idempotent consumed primitive, so a
+  success ends at `completed`; a cooldown that is never retried (user cancels,
+  session stops) leaves the turn's latest stage non-terminal (e.g. `consumed`)
+  and it surfaces as stale — hardening the cooldown cancellation terminal is
+  phase 2 (delivery-attempt ownership).
 

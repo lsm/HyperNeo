@@ -2754,5 +2754,119 @@ describe('SDKMessageHandler', () => {
       ).length;
       expect(consumedCount).toBe(1);
     });
+
+    it('terminalizes accepted-but-unconsumed messages on clear (round-10 P2 #2)', () => {
+      const msgConsumed = 'msg-turn-consumed';
+      const msgQueued = 'msg-still-queued';
+      getMessageByStatusAndUuidSpy.mockImplementation(
+        (_sid: string, _status: string, id: string) =>
+          id === msgConsumed
+            ? {
+                dbId: 'db-consumed',
+                uuid: msgConsumed,
+                type: 'user',
+                message: { role: 'user', content: [{ type: 'text', text: 'x' }] },
+              }
+            : null
+      );
+      getStateSpy.mockReturnValue({ status: 'processing', messageId: msgConsumed });
+
+      // Both messages enter the in-memory queue (accepted); only one is consumed
+      // before the interrupt — the other is still queued when clear() rejects it.
+      mockContext.messageQueue.onMessageEnqueued?.(msgConsumed, Date.now(), false);
+      mockContext.messageQueue.onMessageEnqueued?.(msgQueued, Date.now(), false);
+      mockContext.messageQueue.onMessageYielded?.(msgConsumed, Date.now());
+
+      // clear() fires onMessagesRejected (rejected queued messages) then onClear
+      // (the turn's consumed set) — in that order.
+      mockContext.messageQueue.onMessagesRejected?.();
+      mockContext.messageQueue.onClear?.();
+
+      // The consumed message fails via the turn's consumed set; the still-queued
+      // message fails via the accepted set — each exactly once, so neither reads
+      // as stale after an intentional interrupt.
+      expect(
+        recordLifecycleSpy.mock.calls.some(
+          (c) => c[1] === msgConsumed && c[2] === 'failed' && c[3]?.reason === 'interrupted'
+        )
+      ).toBe(true);
+      expect(
+        recordLifecycleSpy.mock.calls.some(
+          (c) => c[1] === msgQueued && c[2] === 'failed' && c[3]?.reason === 'interrupted'
+        )
+      ).toBe(true);
+      const failedCountFor = (id: string) =>
+        recordLifecycleSpy.mock.calls.filter((c) => c[1] === id && c[2] === 'failed').length;
+      expect(failedCountFor(msgConsumed)).toBe(1);
+      expect(failedCountFor(msgQueued)).toBe(1);
+    });
+
+    it('does not terminalize a still-queued message when the turn merely stops (round-10 P2 #2)', () => {
+      const msgQueued = 'msg-steer-pending';
+      // A steered message accepted mid-turn but not yet yielded when the
+      // predecessor's turn ends: stop() fires onClear but does NOT reject the
+      // queue — the next query's generator still delivers it, so no terminal.
+      mockContext.messageQueue.onMessageEnqueued?.(msgQueued, Date.now(), false);
+
+      mockContext.messageQueue.onClear?.();
+
+      expect(
+        recordLifecycleSpy.mock.calls.some((c) => c[1] === msgQueued && c[2] === 'failed')
+      ).toBe(false);
+    });
+
+    it('does not terminalize a cancelled (queue.remove) message on a later clear (round-10)', () => {
+      const msgCancelled = 'msg-cancelled';
+      // Enqueued (accepted), then removed from the queue by a user cancel — its
+      // lifecycle rows were already deleted by the cancel path, so a later
+      // clear() must NOT resurrect it as failed/interrupted.
+      mockContext.messageQueue.onMessageEnqueued?.(msgCancelled, Date.now(), false);
+      mockContext.messageQueue.onMessageRemoved?.(msgCancelled);
+
+      mockContext.messageQueue.onMessagesRejected?.();
+      mockContext.messageQueue.onClear?.();
+
+      expect(
+        recordLifecycleSpy.mock.calls.some((c) => c[1] === msgCancelled && c[2] === 'failed')
+      ).toBe(false);
+    });
+
+    it('keeps accepted-but-unconsumed messages across a retry-pending clear (round-10 P2 #2)', () => {
+      const msgQueued = 'msg-retry-accepted';
+      getMessageByStatusAndUuidSpy.mockImplementation(
+        (_sid: string, _status: string, id: string) =>
+          id === msgQueued
+            ? {
+                dbId: 'db-queued',
+                uuid: msgQueued,
+                type: 'user',
+                message: { role: 'user', content: [{ type: 'text', text: 'x' }] },
+              }
+            : null
+      );
+      getStateSpy.mockReturnValue({ status: 'processing', messageId: msgQueued });
+
+      mockContext.messageQueue.onMessageEnqueued?.(msgQueued, Date.now(), false);
+
+      // A 429 cooldown teardown is not a terminal — the accepted message must
+      // survive so the watchdog retry can still deliver it.
+      mockContext.messageQueue.onMessagesRejected?.('retry_pending');
+      mockContext.messageQueue.onClear?.('retry_pending');
+      expect(recordLifecycleSpy.mock.calls.filter((c) => c[2] === 'failed').length).toBe(0);
+
+      // The retry re-delivers the same UUID: consumed is recorded (and the ID
+      // leaves the accepted set, so a later genuine clear terminalizes it once).
+      mockContext.messageQueue.onMessageYielded?.(msgQueued, Date.now());
+      expect(
+        recordLifecycleSpy.mock.calls.some((c) => c[1] === msgQueued && c[2] === 'consumed')
+      ).toBe(true);
+
+      mockContext.messageQueue.onMessagesRejected?.();
+      mockContext.messageQueue.onClear?.();
+      const failedCount = recordLifecycleSpy.mock.calls.filter(
+        (c) => c[1] === msgQueued && c[2] === 'failed'
+      ).length;
+      expect(failedCount).toBe(1);
+    });
   });
 });

@@ -1091,4 +1091,48 @@ describe('AcpQueryRunner', () => {
     expect(client.sendPrompt).toHaveBeenCalled();
     expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
   }, 1000);
+
+  test('clears with retry_pending when a 429 schedules a rate-limit cooldown (round-10 P2 #1)', async () => {
+    const client = createMockClient();
+    client.initialize.mockImplementation(async () => {
+      throw new Error('HTTP 429: rate limit exceeded');
+    });
+    const { ctx, messageQueue, stopSpy } = createRunnerFixture({ client });
+    const onRateLimitExhausted = mock(async () => true);
+    ctx.onRateLimitExhausted = onRateLimitExhausted;
+    const runner = new AcpQueryRunner(ctx, () => client as unknown as AcpClient);
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    expect(onRateLimitExhausted).toHaveBeenCalled();
+    // The cooldown watchdog will re-enqueue the delivery, so the teardown must
+    // NOT terminalize the turn (spurious failed/interrupted): both the
+    // handleRunError clear() and the finally's stop() carry 'retry_pending'.
+    expect(messageQueue.clear).toHaveBeenCalledWith('retry_pending');
+    expect(stopSpy).toHaveBeenCalledWith('retry_pending');
+    // No terminal error is surfaced while the retry is pending.
+    expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+  });
+
+  test('clears with no reason on a genuine non-retryable error', async () => {
+    const client = createMockClient();
+    client.initialize.mockImplementation(async () => {
+      throw new Error('ACP agent process exited unexpectedly');
+    });
+    const { ctx, messageQueue, stopSpy } = createRunnerFixture({ client });
+    const onRateLimitExhausted = mock(async () => true);
+    ctx.onRateLimitExhausted = onRateLimitExhausted;
+    const runner = new AcpQueryRunner(ctx, () => client as unknown as AcpClient);
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    // Not a 429 — the watchdog is never consulted and the teardown is a
+    // genuine terminal: clear()/stop() fire onClear without a retry reason.
+    expect(onRateLimitExhausted).not.toHaveBeenCalled();
+    expect(messageQueue.clear).toHaveBeenCalledWith(undefined);
+    expect(stopSpy).toHaveBeenCalledWith(undefined);
+    expect(ctx.errorManager.handleError).toHaveBeenCalled();
+  });
 });

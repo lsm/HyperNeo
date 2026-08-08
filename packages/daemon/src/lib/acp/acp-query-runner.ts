@@ -404,6 +404,17 @@ export class AcpQueryRunner {
     content: string | MessageContent[];
   } | null = null;
 
+  /**
+   * True when the current delivery episode ended in a rate-limit cooldown the
+   * watchdog will retry (set at 429 classification in handleRunError). Function
+   * scope cannot carry this across the startup-timeout retry recursion — the
+   * nested frame classifies but the OUTER frame's finally also stops the queue —
+   * so it lives on the instance. Reset when a fresh (non-retry) runQuery begins;
+   * a stale true would otherwise turn a later genuine teardown into a skipped
+   * terminal. Mirrors QueryRunner. See task #859 round-10 (P2 #1).
+   */
+  private rateLimitCooldownPending = false;
+
   get lastConsumedUserMessage() {
     return this._lastConsumedUserMessage;
   }
@@ -438,6 +449,11 @@ export class AcpQueryRunner {
 
   private async runQuery(queryGeneration: number, isRetry = false): Promise<void> {
     const { session, messageQueue, stateManager, errorManager, logger, optionsBuilder } = this.ctx;
+    // A fresh (non-retry) run starts a new delivery episode — reset the cooldown
+    // flag so a stale true from a previous episode can't suppress a genuine
+    // terminal teardown. Retry frames preserve it: the nested frame may schedule
+    // a cooldown the outer frame's finally must still respect (round-10 P2 #1).
+    if (!isRetry) this.rateLimitCooldownPending = false;
     let client: AcpClient | null = null;
     let queryStartTime = Date.now();
     let startupTimeoutReached = false;
@@ -765,7 +781,13 @@ export class AcpQueryRunner {
         }
 
         this.ctx.resetProcessExitedPromise();
-        messageQueue.stop();
+        // A rate-limit cooldown teardown schedules a watchdog retry rather than
+        // ending the turn, so stop() must NOT fire onClear's terminal+clear for
+        // this message (task #859 round-10 P2 #1): the watchdog re-enqueues the
+        // same UUID, and terminalizing/clearing the consumed set here would
+        // leave the retried delivery unable to record first_progress/completed.
+        // Mirrors the QueryRunner finally.
+        messageQueue.stop(this.rateLimitCooldownPending ? 'retry_pending' : undefined);
 
         if (this.ctx.queryObject) {
           try {
@@ -874,8 +896,6 @@ export class AcpQueryRunner {
       return await this.runQuery(queryGeneration, true);
     }
 
-    messageQueue.clear();
-
     if (!isAbortError) {
       let category = ErrorCategory.SYSTEM;
       const lowerMessage = errorMessage.toLowerCase();
@@ -906,7 +926,7 @@ export class AcpQueryRunner {
       }
 
       const is429Error = category === ErrorCategory.RATE_LIMIT;
-      const rateLimitCooldownScheduled =
+      this.rateLimitCooldownPending =
         is429Error &&
         !!(await this.ctx.onRateLimitExhausted?.(errorMessage, this._lastConsumedUserMessage));
       const userMessage = isStartupTimeout
@@ -915,7 +935,7 @@ export class AcpQueryRunner {
           ? errorMessage
           : undefined;
 
-      if (!rateLimitCooldownScheduled) {
+      if (!this.rateLimitCooldownPending) {
         await errorManager.handleError(
           session.id,
           error instanceof Error ? error : new Error(errorMessage),
@@ -933,6 +953,17 @@ export class AcpQueryRunner {
         await stateManager.setIdle();
       }
     }
+
+    // Clear the queue on non-retryable errors so stale messages don't bleed
+    // into the next session. Run AFTER the rate-limit cooldown classification
+    // (not at the top of the handler) so a 429 that schedules watchdog recovery
+    // can clear with 'retry_pending' — the delivered turn must NOT be
+    // terminalized + cleared here, because the watchdog re-enqueues the same
+    // UUID and the retry still needs to record first_progress/completed.
+    // Genuine non-retryable errors (and aborts/interrupts, which skip the
+    // classification above) clear with no reason and record the turn as failed
+    // (via onClear). Mirrors QueryRunner. See task #859 round-10 (P2 #1).
+    messageQueue.clear(this.rateLimitCooldownPending ? 'retry_pending' : undefined);
   }
 
   private async handleSDKMessage(message: SDKMessage): Promise<void> {

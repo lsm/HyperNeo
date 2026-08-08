@@ -101,6 +101,27 @@ describe('MessageQueue', () => {
       expect(error2).toBeInstanceOf(Error);
       expect(error2.message).toBe('Interrupted by user');
     });
+
+    it('fires onMessagesRejected with the clear reason', async () => {
+      const reasons: Array<string | undefined> = [];
+      queue.onMessagesRejected = (reason) => reasons.push(reason);
+      const promise = queue.enqueue('Message 1');
+
+      queue.clear('test_reason');
+      expect(reasons).toEqual(['test_reason']);
+
+      await promise.catch(() => {});
+    });
+
+    it('stop() does not fire onMessagesRejected (queued messages stay deliverable)', () => {
+      const reasons: Array<string | undefined> = [];
+      queue.onMessagesRejected = (reason) => reasons.push(reason);
+      queue.start();
+
+      queue.stop();
+
+      expect(reasons).toEqual([]);
+    });
   });
 
   describe('remove', () => {
@@ -116,6 +137,25 @@ describe('MessageQueue', () => {
 
     it('should return false for an unknown message ID', () => {
       expect(queue.remove('missing-message')).toBe(false);
+    });
+
+    it('fires onMessageRemoved when a pending message is removed', async () => {
+      const removed: string[] = [];
+      queue.onMessageRemoved = (id) => removed.push(id);
+      const promise = queue.enqueueWithId('message-to-remove', 'Message 1');
+
+      expect(queue.remove('message-to-remove')).toBe(true);
+      expect(removed).toEqual(['message-to-remove']);
+
+      await promise;
+    });
+
+    it('does not fire onMessageRemoved for an unknown message ID', () => {
+      const removed: string[] = [];
+      queue.onMessageRemoved = (id) => removed.push(id);
+
+      expect(queue.remove('missing-message')).toBe(false);
+      expect(removed).toEqual([]);
     });
   });
 

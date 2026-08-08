@@ -112,6 +112,13 @@ export class SDKMessageHandler {
   // attributed to ALL of them, not just the latest activeMessageId, or the
   // earlier ones show as stale forever. Cleared on terminal. See task #859 F2.
   private deliveryTurnConsumedIds: Set<string> = new Set();
+  // Delivery-lifecycle: every message UUID that entered the in-memory queue
+  // ('accepted') but has NOT yet been consumed by the SDK. These are the
+  // still-queued messages rejected by a clear()/interrupt — onMessagesRejected
+  // terminalizes them so they don't sit at 'accepted' forever and read as stale
+  // (round-10 P2 #2). Drained on consumption; kept across turns (a deferred/
+  // steered message stays tracked until consumed or rejected).
+  private deliveryAcceptedIds: Set<string> = new Set();
   private usesSessionStateChangedTurnEnd: boolean = false;
   private expectsSessionStateIdleAfterResult: boolean = false;
   private lastResultWasSuccess: boolean | null = null;
@@ -174,6 +181,19 @@ export class SDKMessageHandler {
     ) => {
       if (internal) return;
       this.recordDelivery(messageId, 'accepted');
+      if (messageId) this.deliveryAcceptedIds.add(messageId);
+    };
+
+    // Delivery-lifecycle: a message that leaves the queue WITHOUT being
+    // consumed or cleared — user-cancelled (removePending → queue.remove) or
+    // ejected by the stuck-message timeout — must drop out of the accepted set.
+    // No terminal is recorded here: cancellation intentionally ends the
+    // timeline (F3), and the timeout path's caller records its own retry or
+    // terminal (handleQueuedMessageFailure). Without this drain a later clear()
+    // would terminalize a message that is no longer queued — resurrecting a
+    // cancelled message as failed/interrupted (round-10 P2 #2 sibling).
+    ctx.messageQueue.onMessageRemoved = (messageId) => {
+      this.deliveryAcceptedIds.delete(messageId);
     };
 
     // Delivery-lifecycle: clear() fires on interrupt/reset/stop (and the
@@ -187,6 +207,23 @@ export class SDKMessageHandler {
       // retried delivery can still record first_progress/completed (round-5 P2).
       if (reason === 'retry_pending') return;
       this.recordDeliveryTerminal('failed', { reason: 'interrupted' });
+    };
+
+    // Delivery-lifecycle: clear() (and ONLY clear()) rejects the still-queued
+    // messages — terminalize the accepted-but-unconsumed set so an intentional
+    // cancel/interrupt doesn't leave them stuck at 'accepted' reading as stale
+    // (round-10 P2 #2). stop() does NOT reject queued messages (the next
+    // query's generator still picks them up), so this must not run there: a
+    // steered message not yet yielded when its predecessor's turn ended would
+    // otherwise collect a spurious failed/interrupted before its delivery.
+    ctx.messageQueue.onMessagesRejected = (reason) => {
+      // Retry-pending: the watchdog re-drives the rejected deliveries from
+      // their persisted rows — keep the set intact so re-delivery re-registers.
+      if (reason === 'retry_pending') return;
+      for (const id of this.deliveryAcceptedIds) {
+        this.recordDelivery(id, 'failed', { reason: 'interrupted' });
+      }
+      this.deliveryAcceptedIds.clear();
     };
 
     this.repeatedToolErrorGuardrail = new RepeatedToolErrorGuardrail({
@@ -568,6 +605,11 @@ export class SDKMessageHandler {
    */
   private recordDeliveryConsumed(messageId: string | null | undefined): void {
     if (!messageId) return;
+    // Consumed messages are no longer "accepted-but-unconsumed" — drain the
+    // accepted set so a later clear() doesn't double-terminalize them
+    // (round-10 P2 #2). Done before the idempotence guard so re-deliveries
+    // that early-return below still move the ID out of the accepted set.
+    this.deliveryAcceptedIds.delete(messageId);
     if (this.deliveryTurnConsumedIds.has(messageId)) return;
     this.recordDelivery(messageId, 'consumed');
     this.deliveryTurnConsumedIds.add(messageId);

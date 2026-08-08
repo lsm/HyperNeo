@@ -440,6 +440,17 @@ export class QueryRunner {
     return this._lastConsumedUserMessage;
   }
 
+  /**
+   * True when the current delivery episode ended in a rate-limit cooldown the
+   * watchdog will retry (set at 429 classification in the runQuery catch).
+   * Function scope cannot carry this across the provider-retry recursion — the
+   * nested frame classifies but the OUTER frame's finally also stops the queue —
+   * so it lives on the instance. Reset when a fresh (non-retry) runQuery begins;
+   * a stale true would otherwise turn a later genuine teardown into a skipped
+   * terminal. See task #859 round-10 (P2 #1 sibling).
+   */
+  private rateLimitCooldownPending = false;
+
   constructor(private ctx: QueryRunnerContext) {}
 
   /**
@@ -485,11 +496,11 @@ export class QueryRunner {
   private async runQuery(queryGeneration: number, retryAttempt = 0): Promise<void> {
     const { session, messageQueue, stateManager, errorManager, logger, optionsBuilder } = this.ctx;
 
-    // Hoisted out of the catch so the finally block can tell whether it is
-    // tearing down a rate-limit cooldown (which the watchdog will retry) from a
-    // genuine terminal/interrupt shutdown — the cooldown path must NOT
-    // terminalize the delivery turn (task #859 round-5 P2 'retry-aware').
-    let rateLimitCooldownScheduled = false;
+    // A fresh (non-retry) run starts a new delivery episode — reset the cooldown
+    // flag so a stale true from a previous episode can't suppress a genuine
+    // terminal teardown. Retry frames preserve it: the nested frame may schedule
+    // a cooldown the outer frame's finally must still respect (round-10 P2 #1).
+    if (retryAttempt === 0) this.rateLimitCooldownPending = false;
 
     try {
       // Verify authentication for the selected provider
@@ -1281,11 +1292,6 @@ export class QueryRunner {
       if (!isAbortError) {
         const apiErrorHandled = await this.handleApiValidationError(error);
 
-        // Track whether rate limit cooldown was scheduled; if so, skip setIdle
-        // below to preserve the rate_limit_cooldown processing state. Assigned
-        // to the function-scoped flag so the finally block can detect it.
-        rateLimitCooldownScheduled = false;
-
         if (!apiErrorHandled) {
           let category = ErrorCategory.SYSTEM;
           const providerId = session.config.provider as string | undefined;
@@ -1366,7 +1372,7 @@ export class QueryRunner {
             category === ErrorCategory.RATE_LIMIT &&
             !isBillingError &&
             (errorMessage.includes('429') || lowerMsg.includes('rate limit'));
-          rateLimitCooldownScheduled =
+          this.rateLimitCooldownPending =
             is429Error &&
             !!(await this.ctx.onRateLimitExhausted?.(errorMessage, this._lastConsumedUserMessage));
 
@@ -1401,7 +1407,7 @@ export class QueryRunner {
           // Skip error broadcast when rate-limit cooldown is scheduled —
           // the session.error event is terminal in Space workflows and would
           // prematurely mark the task as failed before the auto-retry fires.
-          if (!rateLimitCooldownScheduled) {
+          if (!this.rateLimitCooldownPending) {
             await errorManager.handleError(
               session.id,
               error as Error,
@@ -1422,7 +1428,7 @@ export class QueryRunner {
         // Skip idle transition when rate limit cooldown was scheduled —
         // the watchdog already set rate_limit_cooldown state and will
         // transition to idle when the user cancels or the retry fires.
-        if (!rateLimitCooldownScheduled) {
+        if (!this.rateLimitCooldownPending) {
           await stateManager.setIdle();
         }
       }
@@ -1435,7 +1441,7 @@ export class QueryRunner {
       // UUID and the retry still needs to record first_progress/completed.
       // Genuine non-retryable errors clear with no reason and record the turn as
       // failed (via onClear). See task #859 round-9.
-      messageQueue.clear(rateLimitCooldownScheduled ? 'retry_pending' : undefined);
+      messageQueue.clear(this.rateLimitCooldownPending ? 'retry_pending' : undefined);
     } finally {
       // Check for stale query FIRST to avoid race conditions.
       // When a query is restarted (e.g., model switch), the old query's finally block
@@ -1470,8 +1476,10 @@ export class QueryRunner {
         // ending the turn, so stop() must NOT fire onClear's terminal+clear for
         // this message (task #859 round-5 P2): the watchdog re-enqueues the same
         // UUID, and terminalizing/clearing the consumed set here would leave the
-        // retried delivery unable to record first_progress/completed.
-        messageQueue.stop(rateLimitCooldownScheduled ? 'retry_pending' : undefined);
+        // retried delivery unable to record first_progress/completed. The flag
+        // is instance-scoped so a cooldown classified in a nested provider-retry
+        // frame is still respected by this outer frame's finally (round-10).
+        messageQueue.stop(this.rateLimitCooldownPending ? 'retry_pending' : undefined);
 
         // Close and null queryObject BEFORE any async operation so that
         // concurrent stop()/interrupt() callers see null and skip their
