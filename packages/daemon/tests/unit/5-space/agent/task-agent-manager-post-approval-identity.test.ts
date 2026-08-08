@@ -173,7 +173,11 @@ describe('TaskAgentManager post-approval worker identity resolution', () => {
     insertWorkerSession(db, { sessionId: 'worker-old', lastActiveAt: 1 });
     insertWorkerSession(db, { sessionId: 'worker-recent', lastActiveAt: 5 });
     const res = tam.getPostApprovalWorkerSession(TASK_ID);
-    expect(res).toEqual({ sessionId: 'worker-recent', agentName: 'merger' });
+    expect(res).toEqual({
+      sessionId: 'worker-recent',
+      agentName: 'merger',
+      nodeId: POST_APPROVAL_NODE,
+    });
   });
 
   it('honors an explicit hint to select an OLDER worker (P1 misroute)', () => {
@@ -184,7 +188,11 @@ describe('TaskAgentManager post-approval worker identity resolution', () => {
     insertWorkerSession(db, { sessionId: 'worker-old', lastActiveAt: 1 });
     insertWorkerSession(db, { sessionId: 'worker-recent', lastActiveAt: 5 });
     const res = tam.getPostApprovalWorkerSession(TASK_ID, 'worker-old');
-    expect(res).toEqual({ sessionId: 'worker-old', agentName: 'merger' });
+    expect(res).toEqual({
+      sessionId: 'worker-old',
+      agentName: 'merger',
+      nodeId: POST_APPROVAL_NODE,
+    });
   });
 
   it('rejects a hint that points at an execution-backed (normal node-agent) session', () => {
@@ -220,6 +228,10 @@ describe('TaskAgentManager post-approval worker identity resolution', () => {
     insertTask(db, { status: 'done', postApprovalSessionId: null });
     insertWorkerSession(db, { sessionId: 'worker-done', lastActiveAt: 9 });
     const res = tam.getPostApprovalWorkerSession(TASK_ID);
-    expect(res).toEqual({ sessionId: 'worker-done', agentName: 'merger' });
+    expect(res).toEqual({
+      sessionId: 'worker-done',
+      agentName: 'merger',
+      nodeId: POST_APPROVAL_NODE,
+    });
   });
 });
