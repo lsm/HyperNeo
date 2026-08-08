@@ -60,16 +60,13 @@ export function VoiceWaveform({
 
   // Collapse columns before first paint so they don't flash full-height for a
   // frame before rAF takes over. No `style` prop on the columns in JSX, so later
-  // re-renders never reset these transforms. The entrance (hello bounce) is a
-  // CSS animation with a per-column stagger; it has NO fill-mode, so as each
-  // column's animation ends it hands off seamlessly to the rAF-written inline
-  // transform (the wave visibly "wakes up" left → right).
+  // re-renders never reset these transforms. The only entrance animation is the
+  // shimmer sweep on the row (`.voice-shimmer` in InputTextarea) — the columns
+  // themselves show live mic levels from the very first frame.
   useLayoutEffect(() => {
-    barsRef.current.forEach((bar, i) => {
-      if (!bar) return;
-      bar.style.transform = `scaleY(${FLOOR})`;
-      bar.style.animationDelay = `${i * 4}ms`;
-    });
+    for (const bar of barsRef.current) {
+      if (bar) bar.style.transform = `scaleY(${FLOOR})`;
+    }
   }, []);
 
   // 1Hz countdown timer, only while actively recording. Derived from wall-clock
@@ -177,7 +174,7 @@ export function VoiceWaveform({
         {Array.from({ length: barCount }, (_, i) => (
           <div
             key={i}
-            class="voice-bar-enter h-8 min-w-0 flex-1 origin-center rounded-full bg-[#ff3b30]"
+            class="h-8 min-w-0 flex-1 origin-center rounded-full bg-[#ff3b30]"
             ref={(el) => {
               barsRef.current[i] = el;
             }}

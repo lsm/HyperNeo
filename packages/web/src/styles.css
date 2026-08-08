@@ -800,11 +800,9 @@ html.keyboard-open [data-testid="bottom-tab-bar"] {
   }
 }
 
-/* Voice recording entrance — a red shimmer sweeps the recording row once while
-   every waveform column does a two-pulse "hello" bounce with a left → right
-   stagger (delay set inline, per column). The bounce has NO fill-mode: as each
-   column's animation ends it hands off to the rAF-driven inline transform, so
-   the live waveform appears to wake up column by column. */
+/* Voice recording entrance — a red shimmer sweeps the recording row once on
+   entry. The waveform columns themselves carry no entrance animation: they
+   show live mic levels from the very first frame. */
 @keyframes voiceShimmer {
   from {
     transform: translateX(-100%);
@@ -835,31 +833,8 @@ html.keyboard-open [data-testid="bottom-tab-bar"] {
   animation: voiceShimmer 0.7s ease-out 0.05s;
 }
 
-@keyframes voiceHelloBounce {
-  0% {
-    transform: scaleY(0.03);
-  }
-  30% {
-    transform: scaleY(0.7);
-  }
-  55% {
-    transform: scaleY(0.15);
-  }
-  75% {
-    transform: scaleY(0.45);
-  }
-  100% {
-    transform: scaleY(0.12);
-  }
-}
-
-.voice-bar-enter {
-  animation: voiceHelloBounce 0.8s ease-out;
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .voice-shimmer::after,
-  .voice-bar-enter {
+  .voice-shimmer::after {
     animation: none;
   }
 }
