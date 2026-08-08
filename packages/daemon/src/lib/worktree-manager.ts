@@ -8,7 +8,6 @@ import type {
   WorktreeCommitStatus,
   GitBranchesResponse,
   GitChangedFile,
-  GitFileStatusKind,
   GitReviewFile,
   GitReviewSummary,
   GitCheckSummary,
@@ -19,6 +18,7 @@ import type {
 } from '@hyperneo/shared';
 import { Logger } from './logger';
 import { getProjectShortKey, getWorktreeBaseDir } from './worktree-path-utils';
+import { gitStatusKind, parseNumstatMap, parsePorcelainStatus } from './worktree-git-output';
 
 export interface WorktreeInfo {
   path: string;
@@ -493,7 +493,7 @@ export class WorktreeManager {
       reviewFiles.set(path, {
         path,
         oldPath,
-        status: this.gitStatusKind(statusLetter, ' '),
+        status: gitStatusKind(statusLetter, ' '),
         additions: stat.additions,
         deletions: stat.deletions,
         patch: patchResult.patch,
@@ -540,37 +540,17 @@ export class WorktreeManager {
     rangeArgs: string[],
     pathspec?: string
   ): Promise<Map<string, { additions: number; deletions: number }>> {
-    const stats = new Map<string, { additions: number; deletions: number }>();
     try {
       // When a pathspec is given, scope numstat to that one file so the
       // single-file RPC doesn't parse stats for every changed file in the range.
       const args = ['diff', '--numstat', ...rangeArgs];
       if (pathspec) args.push('--', pathspec);
       const output = await git.raw(args);
-      for (const line of output.split('\n')) {
-        if (!line.trim()) continue;
-        const [additionsRaw, deletionsRaw, path] = line.split('\t');
-        if (!path) continue;
-        stats.set(this.normalizeNumstatPath(path), {
-          additions: Number.parseInt(additionsRaw, 10) || 0,
-          deletions: Number.parseInt(deletionsRaw, 10) || 0,
-        });
-      }
+      return parseNumstatMap(output);
     } catch {
       // Diff stats are best-effort for the panel; status and patches still render.
+      return new Map();
     }
-    return stats;
-  }
-
-  private normalizeNumstatPath(path: string): string {
-    if (!path.includes(' => ')) return path;
-
-    const braceRename = path.match(/^(.*)\{(.+) => (.+)\}(.*)$/);
-    if (braceRename) {
-      return `${braceRename[1]}${braceRename[3]}${braceRename[4]}`;
-    }
-
-    return path.slice(path.lastIndexOf(' => ') + 4);
   }
 
   private async getFilePatch(
@@ -701,60 +681,7 @@ export class WorktreeManager {
   private async getChangedFiles(repoPath: string): Promise<GitChangedFile[]> {
     const git = this.getGit(repoPath);
     const output = await git.raw(['status', '--porcelain=v1', '-z']);
-    const entries = output.split('\0').filter(Boolean);
-    const files: GitChangedFile[] = [];
-
-    for (let i = 0; i < entries.length; i++) {
-      const entry = entries[i];
-      if (entry.length < 4) continue;
-
-      const stagedCode = entry[0];
-      const unstagedCode = entry[1];
-      if (stagedCode === '!' && unstagedCode === '!') continue;
-
-      const isRename = stagedCode === 'R' || unstagedCode === 'R';
-      const isCopy = stagedCode === 'C' || unstagedCode === 'C';
-      const path = entry.slice(3);
-      const oldPath = isRename || isCopy ? entries[++i] : undefined;
-
-      files.push({
-        path,
-        oldPath,
-        status: this.gitStatusKind(stagedCode, unstagedCode),
-        staged: stagedCode !== ' ' && stagedCode !== '?' && stagedCode !== '!',
-        // Working-tree column — not the inverse of `staged`: an `MM` file has
-        // both true. Untracked (`?`) counts as unstaged (working-tree only).
-        unstaged: unstagedCode !== ' ' && unstagedCode !== '!',
-      });
-    }
-
-    return files.sort((a, b) => a.path.localeCompare(b.path));
-  }
-
-  private gitStatusKind(stagedCode: string, unstagedCode: string): GitFileStatusKind {
-    if (
-      stagedCode === 'U' ||
-      unstagedCode === 'U' ||
-      (stagedCode === 'A' && unstagedCode === 'A') ||
-      (stagedCode === 'D' && unstagedCode === 'D')
-    ) {
-      return 'conflicted';
-    }
-    if (stagedCode === '?' || unstagedCode === '?') return 'untracked';
-    if (stagedCode === 'R' || unstagedCode === 'R') return 'renamed';
-
-    const code = unstagedCode !== ' ' ? unstagedCode : stagedCode;
-    switch (code) {
-      case 'A':
-        return 'added';
-      case 'D':
-        return 'deleted';
-      case 'M':
-      case 'T':
-        return 'modified';
-      default:
-        return 'other';
-    }
+    return parsePorcelainStatus(output);
   }
 
   private async getAheadBehind(
