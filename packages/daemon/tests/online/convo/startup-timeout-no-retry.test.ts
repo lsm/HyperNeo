@@ -165,13 +165,20 @@ async function waitForSessionError(
  * handleError has set the session error. See waitForStartupTimeoutTimer for
  * stage 1 (proves the retry happened) and waitForSessionError for stage 2 (the
  * terminal signal — waitForIdle cannot serve that role here, see its docstring).
+ *
+ * Both stages share ONE deadline (IDLE_TIMEOUT), not a budget each — otherwise
+ * a slow abort-driven cleanup could consume IDLE_TIMEOUT in stage 1 and again
+ * in stage 2, exceeding the enclosing TEST_TIMEOUT. Each stage resolves in a
+ * few seconds in practice; the shared deadline only bounds the worst case.
  */
 async function waitForRetryOnceCompleted(
   daemon: DaemonServerContext,
   sessionId: string
 ): Promise<void> {
-  await waitForStartupTimeoutTimer(daemon, 2, IDLE_TIMEOUT);
-  await waitForSessionError(daemon, sessionId, IDLE_TIMEOUT);
+  const deadline = Date.now() + IDLE_TIMEOUT;
+  const remaining = (): number => Math.max(0, deadline - Date.now());
+  await waitForStartupTimeoutTimer(daemon, 2, remaining());
+  await waitForSessionError(daemon, sessionId, remaining());
 }
 
 describe('Startup Timeout Error Surfacing', () => {
