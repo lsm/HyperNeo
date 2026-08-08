@@ -124,9 +124,11 @@ export interface DaemonServerContext {
   /**
    * Combined captured stdout+stderr of the spawned daemon process. Returns ''
    * for in-process daemons (no child output to capture). Spawn the daemon with
-   * LOG_LEVEL=error to surface daemon log lines (e.g. "SDK startup timeout") so
-   * a test can assert a code path was actually reached rather than passing
-   * vacuously on timing.
+   * LOG_LEVEL=warn to surface daemon log lines — both the error-level startup
+   * timeout ("SDK startup timeout:") and the warn-level retry log ("Auto-retrying
+   * query after startup timeout"); error alone suppresses the latter — so a test
+   * can assert a code path was actually reached rather than passing vacuously on
+   * timing.
    */
   getCapturedOutput?: () => string;
 }

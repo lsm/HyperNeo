@@ -70,28 +70,53 @@ async function getSessionError(
 }
 
 /**
- * Verify the full startup-timeout → retry-once sequence ran to completion by
- * counting daemon log lines in the captured child output (requires the daemon
- * spawned with LOG_LEVEL=warn — the daemon Logger is SILENT under
- * NODE_ENV=test by default):
- *   - "SDK startup timeout"           fires once per attempt whose startup timer
- *                                     elapses (query-runner.ts:808, timer cb).
- *   - "Auto-retrying query after      fires once per retry-once branch entry
- *     startup timeout"                 (query-runner.ts:990 — a SEPARATE
- *                                     conditional from the timer callback).
- * At the forced 10ms timeout the SDK cannot respond on either attempt, so both
- * time out: expect exactly 2 timeout logs (attempt 1 + the retry's attempt 2)
- * and exactly 1 retry log. The 2-timeout count proves the retry's second attempt
- * actually ran — not merely that the retry branch was entered — and the whole
- * check fails the suite if the timeout ever stops firing (no vacuous pass).
+ * Wait until the daemon's startup-timeout TIMER callback has logged
+ * "SDK startup timeout:" (query-runner.ts:808) at least `expected` times.
+ *
+ * Why this is needed: the retry branch calls stateManager.setIdle() and waits up
+ * to RETRY_EXIT_TIMEOUT_MS (5 s) for the old subprocess before starting the
+ * recursive retry, so waitForIdle() can return on that INTERMEDIATE idle before
+ * the retry's second attempt runs — and the test would then tear down (kill the
+ * daemon) before observing the second attempt. Polling the captured output for
+ * the second timer log makes the test actually wait for the retry's second
+ * attempt. Requires the daemon spawned with LOG_LEVEL=warn (it is SILENT under
+ * NODE_ENV=test by default).
+ *
+ * Counts "SDK startup timeout:" (colon) specifically — the catch block separately
+ * logs "SDK startup timeout - query aborted" (dash), which must not be counted.
+ */
+async function waitForStartupTimeoutTimer(
+  daemon: DaemonServerContext,
+  expected: number,
+  timeoutMs: number
+): Promise<void> {
+  const countTimers = () =>
+    (daemon.getCapturedOutput?.() ?? '').split('SDK startup timeout:').length - 1;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (countTimers() >= expected) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(
+    `expected >= ${expected} "SDK startup timeout:" timer log(s); saw ${countTimers()} ` +
+      '(the retry-once sequence did not complete — the second attempt never timed out)'
+  );
+}
+
+/**
+ * Assert the startup-timeout timer fired on BOTH attempts (2 timer logs) and the
+ * retry-once branch ran exactly once (1 retry log). Call AFTER
+ * waitForStartupTimeoutTimer(daemon, 2, …) so the second attempt has actually
+ * been observed. Uses the timer-callback-specific "SDK startup timeout:" text so
+ * the catch block's "SDK startup timeout - query aborted" line is not counted.
  */
 function assertRetryOnceSequenceRan(daemon: DaemonServerContext): void {
   const output = daemon.getCapturedOutput?.() ?? '';
-  const timeouts = output.split('SDK startup timeout').length - 1;
+  const timers = output.split('SDK startup timeout:').length - 1;
   const retries = output.split('Auto-retrying query after startup timeout').length - 1;
   expect(
-    timeouts,
-    `expected 2 "SDK startup timeout" logs (attempt 1 + the retry's attempt 2); got ${timeouts}`
+    timers,
+    `expected 2 startup-timeout timer logs (attempt 1 + the retry's attempt 2); got ${timers}`
   ).toBe(2);
   expect(
     retries,
@@ -188,8 +213,10 @@ describe('Startup Timeout Error Surfacing', () => {
         await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
         // ── Assertion 1: the startup timeout fired on BOTH attempts and the
-        //    retry-once branch ran exactly once — guards against a vacuous pass,
-        //    a silently-removed retry, or teardown before the 2nd attempt. ──────
+        //    retry-once branch ran exactly once. waitForIdle can return on the
+        //    retry branch's intermediate idle before the 2nd attempt, so wait for
+        //    the 2nd timer log first — otherwise teardown could race the retry.
+        await waitForStartupTimeoutTimer(daemon, 2, IDLE_TIMEOUT);
         assertRetryOnceSequenceRan(daemon);
 
         // ── Assertion 2: session reaches idle (no infinite loop) ──────────────────
@@ -253,7 +280,10 @@ describe('Startup Timeout Error Surfacing', () => {
 
         // ── Assertion 1: the startup timeout fired on BOTH attempts and retried
         //    EXACTLY once — directly proves "not more than once" and that the
-        //    retry's second attempt actually ran. ────────────────────────────────
+        //    retry's second attempt actually ran. waitForIdle can return on the
+        //    retry branch's intermediate idle before the 2nd attempt, so wait for
+        //    the 2nd timer log first — otherwise teardown could race the retry.
+        await waitForStartupTimeoutTimer(daemon, 2, IDLE_TIMEOUT);
         assertRetryOnceSequenceRan(daemon);
 
         // ── Assertion 2: session is idle ──────────────────────────────────────────
