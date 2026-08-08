@@ -746,4 +746,89 @@ describe('SessionStore multi-instance isolation', () => {
     ).length;
     expect(leavesXAfter).toBeGreaterThan(leavesXBefore);
   });
+
+  it('does not let a reconnect-refresh RPC overwrite a newer state.session push', async () => {
+    await selectWithSnapshot(storeB, hub, 'session-x', [
+      { id: 'x1', uuid: 'x1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+    expect(storeB.agentState.value.status).toBe('idle');
+
+    // Hold the reconnect-refresh state.session RPC in flight.
+    let resolveRpc: (value: unknown) => void = () => {};
+    hub.setStateSessionDeferred(
+      new Promise((res) => {
+        resolveRpc = res;
+      })
+    );
+    const refreshP = storeB.refresh();
+    await new Promise((r) => setTimeout(r, 10)); // let refresh reach the RPC await
+
+    // A FULL state.session push lands while the RPC is in flight — newer
+    // agentState (the daemon's pre-await RPC snapshot is staler than this).
+    hub.fireChannelEvent(
+      'state.session',
+      {
+        sessionInfo: { id: 'session-x' },
+        agentState: { status: 'processing' },
+        commandsData: { availableCommands: [] },
+        error: null,
+      },
+      'session:session-x'
+    );
+    expect(storeB.agentState.value.status).toBe('processing');
+
+    // The RPC resolves with the OLDER snapshot. It must NOT revert the push.
+    resolveRpc({
+      sessionInfo: { id: 'session-x' },
+      agentState: { status: 'idle' },
+      commandsData: { availableCommands: [] },
+    });
+    hub.setStateSessionDeferred(null);
+    await refreshP;
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(storeB.agentState.value.status).toBe('processing');
+  });
+
+  it('a partial context.updated push guards only contextInfo, not the full-state fetch', async () => {
+    // Initial load: hold the state.session RPC in flight so sessionState is
+    // still null when a PARTIAL context.updated push lands mid-fetch.
+    let resolveRpc: (value: unknown) => void = () => {};
+    hub.setStateSessionDeferred(
+      new Promise((res) => {
+        resolveRpc = res;
+      })
+    );
+    const selectP = storeB.select('session-x');
+    await new Promise((r) => setTimeout(r, 10)); // let select reach the RPC await
+
+    // A partial context.updated push lands during the fetch with newer context
+    // than the fetch's pre-await snapshot will carry.
+    hub.fireChannelEvent(
+      'context.updated',
+      { inputTokens: 999, outputTokens: 1 },
+      'session:session-x'
+    );
+    expect(storeB.contextInfo.value).toEqual({ inputTokens: 999, outputTokens: 1 });
+
+    // The RPC resolves with a full snapshot whose embedded lastContextInfo is
+    // STALER than the push.
+    resolveRpc({
+      sessionInfo: {
+        id: 'session-x',
+        title: 'loaded',
+        metadata: { lastContextInfo: { inputTokens: 111, outputTokens: 0 } },
+      },
+      agentState: { status: 'idle' },
+      commandsData: { availableCommands: [] },
+    });
+    hub.setStateSessionDeferred(null);
+    await selectP;
+    await new Promise((r) => setTimeout(r, 10));
+
+    // The full-state fetch STILL committed (a partial push must not nuke it)…
+    expect(storeB.sessionInfo.value?.title).toBe('loaded');
+    // …but its staler contextInfo write was skipped — the push's value wins.
+    expect(storeB.contextInfo.value).toEqual({ inputTokens: 999, outputTokens: 1 });
+  });
 });

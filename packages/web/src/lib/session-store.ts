@@ -255,6 +255,29 @@ export class SessionStore {
   private fetchSeq = 0;
   private lastCommittedFetchSeq = 0;
 
+  /**
+   * Push-version guard for the fetch-vs-PUSH race.
+   *
+   * fetchSeq orders concurrent FETCHES against each other but cannot see a PUSH
+   * that lands while a reconnect-refresh RPC is in flight. The daemon captures
+   * the `state.session` RPC snapshot BEFORE an internal await (getSlashCommands),
+   * so a `state.session`/`context.updated` push generated during that await
+   * carries NEWER data yet arrives AFTER the RPC response — without this guard
+   * the fetch commit would revert the fresher push, and for an idle session the
+   * stale snapshot persists until the next push.
+   *
+   * `statePushVersion` bumps on every FULL `state.session` push; a fetch
+   * captures it at start and discards its WHOLE result if a full push landed
+   * during the RPC (a push is always newer than the pre-await snapshot).
+   * `contextPushVersion` bumps on the PARTIAL `context.updated` push and guards
+   * ONLY the `_contextInfo` write — so a partial push never discards a good
+   * full-state fetch (which would stall initial-load metadata until the next
+   * full push). `slashCommandsSignal` needs no separate guard: only full pushes
+   * carry commands, and they trigger the whole-fetch discard.
+   */
+  private statePushVersion = 0;
+  private contextPushVersion = 0;
+
   /** Subscription cleanup functions */
   private cleanupFunctions: Array<() => void> = [];
 
@@ -408,6 +431,11 @@ export class SessionStore {
         // vice-versa), overwriting metadata/agent/context/commands/error.
         // The daemon emits these on channel `session:${sessionId}`.
         if (context?.channel !== `session:${sessionId}`) return;
+        // A full state.session push supersedes any in-flight state.session RPC
+        // fetch (the push is always newer than the daemon's pre-await RPC
+        // snapshot). Bump BEFORE applying so a fetch committing after this
+        // discards its stale result instead of reverting the push.
+        this.statePushVersion++;
         this.sessionState.value = state;
 
         // Sync contextInfo from metadata to direct signal for fast access.
@@ -447,6 +475,10 @@ export class SessionStore {
         'context.updated',
         (contextInfo, context) => {
           if (context?.channel !== `session:${sessionId}`) return;
+          // A partial context push supersedes ONLY an in-flight fetch's
+          // _contextInfo write (not its full-state commit). Bump so the fetch
+          // skips reverting this fresher value. See statePushVersion docs.
+          this.contextPushVersion++;
           this._contextInfo.value = contextInfo;
         }
       );
@@ -726,6 +758,11 @@ export class SessionStore {
     // Issue a per-fetch ticket so two concurrent fetches for the SAME session
     // (same epoch) still order by issue time. See fetchSeq docs.
     const ticket = ++this.fetchSeq;
+    // Snapshot the push versions so a state.session/context.updated push that
+    // lands while this RPC is in flight (always newer than the pre-await
+    // snapshot) supersedes the result. See statePushVersion docs.
+    const statePushAtStart = this.statePushVersion;
+    const contextPushAtStart = this.contextPushVersion;
     let result: SessionState;
     try {
       const sessionState = await hub.request<SessionState>('state.session', { sessionId });
@@ -782,11 +819,15 @@ export class SessionStore {
     // the freshest-issued SUCCESSFUL fetch commits, so a slower-resolving older
     // snapshot can't overwrite a fresher one. (A retainOnError failure returns
     // before this point, so it never claims the slot and can't block another.)
+    // The statePushVersion check discards the whole result if a FULL
+    // state.session push landed during the RPC — that push is newer than this
+    // pre-await snapshot and has already been applied by the push handler.
     if (
       this.destroyed ||
       this.activeSessionId.value !== sessionId ||
       this.selectGeneration !== generation ||
-      ticket <= this.lastCommittedFetchSeq
+      ticket <= this.lastCommittedFetchSeq ||
+      this.statePushVersion !== statePushAtStart
     ) {
       return;
     }
@@ -796,8 +837,12 @@ export class SessionStore {
 
     // Persist contextInfo from metadata to direct signal so it survives page refresh.
     // Without this, _contextInfo stays null until the next context.updated event
-    // (which only fires after a new agent turn).
-    if (result.sessionInfo?.metadata?.lastContextInfo) {
+    // (which only fires after a new agent turn). Skip if a PARTIAL context.updated
+    // push landed during the RPC — its value is fresher than this snapshot's.
+    if (
+      result.sessionInfo?.metadata?.lastContextInfo &&
+      this.contextPushVersion === contextPushAtStart
+    ) {
       this._contextInfo.value = result.sessionInfo.metadata.lastContextInfo;
     }
 
