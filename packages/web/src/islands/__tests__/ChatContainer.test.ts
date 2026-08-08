@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { shouldBlockForPendingQuestion } from '../ChatContainer.tsx';
+import { shouldBlockForPendingQuestion, computeChatLoading } from '../ChatContainer.tsx';
 import type { AgentProcessingState } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 // Vite-native raw import — works in both Node and browser-like test environments
@@ -499,12 +499,6 @@ describe('ChatContainer session-scoped recovery', () => {
     expect(source).toMatch(/setIsRecovering\(store\.isRecovering\.value\)/);
   });
 
-  it('loading cannot relapse into the skeleton while recovering', () => {
-    // `loading` must include `!isRecovering` so a reconnecting chat keeps its
-    // transcript instead of swapping to the loading skeleton.
-    expect(source).toMatch(/const loading = !error && !isRecovering &&/);
-  });
-
   it('renders a non-blocking recovering banner with a stable test id', () => {
     expect(source).toMatch(/data-testid="session-recovering-banner"/);
     // Non-blocking: role=status + polite live region, shown only outside the
@@ -516,6 +510,93 @@ describe('ChatContainer session-scoped recovery', () => {
 
   it('forwards isRecovering to the composer', () => {
     expect(source).toMatch(/isRecovering=\{isRecovering\}/);
+  });
+
+  it('disables the content-wide drop zone while recovering', () => {
+    // composerDisabled gates the parent image drop zone; it must include
+    // isRecovering so a file drop is not advertised then silently discarded
+    // while MessageInput is disabled.
+    const block = source.match(/const composerDisabled =[\s\S]*?sandboxSwitching;/)?.[0] ?? '';
+    expect(block).toContain('isRecovering');
+  });
+
+  describe('computeChatLoading', () => {
+    it('shows the skeleton until session state and the first snapshot arrive', () => {
+      expect(
+        computeChatLoading({
+          error: null,
+          isRecovering: false,
+          sessionStateLoaded: false,
+          messagesLoaded: false,
+        })
+      ).toBe(true);
+      expect(
+        computeChatLoading({
+          error: null,
+          isRecovering: false,
+          sessionStateLoaded: true,
+          messagesLoaded: false,
+        })
+      ).toBe(true);
+      expect(
+        computeChatLoading({
+          error: null,
+          isRecovering: false,
+          sessionStateLoaded: false,
+          messagesLoaded: true,
+        })
+      ).toBe(true);
+    });
+
+    it('hides the skeleton once fully loaded (not recovering)', () => {
+      expect(
+        computeChatLoading({
+          error: null,
+          isRecovering: false,
+          sessionStateLoaded: true,
+          messagesLoaded: true,
+        })
+      ).toBe(false);
+    });
+
+    it('keeps the transcript visible (no skeleton) when recovering an already-loaded session', () => {
+      // The headline recovery invariant: a reconnecting chat that had loaded
+      // must not flash the skeleton.
+      expect(
+        computeChatLoading({
+          error: null,
+          isRecovering: true,
+          sessionStateLoaded: true,
+          messagesLoaded: true,
+        })
+      ).toBe(false);
+    });
+
+    it('keeps the skeleton when a disconnect lands before the first messages snapshot', () => {
+      // Reviewer finding: state.session loaded, first snapshot NOT yet arrived,
+      // then the connection drops. isRecovering flips true but messagesLoaded is
+      // still false — the skeleton must stay so we don't render "No messages
+      // yet" for a conversation whose messages are still in flight.
+      expect(
+        computeChatLoading({
+          error: null,
+          isRecovering: true,
+          sessionStateLoaded: true,
+          messagesLoaded: false,
+        })
+      ).toBe(true);
+    });
+
+    it('short-circuits to the error UI (no skeleton) when there is an error', () => {
+      expect(
+        computeChatLoading({
+          error: 'boom',
+          isRecovering: false,
+          sessionStateLoaded: false,
+          messagesLoaded: false,
+        })
+      ).toBe(false);
+    });
   });
 });
 

@@ -73,6 +73,17 @@ import type { StructuredError } from '../types/error';
  */
 const LIVE_QUERY_MESSAGE_LIMIT = 200;
 
+/**
+ * How many times recovery retries the messages LiveQuery re-subscribe before
+ * giving up, and the base backoff between attempts. A failed re-subscribe
+ * means the new WebSocket client has no message stream for this session — a
+ * send could then persist server-side yet never appear in the transcript — so
+ * recovery retries a few times and, on final failure, leaves `isRecovering`
+ * true (composer disabled) until a later reconnect/resume succeeds.
+ */
+const LIVE_QUERY_RESUBSCRIBE_MAX_ATTEMPTS = 3;
+const LIVE_QUERY_RESUBSCRIBE_RETRY_DELAY_MS = 500;
+
 const logger = new Logger('kai:web:sessionstore');
 
 const HYPERNEO_BUILT_IN_COMMANDS = ['merge-session'];
@@ -1187,6 +1198,7 @@ export class SessionStore {
     if (this.activeMessagesSubscriptionId !== subscriptionId) return;
 
     const token = this.beginRecovery();
+    let messagesResubscribed = false;
     try {
       // A transport drop hands the client a new connection/clientId, which
       // wipes server-side channel membership (validateConnectionOnResume only
@@ -1199,16 +1211,13 @@ export class SessionStore {
       // daemon delivers a fresh snapshot on every subscribe, so this re-syncs
       // rows that arrived while the socket was paused/dropped (the "sticky"
       // stale-transcript bug) without clearing the visible transcript first —
-      // old rows stay until the snapshot replaces them wholesale.
-      await hub
-        .request('liveQuery.subscribe', {
-          queryName: 'messages.bySession',
-          params: [sessionId, LIVE_QUERY_MESSAGE_LIMIT],
-          subscriptionId,
-        })
-        .catch((err) => {
-          logger.warn('Messages LiveQuery re-subscribe failed:', err);
-        });
+      // old rows stay until the snapshot replaces them wholesale. Retries a few
+      // times; a final failure keeps the session "recovering" (see finally).
+      messagesResubscribed = await this.resubscribeMessagesLiveQuery(
+        hub,
+        sessionId,
+        subscriptionId
+      );
 
       // Refresh session state (agent state / context / commands). retainOnError
       // so a transient RPC failure during reconnect preserves the last valid
@@ -1218,12 +1227,59 @@ export class SessionStore {
         logger.warn('Session state refresh on recovery failed:', err);
       });
     } finally {
-      // Drop the flag regardless of success/failure — recovery has done its
-      // best; the LiveQuery + push subscription keep the view current. A
-      // retained-on-error failure must NOT leave the composer permanently
-      // disabled.
-      this.endRecovery(token);
+      // Only mark the session ready (clear isRecovering) when the messages
+      // subscription was actually restored. If the re-subscribe failed, the new
+      // client has no message stream: enabling the composer would let a send
+      // persist server-side yet never appear here. Stay "recovering" (composer
+      // disabled) until a later transport reconnect or visibility resume
+      // retries via recover() and succeeds — that attempt's beginRecovery takes
+      // a fresher token and clears the flag on its own success.
+      if (messagesResubscribed) {
+        this.endRecovery(token);
+      } else {
+        logger.warn(
+          'Messages LiveQuery re-subscribe failed; staying in recovery until the next reconnect/resume.'
+        );
+      }
     }
+  }
+
+  /**
+   * Re-subscribe the messages LiveQuery during recovery, retrying transient
+   * failures. Returns true iff a subscription was (re)established.
+   *
+   * Bails (returns false) without further attempts once the session is switched
+   * away or destroyed, or this subscription was superseded — a stale recovery
+   * must not churn the active session's subscription.
+   */
+  private async resubscribeMessagesLiveQuery(
+    hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
+    sessionId: string,
+    subscriptionId: string
+  ): Promise<boolean> {
+    for (let attempt = 1; attempt <= LIVE_QUERY_RESUBSCRIBE_MAX_ATTEMPTS; attempt++) {
+      if (this.destroyed || this.activeSessionId.value !== sessionId) return false;
+      if (this.activeMessagesSubscriptionId !== subscriptionId) return false;
+      try {
+        await hub.request('liveQuery.subscribe', {
+          queryName: 'messages.bySession',
+          params: [sessionId, LIVE_QUERY_MESSAGE_LIMIT],
+          subscriptionId,
+        });
+        return true;
+      } catch (err) {
+        logger.warn(
+          `Messages LiveQuery re-subscribe attempt ${attempt}/${LIVE_QUERY_RESUBSCRIBE_MAX_ATTEMPTS} failed:`,
+          err
+        );
+        if (attempt < LIVE_QUERY_RESUBSCRIBE_MAX_ATTEMPTS) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, LIVE_QUERY_RESUBSCRIBE_RETRY_DELAY_MS * attempt)
+          );
+        }
+      }
+    }
+    return false;
   }
 
   /**

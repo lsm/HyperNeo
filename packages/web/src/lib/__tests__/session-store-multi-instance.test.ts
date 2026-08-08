@@ -59,6 +59,8 @@ interface MultiHubApi {
   setSessionState: (sessionId: string, state: Record<string, unknown>) => void;
   setStateSessionDeferred: (promise: Promise<unknown> | null) => void;
   setStateSessionError: (error: unknown) => void;
+  /** Force liveQuery.subscribe to reject (null clears it). */
+  setLiveQuerySubscribeError: (error: unknown) => void;
   /**
    * Queue distinct `state.session` RPC responses. Each request shifts the next
    * queued promise, letting two concurrent fetches for the same session resolve
@@ -85,6 +87,9 @@ function installHub(): MultiHubApi {
   const stateSessionQueue: Array<Promise<unknown>> = [];
   // When set, joinChannel returns this promise (simulating a retrying join).
   let joinChannelDeferred: Promise<unknown> | null = null;
+  // When set, liveQuery.subscribe rejects (simulating a failed re-subscribe
+  // during recovery, so the "stay recovering" path can be exercised).
+  let liveQuerySubscribeError: unknown = null;
 
   multiHub.onEvent.mockImplementation((channel: string, cb: (data: unknown) => void) => {
     const list = handlers.get(channel) ?? [];
@@ -128,6 +133,7 @@ function installHub(): MultiHubApi {
       const subscriptionId = String(params?.subscriptionId ?? '');
       const sessionId = String((params?.params as unknown[])?.[0] ?? '');
       subscribeCalls.push({ subscriptionId, sessionId });
+      if (liveQuerySubscribeError) return Promise.reject(liveQuerySubscribeError);
       return Promise.resolve({ subscriptionId });
     }
     if (channel === 'liveQuery.unsubscribe') {
@@ -159,6 +165,9 @@ function installHub(): MultiHubApi {
     },
     setStateSessionError: (e) => {
       stateSessionError = e;
+    },
+    setLiveQuerySubscribeError: (e) => {
+      liveQuerySubscribeError = e;
     },
     queueStateSession: (p) => {
       stateSessionQueue.push(p);
@@ -1108,6 +1117,43 @@ describe('SessionStore multi-instance isolation', () => {
     ).length;
     expect(subscribesAfter).toBe(subscribesBefore + 1);
     expect(storeB.isRecovering.value).toBe(false);
+  });
+
+  it('stays recovering when the messages re-subscribe fails, then clears on success', async () => {
+    // P1: if the LiveQuery re-subscribe fails during recovery, the new WebSocket
+    // client has no message stream — enabling the composer would let a send
+    // persist server-side yet never appear here. Recovery must retry, and on
+    // final failure leave isRecovering TRUE (composer disabled) until a later
+    // reconnect/resume succeeds.
+    await selectWithSnapshot(storeB, hub, 'session-b', [
+      { id: 'b1', uuid: 'b1', type: 'text', role: 'user', timestamp: 1 },
+    ]);
+    expect(storeB.isRecovering.value).toBe(false);
+
+    hub.setLiveQuerySubscribeError(new Error('subscribe rejected'));
+    // 1 initial subscribe already happened; recovery will retry 3x (3 more).
+    const targetSubscribeCalls = hub.subscribeCalls.length + 3;
+    hub.fireConnection('disconnected');
+    hub.fireConnection('connected');
+
+    // Wait for the 3 retry attempts to elapse, then assert it is STILL recovering.
+    await vi.waitFor(
+      () => expect(hub.subscribeCalls.length).toBeGreaterThanOrEqual(targetSubscribeCalls),
+      {
+        timeout: 5000,
+      }
+    );
+    // Give the final failed attempt + fetchInitialSessionState a tick to settle.
+    await new Promise((r) => setTimeout(r, 30));
+    expect(storeB.isRecovering.value).toBe(true);
+    // The transcript and session identity are untouched — only readiness is held.
+    expect(storeB.activeSessionId.value).toBe('session-b');
+    expect(storeB.sdkMessages.value.map((m) => m.uuid)).toEqual(['b1']);
+
+    // A later successful recovery (subscribe works again) clears the flag.
+    hub.setLiveQuerySubscribeError(null);
+    hub.fireConnection('connected');
+    await vi.waitFor(() => expect(storeB.isRecovering.value).toBe(false));
   });
 
   it('does not recover a session switched away from before recover() runs', async () => {

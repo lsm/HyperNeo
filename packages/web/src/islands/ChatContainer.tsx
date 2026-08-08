@@ -88,6 +88,35 @@ export function shouldBlockForPendingQuestion(
   return agentState.status === 'waiting_for_input' && lastMessage?.type !== 'result';
 }
 
+/**
+ * Decide whether the chat area should render the loading skeleton.
+ *
+ * The skeleton shows until BOTH the session-state RPC and the first messages
+ * LiveQuery snapshot have arrived — unless an error short-circuits to the
+ * error UI.
+ *
+ * Recovery (a connection drop/resume on a session that ALREADY loaded) must
+ * NOT relapse into the skeleton: the transcript stays visible and read-only
+ * while we rejoin the channel and re-sync. But this bypass applies ONLY when
+ * the session had completed its initial load (`messagesLoaded`): if the
+ * connection drops BEFORE the first snapshot arrives, `messagesLoaded` is still
+ * false and we must keep the skeleton — otherwise the chat would render the
+ * "No messages yet" empty state for a conversation that still has messages in
+ * flight, lying about an existing transcript throughout the reconnect window.
+ *
+ * Exported for unit tests.
+ */
+export function computeChatLoading(opts: {
+  error: string | null;
+  isRecovering: boolean;
+  sessionStateLoaded: boolean;
+  messagesLoaded: boolean;
+}): boolean {
+  const { error, isRecovering, sessionStateLoaded, messagesLoaded } = opts;
+  const recoveringWithTranscript = isRecovering && messagesLoaded;
+  return !error && (!sessionStateLoaded || !messagesLoaded) && !recoveringWithTranscript;
+}
+
 export async function sendChatContainerMessage({
   content,
   images,
@@ -1108,13 +1137,17 @@ export default function ChatContainer({
   // Errors short-circuit the loading state so the error UI can render.
   const sessionStateLoaded = store.sessionState.value !== null;
   const messagesLoaded = store.messagesLoaded.value;
-  // Recovery must NOT relapse into the loading skeleton: a session that loaded
-  // once keeps its transcript visible (read-only) while reconnecting, even if a
-  // refresh is momentarily re-fetching. `sessionState`/`messagesLoaded` are
-  // retained through recovery (retainOnError + snapshot-replaces-wholesale),
-  // so this guard is belt-and-suspenders against any path that might transiently
-  // null them — the visible transcript is the one invariant recovery must hold.
-  const loading = !error && !isRecovering && (!sessionStateLoaded || !messagesLoaded);
+  // See computeChatLoading: the skeleton stays until the session has fully
+  // loaded, EXCEPT for a recovery of an already-loaded session (transcript
+  // stays visible). A disconnect before the first snapshot must NOT bypass the
+  // skeleton — otherwise the chat renders "No messages yet" for a conversation
+  // whose messages are still in flight.
+  const loading = computeChatLoading({
+    error,
+    isRecovering,
+    sessionStateLoaded,
+    messagesLoaded,
+  });
 
   // Content-column image drop zone. The composer (MessageInput) registers its
   // file-drop handler upward via registerDropTarget; this column owns the actual
@@ -1125,7 +1158,12 @@ export default function ChatContainer({
     dropFilesRef.current = fn;
   }, []);
   const composerDisabled =
-    isWaitingForInput || !isConnected || modelSwitching || coordinatorSwitching || sandboxSwitching;
+    isWaitingForInput ||
+    !isConnected ||
+    isRecovering ||
+    modelSwitching ||
+    coordinatorSwitching ||
+    sandboxSwitching;
   const dropEnabled = !readonly && session?.status !== 'archived' && !composerDisabled;
   const { isDragging, dragHandlers } = useImageDropZone((files) => {
     void dropFilesRef.current?.(files);
