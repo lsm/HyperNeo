@@ -281,9 +281,10 @@ export function InputTextarea({
         {recordingBody ? (
           // Recording row: waveform + voice controls laid out in flow (no
           // absolute positioning), so nothing can overlap regardless of how
-          // many controls the parent passes in. `voice-shimmer` plays the
-          // one-shot red sweep on entry (see styles.css).
-          <div class="voice-shimmer flex h-10 w-full items-center gap-2 pl-4 pr-1.5">
+          // many controls the parent passes in. Symmetric 6px insets (pl-1.5 /
+          // pr-1.5) seat the X (cancel) and the stop/send buttons flush into
+          // the pill's rounded ends, tracing its curve.
+          <div class="flex h-10 w-full items-center gap-2 pl-1.5 pr-1.5">
             <div class="min-w-0 flex-1">{recordingBody}</div>
             {voiceControl}
           </div>

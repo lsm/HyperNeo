@@ -60,9 +60,8 @@ export function VoiceWaveform({
 
   // Collapse columns before first paint so they don't flash full-height for a
   // frame before rAF takes over. No `style` prop on the columns in JSX, so later
-  // re-renders never reset these transforms. The only entrance animation is the
-  // shimmer sweep on the row (`.voice-shimmer` in InputTextarea) — the columns
-  // themselves show live mic levels from the very first frame.
+  // re-renders never reset these transforms. No entrance animation: the columns
+  // show live mic levels from the very first frame.
   useLayoutEffect(() => {
     for (const bar of barsRef.current) {
       if (bar) bar.style.transform = `scaleY(${FLOOR})`;
