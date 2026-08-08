@@ -35,6 +35,7 @@ const BUILT_IN_VALIDATORS: WorkflowHookValidatorId[] = [
   'codex_review_approved',
   'artifact_exists',
   'task_reported_status',
+  'post_approval_only',
 ];
 
 const BUILT_IN_VALIDATOR_COPY: Record<WorkflowHookValidatorId, string> = {
@@ -49,6 +50,8 @@ const BUILT_IN_VALIDATOR_COPY: Record<WorkflowHookValidatorId, string> = {
     'Codex retry: blocks until Codex approval is available, then retry safely.',
   artifact_exists: 'Requires the workflow run to have a matching saved artifact.',
   task_reported_status: 'Requires the task to report the expected status.',
+  post_approval_only:
+    'Post-approval gate: blocks the channel until the task is approved and a post-approval merge reason is set.',
 };
 
 const EXTERNAL_LOOKUPS: WorkflowHookExternalLookup[] = ['github'];

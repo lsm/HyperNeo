@@ -1592,6 +1592,27 @@ export const CODING_WITH_QA_WORKFLOW: SpaceWorkflow = {
       label: 'Coding → QA (post-approval merge blocker)',
     },
   ],
+  hooks: [
+    // Inherit the merger variant's Coding → Review PR-ready hook...
+    ...(CODING_WITH_QA_MERGER_WORKFLOW.hooks ?? []),
+    // ...and gate the Coding → QA channel to post-approval only. Without this,
+    // an in-progress coder could message QA directly, lazily activating the end
+    // node and approving without Review ever running. The post_approval_only
+    // validator allows the send only while task.status === 'approved' AND the
+    // message carries a merge-blocker / fix-push reason.
+    {
+      id: 'stable-qa-coding-to-qa-post-approval',
+      enabled: true,
+      label: 'Post-Approval Only',
+      sourceNode: 'Coding',
+      targetNode: 'QA',
+      method: 'send_message',
+      classification: 'validation',
+      order: 0,
+      validator: { kind: 'built_in', id: 'post_approval_only' },
+      authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+    },
+  ],
 };
 
 // ---------------------------------------------------------------------------

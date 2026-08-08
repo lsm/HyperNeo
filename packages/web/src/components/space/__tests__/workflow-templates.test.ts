@@ -239,4 +239,124 @@ describe('workflowToTemplate', () => {
     expect(template.steps![0].role).toBe('planner');
     expect(template.steps![1].role).toBe('coder');
   });
+
+  it('preserves workflow-level hooks through conversion', () => {
+    // Without preserving hooks, cloning a built-in workflow (e.g. the stable
+    // Coding-with-QA post_approval_only gate) silently drops its runtime
+    // enforcement. Verify hooks survive workflowToTemplate as shallow clones.
+    const wf = makeWorkflow({
+      hooks: [
+        {
+          id: 'coding-to-qa-post-approval',
+          enabled: true,
+          sourceNode: 'Coding',
+          targetNode: 'QA',
+          method: 'send_message',
+          validator: { kind: 'built_in', id: 'post_approval_only' },
+        },
+      ],
+    });
+    const template = workflowToTemplate(wf);
+    expect(template.hooks).toHaveLength(1);
+    expect(template.hooks![0]).toMatchObject({
+      id: 'coding-to-qa-post-approval',
+      sourceNode: 'Coding',
+      targetNode: 'QA',
+      method: 'send_message',
+    });
+    // Shallow clone — not the same reference as the source hook.
+    expect(template.hooks![0]).not.toBe(wf.hooks![0]);
+  });
+
+  it('preserves per-slot toolGuards on multi-agent nodes', () => {
+    const coderNoMergeGuard = {
+      matcher: 'Bash',
+      pattern: 'gh pr merge',
+      decision: 'deny' as const,
+      reason: 'no raw merge',
+    };
+    const wf = makeWorkflow({
+      nodes: [
+        {
+          id: 'step-1',
+          name: 'Review',
+          agents: [
+            { agentId: 'agent-1', name: 'coder', toolGuards: [coderNoMergeGuard] },
+            { agentId: 'agent-2', name: 'reviewer' },
+          ],
+        },
+        { id: 'step-2', name: 'Done', agents: [{ agentId: 'agent-2', name: 'general' }] },
+      ],
+      endNodeId: 'step-2',
+    });
+    const template = workflowToTemplate(wf);
+    expect(template.steps![0].agentSlots![0].toolGuards).toEqual([coderNoMergeGuard]);
+    // Cloned, not the same reference.
+    expect(template.steps![0].agentSlots![0].toolGuards![0]).not.toBe(coderNoMergeGuard);
+    // Slots without guards stay undefined.
+    expect(template.steps![0].agentSlots![1].toolGuards).toBeUndefined();
+  });
+
+  it('preserves toolGuards on single-agent nodes', () => {
+    const coderNoMergeGuard = {
+      matcher: 'Bash',
+      pattern: 'gh pr merge',
+      decision: 'deny' as const,
+      reason: 'no raw merge',
+    };
+    const wf = makeWorkflow({
+      nodes: [
+        { id: 'step-1', name: 'Plan', agents: [{ agentId: 'agent-1', name: 'planner' }] },
+        {
+          id: 'step-2',
+          name: 'Code',
+          agents: [{ agentId: 'agent-2', name: 'coder', toolGuards: [coderNoMergeGuard] }],
+        },
+      ],
+      endNodeId: 'step-2',
+    });
+    const template = workflowToTemplate(wf);
+    expect(template.steps![1].toolGuards).toEqual([coderNoMergeGuard]);
+    expect(template.steps![1].toolGuards![0]).not.toBe(coderNoMergeGuard);
+  });
+});
+
+describe('buildTemplateNodes — toolGuards round-trip', () => {
+  const agents = [makeAgent('a1', 'coder'), makeAgent('a2', 'reviewer')];
+  const coderNoMergeGuard = {
+    matcher: 'Bash',
+    pattern: 'gh pr merge',
+    decision: 'deny' as const,
+    reason: 'no raw merge',
+  };
+
+  it('carries step toolGuards into the single-agent slot', () => {
+    const template = {
+      label: 'T',
+      description: '',
+      steps: [{ name: 'Code', role: 'coder', toolGuards: [coderNoMergeGuard] }],
+    };
+    const [node] = buildTemplateNodes(template, agents);
+    expect(node.agents![0].toolGuards).toEqual([coderNoMergeGuard]);
+    expect(node.agents![0].toolGuards![0]).not.toBe(coderNoMergeGuard);
+  });
+
+  it('carries slot toolGuards into each multi-agent slot', () => {
+    const template = {
+      label: 'T',
+      description: '',
+      steps: [
+        {
+          name: 'Review',
+          agentSlots: [
+            { name: 'Reviewer 1', role: 'reviewer', toolGuards: [coderNoMergeGuard] },
+            { name: 'Coder 1', role: 'coder' },
+          ],
+        },
+      ],
+    };
+    const [node] = buildTemplateNodes(template, agents);
+    expect(node.agents![0].toolGuards).toEqual([coderNoMergeGuard]);
+    expect(node.agents![1].toolGuards).toBeUndefined();
+  });
 });

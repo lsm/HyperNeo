@@ -1804,7 +1804,8 @@ export type WorkflowHookValidatorId =
   | 'github_review_approved'
   | 'codex_review_approved'
   | 'artifact_exists'
-  | 'task_reported_status';
+  | 'task_reported_status'
+  | 'post_approval_only';
 
 /**
  * A connector id named in a script hook's `externalLookups`. The engine admits

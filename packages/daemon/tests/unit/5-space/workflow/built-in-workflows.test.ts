@@ -249,6 +249,40 @@ describe('stable coding workflow templates', () => {
     expect(qaPrompt).toContain('post-approval merge blocker');
   });
 
+  test('stable Coding-with-QA gates the Coding → QA channel to post-approval only', () => {
+    // The Coding → QA channel is reachable during implementation (channel-router
+    // authorizes by from/to+gate, with no phase check). Without an extra gate, an
+    // in-progress coder could message QA directly, lazily activating the end node
+    // and approving without Review ever running. The post_approval_only hook is
+    // the gate: it allows the send_message only while task.status === 'approved'
+    // AND the message carries a merge-blocker / fix-push reason (verified in the
+    // post-approval-only-validator unit tests).
+    const hook = (CODING_WITH_QA_WORKFLOW.hooks ?? []).find(
+      (h) =>
+        h.sourceNode === 'Coding' &&
+        h.targetNode === 'QA' &&
+        h.method === 'send_message' &&
+        h.validator.kind === 'built_in' &&
+        h.validator.id === 'post_approval_only'
+    );
+    expect(hook).toBeDefined();
+    expect(hook!.enabled).toBe(true);
+    // Authorized only for the coder slot on Coding — the merger-on-Coding
+    // reporter — and nothing else.
+    expect(hook!.authorizedCallers).toEqual([{ sourceNode: 'Coding', agentSlots: ['coder'] }]);
+    // The merger variant's Coding → Review pr_ready hook must still be present,
+    // so the primary implementation handoff is unaffected.
+    expect(
+      (CODING_WITH_QA_WORKFLOW.hooks ?? []).some(
+        (h) =>
+          h.sourceNode === 'Coding' &&
+          h.targetNode === 'Review' &&
+          h.validator.kind === 'built_in' &&
+          h.validator.id === 'pr_ready'
+      )
+    ).toBe(true);
+  });
+
   test('legacy template identities map to canonical merger templates that carry gates', () => {
     // C4: SpaceWorkflowManager.BUILT_IN_TEMPLATE_GATES is keyed by every current
     // built-in name PLUS the legacy aliases below, using the RAW template gates
