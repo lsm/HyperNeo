@@ -120,16 +120,19 @@ export const MERGER_RAW_MERGE_GUARD: DeclarativeToolGuard = {
  * but ANCHORED to command-execution positions (start of command, or after a
  * shell separator/subshell, with optional env/command prefixes) — so a bare
  * literal in `rg`/`cat`/`git add` is allowed while an actual `gh` merge call is
- * denied. Same defense-in-depth caveat as MERGER_RAW_MERGE_GUARD: not airtight
- * (a determined shell user evades any command regex), paired with `merge_pr` as
- * the authoritative gate.
+ * denied. The `gh` verb accepts an optional path prefix (`/usr/bin/gh`, `./gh`)
+ * and any global options before the subcommand (`gh -R owner/repo pr merge`),
+ * matching the common/direct forms without matching bare literals. Same
+ * defense-in-depth caveat as MERGER_RAW_MERGE_GUARD: not airtight (a determined
+ * shell user evades any command regex), paired with `merge_pr` as the
+ * authoritative gate.
  */
 export const CODER_RAW_MERGE_GUARD: DeclarativeToolGuard = {
   matcher: 'Bash',
   pattern:
     '(?:^|[;&|()\\n`])\\s*(?:(?:env\\s+)?(?:[A-Za-z_][A-Za-z0-9_]*=[^\\s;&|()`]+|command)\\s+)*' +
-    '(?:gh[\\s\\\\]+pr[\\s\\\\]+merge\\b' +
-    '|gh[\\s\\\\]+api\\b[^\\n]*?(?:\\bmergePullRequest\\b|pulls\\/[^\\/\\s"]+\\/merge\\b))',
+    '(?:[^\\s;&|()`]*\\/)?gh\\b[^\\n]*?(?:pr\\s+merge\\b' +
+    '|api\\b[^\\n]*?(?:\\bmergePullRequest\\b|pulls\\/[^\\/\\s"]+\\/merge\\b))',
   decision: 'deny',
   reason:
     'Direct PR merges are blocked — use the merge_pr tool instead. merge_pr is the authoritative, audited merge ' +
@@ -800,13 +803,20 @@ const CODER_OWNED_MERGE_PROMPT =
   'changed head; the approval and re-approval authority is named in your Runtime Execution Contract ' +
   'and the post-approval merge procedure (it differs by workflow), so never assume a specific one.';
 
+// Behavioral only (CLAUDE.md L170): does not name the Coding peer or the
+// pr_url/review_url gate fields — buildGatedHandoffLines injects the Review→Coding
+// feedback handoff centrally (the channel is gated by review-posted-gate, whose
+// pr_url/review_url fields are writable by Review). comment_urls is NOT a gate
+// field, so it is kept here as behavioral guidance (which threads to raise).
 const CODER_OWNED_REVIEW_PROMPT =
   'You are the Reviewer. Inspect the pull request and relevant code and post a visible GitHub review. ' +
-  'If changes are needed, send Coding actionable feedback with pr_url, review_url, and comment_urls, ' +
-  'then stop. When the current head is clean and all review threads are resolved, save the PR link ' +
-  'artifact and call approve_task, or submit_for_approval when autonomy requires human approval. Do ' +
-  'not merge. If Coding later reports a post-approval merge blocker, re-check the current head, ' +
-  'coordinate any fix, post a fresh approval, and signal Coding to continue.';
+  'If changes are needed, send the implementer actionable feedback via the gated feedback handoff in ' +
+  'Your Role in This Workflow — the runtime supplies the target and the pr_url/review_url gate fields; ' +
+  'include comment_urls for the specific threads you are raising. Then stop. When the current head is ' +
+  'clean and all review threads are resolved, save the PR link artifact and call approve_task, or ' +
+  'submit_for_approval when autonomy requires human approval. Do not merge. If the implementer later ' +
+  'reports a post-approval merge blocker, re-check the current head, coordinate any fix, post a fresh ' +
+  'approval, and signal them to continue.';
 
 // Reviewer prompt for the stable `Coding with QA` workflow, where Review is an
 // INTERMEDIATE node (QA is the end node / approval authority). Behavioral only:
@@ -2901,12 +2911,27 @@ export function seedBuiltInWorkflows(
     const sorted = [...legacyRows].sort((a, b) => b.createdAt - a.createdAt);
     for (const row of sorted) {
       let migrated: SpaceWorkflow | null = row;
+      // Apply the full canonical rename ONLY when the row still carries the
+      // seeded legacy display name. A user who renamed the row keeps their
+      // name AND handle (the templateName-only stamp below writes neither) — we
+      // repoint only templateName so the row still groups under the canonical
+      // template for duplicate cleanup, without clobbering the customization.
+      // The check keys on the display name (what users customize in the editor);
+      // a handle-ONLY customization (name unchanged) is not detected and the
+      // handle gets normalized — accepted, since the handle is a regenerable slug
+      // and the display name is the user-owned identity. (Same templateName-only
+      // fallback used below for name/handle collisions.)
+      const rowIsUnmodifiedSeed = row.name === identity.legacyName;
       try {
-        migrated = workflowManager.updateBuiltInIdentity(row.id, {
-          name: identity.name,
-          handle: identity.handle,
-          templateName: identity.name,
-        });
+        if (rowIsUnmodifiedSeed) {
+          migrated = workflowManager.updateBuiltInIdentity(row.id, {
+            name: identity.name,
+            handle: identity.handle,
+            templateName: identity.name,
+          });
+        } else {
+          migrated = workflowManager.stampBuiltInTemplateName(row.id, identity.name);
+        }
       } catch {
         // Name/handle clash (an older duplicate, or a user workflow already
         // holding the canonical name) — stamp templateName only so the row

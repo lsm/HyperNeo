@@ -220,21 +220,29 @@ describe('stable coding workflow templates', () => {
     const deny = (cmd: string) => expect(re.test(cmd)).toBe(true);
     const allow = (cmd: string) => expect(re.test(cmd)).toBe(false);
 
-    // CLI form — direct, indented, after separator, subshell, env prefix, command builtin.
+    // CLI form — direct, indented, after separator, subshell, env prefix, command builtin,
+    // path-qualified executable, and global gh options (-R/--repo).
     deny('gh pr merge --squash');
     deny('   gh pr merge');
     deny('git fetch && gh pr merge');
     deny('$(gh pr merge)');
     deny('GH_TOKEN=token gh pr merge');
     deny('command gh pr merge');
+    deny('/usr/bin/gh pr merge');
+    deny('./gh pr merge');
+    deny('command /usr/bin/gh pr merge');
+    deny('gh -R owner/repo pr merge');
+    deny('gh --repo owner/repo pr merge --squash');
+    deny('/usr/bin/gh -R owner/repo pr merge');
 
-    // GraphQL mergePullRequest mutation via gh api.
+    // GraphQL mergePullRequest mutation via gh api (including path-qualified).
     deny(
       'gh api graphql -f query=\'mutation{mergePullRequest(input:{pullRequestId:"x"}){mergeCommit{oid}}}\''
     );
     deny(
       "gh api graphql -f query='mutation($i:MergePullRequestInput!){mergePullRequest(input:$i){}}'"
     );
+    deny("/usr/bin/gh api graphql -f query='mutation{mergePullRequest(input:{}){}}'");
 
     // REST pulls/<n>/merge endpoint via gh api.
     deny('gh api -X PUT repos/owner/repo/pulls/42/merge');
@@ -398,12 +406,16 @@ describe('stable coding workflow templates', () => {
   });
 
   test('coder-owned merge-queue poll inspects queue status and is bounded', () => {
-    // Step 2b must not poll `--json state` alone (it can't see a removed queue
-    // entry or a failed merge-group check — both leave the PR OPEN) nor loop
-    // forever. It must (a) query merge-group/queue status fields and (b) impose
-    // a poll cap that routes a stuck queue to step 2c.
+    // Step 2b must not poll `--json state` alone (it can't see a failed
+    // merge-group check, which leaves the PR OPEN) nor loop forever. It must
+    // (a) query mergeStateStatus and (b) impose a poll cap that routes a stuck
+    // queue to step 2c. autoMergeRequest is NOT used: a PR added directly to the
+    // queue with checks already passing legitimately has it null, so it is not a
+    // reliable failure signal (it is neither queried nor treated as failure).
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('mergeStateStatus');
-    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('autoMergeRequest');
+    // autoMergeRequest is NOT queried and NOT used as a failure signal (a PR
+    // added directly to the queue with checks passing legitimately has it null).
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).not.toMatch(/--json [^\n]*autoMergeRequest/);
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).not.toMatch(/--json state --jq \.state/);
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toMatch(/~10 attempts|up to ~10/);
   });
@@ -4164,7 +4176,7 @@ describe('seedBuiltInWorkflows()', () => {
     });
     const newer = manager.createWorkflow({
       spaceId: SPACE_ID,
-      name: 'Coding Workflow (dup-b)',
+      name: 'Coding Workflow',
       nodes: [
         { id: 'n-c', name: 'Coding', agents: [{ agentId: CODER_ID, name: 'coder' }] },
         { id: 'n-r', name: 'Review', agents: [{ agentId: REVIEWER_ID, name: 'reviewer' }] },
@@ -4187,11 +4199,48 @@ describe('seedBuiltInWorkflows()', () => {
     const after = manager.listWorkflows(SPACE_ID);
     expect(after.filter((w) => w.templateName === 'Coding Workflow')).toHaveLength(0);
     expect(after.filter((w) => w.templateName === 'Coding with Merger')).toHaveLength(2);
-    // The newest got the full canonical name; the older duplicate kept its
-    // unique name (collision fallback) but its templateName was still stamped.
+    // The newest still carried the seeded legacy name, so it got the full
+    // canonical rename. The older duplicate had a non-seed name, so the
+    // selective path preserved its name/handle and stamped templateName only
+    // (the same templateName-only fallback used for collisions — and for
+    // user-renamed rows, so a customization is never clobbered).
     expect(after.find((w) => w.id === newer.id)!.name).toBe('Coding with Merger');
     expect(after.find((w) => w.id === older.id)!.name).toBe('Coding Workflow (dup-a)');
     expect(after.find((w) => w.id === older.id)!.templateName).toBe('Coding with Merger');
+  });
+
+  test('user-renamed legacy row keeps its custom name/handle (templateName only)', () => {
+    // A user who renamed a built-in 'Coding Workflow' (or set a custom handle)
+    // must not lose their customization on upgrade: the migration repoints only
+    // templateName so the row still groups under the canonical template for
+    // duplicate cleanup, without clobbering the user's name/handle. (handle is
+    // set explicitly here to assert it too is preserved — stampBuiltInTemplateName
+    // writes neither name nor handle.)
+    const custom = manager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: 'My Team Coding',
+      nodes: [
+        { id: 'u-c', name: 'Coding', agents: [{ agentId: CODER_ID, name: 'coder' }] },
+        { id: 'u-r', name: 'Review', agents: [{ agentId: REVIEWER_ID, name: 'reviewer' }] },
+      ],
+      startNodeId: 'u-c',
+      endNodeId: 'u-r',
+      templateName: 'Coding Workflow',
+    });
+    db.prepare(`UPDATE space_workflows SET handle = ? WHERE id = ?`).run(
+      'my-team-coding',
+      custom.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.errors).toEqual([]);
+
+    const after = manager.listWorkflows(SPACE_ID).find((w) => w.id === custom.id)!;
+    // Custom name/handle preserved; templateName repointed to the canonical
+    // merger template so the row groups for duplicate cleanup.
+    expect(after.name).toBe('My Team Coding');
+    expect(after.handle).toBe('my-team-coding');
+    expect(after.templateName).toBe('Coding with Merger');
   });
 
   test('legacy identity migration strips the stale default tag from merger rows', () => {
