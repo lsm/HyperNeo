@@ -1251,6 +1251,15 @@ export function setupSessionHandlers(
     // its ledger rows so it stops being tracked until replay re-accepts it
     // (mirrors remove/rewind cleanup). See task #859 (8508).
     db.messageDeliveryLifecycle.deleteForMessage(message.uuid);
+    // Re-record the persisted marker for the deferred state: the sdk_messages
+    // row is durable and WILL be replayed, but the clear above removed the only
+    // persisted event. Without a replacement, getTimeline() is empty while
+    // deferred and starts at wake after replay; diagnostics also relies on the
+    // persisted/{sendStatus:'deferred'} marker to exclude it as
+    // intentionally-deferred. See task #859 round-19 P2.
+    db.messageDeliveryLifecycle.record(targetSessionId, message.uuid, 'persisted', {
+      sendStatus: 'deferred',
+    });
     await internalEventBus.publish('messages.statusChanged', {
       sessionId: targetSessionId,
       messageIds: [message.dbId],

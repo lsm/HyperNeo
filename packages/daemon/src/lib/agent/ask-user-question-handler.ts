@@ -503,13 +503,25 @@ export class AskUserQuestionHandler {
       // authoritative and forwards the tool_result as a regular user
       // message. We tolerate the duplicate rather than try to detect
       // which path the SDK will pick before it picks one.
-      await messageQueue.enqueueWithId(`question-${toolUseId}-${Date.now()}`, [
-        {
-          type: 'tool_result',
-          tool_use_id: toolUseId,
-          content: toolResultText,
-        },
-      ]);
+      // internal:true — this is a synthetic tool-result echo with no persisted
+      // sdk_messages row, so it must NOT enter the delivery lifecycle (no
+      // persisted → handleMessageYielded can't find it → the phantom accepted
+      // would sit forever and read as stale). Round-19 P2. The resumed answer
+      // turn's processing state is irrelevant here (deliverQueuedAnswer
+      // deliberately setIdle so ensureQueryStarted resumes cleanly, and the
+      // queryPromise guard defers concurrent sends), matching the other
+      // internal tool-result echoes.
+      await messageQueue.enqueueWithId(
+        `question-${toolUseId}-${Date.now()}`,
+        [
+          {
+            type: 'tool_result',
+            tool_use_id: toolUseId,
+            content: toolResultText,
+          },
+        ],
+        true
+      );
     } catch (error) {
       this.logger.error(
         `AskUserQuestion ${toolUseId}: failed to inject tool_result after restart`,

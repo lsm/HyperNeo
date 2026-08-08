@@ -895,7 +895,26 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       });
       throw err;
     }
-    await session.messageQueue.enqueueWithId(messageId, message);
+    try {
+      await session.messageQueue.enqueueWithId(messageId, message);
+    } catch (err) {
+      // Mirror TaskAgentManager's status-checked enqueue-rejection cleanup: only
+      // abandon the row when it is still 'enqueued' — if the 30s timeout fired
+      // after the generator yielded (row already consumed), the SDK is still
+      // processing it and it must not be rewritten to failed (round-19 P2).
+      const stillEnqueued = deps.reactiveDb.db.getMessageByStatusAndUuid(
+        sessionId,
+        'enqueued',
+        messageId
+      );
+      if (stillEnqueued) {
+        deps.reactiveDb.db.updateMessageStatus([dbId], 'failed');
+        deps.reactiveDb.db.messageDeliveryLifecycle?.record(sessionId, messageId, 'failed', {
+          reason: 'enqueue_rejected',
+        });
+      }
+      throw err;
+    }
   };
 
   // Task Agent Manager — manages Task Agent session lifecycle and message injection.

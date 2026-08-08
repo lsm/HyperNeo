@@ -612,7 +612,26 @@ export class SpaceRuntimeService {
       });
       throw err;
     }
-    await session.messageQueue.enqueueWithId(id, message);
+    try {
+      await session.messageQueue.enqueueWithId(id, message);
+    } catch (err) {
+      // Enqueue rejected (queue timeout / interrupt / clear during the gap).
+      // flushLongTermAgentInbox marks the inbox attempt failed, but the SDK row
+      // would stay 'enqueued' and the lifecycle at 'accepted' (the timeout only
+      // fires onMessageRemoved — no terminal) → stale accepted + the row could
+      // be replayed later. Mirror TaskAgentManager's status-checked cleanup: only
+      // abandon the row when it is still 'enqueued' — if the 30s timeout fired
+      // after the generator yielded (row already consumed), the SDK is still
+      // processing it and it must not be rewritten to failed (round-19 P2).
+      const stillEnqueued = db?.getMessageByStatusAndUuid(sessionId, 'enqueued', id);
+      if (db && dbId && stillEnqueued) {
+        db.updateMessageStatus([dbId], 'failed');
+        db.messageDeliveryLifecycle?.record(sessionId, id, 'failed', {
+          reason: 'enqueue_rejected',
+        });
+      }
+      throw err;
+    }
     return id;
   }
 

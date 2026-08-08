@@ -164,6 +164,24 @@ describe('stranded-shape regression: persistence chokepoint records every origin
     ).toBe(false);
   });
 
+  test('deferring a message re-records the persisted marker (round-19)', () => {
+    const messageId = generateUUID();
+    db.saveUserMessage(SESSION_ID, makeUserMessage(messageId, 'later'), 'enqueued', 'human');
+    const repo = db.messageDeliveryLifecycle;
+    repo.record(SESSION_ID, messageId, 'accepted');
+
+    // deferPending: clear the obsolete accepted attempt, then re-record the
+    // persisted/deferred marker so the durable row's timeline isn't empty and
+    // diagnostics still excludes it as intentionally-deferred.
+    repo.deleteForMessage(messageId);
+    repo.record(SESSION_ID, messageId, 'persisted', { sendStatus: 'deferred' });
+
+    expect(repo.getTimeline(messageId).map((e) => e.stage)).toEqual(['persisted']);
+    const diag = repo.getDiagnostics({ sessionId: SESSION_ID });
+    expect(diag.unclaimed.some((u) => u.messageId === messageId)).toBe(false);
+    expect(diag.stale.some((s) => s.messageId === messageId)).toBe(false);
+  });
+
   test('rewinding the conversation clears lifecycle rows for deleted messages (N9)', () => {
     const messageId = generateUUID();
     db.saveUserMessage(SESSION_ID, makeUserMessage(messageId, 'rewind me'), 'enqueued', 'human');

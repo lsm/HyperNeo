@@ -228,12 +228,6 @@ establishing evidence and correlation before adding retries/ownership:
   terminal lifecycle event after a mid-turn restart (mirroring the pre-existing
   sdk_messages recovery gap). Broadening recovery to synthetic Space inputs is a
   separate, pre-existing concern.
-- **Phantom `accepted` for synthetic enqueues** — an `AskUserQuestion`
-  tool-result enqueue uses a non-persisted UUID and may record an `accepted`
-  event. Marking it `internal` would suppress this but also skips `setProcessing`
-  for the resumed answer turn (overlapping-send risk), so phase 1 accepts the
-  low-signal phantom; it never receives `completed` (terminal attribution uses
-  the consumed set only).
 - **Rate-limit cooldown retries** — a 429 that schedules watchdog recovery does
   not record a terminal for the turn at teardown (it is `'retry_pending'`, so the
   retried delivery re-records `consumed` and can still reach `completed`). Both

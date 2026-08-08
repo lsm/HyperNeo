@@ -275,6 +275,9 @@ describe('AskUserQuestionHandler', () => {
           content: expect.stringContaining('A'),
         }),
       ]);
+      // internal:true — the synthetic answer has no persisted sdk_messages row,
+      // so it must NOT enter the delivery lifecycle (round-19 P2).
+      expect(enqueueCall[2]).toBe(true);
 
       // Should restart the query
       expect(ensureQueryStartedSpy).toHaveBeenCalled();
