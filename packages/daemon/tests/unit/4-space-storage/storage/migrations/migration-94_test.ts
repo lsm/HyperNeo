@@ -39,10 +39,10 @@ import { getBuiltInWorkflows } from '../../../../../src/lib/space/workflows/buil
 import { computeWorkflowHash } from '../../../../../src/lib/space/workflows/template-hash.ts';
 
 // Migration 94 matches rows by the historical 'Coding Workflow' name against a
-// frozen pre-Post-Approval structure (2 nodes Coding/Review, 2 channels). The
-// live template was renamed to 'Coding with Merger' and has since grown a
-// Post-Approval node, so seed the historical shape directly rather than deriving
-// it from the renamed, evolved live template.
+// frozen structure (2 nodes Coding/Review, 2 channels). The merger variant and
+// its dedicated Post-Approval node were removed; legacy 'Coding Workflow' rows
+// now map to the stable 'Coding' template (which has NO Post-Approval node), so
+// seed the historical shape directly rather than deriving it from the live template.
 const LEGACY_CODING_WORKFLOW_NAME = 'Coding Workflow';
 const LEGACY_CODING_DESCRIPTION =
   'Iterative coding workflow with Coding ↔ Review loop. Engineer implements and opens a PR; Reviewer reviews and either requests changes or signals completion.';
@@ -234,12 +234,11 @@ describe('Migration 94: backfill workflow template tracking & dedup orphan dupli
     // intentionally diverges from the current computeWorkflowHash — this is
     // what causes drift detection to fire for existing spaces on next daemon
     // startup, prompting the "Sync from template" UI to appear.
-    // M94's frozen fingerprints use the historical template names. The coding
-    // templates were renamed ('Coding Workflow' → 'Coding with Merger') and the
-    // stable 'Coding'/'Coding with QA' templates were added, so only verify
-    // backfill for templates whose current name still matches a frozen M94 name.
-    // The renamed coding case is covered by the dedicated 'legacy Coding
-    // Workflow' test below.
+    // M94's frozen fingerprints use the historical template names. The legacy
+    // 'Coding Workflow' / 'Coding with QA Workflow' names now resolve to the
+    // stable 'Coding' / 'Coding with QA' templates, so only verify backfill for
+    // templates whose current name still matches a frozen M94 name. The renamed
+    // coding case is covered by the dedicated 'legacy Coding Workflow' test below.
     const frozenM94Names = new Set([
       'Coding Workflow',
       'Research Workflow',
@@ -251,10 +250,9 @@ describe('Migration 94: backfill workflow template tracking & dedup orphan dupli
     for (const [i, tpl] of templates.entries()) {
       const wfId = `wf-verify-${i}`;
       const endNodeId = `n-${i}-end`;
-      // M94's fingerprints are frozen at the pre-Post-Approval structure (the
-      // dedicated merger node was added later). Build the legacy node set by
-      // excluding 'Post-Approval' so the row matches the frozen fingerprint the
-      // way a pre-Post-Approval DB would.
+      // M94's fingerprints are frozen at the historical structure and carry no
+      // Post-Approval node. The stable templates also have no Post-Approval node,
+      // so the filter is a harmless no-op — kept for clarity.
       const nodeIds = tpl.nodes
         .filter((n) => n.name !== 'Post-Approval')
         .map((n) => ({ id: `n-${i}-${n.name}`, name: n.name }));
@@ -294,7 +292,7 @@ describe('Migration 94: backfill workflow template tracking & dedup orphan dupli
     // the migration. Combined with `hash self-verification` above (which
     // covers the TRUE branch), both branches are exercised.
     const canonicalHash = computeWorkflowHash(
-      getBuiltInWorkflows().find((t) => t.name === 'Coding with Merger')!
+      getBuiltInWorkflows().find((t) => t.name === 'Coding')!
     );
 
     // Same name + node set as Coding Workflow, but with a tweaked description
@@ -344,7 +342,7 @@ describe('Migration 94: backfill workflow template tracking & dedup orphan dupli
     expect(row.template_hash).toMatch(/^[0-9a-f]{64}$/);
     // The narrow hash differs from the current expanded hash — drift will be detected
     expect(row.template_hash).not.toBe(
-      computeWorkflowHash(getBuiltInWorkflows().find((t) => t.name === 'Coding with Merger')!)
+      computeWorkflowHash(getBuiltInWorkflows().find((t) => t.name === 'Coding')!)
     );
   });
 

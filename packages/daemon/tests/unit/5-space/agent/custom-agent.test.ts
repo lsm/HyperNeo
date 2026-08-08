@@ -19,10 +19,7 @@ import {
   type CustomAgentConfig,
   type SlotOverrides,
 } from '../../../../src/lib/space/agents/custom-agent';
-import {
-  CODING_WORKFLOW,
-  CODING_WITH_MERGER_WORKFLOW,
-} from '../../../../src/lib/space/workflows/built-in-workflows.ts';
+import { CODING_WORKFLOW } from '../../../../src/lib/space/workflows/built-in-workflows.ts';
 import { REVIEWER_SYSTEM_CONTRACT } from '../../../../src/lib/space/agents/system-contracts';
 
 function makeAgent(overrides?: Partial<SpaceWorkerAgent>): SpaceWorkerAgent {
@@ -1040,18 +1037,18 @@ describe('createCustomAgentInit', () => {
     expect(init.promptProvenance?.source).toBe('workflow_node_replaced_prompt');
   });
 
-  it('injects Coding workflow behavioral handoff guidance into system prompt', () => {
-    // The merger variant's coder slot carries the detailed send_message handoff
-    // chrome in its prompt; the stable `Coding` workflow is behavioral-only and
-    // receives that chrome centrally via the Runtime Execution Contract, so use
-    // the merger variant to exercise the slot-prompt injection path here.
-    const codingNode = CODING_WITH_MERGER_WORKFLOW.nodes.find((node) => node.name === 'Coding')!;
+  it('injects Coding workflow coder-owned handoff guidance into system prompt', () => {
+    // The stable `Coding` workflow (2 nodes: Coding, Review — no Post-Approval
+    // node, no merger agent) uses a behavioral-only coder slot prompt: it does
+    // not restate the review peer or gate fields, which are injected centrally
+    // via the Runtime Execution Contract. Exercise the slot-prompt injection path.
+    const codingNode = CODING_WORKFLOW.nodes.find((node) => node.name === 'Coding')!;
     const codingSlot = codingNode.agents[0];
     const init = createCustomAgentInit(
       makeConfig({
         customAgent: makeAgent({ id: codingSlot.agentId, name: 'Coder', customPrompt: null }),
-        workflow: CODING_WITH_MERGER_WORKFLOW,
-        workflowRun: makeWorkflowRun({ workflowId: CODING_WITH_MERGER_WORKFLOW.id }),
+        workflow: CODING_WORKFLOW,
+        workflowRun: makeWorkflowRun({ workflowId: CODING_WORKFLOW.id }),
         nodeId: codingNode.id,
         agentSlotName: codingSlot.name,
         slotOverrides: {
@@ -1060,7 +1057,7 @@ describe('createCustomAgentInit', () => {
             agentId: codingSlot.agentId,
             agentName: codingSlot.name,
             workflowRunId: 'run-1',
-            workflowId: CODING_WITH_MERGER_WORKFLOW.id,
+            workflowId: CODING_WORKFLOW.id,
             nodeId: codingNode.id,
             nodeName: codingNode.name,
           },
@@ -1069,10 +1066,14 @@ describe('createCustomAgentInit', () => {
     );
 
     const prompt = init.systemPrompt?.append ?? '';
-    expect(prompt).toContain('hand off by calling `send_message` to the review target');
-    expect(prompt).toContain('Use the current target and required data fields');
-    expect(prompt).toContain('`save_artifact` alone is insufficient');
-    expect(prompt).not.toContain('send_message(target="Review"');
+    // The coder-owned merge prompt: the Coder implements and hands off via the
+    // gated handoff, and owns the post-approval merge (no separate merger agent).
+    expect(prompt).toContain(
+      'hand it off via the gated handoff described in Your Role in This Workflow'
+    );
+    expect(prompt).toContain('do not restate or assume it here');
+    expect(prompt).toContain('do not merge or call task-completion tools');
+    expect(prompt).toContain('merge the PR');
     expect(prompt).not.toContain('code-ready-gate');
   });
 

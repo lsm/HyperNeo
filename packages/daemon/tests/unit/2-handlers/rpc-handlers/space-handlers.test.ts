@@ -149,7 +149,6 @@ const mockAgents = [
   { id: 'agent-planner', name: 'Planner', spaceId: 'space-1' },
   { id: 'agent-research', name: 'Research', spaceId: 'space-1' },
   { id: 'agent-reviewer', name: 'Reviewer', spaceId: 'space-1' },
-  { id: 'agent-pr-merger', name: 'PR Merger', spaceId: 'space-1' },
   { id: 'agent-qa', name: 'QA', spaceId: 'space-1' },
 ];
 

@@ -490,14 +490,14 @@ describe('space-workflow-run-handlers', () => {
     });
 
     it('auto-select prefers a default-tagged workflow over the first by created_at', async () => {
-      // Upgraded-space shape: the renamed merger row (oldest, no longer
+      // Upgraded-space shape: the renamed legacy coding row (oldest, no longer
       // `default`) sorts first, and the newly seeded stable Coding template
       // (`default`) sorts last. Auto-select must honor the `default` tag, not
       // workflows[0], so upgraded spaces switch to the stable workflow.
-      const mergerRow = {
+      const legacyRow = {
         ...mockWorkflow,
-        id: 'wf-merger',
-        name: 'Coding with Merger',
+        id: 'wf-legacy',
+        name: 'Coding Workflow',
         tags: ['coding'],
       };
       const stableRow = {
@@ -506,7 +506,7 @@ describe('space-workflow-run-handlers', () => {
         name: 'Coding',
         tags: ['coding', 'default'],
       };
-      setup({ workflows: [mergerRow, stableRow], singleWorkflow: stableRow });
+      setup({ workflows: [legacyRow, stableRow], singleWorkflow: stableRow });
       await call('spaceWorkflowRun.start', { spaceId: 'space-1', title: 'Auto' });
       expect(runtime.startWorkflowRun).toHaveBeenCalledWith(
         'space-1',

@@ -2,13 +2,13 @@
  * Migration 170 Tests — Backfill missing preset agents into existing Spaces.
  *
  * seedPresetAgents() runs only at Space creation, so a Space created before a
- * preset was added to PRESET_AGENTS (most recently "PR Merger") never received
- * that preset's `space_agents` row. M170 walks every Space × the live preset
- * list and INSERTs any preset row that is missing (matched by name).
+ * preset was added to PRESET_AGENTS never received that preset's `space_agents`
+ * row. M170 walks every Space × the live preset list and INSERTs any preset row
+ * that is missing (matched by name).
  *
  * Covers:
  *   - Space with no agents → every preset inserted with canonical values
- *   - Space missing only "PR Merger" (the real-world bug) → only it is inserted
+ *   - Space missing a single preset (e.g. "QA") → only it is inserted
  *   - Inserted row matches what seedPresetAgents would have written
  *     (templateName/templateHash/fields) and is readable by the production repo
  *   - Idempotency: re-running inserts nothing
@@ -39,7 +39,8 @@ interface AgentRow {
 }
 
 const PRESETS = getPresetAgentTemplates();
-const MERGER = PRESETS.find((p) => p.name === 'PR Merger')!;
+/** A single preset used to exercise the "missing one preset" scenarios. */
+const CANONICAL_PRESET = PRESETS[0];
 
 function insertSpace(db: BunDatabase, id: string): void {
   const now = Date.now();
@@ -178,11 +179,11 @@ describe('Migration 170: backfill missing preset agents into existing Spaces', (
     }
   });
 
-  test('Space missing only "PR Merger" (the real-world bug) → only it is inserted', () => {
+  test('Space missing only one preset → only it is inserted', () => {
     insertSpace(db, 'sp-1');
-    // The six presets that predate "PR Merger" already exist, template-stamped.
-    const legacyPresets = PRESETS.filter((p) => p.name !== 'PR Merger');
-    for (const preset of legacyPresets) {
+    // All presets except CANONICAL_PRESET already exist, template-stamped.
+    const existingPresets = PRESETS.filter((p) => p !== CANONICAL_PRESET);
+    for (const preset of existingPresets) {
       insertAgent(db, {
         id: `existing-${preset.handle}`,
         spaceId: 'sp-1',
@@ -195,16 +196,16 @@ describe('Migration 170: backfill missing preset agents into existing Spaces', (
 
     runMigration170(db);
 
-    // PR Merger is now present with canonical values.
-    const merger = readAgentByName(db, 'sp-1', 'PR Merger')!;
-    expect(merger).toBeDefined();
-    expect(merger.template_name).toBe('PR Merger');
-    expect(merger.template_hash).toBe(computeAgentTemplateHash(MERGER));
-    expect(merger.handle).toBe('merger');
+    // The missing preset is now present with canonical values.
+    const backfilled = readAgentByName(db, 'sp-1', CANONICAL_PRESET.name)!;
+    expect(backfilled).toBeDefined();
+    expect(backfilled.template_name).toBe(CANONICAL_PRESET.name);
+    expect(backfilled.template_hash).toBe(computeAgentTemplateHash(CANONICAL_PRESET));
+    expect(backfilled.handle).toBe(CANONICAL_PRESET.handle);
 
-    // No duplicates: exactly PRESETS.length rows, and the legacy six are intact.
+    // No duplicates: exactly PRESETS.length rows, and the pre-existing are intact.
     expect(countAgents(db, 'sp-1')).toBe(PRESETS.length);
-    for (const preset of legacyPresets) {
+    for (const preset of existingPresets) {
       const row = readAgentByName(db, 'sp-1', preset.name)!;
       expect(row.id).toBe(`existing-${preset.handle}`); // original row, not replaced
       expect(row.template_hash).toBe(computeAgentTemplateHash(preset));
@@ -218,16 +219,16 @@ describe('Migration 170: backfill missing preset agents into existing Spaces', (
 
     const repo = new SpaceAgentRepository(db as unknown as InstanceType<typeof BunDatabase>);
     const agents = repo.getBySpaceId('sp-1');
-    const merger = agents.find((a) => a.name === 'PR Merger')!;
-    expect(merger).toBeDefined();
+    const backfilled = agents.find((a) => a.name === CANONICAL_PRESET.name)!;
+    expect(backfilled).toBeDefined();
     // Same fields seedPresetAgents stamps via the manager/repo create path.
-    expect(merger.templateName).toBe('PR Merger');
-    expect(merger.templateHash).toBe(computeAgentTemplateHash(MERGER));
-    expect(merger.handle).toBe('merger');
-    expect(merger.description).toBe(MERGER.description);
-    expect(merger.customPrompt).toBe(MERGER.customPrompt);
-    expect(merger.tools ?? []).toEqual(MERGER.tools);
-    expect(merger.status).toBe('active');
+    expect(backfilled.templateName).toBe(CANONICAL_PRESET.name);
+    expect(backfilled.templateHash).toBe(computeAgentTemplateHash(CANONICAL_PRESET));
+    expect(backfilled.handle).toBe(CANONICAL_PRESET.handle);
+    expect(backfilled.description).toBe(CANONICAL_PRESET.description);
+    expect(backfilled.customPrompt).toBe(CANONICAL_PRESET.customPrompt);
+    expect(backfilled.tools ?? []).toEqual(CANONICAL_PRESET.tools);
+    expect(backfilled.status).toBe('active');
   });
 
   test('idempotent — re-running inserts nothing', () => {
@@ -258,12 +259,11 @@ describe('Migration 170: backfill missing preset agents into existing Spaces', (
 
   test('user-customized same-named row (template_name NULL) is left untouched', () => {
     insertSpace(db, 'sp-1');
-    // The six legacy presets are present and template-stamped. "PR Merger"
-    // exists too, but as a USER-customized row (its own tools, template_name
-    // NULL) — the case M106 left alone because "PR Merger" wasn't in its frozen
-    // name list. M170 must NOT insert a duplicate PR Merger and must NOT touch
-    // the user's row.
-    for (const preset of PRESETS.filter((p) => p.name !== 'PR Merger')) {
+    // All presets except CANONICAL_PRESET are present and template-stamped.
+    // CANONICAL_PRESET exists too, but as a USER-customized row (its own tools,
+    // template_name NULL). M170 must NOT insert a duplicate CANONICAL_PRESET and
+    // must NOT touch the user's row.
+    for (const preset of PRESETS.filter((p) => p !== CANONICAL_PRESET)) {
       insertAgent(db, {
         id: `existing-${preset.handle}`,
         spaceId: 'sp-1',
@@ -274,26 +274,26 @@ describe('Migration 170: backfill missing preset agents into existing Spaces', (
       });
     }
     insertAgent(db, {
-      id: 'user-merger',
+      id: 'user-agent',
       spaceId: 'sp-1',
-      name: 'PR Merger',
-      handle: 'merger',
+      name: CANONICAL_PRESET.name,
+      handle: CANONICAL_PRESET.handle,
       tools: ['Read', 'Bash', 'Write'], // user-customized tool set
-      customPrompt: 'my own merge procedure',
+      customPrompt: 'my own custom prompt',
       templateName: null,
       templateHash: null,
     });
 
     runMigration170(db);
 
-    // Exactly one row per preset name — no duplicate PR Merger inserted.
+    // Exactly one row per preset name — no duplicate CANONICAL_PRESET inserted.
     expect(countAgents(db, 'sp-1')).toBe(PRESETS.length);
-    const row = readAgentByName(db, 'sp-1', 'PR Merger')!;
-    expect(row.id).toBe('user-merger'); // original user row, not replaced
+    const row = readAgentByName(db, 'sp-1', CANONICAL_PRESET.name)!;
+    expect(row.id).toBe('user-agent'); // original user row, not replaced
     expect(row.template_name).toBeNull();
     expect(row.template_hash).toBeNull();
     expect(JSON.parse(row.tools ?? '[]')).toEqual(['Read', 'Bash', 'Write']);
-    expect(row.custom_prompt).toBe('my own merge procedure');
+    expect(row.custom_prompt).toBe('my own custom prompt');
   });
 
   test('multiple Spaces are backfilled independently', () => {
@@ -315,7 +315,9 @@ describe('Migration 170: backfill missing preset agents into existing Spaces', (
 
     expect(countAgents(db, 'sp-1')).toBe(PRESETS.length); // unchanged
     expect(countAgents(db, 'sp-2')).toBe(PRESETS.length); // fully backfilled
-    expect(readAgentByName(db, 'sp-2', 'PR Merger')!.template_name).toBe('PR Merger');
+    expect(readAgentByName(db, 'sp-2', CANONICAL_PRESET.name)!.template_name).toBe(
+      CANONICAL_PRESET.name
+    );
   });
 
   test('no Spaces → safe no-op', () => {
