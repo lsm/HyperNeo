@@ -26,15 +26,13 @@ import type {
   GateField,
   GateScript,
   SpaceWorkflow,
-  WorkflowChannel,
   WorkflowNode,
   WorkflowNodeAgentOverride,
 } from '@hyperneo/shared';
-import { generateUUID, hasEnabledGateFeature, resolveNodeAgents } from '@hyperneo/shared';
+import { generateUUID } from '@hyperneo/shared';
 import { Logger } from '../../logger';
 import { QA_SYSTEM_CONTRACT } from '../agents/system-contracts.ts';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
-import { isApprovalGate } from '../runtime/gate-features';
 import { PR_MERGE_POST_APPROVAL_INSTRUCTIONS } from './post-approval-merge-template.ts';
 import { computeWorkflowHash } from './template-hash.ts';
 import { migrateWorkflowGateProgressionToHooks } from './workflow-migration.ts';
@@ -617,7 +615,11 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
               'post visible GitHub review before sending feedback. If changes needed, include pr_url, ' +
               'review_url, and comment_urls when messaging Coding. If approved, ' +
               REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE +
-              ' Call save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } }) then approve_task() or submit_for_approval. ' +
+              ' Call save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } }) then ' +
+              'approve_task(pr_url: "<url>") or submit_for_approval(pr_url: "<url>") — always include ' +
+              'the PR url. A codex review gate blocks the terminal close until the codex review bot ' +
+              'has reacted +1 on the PR (or a 2h timeout elapses): if codex has not reviewed yet, ' +
+              "comment '@codex review' on the PR and wait for the +1 before closing. " +
               'Do NOT attempt to merge the PR yourself. Do not set auto-merge.' +
               REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH,
           },
@@ -665,6 +667,33 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
       order: 0,
       validator: { kind: 'built_in', id: 'pr_ready' },
       authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+    },
+    // Codex review gate on the TERMINAL reviewer (no-QA case): the reviewer
+    // cannot close the task (submit for human sign-off or self-approve) until
+    // the codex review bot has left a fresh +1 (or the 2h timeout elapses).
+    // The `codex_review_approved` preset is the declarative replacement for the
+    // legacy `requireCodexApproval` runtime-injection split (epic #2299 #2304).
+    {
+      id: 'codex-approval-submit',
+      enabled: true,
+      label: 'Codex Review (submit)',
+      sourceNode: 'Review',
+      method: 'submit_for_approval',
+      classification: 'validation',
+      order: 0,
+      validator: { kind: 'built_in', id: 'codex_review_approved' },
+      authorizedCallers: [{ sourceNode: 'Review', agentSlots: ['reviewer'] }],
+    },
+    {
+      id: 'codex-approval-approve',
+      enabled: true,
+      label: 'Codex Review (approve)',
+      sourceNode: 'Review',
+      method: 'approve_task',
+      classification: 'validation',
+      order: 0,
+      validator: { kind: 'built_in', id: 'codex_review_approved' },
+      authorizedCallers: [{ sourceNode: 'Review', agentSlots: ['reviewer'] }],
     },
   ],
   gates: [
@@ -1627,119 +1656,6 @@ export function mergeNodeStructuralFieldsFromTemplate(
   return [...mergedExistingNodes, ...(missingTemplateNodes as WorkflowNode[])];
 }
 
-/**
- * When a gate still carries the legacy `codex_review_bot` feature (preserved
- * during restamp for backward compatibility), set `requireCodexApproval: true`
- * on the source node(s) for that gate's channels so the visual editor toggle
- * reflects reality and the node-level config drives runtime injection.
- *
- * Also strips `codex_review_bot` from the gate features so the node toggle
- * becomes the single source of truth and can be disabled by unchecking it.
- */
-function migrateCodexFeatureToNodeToggle(
-  nodes: WorkflowNode[],
-  channels: WorkflowChannel[],
-  gates: Gate[]
-): { nodes: WorkflowNode[]; gates: Gate[] } {
-  // Only migrate gates that do not have a custom script. For scripted gates,
-  // dynamic injection is blocked so the node flag cannot replace the legacy
-  // feature; leaving them untouched preserves the legacy feature as the sole
-  // mechanism and keeps the checkbox as a single source of truth for
-  // non-scripted gates.
-  // Only migrate legacy features on approval gates — dynamic Codex injection
-  // requires isApprovalGate(), so migrating a non-approval gate would break it.
-  const codexGateIds = new Set(
-    gates
-      .filter((g) => !g.script && isApprovalGate(g) && hasEnabledGateFeature(g, 'codex_review_bot'))
-      .map((g) => g.id)
-  );
-  // Scripted approval gates with legacy codex: strip node toggles so the UI
-  // doesn't show a misleading enabled checkbox for gates where dynamic
-  // injection is blocked and the legacy feature is the actual mechanism.
-  const scriptedCodexGateIds = new Set(
-    gates
-      .filter((g) => g.script && isApprovalGate(g) && hasEnabledGateFeature(g, 'codex_review_bot'))
-      .map((g) => g.id)
-  );
-
-  const collectSourceNodes = (gateIdSet: Set<string>): Set<string> => {
-    const result = new Set<string>();
-    for (const channel of channels) {
-      if (!channel.gateId || !gateIdSet.has(channel.gateId)) continue;
-      if (channel.from === '*') {
-        for (const node of nodes) result.add(node.id);
-        continue;
-      }
-      const nodeByName = nodes.find((n) => n.name === channel.from);
-      if (nodeByName) {
-        result.add(nodeByName.id);
-        continue;
-      }
-      for (const node of nodes) {
-        try {
-          const agents = resolveNodeAgents(node);
-          if (agents.some((a) => a.name === channel.from)) {
-            result.add(node.id);
-          }
-        } catch {
-          // skip malformed nodes
-        }
-      }
-    }
-    return result;
-  };
-
-  const nodesToFlag = collectSourceNodes(codexGateIds);
-  const nodesToUnflag = collectSourceNodes(scriptedCodexGateIds);
-
-  // Also strip toggles for nodes connected to ANY scripted approval gate
-  // (even without a legacy codex_review_bot feature). Dynamic Codex injection
-  // is blocked for scripted approval gates, so a node toggle is misleading
-  // when the node sends through one.
-  const allScriptedApprovalGateIds = new Set(
-    gates.filter((g) => g.script && isApprovalGate(g)).map((g) => g.id)
-  );
-  for (const nodeId of collectSourceNodes(allScriptedApprovalGateIds)) {
-    nodesToUnflag.add(nodeId);
-  }
-
-  const needsNodeChange = nodesToFlag.size > 0 || nodesToUnflag.size > 0;
-  const migratedNodes = needsNodeChange
-    ? nodes.map((node) => {
-        if (nodesToUnflag.has(node.id)) {
-          const next = { ...node };
-          delete next.requireCodexApproval;
-          return next;
-        }
-        if (nodesToFlag.has(node.id)) {
-          return { ...node, requireCodexApproval: true };
-        }
-        return node;
-      })
-    : nodes;
-
-  const migratedGateIdsToStrip = new Set<string>();
-  for (const gateId of codexGateIds) {
-    const sources = collectSourceNodes(new Set([gateId]));
-    const hasUnflaggedSource = Array.from(sources).some((nodeId) => nodesToUnflag.has(nodeId));
-    if (!hasUnflaggedSource) migratedGateIdsToStrip.add(gateId);
-  }
-
-  const migratedGates = gates.map((gate) => {
-    if (!gate.features?.codex_review_bot) return gate;
-    // Preserve legacy feature on gates that cannot be replaced by dynamic
-    // approval-gate injection.
-    if (gate.script || gate.poll || !migratedGateIdsToStrip.has(gate.id)) return gate;
-    const { codex_review_bot: _ignored, ...restFeatures } = gate.features;
-    return {
-      ...gate,
-      features: Object.keys(restFeatures).length > 0 ? restFeatures : undefined,
-    };
-  });
-
-  return { nodes: migratedNodes, gates: migratedGates };
-}
-
 const CURRENT_CODING_WORKFLOW_PR_STEP_PROMPT =
   '5. If code changed: open a PR with `gh pr create` — include a clear title and description. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n';
 const RETIRED_CODING_WORKFLOW_PR_STEP_PROMPT =
@@ -2500,28 +2416,10 @@ export function mergeGateStructuralFieldsFromTemplate(
         return { ...field, writers: templateField.writers };
       });
 
-      // Skip copying template features if the existing gate already has a custom
-      // script or poll, so feature-backed mechanisms do not silently override
-      // custom gate logic at runtime. When copying is allowed, propagate the
-      // template's features (including undefined when the template removed them).
-      // Preserve existing codex_review_bot feature during transition to node-level
-      // config so pre-existing workflows that relied on gate-level codex keep working.
-      const shouldCopyFeatures = !gate.script && !gate.poll;
-      let nextFeatures: Gate['features'] | undefined;
-      if (shouldCopyFeatures) {
-        if (templateGate.features) {
-          nextFeatures = { ...templateGate.features };
-        }
-        if (hasEnabledGateFeature(gate, 'codex_review_bot')) {
-          nextFeatures = { codex_review_bot: true, ...nextFeatures };
-        }
-      } else {
-        nextFeatures = gate.features;
-      }
       return {
         ...gate,
         fields,
-        features: nextFeatures,
+        features: gate.features,
       };
     })
     .concat(missingTemplateGates);
@@ -2649,17 +2547,12 @@ export function seedBuiltInWorkflows(
           row.nodes
         );
         const mergedGates = mergeGateStructuralFieldsFromTemplate(row.gates, template.gates);
-        const { nodes: migratedNodes, gates: migratedGates } = migrateCodexFeatureToNodeToggle(
-          mergedNodes,
-          mergedChannels ?? row.channels ?? [],
-          mergedGates ?? row.gates ?? []
-        );
         const removedLegacyPrReadyChannels =
           (existingChannels?.length ?? 0) !== (row.channels?.length ?? 0);
         const mergedHooks = mergeHooksFromTemplate(
           template.hooks,
           template.nodes,
-          migratedNodes,
+          mergedNodes,
           row.hooks
         );
         // The merge helpers above only ADD missing template pieces — they never
@@ -2669,9 +2562,9 @@ export function seedBuiltInWorkflows(
         // validation-complete-gate so restamp converges to the two-node graph.
         const stripped = stripRetiredValidationComplete({
           templateName: template.name,
-          nodes: migratedNodes,
+          nodes: mergedNodes,
           channels: mergedChannels,
-          gates: migratedGates,
+          gates: mergedGates,
           hooks: mergedHooks,
         });
         // mergeChannelsFromTemplate propagates structural fields (maxCycles,

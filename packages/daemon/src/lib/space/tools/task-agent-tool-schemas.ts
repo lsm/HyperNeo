@@ -48,7 +48,20 @@ import { z } from 'zod';
  *     it while findings are open — request changes and continue the loop instead.
  */
 export const ApproveTaskSchema = z
-  .object({})
+  .object({
+    /**
+     * Optional PR URL (e.g. `https://github.com/owner/repo/pull/123`) for the
+     * terminal action. Required when a hook on this action (e.g.
+     * `codex_review_approved`) needs to resolve the PR; the codex preset also
+     * falls back to the workspace branch when omitted.
+     */
+    pr_url: z
+      .string()
+      .describe(
+        'Optional PR URL (https://github.com/owner/repo/pull/N) when a workflow hook on this terminal action checks the PR (e.g. codex review approval).'
+      )
+      .optional(),
+  })
   .strict()
   .describe(
     'Self-close the task as APPROVED. TERMINAL final action: closes the review/QA/workflow loop and should be your last tool call. Pre-condition: work is APPROVED/QA-passed, zero P0–P3 findings remain, prior findings are addressed, and required review/artifact evidence has been saved. While findings, QA failures, or dispatch work are open, request changes or continue the loop instead — do NOT call this tool.'
@@ -90,6 +103,18 @@ export const SubmitForApprovalSchema = z
       .string()
       .describe(
         'Optional note explaining why you are requesting human review (visible in the approval UI)'
+      )
+      .optional(),
+    /**
+     * Optional PR URL (e.g. `https://github.com/owner/repo/pull/123`) for the
+     * terminal action. Required when a hook on this action (e.g.
+     * `codex_review_approved`) needs to resolve the PR; the codex preset also
+     * falls back to the workspace branch when omitted.
+     */
+    pr_url: z
+      .string()
+      .describe(
+        'Optional PR URL (https://github.com/owner/repo/pull/N) when a workflow hook on this terminal action checks the PR (e.g. codex review approval).'
       )
       .optional(),
   })
