@@ -3633,6 +3633,39 @@ describe('seedBuiltInWorkflows()', () => {
     expect(after.templateName).toBe('Coding');
   });
 
+  test('handle-only legacy customization is preserved (name unchanged, handle customized)', () => {
+    // A user kept the seeded legacy display name 'Coding Workflow' but changed
+    // only the handle. The identity migration must NOT clobber the custom handle
+    // (the unmodified-seed rename only fires when BOTH name and handle still
+    // match the legacy seed). The row is repointed to the canonical template via
+    // templateName only, keeping the user's handle.
+    const custom = manager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: 'Coding Workflow',
+      nodes: [
+        { id: 'h-c', name: 'Coding', agents: [{ agentId: CODER_ID, name: 'coder' }] },
+        { id: 'h-r', name: 'Review', agents: [{ agentId: REVIEWER_ID, name: 'reviewer' }] },
+      ],
+      startNodeId: 'h-c',
+      endNodeId: 'h-r',
+      templateName: 'Coding Workflow',
+    });
+    db.prepare(`UPDATE space_workflows SET handle = ? WHERE id = ?`).run(
+      'team-coding-flow',
+      custom.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.errors).toEqual([]);
+
+    const after = manager.listWorkflows(SPACE_ID).find((w) => w.id === custom.id)!;
+    // The legacy display name was retained (user kept it), the custom handle is
+    // preserved, and templateName was repointed to the canonical stable template.
+    expect(after.name).toBe('Coding Workflow');
+    expect(after.handle).toBe('team-coding-flow');
+    expect(after.templateName).toBe('Coding');
+  });
+
   test('legacy identity migration strips the stale default tag from non-default rows', () => {
     // A pre-split 'Coding with QA Workflow' row carries a stale 'default' tag.
     // After it is migrated to the stable 'Coding with QA' template (which is NOT
@@ -6383,12 +6416,16 @@ test('no built-in template declares a dedicated merger agent or Bash merge guard
   // The merger-variant pattern was retired in favor of the coder/research-owned
   // post-approval merge. No built-in template may carry a `merger` agent slot or
   // a Bash toolGuard that blocks `gh pr merge` (the coder must be able to merge).
+  // The only permitted Bash guard is the reviewer read-scope guard, which blocks
+  // cross-repo `gh api repos/...` reads (the removed get_pr_diff binding).
   for (const wf of getBuiltInWorkflows()) {
     for (const node of wf.nodes) {
       for (const agent of node.agents) {
         expect(agent.name).not.toBe('merger');
-        const bashGuards = (agent.toolGuards ?? []).filter((g) => g.matcher === 'Bash');
-        expect(bashGuards).toHaveLength(0);
+        for (const guard of agent.toolGuards ?? []) {
+          expect(guard.matcher).toBe('Bash');
+          expect(guard.pattern).not.toMatch(/gh\\b[^\\n]*?pr\\s+merge\\b/);
+        }
       }
     }
   }
@@ -6402,8 +6439,11 @@ test('CODING_WITH_QA_WORKFLOW QA node validates the PR and approves only when gr
   // plus backend/frontend/browser/CI checks, and only approves a green head.
   expect(prompt).toContain('project QA instructions');
   expect(prompt).toMatch(/backend, frontend, browser, and CI checks/i);
-  // Failure path sends concrete reproduction steps back to Coding (non-terminal).
-  expect(prompt).toMatch(/send Coding concrete failures and reproduction steps/i);
+  // Failure path sends concrete reproduction steps to the implementer (non-terminal)
+  // via the runtime-supplied feedback target, not a hard-coded peer.
+  expect(prompt).toMatch(/concrete failures and reproduction steps/i);
+  expect(prompt).toMatch(/the runtime supplies the target/i);
+  expect(prompt).not.toMatch(/send Coding concrete failures/i);
   expect(prompt).toContain('non-terminal QA note');
   // Green path saves the PR link + passing decision artifact, then approves.
   expect(prompt).toMatch(/save the PR link and a passing decision artifact/i);
@@ -6419,10 +6459,12 @@ test('CODING_WITH_QA_WORKFLOW QA node routes post-approval merge-blockers via th
   const qaPrompt = CODING_WITH_QA_WORKFLOW.nodes.find((n) => n.name === 'QA')!.agents[0]
     .customPrompt!.value;
   // The QA slot prompt must revalidate a changed head and re-post approval
-  // evidence when the coder reports a post-approval merge blocker.
+  // evidence when the implementer reports a post-approval merge blocker. The
+  // recipient is the runtime-supplied implementer, not a hard-coded peer.
   expect(qaPrompt).toContain('revalidate the changed head');
   expect(qaPrompt).toMatch(/post fresh approval evidence/i);
-  expect(qaPrompt).toMatch(/signal Coding to continue/i);
+  expect(qaPrompt).toMatch(/signal them to continue/i);
+  expect(qaPrompt).not.toMatch(/signal Coding to continue/i);
   // The channel exists for the coder to report blockers to QA.
   const channels = CODING_WITH_QA_WORKFLOW.channels ?? [];
   expect(channels.some((c) => c.from === 'Coding' && c.to === 'QA')).toBe(true);

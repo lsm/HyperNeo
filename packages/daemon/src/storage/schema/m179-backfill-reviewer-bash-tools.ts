@@ -72,6 +72,8 @@ export function runMigration179(db: BunDatabase): void {
   if (
     !tableHasColumn(db, 'space_agents', 'template_name') ||
     !tableHasColumn(db, 'space_agents', 'tools') ||
+    !tableHasColumn(db, 'space_agents', 'custom_prompt') ||
+    !tableHasColumn(db, 'space_agents', 'description') ||
     !tableHasColumn(db, 'space_agents', 'template_hash')
   ) {
     return;
@@ -85,7 +87,9 @@ export function runMigration179(db: BunDatabase): void {
     .prepare(`SELECT id, tools, template_hash FROM space_agents WHERE template_name = 'Reviewer'`)
     .all() as Array<{ id: string; tools: string | null; template_hash: string | null }>;
 
-  const update = db.prepare(`UPDATE space_agents SET tools = ?, template_hash = ? WHERE id = ?`);
+  const update = db.prepare(
+    `UPDATE space_agents SET tools = ?, custom_prompt = ?, description = ?, template_hash = ? WHERE id = ?`
+  );
   let updated = 0;
 
   for (const row of rows) {
@@ -101,11 +105,25 @@ export function runMigration179(db: BunDatabase): void {
     // tools differ is a user customization — never overwrite it.
     if (!arraysEqual(storedTools, OLD_REVIEWER_TOOLS)) continue;
 
-    update.run(JSON.stringify(reviewer.tools), computeAgentTemplateHash(reviewer), row.id);
+    // Migrate the WHOLE preset for an unmodified seed, not just tools: the old
+    // seed's customPrompt still says the reviewer has no shell and must use the
+    // now-removed get_pr_diff / post_review tools. If we only wrote tools but
+    // stamped the current hash (whose fingerprint includes customPrompt +
+    // description), the stored prompt would keep the obsolete no-shell guidance
+    // while `updateAvailable` collapses to false — so existing reviewers get
+    // contradictory instructions with no sync offered. Writing the full preset
+    // keeps the row genuinely current.
+    update.run(
+      JSON.stringify(reviewer.tools),
+      reviewer.customPrompt,
+      reviewer.description,
+      computeAgentTemplateHash(reviewer),
+      row.id
+    );
     updated++;
   }
 
   if (updated > 0) {
-    log.info(`[backfill] Re-stamped Bash+Cron tools on ${updated} Reviewer preset row(s).`);
+    log.info(`[backfill] Re-stamped Reviewer preset row(s) with Bash+Cron tools and prompt.`);
   }
 }

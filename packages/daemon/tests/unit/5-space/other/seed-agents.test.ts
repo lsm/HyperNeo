@@ -103,14 +103,18 @@ describe('seedPresetAgents', () => {
     expect(reviewer?.customPrompt).toContain('Reviewer System Contract');
   });
 
-  it('coder inherits all SDK built-ins and has explicit no-merge prompt', async () => {
+  it('coder inherits all SDK built-ins and defers merge to the post-approval phase', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const coder = seeded.find((a) => a.name === 'Coder');
 
     expect(coder?.tools).toEqual([]);
-    expect(coder?.customPrompt).toContain('Do NOT merge PRs. Your job is implementation only.');
-    expect(coder?.customPrompt).toContain('When the reviewer approves, your work is done.');
-    expect(coder?.customPrompt).toContain('The reviewer handles the merge.');
+    // The coder implements first and opens a PR; it must not merge during
+    // implementation, but (unlike the old preset) it may merge in the
+    // post-approval phase when the workflow sends the merge procedure.
+    expect(coder?.customPrompt).toMatch(/[Dd]uring implementation, do not merge your own PR/);
+    expect(coder?.customPrompt).toContain('post-approval merge is a separate phase');
+    expect(coder?.customPrompt).toContain('open pull requests for review');
+    expect(coder?.customPrompt).not.toContain('The reviewer handles the merge.');
   });
 
   it('research agent inherits all SDK built-ins (Write + Edit for committing findings)', async () => {
@@ -472,8 +476,10 @@ describe('preset agent exact definitions', () => {
     expect(coder.customPrompt).toBe(
       'You are an expert software engineer. You write clean, well-tested code following the ' +
         "project's existing conventions. You always commit your work, keep the working tree clean, " +
-        'and open pull requests for review. Do NOT merge PRs. Your job is implementation only. ' +
-        'When the reviewer approves, your work is done. The reviewer handles the merge.\n\n' +
+        'and open pull requests for review. During implementation, do not merge your own PR — post-approval ' +
+        'merge is a separate phase: once the task is approved, the workflow may send you the merge procedure, ' +
+        'which you follow (that is when you merge). Your job is implementation first; review feedback comes back ' +
+        'until the work is clean.\n\n' +
         'Before finishing: ensure all tests pass, commit all changes, and open a PR with a clear description.'
     );
   });

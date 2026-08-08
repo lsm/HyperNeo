@@ -109,6 +109,47 @@ const LEGACY_PR_READY_TEMPLATE_ROUTES = new Set([
 ]);
 
 // ---------------------------------------------------------------------------
+// Declarative tool guard: reviewer Bash stays scoped to the workflow run's PR
+// ---------------------------------------------------------------------------
+
+/**
+ * Blocks the Reviewer's Bash from reading OTHER repositories through the
+ * daemon's `gh` credentials.
+ *
+ * The reviewer has Bash for read-only inspection (per the pivot: the PR-process
+ * MCPs were removed, and `gh pr view` / `gh pr diff` / `gh pr checks` / the
+ * run-scoped `gh api graphql` reviewThreads query cover the legitimate read
+ * surface). But a prompt-injected reviewer could otherwise run `gh api
+ * repos/<owner>/<repo>/...` against ANY repository the daemon's credentials
+ * can reach — the removed `get_pr_diff` handler bound reads to the workflow
+ * run's PR (an `isSamePrIdentity` guard); the CLI has no such binding. This
+ * guard closes the cross-repo REST read vector while allowing the run-scoped
+ * `gh pr *` subcommands (which default to the current branch's PR) and the
+ * GraphQL mutation form (which carries the run's PR id, not a free repo path).
+ *
+ * Matches `gh api` calls that target a REST `repos/<owner>/<repo>/...` path —
+ * the cross-repo read/write vector. It does NOT block:
+ *   - `gh pr view|diff|checks|review` (scoped to the run's PR by default),
+ *   - `gh api graphql` (the reviewThreads query uses the run's owner/name/number,
+ *     and review posting uses the `addPullRequestReview` mutation keyed on the
+ *     run's PR id — no free-form repo path),
+ *   - non-`gh` commands (the reviewer still reads the worktree via Read/Grep).
+ *
+ * Defense-in-depth only — the reviewer prompt additionally instructs it to
+ * inspect only the workflow run's PR. A determined shell user can evade any
+ * command regex; this guard removes the accidental / prompt-injected vector.
+ */
+export const REVIEWER_GH_API_REPO_GUARD: DeclarativeToolGuard = {
+  matcher: 'Bash',
+  pattern: 'gh\\b[^\\n]*?\\bapi\\b[^\\n]*?repos\\/',
+  decision: 'deny',
+  reason:
+    'Reviewer Bash reads are scoped to the workflow run’s PR. Direct `gh api repos/<owner>/<repo>/...` calls can read other repositories ' +
+    'through the daemon’s credentials — use `gh pr view` / `gh pr diff` / `gh pr checks` for the run’s PR, and `gh api graphql` ' +
+    '(reviewThreads query or the addPullRequestReview mutation keyed on the run’s PR id) for threads and review posting.',
+};
+
+// ---------------------------------------------------------------------------
 // Template node ID constants (used as stable IDs for workflow nodes and startNodeId)
 // ---------------------------------------------------------------------------
 
@@ -431,13 +472,15 @@ const CODER_OWNED_QA_REVIEW_PROMPT =
   'You are the Reviewer in a workflow where a separate QA step owns final approval. Review is an ' +
   'intermediate step, not the end node, so you do NOT call approve_task or submit_for_approval. ' +
   'Inspect the pull request and relevant code and post a visible GitHub review via `gh pr review`. If ' +
-  'changes are needed, send Coding actionable feedback with pr_url, review_url, and comment_urls, then ' +
-  'stop. When the current head is clean and all review threads are resolved, hand the approved PR to ' +
+  'changes are needed, send the implementer actionable feedback with pr_url, review_url, and comment_urls ' +
+  'via the feedback handoff described in Your Role in This Workflow — the runtime supplies the target, so ' +
+  'follow that contract exactly and do not restate or assume it here. Then stop. When the current head is ' +
+  'clean and all review threads are resolved, hand the approved PR to ' +
   'the final approval authority via the gated handoff described in Your Role in This Workflow — the ' +
   'runtime supplies the channel, target, and gate field, so follow that contract exactly and do not ' +
-  'restate or assume it here. Then stop and wait. Do not merge. If Coding later reports a post-approval ' +
-  'merge blocker, re-check the current head, coordinate any fix, post a fresh approval, and signal ' +
-  'Coding to continue.';
+  'restate or assume it here. Then stop and wait. Do not merge. If the implementer later reports a ' +
+  'post-approval merge blocker, re-check the current head, coordinate any fix, post a fresh approval, ' +
+  'and signal them to continue.';
 
 /**
  * Legacy built-in slot prompts from the pre-split era, keyed by
@@ -662,6 +705,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
           // WorkflowNodeAgent.resetContextPerTurn.
           resetContextPerTurn: true,
           customPrompt: { value: CODER_OWNED_REVIEW_PROMPT },
+          toolGuards: [REVIEWER_GH_API_REPO_GUARD],
         },
       ],
     },
@@ -806,6 +850,7 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
               ' Call save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } }) then approve_task() or submit_for_approval. ' +
               'Do NOT attempt to merge the PR yourself. Do not set auto-merge.',
           },
+          toolGuards: [REVIEWER_GH_API_REPO_GUARD],
         },
       ],
     },
@@ -1138,11 +1183,13 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
  */
 const CODER_OWNED_QA_PROMPT =
   'You are QA. Validate the reviewer-approved pull request using the project QA instructions and ' +
-  'the relevant backend, frontend, browser, and CI checks. If validation fails, send Coding concrete ' +
-  'failures and reproduction steps, save a non-terminal QA note, and stop. When the current head is ' +
+  'the relevant backend, frontend, browser, and CI checks. If validation fails, send the implementer ' +
+  'concrete failures and reproduction steps via the feedback handoff in Your Role in This Workflow — ' +
+  'the runtime supplies the target, so follow that contract exactly and do not restate or assume it ' +
+  'here — save a non-terminal QA note, and stop. When the current head is ' +
   'green, save the PR link and a passing decision artifact, then call approve_task or ' +
-  'submit_for_approval. Do not merge. If Coding later reports a post-approval merge blocker, ' +
-  'revalidate the changed head, post fresh approval evidence, and signal Coding to continue.';
+  'submit_for_approval. Do not merge. If the implementer later reports a post-approval merge blocker, ' +
+  'revalidate the changed head, post fresh approval evidence, and signal them to continue.';
 
 /**
  * Coding with QA Workflow (stable)
@@ -1191,6 +1238,7 @@ export const CODING_WITH_QA_WORKFLOW: SpaceWorkflow = {
           // the approved PR to QA instead of calling the end-node-only
           // approve_task — see CODER_OWNED_QA_REVIEW_PROMPT.
           customPrompt: { value: CODER_OWNED_QA_REVIEW_PROMPT },
+          toolGuards: [REVIEWER_GH_API_REPO_GUARD],
         },
       ],
     },
@@ -1351,9 +1399,15 @@ export function getBuiltInGateScript(templateName: string, gateId: string): Gate
  * migrate into.
  */
 export const LEGACY_CODING_TEMPLATE_IDENTITIES = [
-  { legacyName: 'Coding Workflow', name: 'Coding', handle: 'coding' },
+  {
+    legacyName: 'Coding Workflow',
+    legacyHandle: 'coding-workflow',
+    name: 'Coding',
+    handle: 'coding',
+  },
   {
     legacyName: 'Coding with QA Workflow',
+    legacyHandle: 'coding-with-qa-workflow',
     name: 'Coding with QA',
     handle: 'coding-with-qa',
   },
@@ -2556,16 +2610,15 @@ export function seedBuiltInWorkflows(
     for (const row of sorted) {
       let migrated: SpaceWorkflow | null = row;
       // Apply the full canonical rename ONLY when the row still carries the
-      // seeded legacy display name. A user who renamed the row keeps their
-      // name AND handle (the templateName-only stamp below writes neither) — we
-      // repoint only templateName so the row still groups under the canonical
-      // template for duplicate cleanup, without clobbering the customization.
-      // The check keys on the display name (what users customize in the editor);
-      // a handle-ONLY customization (name unchanged) is not detected and the
-      // handle gets normalized — accepted, since the handle is a regenerable slug
-      // and the display name is the user-owned identity. (Same templateName-only
-      // fallback used below for name/handle collisions.)
-      const rowIsUnmodifiedSeed = row.name === identity.legacyName;
+      // seeded legacy display name AND the seeded legacy handle. A user who
+      // customized either (renamed the row, or kept the name but changed the
+      // handle) keeps their value — the templateName-only stamp below writes
+      // neither — so we repoint only templateName and the row still groups
+      // under the canonical template for duplicate cleanup, without clobbering
+      // the customization. (Same templateName-only fallback used below for
+      // name/handle collisions.)
+      const rowIsUnmodifiedSeed =
+        row.name === identity.legacyName && row.handle === identity.legacyHandle;
       try {
         if (rowIsUnmodifiedSeed) {
           migrated = workflowManager.updateBuiltInIdentity(row.id, {

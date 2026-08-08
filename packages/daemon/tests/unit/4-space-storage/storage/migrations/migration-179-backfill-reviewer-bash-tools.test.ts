@@ -53,6 +53,22 @@ const OLD_REVIEWER_TOOLS = [
   'TaskStop',
 ];
 
+/**
+ * The pre-change Reviewer system contract (shell-less: "You have no shell in
+ * workflow reviewer sessions", posts via the removed post_review tool). M179
+ * must replace this obsolete prompt on unmodified seeds, or existing reviewers
+ * get contradictory instructions with a hash that hides the drift.
+ */
+const OLD_REVIEWER_PROMPT =
+  '## Reviewer System Contract\n\nYou are a critical reviewer. ' +
+  'You have no shell in workflow reviewer sessions — do not run gh, git, test, build, or app commands. ' +
+  'Read the PR diff via the get_pr_diff tool and post your review via the post_review tool.';
+
+/** The pre-change Reviewer preset description (still carried by old seed rows). */
+const OLD_REVIEWER_DESCRIPTION =
+  'Code review specialist. Reviews pull requests for correctness, style, and test coverage. ' +
+  'Has no shell — posts reviews via the post_review tool.';
+
 function insertSpace(db: BunDatabase, id: string): void {
   const now = Date.now();
   db.prepare(
@@ -70,6 +86,7 @@ function insertAgent(
     handle?: string | null;
     tools?: string[];
     customPrompt?: string | null;
+    description?: string | null;
     templateName?: string | null;
     templateHash?: string | null;
   }
@@ -77,8 +94,8 @@ function insertAgent(
   const now = Date.now();
   db.prepare(
     `INSERT INTO space_agents
-       (id, space_id, name, handle, tools, custom_prompt, template_name, template_hash, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       (id, space_id, name, handle, tools, custom_prompt, description, template_name, template_hash, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     opts.id,
     opts.spaceId,
@@ -86,6 +103,7 @@ function insertAgent(
     opts.handle ?? null,
     JSON.stringify(opts.tools ?? []),
     opts.customPrompt ?? null,
+    opts.description ?? '',
     opts.templateName ?? null,
     opts.templateHash ?? null,
     now,
@@ -137,7 +155,7 @@ beforeEach(() => {
 });
 
 describe('migration 179 — reviewer bash tool backfill', () => {
-  test('re-stamps an unmodified Reviewer seed row with Bash + Cron', () => {
+  test('re-stamps an unmodified Reviewer seed row with Bash + Cron AND the current prompt', () => {
     const spaceId = 'space-m179-a';
     insertSpace(db, spaceId);
     insertAgent(db, {
@@ -146,7 +164,8 @@ describe('migration 179 — reviewer bash tool backfill', () => {
       name: 'Reviewer',
       handle: 'reviewer',
       tools: OLD_REVIEWER_TOOLS,
-      customPrompt: REVIEWER_PRESET.customPrompt,
+      customPrompt: OLD_REVIEWER_PROMPT,
+      description: OLD_REVIEWER_DESCRIPTION,
       templateName: 'Reviewer',
       templateHash: computeAgentTemplateHash(REVIEWER_PRESET),
     });
@@ -162,6 +181,14 @@ describe('migration 179 — reviewer bash tool backfill', () => {
     expect(tools).toContain('CronList');
     expect(tools).not.toContain('Write');
     expect(tools).not.toContain('Edit');
+    // The obsolete shell-less prompt is replaced with the current contract, so
+    // the reviewer no longer gets "no shell / use post_review" instructions
+    // while the stored hash claims the row is up to date.
+    const migratedPrompt = (row as unknown as AgentRow).custom_prompt;
+    expect(migratedPrompt).toBe(REVIEWER_PRESET.customPrompt);
+    expect(migratedPrompt).not.toContain('You have no shell in workflow reviewer sessions');
+    expect(migratedPrompt).not.toContain('post_review');
+    expect((row as unknown as AgentRow).description).toBe(REVIEWER_PRESET.description);
     // template_hash re-stamped to the current preset hash.
     expect((row as unknown as AgentRow).template_hash).toBe(
       computeAgentTemplateHash(REVIEWER_PRESET)
