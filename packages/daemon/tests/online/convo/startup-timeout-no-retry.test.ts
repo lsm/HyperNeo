@@ -42,9 +42,10 @@ const IDLE_TIMEOUT = IS_MOCK ? 45000 : 60000;
 // delay the daemon's model fetch beyond the helper's 8 s default.
 const MODELS_READY_TIMEOUT_MS = IS_MOCK ? 25000 : 30000;
 
-// Timeout short enough that the SDK subprocess cannot respond in time on either
-// the first attempt or the retry (subprocess spawn alone is hundreds of ms), so
-// the startup-timeout → retry-once path is exercised deterministically. Kept
+// Short enough that the startup timer reliably fires on the first attempt
+// (subprocess spawn alone is hundreds of ms), so the retry-once path is
+// exercised. The retry spawns a fresh subprocess, so its outcome (succeed or
+// fail) still depends on timing — see the test body's sessionError branch. Kept
 // above 10 ms: an absurdly small value makes the daemon abort/respawn so fast it
 // congests the shared dev proxy and slows unrelated readiness waits (flaky CI).
 const FORCED_STARTUP_TIMEOUT_MS = '100';
@@ -131,10 +132,10 @@ describe('Startup Timeout Error Surfacing', () => {
       });
 
       try {
-        // Send a message — this kicks off query-runner.ts with STARTUP_TIMEOUT_MS=10.
-        // The SDK subprocess cannot respond within 10 ms, so the startup timer fires.
-        // The system retries once automatically. The retry may succeed (SDK subprocess
-        // from attempt 1 is already running) or fail (still too slow).
+        // Send a message — this kicks off query-runner.ts with STARTUP_TIMEOUT_MS
+        // set to FORCED_STARTUP_TIMEOUT_MS. The SDK subprocess cannot respond that
+        // fast, so the startup timer fires and the system retries once automatically.
+        // The retry spawns a fresh subprocess and may succeed or fail on timing.
         await daemon.messageHub.request('message.send', {
           sessionId,
           content: 'Hello, please respond.',
