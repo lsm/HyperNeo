@@ -343,6 +343,43 @@ describe('resolveNodeClick', () => {
         expect(outcome.session.sessionId).not.toBe('session-stale-merger');
       }
     });
+
+    it('shadow cleanup exact-matches the target slot (qa-one does not shadow qa_one)', () => {
+      // A node declares both 'qa-one' (the post-approval target) and 'qa_one'
+      // (a separate live session). The shadow cleanup must remove only the
+      // stale 'qa-one' execution — normalizing would also delete the live
+      // 'qa_one', dropping it from the choices.
+      const outcome = resolveNodeClick({
+        ...baseArgs,
+        nodeId: 'node-x',
+        agentSlotNames: ['qa-one', 'qa_one'],
+        nodeExecutions: [
+          nodeExec({
+            id: 'exec-stale-qa-one',
+            workflowNodeId: 'node-x',
+            agentName: 'qa-one',
+            agentSessionId: 'session-stale-qa-one',
+          }),
+          nodeExec({
+            id: 'exec-live-qa-one',
+            workflowNodeId: 'node-x',
+            agentName: 'qa_one',
+            agentSessionId: 'session-live-qa-one',
+          }),
+        ],
+        postApprovalSessionId: 'session-merger',
+        postApprovalTargetAgent: 'qa-one',
+        postApprovalNodeId: 'node-x',
+      });
+      expect(outcome.type).toBe('choose');
+      if (outcome.type === 'choose') {
+        const sessionIds = outcome.choices.map((c) => (c.kind === 'live' ? c.sessionId : null));
+        // The live qa_one session survives; the stale qa-one is shadowed.
+        expect(sessionIds).toContain('session-live-qa-one');
+        expect(sessionIds).toContain('session-merger');
+        expect(sessionIds).not.toContain('session-stale-qa-one');
+      }
+    });
   });
 
   describe('zero-agent node', () => {

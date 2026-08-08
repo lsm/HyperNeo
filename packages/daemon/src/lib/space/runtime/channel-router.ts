@@ -508,11 +508,17 @@ export class ChannelRouter {
       // and the caller's refresh would find no B execution.
       const targetAgentName = options?.targetAgentName;
       if (!targetAgentName) return existingTasks;
+      // Only short-circuit on a NON-terminal execution for the target slot —
+      // a terminal row (cancelled/waiting_rebind) still needs the
+      // terminal-reactivation loop below, which a sibling-active short-circuit
+      // would skip.
       const targetSlotExists = this.config.nodeExecutionRepo
         .listByNode(runId, nodeId)
-        .some((e) => e.agentName === targetAgentName);
+        .some(
+          (e) => e.agentName === targetAgentName && !TERMINAL_NODE_EXECUTION_STATUSES.has(e.status)
+        );
       if (targetSlotExists) return existingTasks;
-      // Target slot is missing — fall through to createOrIgnore.
+      // Target slot is missing (or terminal) — fall through to createOrIgnore.
     }
 
     // ── 3. Resolve the workflow and node ───────────────────────────────────

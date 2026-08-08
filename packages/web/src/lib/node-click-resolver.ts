@@ -232,7 +232,10 @@ export function resolveNodeClick(args: ResolveNodeClickArgs): NodeClickOutcome {
     // open the stale ordinary session instead of the active post-approval one.
     for (const [sid, entry] of liveBySession) {
       if (sid === postApprovalSessionId) continue;
-      if (normalizeSlotName(entry.agentName) === normalizeSlotName(postApprovalTargetAgent)) {
+      // Exact-match the target agent (the spawn path) — normalizing would
+      // collapse separator-distinct legal slots (qa-one / qa_one) and could
+      // delete a live sibling session that only shares the normalized form.
+      if (entry.agentName === postApprovalTargetAgent) {
         liveBySession.delete(sid);
       }
     }

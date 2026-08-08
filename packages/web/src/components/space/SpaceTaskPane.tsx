@@ -771,22 +771,23 @@ export function SpaceTaskPane({
 
     switch (outcome.type) {
       case 'open_session': {
-        // Only attach node-agent task routing when this is a real
-        // node-execution session. The post-approval merger session has no
-        // node_execution row, so node-agent routing (space.task.sendMessage)
-        // cannot select it and would instead lazy-activate / queue against an
-        // ordinary merger execution. For the merger, omit the task context so
-        // the overlay sends directly to the displayed session. For real node
-        // sessions, carry the node ID so lazy-activation stays scoped if the
-        // latched execution is ever cancelled.
-        const taskContext = outcome.session.nodeExecutionId
-          ? {
-              taskId: task.id,
-              agentName: outcome.session.agentName,
-              nodeExecutionId: outcome.session.nodeExecutionId,
-              workflowNodeId: nodeId,
-            }
-          : null;
+        // Route overlay sends through space.task.sendMessage so the daemon
+        // restores + delivers to the right session. For a real node-execution
+        // session the execution id selects it directly; for the execution-less
+        // post-approval merger (no nodeExecutionId) the handler's
+        // matchesPostApproval path resolves the worker via
+        // getPostApprovalWorkerSession and calls restorePostApprovalWorkerSession
+        // before delivery — so a post-restart merger reply still reaches the
+        // worker with its node-agent tools. workflowNodeId keeps both paths
+        // node-scoped.
+        const taskContext = {
+          taskId: task.id,
+          agentName: outcome.session.agentName,
+          workflowNodeId: nodeId,
+          ...(outcome.session.nodeExecutionId
+            ? { nodeExecutionId: outcome.session.nodeExecutionId }
+            : {}),
+        };
         pushOverlayHistory(
           outcome.session.sessionId,
           outcome.session.label,

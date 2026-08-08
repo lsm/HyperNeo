@@ -422,6 +422,45 @@ describe('ChannelRouter', () => {
       expect(after).toHaveLength(2);
     });
 
+    test('targetAgentName does not short-circuit on a terminal target slot', async () => {
+      // Round-12 regression: the target slot's execution is terminal (cancelled)
+      // while a sibling is active. The agent-aware short-circuit must NOT count
+      // the terminal row — it falls through to the reactivation loop.
+      const workflow = buildWorkflow(SPACE_ID, workflowManager, [
+        {
+          id: NODE_A,
+          name: 'Multi Agent Node',
+          agents: [
+            { agentId: AGENT_CODER, name: 'coder-slot' },
+            { agentId: AGENT_PLANNER, name: 'planner-slot' },
+          ],
+        },
+      ]);
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Terminal Target Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+      await router.activateNode(run.id, NODE_A);
+      const nodeExecutionRepo = new NodeExecutionRepository(db);
+      const planner = nodeExecutionRepo
+        .listByNode(run.id, NODE_A)
+        .find((e) => e.agentName === 'planner-slot')!;
+      nodeExecutionRepo.update(planner.id, {
+        status: 'cancelled',
+        agentSessionId: null,
+        completedAt: Date.now(),
+      });
+
+      await router.activateNode(run.id, NODE_A, { targetAgentName: 'planner-slot' });
+      const after = nodeExecutionRepo
+        .listByNode(run.id, NODE_A)
+        .find((e) => e.agentName === 'planner-slot')!;
+      // Reactivated (no longer terminal) instead of short-circuited.
+      expect(after.status).not.toBe('cancelled');
+    });
+
     test('re-activates if the only existing task is cancelled', async () => {
       const workflow = buildWorkflow(SPACE_ID, workflowManager, [
         { id: NODE_A, name: 'Node A', agentId: AGENT_CODER },

@@ -1392,20 +1392,27 @@ export class TaskAgentManager {
                 });
               }
               // The session is now owned by this node. If it was previously
-              // bound to a DIFFERENT node's execution, clear that old row's
-              // pointer so the old node no longer exposes the reused session
-              // as live (clicking the old node must not open/execute as the
-              // new owner). 'idle' marks it as no longer active on that node.
-              if (
-                prevExec.id &&
-                memberInfo.nodeId &&
-                prevExec.workflowNodeId &&
-                prevExec.workflowNodeId !== memberInfo.nodeId
-              ) {
-                this.config.nodeExecutionRepo.update(prevExec.id, {
-                  agentSessionId: null,
-                  status: 'idle',
-                });
+              // bound to a DIFFERENT node's execution, sweep ALL rows still
+              // pointing at the reused session on OTHER nodes (not just the
+              // most-recent prevExec — cyclic reactivation and pre-existing
+              // multi-owner rows can leave stale co-owners). Clearing them
+              // means the old nodes no longer expose the session as live, so
+              // clicking them can't open/execute as the new owner. Same-node
+              // cyclic retention is the same row, so it's unaffected.
+              if (memberInfo.nodeId) {
+                const staleCoOwners = this.config.nodeExecutionRepo
+                  .listByWorkflowRun(parentTask.workflowRunId)
+                  .filter(
+                    (e) =>
+                      e.agentSessionId === existingSessionId &&
+                      e.workflowNodeId !== memberInfo.nodeId
+                  );
+                for (const stale of staleCoOwners) {
+                  this.config.nodeExecutionRepo.update(stale.id, {
+                    agentSessionId: null,
+                    status: 'idle',
+                  });
+                }
               }
             }
 
