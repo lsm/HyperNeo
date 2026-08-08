@@ -65,11 +65,14 @@ const FORCED_STARTUP_TIMEOUT_MS = '10';
  */
 async function getSessionError(
   daemon: DaemonServerContext,
-  sessionId: string
+  sessionId: string,
+  timeoutMs?: number
 ): Promise<{ message: string; details?: unknown } | null> {
-  const state = (await daemon.messageHub.request('state.session', {
-    sessionId,
-  })) as { error?: { message: string; details?: unknown } | null };
+  const state = (await daemon.messageHub.request(
+    'state.session',
+    { sessionId },
+    { timeout: timeoutMs }
+  )) as { error?: { message: string; details?: unknown } | null };
   return state.error ?? null;
 }
 
@@ -152,8 +155,17 @@ async function waitForSessionError(
 ): Promise<{ message: string; details?: unknown }> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const error = await getSessionError(daemon, sessionId);
-    if (error) return error;
+    // Bound each poll's RPC to the remaining budget (cap 2 s) so a slow daemon
+    // can't overrun the shared deadline by MessageHub's default 10 s, and retry
+    // transient RPC failures (e.g. the daemon busy during abort-driven cleanup)
+    // instead of letting one abort the whole poll.
+    const rpcTimeout = Math.min(2000, Math.max(0, deadline - Date.now()));
+    try {
+      const error = await getSessionError(daemon, sessionId, rpcTimeout);
+      if (error) return error;
+    } catch {
+      // Transient RPC failure — keep polling until the deadline.
+    }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error(
