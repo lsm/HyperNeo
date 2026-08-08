@@ -673,7 +673,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
         expect(injectSubSession.mock.calls[0][0]).toBe(mergerSessionId);
       });
 
-      it('matches the post-approval session case-insensitively by agentName', async () => {
+      it('matches the post-approval session exactly by agentName', async () => {
         const { injectSubSession } = setupPostApproval({
           postApproval: { sessionId: mergerSessionId, agentName: 'merger' },
         });
@@ -682,7 +682,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
           spaceId: 'space-1',
           taskId: 'task-1',
           message: 'go',
-          target: { kind: 'node_agent', agentName: 'Merger' },
+          target: { kind: 'node_agent', agentName: 'merger' },
         });
 
         expect(res).toEqual({ ok: true, routedTo: ['merger'] });
@@ -867,6 +867,35 @@ describe('setupSpaceTaskMessageHandlers', () => {
       expect(injectSubSession).toHaveBeenCalledWith(
         'session-coder-1',
         '@Coder please fix the bug',
+        false,
+        undefined
+      );
+    });
+
+    it('does not @mention-inject into a spawn-retry pending dead session', async () => {
+      // Round-43: a pending execution retaining a dead agentSessionId
+      // (resetWorkflowNodeExecutionForSpawnRetry) must not receive @mention
+      // injection — the session is still eligible to spawn a replacement.
+      const { injectSubSession } = setupWithMention([
+        { agentName: 'Coder', agentSessionId: 'session-coder-live' },
+        {
+          agentName: 'Reviewer',
+          agentSessionId: 'session-reviewer-dead',
+          status: 'pending', // spawn-retry, dead session retained
+        },
+      ]);
+
+      // The pending reviewer is not reachable — the mention throws.
+      await expect(
+        call('space.task.sendMessage', {
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          message: '@Reviewer please review',
+        })
+      ).rejects.toThrow('@mention not found: Reviewer');
+      expect(injectSubSession).not.toHaveBeenCalledWith(
+        'session-reviewer-dead',
+        '@Reviewer please review',
         false,
         undefined
       );
@@ -1381,6 +1410,267 @@ describe('setupSpaceTaskMessageHandlers', () => {
         false,
         undefined
       );
+    });
+
+    it('workflowNodeId scopes an agentName-only target to the clicked node', async () => {
+      // Two nodes both declare "Coder" with live sessions. Providing
+      // workflowNodeId (from a canvas node click) must route to ONLY that
+      // node's session — the same-slot disambiguation the identity fix needs.
+      const { injectSubSession } = setupWithActivation({
+        nodeExecAgents: [
+          {
+            id: 'exec-coder-A',
+            workflowNodeId: 'node-1',
+            agentName: 'Coder',
+            agentSessionId: 'session-coder-a',
+          },
+          {
+            id: 'exec-coder-B',
+            workflowNodeId: 'node-2',
+            agentName: 'Coder',
+            agentSessionId: 'session-coder-b',
+          },
+        ],
+      });
+
+      const result = await call('space.task.sendMessage', {
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        message: 'just node two',
+        target: { kind: 'node_agent', agentName: 'Coder', workflowNodeId: 'node-2' },
+      });
+
+      expect(result).toMatchObject({ ok: true, routedTo: ['Coder'] });
+      expect(injectSubSession).toHaveBeenCalledTimes(1);
+      expect(injectSubSession).toHaveBeenCalledWith(
+        'session-coder-b',
+        'just node two',
+        false,
+        undefined
+      );
+      expect(injectSubSession).not.toHaveBeenCalledWith(
+        'session-coder-a',
+        'just node two',
+        false,
+        undefined
+      );
+    });
+
+    it('fails a send pinned to a session that no longer has an execution (no lazy-activation fallback)', async () => {
+      // Round-58: an overlay pins session W1, but the execution rebinds to W2
+      // before the send. The pinned sessionId must NOT fall back to agentName
+      // lazy-activation (which would inject into W2 while the user views W1) —
+      // the send must fail loudly.
+      const mh = createMockMessageHub();
+      hub = mh.hub;
+      handlers = mh.handlers;
+      const injectSub = mock(async (_sid: string, _msg: string) => {});
+      taskAgentManager = {
+        ...createMockTaskAgentManager(null, mockTaskWithRun),
+        injectSubSessionMessage: injectSub,
+        getWorkflowDeclaredAgentNamesForTask: mock(() => ['Coder']),
+        ensureWorkflowNodeActivationForAgent: mock(async () => true),
+      };
+      db = createMockDatabase(mockTaskWithRun);
+      internalEventBus = {
+        publish: mock(async () => ({ delivered: 0, failures: [] })),
+        publishAsync: mock(() => {}),
+      } as unknown as InternalEventBus<DaemonInternalEventMap>;
+      setupSpaceTaskMessageHandlers(
+        mh.hub,
+        taskAgentManager,
+        db,
+        internalEventBus,
+        makeNodeExecutionRepo([
+          { agentName: 'Coder', agentSessionId: 'session-w2', workflowNodeId: 'node-1' },
+        ]),
+        undefined,
+        undefined,
+        undefined
+      );
+
+      // Pin W1 — no execution carries it anymore.
+      await expect(
+        call('space.task.sendMessage', {
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          message: 'to w1',
+          target: { kind: 'node_agent', agentName: 'Coder', sessionId: 'session-w1' },
+        })
+      ).rejects.toThrow('no longer attached');
+      // No injection, no lazy-activation fallback.
+      expect(injectSub).not.toHaveBeenCalled();
+    });
+
+    it('post-activation refresh stays scoped to the clicked node (no same-name capture)', async () => {
+      // node-1's Coder is LIVE; node-2's Coder is a sessionless (pending)
+      // execution. Targeting node-2 by workflowNodeId: the initial match is
+      // node-2 (sessionless), so activateNode fires for node-2 and brings its
+      // session online. The refresh must deliver ONLY to node-2's new session —
+      // without the workflowNodeId scope it would also capture node-1's live
+      // session and inject the message there.
+      const mutableRepo = {
+        listByWorkflowRun: mock(() => [
+          {
+            id: 'exec-coder-A',
+            workflowNodeId: 'node-1',
+            agentName: 'Coder',
+            agentSessionId: 'session-coder-a',
+            status: 'in_progress',
+          },
+          {
+            id: 'exec-coder-B',
+            workflowNodeId: 'node-2',
+            agentName: 'Coder',
+            agentSessionId: null,
+            status: 'in_progress',
+          },
+        ]),
+      };
+      const mh = createMockMessageHub();
+      hub = mh.hub;
+      handlers = mh.handlers;
+      const injectSub = mock(async (_sid: string, _msg: string) => {});
+      taskAgentManager = {
+        ...createMockTaskAgentManager(null, mockTaskWithRun),
+        injectSubSessionMessage: injectSub,
+      };
+      db = createMockDatabase(mockTaskWithRun);
+      internalEventBus = {
+        publish: mock(async () => ({ delivered: 0, failures: [] })),
+        publishAsync: mock(() => {}),
+      } as unknown as InternalEventBus<DaemonInternalEventMap>;
+      const activateCalls: string[] = [];
+      const mockActivate = mock(async (_runId: string, nodeId: string) => {
+        activateCalls.push(nodeId);
+        // node-2's execution gains a live session after activation.
+        mutableRepo.listByWorkflowRun = mock(() => [
+          {
+            id: 'exec-coder-A',
+            workflowNodeId: 'node-1',
+            agentName: 'Coder',
+            agentSessionId: 'session-coder-a',
+            status: 'in_progress',
+          },
+          {
+            id: 'exec-coder-B',
+            workflowNodeId: 'node-2',
+            agentName: 'Coder',
+            agentSessionId: 'session-coder-b',
+            status: 'in_progress',
+          },
+        ]);
+      });
+      setupSpaceTaskMessageHandlers(
+        mh.hub,
+        taskAgentManager,
+        db,
+        internalEventBus,
+        mutableRepo,
+        undefined,
+        mockActivate,
+        undefined
+      );
+
+      const result = await call('space.task.sendMessage', {
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        message: 'just node two',
+        target: { kind: 'node_agent', agentName: 'Coder', workflowNodeId: 'node-2' },
+      });
+
+      expect(activateCalls).toEqual(['node-2']);
+      expect(injectSub).toHaveBeenCalledTimes(1);
+      expect(injectSub).toHaveBeenCalledWith('session-coder-b', 'just node two', false, undefined);
+      expect(injectSub).not.toHaveBeenCalledWith(
+        'session-coder-a',
+        'just node two',
+        false,
+        undefined
+      );
+      expect(result).toMatchObject({ ok: true, routedTo: ['Coder'], activated: true });
+    });
+
+    it('node-scoped send to a sibling node is NOT misrouted into a legacy post-approval worker', async () => {
+      // Round-9 regression: a legacy (pre-provenance) worker resolves to
+      // nodeId 'node-merger' (route-derived). A node-scoped send to a SIBLING
+      // node 'node-sibling' that reuses the 'merger' slot name (unstarted, no
+      // session/execution) must NOT take the worker shortcut — it must
+      // lazy-activate node-sibling instead of delivering into the worker.
+      const mutableRepo = {
+        listByWorkflowRun: mock(
+          () =>
+            [] as Array<{
+              id: string;
+              workflowNodeId: string;
+              agentName: string;
+              agentSessionId: string | null;
+              status: string;
+            }>
+        ),
+      };
+      const mh = createMockMessageHub();
+      hub = mh.hub;
+      handlers = mh.handlers;
+      const injectSub = mock(async (_sid: string, _msg: string) => {});
+      const ensureCalls: Array<{ agentName: string; workflowNodeId?: string }> = [];
+      taskAgentManager = {
+        ...createMockTaskAgentManager(null, mockTaskWithRun),
+        injectSubSessionMessage: injectSub,
+        getPostApprovalWorkerSession: mock(() => ({
+          sessionId: 'legacy-worker',
+          agentName: 'merger',
+          nodeId: 'node-merger',
+        })),
+        getWorkflowDeclaredAgentNamesForTask: mock(() => ['merger']),
+        ensureWorkflowNodeActivationForAgent: mock(
+          async (_taskId: string, agentName: string, options?: { workflowNodeId?: string }) => {
+            ensureCalls.push({
+              agentName,
+              ...(options?.workflowNodeId ? { workflowNodeId: options.workflowNodeId } : {}),
+            });
+            // node-sibling's execution comes online after activation.
+            mutableRepo.listByWorkflowRun = mock(() => [
+              {
+                id: 'exec-sibling',
+                workflowNodeId: 'node-sibling',
+                agentName: 'merger',
+                agentSessionId: 'sibling-session',
+                status: 'in_progress',
+              },
+            ]);
+            return true;
+          }
+        ),
+      };
+      db = createMockDatabase(mockTaskWithRun);
+      internalEventBus = {
+        publish: mock(async () => ({ delivered: 0, failures: [] })),
+        publishAsync: mock(() => {}),
+      } as unknown as InternalEventBus<DaemonInternalEventMap>;
+      setupSpaceTaskMessageHandlers(
+        mh.hub,
+        taskAgentManager,
+        db,
+        internalEventBus,
+        mutableRepo,
+        undefined,
+        undefined,
+        undefined
+      );
+
+      const result = (await call('space.task.sendMessage', {
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        message: 'hi sibling',
+        target: { kind: 'node_agent', agentName: 'merger', workflowNodeId: 'node-sibling' },
+      })) as Record<string, unknown>;
+
+      // Delivered to the sibling node's freshly-activated session, never the worker.
+      expect(injectSub).toHaveBeenCalledWith('sibling-session', 'hi sibling', false, undefined);
+      expect(injectSub).not.toHaveBeenCalledWith('legacy-worker', 'hi sibling', false, undefined);
+      expect(ensureCalls).toContainEqual({ agentName: 'merger', workflowNodeId: 'node-sibling' });
+      expect(result).toMatchObject({ ok: true, routedTo: ['merger'] });
     });
 
     it('activateNode invoked once per unique missing workflowNodeId (deduped)', async () => {
@@ -2035,12 +2325,21 @@ describe('setupSpaceTaskMessageHandlers', () => {
       const declared = opts.declared ?? ['reviewer', 'coder'];
       const liveSession = opts.liveSession ?? null;
 
-      const ensureCalls: Array<{ taskId: string; agentName: string }> = [];
+      const ensureCalls: Array<{
+        taskId: string;
+        agentName: string;
+        workflowNodeId?: string;
+      }> = [];
       const injectCalls: Array<{ sessionId: string; message: string }> = [];
       const enqueueCalls: Array<{
         targetAgentName: string;
         message: string;
         sourceAgentName?: string | null;
+      }> = [];
+      const getSubSessionCalls: Array<{
+        taskId: string;
+        agentName: string;
+        workflowNodeId?: string;
       }> = [];
 
       const localTaskAgentManager: TaskAgentManagerInterface = {
@@ -2048,15 +2347,24 @@ describe('setupSpaceTaskMessageHandlers', () => {
         injectSubSessionMessage: mock(async (sid: string, msg: string) => {
           injectCalls.push({ sessionId: sid, message: msg });
         }),
-        getSubSessionByAgentName: mock(async (_taskId: string, agentName: string) => {
-          if (liveSession && declared.includes(agentName)) return liveSession;
-          return null;
-        }),
+        getSubSessionByAgentName: mock(
+          async (_taskId: string, agentName: string, workflowNodeId?: string) => {
+            getSubSessionCalls.push({ taskId: _taskId, agentName, workflowNodeId });
+            if (liveSession && declared.includes(agentName)) return liveSession;
+            return null;
+          }
+        ),
         getWorkflowDeclaredAgentNamesForTask: mock(() => declared),
-        ensureWorkflowNodeActivationForAgent: mock(async (taskId: string, agentName: string) => {
-          ensureCalls.push({ taskId, agentName });
-          return opts.ensureReturns ?? true;
-        }),
+        ensureWorkflowNodeActivationForAgent: mock(
+          async (taskId: string, agentName: string, options?: { workflowNodeId?: string }) => {
+            ensureCalls.push({
+              taskId,
+              agentName,
+              ...(options?.workflowNodeId ? { workflowNodeId: options.workflowNodeId } : {}),
+            });
+            return opts.ensureReturns ?? true;
+          }
+        ),
       };
 
       const localDb = createMockDatabase(
@@ -2104,6 +2412,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
         ensureCalls,
         injectCalls,
         enqueueCalls,
+        getSubSessionCalls,
         internalEventBus: localInternalEventBus,
       };
     }
@@ -2194,6 +2503,25 @@ describe('setupSpaceTaskMessageHandlers', () => {
       expect(ensureCalls).toHaveLength(0);
     });
 
+    it('throws and does not report success when activation is rejected (stale node id)', async () => {
+      // A mismatched workflowNodeId whose node does not declare the agent:
+      // ensureWorkflowNodeActivationForAgent returns false. The handler must
+      // surface a failure (not ok:true queued:true) so the client doesn't wait
+      // for a session that will never come.
+      const { handlers: h, ensureCalls } = setupActivate({ ensureReturns: false });
+      await expect(
+        (h.get('space.task.activateNodeAgent') as RequestHandler)({
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          agentName: 'reviewer',
+          message: 'wake up',
+          workflowNodeId: 'node-that-does-not-declare-reviewer',
+        })
+      ).rejects.toThrow(/activate/);
+      expect(ensureCalls).toHaveLength(1);
+      expect(ensureCalls[0].workflowNodeId).toBe('node-that-does-not-declare-reviewer');
+    });
+
     it('queues the message and triggers ensureWorkflowNodeActivationForAgent when no live session exists', async () => {
       const { handlers: h, ensureCalls, injectCalls, enqueueCalls } = setupActivate();
       const result = (await (h.get('space.task.activateNodeAgent') as RequestHandler)({
@@ -2236,6 +2564,36 @@ describe('setupSpaceTaskMessageHandlers', () => {
       expect(result.queuedMessageId).toBeUndefined();
       expect(enqueueCalls).toHaveLength(0);
       expect(ensureCalls).toHaveLength(1);
+    });
+
+    it('forwards workflowNodeId to the live-session lookup and the activation kick', async () => {
+      // Same-slot disambiguation: the clicked node ID must reach both
+      // getSubSessionByAgentName (so a same-name session on another node does
+      // not short-circuit) and ensureWorkflowNodeActivationForAgent (so the
+      // backend activates the exact clicked node).
+      const { handlers: h, ensureCalls, getSubSessionCalls } = setupActivate();
+      await (h.get('space.task.activateNodeAgent') as RequestHandler)({
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        agentName: 'reviewer',
+        workflowNodeId: 'node-2',
+      });
+
+      expect(getSubSessionCalls[0].workflowNodeId).toBe('node-2');
+      expect(ensureCalls).toHaveLength(1);
+      expect(ensureCalls[0].workflowNodeId).toBe('node-2');
+    });
+
+    it('omits workflowNodeId from the activation options when the caller does not supply it', async () => {
+      // Backward compatibility: callers without node context (e.g. legacy
+      // dropdown) must not regress — no workflowNodeId is forwarded.
+      const { handlers: h, ensureCalls } = setupActivate();
+      await (h.get('space.task.activateNodeAgent') as RequestHandler)({
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        agentName: 'reviewer',
+      });
+      expect(ensureCalls[0].workflowNodeId).toBeUndefined();
     });
 
     it('cross-space access throws Task not found', async () => {

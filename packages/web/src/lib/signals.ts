@@ -84,7 +84,24 @@ export const searchHighlightMessageIdSignal = signal<SearchHighlightTarget | nul
 export interface SpaceOverlayTaskContext {
   taskId: string;
   agentName: string;
+  /**
+   * When true, the overlay is a READ-ONLY historical view (e.g. a completed
+   * task's worker): no send override, no composer/drop affordances. Set
+   * explicitly by the terminal-worker paths so contextless session overlays
+   * (Task Agent / Space Agent opened from a feed) stay writable.
+   */
+  readonly?: boolean;
   nodeExecutionId?: string | null;
+  /**
+   * Persisted workflow node ID the pending overlay was opened from. Carried
+   * into lazy activation so the backend targets this exact node when multiple
+   * nodes reuse the same agent slot name. Only set on the pending path.
+   */
+  workflowNodeId?: string | null;
+  /** The displayed session ID — pins overlay sends to the conversation the user
+   * sees, preventing a rebind/worker-replacement mid-overlay from diverting the
+   * message to a different session via nodeExecutionId lookup. */
+  sessionId?: string | null;
 }
 
 export const spaceOverlayTaskContextSignal = signal<SpaceOverlayTaskContext | null>(null);
