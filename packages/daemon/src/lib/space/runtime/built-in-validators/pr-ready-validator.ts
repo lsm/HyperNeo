@@ -90,6 +90,23 @@ export function createPrReadyValidator(
       context.taskStatus === 'approved' &&
       POST_APPROVAL_MERGE_REASONS.has(readSendReason(context) ?? '')
     ) {
+      const data = (context.rawParams ?? context.params)?.data;
+      const suppliedPrUrl =
+        data && typeof data === 'object' && 'pr_url' in data
+          ? (data as { pr_url?: unknown }).pr_url
+          : undefined;
+      const frozenPrUrl =
+        typeof context.hookLocalState.pr_url === 'string'
+          ? context.hookLocalState.pr_url
+          : typeof context.hookLocalState.prUrl === 'string'
+            ? context.hookLocalState.prUrl
+            : undefined;
+      if (typeof suppliedPrUrl === 'string' && frozenPrUrl && suppliedPrUrl !== frozenPrUrl) {
+        return {
+          type: 'block',
+          reason: `Post-approval handoff PR ${suppliedPrUrl} does not match the reviewed PR ${frozenPrUrl}`,
+        };
+      }
       return { type: 'allow' };
     }
     const deadlineMs = Date.now() + DEFAULT_TIMEOUT_MS;
