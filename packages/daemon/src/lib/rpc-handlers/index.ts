@@ -639,6 +639,22 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     db: deps.db.getDatabase(),
     artifactRepo,
     gateDataRepo,
+    // Restrict the PR-identity resolver's hook-state fallback to hook ids that
+    // are actually configured with the pr_ready built-in validator for the run's
+    // workflow — closes the colliding-hook-id spoof on runs without a reserved
+    // pr_ready-identity snapshot.
+    resolvePrReadyHookIds: (runId: string) => {
+      const run = spaceWorkflowRunRepo.getRun(runId);
+      if (!run?.workflowId) return undefined;
+      const wf = spaceWorkflowManager.getWorkflow(run.workflowId);
+      const hooks = wf?.hooks;
+      if (!hooks?.length) return undefined;
+      const ids = new Set<string>();
+      for (const h of hooks) {
+        if (h.validator?.kind === 'built_in' && h.validator.id === 'pr_ready') ids.add(h.id);
+      }
+      return ids;
+    },
   });
   const evolutionEpisodeService = new EvolutionEpisodeService({
     evolutionRepo: deps.db.evolution,

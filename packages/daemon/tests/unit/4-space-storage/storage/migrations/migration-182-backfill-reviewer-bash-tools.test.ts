@@ -228,6 +228,61 @@ describe('migration 182 — reviewer bash tool backfill', () => {
     expect((row as unknown as AgentRow).template_hash).toBe('some-hash');
   });
 
+  test('does NOT grant Bash to an untracked Reviewer-named agent with custom prose', () => {
+    // A user-created agent (template_name NULL) that merely shares the name
+    // 'Reviewer' and the old tool set, but has a custom prompt/description,
+    // must NOT be granted Bash+Cron or stamped template_name='Reviewer' — that
+    // would silently expand an untracked agent's privileges over attacker-
+    // controlled PR content. Only a full pristine-seed match is backfilled.
+    const spaceId = 'space-m179-untracked';
+    insertSpace(db, spaceId);
+    insertAgent(db, {
+      id: 'agent-reviewer-untracked-custom',
+      spaceId,
+      name: 'Reviewer',
+      handle: 'my-reviewer',
+      tools: OLD_REVIEWER_TOOLS,
+      customPrompt: 'A user-authored reviewer prompt, not the seed',
+      description: 'Custom description',
+      templateName: null,
+      templateHash: null,
+    });
+
+    runMigration182(db);
+
+    const row = getAgentRow('agent-reviewer-untracked-custom');
+    // Tools unchanged (NO Bash grant), prose preserved, still untracked.
+    expect(parseTools(row as unknown as AgentRow)).toEqual(OLD_REVIEWER_TOOLS);
+    expect((row as unknown as AgentRow).template_name).toBeNull();
+    expect((row as unknown as AgentRow).custom_prompt).toBe(
+      'A user-authored reviewer prompt, not the seed'
+    );
+  });
+
+  test('backfills an untracked Reviewer-named agent ONLY when it is a full pristine seed', () => {
+    // Same shape but with the EXACT pristine seed prompt+description → it IS a
+    // genuine legacy preset row, so it is backfilled (granted Bash).
+    const spaceId = 'space-m179-untracked-pristine';
+    insertSpace(db, spaceId);
+    insertAgent(db, {
+      id: 'agent-reviewer-untracked-pristine',
+      spaceId,
+      name: 'Reviewer',
+      handle: 'reviewer',
+      tools: OLD_REVIEWER_TOOLS,
+      customPrompt: OLD_REVIEWER_PROMPT,
+      description: OLD_REVIEWER_DESCRIPTION,
+      templateName: null,
+      templateHash: null,
+    });
+
+    runMigration182(db);
+
+    const row = getAgentRow('agent-reviewer-untracked-pristine');
+    expect(parseTools(row as unknown as AgentRow)).toEqual(REVIEWER_PRESET.tools);
+    expect((row as unknown as AgentRow).template_name).toBe('Reviewer');
+  });
+
   test('backfills old tools while preserving customized Reviewer prose', () => {
     // The reviewer kept the old shell-less tool list but customized prompt and
     // description. The migration must make the tool surface usable without

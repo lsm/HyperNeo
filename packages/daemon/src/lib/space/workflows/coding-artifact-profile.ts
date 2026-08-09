@@ -50,6 +50,16 @@ export interface CodingArtifactProfileConfig {
   artifactRepo?: WorkflowRunArtifactRepository;
   /** Optional shared gate-data repo; created from `db` when omitted. */
   gateDataRepo?: GateDataRepository;
+  /**
+   * Resolves the hook ids configured with the actual `pr_ready` built-in
+   * validator for a run's workflow. When provided, the PR-identity resolver's
+   * hook-state fallback trusts ONLY those validator-verified hook ids (not a
+   * `pr-ready` substring), so a custom hook with a colliding id and a different
+   * validator cannot spoof the run PR identity on runs without a reserved
+   * snapshot. Returns undefined when the workflow can't be resolved (the
+   * resolver then falls back to the substring for legacy compatibility).
+   */
+  resolvePrReadyHookIds?: (runId: string) => Set<string> | undefined;
 }
 
 /**
@@ -69,11 +79,13 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
   private readonly db: ArtifactDb;
   private readonly artifactRepo?: WorkflowRunArtifactRepository;
   private readonly sharedGateDataRepo?: GateDataRepository;
+  private readonly resolvePrReadyHookIds?: (runId: string) => Set<string> | undefined;
 
   constructor(config: CodingArtifactProfileConfig) {
     this.db = config.db;
     this.artifactRepo = config.artifactRepo;
     this.sharedGateDataRepo = config.gateDataRepo;
+    this.resolvePrReadyHookIds = config.resolvePrReadyHookIds;
   }
 
   resolvePrimaryLinkUrl(runId: string): string {
@@ -190,11 +202,18 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
 
     try {
       const hookStateRepo = new WorkflowHookStateRepository(this.db);
+      // When the caller can resolve which hook ids are actually configured with
+      // the pr_ready validator, trust ONLY those — a custom hook with a
+      // `pr-ready` id and a different validator must not be able to spoof the
+      // run PR identity on runs without a reserved snapshot. Fall back to the
+      // substring only when the workflow can't be resolved (legacy compat).
+      const verifiedHookIds = this.resolvePrReadyHookIds?.(runId);
+      const useExact = verifiedHookIds !== undefined;
       for (const snapshot of hookStateRepo.listByRun(runId)) {
-        // Only PR-ready handoffs establish the run's PR identity. Later
-        // review/QA hooks also carry pr_url but validate different evidence and
-        // must not be able to replace the coder/research PR.
-        if (!snapshot.hookId.includes('pr-ready')) continue;
+        const trusted = useExact
+          ? verifiedHookIds.has(snapshot.hookId)
+          : snapshot.hookId.includes('pr-ready');
+        if (!trusted) continue;
         approved = newer(approved, legacyPrUrl(snapshot.localState), snapshot.updatedAt ?? 0);
       }
     } catch (err) {

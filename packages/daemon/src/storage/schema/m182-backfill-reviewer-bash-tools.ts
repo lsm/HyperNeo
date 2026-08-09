@@ -173,6 +173,15 @@ export function runMigration182(db: BunDatabase): void {
       row.description === OLD_REVIEWER_DESCRIPTION_PRE_2365;
     const pristineText = pristineShelllessText || pristinePre2365Text;
 
+    // Untracked rows (template_name IS NULL) are user-created agents that happen
+    // to share the Reviewer name + the old tool set. Only backfill them when
+    // their FULL identity matches a known pristine seed — otherwise granting
+    // Bash+Cron (and stamping template_name='Reviewer') would silently expand
+    // an untracked, possibly-custom agent's privileges over attacker-controlled
+    // PR content. Tracked Reviewer presets (template_name='Reviewer') get the
+    // current tool surface regardless (they are owned by the preset).
+    if (row.template_name === null && !pristineText) continue;
+
     // Exact legacy tools prove this row needs a usable current tool surface.
     // Preserve customized prose; only pristine seed text is upgraded wholesale.
     // A preserved customization intentionally keeps a stale template hash so the

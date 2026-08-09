@@ -318,6 +318,9 @@ export function buildTemplateNodes(
         agents: agentSlots,
         customPrompt: step.systemPrompt?.trim() ? { value: step.systemPrompt.trim() } : undefined,
         postApproval: step.postApproval ? { ...step.postApproval } : undefined,
+        // Seed the sticky step-level field so the post-approval toggle cannot
+        // drop the hidden merge gate on a template-picker draft.
+        requirePrMerge: step.postApproval?.requirePrMerge === true ? true : undefined,
         requireCodexApproval: step.requireCodexApproval,
         codexPollIntervalMs: step.codexPollIntervalMs,
         codexTimeoutSeconds: step.codexTimeoutSeconds,
@@ -363,6 +366,9 @@ export function buildTemplateNodes(
       thinkingLevel: undefined,
       customPrompt: undefined,
       postApproval: step.postApproval ? { ...step.postApproval } : undefined,
+      // Seed the sticky step-level field so the post-approval toggle cannot
+      // drop the hidden merge gate on a template-picker draft.
+      requirePrMerge: step.postApproval?.requirePrMerge === true ? true : undefined,
       requireCodexApproval: step.requireCodexApproval,
       codexPollIntervalMs: step.codexPollIntervalMs,
       codexTimeoutSeconds: step.codexTimeoutSeconds,
