@@ -920,23 +920,23 @@ export class WorkflowHookEngine {
    * handoff has frozen an identity yet.
    */
   private resolveFrozenPrUrl(): string | undefined {
-    const hooks = this.config.workflow?.hooks ?? [];
-    let best: { url: string; updatedAt: number } | undefined;
-    for (const h of hooks) {
-      if (h.validator.kind !== 'built_in' || h.validator.id !== 'pr_ready') continue;
-      try {
-        const st = this.config.hookStateRepo.get(this.config.workflowRunId, h.id);
-        if (!st) continue;
-        const url =
-          typeof st.localState?.pr_url === 'string' ? (st.localState.pr_url as string) : '';
-        if (!url) continue;
-        const updatedAt = st.updatedAt ?? 0;
-        if (!best || updatedAt > best.updatedAt) best = { url, updatedAt };
-      } catch {
-        // best effort — an unreadable hook state must not break the action
-      }
+    // The reserved pr_ready-identity key is the authoritative frozen PR URL —
+    // engine-only (stamped on pr_ready allow; cross-hook writes to it are
+    // blocked), so a script hook cannot pollute it by writing to the ordinary
+    // pr_ready hook id. Reading it here (rather than the ordinary hook state)
+    // means the frozen identity bound to mark_complete / blocker handoffs is
+    // no longer spoofable via cross-hook state writes.
+    try {
+      const st = this.config.hookStateRepo.get(
+        this.config.workflowRunId,
+        PR_READY_VALIDATED_IDENTITY_HOOK_ID
+      );
+      const url =
+        st && typeof st.localState?.pr_url === 'string' ? (st.localState.pr_url as string) : '';
+      return url || undefined;
+    } catch {
+      return undefined;
     }
-    return best?.url;
   }
 
   private async buildExecutorContext(

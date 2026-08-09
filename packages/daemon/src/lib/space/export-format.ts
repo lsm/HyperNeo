@@ -205,6 +205,7 @@ const exportedWorkflowNodeSchema = z.object({
     .object({
       targetAgent: z.string().min(1),
       instructions: z.string(),
+      requirePrMerge: z.boolean().optional(),
     })
     .optional(),
   requireCodexApproval: z.boolean().optional(),

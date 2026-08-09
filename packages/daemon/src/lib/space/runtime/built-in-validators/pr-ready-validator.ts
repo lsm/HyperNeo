@@ -92,12 +92,19 @@ export function createPrReadyValidator(
         data && typeof data === 'object' && 'pr_url' in data
           ? (data as { pr_url?: unknown }).pr_url
           : undefined;
+      // The frozen reviewed PR is the engine-stamped reserved identity
+      // (context.frozenPrUrl) — NOT this hook's own localState, which a cross-
+      // hook stateForHook write could pollute. Fall back to the hook's own
+      // state only when the engine did not provide the reserved value (older
+      // runs / tests without the engine resolver).
       const frozenPrUrl =
-        typeof context.hookLocalState.pr_url === 'string'
-          ? context.hookLocalState.pr_url
-          : typeof context.hookLocalState.prUrl === 'string'
-            ? context.hookLocalState.prUrl
-            : undefined;
+        typeof context.frozenPrUrl === 'string'
+          ? context.frozenPrUrl
+          : typeof context.hookLocalState.pr_url === 'string'
+            ? context.hookLocalState.pr_url
+            : typeof context.hookLocalState.prUrl === 'string'
+              ? context.hookLocalState.prUrl
+              : undefined;
       const isMergeReason = POST_APPROVAL_MERGE_REASONS.has(readSendReason(context) ?? '');
       // Blocker / fix-push handoffs MUST carry data.pr_url bound to the frozen
       // reviewed PR. Treating omission as safe lets an approved coder send

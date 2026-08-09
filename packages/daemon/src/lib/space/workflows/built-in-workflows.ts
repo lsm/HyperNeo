@@ -1611,20 +1611,30 @@ export function mergeNodeStructuralFieldsFromTemplate(
           legacyPromptValue !== undefined && legacyPromptValue !== existingCustomPrompt?.value
             ? { value: legacyPromptValue }
             : existingCustomPrompt;
-        const toolGuards =
-          templateAgent.toolGuards === undefined &&
-          agent.toolGuards?.length === 1 &&
-          JSON.stringify(agent.toolGuards[0]) === JSON.stringify(RETIRED_CODER_NO_MERGE_GUARD)
-            ? undefined
-            : templateAgent.toolGuards;
+        // Strip the retired coder no-merge guard when the stable coder template
+        // carries no guards; PRESERVE any sibling custom guards. The prior
+        // exact-singleton test left the retired guard in place when a user guard
+        // was also present (length !== 1), denying the coder's own
+        // `gh pr merge` and stalling post-approval work.
+        let resolvedToolGuards: DeclarativeToolGuard[] | undefined;
+        if (templateAgent.toolGuards !== undefined) {
+          resolvedToolGuards = templateAgent.toolGuards;
+        } else if (agent.toolGuards?.length) {
+          const kept = agent.toolGuards.filter(
+            (g) => JSON.stringify(g) !== JSON.stringify(RETIRED_CODER_NO_MERGE_GUARD)
+          );
+          resolvedToolGuards = kept.length > 0 ? kept : undefined;
+        } else {
+          resolvedToolGuards = undefined;
+        }
+        const toolGuardsUnchanged =
+          (resolvedToolGuards === undefined && agent.toolGuards === undefined) ||
+          (resolvedToolGuards !== undefined &&
+            agent.toolGuards !== undefined &&
+            JSON.stringify(resolvedToolGuards) === JSON.stringify(agent.toolGuards));
         return {
           ...agent,
-          ...(toolGuards === undefined
-            ? agent.toolGuards === undefined ||
-              JSON.stringify(agent.toolGuards) !== JSON.stringify([RETIRED_CODER_NO_MERGE_GUARD])
-              ? {}
-              : { toolGuards: undefined }
-            : { toolGuards }),
+          ...(toolGuardsUnchanged ? {} : { toolGuards: resolvedToolGuards }),
           ...(templateAgent.resetContextPerTurn === undefined
             ? {}
             : { resetContextPerTurn: templateAgent.resetContextPerTurn }),
