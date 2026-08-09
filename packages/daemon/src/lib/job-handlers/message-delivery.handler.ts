@@ -125,8 +125,12 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
 
     // Only deliver messages still pending. `consumed`/`deferred`/`failed` are
     // NOT re-fed (see the module doc + §8). `deferred`/`failed` skip outright;
-    // a `consumed` turn is re-driven without the feed (below).
-    if (sendStatus === 'deferred' || sendStatus === 'failed') {
+    // a `consumed` turn is re-driven without the feed (below). `submitted`
+    // (ACP) means the prompt already reached the subprocess; a reclaimed attempt
+    // must NOT re-feed it (the subprocess may already be executing it). Skip —
+    // the live runner's finally (markACPDeliveryFailed) or cold recovery settles
+    // it. See Codex (#3744971821).
+    if (sendStatus === 'deferred' || sendStatus === 'failed' || sendStatus === 'submitted') {
       await session.settleSkippedDelivery?.(payload.messageUuid);
       return { outcome: 'skipped', sendStatus };
     }
@@ -212,12 +216,12 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       // UNIQUE on the UPDATE; fall back to requeuing as a steer PARKED with the
       // delay (not runAt=now) so it doesn't hot-loop — it re-evaluates later.
       try {
-        deps.jobQueue.requeueAs(job.id, 'turn', Date.now());
+        deps.jobQueue.requeueAs(job.id, 'turn', Date.now(), job.claimToken);
         return { outcome: 'superseded', promoted: 'turn' };
       } catch (err) {
         if (isUniqueConstraintError(err)) {
           const retryAt = Date.now() + MESSAGE_DELIVERY_PARK_MS;
-          deps.jobQueue.requeueAs(job.id, 'steer', retryAt);
+          deps.jobQueue.requeueAs(job.id, 'steer', retryAt, job.claimToken);
           return { outcome: 'superseded', promoted: 'steer' };
         }
         throw err;

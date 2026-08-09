@@ -1845,10 +1845,9 @@ export class AgentSession
       if (!this.messageDeliveryValid(messageUuid, alreadyConsumed)) {
         return { kind: 'aborted' as const };
       }
-      // Re-fence the lease inside the locked section: the handler's pre-lock
-      // isClaimCurrent check can pass, then a reclaim can win the row during the
-      // lock wait (a long steer/startup). The admission below must not feed a
-      // stale attempt. See Codex (#3744886834).
+      // Re-fence the lease before the (async) provider startup so a reclaim
+      // during the lock wait can't waste a subprocess start. See Codex
+      // (#3744886834).
       if (claimGuard && !claimGuard()) {
         return { kind: 'aborted' as const };
       }
@@ -1868,9 +1867,14 @@ export class AgentSession
       // kickoff does not TTL-out into a duplicate re-feed (#3742616720).
       let acknowledgment: Promise<void> | null = null;
       if (!alreadyConsumed) {
-        // Revalidate and synchronously admit under the SAME lock used by
-        // remove/defer. Admission is the linearization point; the long provider
-        // acknowledgment is awaited only after releasing this lock.
+        // Re-fence the lease AGAIN right before admission: ensureQueryStarted
+        // awaits provider startup, so the event loop can suspend past the stale
+        // threshold and a resumed processor can reclaim the row with a new token.
+        // Without this recheck both attempts would admit the same kickoff. See
+        // Codex (#3744971818).
+        if (claimGuard && !claimGuard()) {
+          return { kind: 'aborted' as const };
+        }
         acknowledgment = this.messageQueue.admitWithId(messageUuid, content, false, {
           durable: true,
         });
@@ -1910,14 +1914,16 @@ export class AgentSession
     claimGuard?: () => boolean
   ): Promise<FeedSteerOutcome> {
     const action = await withSessionLock(this.session.id, async () => {
+      // Re-fence the lease at the TOP of the locked section, before branching on
+      // status. The handler's pre-lock check can pass, then a reclaim can win the
+      // row during the lock wait. A stale attempt must not feed, park, OR promote
+      // (promote calls requeueAs, which is token-fenced, but aborting here avoids
+      // the superseded/requeue churn). See Codex (#3744886834, #3744971820).
+      if (claimGuard && !claimGuard()) return { kind: 'aborted' as const };
       const status = this.stateManager.getState().status;
       // 'processing' → validate + synchronously admit while remove/defer are
       // excluded by this same lock. 'queued' → parked owner, so park this steer.
       if (status === 'processing') {
-        // Re-fence the lease inside the lock: the handler's pre-lock check can
-        // pass, then a reclaim can win the row during the lock wait. Admission
-        // must not feed a stale attempt. See Codex (#3744886834).
-        if (claimGuard && !claimGuard()) return { kind: 'aborted' as const };
         if (!this.messageDeliveryValid(messageUuid)) return { kind: 'aborted' as const };
         return {
           kind: 'feed' as const,

@@ -185,7 +185,7 @@ export class JobQueueRepository {
    * violation the caller can catch (fall back to requeuing as a steer). See
    * message-delivery-v2.md §8 (promote).
    */
-  requeueAs(jobId: string, role: string, runAt: number): Job | null {
+  requeueAs(jobId: string, role: string, runAt: number, claimToken?: string | null): Job | null {
     const res = this.db
       .prepare(
         `UPDATE job_queue
@@ -193,9 +193,10 @@ export class JobQueueRepository {
                payload = json_set(payload, '$.role', ?),
                run_at = ?,
                started_at = NULL
-         WHERE id = ? AND status = 'processing'`
+         WHERE id = ? AND status = 'processing'
+           AND (? IS NULL OR json_extract(payload, '$.__claimToken') = ?)`
       )
-      .run(role, runAt, jobId);
+      .run(role, runAt, jobId, claimToken ?? null, claimToken ?? null);
     if (res.changes === 0) return null;
     return this.getJob(jobId);
   }

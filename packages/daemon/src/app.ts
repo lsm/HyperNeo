@@ -1336,6 +1336,16 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         } catch {
           /* best-effort on shutdown */
         }
+        // Drain the MAIN processor BEFORE session cleanup. stopPolling stops new
+        // claims but an already-claimed handler (e.g. a long-horizon reminder
+        // suspended in pre-session async work) can resume after cleanup and
+        // hydrate a session that will never be cleaned this shutdown. Draining
+        // here quiesces those handlers first; any session they hydrate is then
+        // caught by the cleanup below. Main handlers don't block on a session
+        // queryPromise, so this drain can't wedge on the very cleanup it
+        // precedes. See Codex (#3744886835, #3744971819).
+        await jobProcessor.stop();
+        logInfo('[Daemon] Job queue processor stopped');
         // Stop active sessions before draining delivery handlers: a turn handler
         // awaits its session queryPromise, so requeueing the DB row alone cannot
         // make stop() finish. Cleanup aborts those queries and lets the handlers
@@ -1344,8 +1354,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         await sessionManager.cleanup();
         logInfo('[Daemon] Active agent sessions stopped');
 
-        await jobProcessor.stop();
-        logInfo('[Daemon] Job queue processor stopped');
         await messageDeliveryProcessor.stop();
         logInfo('[Daemon] Message-delivery job processor stopped');
 
