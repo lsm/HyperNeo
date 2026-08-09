@@ -45,18 +45,22 @@ const REVIEW_APPROVAL_SCRIPT = [
 ].join('\n');
 
 /**
- * Detects a legacy COMBINED codex-bearing approval hook script — the pre-#2409
- * `buildApprovalsScript` / `buildReviewApprovalScript` baked the full codex +1
- * wait (gh-api reaction lookup + a 2h timeout-allow) INLINE in the approval
- * hook's bash. The current approval-only scripts (`APPROVALS_SCRIPT` /
- * `REVIEW_APPROVAL_SCRIPT`) never emit `codex_wait_started_at` (the codex wait-
- * state field), so its presence uniquely identifies the combined legacy form.
- * Used by the gateless re-emit pass to upgrade such a hook to approval-only
- * instead of stacking a second codex enforcement path on the same route.
+ * Fingerprint of a legacy COMBINED codex-bearing approval hook script — the
+ * pre-#2409 `buildApprovalsScript` / `buildReviewApprovalScript` baked the full
+ * codex +1 wait (gh-api reaction lookup + a 2h timeout-allow) INLINE in the
+ * approval hook's bash. The `((NOW_EPOCH - START_EPOCH)) -lt N` timeout
+ * comparison is emitted ONLY by those builders — neither the approval-only
+ * scripts (`APPROVALS_SCRIPT` / `REVIEW_APPROVAL_SCRIPT`) nor the feedback
+ * reset script produce it — so it is a stable, distinctive generated-script
+ * fingerprint rather than a single ambiguous substring. A user-authored
+ * `plan-approval:` / `review-approval:` hook that merely mentions
+ * `codex_wait_started_at` is therefore not mistaken for the combined legacy
+ * form. Used by the gateless re-emit pass to upgrade such a hook to
+ * approval-only instead of stacking a second codex enforcement path.
  */
-const LEGACY_COMBINED_CODEX_MARKER = 'codex_wait_started_at';
+const LEGACY_COMBINED_CODEX_TIMEOUT_RE = /\(\(NOW_EPOCH - START_EPOCH\)\) -lt \d+/;
 function isLegacyCombinedCodexScript(source: string): boolean {
-  return source.includes(LEGACY_COMBINED_CODEX_MARKER);
+  return LEGACY_COMBINED_CODEX_TIMEOUT_RE.test(source);
 }
 
 type Pattern = {
@@ -772,48 +776,59 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
     for (const targetRef of targetNames) {
       const targetNode =
         targetRef === '*' ? undefined : resolveChannelNodeName(targetRef, workflow.nodes);
-      // Only re-emit on routes that have an approval hook (the migration's
-      // signal that this WAS an approval channel). Non-approval routes
-      // (feedback, post-approval) are skipped — requireCodexApproval never
-      // applied to them.
-      const approvalHook = Array.from(hooksById.values()).find(
+      // Collect the route's script approval hooks (the migration's signal that
+      // this WAS an approval channel). Non-approval routes (feedback,
+      // post-approval) are skipped — requireCodexApproval never applied to them.
+      const routeScriptHooks = Array.from(hooksById.values()).filter(
         (hook) =>
           hook.sourceNode === fromNode &&
           hook.targetNode === targetNode &&
           hook.method === 'send_message' &&
           hook.validator.kind === 'script'
       );
-      if (!approvalHook) continue;
-      // Upgrade a legacy COMBINED codex-bearing approval script (pre-#2409
-      // buildApprovalsScript / buildReviewApprovalScript baked the full 2h codex
-      // +1 wait inline) to the approval-only form BEFORE emitting the codex
-      // hook below. Without this, the re-emit pass stacks a SECOND codex path on
-      // a route whose existing approval hook ALREADY enforces codex — on codex
-      // non-response the legacy inline 2h timeout and the new declarative hook's
-      // 2h timeout both elapse (~4h) before the route self-corrects. The id is
-      // anchored to `plan-approval:` / `review-approval:` so the feedback reset
-      // hook (whose substituted source also contains the marker, as a state-
-      // reset key) is never mistaken for an approval hook, and the marker
-      // confirms the combined (not approval-only) form so a custom same-prefixed
-      // hook is never clobbered.
-      if (
-        approvalHook.validator.kind === 'script' &&
-        (approvalHook.id.startsWith('plan-approval:') ||
-          approvalHook.id.startsWith('review-approval:')) &&
-        isLegacyCombinedCodexScript(approvalHook.validator.source)
-      ) {
-        const upgradedSource = approvalHook.id.startsWith('review-approval:')
-          ? REVIEW_APPROVAL_SCRIPT
-          : APPROVALS_SCRIPT;
-        hooksById.set(approvalHook.id, {
-          ...approvalHook,
-          validator: {
-            kind: 'script',
-            interpreter: 'bash',
-            source: upgradedSource,
-            timeoutMs: 30_000,
-          },
-        });
+      if (routeScriptHooks.length === 0) continue;
+      // Upgrade EVERY legacy combined codex-bearing approval script on the route
+      // (pre-#2409 buildApprovalsScript / buildReviewApprovalScript baked the
+      // full 2h codex +1 wait inline) to the approval-only form BEFORE emitting
+      // the codex hook below. Without this, the re-emit pass stacks a SECOND
+      // codex path on a route whose existing approval hook ALREADY enforces
+      // codex — on codex non-response the legacy inline 2h timeout and the new
+      // declarative hook's 2h timeout both elapse (~4h) before the route
+      // self-corrects. Every script hook on the route is examined (not just the
+      // first) so a legacy combined hook is upgraded regardless of where it sits
+      // in the hooks array.
+      //
+      // Scoped to non-template workflows. Built-in templates never carry a
+      // combined script (they migrate straight to the approval-only form), and a
+      // pre-#2409 saved template's revision-feedback reset hook still clears
+      // codex state under the legacy `plan-approval:` id — upgrading would move
+      // that state to the newly emitted `codex-approval:` hook, which the
+      // persisted reset does not target, leaving a stale wait across review
+      // cycles. Non-template workflows have no reset hook (reset generation is
+      // template-only), so the upgrade is safe only there. (The reset gap itself
+      // is pre-existing in the re-emit pass, which is out of this task's scope.)
+      if (!workflow.templateName) {
+        for (const scriptHook of routeScriptHooks) {
+          if (
+            scriptHook.validator.kind === 'script' &&
+            (scriptHook.id.startsWith('plan-approval:') ||
+              scriptHook.id.startsWith('review-approval:')) &&
+            isLegacyCombinedCodexScript(scriptHook.validator.source)
+          ) {
+            const upgradedSource = scriptHook.id.startsWith('review-approval:')
+              ? REVIEW_APPROVAL_SCRIPT
+              : APPROVALS_SCRIPT;
+            hooksById.set(scriptHook.id, {
+              ...scriptHook,
+              validator: {
+                kind: 'script',
+                interpreter: 'bash',
+                source: upgradedSource,
+                timeoutMs: 30_000,
+              },
+            });
+          }
+        }
       }
       const hasRouteHook = Array.from(hooksById.values()).some(
         (hook) =>

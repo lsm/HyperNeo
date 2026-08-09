@@ -1107,6 +1107,124 @@ const FIXTURES: ReplayFixture[] = [
       expect(allCodex).toHaveLength(1);
     },
   },
+  {
+    name: 'legacy combined codex script is upgraded even when a non-legacy script hook precedes it',
+    build: () => ({
+      nodes: [
+        {
+          id: 'legacy-plan-review',
+          name: 'Plan Review',
+          agents: [{ name: 'planreviewer' }],
+          requireCodexApproval: true,
+        },
+        { id: 'legacy-task-dispatcher', name: 'Task Dispatcher', agents: [{ name: 'dispatcher' }] },
+      ],
+      channels: [
+        { from: 'Plan Review', to: 'Task Dispatcher', label: 'Plan Review → Task Dispatcher' },
+      ],
+      // Two script hooks on the SAME route, with a non-legacy audit hook FIRST.
+      // A first-found lookup would select the audit hook and miss the legacy
+      // combined hook later in the array — every script hook on the route must
+      // be examined.
+      hooks: [
+        makeUserScriptHook({
+          id: 'plan-review-audit-trail',
+          sourceNode: 'Plan Review',
+          targetNode: 'Task Dispatcher',
+          validator: {
+            kind: 'script',
+            interpreter: 'bash',
+            source: 'jq -n \'{"type":"allow"}\'',
+          },
+          authorizedCallers: [{ sourceNode: 'Plan Review' }],
+        }),
+        makeUserScriptHook({
+          id: 'plan-approval:legacy-combined',
+          sourceNode: 'Plan Review',
+          targetNode: 'Task Dispatcher',
+          validator: {
+            kind: 'script',
+            interpreter: 'bash',
+            source: LEGACY_PLAN_APPROVAL_SCRIPT,
+            timeoutMs: 30_000,
+            externalLookups: ['github'],
+          },
+          authorizedCallers: [{ sourceNode: 'Plan Review' }],
+        }),
+      ],
+    }),
+    verify: ({ workflow }) => {
+      // The non-legacy audit hook is preserved verbatim.
+      const audit = workflow.hooks?.find((candidate) => candidate.id === 'plan-review-audit-trail');
+      expect(audit).toBeDefined();
+      expect(scriptSource(audit)).toBe('jq -n \'{"type":"allow"}\'');
+      // The legacy combined hook (SECOND in the array) is still found and
+      // upgraded to approval-only — order must not mask it.
+      const hook = workflow.hooks?.find(
+        (candidate) => candidate.id === 'plan-approval:legacy-combined'
+      );
+      expect(hook).toBeDefined();
+      expect(scriptSource(hook)).toEqual(scriptSource(generatedPlanApprovalHook()));
+      expect(scriptSource(hook)).not.toContain('codex_wait_started_at');
+      const allCodex =
+        workflow.hooks?.filter(
+          (candidate) =>
+            candidate.validator.kind === 'built_in' &&
+            candidate.validator.id === 'codex_review_approved'
+        ) ?? [];
+      expect(allCodex).toHaveLength(1);
+    },
+  },
+  {
+    name: 'legacy combined codex script on a template workflow is left untouched (out of scope)',
+    build: () => ({
+      nodes: [
+        {
+          id: 'tpl-plan-review',
+          name: 'Plan Review',
+          agents: [{ name: 'planreviewer' }],
+          requireCodexApproval: true,
+        },
+        { id: 'tpl-task-dispatcher', name: 'Task Dispatcher', agents: [{ name: 'dispatcher' }] },
+      ],
+      // A template-named workflow whose approval channel is already gateless and
+      // carries a persisted legacy combined hook (e.g. a Plan & Decompose space
+      // saved by the pre-#2409 migration).
+      channels: [
+        { from: 'Plan Review', to: 'Task Dispatcher', label: 'Plan Review → Task Dispatcher' },
+      ],
+      hooks: [
+        makeUserScriptHook({
+          id: 'plan-approval:legacy-combined',
+          sourceNode: 'Plan Review',
+          targetNode: 'Task Dispatcher',
+          validator: {
+            kind: 'script',
+            interpreter: 'bash',
+            source: LEGACY_PLAN_APPROVAL_SCRIPT,
+            timeoutMs: 30_000,
+            externalLookups: ['github'],
+          },
+          authorizedCallers: [{ sourceNode: 'Plan Review' }],
+        }),
+      ],
+      templateName: 'Plan & Decompose',
+      templateGates: [],
+    }),
+    verify: ({ workflow }) => {
+      const hook = workflow.hooks?.find(
+        (candidate) => candidate.id === 'plan-approval:legacy-combined'
+      );
+      expect(hook).toBeDefined();
+      // The upgrade is scoped to non-template workflows: a template's persisted
+      // combined script is preserved byte-for-byte. Its revision-feedback reset
+      // hook still clears codex state under this id; upgrading would move that
+      // state to a newly emitted codex-approval hook the reset does not target.
+      // Built-in templates are out of this task's scope (#883 targets non-
+      // template transition workflows).
+      expect(scriptSource(hook)).toBe(LEGACY_PLAN_APPROVAL_SCRIPT);
+    },
+  },
 ];
 
 describe('workflow hook migration replay suite', () => {
