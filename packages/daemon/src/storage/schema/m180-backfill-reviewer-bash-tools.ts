@@ -1,13 +1,13 @@
 /**
- * Migration 179 — Backfill Bash + Cron tools onto existing Reviewer preset rows.
+ * Migration 180 — Backfill Bash + Cron tools onto existing Reviewer preset rows.
  *
  * Context: the Reviewer preset gained `Bash` + `CronCreate`/`CronDelete`/`CronList`
  * (and the PR-process MCPs — `get_pr_diff`, `post_review` — were removed, so the
  * reviewer now inspects and posts via `gh` directly). `seedPresetAgents()` runs
  * only at Space creation, so existing Spaces keep the shell-less Reviewer tool
  * profile unless their row is updated. A shell-less reviewer in a stable
- * coder-owned workflow cannot run `gh pr review` / `gh pr view`, so the
- * workflow stalls.
+ * coder-owned workflow cannot run the `gh` inspection / review-posting commands
+ * the current contract requires, so the workflow stalls.
  *
  * What this migration does:
  *   For every Space, for every `space_agents` row that is preset-tracked as the

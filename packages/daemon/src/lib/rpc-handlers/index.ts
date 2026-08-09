@@ -591,7 +591,17 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   void restampBuiltInWorkflowsOnStartup(
     spaceWorkflowManager,
     deps.spaceManager,
-    deps.spaceAgentManager
+    deps.spaceAgentManager,
+    // Defer re-stamping any row that an in-flight (non-terminal) workflow run
+    // still references, so the run reloads against an unchanged topology. The
+    // run repo lives in this wiring scope; the seeder only needs a predicate.
+    (workflowId) =>
+      spaceWorkflowRunRepo
+        .listByWorkflow(workflowId)
+        .some(
+          (run) =>
+            run.status === 'in_progress' || run.status === 'blocked' || run.status === 'pending'
+        )
   )
     .then(() => {
       // Proactive drift detection — fire-and-forget; logs warnings for any

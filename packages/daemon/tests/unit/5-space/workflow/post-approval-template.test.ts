@@ -28,19 +28,38 @@ describe('interpolatePostApprovalTemplate — happy path', () => {
     };
     const result = interpolatePostApprovalTemplate(template, context);
     expect(result.missingKeys).toEqual([]);
-    // `workspace_path` renders as a shell-quoted literal (`/tmp/ws` has no
-    // special chars, so quoting leaves it unchanged).
+    // `workspace_path` renders VERBATIM (backward compatible).
     expect(result.text).toBe(
-      "Task t-42 (Ship PR) in space s-7 at '/tmp/ws'\n" +
-        'Reviewer: reviewer via human (autonomy 3).'
+      'Task t-42 (Ship PR) in space s-7 at /tmp/ws\n' + 'Reviewer: reviewer via human (autonomy 3).'
     );
   });
 
-  test('workspace_path with a single quote renders as a valid shell literal', () => {
-    const result = interpolatePostApprovalTemplate('SPACE_WS={{workspace_path}}', {
+  test('workspace_path stays verbatim even with a single quote (backward compat)', () => {
+    // User-defined instruction templates may use {{workspace_path}} as plain
+    // text or inside their own `SPACE_WS='…'` quoting — the interpolator must
+    // NOT inject its own quotes into the shared token.
+    const result = interpolatePostApprovalTemplate(
+      "plain: {{workspace_path}} and '{{workspace_path}}'",
+      {
+        workspace_path: "/tmp/O'Brien/repo",
+      }
+    );
+    expect(result.missingKeys).toEqual([]);
+    expect(result.text).toBe("plain: /tmp/O'Brien/repo and '/tmp/O'Brien/repo'");
+  });
+
+  test('workspace_path_sh renders the shell-quoted literal of workspace_path', () => {
+    const result = interpolatePostApprovalTemplate('SPACE_WS={{workspace_path_sh}}', {
       workspace_path: "/tmp/O'Brien/repo",
     });
+    expect(result.missingKeys).toEqual([]);
     expect(result.text).toBe("SPACE_WS='/tmp/O'\\''Brien/repo'");
+  });
+
+  test('workspace_path_sh is reported missing when workspace_path is absent', () => {
+    const result = interpolatePostApprovalTemplate('SPACE_WS={{workspace_path_sh}}', {});
+    expect(result.text).toBe('SPACE_WS={{workspace_path_sh}}');
+    expect(result.missingKeys).toEqual(['workspace_path_sh']);
   });
 
   test('arbitrary context keys (e.g. end-node payload) are usable', () => {

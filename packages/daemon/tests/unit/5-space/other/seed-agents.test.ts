@@ -73,7 +73,7 @@ describe('seedPresetAgents', () => {
 
     expect(reviewer).toBeDefined();
     // The Reviewer keeps Bash (for GitHub read-only inspection and posting
-    // reviews via `gh pr review`) and Cron tools for scheduled follow-ups, but
+    // reviews via the gh CLI) and Cron tools for scheduled follow-ups, but
     // it is restrained: no Write/Edit so it cannot modify code under review.
     expect(reviewer?.tools).toContain('Bash');
     expect(reviewer?.tools).toContain('Read');
@@ -85,7 +85,7 @@ describe('seedPresetAgents', () => {
     // The reviewer's restraint is taught by its custom prompt (Reviewer System
     // Contract): it must not run the code under review and must not merge.
     expect(reviewer?.customPrompt).toContain('Reviewer System Contract');
-    expect(reviewer?.customPrompt).toContain('gh pr review');
+    expect(reviewer?.customPrompt).toContain('addPullRequestReview');
   });
 
   it('Reviewer is the designated inspection-and-review agent (Bash present, no Write/Edit)', async () => {
@@ -319,15 +319,17 @@ describe('seedPresetAgents', () => {
     expect(reviewer?.customPrompt?.toLowerCase()).toContain('over-engineering');
   });
 
-  it('Reviewer custom prompt posts reviews via gh pr review and emits REVIEW_POSTED', async () => {
+  it('Reviewer custom prompt posts reviews via the addPullRequestReview mutation and emits REVIEW_POSTED', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const reviewer = seeded.find((a) => a.name === 'Reviewer');
 
     expect(reviewer?.customPrompt).toContain('GitHub review procedure');
     expect(reviewer?.customPrompt).toContain('html_url returned by GitHub');
     // The reviewer uses Bash to post a visible review via the gh CLI — there is
-    // no post_review MCP tool anymore.
-    expect(reviewer?.customPrompt).toContain('gh pr review');
+    // no post_review MCP tool anymore. The mutation returns the review URL, so
+    // the contract never queries the PR-wide latest review (a race).
+    expect(reviewer?.customPrompt).toContain('addPullRequestReview');
+    expect(reviewer?.customPrompt).not.toContain('REVIEW_BODY_TERMINATOR');
     expect(reviewer?.customPrompt).toContain('REVIEW_POSTED');
     expect(reviewer?.customPrompt).not.toContain('post_review');
   });
@@ -406,7 +408,7 @@ describe('preset agent exact definitions', () => {
     'ToolSearch',
   ];
   // Reviewer has the read-only toolset PLUS Bash (for read-only GitHub
-  // inspection and posting reviews via `gh pr review`), PLUS Task/* for
+  // inspection and posting reviews via the gh CLI), PLUS Task/* for
   // `general-purpose` sub-agent delegation, PLUS Cron* for scheduled follow-ups.
   // It still has NO Write/Edit — the reviewer cannot modify the code under review.
   const EXPECTED_REVIEWER_TOOLS = [
@@ -526,15 +528,18 @@ describe('preset agent exact definitions', () => {
     expect(reviewer.customPrompt).toBe(reviewerTemplate.customPrompt);
   });
 
-  it('Reviewer custom prompt posts reviews via gh pr review and emits REVIEW_POSTED', async () => {
+  it('Reviewer custom prompt posts reviews via the addPullRequestReview mutation and emits REVIEW_POSTED', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const reviewer = seeded.find((a) => a.name === 'Reviewer')!;
     expect(reviewer.customPrompt).toContain('GitHub review procedure');
     expect(reviewer.customPrompt).toContain('html_url returned by GitHub');
     expect(reviewer.customPrompt).toContain('REVIEW_POSTED');
-    // The posting mechanism is `gh pr review` via Bash. The own-PR fallback
-    // (APPROVE/REQUEST_CHANGES → COMMENT) is described in the contract.
-    expect(reviewer.customPrompt).toContain('gh pr review');
+    // The posting mechanism is the `addPullRequestReview` mutation via Bash,
+    // which returns the exact review URL (no latest-review query race). The
+    // own-PR fallback (APPROVE/REQUEST_CHANGES → COMMENT) is described in the
+    // contract.
+    expect(reviewer.customPrompt).toContain('addPullRequestReview');
+    expect(reviewer.customPrompt).toContain('pullRequestReview.url');
     expect(reviewer.customPrompt).toContain('own-PR fallback');
     expect(reviewer.customPrompt).toContain('COMMENT');
     expect(reviewer.customPrompt).toContain('match your verdict');
@@ -542,16 +547,17 @@ describe('preset agent exact definitions', () => {
     expect(reviewer.customPrompt).not.toContain('post_review');
   });
 
-  // The Reviewer posts reviews via the gh CLI with a plain markdown body passed
-  // straight to the GitHub API — there is no shell layer, so the old shell
-  // `gh api … -f body="$(heredoc)"` procedure (and its `-f body=@-` trap) is
-  // gone. Reviews are posted with `gh pr review`, never the removed post_review
-  // MCP tool and never the merge.
-  it('Reviewer custom prompt teaches no heredoc posting pattern and posts via gh pr review', async () => {
+  // The Reviewer writes review prose to a temp file with a QUOTED heredoc that
+  // uses a per-invocation delimiter (never a fixed public terminator), then
+  // posts via the `addPullRequestReview` GraphQL mutation with the body loaded
+  // through jq --rawfile. The old `-f body="$(heredoc)"` shell trap and the
+  // `post_review` MCP tool are gone.
+  it('Reviewer custom prompt writes body files with a per-invocation heredoc and posts via the mutation', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const reviewer = seeded.find((a) => a.name === 'Reviewer')!;
     const prompt = reviewer.customPrompt!;
-    expect(prompt).toContain('gh pr review');
+    expect(prompt).toContain('addPullRequestReview');
+    expect(prompt).toContain('per-invocation');
     // The old shell-based posting primitives must be gone.
     expect(prompt).not.toContain('-f body=@-');
     expect(prompt).not.toContain("-f body=\"$(cat <<'EOF'");
@@ -611,7 +617,7 @@ describe('PRESET_AGENT_TOOLS export', () => {
     'Skill',
     'ToolSearch',
   ];
-  // Reviewer carries Bash (for read-only GitHub inspection and `gh pr review`
+  // Reviewer carries Bash (for read-only GitHub inspection and gh-CLI review
   // posting) + Task/* for built-in `general-purpose` sub-agent delegation +
   // Cron* for scheduled follow-ups. It has NO Write/Edit — it cannot modify the
   // code under review.

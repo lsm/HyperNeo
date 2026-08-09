@@ -10,10 +10,11 @@
  *   - `{{pr_url}}`             — signalled by the end node via
  *                              `send_message(task-agent, …, data:{ pr_url })`.
  *   - `{{approval_source}}`    — `'human' | 'agent'` (from `SpaceApprovalSource`).
- *   - `{{workspace_path}}`     — absolute path of the Space checkout (for step 6),
- *                              rendered as a single-quote-escaped shell literal
- *                              so the `SPACE_WS=` assignment survives paths with
- *                              single quotes.
+ *   - `{{workspace_path_sh}}`  — the single-quote-escaped shell literal of the
+ *                              Space checkout's absolute path (for step 6), so
+ *                              the `SPACE_WS=` assignment survives paths with
+ *                              single quotes. (`{{workspace_path}}` stays
+ *                              verbatim for user-defined templates.)
  *   - `{{approval_authority}}` — NAME of the node that approved this task (the
  *                              re-approval authority the implementer reports
  *                              blockers to and waits on): "Review" for
@@ -117,7 +118,7 @@ export const CODER_OWNED_MERGE_INSTRUCTIONS: string = [
   '        git fetch origin "$BASE"',
   '   b. ALSO fast-forward the separate Space checkout that future task worktrees branch from. Its absolute path is supplied below as the configured workspace:',
   '        BASE=$(gh pr view {{pr_url}} --json baseRefName --jq .baseRefName)',
-  '        SPACE_WS={{workspace_path}}',
+  '        SPACE_WS={{workspace_path_sh}}',
   '      Guard before pulling (each guard records a NON-result cleanup_warning artifact and skips):',
   '        if [ "$(git -C "$SPACE_WS" rev-parse --abbrev-ref HEAD)" != "$BASE" ]; then',
   '          # Checkout is on a DIFFERENT branch — pulling origin/$BASE here would move or merge it',

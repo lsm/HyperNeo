@@ -234,7 +234,7 @@ describe('Implementer merge template (verify current-head approval, then gh pr m
   test('runtime tokens are present', () => {
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('{{pr_url}}');
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('{{approval_source}}');
-    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('{{workspace_path}}');
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('{{workspace_path_sh}}');
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('{{approval_authority}}');
   });
 
@@ -265,10 +265,10 @@ describe('Implementer merge template (verify current-head approval, then gh pr m
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('shape: "link", kind: "merge"');
   });
 
-  test('preserved: root-repo sync uses {{workspace_path}}, branch-agnostic $BASE', () => {
-    // `{{workspace_path}}` renders as a single-quote-escaped shell literal, so
-    // the template line must NOT wrap it in its own quotes.
-    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('SPACE_WS={{workspace_path}}');
+  test('preserved: root-repo sync uses {{workspace_path_sh}}, branch-agnostic $BASE', () => {
+    // `{{workspace_path_sh}}` renders as a single-quote-escaped shell literal
+    // (the derived token), so the template line must NOT wrap it in quotes.
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('SPACE_WS={{workspace_path_sh}}');
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toMatch(/git -C "\$SPACE_WS" pull --ff-only/);
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('--jq .baseRefName');
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('$BASE');
@@ -306,9 +306,9 @@ describe('Review-Only end-node prompt loses verification boilerplate', () => {
     expect(prompt).not.toContain('before accepting completion');
   });
 
-  test('REVIEW_ONLY_WORKFLOW prompt still requires gh pr review before approve_task', () => {
+  test('REVIEW_ONLY_WORKFLOW prompt still requires a visible review before approve_task', () => {
     const prompt = endNodePrompt(REVIEW_ONLY_WORKFLOW);
-    expect(prompt).toContain('gh pr review');
+    expect(prompt).toContain('post a visible GitHub review');
     expect(prompt).toContain('save_artifact');
     expect(prompt).toContain('approve_task()');
   });

@@ -469,7 +469,7 @@ const CODER_OWNED_MERGE_PROMPT =
 // field, so it is kept here as behavioral guidance (which threads to raise).
 const CODER_OWNED_REVIEW_PROMPT =
   'You are the Reviewer. Inspect the pull request and relevant code and post a visible GitHub review ' +
-  'via `gh pr review`. If changes are needed, send the implementer actionable feedback via the gated ' +
+  'per the Reviewer system contract (which specifies the posting procedure). If changes are needed, send the implementer actionable feedback via the gated ' +
   'feedback handoff in Your Role in This Workflow — the runtime supplies the target and the payload ' +
   'fields, so follow that contract exactly and do not restate or assume them here; include the specific ' +
   'thread URLs you are raising. Then ' +
@@ -489,7 +489,8 @@ const CODER_OWNED_REVIEW_PROMPT =
 const CODER_OWNED_QA_REVIEW_PROMPT =
   'You are the Reviewer in a workflow where a separate QA step owns final approval. Review is an ' +
   'intermediate step, not the end node, so you do NOT call approve_task or submit_for_approval. ' +
-  'Inspect the pull request and relevant code and post a visible GitHub review via `gh pr review`. If ' +
+  'Inspect the pull request and relevant code and post a visible GitHub review per the Reviewer ' +
+  'system contract (which specifies the posting procedure). If ' +
   'changes are needed, send the implementer actionable feedback via the feedback handoff described in ' +
   'Your Role in This Workflow — the runtime supplies the target and the required payload fields, so follow ' +
   'that contract exactly and do not restate or assume them here. Then stop. When the current head is ' +
@@ -571,7 +572,7 @@ const LEGACY_CODING_SLOT_PROMPTS: Record<string, string[]> = {
       '- All feedback MUST be posted to the PR on GitHub — not just summarized in your ' +
       'response. Use the Reviewer System Contract GitHub review procedure.\n' +
       '- The Review → Coding handoff runs a hook that checks GitHub for a fresh review ' +
-      'before releasing your message. If you skip `gh pr review`, the hook will block ' +
+      'before releasing your message. If you skip posting a visible review, the hook will block ' +
       'and the coder will never hear from you.\n\n' +
       reviewerFeedbackProcedure('Coding') +
       'Use save_artifact every cycle to record the PR as a `link` so post-approval dispatch ' +
@@ -756,7 +757,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
       label: 'Review Posted',
       description:
         'Reviewer has posted a GitHub review or PR comment since the workflow started. ' +
-        'Accepts a formal review (via `gh pr review`) as primary evidence; falls back to ' +
+        'Accepts a formal GitHub review as primary evidence; falls back to ' +
         'PR conversation comments for same-account setups where GitHub blocks self-reviews. ' +
         'Blocks the Review → Coding feedback channel until review evidence is visible on the PR.',
       fields: [
@@ -870,7 +871,7 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
               'Post-approval merge support: after you approve, the Research agent may report a ' +
               'post-approval merge blocker (a "merge_blocked" / "merge_fix_pushed" message with a ' +
               'blockers list). When it does: re-check the PR and re-approve the CURRENT head on ' +
-              'GitHub (post a fresh APPROVED review via `gh pr review` — or, for an own-PR where ' +
+              'GitHub (post a fresh APPROVED review per the Reviewer system contract — or, for an own-PR where ' +
               'GitHub rejects self-approval, a COMMENTED review carrying the "Recommendation: ' +
               'APPROVE" marker), then signal the Research agent to continue via the runtime-supplied ' +
               'handoff in Your Role in This Workflow. You are the re-approval authority for changed ' +
@@ -947,7 +948,7 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
             value:
               'You are the sole Reviewer in a single-node Review-Only workflow. Review an existing ' +
               'PR or codebase directly. Follow the Reviewer System Contract and terminal-action tool ' +
-              'contract: post a visible GitHub review (`gh pr review`) before terminal actions; ' +
+              'contract: post a visible GitHub review (per the Reviewer System Contract procedure) before terminal actions; ' +
               'call save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } }) to record the PR, then approve_task() or submit_for_approval only on APPROVE, otherwise stop. ' +
               'Do NOT attempt to merge the PR yourself. Never set a PR to auto-merge.',
           },
@@ -2640,6 +2641,15 @@ const RESTAMP_FIELDS = [
  * Individual workflow creation / re-stamp errors are captured per-workflow
  * and do not abort the remaining operations.
  *
+ * `hasActiveRuns` (optional): a predicate returning whether a non-terminal
+ * workflow run currently references the given workflow row. When it returns
+ * true for a row, the re-stamp is DEFERRED for that row — the topology is left
+ * byte-for-byte untouched so an in-flight run (reloaded by `run.workflowId`
+ * on restart) does not resume against a graph whose retired nodes/tools were
+ * just stripped. The stale hash re-triggers the re-stamp on a later pass once
+ * the run is terminal. Omit it (or always return false) when no runs can
+ * exist (e.g. seeding a fresh space).
+ *
  * NOTE: This function must be called after preset SpaceWorkerAgent records have been
  * seeded (inside the `space.create` RPC handler).
  *
@@ -2654,7 +2664,8 @@ const RESTAMP_FIELDS = [
 export function seedBuiltInWorkflows(
   spaceId: string,
   workflowManager: SpaceWorkflowManager,
-  resolveAgentId: (name: string) => string | undefined
+  resolveAgentId: (name: string) => string | undefined,
+  hasActiveRuns?: (workflowId: string) => boolean
 ): SeedBuiltInWorkflowsResult {
   const templates = getBuiltInWorkflows();
   const templatesByName = new Map(templates.map((t) => [t.name, t]));
@@ -2747,6 +2758,22 @@ export function seedBuiltInWorkflows(
       if (!template) continue;
       const expectedHash = computeWorkflowHash(template);
       if (row.templateHash === expectedHash) continue;
+
+      // Defer the whole re-stamp while an active (non-terminal) workflow run
+      // references this row: runtime recovery reloads the workflow by
+      // run.workflowId, so mutating the topology under an in-flight run (e.g.
+      // stripping the retired Post-Approval merger node) would leave it resuming
+      // against a graph that no longer contains its active worker and it could
+      // not finish. Leave the row byte-for-byte untouched; once the run
+      // reaches a terminal state, the stale hash re-triggers this re-stamp and
+      // the merge + strip run then.
+      if (hasActiveRuns?.(row.id)) {
+        builtInSeederLog.info(
+          `deferred re-stamp of built-in workflow '${template.name}' (id=${row.id}) ` +
+            `in space ${spaceId}: an active workflow run still references it`
+        );
+        continue;
+      }
 
       try {
         // Targeted merge of structural template fields that must stay in sync while

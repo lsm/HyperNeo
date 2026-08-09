@@ -104,7 +104,7 @@ describe('PRESET_AGENT_TOOLS', () => {
     expect(tools).not.toContain('Edit');
   });
 
-  it('reviewer has Bash + Cron tools for inspection, but NO Write/Edit (posts via gh pr review)', () => {
+  it('reviewer has Bash + Cron tools for inspection, but NO Write/Edit (posts via the gh CLI)', () => {
     const tools = PRESET_AGENT_TOOLS.reviewer;
     expect(tools).toContain('Read');
     expect(tools).toContain('Grep');
@@ -114,7 +114,7 @@ describe('PRESET_AGENT_TOOLS', () => {
     expect(tools).toContain('CronDelete');
     expect(tools).toContain('CronList');
     // The Reviewer keeps Bash for read-only GitHub inspection and posting
-    // reviews via `gh pr review`, so it is restrained — not shell-less.
+    // reviews via the gh CLI, so it is restrained — not shell-less.
     expect(tools).not.toContain('Write');
     expect(tools).not.toContain('Edit');
   });
@@ -267,7 +267,7 @@ describe('createCustomAgentInit — sub-session features', () => {
     expect(init.allowedTools).toEqual(['Task', 'TaskOutput', 'TaskStop']);
     expect(init.agent).toBeUndefined();
     expect(init.agents).toBeUndefined();
-    // The Reviewer keeps Bash for read-only GitHub inspection and `gh pr review`
+    // The Reviewer keeps Bash for read-only GitHub inspection and gh-CLI review
     // posting — Bash is NOT denied. Only the mutation tools are denied, so it
     // cannot modify the code under review.
     expect(init.disallowedTools).toEqual(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);

@@ -20,12 +20,9 @@
  *     that builds the context map.
  *   - Values are rendered verbatim via `String(value)` — no HTML-, shell-, or
  *     JSON-escaping. Templates are delivered to LLMs as plain text; escaping
- *     would corrupt URLs, titles, and free-text reviewer summaries.
- *   - ONE exception: `workspace_path` is rendered as a single-quote-escaped
- *     shell literal (see {@link shellQuoteSingleQuoted}) because its only
- *     consumer is the bash assignment `SPACE_WS=…` in the merge template. The
- *     path's user-controlled content may contain a single quote, which would
- *     otherwise break the generated shell command.
+ *     would corrupt URLs, titles, and free-text reviewer summaries. The single
+ *     exception is the DERIVED token `{{workspace_path_sh}}` (see below), which
+ *     opts into shell-quoting for the merge template's `SPACE_WS=` assignment.
  *
  * Recognised context keys (per §1.6 of the plan — callers may supply any
  * subset, and they may include arbitrary extra keys forwarded from an
@@ -37,9 +34,16 @@
  *   reviewer_name      — slot name of the approving reviewer agent
  *   approval_source    — 'human' | 'auto_policy' | 'agent'
  *   space_id           — owning Space's UUID
- *   workspace_path     — absolute workspace path for the space (rendered as a
- *                        single-quote-escaped shell literal — the merge
- *                        template assigns it to `SPACE_WS` in bash)
+ *   workspace_path     — absolute workspace path for the space. Rendered
+ *                        VERBATIM (backward compatible: user-defined
+ *                        instruction templates may use it as plain text or
+ *                        inside their own `SPACE_WS='…'` quoting).
+ *   workspace_path_sh  — DERIVED token (never supplied by the runtime): the
+ *                        single-quote-escaped shell literal of the same
+ *                        `workspace_path` value. The built-in merge template
+ *                        uses `SPACE_WS={{workspace_path_sh}}` so a path
+ *                        containing a single quote cannot break the generated
+ *                        assignment.
  *
  * Every other key in `context` is made available under its own name so
  * workflow authors can thread arbitrary payload fields (e.g. `{{pr_url}}`,
@@ -100,8 +104,8 @@ const TOKEN_PATTERN = /\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g;
  * The value is wrapped in single quotes and every embedded `'` is escaped as
  * `'\''`, so the result round-trips through `sh -c` (or a bash assignment) to
  * the original string regardless of its contents. Only used for the
- * `workspace_path` token, whose only consumer is the `SPACE_WS=` bash
- * assignment in the merge instructions.
+ * derived `workspace_path_sh` token, whose only consumer is the `SPACE_WS=`
+ * bash assignment in the merge instructions.
  */
 export function shellQuoteSingleQuoted(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
@@ -133,6 +137,20 @@ export function interpolatePostApprovalTemplate(
   // left-to-right in a single pass and never re-scans the replacement text.
   const text = template.replace(TOKEN_PATTERN, (match, rawKey: string) => {
     const key = rawKey;
+    // `workspace_path_sh` is a DERIVED token: it renders the shell-quoted
+    // literal of the `workspace_path` context value. It is never supplied by
+    // the runtime directly — the built-in merge template assigns it to
+    // `SPACE_WS=`, which needs the POSIX single-quote escaping that plain
+    // `{{workspace_path}}` (verbatim, backward compatible) does not provide.
+    if (key === 'workspace_path_sh') {
+      const raw = (context as Record<string, unknown>)['workspace_path'];
+      if (raw === undefined || raw === null) {
+        missingSeen.add(key);
+        missingKeys.push(key);
+        return match;
+      }
+      return shellQuoteSingleQuoted(String(raw));
+    }
     if (Object.prototype.hasOwnProperty.call(context, key)) {
       const value = (context as Record<string, unknown>)[key];
       if (value === undefined || value === null) {
@@ -141,12 +159,6 @@ export function interpolatePostApprovalTemplate(
           missingKeys.push(key);
         }
         return match;
-      }
-      // `workspace_path` is the one token destined for a shell assignment —
-      // render it as a shell-quoted literal so user-controlled single quotes in
-      // the path cannot break the generated `SPACE_WS=…` command.
-      if (key === 'workspace_path') {
-        return shellQuoteSingleQuoted(String(value));
       }
       return String(value);
     }

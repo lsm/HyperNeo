@@ -1,9 +1,9 @@
 /**
- * Migration 179 Tests — Backfill Bash + Cron tools onto existing Reviewer preset rows.
+ * Migration 180 Tests — Backfill Bash + Cron tools onto existing Reviewer preset rows.
  *
  * The Reviewer preset gained `Bash` + `CronCreate`/`CronDelete`/`CronList` when the
  * PR-process MCPs were removed. `seedPresetAgents()` runs only at Space creation, so
- * existing Spaces keep the shell-less Reviewer tool profile. M179 re-stamps ONLY
+ * existing Spaces keep the shell-less Reviewer tool profile. M180 re-stamps ONLY
  * unmodified seed rows (stored tools === the old shell-less profile); customized rows
  * are left to the drift/sync UI.
  *
@@ -132,7 +132,7 @@ beforeEach(() => {
   db.prepare(`DELETE FROM spaces`).run();
 });
 
-describe('migration 179 — reviewer bash tool backfill', () => {
+describe('migration 180 — reviewer bash tool backfill', () => {
   test('re-stamps an unmodified Reviewer seed row with Bash + Cron AND the current prompt', () => {
     const spaceId = 'space-m179-a';
     insertSpace(db, spaceId);

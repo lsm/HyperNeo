@@ -399,10 +399,10 @@ describe('stable CODING_WORKFLOW template structure', () => {
     expect(prompt).not.toContain('subscribe_pr_events');
   });
 
-  test('reviewer prompt instructs a visible GitHub review via gh pr review', () => {
+  test('reviewer prompt instructs a visible GitHub review per the system contract', () => {
     const prompt = CODING_WORKFLOW.nodes[1].agents[0]?.customPrompt?.value;
     expect(prompt).toContain('post a visible GitHub review');
-    expect(prompt).toContain('`gh pr review`');
+    expect(prompt).toContain('Reviewer system contract');
     // Review is the end node here — it calls approve_task.
     expect(prompt).toContain('approve_task');
   });
@@ -2067,7 +2067,7 @@ describe('seedBuiltInWorkflows()', () => {
     // Reviewer posts a visible GitHub review, approves, and re-checks a post-approval
     // merge blocker — the coder owns the merge (no "merger" agent to signal).
     expect(reviewPrompt).toContain('post a visible GitHub review');
-    expect(reviewPrompt).toContain('`gh pr review`');
+    expect(reviewPrompt).toContain('Reviewer system contract');
     expect(reviewPrompt).toContain('approve_task');
     expect(reviewPrompt).toContain('post-approval merge blocker');
     expect(reviewPrompt).toMatch(/re-check the current head/i);
@@ -3500,6 +3500,77 @@ describe('seedBuiltInWorkflows()', () => {
     expect(second.errors).toEqual([]);
   });
 
+  test('defers the retired-node strip while an active workflow run references the row', () => {
+    // An in-flight legacy run is reloaded by run.workflowId on restart, so its
+    // row must NOT be structurally mutated (Post-Approval node stripped, hash
+    // advanced) while the run is still non-terminal — otherwise the run resumes
+    // against a graph that no longer contains its merger worker.
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const seededCoding = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === STABLE_CODING_WORKFLOW.name)!;
+    const codingId = seededCoding.id;
+    revertToLegacyIdentity(codingId, 'Coding Workflow', 'coding-workflow');
+    repo.updateWorkflow(codingId, {
+      nodes: [
+        ...seededCoding.nodes.map((n) =>
+          n.name === 'Coding' ? { ...n, postApproval: undefined } : n
+        ),
+        {
+          id: 'retired-pa-active',
+          name: 'Post-Approval',
+          agents: [
+            {
+              agentId: MERGER_ID,
+              name: 'merger',
+              customPrompt: { value: RETIRED_PR_MERGER_SLOT_PROMPT },
+            },
+          ],
+          postApproval: { targetAgent: 'merger', instructions: 'merge' },
+        },
+      ],
+      channels: [
+        ...(seededCoding.channels ?? []),
+        { id: 'pa-c-active', from: 'Post-Approval', to: 'Coding' },
+        { id: 'c-pa-active', from: 'Coding', to: 'Post-Approval' },
+      ],
+    });
+    const staleHash = 'stale-pre-upgrade-hash-active';
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      staleHash,
+      codingId
+    );
+
+    // Active run on THIS row → re-stamp (and with it the strip) is deferred.
+    const deferred = seedBuiltInWorkflows(
+      SPACE_ID,
+      manager,
+      resolveAgentId,
+      (workflowId) => workflowId === codingId
+    );
+    const stillLegacy = manager.listWorkflows(SPACE_ID).find((w) => w.id === codingId)!;
+    // Metadata rename still lands (identity pass, topology/tools untouched)…
+    expect(stillLegacy.name).toBe('Coding');
+    expect(stillLegacy.templateName).toBe('Coding');
+    // …but the Post-Approval merger node + channels SURVIVE — the strip did not run.
+    expect(stillLegacy.nodes.some((n) => n.name === 'Post-Approval')).toBe(true);
+    expect(stillLegacy.nodes.flatMap((n) => n.agents).some((a) => a.name === 'merger')).toBe(true);
+    // The row is NOT counted as re-stamped and its hash stays stale.
+    expect(deferred.restamped).not.toContain('Coding');
+    expect(stillLegacy.templateHash).toBe(staleHash);
+
+    // Once the run is terminal (predicate false), the next pass converges fully.
+    const converged = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const migrated = manager.listWorkflows(SPACE_ID).find((w) => w.id === codingId)!;
+    expect(migrated.nodes.some((n) => n.name === 'Post-Approval')).toBe(false);
+    expect(migrated.nodes.map((n) => n.name)).toEqual(['Coding', 'Review']);
+    expect(migrated.templateHash).toBe(
+      computeWorkflowHash(getBuiltInWorkflows().find((w) => w.name === 'Coding')!)
+    );
+    expect(converged.restamped).toContain('Coding');
+    expect(converged.errors).toEqual([]);
+  });
+
   test('preserves a user-customized Post-Approval node instead of stripping it', () => {
     // A user kept the node/slot names but customized the merger prompt (and no
     // longer carries the pristine PR-Merger marker or the merger route). The
@@ -4710,9 +4781,9 @@ describe('CODING_WORKFLOW agent slot customPrompt', () => {
     const reviewNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
     const reviewer = reviewNode.agents[0];
     const prompt = reviewer.customPrompt!.value;
-    // Reviewer must post a visible GitHub review via gh pr review.
+    // Reviewer must post a visible GitHub review per the system contract.
     expect(prompt).toContain('post a visible GitHub review');
-    expect(prompt).toContain('`gh pr review`');
+    expect(prompt).toContain('Reviewer system contract');
     // The changes-requested feedback handoff defers the payload contract to the
     // runtime (behavioral-only; no field names restated), but still raises the
     // specific thread URLs the reviewer is commenting on.
@@ -4726,8 +4797,8 @@ describe('CODING_WORKFLOW agent slot customPrompt', () => {
   });
 });
 
-describe('REVIEW_ONLY_WORKFLOW reviewer customPrompt requires gh pr review before save_artifact', () => {
-  test('reviewer prompt mandates gh pr review before handoff', () => {
+describe('REVIEW_ONLY_WORKFLOW reviewer customPrompt requires a visible review before save_artifact', () => {
+  test('reviewer prompt mandates a visible review before handoff', () => {
     const agent = REVIEW_ONLY_WORKFLOW.nodes[0].agents[0];
     const prompt = agent.customPrompt!.value;
     expect(prompt).toContain('visible GitHub review');
@@ -6542,7 +6613,7 @@ test('CODING_WITH_QA_WORKFLOW Review node is intermediate and defers final appro
   expect(prompt).toMatch(/determines? final approval|a separate QA step owns final approval/i);
   expect(prompt).toMatch(/do not call approve_task/i);
   expect(prompt).toContain('post a visible GitHub review');
-  expect(prompt).toContain('`gh pr review`');
+  expect(prompt).toContain('Reviewer system contract');
   // The QA target + gate field are injected centrally; the slot must not restate them.
   expect(prompt).not.toContain('send_message(target="QA"');
   expect(prompt).not.toContain('approved: true');

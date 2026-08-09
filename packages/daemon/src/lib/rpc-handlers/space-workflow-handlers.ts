@@ -327,13 +327,19 @@ export async function checkBuiltInWorkflowDriftOnStartup(
  * user to click "Sync" in the Workflow List UI, because that path regenerates
  * node UUIDs and would invalidate any live workflow-run references.
  *
+ * `hasActiveRuns` is forwarded to `seedBuiltInWorkflows`: while a non-terminal
+ * workflow run references a row, that row's re-stamp is deferred so an
+ * in-flight run (reloaded by `run.workflowId` on restart) does not resume
+ * against a topology whose retired nodes/tools were just stripped.
+ *
  * Non-blocking: any per-space failure is logged and the loop continues so
  * one broken space cannot block the daemon from starting.
  */
 export async function restampBuiltInWorkflowsOnStartup(
   workflowManager: SpaceWorkflowManager,
   spaceManager: SpaceManager,
-  spaceAgentManager: SpaceAgentManager
+  spaceAgentManager: SpaceAgentManager,
+  hasActiveRuns?: (workflowId: string) => boolean
 ): Promise<void> {
   try {
     const spaces = await spaceManager.listSpaces();
@@ -346,7 +352,8 @@ export async function restampBuiltInWorkflowsOnStartup(
         const result = seedBuiltInWorkflows(
           space.id,
           workflowManager,
-          (name) => agents.find((a) => a.name.toLowerCase() === name.toLowerCase())?.id
+          (name) => agents.find((a) => a.name.toLowerCase() === name.toLowerCase())?.id,
+          hasActiveRuns
         );
         if (result.restamped.length > 0) {
           totalRestamped += result.restamped.length;

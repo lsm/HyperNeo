@@ -72,8 +72,9 @@ const RESEARCH_TOOLS = PERMISSIVE_TOOLS;
  *
  * The Reviewer uses Bash for GitHub inspection (`gh pr view`, `gh pr diff`,
  * `gh pr checks`, `gh api graphql` reviewThreads) and for posting reviews via
- * `gh pr review` — there are no PR-process MCP tools (get_pr_diff /
- * post_review were removed; the reviewer uses the CLI directly). The runtime
+ * the gh CLI (`addPullRequestReview` GraphQL mutation) — there are no PR-process
+ * MCP tools (get_pr_diff / post_review were removed; the reviewer uses the CLI
+ * directly). The runtime
  * denies Write/Edit/MultiEdit/NotebookEdit whenever a non-empty tool profile
  * omits them, so the Reviewer still cannot edit code. The prompt (Reviewer
  * System Contract) restrains it from running the code under review (tests,
