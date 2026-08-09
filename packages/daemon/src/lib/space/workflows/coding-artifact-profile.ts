@@ -131,6 +131,43 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
     return best?.url ?? '';
   }
 
+  resolveInitialPrimaryLinkUrl(runId: string): string {
+    // Approval handoffs persist pr_url in hook state (or legacy gate data).
+    // Choose the oldest such record and deliberately ignore mutable artifacts:
+    // agents may append newer link artifacts, but cannot change which PR the
+    // run originally submitted for review.
+    type Candidate = { url: string; updatedAt: number };
+    let first: Candidate | null = null;
+    const earlier = (prev: Candidate | null, url: string, updatedAt: number): Candidate | null => {
+      if (!url) return prev;
+      return !prev || updatedAt < prev.updatedAt ? { url, updatedAt } : prev;
+    };
+
+    try {
+      const gateDataRepo = this.sharedGateDataRepo ?? new GateDataRepository(this.db);
+      for (const record of gateDataRepo.listByRun(runId)) {
+        first = earlier(first, legacyPrUrl(record.data), record.updatedAt);
+      }
+    } catch (err) {
+      log.warn(
+        `resolveInitialPrimaryLinkUrl: failed to read gate data for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+
+    try {
+      const hookStateRepo = new WorkflowHookStateRepository(this.db);
+      for (const snapshot of hookStateRepo.listByRun(runId)) {
+        first = earlier(first, legacyPrUrl(snapshot.localState), snapshot.updatedAt ?? 0);
+      }
+    } catch (err) {
+      log.warn(
+        `resolveInitialPrimaryLinkUrl: failed to read hook state for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+
+    return first?.url ?? '';
+  }
+
   summarizeRunOutcome(runId: string): string | null {
     if (!this.artifactRepo) return null;
     try {

@@ -5309,7 +5309,9 @@ export class TaskAgentManager {
             requirePrUrl: true,
             resolvePrUrl: (task) =>
               task.workflowRunId
-                ? (this.config.artifactProfile?.resolvePrimaryLinkUrl(task.workflowRunId) ?? '')
+                ? (this.config.artifactProfile?.resolveInitialPrimaryLinkUrl?.(
+                    task.workflowRunId
+                  ) ?? '')
                 : '',
             getPrState: async (prUrl) => {
               const outcome = await createGithubConnector().ops.getPr(

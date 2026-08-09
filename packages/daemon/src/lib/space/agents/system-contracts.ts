@@ -10,7 +10,7 @@ You have Bash for read-only GitHub inspection and review posting, and for nothin
 
 ### Each review is fresh
 
-Do not rely on prior conclusions. Read the task/issue, PR description, diff, linked comments, changed files in full, and surrounding code each round.
+Do not rely on prior conclusions. Before reading the diff, capture the inspected head with \`INSPECTED_HEAD_OID=$(gh pr view "$PR_URL" --json headRefOid --jq .headRefOid)\`. Then read the task/issue, PR description, diff, linked comments, changed files in full, and surrounding code. Immediately before posting, read \`CURRENT_HEAD_OID\` the same way and compare it to \`INSPECTED_HEAD_OID\`; if they differ, do NOT post a verdict — restart the review against the new head. Use the unchanged \`INSPECTED_HEAD_OID\` as the review mutation's \`commitOID\`.
 
 ### How to execute (dispatch model)
 
@@ -97,8 +97,10 @@ The prose is your own text, so before posting verify the exact echoed delimiter 
 
 \`\`\`bash
 PR_URL=<pr_url>
+# INSPECTED_HEAD_OID was captured BEFORE reading the diff (see "Each review is fresh").
 PR_ID=$(gh pr view "$PR_URL" --json id --jq .id)
-HEAD_OID=$(gh pr view "$PR_URL" --json headRefOid --jq .headRefOid)
+CURRENT_HEAD_OID=$(gh pr view "$PR_URL" --json headRefOid --jq .headRefOid)
+test "$CURRENT_HEAD_OID" = "$INSPECTED_HEAD_OID" || { false; }
 # Parse the PR host with PURE bash parameter expansion — no python3/interpreter
 # (the Reviewer Bash allowlist denies interpreters as unconstrained code exec).
 HOST=\${PR_URL#https://}
@@ -118,7 +120,7 @@ cat > "$BODY" <<'<the EXACT echoed delimiter>'
 # advanced between your diff-read and this post, the review attaches to the old
 # (inspected) commit and the post-approval merge check correctly rejects it as
 # not covering the current head.
-jq -n --arg id "$PR_ID" --arg headOid "$HEAD_OID" --arg event "APPROVE" --rawfile body "$BODY" \
+jq -n --arg id "$PR_ID" --arg headOid "$INSPECTED_HEAD_OID" --arg event "APPROVE" --rawfile body "$BODY" \
   '{query: "mutation($id:ID!, $headOid:GitObjectID!, $event:PullRequestReviewEvent!, $body:String!, $comments:[DraftPullRequestReviewCommentInput!]){addPullRequestReview(input:{pullRequestId:$id, commitOID:$headOid, event:$event, body:$body, comments:$comments}){pullRequestReview{url}}}",
     variables: {id: $id, headOid: $headOid, event: $event, body: $body, comments: []}}' > "$REQ"
 REVIEW_URL=$(gh api graphql --hostname "$HOST" --input "$REQ" --jq '.data.addPullRequestReview.pullRequestReview.url')
