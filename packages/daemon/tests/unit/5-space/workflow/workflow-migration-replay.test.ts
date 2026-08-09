@@ -1380,6 +1380,69 @@ const FIXTURES: ReplayFixture[] = [
       expect(scriptSource(hook)).toBe(LEGACY_PLAN_APPROVAL_SCRIPT);
     },
   },
+  {
+    name: 'a disabled pre-existing codex hook is replaced so the route keeps enforcement',
+    build: () => ({
+      nodes: [
+        {
+          id: 'dc-plan-review',
+          name: 'Plan Review',
+          agents: [{ name: 'planreviewer' }],
+          requireCodexApproval: true,
+        },
+        { id: 'dc-task-dispatcher', name: 'Task Dispatcher', agents: [{ name: 'dispatcher' }] },
+      ],
+      channels: [
+        { from: 'Plan Review', to: 'Task Dispatcher', label: 'Plan Review → Task Dispatcher' },
+      ],
+      // An enabled legacy combined script beside a DISABLED codex-approval hook
+      // (e.g. a user disabled the codex hook in the editor). Upgrading the legacy
+      // script to approval-only must not leave the route without active codex
+      // enforcement — the disabled hook does not count, so an enabled replacement
+      // is emitted.
+      hooks: [
+        makeUserScriptHook({
+          id: 'plan-approval:legacy-combined',
+          sourceNode: 'Plan Review',
+          targetNode: 'Task Dispatcher',
+          validator: {
+            kind: 'script',
+            interpreter: 'bash',
+            source: LEGACY_PLAN_APPROVAL_SCRIPT,
+            timeoutMs: 30_000,
+            externalLookups: ['github'],
+          },
+          authorizedCallers: [{ sourceNode: 'Plan Review' }],
+        }),
+        {
+          id: 'codex-approval:11-dc-pr:15-dc-td',
+          enabled: false,
+          label: 'Codex Review',
+          sourceNode: 'Plan Review',
+          targetNode: 'Task Dispatcher',
+          method: 'send_message',
+          classification: 'validation',
+          order: 1,
+          validator: { kind: 'built_in', id: 'codex_review_approved' },
+          authorizedCallers: [{ sourceNode: 'Plan Review' }],
+        },
+      ],
+    }),
+    verify: ({ workflow }) => {
+      // Exactly one ENABLED codex hook remains on the route — the disabled one is
+      // replaced, so the route has active codex enforcement.
+      const enabledCodex =
+        workflow.hooks?.filter(
+          (candidate) =>
+            candidate.enabled !== false &&
+            candidate.sourceNode === 'Plan Review' &&
+            candidate.targetNode === 'Task Dispatcher' &&
+            candidate.validator.kind === 'built_in' &&
+            candidate.validator.id === 'codex_review_approved'
+        ) ?? [];
+      expect(enabledCodex).toHaveLength(1);
+    },
+  },
 ];
 
 describe('workflow hook migration replay suite', () => {

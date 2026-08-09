@@ -834,6 +834,7 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
       }
       const hasRouteHook = Array.from(hooksById.values()).some(
         (hook) =>
+          hook.enabled !== false &&
           hook.sourceNode === fromNode &&
           hook.targetNode === targetNode &&
           hook.validator.kind === 'built_in' &&
