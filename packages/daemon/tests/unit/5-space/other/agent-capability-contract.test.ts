@@ -168,11 +168,12 @@ describe('effective runtime capability vs declared profile (worker presets)', ()
     }
   });
 
-  test('Reviewer is shell-less — denies Bash + write/edit deniable tools', () => {
+  test('Reviewer keeps Bash but denies write/edit deniable tools (restrained review role)', () => {
     const effective = new Set(effectiveDeniableTools(PRESET_AGENT_TOOLS.reviewer));
-    // Option C: the Reviewer has no shell (the PR Merger holds Bash). All
-    // deniable tools are denied.
-    expect(effective.has('Bash')).toBe(false);
+    // The Reviewer has Bash for read-only GitHub inspection and gh-CLI review
+    // posting, so Bash is available — but the write/edit deniable tools are
+    // denied, so it cannot modify the code under review.
+    expect(effective.has('Bash')).toBe(true);
     expect(effective.has('Write')).toBe(false);
     expect(effective.has('Edit')).toBe(false);
     expect(effective.has('MultiEdit')).toBe(false);

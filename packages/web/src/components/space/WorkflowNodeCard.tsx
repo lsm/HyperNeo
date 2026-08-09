@@ -52,6 +52,15 @@ export interface NodeDraft {
   channels?: WorkflowChannel[];
   /** Optional post-approval route scoped to this node. */
   postApproval?: import('@hyperneo/shared').PostApprovalRoute;
+  /**
+   * Sticky copy of postApproval.requirePrMerge that survives the post-approval
+   * toggle. The toggle deletes `postApproval` when unchecked, so reading
+   * `postApproval.requirePrMerge` on re-check sees undefined and drops the
+   * hidden merge gate. This step-level field is seeded at load and restored at
+   * serialization, so unchecking/rechecking "Post-approval instruction" on a
+   * coder-owned workflow keeps the mark_complete merge gate.
+   */
+  requirePrMerge?: boolean;
   /** Require codex[bot] +1 on approval gates for channels from this node. */
   requireCodexApproval?: boolean;
   /** Custom poll interval (ms) for the codex review bot. */

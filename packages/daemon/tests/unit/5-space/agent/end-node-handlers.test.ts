@@ -25,6 +25,7 @@ import { SpaceGoalService } from '../../../../src/lib/space/goals/goal-service.t
 import {
   createEndNodeHandlers,
   createMarkCompleteHandler,
+  createPrMergedGate,
 } from '../../../../src/lib/space/tools/end-node-handlers.ts';
 import type { EndNodeHandlerDeps } from '../../../../src/lib/space/tools/end-node-handlers.ts';
 import type { Space, SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
@@ -285,6 +286,100 @@ describe('createMarkCompleteHandler', () => {
     expect(ctx.taskRepo.getTask(task.id)?.status).toBe('approved');
   });
 
+  test('mark_complete fails closed while the run PR is still OPEN', async () => {
+    const task = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'T',
+      description: '',
+      status: 'approved',
+    });
+    const handler = createMarkCompleteHandler({
+      taskId: task.id,
+      spaceId: ctx.spaceId,
+      taskRepo: ctx.taskRepo,
+      taskManager: ctx.taskManager,
+      assertPrMerged: async () => ({
+        ok: false,
+        error:
+          "mark_complete merge gate: the run's PR is still OPEN (https://github.com/a/b/pull/1). Merge it before calling mark_complete (gh pr merge), then retry.",
+      }),
+    });
+
+    const out = await handler({});
+    const parsed = JSON.parse(out.content[0].text);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('still OPEN');
+    // The task stays approved — completion is blocked, not faked.
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('approved');
+  });
+
+  test('mark_complete fails closed on lookup error (no merge evidence)', async () => {
+    const task = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'T',
+      description: '',
+      status: 'approved',
+    });
+    const handler = createMarkCompleteHandler({
+      taskId: task.id,
+      spaceId: ctx.spaceId,
+      taskRepo: ctx.taskRepo,
+      taskManager: ctx.taskManager,
+      assertPrMerged: async () => ({
+        ok: false,
+        error: 'mark_complete merge gate: could not verify the run PR state — GitHub unreachable.',
+      }),
+    });
+
+    const out = await handler({});
+    const parsed = JSON.parse(out.content[0].text);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('could not verify');
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('approved');
+  });
+
+  test('mark_complete proceeds when the gate passes (PR merged)', async () => {
+    const task = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'T',
+      description: '',
+      status: 'approved',
+    });
+    const handler = createMarkCompleteHandler({
+      taskId: task.id,
+      spaceId: ctx.spaceId,
+      taskRepo: ctx.taskRepo,
+      taskManager: ctx.taskManager,
+      assertPrMerged: async () => ({ ok: true }),
+    });
+
+    const out = await handler({});
+    const parsed = JSON.parse(out.content[0].text);
+    expect(parsed.success).toBe(true);
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('done');
+  });
+
+  test('mark_complete proceeds when no gate is installed (non-merge workflow)', async () => {
+    const task = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'T',
+      description: '',
+      status: 'approved',
+    });
+    // No assertPrMerged dep → the gate is a no-op.
+    const handler = createMarkCompleteHandler({
+      taskId: task.id,
+      spaceId: ctx.spaceId,
+      taskRepo: ctx.taskRepo,
+      taskManager: ctx.taskManager,
+    });
+
+    const out = await handler({});
+    const parsed = JSON.parse(out.content[0].text);
+    expect(parsed.success).toBe(true);
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('done');
+  });
+
   test('mark_complete uses result artifact before stale generic task result', async () => {
     const task = ctx.taskRepo.createTask({
       spaceId: ctx.spaceId,
@@ -411,6 +506,84 @@ describe('createMarkCompleteHandler', () => {
       'done',
       expect.objectContaining({ onCascadedTasks: expect.any(Function) })
     );
+  });
+});
+
+// ===========================================================================
+// createPrMergedGate — the merge-completion gate factory
+// ===========================================================================
+
+describe('createPrMergedGate', () => {
+  const PR_URL = 'https://github.com/lsm/HyperNeo/pull/1234';
+
+  function makeGateDeps(opts: { state?: string; throwOnLookup?: boolean; prUrl?: string } = {}) {
+    const { state = 'MERGED', throwOnLookup = false, prUrl = PR_URL } = opts;
+    return {
+      resolvePrUrl: () => prUrl,
+      getPrState: async () => {
+        if (throwOnLookup) throw new Error('GitHub unreachable');
+        return state;
+      },
+    };
+  }
+
+  const task = { id: 't-1', spaceId: 's-1' } as SpaceTask;
+
+  test('passes when the PR is MERGED', async () => {
+    const gate = createPrMergedGate(makeGateDeps({ state: 'MERGED' }));
+    const result = await gate(task);
+    expect(result).toEqual({ ok: true });
+  });
+
+  test('blocks while the PR is OPEN (merge not yet done)', async () => {
+    const gate = createPrMergedGate(makeGateDeps({ state: 'OPEN' }));
+    const result = await gate(task);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('still OPEN');
+      expect(result.error).toContain(PR_URL);
+    }
+  });
+
+  test('blocks when the PR is CLOSED without a merge', async () => {
+    const gate = createPrMergedGate(makeGateDeps({ state: 'CLOSED' }));
+    const result = await gate(task);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('CLOSED');
+      expect(result.error).toContain('not merged');
+    }
+  });
+
+  test('fails closed on lookup error', async () => {
+    const gate = createPrMergedGate(makeGateDeps({ throwOnLookup: true }));
+    const result = await gate(task);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('could not verify');
+    }
+  });
+
+  test('passes when no pr_url resolves and the workflow does not require one', async () => {
+    const gate = createPrMergedGate(makeGateDeps({ prUrl: '' }));
+    const result = await gate(task);
+    expect(result).toEqual({ ok: true });
+  });
+
+  test('fails closed when a required pr_url does not resolve', async () => {
+    const gate = createPrMergedGate({
+      resolvePrUrl: () => '',
+      requirePrUrl: true,
+      getPrState: async () => {
+        throw new Error('must not be called');
+      },
+    });
+    const result = await gate(task);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain("could not resolve the run's PR URL");
+      expect(result.error).toContain('stays approved');
+    }
   });
 });
 

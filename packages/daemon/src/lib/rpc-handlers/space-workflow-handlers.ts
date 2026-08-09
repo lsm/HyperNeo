@@ -30,9 +30,13 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager';
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
-import { getBuiltInWorkflows, seedBuiltInWorkflows } from '../space/workflows/built-in-workflows';
+import {
+  getBuiltInWorkflows,
+  resolveBuiltInWorkflowTemplate,
+  seedBuiltInWorkflows,
+} from '../space/workflows/built-in-workflows';
 import { computeWorkflowHash } from '../space/workflows/template-hash';
-import { getPresetAgentTemplates } from '../space/agents/seed-agents';
+import { getPresetAgentTemplates, retireRemovedPresetAgents } from '../space/agents/seed-agents';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
 import { Logger } from '../logger';
 
@@ -113,8 +117,8 @@ function buildTemplateUpdateParams(
       if (!resolvedId) {
         // When the missing name is a built-in preset, the usual cause is that
         // the Space was created before the preset was added to PRESET_AGENTS
-        // (e.g. "PR Merger") and never backfilled. Name the cause + the fix so
-        // the user isn't left guessing.
+        // and never backfilled. Name the cause + the fix so the user isn't left
+        // guessing.
         if (PRESET_AGENT_NAMES_LOWER.has(a.agentId.toLowerCase())) {
           throw new Error(
             `Cannot ${errorVerb}: preset agent "${a.agentId}" is missing from space "${spaceId}" ` +
@@ -247,9 +251,6 @@ export async function checkBuiltInWorkflowDriftOnStartup(
     const spaces = await spaceManager.listSpaces();
     if (spaces.length === 0) return;
 
-    const templates = getBuiltInWorkflows();
-    const templateMap = new Map(templates.map((t) => [t.name, t]));
-
     const updatesAvailable: Array<{
       spaceName: string;
       workflowName: string;
@@ -262,7 +263,7 @@ export async function checkBuiltInWorkflowDriftOnStartup(
       const workflows = workflowManager.listWorkflows(space.id);
       for (const workflow of workflows) {
         if (!workflow.templateName) continue;
-        const template = templateMap.get(workflow.templateName);
+        const template = resolveBuiltInWorkflowTemplate(workflow.templateName);
         if (!template) continue;
 
         const currentTemplateHash = computeWorkflowHash(template);
@@ -326,13 +327,19 @@ export async function checkBuiltInWorkflowDriftOnStartup(
  * user to click "Sync" in the Workflow List UI, because that path regenerates
  * node UUIDs and would invalidate any live workflow-run references.
  *
+ * `hasActiveRuns` is forwarded to `seedBuiltInWorkflows`: while a non-terminal
+ * workflow run references a row, that row's re-stamp is deferred so an
+ * in-flight run (reloaded by `run.workflowId` on restart) does not resume
+ * against a topology whose retired nodes/tools were just stripped.
+ *
  * Non-blocking: any per-space failure is logged and the loop continues so
  * one broken space cannot block the daemon from starting.
  */
 export async function restampBuiltInWorkflowsOnStartup(
   workflowManager: SpaceWorkflowManager,
   spaceManager: SpaceManager,
-  spaceAgentManager: SpaceAgentManager
+  spaceAgentManager: SpaceAgentManager,
+  hasActiveRuns?: (workflowId: string) => boolean
 ): Promise<void> {
   try {
     const spaces = await spaceManager.listSpaces();
@@ -345,7 +352,8 @@ export async function restampBuiltInWorkflowsOnStartup(
         const result = seedBuiltInWorkflows(
           space.id,
           workflowManager,
-          (name) => agents.find((a) => a.name.toLowerCase() === name.toLowerCase())?.id
+          (name) => agents.find((a) => a.name.toLowerCase() === name.toLowerCase())?.id,
+          hasActiveRuns
         );
         if (result.restamped.length > 0) {
           totalRestamped += result.restamped.length;
@@ -361,6 +369,31 @@ export async function restampBuiltInWorkflowsOnStartup(
                 `in space "${space.name}" (${space.id}): ${err.error}`
             );
           }
+        }
+
+        // Round-11 P2: retire the removed `PR Merger` preset row once nothing
+        // references it. Runs AFTER the re-stamp above, so the strip has already
+        // removed the retired merger node from non-active-run workflows; a row
+        // still referenced by an active run (deferred strip) or a customized
+        // workflow (strip skipped) is protected. Deleting a pristine, unreferenced
+        // row removes the obsolete agent that m170 seeded but no live workflow uses.
+        const referencedAgentIds = new Set<string>();
+        for (const wf of workflowManager.listWorkflows(space.id)) {
+          for (const node of wf.nodes) {
+            for (const slot of node.agents) {
+              if (slot.agentId) referencedAgentIds.add(slot.agentId);
+            }
+          }
+        }
+        const retiredAgents = retireRemovedPresetAgents(space.id, {
+          agentManager: spaceAgentManager,
+          referencedAgentIds,
+        });
+        if (retiredAgents.length > 0) {
+          log.info(
+            `[startup] Retired removed preset agent(s) in space "${space.name}" ` +
+              `(${space.id}): ${retiredAgents.join(', ')}`
+          );
         }
       } catch (err) {
         log.warn(
@@ -636,8 +669,7 @@ export function setupSpaceWorkflowHandlers(
     }
 
     // Find the current template by name
-    const templates = getBuiltInWorkflows();
-    const template = templates.find((t) => t.name === workflow.templateName);
+    const template = resolveBuiltInWorkflowTemplate(workflow.templateName);
     if (!template) {
       // Template no longer exists — can't detect drift
       return {
@@ -698,7 +730,7 @@ export function setupSpaceWorkflowHandlers(
       );
     }
 
-    const template = getBuiltInWorkflows().find((t) => t.name === workflow.templateName);
+    const template = resolveBuiltInWorkflowTemplate(workflow.templateName);
     if (!template) {
       throw new Error(
         `Built-in template "${workflow.templateName}" not found. It may have been removed.`
@@ -768,8 +800,7 @@ export function setupSpaceWorkflowHandlers(
     }
 
     // Find the template
-    const templates = getBuiltInWorkflows();
-    const template = templates.find((t) => t.name === workflow.templateName);
+    const template = resolveBuiltInWorkflowTemplate(workflow.templateName);
     if (!template) {
       throw new Error(
         `Built-in template "${workflow.templateName}" not found. It may have been removed.`
@@ -903,8 +934,7 @@ export function setupSpaceWorkflowHandlers(
 
     // Only built-in templates can be resynced — other templateNames have
     // no canonical source to pull from.
-    const builtInTemplates = getBuiltInWorkflows();
-    const template = builtInTemplates.find((t) => t.name === params.templateName);
+    const template = resolveBuiltInWorkflowTemplate(params.templateName);
     if (!template) {
       throw new Error(
         `Built-in template "${params.templateName}" not found. Resync is only available for built-in workflows.`

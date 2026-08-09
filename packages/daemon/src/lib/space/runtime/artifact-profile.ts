@@ -45,6 +45,13 @@ export interface WorkflowArtifactProfile {
   resolvePrimaryLinkUrl(runId: string): string;
 
   /**
+   * Resolve the first primary link identity established for a run. Completion
+   * safety checks use this immutable identity so a later artifact cannot swap
+   * the reviewed PR for a different already-merged PR.
+   */
+  resolveInitialPrimaryLinkUrl?(runId: string): string;
+
+  /**
    * Build a short terminal outcome summary from a run's artifacts, or null when
    * the run recorded no outcome. Used by task completion (mark_complete / run
    * completion / Forge gap detection). The coding profile reads the kindless

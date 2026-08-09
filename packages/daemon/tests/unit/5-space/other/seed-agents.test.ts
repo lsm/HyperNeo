@@ -8,14 +8,20 @@
 
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { KNOWN_TOOLS } from '@hyperneo/shared';
+import { KNOWN_TOOLS, type SpaceWorkerAgent } from '@hyperneo/shared';
 import { setModelsCache } from '../../../../src/lib/model-service';
 import {
   getPresetAgentTemplates,
+  isPristineRetiredPrMergerRow,
   PRESET_AGENT_TOOLS,
+  RETIRED_PR_MERGER_DESCRIPTION,
+  RETIRED_PR_MERGER_PROMPT,
+  RETIRED_PR_MERGER_TOOLS,
+  retireRemovedPresetAgents,
   SUB_SESSION_FEATURES,
   seedPresetAgents,
 } from '../../../../src/lib/space/agents/seed-agents';
+import { computeAgentTemplateHash } from '../../../../src/lib/space/agents/agent-template-hash';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
 import { createSpaceAgentSchema, insertSpace } from '../../helpers/space-agent-schema';
@@ -38,10 +44,10 @@ describe('seedPresetAgents', () => {
     setModelsCache(new Map());
   });
 
-  it('creates exactly seven preset agents', async () => {
+  it('creates exactly six preset agents', async () => {
     const result = await seedPresetAgents('space-1', manager);
 
-    expect(result.seeded).toHaveLength(7);
+    expect(result.seeded).toHaveLength(6);
     expect(result.errors).toHaveLength(0);
   });
 
@@ -49,32 +55,14 @@ describe('seedPresetAgents', () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
 
     const names = seeded.map((a) => a.name.toLowerCase()).sort();
-    expect(names).toEqual([
-      'coder',
-      'general',
-      'planner',
-      'pr merger',
-      'qa',
-      'research',
-      'reviewer',
-    ]);
+    expect(names).toEqual(['coder', 'general', 'planner', 'qa', 'research', 'reviewer']);
   });
 
   it('creates agents with correct names', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
 
     const names = seeded.map((a) => a.name).sort();
-    // Default sort is UTF-16 code-unit order: uppercase 'R' (82) < lowercase
-    // 'l' (108), so 'PR Merger' sorts before 'Planner'.
-    expect(names).toEqual([
-      'Coder',
-      'General',
-      'PR Merger',
-      'Planner',
-      'QA',
-      'Research',
-      'Reviewer',
-    ]);
+    expect(names).toEqual(['Coder', 'General', 'Planner', 'QA', 'Research', 'Reviewer']);
   });
 
   it('sets tools on each preset agent', async () => {
@@ -85,45 +73,54 @@ describe('seedPresetAgents', () => {
     }
   });
 
-  it('reviewer has NO shell — drops Bash, posts reviews via post_review (Option C)', async () => {
+  it('reviewer has Bash for read-only inspection + Cron, but NO Write/Edit (restrained review role)', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const reviewer = seeded.find((a) => a.name === 'Reviewer');
 
     expect(reviewer).toBeDefined();
-    // Role separation: the Reviewer is a pure static-review role with no shell.
-    expect(reviewer?.tools).not.toContain('Bash');
+    // The Reviewer keeps Bash (for GitHub read-only inspection and posting
+    // reviews via the gh CLI) and Cron tools for scheduled follow-ups, but
+    // it is restrained: no Write/Edit so it cannot modify code under review.
+    expect(reviewer?.tools).toContain('Bash');
+    expect(reviewer?.tools).toContain('Read');
+    expect(reviewer?.tools).toContain('CronCreate');
+    expect(reviewer?.tools).toContain('CronDelete');
+    expect(reviewer?.tools).toContain('CronList');
     expect(reviewer?.tools).not.toContain('Write');
     expect(reviewer?.tools).not.toContain('Edit');
-    expect(reviewer?.tools).toContain('Read');
-    // post_review is an MCP tool, so it is NOT listed in the tools profile
-    // (the profile only holds SDK built-ins). Its usage is taught in the prompt
-    // and the tool is registered for the reviewer session at runtime.
-    expect(reviewer?.tools).not.toContain('post_review');
-    expect(reviewer?.customPrompt).toContain('post_review');
+    // The reviewer's restraint is taught by its custom prompt (Reviewer System
+    // Contract): it must not run the code under review and must not merge.
+    expect(reviewer?.customPrompt).toContain('Reviewer System Contract');
+    expect(reviewer?.customPrompt).toContain('addPullRequestReview');
   });
 
-  it('PR Merger is the designated shell agent (Bash present, no Write/Edit)', async () => {
+  it('Reviewer is the designated inspection-and-review agent (Bash present, no Write/Edit)', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
-    const merger = seeded.find((a) => a.name === 'PR Merger');
+    const reviewer = seeded.find((a) => a.name === 'Reviewer');
 
-    expect(merger).toBeDefined();
-    expect(merger?.handle).toBe('merger');
-    // The Merger holds the only Bash tool in the review/merge split.
-    expect(merger?.tools).toContain('Bash');
-    expect(merger?.tools).toContain('Read');
-    expect(merger?.tools).not.toContain('Write');
-    expect(merger?.tools).not.toContain('Edit');
-    expect(merger?.customPrompt).toContain('mark_complete');
+    expect(reviewer).toBeDefined();
+    expect(reviewer?.handle).toBe('reviewer');
+    // The Reviewer holds Bash for read-only GitHub inspection and review
+    // posting; there is no separate merger agent anymore.
+    expect(reviewer?.tools).toContain('Bash');
+    expect(reviewer?.tools).toContain('Read');
+    expect(reviewer?.tools).not.toContain('Write');
+    expect(reviewer?.tools).not.toContain('Edit');
+    expect(reviewer?.customPrompt).toContain('Reviewer System Contract');
   });
 
-  it('coder inherits all SDK built-ins and has explicit no-merge prompt', async () => {
+  it('coder inherits all SDK built-ins and defers merge to the post-approval phase', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const coder = seeded.find((a) => a.name === 'Coder');
 
     expect(coder?.tools).toEqual([]);
-    expect(coder?.customPrompt).toContain('Do NOT merge PRs. Your job is implementation only.');
-    expect(coder?.customPrompt).toContain('When the reviewer approves, your work is done.');
-    expect(coder?.customPrompt).toContain('The reviewer handles the merge.');
+    // The coder implements first and opens a PR; it must not merge during
+    // implementation, but (unlike the old preset) it may merge in the
+    // post-approval phase when the workflow sends the merge procedure.
+    expect(coder?.customPrompt).toMatch(/[Dd]uring implementation, do not merge your own PR/);
+    expect(coder?.customPrompt).toContain('post-approval merge is a separate phase');
+    expect(coder?.customPrompt).toContain('open pull requests for review');
+    expect(coder?.customPrompt).not.toContain('The reviewer handles the merge.');
   });
 
   it('research agent inherits all SDK built-ins (Write + Edit for committing findings)', async () => {
@@ -154,11 +151,11 @@ describe('seedPresetAgents', () => {
     // Seed once
     await seedPresetAgents('space-1', manager);
 
-    // Seed again — all seven names are now taken
+    // Seed again — all six names are now taken
     const second = await seedPresetAgents('space-1', manager);
 
     expect(second.seeded).toHaveLength(0);
-    expect(second.errors).toHaveLength(7);
+    expect(second.errors).toHaveLength(6);
     for (const err of second.errors) {
       expect(err.error).toMatch(/already exists/i);
     }
@@ -170,8 +167,8 @@ describe('seedPresetAgents', () => {
     const r1 = await seedPresetAgents('space-1', manager);
     const r2 = await seedPresetAgents('space-2', manager);
 
-    expect(r1.seeded).toHaveLength(7);
-    expect(r2.seeded).toHaveLength(7);
+    expect(r1.seeded).toHaveLength(6);
+    expect(r2.seeded).toHaveLength(6);
     expect(r1.errors).toHaveLength(0);
     expect(r2.errors).toHaveLength(0);
 
@@ -187,7 +184,7 @@ describe('seedPresetAgents', () => {
     const result = await seedPresetAgents('space-1', manager);
 
     // Coder fails, others succeed
-    expect(result.seeded).toHaveLength(6);
+    expect(result.seeded).toHaveLength(5);
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0].name).toBe('Coder');
   });
@@ -315,7 +312,7 @@ describe('seedPresetAgents', () => {
 
     expect(reviewer?.customPrompt).toContain('own-PR fallback');
     expect(reviewer?.customPrompt).toContain('COMMENT');
-    expect(reviewer?.customPrompt).toContain('match your actual verdict');
+    expect(reviewer?.customPrompt).toContain('match your verdict');
   });
 
   it('Reviewer custom prompt emphasises goal alignment, completeness, and omissions', async () => {
@@ -328,25 +325,30 @@ describe('seedPresetAgents', () => {
     expect(reviewer?.customPrompt?.toLowerCase()).toContain('over-engineering');
   });
 
-  it('Reviewer custom prompt posts reviews via post_review and captures the returned URL', async () => {
+  it('Reviewer custom prompt posts reviews via the addPullRequestReview mutation and emits REVIEW_POSTED', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const reviewer = seeded.find((a) => a.name === 'Reviewer');
 
-    expect(reviewer?.customPrompt).toContain('returned URL');
     expect(reviewer?.customPrompt).toContain('GitHub review procedure');
-    // The shell-free tool is the mechanism — never gh api directly.
-    expect(reviewer?.customPrompt).toContain('post_review');
-    expect(reviewer?.customPrompt).toContain('no shell');
+    expect(reviewer?.customPrompt).toContain('html_url returned by GitHub');
+    // The reviewer uses Bash to post a visible review via the gh CLI — there is
+    // no post_review MCP tool anymore. The mutation returns the review URL, so
+    // the contract never queries the PR-wide latest review (a race).
+    expect(reviewer?.customPrompt).toContain('addPullRequestReview');
+    expect(reviewer?.customPrompt).not.toContain('REVIEW_BODY_TERMINATOR');
+    expect(reviewer?.customPrompt).toContain('REVIEW_POSTED');
+    expect(reviewer?.customPrompt).not.toContain('post_review');
   });
 
-  it('Reviewer custom prompt points at get_pr_diff for authed diff access', async () => {
+  it('Reviewer custom prompt inspects PR diffs via gh pr diff (authed, private repos included)', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const reviewer = seeded.find((a) => a.name === 'Reviewer');
 
-    // Task #844: the Reviewer reads PR diffs via the authed get_pr_diff tool
-    // (private repos included) rather than shelling out to gh pr diff / gh pr view.
-    expect(reviewer?.customPrompt).toContain('get_pr_diff');
+    // The Reviewer reads PR diffs via Bash (gh pr diff / gh pr view / gh api
+    // graphql reviewThreads) rather than a post_review MCP tool.
+    expect(reviewer?.customPrompt).toContain('gh pr diff');
     expect(reviewer?.customPrompt?.toLowerCase()).toContain('private repos');
+    expect(reviewer?.customPrompt).not.toContain('get_pr_diff');
   });
 
   it('Planner custom prompt mentions planning', async () => {
@@ -401,15 +403,6 @@ describe('preset agent exact definitions', () => {
   /** Permissive presets inherit all SDK built-ins; the seeded profile is empty. */
   const EXPECTED_CODER_TOOLS: string[] = [];
 
-  const EXPECTED_REVIEWER_BASE_TOOLS = [
-    'Read',
-    'Grep',
-    'Glob',
-    'WebFetch',
-    'WebSearch',
-    'Skill',
-    'ToolSearch',
-  ];
   const EXPECTED_QA_TOOLS = [
     'Read',
     'Bash',
@@ -420,19 +413,26 @@ describe('preset agent exact definitions', () => {
     'Skill',
     'ToolSearch',
   ];
-  // Reviewer has the read-only toolset PLUS Task/TaskOutput/TaskStop so it can
-  // dispatch the built-in `general-purpose` sub-agent for exploration. It has
-  // NO Bash (Option C: the Merger is the designated shell agent). post_review is
-  // an MCP tool, so it is intentionally absent from this profile.
+  // Reviewer has the read-only toolset PLUS Bash (for read-only GitHub
+  // inspection and posting reviews via the gh CLI), PLUS Task/* for
+  // `general-purpose` sub-agent delegation, PLUS Cron* for scheduled follow-ups.
+  // It still has NO Write/Edit — the reviewer cannot modify the code under review.
   const EXPECTED_REVIEWER_TOOLS = [
-    ...EXPECTED_REVIEWER_BASE_TOOLS,
+    'Read',
+    'Bash',
+    'Grep',
+    'Glob',
+    'WebFetch',
+    'WebSearch',
+    'Skill',
+    'ToolSearch',
     'Task',
     'TaskOutput',
     'TaskStop',
+    'CronCreate',
+    'CronDelete',
+    'CronList',
   ];
-
-  /** PR Merger: Bash + read tools (the designated shell agent). */
-  const EXPECTED_MERGER_TOOLS = ['Bash', 'Read', 'Grep', 'Glob'];
 
   it('general inherits all SDK built-ins (empty permissive profile)', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
@@ -464,16 +464,10 @@ describe('preset agent exact definitions', () => {
     expect(research.tools).toEqual(EXPECTED_CODER_TOOLS);
   });
 
-  it('Reviewer has exact REVIEWER_TOOLS (read-only + Task/*, NO Bash, NO post_review in profile)', async () => {
+  it('Reviewer has exact REVIEWER_TOOLS (read-only + Bash + Task/* + Cron*, no Write/Edit)', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const reviewer = seeded.find((a) => a.name === 'Reviewer')!;
     expect(reviewer.tools).toEqual(EXPECTED_REVIEWER_TOOLS);
-  });
-
-  it('PR Merger has exact MERGER_TOOLS (Bash + read tools, no Write/Edit)', async () => {
-    const { seeded } = await seedPresetAgents('space-1', manager);
-    const merger = seeded.find((a) => a.name === 'PR Merger')!;
-    expect(merger.tools).toEqual(EXPECTED_MERGER_TOOLS);
   });
 
   it('QA has exact QA_TOOLS', async () => {
@@ -490,8 +484,10 @@ describe('preset agent exact definitions', () => {
     expect(coder.customPrompt).toBe(
       'You are an expert software engineer. You write clean, well-tested code following the ' +
         "project's existing conventions. You always commit your work, keep the working tree clean, " +
-        'and open pull requests for review. Do NOT merge PRs. Your job is implementation only. ' +
-        'When the reviewer approves, your work is done. The reviewer handles the merge.\n\n' +
+        'and open pull requests for review. During implementation, do not merge your own PR — post-approval ' +
+        'merge is a separate phase: once the task is approved, the workflow may send you the merge procedure, ' +
+        'which you follow (that is when you merge). Your job is implementation first; review feedback comes back ' +
+        'until the work is clean.\n\n' +
         'Before finishing: ensure all tests pass, commit all changes, and open a PR with a clear description.'
     );
   });
@@ -538,34 +534,41 @@ describe('preset agent exact definitions', () => {
     expect(reviewer.customPrompt).toBe(reviewerTemplate.customPrompt);
   });
 
-  it('Reviewer custom prompt posts reviews via post_review and emits REVIEW_POSTED', async () => {
+  it('Reviewer custom prompt posts reviews via the addPullRequestReview mutation and emits REVIEW_POSTED', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const reviewer = seeded.find((a) => a.name === 'Reviewer')!;
     expect(reviewer.customPrompt).toContain('GitHub review procedure');
-    expect(reviewer.customPrompt).toContain('returned URL');
+    expect(reviewer.customPrompt).toContain('html_url returned by GitHub');
     expect(reviewer.customPrompt).toContain('REVIEW_POSTED');
-    // The shell-free contract: post_review is the only posting mechanism, and
-    // the own-PR fallback (APPROVE/REQUEST_CHANGES → COMMENT) is handled inside it.
-    expect(reviewer.customPrompt).toContain('post_review');
+    // The posting mechanism is the `addPullRequestReview` mutation via Bash,
+    // which returns the exact review URL (no latest-review query race). The
+    // own-PR fallback (APPROVE/REQUEST_CHANGES → COMMENT) is described in the
+    // contract.
+    expect(reviewer.customPrompt).toContain('addPullRequestReview');
+    expect(reviewer.customPrompt).toContain('pullRequestReview.url');
     expect(reviewer.customPrompt).toContain('own-PR fallback');
     expect(reviewer.customPrompt).toContain('COMMENT');
-    expect(reviewer.customPrompt).toContain('match your actual verdict');
+    expect(reviewer.customPrompt).toContain('match your verdict');
+    // The post_review MCP tool no longer exists.
+    expect(reviewer.customPrompt).not.toContain('post_review');
   });
 
-  // Regression guard for the role separation: the Reviewer contract must NOT
-  // teach any `gh api` shell pattern — the Reviewer has no Bash. The previous
-  // contract leaned on a `gh api … -f body="$(heredoc)"` procedure (with its
-  // notorious `-f body=@-` trap); that entire liability is deleted in favour of
-  // the post_review tool.
-  it('Reviewer custom prompt teaches no gh api / heredoc posting pattern', async () => {
+  // The Reviewer writes review prose to a temp file with a QUOTED heredoc that
+  // uses a per-invocation delimiter (never a fixed public terminator), then
+  // posts via the `addPullRequestReview` GraphQL mutation with the body loaded
+  // through jq --rawfile. The old `-f body="$(heredoc)"` shell trap and the
+  // `post_review` MCP tool are gone.
+  it('Reviewer custom prompt writes body files with a per-invocation heredoc and posts via the mutation', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const reviewer = seeded.find((a) => a.name === 'Reviewer')!;
     const prompt = reviewer.customPrompt!;
-    expect(prompt).toContain('never call gh api directly');
+    expect(prompt).toContain('addPullRequestReview');
+    expect(prompt).toContain('per-invocation');
     // The old shell-based posting primitives must be gone.
     expect(prompt).not.toContain('-f body=@-');
     expect(prompt).not.toContain("-f body=\"$(cat <<'EOF'");
     expect(prompt).not.toContain('gh api repos/{owner}/{repo}/pulls/{n}/reviews');
+    expect(prompt).not.toContain('post_review');
   });
 
   it('QA has shared system contract prompt', async () => {
@@ -592,10 +595,7 @@ describe('preset agent exact definitions', () => {
         'Research agent. Investigates topics, gathers information, writes findings to docs, and opens pull requests with research results.',
       Reviewer:
         'Code review specialist. Reviews pull requests for correctness, style, and test coverage. ' +
-        'Has no shell — posts reviews via the post_review tool.',
-      'PR Merger':
-        'Post-approval PR merge specialist. The designated execution agent: it runs gh pr merge, ' +
-        'branch cleanup, worktree sync, and conflict routing. Spawned only after a task is approved.',
+        'Has bash for read-only inspection and posts reviews via the gh CLI.',
       QA: 'Quality assurance specialist. Verifies test coverage, runs test suites, and checks CI pipeline status.',
     };
 
@@ -613,15 +613,6 @@ describe('PRESET_AGENT_TOOLS export', () => {
   /** Permissive presets have an empty visible profile; they inherit all SDK built-ins. */
   const EXPECTED_CODER_TOOLS: string[] = [];
 
-  const EXPECTED_REVIEWER_BASE_TOOLS = [
-    'Read',
-    'Grep',
-    'Glob',
-    'WebFetch',
-    'WebSearch',
-    'Skill',
-    'ToolSearch',
-  ];
   const EXPECTED_QA_TOOLS = [
     'Read',
     'Bash',
@@ -632,23 +623,31 @@ describe('PRESET_AGENT_TOOLS export', () => {
     'Skill',
     'ToolSearch',
   ];
-  // Reviewer carries Task/TaskOutput/TaskStop for built-in `general-purpose`
-  // sub-agent delegation. It has NO Bash (Option C: the Merger is the
-  // designated shell agent). post_review is an MCP tool, intentionally absent
-  // from the profile (MCP tools are inherited regardless of the profile).
+  // Reviewer carries Bash (for read-only GitHub inspection and gh-CLI review
+  // posting) + Task/* for built-in `general-purpose` sub-agent delegation +
+  // Cron* for scheduled follow-ups. It has NO Write/Edit — it cannot modify the
+  // code under review.
   const EXPECTED_REVIEWER_TOOLS = [
-    ...EXPECTED_REVIEWER_BASE_TOOLS,
+    'Read',
+    'Bash',
+    'Grep',
+    'Glob',
+    'WebFetch',
+    'WebSearch',
+    'Skill',
+    'ToolSearch',
     'Task',
     'TaskOutput',
     'TaskStop',
+    'CronCreate',
+    'CronDelete',
+    'CronList',
   ];
-  const EXPECTED_MERGER_TOOLS = ['Bash', 'Read', 'Grep', 'Glob'];
 
-  it('has entries for all 7 preset roles', () => {
+  it('has entries for all 6 preset roles', () => {
     expect(Object.keys(PRESET_AGENT_TOOLS).sort()).toEqual([
       'coder',
       'general',
-      'merger',
       'planner',
       'qa',
       'research',
@@ -672,12 +671,8 @@ describe('PRESET_AGENT_TOOLS export', () => {
     expect(PRESET_AGENT_TOOLS.research).toEqual(EXPECTED_CODER_TOOLS);
   });
 
-  it('reviewer role maps to REVIEWER_TOOLS (read-only + Task/*, NO Bash)', () => {
+  it('reviewer role maps to REVIEWER_TOOLS (read-only + Bash + Task/* + Cron*, no Write/Edit)', () => {
     expect(PRESET_AGENT_TOOLS.reviewer).toEqual(EXPECTED_REVIEWER_TOOLS);
-  });
-
-  it('merger role maps to MERGER_TOOLS (Bash + read tools)', () => {
-    expect(PRESET_AGENT_TOOLS.merger).toEqual(EXPECTED_MERGER_TOOLS);
   });
 
   it('qa role maps to QA_TOOLS', () => {
@@ -695,9 +690,8 @@ describe('PRESET_AGENT_TOOLS export', () => {
     const { seeded } = await seedPresetAgents('space-1', mgr);
 
     for (const agent of seeded) {
-      // PRESET_AGENT_TOOLS is keyed by handle (e.g. 'merger'), which for
-      // single-word presets matches name.toLowerCase() but diverges for
-      // multi-word names like 'PR Merger' → handle 'merger'.
+      // PRESET_AGENT_TOOLS is keyed by handle; every preset handle is a
+      // single-word key (coder, reviewer, qa, …), so lookups succeed.
       const roleKey = agent.handle;
       expect(PRESET_AGENT_TOOLS[roleKey]).toBeDefined();
       expect(agent.tools).toEqual(PRESET_AGENT_TOOLS[roleKey]);
@@ -735,23 +729,15 @@ describe('SUB_SESSION_FEATURES export', () => {
 // ---------------------------------------------------------------------------
 
 describe('getPresetAgentTemplates', () => {
-  it('returns exactly 7 templates', () => {
+  it('returns exactly 6 templates', () => {
     const templates = getPresetAgentTemplates();
-    expect(templates).toHaveLength(7);
+    expect(templates).toHaveLength(6);
   });
 
   it('returns all expected agent names', () => {
     const templates = getPresetAgentTemplates();
     const names = templates.map((t) => t.name).sort();
-    expect(names).toEqual([
-      'Coder',
-      'General',
-      'PR Merger',
-      'Planner',
-      'QA',
-      'Research',
-      'Reviewer',
-    ]);
+    expect(names).toEqual(['Coder', 'General', 'Planner', 'QA', 'Research', 'Reviewer']);
   });
 
   it('each template has name, description, tools, and customPrompt', () => {
@@ -784,5 +770,124 @@ describe('getPresetAgentTemplates', () => {
       const roleKey = t.handle;
       expect(t.tools).toEqual(PRESET_AGENT_TOOLS[roleKey]);
     }
+  });
+});
+
+// ===========================================================================
+// Retired preset cleanup (round-11 P2)
+// ===========================================================================
+
+describe('retireRemovedPresetAgents', () => {
+  let db: Database;
+  let manager: SpaceAgentManager;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    createSpaceAgentSchema(db);
+    insertSpace(db);
+    const repo = new SpaceAgentRepository(db as any);
+    manager = new SpaceAgentManager(repo);
+    setModelsCache(new Map());
+  });
+
+  afterEach(() => {
+    db.close();
+    setModelsCache(new Map());
+  });
+
+  function seedPristinePrMerger(): Promise<SpaceWorkerAgent> {
+    return manager
+      .create({
+        spaceId: 'space-1',
+        name: 'PR Merger',
+        handle: 'merger',
+        description: RETIRED_PR_MERGER_DESCRIPTION,
+        tools: [...RETIRED_PR_MERGER_TOOLS],
+        customPrompt: RETIRED_PR_MERGER_PROMPT,
+        templateName: 'PR Merger',
+        templateHash: computeAgentTemplateHash({
+          name: 'PR Merger',
+          handle: 'merger',
+          description: RETIRED_PR_MERGER_DESCRIPTION,
+          tools: [...RETIRED_PR_MERGER_TOOLS],
+          customPrompt: RETIRED_PR_MERGER_PROMPT,
+        }),
+      })
+      .then((r) => {
+        if (!r.ok) throw new Error(r.error);
+        return r.value;
+      });
+  }
+
+  it('deletes a pristine, unreferenced PR Merger row', async () => {
+    const merger = await seedPristinePrMerger();
+    const retired = retireRemovedPresetAgents('space-1', {
+      agentManager: manager,
+      referencedAgentIds: new Set(),
+    });
+    expect(retired).toEqual(['PR Merger']);
+    const remaining = manager.listBySpaceId('space-1').map((a) => a.id);
+    expect(remaining).not.toContain(merger.id);
+  });
+
+  it('protects a pristine row referenced by a workflow (active run / custom slot)', async () => {
+    const merger = await seedPristinePrMerger();
+    const retired = retireRemovedPresetAgents('space-1', {
+      agentManager: manager,
+      referencedAgentIds: new Set([merger.id]),
+    });
+    expect(retired).toEqual([]);
+    expect(manager.listBySpaceId('space-1').map((a) => a.id)).toContain(merger.id);
+  });
+
+  it('preserves a customized PR Merger row (renamed prompt)', async () => {
+    const merger = await seedPristinePrMerger();
+    manager.update(merger.id, { customPrompt: 'My custom merger prompt' });
+    const retired = retireRemovedPresetAgents('space-1', {
+      agentManager: manager,
+      referencedAgentIds: new Set(),
+    });
+    expect(retired).toEqual([]);
+    expect(manager.listBySpaceId('space-1').map((a) => a.id)).toContain(merger.id);
+  });
+
+  it('preserves a customized PR Merger row (tools changed)', async () => {
+    const merger = await seedPristinePrMerger();
+    manager.update(merger.id, { tools: ['Bash'] });
+    const retired = retireRemovedPresetAgents('space-1', {
+      agentManager: manager,
+      referencedAgentIds: new Set(),
+    });
+    expect(retired).toEqual([]);
+    expect(manager.listBySpaceId('space-1').map((a) => a.id)).toContain(merger.id);
+  });
+
+  it('never touches non-merger preset rows', async () => {
+    const { seeded } = await seedPresetAgents('space-1', manager);
+    const before = seeded.map((a) => a.id).sort();
+    retireRemovedPresetAgents('space-1', {
+      agentManager: manager,
+      referencedAgentIds: new Set(),
+    });
+    const after = manager
+      .listBySpaceId('space-1')
+      .map((a) => a.id)
+      .sort();
+    expect(after).toEqual(before);
+  });
+  it('isPristineRetiredPrMergerRow matches the frozen seed only', async () => {
+    const merger = await seedPristinePrMerger();
+    expect(isPristineRetiredPrMergerRow(merger)).toBe(true);
+    expect(isPristineRetiredPrMergerRow({ ...merger, customPrompt: 'edited' })).toBe(false);
+    expect(isPristineRetiredPrMergerRow({ ...merger, tools: ['Bash'] })).toBe(false);
+    expect(isPristineRetiredPrMergerRow({ ...merger, name: 'My Merger' })).toBe(false);
+    expect(isPristineRetiredPrMergerRow({ ...merger, templateName: null })).toBe(false);
+
+    expect(
+      retireRemovedPresetAgents('space-1', {
+        agentManager: manager,
+        referencedAgentIds: new Set(),
+      })
+    ).toEqual([merger.name]);
   });
 });

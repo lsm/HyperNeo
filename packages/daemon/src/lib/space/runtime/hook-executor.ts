@@ -57,8 +57,27 @@ export interface HookExecutorContext {
   sessionId: string;
   taskId: string;
   workflowRunCreatedAt?: number;
+  /**
+   * Current status of the owning Space task (e.g. `'in_progress'`, `'approved'`,
+   * `'done'`). Built-in validators use this to distinguish execution phases —
+   * e.g. a `pr_ready` exemption for post-approval merge-blocker reports must
+   * only fire while the task is `approved`, so an initial implementation
+   * handoff cannot spoof it. Optional: omitted when the engine has no task
+   * status provider.
+   */
+  taskStatus?: string;
   targetNode?: string;
   hookLocalState: Record<string, unknown>;
+  /**
+   * The run's frozen reviewed PR URL — the pr_url stamped by the `pr_ready`
+   * validator's hook (the only source after the engine gates pr_url stamping on
+   * that validator). Built-in validators that gate post-approval handoffs (e.g.
+   * `post_approval_only`) compare the caller-supplied `pr_url` against this to
+   * stop a prompt-injected post-approval worker from redirecting the approval
+   * authority to a different PR. Undefined when no pr_ready handoff has frozen
+   * an identity yet (the run's first handoff).
+   */
+  frozenPrUrl?: string;
   currentArtifacts: Record<string, unknown>[];
   permittedExternalLookups: string[];
   /** Optional bounded template data from the hook definition. */

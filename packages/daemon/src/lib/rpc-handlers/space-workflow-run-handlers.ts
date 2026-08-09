@@ -220,7 +220,12 @@ export function setupSpaceWorkflowRunHandlers(
     const space = await spaceManager.getSpace(params.spaceId);
     if (!space) throw new Error(`Space not found: ${params.spaceId}`);
 
-    // Resolve workflow: explicit workflowId or auto-select first workflow
+    // Resolve workflow: explicit workflowId or auto-select. Prefer a
+    // `default`-tagged workflow (the stable Coding template) so upgraded spaces
+    // — where the new stable template is seeded after the historical rows —
+    // switch their auto-started runs to it rather than staying on the oldest
+    // row by created_at. Fall back to the first workflow for spaces without a
+    // default-tagged workflow.
     let workflowId = params.workflowId;
     if (!workflowId) {
       const workflows = spaceWorkflowManager
@@ -229,7 +234,22 @@ export function setupSpaceWorkflowRunHandlers(
       if (workflows.length === 0) {
         throw new Error(`No workflows found for space: ${params.spaceId}`);
       }
-      workflowId = workflows[0].id;
+      // Prefer a `default`-tagged workflow; when several exist (e.g. duplicate
+      // legacy rows awaiting cleanup), tie-break by most-recently-updated — the
+      // same deterministic scoring as selectDeterministicWorkflowFallback — so an
+      // auto-start does not silently pick an obsolete/customized oldest duplicate.
+      const canonicalDefaults = workflows.filter(
+        (w) => w.templateName === 'Coding' && (w.tags ?? []).includes('default')
+      );
+      const defaultWorkflows =
+        canonicalDefaults.length > 0
+          ? canonicalDefaults
+          : workflows.filter((w) => (w.tags ?? []).includes('default'));
+      const preferred =
+        defaultWorkflows.length > 0
+          ? [...defaultWorkflows].sort((a, b) => b.updatedAt - a.updatedAt)[0]
+          : workflows[0];
+      workflowId = preferred.id;
     } else {
       // Validate provided workflow exists and belongs to this space
       const workflow = spaceWorkflowManager.getWorkflow(workflowId);

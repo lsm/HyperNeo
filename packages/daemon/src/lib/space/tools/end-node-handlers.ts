@@ -92,12 +92,91 @@ export interface MarkCompleteHandlerDeps {
   taskRepo: Pick<SpaceTaskRepository, 'getTask'>;
   /** Optional summary captured from the latest result artifact for this task's workflow run. */
   resolveResultArtifactSummary?: (task: SpaceTask) => string | null;
+  /** Session invoking mark_complete; must match the routed post-approval session. */
+  callerSessionId?: string;
+  /** Whether this workflow declares a dispatchable post-approval route. */
+  requiresPostApprovalOwner?: boolean;
   /** Task manager — used to transition and update the task atomically. */
   taskManager: Pick<SpaceTaskManager, 'setTaskStatus' | 'updateTask'>;
   /** Optional hub for emitting `space.task.updated` events. */
   internalEventBus?: Pick<InternalEventBus<DaemonInternalEventMap>, 'publish'>;
   /** Optional goal service for processing terminal goal-task side effects. */
   goalService?: Pick<SpaceGoalService, 'getGoal' | 'updateGoal' | 'handleTaskTerminal'>;
+  /**
+   * Optional merge-completion gate. When provided, `mark_complete` fails closed
+   * until GitHub reports the task's PR merged (the coder owns the merge — there
+   * is no `merge_pr` gate anymore). The gate decides whether a missing `pr_url`
+   * passes for non-PR workflows or blocks for workflows that require a PR. The
+   * task stays `approved` on a block and the caller may retry after the merge.
+   */
+  assertPrMerged?: (task: SpaceTask) => Promise<{ ok: true } | { ok: false; error: string }>;
+}
+
+/**
+ * Dependencies for the merge-completion gate factory.
+ */
+export interface PrMergedGateDeps {
+  /** Resolve the task's PR URL (e.g. via the workflow run's primary link). */
+  resolvePrUrl: (task: SpaceTask) => string;
+  /** Block when no PR URL resolves. Use for workflows whose completion requires a PR. */
+  requirePrUrl?: boolean;
+  /** Query GitHub for the PR's state. Throws on lookup failure (fail closed). */
+  getPrState: (prUrl: string) => Promise<string>;
+}
+
+/**
+ * Merge-completion gate factory. Returns a `mark_complete` gate that fails
+ * closed until GitHub reports the task's PR MERGED. Mirrors the `pr_merged`
+ * validator's semantics (`state == MERGED` passes; `OPEN` is a retryable
+ * "not yet merged" block; anything else — CLOSED-without-merge or lookup
+ * failure — is a terminal block). The task stays `approved` on a block so the
+ * implementer can merge and retry.
+ */
+export function createPrMergedGate(
+  deps: PrMergedGateDeps
+): (task: SpaceTask) => Promise<{ ok: true } | { ok: false; error: string }> {
+  const { resolvePrUrl, requirePrUrl = false, getPrState } = deps;
+  return async (task) => {
+    const prUrl = resolvePrUrl(task);
+    if (!prUrl) {
+      return requirePrUrl
+        ? {
+            ok: false,
+            error:
+              "mark_complete merge gate: could not resolve the run's PR URL. " +
+              'The task stays approved until a PR link is available and its merge is confirmed.',
+          }
+        : { ok: true };
+    }
+
+    let state: string;
+    try {
+      state = await getPrState(prUrl);
+    } catch (err) {
+      return {
+        ok: false,
+        error:
+          `mark_complete merge gate: could not verify the run's PR state for ${prUrl} ` +
+          `(${err instanceof Error ? err.message : String(err)}). The task stays approved until the PR is confirmed merged.`,
+      };
+    }
+
+    if (state === 'MERGED') return { ok: true };
+    if (state === 'OPEN') {
+      return {
+        ok: false,
+        error:
+          `mark_complete merge gate: the run's PR is still OPEN (${prUrl}). ` +
+          `Merge it before calling mark_complete (gh pr merge), then retry.`,
+      };
+    }
+    return {
+      ok: false,
+      error:
+        `mark_complete merge gate: the run's PR is ${state} (${prUrl}), not merged. ` +
+        `The task stays approved; resolve the PR before calling mark_complete.`,
+    };
+  };
 }
 
 /**
@@ -116,6 +195,9 @@ export function createMarkCompleteHandler(
     internalEventBus,
     goalService,
     resolveResultArtifactSummary,
+    callerSessionId,
+    requiresPostApprovalOwner = false,
+    assertPrMerged,
   } = deps;
 
   const handleGoalTerminal = (task: SpaceTask): void => {
@@ -151,6 +233,37 @@ export function createMarkCompleteHandler(
           `task is not in \`approved\` status (current: \`${task.status}\`); did you mean \`approve_task\`? ` +
           `mark_complete only transitions an already-approved task from 'approved' to 'done'.`,
       });
+    }
+
+    if (requiresPostApprovalOwner && !task.postApprovalSessionId) {
+      return jsonResult({
+        success: false,
+        error:
+          'mark_complete is blocked until the routed post-approval session is recorded on the task.',
+      });
+    }
+    if (
+      task.postApprovalSessionId &&
+      (!callerSessionId || task.postApprovalSessionId !== callerSessionId)
+    ) {
+      return jsonResult({
+        success: false,
+        error: `mark_complete is restricted to the routed post-approval session ${task.postApprovalSessionId}.`,
+      });
+    }
+
+    // Merge-completion gate: the coder owns the merge in the stable coding /
+    // research workflows, so the task must NOT flip to `done` while the run's
+    // PR is still open — otherwise a coder that abandons a conflicted merge or
+    // mistakes a merge-queue enqueue for completion would close the task with
+    // the PR unmerged. Fails closed until GitHub reports the PR MERGED. The
+    // closure resolves the pr_url itself and skips non-PR runs, so a bare
+    // `approved → done` (no PR) is unaffected.
+    if (assertPrMerged) {
+      const gate = await assertPrMerged(task);
+      if (!gate.ok) {
+        return jsonResult({ success: false, error: gate.error });
+      }
     }
 
     let goalUpdate: {

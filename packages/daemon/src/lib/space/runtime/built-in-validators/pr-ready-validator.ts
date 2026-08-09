@@ -50,6 +50,28 @@ interface GraphQlResponse {
   errors?: unknown[];
 }
 
+/**
+ * Post-approval merge signals carried in `send_message` `data.reason`. When the
+ * coder (reused as the merger on the Coding node) reports a merge blocker or a
+ * fix-push, the PR is by definition NOT "ready for Review" — the coder is
+ * reporting unreadiness (or that it just changed the head). The pr_ready gate
+ * must not block those reports, or an administrative blocker that leaves the PR
+ * UNSTABLE/DIRTY/BEHIND is undeliverable to the approval authority and the
+ * approved task stalls. Only the coder-owned Coding workflow routes the
+ * post-approval coder through the pr_ready-hooked Coding → Review channel (the
+ * merger variants use a dedicated, ungated Post-Approval → Review channel).
+ */
+const POST_APPROVAL_MERGE_REASONS = new Set(['merge_blocked', 'merge_fix_pushed']);
+
+function readSendReason(context: HookExecutorContext): string | undefined {
+  const data = (context.rawParams ?? context.params)?.data;
+  if (data && typeof data === 'object' && 'reason' in data) {
+    const reason = (data as { reason?: unknown }).reason;
+    return typeof reason === 'string' ? reason : undefined;
+  }
+  return undefined;
+}
+
 export function createPrReadyValidator(
   // Lazy default: referencing `Bun.spawn` directly as the default value throws
   // at import/call time under non-Bun runtimes (e.g. Vitest on Node) even when
@@ -58,6 +80,79 @@ export function createPrReadyValidator(
     Bun.spawn(...args)) as typeof Bun.spawn
 ): (context: HookExecutorContext) => Promise<WorkflowHookResult> {
   return async (context: HookExecutorContext): Promise<WorkflowHookResult> => {
+    // Exempt post-approval merge-blocker reports / fix-push notices from the
+    // readiness gate — but ONLY while the task is `approved` (post-approval
+    // phase). The initial implementation handoff runs while the task is still
+    // in-progress, so gating on `approved` prevents a sender from spoofing one
+    // of these reasons to bypass the gate and activate Review with an unready
+    // PR.
+    if (context.taskStatus === 'approved') {
+      const data = (context.rawParams ?? context.params)?.data;
+      const suppliedPrUrl =
+        data && typeof data === 'object' && 'pr_url' in data
+          ? (data as { pr_url?: unknown }).pr_url
+          : undefined;
+      // The frozen reviewed PR is the engine-stamped reserved identity
+      // (context.frozenPrUrl) — NOT this hook's own localState, which a cross-
+      // hook stateForHook write could pollute. Fall back to the hook's own
+      // state only when the engine did not provide the reserved value (older
+      // runs / tests without the engine resolver).
+      const frozenPrUrl =
+        typeof context.frozenPrUrl === 'string'
+          ? context.frozenPrUrl
+          : typeof context.hookLocalState.pr_url === 'string'
+            ? context.hookLocalState.pr_url
+            : typeof context.hookLocalState.prUrl === 'string'
+              ? context.hookLocalState.prUrl
+              : undefined;
+      const isMergeReason = POST_APPROVAL_MERGE_REASONS.has(readSendReason(context) ?? '');
+      // Blocker / fix-push handoffs MUST carry data.pr_url bound to the frozen
+      // reviewed PR. Treating omission as safe lets an approved coder send
+      // `reason: "merge_blocked"` with no structured pr_url while naming a
+      // different PR in the free-form message — the re-approval authority then
+      // has no trusted identity to bind. So require the pr_url and a frozen
+      // identity to compare it against.
+      if (isMergeReason) {
+        if (typeof suppliedPrUrl !== 'string') {
+          return {
+            type: 'block',
+            reason:
+              'Post-approval blocker/fix handoff must carry data.pr_url bound to the reviewed PR (omission is not safe).',
+          };
+        }
+        if (!frozenPrUrl) {
+          return {
+            type: 'block',
+            reason:
+              'Post-approval blocker/fix handoff cannot be bound because this PR-ready hook has no frozen reviewed PR identity.',
+          };
+        }
+        if (suppliedPrUrl !== frozenPrUrl) {
+          return {
+            type: 'block',
+            reason: `Post-approval blocker/fix handoff PR ${suppliedPrUrl} does not match the reviewed PR ${frozenPrUrl}`,
+          };
+        }
+        return { type: 'allow' };
+      }
+      // Non-merge approved handoff: bind any supplied pr_url to the frozen
+      // identity (a missing pr_url is allowed here — it is not a blocker report).
+      if (typeof suppliedPrUrl === 'string') {
+        if (!frozenPrUrl) {
+          return {
+            type: 'block',
+            reason:
+              'Post-approval handoff cannot set a PR URL because this PR-ready hook has no frozen reviewed PR identity.',
+          };
+        }
+        if (suppliedPrUrl !== frozenPrUrl) {
+          return {
+            type: 'block',
+            reason: `Post-approval handoff PR ${suppliedPrUrl} does not match the reviewed PR ${frozenPrUrl}`,
+          };
+        }
+      }
+    }
     const deadlineMs = Date.now() + DEFAULT_TIMEOUT_MS;
     const prUrlResult = await resolvePrUrl(context, spawnImpl, deadlineMs);
     if (!prUrlResult.success) {

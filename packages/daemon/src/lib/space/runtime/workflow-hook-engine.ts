@@ -90,6 +90,15 @@ export interface HookExecutionRecord {
   timestamp: number;
 }
 
+/**
+ * Reserved hook id under which the engine stamps the run's pr_ready-validated
+ * PR identity. Hook `record_state`/`stateForHook` updates target a hook's OWN
+ * id, so no real (user-defined) hook can write here; the resolver reads this key
+ * directly instead of matching user-defined hook ids by substring, closing the
+ * colliding-hook-id / record_state PR-identity spoof.
+ */
+export const PR_READY_VALIDATED_IDENTITY_HOOK_ID = '__pr_ready_validated_identity__';
+
 /** Dependencies for the workflow hook engine. */
 export interface WorkflowHookEngineConfig {
   workflow: SpaceWorkflow;
@@ -469,14 +478,42 @@ export class WorkflowHookEngine {
       // Process result
       switch (result.type) {
         case 'allow':
-          if (methodName === 'send_message') {
+          // Snapshot the run's reviewed PR identity ONLY when the pr_ready
+          // validator allows the handoff. Stamping pr_url into ANY allowed
+          // send_message hook's localState let a custom hook with a colliding
+          // id (e.g. `post-pr-ready-notification`) and a different validator
+          // supply a spoofed pr_url that resolveInitialPrimaryLinkUrl (which
+          // matches hook ids by the `pr-ready` substring) would then trust for
+          // merge-dispatch resolution and the mark_complete merge gate.
+          if (
+            methodName === 'send_message' &&
+            hook.validator.kind === 'built_in' &&
+            hook.validator.id === 'pr_ready'
+          ) {
             const prUrl = extractPrUrlFromParams(currentParams);
-            if (prUrl) stateUpdates.push({ hookId: hook.id, state: { pr_url: prUrl } });
+            if (prUrl) {
+              // The pr_ready hook's own state — used by the validator's frozen-
+              // identity check on later handoffs.
+              stateUpdates.push({ hookId: hook.id, state: { pr_url: prUrl } });
+              // The authoritative run-level identity under a RESERVED hook id.
+              // record_state / stateForHook target a hook's OWN id, so no real
+              // hook can write here — the resolver reads this key directly
+              // instead of matching user-defined hook ids by substring, closing
+              // the colliding-hook-id / record_state spoof.
+              stateUpdates.push({
+                hookId: PR_READY_VALIDATED_IDENTITY_HOOK_ID,
+                state: { pr_url: prUrl },
+              });
+            }
           }
           break;
 
         case 'block':
-          if (result.data && typeof result.data === 'object') {
+          if (
+            result.data &&
+            typeof result.data === 'object' &&
+            hook.id !== PR_READY_VALIDATED_IDENTITY_HOOK_ID
+          ) {
             stateUpdates.push({ hookId: hook.id, state: result.data as Record<string, unknown> });
           }
           if ((hook.classification ?? 'validation') === 'validation') {
@@ -572,6 +609,27 @@ export class WorkflowHookEngine {
               };
             } else {
               currentParams = patchedParams;
+              // A pr_ready patch_params success (it discovered the PR from
+              // templateData / the current branch because the sender omitted
+              // data.pr_url) is a successful handoff — stamp the frozen
+              // identity (hook-local + reserved key) just like the allow branch,
+              // using the now-patched params. Without this, the common no-pr_url
+              // handoff recorded no frozen identity and later blocker/fix
+              // handoffs failed closed.
+              if (
+                methodName === 'send_message' &&
+                hook.validator.kind === 'built_in' &&
+                hook.validator.id === 'pr_ready'
+              ) {
+                const prUrl = extractPrUrlFromParams(currentParams);
+                if (prUrl) {
+                  stateUpdates.push({ hookId: hook.id, state: { pr_url: prUrl } });
+                  stateUpdates.push({
+                    hookId: PR_READY_VALIDATED_IDENTITY_HOOK_ID,
+                    state: { pr_url: prUrl },
+                  });
+                }
+              }
             }
           }
           break;
@@ -584,11 +642,20 @@ export class WorkflowHookEngine {
           break;
 
         case 'record_state':
-          if (result.state && typeof result.state === 'object') {
+          if (
+            result.state &&
+            typeof result.state === 'object' &&
+            hook.id !== PR_READY_VALIDATED_IDENTITY_HOOK_ID
+          ) {
             stateUpdates.push({ hookId: hook.id, state: result.state as Record<string, unknown> });
           }
           if (isRecord(result.stateForHook)) {
             for (const [hookId, state] of Object.entries(result.stateForHook)) {
+              // Hooks cannot write the reserved pr_ready-identity key — it is
+              // engine-only (stamped on pr_ready allow), so the resolver can
+              // trust it as the authoritative run PR identity. record_state and
+              // stateForHook are user/hook-addressable; reject the reserved id.
+              if (hookId === PR_READY_VALIDATED_IDENTITY_HOOK_ID) continue;
               if (isRecord(state)) stateUpdates.push({ hookId, state });
             }
           }
@@ -865,6 +932,34 @@ export class WorkflowHookEngine {
   // Context building
   // -------------------------------------------------------------------------
 
+  /**
+   * Resolve the run's frozen reviewed PR URL: the latest `pr_url` stamped by a
+   * `pr_ready` built-in validator's hook. After the engine gated pr_url
+   * stamping on the pr_ready validator, only those hooks carry a frozen pr_url,
+   * so this is the authoritative run-level identity that merge dispatch and the
+   * mark_complete merge gate bind to. Returns undefined when no pr_ready
+   * handoff has frozen an identity yet.
+   */
+  private resolveFrozenPrUrl(): string | undefined {
+    // The reserved pr_ready-identity key is the authoritative frozen PR URL —
+    // engine-only (stamped on pr_ready allow; cross-hook writes to it are
+    // blocked), so a script hook cannot pollute it by writing to the ordinary
+    // pr_ready hook id. Reading it here (rather than the ordinary hook state)
+    // means the frozen identity bound to mark_complete / blocker handoffs is
+    // no longer spoofable via cross-hook state writes.
+    try {
+      const st = this.config.hookStateRepo.get(
+        this.config.workflowRunId,
+        PR_READY_VALIDATED_IDENTITY_HOOK_ID
+      );
+      const url =
+        st && typeof st.localState?.pr_url === 'string' ? (st.localState.pr_url as string) : '';
+      return url || undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   private async buildExecutorContext(
     hook: WorkflowHook,
     methodName: string,
@@ -953,8 +1048,10 @@ export class WorkflowHookEngine {
       nodeName,
       sessionId: meta.sessionId,
       taskId: meta.taskId,
+      taskStatus: this.config.getTaskStatus?.(meta.taskId),
       targetNode: hook.targetNode ?? meta.targetNode,
       hookLocalState: this.boundHookLocalState(hookLocalState),
+      frozenPrUrl: this.resolveFrozenPrUrl(),
       currentArtifacts: mappedArtifacts,
       permittedExternalLookups,
       templateData: hook.templateData,

@@ -39,7 +39,8 @@ import '../runtime/connectors/production';
 import { slugify, validateSlug } from '../slug';
 import {
   CODING_WORKFLOW,
-  FULLSTACK_QA_LOOP_WORKFLOW,
+  CODING_WITH_QA_WORKFLOW,
+  LEGACY_CODING_TEMPLATE_IDENTITIES,
   PLAN_AND_DECOMPOSE_WORKFLOW,
   RESEARCH_WORKFLOW,
   REVIEW_ONLY_WORKFLOW,
@@ -49,15 +50,27 @@ import { migrateWorkflowGateProgressionToHooks } from '../workflows/workflow-mig
 const logger = new Logger('SpaceWorkflowManager');
 const RESERVED_WORKFLOW_AGENT_NAMES = new Set(['space-agent', 'task-agent']);
 
+// Keyed by template name (current canonical names) so load-time gate→hook
+// migration can resolve template gates for every built-in, including the
+// stable templates. Legacy pre-split names are aliased to their canonical
+// template's gates below so rows seeded under the old names converge to the
+// hook-based topology instead of being left with a stale gated channel + a
+// duplicated open route.
 const BUILT_IN_TEMPLATE_GATES = new Map(
   [
     CODING_WORKFLOW,
+    CODING_WITH_QA_WORKFLOW,
     PLAN_AND_DECOMPOSE_WORKFLOW,
-    FULLSTACK_QA_LOOP_WORKFLOW,
     RESEARCH_WORKFLOW,
     REVIEW_ONLY_WORKFLOW,
   ].map((workflow) => [workflow.name, workflow.gates ?? []])
 );
+for (const identity of LEGACY_CODING_TEMPLATE_IDENTITIES) {
+  const canonical = [CODING_WORKFLOW, CODING_WITH_QA_WORKFLOW].find(
+    (workflow) => workflow.name === identity.name
+  );
+  if (canonical) BUILT_IN_TEMPLATE_GATES.set(identity.legacyName, canonical.gates ?? []);
+}
 
 function normalizeWorkflowAgentName(name: string): string {
   return name.trim().toLowerCase();
@@ -275,6 +288,56 @@ export class SpaceWorkflowManager {
   // -------------------------------------------------------------------------
   // Update
   // -------------------------------------------------------------------------
+
+  /** Update built-in identity metadata without rewriting workflow structure. */
+  updateBuiltInIdentity(
+    id: string,
+    identity: Pick<UpdateSpaceWorkflowParams, 'name' | 'handle' | 'templateName'>
+  ): SpaceWorkflow | null {
+    const existing = this.repo.getWorkflow(id);
+    if (!existing) return null;
+    const name = identity.name?.trim();
+    if (!name) throw new WorkflowValidationError('Workflow name is required');
+    this.validateName(existing.spaceId, name, id);
+    if (typeof identity.handle !== 'string') {
+      throw new WorkflowValidationError('Workflow handle must be a string');
+    }
+    const handle = identity.handle.trim();
+    this.validateHandle(existing.spaceId, handle, id);
+    return this.repo.updateWorkflow(id, {
+      name,
+      handle,
+      templateName: identity.templateName,
+    });
+  }
+
+  /**
+   * Stamp only the `templateName` on a built-in workflow row — no name/handle
+   * validation and no structural migration. Used by the legacy identity
+   * migration to point older duplicate rows at the canonical template so they
+   * group for duplicate cleanup even when their name/handle cannot be renamed
+   * (collision). Unlike {@link updateWorkflow}, this writes a single column and
+   * skips gate→hook migration, so it cannot mangle the row's structure.
+   */
+  stampBuiltInTemplateName(id: string, templateName: string): SpaceWorkflow | null {
+    const existing = this.repo.getWorkflow(id);
+    if (!existing) return null;
+    return this.repo.updateWorkflow(id, { templateName });
+  }
+
+  /**
+   * Stamp only the `tags` on a built-in workflow row — no validation and no
+   * structural migration. Used by the legacy identity migration to drop a stale
+   * `default` tag from merger-variant rows (the stable `Coding` workflow is the
+   * default now), so the deterministic workflow fallback does not pick the
+   * legacy merger flow over the stable one. Like {@link stampBuiltInTemplateName},
+   * this writes a single column and cannot mangle the row's structure.
+   */
+  stampBuiltInTags(id: string, tags: string[]): SpaceWorkflow | null {
+    const existing = this.repo.getWorkflow(id);
+    if (!existing) return null;
+    return this.repo.updateWorkflow(id, { tags });
+  }
 
   updateWorkflow(id: string, params: UpdateSpaceWorkflowParams): SpaceWorkflow | null {
     const existing = this.repo.getWorkflow(id);

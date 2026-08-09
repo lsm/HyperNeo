@@ -31,7 +31,7 @@ import { describe, expect, test } from 'bun:test';
 import type { Gate, WorkflowHook } from '@hyperneo/shared';
 import {
   CODING_WORKFLOW,
-  FULLSTACK_QA_LOOP_WORKFLOW,
+  CODING_WITH_QA_WORKFLOW,
   getBuiltInWorkflows,
   PLAN_AND_DECOMPOSE_WORKFLOW,
   RESEARCH_WORKFLOW,
@@ -130,9 +130,9 @@ const PLAN_TEMPLATE_PROPS = {
   templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
 };
 
-const FULLSTACK_TEMPLATE_PROPS = {
-  templateName: FULLSTACK_QA_LOOP_WORKFLOW.name,
-  templateGates: FULLSTACK_QA_LOOP_WORKFLOW.gates ?? [],
+const QA_TEMPLATE_PROPS = {
+  templateName: CODING_WITH_QA_WORKFLOW.name,
+  templateGates: CODING_WITH_QA_WORKFLOW.gates ?? [],
 };
 
 /**
@@ -234,8 +234,8 @@ const FIXTURES: ReplayFixture[] = [
   {
     name: 'built-in review approval hook (codex) migrates and replays identically',
     build: () => ({
-      ...FULLSTACK_QA_LOOP_WORKFLOW,
-      ...FULLSTACK_TEMPLATE_PROPS,
+      ...CODING_WITH_QA_WORKFLOW,
+      ...QA_TEMPLATE_PROPS,
     }),
     verify: ({ workflow, warnings }) => {
       const hook = hookBetween(workflow, 'Review', 'QA');
@@ -292,13 +292,13 @@ const FIXTURES: ReplayFixture[] = [
   {
     name: 'custom per-node codex timeout (minutes) is baked into the migrated hook',
     build: () => ({
-      ...FULLSTACK_QA_LOOP_WORKFLOW,
-      nodes: FULLSTACK_QA_LOOP_WORKFLOW.nodes.map((node) =>
+      ...CODING_WITH_QA_WORKFLOW,
+      nodes: CODING_WITH_QA_WORKFLOW.nodes.map((node) =>
         node.name === 'Review'
           ? { ...node, requireCodexApproval: true, codexTimeoutSeconds: 300 }
           : node
       ),
-      ...FULLSTACK_TEMPLATE_PROPS,
+      ...QA_TEMPLATE_PROPS,
     }),
     verify: ({ workflow }) => {
       const hook = hookBetween(workflow, 'Review', 'QA');
@@ -538,9 +538,9 @@ const FIXTURES: ReplayFixture[] = [
   {
     name: 'custom review-approval:-prefixed hook with unrelated -lt N is never clobbered',
     build: () => ({
-      ...FULLSTACK_QA_LOOP_WORKFLOW,
+      ...CODING_WITH_QA_WORKFLOW,
       hooks: [
-        ...(FULLSTACK_QA_LOOP_WORKFLOW.hooks ?? []),
+        ...(CODING_WITH_QA_WORKFLOW.hooks ?? []),
         makeUserScriptHook({
           id: 'review-approval:custom-audit-trail',
           sourceNode: 'Review',
@@ -556,7 +556,7 @@ const FIXTURES: ReplayFixture[] = [
           authorizedCallers: [{ sourceNode: 'Review' }],
         }),
       ],
-      ...FULLSTACK_TEMPLATE_PROPS,
+      ...QA_TEMPLATE_PROPS,
     }),
     verify: ({ workflow }) => {
       // Review-side twin of the plan-approval pin above — the post-pass
@@ -673,10 +673,10 @@ describe('workflow hook migration replay suite', () => {
   test('every built-in template migrates and replays identically', () => {
     for (const template of [
       CODING_WORKFLOW,
+      CODING_WITH_QA_WORKFLOW,
       RESEARCH_WORKFLOW,
       REVIEW_ONLY_WORKFLOW,
       PLAN_AND_DECOMPOSE_WORKFLOW,
-      FULLSTACK_QA_LOOP_WORKFLOW,
     ]) {
       const first = migrateWorkflowGateProgressionToHooks({
         ...template,
@@ -707,12 +707,12 @@ describe('workflow hook migration replay suite', () => {
     });
 
     const initial = migrateWorkflowGateProgressionToHooks(
-      withReviewTimeout({ ...FULLSTACK_QA_LOOP_WORKFLOW, ...FULLSTACK_TEMPLATE_PROPS }, 300)
+      withReviewTimeout({ ...CODING_WITH_QA_WORKFLOW, ...QA_TEMPLATE_PROPS }, 300)
     ).workflow;
     expect(scriptSource(hookBetween(initial, 'Review', 'QA'))).toContain('-lt 300 ');
 
     const rebuilt = migrateWorkflowGateProgressionToHooks(
-      withReviewTimeout({ ...initial, ...FULLSTACK_TEMPLATE_PROPS }, 900)
+      withReviewTimeout({ ...initial, ...QA_TEMPLATE_PROPS }, 900)
     ).workflow;
     const rebuiltSource = scriptSource(hookBetween(rebuilt, 'Review', 'QA'));
     expect(rebuiltSource).toContain('-lt 900 ');
@@ -720,7 +720,7 @@ describe('workflow hook migration replay suite', () => {
     expect(rebuiltSource).toContain('15-minute timeout');
 
     const replay = migrateWorkflowGateProgressionToHooks(
-      withReviewTimeout({ ...rebuilt, ...FULLSTACK_TEMPLATE_PROPS }, 900)
+      withReviewTimeout({ ...rebuilt, ...QA_TEMPLATE_PROPS }, 900)
     );
     expect(replay.workflow).toEqual(rebuilt);
     expect(replay.warnings).toEqual([]);

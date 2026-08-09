@@ -2618,7 +2618,7 @@ describe('SpaceRuntime', () => {
         )
       ).not.toThrow();
 
-      // Five built-in workflows should exist
+      // Five built-in workflows should exist (the stable coder-owned set).
       const workflows = workflowManager.listWorkflows(newSpaceId);
       expect(workflows).toHaveLength(5);
     });

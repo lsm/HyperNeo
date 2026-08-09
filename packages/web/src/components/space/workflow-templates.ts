@@ -8,6 +8,7 @@
  */
 
 import type {
+  DeclarativeToolGuard,
   SpaceWorkerAgent,
   SpaceWorkflow,
   WorkflowChannel,
@@ -72,6 +73,12 @@ export interface WorkflowTemplateStep {
   codexPollIntervalMs?: number;
   /** Custom timeout (seconds) for the codex review bot reaction check. */
   codexTimeoutSeconds?: number;
+  /**
+   * Per-agent declarative tool guards for single-agent nodes (e.g. the coder's
+   * raw-merge blocker). Preserved through workflowToTemplate → buildTemplateNodes
+   * so cloned built-in templates keep their runtime enforcement.
+   */
+  toolGuards?: DeclarativeToolGuard[];
 }
 
 export interface WorkflowTemplateAgentSlot {
@@ -91,6 +98,8 @@ export interface WorkflowTemplateAgentSlot {
   instructions?: string;
   /** Per-slot fresh-context flag (clear model context each handoff). */
   resetContextPerTurn?: boolean;
+  /** Per-slot declarative tool guards (mirrors WorkflowNodeAgent.toolGuards). */
+  toolGuards?: DeclarativeToolGuard[];
 }
 
 // ============================================================================
@@ -211,6 +220,7 @@ export function workflowToTemplate(workflow: SpaceWorkflow): WorkflowTemplate {
           model: agent.model,
           systemPrompt: extractInstructionText(agent.customPrompt),
           resetContextPerTurn: agent.resetContextPerTurn,
+          toolGuards: agent.toolGuards?.map((guard) => ({ ...guard })),
         })),
         postApproval: postApproval ? { ...postApproval } : undefined,
         requireCodexApproval: node.requireCodexApproval,
@@ -227,6 +237,7 @@ export function workflowToTemplate(workflow: SpaceWorkflow): WorkflowTemplate {
       model: primary?.model,
       systemPrompt: extractInstructionText(primary?.customPrompt),
       resetContextPerTurn: primary?.resetContextPerTurn,
+      toolGuards: primary?.toolGuards?.map((guard) => ({ ...guard })),
       postApproval: postApproval ? { ...postApproval } : undefined,
       requireCodexApproval: node.requireCodexApproval,
       codexPollIntervalMs: node.codexPollIntervalMs,
@@ -248,6 +259,7 @@ export function workflowToTemplate(workflow: SpaceWorkflow): WorkflowTemplate {
       ...gate,
       fields: [...(gate.fields ?? [])],
     })),
+    hooks: (workflow.hooks ?? []).map((hook) => ({ ...hook })),
     tags: [...(workflow.tags ?? [])],
   };
 }
@@ -293,6 +305,9 @@ export function buildTemplateNodes(
           thinkingLevel: slot.thinkingLevel,
           customPrompt: slot.systemPrompt?.trim() ? { value: slot.systemPrompt.trim() } : undefined,
           ...(slot.resetContextPerTurn ? { resetContextPerTurn: true } : {}),
+          ...(slot.toolGuards
+            ? { toolGuards: slot.toolGuards.map((guard) => ({ ...guard })) }
+            : {}),
         };
       });
 
@@ -303,6 +318,9 @@ export function buildTemplateNodes(
         agents: agentSlots,
         customPrompt: step.systemPrompt?.trim() ? { value: step.systemPrompt.trim() } : undefined,
         postApproval: step.postApproval ? { ...step.postApproval } : undefined,
+        // Seed the sticky step-level field so the post-approval toggle cannot
+        // drop the hidden merge gate on a template-picker draft.
+        requirePrMerge: step.postApproval?.requirePrMerge === true ? true : undefined,
         requireCodexApproval: step.requireCodexApproval,
         codexPollIntervalMs: step.codexPollIntervalMs,
         codexTimeoutSeconds: step.codexTimeoutSeconds,
@@ -336,6 +354,9 @@ export function buildTemplateNodes(
           thinkingLevel: step.thinkingLevel,
           customPrompt: resolvedCustomPrompt,
           ...(step.resetContextPerTurn ? { resetContextPerTurn: true } : {}),
+          ...(step.toolGuards
+            ? { toolGuards: step.toolGuards.map((guard) => ({ ...guard })) }
+            : {}),
         },
       ],
       // Step-level model/thinkingLevel/customPrompt left undefined to avoid
@@ -345,6 +366,9 @@ export function buildTemplateNodes(
       thinkingLevel: undefined,
       customPrompt: undefined,
       postApproval: step.postApproval ? { ...step.postApproval } : undefined,
+      // Seed the sticky step-level field so the post-approval toggle cannot
+      // drop the hidden merge gate on a template-picker draft.
+      requirePrMerge: step.postApproval?.requirePrMerge === true ? true : undefined,
       requireCodexApproval: step.requireCodexApproval,
       codexPollIntervalMs: step.codexPollIntervalMs,
       codexTimeoutSeconds: step.codexTimeoutSeconds,

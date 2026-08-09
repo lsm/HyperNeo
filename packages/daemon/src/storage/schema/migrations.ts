@@ -15,6 +15,7 @@ import { runMigration106 as runMigration106External } from './m106-backfill-agen
 import { runMigration170 as runMigration170External } from './m170-backfill-missing-preset-agents';
 import { runMigration171 } from './m171-backfill-post-approval-review-channels';
 import { runMigration172 as runMigration172External } from './m172-backfill-orphaned-preset-agents';
+import { runMigration184 as runMigration184External } from './m184-backfill-reviewer-bash-tools';
 import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug';
 import {
   deriveArtifactKey,
@@ -922,6 +923,14 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   // Migration 183: Widen sdk_messages.send_status for ACP delivery boundaries.
   run(migrationMarkerKey(183), () => runMigration183(db));
+
+  // Migration 184: Backfill Bash + Cron tools onto existing Reviewer preset rows
+  // (the reviewer lost the shell-less profile when the PR-process MCPs were
+  // removed). Re-stamps only unmodified seeds; customized rows are left for the
+  // drift/sync UI. (Renumbered 181→182→184: dev shipped M181 for workflow-run
+  // definition-version pinning, M182 for the message-delivery-v2 active-turn
+  // index, and M183 for the sdk_messages.send_status widen.)
+  run(migrationMarkerKey(184), () => runMigration184(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -12186,4 +12195,15 @@ export function runMigration181(db: BunDatabase): void {
   } finally {
     db.exec('PRAGMA foreign_keys = ON');
   }
+}
+
+/**
+ * Migration 184 — Backfill Bash + Cron tools onto existing Reviewer preset rows.
+ *
+ * Delegated to m184-backfill-reviewer-bash-tools.ts so the loop body stays
+ * readable. See the module doc there for the safety model (only unmodified
+ * seed rows are re-stamped; customized rows are left to drift/sync).
+ */
+export function runMigration184(db: BunDatabase): void {
+  runMigration184External(db);
 }

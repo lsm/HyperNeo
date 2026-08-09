@@ -87,13 +87,15 @@ export interface SubSessionMemberInfo {
   nodeId?: string;
 }
 import { createNodeAgentMcpServer } from '../tools/node-agent-tools';
-import { createEndNodeHandlers, createMarkCompleteHandler } from '../tools/end-node-handlers';
-import { postGitHubReview, buildGhPostReviewDeps } from '../tools/post-review-handler';
-import type { PostReviewInput } from '../tools/node-agent-tool-schemas';
+import {
+  createEndNodeHandlers,
+  createMarkCompleteHandler,
+  createPrMergedGate,
+} from '../tools/end-node-handlers';
+import { builtInWorkflowRequiresPrMerge } from '../workflows/built-in-workflows';
+import { createGithubConnector } from './connectors/github-connector';
+import { collectDispatchablePostApprovalRoutes } from './post-approval-router';
 import { jsonResult } from '../tools/tool-result';
-import type { ToolResult } from '../tools/tool-result';
-import { getPrDiff, buildGhGetPrDiffDeps, isSamePrIdentity } from '../tools/get-pr-diff-handler';
-import type { GetPrDiffInput } from '../tools/node-agent-tool-schemas';
 import {
   assertExecutionValidAgainstWorkflow,
   PermanentSpawnError,
@@ -453,6 +455,7 @@ export function buildSlotOverrides(
   const taskModelOverride = modelOverrideKey
     ? context?.task?.workflowModelOverrides?.[modelOverrideKey]
     : undefined;
+  const effectiveGuards = slot.toolGuards;
   return {
     model: taskModelOverride ?? slot.model,
     thinkingLevel: slot.thinkingLevel,
@@ -460,7 +463,7 @@ export function buildSlotOverrides(
     replaceAgentPrompt: slot.replaceAgentPrompt,
     disabledSkillIds: slot.disabledSkillIds,
     extraMcpServers: slot.extraMcpServers,
-    toolGuards: slot.toolGuards,
+    toolGuards: effectiveGuards,
     resolutionContext: {
       agentId: slot.agentId,
       agentName: slot.name,
@@ -5234,6 +5237,14 @@ export class TaskAgentManager {
     // The handler self-validates status (rejects non-approved) — a spawned
     // agent that happens not to be running a post-approval step simply sees
     // the tool reject with a clear error.
+    // Merge-completion gate: carry the durable route flag into template-created
+    // clones, with built-in identity as backward compatibility for existing rows.
+    // Instruction prose is deliberately irrelevant: customizing it must not
+    // silently disable the safety contract.
+    const dispatchedPostApprovalRoute = collectDispatchablePostApprovalRoutes(workflow ?? null)[0];
+    const isCoderOwnedMergeWorkflow =
+      dispatchedPostApprovalRoute?.requirePrMerge === true ||
+      builtInWorkflowRequiresPrMerge(workflow?.templateName);
     const onMarkComplete = createMarkCompleteHandler({
       taskId,
       spaceId,
@@ -5241,12 +5252,34 @@ export class TaskAgentManager {
       taskManager: boundTaskManager,
       internalEventBus: this.config.internalEventBus,
       goalService: this.config.goalService,
+      callerSessionId: subSessionId,
+      requiresPostApprovalOwner: dispatchedPostApprovalRoute !== undefined,
       resolveResultArtifactSummary: (task) => {
         // Delegated to the domain artifact profile (coding: the kindless
         // terminal `decision` summary).
         if (!task.workflowRunId) return null;
         return this.config.artifactProfile?.summarizeRunOutcome(task.workflowRunId) ?? null;
       },
+      assertPrMerged: isCoderOwnedMergeWorkflow
+        ? createPrMergedGate({
+            requirePrUrl: true,
+            resolvePrUrl: (task) =>
+              task.workflowRunId
+                ? (this.config.artifactProfile?.resolveInitialPrimaryLinkUrl?.(
+                    task.workflowRunId
+                  ) ?? '')
+                : '',
+            getPrState: async (prUrl) => {
+              const outcome = await createGithubConnector().ops.getPr(
+                { prUrl },
+                { workspacePath: '', params: {}, rawParams: {}, hookLocalState: {} }
+              );
+              if (!outcome.ok) throw new Error(outcome.error);
+              const state = (outcome.data as { state?: unknown } | null)?.state;
+              return typeof state === 'string' ? state : 'UNKNOWN';
+            },
+          })
+        : undefined,
     });
 
     // Self-heal callback for the agent-callable `restore_node_agent` tool.
@@ -5411,73 +5444,6 @@ export class TaskAgentManager {
       }
     };
 
-    // `get_pr_diff` is registered only for the Reviewer — detected by the
-    // agent's handle/templateName (the built-in reviewer preset). The callback
-    // resolves the PR URL (from the arg or the run), builds the authed `gh` deps
-    // with the session's workspace, and delegates to getPrDiff. Other node
-    // agents never see the tool. (get_pr_diff is an MCP tool, so it is NOT
-    // listed in the agent's tools profile — MCP tools are inherited regardless
-    // of the profile.) It reads the diff via runGhJson — the same credential
-    // path as post_review / the github connector / pr_ready — so private repos
-    // work without a shell.
-    const reviewerAgent = execution?.agentId
-      ? this.config.spaceAgentManager.getById(execution.agentId)
-      : null;
-    const isReviewerAgent =
-      reviewerAgent?.handle === 'reviewer' || reviewerAgent?.templateName === 'Reviewer';
-    const onGetPrDiff = isReviewerAgent
-      ? async (args: GetPrDiffInput): Promise<ToolResult> => {
-          try {
-            const runPrUrl = this.resolvePrUrlForRun(workflowRunId);
-            const requestedUrl = args.prUrl ?? runPrUrl;
-            if (!requestedUrl) {
-              return jsonResult({
-                success: false,
-                error: 'No PR URL resolved for this workflow run; pass prUrl explicitly.',
-              });
-            }
-            // Cross-PR guard: when the caller supplies an explicit prUrl AND the
-            // run has a recorded PR, they must identify the same PR. Prevents a
-            // prompt-injected reviewer from reading a different (e.g. other
-            // private) repo's PR through the daemon's gh credentials — the host
-            // allowlist alone only constrains the host, not the owner/repo.
-            // Mirrors the binding in merge-pr-handler. An explicit URL is allowed
-            // only when the run has no recorded PR (review-only flow).
-            if (args.prUrl && runPrUrl && !isSamePrIdentity(args.prUrl, runPrUrl)) {
-              return jsonResult({
-                success: false,
-                error:
-                  "prUrl does not match this workflow run's PR. get_pr_diff is bound to the " +
-                  'run PR to prevent cross-repo reads via the daemon credentials.',
-              });
-            }
-            const deps = buildGhGetPrDiffDeps({ spawnImpl: Bun.spawn, cwd: workspacePath });
-            const result = await getPrDiff({ prUrl: requestedUrl }, deps);
-            return jsonResult(
-              result.success
-                ? {
-                    success: true,
-                    pr: result.pr,
-                    files: result.files,
-                    truncated: result.truncated ?? false,
-                    filesWithoutPatch: result.filesWithoutPatch ?? 0,
-                  }
-                : {
-                    success: false,
-                    error: result.error,
-                    retryable: result.retryable,
-                    retryAfterMs: result.retryAfterMs,
-                  }
-            );
-          } catch (err) {
-            return jsonResult({
-              success: false,
-              error: err instanceof Error ? err.message : String(err),
-            });
-          }
-        }
-      : undefined;
-
     // Build workflow hook engine when the workflow defines hooks.
     let hookEngine: WorkflowHookEngine | undefined;
     if (workflow?.hooks && workflow.hooks.length > 0) {
@@ -5532,82 +5498,6 @@ export class TaskAgentManager {
       });
     }
 
-    // `post_review` is registered for review-capable approval authorities — the
-    // Reviewer and QA — detected by handle/templateName (the built-in presets).
-    // The callback resolves the PR URL (from the arg or the run), builds the
-    // `gh` deps with the session's workspace, and delegates to postGitHubReview,
-    // which posts the marked review (own-PR COMMENTED fallback handled inside,
-    // including the "Recommendation: APPROVE" body marker and the PR URL host).
-    // Other node agents never see the tool. (post_review is an MCP tool, so it is
-    // NOT listed in the agent's tools profile — MCP tools are inherited.)
-    const reviewCapableAgent = execution?.agentId
-      ? this.config.spaceAgentManager.getById(execution.agentId)
-      : null;
-    // Grant post_review when this slot is the workflow's approval authority —
-    // the end node (Review for Coding/Research, QA for Fullstack) — so a
-    // CUSTOMIZED agent assigned to that slot (not the built-in reviewer/qa
-    // preset) still gets the tool its slot prompt tells it to use. The merger
-    // (Post-Approval node) is never the end node, so it never qualifies here.
-    // The preset checks remain as a defensive fallback.
-    const isApprovalAuthorityNode = workflow?.endNodeId === workflowNodeId;
-    const canPostReview =
-      isApprovalAuthorityNode ||
-      reviewCapableAgent?.handle === 'reviewer' ||
-      reviewCapableAgent?.templateName === 'Reviewer' ||
-      reviewCapableAgent?.handle === 'qa' ||
-      reviewCapableAgent?.templateName === 'QA';
-    // Defensive: if this slot looks like the reviewer (by name) but the agent
-    // lookup failed to confirm it, the post_review tool would be silently absent
-    // and the Reviewer would be stuck unable to post. Surface that loudly rather
-    // than failing quietly. (activation path sets execution.agentId at node-exec
-    // creation, so a null/unmatched lookup here is unexpected.)
-    if (!canPostReview && (agentName === 'reviewer' || agentNameAliases.includes('reviewer'))) {
-      log.warn(
-        `TaskAgentManager: post_review not registered for reviewer-like slot "${agentName}" ` +
-          `(execution.agentId=${execution?.agentId ?? 'null'}, looked-up handle=${reviewCapableAgent?.handle ?? 'none'}). ` +
-          'The Reviewer will be unable to post reviews — investigate the agent lookup.'
-      );
-    }
-    const onPostReview = canPostReview
-      ? async (args: PostReviewInput): Promise<ToolResult> => {
-          try {
-            const prUrl = args.prUrl || this.resolvePrUrlForRun(workflowRunId);
-            if (!prUrl) {
-              return jsonResult({
-                success: false,
-                error: 'No PR URL resolved for this workflow run; pass prUrl explicitly.',
-              });
-            }
-            const deps = buildGhPostReviewDeps({ spawnImpl: Bun.spawn, cwd: workspacePath });
-            const result = await postGitHubReview(
-              {
-                prUrl,
-                event: args.event,
-                body: args.body,
-                commitId: args.commitId,
-                comments: args.comments,
-              },
-              deps
-            );
-            return jsonResult(
-              result.success
-                ? {
-                    success: true,
-                    html_url: result.htmlUrl,
-                    event_used: result.eventUsed,
-                    fallback_used: result.fallbackUsed,
-                  }
-                : { success: false, error: result.error }
-            );
-          } catch (err) {
-            return jsonResult({
-              success: false,
-              error: err instanceof Error ? err.message : String(err),
-            });
-          }
-        }
-      : undefined;
-
     return createNodeAgentMcpServer({
       mySessionId: subSessionId,
       myAgentName: agentName,
@@ -5644,8 +5534,6 @@ export class TaskAgentManager {
       onCreateStandaloneTask,
       onPublishTask,
       onArchiveTask,
-      onGetPrDiff,
-      onPostReview,
       onSubscribeExternalEvent,
       onUnsubscribeExternalEvent,
       artifactRepo: this.config.artifactRepo,

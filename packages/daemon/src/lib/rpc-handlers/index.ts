@@ -595,7 +595,18 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   void restampBuiltInWorkflowsOnStartup(
     spaceWorkflowManager,
     deps.spaceManager,
-    deps.spaceAgentManager
+    deps.spaceAgentManager,
+    // Defer re-stamping while a workflow is executing OR has approved work in
+    // its post-approval phase. The runtime marks the run `done` before it
+    // dispatches post-approval, so run status alone would let startup strip a
+    // legacy merger node while its approved task still needs that worker.
+    (workflowId) =>
+      spaceWorkflowRunRepo
+        .listByWorkflow(workflowId)
+        .some(
+          (run) =>
+            run.status === 'in_progress' || run.status === 'blocked' || run.status === 'pending'
+        ) || spaceTaskRepo.hasApprovedTaskForWorkflow(workflowId)
   )
     .then(() => {
       // Proactive drift detection — fire-and-forget; logs warnings for any
@@ -628,6 +639,25 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     db: deps.db.getDatabase(),
     artifactRepo,
     gateDataRepo,
+    // Restrict the PR-identity resolver's hook-state fallback to hook ids that
+    // are actually configured with the pr_ready built-in validator for the run's
+    // workflow — closes the colliding-hook-id spoof on runs without a reserved
+    // pr_ready-identity snapshot.
+    resolvePrReadyHookIds: (runId: string) => {
+      const run = spaceWorkflowRunRepo.getRun(runId);
+      if (!run?.workflowId) return undefined;
+      const wf = spaceWorkflowManager.getWorkflow(run.workflowId);
+      // Return undefined ONLY when the workflow can't be resolved (legacy
+      // fallback). When the workflow resolves — even with no pr_ready hooks —
+      // return an (empty) Set so the resolver uses exact-match (fail closed)
+      // rather than the substring legacy fallback.
+      if (!wf) return undefined;
+      const ids = new Set<string>();
+      for (const h of wf.hooks ?? []) {
+        if (h.validator?.kind === 'built_in' && h.validator.id === 'pr_ready') ids.add(h.id);
+      }
+      return ids;
+    },
   });
   const evolutionEpisodeService = new EvolutionEpisodeService({
     evolutionRepo: deps.db.evolution,

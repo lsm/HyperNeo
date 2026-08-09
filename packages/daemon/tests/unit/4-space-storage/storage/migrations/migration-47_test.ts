@@ -43,6 +43,11 @@ describe('Migration 47: add short_id columns and short_id_counters table', () =>
   let testDir: string;
   let db: BunDatabase;
 
+  // runMigrations replays the full migration chain on a fresh on-disk DB per
+  // test, which legitimately takes a few seconds and intermittently exceeded
+  // the 5s default under CI load (flaky timeout — see migration-94_test.ts).
+  const HOOK_TIMEOUT_MS = 30_000;
+
   beforeEach(() => {
     testDir = join(process.cwd(), 'tmp', 'test-migration-47', `test-${Date.now()}`);
     mkdirSync(testDir, { recursive: true });
@@ -50,7 +55,7 @@ describe('Migration 47: add short_id columns and short_id_counters table', () =>
     const dbPath = join(testDir, 'test.db');
     db = new BunDatabase(dbPath);
     db.exec('PRAGMA foreign_keys = ON');
-  });
+  }, HOOK_TIMEOUT_MS);
 
   afterEach(() => {
     try {
@@ -63,7 +68,7 @@ describe('Migration 47: add short_id columns and short_id_counters table', () =>
     } catch {
       // ignore
     }
-  });
+  }, HOOK_TIMEOUT_MS);
 
   // ── Fresh DB (createTables path) ────────────────────────────────────────────
 

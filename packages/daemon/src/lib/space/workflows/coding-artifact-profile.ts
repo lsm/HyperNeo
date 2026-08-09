@@ -20,6 +20,7 @@
 import { deriveArtifactKey } from '@hyperneo/shared';
 import { Logger } from '../../logger';
 import type { GateDataCommittedEvent, WorkflowArtifactProfile } from '../runtime/artifact-profile';
+import { PR_READY_VALIDATED_IDENTITY_HOOK_ID } from '../runtime/workflow-hook-engine';
 import { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
@@ -28,6 +29,12 @@ const log = new Logger('coding-artifact-profile');
 
 /** Gate id that records a multi-round review decision per cycle. */
 const REVIEW_POSTED_GATE = 'review-posted-gate';
+const LEGACY_PR_READY_GATE_IDS = new Set([
+  'code-ready-gate',
+  'research-ready-gate',
+  'plan-pr-gate',
+  'code-pr-gate',
+]);
 
 /**
  * The SQLite database type this profile consumes. Derived from the repository
@@ -43,6 +50,16 @@ export interface CodingArtifactProfileConfig {
   artifactRepo?: WorkflowRunArtifactRepository;
   /** Optional shared gate-data repo; created from `db` when omitted. */
   gateDataRepo?: GateDataRepository;
+  /**
+   * Resolves the hook ids configured with the actual `pr_ready` built-in
+   * validator for a run's workflow. When provided, the PR-identity resolver's
+   * hook-state fallback trusts ONLY those validator-verified hook ids (not a
+   * `pr-ready` substring), so a custom hook with a colliding id and a different
+   * validator cannot spoof the run PR identity on runs without a reserved
+   * snapshot. Returns undefined when the workflow can't be resolved (the
+   * resolver then falls back to the substring for legacy compatibility).
+   */
+  resolvePrReadyHookIds?: (runId: string) => Set<string> | undefined;
 }
 
 /**
@@ -62,11 +79,13 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
   private readonly db: ArtifactDb;
   private readonly artifactRepo?: WorkflowRunArtifactRepository;
   private readonly sharedGateDataRepo?: GateDataRepository;
+  private readonly resolvePrReadyHookIds?: (runId: string) => Set<string> | undefined;
 
   constructor(config: CodingArtifactProfileConfig) {
     this.db = config.db;
     this.artifactRepo = config.artifactRepo;
     this.sharedGateDataRepo = config.gateDataRepo;
+    this.resolvePrReadyHookIds = config.resolvePrReadyHookIds;
   }
 
   resolvePrimaryLinkUrl(runId: string): string {
@@ -129,6 +148,109 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
     }
 
     return best?.url ?? '';
+  }
+
+  resolveInitialPrimaryLinkUrl(runId: string): string {
+    // Authoritative source FIRST: the engine stamps the pr_ready-validated PR
+    // identity under a RESERVED hook id that no real (user-defined) hook can
+    // write (record_state / stateForHook target a hook's OWN id). Reading it
+    // outright bypasses the user-defined hook-id matching below, closing the
+    // colliding-hook-id / record_state PR-identity spoof for current runs.
+    try {
+      const hookStateRepo = new WorkflowHookStateRepository(this.db);
+      const reserved = hookStateRepo.get(runId, PR_READY_VALIDATED_IDENTITY_HOOK_ID);
+      const reservedUrl = legacyPrUrl(reserved?.localState);
+      if (reservedUrl) return reservedUrl;
+    } catch (err) {
+      log.warn(
+        `resolveInitialPrimaryLinkUrl: failed to read reserved identity for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+
+    // Approval handoffs persist pr_url in hook state (or legacy gate data).
+    // Choose the latest validated handoff identity: a revision may legitimately
+    // replace a closed PR before final approval. Deliberately ignore artifacts
+    // whenever validated state exists so agents cannot substitute the PR later.
+    type Candidate = { url: string; updatedAt: number };
+    let approved: Candidate | null = null;
+    const newer = (prev: Candidate | null, url: string, updatedAt: number): Candidate | null => {
+      if (!url) return prev;
+      return !prev || updatedAt > prev.updatedAt ? { url, updatedAt } : prev;
+    };
+
+    try {
+      const gateDataRepo = this.sharedGateDataRepo ?? new GateDataRepository(this.db);
+      for (const record of gateDataRepo.listByRun(runId)) {
+        // Only the exact legacy pr_ready gate IDs are trusted compatibility
+        // sources for the run's PR identity. A substring match (`includes(
+        // 'pr-ready')`) would let a custom gate with a colliding id (e.g.
+        // `post-pr-ready-notification`) supply a spoofed pr_url that, if written
+        // latest, would control merge-dispatch resolution and the mark_complete
+        // merge gate. The authoritative source on current runs is the pr_ready
+        // hook state (the engine stamps pr_url only for the pr_ready validator);
+        // this gate-data path is legacy-only (runs created before hook state).
+        if (!LEGACY_PR_READY_GATE_IDS.has(record.gateId)) {
+          continue;
+        }
+        approved = newer(approved, legacyPrUrl(record.data), record.updatedAt);
+      }
+    } catch (err) {
+      log.warn(
+        `resolveInitialPrimaryLinkUrl: failed to read gate data for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+
+    try {
+      const hookStateRepo = new WorkflowHookStateRepository(this.db);
+      // When the caller can resolve which hook ids are actually configured with
+      // the pr_ready validator, trust ONLY those — a custom hook with a
+      // `pr-ready` id and a different validator must not be able to spoof the
+      // run PR identity on runs without a reserved snapshot. Fall back to the
+      // substring only when the workflow can't be resolved (legacy compat).
+      const verifiedHookIds = this.resolvePrReadyHookIds?.(runId);
+      const useExact = verifiedHookIds !== undefined;
+      for (const snapshot of hookStateRepo.listByRun(runId)) {
+        const trusted = useExact
+          ? verifiedHookIds.has(snapshot.hookId)
+          : snapshot.hookId.includes('pr-ready');
+        if (!trusted) continue;
+        approved = newer(approved, legacyPrUrl(snapshot.localState), snapshot.updatedAt ?? 0);
+      }
+    } catch (err) {
+      log.warn(
+        `resolveInitialPrimaryLinkUrl: failed to read hook state for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+
+    if (approved) return approved.url;
+
+    // Backward compatibility for runs created before PR-ready hook state was
+    // persisted: bind to the oldest eligible artifact. With no validated
+    // handoff state this is the least-mutable historical identity available.
+    let fallback: Candidate | null = null;
+    const earlier = (prev: Candidate | null, url: string, updatedAt: number): Candidate | null => {
+      if (!url) return prev;
+      return !prev || updatedAt < prev.updatedAt ? { url, updatedAt } : prev;
+    };
+    if (this.artifactRepo) {
+      try {
+        for (const artifact of this.artifactRepo.listByRun(runId)) {
+          const url =
+            artifact.artifactType === 'link' && artifact.data.kind === 'pr'
+              ? typeof artifact.data.url === 'string'
+                ? artifact.data.url
+                : ''
+              : legacyPrUrl(artifact.data);
+          fallback = earlier(fallback, url, artifact.updatedAt);
+        }
+      } catch (err) {
+        log.warn(
+          `resolveInitialPrimaryLinkUrl: failed to read artifacts for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
+
+    return fallback?.url ?? '';
   }
 
   summarizeRunOutcome(runId: string): string | null {

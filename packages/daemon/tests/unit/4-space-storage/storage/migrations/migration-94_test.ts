@@ -38,6 +38,19 @@ import { runMigration94 } from '../../../../../src/storage/schema/migrations.ts'
 import { getBuiltInWorkflows } from '../../../../../src/lib/space/workflows/built-in-workflows.ts';
 import { computeWorkflowHash } from '../../../../../src/lib/space/workflows/template-hash.ts';
 
+// Migration 94 matches rows by the historical 'Coding Workflow' name against a
+// frozen structure (2 nodes Coding/Review, 2 channels). The merger variant and
+// its dedicated Post-Approval node were removed; legacy 'Coding Workflow' rows
+// now map to the stable 'Coding' template (which has NO Post-Approval node), so
+// seed the historical shape directly rather than deriving it from the live template.
+const LEGACY_CODING_WORKFLOW_NAME = 'Coding Workflow';
+const LEGACY_CODING_DESCRIPTION =
+  'Iterative coding workflow with Coding ↔ Review loop. Engineer implements and opens a PR; Reviewer reviews and either requests changes or signals completion.';
+const LEGACY_CODING_CHANNELS = [
+  { from: 'Coding', to: 'Review' },
+  { from: 'Review', to: 'Coding' },
+];
+
 interface WorkflowRow {
   id: string;
   template_name: string | null;
@@ -143,27 +156,20 @@ function seedLegacyCodingWorkflow(
     id: string;
     spaceId: string;
     createdAt?: number;
-    /** Default false — null template_name simulates pre-M90 legacy rows. */
-    withTemplateFields?: boolean;
   }
 ): { workflowId: string; codingNodeId: string; reviewNodeId: string } {
-  const template = getBuiltInWorkflows().find((t) => t.name === 'Coding Workflow');
-  if (!template) throw new Error('Coding Workflow template missing');
-
   const codingNodeId = `${opts.id}-n-coding`;
   const reviewNodeId = `${opts.id}-n-review`;
 
   insertWorkflow(db, {
     id: opts.id,
     spaceId: opts.spaceId,
-    name: template.name,
-    description: template.description,
-    channels: template.channels ?? [],
-    gates: template.gates ?? [],
+    name: LEGACY_CODING_WORKFLOW_NAME,
+    description: LEGACY_CODING_DESCRIPTION,
+    channels: LEGACY_CODING_CHANNELS,
+    gates: [],
     startNodeId: codingNodeId,
     endNodeId: reviewNodeId,
-    templateName: opts.withTemplateFields ? template.name : null,
-    templateHash: opts.withTemplateFields ? computeWorkflowHash(template) : null,
     createdAt: opts.createdAt,
   });
 
@@ -228,39 +234,39 @@ describe('Migration 94: backfill workflow template tracking & dedup orphan dupli
     // intentionally diverges from the current computeWorkflowHash — this is
     // what causes drift detection to fire for existing spaces on next daemon
     // startup, prompting the "Sync from template" UI to appear.
-    const templates = getBuiltInWorkflows();
+    // M94's frozen fingerprints use the historical template names. The legacy
+    // 'Coding Workflow' / 'Coding with QA Workflow' names now resolve to the
+    // stable 'Coding' / 'Coding with QA' templates, so only verify backfill for
+    // templates whose current name still matches a frozen M94 name. The renamed
+    // coding case is covered by the dedicated 'legacy Coding Workflow' test below.
+    const frozenM94Names = new Set([
+      'Coding Workflow',
+      'Research Workflow',
+      'Review-Only Workflow',
+      'Plan & Decompose Workflow',
+      'Coding with QA Workflow',
+    ]);
+    const templates = getBuiltInWorkflows().filter((t) => frozenM94Names.has(t.name));
     for (const [i, tpl] of templates.entries()) {
       const wfId = `wf-verify-${i}`;
       const endNodeId = `n-${i}-end`;
-      const nodeIds =
-        tpl.name === 'Coding Workflow'
-          ? [
-              { id: `n-${i}-Coding`, name: 'Coding' },
-              { id: `n-${i}-Review`, name: 'Review' },
-            ]
-          : // M94's fingerprints are frozen at the pre-Post-Approval structure
-            // (the dedicated merger node was added later). Build the legacy node
-            // set by excluding 'Post-Approval' so the row matches the frozen
-            // fingerprint the way a pre-Post-Approval DB would.
-            tpl.nodes
-              .filter((n) => n.name !== 'Post-Approval')
-              .map((n) => ({ id: `n-${i}-${n.name}`, name: n.name }));
+      // M94's fingerprints are frozen at the historical structure and carry no
+      // Post-Approval node. The stable templates also have no Post-Approval node,
+      // so the filter is a harmless no-op — kept for clarity.
+      const nodeIds = tpl.nodes
+        .filter((n) => n.name !== 'Post-Approval')
+        .map((n) => ({ id: `n-${i}-${n.name}`, name: n.name }));
       const resolvedEndNodeId =
         nodeIds.find((n) => n.name === tpl.nodes.find((x) => x.id === tpl.endNodeId)?.name)?.id ??
         endNodeId;
-      const legacyCodingChannels = [
-        { from: 'Coding', to: 'Review' },
-        { from: 'Review', to: 'Coding' },
-      ];
-      const legacyCodingGates = (tpl.gates ?? []).filter((gate) => gate.id === 'code-ready-gate');
 
       insertWorkflow(db, {
         id: wfId,
         spaceId: 'sp-1',
         name: tpl.name,
         description: tpl.description,
-        channels: tpl.name === 'Coding Workflow' ? legacyCodingChannels : (tpl.channels ?? []),
-        gates: tpl.name === 'Coding Workflow' ? legacyCodingGates : (tpl.gates ?? []),
+        channels: tpl.channels ?? [],
+        gates: tpl.gates ?? [],
         endNodeId: resolvedEndNodeId,
       });
       for (const n of nodeIds) {
@@ -285,21 +291,23 @@ describe('Migration 94: backfill workflow template tracking & dedup orphan dupli
     // Pins the ELSE branch of `fingerprintMatches ? known.hash : rowHash` in
     // the migration. Combined with `hash self-verification` above (which
     // covers the TRUE branch), both branches are exercised.
-    const template = getBuiltInWorkflows().find((t) => t.name === 'Coding Workflow')!;
-    const canonicalHash = computeWorkflowHash(template);
+    const canonicalHash = computeWorkflowHash(
+      getBuiltInWorkflows().find((t) => t.name === 'Coding')!
+    );
 
     // Same name + node set as Coding Workflow, but with a tweaked description
     // — so the structural name match passes but fingerprintMatches is false.
+    // Seeded under the historical name so M94's frozen fingerprint can match it.
     const wfId = 'wf-diverged';
     const codingId = 'n-d-coding';
     const reviewId = 'n-d-review';
     insertWorkflow(db, {
       id: wfId,
       spaceId: 'sp-1',
-      name: template.name,
-      description: template.description + ' — user edited',
-      channels: template.channels ?? [],
-      gates: template.gates ?? [],
+      name: LEGACY_CODING_WORKFLOW_NAME,
+      description: `${LEGACY_CODING_DESCRIPTION} — user edited`,
+      channels: LEGACY_CODING_CHANNELS,
+      gates: [],
       endNodeId: reviewId,
     });
     insertNode(db, { id: codingId, workflowId: wfId, name: 'Coding' });
@@ -334,7 +342,7 @@ describe('Migration 94: backfill workflow template tracking & dedup orphan dupli
     expect(row.template_hash).toMatch(/^[0-9a-f]{64}$/);
     // The narrow hash differs from the current expanded hash — drift will be detected
     expect(row.template_hash).not.toBe(
-      computeWorkflowHash(getBuiltInWorkflows().find((t) => t.name === 'Coding Workflow')!)
+      computeWorkflowHash(getBuiltInWorkflows().find((t) => t.name === 'Coding')!)
     );
   });
 

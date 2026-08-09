@@ -77,6 +77,8 @@ import {
 } from './output-limiter-hook';
 import { isRunningUnderBun, resolveSDKCliPath } from './sdk-cli-resolver.js';
 
+const log = new Logger('QueryOptionsBuilder');
+
 /**
  * Compile a single declarative tool guard into a PreToolUse hook callback.
  * The guard specifies a tool matcher, a regex pattern against the tool input,
@@ -89,8 +91,10 @@ function compileToolGuard(guard: DeclarativeToolGuard): HookCallback {
   let pattern: RegExp;
   try {
     pattern = new RegExp(guard.pattern);
-  } catch {
-    // Bad pattern — guard is silently disabled so the session still works.
+  } catch (err) {
+    log.warn(
+      `Ignoring invalid declarative tool guard pattern ${JSON.stringify(guard.pattern)}: ${err instanceof Error ? err.message : String(err)}`
+    );
     return async () => ({});
   }
   return async (input) => {

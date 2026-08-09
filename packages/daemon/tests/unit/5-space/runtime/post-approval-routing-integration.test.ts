@@ -291,17 +291,18 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
   });
 
   test('approved Coding task: dispatchPostApproval threads artifact.data.prUrl into kickoff; mark_complete closes it', async () => {
-    // Pull the seeded Coding workflow — its Post-Approval (merger) node carries
-    // postApproval.targetAgent='merger' (the PR Merger runs the merge) and an
-    // interpolated template. Approval is a task-level event now: the route lives
-    // on the merger node, not the end (Review) node, and the router fans out to
-    // whichever node declares it.
+    // Pull the seeded stable Coding workflow — its Coding node carries
+    // postApproval.targetAgent='coder' (the original coder owns the audited
+    // post-approval merge) and an interpolated template. Approval is a
+    // task-level event: the route lives on the Coding node (there is no separate
+    // Post-Approval/merger node in the stable workflow), and the router fans out
+    // to whichever node declares it.
     const coding = h.workflowManager
       .listWorkflows(SPACE_ID)
       .find((w) => w.name === CODING_WORKFLOW.name);
     expect(coding).toBeDefined();
     const codingPostApprovalNode = coding!.nodes.find((node) => node.postApproval);
-    expect(codingPostApprovalNode?.postApproval?.targetAgent).toBe('merger');
+    expect(codingPostApprovalNode?.postApproval?.targetAgent).toBe('coder');
     expect(codingPostApprovalNode?.postApproval?.instructions).toContain('{{pr_url}}');
 
     // -----------------------------------------------------------------
@@ -346,7 +347,7 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
     // survived all the way to the sub-session kickoff.
     expect(h.spawned).toHaveLength(1);
     expect(h.spawned[0].taskId).toBe(taskId);
-    expect(h.spawned[0].targetAgent).toBe('merger');
+    expect(h.spawned[0].targetAgent).toBe('coder');
     expect(h.spawned[0].kickoffMessage).toContain(PR_URL);
     expect(h.spawned[0].kickoffMessage).not.toContain('{{pr_url}}');
     // All merge-template tokens MUST interpolate — historically the
@@ -378,6 +379,7 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
       spaceId: SPACE_ID,
       taskRepo: h.taskRepo,
       taskManager: h.taskManager,
+      callerSessionId: result.postApprovalSessionId,
     });
     const toolResult = await markComplete({});
     const parsed = JSON.parse(
@@ -391,7 +393,7 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
     expect(finalTask.postApprovalStartedAt).toBeNull();
   });
 
-  test('dispatchPostApproval prefers the most recent prUrl-bearing artifact', async () => {
+  test('dispatchPostApproval stays bound to the earliest reviewed PR artifact', async () => {
     // Locks in the reverse-chronological scan in `dispatchPostApproval`.
     // A typical review cycle writes multiple `result` artifacts — e.g. one
     // per changes-requested round, plus the final approval round. The
@@ -426,8 +428,8 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
     const result = await h.runtime.dispatchPostApproval(taskId, 'agent');
     expect(result.mode).toBe('spawn');
     expect(h.spawned).toHaveLength(1);
-    expect(h.spawned[0].kickoffMessage).toContain(LATER_URL);
-    expect(h.spawned[0].kickoffMessage).not.toContain(EARLIER_URL);
+    expect(h.spawned[0].kickoffMessage).toContain(EARLIER_URL);
+    expect(h.spawned[0].kickoffMessage).not.toContain(LATER_URL);
   });
 
   test('dispatchPostApproval accepts snake_case `pr_url` in artifact data', async () => {

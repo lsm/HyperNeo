@@ -74,6 +74,11 @@ describe('Migration 28: mission metadata schema additions', () => {
   let testDir: string;
   let db: BunDatabase;
 
+  // runMigrations replays the full migration chain on a fresh on-disk DB per
+  // test, which legitimately takes a few seconds and intermittently exceeded
+  // the 5s default under CI load (flaky timeout — see migration-94_test.ts).
+  const HOOK_TIMEOUT_MS = 30_000;
+
   beforeEach(() => {
     testDir = join(process.cwd(), 'tmp', 'test-migration-28', `test-${Date.now()}`);
     mkdirSync(testDir, { recursive: true });
@@ -101,7 +106,7 @@ describe('Migration 28: mission metadata schema additions', () => {
 			)
 		`);
     insertRoom(db);
-  });
+  }, HOOK_TIMEOUT_MS);
 
   afterEach(() => {
     try {
@@ -114,7 +119,7 @@ describe('Migration 28: mission metadata schema additions', () => {
     } catch {
       // ignore
     }
-  });
+  }, HOOK_TIMEOUT_MS);
 
   test('migration runs cleanly on fresh DB (no goals table yet)', () => {
     expect(() => runMigrations(db, () => {})).not.toThrow();

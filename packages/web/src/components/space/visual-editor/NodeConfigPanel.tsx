@@ -848,6 +848,10 @@ export function NodeConfigPanel({
       postApproval: {
         targetAgent: step.postApproval?.targetAgent ?? '',
         instructions: step.postApproval?.instructions ?? '',
+        // Restore the hidden PR-merged flag from the sticky step-level field —
+        // the disable branch deleted `postApproval`, so reading it there would
+        // see undefined. `step.requirePrMerge` survives the toggle.
+        ...(step.requirePrMerge ? { requirePrMerge: true } : {}),
       },
     });
   };

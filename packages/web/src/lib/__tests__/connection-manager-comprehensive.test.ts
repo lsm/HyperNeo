@@ -247,7 +247,7 @@ describe('ConnectionManager - Comprehensive Coverage', () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       // The hub should be available
-      expect(hubPromise).resolves.toBeDefined();
+      await expect(hubPromise).resolves.toBeDefined();
     });
   });
 

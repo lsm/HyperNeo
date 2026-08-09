@@ -201,8 +201,17 @@ if [ "$RERUN" = true ]; then
 	FAILING_FILES=$(cat "$FAILURES_FILE")
 	FILE_COUNT=$(echo "$FAILING_FILES" | wc -l | tr -d ' ')
 	echo "Rerunning $FILE_COUNT failing test file(s)..."
+	# Apply the same generous budget as the migration shards when a failing file
+	# is a migration test (see run_shard) so a rerun doesn't re-flake on timeout.
+	# Match both layouts: migration tests under `migrations/` AND top-level
+	# `migration-*.test.ts` files directly under `storage/` (both are assigned to
+	# the migration shards, so a --rerun must keep the same budget).
+	RERUN_TIMEOUT_FLAGS=""
+	if echo "$FAILING_FILES" | grep -qE "migrations/|migration-[0-9]+[^/]*(\.test|_test)\.[jt]s"; then
+		RERUN_TIMEOUT_FLAGS="--testTimeout=30000 --hookTimeout=30000"
+	fi
 	# shellcheck disable=SC2086
-	(cd "$REPO_ROOT/packages/daemon" && NODE_ENV=test node_modules/.bin/vitest run $FAILING_FILES)
+	(cd "$REPO_ROOT/packages/daemon" && NODE_ENV=test node_modules/.bin/vitest run $RERUN_TIMEOUT_FLAGS $FAILING_FILES)
 	exit $?
 fi
 
@@ -242,6 +251,16 @@ run_shard() {
 		pkg_dir="$REPO_ROOT/packages/daemon"
 	fi
 
+	# Migration shards replay the full migration chain on a fresh on-disk SQLite
+	# DB per test. That is I/O-heavy and intermittently exceeds vitest's 5s test /
+	# 10s hook defaults under CI parallel load — a different migration test flakes
+	# on different runs (28/29/33/34/35-36/47/94). Give the whole migration shard a
+	# generous budget instead of hardening each file one-by-one.
+	local timeout_flags=""
+	case "$shard" in
+		4-space-migrations-*) timeout_flags="--testTimeout=30000 --hookTimeout=30000" ;;
+	esac
+
 	# shellcheck disable=SC2086
 	(
 		cd "$pkg_dir" || exit 1
@@ -250,6 +269,7 @@ run_shard() {
 			--reporter=junit \
 			--outputFile.junit="$junit_file" \
 			$COV_FLAGS \
+			$timeout_flags \
 			"$@"
 	) >"$log_file" 2>&1
 }

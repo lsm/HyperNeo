@@ -174,6 +174,65 @@ describe('pr-ready validator', () => {
     expect((result as { reason: string }).reason).toContain('DIRTY');
   });
 
+  test('post-approval merge-blocker report is exempt ONLY while the task is approved', async () => {
+    // During post-approval (task approved) the coder reports a blocker over the
+    // pr_ready-hooked channel; the PR is by definition not ready, so the gate
+    // must allow the report through without a gh call.
+    const spawn = makeMockSpawn([]); // no gh calls expected — exemption short-circuits
+    const validator = createPrReadyValidator(spawn);
+    const ctx: HookExecutorContext = {
+      ...makeContext('https://github.com/acme/corp/pull/42'),
+      taskStatus: 'approved',
+      hookLocalState: { pr_url: 'https://github.com/acme/corp/pull/42' },
+      params: {
+        target: 'Review',
+        message: 'blocked',
+        data: { reason: 'merge_blocked', pr_url: 'https://github.com/acme/corp/pull/42' },
+      },
+    };
+    const result = await validator(ctx);
+    expect(result.type).toBe('allow');
+  });
+
+  test('a spoofed merge reason during an in-progress handoff is NOT exempt', async () => {
+    // The initial implementation handoff runs while the task is in-progress, so
+    // a sender cannot spoof `merge_blocked` to bypass the gate and activate
+    // Review with an unready PR. The validator proceeds and blocks on the real
+    // state.
+    const prView = { ...VALID_PR_VIEW, mergeable: 'CONFLICTING' };
+    const spawn = makeMockSpawn([{ stdout: JSON.stringify(prView), stderr: '', exitCode: 0 }]);
+    const validator = createPrReadyValidator(spawn);
+    const ctx: HookExecutorContext = {
+      ...makeContext('https://github.com/acme/corp/pull/42'),
+      taskStatus: 'in_progress',
+      params: {
+        target: 'Review',
+        message: 'handoff',
+        data: { reason: 'merge_blocked', pr_url: 'https://github.com/acme/corp/pull/42' },
+      },
+    };
+    const result = await validator(ctx);
+    expect(result.type).toBe('block');
+  });
+
+  test('undefined taskStatus (no provider) does NOT exempt — fails closed', async () => {
+    // When the engine has no task-status provider, the exemption does not fire,
+    // so a `merge_fix_pushed` reason cannot spoof the gate.
+    const prView = { ...VALID_PR_VIEW, mergeable: 'CONFLICTING' };
+    const spawn = makeMockSpawn([{ stdout: JSON.stringify(prView), stderr: '', exitCode: 0 }]);
+    const validator = createPrReadyValidator(spawn);
+    const ctx: HookExecutorContext = {
+      ...makeContext('https://github.com/acme/corp/pull/42'),
+      params: {
+        target: 'Review',
+        message: 'handoff',
+        data: { reason: 'merge_fix_pushed', pr_url: 'https://github.com/acme/corp/pull/42' },
+      },
+    };
+    const result = await validator(ctx);
+    expect(result.type).toBe('block');
+  });
+
   test('unresolved review threads → block with thread URLs', async () => {
     const threads = {
       data: {

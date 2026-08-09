@@ -1063,7 +1063,11 @@ describe('createCustomAgentInit', () => {
     expect(init.promptProvenance?.source).toBe('workflow_node_replaced_prompt');
   });
 
-  it('injects Coding workflow behavioral handoff guidance into system prompt', () => {
+  it('injects Coding workflow coder-owned handoff guidance into system prompt', () => {
+    // The stable `Coding` workflow (2 nodes: Coding, Review — no Post-Approval
+    // node, no merger agent) uses a behavioral-only coder slot prompt: it does
+    // not restate the review peer or gate fields, which are injected centrally
+    // via the Runtime Execution Contract. Exercise the slot-prompt injection path.
     const codingNode = CODING_WORKFLOW.nodes.find((node) => node.name === 'Coding')!;
     const codingSlot = codingNode.agents[0];
     const init = createCustomAgentInit(
@@ -1088,10 +1092,14 @@ describe('createCustomAgentInit', () => {
     );
 
     const prompt = init.systemPrompt?.append ?? '';
-    expect(prompt).toContain('hand off by calling `send_message` to the review target');
-    expect(prompt).toContain('Use the current target and required data fields');
-    expect(prompt).toContain('`save_artifact` alone is insufficient');
-    expect(prompt).not.toContain('send_message(target="Review"');
+    // The coder-owned merge prompt: the Coder implements and hands off via the
+    // gated handoff, and owns the post-approval merge (no separate merger agent).
+    expect(prompt).toContain(
+      'hand it off via the gated handoff described in Your Role in This Workflow'
+    );
+    expect(prompt).toContain('do not restate or assume it here');
+    expect(prompt).toContain('do not merge or call task-completion tools');
+    expect(prompt).toContain('merge the PR');
     expect(prompt).not.toContain('code-ready-gate');
   });
 

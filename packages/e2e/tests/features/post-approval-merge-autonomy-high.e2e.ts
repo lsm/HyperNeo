@@ -52,7 +52,7 @@ test.describe
       // 1. Create a space with `autonomyLevel: 4` via RPC.
       // 2. Seed a PR fixture: `git init`, `git checkout -b feature/test-high`,
       //    commit a file, push via the mock `gh`'s `gh pr create`.
-      // 3. Call `spaceWorkflowRun.start` with workflow="Coding Workflow".
+      // 3. Call `spaceWorkflowRun.start` with workflow="Coding".
       // 4. Drive the workflow through its gates by short-circuiting the
       //    Coder + Reviewer agents via the LLM mock: the Reviewer's
       //    scripted tool calls must include save_artifact({ prUrl }),

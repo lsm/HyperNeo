@@ -104,15 +104,19 @@ describe('PRESET_AGENT_TOOLS', () => {
     expect(tools).not.toContain('Edit');
   });
 
-  it('reviewer has read/search/delegation tools and NO Bash (posts via post_review)', () => {
+  it('reviewer has Bash + Cron tools for inspection, but NO Write/Edit (posts via the gh CLI)', () => {
     const tools = PRESET_AGENT_TOOLS.reviewer;
     expect(tools).toContain('Read');
     expect(tools).toContain('Grep');
     expect(tools).toContain('Glob');
-    expect(tools).toContain('Task');
-    // Role separation (Option C): the Reviewer is shell-less; the PR Merger
-    // holds the only Bash tool. Reviews land via the post_review MCP tool.
-    expect(tools).not.toContain('Bash');
+    expect(tools).toContain('Bash');
+    expect(tools).toContain('CronCreate');
+    expect(tools).toContain('CronDelete');
+    expect(tools).toContain('CronList');
+    // The Reviewer keeps Bash for read-only GitHub inspection and posting
+    // reviews via the gh CLI, so it is restrained — not shell-less.
+    expect(tools).not.toContain('Write');
+    expect(tools).not.toContain('Edit');
   });
 
   it('qa cannot Write or Edit', () => {
@@ -255,17 +259,21 @@ describe('createCustomAgentInit — sub-session features', () => {
     expect(init.features).toEqual(SUB_SESSION_FEATURES);
   });
 
-  it('reviewer denies Bash + mutation tools (shell-less review role)', () => {
+  it('reviewer denies mutation tools but keeps Bash (restrained review role)', () => {
     const config = makeConfig(PRESET_AGENT_TOOLS.reviewer);
     const init = createCustomAgentInit(config);
 
     expect(init.sdkToolsPreset).toBeUndefined();
     expect(init.allowedTools).toEqual(['Task', 'TaskOutput', 'TaskStop']);
     expect(init.agent).toBeUndefined();
-    // Option C: the Reviewer has no shell — Bash is now denied along with the
-    // other mutation tools. Reviews land via the post_review MCP tool instead.
-    expect(init.disallowedTools).toEqual(['Bash', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
-    expect(init.disallowedTools).toContain('Bash');
+    // The Reviewer dispatches exploration (Task) to the non-delegating
+    // `general-purpose` sub-agent installed by createCustomAgentInit.
+    expect(init.agents?.['general-purpose']).toBeDefined();
+    // The Reviewer keeps Bash for read-only GitHub inspection and gh-CLI review
+    // posting — Bash is NOT denied. Only the mutation tools are denied, so it
+    // cannot modify the code under review.
+    expect(init.disallowedTools).toEqual(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+    expect(init.disallowedTools).not.toContain('Bash');
   });
 
   it('qa denies mutation tools only, leaving Bash available for running tests', () => {

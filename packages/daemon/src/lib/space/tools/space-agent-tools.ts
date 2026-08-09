@@ -84,8 +84,6 @@ import { mapPostApprovalDispatchWarning } from '../runtime/post-approval-router'
 import type { SpaceMcpSessionRole } from '../runtime/space-mcp-session-policy';
 import type { ToolResult } from './tool-result';
 import { jsonResult } from './tool-result';
-import { runMergePr } from './merge-pr-handler';
-import type { MergePrDeps } from '../runtime/merge-pr-gh';
 import { validateGlobPattern, validateSource } from '../../external-events/topic-validator';
 import type { ExternalEventStore } from '../../external-events/external-event-store';
 import { getAvailableModels, getModelInfoUnfiltered, isValidModel } from '../../model-service';
@@ -620,13 +618,6 @@ export interface SpaceAgentToolsConfig {
    * the current space so events never leak across spaces.
    */
   externalEventStore?: ExternalEventStore;
-  /**
-   * Injected dependencies for the `merge_pr` deterministic merge gate. When
-   * omitted, the handler builds production deps from `Bun.spawn` + the Space
-   * workspace path. Tests inject a fully-mocked {@link MergePrDeps} (no gh /
-   * network).
-   */
-  mergePrDeps?: MergePrDeps;
 }
 
 // ---------------------------------------------------------------------------
@@ -5025,28 +5016,6 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
           .describe('Optional approval/rejection note; recorded on the task as approvalReason'),
       },
       (args) => handlers.approve_pending_completion(args)
-    ),
-    tool(
-      'merge_pr',
-      'Deterministic post-approval PR merge gate (task #866). This is the supported, audited way ' +
-        'to merge a PR after task approval — direct `gh pr merge` is blocked on the Merger slot ' +
-        '(defense-in-depth; this tool is the authoritative gate). The tool verifies the PR is open, ' +
-        'the current head has a covering approval (real GitHub APPROVED review, or an own-PR ' +
-        '"Recommendation: APPROVE" comment from the PR author whose commit_id equals the current ' +
-        'head), required CI is passing, there are no unresolved review conversations, no ' +
-        'outstanding CHANGES_REQUESTED, and branch-protection review requirements are satisfied — ' +
-        'then merges bound to the validated head via --match-head-commit. A Space task approval ' +
-        '(approval_source) does NOT authorize a merge; only a current-head GitHub approval does. ' +
-        'Restricted to the designated post-approval merger session for this task, and bound to ' +
-        'the PR recorded for that task; returns structured blockers (relay them to the approval ' +
-        'authority) or the merge result.',
-      {
-        pr_url: z.string().describe('GitHub PR URL to merge'),
-        task_id: z
-          .string()
-          .describe('The approved Space task whose PR is being merged (authorizes the call)'),
-      },
-      (args) => runMergePr(args, config)
     ),
   ];
 
