@@ -44,6 +44,21 @@ const REVIEW_APPROVAL_SCRIPT = [
   'if [ -n "$PR_URL" ]; then jq -n --arg url "$PR_URL" \'{"type":"allow","data":{"approved":true,"pr_url":$url}}\'; else jq -n \'{"type":"allow","data":{"approved":true}}\'; fi',
 ].join('\n');
 
+/**
+ * Detects a legacy COMBINED codex-bearing approval hook script — the pre-#2409
+ * `buildApprovalsScript` / `buildReviewApprovalScript` baked the full codex +1
+ * wait (gh-api reaction lookup + a 2h timeout-allow) INLINE in the approval
+ * hook's bash. The current approval-only scripts (`APPROVALS_SCRIPT` /
+ * `REVIEW_APPROVAL_SCRIPT`) never emit `codex_wait_started_at` (the codex wait-
+ * state field), so its presence uniquely identifies the combined legacy form.
+ * Used by the gateless re-emit pass to upgrade such a hook to approval-only
+ * instead of stacking a second codex enforcement path on the same route.
+ */
+const LEGACY_COMBINED_CODEX_MARKER = 'codex_wait_started_at';
+function isLegacyCombinedCodexScript(source: string): boolean {
+  return source.includes(LEGACY_COMBINED_CODEX_MARKER);
+}
+
 type Pattern = {
   gateId: string;
   hookId: string;
@@ -761,14 +776,45 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
       // signal that this WAS an approval channel). Non-approval routes
       // (feedback, post-approval) are skipped — requireCodexApproval never
       // applied to them.
-      const hasApprovalHook = Array.from(hooksById.values()).some(
+      const approvalHook = Array.from(hooksById.values()).find(
         (hook) =>
           hook.sourceNode === fromNode &&
           hook.targetNode === targetNode &&
           hook.method === 'send_message' &&
           hook.validator.kind === 'script'
       );
-      if (!hasApprovalHook) continue;
+      if (!approvalHook) continue;
+      // Upgrade a legacy COMBINED codex-bearing approval script (pre-#2409
+      // buildApprovalsScript / buildReviewApprovalScript baked the full 2h codex
+      // +1 wait inline) to the approval-only form BEFORE emitting the codex
+      // hook below. Without this, the re-emit pass stacks a SECOND codex path on
+      // a route whose existing approval hook ALREADY enforces codex — on codex
+      // non-response the legacy inline 2h timeout and the new declarative hook's
+      // 2h timeout both elapse (~4h) before the route self-corrects. The id is
+      // anchored to `plan-approval:` / `review-approval:` so the feedback reset
+      // hook (whose substituted source also contains the marker, as a state-
+      // reset key) is never mistaken for an approval hook, and the marker
+      // confirms the combined (not approval-only) form so a custom same-prefixed
+      // hook is never clobbered.
+      if (
+        approvalHook.validator.kind === 'script' &&
+        (approvalHook.id.startsWith('plan-approval:') ||
+          approvalHook.id.startsWith('review-approval:')) &&
+        isLegacyCombinedCodexScript(approvalHook.validator.source)
+      ) {
+        const upgradedSource = approvalHook.id.startsWith('review-approval:')
+          ? REVIEW_APPROVAL_SCRIPT
+          : APPROVALS_SCRIPT;
+        hooksById.set(approvalHook.id, {
+          ...approvalHook,
+          validator: {
+            kind: 'script',
+            interpreter: 'bash',
+            source: upgradedSource,
+            timeoutMs: 30_000,
+          },
+        });
+      }
       const hasRouteHook = Array.from(hooksById.values()).some(
         (hook) =>
           hook.sourceNode === fromNode &&

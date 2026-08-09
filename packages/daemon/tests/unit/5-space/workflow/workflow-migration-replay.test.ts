@@ -41,6 +41,10 @@ import {
   migrateWorkflowGateProgressionToHooks,
   type WorkflowMigrationWarning,
 } from '../../../../src/lib/space/workflows/workflow-migration.ts';
+import {
+  LEGACY_PLAN_APPROVAL_SCRIPT,
+  LEGACY_REVIEW_APPROVAL_SCRIPT,
+} from './legacy-combined-scripts.ts';
 
 // ---------------------------------------------------------------------------
 // Harness
@@ -157,6 +161,19 @@ function generatedPlanApprovalHook(): WorkflowHook {
       candidate.sourceNode === 'Plan Review' && candidate.targetNode === 'Task Dispatcher'
   );
   if (!hook) throw new Error('expected generated plan approval hook on migrated template');
+  return hook;
+}
+
+/** The generated Review → QA approval hook (approval-only), for the legacy
+ *  combined-script upgrade fixture's review twin. */
+function generatedReviewApprovalHook(): WorkflowHook {
+  const migratedTemplate = getBuiltInWorkflows().find(
+    (workflow) => workflow.name === FULLSTACK_QA_LOOP_WORKFLOW.name
+  )!;
+  const hook = migratedTemplate.hooks!.find(
+    (candidate) => candidate.sourceNode === 'Review' && candidate.targetNode === 'QA'
+  );
+  if (!hook) throw new Error('expected generated review approval hook on migrated template');
   return hook;
 }
 
@@ -976,6 +993,118 @@ const FIXTURES: ReplayFixture[] = [
       expect(buildHook).toBeDefined();
       const testHook = codexHookBetween(workflow, 'Plan', 'Test');
       expect(testHook).toBeDefined();
+    },
+  },
+  {
+    name: 'legacy combined codex plan-approval script is upgraded to a single codex path',
+    build: () => ({
+      nodes: [
+        {
+          id: 'legacy-plan-review',
+          name: 'Plan Review',
+          agents: [{ name: 'planreviewer' }],
+          requireCodexApproval: true,
+        },
+        { id: 'legacy-task-dispatcher', name: 'Task Dispatcher', agents: [{ name: 'dispatcher' }] },
+      ],
+      // A non-template workflow saved by the PRE-#2409 migration: the channel is
+      // already gateless, but its persisted plan-approval hook still carries the
+      // old combined bash that baked the full 2h codex +1 wait INLINE (gh-api
+      // reaction lookup + timeout-allow). Re-enabling requireCodexApproval would
+      // otherwise stack the re-emit pass's codex_review_approved hook on top of
+      // that inline wait — two ~2h timeouts summing to ~4h on codex non-response.
+      channels: [
+        { from: 'Plan Review', to: 'Task Dispatcher', label: 'Plan Review → Task Dispatcher' },
+      ],
+      hooks: [
+        makeUserScriptHook({
+          id: 'plan-approval:legacy-combined',
+          sourceNode: 'Plan Review',
+          targetNode: 'Task Dispatcher',
+          validator: {
+            kind: 'script',
+            interpreter: 'bash',
+            source: LEGACY_PLAN_APPROVAL_SCRIPT,
+            timeoutMs: 30_000,
+            // The pre-#2409 migration declared a github lookup for the inline
+            // codex gh-api calls; the approval-only upgrade drops it.
+            externalLookups: ['github'],
+          },
+          authorizedCallers: [{ sourceNode: 'Plan Review' }],
+        }),
+      ],
+    }),
+    verify: ({ workflow }) => {
+      const hook = hookBetween(workflow, 'Plan Review', 'Task Dispatcher');
+      expect(hook).toBeDefined();
+      // The combined codex bash is upgraded to the approval-count-only form the
+      // current migration generates — the inline codex wait, gh-api lookup, and
+      // 2h timeout are gone, and the stale github lookup is dropped.
+      expect(scriptSource(hook)).toEqual(scriptSource(generatedPlanApprovalHook()));
+      expect(scriptSource(hook)).not.toContain('codex_wait_started_at');
+      expect(scriptSource(hook)).not.toContain('gh pr view');
+      expect(scriptExternalLookups(hook)).toBeUndefined();
+      // Exactly ONE codex enforcement path remains on the route: the declarative
+      // codex_review_approved hook. The legacy inline wait no longer stacks a
+      // second ~2h timeout on top of it.
+      const codex = codexHookBetween(workflow, 'Plan Review', 'Task Dispatcher');
+      expect(codex).toBeDefined();
+      expect(codex!.order).toBe(1);
+      const allCodex =
+        workflow.hooks?.filter(
+          (candidate) =>
+            candidate.validator.kind === 'built_in' &&
+            candidate.validator.id === 'codex_review_approved'
+        ) ?? [];
+      expect(allCodex).toHaveLength(1);
+    },
+  },
+  {
+    name: 'legacy combined codex review-approval script is upgraded to a single codex path',
+    build: () => ({
+      nodes: [
+        {
+          id: 'legacy-review',
+          name: 'Review',
+          agents: [{ name: 'reviewer' }],
+          requireCodexApproval: true,
+        },
+        { id: 'legacy-qa', name: 'QA', agents: [{ name: 'qa' }] },
+      ],
+      channels: [{ from: 'Review', to: 'QA', label: 'Review → QA' }],
+      hooks: [
+        makeUserScriptHook({
+          id: 'review-approval:legacy-combined',
+          sourceNode: 'Review',
+          targetNode: 'QA',
+          validator: {
+            kind: 'script',
+            interpreter: 'bash',
+            source: LEGACY_REVIEW_APPROVAL_SCRIPT,
+            timeoutMs: 30_000,
+            externalLookups: ['github'],
+          },
+          authorizedCallers: [{ sourceNode: 'Review' }],
+        }),
+      ],
+    }),
+    verify: ({ workflow }) => {
+      const hook = hookBetween(workflow, 'Review', 'QA');
+      expect(hook).toBeDefined();
+      expect(scriptSource(hook)).toEqual(scriptSource(generatedReviewApprovalHook()));
+      expect(scriptSource(hook)).not.toContain('codex_wait_started_at');
+      expect(scriptSource(hook)).not.toContain('gh pr view');
+      expect(scriptExternalLookups(hook)).toBeUndefined();
+      const codex = codexHookBetween(workflow, 'Review', 'QA');
+      expect(codex).toBeDefined();
+      expect(codex!.order).toBe(1);
+      const allCodex =
+        workflow.hooks?.filter(
+          (candidate) =>
+            candidate.validator.kind === 'built_in' &&
+            candidate.validator.id === 'codex_review_approved'
+        ) ?? [];
+      expect(allCodex).toHaveLength(1);
     },
   },
 ];
