@@ -964,6 +964,29 @@ describe('AgentSession', () => {
       expect(handleInterruptSpy).toHaveBeenCalled();
     });
 
+    it('handleInterrupt cancels ALL durable deliveries, not just the queued owner (#3743968030)', async () => {
+      const cancelForSessionSpy = mock(() => ['turn-uuid', 'steer-uuid']);
+      const markFailedSpy = mock(() => null);
+      mockDb.getJobQueueRepo = mock(() => ({
+        cancelForSessionWithMessages: cancelForSessionSpy,
+      }));
+      mockDb.getSDKMessageRepo = mock(() => ({
+        markDeliveryFailedByUuid: markFailedSpy,
+      }));
+      // Session is PROCESSING (the old code returned early here, leaving a
+      // pending steer to be claimed and promoted after the interrupt).
+      // biome-ignore lint: test mock access
+      (agentSession as unknown as Record<string, unknown>).interruptHandler = {
+        handleInterrupt: mock(async () => {}),
+      };
+
+      await agentSession.handleInterrupt();
+
+      expect(cancelForSessionSpy).toHaveBeenCalledWith(mockSession.id);
+      expect(markFailedSpy).toHaveBeenCalledWith(mockSession.id, 'turn-uuid');
+      expect(markFailedSpy).toHaveBeenCalledWith(mockSession.id, 'steer-uuid');
+    });
+
     it('resetQuery should delegate to lifecycleManager', async () => {
       const resetSpy = mock(async () => ({ success: true }));
       // biome-ignore lint: test mock access

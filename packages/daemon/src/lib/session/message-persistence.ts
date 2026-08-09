@@ -284,9 +284,13 @@ export class MessagePersistence {
       // user tried to stop it. Only for a turn-bound message (session idle); a
       // steer (session busy) is already non-idle, and setQueued would wrongly
       // downgrade processing→queued. The handler transitions to processing on
-      // claim. See Codex (#3742826489).
+      // claim. The idle check must happen AT SET TIME (setQueuedIfIdle), not on
+      // the stale pre-persist snapshot: two concurrent immediate sends both
+      // observe idle before either reaches this await, and the first writer must
+      // own the marker so a concurrent steer can't. See Codex (#3742826489,
+      // #3743968035).
       if (shouldDispatchToQuery && useV2Delivery && !isAgentBusy) {
-        await agentSession.stateManager.setQueued(messageId);
+        await agentSession.stateManager.setQueuedIfIdle(messageId);
       }
 
       // 8. Emit 'message.persisted' for non-critical post-processing.

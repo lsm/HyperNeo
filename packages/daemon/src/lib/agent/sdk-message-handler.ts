@@ -491,6 +491,28 @@ export class SDKMessageHandler {
     this.handleMessageYielded(messageId, Date.now());
   }
 
+  /**
+   * Terminalize an ACP prompt that was submitted to the subprocess but whose
+   * run ended (interrupt / error / adapter close) before any acceptance
+   * signal. Submitted rows are hidden from transcript queries, so without an
+   * explicit settle they stay invisible and nonterminal until restart
+   * recovery. Fail-ambiguous: the row is never auto-replayed. See Codex
+   * (#3743968032).
+   */
+  markMessageSubmissionFailed(messageId: string): void {
+    const { session, db, internalEventBus } = this.ctx;
+    const message = db.getMessageByStatusAndUuid(session.id, 'submitted', messageId);
+    if (!message) return;
+    db.updateMessageStatus([message.dbId], 'failed');
+    internalEventBus
+      .publish('messages.statusChanged', {
+        sessionId: session.id,
+        messageIds: [message.dbId],
+        status: 'failed',
+      })
+      .catch(() => {});
+  }
+
   private transitionPersistedMessage(
     messageId: string,
     fromStatus: 'enqueued',

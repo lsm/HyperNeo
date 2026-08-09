@@ -191,6 +191,7 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
     messageHandler: {
       markMessageSubmitted: mock(() => {}),
       markMessageAccepted: mock(() => {}),
+      markMessageSubmissionFailed: mock(() => {}),
     } as never,
     queryObject: null,
     queryPromise: null,
@@ -571,6 +572,33 @@ describe('AcpQueryRunner', () => {
     expect(onSDKMessage.mock.calls.some(([message]) => message.type === 'result')).toBe(true);
     expect(onMarkApiSuccess).toHaveBeenCalled();
     expect(stopSpy).toHaveBeenCalled();
+  });
+
+  test('settles a submitted-but-never-accepted prompt as failed when the run ends (#3743968032)', async () => {
+    const client = createMockClient();
+    client.sendPrompt = mock(async function* (
+      _prompt: unknown,
+      callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+    ) {
+      callbacks?.onSubmitted?.();
+      // No onAccepted: the run ended (interrupt / adapter close) after the
+      // stdin write completed but before any session/update or prompt
+      // response arrived. The submitted row must not stay hidden+nonterminal.
+      return;
+    });
+    const { runner, ctx } = createRunnerFixture({ client });
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    const handler = ctx.messageHandler as unknown as {
+      markMessageSubmitted: ReturnType<typeof mock>;
+      markMessageAccepted: ReturnType<typeof mock>;
+      markMessageSubmissionFailed: ReturnType<typeof mock>;
+    };
+    expect(handler.markMessageSubmitted).toHaveBeenCalledWith('user-message-1');
+    expect(handler.markMessageAccepted).not.toHaveBeenCalled();
+    expect(handler.markMessageSubmissionFailed).toHaveBeenCalledWith('user-message-1');
   });
 
   test('preserves env-only Anthropic auth for ACP subprocesses', async () => {

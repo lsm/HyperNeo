@@ -137,6 +137,22 @@ export class ProcessingStateManager {
   }
 
   /**
+   * Set state to queued only when the session is still idle AT SET TIME.
+   * The v2 pre-claim marker uses this instead of trusting a stale isAgentBusy
+   * snapshot taken before persistence/event-bus awaits: two concurrent
+   * immediate sends can both observe idle before either reaches the set, so
+   * the check must happen here — the first writer wins and a concurrent
+   * steer never owns the queued marker (removing/deferring that steer then
+   * can't clear the real turn's queued state back to idle). Returns true
+   * when this call set the marker. See Codex (#3743968035).
+   */
+  async setQueuedIfIdle(messageId: string): Promise<boolean> {
+    if (this.processingState.status !== 'idle') return false;
+    await this.setQueued(messageId);
+    return true;
+  }
+
+  /**
    * Return to idle only when the queued marker still belongs to `messageId`.
    * Delivery cancellation/skip paths use this compare-and-set so they cannot
    * clear a newer message's queued/processing state.

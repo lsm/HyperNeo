@@ -24,7 +24,7 @@ describe('MessagePersistence', () => {
     getSessionData: ReturnType<typeof mock>;
     getProcessingState: ReturnType<typeof mock>;
     startQueryAndEnqueue: ReturnType<typeof mock>;
-    stateManager: { setQueued: ReturnType<typeof mock> };
+    stateManager: { setQueuedIfIdle: ReturnType<typeof mock> };
   };
 
   let saveUserMessageSpy: ReturnType<typeof mock>;
@@ -62,7 +62,7 @@ describe('MessagePersistence', () => {
       getSessionData: mock(() => mockSession),
       getProcessingState: processingStateSpy,
       startQueryAndEnqueue: mock(async () => {}),
-      stateManager: { setQueued: mock(async () => {}) },
+      stateManager: { setQueuedIfIdle: mock(async () => true) },
     };
 
     mockSessionCache = {
@@ -231,8 +231,9 @@ describe('MessagePersistence', () => {
     const previous = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
     process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '1';
     const calls: string[] = [];
-    mockAgentSession.stateManager.setQueued = mock(async () => {
+    mockAgentSession.stateManager.setQueuedIfIdle = mock(async () => {
       calls.push('queued');
+      return true;
     });
     internalEventBusPublishSpy = mock(async (event: string) => {
       if (event === 'message.persisted') calls.push('persisted');
@@ -250,7 +251,7 @@ describe('MessagePersistence', () => {
       else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previous;
     }
 
-    expect(mockAgentSession.stateManager.setQueued).toHaveBeenCalledWith('msg-v2');
+    expect(mockAgentSession.stateManager.setQueuedIfIdle).toHaveBeenCalledWith('msg-v2');
     expect(mockAgentSession.startQueryAndEnqueue).not.toHaveBeenCalled();
     expect(calls).toEqual(['queued', 'persisted']);
   });
@@ -271,7 +272,7 @@ describe('MessagePersistence', () => {
       else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previous;
     }
 
-    expect(mockAgentSession.stateManager.setQueued).not.toHaveBeenCalled();
+    expect(mockAgentSession.stateManager.setQueuedIfIdle).not.toHaveBeenCalled();
   });
 });
 

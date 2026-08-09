@@ -895,15 +895,22 @@ export class AgentSession
     this.rateLimitWatchdog.cancel();
 
     // Pre-claim v2 interrupt: queued state may represent a durable turn job that
-    // has not reached MessageQueue/query state yet. Revoke that durable owner and
-    // terminalize its hidden enqueued SDK row before the generic interrupt path
-    // returns the session to idle; otherwise the processor can claim it later and
-    // execute the prompt the user just stopped.
+    // has not reached MessageQueue/query state yet. Revoke EVERY active durable
+    // delivery for the session — not just the queued-state owner: a pending steer
+    // survives an interrupt during `processing` otherwise, and is later claimed
+    // and promoted into a new turn, executing a prompt the user stopped. The
+    // in-flight turn's job row is deleted too; its handler self-settles (the
+    // interrupt aborts the SDK query, and the processor's auto-complete is a
+    // no-op on a deleted row). Terminalize each still-enqueued SDK row so no
+    // hidden prompt remains; consumed rows are untouched (they WERE delivered).
     await withSessionLock(this.session.id, async () => {
-      const state = this.stateManager.getState();
-      if (state.status !== 'queued') return;
-      this.db.getJobQueueRepo().cancelDelivery(this.session.id, state.messageId);
-      this.db.getSDKMessageRepo().markDeliveryFailedByUuid(this.session.id, state.messageId);
+      const messageUuids =
+        this.db.getJobQueueRepo?.()?.cancelForSessionWithMessages(this.session.id) ?? [];
+      if (messageUuids.length === 0) return;
+      const sdkRepo = this.db.getSDKMessageRepo?.();
+      for (const messageUuid of messageUuids) {
+        sdkRepo?.markDeliveryFailedByUuid(this.session.id, messageUuid);
+      }
     });
 
     await this.interruptHandler.handleInterrupt();

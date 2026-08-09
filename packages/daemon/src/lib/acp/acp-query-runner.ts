@@ -674,6 +674,7 @@ export class AcpQueryRunner {
         const shouldPersistInstructionsSent = prependInstructionsToNextPrompt;
         prependInstructionsToNextPrompt = false;
         let submitted = false;
+        let accepted = false;
         const adapter = new AcpQueryAdapter(client, promptContent, {
           contextWindow: getAcpContextWindow(),
           initialUsageEstimate: getAcpContextUsageEstimate(session),
@@ -687,6 +688,7 @@ export class AcpQueryRunner {
           },
           onAccepted: () => {
             this.ctx.messageHandler.markMessageAccepted(message.uuid ?? '');
+            accepted = true;
           },
         });
         this.ctx.queryObject = adapter;
@@ -696,46 +698,61 @@ export class AcpQueryRunner {
         startStartupTimer(() => promptMessageReceived);
 
         let messageCount = 0;
-        for await (const acpMessage of this.createAbortableQuery(adapter, abortController.signal)) {
+        try {
+          for await (const acpMessage of this.createAbortableQuery(
+            adapter,
+            abortController.signal
+          )) {
+            if (startupTimeoutReached && messageCount === 0) {
+              throw new Error('ACP startup timeout - query aborted');
+            }
+
+            messageCount++;
+            if (messageCount === 1) {
+              promptMessageReceived = true;
+              receivedAcpMessageDuringRun = true;
+              if (shouldPersistInstructionsSent) {
+                this.persistAcpInstructionsSent();
+              }
+              this.clearStartupTimer();
+            }
+            this.ctx.firstMessageReceived = true;
+
+            try {
+              await this.handleSDKMessage(acpMessage as SDKMessage);
+            } catch (error) {
+              logger.error('Error handling ACP SDK message:', error);
+              logger.error('Message type:', (acpMessage as SDKMessage).type);
+
+              if (!this.ctx.isCleaningUp()) {
+                const processingState = stateManager.getState();
+                await stateManager.setIdle();
+
+                await errorManager.handleError(
+                  session.id,
+                  error as Error,
+                  ErrorCategory.MESSAGE,
+                  'Error processing ACP message. The session has been reset.',
+                  processingState,
+                  { messageType: (acpMessage as SDKMessage).type, providerId: 'acp' }
+                );
+              }
+            }
+          }
+
           if (startupTimeoutReached && messageCount === 0) {
             throw new Error('ACP startup timeout - query aborted');
           }
-
-          messageCount++;
-          if (messageCount === 1) {
-            promptMessageReceived = true;
-            receivedAcpMessageDuringRun = true;
-            if (shouldPersistInstructionsSent) {
-              this.persistAcpInstructionsSent();
-            }
-            this.clearStartupTimer();
+        } finally {
+          // The prompt reached the ACP subprocess (stdin write completed) but
+          // the run ended — interrupt, error, or adapter close — before any
+          // acceptance signal. Submitted rows are hidden from transcript
+          // queries, so settle explicitly or the prompt stays invisible and
+          // nonterminal until restart recovery. Fail-ambiguous: never
+          // auto-replayed. See Codex (#3743968032).
+          if (submitted && !accepted) {
+            this.ctx.messageHandler.markMessageSubmissionFailed(message.uuid ?? '');
           }
-          this.ctx.firstMessageReceived = true;
-
-          try {
-            await this.handleSDKMessage(acpMessage as SDKMessage);
-          } catch (error) {
-            logger.error('Error handling ACP SDK message:', error);
-            logger.error('Message type:', (acpMessage as SDKMessage).type);
-
-            if (!this.ctx.isCleaningUp()) {
-              const processingState = stateManager.getState();
-              await stateManager.setIdle();
-
-              await errorManager.handleError(
-                session.id,
-                error as Error,
-                ErrorCategory.MESSAGE,
-                'Error processing ACP message. The session has been reset.',
-                processingState,
-                { messageType: (acpMessage as SDKMessage).type, providerId: 'acp' }
-              );
-            }
-          }
-        }
-
-        if (startupTimeoutReached && messageCount === 0) {
-          throw new Error('ACP startup timeout - query aborted');
         }
       }
 

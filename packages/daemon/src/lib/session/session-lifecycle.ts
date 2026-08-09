@@ -802,6 +802,32 @@ export class SessionLifecycle {
     const completedPhases: string[] = [];
 
     try {
+      // PHASE 0: Commit the persisted archive barrier + cancel durable
+      // deliveries BEFORE any teardown, mirroring archiveResources. Deletion
+      // destroys the same resources (agent, SDK files, worktree) while the
+      // session row is still `active`, so without the barrier a send or a
+      // claimed delivery job passes the archived checks and drives against a
+      // half-deleted session; job_queue has no session FK, so pending jobs
+      // would also survive the row delete. See Codex (#3743968033).
+      if (session && session.status !== 'archived') {
+        await this.update(sessionId, {
+          status: 'archived',
+          archivedAt: new Date().toISOString(),
+        });
+        completedPhases.push('db-mark-archived');
+      }
+      try {
+        const messageUuids =
+          this.db.getJobQueueRepo?.()?.cancelForSessionWithMessages(sessionId) ?? [];
+        const sdkRepo = this.db.getSDKMessageRepo?.();
+        for (const messageUuid of messageUuids) {
+          sdkRepo?.markDeliveryFailedByUuid(sessionId, messageUuid);
+        }
+        completedPhases.push('delivery-cancel');
+      } catch (error) {
+        this.logger.error(`[SessionLifecycle] deleteResources: delivery cancel failed:`, error);
+      }
+
       // PHASE 1: Cleanup AgentSession (stops SDK subprocess)
       if (agentSession) {
         try {
