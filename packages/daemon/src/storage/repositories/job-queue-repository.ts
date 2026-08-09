@@ -112,6 +112,73 @@ export class JobQueueRepository {
     return this.getJob(jobId);
   }
 
+  /**
+   * Requeue + change the job's role in place (e.g. a steer promoted to a turn),
+   * atomically converting THIS job rather than completing it and enqueuing a
+   * second. Avoids the crash-window double-deliver of a separate promote job
+   * (the active-turn index dedups turn-role-per-session, not per-messageUuid).
+   * `runAt` defaults to now so the converted job is immediately claimable. The
+   * per-session-active-turn unique index still applies: if another turn became
+   * active between the promote check and this write, the UPDATE raises a UNIQUE
+   * violation the caller can catch (fall back to requeuing as a steer). See
+   * message-delivery-v2.md §8 (promote).
+   */
+  requeueAs(jobId: string, role: string, runAt: number): Job | null {
+    const res = this.db
+      .prepare(
+        `UPDATE job_queue
+           SET status = 'pending',
+               payload = json_set(payload, '$.role', ?),
+               run_at = ?,
+               started_at = NULL
+         WHERE id = ? AND status = 'processing'`
+      )
+      .run(role, runAt, jobId);
+    if (res.changes === 0) return null;
+    return this.getJob(jobId);
+  }
+
+  /**
+   * Refresh `started_at` on a `processing` job WITHOUT changing status — a lease
+   * heartbeat so the generic `reclaimStale` sweep (default 5min threshold) does
+   * not reclaim a long-but-live SDK turn and re-deliver it (duplicate turn). The
+   * message-delivery handler heartbeats this throughout the turn await; a
+   * crashed handler stops heartbeating, so reclaimStale still recovers it. See
+   * message-delivery-v2.md §10 + Codex review (live-turn reclaim).
+   */
+  touchStartedAt(jobId: string): void {
+    this.db
+      .prepare(`UPDATE job_queue SET started_at = ? WHERE id = ? AND status = 'processing'`)
+      .run(Date.now(), jobId);
+  }
+
+  /**
+   * The set of messageUuids with an ACTIVE (pending/processing) message_delivery
+   * job for a session. Used by the LEGACY replay paths
+   * (replayPendingMessagesForImmediateMode / handleQueryTrigger /
+   * sendEnqueuedMessagesOnTurnEnd) to SKIP messages already owned by a durable
+   * v2 job — otherwise, on restart, both the reclaimed v2 job AND the legacy
+   * replay would deliver the same message (duplicate). Empty when v2 is off (no
+   * message_delivery jobs exist), so legacy behavior is unchanged. See
+   * message-delivery-v2.md §10 + Codex review (legacy-replay race).
+   */
+  activeDeliveryMessageUuids(sessionId: string): Set<string> {
+    const rows = this.db
+      .prepare(
+        `SELECT json_extract(payload, '$.messageUuid') AS uuid
+           FROM job_queue
+          WHERE queue = 'message_delivery'
+            AND json_extract(payload, '$.sessionId') = ?
+            AND status IN ('pending', 'processing')`
+      )
+      .all(sessionId) as Array<{ uuid: string | null }>;
+    const out = new Set<string>();
+    for (const r of rows) {
+      if (typeof r.uuid === 'string') out.add(r.uuid);
+    }
+    return out;
+  }
+
   complete(jobId: string, result?: Record<string, unknown>): Job | null {
     const stmt = this.db.prepare(
       `UPDATE job_queue SET status = 'completed', completed_at = ?, result = ? WHERE id = ? AND status = 'processing'`

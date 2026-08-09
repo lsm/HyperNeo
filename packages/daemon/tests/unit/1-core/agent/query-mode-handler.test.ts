@@ -60,6 +60,9 @@ describe('QueryModeHandler', () => {
     mockDb = {
       getMessagesByStatus: getMessagesByStatusSpy,
       updateMessageStatus: updateMessageStatusSpy,
+      // message-delivery v2 legacy-replay guard: no active v2 jobs in these
+      // tests, so the replay paths are unfiltered.
+      getJobQueueRepo: () => ({ activeDeliveryMessageUuids: () => new Set<string>() }),
     } as unknown as Database;
 
     emitSpy = mock(async () => {});

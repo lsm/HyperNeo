@@ -218,6 +218,7 @@ import { MessageQueue } from './message-queue';
 import {
   MESSAGE_DELIVERY_PARK_MS,
   deliverMessage,
+  withSessionLock,
   type DriveTurnOutcome,
   type FeedSteerOutcome,
 } from './message-delivery';
@@ -1777,39 +1778,60 @@ export class AgentSession
     content: string | MessageContent[],
     _parentToolUseId?: string | null
   ): Promise<DriveTurnOutcome> {
-    const queryStartResult = await this.lifecycleManager.ensureQueryStarted();
-    if (queryStartResult === 'blocked') {
+    // Brief critical section (per-session lock): start the query + feed the
+    // kickoff so it is the FIRST message the generator yields (a steer grabbing
+    // the lock next can't jump ahead). The lock also serializes ensureQueryStarted
+    // against a concurrent steer's state-check. Released BEFORE the long turn
+    // await below — holding it across the turn would serialize mid-turn steering
+    // (the feature's whole point). See message-delivery-v2.md §8 + Codex review.
+    const started = await withSessionLock(this.session.id, async () => {
+      const queryStartResult = await this.lifecycleManager.ensureQueryStarted();
+      if (queryStartResult === 'blocked') {
+        return { kind: 'blocked' as const };
+      }
+      const queryPromise = this.queryPromise;
+      if (!queryPromise) {
+        throw new Error('message_delivery: query did not start; cannot drive turn');
+      }
+      // Feed the kickoff (resolves on onSent = the SDK consumed it). Brief for a
+      // freshly-started query whose generator is actively iterating.
+      await this.messageQueue.enqueueWithId(messageUuid, content);
+      return { kind: 'driving' as const, queryPromise };
+    });
+    if (started.kind === 'blocked') {
       return { outcome: 'blocked', retryAt: Date.now() + MESSAGE_DELIVERY_PARK_MS };
     }
-    const queryPromise = this.queryPromise;
-    if (!queryPromise) {
-      throw new Error('message_delivery: query did not start; cannot drive turn');
-    }
-    // Feed the kickoff (resolves on onSent = the SDK consumed the message).
-    await this.messageQueue.enqueueWithId(messageUuid, content);
-    // Await the turn's end (success or handled error — QueryRunner owns the
-    // distinction in step 1; a swallowed rejection is expected).
-    await queryPromise.catch(() => {});
+    // Long await OUTSIDE the lock — mid-turn steers can now feed. The lease
+    // heartbeat (handler) keeps the job from being reclaimed as stale. QueryRunner
+    // still owns in-process retry/error in step 1; a swallowed rejection is expected.
+    await started.queryPromise.catch(() => {});
     return { outcome: 'completed' };
   }
 
   /**
-   * Feed a steered message into the active turn's live transport (v2). Resolves
-   * on SDK consume (`onSent`) → the steer is durable-complete. If the turn ended
-   * between enqueue and claim, returns `promote` so the handler re-enters the
-   * message through the chokepoint as a fresh turn candidate.
+   * Feed a steered message into the active turn's live transport (v2). The
+   * per-session lock guards ONLY the processing-state check (brief); the feed
+   * (enqueueWithId, which resolves on `onSent`) runs UNLOCKED — it is
+   * concurrent-safe and may itself await for the duration of the steer being
+   * consumed. If the turn ended, returns `promote` so the handler converts the
+   * job to a turn in place.
    */
   async feedDeliverySteer(
     messageUuid: string,
     content: string | MessageContent[],
     _parentToolUseId?: string | null
   ): Promise<FeedSteerOutcome> {
-    if (this.stateManager.getState().status !== 'processing') {
+    const action = await withSessionLock(this.session.id, async () => {
+      return this.stateManager.getState().status === 'processing' ? 'feed' : 'promote';
+    });
+    if (action === 'promote') {
       // The active turn ended (or never started) — promote to a turn candidate.
       return { outcome: 'promote' };
     }
-    // Resolves on onSent (SDK consumed the steer); rejects on clear/turn-end/
-    // error → the handler throws → the job fails → backoff → re-feed or promote.
+    // Feed OUTSIDE the lock. Resolves on onSent (SDK consumed the steer);
+    // rejects on clear/turn-end/error → the handler fails the job → backoff →
+    // re-feed (if active) or promote. (A racy turn teardown may delay this up to
+    // the enqueueWithId TTL — §15 removes that TTL; reclaimStale covers liveness.)
     await this.messageQueue.enqueueWithId(messageUuid, content);
     return { outcome: 'consumed' };
   }

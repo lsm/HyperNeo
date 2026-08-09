@@ -50,8 +50,14 @@ export class QueryModeHandler {
     const { session, db, internalEventBus, messageQueue, logger } = this.ctx;
 
     try {
-      // Get all deferred messages
-      const deferredMessages = db.getMessagesByStatus(session.id, 'deferred');
+      // Get all deferred messages, EXCLUDING any already owned by a durable v2
+      // delivery job — on restart both the reclaimed v2 job and this legacy
+      // replay would otherwise deliver the same message (duplicate). No-op when
+      // v2 is off (no message_delivery jobs → empty set). See §10 + Codex review.
+      const v2Owned = db.getJobQueueRepo().activeDeliveryMessageUuids(session.id);
+      const deferredMessages = db
+        .getMessagesByStatus(session.id, 'deferred')
+        .filter((m) => !v2Owned.has((m.uuid ?? '') as string));
 
       if (deferredMessages.length === 0) {
         return { success: true, messageCount: 0 };
@@ -98,8 +104,12 @@ export class QueryModeHandler {
     const { session, db, messageQueue, logger } = this.ctx;
 
     try {
-      // Get all queued messages
-      const queuedMessages = db.getMessagesByStatus(session.id, 'enqueued');
+      // Get all queued messages, EXCLUDING any already owned by a durable v2
+      // delivery job (see handleQueryTrigger for the restart duplicate guard).
+      const v2Owned = db.getJobQueueRepo().activeDeliveryMessageUuids(session.id);
+      const queuedMessages = db
+        .getMessagesByStatus(session.id, 'enqueued')
+        .filter((m) => !v2Owned.has((m.uuid ?? '') as string));
 
       if (queuedMessages.length === 0) {
         return;

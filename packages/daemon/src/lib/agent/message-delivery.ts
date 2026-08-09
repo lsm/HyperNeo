@@ -197,3 +197,29 @@ export interface MessageDeliverySession {
     parentToolUseId?: string | null
   ): Promise<FeedSteerOutcome>;
 }
+
+/**
+ * In-process per-session mutex. Guards ONLY the brief turn start/stop + steer
+ * state-check windows — NOT the long turn await. The feed itself is
+ * concurrent-safe (§8). Holding this lock across a full SDK turn would block
+ * mid-turn steering (the headline feature), so callers MUST release before any
+ * long await (turn promise / enqueueWithId-onSent). The synchronous
+ * read-then-set below has no await, so concurrent callers chain deterministically.
+ */
+const sessionLocks = new Map<string, Promise<unknown>>();
+
+export async function withSessionLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = sessionLocks.get(sessionId) ?? Promise.resolve();
+  let release!: () => void;
+  const next = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  sessionLocks.set(sessionId, next);
+  try {
+    await prev;
+    return await fn();
+  } finally {
+    release();
+    if (sessionLocks.get(sessionId) === next) sessionLocks.delete(sessionId);
+  }
+}

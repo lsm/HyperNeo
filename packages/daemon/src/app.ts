@@ -951,13 +951,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         jobQueue,
         getSession: (sessionId: string) => sessionManager?.getSession(sessionId) ?? null,
         getMessageContent: (sessionId: string, messageUuid: string) => {
-          // Step-1: text content via getUserMessageByUuid. Multimodal (image)
-          // blocks are flattened — a documented step-1 limitation under the
-          // opt-in flag; a block-preserving loader is a §15 follow-up.
-          const row = reactiveDb?.db
-            .getSDKMessageRepo()
-            .getUserMessageByUuid(sessionId, messageUuid);
-          return row?.content ?? null;
+          // Block-preserving loader (string OR content blocks incl. images /
+          // tool_results) — avoids the data-loss of the text-flattening
+          // getUserMessageByUuid.
+          return (
+            reactiveDb?.db
+              .getSDKMessageRepo()
+              .getUserMessageContentByUuid(sessionId, messageUuid) ?? null
+          );
         },
       })
     );

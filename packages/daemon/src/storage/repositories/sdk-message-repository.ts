@@ -9,7 +9,12 @@
 
 import type { Database as BunDatabase } from '../sqlite-compat';
 import { generateUUID } from '@hyperneo/shared';
-import type { MessageOrigin, HyperNeoActionMessage, ChatMessage } from '@hyperneo/shared';
+import type {
+  MessageContent,
+  MessageOrigin,
+  HyperNeoActionMessage,
+  ChatMessage,
+} from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
 import type { ReactiveDatabase } from '../reactive-database';
@@ -1729,6 +1734,35 @@ export class SDKMessageRepository {
     return this.parseUserMessageRow(earliest, uuid);
   }
 
+  /**
+   * Load the raw `message.content` (string OR content-block array) for a user
+   * message by UUID, preserving multimodal blocks (images, tool_results, extra
+   * text). Used by the message-delivery v2 handler to feed the transport WITHOUT
+   * the data-loss of the text-flattening {@link getUserMessageByUuid} (which is
+   * display/rewind-oriented). Status-agnostic (a retried message may be
+   * consumed/failed by the time the handler loads it). Returns null if no user
+   * row matches or the blob is unparseable. Earliest match wins (consistent with
+   * getUserMessageByUuid if a uuid is shared by several rows).
+   */
+  getUserMessageContentByUuid(sessionId: string, uuid: string): string | MessageContent[] | null {
+    const row = this.db
+      .prepare(
+        `SELECT sdk_message FROM sdk_messages
+           WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
+           ORDER BY timestamp ASC LIMIT 1`
+      )
+      .get(sessionId, uuid) as { sdk_message: string } | undefined;
+    if (!row) return null;
+    try {
+      const message = JSON.parse(row.sdk_message) as {
+        message?: { content?: string | MessageContent[] };
+      };
+      return message.message?.content ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   private parseUserMessageRow(
     row: { sdk_message: string; timestamp: string },
     uuid: string
@@ -1918,6 +1952,28 @@ export class SDKMessageRepository {
     if (countsTowardsBadge) this.notifySessionsChanged(sessionId);
     this.upsertMessageSearchRow(id);
     return id;
+  }
+
+  /**
+   * True iff an UNRESOLVED HyperNeo action message of the given action kind
+   * exists for the session. Used to dedupe the sdk_resume_choice prompt: under
+   * message-delivery v2, a blocked turn job is PARKED and re-claimed every few
+   * seconds, and each reclaim re-runs ensureQueryStarted → emitSdkResumeChoice.
+   * Without this guard that would pile up ~12 duplicate action cards/min. See
+   * message-delivery-v2.md §8 + review P2.
+   */
+  hasUnresolvedHyperNeoAction(sessionId: string, action: string): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT 1 FROM sdk_messages
+           WHERE session_id = ?
+             AND message_type = 'hyperneo_action'
+             AND message_subtype = ?
+             AND json_extract(sdk_message, '$.resolved') = 0
+           LIMIT 1`
+      )
+      .get(sessionId, action);
+    return row !== undefined;
   }
 
   /**

@@ -190,6 +190,78 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
       expect(repo.dequeue(MESSAGE_DELIVERY, 1)).toHaveLength(1);
     });
   });
+
+  describe('atomic claim — no double-delivery (§13 headline)', () => {
+    it('a claimed (processing) job is NOT re-claimed by a second dequeue', () => {
+      deliverMessage(repo, SESSION, 'msg-once', { origin: 'chat' });
+      const first = repo.dequeue(MESSAGE_DELIVERY, 1);
+      expect(first).toHaveLength(1);
+      expect(first[0].status).toBe('processing');
+      // The atomic dequeue transaction moved it pending→processing, so a second
+      // dequeue finds nothing — the message cannot be double-delivered.
+      expect(repo.dequeue(MESSAGE_DELIVERY, 1)).toHaveLength(0);
+    });
+
+    it('dequeue(limit > 1) claims a pending job exactly once', () => {
+      deliverMessage(repo, SESSION, 'msg-once2', { origin: 'chat' });
+      const claimed = repo.dequeue(MESSAGE_DELIVERY, 10);
+      expect(claimed).toHaveLength(1);
+      expect(claimed[0].status).toBe('processing');
+    });
+  });
+
+  describe('requeueAs — atomic promote (no second job)', () => {
+    it('converts a processing steer to a pending turn in place', () => {
+      deliverMessage(repo, SESSION, 'turn-anchor', { origin: 'chat' });
+      deliverMessage(repo, SESSION, 'the-steer', { origin: 'chat' }); // → steer
+      const [turn] = repo.dequeue(MESSAGE_DELIVERY, 1);
+      repo.complete(turn.id, { ok: true }); // free the active-turn slot
+      const [steer] = repo.dequeue(MESSAGE_DELIVERY, 1);
+      expect((steer.payload as { role: string }).role).toBe('steer');
+      const before = repo.listJobs({ queue: MESSAGE_DELIVERY, limit: 50 }).length;
+      repo.requeueAs(steer.id, 'turn', 123);
+      const after = repo.getJob(steer.id);
+      expect(after?.status).toBe('pending');
+      expect((after?.payload as { role: string }).role).toBe('turn');
+      expect(after?.runAt).toBe(123);
+      expect(after?.retryCount).toBe(0); // no retry bump
+      // Same job count — converted in place, no second job.
+      expect(repo.listJobs({ queue: MESSAGE_DELIVERY, limit: 50 }).length).toBe(before);
+    });
+
+    it('no-ops (returns null) when the job is no longer processing', () => {
+      deliverMessage(repo, SESSION, 'gone-as', { origin: 'chat' });
+      const [job] = repo.dequeue(MESSAGE_DELIVERY, 1);
+      repo.complete(job.id, { ok: true });
+      expect(repo.requeueAs(job.id, 'turn', Date.now())).toBeNull();
+    });
+  });
+
+  describe('touchStartedAt — lease heartbeat (live turn not reclaimed)', () => {
+    it('refreshes started_at without changing status (fends off reclaimStale)', () => {
+      deliverMessage(repo, SESSION, 'live-turn', { origin: 'chat' });
+      const [job] = repo.dequeue(MESSAGE_DELIVERY, 1);
+      const stale = Date.now() - 10 * 60 * 1000;
+      db.prepare(`UPDATE job_queue SET started_at = ? WHERE id = ?`).run(stale, job.id);
+      repo.touchStartedAt(job.id);
+      // After the heartbeat, the job is NOT reclaimed (started_at is fresh)...
+      expect(repo.reclaimStale(Date.now() - 5 * 60 * 1000)).toBe(0);
+      expect(repo.getJob(job.id)?.status).toBe('processing');
+    });
+  });
+
+  describe('activeDeliveryMessageUuids — legacy-replay guard', () => {
+    it('lists UUIDs with an active (pending/processing) v2 job; empty when none', () => {
+      expect(repo.activeDeliveryMessageUuids(SESSION)).toEqual(new Set());
+      deliverMessage(repo, SESSION, 'msg-a', { origin: 'chat' }); // pending turn
+      deliverMessage(repo, SESSION, 'msg-b', { origin: 'chat' }); // pending steer
+      expect(repo.activeDeliveryMessageUuids(SESSION)).toEqual(new Set(['msg-a', 'msg-b']));
+      // Completed jobs drop out.
+      const [turn] = repo.dequeue(MESSAGE_DELIVERY, 1);
+      repo.complete(turn.id, { ok: true });
+      expect(repo.activeDeliveryMessageUuids(SESSION)).toEqual(new Set(['msg-b']));
+    });
+  });
 });
 
 // ── Handler-level conformance ──────────────────────────────────────────────
@@ -326,16 +398,17 @@ describe('message-delivery v2 — handler (conformance)', () => {
       getMessageContent: () => 'steer-content',
     });
     const result = await handler(job);
-    expect(result).toMatchObject({ outcome: 'superseded', promoted: true });
-    // A NEW turn job for the same UUID was enqueued.
-    const requeued = jobsFor(repo, SESSION)
-      .filter(
-        (j) =>
-          (j.payload as { messageUuid: string }).messageUuid === 'msg-promote' &&
-          (j.payload as { role: string }).role === 'turn'
+    expect(result).toMatchObject({ outcome: 'superseded', promoted: 'turn' });
+    // The SAME job was converted to a pending turn IN PLACE (requeueAs) — no
+    // second job, so no crash-window double-deliver.
+    const after = repo.getJob(job.id);
+    expect(after?.status).toBe('pending');
+    expect((after?.payload as { role: string }).role).toBe('turn');
+    expect(
+      jobsFor(repo, SESSION).filter(
+        (j) => (j.payload as { messageUuid: string }).messageUuid === 'msg-promote'
       )
-      .filter((j) => j.id !== job.id);
-    expect(requeued).toHaveLength(1);
+    ).toHaveLength(1);
   });
 
   it('session gone → handler rejects (so reclaimStale/processor re-drives it)', async () => {

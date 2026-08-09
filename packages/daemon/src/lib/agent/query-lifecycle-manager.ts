@@ -552,6 +552,14 @@ export class QueryLifecycleManager {
   private async emitSdkResumeChoiceMessage(): Promise<void> {
     const { session, db, messageHub } = this.ctx;
 
+    // Dedupe: under message-delivery v2 a blocked turn job is parked + re-claimed
+    // every few seconds, re-running ensureQueryStarted → here. Skip emitting a
+    // FRESH card when an unresolved sdk_resume_choice already exists (otherwise
+    // ~12 duplicate cards/min). See message-delivery-v2.md §8 + review P2.
+    if (db.getSDKMessageRepo().hasUnresolvedHyperNeoAction(session.id, 'sdk_resume_choice')) {
+      return;
+    }
+
     const actionMessage: HyperNeoActionMessage = {
       type: 'hyperneo_action',
       uuid: generateUUID(),
