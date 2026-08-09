@@ -215,6 +215,12 @@ export interface AgentSessionRuntimeOptions {
 
 // Extracted components
 import { MessageQueue } from './message-queue';
+import {
+  MESSAGE_DELIVERY_PARK_MS,
+  deliverMessage,
+  type DriveTurnOutcome,
+  type FeedSteerOutcome,
+} from './message-delivery';
 import { ProcessingStateManager } from './processing-state-manager';
 import { ContextTracker } from './context-tracker';
 import { SDKMessageHandler, type SDKMessageHandlerContext } from './sdk-message-handler';
@@ -1747,6 +1753,78 @@ export class AgentSession
    */
   isRateLimitEpisodeSuperseded(generation: number): boolean {
     return this.rateLimitWatchdog.isSuperseded(generation);
+  }
+
+  // ============================================================================
+  // Message delivery v2 — turn/steer driving bridge
+  // ============================================================================
+
+  /**
+   * Drive a new SDK turn for a durable message_delivery job (v2). Ensures the
+   * query is started (parking if blocked on sdk_resume_choice), feeds the
+   * kickoff to the transport, then awaits the turn's terminal outcome (the
+   * runQuery promise settling). The job stays `processing` across the await, so
+   * a crash before the turn ends is redelivered by reclaimStale.
+   *
+   * Step-1 (transitional): the QueryRunner still owns in-process retry/error
+   * handling, so this completes the job when the turn ENDS (success or handled
+   * error) rather than fail-on-error — otherwise the job's backoff would
+   * double-retry what QueryRunner already retried. Step 4 (decommission)
+   * removes QueryRunner retry, making the job's fail/backoff the sole retry.
+   */
+  async driveDeliveryTurn(
+    messageUuid: string,
+    content: string | MessageContent[],
+    _parentToolUseId?: string | null
+  ): Promise<DriveTurnOutcome> {
+    const queryStartResult = await this.lifecycleManager.ensureQueryStarted();
+    if (queryStartResult === 'blocked') {
+      return { outcome: 'blocked', retryAt: Date.now() + MESSAGE_DELIVERY_PARK_MS };
+    }
+    const queryPromise = this.queryPromise;
+    if (!queryPromise) {
+      throw new Error('message_delivery: query did not start; cannot drive turn');
+    }
+    // Feed the kickoff (resolves on onSent = the SDK consumed the message).
+    await this.messageQueue.enqueueWithId(messageUuid, content);
+    // Await the turn's end (success or handled error — QueryRunner owns the
+    // distinction in step 1; a swallowed rejection is expected).
+    await queryPromise.catch(() => {});
+    return { outcome: 'completed' };
+  }
+
+  /**
+   * Feed a steered message into the active turn's live transport (v2). Resolves
+   * on SDK consume (`onSent`) → the steer is durable-complete. If the turn ended
+   * between enqueue and claim, returns `promote` so the handler re-enters the
+   * message through the chokepoint as a fresh turn candidate.
+   */
+  async feedDeliverySteer(
+    messageUuid: string,
+    content: string | MessageContent[],
+    _parentToolUseId?: string | null
+  ): Promise<FeedSteerOutcome> {
+    if (this.stateManager.getState().status !== 'processing') {
+      // The active turn ended (or never started) — promote to a turn candidate.
+      return { outcome: 'promote' };
+    }
+    // Resolves on onSent (SDK consumed the steer); rejects on clear/turn-end/
+    // error → the handler throws → the job fails → backoff → re-feed or promote.
+    await this.messageQueue.enqueueWithId(messageUuid, content);
+    return { outcome: 'consumed' };
+  }
+
+  /**
+   * Ordinary-chat entry for message-delivery v2: enqueue a durable delivery job
+   * (role decided atomically by the job_queue index) instead of driving the
+   * query inline. The message_delivery handler then drives/feeds the turn.
+   * Flag-gated; the `message.persisted` subscriber calls this only when
+   * HYPERNEO_MESSAGE_DELIVERY_V2 is set.
+   */
+  deliverChatMessage(messageUuid: string): void {
+    deliverMessage(this.db.getJobQueueRepo(), this.session.id, messageUuid, {
+      origin: 'chat',
+    });
   }
 
   trackAgentProcess(proc: TrackedAgentProcess): void {

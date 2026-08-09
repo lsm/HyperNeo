@@ -80,9 +80,11 @@ import {
   JOB_QUEUE_CLEANUP,
   LONG_HORIZON_AGENT_REMINDER_FIRE,
   MEMORY_CONSOLIDATION,
+  MESSAGE_DELIVERY,
   SKILL_VALIDATE,
   TASK_SCHEDULE_FIRE,
 } from './lib/job-queue-constants';
+import { createMessageDeliveryHandler } from './lib/job-handlers/message-delivery.handler';
 import { handleTaskScheduleFire } from './lib/job-handlers/task-schedule-fire.handler';
 import {
   backfillLongHorizonAgentReminderNextRunAt,
@@ -934,6 +936,30 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     jobProcessor.register(
       MEMORY_CONSOLIDATION,
       createMemoryConsolidationHandler(db.agentMemory, jobQueue)
+    );
+
+    // Message-delivery v2 — durable user-message delivery on job_queue (flag-
+    // gated for ordinary chat; see docs/features/message-delivery-v2.md). The
+    // handler resolves the live AgentSession (which implements
+    // MessageDeliverySession via driveDeliveryTurn/feedDeliverySteer) and loads
+    // content from sdk_messages by UUID. getSession returns null for a closed/
+    // evicted session → the handler fails the job (reclaimStale/processor
+    // re-drives it once the session is back, or it dead-letters after backoff).
+    jobProcessor.register(
+      MESSAGE_DELIVERY,
+      createMessageDeliveryHandler({
+        jobQueue,
+        getSession: (sessionId: string) => sessionManager?.getSession(sessionId) ?? null,
+        getMessageContent: (sessionId: string, messageUuid: string) => {
+          // Step-1: text content via getUserMessageByUuid. Multimodal (image)
+          // blocks are flattened — a documented step-1 limitation under the
+          // opt-in flag; a block-preserving loader is a §15 follow-up.
+          const row = reactiveDb?.db
+            .getSDKMessageRepo()
+            .getUserMessageByUuid(sessionId, messageUuid);
+          return row?.content ?? null;
+        },
+      })
     );
 
     // Register task-schedule.fire handler.

@@ -78,7 +78,7 @@ export class JobQueueRepository {
     const txn = this.db.transaction(() => {
       const rows = this.db
         .prepare(
-          `SELECT * FROM job_queue WHERE queue = ? AND status = 'pending' AND run_at <= ? ORDER BY priority DESC, run_at ASC LIMIT ?`
+          `SELECT * FROM job_queue WHERE queue = ? AND status = 'pending' AND run_at <= ? ORDER BY priority DESC, run_at ASC, created_at ASC LIMIT ?`
         )
         .all(queue, Date.now(), limit) as Record<string, unknown>[];
 
@@ -93,6 +93,23 @@ export class JobQueueRepository {
 
     txn();
     return claimed;
+  }
+
+  /**
+   * Return a claimed (`processing`) job back to `pending` with a specific
+   * `run_at`, WITHOUT incrementing `retry_count` or recording an error. Used by
+   * the message-delivery handler to PARK a turn whose query startup is blocked
+   * (e.g. sdk_resume_choice) so it is re-claimed later instead of failing. The
+   * job-queue processor's auto-`complete()` on handler return is a no-op here
+   * because the row is no longer `processing`. See message-delivery-v2.md §8.
+   */
+  requeue(jobId: string, runAt: number): Job | null {
+    const stmt = this.db.prepare(
+      `UPDATE job_queue SET status = 'pending', run_at = ?, started_at = NULL WHERE id = ? AND status = 'processing'`
+    );
+    const res = stmt.run(runAt, jobId);
+    if (res.changes === 0) return null;
+    return this.getJob(jobId);
   }
 
   complete(jobId: string, result?: Record<string, unknown>): Job | null {

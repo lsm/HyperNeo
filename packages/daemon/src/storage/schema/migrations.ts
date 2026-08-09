@@ -895,6 +895,12 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   //   idempotent on DBs that already have it. (Renumbered 173->175->176->179 as
   //   dev shipped M176/M177/M178 in #2387/#2388/#2390.)
   run(migrationMarkerKey(179), () => runMigration179(db));
+
+  // Migration 180: Partial unique index uq_message_delivery_active_turn on
+  // job_queue lane 'message_delivery' — the atomic "one active turn per
+  // session" guard + turn-vs-steer arbiter for message-delivery v2. See
+  // docs/features/message-delivery-v2.md §6. Idempotent; no-op pre-lane.
+  run(migrationMarkerKey(180), () => runMigration180(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -7896,6 +7902,29 @@ export function runMigration179(db: BunDatabase): void {
   if (!tableExists(db, 'pending_agent_messages')) return;
   if (tableHasColumn(db, 'pending_agent_messages', 'workflow_node_id')) return;
   db.exec(`ALTER TABLE pending_agent_messages ADD COLUMN workflow_node_id TEXT`);
+}
+
+/**
+ * Migration 180: Partial unique index enforcing "one active turn per session"
+ * on job_queue lane 'message_delivery' (message-delivery v2). The index is the
+ * atomic role arbiter: a `role='turn'` insert either succeeds or hits this
+ * constraint, in which case `deliverMessage` inserts the message as `role=
+ * 'steer'` instead. Steers (`role='steer'`) are excluded from the index so they
+ * coexist with the active turn. A parked/blocked turn-job (pending/processing)
+ * still counts as active, so a message arriving during sdk_resume_choice
+ * correctly becomes a steer, not a competing turn. See
+ * docs/features/message-delivery-v2.md §6. Idempotent (`CREATE ... IF NOT
+ * EXISTS`); no-op on tables that pre-date the lane (no rows ⇒ no conflict).
+ */
+export function runMigration180(db: BunDatabase): void {
+  if (!tableExists(db, 'job_queue')) return;
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_message_delivery_active_turn
+      ON job_queue (queue, json_extract(payload, '$.sessionId'))
+      WHERE queue = 'message_delivery'
+        AND json_extract(payload, '$.role') = 'turn'
+        AND status IN ('pending', 'processing')
+  `);
 }
 
 /**
