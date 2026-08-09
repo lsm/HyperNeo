@@ -3123,9 +3123,32 @@ WITH recent_metadata AS (
   ORDER BY timestamp DESC, rowid DESC
   LIMIT ${BACKGROUND_TASK_METADATA_BATCH_SIZE}
 ),
+recent_progress AS (
+  SELECT
+    id,
+    sdk_message,
+    timestamp,
+    send_status,
+    origin,
+    rowid,
+    COALESCE(
+      CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
+      task_id
+    ) AS task_id
+  FROM sdk_messages
+  WHERE session_id = ?
+    AND parent_tool_use_id IS NULL
+    AND message_subtype_norm = 'task_progress'
+  ORDER BY timestamp DESC, rowid DESC
+  LIMIT ${BACKGROUND_TASK_METADATA_BATCH_SIZE}
+),
 recent_task_ids AS (
   SELECT DISTINCT task_id
-  FROM recent_metadata
+  FROM (
+    SELECT task_id FROM recent_metadata
+    UNION ALL
+    SELECT task_id FROM recent_progress
+  )
   WHERE task_id IS NOT NULL AND task_id != ''
 ),
 task_starts AS (
@@ -3777,10 +3800,12 @@ export function setupLiveQueryHandlers(
     mapResult: (_rawRows, params) => {
       const sessionId = params[0];
       if (typeof sessionId !== 'string' || sessionId.length === 0) return undefined;
-      const rows = stmtBackgroundTaskMetadata.all(sessionId, sessionId, sessionId) as Record<
-        string,
-        unknown
-      >[];
+      const rows = stmtBackgroundTaskMetadata.all(
+        sessionId,
+        sessionId,
+        sessionId,
+        sessionId
+      ) as Record<string, unknown>[];
       return {
         backgroundTaskMessages: rows.map(mapMessageRow).reverse(),
       };
@@ -4020,8 +4045,21 @@ export function setupLiveQueryHandlers(
           });
         }
 
-        const sent = router.sendToClient(clientId, message);
-        if (!sent) {
+        const delivery = router.sendToClientDetailed(clientId, message);
+        if (!delivery.ok && delivery.reason === 'message_too_large') {
+          const errorMessage = createEventMessage({
+            method: 'liveQuery.error',
+            data: {
+              subscriptionId,
+              code: 'MESSAGE_TOO_LARGE',
+              message: 'Live query update is too large to send; load a smaller window',
+            },
+            sessionId,
+          });
+          router.sendToClient(clientId, errorMessage);
+          return;
+        }
+        if (!delivery.ok) {
           if (diff.type === 'snapshot') {
             // handle not yet assigned; defer cleanup to after subscribe() returns
             snapshotDeliveryFailed = true;

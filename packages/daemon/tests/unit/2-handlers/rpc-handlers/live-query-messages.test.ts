@@ -119,11 +119,12 @@ function createMockHub() {
       return () => handlers.delete(method);
     }),
     getRouter: mock(() => ({
-      sendToClient: mock((_clientId: string, message: unknown) => {
+      sendToClient: mock(() => true),
+      sendToClientDetailed: mock((_clientId: string, message: unknown) => {
         sentMessages.push({
           message: message as { method: string; data: Record<string, unknown> },
         });
-        return true;
+        return { ok: true } as const;
       }),
     })),
     onClientDisconnect: mock(() => () => {}),
@@ -823,7 +824,7 @@ describe('messages.bySession — SQL behavior', () => {
     // The sidecar has three session_id=? parameters (one per CTE).
     const planRows = db
       .prepare(`EXPLAIN QUERY PLAN ${BACKGROUND_TASK_METADATA_SQL}`)
-      .all('s1', 's1', 's1') as Array<{ detail: string }>;
+      .all('s1', 's1', 's1', 's1') as Array<{ detail: string }>;
     const plan = planRows.map((row) => row.detail).join('\n');
     // The load-bearing assertion: the new index drives the subtype predicate.
     expect(plan).toContain('idx_sdk_messages_session_subtype_parent');

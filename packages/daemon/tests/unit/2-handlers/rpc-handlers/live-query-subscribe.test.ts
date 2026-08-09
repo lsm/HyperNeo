@@ -51,6 +51,12 @@ function createMockSetup() {
       sentMessages.push({ clientId, message: message as SentMessage['message'] });
       return sendToClientResult;
     }),
+    sendToClientDetailed: mock((clientId: string, message: unknown) => {
+      sentMessages.push({ clientId, message: message as SentMessage['message'] });
+      return sendToClientResult
+        ? ({ ok: true } as const)
+        : ({ ok: false, reason: 'send_failed' } as const);
+    }),
   };
 
   const hub = {
