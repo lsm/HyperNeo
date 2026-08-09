@@ -157,6 +157,10 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
     try {
       const hookStateRepo = new WorkflowHookStateRepository(this.db);
       for (const snapshot of hookStateRepo.listByRun(runId)) {
+        // Only PR-ready handoffs establish the run's PR identity. Later
+        // review/QA hooks also carry pr_url but validate different evidence and
+        // must not be able to replace the coder/research PR.
+        if (!snapshot.hookId.includes('pr-ready')) continue;
         approved = newer(approved, legacyPrUrl(snapshot.localState), snapshot.updatedAt ?? 0);
       }
     } catch (err) {
