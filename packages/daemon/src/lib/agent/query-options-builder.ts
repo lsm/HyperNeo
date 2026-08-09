@@ -196,6 +196,17 @@ export function ensureAgentTools(
     return tools;
   }
 
+  // Space workers install this single built-in override only to constrain the
+  // child's tool surface. It must not grant Agent/Task to a non-native parent
+  // whose provider preset did not already expose delegation.
+  const onlyOverridesGeneralPurpose =
+    sessionType === 'worker' &&
+    Object.keys(agents).length === 1 &&
+    Object.hasOwn(agents, 'general-purpose');
+  if (onlyOverridesGeneralPurpose) {
+    return tools;
+  }
+
   if (Array.isArray(tools)) {
     if (NATIVE_AGENT_TOOL_PROVIDERS.includes(providerId)) {
       return tools;

@@ -143,27 +143,26 @@ describe('QueryOptionsBuilder', () => {
       expect(options.agents).toBeDefined();
     });
 
-    it('preserves child delegation restrictions while exposing parent agent tools', async () => {
-      mockSession.config.provider = 'glm';
-      mockSession.config.agents = {
+    it('does not widen a non-native worker parent tool surface for child overrides', () => {
+      const tools = ['Read', 'Bash'];
+      const agents = {
         'general-purpose': {
           description: 'Investigate directly',
           tools: ['Read', 'Bash', 'Grep', 'Glob'],
           disallowedTools: ['Agent', 'Task', 'TaskOutput', 'TaskStop'],
           prompt: 'Do not delegate.',
-          model: 'inherit',
+          model: 'inherit' as const,
         },
       };
 
-      const options = await builder.build();
-
-      expect(options.tools).toEqual(
-        expect.arrayContaining(['Agent', 'Task', 'TaskOutput', 'TaskStop'])
-      );
-      expect(options.agents?.['general-purpose']).toMatchObject({
-        tools: ['Read', 'Bash', 'Grep', 'Glob'],
-        disallowedTools: ['Agent', 'Task', 'TaskOutput', 'TaskStop'],
-      });
+      expect(ensureAgentTools(tools, agents, 'glm', 'worker')).toBe(tools);
+      expect(ensureAgentTools(undefined, agents, 'glm', 'worker')).toBeUndefined();
+      expect(agents['general-purpose'].disallowedTools).toEqual([
+        'Agent',
+        'Task',
+        'TaskOutput',
+        'TaskStop',
+      ]);
     });
 
     it('should include sandbox settings when configured', async () => {
