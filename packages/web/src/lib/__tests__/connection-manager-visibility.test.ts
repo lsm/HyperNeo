@@ -202,7 +202,9 @@ describe('ConnectionManager - Page Visibility Handling', () => {
     });
 
     it('should refresh sessionStore, appState, and globalStore', async () => {
-      const sessionStoreRefreshSpy = vi.spyOn(sessionStore, 'refresh').mockResolvedValue(undefined);
+      // Soft-resume drives full per-session recovery (recover), not state-only
+      // refresh — see SessionStore.recover / refreshAllSessionStores.
+      const sessionStoreRefreshSpy = vi.spyOn(sessionStore, 'recover').mockResolvedValue(undefined);
       const appStateRefreshSpy = vi.spyOn(appState, 'refreshAll').mockResolvedValue(undefined);
       const globalStoreRefreshSpy = vi.spyOn(globalStore, 'refresh').mockResolvedValue(undefined);
 
@@ -218,7 +220,7 @@ describe('ConnectionManager - Page Visibility Handling', () => {
       // Wait for async validation
       await new Promise((resolve) => setTimeout(resolve, 100));
 
-      // FIX: sessionStore.refresh() is now requested to sync agent state for status bar
+      // FIX: sessionStore.recover() is now requested to sync agent state for status bar
       expect(sessionStoreRefreshSpy).toHaveBeenCalled();
       expect(appStateRefreshSpy).toHaveBeenCalled();
       expect(globalStoreRefreshSpy).toHaveBeenCalled();
@@ -228,7 +230,7 @@ describe('ConnectionManager - Page Visibility Handling', () => {
       const refreshStartTimes: number[] = [];
 
       const _sessionStoreRefreshSpy = vi
-        .spyOn(sessionStore, 'refresh')
+        .spyOn(sessionStore, 'recover')
         .mockImplementation(async () => {
           refreshStartTimes.push(Date.now());
           await new Promise((resolve) => setTimeout(resolve, 50));

@@ -88,6 +88,37 @@ export function shouldBlockForPendingQuestion(
   return agentState.status === 'waiting_for_input' && lastMessage?.type !== 'result';
 }
 
+/**
+ * Decide whether the chat area should render the loading skeleton.
+ *
+ * The skeleton shows until BOTH the session-state RPC and the first messages
+ * LiveQuery snapshot have arrived — unless an error short-circuits to the
+ * error UI.
+ *
+ * Recovery (a connection drop/resume on a session that ALREADY loaded) must
+ * NOT relapse into the skeleton: the transcript stays visible and read-only
+ * while we rejoin the channel and re-sync. But this bypass applies ONLY when
+ * the session had completed its FULL initial load — i.e. BOTH halves
+ * (`sessionStateLoaded && messagesLoaded`). A drop that lands after only one
+ * half (state loaded but no snapshot yet, OR snapshot arrived but no metadata
+ * yet) must keep the skeleton: rendering with a half-loaded session would show
+ * missing metadata or an empty transcript for a conversation that is still in
+ * flight (and `isInitialLoad` stays true, so no recovery banner either).
+ *
+ * Exported for unit tests.
+ */
+export function computeChatLoading(opts: {
+  error: string | null;
+  isRecovering: boolean;
+  sessionStateLoaded: boolean;
+  messagesLoaded: boolean;
+}): boolean {
+  const { error, isRecovering, sessionStateLoaded, messagesLoaded } = opts;
+  const fullyLoaded = sessionStateLoaded && messagesLoaded;
+  const recoveringWithTranscript = isRecovering && fullyLoaded;
+  return !error && (!sessionStateLoaded || !messagesLoaded) && !recoveringWithTranscript;
+}
+
 export async function sendChatContainerMessage({
   content,
   images,
@@ -398,6 +429,15 @@ export default function ChatContainer({
 
   const handleRewindConfirm = useCallback(async () => {
     if (!rewindTargetUuid) return;
+    // Read-only while recovering: a rewind deletes messages (and may restore
+    // files) while the message subscription is still being re-established, so
+    // the change would not be reflected until recovery completes. The rewind
+    // affordance is also hidden during recovery, but guard the confirm path in
+    // case a modal was already open when recovery started.
+    if (store.isRecovering.value) {
+      toast.warning('Please wait — this session is reconnecting.');
+      return;
+    }
 
     setIsRewinding(true);
     try {
@@ -502,6 +542,17 @@ export default function ChatContainer({
   // Sync error from sessionStore
   useSignalEffect(() => {
     setStoreError(store.error.value);
+  });
+
+  // Sync the per-session recovery flag. Distinct from `isConnected`
+  // (socket-level): true while THIS session is rejoining its channel and
+  // re-syncing state/messages after a connection drop/resume. The composer
+  // stays disabled and a subtle indicator shows while the transcript remains
+  // visible — recovery must not be confused with a fresh load (skeleton) or a
+  // genuine failure (error screen).
+  const [isRecovering, setIsRecovering] = useState(store.isRecovering.value);
+  useSignalEffect(() => {
+    setIsRecovering(store.isRecovering.value);
   });
 
   // Sync hasMoreMessages from sessionStore (inferred from initial load count)
@@ -1128,7 +1179,17 @@ export default function ChatContainer({
   // Errors short-circuit the loading state so the error UI can render.
   const sessionStateLoaded = store.sessionState.value !== null;
   const messagesLoaded = store.messagesLoaded.value;
-  const loading = !error && (!sessionStateLoaded || !messagesLoaded);
+  // See computeChatLoading: the skeleton stays until the session has fully
+  // loaded, EXCEPT for a recovery of an already-loaded session (transcript
+  // stays visible). A disconnect before the first snapshot must NOT bypass the
+  // skeleton — otherwise the chat renders "No messages yet" for a conversation
+  // whose messages are still in flight.
+  const loading = computeChatLoading({
+    error,
+    isRecovering,
+    sessionStateLoaded,
+    messagesLoaded,
+  });
 
   // Content-column image drop zone. The composer (MessageInput) registers its
   // file-drop handler upward via registerDropTarget; this column owns the actual
@@ -1139,7 +1200,12 @@ export default function ChatContainer({
     dropFilesRef.current = fn;
   }, []);
   const composerDisabled =
-    isWaitingForInput || !isConnected || modelSwitching || coordinatorSwitching || sandboxSwitching;
+    isWaitingForInput ||
+    !isConnected ||
+    isRecovering ||
+    modelSwitching ||
+    coordinatorSwitching ||
+    sandboxSwitching;
   const dropEnabled = !readonly && session?.status !== 'archived' && !composerDisabled;
   const { isDragging, dragHandlers } = useImageDropZone((files) => {
     void dropFilesRef.current?.(files);
@@ -1359,6 +1425,23 @@ export default function ChatContainer({
         />
       )}
 
+      {/* Recovery indicator — non-blocking. The transcript stays visible and
+          read-only underneath while this session rejoins its channel and
+          re-syncs state/messages after a connection drop or background resume.
+          Shown only when there is no error (a real load failure renders its own
+          screen) and we are not on the initial load (skeleton handles that). */}
+      {isRecovering && !error && !isInitialLoad && (
+        <div
+          class="flex items-center justify-center gap-2 border-b border-blue-500/20 bg-blue-500/10 px-4 py-1.5 text-xs text-blue-200"
+          data-testid="session-recovering-banner"
+          role="status"
+          aria-live="polite"
+        >
+          <div class="h-3 w-3 rounded-full border-2 border-blue-400 border-t-transparent animate-spin" />
+          Reconnecting — restoring this session…
+        </div>
+      )}
+
       {/* Rate Limit Cooldown Banner */}
       {agentState.status === 'rate_limit_cooldown' && session && (
         <RateLimitCooldownBanner
@@ -1496,8 +1579,8 @@ export default function ChatContainer({
                     }
                     sessionId={sessionId}
                     resolvedQuestions={allResolvedQuestions}
-                    pendingQuestion={pendingQuestion}
-                    onRewind={handleRewindClick}
+                    pendingQuestion={isRecovering ? null : pendingQuestion}
+                    onRewind={isRecovering ? undefined : handleRewindClick}
                     rewindingMessageUuid={isRewinding ? rewindTargetUuid : null}
                     onQuestionResolved={handleQuestionResolved}
                     replacementStatus={
@@ -1547,6 +1630,7 @@ export default function ChatContainer({
         sandboxSwitching={sandboxSwitching}
         isWaitingForInput={isWaitingForInput}
         isConnected={isConnected}
+        isRecovering={isRecovering}
         onModelSwitch={handleModelSwitchWithConfirmation}
         onAutoScrollChange={handleAutoScrollChange}
         onCoordinatorModeChange={handleCoordinatorModeChange}

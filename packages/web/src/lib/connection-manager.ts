@@ -31,7 +31,11 @@
 import { MessageHub, WebSocketClientTransport } from '@hyperneo/shared';
 import { appState, connectionState, reconnectAttemptCount } from './state';
 import { globalStore } from './global-store';
-import { refreshAllSessionStores, sessionStore } from './session-store';
+import {
+  markAllSessionStoresRecovering,
+  refreshAllSessionStores,
+  sessionStore,
+} from './session-store';
 import { spaceStore } from './space-store';
 import { ConnectionNotReadyError, ConnectionTimeoutError } from './errors';
 import { createDeferred } from './timeout';
@@ -534,6 +538,14 @@ export class ConnectionManager {
     // Mark that we're in resume validation - this prevents connectionState from
     // reporting 'connected' until validation completes
     this._isResuming = true;
+    // Synchronously flag every mounted chat recovering so the composer (and the
+    // rewind/question/drop affordances) is disabled BEFORE the ≤3s health check
+    // + channel joins — a send during that window could land before the
+    // session channel / messages LiveQuery are restored. performRecovery (via
+    // refreshAllSessionStores below) supersedes this mark and clears it on
+    // success; forceReconnect clears it via the transport path. Mirrors the
+    // transport-reconnect path's immediate onConnection('disconnected') mark.
+    markAllSessionStoresRecovering();
 
     try {
       if (!this.messageHub || !this.transport) {
