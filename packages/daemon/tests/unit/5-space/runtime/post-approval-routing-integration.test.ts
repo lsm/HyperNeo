@@ -392,7 +392,7 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
     expect(finalTask.postApprovalStartedAt).toBeNull();
   });
 
-  test('dispatchPostApproval prefers the most recent prUrl-bearing artifact', async () => {
+  test('dispatchPostApproval stays bound to the earliest reviewed PR artifact', async () => {
     // Locks in the reverse-chronological scan in `dispatchPostApproval`.
     // A typical review cycle writes multiple `result` artifacts — e.g. one
     // per changes-requested round, plus the final approval round. The
@@ -427,8 +427,8 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
     const result = await h.runtime.dispatchPostApproval(taskId, 'agent');
     expect(result.mode).toBe('spawn');
     expect(h.spawned).toHaveLength(1);
-    expect(h.spawned[0].kickoffMessage).toContain(LATER_URL);
-    expect(h.spawned[0].kickoffMessage).not.toContain(EARLIER_URL);
+    expect(h.spawned[0].kickoffMessage).toContain(EARLIER_URL);
+    expect(h.spawned[0].kickoffMessage).not.toContain(LATER_URL);
   });
 
   test('dispatchPostApproval accepts snake_case `pr_url` in artifact data', async () => {

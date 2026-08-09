@@ -5285,12 +5285,13 @@ export class TaskAgentManager {
     // The handler self-validates status (rejects non-approved) — a spawned
     // agent that happens not to be running a post-approval step simply sees
     // the tool reject with a clear error.
-    // Merge-completion gate: the coder owns the merge in the stable Coding /
-    // Coding-with-QA / Research workflows, so `mark_complete` must fail closed
-    // until GitHub reports the run's PR merged. Identify that contract from the
-    // durable built-in template identity, not the persisted instruction prose:
-    // append-only user customization must not silently disable the safety gate.
-    const isCoderOwnedMergeWorkflow = builtInWorkflowRequiresPrMerge(workflow?.templateName);
+    // Merge-completion gate: carry the durable route flag into template-created
+    // clones, with built-in identity as backward compatibility for existing rows.
+    // Instruction prose is deliberately irrelevant: customizing it must not
+    // silently disable the safety contract.
+    const isCoderOwnedMergeWorkflow =
+      (workflow?.nodes ?? []).some((node) => node.postApproval?.requirePrMerge === true) ||
+      builtInWorkflowRequiresPrMerge(workflow?.templateName);
     const onMarkComplete = createMarkCompleteHandler({
       taskId,
       spaceId,

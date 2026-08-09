@@ -2396,6 +2396,8 @@ export interface PostApprovalRoute {
    * post-approval route.
    */
   instructions: string;
+  /** Require the run's reviewed PR to be confirmed merged before mark_complete. */
+  requirePrMerge?: boolean;
 }
 
 /**

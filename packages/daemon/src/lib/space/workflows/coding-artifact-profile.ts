@@ -165,6 +165,28 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
       );
     }
 
+    // Backward compatibility for runs created before PR-ready hook state was
+    // persisted: bind to the OLDEST eligible artifact identity, never the
+    // freshest. Once established, a later agent-written artifact cannot replace
+    // the PR used for dispatch or completion.
+    if (this.artifactRepo) {
+      try {
+        for (const artifact of this.artifactRepo.listByRun(runId)) {
+          const url =
+            artifact.artifactType === 'link' && artifact.data.kind === 'pr'
+              ? typeof artifact.data.url === 'string'
+                ? artifact.data.url
+                : ''
+              : legacyPrUrl(artifact.data);
+          first = earlier(first, url, artifact.updatedAt);
+        }
+      } catch (err) {
+        log.warn(
+          `resolveInitialPrimaryLinkUrl: failed to read artifacts for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
+
     return first?.url ?? '';
   }
 

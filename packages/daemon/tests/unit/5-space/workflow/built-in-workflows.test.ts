@@ -152,6 +152,7 @@ describe('stable coding workflow templates', () => {
     expect(STABLE_CODING_WORKFLOW.nodes[0]?.postApproval).toEqual({
       targetAgent: 'coder',
       instructions: CODER_OWNED_MERGE_INSTRUCTIONS,
+      requirePrMerge: true,
     });
     expect(
       STABLE_CODING_WORKFLOW.nodes
@@ -169,6 +170,7 @@ describe('stable coding workflow templates', () => {
     expect(CODING_WITH_QA_WORKFLOW.nodes[0]?.postApproval).toEqual({
       targetAgent: 'coder',
       instructions: CODER_OWNED_MERGE_INSTRUCTIONS,
+      requirePrMerge: true,
     });
   });
 

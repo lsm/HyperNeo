@@ -783,6 +783,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
       postApproval: {
         targetAgent: 'coder',
         instructions: CODER_OWNED_MERGE_INSTRUCTIONS,
+        requirePrMerge: true,
       },
     },
     {
@@ -921,6 +922,7 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
       postApproval: {
         targetAgent: 'research',
         instructions: CODER_OWNED_MERGE_INSTRUCTIONS,
+        requirePrMerge: true,
       },
     },
     {
@@ -1332,6 +1334,7 @@ export const CODING_WITH_QA_WORKFLOW: SpaceWorkflow = {
       postApproval: {
         targetAgent: 'coder',
         instructions: CODER_OWNED_MERGE_INSTRUCTIONS,
+        requirePrMerge: true,
       },
     },
     {
