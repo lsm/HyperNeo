@@ -238,6 +238,23 @@ export class MessagePersistence {
 
       const dbMessageId = this.db.saveUserMessage(sessionId, sdkUserMessage, sendStatus, origin);
 
+      // Revalidate AFTER saving: archive can begin after the early admission
+      // check while cache/reference work awaits. Its point-in-time cancellation
+      // may then run before this enqueued row exists. Terminalize the late row
+      // and stop before message.persisted can enqueue work against torn-down
+      // resources. The failed row remains visible instead of hidden forever.
+      if (this.db.getSession?.(sessionId)?.status === 'archived') {
+        this.db.updateMessageStatus([dbMessageId], 'failed');
+        await this.internalEventBus
+          .publish('messages.statusChanged', {
+            sessionId,
+            messageIds: [dbMessageId],
+            status: 'failed',
+          })
+          .catch(() => {});
+        throw new Error(`Session ${sessionId} is archived`);
+      }
+
       // 6. Publish manual messages immediately. Immediate-mode messages are
       // rendered when the SDK input generator consumes them and flips their
       // status to `consumed`, which prevents a "visible but undelivered" turn.
@@ -290,7 +307,18 @@ export class MessagePersistence {
       // own the marker so a concurrent steer can't. See Codex (#3742826489,
       // #3743968035).
       if (shouldDispatchToQuery && useV2Delivery && !isAgentBusy) {
-        await agentSession.stateManager.setQueuedIfIdle(messageId);
+        try {
+          await agentSession.stateManager.setQueuedIfIdle(messageId);
+        } catch (error) {
+          // setQueuedIfIdle is DB-first: a session.updated subscriber may throw
+          // after the queued marker is already persisted. Publication failure
+          // must not prevent message.persisted below from creating the durable
+          // owner, or the hidden enqueued prompt is stranded without a job.
+          this.logger.warn(
+            '[MessagePersistence] Queued-state publication failed; continuing durable dispatch:',
+            error
+          );
+        }
       }
 
       // 8. Emit 'message.persisted' for non-critical post-processing.

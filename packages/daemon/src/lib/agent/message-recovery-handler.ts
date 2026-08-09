@@ -53,6 +53,11 @@ export class MessageRecoveryHandler {
       // Do the status/type/timestamp filtering in SQL so cold-opening an old,
       // large session does not parse the whole transcript.
       const candidateMessages = db.getConsumedUserMessagesAfterLatestInit(session.id);
+      // Durable v2 jobs own crash recovery for their consumed kickoff. Legacy
+      // orphan recovery must not flip those rows to failed before the reclaimed
+      // handler loads send_status and resumes the turn from history.
+      const durableOwned =
+        db.getJobQueueRepo?.()?.activeDeliveryMessageUuids(session.id) ?? new Set();
 
       if (candidateMessages.length === 0) {
         return;
@@ -74,7 +79,7 @@ export class MessageRecoveryHandler {
         // These are saved by saveSDKMessage with isSynthetic=true and should not
         // be recovered — they are internal SDK messages, not user input.
         const userMsg = consumedMsg as SDKUserMessage & { isSynthetic?: boolean };
-        if (userMsg.isSynthetic) {
+        if (userMsg.isSynthetic || durableOwned.has(userMsg.uuid ?? '')) {
           continue;
         }
 

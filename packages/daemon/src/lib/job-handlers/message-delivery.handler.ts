@@ -62,6 +62,8 @@ export interface MessageDeliveryHandlerDeps {
    * Codex (#3742616723).
    */
   isSessionArchived?(sessionId: string): boolean;
+  /** Terminalize a still-enqueued prompt when lifecycle rejection completes its job. */
+  markDeliveryFailed?(sessionId: string, messageUuid: string): void;
 }
 
 /**
@@ -91,6 +93,11 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
     // session.archive path also cancels pending jobs, but this guards the claim
     // race. See Codex (#3742616723).
     if (deps.isSessionArchived?.(payload.sessionId)) {
+      // The job may already be claimed between archive's persisted barrier and
+      // cancelForSessionWithMessages. Terminalize before returning/completing;
+      // otherwise cancellation no longer sees this completed job and its hidden
+      // enqueued SDK row survives forever.
+      deps.markDeliveryFailed?.(payload.sessionId, payload.messageUuid);
       await deps.getSession(payload.sessionId)?.settleSkippedDelivery?.(payload.messageUuid);
       return { outcome: 'archived' };
     }

@@ -993,6 +993,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         // fallback workspace. See Codex (#3742616723).
         isSessionArchived: (sessionId: string) =>
           reactiveDb?.db.getSession(sessionId)?.status === 'archived',
+        markDeliveryFailed: (sessionId: string, messageUuid: string) => {
+          reactiveDb?.db.getSDKMessageRepo().markDeliveryFailedByUuid(sessionId, messageUuid);
+        },
       }),
       {
         // Steers bypass the turn concurrency cap (a separate exempt budget) so a

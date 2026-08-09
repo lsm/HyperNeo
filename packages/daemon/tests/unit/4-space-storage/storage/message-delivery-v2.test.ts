@@ -508,17 +508,20 @@ describe('handler — status-aware delivery (§8)', () => {
     expect(session.feedCalls).toBe(0);
   });
 
-  it('archived session is rejected, not driven (#3742616723)', async () => {
+  it('archived session is rejected, terminalized, and not driven (#3742616723/#3744225587)', async () => {
     const session = new MockSession();
     const job = turnJob(repo, 'msg-archived');
+    const markFailed = mock(() => {});
     const handler = createMessageDeliveryHandler({
       jobQueue: repo,
       getSession: () => session,
       getMessageContent: () => ({ content: 'hello', sendStatus: 'enqueued' }),
       isSessionArchived: () => true,
+      markDeliveryFailed: markFailed,
     });
     const result = await handler(job);
     expect(result).toEqual({ outcome: 'archived' });
+    expect(markFailed).toHaveBeenCalledWith(SESSION, 'msg-archived');
     expect(session.driveCalls).toBe(0);
   });
 

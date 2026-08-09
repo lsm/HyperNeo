@@ -1837,6 +1837,13 @@ export class AgentSession
     // await below — holding it across the turn would serialize mid-turn steering
     // (the feature's whole point). See message-delivery-v2.md §8 + Codex review.
     const started = await withSessionLock(this.session.id, async () => {
+      // Validate the persisted lifecycle barrier BEFORE starting/restarting the
+      // provider. Archive may flip after the handler's initial guard; checking
+      // only after ensureQueryStarted races teardown. Reclaimed consumed turns
+      // must validate too, while accepting their consumed ownership state.
+      if (!this.messageDeliveryValid(messageUuid, alreadyConsumed)) {
+        return { kind: 'aborted' as const };
+      }
       const queryStartResult = await this.lifecycleManager.ensureQueryStarted();
       if (queryStartResult === 'blocked') {
         return { kind: 'blocked' as const };
@@ -1856,9 +1863,6 @@ export class AgentSession
         // Revalidate and synchronously admit under the SAME lock used by
         // remove/defer. Admission is the linearization point; the long provider
         // acknowledgment is awaited only after releasing this lock.
-        if (!this.messageDeliveryValid(messageUuid)) {
-          return { kind: 'aborted' as const };
-        }
         acknowledgment = this.messageQueue.admitWithId(messageUuid, content, false, {
           durable: true,
         });
@@ -1960,10 +1964,13 @@ export class AgentSession
    * re-classified to deferred/consumed/failed) since the handler loaded it. Closes
    * the archive + removePending TOCTOU windows together. See Codex (#3742774841, #3696).
    */
-  private messageDeliveryValid(messageUuid: string): boolean {
+  private messageDeliveryValid(messageUuid: string, alreadyConsumed = false): boolean {
     if (this.db.getSession(this.session.id)?.status === 'archived') return false;
     const loaded = this.db.getSDKMessageRepo().getDeliveryContent(this.session.id, messageUuid);
-    return loaded !== null && loaded.sendStatus === 'enqueued';
+    return (
+      loaded !== null &&
+      (loaded.sendStatus === 'enqueued' || (alreadyConsumed && loaded.sendStatus === 'consumed'))
+    );
   }
 
   trackAgentProcess(proc: TrackedAgentProcess): void {
