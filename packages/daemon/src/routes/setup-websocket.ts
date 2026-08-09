@@ -12,6 +12,7 @@ import {
   MessageType,
   generateUUID,
 } from '@hyperneo/shared';
+import { DEFAULT_MAX_OUTBOUND_MESSAGE_SIZE } from '@hyperneo/shared/message-hub/router';
 import type { HubMessage } from '@hyperneo/shared/message-hub/protocol';
 import type { WebSocketServerTransport } from '../lib/websocket-server-transport';
 import type { SessionManager } from '../lib/session-manager';
@@ -21,7 +22,7 @@ const GLOBAL_SESSION_ID = 'global';
 // FIX P1.1: Message size validation constants (DoS prevention)
 // Note: Increased from 10MB to 50MB to support large session state snapshots
 // with long conversation histories
-const MAX_MESSAGE_SIZE = 50 * 1024 * 1024; // 50MB max message size
+const MAX_MESSAGE_SIZE = 32 * 1024 * 1024; // Reserve headroom for response expansion
 const MAX_MESSAGE_SIZE_MB = MAX_MESSAGE_SIZE / (1024 * 1024);
 
 /**
@@ -37,6 +38,25 @@ interface WebSocketData {
 /**
  * Parsed WebSocket message with sessionId for routing
  */
+function sendCapped(ws: RuntimeSocket<WebSocketData>, message: HubMessage): void {
+  const json = JSON.stringify(message);
+  if (new Blob([json]).size <= DEFAULT_MAX_OUTBOUND_MESSAGE_SIZE) {
+    ws.send(json);
+    return;
+  }
+
+  const fallback = createErrorResponseMessage({
+    method: message.method,
+    error: {
+      code: 'MESSAGE_TOO_LARGE',
+      message: 'Response is too large to send',
+    },
+    sessionId: GLOBAL_SESSION_ID,
+    requestId: message.requestId ?? message.id,
+  });
+  ws.send(JSON.stringify(fallback));
+}
+
 interface ParsedWebSocketMessage {
   id?: string;
   type: string;
@@ -72,7 +92,7 @@ export function createWebSocketHandlers(
           version: '1.0.0',
         },
       });
-      ws.send(JSON.stringify(connectionEvent));
+      sendCapped(ws, connectionEvent);
     },
 
     async message(ws: RuntimeSocket<WebSocketData>, message: string | Buffer) {
@@ -92,7 +112,7 @@ export function createWebSocketHandlers(
             sessionId: GLOBAL_SESSION_ID,
             requestId: '',
           });
-          ws.send(JSON.stringify(errorMsg));
+          sendCapped(ws, errorMsg);
           return;
         }
 
@@ -121,7 +141,7 @@ export function createWebSocketHandlers(
             timestamp: new Date().toISOString(),
             requestId: data.id,
           };
-          ws.send(JSON.stringify(pongMsg));
+          sendCapped(ws, pongMsg);
           return;
         }
 
@@ -146,7 +166,7 @@ export function createWebSocketHandlers(
               sessionId: data.sessionId,
               requestId: data.id || '',
             });
-            ws.send(JSON.stringify(errorMsg));
+            sendCapped(ws, errorMsg);
             return;
           }
         }
@@ -190,7 +210,7 @@ export function createWebSocketHandlers(
           sessionId: GLOBAL_SESSION_ID,
           requestId: '',
         });
-        ws.send(JSON.stringify(errorMsg));
+        sendCapped(ws, errorMsg);
       }
     },
 

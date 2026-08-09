@@ -3,6 +3,7 @@ import type {
   ActiveTurnSummary,
   ActivityEntry,
   LiveQueryDeltaEvent,
+  LiveQueryErrorEvent,
   LiveQuerySnapshotEvent,
 } from '@hyperneo/shared';
 import { useMessageHub } from './useMessageHub';
@@ -65,6 +66,7 @@ export interface UseSpaceTaskMessagesResult {
   /** Server-computed activity summary for the currently-active turn of each session. */
   activeTurnSummaries: ActiveTurnSummary[];
   isLoading: boolean;
+  error: string | null;
   isReconnecting: boolean;
 }
 
@@ -176,6 +178,7 @@ export function useSpaceTaskMessages(
   const { request, onEvent, getHub, isConnected } = useMessageHub();
   const [rows, setRows] = useState<SpaceTaskThreadMessageRow[]>([]);
   const [activeTurnRows, setActiveTurnRows] = useState<ActiveTurnEntryRow[]>([]);
+  const [error, setError] = useState<string | null>(null);
   /**
    * The task id whose LiveQuery snapshot has been applied to `rows`.
    * `null` means either no subscription is active or we are still waiting
@@ -197,6 +200,7 @@ export function useSpaceTaskMessages(
       setRows([]);
       setActiveTurnRows([]);
       setLoadedForTaskId(null);
+      setError(null);
       activeSubIdRef.current = null;
       activeTurnSubIdRef.current = null;
       return;
@@ -217,6 +221,7 @@ export function useSpaceTaskMessages(
     setRows([]);
     setActiveTurnRows([]);
     setLoadedForTaskId(null);
+    setError(null);
 
     const unsubSnapshot = onEvent<LiveQuerySnapshotEvent>('liveQuery.snapshot', (event) => {
       if (event.subscriptionId === activeSubIdRef.current) {
@@ -237,6 +242,36 @@ export function useSpaceTaskMessages(
       }
       if (event.subscriptionId === activeTurnSubIdRef.current) {
         setActiveTurnRows((prev) => applyActiveTurnDelta(prev, event));
+      }
+    });
+
+    const unsubError = onEvent<LiveQueryErrorEvent>('liveQuery.error', (event) => {
+      if (event.subscriptionId === activeSubIdRef.current) {
+        if (event.phase === 'delta') {
+          subscribe(true);
+          return;
+        }
+        sawSnapshot = true;
+        setError(event.message);
+        setLoadedForTaskId(taskId);
+        return;
+      }
+      if (event.subscriptionId === activeTurnSubIdRef.current) {
+        if (event.phase === 'delta') {
+          const hub = getHub();
+          if (hub) {
+            hub
+              .request('liveQuery.subscribe', {
+                queryName: 'spaceTaskActiveTurn.byTask',
+                params: [taskId],
+                subscriptionId: activeTurnSubscriptionId,
+              })
+              .catch(() => setActiveTurnRows([]));
+          }
+          return;
+        }
+        setError(event.message);
+        setActiveTurnRows([]);
       }
     });
 
@@ -302,6 +337,7 @@ export function useSpaceTaskMessages(
       if (state !== 'connected') return;
       if (activeSubIdRef.current !== subscriptionId) return;
       setLoadedForTaskId(null);
+      setError(null);
       subscribe(true);
     });
 
@@ -312,6 +348,7 @@ export function useSpaceTaskMessages(
       snapshotRetryTimers.clear();
       unsubSnapshot();
       unsubDelta();
+      unsubError();
       unsubReconnect?.();
       activeSubIdRef.current = null;
       activeTurnSubIdRef.current = null;
@@ -341,6 +378,7 @@ export function useSpaceTaskMessages(
     rows: sortedRows,
     activeTurnSummaries,
     isLoading,
+    error,
     isReconnecting: !isConnected && taskId !== null,
   };
 }

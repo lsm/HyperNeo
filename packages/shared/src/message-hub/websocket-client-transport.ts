@@ -77,10 +77,9 @@ export class WebSocketClientTransport implements IMessageTransport {
   private messageHandlers: Set<(message: HubMessage) => void> = new Set();
   private connectionHandlers: Set<ConnectionStateHandler> = new Set();
 
-  // FIX P1.1: Message size validation (DoS prevention)
-  // Note: Increased from 10MB to 50MB to support large session state snapshots
-  // with long conversation histories
-  private readonly maxMessageSize: number = 50 * 1024 * 1024; // 50MB
+  // Keep requests below the response budget while accepting all valid server frames.
+  private readonly maxOutboundMessageSize = 32 * 1024 * 1024;
+  private readonly maxInboundMessageSize = 40 * 1024 * 1024;
 
   // FIX P1.2: PONG timeout detection (stale connection detection)
   private lastPongTime: number = Date.now();
@@ -229,9 +228,9 @@ export class WebSocketClientTransport implements IMessageTransport {
 
       // FIX P1.1: Validate message size before sending
       const messageSize = new TextEncoder().encode(json).length;
-      if (messageSize > this.maxMessageSize) {
+      if (messageSize > this.maxOutboundMessageSize) {
         throw new Error(
-          `Message size ${(messageSize / (1024 * 1024)).toFixed(2)}MB exceeds maximum ${this.maxMessageSize / (1024 * 1024)}MB`
+          `Message size ${(messageSize / (1024 * 1024)).toFixed(2)}MB exceeds maximum ${this.maxOutboundMessageSize / (1024 * 1024)}MB`
         );
       }
 
@@ -363,9 +362,9 @@ export class WebSocketClientTransport implements IMessageTransport {
     try {
       // FIX P1.1: Validate message size before parsing
       const messageSize = new TextEncoder().encode(data).length;
-      if (messageSize > this.maxMessageSize) {
+      if (messageSize > this.maxInboundMessageSize) {
         log.error(
-          `Message rejected: size ${(messageSize / (1024 * 1024)).toFixed(2)}MB exceeds limit ${this.maxMessageSize / (1024 * 1024)}MB`
+          `Message rejected: size ${(messageSize / (1024 * 1024)).toFixed(2)}MB exceeds limit ${this.maxInboundMessageSize / (1024 * 1024)}MB`
         );
         return;
       }

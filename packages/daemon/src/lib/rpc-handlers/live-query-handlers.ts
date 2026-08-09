@@ -7,22 +7,23 @@
  * Clients never send raw SQL.
  */
 
-import { Database as BunDatabase } from '../../storage/sqlite-compat';
-import type { MessageHub } from '@hyperneo/shared';
-import { createEventMessage, parseJson, parseJsonOptional } from '@hyperneo/shared';
-import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
 import type {
+  LiveQueryDeltaEvent,
+  LiveQuerySnapshotEvent,
   LiveQuerySubscribeRequest,
   LiveQuerySubscribeResponse,
   LiveQueryUnsubscribeRequest,
   LiveQueryUnsubscribeResponse,
-  LiveQuerySnapshotEvent,
-  LiveQueryDeltaEvent,
+  MessageHub,
 } from '@hyperneo/shared';
+import { createEventMessage, parseJson, parseJsonOptional } from '@hyperneo/shared';
+import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
 import type { LiveQueryEngine, LiveQueryHandle, QueryDiff } from '../../storage/live-query';
 import type { TableChangeScope } from '../../storage/reactive-database';
+import type { Database as BunDatabase } from '../../storage/sqlite-compat';
 import { Logger } from '../logger';
 import { mapActiveTurnEntryRow } from './activity-preview';
+
 // Facade re-export (activity-preview extraction): `buildActiveTurnSummariesFromRows`
 // was exported from this module before the extraction and is consumed via dynamic
 // import by tests. Re-exported so the public surface is unchanged.
@@ -3094,6 +3095,7 @@ function mapSpaceSessionRow(row: Record<string, unknown>): Record<string, unknow
  */
 const BACKGROUND_TASK_METADATA_SUBTYPES = ['task_started', 'task_updated', 'task_notification'];
 const BACKGROUND_TASK_METADATA_BATCH_SIZE = 300;
+const MAX_MESSAGES_BY_SESSION_WINDOW = 200;
 
 function toSqlStringList(subtypes: Iterable<string>): string {
   return [...subtypes].map((subtype) => `'${subtype.replace(/'/g, "''")}'`).join(', ');
@@ -3121,10 +3123,44 @@ WITH recent_metadata AS (
   ORDER BY timestamp DESC, rowid DESC
   LIMIT ${BACKGROUND_TASK_METADATA_BATCH_SIZE}
 ),
+recent_progress AS (
+  SELECT
+    id,
+    sdk_message,
+    timestamp,
+    send_status,
+    origin,
+    rowid,
+    COALESCE(
+      CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
+      task_id
+    ) AS task_id
+  FROM sdk_messages
+  WHERE session_id = ?
+    AND parent_tool_use_id IS NULL
+    AND message_subtype_norm = 'task_progress'
+  ORDER BY timestamp DESC, rowid DESC
+  LIMIT ${BACKGROUND_TASK_METADATA_BATCH_SIZE}
+),
 recent_task_ids AS (
-  SELECT DISTINCT task_id
-  FROM recent_metadata
-  WHERE task_id IS NOT NULL AND task_id != ''
+  SELECT DISTINCT candidate.task_id
+  FROM (
+    SELECT task_id FROM recent_metadata
+    UNION ALL
+    SELECT task_id FROM recent_progress
+  ) candidate
+  WHERE candidate.task_id IS NOT NULL AND candidate.task_id != ''
+    AND NOT EXISTS (
+      SELECT 1
+      FROM sdk_messages terminal
+      WHERE terminal.session_id = ?
+        AND terminal.parent_tool_use_id IS NULL
+        AND terminal.message_subtype_norm = 'task_notification'
+        AND COALESCE(
+          CASE WHEN json_valid(terminal.sdk_message) THEN json_extract(terminal.sdk_message, '$.task_id') END,
+          terminal.task_id
+        ) = candidate.task_id
+    )
 ),
 task_starts AS (
   SELECT
@@ -3184,6 +3220,10 @@ latest_progress AS (
         CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.tool_use_id') END,
         ''
       ) != ''
+      AND COALESCE(
+        CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
+        task_id
+      ) IN (SELECT task_id FROM recent_task_ids)
   )
   WHERE rn = 1
 )
@@ -3771,10 +3811,13 @@ export function setupLiveQueryHandlers(
     mapResult: (_rawRows, params) => {
       const sessionId = params[0];
       if (typeof sessionId !== 'string' || sessionId.length === 0) return undefined;
-      const rows = stmtBackgroundTaskMetadata.all(sessionId, sessionId, sessionId) as Record<
-        string,
-        unknown
-      >[];
+      const rows = stmtBackgroundTaskMetadata.all(
+        sessionId,
+        sessionId,
+        sessionId,
+        sessionId,
+        sessionId
+      ) as Record<string, unknown>[];
       return {
         backgroundTaskMessages: rows.map(mapMessageRow).reverse(),
       };
@@ -3920,9 +3963,14 @@ export function setupLiveQueryHandlers(
       // (e.g. NaN, negative numbers) doesn't silently produce an empty result
       // set that the client would interpret as "no messages".
       const limit = params[1];
-      if (typeof limit !== 'number' || !Number.isInteger(limit) || limit <= 0 || limit > 10000) {
+      if (
+        typeof limit !== 'number' ||
+        !Number.isInteger(limit) ||
+        limit <= 0 ||
+        limit > MAX_MESSAGES_BY_SESSION_WINDOW
+      ) {
         throw new Error(
-          `Unauthorized: messages.bySession limit must be an integer in [1, 10000], got ${String(limit)}`
+          `Unauthorized: messages.bySession limit must be an integer in [1, ${MAX_MESSAGES_BY_SESSION_WINDOW}], got ${String(limit)}`
         );
       }
     }
@@ -3954,6 +4002,7 @@ export function setupLiveQueryHandlers(
     // inside liveQueries.subscribe() before it returns the handle, so we
     // cannot call handle.dispose() directly during the callback.
     let snapshotDeliveryFailed = false;
+    let snapshotTooLarge = false;
 
     const handle = liveQueries.subscribe(
       sql,
@@ -4009,8 +4058,30 @@ export function setupLiveQueryHandlers(
           });
         }
 
-        const sent = router.sendToClient(clientId, message);
-        if (!sent) {
+        const delivery = router.sendToClientDetailed(clientId, message);
+        if (!delivery.ok && delivery.reason === 'message_too_large') {
+          const errorMessage = createEventMessage({
+            method: 'liveQuery.error',
+            data: {
+              subscriptionId,
+              code: 'MESSAGE_TOO_LARGE',
+              message: 'Live query update is too large to send; load a smaller window',
+              phase: diff.type,
+            },
+            sessionId,
+          });
+          router.sendToClient(clientId, errorMessage);
+          if (diff.type === 'snapshot') {
+            snapshotTooLarge = true;
+          } else {
+            handle.dispose();
+            const subs = subscriptions.get(clientId);
+            subs?.delete(subscriptionId);
+            if (subs?.size === 0) subscriptions.delete(clientId);
+          }
+          return;
+        }
+        if (!delivery.ok) {
           if (diff.type === 'snapshot') {
             // handle not yet assigned; defer cleanup to after subscribe() returns
             snapshotDeliveryFailed = true;
@@ -4037,6 +4108,11 @@ export function setupLiveQueryHandlers(
         scopeFilter: namedQuery.buildScopeFilter?.(params, db),
       }
     );
+
+    if (snapshotTooLarge) {
+      handle.dispose();
+      throw new Error('MESSAGE_TOO_LARGE: Live query snapshot exceeds the outbound size limit');
+    }
 
     // If snapshot delivery failed (no router or client not found), clean up
     // immediately and return ok — this is not a protocol error from the

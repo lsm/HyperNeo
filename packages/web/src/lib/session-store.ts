@@ -57,9 +57,10 @@ import type {
   SessionState,
   LiveQuerySnapshotEvent,
   LiveQueryDeltaEvent,
+  LiveQueryErrorEvent,
 } from '@hyperneo/shared';
 import type { ChatMessage } from '@hyperneo/shared';
-import { Logger } from '@hyperneo/shared';
+import { Logger, MessageHubResponseError } from '@hyperneo/shared';
 import { flattenSDKSlashCommands, type SDKSlashCommand } from '@hyperneo/shared/sdk';
 import { connectionManager } from './connection-manager';
 import {
@@ -782,11 +783,13 @@ export class SessionStore {
   ): Promise<void> {
     const subscriptionId = `messages:${sessionId}:${Date.now()}:${messageSubscriptionSeq++}`;
     this.activeMessagesSubscriptionId = subscriptionId;
+    let awaitingSnapshot = true;
 
     // Snapshot handler
     const unsubSnapshot = hub.onEvent<LiveQuerySnapshotEvent>('liveQuery.snapshot', (event) => {
       if (event.subscriptionId !== subscriptionId) return;
       if (this.activeMessagesSubscriptionId !== subscriptionId) return;
+      awaitingSnapshot = false;
       this._applyMessagesSnapshot(event.rows as ChatMessage[], event.metadata);
     });
     this.cleanupFunctions.push(unsubSnapshot);
@@ -795,9 +798,30 @@ export class SessionStore {
     const unsubDelta = hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
       if (event.subscriptionId !== subscriptionId) return;
       if (this.activeMessagesSubscriptionId !== subscriptionId) return;
+      if (awaitingSnapshot) return;
       this._applyMessagesDelta(event);
     });
     this.cleanupFunctions.push(unsubDelta);
+
+    const unsubError = hub.onEvent<LiveQueryErrorEvent>('liveQuery.error', (event) => {
+      if (event.subscriptionId !== subscriptionId) return;
+      if (this.activeMessagesSubscriptionId !== subscriptionId) return;
+      if (event.code === 'MESSAGE_TOO_LARGE') {
+        awaitingSnapshot = true;
+        this.messagesLoaded.value = false;
+        toast.error('Session is too large to load in one window. Try loading less history.');
+        if (event.phase === 'delta') {
+          hub
+            .request('liveQuery.subscribe', {
+              queryName: 'messages.bySession',
+              params: [sessionId, LIVE_QUERY_MESSAGE_LIMIT],
+              subscriptionId,
+            })
+            .catch((error) => logger.warn('Failed to resynchronize messages LiveQuery:', error));
+        }
+      }
+    });
+    this.cleanupFunctions.push(unsubError);
 
     // Connection handler — drives per-instance recovery for this session.
     // Fires on transport-level state changes (WebSocket drop + re-establish),
@@ -866,7 +890,10 @@ export class SessionStore {
       // was deleted between select and subscribe). We fall through to
       // whatever sdkMessages currently holds — either the optimistic
       // empty state or stale rows from a prior subscription.
-      if (this.activeMessagesSubscriptionId === subscriptionId) {
+      if (
+        this.activeMessagesSubscriptionId === subscriptionId &&
+        !(err instanceof MessageHubResponseError && err.message.includes('MESSAGE_TOO_LARGE'))
+      ) {
         this.messagesLoaded.value = true;
       }
       // Don't rethrow — we still want session state to be usable even if

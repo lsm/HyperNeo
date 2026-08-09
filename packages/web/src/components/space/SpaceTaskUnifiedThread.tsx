@@ -86,7 +86,7 @@ export function SpaceTaskUnifiedThread({
   onScrollToBottomChange,
   onScrollerChange,
 }: SpaceTaskUnifiedThreadProps) {
-  const { rows, activeTurnSummaries, isLoading, isReconnecting } = useSpaceTaskMessages(
+  const { rows, activeTurnSummaries, isLoading, error, isReconnecting } = useSpaceTaskMessages(
     taskId,
     'compact'
   );
@@ -142,6 +142,16 @@ export function SpaceTaskUnifiedThread({
       <div class="h-full overflow-y-auto">
         <div class="min-h-[calc(100%+1px)] flex items-center justify-center text-sm text-gray-400">
           Loading task thread…
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div class="h-full overflow-y-auto">
+        <div class="min-h-[calc(100%+1px)] flex items-center justify-center px-6 text-center">
+          <p class="text-sm text-amber-500">{error}</p>
         </div>
       </div>
     );
