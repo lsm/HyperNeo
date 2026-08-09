@@ -75,6 +75,7 @@ class AppMcpStore {
         if (event.subscriptionId !== SUBSCRIPTION_ID) return;
         if (!this.activeSubscriptionIds.has(SUBSCRIPTION_ID)) return; // stale-event guard
         this.appMcpServers.value = event.rows as AppMcpServer[];
+        this.error.value = null;
         this.loading.value = false;
       });
       this.cleanups.push(unsubSnapshot);
