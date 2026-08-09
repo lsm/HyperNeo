@@ -1117,7 +1117,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(matches.map((match) => match.workflowRunId).filter(Boolean)).toHaveLength(2);
   });
 
-  test('rehydrates workflow static interests for a completed (done) task on restart', async () => {
+  test('does not rehydrate workflow static interests for a completed task', async () => {
     const { run, task } = await startRunWithSubscription(DEFAULT_TOPIC, 'code-done-static', {
       staticInterest: true,
     });
@@ -1147,9 +1147,10 @@ describe('SpaceRuntime external event subscriptions', () => {
       }
     ).lookupSubscriptionTargets(DEFAULT_TOPIC);
 
-    // A done task relying on a workflow-defined eventInterests pattern must keep
-    // matching after a restart so a later check_failed can reactivate it.
-    expect(matches.some((match) => match.workflowRunId === run.id)).toBe(true);
+    // Done tasks are terminal and cannot deliver events. Rebuilding their
+    // interests would fan every later matching event out across historical runs
+    // only to fail each delivery with target_task_terminal.
+    expect(matches.some((match) => match.workflowRunId === run.id)).toBe(false);
   });
 
   test('keeps subscriptions while completion routes the task to approved', async () => {
@@ -1223,15 +1224,35 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
   });
 
-  test('marks unmatched events ignored', async () => {
+  test('retains unmatched events until a dynamic subscription registers', async () => {
     const { run, task } = await startRunWithSubscription(DEFAULT_TOPIC);
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-late-subscription',
+      startedAt: Date.now(),
+    });
+    tam.alive.add('session-late-subscription');
     await runtime.executeTick();
 
     const event = makeEvent({ topic: 'github/lsm/neokai/pull_request/42.comment_created' });
     await eventService.publish(event);
 
     expect(injected).toHaveLength(0);
-    expect(eventStore.getById(event.id)?.state).toBe('ignored');
+    expect(eventStore.getById(event.id)?.state).toBe('published');
+
+    runtime.registerSubscription(
+      run.id,
+      task.id,
+      'code',
+      'coder',
+      'github/*/*/pull_request/*.comment_created'
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-late-subscription');
   });
 
   test('delivers a linked-PR event after a matching subscription registers', async () => {
@@ -1297,7 +1318,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(injected[0]!.sessionId).toBe('session-linked-pr-redeliver');
   });
 
-  test('ignores PR events not linked to any run in the space', async () => {
+  test('retains unmatched events without PR-to-run coupling until the TTL', async () => {
     const { run } = await startRunWithSubscription(DEFAULT_TOPIC);
     await runtime.executeTick();
     const gateDataRepo = new GateDataRepository(db);
@@ -1307,10 +1328,10 @@ describe('SpaceRuntime external event subscriptions', () => {
     await eventService.publish(event);
 
     expect(injected).toHaveLength(0);
-    expect(eventStore.getById(event.id)?.state).toBe('ignored');
+    expect(eventStore.getById(event.id)?.state).toBe('published');
   });
 
-  test('fails linked-PR events that stay unmatched past the TTL', async () => {
+  test('fails unmatched events that stay unclaimed past the TTL', async () => {
     const { run } = await startRunWithSubscription(DEFAULT_TOPIC);
     await runtime.executeTick();
     const gateDataRepo = new GateDataRepository(db);
@@ -3728,7 +3749,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(event.id)?.state).toBe('failed');
   });
 
-  test('marks unmatched events ignored after stop/start on a rehydrated runtime', async () => {
+  test('retains unmatched events after stop/start until the TTL', async () => {
     await startRunWithSubscription();
     await runtime.executeTick();
     await runtime.stop();
@@ -3737,7 +3758,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     const event = makeEvent({ topic: 'github/lsm/neokai/pull_request/42.comment_created' });
     await eventService.publish(event);
 
-    expect(eventStore.getById(event.id)?.state).toBe('ignored');
+    expect(eventStore.getById(event.id)?.state).toBe('published');
   });
 
   test('redispatches published events without deliveries after rehydrate', async () => {
@@ -3818,7 +3839,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     await runtime.executeTick();
 
     expect(eventStore.listDeliveries('evt-stranded-without-matches')).toHaveLength(0);
-    expect(eventStore.getById('evt-stranded-without-matches')?.state).toBe('ignored');
+    expect(eventStore.getById('evt-stranded-without-matches')?.state).toBe('published');
   });
 
   test('redispatches events that arrived during stop when runtime restarts', async () => {
@@ -4073,7 +4094,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     const removedInterestEvent = makeEvent({ id: 'evt-removed-interest' });
     await eventService.publish(removedInterestEvent);
     await runtime.executeTick();
-    expect(eventStore.getById(removedInterestEvent.id)?.state).toBe('ignored');
+    expect(eventStore.getById(removedInterestEvent.id)?.state).toBe('published');
     expect(eventStore.listDeliveries(removedInterestEvent.id)).toHaveLength(0);
 
     const addedInterestEvent = makeEvent({

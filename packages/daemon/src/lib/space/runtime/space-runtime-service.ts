@@ -1414,16 +1414,21 @@ export class SpaceRuntimeService {
       'space.task.updated',
       (event) => {
         const task = event.task;
-        if (!task?.workflowRunId || (task.status !== 'cancelled' && task.status !== 'archived')) {
+        if (
+          !task?.workflowRunId ||
+          (task.status !== 'cancelled' && task.status !== 'archived' && task.status !== 'done')
+        ) {
           return;
         }
-        if (task.status === 'archived') {
-          // Permanent teardown: drop this task's interests (including dynamic).
+        if (task.status === 'archived' || task.status === 'done') {
+          // Permanent teardown: drop all interests, including dynamic. A done
+          // task cannot receive events; retaining its subscriptions would fan
+          // every later match out to a target that only fails terminally. If the
+          // run reopens, the coder explicitly subscribes again.
           this.runtime.clearTaskInterests(task.id);
         } else {
-          // Retryable cancellation: drop this task's static/auto interests while
-          // preserving dynamic subscriptions for a potential retry. Per-task
-          // cleanup avoids stripping the canonical task's subscriptions.
+          // Retryable cancellation: preserve dynamic subscriptions for a
+          // potential retry while dropping workflow-defined static interests.
           this.runtime.clearTaskInterestsPreservingDynamic(task.id);
         }
       },

@@ -343,11 +343,12 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
     };
     await ctx.eventService.publish(event);
 
-    // No matching subscription → the reviewer session receives nothing and the
-    // event is terminally ignored (no auto-subscription attaches to the active
-    // reviewer slot).
+    // No matching subscription → the reviewer session receives nothing. The
+    // event remains boundedly retained so an explicit coder subscription that
+    // registers moments later can replay it; no auto-subscription attaches to
+    // the active reviewer slot.
     expect(ctx.injected.every((entry) => entry.sessionId !== reviewerSessionId)).toBe(true);
-    expect(ctx.eventStore.getById(event.id)?.state).toBe('ignored');
+    expect(ctx.eventStore.getById(event.id)?.state).toBe('published');
   });
 
   test('handleBlockedRunExternalEvent re-evaluates gates and notifies the session when a gate opens', async () => {

@@ -185,7 +185,7 @@ describe('CODING_WORKFLOW template', () => {
     ];
 
     for (const prompt of prompts) {
-      expect(prompt).toContain('`subscribe_pr_events({})`');
+      expect(prompt).toContain('`subscribe_pr_events({ prUrl: "<PR URL>" })`');
       expect(prompt).toContain('review comments, CI failures, and reactions');
       expect(prompt).toContain('Do this once per PR');
     }
@@ -1792,7 +1792,7 @@ describe('seedBuiltInWorkflows()', () => {
       .customPrompt!.value;
     const stalePrompt = templatePrompt
       .replace(
-        '5. If code changed: open a PR with `gh pr create` — include a clear title and description. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n',
+        '5. If code changed: open a PR with `gh pr create` — include a clear title and description. After `gh pr create`, call `subscribe_pr_events({ prUrl: "<PR URL>" })`, passing the PR URL from the `gh pr create` output explicitly (it is not auto-resolved from the run until the PR is recorded). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n',
         '5. If code changed: open a PR with `gh pr create` — include a clear title and description\n'
       )
       .replace(
@@ -1860,7 +1860,7 @@ describe('seedBuiltInWorkflows()', () => {
       .customPrompt!.value;
     const stalePrompt = templatePrompt
       .replace(
-        '5. If code changed: open a PR with `gh pr create` — include a clear title and description. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n',
+        '5. If code changed: open a PR with `gh pr create` — include a clear title and description. After `gh pr create`, call `subscribe_pr_events({ prUrl: "<PR URL>" })`, passing the PR URL from the `gh pr create` output explicitly (it is not auto-resolved from the run until the PR is recorded). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n',
         '5. If code changed: open a PR with `gh pr create` — include a clear title and description\n'
       )
       .replace(
@@ -1962,7 +1962,7 @@ describe('seedBuiltInWorkflows()', () => {
         workflow: CODING_WORKFLOW,
         nodeName: 'Coding',
         currentStep:
-          '5. If code changed: open a PR with `gh pr create` — include a clear title and description. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n',
+          '5. If code changed: open a PR with `gh pr create` — include a clear title and description. After `gh pr create`, call `subscribe_pr_events({ prUrl: "<PR URL>" })`, passing the PR URL from the `gh pr create` output explicitly (it is not auto-resolved from the run until the PR is recorded). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n',
         retiredStep:
           '5. If code changed: open a PR with `gh pr create` — include a clear title and description\n',
       },
@@ -1970,14 +1970,14 @@ describe('seedBuiltInWorkflows()', () => {
         workflow: FULLSTACK_QA_LOOP_WORKFLOW,
         nodeName: 'Coding',
         currentStep:
-          '3. Open or update the PR and ensure it remains mergeable. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n',
+          '3. Open or update the PR and ensure it remains mergeable. After `gh pr create`, call `subscribe_pr_events({ prUrl: "<PR URL>" })`, passing the PR URL from the `gh pr create` output explicitly (it is not auto-resolved from the run until the PR is recorded). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n',
         retiredStep: '3. Open or update the PR and ensure it remains mergeable\n',
       },
       {
         workflow: RESEARCH_WORKFLOW,
         nodeName: 'Research',
         currentStep:
-          '5. Commit findings and open a PR with `gh pr create`. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n',
+          '5. Commit findings and open a PR with `gh pr create`. After `gh pr create`, call `subscribe_pr_events({ prUrl: "<PR URL>" })`, passing the PR URL from the `gh pr create` output explicitly (it is not auto-resolved from the run until the PR is recorded). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n',
         retiredStep: '5. Commit findings and open a PR with `gh pr create`\n',
       },
     ];
@@ -2072,7 +2072,7 @@ describe('seedBuiltInWorkflows()', () => {
       .agents[0].customPrompt!.value;
     const stalePrompt = templatePrompt
       .replace(
-        '3. Open or update the PR and ensure it remains mergeable. After `gh pr create`, call `subscribe_pr_events({})` (no arguments needed — the PR URL is auto-resolved from the run). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n',
+        '3. Open or update the PR and ensure it remains mergeable. After `gh pr create`, call `subscribe_pr_events({ prUrl: "<PR URL>" })`, passing the PR URL from the `gh pr create` output explicitly (it is not auto-resolved from the run until the PR is recorded). This subscribes you to review comments, CI failures, and reactions for your PR so you receive them directly and can act on them. Do this once per PR.\n',
         '3. Open or update the PR and ensure it remains mergeable\n'
       )
       .replace(

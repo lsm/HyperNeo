@@ -1135,6 +1135,15 @@ export class SpaceRuntime {
       topic: trimmed,
       subscriptionKind,
     });
+    // An event can arrive in the brief interval between an external resource
+    // being created and the actor registering its dynamic interest. Unmatched
+    // events stay `published` for the bounded retention TTL; replay here so a
+    // newly-registered interest receives any event that arrived in that gap.
+    // Static interests are rebuilt during rehydrate before the runtime accepts
+    // events, so only runtime-created dynamic interests need the direct replay.
+    if (subscriptionKind === 'dynamic') {
+      this.redispatchRetainedExternalEvents();
+    }
     return { success: true };
   }
 
@@ -1691,8 +1700,22 @@ export class SpaceRuntime {
     });
 
     if (matches.length === 0) {
-      if (this.acceptingExternalEvents && blockedHookOutcome.firedRunIds.size === 0) {
-        store.markEventIgnored(payload.eventId, 'no_matching_subscriptions');
+      // Keep unmatched events published for the bounded retention TTL. This is
+      // connector-agnostic: any actor that registers a dynamic interest moments
+      // after an external resource is created can replay the event that arrived
+      // in the registration gap. The periodic TTL sweep terminalizes events that
+      // never gain a matching interest, so this does not grow without bound.
+      if (this.acceptingExternalEvents && this.isPublishedExternalEventExpired(payload)) {
+        try {
+          store.markEventFailed(payload.eventId, {
+            terminal: true,
+            reason: 'ttl_expired',
+          });
+        } catch (err) {
+          log.warn(
+            `SpaceRuntime: markEventFailed for ${payload.eventId} failed: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
       }
       return blockedHookOutcome.anyRetryScheduled;
     }
@@ -3235,13 +3258,20 @@ export class SpaceRuntime {
   private isRunInterestRebuildEligible(run: SpaceWorkflowRun): boolean {
     // A cancelled run (e.g. cancelled by space.stop) must not have its static
     // event interests rebuilt on resume/rehydrate — the run is no longer active
-    // even if a review task on it was not cancelled.
-    if (run.status === 'cancelled') return false;
+    // even if a review task on it was not cancelled. A `done` run is terminal
+    // (it can no longer deliver events — every delivery fails with
+    // target_task_terminal), so rebuilding its interests only causes fan-out
+    // waste on every matching event; the coder re-subscribes if the run reopens.
+    if (run.status === 'cancelled' || isWorkflowRunSucceeded(run.status)) {
+      return false;
+    }
     const task = this.pickCanonicalTaskForRun(
       run,
       this.config.taskRepo.listByWorkflowRunIncludingArchived(run.id)
     );
-    return !!task && task.status !== 'cancelled' && task.status !== 'archived';
+    return (
+      !!task && task.status !== 'cancelled' && task.status !== 'archived' && task.status !== 'done'
+    );
   }
 
   private isWorkflowTargetOwnedBySpace(

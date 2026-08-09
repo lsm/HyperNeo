@@ -1924,6 +1924,72 @@ describe('SpaceRuntimeService', () => {
       await svc.stop();
     });
 
+    test('clears all task interests when a task becomes done', async () => {
+      let taskUpdatedHandler:
+        | ((
+            event: import('../../../../src/lib/internal-event-bus').DaemonInternalEventMap['space.task.updated']
+          ) => void)
+        | undefined;
+      const internalEventBus = {
+        subscribe: mock((event: string, handler: typeof taskUpdatedHandler) => {
+          if (event === 'space.task.updated') taskUpdatedHandler = handler;
+          return () => {};
+        }),
+        publish: mock(async () => ({ delivered: 0, failures: [] })),
+        publishAsync: mock(() => {}),
+      } as unknown as SpaceRuntimeServiceConfig['internalEventBus'];
+      const sessionManager = {
+        listSessions: mock(() => [] as Session[]),
+        getSessionAsync: mock(async () => null),
+        registerSessionResetSubscriber: mock(() => () => {}),
+      } as unknown as SessionManager;
+      const svc = new SpaceRuntimeService({
+        ...buildConfig(createMockSpaceManager()),
+        sessionManager,
+        internalEventBus,
+      });
+      const runtime = (
+        svc as unknown as {
+          runtime: {
+            clearTaskInterests: (taskId: string) => void;
+            clearTaskInterestsPreservingDynamic: (taskId: string) => void;
+          };
+        }
+      ).runtime;
+      const clearAll = mock(() => {});
+      const clearPreservingDynamic = mock(() => {});
+      runtime.clearTaskInterests = clearAll;
+      runtime.clearTaskInterestsPreservingDynamic = clearPreservingDynamic;
+      svc.start();
+
+      expect(taskUpdatedHandler).toBeDefined();
+      taskUpdatedHandler?.({
+        sessionId: 'global',
+        spaceId: mockSpace.id,
+        taskId: 'task-done',
+        task: {
+          id: 'task-done',
+          spaceId: mockSpace.id,
+          taskNumber: 1,
+          title: 'Done task',
+          description: '',
+          status: 'done',
+          priority: 'normal',
+          labels: [],
+          dependsOn: [],
+          result: null,
+          workflowRunId: 'run-done',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        } as import('@hyperneo/shared').SpaceTask,
+      });
+
+      expect(clearAll).toHaveBeenCalledWith('task-done');
+      expect(clearPreservingDynamic).not.toHaveBeenCalled();
+
+      await svc.stop();
+    });
+
     test('does NOT attach for sessions outside Space policy', async () => {
       const agent = makeMemberAgentSession();
       const sessionManager = {
