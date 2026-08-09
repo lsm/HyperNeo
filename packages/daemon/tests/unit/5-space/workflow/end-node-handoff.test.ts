@@ -266,7 +266,9 @@ describe('Implementer merge template (verify current-head approval, then gh pr m
   });
 
   test('preserved: root-repo sync uses {{workspace_path}}, branch-agnostic $BASE', () => {
-    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain("SPACE_WS='{{workspace_path}}'");
+    // `{{workspace_path}}` renders as a single-quote-escaped shell literal, so
+    // the template line must NOT wrap it in its own quotes.
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('SPACE_WS={{workspace_path}}');
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toMatch(/git -C "\$SPACE_WS" pull --ff-only/);
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('--jq .baseRefName');
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('$BASE');

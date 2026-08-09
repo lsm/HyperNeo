@@ -55,6 +55,27 @@ export const OLD_REVIEWER_DESCRIPTION =
   'Code review specialist. Reviews pull requests for correctness, style, and test coverage. ' +
   'Has no shell — posts reviews via the post_review tool.';
 
+// The EXACT pre-#2365 (bash-based) Reviewer seed TOOLS and DESCRIPTION — the
+// era seeded before the shell-less Reviewer split. That seed HAD Bash in its
+// tools and its description ended at "test coverage." (no "Has no shell"
+// suffix). A pristine row from that era must match THIS tuple (tools+prompt+
+// description), not the shell-less tuple.
+export const OLD_REVIEWER_TOOLS_PRE_2365 = [
+  'Read',
+  'Grep',
+  'Glob',
+  'WebFetch',
+  'WebSearch',
+  'Skill',
+  'ToolSearch',
+  'Bash',
+  'Task',
+  'TaskOutput',
+  'TaskStop',
+];
+export const OLD_REVIEWER_DESCRIPTION_PRE_2365 =
+  'Code review specialist. Reviews pull requests for correctness, style, and test coverage.';
+
 // The EXACT pre-#2365 (bash-based) Reviewer seed prompt — the version seeded
 // before the shell-less Reviewer split. It also posted reviews via a REST
 // `gh api repos/.../reviews` command that the reviewer Bash guard now blocks,
@@ -129,22 +150,21 @@ export function runMigration180(db: BunDatabase): void {
       continue;
     }
     // Only pristine unmodified seeds are fully re-stamped. A row is an
-    // unmodified seed ONLY when BOTH the tool list AND the prompt/description
-    // still carry the old seed's values — matching tools alone is NOT proof the
-    // prompt/description are unchanged (a user may have customized them while
-    // keeping the tool list). The prompt must EXACTLY match one of the known
-    // pristine seed variants (the shell-less post-#2365 contract, or the
-    // bash-based pre-#2365 contract) — a row with a prompt that differs in any
-    // way (append/edit) is a user customization and is left to the drift/sync UI.
-    const promptIsOldSeed =
-      row.custom_prompt === OLD_REVIEWER_PROMPT ||
-      row.custom_prompt === OLD_REVIEWER_PROMPT_PRE_2365;
-    const descriptionIsOldSeed = row.description === OLD_REVIEWER_DESCRIPTION;
-    if (
-      !arraysEqual(storedTools, OLD_REVIEWER_TOOLS) ||
-      !promptIsOldSeed ||
-      !descriptionIsOldSeed
-    ) {
+    // unmodified seed ONLY when its FULL tuple (tools + prompt + description)
+    // EXACTLY matches one of the known pristine seed variants — the shell-less
+    // post-#2365 tuple, OR the bash-based pre-#2365 tuple (which had Bash in its
+    // tools and a shorter description). Matching any single field alone is NOT
+    // proof the row is unmodified; a row that differs in any way is a user
+    // customization and is left to the drift/sync UI.
+    const shelllessTuple =
+      arraysEqual(storedTools, OLD_REVIEWER_TOOLS) &&
+      row.custom_prompt === OLD_REVIEWER_PROMPT &&
+      row.description === OLD_REVIEWER_DESCRIPTION;
+    const pre2365Tuple =
+      arraysEqual(storedTools, OLD_REVIEWER_TOOLS_PRE_2365) &&
+      row.custom_prompt === OLD_REVIEWER_PROMPT_PRE_2365 &&
+      row.description === OLD_REVIEWER_DESCRIPTION_PRE_2365;
+    if (!shelllessTuple && !pre2365Tuple) {
       continue;
     }
 

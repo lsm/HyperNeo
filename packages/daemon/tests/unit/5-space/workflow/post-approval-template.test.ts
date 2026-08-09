@@ -28,9 +28,19 @@ describe('interpolatePostApprovalTemplate — happy path', () => {
     };
     const result = interpolatePostApprovalTemplate(template, context);
     expect(result.missingKeys).toEqual([]);
+    // `workspace_path` renders as a shell-quoted literal (`/tmp/ws` has no
+    // special chars, so quoting leaves it unchanged).
     expect(result.text).toBe(
-      'Task t-42 (Ship PR) in space s-7 at /tmp/ws\n' + 'Reviewer: reviewer via human (autonomy 3).'
+      "Task t-42 (Ship PR) in space s-7 at '/tmp/ws'\n" +
+        'Reviewer: reviewer via human (autonomy 3).'
     );
+  });
+
+  test('workspace_path with a single quote renders as a valid shell literal', () => {
+    const result = interpolatePostApprovalTemplate('SPACE_WS={{workspace_path}}', {
+      workspace_path: "/tmp/O'Brien/repo",
+    });
+    expect(result.text).toBe("SPACE_WS='/tmp/O'\\''Brien/repo'");
   });
 
   test('arbitrary context keys (e.g. end-node payload) are usable', () => {

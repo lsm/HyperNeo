@@ -25,7 +25,9 @@ import {
   OLD_REVIEWER_PROMPT,
   OLD_REVIEWER_PROMPT_PRE_2365,
   OLD_REVIEWER_DESCRIPTION,
+  OLD_REVIEWER_DESCRIPTION_PRE_2365,
   OLD_REVIEWER_TOOLS,
+  OLD_REVIEWER_TOOLS_PRE_2365,
 } from '../../../../../src/storage/schema/m180-backfill-reviewer-bash-tools.ts';
 import { getPresetAgentTemplates } from '../../../../../src/lib/space/agents/seed-agents.ts';
 import { computeAgentTemplateHash } from '../../../../../src/lib/space/agents/agent-template-hash.ts';
@@ -173,9 +175,10 @@ describe('migration 179 — reviewer bash tool backfill', () => {
 
   test('re-stamps a pristine pre-#2365 bash Reviewer seed too', () => {
     // Spaces seeded before the shell-less Reviewer split carry the pre-#2365
-    // bash contract (which posted via a REST gh api repos/.../reviews command the
-    // reviewer Bash guard now blocks). It is a known pristine seed and must be
-    // migrated to the current preset, not left stale.
+    // bash contract — WITH Bash in its tools and a shorter description ending at
+    // "test coverage." (no "Has no shell" suffix). Its REST gh api repos/.../
+    // reviews posting command is now blocked by the reviewer Bash guard, so a
+    // pristine row from that era must be migrated (full tuple match) too.
     const spaceId = 'space-m179-pre2365';
     insertSpace(db, spaceId);
     insertAgent(db, {
@@ -183,9 +186,9 @@ describe('migration 179 — reviewer bash tool backfill', () => {
       spaceId,
       name: 'Reviewer',
       handle: 'reviewer',
-      tools: OLD_REVIEWER_TOOLS,
+      tools: OLD_REVIEWER_TOOLS_PRE_2365,
       customPrompt: OLD_REVIEWER_PROMPT_PRE_2365,
-      description: OLD_REVIEWER_DESCRIPTION,
+      description: OLD_REVIEWER_DESCRIPTION_PRE_2365,
       templateName: 'Reviewer',
       templateHash: computeAgentTemplateHash(REVIEWER_PRESET),
     });

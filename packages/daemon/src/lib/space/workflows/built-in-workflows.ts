@@ -234,8 +234,10 @@ const CODEX_REACTION_APPROVAL_GUIDANCE =
   'After posting your approval review, verify the Codex review bot reaction status ' +
   'before closing or handing off. Use the run-scoped GraphQL reaction lookup ' +
   '(the Reviewer Bash guard permits `gh api graphql`; direct `gh api repos/...` REST reads are ' +
-  'blocked), resolving the PR number from the run PR URL and reading `reactions`: ' +
-  "`gh api graphql -f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){issueOrPullRequest(number:$number){... on PullRequest {reactions(first:100){nodes{content user{login}}}}}}}' -f owner=<owner> -f name=<repo> -F number=<number>` " +
+  'blocked), resolving the PR number and host from the run PR URL and reading `reactions` ' +
+  '(parse the host and pass `--hostname` so GitHub Enterprise PRs are queried on the enterprise ' +
+  'host, not the default github.com): ' +
+  "`HOST=$(python3 -c \"import sys,urllib.parse; print(urllib.parse.urlparse('<pr_url>').hostname or 'github.com')\"); gh api graphql --hostname \"$HOST\" -f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){issueOrPullRequest(number:$number){... on PullRequest {reactions(first:100){nodes{content user{login}}}}}}}' -f owner=<owner> -f name=<repo> -F number=<number>` " +
   'and inspect reactions from any login containing `codex` (case-insensitive — GitHub ' +
   'ships multiple variants such as `codex[bot]` and `chatgpt-codex-connector[bot]`, and ' +
   'the matcher accepts any of them): content `+1` means Codex passed, content `eyes` ' +
