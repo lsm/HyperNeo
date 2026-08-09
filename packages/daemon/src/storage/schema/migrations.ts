@@ -12037,6 +12037,21 @@ export function runMigration180(db: BunDatabase): void {
 export function runMigration181(db: BunDatabase): void {
   if (!tableExists(db, 'space_workflow_runs')) return;
   if (tableHasColumn(db, 'space_workflow_runs', 'definition_version')) return;
+  // Historical-marker tests and damaged/partial databases can expose only a sentinel table.
+  // Do not attempt a destructive rebuild unless the M71 run schema is fully present.
+  const requiredColumns = [
+    'space_id',
+    'workflow_id',
+    'title',
+    'description',
+    'status',
+    'failure_reason',
+    'created_at',
+    'started_at',
+    'updated_at',
+    'completed_at',
+  ];
+  if (requiredColumns.some((column) => !tableHasColumn(db, 'space_workflow_runs', column))) return;
 
   db.exec('PRAGMA foreign_keys = OFF');
   db.exec('BEGIN');
