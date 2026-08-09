@@ -116,6 +116,7 @@ vi.mock('../../lib/connection-manager', () => ({
 }));
 
 import MessageInput from '../MessageInput';
+import { toast } from '../../lib/toast.ts';
 
 describe('MessageInput — recording UI', () => {
   beforeEach(() => {
@@ -179,5 +180,54 @@ describe('MessageInput — recording UI', () => {
     expect(voiceStop).not.toHaveBeenCalled();
     expect(transcribeRequest).not.toHaveBeenCalled();
     expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it('agent running: Queue + Steer replace Send, and no agent stop button appears', () => {
+    mockAgentWorking.value = true;
+    render(<MessageInput sessionId="s1" onSend={vi.fn()} />);
+
+    expect(screen.getByLabelText('Stop recording and transcribe')).toBeTruthy();
+    expect(screen.getByLabelText('Stop, transcribe and queue')).toBeTruthy();
+    expect(screen.getByLabelText('Stop, transcribe and steer')).toBeTruthy();
+    // The idle-state blue voice send is hidden, and the agent's own stop button
+    // is never shown next to the voice stop (no two-stop-buttons state).
+    expect(screen.queryByLabelText('Stop, transcribe and send')).toBeNull();
+    expect(screen.queryByLabelText('Stop generation')).toBeNull();
+  });
+
+  it('Queue stops, transcribes and defers the transcript to the next turn', async () => {
+    mockAgentWorking.value = true;
+    const onSend = vi.fn(async () => {});
+    render(<MessageInput sessionId="s1" onSend={onSend} />);
+
+    fireEvent.click(screen.getByLabelText('Stop, transcribe and queue'));
+
+    await waitFor(() => expect(voiceStop).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(transcribeRequest).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('hello world', undefined, 'defer'));
+  });
+
+  it('composers without deferred delivery hide Queue (voice and typed), keeping Steer', () => {
+    mockAgentWorking.value = true;
+    render(<MessageInput sessionId="s1" onSend={vi.fn()} supportsQueueDelivery={false} />);
+
+    expect(screen.queryByLabelText('Stop, transcribe and queue')).toBeNull();
+    expect(screen.getByLabelText('Stop, transcribe and steer')).toBeTruthy();
+    expect(screen.queryByTestId('queue-button')).toBeNull();
+  });
+
+  it('whitespace-only transcripts show the no-speech toast and do not send', async () => {
+    transcribeRequest.mockResolvedValueOnce({ text: '  \n ' });
+    const onSend = vi.fn(async () => {});
+    render(<MessageInput sessionId="s1" onSend={onSend} />);
+
+    fireEvent.click(screen.getByLabelText('Stop, transcribe and send'));
+
+    await waitFor(() => expect(transcribeRequest).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(toast.info).toHaveBeenCalledWith('No speech detected in that recording')
+    );
+    expect(onSend).not.toHaveBeenCalled();
+    expect(draft.value).toBe('');
   });
 });

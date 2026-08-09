@@ -229,6 +229,9 @@ export function TaskSessionChatComposer({
         sessionId={targetSessionId ?? ''}
         readonly={false}
         isProcessing={targetIsProcessing}
+        // Task-thread sends are always delivered immediately (sendThreadMessage
+        // has no deferred/queued delivery), so Queue controls must not appear.
+        supportsQueueDelivery={false}
         thinkingLevel={thinkingLevel}
         features={{
           coordinator: false,

@@ -19,7 +19,14 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 
 const BAR_COUNT_WIDE = 72;
-const BAR_COUNT_NARROW = 40;
+// Phone-width composers: with the X, timer, and up to three 36px control
+// buttons (Stop + Queue + Steer while the agent runs), a 320px viewport leaves
+// well under 100px for this panel — so on narrow screens the fixed costs shrink
+// (tighter gaps, smaller timer text, short startup label) and only 12 columns
+// with a 1px gap render, keeping every bar visible instead of clipping. The
+// bars row is the ONLY flex item allowed to shrink (min-w-0 flex-1); the
+// controls are flex-none so they never clip or overlap.
+const BAR_COUNT_NARROW = 12;
 const MAX_SECONDS = 300; // matches useVoiceRecorder MAX_RECORDING_MS (5 min)
 const FLOOR = 0.03; // silence renders as small dots, like iMessage
 
@@ -27,20 +34,30 @@ interface VoiceWaveformProps {
   getLevel: () => number;
   isRecording: boolean;
   isTranscribing: boolean;
+  /** Mic permission/hardware startup is in flight (may be waiting on the browser prompt). */
+  isStarting?: boolean;
+  /** Discard the recording (the X button at the left end of the row). */
+  onCancel: () => void;
 }
 
 function formatElapsed(seconds: number): string {
   return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds) % 60).padStart(2, '0')}`;
 }
 
-export function VoiceWaveform({ getLevel, isRecording, isTranscribing }: VoiceWaveformProps) {
-  // Fewer columns on phone-width composers: with a fixed 2px gap, 72 columns
-  // need ~142px of gaps alone and would overflow into the timer/controls.
+export function VoiceWaveform({
+  getLevel,
+  isRecording,
+  isTranscribing,
+  isStarting = false,
+  onCancel,
+}: VoiceWaveformProps) {
+  // Fewer columns on phone-width composers: see BAR_COUNT_NARROW.
   const [barCount] = useState(() =>
     typeof window !== 'undefined' && window.matchMedia?.('(max-width: 639px)').matches
       ? BAR_COUNT_NARROW
       : BAR_COUNT_WIDE
   );
+  const isNarrow = barCount === BAR_COUNT_NARROW;
   const barsRef = useRef<(HTMLDivElement | null)[]>([]);
   const histRef = useRef<number[]>([]);
   const valsRef = useRef<Float32Array>(new Float32Array(0));
@@ -50,7 +67,8 @@ export function VoiceWaveform({ getLevel, isRecording, isTranscribing }: VoiceWa
 
   // Collapse columns before first paint so they don't flash full-height for a
   // frame before rAF takes over. No `style` prop on the columns in JSX, so later
-  // re-renders never reset these transforms.
+  // re-renders never reset these transforms. No entrance animation: the columns
+  // show live mic levels from the very first frame.
   useLayoutEffect(() => {
     for (const bar of barsRef.current) {
       if (bar) bar.style.transform = `scaleY(${FLOOR})`;
@@ -136,8 +154,32 @@ export function VoiceWaveform({ getLevel, isRecording, isTranscribing }: VoiceWa
   }, [getLevel, isRecording, isTranscribing, barCount]);
 
   return (
-    <div class="flex w-full items-center gap-3" data-testid="voice-recording-panel">
-      <div class="flex h-8 min-w-0 flex-1 items-center gap-[2px] overflow-hidden">
+    <div
+      class={`flex w-full items-center ${isNarrow ? 'gap-2' : 'gap-3'}`}
+      data-testid="voice-recording-panel"
+    >
+      <button
+        type="button"
+        onClick={onCancel}
+        disabled={isTranscribing}
+        title="Discard recording"
+        aria-label="Cancel recording"
+        class="grid h-9 w-9 flex-none place-items-center rounded-full bg-dark-700/80 text-gray-400 transition-colors hover:bg-dark-600 hover:text-gray-200 disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        <svg
+          class="h-3.5 w-3.5"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width={2.5}
+        >
+          <path stroke-linecap="round" d="M6 6l12 12M18 6L6 18" />
+        </svg>
+      </button>
+      <div
+        class={`flex h-8 min-w-0 flex-1 items-center overflow-hidden ${isNarrow ? 'gap-px' : 'gap-[2px]'}`}
+        data-testid="voice-bars"
+      >
         {Array.from({ length: barCount }, (_, i) => (
           <div
             key={i}
@@ -150,14 +192,29 @@ export function VoiceWaveform({ getLevel, isRecording, isTranscribing }: VoiceWa
       </div>
       {isTranscribing ? (
         <span
-          class="inline-flex items-center gap-1.5 text-xs text-red-400"
+          class="inline-flex flex-none items-center gap-1.5 text-xs text-red-400"
           data-testid="voice-transcribing"
+          aria-label="Transcribing"
         >
           <span class="h-2.5 w-2.5 animate-spin rounded-full border-2 border-red-400/40 border-t-red-400" />
-          Transcribing…
+          {/* Narrow composers don't have room for the label next to the cancel
+              button and recording controls — the spinner alone carries it. */}
+          {!isNarrow && 'Transcribing…'}
+        </span>
+      ) : isStarting && !isRecording ? (
+        // Mic startup can block on the browser permission prompt — frozen dots
+        // alone read as "broken", so say what we're waiting for.
+        <span
+          class={`inline-flex flex-none animate-pulse items-center gap-1.5 text-gray-400 motion-reduce:animate-none ${isNarrow ? 'text-[11px]' : 'text-xs'}`}
+          data-testid="voice-starting"
+        >
+          {isNarrow ? 'Mic…' : 'Waiting for mic…'}
         </span>
       ) : (
-        <span class="tabular-nums text-xs text-gray-100" data-testid="voice-timer">
+        <span
+          class={`flex-none tabular-nums text-gray-100 ${isNarrow ? 'text-[11px]' : 'text-xs'}`}
+          data-testid="voice-timer"
+        >
           {formatElapsed(MAX_SECONDS - elapsed)}
         </span>
       )}

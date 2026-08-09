@@ -67,6 +67,12 @@ export interface ChatComposerProps {
   /** Optional inline error message rendered above the status bar (used by task sessions) */
   errorMessage?: string | null;
   /**
+   * Whether this composer's send path honors 'defer' (queue for next turn).
+   * Defaults to true; task-session composers pass false because they deliver
+   * immediately. Forwarded to MessageInput, which hides the Queue controls.
+   */
+  supportsQueueDelivery?: boolean;
+  /**
    * Forwarded to MessageInput so the owning content column can register itself
    * as the file-drop target. @see MessageInput#registerDropTarget
    */
@@ -119,6 +125,7 @@ export function ChatComposer({
   onDraftActiveChange,
   onThinkingLevelChange,
   errorMessage,
+  supportsQueueDelivery,
   registerDropTarget,
   store,
 }: ChatComposerProps) {
@@ -207,6 +214,7 @@ export function ChatComposer({
               leadingPaddingClass={inputLeadingPaddingClass}
               onDraftActiveChange={onDraftActiveChange}
               isProcessing={isProcessing}
+              supportsQueueDelivery={supportsQueueDelivery}
               registerDropTarget={registerDropTarget}
               coordinatorMode={coordinatorMode}
               coordinatorSwitching={coordinatorSwitching}

@@ -15,6 +15,8 @@ export interface VoiceRecording {
   audioBase64: string;
   mimeType: 'audio/wav';
   hitDurationLimit?: boolean;
+  /** Peak absolute sample amplitude in [0, 1]; ~0 means the mic delivered silence. */
+  peakLevel: number;
 }
 
 export function useVoiceRecorder() {
@@ -272,8 +274,16 @@ export function useVoiceRecorder() {
     // the full-rate capture — a 5-minute 48 kHz recording is ~55 MB of floats).
     const mono = downsampleChunks(chunks, totalSamples, sampleRateRef.current, TARGET_SAMPLE_RATE);
     chunksRef.current = [];
+    // Peak scan so the caller can tell "mic captured silence" (muted/wrong
+    // input device) apart from "the transcription backend returned no text" —
+    // both otherwise surface as a confusing empty result.
+    let peakLevel = 0;
+    for (let i = 0; i < mono.length; i++) {
+      const a = Math.abs(mono[i]);
+      if (a > peakLevel) peakLevel = a;
+    }
     const wav = encodeWav({ sampleRate: TARGET_SAMPLE_RATE, samples: mono });
-    return { audioBase64: bytesToBase64(wav), mimeType: 'audio/wav', hitDurationLimit };
+    return { audioBase64: bytesToBase64(wav), mimeType: 'audio/wav', hitDurationLimit, peakLevel };
   }, [isRecording, teardown]);
 
   const cancel = useCallback(async () => {
