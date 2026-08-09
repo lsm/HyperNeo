@@ -18,15 +18,16 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 
-const BAR_COUNT_WIDE = 72;
-// Phone-width composers: with the X, timer, and up to three 36px control
-// buttons (Stop + Queue + Steer while the agent runs), a 320px viewport leaves
-// well under 100px for this panel — so on narrow screens the fixed costs shrink
-// (tighter gaps, smaller timer text, short startup label) and only 12 columns
-// with a 1px gap render, keeping every bar visible instead of clipping. The
-// bars row is the ONLY flex item allowed to shrink (min-w-0 flex-1); the
-// controls are flex-none so they never clip or overlap.
-const BAR_COUNT_NARROW = 12;
+// Columns are sized by PITCH, not count: the row measures itself and renders
+// floor(width / pitch) columns, so each stays ~2-3px thin at ANY composer
+// width instead of stretching into blocks (columns keep flex-1 only to absorb
+// the sub-pixel rounding remainder, so the row always fills exactly). The
+// count sets granularity and history length (~20 columns/sec) — never layout
+// fit: the bars row stays min-w-0 flex-1 and collapses first in the worst
+// case (320px viewport, agent running), with all controls flex-none.
+const BAR_PITCH_WIDE = 5; // ~3px column + 2px gap
+const BAR_PITCH_NARROW = 4; // ~3px column + 1px gap
+const MIN_BARS = 8;
 const MAX_SECONDS = 300; // matches useVoiceRecorder MAX_RECORDING_MS (5 min)
 const FLOOR = 0.03; // silence renders as small dots, like iMessage
 
@@ -51,13 +52,29 @@ export function VoiceWaveform({
   isStarting = false,
   onCancel,
 }: VoiceWaveformProps) {
-  // Fewer columns on phone-width composers: see BAR_COUNT_NARROW.
-  const [barCount] = useState(() =>
-    typeof window !== 'undefined' && window.matchMedia?.('(max-width: 639px)').matches
-      ? BAR_COUNT_NARROW
-      : BAR_COUNT_WIDE
+  // Phone-width composers get tighter gaps/smaller labels; also selects pitch.
+  const [isNarrow] = useState(
+    () =>
+      typeof window !== 'undefined' && window.matchMedia?.('(max-width: 639px)').matches === true
   );
-  const isNarrow = barCount === BAR_COUNT_NARROW;
+  const rowRef = useRef<HTMLDivElement>(null);
+  // Column count derives from the row's real width and re-derives on resize
+  // (the composer flexes with window/panel size). Runs in useLayoutEffect so
+  // the first paint already has columns.
+  const [barCount, setBarCount] = useState(0);
+  useLayoutEffect(() => {
+    const row = rowRef.current;
+    if (!row) return;
+    const pitch = isNarrow ? BAR_PITCH_NARROW : BAR_PITCH_WIDE;
+    const update = () => {
+      const next = Math.max(MIN_BARS, Math.floor(row.clientWidth / pitch));
+      setBarCount((n) => (n === next ? n : next));
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(row);
+    return () => ro.disconnect();
+  }, [isNarrow]);
   const barsRef = useRef<(HTMLDivElement | null)[]>([]);
   const histRef = useRef<number[]>([]);
   const valsRef = useRef<Float32Array>(new Float32Array(0));
@@ -67,13 +84,15 @@ export function VoiceWaveform({
 
   // Collapse columns before first paint so they don't flash full-height for a
   // frame before rAF takes over. No `style` prop on the columns in JSX, so later
-  // re-renders never reset these transforms. No entrance animation: the columns
-  // show live mic levels from the very first frame.
+  // re-renders never reset these transforms. Only seed columns that have no
+  // transform yet — resetting live levels on a resize-derived count change
+  // would flash the waveform to dots. No entrance animation: the columns show
+  // live mic levels from the very first frame.
   useLayoutEffect(() => {
     for (const bar of barsRef.current) {
-      if (bar) bar.style.transform = `scaleY(${FLOOR})`;
+      if (bar && !bar.style.transform) bar.style.transform = `scaleY(${FLOOR})`;
     }
-  }, []);
+  }, [barCount]);
 
   // 1Hz countdown timer, only while actively recording. Derived from wall-clock
   // elapsed (not counted ticks) so background-tab interval throttling can't let
@@ -177,6 +196,7 @@ export function VoiceWaveform({
         </svg>
       </button>
       <div
+        ref={rowRef}
         class={`flex h-8 min-w-0 flex-1 items-center overflow-hidden ${isNarrow ? 'gap-px' : 'gap-[2px]'}`}
         data-testid="voice-bars"
       >
