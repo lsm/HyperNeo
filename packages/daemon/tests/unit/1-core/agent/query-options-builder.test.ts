@@ -143,6 +143,38 @@ describe('QueryOptionsBuilder', () => {
       expect(options.agents).toBeDefined();
     });
 
+    it('does not widen a non-native worker parent tool surface for the internal child override', () => {
+      const tools = ['Read', 'Bash'];
+      const agents = {
+        'general-purpose': {
+          description:
+            'Investigate a focused question using files, search, shell commands, and web sources. Complete the assigned work directly; do not delegate it to another agent.',
+          tools: ['Read', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch', 'Skill', 'ToolSearch'],
+          disallowedTools: ['Agent', 'Task', 'TaskOutput', 'TaskStop'],
+          prompt:
+            'Complete the assigned investigation directly. You may use the available read, search, shell, and web tools, but you must not spawn or delegate to other agents.',
+          model: 'inherit' as const,
+        },
+      };
+
+      expect(ensureAgentTools(tools, agents, 'glm', 'worker')).toBe(tools);
+      expect(ensureAgentTools(undefined, agents, 'glm', 'worker')).toBeUndefined();
+    });
+
+    it('still exposes a user-defined general-purpose agent on non-native workers', () => {
+      const agents = {
+        'general-purpose': {
+          description: 'User agent',
+          prompt: 'Custom behavior',
+          model: 'inherit' as const,
+        },
+      };
+
+      expect(ensureAgentTools(undefined, agents, 'glm', 'worker')).toEqual(
+        expect.arrayContaining(['Agent', 'Task', 'TaskOutput', 'TaskStop'])
+      );
+    });
+
     it('should include sandbox settings when configured', async () => {
       mockSession.config.sandbox = { enabled: true };
       const options = await builder.build();

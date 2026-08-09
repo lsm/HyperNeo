@@ -8,6 +8,7 @@
 
 import type { AgentSessionInit, PromptProvenanceInit } from '../../agent/agent-session';
 import type {
+  AgentDefinition,
   DeclarativeToolGuard,
   McpServerConfig,
   EvolutionLesson,
@@ -34,6 +35,16 @@ import { formatGatedHandoffCall, getSendMessageTargets } from '../runtime/gated-
 import { createHash } from 'node:crypto';
 
 const DEFAULT_CUSTOM_AGENT_MODEL = 'claude-sonnet-4-6';
+
+export const NON_DELEGATING_GENERAL_AGENT: AgentDefinition = {
+  description:
+    'Investigate a focused question using files, search, shell commands, and web sources. Complete the assigned work directly; do not delegate it to another agent.',
+  tools: ['Read', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch', 'Skill', 'ToolSearch'],
+  disallowedTools: ['Agent', 'Task', 'TaskOutput', 'TaskStop'],
+  prompt:
+    'Complete the assigned investigation directly. You may use the available read, search, shell, and web tools, but you must not spawn or delegate to other agents.',
+  model: 'inherit',
+};
 
 /**
  * Soft size budget for the initial user message. When exceeded, a warning is
@@ -692,6 +703,7 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
     provider,
     thinkingLevel,
     ...customToolPermissions,
+    agents: { 'general-purpose': NON_DELEGATING_GENERAL_AGENT },
     skillOverrides,
     mcpServers: extraMcpServers,
     settingSources: customAgent.settingSources ?? space.settingSources,
