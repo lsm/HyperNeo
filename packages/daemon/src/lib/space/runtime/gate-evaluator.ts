@@ -405,6 +405,13 @@ export function validateGate(gate: unknown): string[] {
       errors.push(
         `gate.validator.id: unknown built-in validator ${JSON.stringify(validator.id)} (registered presets: ${allowed})`
       );
+    } else if (validator.id === 'codex_review_approved') {
+      // codex_review_approved is a send_message HOOK only — its workspace-branch
+      // PR resolution doesn't apply on the gate dispatch path. Reject at save
+      // time so a permanently-closed gate can't be persisted.
+      errors.push(
+        'gate.validator.id: "codex_review_approved" is supported as a send_message hook only, not a gate validator'
+      );
     }
   }
 
@@ -543,6 +550,18 @@ async function runGateValidator(
   const fn = getBuiltInValidator(validator.id);
   if (!fn) {
     return { open: false, reason: `Gate validator "${validator.id}" is not registered` };
+  }
+  // codex_review_approved is supported ONLY as a send_message hook — its op
+  // resolves the PR from ctx.workspacePath (the session's worktree branch),
+  // which the gate-dispatch path may not have checked out. Reject it here to
+  // match the save-time validation (validateGate); it is not wired as a gate
+  // in any built-in workflow.
+  if (validator.id === 'codex_review_approved') {
+    return {
+      open: false,
+      reason:
+        'codex_review_approved is supported as a send_message hook only — its op resolves the PR from the session workspace branch, which the gate-dispatch path does not reliably have checked out; it cannot be used as a gate validator.',
+    };
   }
   const hookContext: HookExecutorContext = {
     workspacePath: context.workspacePath,

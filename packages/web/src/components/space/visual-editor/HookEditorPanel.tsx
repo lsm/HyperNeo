@@ -143,8 +143,10 @@ export function HookEditorPanel({
   );
 
   const isPrReadyValidator = validatorKind === 'built_in' && builtInId === 'pr_ready';
-  const maxAttempts = hook.retry?.maxAttempts ?? 3;
-  const delayMs = hook.retry?.delayMs ?? 5000;
+  const isCodexApprovalValidator =
+    validatorKind === 'built_in' && builtInId === 'codex_review_approved';
+  const maxAttempts = hook.retry?.maxAttempts ?? (isCodexApprovalValidator ? 0 : 3);
+  const delayMs = hook.retry?.delayMs ?? (isCodexApprovalValidator ? 60_000 : 5_000);
   const backoffMultiplier = hook.retry?.backoffMultiplier ?? 1;
 
   function updateHook(partial: Partial<WorkflowHook>) {
@@ -177,7 +179,10 @@ export function HookEditorPanel({
   }
 
   function updateRetry(partial: Partial<NonNullable<WorkflowHook['retry']>>) {
-    const current = hook.retry ?? { maxAttempts: 3, delayMs: 5000 };
+    const current = hook.retry ?? {
+      maxAttempts: isCodexApprovalValidator ? 0 : 3,
+      delayMs: isCodexApprovalValidator ? 60_000 : 5_000,
+    };
     onChange({ ...hook, retry: { ...current, ...partial } });
   }
 
@@ -721,7 +726,9 @@ export function HookEditorPanel({
                     onInput={(e) => {
                       const val = Number((e.currentTarget as HTMLInputElement).value);
                       if (isNaN(val)) return;
-                      updateRetry({ maxAttempts: Math.max(1, Math.min(20, val)) });
+                      updateRetry({
+                        maxAttempts: Math.max(isCodexApprovalValidator ? 0 : 1, Math.min(20, val)),
+                      });
                     }}
                     class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1 text-gray-200 font-mono focus:outline-none focus:border-blue-500"
                   />

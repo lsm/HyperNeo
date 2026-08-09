@@ -154,6 +154,7 @@ interface Harness {
   taskRepo: SpaceTaskRepository;
   taskManager: SpaceTaskManager;
   artifactRepo: WorkflowRunArtifactRepository;
+  artifactProfile: CodingArtifactProfile;
   spawned: RecordedSpawn[];
   injected: Array<{ taskId: string; message: string }>;
   aliveSessions: Set<string>;
@@ -561,5 +562,28 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
     expect(final?.pendingCompletionSubmittedByNodeId).toBeNull();
     expect(final?.pendingCompletionSubmittedAt).toBeNull();
     expect(final?.pendingCompletionReason).toBeNull();
+  });
+
+  test('resolvePrimaryLinkUrl accepts a decision-artifact pr_url (post-approval/migration compat)', async () => {
+    // Regression: the legacy-tolerant resolver must still accept a `pr_url` on a
+    // free-form artifact — post-approval records the PR on a `decision` artifact
+    // (migration 166 preserves URL-plus-summary results that way), and the
+    // `{{pr_url}}` template relies on it.
+    const coding = h.workflowManager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === CODING_WORKFLOW.name)!;
+    const { runId } = seedRunAndTask(h, coding.id, 'resolver probe');
+    const POISON = 'https://github.com/example/repo/pull/999';
+    h.artifactRepo.upsert({
+      id: 'note-poison',
+      runId,
+      nodeId: 'n',
+      artifactType: 'note',
+      artifactKey: 'x',
+      data: { summary: 'x', pr_url: POISON },
+    });
+    const profile = new CodingArtifactProfile({ db: h.db, artifactRepo: h.artifactRepo });
+    // Legacy-tolerant (post-approval compat): accepts the artifact pr_url.
+    expect(profile.resolvePrimaryLinkUrl(runId)).toBe(POISON);
   });
 });

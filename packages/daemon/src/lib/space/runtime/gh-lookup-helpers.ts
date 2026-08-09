@@ -206,15 +206,21 @@ export async function runGhJson(
     timeoutMs?: number;
     hostHint?: string;
     resourceHint?: 'core' | 'graphql';
+    /** Strip GH_REPO from the spawn env so the lookup targets the local
+     *  workspace repository, not a GH_REPO override. */
+    stripGHRepo?: boolean;
   }
 ): Promise<ConnectorOutcome> {
   const timeoutMs = options?.timeoutMs ?? DEFAULT_GH_LOOKUP_TIMEOUT_MS;
+
+  const ghEnv = buildGitHubLookupEnv();
+  if (options?.stripGHRepo) delete ghEnv.GH_REPO;
 
   let proc;
   try {
     proc = spawnImpl(args, {
       cwd,
-      env: buildGitHubLookupEnv(),
+      env: ghEnv,
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -222,7 +228,9 @@ export async function runGhJson(
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 
+  let timedOut = false;
   const killTimer = setTimeout(() => {
+    timedOut = true;
     try {
       proc.kill('SIGKILL');
     } catch {
@@ -264,14 +272,73 @@ export async function runGhJson(
         retryAfterMs: computeRateLimitRetryMs(resetEpoch),
       };
     }
+    // Transient transport/server failures (HTTP 5xx, timeouts, DNS/connection
+    // errors) — and the helper's own kill-timer firing (gh exits with empty
+    // stderr, e.g. code 137) — are retryable: a polling gate must not
+    // terminally block (and clear a queued handoff) on a brief GitHub stall.
+    // Auth/parse/not-found errors fall through to the terminal return below.
+    if (timedOut || isTransientGhError(errorText)) {
+      return {
+        ok: false,
+        error: timedOut ? `gh lookup timed out after ${timeoutMs}ms` : errorText,
+        retryable: true,
+        retryAfterMs: RATE_LIMIT_MIN_BACKOFF_MS,
+      };
+    }
     return { ok: false, error: errorText };
   }
 
   const parsed = parseJsonAny(stdoutResult.text);
   if (parsed === undefined) {
-    return { ok: false, error: 'gh produced empty or non-JSON stdout' };
+    // A deliberately truncated response (oversized, e.g. a large comments page
+    // exceeding MAX_BUFFER_BYTES) is a DETERMINISTIC size error — retrying the
+    // same lookup would livelock on the identical oversized page, so it stays
+    // terminal. Only genuine transient non-JSON (e.g. an HTML 5xx error page)
+    // is retryable.
+    if (stdoutResult.truncated) {
+      return {
+        ok: false,
+        error: `gh response exceeded the ${MAX_BUFFER_BYTES}-byte buffer and was truncated`,
+      };
+    }
+    return {
+      ok: false,
+      error: 'gh produced empty or non-JSON stdout',
+      retryable: true,
+      retryAfterMs: RATE_LIMIT_MIN_BACKOFF_MS,
+    };
   }
   return { ok: true, data: parsed };
+}
+
+/**
+ * Classify a `gh` stderr/exit message as a TRANSIENT transport/server failure
+ * worth retrying: HTTP 5xx, gateway/server errors, timeouts, and DNS /
+ * connection failures. Deliberately conservative — merge-conflict / not-found /
+ * auth (4xx) errors live in the response body or distinct text and stay
+ * terminal so a genuinely broken request surfaces a clear error.
+ *
+ * The `timeout|timed out` pattern is scoped to gh's OWN transport stderr (a gh
+ * or network timeout reported in the error text); the helper's separate
+ * kill-timer case (gh killed with empty stderr) is handled via the `timedOut`
+ * flag, not this pattern. These ops never invoke `gh pr checks`, so CI timeout
+ * text is not a concern here.
+ */
+function isTransientGhError(errorText: string): boolean {
+  return (
+    /HTTP\s*5\d\d/i.test(errorText) ||
+    /server error/i.test(errorText) ||
+    /bad gateway/i.test(errorText) ||
+    /service unavailable/i.test(errorText) ||
+    /internal server error/i.test(errorText) ||
+    /timeout|timed out/i.test(errorText) ||
+    /deadline exceeded/i.test(errorText) ||
+    /dial tcp/i.test(errorText) ||
+    /no such host/i.test(errorText) ||
+    /connection refused/i.test(errorText) ||
+    /connection reset/i.test(errorText) ||
+    /temporary failure/i.test(errorText)
+  );
 }
 
 /** Parse stdout as JSON, accepting objects AND arrays. Returns undefined when
