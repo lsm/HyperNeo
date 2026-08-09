@@ -64,6 +64,34 @@ describe('MessageQueue', () => {
     });
   });
 
+  it('suppresses the pre-yield callback only when requested by ACP', async () => {
+    const yielded: string[] = [];
+    queue.onMessageYielded = (id) => yielded.push(id);
+    queue.start();
+
+    const delivery = queue.enqueue('ACP prompt');
+    const generator = queue.messageGenerator(testSessionId, { suppressPreYieldCallback: true });
+    const result = await generator.next();
+    expect(yielded).toEqual([]);
+    result.value.onSent();
+    await delivery;
+    queue.stop();
+  });
+
+  it('keeps the SDK pre-yield callback behavior by default', async () => {
+    const yielded: string[] = [];
+    queue.onMessageYielded = (id) => yielded.push(id);
+    queue.start();
+
+    const delivery = queue.enqueue('SDK prompt');
+    const generator = queue.messageGenerator(testSessionId);
+    const result = await generator.next();
+    expect(yielded).toHaveLength(1);
+    result.value.onSent();
+    await delivery;
+    queue.stop();
+  });
+
   describe('clear', () => {
     it('should clear all pending messages', async () => {
       const promise1 = queue.enqueue('Message 1');
@@ -116,6 +144,43 @@ describe('MessageQueue', () => {
 
     it('should return false for an unknown message ID', () => {
       expect(queue.remove('missing-message')).toBe(false);
+    });
+
+    it('removes a generator-claimed message before the actual yield', async () => {
+      queue.start();
+      const acknowledgment = queue.enqueueWithId('claimed-to-remove', 'Message 1');
+      const generator = queue.messageGenerator(testSessionId);
+
+      // next() runs synchronously up to its first await: the message is already
+      // shifted out of `queue` and claimed by the generator, but not yet yielded.
+      const nextPromise = generator.next();
+
+      // Revocation still wins in the claimed (pre-yield) state.
+      expect(queue.remove('claimed-to-remove')).toBe(true);
+      expect(queue.size()).toBe(0);
+      await acknowledgment;
+
+      // The generator skips the revoked claim and waits for the next message.
+      queue.stop();
+      const result = await nextPromise;
+      expect(result.done).toBe(true);
+    });
+
+    it('returns false once the message has actually been yielded', async () => {
+      queue.start();
+      const acknowledgment = queue.enqueueWithId('yielded-kept', 'Message 1');
+      const generator = queue.messageGenerator(testSessionId);
+
+      const result = await generator.next();
+      expect(result.done).toBe(false);
+
+      // Provider ownership has won — removal must not report success.
+      expect(queue.remove('yielded-kept')).toBe(false);
+      expect(queue.size()).toBe(1);
+
+      result.value.onSent();
+      await acknowledgment;
+      queue.stop();
     });
   });
 
@@ -208,26 +273,34 @@ describe('MessageQueue', () => {
       expect(result.done).toBe(true);
     });
 
-    it('clear() rejects a yielded-but-unacknowledged message so its enqueue promise settles', async () => {
-      // messageGenerator shifts a message out of the queue before yielding it,
-      // and the enqueue promise only resolves once the SDK calls onSent. If an
-      // interrupt lands in that gap, clear() must still reject the promise —
-      // otherwise `await enqueueWithId()` hangs forever.
+    it('clear() resolves a yielded-but-unacknowledged message', async () => {
       queue.start();
       const messagePromise = queue.enqueueWithId('msg-inflight', 'Hello');
       const generator = queue.messageGenerator(testSessionId);
 
       const result = await generator.next();
       expect(result.done).toBe(false);
-      // Do NOT call onSent — the SDK hasn't acknowledged yet.
 
       queue.clear();
-      await expect(messagePromise).rejects.toThrow('Interrupted by user');
+      await expect(messagePromise).resolves.toBeUndefined();
+    });
+
+    it('rejects when onMessageYielded throws and does not count the message as yielded', async () => {
+      queue.start();
+      const callbackError = new Error('yield persistence failed');
+      queue.onMessageYielded = () => {
+        throw callbackError;
+      };
+      const acknowledgment = queue.enqueueWithId('msg-callback-failure', 'Hello');
+      const rejection = acknowledgment.catch((error) => error);
+      const generator = queue.messageGenerator(testSessionId);
+
+      await expect(generator.next()).rejects.toBe(callbackError);
+      expect(await rejection).toBe(callbackError);
+      expect(queue.size()).toBe(0);
     });
 
     it('size() counts messages shifted out and yielded but not yet acknowledged', async () => {
-      // handleInterrupt clears only when size() > 0, so a yielded kickoff (only
-      // in inFlight) must still count here or clear() would be skipped.
       queue.start();
       queue.enqueueWithId('msg-inflight-size', 'Hello');
       const generator = queue.messageGenerator(testSessionId);
@@ -569,6 +642,15 @@ describe('MessageQueue', () => {
   });
 
   describe('enqueueWithId', () => {
+    it('admits synchronously and returns an acknowledgment promise', async () => {
+      const acknowledgment = queue.admitWithId('sync-admission', 'Test message');
+
+      expect(acknowledgment).toBeInstanceOf(Promise);
+      expect(queue.size()).toBe(1);
+      expect(queue.remove('sync-admission')).toBe(true);
+      await acknowledgment;
+    });
+
     it('should enqueue message with pre-generated ID', async () => {
       queue.start();
 
@@ -828,6 +910,45 @@ describe('MessageQueue', () => {
       await promise4;
 
       queue.stop();
+    });
+  });
+
+  describe('durable delivery feeds — TTL bypass (#3742616720)', () => {
+    it('a yielded-but-unacknowledged DURABLE feed RESOLVES on timeout (no duplicate re-feed)', async () => {
+      const q = new MessageQueue();
+      q.overrideTimeoutMsForTest(40);
+      q.start();
+      const promise = q.enqueueWithId('msg-durable', 'hello', false, { durable: true });
+      // Drive the generator one step: the message is shifted out and yielded to
+      // the SDK (now in `inFlight`) but onSent never fires within the timeout.
+      const generator = q.messageGenerator('test-session');
+      const result = await generator.next();
+      expect(result.done).toBe(false);
+      // After the (short) timeout, a durable feed RESOLVES — the live SDK already
+      // holds the UUID, so a reject → handler fail → job retry → re-feed would
+      // execute the user's request twice.
+      await expect(promise).resolves.toBeUndefined();
+      q.stop();
+    });
+
+    it('a yielded-but-unacknowledged NON-durable feed still rejects (legacy behavior)', async () => {
+      const q = new MessageQueue();
+      q.overrideTimeoutMsForTest(40);
+      q.start();
+      const promise = q.enqueueWithId('msg-legacy', 'hello');
+      const generator = q.messageGenerator('test-session');
+      await generator.next(); // yield to inFlight, no onSent
+      await expect(promise).rejects.toThrow('Message queue timeout');
+      q.stop();
+    });
+
+    it('a DURABLE feed that was never yielded still rejects (genuine stall → safe retry)', async () => {
+      const q = new MessageQueue();
+      q.overrideTimeoutMsForTest(40);
+      // Do NOT start / drive the generator: the message stays in `queue` (never
+      // reached the SDK). A retry cannot duplicate it, so rejecting is correct.
+      const promise = q.enqueueWithId('msg-stalled', 'hello', false, { durable: true });
+      await expect(promise).rejects.toThrow('Message queue timeout');
     });
   });
 });

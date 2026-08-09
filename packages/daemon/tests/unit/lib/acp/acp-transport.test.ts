@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { buildAcpProcessEnv } from '../../../../src/lib/acp/acp-transport';
+import { AcpTransport, buildAcpProcessEnv } from '../../../../src/lib/acp/acp-transport';
 
 describe('buildAcpProcessEnv', () => {
   it('removes provider-managed routing env from ACP subprocess env', () => {
@@ -14,5 +14,29 @@ describe('buildAcpProcessEnv', () => {
     expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
     expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBeUndefined();
+  });
+});
+
+describe('AcpTransport.sendRequest onSubmitted', () => {
+  it('rejects when the onSubmitted callback throws instead of pending until timeout (#3744105279)', async () => {
+    // `sleep` accepts the stdin write but never responds, so only the callback
+    // path can settle this request — if the throw escaped, the promise would
+    // pend until requestTimeoutMs (set far in the future to prove the point).
+    const transport = new AcpTransport({
+      command: 'sleep',
+      args: ['30'],
+      requestTimeoutMs: 60_000,
+    } as never);
+    try {
+      await expect(
+        transport.sendRequest('session/prompt', { sessionId: 's' } as never, {
+          onSubmitted: () => {
+            throw new Error('markMessageSubmitted exploded');
+          },
+        })
+      ).rejects.toThrow('markMessageSubmitted exploded');
+    } finally {
+      await transport.close();
+    }
   });
 });

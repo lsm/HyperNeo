@@ -910,6 +910,18 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // runs remain unpinned because the definition they originally executed cannot be inferred
   // from the current mutable head. The composite FK makes every non-null pin resolvable.
   run(migrationMarkerKey(181), () => runMigration181(db));
+
+  // Migration 182: Partial unique index uq_message_delivery_active_turn on
+  // job_queue lane 'message_delivery' — the atomic "one active turn per
+  // session" guard + turn-vs-steer arbiter for message-delivery v2. See
+  // docs/features/message-delivery-v2.md §6. Idempotent (`CREATE INDEX IF NOT
+  // EXISTS`); no-op on tables that pre-date the lane (no rows ⇒ no conflict).
+  // (Renumbered 180→181→182: dev shipped M180 for space_workflow_definition_versions
+  // in #2412 and M181 for workflow-run definition pinning in #2425.)
+  run(migrationMarkerKey(182), () => runMigration182(db));
+
+  // Migration 183: Widen sdk_messages.send_status for ACP delivery boundaries.
+  run(migrationMarkerKey(183), () => runMigration183(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -7936,6 +7948,84 @@ export function runMigration179(db: BunDatabase): void {
   if (!tableExists(db, 'pending_agent_messages')) return;
   if (tableHasColumn(db, 'pending_agent_messages', 'workflow_node_id')) return;
   db.exec(`ALTER TABLE pending_agent_messages ADD COLUMN workflow_node_id TEXT`);
+}
+
+/**
+ * Migration 182: Partial unique index enforcing "one active turn per session"
+ * on job_queue lane 'message_delivery' (message-delivery v2). The index is the
+ * atomic role arbiter: a `role='turn'` insert either succeeds or hits this
+ * constraint, in which case `deliverMessage` inserts the message as `role=
+ * 'steer'` instead. Steers (`role='steer'`) are excluded from the index so they
+ * coexist with the active turn. A parked/blocked turn-job (pending/processing)
+ * still counts as active, so a message arriving during sdk_resume_choice
+ * correctly becomes a steer, not a competing turn. See
+ * docs/features/message-delivery-v2.md §6. Idempotent (`CREATE ... IF NOT
+ * EXISTS`); no-op on tables that pre-date the lane (no rows ⇒ no conflict).
+ * (Renumbered 180→181→182: dev shipped M180 for space_workflow_definition_versions
+ * in #2412 and M181 for workflow-run definition pinning in #2425.)
+ */
+export function runMigration182(db: BunDatabase): void {
+  if (!tableExists(db, 'job_queue')) return;
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_message_delivery_active_turn
+      ON job_queue (queue, json_extract(payload, '$.sessionId'))
+      WHERE queue = 'message_delivery'
+        AND json_extract(payload, '$.role') = 'turn'
+        AND status IN ('pending', 'processing')
+  `);
+}
+
+/**
+ * Migration 183: Add the ACP submitted delivery state while preserving the
+ * complete sdk_messages schema and dependent SQLite objects.
+ */
+export function runMigration183(db: BunDatabase): void {
+  if (!tableExists(db, 'sdk_messages')) return;
+  const tableSql = tableCreateSql(db, 'sdk_messages');
+  if (!tableSql || tableSql.includes("'submitted'")) return;
+
+  const objects = db
+    .prepare(`SELECT type, name, sql FROM sqlite_master
+      WHERE tbl_name = 'sdk_messages' AND type IN ('index', 'trigger') AND sql IS NOT NULL`)
+    .all() as Array<{ type: string; name: string; sql: string }>;
+  const widenedSql = tableSql
+    .replace(
+      /CREATE TABLE(?: IF NOT EXISTS)?\s+["'`[]?sdk_messages["'`\]]?/i,
+      'CREATE TABLE sdk_messages_m182_new'
+    )
+    .replace(
+      /CHECK\s*\(send_status IN \('deferred', 'enqueued', 'consumed', 'failed'\)\)/,
+      "CHECK(send_status IN ('deferred', 'enqueued', 'submitted', 'consumed', 'failed'))"
+    );
+  if (widenedSql === tableSql) return;
+
+  const columns = db.prepare(`PRAGMA table_xinfo('sdk_messages')`).all() as Array<{
+    name: string;
+    hidden: number;
+  }>;
+  const storedColumns = columns
+    .filter((column) => column.hidden === 0)
+    .map((column) => column.name);
+  const quoted = storedColumns.map((name) => `"${name.replaceAll('"', '""')}"`).join(', ');
+  const foreignKeys = (
+    db.prepare(`PRAGMA foreign_keys`).get() as { foreign_keys: number } | undefined
+  )?.foreign_keys;
+
+  db.exec('PRAGMA foreign_keys = OFF');
+  db.exec('BEGIN');
+  try {
+    db.exec(widenedSql);
+    db.exec(`INSERT INTO sdk_messages_m182_new (${quoted}) SELECT ${quoted} FROM sdk_messages`);
+    db.exec('DROP TABLE sdk_messages');
+    db.exec('ALTER TABLE sdk_messages_m182_new RENAME TO sdk_messages');
+    for (const object of objects) db.exec(object.sql);
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  } finally {
+    db.exec(`PRAGMA foreign_keys = ${foreignKeys === 0 ? 'OFF' : 'ON'}`);
+  }
 }
 
 /**

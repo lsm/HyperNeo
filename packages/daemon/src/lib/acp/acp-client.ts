@@ -276,7 +276,10 @@ export class AcpClient {
   /**
    * Send a prompt and yield streaming update notifications.
    */
-  async *sendPrompt(prompt: AcpContentBlock[]): AsyncGenerator<AcpSessionUpdateNotification> {
+  async *sendPrompt(
+    prompt: AcpContentBlock[],
+    callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+  ): AsyncGenerator<AcpSessionUpdateNotification> {
     if (!this.sessionId) {
       throw new Error('No active session. Call createSession() first.');
     }
@@ -286,11 +289,29 @@ export class AcpClient {
     let resolveNext: (() => void) | null = null;
     let done = false;
     let error: Error | null = null;
+    let accepted = false;
+    const accept = () => {
+      if (accepted) return;
+      // Mark accepted only AFTER the callback succeeds: a throwing callback
+      // (e.g. markMessageAccepted hitting a SQLite/MessageHub failure) leaves
+      // acceptance retryable on later notifications instead of suppressing it,
+      // and the response path below still sets done — a callback failure must
+      // never leave sendPrompt waiting forever on a settled request. See Codex
+      // (#3743968037).
+      callbacks?.onAccepted?.();
+      accepted = true;
+    };
 
     const subscriber = (notification: AcpJsonRpcNotification) => {
       if (notification.method !== 'session/update') return;
       const params = notification.params as AcpSessionUpdateNotification;
       if (params.sessionId !== this.sessionId) return;
+      try {
+        accept();
+      } catch {
+        // Acceptance callback failed — retryable on the next session/update or
+        // the prompt-response fallback; the update itself is still delivered.
+      }
       queue.push(params);
       if (resolveNext) {
         resolveNext();
@@ -301,10 +322,14 @@ export class AcpClient {
     this.notificationSubscribers.add(subscriber);
 
     const requestPromise = this.transport
-      .sendRequest('session/prompt', {
-        sessionId: this.sessionId,
-        prompt,
-      } as AcpSessionPromptParams)
+      .sendRequest(
+        'session/prompt',
+        {
+          sessionId: this.sessionId,
+          prompt,
+        } as AcpSessionPromptParams,
+        { onSubmitted: callbacks?.onSubmitted }
+      )
       .then(
         (response) => {
           if ('error' in response) {
@@ -312,6 +337,13 @@ export class AcpClient {
           } else {
             const result = response.result as AcpSessionPromptResult;
             this.lastPromptStopReason = result.stopReason;
+            try {
+              accept();
+            } catch {
+              // Acceptance callback failed — the row stays retryable and the
+              // runner's end-of-run settle terminalizes it; never leave
+              // `done` unset or sendPrompt waits forever on a settled request.
+            }
           }
           done = true;
         },

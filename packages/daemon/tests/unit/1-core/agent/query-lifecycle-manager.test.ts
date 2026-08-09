@@ -105,6 +105,9 @@ describe('QueryLifecycleManager', () => {
         updateMessageStatus: updateMessageStatusSpy,
         getMessagesByStatus: getMessagesByStatusSpy,
         saveHyperNeoActionMessage: saveHyperNeoActionMessageSpy,
+        // message-delivery v2 resume-choice dedup: no pre-existing unresolved
+        // action in these tests, so emitSdkResumeChoiceMessage proceeds.
+        getSDKMessageRepo: () => ({ hasUnresolvedHyperNeoAction: () => false }),
       } as unknown as Database,
       messageHub: {
         event: publishSpy,

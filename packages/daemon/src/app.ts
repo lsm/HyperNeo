@@ -80,9 +80,12 @@ import {
   JOB_QUEUE_CLEANUP,
   LONG_HORIZON_AGENT_REMINDER_FIRE,
   MEMORY_CONSOLIDATION,
+  MESSAGE_DELIVERY,
   SKILL_VALIDATE,
   TASK_SCHEDULE_FIRE,
 } from './lib/job-queue-constants';
+import { createMessageDeliveryHandler } from './lib/job-handlers/message-delivery.handler';
+import { asMessageDeliveryPayload } from './lib/agent/message-delivery';
 import { handleTaskScheduleFire } from './lib/job-handlers/task-schedule-fire.handler';
 import {
   backfillLongHorizonAgentReminderNextRunAt,
@@ -334,6 +337,21 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       maxConcurrent,
       staleThresholdMs: 5 * 60 * 1000,
     });
+    // message_delivery runs on a DEDICATED processor with its own budget. A
+    // delivery turn holds its slot for the whole SDK turn (seconds→minutes, or
+    // indefinitely while awaiting user input); sharing the main processor's
+    // budget starved unrelated lanes (task schedules, long-horizon reminders,
+    // GitHub polling, cleanup, memory consolidation) whenever a few turns were
+    // active. A separate budget gives zero cross-lane contention without any
+    // shared-processor surgery. Steers still exempt-bypass THIS budget. See
+    // message-delivery-v2.md + Codex (#3742774839).
+    const messageDeliveryMaxConcurrent =
+      Number(process.env.HYPERNEO_MESSAGE_DELIVERY_MAX_CONCURRENT) || 8;
+    const messageDeliveryProcessor = new JobQueueProcessor(jobQueue, {
+      pollIntervalMs: 1000,
+      maxConcurrent: messageDeliveryMaxConcurrent,
+      staleThresholdMs: 5 * 60 * 1000,
+    });
     // --- setInterval inventory (out-of-scope for job-queue migration) ---
     // The following subsystems intentionally retain their own setInterval timers.
     // They were audited as part of the background-task migration (milestone 6) and
@@ -355,6 +373,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     //   • ProcessWatchdog timer (process-watchdog.ts)
     //       Last-resort OS process leak safety net; intentionally independent from the job queue.
     jobProcessor.setChangeNotifier((table) => {
+      reactiveDb.notifyChange(table);
+    });
+    messageDeliveryProcessor.setChangeNotifier((table) => {
       reactiveDb.notifyChange(table);
     });
     let sessionManager: SessionManager | null = null;
@@ -950,6 +971,71 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       createMemoryConsolidationHandler(db.agentMemory, jobQueue)
     );
 
+    // Message-delivery v2 — durable user-message delivery on job_queue (flag-
+    // gated for ordinary chat; see docs/features/message-delivery-v2.md). The
+    // handler resolves the live AgentSession (which implements
+    // MessageDeliverySession via driveDeliveryTurn/feedDeliverySteer) and loads
+    // content from sdk_messages by UUID. getSession returns null for a closed/
+    // evicted session → the handler fails the job (reclaimStale/processor
+    // re-drives it once the session is back, or it dead-letters after backoff).
+    messageDeliveryProcessor.register(
+      MESSAGE_DELIVERY,
+      createMessageDeliveryHandler({
+        jobQueue,
+        getSession: (sessionId: string) => sessionManager?.getSession(sessionId) ?? null,
+        // Status-aware loader: content + send_status. The handler branches on
+        // status (consumed = already delivered, don't re-feed; deferred = user
+        // deferred; failed = terminal) — see message-delivery.handler + #2592/#2597.
+        getMessageContent: (sessionId: string, messageUuid: string) =>
+          reactiveDb?.db.getSDKMessageRepo().getDeliveryContent(sessionId, messageUuid) ?? null,
+        // Reject delivery for archived sessions — their worktree + SDK subprocess
+        // are torn down; driving a turn would recreate resources or run in the
+        // fallback workspace. See Codex (#3742616723).
+        isSessionArchived: (sessionId: string) =>
+          reactiveDb?.db.getSession(sessionId)?.status === 'archived',
+        markDeliveryFailed: (sessionId: string, messageUuid: string) => {
+          reactiveDb?.db.getSDKMessageRepo().markDeliveryFailedByUuid(sessionId, messageUuid);
+        },
+      }),
+      {
+        // Steers bypass the turn concurrency cap (a separate exempt budget) so a
+        // mid-turn steer reaches the live turn before it ends, instead of being
+        // promoted to a later turn when all capped slots are driving turns. See
+        // Codex (#2587).
+        exemptJobs: { path: '$.role', equals: 'steer' },
+        // Dead-letter hook: a delivery job that exhausted its retry budget
+        // terminalizes the persisted message as `failed` and publishes the status
+        // change. Without this the row stays `enqueued`, which pagination hides —
+        // the user's prompt vanishes without a terminal error. See Codex (#2595).
+        onDead: (job) => {
+          const payload = asMessageDeliveryPayload(job.payload);
+          if (!payload) return;
+          const sdkRepo = reactiveDb?.db.getSDKMessageRepo();
+          if (!sdkRepo) return;
+          const flipped = sdkRepo.markDeliveryFailedByUuid(payload.sessionId, payload.messageUuid);
+          if (flipped) {
+            internalEventBus
+              .publish('messages.statusChanged', {
+                sessionId: payload.sessionId,
+                messageIds: [flipped],
+                status: 'failed',
+              })
+              .catch(() => {
+                /* dead-letter publish is best-effort */
+              });
+          }
+          // Release a pre-claim queued marker still owned by this terminal turn.
+          // Conditional settlement preserves any newer turn's ownership.
+          sessionManager
+            ?.getSession(payload.sessionId)
+            ?.settleSkippedDelivery(payload.messageUuid)
+            .catch(() => {
+              /* dead-letter state settlement is best-effort */
+            });
+        },
+      }
+    );
+
     // Register task-schedule.fire handler.
     const taskScheduleRepo = new TaskScheduleRepository(db.getDatabase());
     const taskScheduleSpaceRepo = new SpaceRepository(db.getDatabase());
@@ -1112,6 +1198,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     // Start job queue processor last (after all handler registrations)
     jobProcessor.start();
     logInfo('[Daemon] Job queue processor started');
+    messageDeliveryProcessor.start();
+    logInfo('[Daemon] Message-delivery job processor started');
     if (process.env.NODE_ENV !== 'test') {
       processWatchdog.start();
       logInfo('[Daemon] Process watchdog started');
@@ -1221,8 +1309,53 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         logInfo('[Daemon] Process watchdog stopped');
         oauthRefreshScheduler.stop();
         logInfo('[Daemon] OAuth refresh scheduler stopped');
+        // Stop delivery polling BEFORE requeueing its in-flight rows. Otherwise
+        // the next poll can reclaim a row while its original handler is still
+        // draining, creating two concurrent handlers for one prompt.
+        messageDeliveryProcessor.stopPolling();
+        logInfo('[Daemon] Message-delivery job polling stopped');
+        // Stop the MAIN processor's polling too before session cleanup: a handler
+        // claimed in this window (e.g. a long-horizon reminder) can create/hydrate
+        // a session AFTER cleanup already drained it, leaving a live SDK process
+        // outside shutdown. Drains run after the session aborts below.
+        jobProcessor.stopPolling();
+        logInfo('[Daemon] Job queue polling stopped');
+        // Requeue in-flight message_delivery turns to pending BEFORE draining the
+        // processor: their handlers are still awaiting the live SDK turn, so
+        // stop() would otherwise block on them until the CLI's shutdown timeout
+        // force-exits, leaving the rows `processing` with a fresh heartbeat. That
+        // blocks next-boot reclamation for the 5-min stale window AND leaves the
+        // active-turn index pointing at a turn no live handler drives (new prompts
+        // misrouted as steers). Requeueing makes them instantly reclaimable; the
+        // still-running handlers' later complete()/fail() is a no-op. See #2593.
+        try {
+          const requeued = jobQueue.requeueAllProcessing(MESSAGE_DELIVERY, Date.now());
+          if (requeued > 0) {
+            logInfo(`[Daemon] Requeued ${requeued} in-flight message_delivery job(s) for restart`);
+          }
+        } catch {
+          /* best-effort on shutdown */
+        }
+        // Drain the MAIN processor BEFORE session cleanup. stopPolling stops new
+        // claims but an already-claimed handler (e.g. a long-horizon reminder
+        // suspended in pre-session async work) can resume after cleanup and
+        // hydrate a session that will never be cleaned this shutdown. Draining
+        // here quiesces those handlers first; any session they hydrate is then
+        // caught by the cleanup below. Main handlers don't block on a session
+        // queryPromise, so this drain can't wedge on the very cleanup it
+        // precedes. See Codex (#3744886835, #3744971819).
         await jobProcessor.stop();
         logInfo('[Daemon] Job queue processor stopped');
+        // Stop active sessions before draining delivery handlers: a turn handler
+        // awaits its session queryPromise, so requeueing the DB row alone cannot
+        // make stop() finish. Cleanup aborts those queries and lets the handlers
+        // unwind. Task-agent sessions go first for the same reason.
+        await taskAgentManager.cleanupAll();
+        await sessionManager.cleanup();
+        logInfo('[Daemon] Active agent sessions stopped');
+
+        await messageDeliveryProcessor.stop();
+        logInfo('[Daemon] Message-delivery job processor stopped');
 
         // Cleanup MessageHub (rejects remaining calls)
         messageHub.cleanup();
@@ -1244,15 +1377,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         }
         logInfo('[Daemon] External event extensions stopped');
 
-        // Stop all Task Agent sessions before sessionManager.cleanup() so that
-        // Task Agent sessions are interrupted cleanly before the session pool drains.
-        await taskAgentManager.cleanupAll();
-
-        // Stop all agent sessions first — this closes any open SSE connections
-        // that are held by providers (e.g. AnthropicToCopilotBridgeProvider's embedded
-        // HTTP server). Provider shutdown must follow so server.close() is not
-        // blocked waiting for those connections to drain.
-        await sessionManager.cleanup();
+        // Active sessions were stopped before processor drain above. Provider
+        // shutdown follows so all SSE/CLI connections are already closed.
 
         // Shut down providers that hold background resources (e.g. embedded
         // HTTP servers and CLI subprocesses). Runs after sessionManager.cleanup()

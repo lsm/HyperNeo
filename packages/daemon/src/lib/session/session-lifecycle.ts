@@ -656,8 +656,31 @@ export class SessionLifecycle {
     }
 
     const completedPhases: string[] = [];
+    const archivedAt = new Date().toISOString();
 
-    // PHASE 1: Stop in-memory SDK subprocess.
+    // PHASE 0: Commit the persisted archive barrier BEFORE cancellation or any
+    // teardown. Every enqueue/hydrate/claim/feed guard now sees archived for the
+    // entire destructive window, so cancelForSession cannot be bypassed by a send
+    // arriving between point-in-time cancellation and phase 4.
+    await this.update(sessionId, { status: 'archived', archivedAt });
+    completedPhases.push('db-mark-archived');
+
+    // PHASE 1: Cancel active deliveries after the barrier. Terminalize any still
+    // enqueued prompt so archive cannot leave a hidden orphan after deleting its
+    // durable owner.
+    try {
+      const messageUuids =
+        this.db.getJobQueueRepo?.()?.cancelForSessionWithMessages(sessionId) ?? [];
+      const sdkRepo = this.db.getSDKMessageRepo?.();
+      for (const messageUuid of messageUuids) {
+        sdkRepo?.markDeliveryFailedByUuid(sessionId, messageUuid);
+      }
+      completedPhases.push('delivery-cancel');
+    } catch (error) {
+      this.logger.error(`[SessionLifecycle] archiveResources: delivery cancel failed:`, error);
+    }
+
+    // PHASE 2: Stop in-memory SDK subprocess.
     if (agentSession) {
       try {
         await agentSession.cleanup();
@@ -715,10 +738,9 @@ export class SessionLifecycle {
       }
     }
 
-    // PHASE 4: Update session row (status=archived). DB row and sdk_messages are preserved.
-    // If the session had a worktree, clear it now that the on-disk worktree has been
-    // removed — otherwise UIs (and RPCs like `session.get`) would continue to surface a
-    // stale `session.worktree` pointing at a deleted path.
+    // FINALIZE: append cleanup metadata while preserving the archive barrier
+    // committed before teardown. If the session had a worktree, clear it now that
+    // the on-disk worktree has been removed.
     try {
       const archivedWorktreeMetadata = session.worktree
         ? {
@@ -736,7 +758,7 @@ export class SessionLifecycle {
 
       await this.update(sessionId, {
         status: 'archived',
-        archivedAt: new Date().toISOString(),
+        archivedAt,
         ...(session.worktree ? { worktree: undefined } : {}),
         ...(Object.keys(metadataUpdate).length > 0
           ? {
@@ -747,7 +769,7 @@ export class SessionLifecycle {
             }
           : {}),
       });
-      completedPhases.push('db-mark-archived');
+      completedPhases.push('db-finalize-archive');
     } catch (error) {
       this.logger.error(`[SessionLifecycle] archiveResources: status update failed:`, error);
       throw error;
@@ -780,6 +802,32 @@ export class SessionLifecycle {
     const completedPhases: string[] = [];
 
     try {
+      // PHASE 0: Commit the persisted archive barrier + cancel durable
+      // deliveries BEFORE any teardown, mirroring archiveResources. Deletion
+      // destroys the same resources (agent, SDK files, worktree) while the
+      // session row is still `active`, so without the barrier a send or a
+      // claimed delivery job passes the archived checks and drives against a
+      // half-deleted session; job_queue has no session FK, so pending jobs
+      // would also survive the row delete. See Codex (#3743968033).
+      if (session && session.status !== 'archived') {
+        await this.update(sessionId, {
+          status: 'archived',
+          archivedAt: new Date().toISOString(),
+        });
+        completedPhases.push('db-mark-archived');
+      }
+      try {
+        const messageUuids =
+          this.db.getJobQueueRepo?.()?.cancelForSessionWithMessages(sessionId) ?? [];
+        const sdkRepo = this.db.getSDKMessageRepo?.();
+        for (const messageUuid of messageUuids) {
+          sdkRepo?.markDeliveryFailedByUuid(sessionId, messageUuid);
+        }
+        completedPhases.push('delivery-cancel');
+      } catch (error) {
+        this.logger.error(`[SessionLifecycle] deleteResources: delivery cancel failed:`, error);
+      }
+
       // PHASE 1: Cleanup AgentSession (stops SDK subprocess)
       if (agentSession) {
         try {

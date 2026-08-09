@@ -9,7 +9,12 @@
 
 import type { Database as BunDatabase } from '../sqlite-compat';
 import { generateUUID } from '@hyperneo/shared';
-import type { MessageOrigin, HyperNeoActionMessage, ChatMessage } from '@hyperneo/shared';
+import type {
+  MessageContent,
+  MessageOrigin,
+  HyperNeoActionMessage,
+  ChatMessage,
+} from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
 import type { ReactiveDatabase } from '../reactive-database';
@@ -24,7 +29,7 @@ import {
 } from '../message-search';
 import type { SQLiteValue } from '../types';
 
-export type SendStatus = 'deferred' | 'enqueued' | 'consumed' | 'failed';
+export type SendStatus = 'deferred' | 'enqueued' | 'submitted' | 'consumed' | 'failed';
 
 const MESSAGE_SEARCH_TERMINAL_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const ROOM_SESSION_PREFIXES = ['room:chat:', 'planner:', 'coder:', 'leader:', 'general:'];
@@ -1411,7 +1416,7 @@ export class SDKMessageRepository {
 
     const placeholders = messageIds.map(() => '?').join(',');
     // #2338: BEFORE the flip, capture the user-anchor rows that are NOT yet
-    // anchored (still enqueued/deferred). Only these need a fresh turn when
+    // anchored (still deferred/enqueued/submitted). Only these need a fresh turn when
     // they become consumed/failed. Rows already consumed/failed are already
     // anchored and must keep their turn — recoverOrphanedConsumedMessages
     // flips already-consumed rows to 'failed', and re-bumping those would
@@ -1427,13 +1432,13 @@ export class SDKMessageRepository {
                   AND message_type = 'user'
                   AND is_renderable = 1
                   AND task_id IS NOT NULL
-                  AND send_status IN ('enqueued', 'deferred')
+                  AND send_status IN ('deferred', 'enqueued', 'submitted')
                 ORDER BY rowid ASC`
             )
             .all(...messageIds) as Array<{ id: string; task_id: string }>)
         : [];
     // A send_status transition can flip a user row's badge visibility
-    // (deferred/enqueued -> consumed/failed), so capture the affected sessions
+    // (deferred/enqueued/submitted -> consumed/failed), so capture the affected sessions
     // and recompute their counters after the update.
     const affectedSessions = this.supportsVisibleMessageCount()
       ? (this.db
@@ -1509,7 +1514,8 @@ export class SDKMessageRepository {
    */
   deletePendingUserMessage(
     sessionId: string,
-    messageId: string
+    messageId: string,
+    expectedStatus?: 'deferred' | 'enqueued'
   ): { dbId: string; uuid: string; status: 'deferred' | 'enqueued' } | null {
     const row = this.db
       .prepare(
@@ -1519,9 +1525,10 @@ export class SDKMessageRepository {
 				    AND id = ?
 				    AND message_type = 'user'
 				    AND send_status IN ('deferred', 'enqueued')
+            AND (? IS NULL OR send_status = ?)
 				  LIMIT 1`
       )
-      .get(sessionId, messageId) as
+      .get(sessionId, messageId, expectedStatus ?? null, expectedStatus ?? null) as
       | { id: string; sdk_message: string; send_status: 'deferred' | 'enqueued' }
       | undefined;
 
@@ -1535,13 +1542,16 @@ export class SDKMessageRepository {
 				  WHERE session_id = ?
 				    AND id = ?
 				    AND message_type = 'user'
-				    AND send_status IN ('deferred', 'enqueued')`
+				    AND send_status IN ('deferred', 'enqueued')
+            AND (? IS NULL OR send_status = ?)`
     );
     // Wrap DELETE + counter recompute in one transaction (FTS cleanup below is
     // best-effort, outside the tx) so an FTS throw can't leave the counter stale.
     let deleted = false;
     this.db.transaction(() => {
-      deleted = deleteStmt.run(sessionId, messageId).changes > 0;
+      deleted =
+        deleteStmt.run(sessionId, messageId, expectedStatus ?? null, expectedStatus ?? null)
+          .changes > 0;
       if (deleted) this.recomputeVisibleMessageCount(sessionId);
     })();
 
@@ -1557,6 +1567,34 @@ export class SDKMessageRepository {
       uuid: message.uuid ?? '',
       status: row.send_status,
     };
+  }
+
+  /**
+   * Compare-and-set one enqueued user message to deferred. Returns its UUID only
+   * when this mutation wins before SDK/provider delivery.
+   */
+  deferEnqueuedUserMessage(
+    sessionId: string,
+    messageId: string
+  ): { dbId: string; uuid: string } | null {
+    const row = this.db
+      .prepare(
+        `SELECT id, sdk_message FROM sdk_messages
+          WHERE session_id = ? AND id = ? AND message_type = 'user'
+            AND send_status = 'enqueued' LIMIT 1`
+      )
+      .get(sessionId, messageId) as { id: string; sdk_message: string } | undefined;
+    if (!row) return null;
+    const changed = this.db
+      .prepare(
+        `UPDATE sdk_messages SET send_status = 'deferred'
+          WHERE session_id = ? AND id = ? AND message_type = 'user'
+            AND send_status = 'enqueued'`
+      )
+      .run(sessionId, messageId).changes;
+    if (changed === 0) return null;
+    const message = JSON.parse(row.sdk_message) as { uuid?: string };
+    return { dbId: row.id, uuid: message.uuid ?? '' };
   }
 
   /**
@@ -1727,6 +1765,104 @@ export class SDKMessageRepository {
       if (rows[i].timestamp < earliest.timestamp) earliest = rows[i];
     }
     return this.parseUserMessageRow(earliest, uuid);
+  }
+
+  /**
+   * Load the raw `message.content` (string OR content-block array) for a user
+   * message by UUID, preserving multimodal blocks (images, tool_results, extra
+   * text). Used by the message-delivery v2 handler to feed the transport WITHOUT
+   * the data-loss of the text-flattening {@link getUserMessageByUuid} (which is
+   * display/rewind-oriented). Status-agnostic (a retried message may be
+   * consumed/failed by the time the handler loads it). Returns null if no user
+   * row matches or the blob is unparseable. Earliest match wins (consistent with
+   * getUserMessageByUuid if a uuid is shared by several rows).
+   */
+  getUserMessageContentByUuid(sessionId: string, uuid: string): string | MessageContent[] | null {
+    const row = this.db
+      .prepare(
+        `SELECT sdk_message FROM sdk_messages
+           WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
+           ORDER BY timestamp ASC LIMIT 1`
+      )
+      .get(sessionId, uuid) as { sdk_message: string } | undefined;
+    if (!row) return null;
+    try {
+      const message = JSON.parse(row.sdk_message) as {
+        message?: { content?: string | MessageContent[] };
+      };
+      return message.message?.content ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Load a user message's content blocks AND `send_status` by UUID — used by the
+   * message-delivery v2 handler to decide whether feeding is warranted BEFORE it
+   * drives/feeds (status-aware delivery). This is what makes recovery safe:
+   *
+   * - `consumed` kickoff → a prior attempt already fed it (before a crash). The
+   *   SDK's resume-from-history already holds it, so re-feeding would DUPLICATE
+   *   the user's prompt. The handler skips the feed (and just ensures the query
+   *   is running so history drives the turn).
+   * - `deferred` → the user deferred it via "send next"; don't force-feed it into
+   *   the running turn.
+   * - `failed` → already terminal.
+   * - `enqueued` → pending delivery; feed normally.
+   *
+   * See docs/features/message-delivery-v2.md §8 + Codex (#2592 consumed-kickoff,
+   * #2597 defer). COALESCE(NULL→'consumed') so a NULL status (defensive) is
+   * treated as already-delivered, never re-fed.
+   */
+  getDeliveryContent(
+    sessionId: string,
+    uuid: string
+  ): { content: string | MessageContent[]; sendStatus: SendStatus } | null {
+    const row = this.db
+      .prepare(
+        `SELECT sdk_message, COALESCE(send_status, 'consumed') AS send_status
+           FROM sdk_messages
+          WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
+          ORDER BY timestamp ASC LIMIT 1`
+      )
+      .get(sessionId, uuid) as { sdk_message: string; send_status: SendStatus } | undefined;
+    if (!row) return null;
+    try {
+      const message = JSON.parse(row.sdk_message) as {
+        message?: { content?: string | MessageContent[] };
+      };
+      const content = message.message?.content ?? null;
+      if (content === null) return null;
+      return { content, sendStatus: row.send_status };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Terminalize a user message as `failed` by UUID — the message-delivery v2
+   * dead-letter path. Called from the processor's `onDead` hook when a delivery
+   * job exhausts its retry budget; without this, the persisted row stays
+   * `enqueued`, which pagination hides, so the user's prompt vanishes without a
+   * terminal error. Only flips rows still pending delivery (`enqueued`/
+   * `deferred`) — a `consumed` row means the turn ran (don't fail it), a
+   * `failed` row is idempotent. Returns the flipped db id (so the caller can
+   * publish the status change), else null. See Codex (#2595).
+   */
+  markDeliveryFailedByUuid(sessionId: string, uuid: string): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT id FROM sdk_messages
+           WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
+             AND send_status IN ('enqueued', 'deferred', 'submitted')
+           ORDER BY timestamp ASC LIMIT 1`
+      )
+      .get(sessionId, uuid) as { id: string } | undefined;
+    if (!row) return null;
+    // updateMessageStatus handles the turn-assignment + visible-counter
+    // bookkeeping for the consumed/failed transition.
+    this.updateMessageStatus([row.id], 'failed');
+    return row.id;
   }
 
   private parseUserMessageRow(
@@ -1918,6 +2054,28 @@ export class SDKMessageRepository {
     if (countsTowardsBadge) this.notifySessionsChanged(sessionId);
     this.upsertMessageSearchRow(id);
     return id;
+  }
+
+  /**
+   * True iff an UNRESOLVED HyperNeo action message of the given action kind
+   * exists for the session. Used to dedupe the sdk_resume_choice prompt: under
+   * message-delivery v2, a blocked turn job is PARKED and re-claimed every few
+   * seconds, and each reclaim re-runs ensureQueryStarted → emitSdkResumeChoice.
+   * Without this guard that would pile up ~12 duplicate action cards/min. See
+   * message-delivery-v2.md §8 + review P2.
+   */
+  hasUnresolvedHyperNeoAction(sessionId: string, action: string): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT 1 FROM sdk_messages
+           WHERE session_id = ?
+             AND message_type = 'hyperneo_action'
+             AND message_subtype = ?
+             AND json_extract(sdk_message, '$.resolved') = 0
+           LIMIT 1`
+      )
+      .get(sessionId, action);
+    return row !== undefined;
   }
 
   /**

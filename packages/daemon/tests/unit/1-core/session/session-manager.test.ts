@@ -1157,6 +1157,25 @@ describe('SessionManager', () => {
       await sessionManager.interruptInMemorySession('test-id');
     });
 
+    it('reset without restart cancels and terminalizes durable jobs before replacement', async () => {
+      const persistedSession = makePersistedSession();
+      (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(persistedSession);
+      const cancel = mock(() => ['pending-turn', 'pending-steer']);
+      const markFailed = mock(() => null);
+      mockDb.getJobQueueRepo = mock(() => ({ cancelForSessionWithMessages: cancel }));
+      mockDb.getSDKMessageRepo = mock(() => ({ markDeliveryFailedByUuid: markFailed }));
+
+      const oldSession = sessionManager.getSession('test-id')!;
+      const result = await oldSession.resetQuery({ restartQuery: false, hardReset: true });
+      const freshSession = sessionManager.getSession('test-id')!;
+
+      expect(result).toEqual({ success: true });
+      expect(cancel).toHaveBeenCalledWith('test-id');
+      expect(markFailed).toHaveBeenCalledWith('test-id', 'pending-turn');
+      expect(markFailed).toHaveBeenCalledWith('test-id', 'pending-steer');
+      expect(freshSession.getProcessingState().status).toBe('idle');
+    });
+
     it('replaces the cached AgentSession instance without recreating the DB row', async () => {
       const persistedSession = makePersistedSession();
       (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(persistedSession);

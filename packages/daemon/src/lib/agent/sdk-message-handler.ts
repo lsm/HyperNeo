@@ -363,6 +363,12 @@ export class SDKMessageHandler {
       return true;
     }
 
+    const submittedMessage = db.getMessageByStatusAndUuid(session.id, 'submitted', message.uuid);
+    if (submittedMessage) {
+      await this.consumePersistedUserMessage(submittedMessage, message);
+      return true;
+    }
+
     const consumedMessage = db.getMessageByStatusAndUuid(session.id, 'consumed', message.uuid);
     if (consumedMessage) {
       this.acknowledgedPersistedUserThisTurn = true;
@@ -423,9 +429,11 @@ export class SDKMessageHandler {
    */
   private async acknowledgeOldestQueuedUserOnTurnEnd(): Promise<void> {
     const { session, db, internalEventBus, messageHub } = this.ctx;
+    const durableOwned =
+      db.getJobQueueRepo?.()?.activeDeliveryMessageUuids(session.id) ?? new Set();
     const enqueuedUsers = db
       .getMessagesByStatus(session.id, 'enqueued')
-      .filter((enqueued) => isSDKUserMessage(enqueued));
+      .filter((enqueued) => isSDKUserMessage(enqueued) && !durableOwned.has(enqueued.uuid ?? ''));
 
     // Strictly-increasing consumedAt across the loop so two prompts consumed in
     // the same millisecond don't share a timestamp — rewind checkpoints are
@@ -474,6 +482,78 @@ export class SDKMessageHandler {
     }
   }
 
+  markMessageSubmitted(messageId: string): boolean {
+    return this.transitionPersistedMessage(messageId, 'enqueued', 'submitted');
+  }
+
+  markMessageAccepted(messageId: string): void {
+    // ACP acceptance is the provider-specific consume boundary. Reuse the same
+    // projection path as a normal SDK yield so status, timestamp, transcript
+    // delta, and server-side events stay consistent.
+    this.handleMessageYielded(messageId, Date.now());
+  }
+
+  /**
+   * Terminalize an ACP prompt that was submitted to the subprocess but whose
+   * run ended (interrupt / error / adapter close) before any acceptance
+   * signal. Submitted rows are hidden from transcript queries, so without an
+   * explicit settle they stay invisible and nonterminal until restart
+   * recovery. Fail-ambiguous: the row is never auto-replayed. See Codex
+   * (#3743968032).
+   */
+  markMessageSubmissionFailed(messageId: string): void {
+    const { session, db, internalEventBus } = this.ctx;
+    const message = db.getMessageByStatusAndUuid(session.id, 'submitted', messageId);
+    if (!message) return;
+    db.updateMessageStatus([message.dbId], 'failed');
+    internalEventBus
+      .publish('messages.statusChanged', {
+        sessionId: session.id,
+        messageIds: [message.dbId],
+        status: 'failed',
+      })
+      .catch(() => {});
+  }
+
+  /**
+   * Fail-ambiguous terminalization for an ACP prompt that may have reached the
+   * subprocess but never got a definitive acceptance. Covers BOTH enqueued (the
+   * enqueued→submitted transition threw, or remove/defer won) AND submitted (the
+   * run ended before acceptance). The row becomes visible-failed and is never
+   * auto-replayed. See Codex (#3743968032, #3744886836).
+   */
+  markACPDeliveryFailed(messageId: string): void {
+    const { session, db, internalEventBus } = this.ctx;
+    const flipped = db.getSDKMessageRepo().markDeliveryFailedByUuid(session.id, messageId);
+    if (!flipped) return;
+    internalEventBus
+      .publish('messages.statusChanged', {
+        sessionId: session.id,
+        messageIds: [flipped],
+        status: 'failed',
+      })
+      .catch(() => {});
+  }
+
+  private transitionPersistedMessage(
+    messageId: string,
+    fromStatus: 'enqueued',
+    toStatus: 'submitted'
+  ): boolean {
+    const { session, db, internalEventBus } = this.ctx;
+    const message = db.getMessageByStatusAndUuid(session.id, fromStatus, messageId);
+    if (!message) return false;
+    db.updateMessageStatus([message.dbId], toStatus);
+    internalEventBus
+      .publish('messages.statusChanged', {
+        sessionId: session.id,
+        messageIds: [message.dbId],
+        status: toStatus,
+      })
+      .catch(() => {});
+    return true;
+  }
+
   /**
    * Handle message yielded by the generator to the SDK.
    *
@@ -487,7 +567,9 @@ export class SDKMessageHandler {
     const { session, db, internalEventBus, messageHub } = this.ctx;
 
     // Find the persisted message in DB by UUID without scanning every queued row.
-    const enqueuedMessage = db.getMessageByStatusAndUuid(session.id, 'enqueued', messageId);
+    const enqueuedMessage =
+      db.getMessageByStatusAndUuid(session.id, 'enqueued', messageId) ??
+      db.getMessageByStatusAndUuid(session.id, 'submitted', messageId);
     if (!enqueuedMessage) {
       // Could be a 'deferred' message being replayed
       const deferredMessage = db.getMessageByStatusAndUuid(session.id, 'deferred', messageId);

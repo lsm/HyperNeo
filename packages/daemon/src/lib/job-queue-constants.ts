@@ -3,6 +3,12 @@
  * Use these constants when enqueueing or registering handlers to avoid typos.
  */
 
+// ─── Message delivery (v2) ────────────────────────────────────────────────────
+// Durable delivery ownership: one job_queue row per user message (turn or steer).
+// The message-delivery.handler drives the SDK turn / feeds the live transport;
+// see docs/features/message-delivery-v2.md. Flag-gated (HYPERNEO_MESSAGE_DELIVERY_V2).
+export const MESSAGE_DELIVERY = 'message_delivery';
+
 export const SESSION_TITLE_GENERATION = 'session.title_generation';
 export const GITHUB_POLL = 'github.poll';
 export const ROOM_TICK = 'room.tick';

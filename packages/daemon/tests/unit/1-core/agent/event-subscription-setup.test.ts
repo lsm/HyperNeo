@@ -9,11 +9,16 @@ import {
   EventSubscriptionSetup,
   type EventSubscriptionSetupContext,
 } from '../../../../src/lib/agent/event-subscription-setup';
+import { InterruptHandler } from '../../../../src/lib/agent/interrupt-handler';
+import { deliverMessage } from '../../../../src/lib/agent/message-delivery';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
+import { createTables } from '../../../../src/storage/schema/index';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
+import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Session } from '@hyperneo/shared';
 import type { ModelSwitchHandler } from '../../../../src/lib/agent/model-switch-handler';
-import type { InterruptHandler } from '../../../../src/lib/agent/interrupt-handler';
 import type { QueryModeHandler } from '../../../../src/lib/agent/query-mode-handler';
 
 describe('EventSubscriptionSetup', () => {
@@ -183,6 +188,76 @@ describe('EventSubscriptionSetup', () => {
         expect(emitSpy).toHaveBeenCalledWith('agent.interrupted', {
           sessionId: 'test-session-id',
         });
+      });
+
+      it('client.interrupt RPC path cancels pending durable deliveries end-to-end (#3744105273)', async () => {
+        // Drive the exact wiring the client.interrupt RPC takes:
+        // session-handlers publishes agent.interruptRequest → this subscriber →
+        // the REAL InterruptHandler. A pending message_delivery job + its hidden
+        // enqueued SDK row must both be gone afterwards. The round-7 test called
+        // the AgentSession wrapper directly and missed that this path bypassed
+        // the cancel entirely.
+        const raw = new BunDatabase(':memory:');
+        createTables(raw);
+        const jobQueueRepo = new JobQueueRepository(raw);
+        const sdkRepo = new SDKMessageRepository(raw);
+        const sessionId = 'test-session-id';
+        const messageUuid = '11111111-2222-3333-4444-555555555555';
+
+        raw
+          .prepare(
+            `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid)
+             VALUES (?, ?, 'user', ?, ?, 'enqueued', ?)`
+          )
+          .run(
+            'db-msg-1',
+            sessionId,
+            JSON.stringify({ uuid: messageUuid }),
+            new Date().toISOString(),
+            messageUuid
+          );
+        deliverMessage(jobQueueRepo, sessionId, messageUuid, { origin: 'chat' });
+        expect((raw.prepare(`SELECT COUNT(*) AS n FROM job_queue`).get() as { n: number }).n).toBe(
+          1
+        );
+
+        const realInterruptHandler = new InterruptHandler({
+          session: mockContext.session,
+          messageHub: { event: () => {} } as never,
+          messageQueue: { size: () => 0, clear: () => {}, stop: () => {} } as never,
+          stateManager: {
+            getState: () => ({ status: 'processing', phase: 'streaming' }),
+            setInterrupted: async () => {},
+            setIdle: async () => {},
+          } as never,
+          logger: { warn: () => {}, error: () => {}, info: () => {}, debug: () => {} } as never,
+          db: {
+            getJobQueueRepo: () => jobQueueRepo,
+            getSDKMessageRepo: () => sdkRepo,
+          } as never,
+          queryObject: null,
+          queryPromise: null,
+          queryAbortController: null,
+        });
+
+        const rpcContext: EventSubscriptionSetupContext = {
+          ...mockContext,
+          interruptHandler: realInterruptHandler,
+        };
+        const rpcSetup = new EventSubscriptionSetup(rpcContext);
+        rpcSetup.setup();
+
+        const callback = registeredCallbacks.get('agent.interruptRequest')!;
+        await callback({ sessionId });
+
+        expect((raw.prepare(`SELECT COUNT(*) AS n FROM job_queue`).get() as { n: number }).n).toBe(
+          0
+        );
+        const row = raw
+          .prepare(`SELECT send_status AS sendStatus FROM sdk_messages WHERE id = 'db-msg-1'`)
+          .get() as { sendStatus: string };
+        expect(row.sendStatus).toBe('failed');
+        raw.close();
       });
     });
 

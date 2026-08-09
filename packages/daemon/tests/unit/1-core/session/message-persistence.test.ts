@@ -24,6 +24,7 @@ describe('MessagePersistence', () => {
     getSessionData: ReturnType<typeof mock>;
     getProcessingState: ReturnType<typeof mock>;
     startQueryAndEnqueue: ReturnType<typeof mock>;
+    stateManager: { setQueuedIfIdle: ReturnType<typeof mock> };
   };
 
   let saveUserMessageSpy: ReturnType<typeof mock>;
@@ -61,6 +62,7 @@ describe('MessagePersistence', () => {
       getSessionData: mock(() => mockSession),
       getProcessingState: processingStateSpy,
       startQueryAndEnqueue: mock(async () => {}),
+      stateManager: { setQueuedIfIdle: mock(async () => true) },
     };
 
     mockSessionCache = {
@@ -207,6 +209,64 @@ describe('MessagePersistence', () => {
         skipQueryStart: true,
       })
     );
+  });
+
+  it('rejects archived sessions before saving a user message', async () => {
+    mockDb.getSession = mock(() => ({ ...mockSession, status: 'archived' })) as never;
+
+    await expect(
+      persistence.persist({
+        sessionId: 'test-session-id',
+        messageId: 'msg-archived',
+        content: 'must not persist',
+      })
+    ).rejects.toThrow('Session test-session-id is archived');
+
+    expect(mockSessionCache.getAsync).not.toHaveBeenCalled();
+    expect(saveUserMessageSpy).not.toHaveBeenCalled();
+    expect(mockAgentSession.startQueryAndEnqueue).not.toHaveBeenCalled();
+  });
+
+  it('publishes v2 persisted before queued ownership is assigned by turn insertion', async () => {
+    const previous = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+    process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '1';
+
+    try {
+      await persistence.persist({
+        sessionId: 'test-session-id',
+        messageId: 'msg-v2',
+        content: 'durable turn',
+      });
+    } finally {
+      if (previous === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+      else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previous;
+    }
+
+    expect(mockAgentSession.stateManager.setQueuedIfIdle).not.toHaveBeenCalled();
+    expect(mockAgentSession.startQueryAndEnqueue).not.toHaveBeenCalled();
+    expect(mockInternalEventBus.publish).toHaveBeenCalledWith(
+      'message.persisted',
+      expect.objectContaining({ messageId: 'msg-v2' })
+    );
+  });
+
+  it('does not downgrade a busy v2 session from processing to queued', async () => {
+    const previous = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+    process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '1';
+    processingStateSpy.mockReturnValue({ status: 'processing' });
+
+    try {
+      await persistence.persist({
+        sessionId: 'test-session-id',
+        messageId: 'msg-v2-steer',
+        content: 'durable steer',
+      });
+    } finally {
+      if (previous === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+      else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previous;
+    }
+
+    expect(mockAgentSession.stateManager.setQueuedIfIdle).not.toHaveBeenCalled();
   });
 });
 

@@ -337,6 +337,81 @@ describe('AcpClient', () => {
     ).rejects.toThrow('Bad prompt');
   });
 
+  test('sendPrompt terminates when onAccepted throws on the response path (#3743968037)', async () => {
+    const client = new AcpClient({ command: 'acp-agent' });
+    const transport = lastMockTransport!;
+
+    const sessionPromise = client.createSession('/tmp');
+    transport.resolveRequest(1, { sessionId: 'sess-cb-throw' });
+    await sessionPromise;
+
+    const gen = client.sendPrompt([{ type: 'text', text: 'hello' }], {
+      onAccepted: () => {
+        throw new Error('markMessageAccepted exploded');
+      },
+    });
+
+    const nextPromise = gen.next();
+    // Zero-update prompt: the successful prompt response is the acceptance
+    // fallback, and its callback throws. The generator must still TERMINATE —
+    // previously `done` was never set and sendPrompt waited forever with no
+    // request left to resolve it.
+    transport.resolveRequest(2, { stopReason: 'end_turn' });
+
+    const result = await nextPromise;
+    expect(result.done).toBe(true);
+  });
+
+  test('sendPrompt keeps acceptance retryable when onAccepted throws on notifications (#3743968037)', async () => {
+    const client = new AcpClient({ command: 'acp-agent' });
+    const transport = lastMockTransport!;
+
+    const sessionPromise = client.createSession('/tmp');
+    transport.resolveRequest(1, { sessionId: 'sess-cb-retry' });
+    await sessionPromise;
+
+    let acceptCalls = 0;
+    const gen = client.sendPrompt([{ type: 'text', text: 'hello' }], {
+      onAccepted: () => {
+        acceptCalls++;
+        if (acceptCalls === 1) throw new Error('transient persistence failure');
+      },
+    });
+
+    const nextPromise = gen.next();
+
+    // First update: the acceptance callback throws — the update must NOT be
+    // dropped with it, and acceptance must stay retryable (not suppressed).
+    transport.emitNotification({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 'sess-cb-retry',
+        update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'A' } },
+      },
+    });
+    transport.emitNotification({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 'sess-cb-retry',
+        update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'B' } },
+      },
+    });
+
+    transport.resolveRequest(2, { stopReason: 'end_turn' });
+
+    const updates: unknown[] = [];
+    let result = await nextPromise;
+    while (!result.done) {
+      updates.push(result.value);
+      result = await gen.next();
+    }
+
+    expect(updates.length).toBe(2);
+    expect(acceptCalls).toBe(2); // failed once, retried on the next update
+  });
+
   // -------------------------------------------------------------------------
   // Cancel / close
   // -------------------------------------------------------------------------

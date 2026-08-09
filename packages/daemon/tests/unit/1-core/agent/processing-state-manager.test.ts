@@ -187,6 +187,33 @@ describe('ProcessingStateManager', () => {
     });
   });
 
+  describe('setQueuedIfIdle', () => {
+    test('sets the queued marker while idle and returns true', async () => {
+      const didSet = await manager.setQueuedIfIdle('msg-turn');
+
+      expect(didSet).toBe(true);
+      expect(manager.getState()).toMatchObject({ status: 'queued', messageId: 'msg-turn' });
+    });
+
+    test('first writer wins — a concurrent send never steals the marker (#3743968035)', async () => {
+      await manager.setQueuedIfIdle('msg-first');
+
+      const didSet = await manager.setQueuedIfIdle('msg-second');
+
+      expect(didSet).toBe(false);
+      expect(manager.getState()).toMatchObject({ status: 'queued', messageId: 'msg-first' });
+    });
+
+    test('does not downgrade a processing session', async () => {
+      await manager.setProcessing('msg-active');
+
+      const didSet = await manager.setQueuedIfIdle('msg-steer');
+
+      expect(didSet).toBe(false);
+      expect(manager.getState().status).toBe('processing');
+    });
+  });
+
   describe('setProcessing', () => {
     test('transitions to processing state with default phase', async () => {
       await manager.setProcessing('msg-1');

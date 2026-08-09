@@ -28,7 +28,12 @@ function createMockClient() {
     loadSession: mock(async (sessionId: string) => ({ sessionId, configOptions: [] })),
     resumeSession: mock(async (sessionId: string) => ({ sessionId, configOptions: [] })),
     canLoadSession: mock(() => false),
-    sendPrompt: mock(async function* (_prompt: unknown) {
+    sendPrompt: mock(async function* (
+      _prompt: unknown,
+      callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+    ) {
+      callbacks?.onSubmitted?.();
+      callbacks?.onAccepted?.();
       yield {
         sessionId: 'acp-session-1',
         update: {
@@ -183,6 +188,12 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
     askUserQuestionHandler: {
       createCanUseToolCallback: mock(() => canUseTool),
     } as unknown as AskUserQuestionHandler,
+    messageHandler: {
+      markMessageSubmitted: mock(() => true),
+      markMessageAccepted: mock(() => {}),
+      markMessageSubmissionFailed: mock(() => {}),
+      markACPDeliveryFailed: mock(() => {}),
+    } as never,
     queryObject: null,
     queryPromise: null,
     queryAbortController: null,
@@ -562,6 +573,59 @@ describe('AcpQueryRunner', () => {
     expect(onSDKMessage.mock.calls.some(([message]) => message.type === 'result')).toBe(true);
     expect(onMarkApiSuccess).toHaveBeenCalled();
     expect(stopSpy).toHaveBeenCalled();
+  });
+
+  test('aborts ACP submission when remove/defer already revoked the row (#3744696846)', async () => {
+    const client = createMockClient();
+    let promptBodyRan = false;
+    client.sendPrompt = mock(async function* (
+      _prompt: unknown,
+      callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+    ) {
+      callbacks?.onSubmitted?.();
+      promptBodyRan = true;
+      yield {
+        sessionId: 'acp-session-1',
+        update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'bad' } },
+      };
+    });
+    const { runner, ctx, onSent } = createRunnerFixture({ client });
+    (
+      ctx.messageHandler as unknown as { markMessageSubmitted: ReturnType<typeof mock> }
+    ).markMessageSubmitted = mock(() => false);
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    expect(onSent).not.toHaveBeenCalled();
+    expect(promptBodyRan).toBe(false);
+  });
+
+  test('settles a submitted-but-never-accepted prompt as failed when the run ends (#3743968032)', async () => {
+    const client = createMockClient();
+    client.sendPrompt = mock(async function* (
+      _prompt: unknown,
+      callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+    ) {
+      callbacks?.onSubmitted?.();
+      // No onAccepted: the run ended (interrupt / adapter close) after the
+      // stdin write completed but before any session/update or prompt
+      // response arrived. The submitted row must not stay hidden+nonterminal.
+      return;
+    });
+    const { runner, ctx } = createRunnerFixture({ client });
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    const handler = ctx.messageHandler as unknown as {
+      markMessageSubmitted: ReturnType<typeof mock>;
+      markMessageAccepted: ReturnType<typeof mock>;
+      markACPDeliveryFailed: ReturnType<typeof mock>;
+    };
+    expect(handler.markMessageSubmitted).toHaveBeenCalledWith('user-message-1');
+    expect(handler.markMessageAccepted).not.toHaveBeenCalled();
+    expect(handler.markACPDeliveryFailed).toHaveBeenCalledWith('user-message-1');
   });
 
   test('preserves env-only Anthropic auth for ACP subprocesses', async () => {

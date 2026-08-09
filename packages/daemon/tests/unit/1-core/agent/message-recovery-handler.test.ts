@@ -80,9 +80,15 @@ describe('MessageRecoveryHandler', () => {
       handler.recoverOrphanedConsumedMessages();
 
       expect(getConsumedUserMessagesAfterLatestInitSpy).toHaveBeenCalledWith('test-session-id');
-      expect(getMessagesByStatusSpy).not.toHaveBeenCalled();
+      expect(getMessagesByStatusSpy).toHaveBeenCalledWith('test-session-id', 'submitted');
       expect(getLatestSystemInitTimestampSpy).not.toHaveBeenCalled();
       expect(updateMessageStatusSpy).not.toHaveBeenCalled();
+    });
+
+    it('marks stranded submitted messages as failed on startup', () => {
+      getMessagesByStatusSpy.mockReturnValue([{ dbId: 'submitted-1' }]);
+      handler.recoverOrphanedConsumedMessages();
+      expect(updateMessageStatusSpy).toHaveBeenCalledWith(['submitted-1'], 'failed');
     });
 
     it('should check consumed messages for recovery', () => {
@@ -108,7 +114,7 @@ describe('MessageRecoveryHandler', () => {
 
       handler.recoverOrphanedConsumedMessages();
 
-      expect(getMessagesByStatusSpy).not.toHaveBeenCalled();
+      expect(getMessagesByStatusSpy).toHaveBeenCalledWith('test-session-id', 'submitted');
       expect(getLatestSystemInitTimestampSpy).not.toHaveBeenCalled();
       expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-1'], 'failed');
     });
@@ -119,7 +125,7 @@ describe('MessageRecoveryHandler', () => {
       handler.recoverOrphanedConsumedMessages();
 
       expect(getConsumedUserMessagesAfterLatestInitSpy).toHaveBeenCalledWith('test-session-id');
-      expect(getMessagesByStatusSpy).not.toHaveBeenCalled();
+      expect(getMessagesByStatusSpy).toHaveBeenCalledWith('test-session-id', 'submitted');
       expect(getLatestSystemInitTimestampSpy).not.toHaveBeenCalled();
       expect(updateMessageStatusSpy).not.toHaveBeenCalled();
     });
@@ -131,7 +137,7 @@ describe('MessageRecoveryHandler', () => {
       handler.recoverOrphanedConsumedMessages();
 
       expect(getConsumedUserMessagesAfterLatestInitSpy).toHaveBeenCalledWith('test-session-id');
-      expect(getMessagesByStatusSpy).not.toHaveBeenCalled();
+      expect(getMessagesByStatusSpy).toHaveBeenCalledWith('test-session-id', 'submitted');
       expect(updateMessageStatusSpy).not.toHaveBeenCalled();
     });
 
@@ -322,7 +328,7 @@ describe('MessageRecoveryHandler', () => {
       handler.recoverOrphanedConsumedMessages();
 
       expect(getConsumedUserMessagesAfterLatestInitSpy).toHaveBeenCalledWith('test-session-id');
-      expect(getMessagesByStatusSpy).not.toHaveBeenCalled();
+      expect(getMessagesByStatusSpy).toHaveBeenCalledWith('test-session-id', 'submitted');
       expect(getLatestSystemInitTimestampSpy).not.toHaveBeenCalled();
       expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-1'], 'failed');
     });
