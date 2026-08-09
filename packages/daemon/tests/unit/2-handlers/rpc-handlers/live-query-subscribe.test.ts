@@ -400,13 +400,15 @@ describe('setupLiveQueryHandlers', () => {
     expect(typeof msg.message.data.version).toBe('number');
   });
 
-  test('oversized snapshot reports an error and preserves the subscription', async () => {
+  test('oversized snapshot reports an error and rejects the subscription', async () => {
     setup.setDetailedSendResult({ ok: false, reason: 'message_too_large' });
-    await setup.callHandler('liveQuery.subscribe', {
-      queryName: 'mcpServers.global',
-      params: [],
-      subscriptionId: 'sub-large',
-    });
+    await expect(
+      setup.callHandler('liveQuery.subscribe', {
+        queryName: 'mcpServers.global',
+        params: [],
+        subscriptionId: 'sub-large',
+      })
+    ).rejects.toThrow('MESSAGE_TOO_LARGE');
 
     expect(setup.sentMessages.map((sent) => sent.message.method)).toEqual([
       'liveQuery.snapshot',
@@ -418,7 +420,9 @@ describe('setupLiveQueryHandlers', () => {
     reactiveDb.notifyChange('app_mcp_servers');
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    expect(setup.sentMessages.some((sent) => sent.message.method === 'liveQuery.delta')).toBe(true);
+    expect(setup.sentMessages.some((sent) => sent.message.method === 'liveQuery.delta')).toBe(
+      false
+    );
   });
 
   test('full lifecycle: subscribe, delta, unsubscribe', async () => {

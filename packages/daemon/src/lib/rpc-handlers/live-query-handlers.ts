@@ -3990,6 +3990,7 @@ export function setupLiveQueryHandlers(
     // inside liveQueries.subscribe() before it returns the handle, so we
     // cannot call handle.dispose() directly during the callback.
     let snapshotDeliveryFailed = false;
+    let snapshotTooLarge = false;
 
     const handle = liveQueries.subscribe(
       sql,
@@ -4058,6 +4059,14 @@ export function setupLiveQueryHandlers(
             sessionId,
           });
           router.sendToClient(clientId, errorMessage);
+          if (diff.type === 'snapshot') {
+            snapshotTooLarge = true;
+          } else {
+            handle.dispose();
+            const subs = subscriptions.get(clientId);
+            subs?.delete(subscriptionId);
+            if (subs?.size === 0) subscriptions.delete(clientId);
+          }
           return;
         }
         if (!delivery.ok) {
@@ -4087,6 +4096,11 @@ export function setupLiveQueryHandlers(
         scopeFilter: namedQuery.buildScopeFilter?.(params, db),
       }
     );
+
+    if (snapshotTooLarge) {
+      handle.dispose();
+      throw new Error('MESSAGE_TOO_LARGE: Live query snapshot exceeds the outbound size limit');
+    }
 
     // If snapshot delivery failed (no router or client not found), clean up
     // immediately and return ok — this is not a protocol error from the
