@@ -46,6 +46,7 @@ import {
   THINKING_LEVEL_TOKENS,
 } from '@hyperneo/shared';
 import type { McpServerConfig } from '@hyperneo/shared/types/sdk-config';
+import { NON_DELEGATING_GENERAL_AGENT } from '../space/agents/custom-agent';
 import type { PermissionMode } from '@hyperneo/shared/types/settings';
 import { homedir } from 'os';
 import { join } from 'path';
@@ -162,6 +163,17 @@ const FULL_BUILTIN_TOOL_LIST = [
  */
 const AGENT_INVOCATION_TOOLS = ['Agent', 'Task', 'TaskOutput', 'TaskStop'];
 
+function isNonDelegatingGeneralOverride(agents: Options['agents']): boolean {
+  if (!agents || Object.keys(agents).length !== 1) return false;
+  const agent = agents['general-purpose'];
+  return (
+    agent?.prompt === NON_DELEGATING_GENERAL_AGENT.prompt &&
+    JSON.stringify(agent.tools) === JSON.stringify(NON_DELEGATING_GENERAL_AGENT.tools) &&
+    JSON.stringify(agent.disallowedTools) ===
+      JSON.stringify(NON_DELEGATING_GENERAL_AGENT.disallowedTools)
+  );
+}
+
 /**
  * Providers whose native SDK integration already includes agent tools in the
  * function schema when agents are configured. All other providers need an
@@ -200,9 +212,7 @@ export function ensureAgentTools(
   // child's tool surface. It must not grant Agent/Task to a non-native parent
   // whose provider preset did not already expose delegation.
   const onlyOverridesGeneralPurpose =
-    sessionType === 'worker' &&
-    Object.keys(agents).length === 1 &&
-    Object.hasOwn(agents, 'general-purpose');
+    sessionType === 'worker' && isNonDelegatingGeneralOverride(agents);
   if (onlyOverridesGeneralPurpose) {
     return tools;
   }
