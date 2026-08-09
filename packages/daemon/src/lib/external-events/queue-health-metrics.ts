@@ -154,7 +154,6 @@ const FAILURE_CATEGORY_PREFIXES: Array<{
       r === 'target_task_reactivation_failed' ||
       r === 'subscription_no_longer_active' ||
       r === 'invalid_target_ownership' ||
-      r === 'auto_pr_subscription_cleared' ||
       r === 'node_execution_cancelled' ||
       r === 'run_interests_rebuilt' ||
       r === 'run_terminal_cleanup' ||

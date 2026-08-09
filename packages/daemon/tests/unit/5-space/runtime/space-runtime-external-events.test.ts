@@ -1117,7 +1117,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(matches.map((match) => match.workflowRunId).filter(Boolean)).toHaveLength(2);
   });
 
-  test('rehydrates workflow static interests for a completed (done) task on restart', async () => {
+  test('does not rehydrate workflow static interests for a completed task', async () => {
     const { run, task } = await startRunWithSubscription(DEFAULT_TOPIC, 'code-done-static', {
       staticInterest: true,
     });
@@ -1147,9 +1147,10 @@ describe('SpaceRuntime external event subscriptions', () => {
       }
     ).lookupSubscriptionTargets(DEFAULT_TOPIC);
 
-    // A done task relying on a workflow-defined eventInterests pattern must keep
-    // matching after a restart so a later check_failed can reactivate it.
-    expect(matches.some((match) => match.workflowRunId === run.id)).toBe(true);
+    // Done tasks are terminal and cannot deliver events. Rebuilding their
+    // interests would fan every later matching event out across historical runs
+    // only to fail each delivery with target_task_terminal.
+    expect(matches.some((match) => match.workflowRunId === run.id)).toBe(false);
   });
 
   test('keeps subscriptions while completion routes the task to approved', async () => {
@@ -1223,29 +1224,35 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
   });
 
-  test('marks unmatched events ignored', async () => {
+  test('retains unmatched events until a dynamic subscription registers', async () => {
     const { run, task } = await startRunWithSubscription(DEFAULT_TOPIC);
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-late-subscription',
+      startedAt: Date.now(),
+    });
+    tam.alive.add('session-late-subscription');
     await runtime.executeTick();
-
-    const event = makeEvent({ topic: 'github/lsm/neokai/pull_request/42.comment_created' });
-    await eventService.publish(event);
-
-    expect(injected).toHaveLength(0);
-    expect(eventStore.getById(event.id)?.state).toBe('ignored');
-  });
-
-  test('keeps PR events linked to a run published when no subscription matches', async () => {
-    const { run } = await startRunWithSubscription(DEFAULT_TOPIC);
-    await runtime.executeTick();
-    const gateDataRepo = new GateDataRepository(db);
-    gateDataRepo.set(run.id, 'pr', { prUrl: 'https://github.com/lsm/neokai/pull/42' });
 
     const event = makeEvent({ topic: 'github/lsm/neokai/pull_request/42.comment_created' });
     await eventService.publish(event);
 
     expect(injected).toHaveLength(0);
     expect(eventStore.getById(event.id)?.state).toBe('published');
-    expect(eventStore.listDeliveries(event.id)).toHaveLength(0);
+
+    runtime.registerSubscription(
+      run.id,
+      task.id,
+      'code',
+      'coder',
+      'github/*/*/pull_request/*.comment_created'
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-late-subscription');
   });
 
   test('delivers a linked-PR event after a matching subscription registers', async () => {
@@ -1311,7 +1318,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(injected[0]!.sessionId).toBe('session-linked-pr-redeliver');
   });
 
-  test('ignores PR events not linked to any run in the space', async () => {
+  test('retains unmatched events without PR-to-run coupling until the TTL', async () => {
     const { run } = await startRunWithSubscription(DEFAULT_TOPIC);
     await runtime.executeTick();
     const gateDataRepo = new GateDataRepository(db);
@@ -1321,10 +1328,10 @@ describe('SpaceRuntime external event subscriptions', () => {
     await eventService.publish(event);
 
     expect(injected).toHaveLength(0);
-    expect(eventStore.getById(event.id)?.state).toBe('ignored');
+    expect(eventStore.getById(event.id)?.state).toBe('published');
   });
 
-  test('fails linked-PR events that stay unmatched past the TTL', async () => {
+  test('fails unmatched events that stay unclaimed past the TTL', async () => {
     const { run } = await startRunWithSubscription(DEFAULT_TOPIC);
     await runtime.executeTick();
     const gateDataRepo = new GateDataRepository(db);
@@ -1362,59 +1369,6 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     expect(eventStore.listDeliveries('evt-linked-pr-expired')).toHaveLength(0);
     expect(eventStore.getById('evt-linked-pr-expired')?.state).toBe('failed');
-  });
-
-  test('keeps PR events linked to a run published when run URL has a suffix', async () => {
-    const { run } = await startRunWithSubscription(DEFAULT_TOPIC);
-    await runtime.executeTick();
-    const gateDataRepo = new GateDataRepository(db);
-    gateDataRepo.set(run.id, 'pr', { prUrl: 'https://github.com/lsm/neokai/pull/42/files' });
-
-    const event = makeEvent({ topic: 'github/lsm/neokai/pull_request/42.comment_created' });
-    await eventService.publish(event);
-
-    expect(injected).toHaveLength(0);
-    expect(eventStore.getById(event.id)?.state).toBe('published');
-    expect(eventStore.listDeliveries(event.id)).toHaveLength(0);
-  });
-
-  test('matches linked PR events case-insensitively across owner and repo', async () => {
-    const { run } = await startRunWithSubscription(DEFAULT_TOPIC);
-    await runtime.executeTick();
-    const gateDataRepo = new GateDataRepository(db);
-    gateDataRepo.set(run.id, 'pr', { prUrl: 'https://github.com/LSM/NeoKai/pull/42' });
-
-    const event = makeEvent({ topic: 'github/lsm/neokai/pull_request/42.comment_created' });
-    await eventService.publish(event);
-
-    expect(injected).toHaveLength(0);
-    expect(eventStore.getById(event.id)?.state).toBe('published');
-    expect(eventStore.listDeliveries(event.id)).toHaveLength(0);
-  });
-
-  test('fails linked-PR events past TTL via periodic executeTick sweep', async () => {
-    const { run } = await startRunWithSubscription(DEFAULT_TOPIC);
-    await runtime.executeTick();
-    const gateDataRepo = new GateDataRepository(db);
-    gateDataRepo.set(run.id, 'pr', { prUrl: 'https://github.com/lsm/neokai/pull/42' });
-
-    const event = makeEvent({
-      id: 'evt-linked-pr-expired-sweep',
-      topic: 'github/lsm/neokai/pull_request/42.comment_created',
-    });
-    await eventService.publish(event);
-    expect(eventStore.getById(event.id)?.state).toBe('published');
-
-    const originalNow = Date.now;
-    Date.now = () => originalNow() + 300_001;
-    try {
-      await runtime.executeTick();
-    } finally {
-      Date.now = originalNow;
-    }
-
-    expect(eventStore.listDeliveries('evt-linked-pr-expired-sweep')).toHaveLength(0);
-    expect(eventStore.getById('evt-linked-pr-expired-sweep')?.state).toBe('failed');
   });
 
   test('retains a subscribed event when the blocked-run hook fires but opens no gate', async () => {
@@ -1707,58 +1661,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
   });
 
-  test('sweep refreshes stale PR auto-subscription when the resolved PR URL changes', async () => {
-    const workflow = createWorkflow();
-    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
-    nodeExecutionRepo.update(execution.id, {
-      status: 'in_progress',
-      agentSessionId: 'session-pr-refresh',
-      startedAt: Date.now(),
-    });
-    tam.alive.add('session-pr-refresh');
-
-    const gateDataRepo = new GateDataRepository(db);
-    gateDataRepo.merge(run.id, 'pr-gate', { pr_url: 'https://github.com/lsm/neokai/pull/41' });
-    runtime.registerPrEventSubscriptionForRun(run.id, 'https://github.com/lsm/neokai/pull/41');
-    gateDataRepo.merge(run.id, 'pr-gate', { pr_url: 'https://github.com/lsm/neokai/pull/42' });
-
-    await runtime.executeTick();
-
-    await eventService.publish(makeEvent());
-    expect(injected).toHaveLength(1);
-    expect(injected[0]!.sessionId).toBe('session-pr-refresh');
-  });
-
-  test('clears the stale auto subscription when the resolved PR URL becomes invalid', async () => {
-    const workflow = createWorkflow();
-    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
-    nodeExecutionRepo.update(execution.id, {
-      status: 'in_progress',
-      agentSessionId: 'session-invalid-url',
-      startedAt: Date.now(),
-    });
-    tam.alive.add('session-invalid-url');
-
-    const gateDataRepo = new GateDataRepository(db);
-    gateDataRepo.merge(run.id, 'pr-gate', { pr_url: 'https://github.com/lsm/neokai/pull/42' });
-    runtime.registerPrEventSubscriptionForRun(run.id, 'https://github.com/lsm/neokai/pull/42');
-
-    // A PR event for the registered PR delivers while the URL is valid.
-    await eventService.publish(makeEvent());
-    expect(injected).toHaveLength(1);
-
-    // Replace the URL with an unparsable value. ensure must drop the stale auto
-    // subscription so events for the previous PR stop matching the active slot.
-    injected.length = 0;
-    gateDataRepo.merge(run.id, 'pr-gate', { pr_url: 'not-a-github-url' });
-    runtime.ensurePrEventSubscriptionForRun(run.id);
-
-    await eventService.publish(makeEvent());
-    expect(injected).toHaveLength(0);
-  });
-
   test('resetBlockedExecutionsForRun resets blocked node executions to pending', async () => {
     const { run } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
@@ -1768,129 +1670,6 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     const updated = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
     expect(updated.status).toBe('pending');
-  });
-
-  test('delivers a retained PR event when a direct ensure creates the auto subscription', async () => {
-    const workflow = createWorkflow();
-    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
-    nodeExecutionRepo.update(execution.id, {
-      status: 'in_progress',
-      agentSessionId: 'session-direct-ensure',
-      startedAt: Date.now(),
-    });
-    tam.alive.add('session-direct-ensure');
-
-    const gateDataRepo = new GateDataRepository(db);
-    gateDataRepo.merge(run.id, 'pr-gate', { pr_url: 'https://github.com/lsm/neokai/pull/42' });
-
-    // Publish a PR event BEFORE any auto subscription exists. It is linked to
-    // the run so it is retained as `published` with no delivery rows.
-    const event = makeEvent();
-    await eventService.publish(event);
-    expect(eventStore.listDeliveries(event.id)).toHaveLength(0);
-    expect(eventStore.getById(event.id)?.state).toBe('published');
-
-    // A direct subscription creation (e.g. notifyGateDataChanged / resume path)
-    // must replay the retained event instead of stranding it until the next tick.
-    runtime.ensurePrEventSubscriptionForRun(run.id);
-    await new Promise((resolve) => setTimeout(resolve, 10));
-
-    expect(injected).toHaveLength(1);
-    expect(injected[0]!.sessionId).toBe('session-direct-ensure');
-    expect(eventStore.getById(event.id)?.state).toBe('delivered');
-  });
-
-  test('rebuilds active-run PR auto-subscription before persisted delivery replay on restart', async () => {
-    const workflow = createWorkflow();
-    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
-    // Pending execution (no live session) so the PR event queues a pending
-    // delivery rather than delivering immediately.
-    nodeExecutionRepo.update(execution.id, {
-      status: 'in_progress',
-      agentSessionId: null,
-      startedAt: Date.now(),
-    });
-
-    const gateDataRepo = new GateDataRepository(db);
-    gateDataRepo.merge(run.id, 'pr-gate', { pr_url: 'https://github.com/lsm/neokai/pull/42' });
-    runtime.registerPrEventSubscriptionForRun(run.id, 'https://github.com/lsm/neokai/pull/42');
-
-    const event = makeEvent({ id: 'evt-restart-replay', dedupeKey: 'dedupe-restart-replay' });
-    await eventService.publish(event);
-    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
-
-    // Restart. rehydrateExecutors must rebuild the auto subscription BEFORE its
-    // persisted-delivery replay; otherwise the replay terminalizes the pending
-    // delivery as `subscription_no_longer_active` (the trie is empty on cold
-    // start until the rebuild runs).
-    await runtime.stop();
-    runtime = new SpaceRuntime({
-      db,
-      spaceManager: new SpaceManager(db),
-      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
-      spaceWorkflowManager: workflowManager,
-      workflowRunRepo,
-      taskRepo,
-      nodeExecutionRepo,
-      artifactRepo,
-      artifactProfile,
-      internalEventBus: bus,
-      commandBus: createInternalCommandBus(),
-      externalEventStore: eventStore,
-      taskAgentManager: tam as never,
-    });
-    await runtime.executeTick();
-
-    const delivery = eventStore.listDeliveries(event.id)[0]!;
-    expect(delivery.state).not.toBe('failed');
-    expect(delivery.failureReason).not.toBe('subscription_no_longer_active');
-  });
-
-  test('defers persisted PR deliveries for a paused space instead of terminalizing them on restart', async () => {
-    const workflow = createWorkflow();
-    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
-    nodeExecutionRepo.update(execution.id, {
-      status: 'in_progress',
-      agentSessionId: null,
-      startedAt: Date.now(),
-    });
-
-    const gateDataRepo = new GateDataRepository(db);
-    gateDataRepo.merge(run.id, 'pr-gate', { pr_url: 'https://github.com/lsm/neokai/pull/42' });
-    runtime.registerPrEventSubscriptionForRun(run.id, 'https://github.com/lsm/neokai/pull/42');
-
-    const event = makeEvent({ id: 'evt-paused-replay', dedupeKey: 'dedupe-paused-replay' });
-    await eventService.publish(event);
-    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
-
-    // Pause the space, then restart. The rebuild loop skips paused spaces, so
-    // the persisted-delivery replay must defer (leave pending) this delivery
-    // for onSpaceResumed instead of terminalizing it as subscription_no_longer_active.
-    db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
-    await runtime.stop();
-    runtime = new SpaceRuntime({
-      db,
-      spaceManager: new SpaceManager(db),
-      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
-      spaceWorkflowManager: workflowManager,
-      workflowRunRepo,
-      taskRepo,
-      nodeExecutionRepo,
-      artifactRepo,
-      artifactProfile,
-      internalEventBus: bus,
-      commandBus: createInternalCommandBus(),
-      externalEventStore: eventStore,
-      taskAgentManager: tam as never,
-    });
-    await runtime.executeTick();
-
-    const delivery = eventStore.listDeliveries(event.id)[0]!;
-    expect(delivery.state).not.toBe('failed');
-    expect(delivery.failureReason).not.toBe('subscription_no_longer_active');
   });
 
   test('fails queued deliveries when task-owned run interests are cleared', async () => {
@@ -3809,76 +3588,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(event.id)?.state).toBe('failed');
   });
 
-  test('reactivates a done task and delivers a PR CI check_failed event to the coder', async () => {
-    const CHECK_FAILED_TOPIC = 'github/lsm/neokai/pull_request/42.check_failed';
-    const { workflow, run, task } = await startRunWithSubscription(CHECK_FAILED_TOPIC);
-    // Set the run's PR URL so the check_failed event's PR identity matches.
-    new GateDataRepository(db).set(run.id, 'pr', {
-      prUrl: 'https://github.com/lsm/neokai/pull/42',
-    });
-    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
-    // The coder finished: task and run are done, the worker session is gone.
-    taskRepo.updateTask(task.id, { status: 'done', completedAt: Date.now() });
-    workflowRunRepo.updateRun(run.id, { status: 'done', completedAt: Date.now() });
-    nodeExecutionRepo.update(execution.id, {
-      status: 'idle',
-      agentSessionId: null,
-      completedAt: Date.now(),
-    });
-
-    const event = makeEvent({ topic: CHECK_FAILED_TOPIC });
-    await eventService.publish(event);
-
-    // The owning task and its run are reopened so the failure can be acted on,
-    // and the check-failed event is retained as a pending delivery for the
-    // recovered coder slot.
-    expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
-    expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
-    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
-
-    // The tick loop then spawns the recovered coder slot; the pending queue
-    // flushes the retained check-failed event to it exactly once.
-    nodeExecutionRepo.update(execution.id, {
-      status: 'in_progress',
-      agentSessionId: 'session-reopened',
-      startedAt: Date.now(),
-      completedAt: null,
-    });
-    tam.alive.add('session-reopened');
-    runtime.flushPendingNodeQueue({
-      workflowRunId: run.id,
-      taskId: task.id,
-      nodeId: 'code',
-      agentName: 'coder',
-      sessionId: 'session-reopened',
-    });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(injected).toHaveLength(1);
-    expect(injected[0]!.sessionId).toBe('session-reopened');
-    expect(eventStore.getById(event.id)?.state).toBe('delivered');
-  });
-
-  test('reactivates a done task for an external-CI status_failure event (Jenkins/Travis)', async () => {
-    // External/legacy CI posts commit statuses, re-expressed as
-    // pull_request/<id>.status_<state>; a failure must reopen a done task like
-    // a native check_failed does.
-    const STATUS_FAILED_TOPIC = 'github/lsm/neokai/pull_request/42.status_failure';
-    const { run, task } = await startRunWithSubscription(STATUS_FAILED_TOPIC);
-    new GateDataRepository(db).set(run.id, 'pr', {
-      prUrl: 'https://github.com/lsm/neokai/pull/42',
-    });
-    taskRepo.updateTask(task.id, { status: 'done', completedAt: Date.now() });
-    workflowRunRepo.updateRun(run.id, { status: 'done', completedAt: Date.now() });
-
-    const event = makeEvent({ topic: STATUS_FAILED_TOPIC });
-    await eventService.publish(event);
-
-    expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
-    expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
-    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
-  });
-
   test('does not reactivate a done task for a non-failure status event (status_pending/success)', async () => {
     const STATUS_PENDING_TOPIC = 'github/lsm/neokai/pull_request/42.status_pending';
     const { run, task } = await startRunWithSubscription(STATUS_PENDING_TOPIC);
@@ -3893,85 +3602,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     const delivery = eventStore.listDeliveries(event.id)[0]!;
     expect(delivery.state).toBe('failed');
     expect(delivery.failureReason).toBe('target_task_terminal');
-  });
-
-  test('preserves the auto PR subscription across check_failed recovery', async () => {
-    const PR_URL = 'https://github.com/lsm/neokai/pull/42';
-    const CHECK_FAILED_TOPIC = 'github/lsm/neokai/pull_request/42.check_failed';
-    // Register only the runtime-generated auto PR subscription (no dynamic sub
-    // on the check_failed topic) so the event matches it alone.
-    const { workflow, run, task } = await startRunWithSubscription();
-    const gateDataRepo = new GateDataRepository(db);
-    gateDataRepo.set(run.id, 'pr', { prUrl: PR_URL });
-    runtime.registerPrEventSubscriptionForRun(run.id, PR_URL);
-    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
-    taskRepo.updateTask(task.id, { status: 'done', completedAt: Date.now() });
-    workflowRunRepo.updateRun(run.id, { status: 'done', completedAt: Date.now() });
-    nodeExecutionRepo.update(execution.id, {
-      status: 'idle',
-      agentSessionId: null,
-      completedAt: Date.now(),
-    });
-
-    const event = makeEvent({ topic: CHECK_FAILED_TOPIC });
-    await eventService.publish(event);
-
-    // Recovery must not drop the matching auto subscription (the static-interest
-    // refresh preserves auto), so the event is retained — not terminally failed
-    // as subscription_no_longer_active after reopening the task.
-    expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
-    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
-
-    nodeExecutionRepo.update(execution.id, {
-      status: 'in_progress',
-      agentSessionId: 'session-auto-reopened',
-      startedAt: Date.now(),
-      completedAt: null,
-    });
-    tam.alive.add('session-auto-reopened');
-    runtime.flushPendingNodeQueue({
-      workflowRunId: run.id,
-      taskId: task.id,
-      nodeId: 'code',
-      agentName: 'coder',
-      sessionId: 'session-auto-reopened',
-    });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(injected).toHaveLength(1);
-    expect(eventStore.getById(event.id)?.state).toBe('delivered');
-  });
-
-  test('recurring PR sweep does not recreate the auto subscription for a cancelled task', async () => {
-    const PR_URL = 'https://github.com/lsm/neokai/pull/42';
-    const CHECK_TOPIC = 'github/lsm/neokai/pull_request/42.check_failed';
-    const { run, task } = await startRunWithSubscription();
-    const gateDataRepo = new GateDataRepository(db);
-    gateDataRepo.set(run.id, 'pr', { prUrl: PR_URL });
-    runtime.registerPrEventSubscriptionForRun(run.id, PR_URL);
-    const lookup = (
-      runtime as unknown as {
-        lookupSubscriptionTargets(topic: string): Array<{
-          workflowRunId?: string;
-          subscriptionKind?: string;
-        }>;
-      }
-    ).lookupSubscriptionTargets.bind(runtime);
-    expect(
-      lookup(CHECK_TOPIC).some((t) => t.workflowRunId === run.id && t.subscriptionKind === 'auto')
-    ).toBe(true);
-
-    // cancel_task (cancel_workflow_run:false) cancels the task while the run
-    // stays in_progress; the lifecycle listener clears its auto subscription.
-    taskRepo.updateTask(task.id, { status: 'cancelled' });
-    runtime.clearRunInterestsPreservingDynamic(run.id);
-
-    // The per-tick sweep must not recreate the auto subscription for the
-    // cancelled task even though the run is still active.
-    await runtime.executeTick();
-    expect(
-      lookup(CHECK_TOPIC).some((t) => t.workflowRunId === run.id && t.subscriptionKind === 'auto')
-    ).toBe(false);
   });
 
   test('does not reactivate a done task for a non-check-failed PR event but keeps the subscription', async () => {
@@ -4119,40 +3749,10 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(event.id)?.state).toBe('failed');
   });
 
-  test('marks unmatched events ignored after stop/start on a rehydrated runtime', async () => {
+  test('retains unmatched events after stop/start until the TTL', async () => {
     await startRunWithSubscription();
     await runtime.executeTick();
     await runtime.stop();
-    runtime.start();
-
-    const event = makeEvent({ topic: 'github/lsm/neokai/pull_request/42.comment_created' });
-    await eventService.publish(event);
-
-    expect(eventStore.getById(event.id)?.state).toBe('ignored');
-  });
-
-  test('keeps unmatched events published until restart rehydrate completes', async () => {
-    const { workflow, run, task } = await startRunWithSubscription();
-    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
-    nodeExecutionRepo.update(execution.id, {
-      status: 'in_progress',
-      agentSessionId: 'session-rehydrate-race',
-      startedAt: Date.now(),
-    });
-    await runtime.stop();
-    runtime = new SpaceRuntime({
-      db,
-      spaceManager: new SpaceManager(db),
-      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
-      spaceWorkflowManager: workflowManager,
-      workflowRunRepo,
-      taskRepo,
-      nodeExecutionRepo,
-      internalEventBus: bus,
-      commandBus: createInternalCommandBus(),
-      externalEventStore: eventStore,
-      taskAgentManager: tam as never,
-    });
     runtime.start();
 
     const event = makeEvent({ topic: 'github/lsm/neokai/pull_request/42.comment_created' });
@@ -4239,7 +3839,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     await runtime.executeTick();
 
     expect(eventStore.listDeliveries('evt-stranded-without-matches')).toHaveLength(0);
-    expect(eventStore.getById('evt-stranded-without-matches')?.state).toBe('ignored');
+    expect(eventStore.getById('evt-stranded-without-matches')?.state).toBe('published');
   });
 
   test('redispatches events that arrived during stop when runtime restarts', async () => {
@@ -4494,7 +4094,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     const removedInterestEvent = makeEvent({ id: 'evt-removed-interest' });
     await eventService.publish(removedInterestEvent);
     await runtime.executeTick();
-    expect(eventStore.getById(removedInterestEvent.id)?.state).toBe('ignored');
+    expect(eventStore.getById(removedInterestEvent.id)?.state).toBe('published');
     expect(eventStore.listDeliveries(removedInterestEvent.id)).toHaveLength(0);
 
     const addedInterestEvent = makeEvent({
@@ -5616,28 +5216,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(event.id)?.state).toBe('failed');
   });
 
-  test('preserves DB-only pending deliveries when another target subscription survives', async () => {
-    const { workflow, run, task } = await startRunWithSubscription();
-    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
-    nodeExecutionRepo.update(execution.id, {
-      status: 'idle',
-      completedAt: Date.now(),
-    });
-    runtime.registerSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC, {
-      subscriptionKind: 'auto',
-    });
-    const event = makeEvent();
-    await eventService.publish(event);
-    const pendingDelivery = eventStore.listDeliveries(event.id)[0]!;
-    expect(pendingDelivery.state).toBe('pending');
-
-    runtime.clearPrEventSubscriptionsForRun(run.id);
-
-    const delivery = eventStore.listDeliveries(event.id)[0]!;
-    expect(delivery.state).toBe('pending');
-    expect(delivery.failureReason).toBe('node_execution_not_active');
-    expect(eventStore.getById(event.id)?.state).toBe('published');
-  });
   test('terminalizes persisted pending deliveries for cancelled tasks on rehydrate', async () => {
     const { workflow, run, task } = await startRunWithSubscription();
     const event = makeEvent();
@@ -6289,37 +5867,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
   });
 
-  test('does not inject a matched PR event into a live session while the space is paused', async () => {
-    const workflow = createWorkflow();
-    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
-    nodeExecutionRepo.update(execution.id, {
-      status: 'in_progress',
-      agentSessionId: 'session-paused-inject',
-      startedAt: Date.now(),
-    });
-    tam.alive.add('session-paused-inject');
-    const gateDataRepo = new GateDataRepository(db);
-    gateDataRepo.merge(run.id, 'pr-gate', { pr_url: 'https://github.com/lsm/neokai/pull/42' });
-    runtime.registerPrEventSubscriptionForRun(run.id, 'https://github.com/lsm/neokai/pull/42');
-
-    // Pause the space via pauseSpace (fires the runtime's paused callback,
-    // seeding the sync paused cache). pauseSpace does not terminate sessions,
-    // so without the pause guard a matched PR event would inject into the
-    // still-live session.
-    await spaceManager.pauseSpace(SPACE_ID);
-    const event = makeEvent({ id: 'evt-paused-inject', dedupeKey: 'dedupe-paused-inject' });
-    await eventService.publish(event);
-    expect(injected).toHaveLength(0);
-    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
-
-    // Resume -> the deferred delivery is delivered to the live session.
-    await spaceManager.resumeSpace(SPACE_ID);
-    await new Promise((resolve) => setTimeout(resolve, 1_200));
-    expect(injected).toHaveLength(1);
-    expect(injected[0]!.sessionId).toBe('session-paused-inject');
-  });
-
   test('excludes retried delivery from activation flush drain', async () => {
     const { run, task } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
@@ -6801,91 +6348,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.listDeliveries(later.id)[0]!.state).toBe('delivered');
   });
 
-  test('rebuilds blocked-run PR subscriptions on resume before terminalizing pending deliveries', async () => {
-    const { run, task } = await startRunWithSubscription();
-    workflowRunRepo.updateRun(run.id, { status: 'blocked', failureReason: 'manual block' });
-    artifactRepo.upsert({
-      id: 'art-resume-subscription',
-      runId: run.id,
-      nodeId: 'code',
-      artifactType: 'pr_url',
-      artifactKey: 'pr_url',
-      data: { prUrl: 'https://github.com/lsm/neokai/pull/99' },
-    });
-
-    // Establish the auto-subscription and create a pending PR delivery.
-    runtime.notifyRunBlocked(run.id);
-    const prTopic = 'github/lsm/neokai/pull_request/99.review_submitted';
-    const event = makeEvent({ id: 'evt-resume-subscription-rebuild', topic: prTopic });
-    await eventService.publish(event);
-    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
-
-    // Simulate startup skipping the paused space: drop the auto-subscription
-    // from the trie without failing queued deliveries. Use the trie directly
-    // (not lookupSubscriptionTargets) because the latter also matches the
-    // legacy four-segment topic form and would still find the dynamic
-    // subscription registered by startRunWithSubscription.
-    const trie = (
-      runtime as unknown as {
-        topicTrie: {
-          remove: (predicate: (target: unknown) => boolean) => void;
-          lookup: (topic: string) => unknown[];
-        };
-      }
-    ).topicTrie;
-    trie.remove((target) => {
-      const t = target as { workflowRunId?: string; subscriptionKind?: string };
-      return t.workflowRunId === run.id && t.subscriptionKind === 'auto';
-    });
-    expect(
-      trie
-        .lookup(prTopic)
-        .filter((target) => (target as { subscriptionKind?: string }).subscriptionKind === 'auto')
-    ).toHaveLength(0);
-
-    // Resume the space. onSpaceResumed must rebuild the PR subscription before
-    // the subscription check, so the pending delivery is not terminalized.
-    runtime.onSpaceResumed(SPACE_ID);
-    await new Promise((resolve) => setTimeout(resolve, 50));
-
-    expect(runtime.lookupSubscriptionTargets(prTopic).length).toBeGreaterThan(0);
-    const delivery = eventStore.listDeliveries(event.id)[0]!;
-    expect(delivery.state).not.toBe('failed');
-    expect(delivery.failureReason).not.toBe('subscription_no_longer_active');
-  });
-
-  test('does not clear existing PR auto-subscription deliveries on resume', async () => {
-    const { run, task } = await startRunWithSubscription();
-    workflowRunRepo.updateRun(run.id, { status: 'blocked', failureReason: 'manual block' });
-    artifactRepo.upsert({
-      id: 'art-resume-existing',
-      runId: run.id,
-      nodeId: 'code',
-      artifactType: 'pr_url',
-      artifactKey: 'pr_url',
-      data: { prUrl: 'https://github.com/lsm/neokai/pull/99' },
-    });
-
-    // Establish the auto-subscription and create a pending PR delivery.
-    runtime.notifyRunBlocked(run.id);
-    const prTopic = 'github/lsm/neokai/pull_request/99.review_submitted';
-    const event = makeEvent({ id: 'evt-resume-existing-subscription', topic: prTopic });
-    await eventService.publish(event);
-    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
-
-    // Resume the space. onSpaceResumed must not re-enter
-    // registerPrEventSubscriptionForRun for a run that already has an auto
-    // subscription, because that would clear the existing subscription and
-    // terminally fail the pending delivery as auto_pr_subscription_cleared.
-    runtime.onSpaceResumed(SPACE_ID);
-    await new Promise((resolve) => setTimeout(resolve, 50));
-
-    expect(runtime.lookupSubscriptionTargets(prTopic).length).toBeGreaterThan(0);
-    const delivery = eventStore.listDeliveries(event.id)[0]!;
-    expect(delivery.state).not.toBe('failed');
-    expect(delivery.failureReason).not.toBe('auto_pr_subscription_cleared');
-  });
-
   test('preserves event age when requeueing activation retries for pending executions', async () => {
     const { run, task } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
@@ -6947,434 +6409,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(injected[0]!.sessionId).toBe('session-activation-defer');
     expect(injected[0]!.deliveryMode).toBe('defer');
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
-  });
-});
-
-describe('SpaceRuntime event-driven gate evaluation', () => {
-  let db: Database;
-  let workflowRunRepo: SpaceWorkflowRunRepository;
-  let taskRepo: SpaceTaskRepository;
-  let nodeExecutionRepo: NodeExecutionRepository;
-  let workflowManager: SpaceWorkflowManager;
-  let runtime: SpaceRuntime;
-  let eventStore: ExternalEventStore;
-  let eventService: ExternalEventService;
-  let injected: Array<{ sessionId: string; message: string; deliveryMode?: string }>;
-  let blockedRunHooks: Array<{ runId: string; topic: string }>;
-  let tam: MockTaskAgentManager;
-  let bus: ReturnType<typeof createDaemonInternalEventBus>;
-
-  const PR_URL = 'https://github.com/lsm/neokai/pull/42';
-  const PR_TOPIC = 'github/lsm/neokai/pull_request/42.review_submitted';
-
-  function makePrEvent(overrides: Partial<ExternalEvent> = {}): ExternalEvent {
-    return {
-      id: `evt-pr-${Math.random().toString(36).slice(2)}`,
-      spaceId: SPACE_ID,
-      source: 'github',
-      topic: PR_TOPIC,
-      occurredAt: 1_700_000_000_000,
-      ingestedAt: 1_700_000_001_000,
-      dedupeKey: `dedupe-pr-${Math.random().toString(36).slice(2)}`,
-      summary: 'Codex approved PR',
-      payload: { action: 'review_submitted', user: 'codex', content: '+1' },
-      ...overrides,
-    };
-  }
-
-  beforeEach(() => {
-    db = makeDb();
-    workflowRunRepo = new SpaceWorkflowRunRepository(db);
-    taskRepo = new SpaceTaskRepository(db);
-    nodeExecutionRepo = new NodeExecutionRepository(db);
-    workflowManager = new SpaceWorkflowManager(new SpaceWorkflowRepository(db));
-    bus = createDaemonInternalEventBus();
-    const commandBus = createInternalCommandBus();
-    eventStore = new ExternalEventStore(db);
-    eventService = new ExternalEventService(eventStore, bus);
-    injected = [];
-    blockedRunHooks = [];
-    commandBus.register('agent.message.inject', async (command) => {
-      injected.push({
-        sessionId: command.sessionId,
-        message: command.message,
-        deliveryMode: command.deliveryMode,
-      });
-      return { ok: true };
-    });
-    tam = new MockTaskAgentManager();
-    runtime = new SpaceRuntime({
-      db,
-      spaceManager: new SpaceManager(db),
-      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
-      spaceWorkflowManager: workflowManager,
-      workflowRunRepo,
-      taskRepo,
-      nodeExecutionRepo,
-      internalEventBus: bus,
-      commandBus,
-      externalEventStore: eventStore,
-      taskAgentManager: tam as never,
-      onBlockedRunExternalEvent: ({ runId, event }) => {
-        blockedRunHooks.push({ runId, topic: event.topic });
-      },
-    });
-  });
-
-  async function startRun(): Promise<{
-    workflow: SpaceWorkflow;
-    run: Awaited<ReturnType<typeof runtime.startWorkflowRun>>['run'];
-    task: SpaceTask;
-    executionId: string;
-    sessionId: string;
-  }> {
-    const workflow = workflowManager.createWorkflow({
-      spaceId: SPACE_ID,
-      name: `Workflow ${Math.random()}`,
-      description: '',
-      nodes: [
-        {
-          id: 'code',
-          name: 'Code',
-          agents: [{ agentId: AGENT_ID, name: 'coder' }],
-        },
-      ],
-      transitions: [],
-      startNodeId: 'code',
-      rules: [],
-      tags: [],
-    });
-    const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-    const task = tasks[0]!;
-    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
-    const sessionId = `session-${execution.id}`;
-    nodeExecutionRepo.update(execution.id, {
-      status: 'in_progress',
-      agentSessionId: sessionId,
-      startedAt: Date.now(),
-    });
-    tam.alive.add(sessionId);
-    return { workflow, run, task, executionId: execution.id, sessionId };
-  }
-
-  test('registerPrEventSubscriptionForRun builds the canonical GitHub PR topic pattern', async () => {
-    const { run } = await startRun();
-    const result = runtime.registerPrEventSubscriptionForRun(run.id, PR_URL);
-    expect(result.success).toBe(true);
-    expect(result.topicPattern).toBe('github/lsm/neokai/pull_request/42.*');
-  });
-
-  test('registerPrEventSubscriptionForRun matches published PR events for the same PR', async () => {
-    const { run, sessionId } = await startRun();
-    const result = runtime.registerPrEventSubscriptionForRun(run.id, PR_URL);
-    expect(result.success).toBe(true);
-
-    const event = makePrEvent();
-    await eventService.publish(event);
-
-    expect(injected).toHaveLength(1);
-    expect(injected[0]!.sessionId).toBe(sessionId);
-    expect(eventStore.getById(event.id)?.state).toBe('delivered');
-  });
-
-  test('clearPrEventSubscriptionsForRun releases digest-path in-flight claims for purged auto-PR items', async () => {
-    const { run } = await startRun();
-    const result = runtime.registerPrEventSubscriptionForRun(run.id, PR_URL);
-    expect(result.success).toBe(true);
-
-    // Publish more PR events than the per-minute rate limit (default 10) so the
-    // overflow lands in the rate-limit digest, where enqueueDeliverableExternalEvent
-    // acquires the synchronous in-flight claim.
-    const events = Array.from({ length: 12 }, (_, index) =>
-      makePrEvent({
-        id: `evt-auto-pr-digest-${index}`,
-        dedupeKey: `dedupe-auto-pr-digest-${index}`,
-      })
-    );
-    for (const event of events) {
-      await eventService.publish(event);
-    }
-    // The two overflowed events are buffered in the digest (their setTimeout(0)
-    // flush has not fired — the run is in_progress so no macrotask yields during
-    // the publish loop). Capture their delivery keys before the purge.
-    const overflowKeys = events
-      .slice(10)
-      .map((event) => eventStore.listDeliveries(event.id)[0]!.deliveryKey);
-
-    // Drop the auto subscription while the overflow events are still buffered.
-    runtime.clearPrEventSubscriptionsForRun(run.id);
-
-    const inFlight = runtime as unknown as { externalEventDeliveriesInFlight: Set<string> };
-    // The purged digest items must release their synchronous in-flight claims —
-    // otherwise externalEventDeliveriesInFlight leaks a terminal delivery key on
-    // every cleared subscription and can block later deliveries reusing the key.
-    for (const [index, deliveryKey] of overflowKeys.entries()) {
-      expect(inFlight.externalEventDeliveriesInFlight.has(deliveryKey)).toBe(false);
-      const delivery = eventStore.listDeliveries(events[10 + index]!.id)[0]!;
-      expect(delivery.state).toBe('failed');
-      expect(delivery.failureReason).toBe('auto_pr_subscription_cleared');
-    }
-  });
-
-  test('explicit dynamic PR subscription matches PR events', async () => {
-    const { run, task, sessionId } = await startRun();
-    const result = runtime.registerSubscription(
-      run.id,
-      task.id,
-      'code',
-      'coder',
-      'github/lsm/neokai/pull_request/42.*',
-      { subscriptionKind: 'dynamic' }
-    );
-    expect(result.success).toBe(true);
-
-    const event = makePrEvent();
-    await eventService.publish(event);
-
-    expect(injected).toHaveLength(1);
-    expect(injected[0]!.sessionId).toBe(sessionId);
-    expect(eventStore.getById(event.id)?.state).toBe('delivered');
-  });
-
-  test('registerPrEventSubscriptionForRun rejects unparseable PR URLs', async () => {
-    const { run } = await startRun();
-    const result = runtime.registerPrEventSubscriptionForRun(
-      run.id,
-      'https://example.com/not/a/pr'
-    );
-    expect(result.success).toBe(false);
-    expect(result.error).toMatch(/unable to parse github pr url/i);
-  });
-
-  test('registerPrEventSubscriptionForRun falls back to the workflow start node when no execution history exists', async () => {
-    const workflow = workflowManager.createWorkflow({
-      spaceId: SPACE_ID,
-      name: `Workflow ${Math.random()}`,
-      description: '',
-      nodes: [{ id: 'code', name: 'Code', agents: [{ agentId: AGENT_ID, name: 'coder' }] }],
-      transitions: [],
-      startNodeId: 'code',
-      rules: [],
-      tags: [],
-    });
-    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-    // Acceptance gate: acceptingExternalEvents flips on only after the runtime
-    // has rehydrated, mirroring production startup.
-    await runtime.executeTick();
-    // Blow away execution history so the fallback path is exercised.
-    nodeExecutionRepo.listByWorkflowRun(run.id).forEach((execution) => {
-      nodeExecutionRepo.update(execution.id, { status: 'cancelled', completedAt: Date.now() });
-    });
-
-    const result = runtime.registerPrEventSubscriptionForRun(run.id, PR_URL);
-    // Falls back to the start node's first agent — subscription succeeds.
-    expect(result.success).toBe(true);
-    expect(result.topicPattern).toBe('github/lsm/neokai/pull_request/42.*');
-    expect(result.topicPattern).toBe('github/lsm/neokai/pull_request/42.*');
-  });
-
-  test('registerPrEventSubscriptionForRun is idempotent for the same PR URL', async () => {
-    const { run, sessionId } = await startRun();
-    const first = runtime.registerPrEventSubscriptionForRun(run.id, PR_URL);
-    const second = runtime.registerPrEventSubscriptionForRun(run.id, PR_URL);
-    expect(first.success).toBe(true);
-    expect(second.success).toBe(true);
-
-    const event = makePrEvent();
-    await eventService.publish(event);
-
-    // Second registration must not duplicate delivery.
-    expect(injected).toHaveLength(1);
-    expect(injected[0]!.sessionId).toBe(sessionId);
-  });
-
-  test('clearPrEventSubscriptionsForRun removes only PR-pattern interests', async () => {
-    const { run } = await startRun();
-    const subscription = runtime.registerPrEventSubscriptionForRun(run.id, PR_URL);
-    expect(subscription.success).toBe(true);
-
-    runtime.clearPrEventSubscriptionsForRun(run.id);
-
-    const event = makePrEvent();
-    await eventService.publish(event);
-    expect(injected).toHaveLength(0);
-  });
-
-  test('clearPrEventSubscriptionsForRun preserves agent-registered interests on other topics', async () => {
-    const { run, task } = await startRun();
-    runtime.registerPrEventSubscriptionForRun(run.id, PR_URL);
-    runtime.registerSubscription(
-      run.id,
-      task.id,
-      'code',
-      'coder',
-      'github/lsm/neokai/pull_request/42.review_submitted'
-    );
-    runtime.clearPrEventSubscriptionsForRun(run.id);
-
-    // The literal (non-glob) agent-registered topic must still match.
-    const event = makePrEvent();
-    await eventService.publish(event);
-    expect(injected).toHaveLength(1);
-  });
-
-  test('clearRunInterests sweeps PR event subscriptions alongside other interests', async () => {
-    const { run } = await startRun();
-    runtime.registerPrEventSubscriptionForRun(run.id, PR_URL);
-    runtime.clearRunInterests(run.id);
-
-    const event = makePrEvent();
-    await eventService.publish(event);
-    expect(injected).toHaveLength(0);
-  });
-
-  test('review_comment during the first in_progress window is delivered to the coder node', async () => {
-    const gateDataRepo = new GateDataRepository(db);
-    const localCommandBus = createInternalCommandBus();
-    const localInjected: Array<{ sessionId: string; message: string; deliveryMode?: string }> = [];
-    localCommandBus.register('agent.message.inject', async (command) => {
-      localInjected.push({
-        sessionId: command.sessionId,
-        message: command.message,
-        deliveryMode: command.deliveryMode,
-      });
-      return { ok: true };
-    });
-
-    const localRuntime = new SpaceRuntime({
-      db,
-      spaceManager: new SpaceManager(db),
-      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
-      spaceWorkflowManager: workflowManager,
-      workflowRunRepo,
-      taskRepo,
-      nodeExecutionRepo,
-      gateDataRepo,
-      artifactProfile: new CodingArtifactProfile({ db, gateDataRepo }),
-      internalEventBus: bus,
-      commandBus: localCommandBus,
-      externalEventStore: eventStore,
-      taskAgentManager: tam as never,
-      deliverLongHorizonExternalEvent: async () => ({ delivered: true }),
-    });
-
-    const workflow = workflowManager.createWorkflow({
-      spaceId: SPACE_ID,
-      name: 'Workflow with gate',
-      description: '',
-      nodes: [{ id: 'code', name: 'Code', agents: [{ agentId: AGENT_ID, name: 'coder' }] }],
-      transitions: [],
-      startNodeId: 'code',
-      rules: [],
-      tags: [],
-      gates: [
-        {
-          id: 'approval',
-          fields: [{ name: 'pr_url', type: 'string', writers: ['coder'], check: { op: 'exists' } }],
-        },
-      ],
-    });
-
-    const { run } = await localRuntime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
-    const coderSessionId = `session-coder-${run.id}`;
-    nodeExecutionRepo.update(execution.id, {
-      status: 'in_progress',
-      agentSessionId: coderSessionId,
-      startedAt: Date.now(),
-    });
-    tam.alive.add(coderSessionId);
-
-    // PR URL becomes known after the run has already entered in_progress.
-    gateDataRepo.merge(run.id, 'approval', { pr_url: PR_URL });
-
-    // The tick sweep resolves the new PR URL and registers the auto-subscription.
-    await localRuntime.executeTick();
-
-    const event = makeEvent({
-      topic: 'github/lsm/neokai/pull_request/42.review_comment_created',
-    });
-    await eventService.publish(event);
-
-    expect(localInjected).toHaveLength(1);
-    expect(localInjected[0]!.sessionId).toBe(coderSessionId);
-  });
-
-  test('onBlockedRunExternalEvent fires once per matching blocked run when event delivered', async () => {
-    const { run, sessionId } = await startRun();
-    workflowRunRepo.updateRun(run.id, { status: 'blocked', failureReason: 'agentCrash' });
-    // Re-mark execution active so the blocked run is still considered deliverable.
-    nodeExecutionRepo.update(nodeExecutionRepo.listByNode(run.id, 'code')[0]!.id, {
-      status: 'in_progress',
-      agentSessionId: sessionId,
-      startedAt: Date.now(),
-    });
-    runtime.registerPrEventSubscriptionForRun(run.id, PR_URL);
-
-    const event = makePrEvent();
-    await eventService.publish(event);
-
-    expect(blockedRunHooks).toEqual([{ runId: run.id, topic: PR_TOPIC }]);
-  });
-
-  test('onBlockedRunExternalEvent does not fire for non-blocked runs', async () => {
-    const { run } = await startRun();
-    // Run stays in_progress — no hook should fire even when an event matches.
-    runtime.registerPrEventSubscriptionForRun(run.id, PR_URL);
-
-    const event = makePrEvent();
-    await eventService.publish(event);
-
-    expect(blockedRunHooks).toHaveLength(0);
-  });
-
-  test('onBlockedRunExternalEvent fires once even when multiple subscriptions match for the same run', async () => {
-    const { run, task, sessionId } = await startRun();
-    workflowRunRepo.updateRun(run.id, { status: 'blocked', failureReason: 'agentCrash' });
-    nodeExecutionRepo.update(nodeExecutionRepo.listByNode(run.id, 'code')[0]!.id, {
-      status: 'in_progress',
-      agentSessionId: sessionId,
-      startedAt: Date.now(),
-    });
-    runtime.registerPrEventSubscriptionForRun(run.id, PR_URL);
-    // Second matching subscription (literal this time) on the same slot — both
-    // should match but the hook fires only once per (run, event) pair.
-    runtime.registerSubscription(
-      run.id,
-      task.id,
-      'code',
-      'coder',
-      'github/lsm/neokai/pull_request/42.review_submitted'
-    );
-
-    const event = makePrEvent();
-    await eventService.publish(event);
-
-    expect(blockedRunHooks).toEqual([{ runId: run.id, topic: PR_TOPIC }]);
-  });
-
-  test('clearPrEventSubscriptionsForRun preserves agent-registered dynamic subscriptions on the same PR topic', async () => {
-    const { run, task } = await startRun();
-    // Agent explicitly subscribes to the PR topic via subscribe_external_event (dynamic).
-    runtime.registerSubscription(
-      run.id,
-      task.id,
-      'code',
-      'coder',
-      'github/lsm/neokai/pull_request/42.*',
-      { subscriptionKind: 'dynamic' }
-    );
-    // Runtime also auto-subscribes (kind 'auto') on the same pattern.
-    const auto = runtime.registerPrEventSubscriptionForRun(run.id, PR_URL);
-    expect(auto.success).toBe(true);
-
-    // Gate-driven cleanup must only sweep the auto subscription.
-    runtime.clearPrEventSubscriptionsForRun(run.id);
-
-    const event = makePrEvent();
-    await eventService.publish(event);
-    // Agent-owned dynamic subscription still matches.
-    expect(injected).toHaveLength(1);
   });
 });
 

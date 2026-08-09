@@ -70,6 +70,8 @@ const REVIEW_TOPIC = `github/${OWNER}/${REPO}/pull_request/${PR_NUMBER}.review_s
 const CHECK_FAILED_TOPIC = `github/${OWNER}/${REPO}/pull_request/${PR_NUMBER}.check_failed`;
 const COMMENT_POLLED_TOPIC = `github/${OWNER}/${REPO}/pull_request/${PR_NUMBER}.comment_polled`;
 const PR_POLLED_TOPIC = `github/${OWNER}/${REPO}/pull_request/${PR_NUMBER}.polled`;
+// The topic pattern the coder registers via subscribe_pr_events for its PR.
+const CODER_PR_TOPIC_PATTERN = `github/${OWNER}/${REPO}/pull_request/${PR_NUMBER}.*`;
 
 // ---------------------------------------------------------------------------
 // GitHub payload / fetch fakes
@@ -549,9 +551,10 @@ async function seedActiveRunWithPr(
   });
   ctx.tam.alive.add(coderSessionId);
   ctx.gateDataRepo.merge(run.id, 'approval', { pr_url: PR_URL });
-  // The production gate-write path: registers the PR auto-subscription for the
-  // in_progress run (with replay of retained events).
-  await ctx.service.notifyGateDataChanged(run.id, 'approval');
+  // The coder self-subscribes to its PR events via subscribe_pr_events (the
+  // prompt-driven dynamic subscription that replaced the runtime's gate-blocked
+  // auto-subscription). Register it explicitly here to model that flow.
+  ctx.runtime.registerSubscription(run.id, tasks[0]!.id, 'code', 'coder', CODER_PR_TOPIC_PATTERN);
   return { runId: run.id, taskId: tasks[0]!.id, coderSessionId };
 }
 
@@ -561,9 +564,6 @@ async function seedBlockedRunWithPr(
 ): Promise<{ runId: string; coderSessionId: string }> {
   const { runId, coderSessionId } = await seedActiveRunWithPr(ctx);
   ctx.workflowRunRepo.updateRun(runId, { status: 'blocked', failureReason: 'agentCrash' });
-  // Still blocked: the gate-write path keeps the auto-subscription registered
-  // so an external event can re-evaluate the gate.
-  await ctx.service.notifyGateDataChanged(runId, 'approval');
   return { runId, coderSessionId };
 }
 
@@ -944,74 +944,5 @@ describe('external event delivery e2e', () => {
       `${OWNER}/${REPO}:pull_request:${PR_NUMBER * 10}:def456`
     );
     expect(pushEvent?.state).toBe('delivered');
-  });
-
-  // -------------------------------------------------------------------------
-  // 5. Retention: no terminal drop while a run can still consume the event
-  // -------------------------------------------------------------------------
-
-  test('PR event linked to a run is retained published until a subscription registers; unlinked events are ignored', async () => {
-    ctx = await setupE2E();
-    watchRepo(ctx);
-    // Seed a run whose PR URL is resolvable from gate data, but with no
-    // subscription registered yet (no notifyGateDataChanged, no tick sweep).
-    const { run } = await ctx.runtime.startWorkflowRun(SPACE_ID, workflowId(ctx), 'Run');
-    const execution = ctx.nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
-    const coderSessionId = `session-coder-${run.id}`;
-    ctx.nodeExecutionRepo.update(execution.id, {
-      status: 'in_progress',
-      agentSessionId: coderSessionId,
-      startedAt: Date.now(),
-    });
-    ctx.tam.alive.add(coderSessionId);
-    ctx.gateDataRepo.merge(run.id, 'approval', { pr_url: PR_URL });
-
-    const response = await sendWebhook(
-      ctx,
-      'pull_request_review',
-      reviewWebhookPayload(),
-      'delivery-review-retained'
-    );
-    expect(response.status).toBe(200);
-
-    // No subscription matches, but the event names this run's PR — it must
-    // stay published (retained) instead of being terminally ignored.
-    const retained = (
-      ctx.db
-        .prepare(`SELECT id, state FROM space_external_events WHERE space_id = ?`)
-        .all(SPACE_ID) as Array<{ id: string; state: string }>
-    )[0]!;
-    expect(retained.state).toBe('published');
-    expect(ctx.eventStore.listDeliveries(retained.id)).toHaveLength(0);
-    expect(ctx.injected).toHaveLength(0);
-
-    // The subscription registering later (production: gate write on the
-    // in_progress run) replays the retained event to the worker.
-    await ctx.service.notifyGateDataChanged(run.id, 'approval');
-    expect(injectedTopics(ctx)).toEqual([REVIEW_TOPIC]);
-    expect(ctx.eventStore.getById(retained.id)?.state).toBe('delivered');
-
-    // An event for a PR no run cares about is terminally ignored, so
-    // duplicate webhooks for it short-circuit at the store.
-    const unlinkedPayload = reviewWebhookPayload({
-      review: { ...reviewWebhookPayload().review, id: 9002 },
-      pull_request: {
-        id: 990,
-        number: 99,
-        html_url: `https://github.com/${OWNER}/${REPO}/pull/99`,
-        user: { login: 'dev', type: 'User' },
-      },
-    });
-    const unlinked = await sendWebhook(
-      ctx,
-      'pull_request_review',
-      unlinkedPayload,
-      'delivery-review-unlinked'
-    );
-    expect(unlinked.status).toBe(200);
-    const ignored = ctx.db
-      .prepare(`SELECT state FROM space_external_events WHERE topic LIKE '%pull_request/99.%'`)
-      .all() as Array<{ state: string }>;
-    expect(ignored).toEqual([{ state: 'ignored' }]);
   });
 });

@@ -82,7 +82,6 @@ import {
 import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format';
 import { getBuiltInGateScript } from '../workflows/built-in-workflows';
 import { getEffectiveGate } from './gate-features';
-import { buildPrEventTopicPattern, parsePrUrl } from './parse-pr-url';
 import { deliveryModeFromFailureReason } from './delivery-mode';
 import { CompletionDetector } from './completion-detector';
 import {
@@ -317,29 +316,6 @@ export interface SpaceRuntimeConfig {
     runId: string;
     event: ExternalEventPublishedPayload;
   }) => Promise<boolean | 'retry'> | boolean | 'retry' | void;
-  /**
-   * Optional hook invoked immediately after a workflow run transitions into
-   * `blocked` status — covers tick-loop recovery (`recoverStalledRuns`),
-   * `markFailed` RPC, and gate-rejection paths that bypass the gate-write
-   * sync. Wired by `SpaceRuntimeService` to ensure the PR-event
-   * auto-subscription is created when the run becomes blocked regardless
-   * of which code path performed the transition.
-   *
-   * Fire-and-forget; errors are logged and swallowed by the runtime.
-   */
-  onRunBlocked?: (runId: string) => Promise<void> | void;
-  /**
-   * Optional hook invoked inside `executeTick` after recovery completes and
-   * BEFORE `redispatchPublishedEventsWithoutDeliveries` runs. Wired by
-   * `SpaceRuntimeService` to rebuild PR-event auto-subscriptions for blocked
-   * runs before the redispatch sweep re-processes crash-pending PR events —
-   * without this, those events hit an empty topic trie and get marked
-   * `ignored`, blocking the event-driven gate-eval path on the first
-   * post-restart tick.
-   *
-   * Awaited by the runtime so the trie is fully populated before redispatch.
-   */
-  onBeforeRedispatch?: () => Promise<void> | void;
 }
 
 interface StartWorkflowRunOptions {
@@ -374,13 +350,10 @@ interface WorkflowSubscriptionTarget {
   /**
    * Origin of the subscription:
    * - `static`  — declared in the workflow template's `eventInterests`
-   * - `dynamic` — registered at runtime via MCP tooling (`subscribe_external_event`)
-   * - `auto`    — registered by the runtime itself (e.g. gate-blocked PR
-   *              auto-subscription). Distinct from `dynamic` so cleanup can
-   *              target only runtime-managed subscriptions without touching
-   *              agent-registered interests on the same topic.
+   * - `dynamic` — registered at runtime via MCP tooling (`subscribe_external_event`
+   *              / `subscribe_pr_events`), e.g. a coder subscribing to its own PR.
    */
-  subscriptionKind?: 'static' | 'dynamic' | 'auto' | 'auto_pr';
+  subscriptionKind?: 'static' | 'dynamic';
   sessionId?: string;
 }
 
@@ -626,36 +599,6 @@ function formatCommandError(error: unknown): string {
 function longHorizonSpaceIdFromWorkflowRunId(workflowRunId: string): string | null {
   const prefix = 'long_horizon:';
   return workflowRunId.startsWith(prefix) ? workflowRunId.slice(prefix.length) : null;
-}
-
-// Reactive task reactivation fires only on the granular `.check_failed`
-// (check_run) signal, not on `.suite_failed` (check_suite). A failed suite is
-// usually accompanied by failed individual checks, so reacting to both would
-// risk double-reactivating a done task when the two events arrive before the
-// first recovery flips its status. The suite event is still ingested, stored,
-// delivered to subscribers, and shown in the timeline — only reactivation is
-// scoped to check_run.
-function isReactivePrCheckFailure(event: { topic: string; source: string }): boolean {
-  return (
-    event.source.toLowerCase() === 'github' &&
-    // Native GitHub Actions failures arrive as .../pull_request/{pr}.check_failed;
-    // external/legacy CI (Jenkins/Travis/custom) commit statuses arrive as
-    // .status_failure / .status_error. Both should reopen a done PR task. The
-    // non-failure status states (pending/success) are intentionally excluded.
-    /^github\/[^/]+\/[^/]+\/pull_request\/[^/.]+\.(?:check_failed|status_(?:failure|error))$/i.test(
-      event.topic
-    )
-  );
-}
-
-/**
- * Whether a run is eligible for the recurring PR-subscription sweep. Restricted
- * to active runs (in_progress/blocked) so the per-tick sweep stays bounded;
- * done tasks keep a subscription retained from their active period and are
- * rebuilt once at startup by rehydrateExecutors.
- */
-function isPrSubscriptionSweepEligibleRun(run: SpaceWorkflowRun): boolean {
-  return run.status === 'in_progress' || run.status === 'blocked';
 }
 
 type ExternalEventTaskDecision =
@@ -1091,9 +1034,8 @@ export class SpaceRuntime {
     options: { clearQueuedDeliveries?: boolean } = {}
   ): void {
     // Refresh only workflow-defined static interests, preserving agent-created
-    // (dynamic) and runtime task-owned PR (auto/auto_pr) subscriptions — clearing
-    // the auto PR sub here would drop the very target a check_failed matched,
-    // causing post-recovery delivery validation to terminally fail it.
+    // (dynamic) subscriptions so an agent that explicitly subscribed keeps
+    // receiving events after a re-registration.
     this.topicTrie.remove(
       (target) =>
         isWorkflowSubscriptionTarget(target) &&
@@ -1146,7 +1088,7 @@ export class SpaceRuntime {
     nodeId: string,
     agentName: string,
     topic: string,
-    options: { subscriptionKind?: 'static' | 'dynamic' | 'auto' | 'auto_pr' } = {}
+    options: { subscriptionKind?: 'static' | 'dynamic' } = {}
   ): { success: boolean; error?: string } {
     const trimmed = topic?.trim();
     if (!trimmed) return { success: false, error: 'Topic pattern is required.' };
@@ -1171,26 +1113,19 @@ export class SpaceRuntime {
         target.topic?.toLowerCase() === normalized
     );
     // The per-slot cap protects against agents registering excessive
-    // user/static/dynamic interests. Auto subscriptions (registered by the
-    // runtime itself for blocked-run PR wake-up) bypass the cap so a slot
-    // already at the user-interest limit still gets its single gate-wake
-    // subscription.
-    if (subscriptionKind !== 'auto' && subscriptionKind !== 'auto_pr') {
-      const existingInterests = this.topicTrie.count(
-        (target) =>
-          isWorkflowSubscriptionTarget(target) &&
-          target.workflowRunId === workflowRunId &&
-          target.nodeId === nodeId &&
-          target.agentName === agentName &&
-          target.subscriptionKind !== 'auto' &&
-          target.subscriptionKind !== 'auto_pr'
+    // user/static/dynamic interests on a single slot.
+    const existingInterests = this.topicTrie.count(
+      (target) =>
+        isWorkflowSubscriptionTarget(target) &&
+        target.workflowRunId === workflowRunId &&
+        target.nodeId === nodeId &&
+        target.agentName === agentName
+    );
+    if (existingInterests >= MAX_AGENT_SLOT_EVENT_INTERESTS) {
+      throw new Error(
+        `Agent slot ${workflowRunId}/${nodeId}/${agentName} cannot register more than ` +
+          `${MAX_AGENT_SLOT_EVENT_INTERESTS} event interests`
       );
-      if (existingInterests >= MAX_AGENT_SLOT_EVENT_INTERESTS) {
-        throw new Error(
-          `Agent slot ${workflowRunId}/${nodeId}/${agentName} cannot register more than ` +
-            `${MAX_AGENT_SLOT_EVENT_INTERESTS} event interests`
-        );
-      }
     }
     this.topicTrie.insert(trimmed, {
       workflowRunId,
@@ -1200,6 +1135,15 @@ export class SpaceRuntime {
       topic: trimmed,
       subscriptionKind,
     });
+    // An event can arrive in the brief interval between an external resource
+    // being created and the actor registering its dynamic interest. Unmatched
+    // events stay `published` for the bounded retention TTL; replay here so a
+    // newly-registered interest receives any event that arrived in that gap.
+    // Static interests are rebuilt during rehydrate before the runtime accepts
+    // events, so only runtime-created dynamic interests need the direct replay.
+    if (subscriptionKind === 'dynamic') {
+      this.redispatchRetainedExternalEvents();
+    }
     return { success: true };
   }
 
@@ -1420,151 +1364,11 @@ export class SpaceRuntime {
   }
 
   /**
-   * Resolve the agent slot (task / node / agent name) currently active for a
-   * workflow run — the most recent non-terminal node execution. Used by
-   * auto-subscription helpers to attach GitHub PR event subscriptions on
-   * behalf of the agent that posted the PR.
-   *
-   * Falls back to the most recent execution of any status (preserving its
-   * nodeId / agentName) when no live execution exists — e.g. immediately
-   * after a stall-recovery transition where the agent session is gone but
-   * the next spawn will reuse the same slot. When no execution exists at
-   * all, falls back to the workflow's start node + first agent so the
-   * subscription attaches somewhere the next agent will inhabit.
-   *
-   * Returns `null` only when the run has no canonical task AND no workflow
-   * definition is available.
-   */
-  resolveActiveExecutionSlotForRun(
-    workflowRunId: string
-  ): { taskId: string; nodeId: string; agentName: string } | null {
-    const taskId = this.resolveExecutionTaskId(workflowRunId);
-    if (!taskId) return null;
-    const executions = this.config.nodeExecutionRepo.listByWorkflowRun(workflowRunId);
-    const live = executions
-      .filter((execution) => execution.agentSessionId && !execution.completedAt)
-      .sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0))[0];
-    if (live) {
-      return { taskId, nodeId: live.workflowNodeId, agentName: live.agentName };
-    }
-    // No live execution — fall back to the most recent execution of any
-    // status so the subscription attaches to the slot the next spawn will
-    // reuse (same nodeId / agentName).
-    const mostRecent = executions
-      .filter((execution) => execution.agentName)
-      .sort((a, b) => (b.startedAt ?? b.createdAt ?? 0) - (a.startedAt ?? a.createdAt ?? 0))[0];
-    if (mostRecent) {
-      return { taskId, nodeId: mostRecent.workflowNodeId, agentName: mostRecent.agentName };
-    }
-    // No execution history at all — use the workflow's start node + first
-    // agent as the canonical fallback slot.
-    const run = this.config.workflowRunRepo.getRun(workflowRunId);
-    if (!run) return null;
-    const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
-    const startNode = workflow?.nodes.find((node) => node.id === workflow.startNodeId);
-    const firstAgent = startNode?.agents[0];
-    if (!startNode || !firstAgent) return null;
-    return { taskId, nodeId: startNode.id, agentName: firstAgent.name };
-  }
-
-  private resolveExecutionTaskId(workflowRunId: string): string | null {
-    const tasks = this.config.taskRepo.listByWorkflowRun(workflowRunId);
-    if (tasks.length === 0) return null;
-    const run = this.config.workflowRunRepo.getRun(workflowRunId);
-    if (!run) return tasks[0]!.id;
-    return this.pickCanonicalTaskForRun(run, tasks)?.id ?? tasks[0]!.id;
-  }
-
-  /**
-   * Auto-subscribe a blocked workflow run to GitHub PR events for a specific
-   * pull request. Builds the topic pattern `github/owner/repo/pull_request/N.*`
-   * and registers it on the run's currently-active agent slot via
-   * {@link registerSubscription} (kind `dynamic`), so it is automatically
-   * swept when the run terminates or the slot is unregistered.
-   *
-   * Returns `{ success: false }` when:
-   * - `prUrl` cannot be parsed as a GitHub PR URL
-   * - no active agent slot exists for the run
-   * - the underlying `registerSubscription` call rejects (capacity / invalid)
-   *
-   * Idempotent: re-invoking with the same `prUrl` no-ops because
-   * `registerSubscription` removes the prior identical pattern first. When
-   * the PR URL changes (A → B) the prior auto-subscription for A is dropped
-   * before the new one is registered so obsolete PR events stop matching.
-   */
-  registerPrEventSubscriptionForRun(
-    workflowRunId: string,
-    prUrl: string
-  ): { success: boolean; error?: string; topicPattern?: string } {
-    const parsed = parsePrUrl(prUrl);
-    if (!parsed) {
-      return { success: false, error: `Unable to parse GitHub PR URL: ${prUrl}` };
-    }
-    const slot = this.resolveActiveExecutionSlotForRun(workflowRunId);
-    if (!slot) {
-      return { success: false, error: 'No active agent slot for workflow run' };
-    }
-    // Drop any prior auto-subscriptions for this run before registering the
-    // new pattern. This handles PR-URL changes (A → B) and also makes the
-    // 'auto' kind a single-entry-per-run invariant.
-    this.clearPrEventSubscriptionsForRun(workflowRunId);
-    const topicPattern = buildPrEventTopicPattern(parsed);
-    try {
-      const result = this.registerSubscription(
-        workflowRunId,
-        slot.taskId,
-        slot.nodeId,
-        slot.agentName,
-        topicPattern,
-        { subscriptionKind: 'auto' }
-      );
-      if (!result.success) return { success: false, error: result.error, topicPattern };
-      return { success: true, topicPattern };
-    } catch (err) {
-      return {
-        success: false,
-        error: err instanceof Error ? err.message : String(err),
-        topicPattern,
-      };
-    }
-  }
-
-  private hasAnyAutoPrSubscriptionForRun(workflowRunId: string): boolean {
-    return (
-      this.topicTrie.count(
-        (target) =>
-          isWorkflowSubscriptionTarget(target) &&
-          target.workflowRunId === workflowRunId &&
-          target.subscriptionKind === 'auto'
-      ) > 0
-    );
-  }
-
-  private hasCurrentAutoPrSubscriptionForRun(workflowRunId: string, prUrl: string): boolean {
-    const parsed = parsePrUrl(prUrl);
-    if (!parsed) return false;
-    const slot = this.resolveActiveExecutionSlotForRun(workflowRunId);
-    if (!slot) return false;
-    const expectedTopic = buildPrEventTopicPattern(parsed).toLowerCase();
-    return (
-      this.topicTrie.count(
-        (target) =>
-          isWorkflowSubscriptionTarget(target) &&
-          target.workflowRunId === workflowRunId &&
-          target.taskId === slot.taskId &&
-          target.nodeId === slot.nodeId &&
-          target.agentName === slot.agentName &&
-          target.subscriptionKind === 'auto' &&
-          target.topic?.toLowerCase() === expectedTopic
-      ) > 0
-    );
-  }
-
-  /**
    * Reset any blocked node executions for a run back to pending. Called by
-   * direct resume paths (approve_gate) that bypass transitionBlockedRunToInProgress
-   * so the auto-sub targets the recovered slot, not the stale blocked one.
-   * Best-effort — errors are logged and swallowed.
+   * direct resume paths (approve_gate, event-driven gate-open resume) that
+   * bypass the normal blocked → in_progress transition so the tick loop
+   * re-drives the recovered slot instead of short-circuiting through the
+   * blocked-execution guard. Best-effort — errors are logged and swallowed.
    */
   resetBlockedExecutionsForRun(runId: string): void {
     try {
@@ -1581,57 +1385,6 @@ export class SpaceRuntime {
         `SpaceRuntime: resetBlockedExecutionsForRun failed for run ${runId}: ${formatCommandError(err)}`
       );
     }
-  }
-
-  /**
-   * Ensure a workflow run has an auto PR-event subscription when a resolvable
-   * PR URL exists. Idempotent for the current PR URL, but refreshes stale auto
-   * subscriptions when the resolved PR changes.
-   */
-  ensurePrEventSubscriptionForRun(
-    workflowRunId: string,
-    options: { replay?: boolean } = {}
-  ): {
-    subscribed: boolean;
-    reason?: string;
-  } {
-    const prUrl = this.resolvePrUrlForRun(workflowRunId);
-    if (!prUrl) {
-      // The PR URL was removed/reset (e.g. a gate resetOnCycle writing defaults
-      // without pr_url). Clear any stale auto subscription so events for the
-      // previous PR stop matching the run's active slot. No-op when none exists.
-      if (this.hasAnyAutoPrSubscriptionForRun(workflowRunId)) {
-        this.clearPrEventSubscriptionsForRun(workflowRunId);
-      }
-      return { subscribed: false, reason: 'no resolvable PR URL' };
-    }
-    if (this.hasCurrentAutoPrSubscriptionForRun(workflowRunId, prUrl)) {
-      return { subscribed: false, reason: 'already has current auto PR-event subscription' };
-    }
-    const result = this.registerPrEventSubscriptionForRun(workflowRunId, prUrl);
-    if (!result.success) {
-      // The resolved URL is present but unparsable/non-GitHub, or no active
-      // slot exists. registerPr returns before clearing in the parse-failure
-      // case, so drop any stale auto subscription for the previous valid URL.
-      if (this.hasAnyAutoPrSubscriptionForRun(workflowRunId)) {
-        this.clearPrEventSubscriptionsForRun(workflowRunId);
-      }
-      return { subscribed: false, reason: result.error };
-    }
-    // A newly-created auto subscription may match a retained PR event kept
-    // `published` with no delivery rows while no subscription existed. Direct
-    // callers (gate-data change, resume, approval, run start) do not otherwise
-    // trigger a redispatch, so replay (or TTL-expire) retained events now
-    // instead of stranding them until the next tick sweep. Startup rebuild
-    // paths pass `replay: false` because rehydrate/recovery has not restored
-    // executors/sessions yet — they rely on the tick's post-rehydrate
-    // redispatch. Defer when inside handleExternalEvent to avoid re-handling
-    // the in-flight event.
-    if (options.replay === false) {
-      return { subscribed: true };
-    }
-    this.redispatchRetainedExternalEvents();
-    return { subscribed: true };
   }
 
   /**
@@ -1654,157 +1407,6 @@ export class SpaceRuntime {
     }
     this.expirePublishedExternalEventsPastTtl();
     this.redispatchPublishedEventsWithoutDeliveries();
-  }
-
-  /**
-   * Idempotent per-tick sweep that ensures active runs (in_progress/blocked)
-   * whose PR URL is resolvable carry an auto subscription. It is bounded to
-   * active runs: done tasks retain their subscription from the active period
-   * (terminal transitions no longer clear it) and are rebuilt once at startup
-   * by rehydrateExecutors, so scanning every done run on every tick would be an
-   * unbounded N+1 as work accumulates.
-   */
-  private async ensurePrEventSubscriptionsForActiveRuns(): Promise<number> {
-    let subscribed = 0;
-    try {
-      const spaces = await this.config.spaceManager.listSpaces(false);
-      for (const space of spaces) {
-        if (space.paused || space.stopped) continue;
-        for (const run of this.config.workflowRunRepo.listBySpace(space.id)) {
-          if (!isPrSubscriptionSweepEligibleRun(run)) continue;
-          // Also require the owning task to be non-terminal: cancel_task can
-          // cancel a task while leaving its run in_progress/blocked, and the
-          // sweep must not recreate an auto subscription the lifecycle listener
-          // just cleared for that cancelled task.
-          if (!this.isTaskOwnedPrSubscriptionEligible(run)) continue;
-          // replay:false — this is a sweep-style caller; executeTick performs a
-          // single post-sweep redispatch when subscribed > 0, so per-run replay
-          // here would race with it and double-handle retained PR events.
-          if (this.ensurePrEventSubscriptionForRun(run.id, { replay: false }).subscribed) {
-            subscribed++;
-          }
-        }
-      }
-    } catch (err) {
-      log.warn(
-        `SpaceRuntime: ensurePrEventSubscriptionsForActiveRuns failed: ${formatCommandError(err)}`
-      );
-    }
-    return subscribed;
-  }
-
-  /**
-   * Fallback path for runs that transition to `blocked` outside of the normal
-   * in_progress registration / tick sweep (markFailed RPC, gate rejection in
-   * space-agent-tools, etc.). Delegates to {@link ensurePrEventSubscriptionForRun}
-   * so it is a no-op when the run already has an auto subscription.
-   */
-  notifyRunBlocked(workflowRunId: string): { subscribed: boolean; reason?: string } {
-    const run = this.config.workflowRunRepo.getRun(workflowRunId);
-    if (!run || run.status !== 'blocked') {
-      return { subscribed: false, reason: `run status is ${run?.status ?? 'unknown'}` };
-    }
-    // During startup recovery (e.g. recoverStalledWorkflowRuns racing the first
-    // rehydrate), acceptingExternalEvents is still false and executors/sessions
-    // are not restored — defer retained-event replay to the post-rehydrate
-    // redispatch. At runtime a real blocked transition replays as a direct call.
-    return this.ensurePrEventSubscriptionForRun(workflowRunId, {
-      replay: this.acceptingExternalEvents,
-    });
-  }
-
-  /**
-   * Remove auto-subscribed GitHub PR event subscriptions for a workflow run.
-   *
-   * Only removes subscriptions whose `subscriptionKind === 'auto'` — i.e.
-   * those created by {@link registerPrEventSubscriptionForRun}. Agent-registered
-   * `dynamic` interests (e.g. via `subscribe_external_event`) on the same or
-   * overlapping topics are preserved so an agent that explicitly subscribed
-   * keeps receiving events after the gate opens.
-   *
-   * Called when a gate opens or the run transitions out of `blocked`.
-   */
-  clearPrEventSubscriptionsForRun(workflowRunId: string): void {
-    // Collect the auto-kind targets before removing them so we can also
-    // purge any queued / in-flight deliveries that were registered against
-    // them. Without this, an auto-delivery queued while the run was blocked
-    // can flush later and deliver a PR event to an agent that is no longer
-    // waiting on a gate.
-    const removedTargets: WorkflowSubscriptionTarget[] = [];
-    this.topicTrie.remove((target) => {
-      if (
-        isWorkflowSubscriptionTarget(target) &&
-        target.workflowRunId === workflowRunId &&
-        target.subscriptionKind === 'auto'
-      ) {
-        removedTargets.push(target);
-        return true;
-      }
-      return false;
-    });
-    for (const target of removedTargets) {
-      this.failQueuedDeliveriesForTarget(target, 'auto_pr_subscription_cleared');
-      // Cancel any in-flight retries for the removed target.
-      for (const deliveryKey of Array.from(this.externalEventRetryTimers.keys())) {
-        if (this.deliveryKeyMatchesTarget(deliveryKey, target)) {
-          this.clearExternalEventRetry(deliveryKey);
-        }
-      }
-    }
-    // Purge buffered rate-limit digests whose target was just removed —
-    // otherwise a deferred digest timer can flush and deliver PR events to
-    // an agent that is no longer waiting on a gate.
-    this.purgeAutoPrDigestItemsForRun(workflowRunId);
-  }
-
-  /**
-   * Remove every rate-limit digest item whose target is an auto-kind PR
-   * subscription for the given run. Cleans digest timers when the resulting
-   * per-target pending list is empty.
-   */
-  private purgeAutoPrDigestItemsForRun(workflowRunId: string): void {
-    const store = this.config.externalEventStore;
-    for (const [, state] of this.externalEventRateLimits) {
-      const remaining = state.pendingDigest.filter((item) => {
-        const isAutoForRun =
-          item.target.workflowRunId === workflowRunId && item.target.subscriptionKind === 'auto';
-        if (!isAutoForRun) return true;
-        if (store) {
-          store.markDeliveryFailed(item.event.eventId, item.deliveryKey, {
-            terminal: true,
-            reason: 'auto_pr_subscription_cleared',
-          });
-          store.markEventFailedIfAllDeliveriesTerminal(item.event.eventId);
-        }
-        // Release the synchronous digest-path claim acquired in
-        // enqueueDeliverableExternalEvent so the terminal delivery key does not
-        // leak in externalEventDeliveriesInFlight.
-        this.externalEventDeliveriesInFlight.delete(item.deliveryKey);
-        return false;
-      });
-      state.pendingDigest = remaining;
-      if (state.pendingDigest.length === 0 && state.digestTimer) {
-        clearTimeout(state.digestTimer);
-        state.digestTimer = null;
-      }
-    }
-  }
-
-  /**
-   * Best-effort check whether a retry-timer delivery key corresponds to a
-   * workflow subscription target. Delivery keys are opaque idempotency
-   * tokens built from the event id + target identity, so we cannot parse
-   * them directly — instead, we scan the in-flight delivery set and the
-   * pending queue for a matching delivery key and check the stored target.
-   */
-  private deliveryKeyMatchesTarget(
-    deliveryKey: string,
-    target: WorkflowSubscriptionTarget
-  ): boolean {
-    const queueKey = this.buildQueueKey(target);
-    const queued = this.pendingExternalEventQueue.get(queueKey);
-    if (queued?.some((item) => item.deliveryKey === deliveryKey)) return true;
-    return false;
   }
 
   flushPendingNodeQueue(target: WorkflowSubscriptionTarget, excludeDeliveryKey?: string): void {
@@ -2098,27 +1700,22 @@ export class SpaceRuntime {
     });
 
     if (matches.length === 0) {
-      // Don't terminally drop GitHub PR events linked to a task merely because
-      // its reconstructable subscription has not appeared yet. Keep the event
-      // published until the subscription is rebuilt or the existing TTL expires.
-      if (this.isPrEventLinkedToRun(payload)) {
-        if (this.acceptingExternalEvents && this.isPublishedExternalEventExpired(payload)) {
-          try {
-            store.markEventFailed(payload.eventId, {
-              terminal: true,
-              reason: 'ttl_expired',
-            });
-          } catch (err) {
-            log.warn(
-              `SpaceRuntime: markEventFailed for ${payload.eventId} failed: ${err instanceof Error ? err.message : String(err)}`
-            );
-          }
+      // Keep unmatched events published for the bounded retention TTL. This is
+      // connector-agnostic: any actor that registers a dynamic interest moments
+      // after an external resource is created can replay the event that arrived
+      // in the registration gap. The periodic TTL sweep terminalizes events that
+      // never gain a matching interest, so this does not grow without bound.
+      if (this.acceptingExternalEvents && this.isPublishedExternalEventExpired(payload)) {
+        try {
+          store.markEventFailed(payload.eventId, {
+            terminal: true,
+            reason: 'ttl_expired',
+          });
+        } catch (err) {
+          log.warn(
+            `SpaceRuntime: markEventFailed for ${payload.eventId} failed: ${err instanceof Error ? err.message : String(err)}`
+          );
         }
-        return blockedHookOutcome.anyRetryScheduled;
-      }
-
-      if (this.acceptingExternalEvents && blockedHookOutcome.firedRunIds.size === 0) {
-        store.markEventIgnored(payload.eventId, 'no_matching_subscriptions');
       }
       return blockedHookOutcome.anyRetryScheduled;
     }
@@ -3658,16 +3255,23 @@ export class SpaceRuntime {
     return { ...target, sessionId: current.agentSessionId };
   }
 
-  private isTaskOwnedPrSubscriptionEligible(run: SpaceWorkflowRun): boolean {
-    // A cancelled run (e.g. cancelled by space.stop) must not have its interests
-    // rebuilt on resume/rehydrate — the run is no longer active even if a review
-    // task on it was not cancelled.
-    if (run.status === 'cancelled') return false;
+  private isRunInterestRebuildEligible(run: SpaceWorkflowRun): boolean {
+    // A cancelled run (e.g. cancelled by space.stop) must not have its static
+    // event interests rebuilt on resume/rehydrate — the run is no longer active
+    // even if a review task on it was not cancelled. A `done` run is terminal
+    // (it can no longer deliver events — every delivery fails with
+    // target_task_terminal), so rebuilding its interests only causes fan-out
+    // waste on every matching event; the coder re-subscribes if the run reopens.
+    if (run.status === 'cancelled' || isWorkflowRunSucceeded(run.status)) {
+      return false;
+    }
     const task = this.pickCanonicalTaskForRun(
       run,
       this.config.taskRepo.listByWorkflowRunIncludingArchived(run.id)
     );
-    return !!task && task.status !== 'cancelled' && task.status !== 'archived';
+    return (
+      !!task && task.status !== 'cancelled' && task.status !== 'archived' && task.status !== 'done'
+    );
   }
 
   private isWorkflowTargetOwnedBySpace(
@@ -3686,11 +3290,11 @@ export class SpaceRuntime {
   }
 
   /**
-   * Synchronous task-lifecycle decision for an external event. Only the
-   * `done` + reactive-check-failed case needs async work (recovery); it returns
-   * `reactivate` and the caller performs `recoverWorkflowBackedTask`. Keeping
-   * this synchronous lets the common `deliver` case reach delivery without an
-   * awaited lookup (the flush path dispatches synchronously).
+   * Synchronous task-lifecycle decision for an external event. A `done` task is
+   * terminal — it no longer receives events (the prior reactive-reopen on a late
+   * CI failure relied on a runtime-owned PR subscription that no longer exists;
+   * see task #886). Keeping this synchronous lets the common `deliver` case reach
+   * delivery without an awaited lookup (the flush path dispatches synchronously).
    */
   private prepareExternalEventTask(
     target: WorkflowSubscriptionTarget,
@@ -3707,27 +3311,8 @@ export class SpaceRuntime {
     ) {
       return { action: 'fail', reason: 'invalid_target_ownership' };
     }
-    if (task.status === 'cancelled' || task.status === 'archived') {
+    if (task.status === 'cancelled' || task.status === 'archived' || task.status === 'done') {
       return { action: 'fail', reason: 'target_task_terminal' };
-    }
-
-    if (task.status === 'done') {
-      if (!isReactivePrCheckFailure(event)) {
-        return { action: 'fail', reason: 'target_task_terminal' };
-      }
-      // Verify the event's PR matches this run's resolved PR — a wildcard static
-      // interest must not reactivate every historical done task for any PR's
-      // check_failed.
-      if (!this.isEventPrForRun(event, run.id)) {
-        return { action: 'fail', reason: 'target_task_terminal' };
-      }
-      // Defer reactivation while the space is paused — resuming the space re-enters
-      // delivery and performs the recovery then. Recovering now would reopen a run
-      // and spawn work the user has explicitly paused.
-      if (this.pausedSpaceIds.has(task.spaceId)) {
-        return { action: 'hold' };
-      }
-      return { action: 'reactivate' };
     }
 
     return { action: 'deliver' };
@@ -3799,19 +3384,19 @@ export class SpaceRuntime {
   /**
    * Synchronous task-lifecycle check for the rehydrate/resume requeue sweeps.
    * Returns a terminal failure reason when a persisted pending delivery can no
-   * longer ever matter (cancelled/archived task, or a done task receiving a
-   * non-reactivating event), or `null` to continue requeuing. Rehydrate must not
-   * reactivate a done task — that recovery belongs to the delivery path, which a
-   * requeued retry re-enters — so a reactive check failure returns `null`.
+   * longer ever matter (cancelled/archived/done task), or `null` to continue
+   * requeuing. A `done` task is terminal — it no longer reacts to events.
    */
   private evaluateRequeueTaskLifecycle(
     target: Pick<WorkflowSubscriptionTarget, 'taskId'>,
     event: { topic: string; source: string }
   ): string | null {
+    void event;
     const task = this.config.taskRepo.getTask(target.taskId);
     if (!task) return 'invalid_target_ownership';
-    if (task.status === 'cancelled' || task.status === 'archived') return 'target_task_terminal';
-    if (task.status === 'done' && !isReactivePrCheckFailure(event)) return 'target_task_terminal';
+    if (task.status === 'cancelled' || task.status === 'archived' || task.status === 'done') {
+      return 'target_task_terminal';
+    }
     return null;
   }
 
@@ -4692,35 +4277,8 @@ export class SpaceRuntime {
     nextStatus: SpaceWorkflowRun['status']
   ): Promise<SpaceWorkflowRun> {
     const updated = this.config.workflowRunRepo.transitionStatus(runId, nextStatus);
-    if (nextStatus === 'blocked') {
-      this.fireRunBlockedHook(runId);
-    }
-    if (nextStatus === 'in_progress') {
-      this.ensurePrEventSubscriptionForRun(runId);
-    }
     await this.safeOnWorkflowRunUpdated(updated.spaceId, updated);
     return updated;
-  }
-
-  private fireRunBlockedHook(runId: string): void {
-    const hook = this.config.onRunBlocked;
-    if (!hook) return;
-    try {
-      const result = hook(runId);
-      if (result && typeof (result as Promise<void>).catch === 'function') {
-        (result as Promise<void>).catch((err) => {
-          log.warn(
-            `SpaceRuntime: onRunBlocked failed for run ${runId}: ` +
-              `${err instanceof Error ? err.message : String(err)}`
-          );
-        });
-      }
-    } catch (err) {
-      log.warn(
-        `SpaceRuntime: onRunBlocked threw for run ${runId}: ` +
-          `${err instanceof Error ? err.message : String(err)}`
-      );
-    }
   }
 
   /**
@@ -5110,21 +4668,7 @@ export class SpaceRuntime {
 
       const justRehydrated = !this.rehydrated;
       if (!this.rehydrated) {
-        // Give the service a chance to rebuild in-memory subscriptions
-        // (e.g. PR-event auto-subs for active runs) BEFORE rehydrateExecutors
-        // runs its persisted-delivery replay. rehydrateExecutors also rebuilds
-        // these itself, so this hook is a belt-and-suspenders early pass.
-        if (this.config.onBeforeRedispatch) {
-          try {
-            await this.config.onBeforeRedispatch();
-          } catch (err) {
-            log.warn(
-              `SpaceRuntime: onBeforeRedispatch failed: ${err instanceof Error ? err.message : String(err)}`
-            );
-          }
-        }
         await this.rehydrateExecutors();
-        await this.ensurePrEventSubscriptionsForActiveRuns();
         // Run a stalled-run recovery pass right after rehydrate so the
         // first tick that processes runs already sees a clean slate
         // (orphan in_progress executions reset to pending, terminally
@@ -5137,17 +4681,8 @@ export class SpaceRuntime {
         this.acceptingExternalEvents = true;
       }
 
-      // Idempotent sweep: every active run (in_progress or blocked) with a
-      // resolvable PR URL and no existing auto subscription gets registered.
-      // Runs on the first tick before redispatch so crash-pending PR events
-      // find a target after restart, and on every subsequent tick to catch
-      // runs whose PR URL becomes known mid-flight. A newly-registered
-      // subscription also replays retained events itself (see
-      // ensurePrEventSubscriptionForRun).
-      const subscribedPrRuns = await this.ensurePrEventSubscriptionsForActiveRuns();
-
-      if (justRehydrated || subscribedPrRuns > 0) {
-        // Route through the re-entrancy-guarded helper: if a PR event is still
+      if (justRehydrated) {
+        // Route through the re-entrancy-guarded helper: if an event is still
         // mid-handling (awaiting gate re-eval, before its delivery rows exist),
         // the raw redispatch would re-handle it; the guard defers to the
         // post-handling flush instead.
@@ -5164,20 +4699,9 @@ export class SpaceRuntime {
       // restarts (the in-memory watchdog cooldown does not).
       await this.recoverRateLimitedTasks();
 
-      // Re-sweep after run advancement (processCompletedTasks/processRunTick may
-      // advance an in_progress run to a new node/agent, or make a PR URL newly
-      // resolvable). The pre-advancement sweep above would otherwise leave the
-      // auto-sub targeting the prior slot until the next tick. If this sweep
-      // creates a subscription, replay retained events (mirroring the
-      // start-of-tick sweep), routed through the re-entrancy guard.
-      const advancedPrRuns = await this.ensurePrEventSubscriptionsForActiveRuns();
-      if (advancedPrRuns > 0) {
-        this.redispatchRetainedExternalEvents();
-      }
-
-      // Bound published events without deliveries (e.g. retained PR-linked
-      // events waiting for a subscription) so they do not last forever when no
-      // matching subscription, duplicate webhook, or restart occurs.
+      // Bound published events without deliveries (e.g. retained events waiting
+      // for a subscription) so they do not last forever when no matching
+      // subscription, duplicate webhook, or restart occurs.
       this.expirePublishedExternalEventsPastTtl();
     } finally {
       this.tickInFlight = false;
@@ -5311,11 +4835,6 @@ export class SpaceRuntime {
       throw err;
     }
 
-    // Best-effort: register a PR-event auto-subscription if the run already
-    // resolves a PR URL. The start node may not be active yet, so the tick
-    // sweep will retry on the next cycle if this is a no-op.
-    this.ensurePrEventSubscriptionForRun(run.id);
-
     // Resolve channel topology for the start node and store in run config.
     // TODO: Milestone 6: pass resolvedChannels to session group creation in
     // TaskAgentManager.spawnTaskAgent() rather than storing in run config.
@@ -5359,11 +4878,6 @@ export class SpaceRuntime {
     void runId;
     void gateId;
     return false;
-  }
-
-  /** @internal — exposed only for unit tests/diagnostics. */
-  getPollPrUrlForRun(runId: string): string {
-    return this.resolvePrUrlForRun(runId);
   }
 
   /**
@@ -5844,17 +5358,14 @@ export class SpaceRuntime {
     this.pausedSpaceIds.delete(spaceId);
     if (!store) return;
 
-    // Rebuild task-owned PR subscriptions before evaluating pending deliveries.
-    // The startup rehydrate skips paused spaces, so eligible tasks may have no
+    // Re-register workflow-defined static event interests for eligible runs
+    // before evaluating pending deliveries. The startup rehydrate skips paused
+    // spaces, so a run relying on a workflow eventInterests pattern may have no
     // trie entry yet; rebuilding first avoids false subscription removal.
     const reactiveRuns = this.config.workflowRunRepo
       .listBySpace(spaceId)
-      .filter((run) => this.isTaskOwnedPrSubscriptionEligible(run));
+      .filter((run) => this.isRunInterestRebuildEligible(run));
     for (const run of reactiveRuns) {
-      // Re-register workflow static interests too: a space paused at startup was
-      // skipped by rehydrateExecutors, so a done task relying on a workflow
-      // eventInterests pattern would otherwise still have no trie entry after
-      // resume.
       const staticWorkflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
       if (staticWorkflow) {
         try {
@@ -5864,16 +5375,6 @@ export class SpaceRuntime {
             `SpaceRuntime: failed to rebuild static interests for run ${run.id} on resume: ${formatCommandError(err)}`
           );
         }
-      }
-      try {
-        // replay:false — onSpaceResumed does a single post-requeue replay below,
-        // so per-run replay here would race with it and double-handle retained
-        // PR events.
-        this.ensurePrEventSubscriptionForRun(run.id, { replay: false });
-      } catch (err) {
-        log.warn(
-          `SpaceRuntime: failed to rebuild task-owned PR subscription for run ${run.id} on resume: ${formatCommandError(err)}`
-        );
       }
     }
 
@@ -6083,20 +5584,18 @@ export class SpaceRuntime {
         await this.ensureExecutorRegistered(run, space);
       }
       this.rehydrateLongHorizonSubscriptions(space.id);
-      // Rebuild task-owned PR subscriptions BEFORE persisted-delivery replay.
-      // Executor rehydration intentionally excludes most succeeded runs, but a
-      // done task must still be able to react to a later CI failure.
+      // Re-register workflow-defined static event interests for eligible runs
+      // BEFORE persisted-delivery replay. Executor rehydration intentionally
+      // excludes most succeeded runs, so a run relying on a workflow
+      // eventInterests pattern would otherwise have no trie entry after a
+      // restart. Idempotent for already-active runs.
       if (space.paused || space.stopped) {
         pausedSpaceIds.add(space.id);
         this.pausedSpaceIds.add(space.id);
         continue;
       }
       for (const run of this.config.workflowRunRepo.listBySpace(space.id)) {
-        if (!this.isTaskOwnedPrSubscriptionEligible(run)) continue;
-        // Re-register workflow static interests so a done task relying on a
-        // workflow-defined eventInterests pattern still matches after a restart
-        // (succeeded runs are not in activeRuns, so ensureExecutorRegistered did
-        // not register them). Idempotent for already-active runs.
+        if (!this.isRunInterestRebuildEligible(run)) continue;
         const staticWorkflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
         if (staticWorkflow) {
           try {
@@ -6106,13 +5605,6 @@ export class SpaceRuntime {
               `SpaceRuntime: failed to rebuild static interests for run ${run.id} during rehydrate: ${formatCommandError(err)}`
             );
           }
-        }
-        try {
-          this.ensurePrEventSubscriptionForRun(run.id, { replay: false });
-        } catch (err) {
-          log.warn(
-            `SpaceRuntime: failed to rebuild task-owned PR subscription for run ${run.id} during rehydrate: ${formatCommandError(err)}`
-          );
         }
       }
     }
@@ -9448,118 +8940,6 @@ export class SpaceRuntime {
     // Generic infra does not know which `link` is the PR, so without a profile
     // there is no primary link to resolve.
     return this.config.artifactProfile?.resolvePrimaryLinkUrl(runId) ?? '';
-  }
-
-  /**
-   * Extract a GitHub PR URL from an external-event payload.
-   *
-   * Prefers the explicit `prUrl` in the source payload (set by the GitHub
-   * normalizer), falls back to `externalUrl` when it parses as a PR URL, and
-   * finally derives a canonical `github.com` URL from a five-segment PR topic
-   * (`github/owner/repo/pull_request/N.action`). Returns `null` for non-PR
-   * events or legacy four-segment topics without an explicit URL.
-   */
-  private resolvePrUrlFromExternalEventPayload(
-    payload: ExternalEventPublishedPayload
-  ): string | null {
-    const payloadPrUrl = payload.payload?.prUrl;
-    if (typeof payloadPrUrl === 'string') {
-      const parsed = parsePrUrl(payloadPrUrl);
-      if (parsed) return payloadPrUrl;
-    }
-    const payloadPrUrlSnake = payload.payload?.pr_url;
-    if (typeof payloadPrUrlSnake === 'string') {
-      const parsed = parsePrUrl(payloadPrUrlSnake);
-      if (parsed) return payloadPrUrlSnake;
-    }
-    if (typeof payload.externalUrl === 'string') {
-      const parsed = parsePrUrl(payload.externalUrl);
-      if (parsed) return payload.externalUrl;
-    }
-    const topicParts = payload.topic.split('/');
-    if (topicParts.length >= 5 && topicParts[0] === 'github' && topicParts[3] === 'pull_request') {
-      const owner = topicParts[1];
-      const repo = topicParts[2];
-      const number = topicParts[4]!.split('.')[0];
-      if (owner && repo && number) {
-        return `https://github.com/${owner}/${repo}/pull/${number}`;
-      }
-    }
-    return null;
-  }
-
-  /**
-   * Whether a GitHub PR event is associated with any workflow run in its space.
-   *
-   * The link is derived at runtime by comparing the event's PR URL to the PR
-   * URL resolved for each run in the space (gate data / hook state / artifacts).
-   * There is no stored PR→run index; this keeps the bounding decision consistent
-   * with the existing `resolvePrUrlForRun` path used by blocked-run auto-subscriptions.
-   */
-  /**
-   * Whether the event's PR identity matches the resolved PR for a specific run.
-   * Used to scope done-task reactivation so a wildcard static interest does not
-   * mass-reactivate every historical done task for any PR's check_failed.
-   */
-  private isEventPrForRun(
-    event: {
-      topic: string;
-      source: string;
-      payload: Record<string, unknown>;
-      externalUrl?: string;
-    },
-    runId: string
-  ): boolean {
-    const eventPrUrl = this.resolvePrUrlFromExternalEventPayload(
-      event as ExternalEventPublishedPayload
-    );
-    if (!eventPrUrl) return false;
-    const eventParsed = parsePrUrl(eventPrUrl);
-    const runParsed = parsePrUrl(this.resolvePrUrlForRun(runId));
-    if (!eventParsed || !runParsed) return false;
-    return (
-      eventParsed.host.toLowerCase() === runParsed.host.toLowerCase() &&
-      eventParsed.owner.toLowerCase() === runParsed.owner.toLowerCase() &&
-      eventParsed.repo.toLowerCase() === runParsed.repo.toLowerCase() &&
-      eventParsed.number === runParsed.number
-    );
-  }
-
-  private isPrEventLinkedToRun(payload: ExternalEventPublishedPayload): boolean {
-    const eventPrUrl = this.resolvePrUrlFromExternalEventPayload(payload);
-    const eventParsed = eventPrUrl ? parsePrUrl(eventPrUrl) : null;
-    if (!eventParsed) return false;
-    // Compare the parsed identity case-insensitively: GitHub owner/repo are
-    // case-insensitive (the canonical form is returned on redirect), so a
-    // run storing `.../LSM/NeoKai/pull/42` must still match an event for
-    // `.../lsm/neokai/pull/42`.
-    const eventHost = eventParsed.host.toLowerCase();
-    const eventOwner = eventParsed.owner.toLowerCase();
-    const eventRepo = eventParsed.repo.toLowerCase();
-    const eventNumber = eventParsed.number;
-    for (const run of this.config.workflowRunRepo.listBySpace(payload.spaceId)) {
-      // Only retain against runs that could still react: a cancelled run, or a
-      // run whose canonical task is cancelled/archived, will never grow a
-      // matching subscription, so retaining its PR events would accumulate
-      // `published` rows that never expire.
-      if (run.status === 'cancelled') continue;
-      const task = this.pickCanonicalTaskForRun(
-        run,
-        this.config.taskRepo.listByWorkflowRunIncludingArchived(run.id)
-      );
-      if (task && (task.status === 'cancelled' || task.status === 'archived')) continue;
-      const runParsed = parsePrUrl(this.resolvePrUrlForRun(run.id));
-      if (
-        runParsed &&
-        runParsed.host.toLowerCase() === eventHost &&
-        runParsed.owner.toLowerCase() === eventOwner &&
-        runParsed.repo.toLowerCase() === eventRepo &&
-        runParsed.number === eventNumber
-      ) {
-        return true;
-      }
-    }
-    return false;
   }
 
   private resolvePrimaryResultArtifactSummary(runId: string): string | undefined {
