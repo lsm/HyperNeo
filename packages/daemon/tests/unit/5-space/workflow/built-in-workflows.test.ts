@@ -4894,8 +4894,8 @@ describe('PLAN_AND_DECOMPOSE_WORKFLOW agent slot customPrompt', () => {
     const node = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find((n) => n.name === 'Plan Review')!;
     const prompt = node.agents[0].customPrompt!.value;
     expect(prompt).toContain('any login containing `codex`');
-    // The reaction lookup is run-scoped GraphQL (the Reviewer Bash guard blocks
-    // direct `gh api repos/...` REST reads), not the legacy REST issues/.../reactions.
+    // The reaction lookup is run-scoped GraphQL (the Reviewer contract forbids
+    // direct `gh api repos/...` REST reads against other repos), not the legacy REST issues/.../reactions.
     expect(prompt).toContain('gh api graphql');
     expect(prompt).toContain('reactions(first:100)');
     expect(prompt).not.toContain('issues/{number}/reactions');
@@ -6671,8 +6671,10 @@ test('no built-in template declares a dedicated merger agent or Bash merge guard
   // The merger-variant pattern was retired in favor of the coder/research-owned
   // post-approval merge. No built-in template may carry a `merger` agent slot or
   // a Bash toolGuard that blocks `gh pr merge` (the coder must be able to merge).
-  // The only permitted Bash guard is the reviewer read-scope guard, which blocks
-  // cross-repo `gh api repos/...` reads (the removed get_pr_diff binding).
+  // Built-in templates carry NO Bash toolGuards at all — the Reviewer's
+  // run-scoping is governed by the System Contract prompt, not a declarative
+  // guard. The loop below guards against a future regression that re-introduces
+  // a merge-blocking guard.
   for (const wf of getBuiltInWorkflows()) {
     for (const node of wf.nodes) {
       for (const agent of node.agents) {

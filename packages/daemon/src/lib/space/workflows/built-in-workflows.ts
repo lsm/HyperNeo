@@ -232,8 +232,8 @@ const PD_PLANNING_PROMPT =
 const CODEX_REACTION_APPROVAL_GUIDANCE =
   'After posting your approval review, verify the Codex review bot reaction status ' +
   'before closing or handing off. Use the run-scoped GraphQL reaction lookup ' +
-  '(the Reviewer Bash guard permits `gh api graphql`; direct `gh api repos/...` REST reads are ' +
-  'blocked), resolving the PR number and host from the run PR URL and reading `reactions` ' +
+  '(the Reviewer contract permits the run-scoped `gh api graphql` lookup; direct `gh api repos/...` ' +
+  'REST reads against other repos are forbidden by contract), resolving the PR number and host from the run PR URL and reading `reactions` ' +
   '(parse the host and pass `--hostname` so GitHub Enterprise PRs are queried on the enterprise ' +
   'host, not the default github.com): ' +
   '`PR_URL=<pr_url>; HOST=${PR_URL#https://}; HOST=${HOST%%/*}; gh api graphql --hostname "$HOST" ' +
