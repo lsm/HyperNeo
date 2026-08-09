@@ -588,6 +588,8 @@ export function TaskArtifactsPanel({ runId, taskId, class: className }: TaskArti
             </div>
           )}
 
+          {messageRowsError && <p class="px-4 py-3 text-sm text-amber-500">{messageRowsError}</p>}
+
           {isGitRepo ? (
             <>
               {/* ── Commits ───────────────────────────────────────── */}
@@ -765,9 +767,7 @@ export function TaskArtifactsPanel({ runId, taskId, class: className }: TaskArti
                 }
               />
               <div class="py-1" data-testid="artifacts-file-list">
-                {messageRowsError ? (
-                  <p class="px-4 py-3 text-sm text-amber-500">{messageRowsError}</p>
-                ) : fileOps.length === 0 ? (
+                {fileOps.length === 0 ? (
                   <p class="px-4 py-3 text-sm text-gray-400">No files written or edited yet</p>
                 ) : (
                   <div class="px-2 space-y-0.5">
