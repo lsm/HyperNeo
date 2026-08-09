@@ -49,7 +49,6 @@ import type {
   WorkflowNode,
   WorkflowNodeAgent,
   Session,
-  DeclarativeToolGuard,
 } from '@hyperneo/shared';
 import type { SkillsManager } from '../../skills-manager';
 import type { AppMcpServerRepository } from '../../../storage/repositories/app-mcp-server-repository';
@@ -93,10 +92,7 @@ import {
   createMarkCompleteHandler,
   createPrMergedGate,
 } from '../tools/end-node-handlers';
-import {
-  builtInWorkflowRequiresPrMerge,
-  REVIEWER_TOOL_GUARDS,
-} from '../workflows/built-in-workflows';
+import { builtInWorkflowRequiresPrMerge } from '../workflows/built-in-workflows';
 import { createGithubConnector } from './connectors/github-connector';
 import { collectDispatchablePostApprovalRoutes } from './post-approval-router';
 import { jsonResult } from '../tools/tool-result';
@@ -418,16 +414,6 @@ export interface BuildSlotOverridesContext {
   node?: { id: string; name: string };
   workflow?: { id: string };
   workflowRun?: { id: string };
-  /**
-   * Fallback toolGuards for a slot that defines none of its own, keyed by the
-   * slot's agent id. Used to keep the reviewer Bash allowlist enforced even on
-   * user-cloned / hand-authored workflows whose reviewer slot predates
-   * `REVIEWER_TOOL_GUARDS` (round-12 P1-3): the slot has Bash via the agent
-   * preset, so it must not run with an unguarded shell. When a slot defines its
-   * OWN toolGuards, they win — the slot author explicitly configured the guard
-   * surface.
-   */
-  resolveFallbackToolGuards?: (agentId: string | undefined) => DeclarativeToolGuard[] | undefined;
 }
 
 /**
@@ -469,17 +455,7 @@ export function buildSlotOverrides(
   const taskModelOverride = modelOverrideKey
     ? context?.task?.workflowModelOverrides?.[modelOverrideKey]
     : undefined;
-  // Mandatory preset guards compose with slot-specific guards. A Reviewer may
-  // have unrelated custom guards, but those do not replace the Bash boundary
-  // that became required when M181 added Bash to historical Reviewer agents.
-  const slotGuards = slot.toolGuards ?? [];
-  const fallbackGuards = context?.resolveFallbackToolGuards?.(slot.agentId) ?? [];
-  const effectiveGuards = [...fallbackGuards];
-  for (const guard of slotGuards) {
-    if (!effectiveGuards.some((candidate) => JSON.stringify(candidate) === JSON.stringify(guard))) {
-      effectiveGuards.push(guard);
-    }
-  }
+  const effectiveGuards = slot.toolGuards;
   return {
     model: taskModelOverride ?? slot.model,
     thinkingLevel: slot.thinkingLevel,
@@ -1121,7 +1097,6 @@ export class TaskAgentManager {
         node,
         workflow,
         workflowRun,
-        resolveFallbackToolGuards: (agentId) => this.resolveFallbackToolGuards(agentId),
       });
 
       let init = resolveAgentInit({
@@ -1328,29 +1303,6 @@ export class TaskAgentManager {
         .replace(/^-+|-+$/g, '')
         .slice(0, 40) || 'agent'
     );
-  }
-
-  /**
-   * Fallback toolGuards for a slot that defines none of its own (round-12 P1-3).
-   * A reviewer slot that predates REVIEWER_TOOL_GUARDS still gets Bash from the
-   * Reviewer preset (M181 backfilled the tool), so it must not run with an
-   * unguarded shell. Returns the reviewer guard set when the slot's agent is the
-   * Reviewer preset; undefined otherwise (non-reviewer slots inherit their own
-   * configured guards or none).
-   */
-  private resolveFallbackToolGuards(
-    agentId: string | undefined
-  ): DeclarativeToolGuard[] | undefined {
-    if (!agentId) return undefined;
-    try {
-      const agent = this.config.spaceAgentManager.getById(agentId);
-      if (agent?.templateName === 'Reviewer') {
-        return REVIEWER_TOOL_GUARDS;
-      }
-    } catch {
-      // Best-effort — an unresolvable agent must not break session spawn.
-    }
-    return undefined;
   }
 
   /**
@@ -2645,7 +2597,6 @@ export class TaskAgentManager {
         node: matchedNode,
         workflow: workflow ?? undefined,
         workflowRun: workflowRun ?? undefined,
-        resolveFallbackToolGuards: (agentId) => this.resolveFallbackToolGuards(agentId),
       });
       slotInit = resolveAgentInit({
         task,
@@ -4479,7 +4430,6 @@ export class TaskAgentManager {
         node,
         workflow: workflow ?? undefined,
         workflowRun: workflowRun ?? undefined,
-        resolveFallbackToolGuards: (agentId) => this.resolveFallbackToolGuards(agentId),
       }),
       agentId: slot.agentId,
     });
@@ -5721,7 +5671,6 @@ export class TaskAgentManager {
       node: matchedNode,
       workflow,
       workflowRun: workflowRun ?? undefined,
-      resolveFallbackToolGuards: (agentId) => this.resolveFallbackToolGuards(agentId),
     });
 
     const baseSessionId = `space:${spaceId}:task:${taskId}:post-approval:${this.sanitizeAgentNameForId(matchedSlot.name)}`;

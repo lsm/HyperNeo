@@ -160,81 +160,6 @@ const RETIRED_CODER_NO_MERGE_GUARD: DeclarativeToolGuard = {
     'Coder-role agents must not merge PRs. Their job is implementation only; the reviewer handles the merge after approval.',
 };
 
-export const REVIEWER_GH_API_REPO_GUARD: DeclarativeToolGuard = {
-  matcher: 'Bash',
-  pattern: 'gh\\b[^\\n]*?(?:\\bapi\\b[^\\n]*?repos\\/|(?:^|[\\s])(-R|--repo)(?:[\\s=]|$))',
-  decision: 'deny',
-  reason:
-    'Reviewer Bash reads are scoped to the workflow run’s PR. Direct `gh api repos/<owner>/<repo>/...` calls and the `-R`/`--repo` flag can read ' +
-    'other repositories through the daemon’s credentials — use `gh pr view` / `gh pr diff` / `gh pr checks` (without `-R`/`--repo`) for the run’s PR, ' +
-    'and `gh api graphql` (reviewThreads query or the addPullRequestReview mutation keyed on the run’s PR id) for threads and review posting. ' +
-    'Only the workflow run’s PR may be inspected.',
-};
-
-/**
- * Reviewer Bash allowlist (defense-in-depth, round-11 P2).
- *
- * The Reviewer ingests attacker-authored PR content as its primary job, yet its
- * Bash profile was unrestricted apart from the narrow `gh api repos/...` /
- * `-R` deny guard above — so a prompt-injected reviewer could run arbitrary
- * binaries (`curl`, `wget`, `nc`, `ssh`, `env`, …) and disclose or exfiltrate
- * daemon credentials (env vars, `~/.claude/.credentials.json`, the Keychain).
- * This guard denies ANY Bash command whose leading executable is not one of the
- * legitimate review-surface primitives:
- *
- *   - `gh pr view|diff|checks` — the run-scoped read-only inspection commands
- *       (default to the current branch's PR; no `-R`/`--repo` cross-repo flag);
- *   - `gh api graphql` — the reviewThreads query and the addPullRequestReview
- *       mutation (keyed on the run's PR id, not a free repo path). ALL OTHER
- *       `gh` subcommands — including write/merge forms like `gh pr merge`,
- *       `gh pr review`, `gh pr close`, and REST `gh api repos/...` — are denied;
- *   - `jq`            — building the GraphQL `--input` request JSON;
- *   - `mktemp`        — session-unique temp files for the review body;
- *   - `cat`, `echo`   — QUOTED-heredoc body writing + delimiter echo;
- *   - `head`, `base64`, `tr` — per-invocation heredoc delimiter generation;
- *   - `trap`, `rm`    — temp-file cleanup on exit;
- *   - `printf`, `true`, `false`, `:`, `test`, `[`, `read` — minor shell plumbing.
- *
- * No `python3`/`python` (or any other interpreter) is allowed: even though the
- * old contract used `python3 -c urllib.parse.urlparse` to parse the PR host,
- * an allowlisted interpreter is unconstrained code execution. The host is now
- * parsed with PURE bash parameter expansion (`HOST=${PR_URL#https://};
- * HOST=${HOST%%/*}`), which is shell syntax, not an external command.
- *
- * A leading variable assignment (`NAME=…`) is stripped first (including the
- * `$(…)`/quoted forms), so `PR_ID=$(gh pr view …)`, `HOST=${PR_URL#https://}`,
- * `REQ=$(mktemp)`, and `DELIM="…$(head …|base64|tr …)…"` all pass.
- *
- * Honest limits of a regex allowlist (mirroring the doc on
- * `REVIEWER_GH_API_REPO_GUARD`): the leading-token check validates only up to
- * the first permitted token after assignment-unwrap — it cannot validate inside
- * command substitution (`HOST=$(curl …)` is caught because `curl` becomes the
- * leading token, but a command LIST such as `echo ok; curl …` is not), and
- * `cat <credential-file>` is indistinguishable from the `cat > "$BODY"
- * <<heredoc` posting form. This is defense-in-depth only — the Reviewer System
- * Contract remains the primary boundary ("you do NOT run the code under review;
- * never run merge/API writes; read ONLY the workflow run's PR"). It raises the
- * bar from "deny two gh vectors" to "deny every non-review binary as the
- * primary command, every write/merge gh subcommand, and every interpreter".
- */
-export const REVIEWER_BASH_ALLOWLIST_GUARD: DeclarativeToolGuard = {
-  matcher: 'Bash',
-  pattern:
-    '^(?!\\s*(?:(?:[A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*(?:\\$\\(|[\'"]|\\S+?\\s*)?)*(?:gh\\s+(?:pr\\s+(?:view|diff|checks)\\b|api\\s+graphql\\b)|jq|mktemp|echo|cat|tr|base64|head|trap|rm|printf|true|false|:|test|\\[|read)\\b)',
-  decision: 'deny',
-  reason:
-    'Reviewer Bash is allowlisted: only the run-scoped read-only `gh pr view|diff|checks`, the `gh api graphql` reviewThreads query / addPullRequestReview mutation, ' +
-    'and the temp-file + jq plumbing that posts the review (mktemp, cat, echo, head, base64, tr, trap, rm, printf) are permitted. ' +
-    '`gh` write/merge subcommands (gh pr merge, gh pr review, gh pr close, gh api repos/...) are DENIED, and NO interpreter (python3, python, node, bash, sh, ...) is allowed — ' +
-    'the reviewer must never execute code, and these vectors could disclose or exfiltrate daemon credentials or mutate the repository.',
-};
-
-/** Combined guard set applied to every built-in Reviewer slot. */
-export const REVIEWER_TOOL_GUARDS: DeclarativeToolGuard[] = [
-  REVIEWER_GH_API_REPO_GUARD,
-  REVIEWER_BASH_ALLOWLIST_GUARD,
-];
-
 // ---------------------------------------------------------------------------
 // Template node ID constants (used as stable IDs for workflow nodes and startNodeId)
 // ---------------------------------------------------------------------------
@@ -800,7 +725,6 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
           // WorkflowNodeAgent.resetContextPerTurn.
           resetContextPerTurn: true,
           customPrompt: { value: CODER_OWNED_REVIEW_PROMPT },
-          toolGuards: REVIEWER_TOOL_GUARDS,
         },
       ],
     },
@@ -955,7 +879,6 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
               'heads; the Research agent merges. Do not mark the task complete — only the Research ' +
               'agent merges and closes.',
           },
-          toolGuards: REVIEWER_TOOL_GUARDS,
         },
       ],
     },
@@ -1029,7 +952,6 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
               'call save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } }) to record the PR, then approve_task() or submit_for_approval only on APPROVE, otherwise stop. ' +
               'Do NOT attempt to merge the PR yourself. Never set a PR to auto-merge.',
           },
-          toolGuards: REVIEWER_TOOL_GUARDS,
         },
       ],
     },
@@ -1127,7 +1049,6 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               '`data: { approvals: { architecture: "approved" }, pr_url: "<plan PR url>" }` ' +
               'to Task Dispatcher when approving. Send rejected votes with findings to Planning.',
           },
-          toolGuards: REVIEWER_TOOL_GUARDS,
         },
         {
           agentId: 'Reviewer',
@@ -1144,7 +1065,6 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               '`data: { approvals: { security: "approved" }, pr_url: "<plan PR url>" }` ' +
               'to Task Dispatcher when approving. Send rejected votes with findings to Planning.',
           },
-          toolGuards: REVIEWER_TOOL_GUARDS,
         },
         {
           agentId: 'Reviewer',
@@ -1161,7 +1081,6 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               '`data: { approvals: { correctness: "approved" }, pr_url: "<plan PR url>" }` ' +
               'to Task Dispatcher when approving. Send rejected votes with findings to Planning.',
           },
-          toolGuards: REVIEWER_TOOL_GUARDS,
         },
         {
           agentId: 'Reviewer',
@@ -1178,7 +1097,6 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               '`data: { approvals: { ux: "approved" }, pr_url: "<plan PR url>" }` ' +
               'to Task Dispatcher when approving. Send rejected votes with findings to Planning.',
           },
-          toolGuards: REVIEWER_TOOL_GUARDS,
         },
       ],
     },
@@ -1349,7 +1267,6 @@ export const CODING_WITH_QA_WORKFLOW: SpaceWorkflow = {
           // the approved PR to QA instead of calling the end-node-only
           // approve_task — see CODER_OWNED_QA_REVIEW_PROMPT.
           customPrompt: { value: CODER_OWNED_QA_REVIEW_PROMPT },
-          toolGuards: REVIEWER_TOOL_GUARDS,
         },
       ],
     },
