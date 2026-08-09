@@ -71,6 +71,7 @@ const mockWorkflowRuns = signal<unknown[]>([]);
 
 const mockCreateWorkflow = vi.fn();
 const mockUpdateWorkflow = vi.fn();
+const mockEnsureNodeExecutions = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('../../../../lib/connection-manager', () => ({
   connectionManager: {
@@ -110,6 +111,7 @@ vi.mock('../../../../lib/space-store', () => ({
       workflowRuns: mockWorkflowRuns,
       createWorkflow: mockCreateWorkflow,
       updateWorkflow: mockUpdateWorkflow,
+      ensureNodeExecutions: mockEnsureNodeExecutions,
     };
   },
 }));
@@ -188,6 +190,7 @@ beforeEach(() => {
   mockUpdateWorkflow.mockResolvedValue({ id: 'wf-1', nodes: [], tags: [] });
   mockCreateWorkflow.mockClear();
   mockUpdateWorkflow.mockClear();
+  mockEnsureNodeExecutions.mockClear();
 });
 
 afterEach(() => {

@@ -20,7 +20,7 @@
  * provide a stable `key` prop to force remount when switching between workflows.
  */
 
-import { useState, useMemo, useCallback, useRef } from 'preact/hooks';
+import { useEffect, useState, useMemo, useCallback, useRef } from 'preact/hooks';
 import type {
   SpaceWorkflow,
   WorkflowNode,
@@ -317,6 +317,15 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
     if (active) return active.id;
     return [...runs].sort((a, b) => b.updatedAt - a.updatedAt)[0].id;
   })();
+
+  // Load node executions for this workflow's relevant run so the editor can
+  // render running/completed node indicators. Scoped to that single run via the
+  // per-run API (not every run in the space). relevantRunId is null for a
+  // brand-new workflow with no runs — ensureNodeExecutions(null) then tears down
+  // any stale subscription without loading.
+  useEffect(() => {
+    spaceStore.ensureNodeExecutions(relevantRunId).catch(() => {});
+  }, [relevantRunId]);
 
   // ------------------------------------------------------------------
   // Key-resolution maps

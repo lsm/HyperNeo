@@ -2546,6 +2546,39 @@ describe('SpaceStore — refresh', () => {
     const gets = mockHub.request.mock.calls.filter((c) => (c[0] as string) === 'spaceWorkflow.get');
     expect(gets).toHaveLength(1);
   });
+
+  it('re-establishes the open task run node-exec subscription on reconnect', async () => {
+    mockWorkflowSummaries([]);
+    await spaceStore.selectSpace('space-1');
+    await spaceStore.ensureNodeExecutions('run-1');
+    mockHub.request.mockClear();
+
+    await spaceStore.refresh();
+    await new Promise((r) => setTimeout(r, 0));
+
+    // refresh() re-fetches + re-subscribes the open task's run (activeNodeExecRunId).
+    expect(mockHub.request).toHaveBeenCalledWith('nodeExecution.list', {
+      workflowRunId: 'run-1',
+      spaceId: 'space-1',
+    });
+    expect(mockHub.request).toHaveBeenCalledWith('liveQuery.subscribe', {
+      queryName: 'nodeExecutions.byRun',
+      params: ['run-1'],
+      subscriptionId: 'nodeExecutions-byRun-run-1',
+    });
+  });
+
+  it('does not re-establish node-exec subscription on reconnect when none was active', async () => {
+    mockWorkflowSummaries([]);
+    await spaceStore.selectSpace('space-1');
+    mockHub.request.mockClear();
+
+    await spaceStore.refresh();
+    await new Promise((r) => setTimeout(r, 0));
+
+    const methods = mockHub.request.mock.calls.map((c) => c[0] as string);
+    expect(methods).not.toContain('nodeExecution.list');
+  });
 });
 
 // -------------------------------------------------------
@@ -2830,6 +2863,50 @@ describe('SpaceStore — node execution LiveQuery subscriptions', () => {
     await spaceStore.ensureNodeExecutions('run-1');
 
     expect(nodeExecSubscribeCalls()).toHaveLength(1);
+  });
+
+  it('discards a stale fetch when the run switches mid-load (nodeExecLoadGen guard)', async () => {
+    await spaceStore.selectSpace('space-1');
+
+    // Deferred control over nodeExecution.list so run-1's fetch stays in flight
+    // while we switch to run-2 — exercising the stale-result / supersede guards.
+    const run1Exec = makeNodeExecution({ id: 'stale', workflowRunId: 'run-1' });
+    const run2Exec = makeNodeExecution({ id: 'exec-2', workflowRunId: 'run-2' });
+    let resolveRun1!: (v: { executions: NodeExecution[] }) => void;
+    let resolveRun2!: (v: { executions: NodeExecution[] }) => void;
+    const run1Promise = new Promise<{ executions: NodeExecution[] }>((r) => {
+      resolveRun1 = r;
+    });
+    const run2Promise = new Promise<{ executions: NodeExecution[] }>((r) => {
+      resolveRun2 = r;
+    });
+    mockHub.request.mockImplementation(async (method: string, params: any) => {
+      if (method === 'nodeExecution.list') {
+        return params.workflowRunId === 'run-1' ? run1Promise : run2Promise;
+      }
+      return {};
+    });
+
+    // Kick off run-1, then switch to run-2 BEFORE run-1's fetch resolves.
+    const p1 = spaceStore.ensureNodeExecutions('run-1');
+    const p2 = spaceStore.ensureNodeExecutions('run-2');
+
+    resolveRun1({ executions: [run1Exec] });
+    resolveRun2({ executions: [run2Exec] });
+    await Promise.all([p1, p2]);
+
+    // run-2's data lands; run-1's stale fetch was discarded.
+    expect(spaceStore.nodeExecutions.value).toEqual([run2Exec]);
+    // run-1 was superseded before it could subscribe, so it never subscribes.
+    const run1Subscribes = nodeExecSubscribeCalls().filter(
+      (c) => (c[1] as { params?: string[] }).params?.[0] === 'run-1'
+    );
+    expect(run1Subscribes).toHaveLength(0);
+    expect(mockHub.request).toHaveBeenCalledWith('liveQuery.subscribe', {
+      queryName: 'nodeExecutions.byRun',
+      params: ['run-2'],
+      subscriptionId: 'nodeExecutions-byRun-run-2',
+    });
   });
   describe('sendTaskMessage', () => {
     beforeEach(async () => {
