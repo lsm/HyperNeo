@@ -1577,7 +1577,50 @@ describe('wrapHandlerWithHooks', () => {
     expect(data.extra).toBe('data');
   });
 
-  test('persists PR URL from allowed send_message hook to local state', async () => {
+  test('persists PR URL from an allowed pr_ready send_message hook to local state', async () => {
+    const hookStateRepo = makeMockHookStateRepo();
+    const mockExecutor = new MockHookExecutor();
+
+    const engine = new WorkflowHookEngine({
+      workflow: makeWorkflow([
+        makeHook({
+          id: 'hook-1',
+          classification: 'validation',
+          validator: { kind: 'built_in', id: 'pr_ready' },
+        }),
+      ]),
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo,
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+
+    mockExecutor.setResult('hook-1', { type: 'allow' });
+
+    const handler = async () => ({
+      content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
+    });
+
+    const wrapped = wrapHandlerWithHooks('send_message', handler, engine, {}, defaultMeta);
+    await wrapped({
+      target: 'Review',
+      message: 'handoff',
+      data: { pr_url: 'https://github.com/acme/corp/pull/42' },
+    });
+
+    expect(hookStateRepo.get('run-1', 'hook-1')?.localState.pr_url).toBe(
+      'https://github.com/acme/corp/pull/42'
+    );
+  });
+
+  test('does NOT persist PR URL for a non-pr_ready hook (PR-identity spoofing guard)', async () => {
+    // Only the pr_ready validator's hook may stamp pr_url to local state.
+    // Otherwise a custom hook with a colliding id (e.g. post-pr-ready-notification)
+    // and a different validator could supply a spoofed pr_url that
+    // resolveInitialPrimaryLinkUrl — which matches hook ids by the 'pr-ready'
+    // substring — would then trust for merge dispatch + the mark_complete gate.
     const hookStateRepo = makeMockHookStateRepo();
     const mockExecutor = new MockHookExecutor();
 
@@ -1604,9 +1647,7 @@ describe('wrapHandlerWithHooks', () => {
       data: { pr_url: 'https://github.com/acme/corp/pull/42' },
     });
 
-    expect(hookStateRepo.get('run-1', 'hook-1')?.localState.pr_url).toBe(
-      'https://github.com/acme/corp/pull/42'
-    );
+    expect(hookStateRepo.get('run-1', 'hook-1')?.localState.pr_url).toBeUndefined();
   });
 
   test('persists hook results to state repo', async () => {

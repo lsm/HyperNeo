@@ -469,7 +469,18 @@ export class WorkflowHookEngine {
       // Process result
       switch (result.type) {
         case 'allow':
-          if (methodName === 'send_message') {
+          // Snapshot the run's reviewed PR identity ONLY when the pr_ready
+          // validator allows the handoff. Stamping pr_url into ANY allowed
+          // send_message hook's localState let a custom hook with a colliding
+          // id (e.g. `post-pr-ready-notification`) and a different validator
+          // supply a spoofed pr_url that resolveInitialPrimaryLinkUrl (which
+          // matches hook ids by the `pr-ready` substring) would then trust for
+          // merge-dispatch resolution and the mark_complete merge gate.
+          if (
+            methodName === 'send_message' &&
+            hook.validator.kind === 'built_in' &&
+            hook.validator.id === 'pr_ready'
+          ) {
             const prUrl = extractPrUrlFromParams(currentParams);
             if (prUrl) stateUpdates.push({ hookId: hook.id, state: { pr_url: prUrl } });
           }
@@ -865,6 +876,34 @@ export class WorkflowHookEngine {
   // Context building
   // -------------------------------------------------------------------------
 
+  /**
+   * Resolve the run's frozen reviewed PR URL: the latest `pr_url` stamped by a
+   * `pr_ready` built-in validator's hook. After the engine gated pr_url
+   * stamping on the pr_ready validator, only those hooks carry a frozen pr_url,
+   * so this is the authoritative run-level identity that merge dispatch and the
+   * mark_complete merge gate bind to. Returns undefined when no pr_ready
+   * handoff has frozen an identity yet.
+   */
+  private resolveFrozenPrUrl(): string | undefined {
+    const hooks = this.config.workflow?.hooks ?? [];
+    let best: { url: string; updatedAt: number } | undefined;
+    for (const h of hooks) {
+      if (h.validator.kind !== 'built_in' || h.validator.id !== 'pr_ready') continue;
+      try {
+        const st = this.config.hookStateRepo.get(this.config.workflowRunId, h.id);
+        if (!st) continue;
+        const url =
+          typeof st.localState?.pr_url === 'string' ? (st.localState.pr_url as string) : '';
+        if (!url) continue;
+        const updatedAt = st.updatedAt ?? 0;
+        if (!best || updatedAt > best.updatedAt) best = { url, updatedAt };
+      } catch {
+        // best effort — an unreadable hook state must not break the action
+      }
+    }
+    return best?.url;
+  }
+
   private async buildExecutorContext(
     hook: WorkflowHook,
     methodName: string,
@@ -956,6 +995,7 @@ export class WorkflowHookEngine {
       taskStatus: this.config.getTaskStatus?.(meta.taskId),
       targetNode: hook.targetNode ?? meta.targetNode,
       hookLocalState: this.boundHookLocalState(hookLocalState),
+      frozenPrUrl: this.resolveFrozenPrUrl(),
       currentArtifacts: mappedArtifacts,
       permittedExternalLookups,
       templateData: hook.templateData,

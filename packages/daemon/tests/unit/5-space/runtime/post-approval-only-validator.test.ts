@@ -126,4 +126,55 @@ describe('post_approval_only validator', () => {
     );
     expect(result.type).toBe('block');
   });
+
+  test('allows a blocker whose pr_url matches the frozen reviewed PR', async () => {
+    const validator = createPostApprovalOnlyValidator();
+    const result = await validator(
+      makeContext({
+        taskStatus: 'approved',
+        frozenPrUrl: 'https://github.com/acme/corp/pull/42',
+        params: {
+          target: 'QA',
+          message: 'blocked',
+          data: { reason: 'merge_blocked', pr_url: 'https://github.com/acme/corp/pull/42' },
+        },
+      })
+    );
+    expect(result.type).toBe('allow');
+  });
+
+  test('blocks a blocker whose pr_url differs from the frozen reviewed PR', async () => {
+    // A prompt-injected post-approval coder must not redirect the approval
+    // authority to a different same-host PR.
+    const validator = createPostApprovalOnlyValidator();
+    const result = await validator(
+      makeContext({
+        taskStatus: 'approved',
+        frozenPrUrl: 'https://github.com/acme/corp/pull/42',
+        params: {
+          target: 'QA',
+          message: 'blocked',
+          data: { reason: 'merge_blocked', pr_url: 'https://github.com/acme/corp/pull/999' },
+        },
+      })
+    );
+    expect(result.type).toBe('block');
+    expect((result as { reason: string }).reason).toContain('does not match');
+  });
+
+  test('fails closed when a pr_url is supplied but no frozen identity exists', async () => {
+    const validator = createPostApprovalOnlyValidator();
+    const result = await validator(
+      makeContext({
+        taskStatus: 'approved',
+        params: {
+          target: 'QA',
+          message: 'blocked',
+          data: { reason: 'merge_blocked', pr_url: 'https://github.com/acme/corp/pull/42' },
+        },
+      })
+    );
+    expect(result.type).toBe('block');
+    expect((result as { reason: string }).reason).toContain('no frozen reviewed PR identity');
+  });
 });

@@ -34,6 +34,18 @@ function readSendReason(context: HookExecutorContext): string | undefined {
   return undefined;
 }
 
+function readSuppliedPrUrl(context: HookExecutorContext): string | undefined {
+  const data = (context.rawParams ?? context.params)?.data;
+  if (
+    data &&
+    typeof data === 'object' &&
+    typeof (data as Record<string, unknown>).pr_url === 'string'
+  ) {
+    return (data as Record<string, unknown>).pr_url as string;
+  }
+  return undefined;
+}
+
 export function createPostApprovalOnlyValidator(): (
   context: HookExecutorContext
 ) => Promise<WorkflowHookResult> {
@@ -42,6 +54,31 @@ export function createPostApprovalOnlyValidator(): (
       context.taskStatus === 'approved' &&
       POST_APPROVAL_MERGE_REASONS.has(readSendReason(context) ?? '')
     ) {
+      // Bind the blocker / fix-push handoff to the run's frozen reviewed PR.
+      // Without this, a prompt-injected post-approval coder could send a
+      // `merge_blocked`/`merge_fix_pushed` report naming a DIFFERENT same-host
+      // PR, and the approval authority's re-approval procedure would then
+      // review and approve that other PR. The frozen identity is stamped only
+      // by the `pr_ready` validator's hook (the engine gates pr_url stamping on
+      // that validator), so it is the authoritative run-level PR. Fail closed
+      // when a pr_url is supplied but no frozen identity exists to compare it
+      // against.
+      const suppliedPrUrl = readSuppliedPrUrl(context);
+      if (typeof suppliedPrUrl === 'string') {
+        if (!context.frozenPrUrl) {
+          return {
+            type: 'block',
+            reason:
+              'Post-approval blocker handoff carries a pr_url, but this run has no frozen reviewed PR identity to bind it to.',
+          };
+        }
+        if (suppliedPrUrl !== context.frozenPrUrl) {
+          return {
+            type: 'block',
+            reason: `Post-approval blocker handoff PR ${suppliedPrUrl} does not match this run's reviewed PR ${context.frozenPrUrl}.`,
+          };
+        }
+      }
       return { type: 'allow' };
     }
     return {

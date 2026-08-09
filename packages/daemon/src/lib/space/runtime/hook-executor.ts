@@ -68,6 +68,16 @@ export interface HookExecutorContext {
   taskStatus?: string;
   targetNode?: string;
   hookLocalState: Record<string, unknown>;
+  /**
+   * The run's frozen reviewed PR URL — the pr_url stamped by the `pr_ready`
+   * validator's hook (the only source after the engine gates pr_url stamping on
+   * that validator). Built-in validators that gate post-approval handoffs (e.g.
+   * `post_approval_only`) compare the caller-supplied `pr_url` against this to
+   * stop a prompt-injected post-approval worker from redirecting the approval
+   * authority to a different PR. Undefined when no pr_ready handoff has frozen
+   * an identity yet (the run's first handoff).
+   */
+  frozenPrUrl?: string;
   currentArtifacts: Record<string, unknown>[];
   permittedExternalLookups: string[];
   /** Optional bounded template data from the hook definition. */
