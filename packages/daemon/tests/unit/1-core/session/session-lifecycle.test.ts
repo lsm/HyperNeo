@@ -761,6 +761,7 @@ describe('SessionLifecycle', () => {
     it('should cleanup agent session if cached', async () => {
       const mockAgentSession = {
         cleanup: mock(async () => {}),
+        updateMetadata: mock(() => {}),
       };
       (mockSessionCache.has as ReturnType<typeof mock>).mockReturnValue(true);
       (mockSessionCache.get as ReturnType<typeof mock>).mockReturnValue(mockAgentSession);
@@ -818,6 +819,7 @@ describe('SessionLifecycle', () => {
         cleanup: mock(async () => {
           throw new Error('Cleanup failed');
         }),
+        updateMetadata: mock(() => {}),
       };
       (mockSessionCache.has as ReturnType<typeof mock>).mockReturnValue(true);
       (mockSessionCache.get as ReturnType<typeof mock>).mockReturnValue(mockAgentSession);
@@ -848,6 +850,38 @@ describe('SessionLifecycle', () => {
       // Should complete deletion despite worktree removal failure
       await lifecycle.deleteResources('test-id', 'ui_session_delete');
       expect(mockDb.deleteSession).toHaveBeenCalledWith('test-id');
+    });
+
+    it('commits the archived barrier and cancels durable deliveries BEFORE teardown (#3743968033)', async () => {
+      const order: string[] = [];
+      (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
+        id: 'test-id',
+        workspacePath: '/test',
+        status: 'active',
+      });
+      (mockDb.updateSession as ReturnType<typeof mock>).mockImplementation(() => {
+        order.push('mark-archived');
+      });
+      const cancelSpy = mock(() => {
+        order.push('delivery-cancel');
+        return ['msg-uuid-1'];
+      });
+      const markFailedSpy = mock(() => null);
+      mockDb.getJobQueueRepo = mock(() => ({ cancelForSessionWithMessages: cancelSpy }));
+      mockDb.getSDKMessageRepo = mock(() => ({ markDeliveryFailedByUuid: markFailedSpy }));
+      (mockDb.deleteSession as ReturnType<typeof mock>).mockImplementation(() => {
+        order.push('db-delete');
+      });
+
+      await lifecycle.deleteResources('test-id', 'ui_session_delete');
+
+      expect(mockDb.updateSession).toHaveBeenCalledWith(
+        'test-id',
+        expect.objectContaining({ status: 'archived' })
+      );
+      expect(cancelSpy).toHaveBeenCalledWith('test-id');
+      expect(markFailedSpy).toHaveBeenCalledWith('test-id', 'msg-uuid-1');
+      expect(order).toEqual(['mark-archived', 'delivery-cancel', 'db-delete']);
     });
   });
 

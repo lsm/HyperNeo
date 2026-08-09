@@ -964,6 +964,54 @@ describe('AgentSession', () => {
       expect(handleInterruptSpy).toHaveBeenCalled();
     });
 
+    it('revokePendingDelivery remove accepts deferred (next-turn) rows too (#3744105283)', async () => {
+      const deletePendingSpy = mock(() => ({
+        dbId: 'db-1',
+        uuid: 'uuid-1',
+        status: 'deferred' as const,
+      }));
+      const cancelDeliverySpy = mock(() => false);
+      mockDb.deletePendingUserMessage = deletePendingSpy;
+      mockDb.getJobQueueRepo = mock(() => ({ cancelDelivery: cancelDeliverySpy }));
+
+      const result = await agentSession.revokePendingDelivery('db-1', 'remove');
+
+      expect(result.changed).toBe(true);
+      // No hardcoded 'enqueued' filter — the frontend Remove button targets
+      // both current-turn (enqueued) and next-turn (deferred) rows.
+      expect(deletePendingSpy).toHaveBeenCalledWith(mockSession.id, 'db-1');
+      expect(cancelDeliverySpy).toHaveBeenCalledWith(mockSession.id, 'uuid-1');
+    });
+
+    it('deliverChatMessage preserves a legacy-owned processing turn', async () => {
+      const jobQueue = {
+        enqueue: mock(() => ({ id: 'job' })),
+        getActiveDeliveryRole: mock(() => null),
+      };
+      mockDb.getJobQueueRepo = mock(() => jobQueue);
+      const setQueuedIfIdle = mock(async () => false);
+      agentSession.stateManager.setQueuedIfIdle = setQueuedIfIdle;
+
+      await agentSession.deliverChatMessage('legacy-overlap');
+
+      expect(setQueuedIfIdle).toHaveBeenCalledWith('legacy-overlap');
+      expect(agentSession.getProcessingState().status).not.toBe('queued');
+    });
+
+    it('deliverChatMessage treats queued publication failure as non-fatal after insertion', async () => {
+      const jobQueue = {
+        enqueue: mock(() => ({ id: 'job' })),
+        getActiveDeliveryRole: mock(() => null),
+      };
+      mockDb.getJobQueueRepo = mock(() => jobQueue);
+      agentSession.stateManager.setQueuedIfIdle = mock(async () => {
+        throw new Error('subscriber failed');
+      });
+
+      await expect(agentSession.deliverChatMessage('publish-failure')).resolves.toBeUndefined();
+      expect(jobQueue.enqueue).toHaveBeenCalled();
+    });
+
     it('resetQuery should delegate to lifecycleManager', async () => {
       const resetSpy = mock(async () => ({ success: true }));
       // biome-ignore lint: test mock access

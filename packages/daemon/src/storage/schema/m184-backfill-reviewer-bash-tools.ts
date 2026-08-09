@@ -1,5 +1,5 @@
 /**
- * Migration 182 — Backfill Bash + Cron tools onto existing Reviewer preset rows.
+ * Migration 184 — Backfill Bash + Cron tools onto existing Reviewer preset rows.
  *
  * Context: the Reviewer preset gained `Bash` + `CronCreate`/`CronDelete`/`CronList`
  * (and the PR-process MCPs — `get_pr_diff`, `post_review` — were removed, so the
@@ -26,7 +26,7 @@ import { getPresetAgentTemplates } from '../../lib/space/agents/seed-agents';
 import { computeAgentTemplateHash } from '../../lib/space/agents/agent-template-hash';
 import { Logger } from '../../lib/logger';
 
-const log = new Logger('migration-182');
+const log = new Logger('migration-184');
 
 // The pre-change Reviewer profile (shell-less, no cron) — rows whose stored
 // tools exactly match this set are unmodified seeds and safe to re-stamp.
@@ -102,7 +102,7 @@ function arraysEqual(a: string[], b: string[]): boolean {
   return b.every((v) => set.has(v));
 }
 
-export function runMigration182(db: BunDatabase): void {
+export function runMigration184(db: BunDatabase): void {
   if (!tableExists(db, 'space_agents')) return;
 
   // Guard against partially-migrated / sentinel schemas (the marker-seed path):

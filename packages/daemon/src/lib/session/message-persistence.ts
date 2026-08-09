@@ -25,6 +25,7 @@ import type { UUID } from 'crypto';
 import type { Database } from '../../storage/database';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import { buildReferenceContext, prependContextToMessage } from '../agent/reference-context-builder';
+import { isMessageDeliveryV2Enabled } from '../agent/message-delivery';
 import { expandBuiltInCommand } from '../built-in-commands';
 import { Logger } from '../logger';
 import type { SessionCache } from './session-cache';
@@ -157,12 +158,20 @@ export class MessagePersistence {
   async persist(data: MessagePersistenceData): Promise<void> {
     const { sessionId, messageId, content, images, deliveryMode = 'immediate', origin } = data;
 
+    // Persisted session status is the admission barrier. Check it BEFORE cache
+    // hydration: constructing an archived AgentSession schedules pending replay,
+    // which could restart cancelled prompts even though this send later rejects.
+    const persistedSession = this.db.getSession?.(sessionId);
+    if (persistedSession?.status === 'archived') {
+      throw new Error(
+        `[MessagePersistence] Session ${sessionId} is archived; cannot accept new messages.`
+      );
+    }
+
     const agentSession = await this.sessionCache.getAsync(sessionId);
     if (!agentSession) {
       const error = `[MessagePersistence] Session ${sessionId} not found for message persistence`;
       this.logger.error(error);
-      // FIX: Throw instead of returning early so error is propagated
-      // This prevents messages from being silently lost when session fails to load
       throw new Error(error);
     }
 
@@ -229,6 +238,23 @@ export class MessagePersistence {
 
       const dbMessageId = this.db.saveUserMessage(sessionId, sdkUserMessage, sendStatus, origin);
 
+      // Revalidate AFTER saving: archive can begin after the early admission
+      // check while cache/reference work awaits. Its point-in-time cancellation
+      // may then run before this enqueued row exists. Terminalize the late row
+      // and stop before message.persisted can enqueue work against torn-down
+      // resources. The failed row remains visible instead of hidden forever.
+      if (this.db.getSession?.(sessionId)?.status === 'archived') {
+        this.db.updateMessageStatus([dbMessageId], 'failed');
+        await this.internalEventBus
+          .publish('messages.statusChanged', {
+            sessionId,
+            messageIds: [dbMessageId],
+            status: 'failed',
+          })
+          .catch(() => {});
+        throw new Error(`Session ${sessionId} is archived`);
+      }
+
       // 6. Publish manual messages immediately. Immediate-mode messages are
       // rendered when the SDK input generator consumes them and flips their
       // status to `consumed`, which prevents a "visible but undelivered" turn.
@@ -257,16 +283,20 @@ export class MessagePersistence {
         status: sendStatus,
       });
 
-      // 7. For immediate delivery, start the query and enqueue before acknowledging
-      // the caller. The message is still rendered only after SDKMessageHandler
-      // flips it to `consumed` at the exact delivery point.
-      if (shouldDispatchToQuery) {
+      // 7. For immediate delivery, start the query inline — UNLESS message-delivery
+      // v2 is enabled, in which case the durable job_queue path owns dispatch:
+      // the message.persisted subscriber (below) enqueues a message_delivery job
+      // and the handler drives the turn. Skipping the inline start here is what
+      // makes the v2 flag actually take effect (P0: otherwise skipQueryStart:true
+      // made the subscriber return before the v2 check, so the flag did nothing).
+      const useV2Delivery = isMessageDeliveryV2Enabled();
+      if (shouldDispatchToQuery && !useV2Delivery) {
         await agentSession.startQueryAndEnqueue(messageId, messageContent);
       }
-
       // 8. Emit 'message.persisted' for non-critical post-processing.
-      // Query start is handled above synchronously; the event remains for title
-      // generation, draft clearing, and legacy subscribers.
+      // skipQueryStart reflects whether the inline start above already happened:
+      // under v2 it is false so the subscriber proceeds to the v2 check and
+      // routes through deliverChatMessage (the durable chokepoint).
       if (shouldDispatchToQuery) {
         await this.internalEventBus.publish('message.persisted', {
           sessionId,
@@ -280,7 +310,7 @@ export class MessagePersistence {
           hasDraftToClear: session.metadata?.inputDraft === content.trim(),
           sendStatus,
           deliveryMode: effectiveDeliveryMode,
-          skipQueryStart: true,
+          skipQueryStart: !useV2Delivery,
         });
       }
     } catch (error) {

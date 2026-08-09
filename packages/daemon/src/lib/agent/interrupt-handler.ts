@@ -17,6 +17,8 @@ import type { QueryLike } from './query-like';
 import type { Logger } from '../logger';
 import type { MessageQueue } from './message-queue';
 import type { ProcessingStateManager } from './processing-state-manager';
+import type { Database } from '../../storage/database';
+import { withSessionLock } from './message-delivery';
 
 /**
  * Context interface - what InterruptHandler needs from AgentSession
@@ -28,6 +30,7 @@ export interface InterruptHandlerContext {
   readonly messageQueue: MessageQueue;
   readonly stateManager: ProcessingStateManager;
   readonly logger: Logger;
+  readonly db: Database;
 
   // Mutable query state
   queryObject: QueryLike | null;
@@ -58,6 +61,24 @@ export class InterruptHandler {
    */
   async handleInterrupt(): Promise<void> {
     const { session, messageHub, messageQueue, stateManager, logger } = this.ctx;
+
+    // Durable-delivery cancel FIRST (message-delivery v2): revoke EVERY active
+    // message_delivery job for the session and terminalize each still-enqueued
+    // SDK row. This must live here — the single chokepoint every interrupt path
+    // reaches (client.interrupt RPC → agent.interruptRequest subscriber → this
+    // handler, space paths via the AgentSession wrapper). Without it a pending
+    // turn/steer job survives the user's interrupt and is claimed afterwards.
+    // Legacy path: no message_delivery jobs exist → no-op. Consumed rows are
+    // untouched (they WERE delivered). See Codex (#3743968030, #3744105273).
+    await withSessionLock(session.id, async () => {
+      const messageUuids =
+        this.ctx.db.getJobQueueRepo?.()?.cancelForSessionWithMessages(session.id) ?? [];
+      if (messageUuids.length === 0) return;
+      const sdkRepo = this.ctx.db.getSDKMessageRepo?.();
+      for (const messageUuid of messageUuids) {
+        sdkRepo?.markDeliveryFailedByUuid(session.id, messageUuid);
+      }
+    });
 
     const currentState = stateManager.getState();
 

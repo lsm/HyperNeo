@@ -269,6 +269,27 @@ describe('SpaceDetailPanel', () => {
     expect(screen.queryByText('Blocked Task')).toBeNull();
   });
 
+  it('orders running tasks before open ones in the Active tab (recency as tiebreaker)', () => {
+    // Give the open task the most recent updatedAt so a pure-recency sort would
+    // surface it first — the status tier must override that.
+    mockTasksSignal.value = [
+      makeTask('t-open', 'Open Recent', 'open', { updatedAt: 300 }),
+      makeTask('t-prog', 'In Progress Older', 'in_progress', { updatedAt: 100 }),
+      makeTask('t-appr', 'Approved Mid', 'approved', { updatedAt: 200 }),
+    ];
+    render(<SpaceDetailPanel spaceId="space-1" />);
+    fireEvent.click(getTaskTab('Active'));
+
+    const prog = screen.getByText('In Progress Older');
+    const appr = screen.getByText('Approved Mid');
+    const openEl = screen.getByText('Open Recent');
+    const follows = Node.DOCUMENT_POSITION_FOLLOWING;
+
+    // Expected order: in_progress → approved → open.
+    expect(prog.compareDocumentPosition(appr) & follows).toBeTruthy();
+    expect(appr.compareDocumentPosition(openEl) & follows).toBeTruthy();
+  });
+
   it('does not show a terminal (done) task in the active or action tab', () => {
     mockTasksSignal.value = [
       makeTask('t1', 'Queued Task', 'open'),

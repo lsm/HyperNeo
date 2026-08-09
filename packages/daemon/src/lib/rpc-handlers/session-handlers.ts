@@ -1198,13 +1198,11 @@ export function setupSessionHandlers(
       throw new Error('Session not found');
     }
 
-    const db = sessionManager.getDatabase();
-    const removed = db.deletePendingUserMessage(targetSessionId, messageDbId);
-    if (!removed) {
+    const removed = await agentSession.revokePendingDelivery(messageDbId, 'remove');
+    if (!removed.changed) {
       return { removed: false };
     }
 
-    const removedFromMemory = removed.uuid ? agentSession.removeQueuedMessage(removed.uuid) : false;
     await internalEventBus.publish('messages.statusChanged', {
       sessionId: targetSessionId,
       messageIds: [removed.dbId],
@@ -1214,8 +1212,8 @@ export function setupSessionHandlers(
     return {
       removed: true,
       messageId: removed.dbId,
-      status: removed.status,
-      removedFromMemory,
+      status: 'enqueued',
+      removedFromMemory: removed.removedFromMemory,
     };
   });
 
@@ -1235,28 +1233,22 @@ export function setupSessionHandlers(
       throw new Error('Session not found');
     }
 
-    const db = sessionManager.getDatabase();
-    const message = db
-      .getMessagesByStatus(targetSessionId, 'enqueued')
-      .find((queuedMessage) => queuedMessage.dbId === messageDbId);
-
-    if (!message || !isSDKUserMessage(message) || !message.uuid) {
+    const deferred = await agentSession.revokePendingDelivery(messageDbId, 'defer');
+    if (!deferred.changed) {
       return { deferred: false };
     }
 
-    const removedFromMemory = agentSession.removeQueuedMessage(message.uuid);
-    db.updateMessageStatus([message.dbId], 'deferred');
     await internalEventBus.publish('messages.statusChanged', {
       sessionId: targetSessionId,
-      messageIds: [message.dbId],
+      messageIds: [deferred.dbId],
       status: 'deferred',
     });
 
     return {
       deferred: true,
-      messageId: message.dbId,
+      messageId: deferred.dbId,
       status: 'deferred',
-      removedFromMemory,
+      removedFromMemory: deferred.removedFromMemory,
     };
   });
 

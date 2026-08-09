@@ -295,6 +295,19 @@ export class SessionManager {
         persistedSession
       );
 
+      if (!options.restartQuery) {
+        // A no-restart reset is an explicit stop boundary. Cancel every durable
+        // turn/steer before replacing the cached AgentSession; otherwise the
+        // processor resolves the fresh session and starts a new query for a
+        // prompt the caller asked to keep stopped.
+        const messageUuids =
+          this.db.getJobQueueRepo?.()?.cancelForSessionWithMessages(sessionId) ?? [];
+        const sdkRepo = this.db.getSDKMessageRepo?.();
+        for (const messageUuid of messageUuids) {
+          sdkRepo?.markDeliveryFailedByUuid(sessionId, messageUuid);
+        }
+      }
+
       await this.internalEventBus.publish('session.errorClear', { sessionId });
 
       const freshSession = this.createAgentSessionFromSession(sessionForFreshInstance, {

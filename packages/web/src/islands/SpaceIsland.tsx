@@ -459,7 +459,7 @@ export default function SpaceIsland({
           data-testid="space-forge-view"
           {...baseLayerProps}
         >
-          <SpacePageHeader pageTitle="Forge" />
+          <SpacePageHeader pageTitle="Evolve" />
           <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
             <Suspense fallback={lazyFallback}>
               <SpaceForge spaceId={spaceId} />

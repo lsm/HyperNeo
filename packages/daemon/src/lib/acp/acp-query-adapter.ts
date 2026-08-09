@@ -35,6 +35,8 @@ export class AcpQueryAdapter implements QueryLike {
       initialUsageEstimate?: number;
       onContextUsageUpdate?: (used: number) => void;
       onConfigOptionsUpdate?: (configOptions: AcpConfigOption[]) => void;
+      onSubmitted?: () => void;
+      onAccepted?: () => void;
     } = {}
   ) {
     this.client = client;
@@ -58,7 +60,10 @@ export class AcpQueryAdapter implements QueryLike {
     }
 
     try {
-      for await (const notification of this.client.sendPrompt(this.prompt)) {
+      for await (const notification of this.client.sendPrompt(this.prompt, {
+        onSubmitted: this.options.onSubmitted,
+        onAccepted: this.options.onAccepted,
+      })) {
         if (this.interrupted) {
           break;
         }

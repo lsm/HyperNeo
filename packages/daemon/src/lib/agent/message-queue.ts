@@ -52,20 +52,25 @@ interface QueuedMessage {
   reject: (error: Error) => void;
   internal?: boolean; // If true, don't save to DB or emit to client
   timeoutId?: ReturnType<typeof setTimeout>; // Timeout handle for cleanup
+  durable?: boolean;
 }
 
 export class MessageQueue {
   private queue: QueuedMessage[] = [];
   private waiters: Array<() => void> = [];
   private running: boolean = false;
+  private timeoutMs: number = MESSAGE_QUEUE_TIMEOUT_MS;
 
-  // Messages shifted out of `queue` and yielded to the SDK, but whose
-  // enqueueWithId() promise has not yet resolved (onSent not called). clear()
-  // must reject these too — otherwise, if an interrupt lands in the gap between
-  // the generator's shift and the SDK's onSent, neither clear() (the message is
-  // no longer in `queue`) nor the stuck-message timeout (same check) can settle
-  // the promise, so `await enqueueWithId()` hangs forever.
-  private inFlight: Set<QueuedMessage> = new Set();
+  /** Test-only: shorten timeout to exercise delivery-state branches. */
+  overrideTimeoutMsForTest(ms: number): void {
+    this.timeoutMs = ms;
+  }
+
+  // Messages atomically removed from `queue` by a generator, but not yet yielded.
+  private claimed: Set<QueuedMessage> = new Set();
+
+  // Messages actually yielded to the SDK, but not yet acknowledged by onSent.
+  private yielded: Set<QueuedMessage> = new Set();
 
   // Generation counter to detect stale queries
   // When incrementing, old generators will skip yielding messages
@@ -103,13 +108,26 @@ export class MessageQueue {
    * Used when caller needs the ID before the message is processed (e.g., for state tracking)
    *
    * Includes timeout detection: if the SDK doesn't consume the message within
-   * MESSAGE_QUEUE_TIMEOUT_MS, the promise is rejected with a timeout error.
+   * this.timeoutMs, the promise is rejected with a timeout error.
    * This prevents the session from getting stuck in 'queued' state indefinitely.
    */
   async enqueueWithId(
     messageId: string,
     content: string | MessageContent[],
-    internal: boolean = false
+    internal: boolean = false,
+    options?: { durable?: boolean }
+  ): Promise<void> {
+    return this.admitWithId(messageId, content, internal, options);
+  }
+
+  /**
+   * Synchronously admit a message and return its eventual delivery acknowledgment.
+   */
+  admitWithId(
+    messageId: string,
+    content: string | MessageContent[],
+    internal: boolean = false,
+    options?: { durable?: boolean }
   ): Promise<void> {
     return new Promise((resolve, reject) => {
       const queuedMessage: QueuedMessage = {
@@ -117,6 +135,7 @@ export class MessageQueue {
         content,
         timestamp: new Date().toISOString(),
         queuedAt: Date.now(),
+        durable: options?.durable,
         resolve: () => {
           // Clear timeout when message is successfully consumed
           if (queuedMessage.timeoutId) {
@@ -142,7 +161,7 @@ export class MessageQueue {
       // hang and the inFlight Set/size() would leak/overcount it indefinitely.
       queuedMessage.timeoutId = setTimeout(() => {
         const timeoutError = new Error(
-          `Message queue timeout: SDK did not consume message ${messageId} within ${MESSAGE_QUEUE_TIMEOUT_MS / 1000}s. ` +
+          `Message queue timeout: SDK did not consume message ${messageId} within ${this.timeoutMs / 1000}s. ` +
             `This usually indicates an SDK internal error. Please try again or create a new session.`
         );
         timeoutError.name = 'MessageQueueTimeoutError';
@@ -152,10 +171,18 @@ export class MessageQueue {
           queuedMessage.reject(timeoutError);
           return;
         }
-        if (this.inFlight.delete(queuedMessage)) {
+        if (this.claimed.delete(queuedMessage)) {
           queuedMessage.reject(timeoutError);
+          return;
         }
-      }, MESSAGE_QUEUE_TIMEOUT_MS);
+        if (this.yielded.delete(queuedMessage)) {
+          if (queuedMessage.durable) {
+            queuedMessage.resolve(queuedMessage.id);
+          } else {
+            queuedMessage.reject(timeoutError);
+          }
+        }
+      }, this.timeoutMs);
 
       this.queue.push(queuedMessage);
       this.onMessageEnqueued?.(queuedMessage.id, queuedMessage.queuedAt);
@@ -178,15 +205,20 @@ export class MessageQueue {
       msg.reject(new Error('Interrupted by user'));
     }
     this.queue = [];
-    // Also reject messages already shifted out of the queue and yielded to the
-    // SDK whose onSent callback never ran (interrupt landed in that gap).
-    for (const msg of this.inFlight) {
+    for (const msg of this.claimed) {
       if (msg.timeoutId) {
         clearTimeout(msg.timeoutId);
       }
       msg.reject(new Error('Interrupted by user'));
     }
-    this.inFlight.clear();
+    this.claimed.clear();
+    for (const msg of this.yielded) {
+      if (msg.timeoutId) {
+        clearTimeout(msg.timeoutId);
+      }
+      msg.resolve(msg.id);
+    }
+    this.yielded.clear();
   }
 
   /**
@@ -197,29 +229,37 @@ export class MessageQueue {
    */
   remove(messageId: string): boolean {
     const index = this.queue.findIndex((msg) => msg.id === messageId);
-    if (index === -1) {
-      return false;
+    if (index !== -1) {
+      const [msg] = this.queue.splice(index, 1);
+      if (msg.timeoutId) clearTimeout(msg.timeoutId);
+      msg.resolve(messageId);
+      return true;
     }
 
-    const [msg] = this.queue.splice(index, 1);
-    if (msg.timeoutId) {
-      clearTimeout(msg.timeoutId);
-    }
-    msg.resolve(messageId);
+    // A generator may have atomically claimed the message but not reached the
+    // actual yield yet. Revocation still wins in that state: remove it from the
+    // claimed set and settle the admission. messageGenerator rechecks ownership
+    // after its await and skips a revoked claim. Once in `yielded`, provider
+    // ownership has won and removal correctly returns false.
+    const claimed = [...this.claimed].find((msg) => msg.id === messageId);
+    if (!claimed) return false;
+    this.claimed.delete(claimed);
+    if (claimed.timeoutId) clearTimeout(claimed.timeoutId);
+    claimed.resolve(messageId);
     return true;
   }
 
   /**
    * Get pending message count (for monitoring + interrupt gating).
    *
-   * Includes messages already shifted out and yielded to the SDK (inFlight) —
+   * Includes messages claimed by a generator or actually yielded to the SDK —
    * InterruptHandler.handleInterrupt clears only when `size() > 0`, so a
    * kickoff that has been yielded (and is therefore only in `inFlight`) must
    * still count here or `clear()` would be skipped and its enqueue promise would
    * never settle.
    */
   size(): number {
-    return this.queue.length + this.inFlight.size;
+    return this.queue.length + this.claimed.size + this.yielded.size;
   }
 
   /**
@@ -269,7 +309,8 @@ export class MessageQueue {
    * generators will exit early instead of consuming messages meant for the new query.
    */
   async *messageGenerator(
-    sessionId: string
+    sessionId: string,
+    options?: { suppressPreYieldCallback?: boolean }
   ): AsyncGenerator<{ message: SDKUserMessage; onSent: () => void }> {
     // Capture the generation at the time this generator was created
     const myGeneration = this.generation;
@@ -288,9 +329,17 @@ export class MessageQueue {
         break;
       }
 
+      // Ownership may have been revoked after waitForNextMessage claimed the
+      // entry but before this continuation resumed. A successful remove/defer
+      // wins before actual yield, so skip the revoked claim entirely.
+      if (!this.claimed.has(queuedMessage)) {
+        continue;
+      }
+
       // Double-check generation after waiting (in case it changed while we were waiting)
       if (this.generation !== myGeneration) {
         // Generation changed while waiting - put message back and exit
+        this.claimed.delete(queuedMessage);
         this.queue.unshift(queuedMessage);
         break;
       }
@@ -315,34 +364,30 @@ export class MessageQueue {
         internal: queuedMessage.internal,
       };
 
-      // Track the shifted-but-unresolved message BEFORE firing the yield
-      // callback, so a synchronous throw from onMessageYielded (DB/event
-      // delivery) doesn't orphan it in neither `queue` nor `inFlight` — which
-      // would leave clear()/timeout unable to settle the enqueue promise.
-      //
-      // Residual: there is a microtask-boundary gap between waitForNextMessage()'s
-      // synchronous queue.shift() and this inFlight.add (they straddle the await
-      // boundary), so a clear() that lands in that window finds the message in
-      // neither collection. The enqueue promise then settles via the 30s timeout
-      // (self-healing), and the "cancelled coder receives the kickoff" sub-race is
-      // effectively unreachable because queryAbortController.abort() fires during
-      // the same await boundary, before the generator resumes to yield. Fully
-      // closing it (make shift+add atomic, or bump generation in stop()) interacts
-      // with the generation-check unshift path — tracked for the cancellation-token
-      // pass's atomic generator abort.
-      this.inFlight.add(queuedMessage);
-
-      // Fire callback at yield time for non-internal messages
-      // This is T_consumed - when the SDK actually receives the message
-      if (!queuedMessage.internal && this.onMessageYielded) {
-        this.onMessageYielded(queuedMessage.id, Date.now());
+      // Fire callback immediately before the actual yield. A failure means the
+      // message was claimed but never yielded, so reject its acknowledgment.
+      try {
+        if (
+          !options?.suppressPreYieldCallback &&
+          !queuedMessage.internal &&
+          this.onMessageYielded
+        ) {
+          this.onMessageYielded(queuedMessage.id, Date.now());
+        }
+      } catch (error) {
+        this.claimed.delete(queuedMessage);
+        queuedMessage.reject(error instanceof Error ? error : new Error(String(error)));
+        throw error;
       }
-      // Yield message with callback
+
+      this.claimed.delete(queuedMessage);
+      this.yielded.add(queuedMessage);
       yield {
         message: sdkUserMessage,
         onSent: () => {
-          this.inFlight.delete(queuedMessage);
-          queuedMessage.resolve(queuedMessage.id);
+          if (this.yielded.delete(queuedMessage)) {
+            queuedMessage.resolve(queuedMessage.id);
+          }
         },
       };
     }
@@ -361,6 +406,10 @@ export class MessageQueue {
       if (!this.running) return null;
     }
 
-    return this.queue.shift() || null;
+    const message = this.queue.shift() || null;
+    if (message) {
+      this.claimed.add(message);
+    }
+    return message;
   }
 }

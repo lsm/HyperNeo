@@ -408,10 +408,21 @@ export function SpaceDetailPanel({
   const taskListCount = activeCount + actionCount + draftCount;
 
   const tasksForTab = useMemo(() => {
-    const sorted = [...tasks].sort((a, b) => b.updatedAt - a.updatedAt);
     const predicate =
       taskTab === 'action' ? isActionRequired : taskTab === 'draft' ? isDraftTask : isActiveTask;
-    return sorted.filter(predicate);
+    // Active tab: surface running tasks (in_progress, then approved) before
+    // waiting ones (open), with recency as the tiebreaker within each tier.
+    // Other tabs keep pure recency order.
+    const statusRank =
+      taskTab === 'active'
+        ? (s: SpaceTaskStatus) => (s === 'in_progress' ? 0 : s === 'approved' ? 1 : 2)
+        : () => 0;
+    return [...tasks]
+      .sort((a, b) => {
+        const rankDelta = statusRank(a.status) - statusRank(b.status);
+        return rankDelta !== 0 ? rankDelta : b.updatedAt - a.updatedAt;
+      })
+      .filter(predicate);
   }, [tasks, taskTab, selectedTaskId]);
 
   // Cap the sidebar preview, but always keep the selected task visible even
@@ -664,7 +675,7 @@ export function SpaceDetailPanel({
           }
         />
         <SpaceNavItem
-          label="Forge"
+          label="Evolve"
           active={isForgeSelected}
           onClick={handleForgeClick}
           testId="space-detail-forge"

@@ -20,6 +20,7 @@ import { Logger as LoggerClass } from '../logger';
 import type { ModelSwitchHandler } from './model-switch-handler';
 import type { InterruptHandler } from './interrupt-handler';
 import type { QueryModeHandler } from './query-mode-handler';
+import { isMessageDeliveryV2Enabled } from './message-delivery';
 
 /**
  * Context interface - what EventSubscriptionSetup needs from AgentSession
@@ -40,6 +41,13 @@ export interface EventSubscriptionSetupContext {
     hardReset?: boolean;
   }): Promise<{ success: boolean; error?: string }>;
   startQueryAndEnqueue(messageId: string, messageContent: string | MessageContent[]): Promise<void>;
+  /**
+   * Ordinary-chat entry for message-delivery v2 (flag-gated). When present AND
+   * the v2 flag is set, `message.persisted` enqueues a durable job_queue row
+   * instead of calling startQueryAndEnqueue. Optional — absent on sessions that
+   * haven't opted into v2.
+   */
+  deliverChatMessage?(messageId: string): Promise<void>;
 }
 
 /**
@@ -118,6 +126,15 @@ export class EventSubscriptionSetup {
       'message.persisted',
       async (data) => {
         if (data.skipQueryStart) return;
+        // Message-delivery v2: route ordinary chat through the durable job_queue
+        // chokepoint (role decided atomically by the index) instead of driving
+        // the query inline. Flag-gated; Space injectors still call
+        // startQueryAndEnqueue directly (migrated in step 2). See
+        // docs/features/message-delivery-v2.md §12.
+        if (isMessageDeliveryV2Enabled() && this.ctx.deliverChatMessage) {
+          await this.ctx.deliverChatMessage(data.messageId);
+          return;
+        }
         // Start query and enqueue message
         // Note: User messages in the DB serve as rewind points - no separate checkpoint tracking needed
         await this.ctx.startQueryAndEnqueue(

@@ -31,6 +31,7 @@ import {
 } from '../space/runtime/space-mcp-session-policy';
 import type { AskUserQuestionHandler } from './ask-user-question-handler';
 import type { MessageQueue } from './message-queue';
+import type { SDKMessageHandler } from './sdk-message-handler';
 import type { ProcessingStateManager } from './processing-state-manager';
 import type { QueryLike } from './query-like';
 import type { QueryOptionsBuilder } from './query-options-builder';
@@ -348,6 +349,7 @@ export interface QueryRunnerContext {
   readonly logger: Logger;
   readonly optionsBuilder: QueryOptionsBuilder;
   readonly askUserQuestionHandler: AskUserQuestionHandler;
+  readonly messageHandler: SDKMessageHandler;
 
   // Mutable query state (accessed directly)
   queryObject: QueryLike | null;

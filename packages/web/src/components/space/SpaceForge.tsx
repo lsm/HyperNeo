@@ -600,7 +600,7 @@ function EvidenceTab({ scope }: { scope: EvolutionScope }) {
         <textarea
           value={note}
           onInput={(event) => setNote((event.target as HTMLTextAreaElement).value)}
-          placeholder="What happened? What evidence should Forge remember?"
+          placeholder="What happened? What evidence should Evolve remember?"
           rows={3}
           class="w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
         />
@@ -1928,7 +1928,7 @@ export function ScopeDetail({
             {goal && (
               <SectionCard title="Completed-task automation">
                 <p class="text-xs text-gray-400">
-                  Draft a Forge episode after a configured number of completed scoped tasks.
+                  Draft an Evolution episode after a configured number of completed scoped tasks.
                 </p>
                 <label class="flex items-center gap-2 text-sm text-gray-200">
                   <input
@@ -2058,7 +2058,7 @@ export function SpaceForge({ spaceId }: SpaceForgeProps) {
     <div class="flex h-full min-h-0 flex-col overflow-hidden">
       <div class="flex h-[88px] flex-shrink-0 items-center justify-between gap-3 border-b border-white/10 px-4">
         <div>
-          <h2 class="text-sm font-semibold text-gray-100">Forge scopes</h2>
+          <h2 class="text-sm font-semibold text-gray-100">Evolution scopes</h2>
           <p class="text-xs text-gray-400">
             {formatScopeCount(scopes.length)} collecting evidence, metrics, and lessons
           </p>
@@ -2080,7 +2080,7 @@ export function SpaceForge({ spaceId }: SpaceForgeProps) {
           <p class="text-sm text-gray-400">Loading scopes...</p>
         ) : scopes.length === 0 ? (
           <div class="rounded-lg border border-dashed border-white/10 bg-white/[0.02] p-8 text-center">
-            <p class="text-sm text-gray-400">No Forge scopes yet.</p>
+            <p class="text-sm text-gray-400">No Evolution scopes yet.</p>
             <p class="mt-1 text-xs text-gray-400">
               Create one from a recurring goal to track evidence, metrics, lessons, and follow-up
               tasks.

@@ -215,6 +215,13 @@ export interface AgentSessionRuntimeOptions {
 
 // Extracted components
 import { MessageQueue } from './message-queue';
+import {
+  MESSAGE_DELIVERY_PARK_MS,
+  deliverMessage,
+  withSessionLock,
+  type DriveTurnOutcome,
+  type FeedSteerOutcome,
+} from './message-delivery';
 import { ProcessingStateManager } from './processing-state-manager';
 import { ContextTracker } from './context-tracker';
 import { SDKMessageHandler, type SDKMessageHandlerContext } from './sdk-message-handler';
@@ -847,6 +854,41 @@ export class AgentSession
     return this.messageQueue.remove(messageId);
   }
 
+  /**
+   * Revoke one not-yet-delivered durable message under the same per-session
+   * ownership lock used by transport admission. This linearizes remove/defer
+   * against the handler's final validation + synchronous queue admission.
+   */
+  async revokePendingDelivery(
+    messageDbId: string,
+    mode: 'remove' | 'defer'
+  ): Promise<
+    { changed: false } | { changed: true; dbId: string; uuid: string; removedFromMemory: boolean }
+  > {
+    return withSessionLock(this.session.id, async () => {
+      // Remove accepts BOTH pending states: the frontend Remove button sends
+      // the same RPC for current-turn (enqueued) and next-turn (deferred)
+      // messages — hardcoding 'enqueued' made deferred removal a silent no-op
+      // that reappeared on refresh. cancelDelivery is a safe no-op when the
+      // deferred row has no active job. See Codex (#3744105283).
+      const result =
+        mode === 'remove'
+          ? this.db.deletePendingUserMessage(this.session.id, messageDbId)
+          : this.db.deferEnqueuedUserMessage(this.session.id, messageDbId);
+      if (!result?.uuid) return { changed: false as const };
+
+      this.db.getJobQueueRepo().cancelDelivery(this.session.id, result.uuid);
+      const removedFromMemory = this.messageQueue.remove(result.uuid);
+      await this.stateManager.clearQueuedIfOwnedBy(result.uuid);
+      return {
+        changed: true as const,
+        dbId: result.dbId,
+        uuid: result.uuid,
+        removedFromMemory,
+      };
+    });
+  }
+
   // ============================================================================
   // Interrupt and Reset
   // ============================================================================
@@ -856,6 +898,11 @@ export class AgentSession
     // cooldown timer can't switch the model or replay the stale message after
     // the user explicitly stopped the turn.
     this.rateLimitWatchdog.cancel();
+
+    // The durable-delivery cancel lives in InterruptHandler.handleInterrupt —
+    // the single chokepoint every interrupt path reaches (client.interrupt RPC
+    // → agent.interruptRequest subscriber → the raw handler, and the space
+    // paths via this wrapper). See Codex (#3744105273).
     await this.interruptHandler.handleInterrupt();
   }
 
@@ -1758,6 +1805,223 @@ export class AgentSession
    */
   isRateLimitEpisodeSuperseded(generation: number): boolean {
     return this.rateLimitWatchdog.isSuperseded(generation);
+  }
+
+  // ============================================================================
+  // Message delivery v2 — turn/steer driving bridge
+  // ============================================================================
+
+  /**
+   * Drive a new SDK turn for a durable message_delivery job (v2). Ensures the
+   * query is started (parking if blocked on sdk_resume_choice), feeds the
+   * kickoff to the transport, then awaits the turn's terminal outcome (the
+   * runQuery promise settling). The job stays `processing` across the await, so
+   * a crash before the turn ends is redelivered by reclaimStale.
+   *
+   * Step-1 (transitional): the QueryRunner still owns in-process retry/error
+   * handling, so this completes the job when the turn ENDS (success or handled
+   * error) rather than fail-on-error — otherwise the job's backoff would
+   * double-retry what QueryRunner already retried. Step 4 (decommission)
+   * removes QueryRunner retry, making the job's fail/backoff the sole retry.
+   */
+  async driveDeliveryTurn(
+    messageUuid: string,
+    content: string | MessageContent[],
+    _parentToolUseId?: string | null,
+    alreadyConsumed = false,
+    claimGuard?: () => boolean
+  ): Promise<DriveTurnOutcome> {
+    // Brief critical section (per-session lock): start the query + feed the
+    // kickoff so it is the FIRST message the generator yields (a steer grabbing
+    // the lock next can't jump ahead). The lock also serializes ensureQueryStarted
+    // against a concurrent steer's state-check. Released BEFORE the long turn
+    // await below — holding it across the turn would serialize mid-turn steering
+    // (the feature's whole point). See message-delivery-v2.md §8 + Codex review.
+    const started = await withSessionLock(this.session.id, async () => {
+      // Validate the persisted lifecycle barrier BEFORE starting/restarting the
+      // provider. Archive may flip after the handler's initial guard; checking
+      // only after ensureQueryStarted races teardown. Reclaimed consumed turns
+      // must validate too, while accepting their consumed ownership state.
+      if (!this.messageDeliveryValid(messageUuid, alreadyConsumed)) {
+        return { kind: 'aborted' as const };
+      }
+      // Re-fence the lease before the (async) provider startup so a reclaim
+      // during the lock wait can't waste a subprocess start. See Codex
+      // (#3744886834).
+      if (claimGuard && !claimGuard()) {
+        return { kind: 'aborted' as const };
+      }
+      const queryStartResult = await this.lifecycleManager.ensureQueryStarted();
+      if (queryStartResult === 'blocked') {
+        return { kind: 'blocked' as const };
+      }
+      const queryPromise = this.queryPromise;
+      if (!queryPromise) {
+        throw new Error('message_delivery: query did not start; cannot drive turn');
+      }
+      // Feed the kickoff (resolves on onSent = the SDK consumed it) UNLESS a
+      // prior attempt already did (alreadyConsumed = reclaim after a crash): the
+      // SDK resume-from-history already holds a consumed kickoff, so re-feeding
+      // would duplicate the prompt. History drives the turn; we only ensure the
+      // query is running. See Codex (#2592). Durable so a yielded-but-unresumed
+      // kickoff does not TTL-out into a duplicate re-feed (#3742616720).
+      let acknowledgment: Promise<void> | null = null;
+      if (!alreadyConsumed) {
+        // Re-fence the lease AGAIN right before admission: ensureQueryStarted
+        // awaits provider startup, so the event loop can suspend past the stale
+        // threshold and a resumed processor can reclaim the row with a new token.
+        // Without this recheck both attempts would admit the same kickoff. See
+        // Codex (#3744971818).
+        if (claimGuard && !claimGuard()) {
+          return { kind: 'aborted' as const };
+        }
+        acknowledgment = this.messageQueue.admitWithId(messageUuid, content, false, {
+          durable: true,
+        });
+      }
+      return { kind: 'driving' as const, queryPromise, acknowledgment };
+    });
+    if (started.kind === 'blocked') {
+      // Mirror the legacy startQueryAndEnqueue path: report the session as
+      // queued while it waits on sdk_resume_choice, so later explicit deferrals
+      // are honored (isAgentBusy) and the UI shows blocked-state controls
+      // instead of idle. See Codex (#2599).
+      await this.stateManager.setQueued(messageUuid);
+      return { outcome: 'blocked', retryAt: Date.now() + MESSAGE_DELIVERY_PARK_MS };
+    }
+    if (started.kind === 'aborted') {
+      return { outcome: 'aborted' };
+    }
+    // Long awaits OUTSIDE the lock — ownership mutations and mid-turn steers can
+    // proceed while the provider acknowledges the kickoff and runs the turn.
+    await started.acknowledgment;
+    await started.queryPromise.catch(() => {});
+    return { outcome: 'completed' };
+  }
+
+  /**
+   * Feed a steered message into the active turn's live transport (v2). The
+   * per-session lock guards ONLY the processing-state check (brief); the feed
+   * (enqueueWithId, which resolves on `onSent`) runs UNLOCKED — it is
+   * concurrent-safe and may itself await for the duration of the steer being
+   * consumed. If the turn ended, returns `promote` so the handler converts the
+   * job to a turn in place.
+   */
+  async feedDeliverySteer(
+    messageUuid: string,
+    content: string | MessageContent[],
+    _parentToolUseId?: string | null,
+    claimGuard?: () => boolean
+  ): Promise<FeedSteerOutcome> {
+    const action = await withSessionLock(this.session.id, async () => {
+      // Re-fence the lease at the TOP of the locked section, before branching on
+      // status. The handler's pre-lock check can pass, then a reclaim can win the
+      // row during the lock wait. A stale attempt must not feed, park, OR promote
+      // (promote calls requeueAs, which is token-fenced, but aborting here avoids
+      // the superseded/requeue churn). See Codex (#3744886834, #3744971820).
+      if (claimGuard && !claimGuard()) return { kind: 'aborted' as const };
+      const status = this.stateManager.getState().status;
+      // 'processing' → validate + synchronously admit while remove/defer are
+      // excluded by this same lock. 'queued' → parked owner, so park this steer.
+      if (status === 'processing') {
+        if (!this.messageDeliveryValid(messageUuid)) return { kind: 'aborted' as const };
+        return {
+          kind: 'feed' as const,
+          acknowledgment: this.messageQueue.admitWithId(messageUuid, content, false, {
+            durable: true,
+          }),
+        };
+      }
+      if (status === 'queued') return { kind: 'park' as const };
+      return { kind: 'promote' as const };
+    });
+    if (action.kind === 'promote') {
+      // The active turn ended (or never started) — promote to a turn candidate.
+      return { outcome: 'promote' };
+    }
+    if (action.kind === 'park') {
+      return { outcome: 'park' };
+    }
+    if (action.kind === 'aborted') {
+      return { outcome: 'aborted' };
+    }
+    // Admission happened atomically under the lock; only the provider
+    // acknowledgment is awaited here.
+    await action.acknowledgment;
+    return { outcome: 'consumed' };
+  }
+
+  /**
+   * Ordinary-chat entry for message-delivery v2: enqueue a durable delivery job
+   * (role decided atomically by the job_queue index) instead of driving the
+   * query inline. The message_delivery handler then drives/feeds the turn.
+   * Flag-gated; the `message.persisted` subscriber calls this only when
+   * HYPERNEO_MESSAGE_DELIVERY_V2 is set.
+   */
+  async settleSkippedDelivery(messageUuid: string): Promise<void> {
+    await withSessionLock(this.session.id, () =>
+      this.stateManager.clearQueuedIfOwnedBy(messageUuid).then(() => undefined)
+    );
+  }
+
+  async deliverChatMessage(messageUuid: string): Promise<void> {
+    await withSessionLock(this.session.id, async () => {
+      // Enqueue-time archive barrier: cancelForSession is point-in-time, so a send
+      // landing after it but before the phase-4 status flip would otherwise create a
+      // job that drives against a half-destroyed session. Skip the enqueue when the
+      // session is already archived; the handler + bridge revalidate again at feed
+      // time. See Codex (#3742774841).
+      if (this.db.getSession(this.session.id)?.status === 'archived') {
+        // Archive can win after MessagePersistence's post-save check but before
+        // this final admission point. Its point-in-time job cancellation then
+        // saw no job, so terminalize the saved enqueued row before rejecting.
+        this.db.getSDKMessageRepo().markDeliveryFailedByUuid(this.session.id, messageUuid);
+        throw new Error(`Session ${this.session.id} is archived`);
+      }
+      // Role arbitration and queued ownership are one critical section. The row
+      // that actually inserts as `turn` owns the marker; a concurrently-persisted
+      // steer can never steal it by publishing message.persisted first.
+      let role: 'turn' | 'steer';
+      try {
+        role = deliverMessage(this.db.getJobQueueRepo(), this.session.id, messageUuid, {
+          origin: 'chat',
+        });
+      } catch (err) {
+        // The user row was already saved `enqueued` by MessagePersistence. If job
+        // insertion throws (transient SQLite failure), the hidden prompt has no
+        // durable owner — a client retry would create a second, and restart/replay
+        // could still run the orphaned original. Terminalize before propagating.
+        this.db.getSDKMessageRepo().markDeliveryFailedByUuid(this.session.id, messageUuid);
+        throw err;
+      }
+      if (role === 'turn') {
+        try {
+          // Preserve a legacy-owned live turn: role arbitration can return turn
+          // when no durable turn row exists even though the session is processing.
+          // DB-first publication failure is non-fatal after durable insertion —
+          // rejecting here would invite a client retry while this job still runs.
+          await this.stateManager.setQueuedIfIdle(messageUuid);
+        } catch (error) {
+          this.logger.warn('Queued-state publication failed after durable insertion:', error);
+        }
+      }
+    });
+  }
+
+  /**
+   * Revalidation checked under the per-session lock immediately before feeding a
+   * delivery: false if the session was archived (worktree/agent torn down) or the
+   * message row is no longer pending delivery (removed by removePending, or
+   * re-classified to deferred/consumed/failed) since the handler loaded it. Closes
+   * the archive + removePending TOCTOU windows together. See Codex (#3742774841, #3696).
+   */
+  private messageDeliveryValid(messageUuid: string, alreadyConsumed = false): boolean {
+    if (this.db.getSession(this.session.id)?.status === 'archived') return false;
+    const loaded = this.db.getSDKMessageRepo().getDeliveryContent(this.session.id, messageUuid);
+    return (
+      loaded !== null &&
+      (loaded.sendStatus === 'enqueued' || (alreadyConsumed && loaded.sendStatus === 'consumed'))
+    );
   }
 
   trackAgentProcess(proc: TrackedAgentProcess): void {
