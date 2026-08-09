@@ -40,15 +40,6 @@ function extractParentToolUseId(content: string | MessageContent[]): string | nu
  */
 const MESSAGE_QUEUE_TIMEOUT_MS = 30_000;
 
-function makeTimeoutError(messageId: string, timeoutMs: number): Error {
-  const error = new Error(
-    `Message queue timeout: SDK did not consume message ${messageId} within ${timeoutMs / 1000}s. ` +
-      `This usually indicates an SDK internal error. Please try again or create a new session.`
-  );
-  error.name = 'MessageQueueTimeoutError';
-  return error;
-}
-
 /**
  * Queued message waiting to be sent to Claude
  */
@@ -61,15 +52,6 @@ interface QueuedMessage {
   reject: (error: Error) => void;
   internal?: boolean; // If true, don't save to DB or emit to client
   timeoutId?: ReturnType<typeof setTimeout>; // Timeout handle for cleanup
-  /**
-   * Durable delivery feed (message_delivery v2). Changes timeout semantics: when
-   * the SDK has already YIELDED the message (it's in `inFlight`) but `onSent`
-   * never fires within the timeout, resolve instead of rejecting — the live SDK
-   * already holds this UUID, so a reject→retry→re-feed would execute the user's
-   * request twice. Still reject when the message was never yielded (genuine
-   * iterator stall — the SDK never received it, so a retry cannot duplicate).
-   * See message-delivery-v2.md + Codex (#3742616720).
-   */
   durable?: boolean;
 }
 
@@ -78,22 +60,11 @@ export class MessageQueue {
   private waiters: Array<() => void> = [];
   private running: boolean = false;
 
-  // Configurable enqueue timeout (default 30s). Overridden in tests via
-  // `overrideTimeoutMsForTest` to exercise the timeout path without a 30s wait.
-  private timeoutMs: number = MESSAGE_QUEUE_TIMEOUT_MS;
+  // Messages atomically removed from `queue` by a generator, but not yet yielded.
+  private claimed: Set<QueuedMessage> = new Set();
 
-  /** Test-only: shorten the enqueue timeout so the timeout path is exercisable. */
-  overrideTimeoutMsForTest(ms: number): void {
-    this.timeoutMs = ms;
-  }
-
-  // Messages shifted out of `queue` and yielded to the SDK, but whose
-  // enqueueWithId() promise has not yet resolved (onSent not called). clear()
-  // must reject these too — otherwise, if an interrupt lands in the gap between
-  // the generator's shift and the SDK's onSent, neither clear() (the message is
-  // no longer in `queue`) nor the stuck-message timeout (same check) can settle
-  // the promise, so `await enqueueWithId()` hangs forever.
-  private inFlight: Set<QueuedMessage> = new Set();
+  // Messages actually yielded to the SDK, but not yet acknowledged by onSent.
+  private yielded: Set<QueuedMessage> = new Set();
 
   // Generation counter to detect stale queries
   // When incrementing, old generators will skip yielding messages
@@ -140,6 +111,18 @@ export class MessageQueue {
     internal: boolean = false,
     options?: { durable?: boolean }
   ): Promise<void> {
+    return this.admitWithId(messageId, content, internal, options);
+  }
+
+  /**
+   * Synchronously admit a message and return its eventual delivery acknowledgment.
+   */
+  admitWithId(
+    messageId: string,
+    content: string | MessageContent[],
+    internal: boolean = false,
+    options?: { durable?: boolean }
+  ): Promise<void> {
     return new Promise((resolve, reject) => {
       const queuedMessage: QueuedMessage = {
         id: messageId,
@@ -170,28 +153,30 @@ export class MessageQueue {
       // consumed) OR already shifted out and yielded but `onSent` never ran
       // (iterator terminated mid-flight) — otherwise the enqueue promise would
       // hang and the inFlight Set/size() would leak/overcount it indefinitely.
-      //
-      // Durable feeds (message_delivery v2) RESOLVE instead of reject in the
-      // yielded-but-unacknowledged case: the live SDK already holds this UUID, so
-      // a reject → handler fail → job retry → re-feed would execute the user's
-      // request twice. The not-yet-yielded case still rejects (genuine iterator
-      // stall — the SDK never received it, so a retry cannot duplicate). See
-      // message-delivery-v2.md + Codex (#3742616720).
       queuedMessage.timeoutId = setTimeout(() => {
+        const timeoutError = new Error(
+          `Message queue timeout: SDK did not consume message ${messageId} within ${MESSAGE_QUEUE_TIMEOUT_MS / 1000}s. ` +
+            `This usually indicates an SDK internal error. Please try again or create a new session.`
+        );
+        timeoutError.name = 'MessageQueueTimeoutError';
         const index = this.queue.indexOf(queuedMessage);
         if (index !== -1) {
           this.queue.splice(index, 1);
-          queuedMessage.reject(makeTimeoutError(messageId, this.timeoutMs));
+          queuedMessage.reject(timeoutError);
           return;
         }
-        if (this.inFlight.delete(queuedMessage)) {
+        if (this.claimed.delete(queuedMessage)) {
+          queuedMessage.reject(timeoutError);
+          return;
+        }
+        if (this.yielded.delete(queuedMessage)) {
           if (queuedMessage.durable) {
-            queuedMessage.resolve(messageId);
+            queuedMessage.resolve(queuedMessage.id);
           } else {
-            queuedMessage.reject(makeTimeoutError(messageId, this.timeoutMs));
+            queuedMessage.reject(timeoutError);
           }
         }
-      }, this.timeoutMs);
+      }, MESSAGE_QUEUE_TIMEOUT_MS);
 
       this.queue.push(queuedMessage);
       this.onMessageEnqueued?.(queuedMessage.id, queuedMessage.queuedAt);
@@ -214,15 +199,20 @@ export class MessageQueue {
       msg.reject(new Error('Interrupted by user'));
     }
     this.queue = [];
-    // Also reject messages already shifted out of the queue and yielded to the
-    // SDK whose onSent callback never ran (interrupt landed in that gap).
-    for (const msg of this.inFlight) {
+    for (const msg of this.claimed) {
       if (msg.timeoutId) {
         clearTimeout(msg.timeoutId);
       }
       msg.reject(new Error('Interrupted by user'));
     }
-    this.inFlight.clear();
+    this.claimed.clear();
+    for (const msg of this.yielded) {
+      if (msg.timeoutId) {
+        clearTimeout(msg.timeoutId);
+      }
+      msg.resolve(msg.id);
+    }
+    this.yielded.clear();
   }
 
   /**
@@ -248,14 +238,14 @@ export class MessageQueue {
   /**
    * Get pending message count (for monitoring + interrupt gating).
    *
-   * Includes messages already shifted out and yielded to the SDK (inFlight) —
+   * Includes messages claimed by a generator or actually yielded to the SDK —
    * InterruptHandler.handleInterrupt clears only when `size() > 0`, so a
    * kickoff that has been yielded (and is therefore only in `inFlight`) must
    * still count here or `clear()` would be skipped and its enqueue promise would
    * never settle.
    */
   size(): number {
-    return this.queue.length + this.inFlight.size;
+    return this.queue.length + this.claimed.size + this.yielded.size;
   }
 
   /**
@@ -327,6 +317,7 @@ export class MessageQueue {
       // Double-check generation after waiting (in case it changed while we were waiting)
       if (this.generation !== myGeneration) {
         // Generation changed while waiting - put message back and exit
+        this.claimed.delete(queuedMessage);
         this.queue.unshift(queuedMessage);
         break;
       }
@@ -351,34 +342,26 @@ export class MessageQueue {
         internal: queuedMessage.internal,
       };
 
-      // Track the shifted-but-unresolved message BEFORE firing the yield
-      // callback, so a synchronous throw from onMessageYielded (DB/event
-      // delivery) doesn't orphan it in neither `queue` nor `inFlight` — which
-      // would leave clear()/timeout unable to settle the enqueue promise.
-      //
-      // Residual: there is a microtask-boundary gap between waitForNextMessage()'s
-      // synchronous queue.shift() and this inFlight.add (they straddle the await
-      // boundary), so a clear() that lands in that window finds the message in
-      // neither collection. The enqueue promise then settles via the 30s timeout
-      // (self-healing), and the "cancelled coder receives the kickoff" sub-race is
-      // effectively unreachable because queryAbortController.abort() fires during
-      // the same await boundary, before the generator resumes to yield. Fully
-      // closing it (make shift+add atomic, or bump generation in stop()) interacts
-      // with the generation-check unshift path — tracked for the cancellation-token
-      // pass's atomic generator abort.
-      this.inFlight.add(queuedMessage);
-
-      // Fire callback at yield time for non-internal messages
-      // This is T_consumed - when the SDK actually receives the message
-      if (!queuedMessage.internal && this.onMessageYielded) {
-        this.onMessageYielded(queuedMessage.id, Date.now());
+      // Fire callback immediately before the actual yield. A failure means the
+      // message was claimed but never yielded, so reject its acknowledgment.
+      try {
+        if (!queuedMessage.internal && this.onMessageYielded) {
+          this.onMessageYielded(queuedMessage.id, Date.now());
+        }
+      } catch (error) {
+        this.claimed.delete(queuedMessage);
+        queuedMessage.reject(error instanceof Error ? error : new Error(String(error)));
+        throw error;
       }
-      // Yield message with callback
+
+      this.claimed.delete(queuedMessage);
+      this.yielded.add(queuedMessage);
       yield {
         message: sdkUserMessage,
         onSent: () => {
-          this.inFlight.delete(queuedMessage);
-          queuedMessage.resolve(queuedMessage.id);
+          if (this.yielded.delete(queuedMessage)) {
+            queuedMessage.resolve(queuedMessage.id);
+          }
         },
       };
     }
@@ -397,6 +380,10 @@ export class MessageQueue {
       if (!this.running) return null;
     }
 
-    return this.queue.shift() || null;
+    const message = this.queue.shift() || null;
+    if (message) {
+      this.claimed.add(message);
+    }
+    return message;
   }
 }

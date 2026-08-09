@@ -208,26 +208,34 @@ describe('MessageQueue', () => {
       expect(result.done).toBe(true);
     });
 
-    it('clear() rejects a yielded-but-unacknowledged message so its enqueue promise settles', async () => {
-      // messageGenerator shifts a message out of the queue before yielding it,
-      // and the enqueue promise only resolves once the SDK calls onSent. If an
-      // interrupt lands in that gap, clear() must still reject the promise —
-      // otherwise `await enqueueWithId()` hangs forever.
+    it('clear() resolves a yielded-but-unacknowledged message', async () => {
       queue.start();
       const messagePromise = queue.enqueueWithId('msg-inflight', 'Hello');
       const generator = queue.messageGenerator(testSessionId);
 
       const result = await generator.next();
       expect(result.done).toBe(false);
-      // Do NOT call onSent — the SDK hasn't acknowledged yet.
 
       queue.clear();
-      await expect(messagePromise).rejects.toThrow('Interrupted by user');
+      await expect(messagePromise).resolves.toBeUndefined();
+    });
+
+    it('rejects when onMessageYielded throws and does not count the message as yielded', async () => {
+      queue.start();
+      const callbackError = new Error('yield persistence failed');
+      queue.onMessageYielded = () => {
+        throw callbackError;
+      };
+      const acknowledgment = queue.enqueueWithId('msg-callback-failure', 'Hello');
+      const rejection = acknowledgment.catch((error) => error);
+      const generator = queue.messageGenerator(testSessionId);
+
+      await expect(generator.next()).rejects.toBe(callbackError);
+      expect(await rejection).toBe(callbackError);
+      expect(queue.size()).toBe(0);
     });
 
     it('size() counts messages shifted out and yielded but not yet acknowledged', async () => {
-      // handleInterrupt clears only when size() > 0, so a yielded kickoff (only
-      // in inFlight) must still count here or clear() would be skipped.
       queue.start();
       queue.enqueueWithId('msg-inflight-size', 'Hello');
       const generator = queue.messageGenerator(testSessionId);
@@ -569,6 +577,15 @@ describe('MessageQueue', () => {
   });
 
   describe('enqueueWithId', () => {
+    it('admits synchronously and returns an acknowledgment promise', async () => {
+      const acknowledgment = queue.admitWithId('sync-admission', 'Test message');
+
+      expect(acknowledgment).toBeInstanceOf(Promise);
+      expect(queue.size()).toBe(1);
+      expect(queue.remove('sync-admission')).toBe(true);
+      await acknowledgment;
+    });
+
     it('should enqueue message with pre-generated ID', async () => {
       queue.start();
 
