@@ -90,6 +90,15 @@ export interface HookExecutionRecord {
   timestamp: number;
 }
 
+/**
+ * Reserved hook id under which the engine stamps the run's pr_ready-validated
+ * PR identity. Hook `record_state`/`stateForHook` updates target a hook's OWN
+ * id, so no real (user-defined) hook can write here; the resolver reads this key
+ * directly instead of matching user-defined hook ids by substring, closing the
+ * colliding-hook-id / record_state PR-identity spoof.
+ */
+export const PR_READY_VALIDATED_IDENTITY_HOOK_ID = '__pr_ready_validated_identity__';
+
 /** Dependencies for the workflow hook engine. */
 export interface WorkflowHookEngineConfig {
   workflow: SpaceWorkflow;
@@ -482,7 +491,20 @@ export class WorkflowHookEngine {
             hook.validator.id === 'pr_ready'
           ) {
             const prUrl = extractPrUrlFromParams(currentParams);
-            if (prUrl) stateUpdates.push({ hookId: hook.id, state: { pr_url: prUrl } });
+            if (prUrl) {
+              // The pr_ready hook's own state — used by the validator's frozen-
+              // identity check on later handoffs.
+              stateUpdates.push({ hookId: hook.id, state: { pr_url: prUrl } });
+              // The authoritative run-level identity under a RESERVED hook id.
+              // record_state / stateForHook target a hook's OWN id, so no real
+              // hook can write here — the resolver reads this key directly
+              // instead of matching user-defined hook ids by substring, closing
+              // the colliding-hook-id / record_state spoof.
+              stateUpdates.push({
+                hookId: PR_READY_VALIDATED_IDENTITY_HOOK_ID,
+                state: { pr_url: prUrl },
+              });
+            }
           }
           break;
 

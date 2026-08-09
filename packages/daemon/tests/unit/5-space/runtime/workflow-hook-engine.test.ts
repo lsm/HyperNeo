@@ -12,6 +12,7 @@ import {
   QUEUED_RETRYABLE_ACTION_STATE_KEY,
   WorkflowHookEngine,
   wrapHandlerWithHooks,
+  PR_READY_VALIDATED_IDENTITY_HOOK_ID,
   type HookActionMeta,
   type HookActionOutcome,
 } from '../../../../src/lib/space/runtime/workflow-hook-engine';
@@ -1611,6 +1612,12 @@ describe('wrapHandlerWithHooks', () => {
     });
 
     expect(hookStateRepo.get('run-1', 'hook-1')?.localState.pr_url).toBe(
+      'https://github.com/acme/corp/pull/42'
+    );
+    // The authoritative run-level identity is also stamped under the reserved
+    // hook id (engine-only-writable) so the resolver need not match user-defined
+    // hook ids by substring.
+    expect(hookStateRepo.get('run-1', PR_READY_VALIDATED_IDENTITY_HOOK_ID)?.localState.pr_url).toBe(
       'https://github.com/acme/corp/pull/42'
     );
   });

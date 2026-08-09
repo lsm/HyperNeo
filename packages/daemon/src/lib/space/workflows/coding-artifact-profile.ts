@@ -20,6 +20,7 @@
 import { deriveArtifactKey } from '@hyperneo/shared';
 import { Logger } from '../../logger';
 import type { GateDataCommittedEvent, WorkflowArtifactProfile } from '../runtime/artifact-profile';
+import { PR_READY_VALIDATED_IDENTITY_HOOK_ID } from '../runtime/workflow-hook-engine';
 import { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
@@ -138,6 +139,22 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
   }
 
   resolveInitialPrimaryLinkUrl(runId: string): string {
+    // Authoritative source FIRST: the engine stamps the pr_ready-validated PR
+    // identity under a RESERVED hook id that no real (user-defined) hook can
+    // write (record_state / stateForHook target a hook's OWN id). Reading it
+    // outright bypasses the user-defined hook-id matching below, closing the
+    // colliding-hook-id / record_state PR-identity spoof for current runs.
+    try {
+      const hookStateRepo = new WorkflowHookStateRepository(this.db);
+      const reserved = hookStateRepo.get(runId, PR_READY_VALIDATED_IDENTITY_HOOK_ID);
+      const reservedUrl = legacyPrUrl(reserved?.localState);
+      if (reservedUrl) return reservedUrl;
+    } catch (err) {
+      log.warn(
+        `resolveInitialPrimaryLinkUrl: failed to read reserved identity for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+
     // Approval handoffs persist pr_url in hook state (or legacy gate data).
     // Choose the latest validated handoff identity: a revision may legitimately
     // replace a closed PR before final approval. Deliberately ignore artifacts
