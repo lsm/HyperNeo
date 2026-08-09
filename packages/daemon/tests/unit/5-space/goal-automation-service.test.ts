@@ -1466,7 +1466,7 @@ describe('handleGoalAutomationExecute', () => {
       spaceId,
       goalId: goal.id,
       evolutionScopeId: scope.id,
-      title: 'Review Forge retrospective: Review generated lessons',
+      title: 'Review Evolution retrospective: Review generated lessons',
     });
     expect(reviewTask?.labels).toContain('forge');
     expect(reviewTask?.labels).toContain('review');
@@ -1636,7 +1636,7 @@ describe('handleGoalAutomationExecute', () => {
     });
     const activeReview = taskRepo.createTask({
       spaceId,
-      title: 'Review Forge retrospective: Dedupe requeue',
+      title: 'Review Evolution retrospective: Dedupe requeue',
       goalId: goal.id,
       evolutionScopeId: scope.id,
       description: 'Episode: episode-active',
@@ -1727,7 +1727,7 @@ describe('handleGoalAutomationExecute', () => {
     });
     const activeReview = taskRepo.createTask({
       spaceId,
-      title: 'Review Forge retrospective: Defer overlap',
+      title: 'Review Evolution retrospective: Defer overlap',
       goalId: goal.id,
       evolutionScopeId: scope.id,
       description: 'Episode: episode-active',
@@ -1810,7 +1810,7 @@ describe('handleGoalAutomationExecute', () => {
     });
     const activeReview = taskRepo.createTask({
       spaceId,
-      title: 'Review Forge retrospective: Same token defer',
+      title: 'Review Evolution retrospective: Same token defer',
       goalId: goal.id,
       evolutionScopeId: scope.id,
       description: 'Episode: episode-active',
@@ -2121,7 +2121,7 @@ describe('handleGoalAutomationExecute', () => {
     });
     const activeReview = taskRepo.createTask({
       spaceId,
-      title: 'Review Forge retrospective: Extended requeue',
+      title: 'Review Evolution retrospective: Extended requeue',
       goalId: goal.id,
       evolutionScopeId: scope.id,
       description: 'Episode: episode-active',
@@ -2194,7 +2194,7 @@ describe('handleGoalAutomationExecute', () => {
     });
     const activeReview = taskRepo.createTask({
       spaceId,
-      title: 'Review Forge retrospective: Changed threshold',
+      title: 'Review Evolution retrospective: Changed threshold',
       goalId: goal.id,
       evolutionScopeId: scope.id,
       description: 'Episode: episode-active',

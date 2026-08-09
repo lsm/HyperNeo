@@ -111,8 +111,8 @@ export function syncGoalAutomationSelfNagScheduleForScope(params: {
       // nextRunAt from the new (valid) trigger config instead of the
       // stale config persisted when the schedule was paused.
       scheduleService.updateSchedule(existing.id, {
-        title: `Forge self-nag: ${goal.title}`,
-        description: `Run Forge automation for goal: ${goal.title}`,
+        title: `Evolve self-nag: ${goal.title}`,
+        description: `Run Evolve automation for goal: ${goal.title}`,
         priority: goal.priority,
         labels: ['forge', 'automation', `goal:${goal.id}`, scopeLabel],
         cronExpression: policy.selfNagCronExpression,
@@ -124,8 +124,8 @@ export function syncGoalAutomationSelfNagScheduleForScope(params: {
     scheduleService.createGoalSchedule({
       spaceId: goal.spaceId,
       goalId: goal.id,
-      title: `Forge self-nag: ${goal.title}`,
-      description: `Run Forge automation for goal: ${goal.title}`,
+      title: `Evolve self-nag: ${goal.title}`,
+      description: `Run Evolve automation for goal: ${goal.title}`,
       priority: goal.priority,
       labels: ['forge', 'automation', `goal:${goal.id}`, scopeLabel],
       metadata: goalAutomationSelfNagMetadata(scope.id),
