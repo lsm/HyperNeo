@@ -835,7 +835,9 @@ function buildCompletedTurn(
         ...globalRosteredToolUseIds,
         ...rosteredToolUseIdsFromRoster(base),
       ]);
-      return [...base, ...standaloneTaskNotificationEntries(rows, rostered)];
+      // Merge by timestamp (not append) so older outcomes don't land below
+      // newer activity, and apply the cap uniformly with the active path.
+      return mergeRosterWithNotifications(base, standaloneTaskNotificationEntries(rows, rostered));
     })(),
   };
 }
@@ -899,6 +901,23 @@ function standaloneTaskNotificationEntries(
     });
   }
   return out;
+}
+
+/**
+ * Interleave standalone task_notification entries into the roster by timestamp,
+ * then apply the display cap. Appending them as a block (older outcomes after
+ * newer activity) inverts chronology, and a subsequent `slice(-N)` then pins
+ * those older outcomes to the bottom forever — every newly-arrived tool call
+ * lands above them and is trimmed off instead. Sorting by `ts` places each
+ * notification at its true position: an old notification whose tool card has
+ * scrolled out of the window rises to the top and falls off once N newer
+ * entries exist, exactly like any other roster entry.
+ */
+function mergeRosterWithNotifications(
+  base: ActiveRosterEntry[],
+  notifications: RosterTaskNotificationEntry[]
+): ActiveRosterEntry[] {
+  return [...base, ...notifications].sort((a, b) => a.ts - b.ts).slice(-ROSTER_MAX_ENTRIES);
 }
 
 /**
@@ -970,7 +989,7 @@ function buildActiveTurn(
     if (entry.kind !== 'tool') return entry;
     return foldTaskNotification(entry, taskNotificationsByToolUseId);
   });
-  // Append standalone outcome entries for task_notifications whose tool_use
+  // Collect standalone outcome entries for task_notifications whose tool_use
   // isn't rostered in any turn (capped out / orphan). Folded ones are already
   // on their tool card; checking the global set + this turn's roster prevents
   // both cross-turn and within-turn duplication.
@@ -978,14 +997,18 @@ function buildActiveTurn(
     ...globalRosteredToolUseIds,
     ...rosteredToolUseIdsFromRoster(baseRoster),
   ]);
-  const withNotifications = [...baseRoster, ...standaloneTaskNotificationEntries(rows, rostered)];
   const labelKey = normalizeAgentKey(block.agentLabel);
   const sessionEntry = sessionId ? latestStatusBySession?.get(sessionId) : undefined;
   const labelEntry = latestStatusBySession?.get(labelKey);
   const activeStatus = sessionEntry ?? labelEntry;
-  // Cap the base roster first, then pin the live status entry so the header
-  // pill always has a matching roster line even when many events followed it.
-  const cappedBase = withNotifications.slice(-ROSTER_MAX_ENTRIES);
+  // Merge standalone outcomes into the roster by timestamp, then cap — so a
+  // stale notification rises and ages out instead of pinning to the bottom.
+  // The live status entry is pinned AFTER the cap so the header pill always
+  // has a matching roster line even when many events followed it.
+  const cappedBase = mergeRosterWithNotifications(
+    baseRoster,
+    standaloneTaskNotificationEntries(rows, rostered)
+  );
   const roster = activeStatus
     ? [...cappedBase, { kind: 'status' as const, status: activeStatus.status, ts: activeStatus.ts }]
     : cappedBase;
