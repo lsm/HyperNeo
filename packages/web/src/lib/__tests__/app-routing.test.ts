@@ -29,7 +29,7 @@ describe('deriveAppExpectedPath', () => {
       ['overview', '/space/s1'],
       ['goals', '/space/s1/goals'],
       ['memories', '/space/s1/memories'],
-      ['forge', '/space/s1/forge'],
+      ['forge', '/space/s1/evolve'],
       ['tasks', '/space/s1/tasks'],
       ['sessions', '/space/s1/sessions'],
       ['agents', '/space/s1/agents'],

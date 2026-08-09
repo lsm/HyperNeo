@@ -18,7 +18,7 @@ import {
   navigateToSpaceConfigure,
   navigateToSpaceSessions,
   navigateToSpaceGoals,
-  navigateToSpaceForge,
+  navigateToSpaceEvolve,
   navigateToSpaceMemories,
   navigateToSpaceTasks,
 } from '../lib/router.ts';
@@ -226,7 +226,7 @@ export function ContextPanel() {
         navigateToSpaceMemories(spaceId);
         break;
       case 'forge':
-        navigateToSpaceForge(spaceId);
+        navigateToSpaceEvolve(spaceId);
         break;
       case 'configure':
         navigateToSpaceConfigure(spaceId, currentSpaceConfigureTab);

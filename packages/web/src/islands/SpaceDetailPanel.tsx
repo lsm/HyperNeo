@@ -23,7 +23,7 @@ import {
   navigateToSpace,
   navigateToSpaceAgent,
   navigateToSpaceGoals,
-  navigateToSpaceForge,
+  navigateToSpaceEvolve,
   navigateToSpaceMemories,
   navigateToSpaceSession,
   navigateToSpaceSessions,
@@ -481,7 +481,7 @@ export function SpaceDetailPanel({
   }, [routeSpaceId, onNavigate]);
 
   const handleForgeClick = useCallback(() => {
-    navigateToSpaceForge(routeSpaceId);
+    navigateToSpaceEvolve(routeSpaceId);
     onNavigate?.();
   }, [routeSpaceId, onNavigate]);
 
