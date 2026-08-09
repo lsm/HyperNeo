@@ -123,6 +123,7 @@ import { buildPrEventTopicPattern, parsePrUrl } from '../runtime/parse-pr-url';
 import type { WorkflowArtifactProfile } from '../runtime/artifact-profile';
 import type { WorkflowHookEngine } from '../runtime/workflow-hook-engine';
 import { wrapHandlerWithHooks } from '../runtime/workflow-hook-engine';
+import { normalizeAgentNameToken } from '../agent-handle';
 
 /**
  * Decode the JSON payload from a ToolResult created by jsonResult().
@@ -144,10 +145,6 @@ function decodeToolResultPayload(result: ToolResult): Record<string, unknown> | 
 export type { ToolResult };
 
 const log = new Logger('node-agent-tools');
-
-function normalizeAgentNameToken(value: string): string {
-  return value.trim().toLowerCase();
-}
 
 export async function evaluateTerminalGateFeatures(
   workflow: SpaceWorkflow | null,

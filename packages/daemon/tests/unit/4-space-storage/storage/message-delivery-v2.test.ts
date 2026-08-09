@@ -14,7 +14,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
-import { runMigration180 } from '../../../../src/storage/schema/migrations';
+import { runMigration181 } from '../../../../src/storage/schema/migrations';
 import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants';
 import {
   deliverMessage,
@@ -51,7 +51,7 @@ function setupRepo(): { db: Database; repo: JobQueueRepository } {
     CREATE INDEX idx_job_queue_status ON job_queue(status);
   `);
   // The atomic role arbiter — the v2 substrate.
-  runMigration180(db as unknown as Parameters<typeof runMigration180>[0]);
+  runMigration181(db as unknown as Parameters<typeof runMigration181>[0]);
   return { db, repo: new JobQueueRepository(db as never) };
 }
 

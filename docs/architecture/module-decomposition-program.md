@@ -158,6 +158,49 @@ seam started in Increment 2 (the item previously marked "deferred").
   now calls the shared leaf. Extracting it would not consolidate anything and would
   widen the surface, so it stays put.
 
+## Increment 4
+
+**`space/agent-handle.ts`** — extracted the agent handle / name-token normalization
+family from `space/tools/space-agent-tools.ts`.
+
+- **Family:** normalizing Space agent name tokens and deriving canonical reply
+  target handles — pure `string → string | null | boolean` helpers. Four members:
+  `normalizeAgentNameToken` (trim + lowercase for case/whitespace-insensitive
+  comparison), `normalizeReplyTargetHandle` (empty → null, literal `space-agent` →
+  `@coordinator`, `@`-prefixed passthrough, otherwise slugify), `isReservedAgentHandle`
+  (reserved-singleton membership), and the module-private `handleFromName` (the
+  slugifier `normalizeReplyTargetHandle` calls).
+- **Why it scored highest:**
+  - *Cohesion:* all four share one concern — agent handle/name normalization — with
+    a closed internal dependency boundary (`normalizeReplyTargetHandle` →
+    `handleFromName`; `isReservedAgentHandle` → `RESERVED_SPACE_AGENT_HANDLES` from
+    `./slug`). Nothing else from either host file is needed.
+  - *Churn / conflict:* `normalizeAgentNameToken` was **duplicated verbatim** across
+    `space/tools/space-agent-tools.ts` (~84 commits/yr) **and**
+    `space/tools/node-agent-tools.ts` (~63 commits/yr). Verified byte-identical
+    pre-move via `diff` (exit 0), so consolidating the canonical leaf behind one
+    import removes a real merge-conflict surface from two large tool files (15 call
+    sites total).
+  - *Coverage:* none of the four had **any** direct unit tests; characterization
+    tests now pin every branch — including a non-obvious one the characterization
+    pass itself surfaced (a leading `@` short-circuits slugification, so
+    `normalizeReplyTargetHandle('@@@')` returns `'@@@'`, not `null`).
+  - *Regression risk:* low — pure deterministic functions; the duplicated copy was
+    byte-identical; both consumer suites pass unchanged (`space-agent-tools`, 290
+    tests; `node-agent-tools`, 170 tests).
+- **Narrow surface:** `normalizeAgentNameToken`, `normalizeReplyTargetHandle`, and
+  `isReservedAgentHandle` are exported; `handleFromName` is used only by
+  `normalizeReplyTargetHandle`, so it stays module-private.
+- **Dependency direction:** the new leaf lives in `space/` alongside `slug.ts`, the
+  only module it depends on (downward). Both consumers already imported from
+  `space/`-level modules, so no new direction was introduced. `RESERVED_SPACE_AGENT_HANDLES`
+  stays imported in `space-agent-tools.ts` (still spread into a literal at the call
+  site), so no import was orphaned.
+- **Deferred:** `task-agent-manager.ts` carries its own `private normalizeAgentNameToken`
+  method (a class member, not a free function) — intentionally left in place; it is
+  not byte-identical duplication of a free function and consolidating it would touch
+  the class surface, so it is out of scope for a leaf extraction.
+
 ## Increment log
 
 | # | Module extracted | From | PR | Outcome |
@@ -165,3 +208,4 @@ seam started in Increment 2 (the item previously marked "deferred").
 | 1 | `rpc-handlers/activity-preview.ts` | `live-query-handlers.ts` | #2383 | Pure leaf family moved behind facade; characterization tests added for previously-untested formatters. |
 | 2 | `external-events/github-subscription-pattern.ts` | `space/runtime/space-runtime.ts` + `rpc-handlers/space-long-horizon-agent-handlers.ts` | #2393 | Pure GitHub topic-grammar leaf extracted; verbatim duplicate across two files consolidated behind a 2-function surface; characterization tests added for every branch. |
 | 3 | `external-events/long-horizon-subscription-pattern.ts` | `space/runtime/space-runtime.ts` + `rpc-handlers/space-long-horizon-agent-handlers.ts` | _(this PR)_ | Pure long-horizon topic composer extracted; verbatim duplicate across two files consolidated behind a 1-function surface; characterization tests added for every branch. |
+| 4 | `space/agent-handle.ts` | `space/tools/space-agent-tools.ts` + `space/tools/node-agent-tools.ts` | _(this PR)_ | Pure agent handle/name-token normalization family extracted; verbatim `normalizeAgentNameToken` duplicate across two tool files consolidated behind a 3-function surface; characterization tests added for every branch. |

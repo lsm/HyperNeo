@@ -17,6 +17,8 @@ import { TaskAuxiliaryPanel } from '../components/space/TaskAuxiliaryPanel';
 import { SpaceCreateTaskDialog } from '../components/space/SpaceCreateTaskDialog';
 import { SpacePageHeader } from '../components/space/SpacePageHeader';
 import { createSession } from '../lib/api-helpers';
+import { parseLongHorizonAgentSessionId } from '../lib/space-agent-session';
+import { sessionStore } from '../lib/session-store';
 import {
   closeOverlayHistory,
   navigateToSpace,
@@ -30,6 +32,7 @@ import {
   currentSpaceAgentHandleSignal,
   currentSpaceCanonicalIdSignal,
   currentSpaceIdSignal,
+  currentSpaceSessionIdSignal,
   currentSpaceViewModeSignal,
   spaceOverlayAgentNameSignal,
   spaceOverlayHighlightMessageIdSignal,
@@ -117,6 +120,34 @@ export default function SpaceIsland({
     closeOverlayHistory();
   }, []);
 
+  // Refresh a long-horizon agent's record and re-resolve its session id
+  // (task #873): re-fetch the agent list, then — if the viewed agent now points
+  // to a different (restored/recreated) session — navigate to the live one
+  // instead of looping on a deleted id. The coordinator id is stable, so it
+  // just retries the load. Used by the unavailable-session "Refresh" action.
+  const handleRefreshAgentRecord = useCallback(async () => {
+    const viewedId = sessionViewId;
+    if (!viewedId) return;
+    await spaceStore.refreshLongHorizonAgents();
+    // Abort if the user navigated away — either to a different Space, or to a
+    // different session/view WITHIN the same Space. stillOnThisRouteSpace()
+    // only checks the Space id, so also compare the live route session id; an
+    // in-flight refresh must never navigate back to / re-select the old agent
+    // and clobber the store of the newly selected route.
+    if (!stillOnThisRouteSpace()) return;
+    if (currentSpaceSessionIdSignal.value !== viewedId) return;
+    const parsed = parseLongHorizonAgentSessionId(viewedId);
+    const nextId = parsed
+      ? (spaceStore.longHorizonAgents.value.find((a) => a.id === parsed.agentId)?.sessionId ?? null)
+      : viewedId;
+    if (nextId && nextId !== viewedId) {
+      navigateToSpaceSession(navigationSpaceId, nextId, true);
+    } else {
+      // Same id (or agent removed) — retry the load.
+      sessionStore.select(viewedId);
+    }
+  }, [sessionViewId, navigationSpaceId, stillOnThisRouteSpace]);
+
   // Single overlay element shared across every rendering branch below — keeps
   // the overlay/pending precedence in one place. Pending takes precedence over
   // session because pending is cleared as part of pushOverlayHistory, so the
@@ -143,6 +174,16 @@ export default function SpaceIsland({
         taskContext={overlayTaskContext}
       />
     ) : null;
+
+  // Whether an agent overlay (live or pending) is open over the base content.
+  // When true the base chat/pane is inerted + hidden from the a11y tree so that,
+  // on mobile in particular, only the foreground overlay is interactive or
+  // focusable (task #873). The Portal + backdrop + focus-trap already keep it
+  // visually/keyboard-isolated; `inert` closes the accessibility gap (the base
+  // chat's composer/scroll remained in the a11y tree and reachable via swipe/
+  // virtual cursor). It is re-enabled the instant the overlay closes.
+  const overlayActive = !!overlay;
+  const baseLayerProps = overlayActive ? { inert: true, 'aria-hidden': true as const } : {};
 
   // Test hook: expose overlay controls on window.__hyperneo_space_overlay so E2E
   // tests can trigger the overlay programmatically. Opening is purely
@@ -253,14 +294,26 @@ export default function SpaceIsland({
   // AgentOverlayChat uses a Portal so it doesn't affect layout.
   if (sessionViewId) {
     const isSpaceAgentSession = sessionViewId === `space:chat:${spaceId}`;
+    // The Refresh action re-fetches the long-horizon-agent record, so it only
+    // applies to coordinator / `space:agent:` sessions — a regular (archived)
+    // Space session has no agent record to refresh.
+    const isAgentSession = isSpaceAgentSession || sessionViewId.startsWith('space:agent:');
     return (
       <>
-        <ChatContainer
-          key={sessionViewId}
-          sessionId={sessionViewId}
-          titleOverride={isSpaceAgentSession ? 'Coordinator' : undefined}
-          onBack={handleSessionBack}
-        />
+        <div
+          class="flex-1 min-h-0 flex flex-col"
+          data-testid="space-base-session-layer"
+          {...baseLayerProps}
+        >
+          <ChatContainer
+            key={sessionViewId}
+            sessionId={sessionViewId}
+            titleOverride={isSpaceAgentSession ? 'Coordinator' : undefined}
+            onBack={handleSessionBack}
+            agentLabel={isSpaceAgentSession ? 'space' : undefined}
+            onRefreshAgent={isAgentSession ? handleRefreshAgentRecord : undefined}
+          />
+        </div>
         {overlay}
       </>
     );
@@ -292,6 +345,7 @@ export default function SpaceIsland({
         <div
           class="flex-1 flex flex-col overflow-hidden bg-app-content"
           data-testid="space-task-pane"
+          {...baseLayerProps}
         >
           <Suspense fallback={lazyFallback}>
             {showInMiddle ? (
@@ -322,6 +376,7 @@ export default function SpaceIsland({
         <div
           class="flex-1 flex flex-col overflow-hidden bg-app-content"
           data-testid="space-tasks-view"
+          {...baseLayerProps}
         >
           <SpacePageHeader
             pageTitle="Tasks"
@@ -382,6 +437,7 @@ export default function SpaceIsland({
         <div
           class="flex-1 flex flex-col overflow-hidden bg-app-content"
           data-testid="space-goals-view"
+          {...baseLayerProps}
         >
           <SpacePageHeader pageTitle="Goals" />
           <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
@@ -401,6 +457,7 @@ export default function SpaceIsland({
         <div
           class="flex-1 flex flex-col overflow-hidden bg-app-content"
           data-testid="space-forge-view"
+          {...baseLayerProps}
         >
           <SpacePageHeader pageTitle="Forge" />
           <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
@@ -420,6 +477,7 @@ export default function SpaceIsland({
         <div
           class="flex-1 flex flex-col overflow-hidden bg-app-content"
           data-testid="space-sessions-view"
+          {...baseLayerProps}
         >
           <SpacePageHeader
             pageTitle="Sessions"
@@ -466,6 +524,7 @@ export default function SpaceIsland({
         <div
           class="flex-1 flex flex-col overflow-hidden bg-app-content"
           data-testid="space-agents-view"
+          {...baseLayerProps}
         >
           <SpacePageHeader pageTitle="Agents" />
           <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
@@ -489,6 +548,7 @@ export default function SpaceIsland({
         <div
           class="flex-1 flex flex-col overflow-hidden bg-app-content"
           data-testid="space-memories-view"
+          {...baseLayerProps}
         >
           <SpacePageHeader pageTitle="Memories" />
           <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
@@ -508,6 +568,7 @@ export default function SpaceIsland({
         <div
           class="flex-1 flex flex-col overflow-hidden bg-app-content"
           data-testid="space-configure-view"
+          {...baseLayerProps}
         >
           <SpacePageHeader pageTitle="Settings" />
           <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
@@ -527,6 +588,7 @@ export default function SpaceIsland({
       <div
         class="flex-1 flex flex-col overflow-hidden bg-app-content"
         data-testid="space-overview-view"
+        {...baseLayerProps}
       >
         <SpacePageHeader pageTitle="Overview" />
         <div class="flex-1 overflow-hidden flex flex-col min-w-0">

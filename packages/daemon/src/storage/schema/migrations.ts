@@ -896,11 +896,24 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   //   dev shipped M176/M177/M178 in #2387/#2388/#2390.)
   run(migrationMarkerKey(179), () => runMigration179(db));
 
-  // Migration 180: Partial unique index uq_message_delivery_active_turn on
+  // Migration 180: Create `space_workflow_definition_versions` — the append-only history
+  // of immutable workflow-definition snapshots (RFC §4 Phase 1). Each row is a full,
+  // self-contained definition payload identified by a SHA-256 `version_hash`. Shadow mode:
+  // this PR creates the table and begins populating it on definition writes; no run read
+  // resolves through it yet (the Phase-1 read cutover lands in a later PR). No FK to
+  // space_workflows(id): pinned versions must survive deletion of the mutable head
+  // (orphan/tombstone policy). New databases get the table from createTables(); this
+  // brings existing databases to parity.
+  run(migrationMarkerKey(180), () => runMigration180(db));
+
+  // Migration 181: Partial unique index uq_message_delivery_active_turn on
   // job_queue lane 'message_delivery' — the atomic "one active turn per
   // session" guard + turn-vs-steer arbiter for message-delivery v2. See
-  // docs/features/message-delivery-v2.md §6. Idempotent; no-op pre-lane.
-  run(migrationMarkerKey(180), () => runMigration180(db));
+  // docs/features/message-delivery-v2.md §6. Idempotent (`CREATE INDEX IF NOT
+  // EXISTS`); no-op on tables that pre-date the lane (no rows ⇒ no conflict).
+  // (Renumbered 180→181: dev shipped M180 for space_workflow_definition_versions
+  // in #2412, so this index bumped one.)
+  run(migrationMarkerKey(181), () => runMigration181(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -2737,6 +2750,31 @@ function runMigration29(db: BunDatabase): void {
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_space_workflow_steps_order ON space_workflow_steps(workflow_id, order_index)`
   );
+
+  // -------------------------------------------------------------------------
+  // space_workflow_definition_versions
+  //
+  // Append-only history of immutable workflow-definition snapshots (RFC §4 Phase 1).
+  // Shadow mode: populated on definition writes; no run read resolves through it yet.
+  // No FK to space_workflows(id) — pinned versions must survive deletion of the mutable
+  // head (orphan/tombstone policy).
+  // -------------------------------------------------------------------------
+  db.exec(`
+		CREATE TABLE IF NOT EXISTS space_workflow_definition_versions (
+			workflow_id TEXT NOT NULL,
+			version_hash TEXT NOT NULL,
+			space_id TEXT NOT NULL,
+			payload TEXT NOT NULL,
+			source TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			PRIMARY KEY (workflow_id, version_hash),
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+		)
+	`);
+  db.exec(`
+		CREATE INDEX IF NOT EXISTS idx_space_workflow_definition_versions_space
+		ON space_workflow_definition_versions(space_id)
+	`);
 
   // -------------------------------------------------------------------------
   // space_workflow_transitions (directed edges between steps)
@@ -7905,7 +7943,7 @@ export function runMigration179(db: BunDatabase): void {
 }
 
 /**
- * Migration 180: Partial unique index enforcing "one active turn per session"
+ * Migration 181: Partial unique index enforcing "one active turn per session"
  * on job_queue lane 'message_delivery' (message-delivery v2). The index is the
  * atomic role arbiter: a `role='turn'` insert either succeeds or hits this
  * constraint, in which case `deliverMessage` inserts the message as `role=
@@ -7915,8 +7953,10 @@ export function runMigration179(db: BunDatabase): void {
  * correctly becomes a steer, not a competing turn. See
  * docs/features/message-delivery-v2.md §6. Idempotent (`CREATE ... IF NOT
  * EXISTS`); no-op on tables that pre-date the lane (no rows ⇒ no conflict).
+ * (Renumbered 180→181: dev shipped M180 for space_workflow_definition_versions
+ * in #2412.)
  */
-export function runMigration180(db: BunDatabase): void {
+export function runMigration181(db: BunDatabase): void {
   if (!tableExists(db, 'job_queue')) return;
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS uq_message_delivery_active_turn
@@ -11983,5 +12023,35 @@ export function runMigration178(db: BunDatabase): void {
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_session_turn
     ON sdk_messages(task_id, session_id, conversation_turn_index)
+  `);
+}
+
+/**
+ * Migration 180: Create `space_workflow_definition_versions` — the append-only history
+ * of immutable workflow-definition snapshots (RFC §4 Phase 1).
+ *
+ * Each row is a full, self-contained definition payload identified by a SHA-256
+ * `version_hash` (see `computeDefinitionVersion`). Shadow mode: populated on definition
+ * writes; no run read resolves through it yet. There is intentionally NO FK to
+ * `space_workflows(id)` — pinned versions must survive deletion of the mutable head
+ * (orphan/tombstone policy); a cascade would erase the rows a pinned run depends on.
+ */
+export function runMigration180(db: BunDatabase): void {
+  if (tableExists(db, 'space_workflow_definition_versions')) return;
+  db.exec(`
+    CREATE TABLE space_workflow_definition_versions (
+      workflow_id TEXT NOT NULL,
+      version_hash TEXT NOT NULL,
+      space_id TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      source TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (workflow_id, version_hash),
+      FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+    )
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_space_workflow_definition_versions_space
+    ON space_workflow_definition_versions(space_id)
   `);
 }
