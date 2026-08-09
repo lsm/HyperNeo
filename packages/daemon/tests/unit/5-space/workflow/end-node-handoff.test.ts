@@ -94,6 +94,7 @@ describe('Post-approval route declarations', () => {
     expect(postApprovalRoute(CODING_WORKFLOW)).toEqual({
       targetAgent: 'coder',
       instructions: CODER_OWNED_MERGE_INSTRUCTIONS,
+      requirePrMerge: true,
     });
   });
 
@@ -101,6 +102,7 @@ describe('Post-approval route declarations', () => {
     expect(postApprovalRoute(CODING_WITH_QA_WORKFLOW)).toEqual({
       targetAgent: 'coder',
       instructions: CODER_OWNED_MERGE_INSTRUCTIONS,
+      requirePrMerge: true,
     });
   });
 
