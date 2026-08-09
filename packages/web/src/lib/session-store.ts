@@ -60,7 +60,7 @@ import type {
   LiveQueryErrorEvent,
 } from '@hyperneo/shared';
 import type { ChatMessage } from '@hyperneo/shared';
-import { Logger } from '@hyperneo/shared';
+import { Logger, MessageHubResponseError } from '@hyperneo/shared';
 import { flattenSDKSlashCommands, type SDKSlashCommand } from '@hyperneo/shared/sdk';
 import { connectionManager } from './connection-manager';
 import {
@@ -890,7 +890,10 @@ export class SessionStore {
       // was deleted between select and subscribe). We fall through to
       // whatever sdkMessages currently holds — either the optimistic
       // empty state or stale rows from a prior subscription.
-      if (this.activeMessagesSubscriptionId === subscriptionId) {
+      if (
+        this.activeMessagesSubscriptionId === subscriptionId &&
+        !(err instanceof MessageHubResponseError && err.message.includes('MESSAGE_TOO_LARGE'))
+      ) {
         this.messagesLoaded.value = true;
       }
       // Don't rethrow — we still want session state to be usable even if
