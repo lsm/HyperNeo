@@ -101,6 +101,18 @@ describe('github connector.getPr', () => {
     }
   });
 
+  test('rejects absolute PR URLs on untrusted hosts before spawning gh', async () => {
+    const calls: string[][] = [];
+    const conn = createGithubConnector(capturingMockSpawn([], calls));
+    const outcome = await conn.ops.getPr(
+      { prUrl: 'https://attacker.example/acme/corp/pull/42' },
+      ctx()
+    );
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) expect(outcome.error).toContain('not allowed for GitHub lookups');
+    expect(calls).toEqual([]);
+  });
+
   test('missing prUrl → terminal error', async () => {
     const conn = createGithubConnector(mockSpawn([]));
     const outcome = await conn.ops.getPr({}, ctx());

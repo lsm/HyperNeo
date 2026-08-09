@@ -2319,6 +2319,17 @@ function removeLegacyPrReadyGateChannels(
 
 const RETIRED_POST_APPROVAL_NODE = 'Post-Approval';
 const RETIRED_MERGER_SLOT_NAMES = new Set(['merger']);
+const RETIRED_MERGER_RAW_MERGE_GUARD: DeclarativeToolGuard = {
+  matcher: 'Bash',
+  pattern: 'gh\\b[^\\n]*?pr\\s+merge\\b|\\bmergePullRequest\\b|pulls\\/[^\\/\\s"]+\\/merge\\b',
+  decision: 'deny',
+  reason:
+    'Direct PR merges are blocked — use the merge_pr tool instead. merge_pr is the authoritative, audited merge ' +
+    'path: it deterministically verifies the approval covers the current head (plus CI, unresolved review ' +
+    'threads, and branch protection) before merging bound to that head. This Bash guard is defense-in-depth ' +
+    '(it blocks the common/direct raw-merge forms, including wrapped ones); it is not the enforcement — always ' +
+    'merge through merge_pr.',
+};
 // The EXACT retired PR-Merger slot prompt (built-in-workflows.ts pre-pivot). The
 // strip guard compares the stored slot prompt to this EXACT value — a substring
 // match is insufficient because a user who appended instructions to the seeded
@@ -2867,6 +2878,42 @@ export function seedBuiltInWorkflows(
       // reaches a terminal state, the stale hash re-triggers this re-stamp and
       // the merge + strip run then.
       if (hasActiveRuns?.(row.id)) {
+        // Keep the legacy node/agent identities so a live post-approval session
+        // can resume, but migrate its exact retired merge contract away from the
+        // removed merge_pr tool. This is deliberately narrower than restamping:
+        // customized merger prompts/guards/routes remain byte-for-byte untouched.
+        const nodes = row.nodes.map((node) => {
+          if (node.name !== RETIRED_POST_APPROVAL_NODE) return node;
+          const merger = node.agents.find((agent) => RETIRED_MERGER_SLOT_NAMES.has(agent.name));
+          if (
+            !merger ||
+            merger.customPrompt?.value !== RETIRED_PR_MERGER_SLOT_PROMPT ||
+            JSON.stringify(merger.toolGuards) !==
+              JSON.stringify([RETIRED_MERGER_RAW_MERGE_GUARD]) ||
+            node.postApproval?.targetAgent !== merger.name
+          ) {
+            return node;
+          }
+          return {
+            ...node,
+            agents: node.agents.map((agent) =>
+              agent === merger
+                ? {
+                    ...agent,
+                    customPrompt: { value: CODER_OWNED_MERGE_PROMPT },
+                    toolGuards: undefined,
+                  }
+                : agent
+            ),
+            postApproval: {
+              ...node.postApproval,
+              instructions: CODER_OWNED_MERGE_INSTRUCTIONS,
+            },
+          };
+        });
+        if (JSON.stringify(nodes) !== JSON.stringify(row.nodes)) {
+          workflowManager.updateWorkflow(row.id, { nodes });
+        }
         builtInSeederLog.info(
           `deferred re-stamp of built-in workflow '${template.name}' (id=${row.id}) ` +
             `in space ${spaceId}: an active workflow run still references it`

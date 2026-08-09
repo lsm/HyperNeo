@@ -95,10 +95,31 @@ function asString(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
+function validatePrLookupHost(prUrl: string): ConnectorOutcome | null {
+  let inputHost: string | undefined;
+  try {
+    inputHost = new URL(prUrl).hostname || undefined;
+  } catch {
+    return null;
+  }
+  const allowedHost = process.env.GH_HOST || 'github.com';
+  if (inputHost !== 'github.com' && inputHost !== allowedHost) {
+    return {
+      ok: false,
+      error: `PR host ${inputHost} is not allowed for GitHub lookups (allowed: github.com${
+        allowedHost !== 'github.com' ? `, ${allowedHost}` : ''
+      })`,
+    };
+  }
+  return null;
+}
+
 function makeGetPrOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
   return async (opParams, ctx): Promise<ConnectorOutcome> => {
     const prUrl = asString(opParams.prUrl);
     if (!prUrl) return { ok: false, error: 'prUrl is required' };
+    const hostError = validatePrLookupHost(prUrl);
+    if (hostError) return hostError;
     return runGhJson(
       ['gh', 'pr', 'view', prUrl, '--json', 'url,state,mergeable,mergeStateStatus'],
       ctx.workspacePath || '/tmp',
@@ -232,25 +253,8 @@ function makeGetReviewEvidenceOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
     // fall through to gh's default host (GH_HOST/github.com). Preserves +
     // strengthens the legacy hook check
     // (`PR_HOST != github.com && PR_HOST != ${GH_HOST:-github.com}` → reject).
-    let inputHost: string | undefined;
-    try {
-      const parsed = new URL(prUrl);
-      inputHost = parsed.hostname || undefined;
-    } catch {
-      // not an absolute URL (branch/number/owner#N selector) — gh resolves it
-      // against its default host, so no credential-exfil risk.
-    }
-    if (inputHost) {
-      const allowedHost = process.env.GH_HOST || 'github.com';
-      if (inputHost !== 'github.com' && inputHost !== allowedHost) {
-        return {
-          ok: false,
-          error: `PR host ${inputHost} is not allowed for GitHub lookups (allowed: github.com${
-            allowedHost !== 'github.com' ? `, ${allowedHost}` : ''
-          })`,
-        };
-      }
-    }
+    const hostError = validatePrLookupHost(prUrl);
+    if (hostError) return hostError;
 
     const prOutcome = await runGhJson(
       ['gh', 'pr', 'view', prUrl, '--json', 'reviews,comments,author,url'],
