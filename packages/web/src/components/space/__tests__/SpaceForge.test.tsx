@@ -151,8 +151,8 @@ describe('SpaceForge', () => {
   it('renders Evolution scope list cards without inline detail', async () => {
     render(<SpaceForge spaceId="space-1" />);
 
-    expect(await screen.findByRole('heading', { name: 'Evolution scopes' })).toBeTruthy();
-    expect(screen.getByRole('heading', { name: 'Review quality scope' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Evolution scopes' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Review quality scope' })).toBeTruthy();
     expect(screen.getByText('Improve code review outcomes')).toBeTruthy();
     expect(screen.getByText('Goal: Improve review loop')).toBeTruthy();
     expect(screen.queryByText('Linked recurring goal')).toBeNull();
