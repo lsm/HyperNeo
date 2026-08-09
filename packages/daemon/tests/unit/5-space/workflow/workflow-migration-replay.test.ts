@@ -164,19 +164,6 @@ function generatedPlanApprovalHook(): WorkflowHook {
   return hook;
 }
 
-/** The generated Review → QA approval hook (approval-only), for the legacy
- *  combined-script upgrade fixture's review twin. */
-function generatedReviewApprovalHook(): WorkflowHook {
-  const migratedTemplate = getBuiltInWorkflows().find(
-    (workflow) => workflow.name === FULLSTACK_QA_LOOP_WORKFLOW.name
-  )!;
-  const hook = migratedTemplate.hooks!.find(
-    (candidate) => candidate.sourceNode === 'Review' && candidate.targetNode === 'QA'
-  );
-  if (!hook) throw new Error('expected generated review approval hook on migrated template');
-  return hook;
-}
-
 function makeUserScriptHook(overrides: Partial<WorkflowHook> & { id: string }): WorkflowHook {
   return {
     enabled: true,
@@ -996,7 +983,7 @@ const FIXTURES: ReplayFixture[] = [
     },
   },
   {
-    name: 'legacy combined codex plan-approval script is upgraded to a single codex path',
+    name: 'legacy combined codex plan-approval script is left as the single codex path',
     build: () => ({
       nodes: [
         {
@@ -1010,9 +997,9 @@ const FIXTURES: ReplayFixture[] = [
       // A non-template workflow saved by the PRE-#2409 migration: the channel is
       // already gateless, but its persisted plan-approval hook still carries the
       // old combined bash that baked the full 2h codex +1 wait INLINE (gh-api
-      // reaction lookup + timeout-allow). Re-enabling requireCodexApproval would
-      // otherwise stack the re-emit pass's codex_review_approved hook on top of
-      // that inline wait — two ~2h timeouts summing to ~4h on codex non-response.
+      // reaction lookup + timeout-allow). The re-emit pass must NOT stack a
+      // second codex_review_approved hook on top of that inline wait — the legacy
+      // script already enforces codex (and is correctly reset per cycle).
       channels: [
         { from: 'Plan Review', to: 'Task Dispatcher', label: 'Plan Review → Task Dispatcher' },
       ],
@@ -1026,8 +1013,6 @@ const FIXTURES: ReplayFixture[] = [
             interpreter: 'bash',
             source: LEGACY_PLAN_APPROVAL_SCRIPT,
             timeoutMs: 30_000,
-            // The pre-#2409 migration declared a github lookup for the inline
-            // codex gh-api calls; the approval-only upgrade drops it.
             externalLookups: ['github'],
           },
           authorizedCallers: [{ sourceNode: 'Plan Review' }],
@@ -1037,30 +1022,25 @@ const FIXTURES: ReplayFixture[] = [
     verify: ({ workflow }) => {
       const hook = hookBetween(workflow, 'Plan Review', 'Task Dispatcher');
       expect(hook).toBeDefined();
-      // The combined codex bash is upgraded to the approval-count-only form the
-      // current migration generates — the inline codex wait, gh-api lookup, and
-      // 2h timeout are gone, and the stale github lookup is dropped.
-      expect(scriptSource(hook)).toEqual(scriptSource(generatedPlanApprovalHook()));
-      expect(scriptSource(hook)).not.toContain('codex_wait_started_at');
-      expect(scriptSource(hook)).not.toContain('gh pr view');
-      expect(scriptExternalLookups(hook)).toBeUndefined();
-      // Exactly ONE codex enforcement path remains on the route: the declarative
-      // codex_review_approved hook. The legacy inline wait no longer stacks a
-      // second ~2h timeout on top of it.
-      const codex = codexHookBetween(workflow, 'Plan Review', 'Task Dispatcher');
-      expect(codex).toBeDefined();
-      expect(codex!.order).toBe(1);
+      // Task Option 2: the combined codex bash is preserved verbatim. The legacy
+      // inline script stays as the single codex enforcement so its wait-state is
+      // not orphaned from the persisted reset hook.
+      expect(scriptSource(hook)).toBe(LEGACY_PLAN_APPROVAL_SCRIPT);
+      // No separate codex_review_approved hook is emitted on the route — the
+      // legacy inline wait is the only codex path, so the ~2h+~2h stack cannot
+      // form.
+      expect(codexHookBetween(workflow, 'Plan Review', 'Task Dispatcher')).toBeUndefined();
       const allCodex =
         workflow.hooks?.filter(
           (candidate) =>
             candidate.validator.kind === 'built_in' &&
             candidate.validator.id === 'codex_review_approved'
         ) ?? [];
-      expect(allCodex).toHaveLength(1);
+      expect(allCodex).toHaveLength(0);
     },
   },
   {
-    name: 'legacy combined codex review-approval script is upgraded to a single codex path',
+    name: 'legacy combined codex review-approval script is left as the single codex path',
     build: () => ({
       nodes: [
         {
@@ -1091,24 +1071,12 @@ const FIXTURES: ReplayFixture[] = [
     verify: ({ workflow }) => {
       const hook = hookBetween(workflow, 'Review', 'QA');
       expect(hook).toBeDefined();
-      expect(scriptSource(hook)).toEqual(scriptSource(generatedReviewApprovalHook()));
-      expect(scriptSource(hook)).not.toContain('codex_wait_started_at');
-      expect(scriptSource(hook)).not.toContain('gh pr view');
-      expect(scriptExternalLookups(hook)).toBeUndefined();
-      const codex = codexHookBetween(workflow, 'Review', 'QA');
-      expect(codex).toBeDefined();
-      expect(codex!.order).toBe(1);
-      const allCodex =
-        workflow.hooks?.filter(
-          (candidate) =>
-            candidate.validator.kind === 'built_in' &&
-            candidate.validator.id === 'codex_review_approved'
-        ) ?? [];
-      expect(allCodex).toHaveLength(1);
+      expect(scriptSource(hook)).toBe(LEGACY_REVIEW_APPROVAL_SCRIPT);
+      expect(codexHookBetween(workflow, 'Review', 'QA')).toBeUndefined();
     },
   },
   {
-    name: 'legacy combined codex script is upgraded even when a non-legacy script hook precedes it',
+    name: 'legacy combined codex script suppresses the codex hook even when a non-legacy script hook precedes it',
     build: () => ({
       nodes: [
         {
@@ -1123,9 +1091,9 @@ const FIXTURES: ReplayFixture[] = [
         { from: 'Plan Review', to: 'Task Dispatcher', label: 'Plan Review → Task Dispatcher' },
       ],
       // Two script hooks on the SAME route, with a non-legacy audit hook FIRST.
-      // A first-found lookup would select the audit hook and miss the legacy
-      // combined hook later in the array — every script hook on the route must
-      // be examined.
+      // The legacy combined hook (SECOND) must still be detected and suppress
+      // the codex emit — every script hook on the route is examined, not just
+      // the first.
       hooks: [
         makeUserScriptHook({
           id: 'plan-review-audit-trail',
@@ -1154,29 +1122,22 @@ const FIXTURES: ReplayFixture[] = [
       ],
     }),
     verify: ({ workflow }) => {
-      // The non-legacy audit hook is preserved verbatim.
+      // The audit hook is preserved verbatim.
       const audit = workflow.hooks?.find((candidate) => candidate.id === 'plan-review-audit-trail');
       expect(audit).toBeDefined();
       expect(scriptSource(audit)).toBe('jq -n \'{"type":"allow"}\'');
-      // The legacy combined hook (SECOND in the array) is still found and
-      // upgraded to approval-only — order must not mask it.
+      // The legacy combined hook (second in the array) is still detected, so no
+      // codex hook is emitted — order must not mask it.
       const hook = workflow.hooks?.find(
         (candidate) => candidate.id === 'plan-approval:legacy-combined'
       );
       expect(hook).toBeDefined();
-      expect(scriptSource(hook)).toEqual(scriptSource(generatedPlanApprovalHook()));
-      expect(scriptSource(hook)).not.toContain('codex_wait_started_at');
-      const allCodex =
-        workflow.hooks?.filter(
-          (candidate) =>
-            candidate.validator.kind === 'built_in' &&
-            candidate.validator.id === 'codex_review_approved'
-        ) ?? [];
-      expect(allCodex).toHaveLength(1);
+      expect(scriptSource(hook)).toBe(LEGACY_PLAN_APPROVAL_SCRIPT);
+      expect(codexHookBetween(workflow, 'Plan Review', 'Task Dispatcher')).toBeUndefined();
     },
   },
   {
-    name: 'legacy combined codex script on a template workflow is left untouched (out of scope)',
+    name: 'legacy combined codex script on a template workflow keeps the inline codex enforcement',
     build: () => ({
       nodes: [
         {
@@ -1188,8 +1149,11 @@ const FIXTURES: ReplayFixture[] = [
         { id: 'tpl-task-dispatcher', name: 'Task Dispatcher', agents: [{ name: 'dispatcher' }] },
       ],
       // A template-named workflow whose approval channel is already gateless and
-      // carries a persisted legacy combined hook (e.g. a Plan & Decompose space
-      // saved by the pre-#2409 migration).
+      // carries a persisted legacy combined hook + revision-feedback reset hook
+      // (e.g. a Plan & Decompose space saved by the pre-#2409 migration). The
+      // reset hook clears codex state under the legacy plan-approval id; emitting
+      // a new codex-approval hook would move that state off the reset target.
+      // Option 2 leaves the legacy script as the (correctly-reset) enforcement.
       channels: [
         { from: 'Plan Review', to: 'Task Dispatcher', label: 'Plan Review → Task Dispatcher' },
       ],
@@ -1216,13 +1180,12 @@ const FIXTURES: ReplayFixture[] = [
         (candidate) => candidate.id === 'plan-approval:legacy-combined'
       );
       expect(hook).toBeDefined();
-      // The upgrade is scoped to non-template workflows: a template's persisted
-      // combined script is preserved byte-for-byte. Its revision-feedback reset
-      // hook still clears codex state under this id; upgrading would move that
-      // state to a newly emitted codex-approval hook the reset does not target.
-      // Built-in templates are out of this task's scope (#883 targets non-
-      // template transition workflows).
+      // The combined script is preserved and remains the single codex path — no
+      // separate codex-approval hook is emitted, so the persisted reset hook's
+      // per-cycle clear (keyed on this id) still works (the P1 the reviewer
+      // raised: moving codex state to a new id would orphan it from the reset).
       expect(scriptSource(hook)).toBe(LEGACY_PLAN_APPROVAL_SCRIPT);
+      expect(codexHookBetween(workflow, 'Plan Review', 'Task Dispatcher')).toBeUndefined();
     },
   },
 ];
