@@ -667,9 +667,8 @@ describe('visualStateToCreateParams', () => {
   });
 
   it('preserves postApproval.requirePrMerge through create params (regression)', () => {
-    // Without this, a saved clone of a coder-owned workflow (Coding / Coding
-    // with QA / Research) loses the PR-merged gate, and mark_complete can close
-    // the task with the PR still open.
+    // requirePrMerge is carried on the sticky step-level field (seeded at load,
+    // surviving the post-approval toggle) and restored by the serializer.
     const state = makeState({
       nodes: [
         {
@@ -681,8 +680,8 @@ describe('visualStateToCreateParams', () => {
             postApproval: {
               targetAgent: 'reviewer',
               instructions: 'Merge PR {{pr_url}}.',
-              requirePrMerge: true,
             },
+            requirePrMerge: true,
           },
           position: { x: 50, y: 50 },
         },
@@ -694,6 +693,32 @@ describe('visualStateToCreateParams', () => {
       instructions: 'Merge PR {{pr_url}}.',
       requirePrMerge: true,
     });
+  });
+
+  it('restores requirePrMerge after the post-approval toggle deletes the route', () => {
+    // The disable branch deletes step.postApproval; the re-enable rebuilds it
+    // without requirePrMerge. The sticky step.requirePrMerge survives and the
+    // serializer restores it, so a saved clone keeps the mark_complete gate.
+    const state = makeState({
+      nodes: [
+        {
+          step: {
+            localId: 'local-1',
+            id: 's1',
+            name: 'Step 1',
+            agentId: 'a1',
+            postApproval: {
+              targetAgent: 'reviewer',
+              instructions: 'Merge PR {{pr_url}}.',
+            },
+            requirePrMerge: true,
+          },
+          position: { x: 50, y: 50 },
+        },
+      ],
+    });
+    const params = visualStateToCreateParams(state, 'space-1', 'WF');
+    expect(params.nodes?.[0].postApproval?.requirePrMerge).toBe(true);
   });
 
   it('omits postApproval.requirePrMerge when not set (no undefined leak)', () => {

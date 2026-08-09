@@ -848,12 +848,10 @@ export function NodeConfigPanel({
       postApproval: {
         targetAgent: step.postApproval?.targetAgent ?? '',
         instructions: step.postApproval?.instructions ?? '',
-        // Preserve the hidden PR-merged safety flag across the toggle — without
-        // this, unchecking and rechecking "Post-approval instruction" on a
-        // coder-owned workflow drops the flag before serialization, and a saved
-        // clone (no built-in templateName fallback) loses the mark_complete
-        // merge gate.
-        ...(step.postApproval?.requirePrMerge ? { requirePrMerge: true } : {}),
+        // Restore the hidden PR-merged flag from the sticky step-level field —
+        // the disable branch deleted `postApproval`, so reading it there would
+        // see undefined. `step.requirePrMerge` survives the toggle.
+        ...(step.requirePrMerge ? { requirePrMerge: true } : {}),
       },
     });
   };

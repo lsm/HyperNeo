@@ -144,6 +144,12 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
       })),
       postApproval:
         s.postApproval ?? (s.id === workflow.endNodeId ? workflow.postApproval : undefined),
+      // Sticky seed so the post-approval toggle cannot drop the hidden merge gate.
+      requirePrMerge:
+        (s.postApproval ?? (s.id === workflow.endNodeId ? workflow.postApproval : undefined))
+          ?.requirePrMerge === true
+          ? true
+          : undefined,
       requireCodexApproval: s.requireCodexApproval,
       codexPollIntervalMs: s.codexPollIntervalMs,
       codexTimeoutSeconds: s.codexTimeoutSeconds,
@@ -355,10 +361,11 @@ function buildWorkflowFields(state: VisualEditorState): {
       ? {
           targetAgent: derivePostApprovalTargetAgent(agents, i),
           instructions: node.step.postApproval.instructions,
-          // Preserve the PR-merged gate flag — without it, a saved clone of a
-          // coder-owned workflow loses the mark_complete merge gate and can close
-          // the task with the PR still open.
-          ...(node.step.postApproval.requirePrMerge ? { requirePrMerge: true } : {}),
+          // Restore the PR-merged gate flag from the sticky step-level field so
+          // it survives a post-approval toggle; without it, a saved clone of a
+          // coder-owned workflow loses the mark_complete merge gate and can
+          // close the task with the PR still open.
+          ...(node.step.requirePrMerge ? { requirePrMerge: true } : {}),
         }
       : undefined;
     return {
