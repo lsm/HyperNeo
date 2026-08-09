@@ -7,11 +7,14 @@
 import type { Database as BunDatabase } from '../sqlite-compat';
 import { generateUUID } from '@hyperneo/shared';
 import type {
+  SpaceWorkflow,
   SpaceWorkflowRun,
   WorkflowRunStatus,
   CreateWorkflowRunParams,
   WorkflowRunFailureReason,
 } from '@hyperneo/shared';
+import { computeDefinitionVersion } from '../../lib/space/workflows/definition-version';
+import { SpaceWorkflowDefinitionVersionRepository } from './space-workflow-definition-version-repository';
 import type { SQLiteValue } from '../types';
 import { assertValidTransition } from '../../lib/space/runtime/workflow-run-status-machine';
 import type { GateOpenStateRepository } from './gate-open-state-repository';
@@ -35,24 +38,63 @@ export class SpaceWorkflowRunRepository {
    * Create a new workflow run
    */
   createRun(params: CreateWorkflowRunParams): SpaceWorkflowRun {
+    return this.insertRun(params, null);
+  }
+
+  /**
+   * Atomically append the immutable definition snapshot and create a run pinned to it.
+   * Production run creation must use this method; createRun remains for legacy/test fixtures.
+   */
+  createPinnedRun(
+    params: CreateWorkflowRunParams & { rawWorkflow: SpaceWorkflow }
+  ): SpaceWorkflowRun {
+    if (params.rawWorkflow.id !== params.workflowId) {
+      throw new Error('Pinned workflow id does not match the run workflow id');
+    }
+    if (params.rawWorkflow.spaceId !== params.spaceId) {
+      throw new Error('Pinned workflow space does not match the run space');
+    }
+
+    const { versionHash, payload } = computeDefinitionVersion(params.rawWorkflow);
+    const appendVersion = new SpaceWorkflowDefinitionVersionRepository(this.db);
+    return this.db.transaction(() => {
+      appendVersion.appendVersion({
+        workflowId: params.workflowId,
+        spaceId: params.spaceId,
+        versionHash,
+        payload,
+        source: 'run_create',
+        createdAt: Date.now(),
+      });
+      return this.insertRun(params, versionHash);
+    })();
+  }
+
+  private insertRun(
+    params: CreateWorkflowRunParams,
+    definitionVersion: string | null
+  ): SpaceWorkflowRun {
     const id = generateUUID();
     const now = Date.now();
 
-    const stmt = this.db.prepare(
-      `INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, description, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    );
-
-    stmt.run(
-      id,
-      params.spaceId,
-      params.workflowId,
-      params.title,
-      params.description ?? '',
-      'pending',
-      now,
-      now
-    );
+    this.db
+      .prepare(
+        `INSERT INTO space_workflow_runs
+           (id, space_id, workflow_id, definition_version, title, description, status,
+            created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        id,
+        params.spaceId,
+        params.workflowId,
+        definitionVersion,
+        params.title,
+        params.description ?? '',
+        'pending',
+        now,
+        now
+      );
 
     return this.getRun(id)!;
   }
@@ -261,6 +303,7 @@ export class SpaceWorkflowRunRepository {
       id: row.id as string,
       spaceId: row.space_id as string,
       workflowId: row.workflow_id as string,
+      definitionVersion: (row.definition_version as string | null) ?? null,
       title: row.title as string,
       description: (row.description as string | null) ?? undefined,
       status: row.status as WorkflowRunStatus,

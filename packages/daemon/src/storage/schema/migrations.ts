@@ -905,6 +905,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // (orphan/tombstone policy). New databases get the table from createTables(); this
   // brings existing databases to parity.
   run(migrationMarkerKey(180), () => runMigration180(db));
+
+  // Migration 181: Pin each new workflow run to an immutable definition version. Existing
+  // runs remain unpinned because the definition they originally executed cannot be inferred
+  // from the current mutable head. The composite FK makes every non-null pin resolvable.
+  run(migrationMarkerKey(181), () => runMigration181(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -12020,4 +12025,60 @@ export function runMigration180(db: BunDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_space_workflow_definition_versions_space
     ON space_workflow_definition_versions(space_id)
   `);
+}
+
+/**
+ * Migration 181: add a nullable creation-time definition pin to workflow runs.
+ *
+ * SQLite cannot add a composite foreign key with ALTER TABLE, so the run table is rebuilt.
+ * Existing runs deliberately keep a NULL pin: assigning the current definition head would
+ * falsely claim that it was the version they originally executed.
+ */
+export function runMigration181(db: BunDatabase): void {
+  if (!tableExists(db, 'space_workflow_runs')) return;
+  if (tableHasColumn(db, 'space_workflow_runs', 'definition_version')) return;
+
+  db.exec('PRAGMA foreign_keys = OFF');
+  db.exec('BEGIN');
+  try {
+    db.exec(`
+      CREATE TABLE space_workflow_runs_m181_new (
+        id TEXT PRIMARY KEY,
+        space_id TEXT NOT NULL,
+        workflow_id TEXT NOT NULL,
+        definition_version TEXT,
+        title TEXT NOT NULL,
+        description TEXT,
+        status TEXT NOT NULL DEFAULT 'pending'
+          CHECK(status IN ('pending', 'in_progress', 'done', 'blocked', 'cancelled')),
+        failure_reason TEXT,
+        created_at INTEGER NOT NULL,
+        started_at INTEGER,
+        updated_at INTEGER NOT NULL,
+        completed_at INTEGER,
+        FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+        FOREIGN KEY (workflow_id, definition_version)
+          REFERENCES space_workflow_definition_versions(workflow_id, version_hash)
+      )
+    `);
+    db.exec(`
+      INSERT INTO space_workflow_runs_m181_new
+        (id, space_id, workflow_id, title, description, status, failure_reason,
+         created_at, started_at, updated_at, completed_at)
+      SELECT id, space_id, workflow_id, title, description, status, failure_reason,
+             created_at, started_at, updated_at, completed_at
+      FROM space_workflow_runs
+    `);
+    db.exec(`DROP TABLE space_workflow_runs`);
+    db.exec(`ALTER TABLE space_workflow_runs_m181_new RENAME TO space_workflow_runs`);
+    db.exec(`CREATE INDEX idx_space_workflow_runs_space_id ON space_workflow_runs(space_id)`);
+    db.exec(`CREATE INDEX idx_space_workflow_runs_workflow_id ON space_workflow_runs(workflow_id)`);
+    db.exec(`CREATE INDEX idx_space_workflow_runs_status ON space_workflow_runs(status)`);
+    db.exec(`COMMIT`);
+  } catch (err) {
+    db.exec(`ROLLBACK`);
+    throw err;
+  } finally {
+    db.exec('PRAGMA foreign_keys = ON');
+  }
 }

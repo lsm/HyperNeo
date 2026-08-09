@@ -145,6 +145,7 @@ function makeRun(id: string, status = 'pending'): SpaceWorkflowRun {
     id,
     spaceId: 'space-1',
     workflowId: 'wf-1',
+    definitionVersion: null,
     title: `Run ${id}`,
     status: status as SpaceWorkflowRun['status'],
     startedAt: null,

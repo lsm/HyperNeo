@@ -5204,10 +5204,11 @@ export class SpaceRuntime {
     description?: string,
     options: StartWorkflowRunOptions = {}
   ): Promise<{ run: SpaceWorkflowRun; tasks: SpaceTask[] }> {
-    const workflow = this.config.spaceWorkflowManager.getWorkflow(workflowId);
-    if (!workflow) {
+    const workflowResult = this.config.spaceWorkflowManager.getWorkflowForRunStart(workflowId);
+    if (!workflowResult) {
       throw new Error(`Workflow not found: ${workflowId}`);
     }
+    const { rawWorkflow, workflow } = workflowResult;
     if (workflow.disabled) {
       throw new Error(`Workflow "${workflow.name}" is disabled and cannot be used for new runs.`);
     }
@@ -5221,11 +5222,12 @@ export class SpaceRuntime {
     }
 
     // Create the run record — starts as 'pending', immediately promoted to 'in_progress'
-    const pendingRun = this.config.workflowRunRepo.createRun({
+    const pendingRun = this.config.workflowRunRepo.createPinnedRun({
       spaceId,
       workflowId,
       title,
       description,
+      rawWorkflow,
     });
 
     const run = this.config.workflowRunRepo.transitionStatus(pendingRun.id, 'in_progress');
