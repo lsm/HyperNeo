@@ -11,7 +11,6 @@ declare function requestIdleCallback(
 ): number;
 
 import type { IMessageTransport, ConnectionState, ConnectionStateHandler } from './types.ts';
-import { DEFAULT_MAX_OUTBOUND_MESSAGE_SIZE } from './router.ts';
 import type { HubMessage } from './protocol.ts';
 import { generateUUID } from '../utils.ts';
 import { createLogger } from '../logger.ts';
@@ -79,7 +78,7 @@ export class WebSocketClientTransport implements IMessageTransport {
   private connectionHandlers: Set<ConnectionStateHandler> = new Set();
 
   // Keep client requests within the daemon's outbound response safety budget.
-  private readonly maxMessageSize = DEFAULT_MAX_OUTBOUND_MESSAGE_SIZE;
+  private readonly maxMessageSize = 32 * 1024 * 1024;
 
   // FIX P1.2: PONG timeout detection (stale connection detection)
   private lastPongTime: number = Date.now();

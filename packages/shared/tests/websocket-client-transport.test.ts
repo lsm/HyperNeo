@@ -737,8 +737,8 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
         await transport.initialize();
         await new Promise((resolve) => setTimeout(resolve, 20));
 
-        // Create an oversized request (>40MB)
-        const largeData = 'x'.repeat(41 * 1024 * 1024);
+        // Create an oversized request (>32MB)
+        const largeData = 'x'.repeat(33 * 1024 * 1024);
         const message: HubMessage = {
           id: 'test-1',
           type: MessageType.REQUEST,

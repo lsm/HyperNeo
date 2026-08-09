@@ -22,7 +22,7 @@ const GLOBAL_SESSION_ID = 'global';
 // FIX P1.1: Message size validation constants (DoS prevention)
 // Note: Increased from 10MB to 50MB to support large session state snapshots
 // with long conversation histories
-const MAX_MESSAGE_SIZE = DEFAULT_MAX_OUTBOUND_MESSAGE_SIZE; // Keep requests within reply budget
+const MAX_MESSAGE_SIZE = 32 * 1024 * 1024; // Reserve headroom for response expansion
 const MAX_MESSAGE_SIZE_MB = MAX_MESSAGE_SIZE / (1024 * 1024);
 
 /**
@@ -38,9 +38,23 @@ interface WebSocketData {
 /**
  * Parsed WebSocket message with sessionId for routing
  */
-function sendCapped(ws: RuntimeSocket<WebSocketData>, message: unknown): void {
+function sendCapped(ws: RuntimeSocket<WebSocketData>, message: HubMessage): void {
   const json = JSON.stringify(message);
-  if (new Blob([json]).size <= DEFAULT_MAX_OUTBOUND_MESSAGE_SIZE) ws.send(json);
+  if (new Blob([json]).size <= DEFAULT_MAX_OUTBOUND_MESSAGE_SIZE) {
+    ws.send(json);
+    return;
+  }
+
+  const fallback = createErrorResponseMessage({
+    method: message.method,
+    error: {
+      code: 'MESSAGE_TOO_LARGE',
+      message: 'Response is too large to send',
+    },
+    sessionId: GLOBAL_SESSION_ID,
+    requestId: message.requestId ?? message.id,
+  });
+  ws.send(JSON.stringify(fallback));
 }
 
 interface ParsedWebSocketMessage {
