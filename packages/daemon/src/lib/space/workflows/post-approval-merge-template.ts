@@ -60,7 +60,7 @@ export const CODER_OWNED_MERGE_INSTRUCTIONS: string = [
   '',
   '1. Confirm the PR is open, CI is green, and capture the base branch it merges into:',
   '     gh pr view {{pr_url}} --json state,mergeStateStatus,headRefOid',
-  '     gh pr checks {{pr_url}}',
+  '     gh pr checks {{pr_url}} --required  # only REQUIRED checks gate the merge — optional pending/failing checks do not block (mergeStateStatus CLEAN already implies required checks pass)',
   '     BASE=$(gh pr view {{pr_url}} --json baseRefName --jq .baseRefName)',
   '   If state is not OPEN, or a required check is failing or pending, treat it as a blocker per step 4.',
   '   If state is MERGED, the merge already happened (possibly in a prior session). Perform step 6 ONLY (fast-forward the root checkout — a restart after merge must still sync it), then call mark_complete to close the task. Do NOT save the step-7 new-merge audit artifact (no merge happened in this session).',
