@@ -322,9 +322,13 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
   // render running/completed node indicators. Scoped to that single run via the
   // per-run API (not every run in the space). relevantRunId is null for a
   // brand-new workflow with no runs — ensureNodeExecutions(null) then tears down
-  // any stale subscription without loading.
+  // any stale subscription without loading. The cleanup releases the run on
+  // unmount (leaving the editor) so no run stays subscribed once closed.
   useEffect(() => {
     spaceStore.ensureNodeExecutions(relevantRunId).catch(() => {});
+    return () => {
+      spaceStore.ensureNodeExecutions(null).catch(() => {});
+    };
   }, [relevantRunId]);
 
   // ------------------------------------------------------------------

@@ -212,6 +212,16 @@ describe('VisualWorkflowEditor', () => {
       expect(getByTestId('visual-workflow-editor')).toBeTruthy();
     });
 
+    it('releases the node-execution subscription on unmount', async () => {
+      const { unmount } = render(<VisualWorkflowEditor {...makeProps()} />);
+      // mount requests node executions (null for a run-less new workflow)
+      await waitFor(() => expect(mockEnsureNodeExecutions).toHaveBeenCalled());
+      mockEnsureNodeExecutions.mockClear();
+      unmount();
+      // unmount releases the run subscription
+      expect(mockEnsureNodeExecutions).toHaveBeenCalledWith(null);
+    });
+
     it('renders "New Workflow" title', () => {
       const { getByText } = render(<VisualWorkflowEditor {...makeProps()} />);
       expect(getByText('New Workflow')).toBeTruthy();
