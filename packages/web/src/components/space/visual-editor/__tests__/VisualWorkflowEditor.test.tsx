@@ -222,6 +222,26 @@ describe('VisualWorkflowEditor', () => {
       expect(mockEnsureNodeExecutions).toHaveBeenCalledWith(null);
     });
 
+    it('loads node executions for the relevant run and re-loads when the run changes', async () => {
+      const wf = makeWorkflow(); // id: 'wf-1'
+      mockWorkflowRuns.value = [
+        { id: 'run-a', workflowId: 'wf-1', status: 'in_progress', updatedAt: 1 },
+      ];
+      const { rerender } = render(<VisualWorkflowEditor {...makeProps({ workflow: wf })} />);
+
+      // mount loads the workflow's active run
+      await waitFor(() => expect(mockEnsureNodeExecutions).toHaveBeenCalledWith('run-a'));
+
+      // a newer active run appears → relevantRunId switches and the effect re-fires
+      mockEnsureNodeExecutions.mockClear();
+      mockWorkflowRuns.value = [
+        { id: 'run-a', workflowId: 'wf-1', status: 'completed', updatedAt: 1 },
+        { id: 'run-b', workflowId: 'wf-1', status: 'in_progress', updatedAt: 2 },
+      ];
+      rerender(<VisualWorkflowEditor {...makeProps({ workflow: wf })} />);
+      await waitFor(() => expect(mockEnsureNodeExecutions).toHaveBeenCalledWith('run-b'));
+    });
+
     it('renders "New Workflow" title', () => {
       const { getByText } = render(<VisualWorkflowEditor {...makeProps()} />);
       expect(getByText('New Workflow')).toBeTruthy();

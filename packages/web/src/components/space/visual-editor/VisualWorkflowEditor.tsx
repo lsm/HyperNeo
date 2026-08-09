@@ -322,14 +322,21 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
   // render running/completed node indicators. Scoped to that single run via the
   // per-run API (not every run in the space). relevantRunId is null for a
   // brand-new workflow with no runs — ensureNodeExecutions(null) then tears down
-  // any stale subscription without loading. The cleanup releases the run on
-  // unmount (leaving the editor) so no run stays subscribed once closed.
+  // any stale subscription without loading.
   useEffect(() => {
     spaceStore.ensureNodeExecutions(relevantRunId).catch(() => {});
+  }, [relevantRunId]);
+
+  // Release the run subscription when the editor unmounts (leaving Configure →
+  // Workflows) so no run keeps streaming with no editor open. Empty deps →
+  // cleanup runs only on unmount, not when relevantRunId changes (the effect
+  // above handles rescoping). ensureNodeExecutions(null) is a safe no-op when
+  // nothing is active.
+  useEffect(() => {
     return () => {
       spaceStore.ensureNodeExecutions(null).catch(() => {});
     };
-  }, [relevantRunId]);
+  }, []);
 
   // ------------------------------------------------------------------
   // Key-resolution maps
