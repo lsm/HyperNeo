@@ -229,15 +229,23 @@ export class MessageQueue {
    */
   remove(messageId: string): boolean {
     const index = this.queue.findIndex((msg) => msg.id === messageId);
-    if (index === -1) {
-      return false;
+    if (index !== -1) {
+      const [msg] = this.queue.splice(index, 1);
+      if (msg.timeoutId) clearTimeout(msg.timeoutId);
+      msg.resolve(messageId);
+      return true;
     }
 
-    const [msg] = this.queue.splice(index, 1);
-    if (msg.timeoutId) {
-      clearTimeout(msg.timeoutId);
-    }
-    msg.resolve(messageId);
+    // A generator may have atomically claimed the message but not reached the
+    // actual yield yet. Revocation still wins in that state: remove it from the
+    // claimed set and settle the admission. messageGenerator rechecks ownership
+    // after its await and skips a revoked claim. Once in `yielded`, provider
+    // ownership has won and removal correctly returns false.
+    const claimed = [...this.claimed].find((msg) => msg.id === messageId);
+    if (!claimed) return false;
+    this.claimed.delete(claimed);
+    if (claimed.timeoutId) clearTimeout(claimed.timeoutId);
+    claimed.resolve(messageId);
     return true;
   }
 
@@ -319,6 +327,13 @@ export class MessageQueue {
 
       if (!queuedMessage) {
         break;
+      }
+
+      // Ownership may have been revoked after waitForNextMessage claimed the
+      // entry but before this continuation resumed. A successful remove/defer
+      // wins before actual yield, so skip the revoked claim entirely.
+      if (!this.claimed.has(queuedMessage)) {
+        continue;
       }
 
       // Double-check generation after waiting (in case it changed while we were waiting)

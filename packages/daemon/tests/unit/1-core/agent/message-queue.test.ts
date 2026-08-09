@@ -145,6 +145,43 @@ describe('MessageQueue', () => {
     it('should return false for an unknown message ID', () => {
       expect(queue.remove('missing-message')).toBe(false);
     });
+
+    it('removes a generator-claimed message before the actual yield', async () => {
+      queue.start();
+      const acknowledgment = queue.enqueueWithId('claimed-to-remove', 'Message 1');
+      const generator = queue.messageGenerator(testSessionId);
+
+      // next() runs synchronously up to its first await: the message is already
+      // shifted out of `queue` and claimed by the generator, but not yet yielded.
+      const nextPromise = generator.next();
+
+      // Revocation still wins in the claimed (pre-yield) state.
+      expect(queue.remove('claimed-to-remove')).toBe(true);
+      expect(queue.size()).toBe(0);
+      await acknowledgment;
+
+      // The generator skips the revoked claim and waits for the next message.
+      queue.stop();
+      const result = await nextPromise;
+      expect(result.done).toBe(true);
+    });
+
+    it('returns false once the message has actually been yielded', async () => {
+      queue.start();
+      const acknowledgment = queue.enqueueWithId('yielded-kept', 'Message 1');
+      const generator = queue.messageGenerator(testSessionId);
+
+      const result = await generator.next();
+      expect(result.done).toBe(false);
+
+      // Provider ownership has won — removal must not report success.
+      expect(queue.remove('yielded-kept')).toBe(false);
+      expect(queue.size()).toBe(1);
+
+      result.value.onSent();
+      await acknowledgment;
+      queue.stop();
+    });
   });
 
   describe('lifecycle', () => {
