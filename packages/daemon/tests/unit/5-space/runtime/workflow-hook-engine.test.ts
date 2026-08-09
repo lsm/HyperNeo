@@ -1777,6 +1777,70 @@ describe('wrapHandlerWithHooks', () => {
     ).toBeNull();
   });
 
+  test('a cyclic feedback channel WITHOUT explicit maxCycles still counts as revision', async () => {
+    // Cyclicity is a graph-topology property (the channel closes a loop back
+    // to an earlier node), not the presence of `maxCycles` — the runtime
+    // treats a cyclic channel as cyclic with a default cap of 5. A maxCycles-
+    // only check would misclassify this channel and let a stale terminal
+    // action replay after a changes request.
+    const hookStateRepo = makeMockHookStateRepo();
+    const workflow: SpaceWorkflow = {
+      ...makeWorkflow([
+        makeHook({
+          id: 'codex-approve',
+          sourceNode: 'Review',
+          method: 'approve_task',
+          authorizedCallers: [{ sourceNode: 'Review', agentSlots: ['reviewer'] }],
+        }),
+      ]),
+      // Review→Coding is cyclic by topology (forward Coding→Review exists) but
+      // omits maxCycles entirely.
+      channels: [
+        { id: 'ch-forward', from: 'Coding', to: 'Review' },
+        { id: 'ch-feedback', from: 'Review', to: 'Coding' },
+      ],
+    };
+    const mockExecutor = new MockHookExecutor();
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo,
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+    const reviewerMeta: HookActionMeta = {
+      sessionId: 'session-reviewer',
+      agentName: 'reviewer',
+      nodeId: 'node-review',
+      taskId: 'task-1',
+    };
+    const blocked: WorkflowHookResult = {
+      type: 'retryable_block',
+      reason: 'codex review bot approval missing',
+      retryAfterMs: 30_000,
+    };
+    hookStateRepo.ensure('run-1', 'codex-approve');
+    mockExecutor.setResult('codex-approve', blocked);
+    const handler = async () => ({
+      content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
+    });
+
+    const approveWrapped = wrapHandlerWithHooks('approve_task', handler, engine, {}, reviewerMeta);
+    await approveWrapped({});
+    expect(
+      hookStateRepo.get('run-1', 'codex-approve')?.localState[QUEUED_RETRYABLE_ACTION_STATE_KEY]
+    ).toBeDefined();
+
+    const sendWrapped = wrapHandlerWithHooks('send_message', handler, engine, {}, reviewerMeta);
+    await sendWrapped({ target: 'Coding', message: 'please fix X' });
+
+    expect(
+      hookStateRepo.get('run-1', 'codex-approve')?.localState[QUEUED_RETRYABLE_ACTION_STATE_KEY]
+    ).toBeNull();
+  });
+
   test('a non-revision (forward) send_message does NOT withdraw a queued terminal retry', async () => {
     // A forward handoff or status/vote message is not revision feedback — it
     // must not drop a pending close (the non-terminal clearing guard). The

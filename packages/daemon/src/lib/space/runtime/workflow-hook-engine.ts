@@ -24,6 +24,7 @@ import type {
   WorkflowRunStatus,
   WorkflowHookStateSnapshot,
 } from '@hyperneo/shared';
+import { isChannelCyclic } from '@hyperneo/shared';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import type { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository';
@@ -1507,15 +1508,24 @@ function isRevisionFeedbackSend(
       .filter((name): name is string => Boolean(name))
   );
   if (targetNodeNames.size === 0) return false;
-  return workflow.channels.some((channel) => {
-    if (channel.maxCycles === undefined) return false;
-    if (resolveNodeNameByRef(channel.from, workflow.nodes) !== senderNodeName) return false;
+  const nodes = workflow.nodes;
+  for (let i = 0; i < workflow.channels.length; i++) {
+    const channel = workflow.channels[i];
+    // Cyclic is a graph-topology property (the channel closes a loop back to
+    // an earlier node), NOT the presence of an explicit `maxCycles` — the
+    // runtime treats a cyclic channel as cyclic with a default cap of 5 even
+    // when maxCycles is omitted. A maxCycles-only check would misclassify such
+    // a channel as non-revision and let a stale terminal action replay.
+    if (!isChannelCyclic(i, workflow.channels, nodes)) continue;
+    if (resolveNodeNameByRef(channel.from, nodes) !== senderNodeName) continue;
     const endpoints = Array.isArray(channel.to) ? channel.to : [channel.to];
-    return endpoints.some((endpoint) => {
-      const nodeName = resolveNodeNameByRef(endpoint, workflow.nodes);
+    const matchesTarget = endpoints.some((endpoint) => {
+      const nodeName = resolveNodeNameByRef(endpoint, nodes);
       return nodeName !== undefined && targetNodeNames.has(nodeName);
     });
-  });
+    if (matchesTarget) return true;
+  }
+  return false;
 }
 
 async function replayRetryableAction<T extends Record<string, unknown>>(options: {

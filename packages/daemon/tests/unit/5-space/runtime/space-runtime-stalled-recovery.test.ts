@@ -2002,6 +2002,110 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       expect(findExec(run.id, STEP_B)).toBeUndefined();
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
       expect(taskRepo.getTask(task.id)?.status).toBe('blocked');
+      // The rearm was RESCHEDULED (not discarded): a timer is still pending so
+      // the run is not stranded after resume (the resume sweep only enumerates
+      // in_progress runs).
+      expect(
+        (rt as unknown as { restartRecoveryRearmTimers: Set<unknown> }).restartRecoveryRearmTimers
+          .size
+      ).toBeGreaterThan(0);
+
+      // Resume the space. The rescheduled rearm now fires and proceeds: the
+      // gate is re-evaluated (2nd call → allow), downstream activates, and the
+      // blocked run + task transition back to in_progress.
+      rt.onSpaceResumed(SPACE_ID);
+      await new Promise((resolve) => setTimeout(resolve, 80));
+
+      expect(evalCount).toBe(2);
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+      expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
+    });
+
+    test('stop() drains an in-flight rearm body before returning', async () => {
+      // A rearm timer that fires just before stop() launches an untracked async
+      // body. stop() must await it so the recovery callback cannot read/write
+      // the repository after the runtime has shut down and its DB is closing.
+      let releaseBody: () => void = () => {};
+      const bodyGate = new Promise<void>((resolve) => {
+        releaseBody = resolve;
+      });
+      let evalCount = 0;
+      const VALIDATOR = 'test-slow-rearm-validator';
+      registerBuiltInValidator(VALIDATOR, async () => {
+        evalCount += 1;
+        if (evalCount === 1) {
+          return { type: 'retryable_block', reason: 'codex pending', retryAfterMs: 20 };
+        }
+        // 2nd evaluation (the rearm body) blocks until stop() is mid-drain.
+        await bodyGate;
+        return { type: 'allow' };
+      });
+      const workflow = buildLinearWorkflow(
+        SPACE_ID,
+        workflowManager,
+        [
+          { id: STEP_A, name: 'Coding', agentId: AGENT },
+          { id: STEP_B, name: 'Review', agentId: AGENT },
+        ],
+        {
+          channels: [
+            { id: 'codex-to-review', from: 'Coding', to: 'Review', gateId: 'codex-ready' },
+          ],
+          gates: [
+            {
+              id: 'codex-ready',
+              resetOnCycle: false,
+              fields: [],
+              validator: { kind: 'built_in', id: VALIDATOR },
+            },
+          ],
+        }
+      );
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Drain rearm',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+      taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Drain rearm',
+        description: '',
+        workflowRunId: run.id,
+        workflowNodeId: STEP_A,
+        status: 'in_progress',
+      });
+      seedExec(run.id, STEP_A, 'Coding', 'idle');
+
+      const rt = makeRuntime({ pendingMessageRepo: new PendingAgentMessageRepository(db) });
+      await rt.recoverStalledRuns();
+
+      // Wait until the rearm body is mid-flight at the 2nd validator call.
+      const started = Date.now();
+      while (evalCount < 2 && Date.now() - started < 2_000) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      expect(evalCount).toBe(2);
+
+      const inFlight = () =>
+        (rt as unknown as { restartRecoveryRearmInFlight: Set<unknown> })
+          .restartRecoveryRearmInFlight.size;
+      expect(inFlight()).toBeGreaterThan(0);
+
+      // stop() is awaited; it must NOT resolve while the body is still pending.
+      let stopDone = false;
+      const stopPromise = rt.stop().then(() => {
+        stopDone = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      expect(stopDone).toBe(false);
+
+      // Releasing the body lets it complete, after which stop() resolves and
+      // the in-flight set is drained.
+      releaseBody();
+      await stopPromise;
+      expect(stopDone).toBe(true);
+      expect(inFlight()).toBe(0);
     });
 
     test('single-node run with idle execution → run blocked, task blocked, notifications emitted', async () => {

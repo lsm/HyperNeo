@@ -5061,6 +5061,30 @@ export class SpaceRuntime {
       clearTimeout(timer);
     }
     this.restartRecoveryRearmTimers.clear();
+    // Drain any rearm async body already in flight (a timer that fired just
+    // before stop()). The isStopped guard above prevents new work, but a
+    // mid-flight recovery could still read/write the repo after close. Capped
+    // for parity with the tickInFlight drain so a hung validator (e.g. a stuck
+    // GitHub call) cannot block shutdown indefinitely.
+    if (this.restartRecoveryRearmInFlight.size > 0) {
+      const MAX_REARM_DRAIN_MS = 30_000;
+      const drainStart = Date.now();
+      await new Promise<void>((resolve) => {
+        const check = () => {
+          if (this.restartRecoveryRearmInFlight.size === 0) {
+            resolve();
+          } else if (Date.now() - drainStart > MAX_REARM_DRAIN_MS) {
+            log.warn(
+              `SpaceRuntime: timed out waiting for in-flight rearm after ${MAX_REARM_DRAIN_MS}ms — proceeding with shutdown`
+            );
+            resolve();
+          } else {
+            setTimeout(check, 10);
+          }
+        };
+        check();
+      });
+    }
     if (this.tickTimer !== null) {
       clearInterval(this.tickTimer);
       this.tickTimer = null;
@@ -6761,6 +6785,10 @@ export class SpaceRuntime {
   }
 
   private readonly restartRecoveryRearmTimers = new Set<ReturnType<typeof setTimeout>>();
+  /** In-flight rearm async bodies — drained in stop() so a recovery callback
+   *  cannot read/write the repository (or evaluate gates) after the runtime
+   *  has shut down and its database is closing. */
+  private readonly restartRecoveryRearmInFlight = new Set<Promise<unknown>>();
 
   /** Re-evaluate THIS run's gates after `delayMs` so a retryable retained gate
    *  (e.g. codex pending) is observed post-restart — the in-memory retry
@@ -6771,16 +6799,24 @@ export class SpaceRuntime {
   private scheduleRestartRecoveryGateRearm(runId: string, delayMs: number): void {
     const timer = setTimeout(() => {
       this.restartRecoveryRearmTimers.delete(timer);
-      void (async () => {
+      if (this.isStopped) return;
+      const promise = (async () => {
         try {
           const run = this.config.workflowRunRepo.getRun(runId);
           if (!run) return;
           // Skip terminal runs — the user may have cancelled or the run may
           // have completed while the timer was pending.
           if (run.status !== 'blocked' && run.status !== 'in_progress') return;
-          // A paused space must not be driven by a recovery timer — the user
-          // explicitly halted it. Every other runtime path checks this set.
-          if (this.pausedSpaceIds.has(run.spaceId)) return;
+          // A paused space must not be driven by a recovery timer, but the
+          // rearm must survive the pause: reschedule instead of discarding.
+          // The resume sweep (`recoverStalledRunsForSpace`) enumerates only
+          // `in_progress` runs, so a discarded rearm would strand this
+          // `blocked` run after resume — a retryable gate that later opens
+          // (codex +1 / timeout) would never be re-observed.
+          if (this.pausedSpaceIds.has(run.spaceId)) {
+            if (!this.isStopped) this.scheduleRestartRecoveryGateRearm(runId, delayMs);
+            return;
+          }
           const executions = this.config.nodeExecutionRepo.listByWorkflowRun(run.id);
           const activated = await this.activateRestartRecoveryDownstreamNodes(run, executions);
           // If the rearm successfully activated a target on a `blocked` run,
@@ -6806,6 +6842,8 @@ export class SpaceRuntime {
           );
         }
       })();
+      this.restartRecoveryRearmInFlight.add(promise);
+      void promise.finally(() => this.restartRecoveryRearmInFlight.delete(promise));
     }, delayMs);
     this.restartRecoveryRearmTimers.add(timer);
   }
