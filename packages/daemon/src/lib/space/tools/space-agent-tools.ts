@@ -89,6 +89,11 @@ import type { ExternalEventStore } from '../../external-events/external-event-st
 import { getAvailableModels, getModelInfoUnfiltered, isValidModel } from '../../model-service';
 import { normalizeMeaningfulTaskResult } from '../task-result-utils';
 import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from '../slug';
+import {
+  isReservedAgentHandle,
+  normalizeAgentNameToken,
+  normalizeReplyTargetHandle,
+} from '../agent-handle';
 
 const log = new Logger('space-agent-tools');
 const KNOWN_TOOLS_SET = new Set<string>(KNOWN_TOOLS);
@@ -231,43 +236,12 @@ function normalizeGoalUpdateArgs(args: GoalToolUpdateArgs) {
   };
 }
 
-function normalizeAgentNameToken(value: string): string {
-  return value.trim().toLowerCase();
-}
-
-function handleFromName(value: string): string | null {
-  const slug = value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  return slug ? `@${slug}` : null;
-}
-
-function normalizeReplyTargetHandle(value: string): string | null {
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  if (trimmed === 'space-agent') return '@coordinator';
-  return trimmed.startsWith('@') ? trimmed : handleFromName(trimmed);
-}
-
 function validateTools(tools: string[]): string | null {
   const invalid = tools.filter((toolName) => !KNOWN_TOOLS_SET.has(toolName));
   if (invalid.length === 0) return null;
   return `Unknown tool${invalid.length > 1 ? 's' : ''}: ${invalid
     .map((toolName) => `"${toolName}"`)
     .join(', ')}. Valid tools: ${KNOWN_TOOLS.join(', ')}`;
-}
-
-/**
- * True for agent handles that are reserved system singletons (e.g. `coordinator`,
- * auto-created per space by `ensureCoordinator`). Such templates cannot be
- * created via `create_agent_from_template` — creating them would mint a
- * suffixed duplicate the runtime does not recognize as the singleton — so they
- * are also excluded from the `list_agent_templates` discovery catalog.
- */
-function isReservedAgentHandle(handle: string): boolean {
-  return (RESERVED_SPACE_AGENT_HANDLES as readonly string[]).includes(handle);
 }
 
 async function validateLongHorizonModel(

@@ -17,7 +17,7 @@
  * - workflows: SpaceWorkflow list for the space
  * - workflowTemplates: Built-in workflow templates from daemon seeding source
  * - runtimeState: Runtime state (running/paused/stopped)
- * - nodeExecutions: NodeExecution list for all workflow runs in the space
+ * - nodeExecutions: NodeExecution list for the OPEN task's run only (scoped per-run)
  * - nodeExecutionsByNodeId: NodeExecutions grouped by workflow node ID
  * - loading: Loading state
  * - error: Error state
@@ -354,7 +354,9 @@ class SpaceStore {
   /** Tasks not associated with any workflow run */
   readonly standaloneTasks = computed(() => this.tasks.value.filter((t) => !t.workflowRunId));
 
-  /** Node executions for all workflow runs — loaded via initial fetch and LiveQuery subscriptions */
+  /** Node executions for the OPEN task's run only — loaded via initial fetch and a single
+   *  `nodeExecutions.byRun` LiveQuery subscription. Scoped per-run so a task page only
+   *  pays for the one run it actually reads (not every run in the space). */
   readonly nodeExecutions = signal<NodeExecution[]>([]);
 
   /** Node executions grouped by workflow node ID */
@@ -412,6 +414,16 @@ class SpaceStore {
 
   /** Stale-event guard for node execution LiveQuery subscriptions */
   private activeNodeExecSubscriptionIds = new Set<string>();
+
+  /** The workflow run ID whose node executions are currently loaded/subscribed.
+   *  At most one run is active at a time — the open task's run. null = nothing
+   *  loaded (standalone task, no task open, or between runs). */
+  private activeNodeExecRunId: string | null = null;
+
+  /** Monotonic counter bumped before each node-exec load so a stale in-flight
+   *  load (superseded by a task switch to a different run) can't clear the
+   *  shared `nodeExecPromise` out from under the newer load. */
+  private nodeExecLoadGen = 0;
 
   /** Monotonic counter so stale goal list responses cannot overwrite newer filters. */
   private goalListRequestVersion = 0;
@@ -725,6 +737,7 @@ class SpaceStore {
     this.configDataPromise = null;
     this.nodeExecLoaded.value = false;
     this.nodeExecPromise = null;
+    this.activeNodeExecRunId = null;
     this.sessions.value = [];
     this.schedules.value = [];
     this.goals.value = [];
@@ -895,8 +908,10 @@ class SpaceStore {
         const exists = this.workflowRuns.value.some((r) => r.id === event.run.id);
         if (!exists) {
           this.workflowRuns.value = [...this.workflowRuns.value, event.run];
-          // Subscribe to the new run's LiveQuery for real-time updates
-          this.subscribeNodeExecutionsByRun(hub, event.run.id);
+          // Node-execution subscriptions are scoped to the OPEN task's run only
+          // (see ensureNodeExecutions), so a newly-created run is NOT auto-
+          // subscribed. If this run belongs to the open task, its subscription
+          // is established when SpaceTaskPane calls ensureNodeExecutions(runId).
         }
       }
     });
@@ -1152,10 +1167,39 @@ class SpaceStore {
         'spaceLongHorizonAgent.list',
         { spaceId }
       );
-      this.longHorizonAgents.value = result?.agents ?? [];
+      // Guard against a space switch during the await: a refresh started in
+      // space A must not overwrite space B's agent list if the user navigated
+      // away before the RPC resolved. Mirrors fetchAgents.
+      if (this.spaceId.value !== spaceId) return;
+      this.longHorizonAgents.value = (result?.agents ?? []).filter(
+        (agent) => agent.spaceId === spaceId
+      );
     } catch (err) {
-      logger.error('Failed to fetch long-horizon agents:', err);
-      this.longHorizonAgents.value = [];
+      // On failure, KEEP the cached list. Clearing it would empty the Agents
+      // view (and ensureConfigData won't re-fetch because configDataLoaded is
+      // still true), which is worse than showing slightly-stale data. The
+      // refresh caller retries the session load regardless.
+      logger.error('Failed to fetch long-horizon agents (keeping cached list):', err);
+    }
+  }
+
+  /**
+   * Force-refresh the long-horizon agent list for the current space (task #873).
+   *
+   * Unlike `ensureConfigData` (which dedupes once the config has loaded), this
+   * always re-fetches `spaceLongHorizonAgent.list`. The unavailable-session
+   * "Refresh agent record" action uses it to pick up a corrected `sessionId`
+   * after a reconnect/restart, instead of looping on a deleted id. No-op when
+   * no space is selected or the transport is unavailable.
+   */
+  async refreshLongHorizonAgents(): Promise<void> {
+    const spaceId = this.spaceId.value;
+    if (!spaceId) return;
+    try {
+      const hub = await connectionManager.getHub();
+      await this.fetchLongHorizonAgents(hub, spaceId);
+    } catch (err) {
+      logger.error('Failed to refresh long-horizon agents:', err);
     }
   }
 
@@ -1535,38 +1579,22 @@ class SpaceStore {
   }
 
   /**
-   * Fetch node executions for all workflow runs in the space.
-   * Calls nodeExecution.list for each run and aggregates the results.
+   * Fetch node executions for a single workflow run (the open task's run).
+   * One RPC instead of one-per-run, so opening a task page no longer fans out
+   * hundreds of nodeExecution.list calls.
    */
   private async fetchNodeExecutions(
     hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
-    spaceId: string
+    runId: string
   ): Promise<void> {
     try {
-      const runs = this.workflowRuns.value;
-      if (runs.length === 0) {
-        this.nodeExecutions.value = [];
-        return;
-      }
-      const results = await Promise.allSettled(
-        runs.map((run) =>
-          hub
-            .request<{ executions: NodeExecution[] }>('nodeExecution.list', {
-              workflowRunId: run.id,
-              spaceId,
-            })
-            .then((r) => r?.executions ?? [])
-        )
-      );
-      const allExecs: NodeExecution[] = [];
-      for (const result of results) {
-        if (result.status === 'fulfilled') {
-          allExecs.push(...result.value);
-        } else {
-          logger.warn('Failed to fetch node executions for a run:', result.reason);
-        }
-      }
-      this.nodeExecutions.value = allExecs;
+      const result = await hub.request<{ executions: NodeExecution[] }>('nodeExecution.list', {
+        workflowRunId: runId,
+        spaceId: this.spaceId.value,
+      });
+      // A run switch (or space switch) during the fetch invalidates this result.
+      if (this.activeNodeExecRunId !== runId) return;
+      this.nodeExecutions.value = result?.executions ?? [];
     } catch (err) {
       logger.error('Failed to fetch node executions:', err);
     }
@@ -1633,34 +1661,65 @@ class SpaceStore {
   }
 
   /**
-   * Lazily load node executions and subscribe to LiveQuery updates.
-   * Called by components that render the workflow canvas.
-   * Safe to call multiple times — deduplicates via promise + flag.
+   * Lazily load node executions for the OPEN task's run and subscribe to its
+   * LiveQuery updates. Only the passed-in run is fetched/subscribed — opening
+   * a task page no longer subscribes every run in the space. Switching runs
+   * (calling this with a different workflowRunId) tears down the previous run's
+   * subscription and establishes the new one.
+   *
+   * Standalone tasks (no workflowRunId) need no node-execution data: pass null
+   * and this is a no-op.
+   *
+   * Safe to call multiple times for the same run — deduplicates via promise +
+   * flag.
    */
-  async ensureNodeExecutions(): Promise<void> {
-    if (this.nodeExecLoaded.value) return;
-    if (this.nodeExecPromise) return this.nodeExecPromise;
-
+  async ensureNodeExecutions(workflowRunId: string | null): Promise<void> {
+    // Standalone task (no workflowRunId) — tear down any active node-execution
+    // subscription so a standalone task (or no open task) carries no live sub.
+    if (!workflowRunId) {
+      if (this.activeNodeExecRunId !== null) {
+        this.unsubscribeNodeExecutions();
+        this.nodeExecutions.value = [];
+        this.activeNodeExecRunId = null;
+        this.nodeExecLoaded.value = false;
+      }
+      return;
+    }
+    // Already loaded for this exact run.
+    if (this.activeNodeExecRunId === workflowRunId && this.nodeExecLoaded.value) return;
+    // Ride an in-flight load for the SAME run.
+    if (this.nodeExecPromise && this.activeNodeExecRunId === workflowRunId) {
+      return this.nodeExecPromise;
+    }
     const spaceId = this.spaceId.value;
     if (!spaceId) return;
 
-    this.nodeExecPromise = this.doEnsureNodeExecutions(spaceId);
+    // Switch target run: reset loaded state, clear stale executions, drop the
+    // previous run's subscription so only the open task's run is live.
+    this.activeNodeExecRunId = workflowRunId;
+    this.nodeExecLoaded.value = false;
+    this.nodeExecutions.value = [];
+    this.unsubscribeNodeExecutions();
+
+    const gen = ++this.nodeExecLoadGen;
+    this.nodeExecPromise = this.doEnsureNodeExecutions(workflowRunId);
     try {
       await this.nodeExecPromise;
     } finally {
-      this.nodeExecPromise = null;
+      // Only clear the shared promise if no newer load has superseded this one.
+      if (gen === this.nodeExecLoadGen) this.nodeExecPromise = null;
     }
   }
 
-  private async doEnsureNodeExecutions(spaceId: string): Promise<void> {
+  private async doEnsureNodeExecutions(runId: string): Promise<void> {
     try {
       const hub = await connectionManager.getHub();
-      await this.fetchNodeExecutions(hub, spaceId);
-      // Subscribe to real-time updates
-      if (this.spaceId.value === spaceId) {
-        this.subscribeNodeExecutions(hub);
-        this.nodeExecLoaded.value = true;
-      }
+      await this.fetchNodeExecutions(hub, runId);
+      // A task switch during the fetch changes activeNodeExecRunId; bail so a
+      // stale result for the previous run can't subscribe to the wrong run.
+      if (this.activeNodeExecRunId !== runId) return;
+      this.subscribeNodeExecutionsByRun(hub, runId);
+      this.nodeExecLoaded.value = true;
     } catch (err) {
       logger.error('Failed to load node executions:', err);
     }
@@ -1780,22 +1839,8 @@ class SpaceStore {
   // ========================================
 
   /**
-   * Subscribe to nodeExecutions.byRun LiveQueries for all current workflow runs.
-   * Called after initial fetch to enable real-time status updates.
-   */
-  private subscribeNodeExecutions(hub: Awaited<ReturnType<typeof connectionManager.getHub>>): void {
-    this.unsubscribeNodeExecutions();
-
-    const runs = this.workflowRuns.value;
-    if (runs.length === 0) return;
-
-    for (const run of runs) {
-      this.subscribeNodeExecutionsByRun(hub, run.id);
-    }
-  }
-
-  /**
-   * Subscribe to nodeExecutions.byRun for a single workflow run.
+   * Subscribe to nodeExecutions.byRun for a single workflow run (the open
+   * task's run). At most one run is ever subscribed at a time.
    */
   private subscribeNodeExecutionsByRun(
     hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
@@ -2054,7 +2099,10 @@ class SpaceStore {
           });
       }
       if (hadNodeExec) {
-        this.ensureNodeExecutions().catch((err) => {
+        // Re-establish the open task's run subscription (activeNodeExecRunId
+        // survives the reset above; the old hub's handlers are torn down, so
+        // ensureNodeExecutions re-subscribes on the new hub).
+        this.ensureNodeExecutions(this.activeNodeExecRunId).catch((err) => {
           logger.error('Failed to refresh node executions:', err);
         });
       }

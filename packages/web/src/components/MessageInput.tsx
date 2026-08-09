@@ -132,6 +132,14 @@ interface MessageInputProps {
   /** Whether the backing agent/session is currently processing or queued. */
   isProcessing?: boolean;
   /**
+   * Whether the backing send path honors 'defer' (queue for next turn). When
+   * false, the Queue controls (typed-text button, voice Queue button) and the
+   * Tab-to-queue shortcut are suppressed — e.g. the task-session composer
+   * delivers every message immediately, so a Queue affordance there would
+   * silently steer the live agent instead of deferring.
+   */
+  supportsQueueDelivery?: boolean;
+  /**
    * Registers this composer's file-drop handler with the parent drop zone
    * (the content column). When provided, the column owns the drag/drop surface
    * and forwards dropped files here. When omitted, no column-level drop zone is
@@ -179,6 +187,7 @@ export default function MessageInput({
   leadingPaddingClass,
   onDraftActiveChange,
   isProcessing,
+  supportsQueueDelivery = true,
   registerDropTarget,
   store,
 }: MessageInputProps) {
@@ -456,12 +465,13 @@ export default function MessageInput({
     }
   }, [isTranscribing, voiceRecorder, voiceSupported, sessionId]);
 
-  // Set by a voice "Send" click with the sessionId that was targeted at click
-  // time; consumed by the effect after handleSubmit to auto-submit the draft
-  // once the transcript has landed. Pinned because the inline task composer can
-  // switch sessionId without remounting while a transcription is in flight —
-  // the transcript must never auto-send to a different agent than was targeted.
-  const pendingAutoSendRef = useRef<string | null>(null);
+  // Set by a voice Send/Steer/Queue click with the sessionId + delivery mode
+  // targeted at click time; consumed by the effect after handleSubmit to
+  // auto-submit the draft once the transcript has landed. Pinned because the
+  // inline task composer can switch sessionId without remounting while a
+  // transcription is in flight — the transcript must never auto-send to a
+  // different agent than was targeted.
+  const pendingAutoSendRef = useRef<{ sessionId: string; mode: 'send' | 'queue' } | null>(null);
   // Always-current sessionId, so an in-flight transcription (up to 125s) can
   // tell the session it was started for from whatever the composer shows now.
   const sessionIdRef = useRef(sessionId);
@@ -470,7 +480,10 @@ export default function MessageInput({
   const recordingSessionRef = useRef<string | null>(null);
 
   const stopAndTranscribe = useCallback(
-    async (autoSend = false) => {
+    // 'stay' leaves the transcript in the composer; 'send' auto-submits it
+    // (immediate send, or steer when the agent is working); 'queue' defers it
+    // to the next turn.
+    async (mode: 'stay' | 'send' | 'queue' = 'stay') => {
       if (isTranscribing) return;
       // Nothing to stop — guard against stray calls so we never flip into a
       // transcribing state with no audio to send.
@@ -486,18 +499,32 @@ export default function MessageInput({
         if (recording.hitDurationLimit) {
           toast.info('Voice recording stopped at 5 minutes — transcribing…');
         }
+        // Silent capture (muted mic, wrong input device, hung permission) —
+        // don't ship dead air to the backend; tell the user to check the mic.
+        if (recording.peakLevel !== undefined && recording.peakLevel < 0.001) {
+          toast.error('No microphone signal detected — check your mic or input device');
+          return;
+        }
         const hub = connectionManager.getHubIfConnected();
         if (!hub) throw new Error('Not connected');
         const result = (await hub.request('voice.transcribe', recording, { timeout: 125_000 })) as {
           text?: string;
         };
+        // Backends return untrimmed text; a whitespace-only string for silence
+        // is truthy, so it would skip the no-speech branch, insert a blank, and
+        // leave the auto-send path with nothing to send — no feedback at all.
+        const transcript = result.text?.trim() ?? '';
         if (sessionIdRef.current !== targetSessionId) {
-          if (result.text) toast.info('Recording target changed — transcript discarded');
-        } else if (result.text && mountedRef.current) {
-          insertTranscript(result.text);
+          if (transcript) toast.info('Recording target changed — transcript discarded');
+        } else if (transcript && mountedRef.current) {
+          insertTranscript(transcript);
           // Only queue an auto-send when the transcript produced text; the
           // effect below fires it after isTranscribing flips false.
-          if (autoSend) pendingAutoSendRef.current = targetSessionId;
+          if (mode !== 'stay') pendingAutoSendRef.current = { sessionId: targetSessionId, mode };
+        } else if (mountedRef.current) {
+          // Backend heard nothing it could transcribe — say so instead of
+          // silently returning to an empty composer.
+          toast.info('No speech detected in that recording');
         }
       } catch (error) {
         await voiceRecorder.cancel();
@@ -792,15 +819,17 @@ export default function MessageInput({
     ]
   );
 
-  // Voice "Send": stopAndTranscribe(true) queues an auto-send pinned to the
-  // sessionId that was targeted; once transcription finishes (voiceActive flips
-  // false) the transcript is in the draft, so submit it — unless the composer
-  // has since been re-targeted, in which case the text stays as a draft.
+  // Voice Send/Steer/Queue: stopAndTranscribe('send'|'queue') pins an
+  // auto-submit to the targeted session; once transcription finishes
+  // (voiceActive flips false) the transcript is in the draft, so submit it —
+  // unless the composer has since been re-targeted, in which case the text
+  // stays as a draft.
   useEffect(() => {
     if (pendingAutoSendRef.current !== null && !voiceActive) {
-      const target = pendingAutoSendRef.current;
+      const pending = pendingAutoSendRef.current;
       pendingAutoSendRef.current = null;
-      if (target === sessionId) void handleSubmit('immediate');
+      if (pending.sessionId === sessionId)
+        void handleSubmit(pending.mode === 'queue' ? 'defer' : 'immediate');
     }
   }, [voiceActive, handleSubmit, content, sessionId]);
 
@@ -852,7 +881,7 @@ export default function MessageInput({
         return;
       }
 
-      if (e.key === 'Tab' && !e.shiftKey && agentWorking) {
+      if (e.key === 'Tab' && !e.shiftKey && agentWorking && supportsQueueDelivery) {
         e.preventDefault();
         void handleSubmit('defer');
         return;
@@ -878,6 +907,7 @@ export default function MessageInput({
       cmdHandleKeyDown,
       handleSubmit,
       agentWorking,
+      supportsQueueDelivery,
       showAgentMentionAutocomplete,
       filteredAgentMentionCandidates,
       agentMentionSelectedIndex,
@@ -998,9 +1028,13 @@ export default function MessageInput({
               onReferenceSelect={referenceAutocomplete.handleSelect}
               onReferenceClose={referenceAutocomplete.close}
               isAgentWorking={agentWorking}
-              onQueue={() => {
-                void handleSubmit('defer');
-              }}
+              onQueue={
+                supportsQueueDelivery
+                  ? () => {
+                      void handleSubmit('defer');
+                    }
+                  : undefined
+              }
               onStop={handleInterrupt}
               onPaste={disabled ? undefined : handlePaste}
               textareaRef={textareaInputRef}
@@ -1011,24 +1045,20 @@ export default function MessageInput({
                     getLevel={voiceRecorder.getLevel}
                     isRecording={voiceRecorder.isRecording}
                     isTranscribing={isTranscribing}
+                    isStarting={voiceRecorder.isStarting}
+                    onCancel={cancelRecording}
                   />
                 ) : undefined
               }
               voiceControl={
                 voiceActive ? (
+                  // Recording cluster: the mic slot becomes the red Stop, and the
+                  // send controls stay exactly what this session state shows in
+                  // the idle composer — blue Send when the agent is idle, Queue +
+                  // amber Steer while it runs. The X (discard) lives at the left
+                  // end of the waveform body, and the agent-stop is never shown
+                  // here, so two stop buttons can never coexist.
                   <>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        cancelRecording();
-                      }}
-                      disabled={isTranscribing}
-                      title="Discard recording"
-                      aria-label="Cancel recording"
-                      class="h-8 rounded-full px-2 text-xs text-gray-400 hover:bg-white/5 hover:text-gray-200 disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      Cancel
-                    </button>
                     <button
                       type="button"
                       onClick={() => {
@@ -1046,30 +1076,85 @@ export default function MessageInput({
                         <rect x="6" y="6" width="12" height="12" rx="2" />
                       </svg>
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void stopAndTranscribe(true);
-                      }}
-                      disabled={isTranscribing || !voiceRecorder.isRecording}
-                      aria-label="Stop, transcribe and send"
-                      title="Stop, transcribe and send"
-                      class="grid h-9 w-9 place-items-center rounded-full bg-amber-400 text-dark-950 hover:bg-amber-300 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <svg
-                        class="h-4.5 w-4.5"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width={2.5}
+                    {agentWorking ? (
+                      <>
+                        {supportsQueueDelivery && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              void stopAndTranscribe('queue');
+                            }}
+                            disabled={isTranscribing || !voiceRecorder.isRecording}
+                            aria-label="Stop, transcribe and queue"
+                            title="Stop, transcribe and queue for next turn"
+                            class="grid h-9 w-9 place-items-center rounded-full border border-blue-400/30 bg-blue-500/10 text-blue-200 hover:bg-blue-500/20 hover:text-blue-100 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            <svg
+                              class="h-4 w-4"
+                              fill="none"
+                              viewBox="0 0 24 24"
+                              stroke="currentColor"
+                              stroke-width={2.3}
+                            >
+                              <path
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                d="M4 7h11a4 4 0 010 8H7m0 0l3-3m-3 3l3 3"
+                              />
+                            </svg>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void stopAndTranscribe('send');
+                          }}
+                          disabled={isTranscribing || !voiceRecorder.isRecording}
+                          aria-label="Stop, transcribe and steer"
+                          title="Stop, transcribe and steer the current turn"
+                          class="grid h-9 w-9 place-items-center rounded-full bg-amber-400 text-dark-950 hover:bg-amber-300 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          <svg
+                            class="h-4.5 w-4.5"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width={2.5}
+                          >
+                            <path
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              d="M5 10l7-7m0 0l7 7m-7-7v18"
+                            />
+                          </svg>
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void stopAndTranscribe('send');
+                        }}
+                        disabled={isTranscribing || !voiceRecorder.isRecording}
+                        aria-label="Stop, transcribe and send"
+                        title="Stop, transcribe and send"
+                        class="grid h-9 w-9 place-items-center rounded-full bg-blue-500 text-white hover:bg-blue-600 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        <path
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          d="M5 10l7-7m0 0l7 7m-7-7v18"
-                        />
-                      </svg>
-                    </button>
+                        <svg
+                          class="h-4.5 w-4.5"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width={2.5}
+                        >
+                          <path
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            d="M5 10l7-7m0 0l7 7m-7-7v18"
+                          />
+                        </svg>
+                      </button>
+                    )}
                   </>
                 ) : voiceControlVisible ? (
                   <button

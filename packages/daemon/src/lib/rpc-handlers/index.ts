@@ -544,6 +544,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   );
 
   const spaceWorkflowRepo = new SpaceWorkflowRepository(deps.db.getDatabase());
+  // Capture a definition-version snapshot for every pre-existing workflow at startup
+  // (RFC §4 Phase 1 rollout backfill) so a later edit can't erase the rollout-time
+  // definition. Idempotent — a no-op on subsequent boots once every head is captured.
+  spaceWorkflowRepo.backfillExistingDefinitionVersions();
   const spaceAgentRepo = new SpaceAgentRepository(deps.db.getDatabase());
   const longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(deps.db.getDatabase());
   const agentLookup: SpaceAgentLookup = {

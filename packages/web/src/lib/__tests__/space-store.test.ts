@@ -2546,6 +2546,39 @@ describe('SpaceStore — refresh', () => {
     const gets = mockHub.request.mock.calls.filter((c) => (c[0] as string) === 'spaceWorkflow.get');
     expect(gets).toHaveLength(1);
   });
+
+  it('re-establishes the open task run node-exec subscription on reconnect', async () => {
+    mockWorkflowSummaries([]);
+    await spaceStore.selectSpace('space-1');
+    await spaceStore.ensureNodeExecutions('run-1');
+    mockHub.request.mockClear();
+
+    await spaceStore.refresh();
+    await new Promise((r) => setTimeout(r, 0));
+
+    // refresh() re-fetches + re-subscribes the open task's run (activeNodeExecRunId).
+    expect(mockHub.request).toHaveBeenCalledWith('nodeExecution.list', {
+      workflowRunId: 'run-1',
+      spaceId: 'space-1',
+    });
+    expect(mockHub.request).toHaveBeenCalledWith('liveQuery.subscribe', {
+      queryName: 'nodeExecutions.byRun',
+      params: ['run-1'],
+      subscriptionId: 'nodeExecutions-byRun-run-1',
+    });
+  });
+
+  it('does not re-establish node-exec subscription on reconnect when none was active', async () => {
+    mockWorkflowSummaries([]);
+    await spaceStore.selectSpace('space-1');
+    mockHub.request.mockClear();
+
+    await spaceStore.refresh();
+    await new Promise((r) => setTimeout(r, 0));
+
+    const methods = mockHub.request.mock.calls.map((c) => c[0] as string);
+    expect(methods).not.toContain('nodeExecution.list');
+  });
 });
 
 // -------------------------------------------------------
@@ -2574,7 +2607,66 @@ describe('SpaceStore — node execution LiveQuery subscriptions', () => {
   beforeEach(resetStore);
   afterEach(() => vi.clearAllMocks());
 
-  it('subscribes to LiveQuery when workflowRun.created fires', async () => {
+  /** Count liveQuery.subscribe calls for nodeExecutions.byRun in the mock hub. */
+  function nodeExecSubscribeCalls() {
+    return mockHub.request.mock.calls.filter(
+      (c: unknown[]) =>
+        c[0] === 'liveQuery.subscribe' &&
+        (c[1] as Record<string, unknown>)?.queryName === 'nodeExecutions.byRun'
+    );
+  }
+
+  it('ensureNodeExecutions(runId) fetches + subscribes to nodeExecutions.byRun for that run only', async () => {
+    await spaceStore.selectSpace('space-1');
+
+    await spaceStore.ensureNodeExecutions('run-1');
+
+    // One fetch for the open run (not one per run in the space).
+    expect(mockHub.request).toHaveBeenCalledWith('nodeExecution.list', {
+      workflowRunId: 'run-1',
+      spaceId: 'space-1',
+    });
+    // Exactly one subscription for the open run.
+    expect(mockHub.request).toHaveBeenCalledWith('liveQuery.subscribe', {
+      queryName: 'nodeExecutions.byRun',
+      params: ['run-1'],
+      subscriptionId: 'nodeExecutions-byRun-run-1',
+    });
+    expect(nodeExecSubscribeCalls()).toHaveLength(1);
+  });
+
+  it('ensureNodeExecutions(null) is a no-op when no run is active (standalone task)', async () => {
+    await spaceStore.selectSpace('space-1');
+
+    await spaceStore.ensureNodeExecutions(null);
+
+    expect(nodeExecSubscribeCalls()).toHaveLength(0);
+    const calledMethods = mockHub.request.mock.calls.map((c: unknown[]) => c[0]);
+    expect(calledMethods).not.toContain('nodeExecution.list');
+  });
+
+  it('ensureNodeExecutions(null) tears down the active run subscription when switching to a standalone task', async () => {
+    await spaceStore.selectSpace('space-1');
+
+    await spaceStore.ensureNodeExecutions('run-1');
+    expect(nodeExecSubscribeCalls()).toHaveLength(1);
+
+    // Switching to a standalone task (no workflowRunId) must drop run-1's sub.
+    await spaceStore.ensureNodeExecutions(null);
+
+    expect(mockHub.request).toHaveBeenCalledWith('liveQuery.unsubscribe', {
+      subscriptionId: 'nodeExecutions-byRun-run-1',
+    });
+    expect(spaceStore.nodeExecutions.value).toEqual([]);
+  });
+
+  it('ensureNodeExecutions does not subscribe before a space is selected', async () => {
+    await spaceStore.ensureNodeExecutions('run-1');
+
+    expect(nodeExecSubscribeCalls()).toHaveLength(0);
+  });
+
+  it('workflowRun.created does not auto-subscribe (subscription is per-run via ensureNodeExecutions)', async () => {
     await spaceStore.selectSpace('space-1');
 
     const handler = mockEventHandlers.get('space.workflowRun.created')!;
@@ -2582,33 +2674,12 @@ describe('SpaceStore — node execution LiveQuery subscriptions', () => {
     handler({ spaceId: 'space-1', runId: run.id, run, sessionId: 's1' });
 
     expect(spaceStore.workflowRuns.value).toContainEqual(run);
-    expect(mockHub.request).toHaveBeenCalledWith('liveQuery.subscribe', {
-      queryName: 'nodeExecutions.byRun',
-      params: ['run-1'],
-      subscriptionId: 'nodeExecutions-byRun-run-1',
-    });
-  });
-
-  it('does not subscribe to LiveQuery if spaceId does not match', async () => {
-    await spaceStore.selectSpace('space-1');
-
-    const handler = mockEventHandlers.get('space.workflowRun.created')!;
-    const run = makeRun('run-2');
-    handler({ spaceId: 'space-other', runId: run.id, run, sessionId: 's1' });
-
-    expect(spaceStore.workflowRuns.value).not.toContainEqual(run);
-    expect(mockHub.request).not.toHaveBeenCalledWith(
-      'liveQuery.subscribe',
-      expect.objectContaining({ params: ['run-2'] })
-    );
+    expect(nodeExecSubscribeCalls()).toHaveLength(0);
   });
 
   it('applies LiveQuery snapshot to nodeExecutions signal', async () => {
     await spaceStore.selectSpace('space-1');
-
-    const handler = mockEventHandlers.get('space.workflowRun.created')!;
-    const run = makeRun('run-1');
-    handler({ spaceId: 'space-1', runId: run.id, run, sessionId: 's1' });
+    await spaceStore.ensureNodeExecutions('run-1');
 
     const exec1 = makeNodeExecution({
       id: 'exec-1',
@@ -2631,10 +2702,7 @@ describe('SpaceStore — node execution LiveQuery subscriptions', () => {
 
   it('applies LiveQuery delta (add/update/remove) to nodeExecutions signal', async () => {
     await spaceStore.selectSpace('space-1');
-
-    const handler = mockEventHandlers.get('space.workflowRun.created')!;
-    const run = makeRun('run-1');
-    handler({ spaceId: 'space-1', runId: run.id, run, sessionId: 's1' });
+    await spaceStore.ensureNodeExecutions('run-1');
 
     const exec1 = makeNodeExecution({ id: 'exec-1', status: 'pending' });
     const exec2 = makeNodeExecution({ id: 'exec-2', status: 'pending' });
@@ -2660,19 +2728,32 @@ describe('SpaceStore — node execution LiveQuery subscriptions', () => {
     expect(spaceStore.nodeExecutions.value).not.toContainEqual(exec2);
   });
 
-  it('replaces snapshot data for a specific run without affecting other runs', async () => {
+  it('switching runs replaces node executions and unsubscribes the previous run', async () => {
     await spaceStore.selectSpace('space-1');
 
-    const handler = mockEventHandlers.get('space.workflowRun.created')!;
-    handler({ spaceId: 'space-1', runId: 'run-1', run: makeRun('run-1'), sessionId: 's1' });
-    handler({ spaceId: 'space-1', runId: 'run-2', run: makeRun('run-2'), sessionId: 's1' });
-
+    await spaceStore.ensureNodeExecutions('run-1');
     const exec1 = makeNodeExecution({ id: 'exec-1', workflowRunId: 'run-1' });
     fireMockEvent('liveQuery.snapshot', {
       subscriptionId: 'nodeExecutions-byRun-run-1',
       rows: [exec1],
       version: 1,
     });
+    expect(spaceStore.nodeExecutions.value).toEqual([exec1]);
+
+    // Switch to a different run — the store drops run-1's subscription and
+    // clears its executions so only the open task's run stays live.
+    await spaceStore.ensureNodeExecutions('run-2');
+
+    expect(mockHub.request).toHaveBeenCalledWith('liveQuery.unsubscribe', {
+      subscriptionId: 'nodeExecutions-byRun-run-1',
+    });
+    // A late snapshot for the torn-down run must not land.
+    fireMockEvent('liveQuery.snapshot', {
+      subscriptionId: 'nodeExecutions-byRun-run-1',
+      rows: [makeNodeExecution({ id: 'stale', workflowRunId: 'run-1' })],
+      version: 2,
+    });
+    expect(spaceStore.nodeExecutions.value).toEqual([]);
 
     const exec2 = makeNodeExecution({ id: 'exec-2', workflowRunId: 'run-2' });
     fireMockEvent('liveQuery.snapshot', {
@@ -2680,26 +2761,12 @@ describe('SpaceStore — node execution LiveQuery subscriptions', () => {
       rows: [exec2],
       version: 1,
     });
-
-    expect(spaceStore.nodeExecutions.value).toHaveLength(2);
-
-    const exec1New = makeNodeExecution({ id: 'exec-1-new', workflowRunId: 'run-1' });
-    fireMockEvent('liveQuery.snapshot', {
-      subscriptionId: 'nodeExecutions-byRun-run-1',
-      rows: [exec1New],
-      version: 2,
-    });
-
-    expect(spaceStore.nodeExecutions.value).toHaveLength(2);
-    expect(spaceStore.nodeExecutions.value).toContainEqual(exec1New);
-    expect(spaceStore.nodeExecutions.value).toContainEqual(exec2);
+    expect(spaceStore.nodeExecutions.value).toEqual([exec2]);
   });
 
   it('handles empty snapshot (clears executions for that run)', async () => {
     await spaceStore.selectSpace('space-1');
-
-    const handler = mockEventHandlers.get('space.workflowRun.created')!;
-    handler({ spaceId: 'space-1', runId: 'run-1', run: makeRun('run-1'), sessionId: 's1' });
+    await spaceStore.ensureNodeExecutions('run-1');
 
     const exec1 = makeNodeExecution({ id: 'exec-1', workflowRunId: 'run-1' });
     fireMockEvent('liveQuery.snapshot', {
@@ -2719,9 +2786,7 @@ describe('SpaceStore — node execution LiveQuery subscriptions', () => {
 
   it('computes nodeExecutionsByNodeId correctly', async () => {
     await spaceStore.selectSpace('space-1');
-
-    const handler = mockEventHandlers.get('space.workflowRun.created')!;
-    handler({ spaceId: 'space-1', runId: 'run-1', run: makeRun('run-1'), sessionId: 's1' });
+    await spaceStore.ensureNodeExecutions('run-1');
 
     const exec1 = makeNodeExecution({
       id: 'exec-1',
@@ -2752,9 +2817,7 @@ describe('SpaceStore — node execution LiveQuery subscriptions', () => {
 
   it('ignores snapshot events for wrong subscriptionId', async () => {
     await spaceStore.selectSpace('space-1');
-
-    const handler = mockEventHandlers.get('space.workflowRun.created')!;
-    handler({ spaceId: 'space-1', runId: 'run-1', run: makeRun('run-1'), sessionId: 's1' });
+    await spaceStore.ensureNodeExecutions('run-1');
 
     const exec1 = makeNodeExecution({ id: 'exec-1' });
     fireMockEvent('liveQuery.snapshot', {
@@ -2768,9 +2831,7 @@ describe('SpaceStore — node execution LiveQuery subscriptions', () => {
 
   it('clears nodeExecutions on space switch', async () => {
     await spaceStore.selectSpace('space-1');
-
-    const handler = mockEventHandlers.get('space.workflowRun.created')!;
-    handler({ spaceId: 'space-1', runId: 'run-1', run: makeRun('run-1'), sessionId: 's1' });
+    await spaceStore.ensureNodeExecutions('run-1');
 
     const exec1 = makeNodeExecution({ id: 'exec-1' });
     fireMockEvent('liveQuery.snapshot', {
@@ -2795,21 +2856,57 @@ describe('SpaceStore — node execution LiveQuery subscriptions', () => {
     expect(spaceStore.nodeExecutions.value).toHaveLength(0);
   });
 
-  it('does not duplicate subscription when workflowRun.created fires twice for same run', async () => {
+  it('does not duplicate subscription when ensureNodeExecutions(runId) is called twice', async () => {
     await spaceStore.selectSpace('space-1');
 
-    const handler = mockEventHandlers.get('space.workflowRun.created')!;
-    const run = makeRun('run-1');
+    await spaceStore.ensureNodeExecutions('run-1');
+    await spaceStore.ensureNodeExecutions('run-1');
 
-    handler({ spaceId: 'space-1', runId: run.id, run, sessionId: 's1' });
-    handler({ spaceId: 'space-1', runId: run.id, run, sessionId: 's1' });
+    expect(nodeExecSubscribeCalls()).toHaveLength(1);
+  });
 
-    const subscribeCalls = mockHub.request.mock.calls.filter(
-      (c: unknown[]) =>
-        c[0] === 'liveQuery.subscribe' &&
-        (c[1] as Record<string, unknown>)?.queryName === 'nodeExecutions.byRun'
+  it('discards a stale fetch when the run switches mid-load (nodeExecLoadGen guard)', async () => {
+    await spaceStore.selectSpace('space-1');
+
+    // Deferred control over nodeExecution.list so run-1's fetch stays in flight
+    // while we switch to run-2 — exercising the stale-result / supersede guards.
+    const run1Exec = makeNodeExecution({ id: 'stale', workflowRunId: 'run-1' });
+    const run2Exec = makeNodeExecution({ id: 'exec-2', workflowRunId: 'run-2' });
+    let resolveRun1!: (v: { executions: NodeExecution[] }) => void;
+    let resolveRun2!: (v: { executions: NodeExecution[] }) => void;
+    const run1Promise = new Promise<{ executions: NodeExecution[] }>((r) => {
+      resolveRun1 = r;
+    });
+    const run2Promise = new Promise<{ executions: NodeExecution[] }>((r) => {
+      resolveRun2 = r;
+    });
+    mockHub.request.mockImplementation(async (method: string, params: any) => {
+      if (method === 'nodeExecution.list') {
+        return params.workflowRunId === 'run-1' ? run1Promise : run2Promise;
+      }
+      return {};
+    });
+
+    // Kick off run-1, then switch to run-2 BEFORE run-1's fetch resolves.
+    const p1 = spaceStore.ensureNodeExecutions('run-1');
+    const p2 = spaceStore.ensureNodeExecutions('run-2');
+
+    resolveRun1({ executions: [run1Exec] });
+    resolveRun2({ executions: [run2Exec] });
+    await Promise.all([p1, p2]);
+
+    // run-2's data lands; run-1's stale fetch was discarded.
+    expect(spaceStore.nodeExecutions.value).toEqual([run2Exec]);
+    // run-1 was superseded before it could subscribe, so it never subscribes.
+    const run1Subscribes = nodeExecSubscribeCalls().filter(
+      (c) => (c[1] as { params?: string[] }).params?.[0] === 'run-1'
     );
-    expect(subscribeCalls).toHaveLength(1);
+    expect(run1Subscribes).toHaveLength(0);
+    expect(mockHub.request).toHaveBeenCalledWith('liveQuery.subscribe', {
+      queryName: 'nodeExecutions.byRun',
+      params: ['run-2'],
+      subscriptionId: 'nodeExecutions-byRun-run-2',
+    });
   });
   describe('sendTaskMessage', () => {
     beforeEach(async () => {
@@ -2837,5 +2934,58 @@ describe('SpaceStore — node execution LiveQuery subscriptions', () => {
       expect(result?.delivered).toBe(false);
       expect((result as { queued?: boolean }).queued).toBeUndefined();
     });
+  });
+});
+
+describe('SpaceStore — refreshLongHorizonAgents preserves cache on failure', () => {
+  beforeEach(resetStore);
+  afterEach(() => vi.clearAllMocks());
+
+  it('keeps the cached agent list when a force-refresh fails (review fix)', async () => {
+    spaceStore.spaceId.value = 'space-1';
+    // Seed the cache as if a prior load succeeded.
+    spaceStore.longHorizonAgents.value = [makeLongHorizonAgent('lh-1')];
+    // The force-refresh RPC fails transiently.
+    mockHub.request.mockImplementation((method: string) => {
+      if (method === 'spaceLongHorizonAgent.list') return Promise.reject(new Error('timeout'));
+      return Promise.resolve({});
+    });
+    await spaceStore.refreshLongHorizonAgents();
+    // The cached list must be preserved — a transient refresh failure must not
+    // wipe the Agents view (ensureConfigData won't re-fetch: configDataLoaded
+    // stays true).
+    expect(spaceStore.longHorizonAgents.value).toHaveLength(1);
+  });
+
+  it('drops a longHorizonAgent.list result that arrived after a space switch', async () => {
+    spaceStore.spaceId.value = 'space-1';
+    // Seed the cache so a stale overwrite would be observable.
+    spaceStore.longHorizonAgents.value = [makeLongHorizonAgent('seeded')];
+    let resolveList: (value: { agents: SpaceLongHorizonAgent[] }) => void = () => {};
+    // The mock's request return union is inferred narrow from its default
+    // `{ agents: [] }`; cast the implementation so we can resolve non-empty
+    // agents for this one RPC.
+    mockHub.request.mockImplementation(((method: string) => {
+      if (method === 'spaceLongHorizonAgent.list') {
+        return new Promise<{ agents: SpaceLongHorizonAgent[] }>((r) => {
+          resolveList = r;
+        });
+      }
+      return Promise.resolve({});
+    }) as never);
+    const pending = spaceStore.refreshLongHorizonAgents();
+    // Wait for getHub to resolve and the list RPC to be issued (so resolveList
+    // is captured) BEFORE flipping the space.
+    await vi.waitFor(() =>
+      expect(mockHub.request).toHaveBeenCalledWith('spaceLongHorizonAgent.list', {
+        spaceId: 'space-1',
+      })
+    );
+    // Switch space before the list RPC resolves.
+    spaceStore.spaceId.value = 'space-2';
+    resolveList({ agents: [makeLongHorizonAgent('stale')] });
+    await pending;
+    // The stale (now space-2) result must NOT overwrite the seeded cache.
+    expect(spaceStore.longHorizonAgents.value.map((a) => a.id)).toEqual(['seeded']);
   });
 });

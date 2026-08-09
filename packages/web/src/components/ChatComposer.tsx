@@ -67,6 +67,12 @@ export interface ChatComposerProps {
   /** Optional inline error message rendered above the status bar (used by task sessions) */
   errorMessage?: string | null;
   /**
+   * Whether this composer's send path honors 'defer' (queue for next turn).
+   * Defaults to true; task-session composers pass false because they deliver
+   * immediately. Forwarded to MessageInput, which hides the Queue controls.
+   */
+  supportsQueueDelivery?: boolean;
+  /**
    * Forwarded to MessageInput so the owning content column can register itself
    * as the file-drop target. @see MessageInput#registerDropTarget
    */
@@ -119,6 +125,7 @@ export function ChatComposer({
   onDraftActiveChange,
   onThinkingLevelChange,
   errorMessage,
+  supportsQueueDelivery,
   registerDropTarget,
   store,
 }: ChatComposerProps) {
@@ -158,9 +165,10 @@ export function ChatComposer({
           thinkingLevel={thinkingLevel}
           onThinkingLevelChange={onThinkingLevelChange}
           coordinatorSwitching={coordinatorSwitching}
+          isRecovering={isRecovering}
         />
 
-        {sessionStatus === 'archived' ? (
+        {sessionStatus === 'archived' || sessionStatus === 'ended' ? (
           <div class="p-4">
             <div class="max-w-4xl mx-auto">
               <div
@@ -179,7 +187,7 @@ export function ChatComposer({
                       d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"
                     />
                   </svg>
-                  Session archived
+                  {sessionStatus === 'ended' ? 'Session ended' : 'Session archived'}
                 </span>
               </div>
             </div>
@@ -207,6 +215,7 @@ export function ChatComposer({
               leadingPaddingClass={inputLeadingPaddingClass}
               onDraftActiveChange={onDraftActiveChange}
               isProcessing={isProcessing}
+              supportsQueueDelivery={supportsQueueDelivery}
               registerDropTarget={registerDropTarget}
               coordinatorMode={coordinatorMode}
               coordinatorSwitching={coordinatorSwitching}

@@ -15,7 +15,7 @@ import { runMigration106 as runMigration106External } from './m106-backfill-agen
 import { runMigration170 as runMigration170External } from './m170-backfill-missing-preset-agents';
 import { runMigration171 } from './m171-backfill-post-approval-review-channels';
 import { runMigration172 as runMigration172External } from './m172-backfill-orphaned-preset-agents';
-import { runMigration180 as runMigration180External } from './m180-backfill-reviewer-bash-tools';
+import { runMigration181 as runMigration181External } from './m181-backfill-reviewer-bash-tools';
 import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug';
 import {
   deriveArtifactKey,
@@ -897,12 +897,22 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   //   dev shipped M176/M177/M178 in #2387/#2388/#2390.)
   run(migrationMarkerKey(179), () => runMigration179(db));
 
-  // Migration 180: Backfill Bash + Cron tools onto existing Reviewer preset rows
+  // Migration 180: Create `space_workflow_definition_versions` — the append-only history
+  // of immutable workflow-definition snapshots (RFC §4 Phase 1). Each row is a full,
+  // self-contained definition payload identified by a SHA-256 `version_hash`. Shadow mode:
+  // this PR creates the table and begins populating it on definition writes; no run read
+  // resolves through it yet (the Phase-1 read cutover lands in a later PR). No FK to
+  // space_workflows(id): pinned versions must survive deletion of the mutable head
+  // (orphan/tombstone policy). New databases get the table from createTables(); this
+  // brings existing databases to parity.
+  run(migrationMarkerKey(180), () => runMigration180(db));
+
+  // Migration 181: Backfill Bash + Cron tools onto existing Reviewer preset rows
   // (the reviewer lost the shell-less profile when the PR-process MCPs were
   // removed). Re-stamps only unmodified seeds; customized rows are left for the
-  // drift/sync UI. (Renumbered 179->180 because dev shipped M179 for
-  // pending_agent_messages.workflow_node_id.)
-  run(migrationMarkerKey(180), () => runMigration180(db));
+  // drift/sync UI. (Renumbered 180->181 because dev shipped M180 for
+  // space_workflow_definition_versions.)
+  run(migrationMarkerKey(181), () => runMigration181(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -2739,6 +2749,31 @@ function runMigration29(db: BunDatabase): void {
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_space_workflow_steps_order ON space_workflow_steps(workflow_id, order_index)`
   );
+
+  // -------------------------------------------------------------------------
+  // space_workflow_definition_versions
+  //
+  // Append-only history of immutable workflow-definition snapshots (RFC §4 Phase 1).
+  // Shadow mode: populated on definition writes; no run read resolves through it yet.
+  // No FK to space_workflows(id) — pinned versions must survive deletion of the mutable
+  // head (orphan/tombstone policy).
+  // -------------------------------------------------------------------------
+  db.exec(`
+		CREATE TABLE IF NOT EXISTS space_workflow_definition_versions (
+			workflow_id TEXT NOT NULL,
+			version_hash TEXT NOT NULL,
+			space_id TEXT NOT NULL,
+			payload TEXT NOT NULL,
+			source TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			PRIMARY KEY (workflow_id, version_hash),
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+		)
+	`);
+  db.exec(`
+		CREATE INDEX IF NOT EXISTS idx_space_workflow_definition_versions_space
+		ON space_workflow_definition_versions(space_id)
+	`);
 
   // -------------------------------------------------------------------------
   // space_workflow_transitions (directed edges between steps)
@@ -11966,12 +12001,42 @@ export function runMigration178(db: BunDatabase): void {
 }
 
 /**
- * Migration 180 — Backfill Bash + Cron tools onto existing Reviewer preset rows.
+ * Migration 180: Create `space_workflow_definition_versions` — the append-only history
+ * of immutable workflow-definition snapshots (RFC §4 Phase 1).
  *
- * Delegated to m180-backfill-reviewer-bash-tools.ts so the loop body stays
+ * Each row is a full, self-contained definition payload identified by a SHA-256
+ * `version_hash` (see `computeDefinitionVersion`). Shadow mode: populated on definition
+ * writes; no run read resolves through it yet. There is intentionally NO FK to
+ * `space_workflows(id)` — pinned versions must survive deletion of the mutable head
+ * (orphan/tombstone policy); a cascade would erase the rows a pinned run depends on.
+ */
+export function runMigration180(db: BunDatabase): void {
+  if (tableExists(db, 'space_workflow_definition_versions')) return;
+  db.exec(`
+    CREATE TABLE space_workflow_definition_versions (
+      workflow_id TEXT NOT NULL,
+      version_hash TEXT NOT NULL,
+      space_id TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      source TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (workflow_id, version_hash),
+      FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+    )
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_space_workflow_definition_versions_space
+    ON space_workflow_definition_versions(space_id)
+  `);
+}
+
+/**
+ * Migration 181 — Backfill Bash + Cron tools onto existing Reviewer preset rows.
+ *
+ * Delegated to m181-backfill-reviewer-bash-tools.ts so the loop body stays
  * readable. See the module doc there for the safety model (only unmodified
  * seed rows are re-stamped; customized rows are left to drift/sync).
  */
-export function runMigration180(db: BunDatabase): void {
-  runMigration180External(db);
+export function runMigration181(db: BunDatabase): void {
+  runMigration181External(db);
 }

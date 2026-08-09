@@ -129,6 +129,23 @@ export function createSpaceTables(db: BunDatabase): void {
   );
 
   db.exec(`
+		CREATE TABLE IF NOT EXISTS space_workflow_definition_versions (
+			workflow_id TEXT NOT NULL,
+			version_hash TEXT NOT NULL,
+			space_id TEXT NOT NULL,
+			payload TEXT NOT NULL,
+			source TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			PRIMARY KEY (workflow_id, version_hash),
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+		)
+	`);
+  db.exec(`
+		CREATE INDEX IF NOT EXISTS idx_space_workflow_definition_versions_space
+		ON space_workflow_definition_versions(space_id)
+	`);
+
+  db.exec(`
 		CREATE TABLE IF NOT EXISTS space_workflow_runs (
 			id TEXT PRIMARY KEY,
 			space_id TEXT NOT NULL,
