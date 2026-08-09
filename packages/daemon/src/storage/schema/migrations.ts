@@ -914,6 +914,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // (Renumbered 180→181: dev shipped M180 for space_workflow_definition_versions
   // in #2412, so this index bumped one.)
   run(migrationMarkerKey(181), () => runMigration181(db));
+
+  // Migration 182: Widen sdk_messages.send_status for ACP delivery boundaries.
+  run(migrationMarkerKey(182), () => runMigration182(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -7965,6 +7968,53 @@ export function runMigration181(db: BunDatabase): void {
         AND json_extract(payload, '$.role') = 'turn'
         AND status IN ('pending', 'processing')
   `);
+}
+
+/**
+ * Migration 182: Add the ACP submitted delivery state while preserving the
+ * complete sdk_messages schema and dependent SQLite objects.
+ */
+export function runMigration182(db: BunDatabase): void {
+  if (!tableExists(db, 'sdk_messages')) return;
+  const tableSql = tableCreateSql(db, 'sdk_messages');
+  if (!tableSql || tableSql.includes("'submitted'")) return;
+
+  const objects = db
+    .prepare(`SELECT type, name, sql FROM sqlite_master
+      WHERE tbl_name = 'sdk_messages' AND type IN ('index', 'trigger') AND sql IS NOT NULL`)
+    .all() as Array<{ type: string; name: string; sql: string }>;
+  const widenedSql = tableSql
+    .replace(/CREATE TABLE(?: IF NOT EXISTS)? sdk_messages/i, 'CREATE TABLE sdk_messages_m182_new')
+    .replace(
+      /CHECK\s*\(send_status IN \('deferred', 'enqueued', 'consumed', 'failed'\)\)/,
+      "CHECK(send_status IN ('deferred', 'enqueued', 'submitted', 'consumed', 'failed'))"
+    );
+  if (widenedSql === tableSql) return;
+
+  const columns = db.prepare(`PRAGMA table_xinfo('sdk_messages')`).all() as Array<{
+    name: string;
+    hidden: number;
+  }>;
+  const storedColumns = columns
+    .filter((column) => column.hidden === 0)
+    .map((column) => column.name);
+  const quoted = storedColumns.map((name) => `"${name.replaceAll('"', '""')}"`).join(', ');
+
+  db.exec('PRAGMA foreign_keys = OFF');
+  db.exec('BEGIN');
+  try {
+    db.exec(widenedSql);
+    db.exec(`INSERT INTO sdk_messages_m182_new (${quoted}) SELECT ${quoted} FROM sdk_messages`);
+    db.exec('DROP TABLE sdk_messages');
+    db.exec('ALTER TABLE sdk_messages_m182_new RENAME TO sdk_messages');
+    for (const object of objects) db.exec(object.sql);
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  } finally {
+    db.exec('PRAGMA foreign_keys = ON');
+  }
 }
 
 /**

@@ -276,7 +276,10 @@ export class AcpClient {
   /**
    * Send a prompt and yield streaming update notifications.
    */
-  async *sendPrompt(prompt: AcpContentBlock[]): AsyncGenerator<AcpSessionUpdateNotification> {
+  async *sendPrompt(
+    prompt: AcpContentBlock[],
+    callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+  ): AsyncGenerator<AcpSessionUpdateNotification> {
     if (!this.sessionId) {
       throw new Error('No active session. Call createSession() first.');
     }
@@ -286,11 +289,18 @@ export class AcpClient {
     let resolveNext: (() => void) | null = null;
     let done = false;
     let error: Error | null = null;
+    let accepted = false;
+    const accept = () => {
+      if (accepted) return;
+      accepted = true;
+      callbacks?.onAccepted?.();
+    };
 
     const subscriber = (notification: AcpJsonRpcNotification) => {
       if (notification.method !== 'session/update') return;
       const params = notification.params as AcpSessionUpdateNotification;
       if (params.sessionId !== this.sessionId) return;
+      accept();
       queue.push(params);
       if (resolveNext) {
         resolveNext();
@@ -301,10 +311,14 @@ export class AcpClient {
     this.notificationSubscribers.add(subscriber);
 
     const requestPromise = this.transport
-      .sendRequest('session/prompt', {
-        sessionId: this.sessionId,
-        prompt,
-      } as AcpSessionPromptParams)
+      .sendRequest(
+        'session/prompt',
+        {
+          sessionId: this.sessionId,
+          prompt,
+        } as AcpSessionPromptParams,
+        { onSubmitted: callbacks?.onSubmitted }
+      )
       .then(
         (response) => {
           if ('error' in response) {
@@ -312,6 +326,7 @@ export class AcpClient {
           } else {
             const result = response.result as AcpSessionPromptResult;
             this.lastPromptStopReason = result.stopReason;
+            accept();
           }
           done = true;
         },

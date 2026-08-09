@@ -41,6 +41,14 @@ export class MessageRecoveryHandler {
     const { session, db, logger } = this;
 
     try {
+      const submitted = db.getMessagesByStatus(session.id, 'submitted');
+      if (submitted.length > 0) {
+        db.updateMessageStatus(
+          submitted.map((message) => message.dbId),
+          'failed'
+        );
+      }
+
       // Only consumed user messages after the latest system:init can be orphaned.
       // Do the status/type/timestamp filtering in SQL so cold-opening an old,
       // large session does not parse the whole transcript.

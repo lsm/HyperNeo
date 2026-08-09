@@ -64,6 +64,34 @@ describe('MessageQueue', () => {
     });
   });
 
+  it('suppresses the pre-yield callback only when requested by ACP', async () => {
+    const yielded: string[] = [];
+    queue.onMessageYielded = (id) => yielded.push(id);
+    queue.start();
+
+    const delivery = queue.enqueue('ACP prompt');
+    const generator = queue.messageGenerator(testSessionId, { suppressPreYieldCallback: true });
+    const result = await generator.next();
+    expect(yielded).toEqual([]);
+    result.value.onSent();
+    await delivery;
+    queue.stop();
+  });
+
+  it('keeps the SDK pre-yield callback behavior by default', async () => {
+    const yielded: string[] = [];
+    queue.onMessageYielded = (id) => yielded.push(id);
+    queue.start();
+
+    const delivery = queue.enqueue('SDK prompt');
+    const generator = queue.messageGenerator(testSessionId);
+    const result = await generator.next();
+    expect(yielded).toHaveLength(1);
+    result.value.onSent();
+    await delivery;
+    queue.stop();
+  });
+
   describe('clear', () => {
     it('should clear all pending messages', async () => {
       const promise1 = queue.enqueue('Message 1');

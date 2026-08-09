@@ -652,7 +652,9 @@ export class AcpQueryRunner {
         logger.warn('Background fetch of models failed:', error);
       });
 
-      for await (const { message, onSent } of messageQueue.messageGenerator(session.id)) {
+      for await (const { message, onSent } of messageQueue.messageGenerator(session.id, {
+        suppressPreYieldCallback: true,
+      })) {
         if (abortController.signal.aborted) break;
 
         const queuedMessage = message as SDKUserMessage & { internal?: boolean };
@@ -665,18 +667,27 @@ export class AcpQueryRunner {
         }
 
         await this.applyStoredAcpThinkingLevel(client);
-        onSent();
 
         const promptContent = prependInstructionsToNextPrompt
           ? [...instructionBlocks, ...toAcpPromptContent(message)]
           : toAcpPromptContent(message);
         const shouldPersistInstructionsSent = prependInstructionsToNextPrompt;
         prependInstructionsToNextPrompt = false;
+        let submitted = false;
         const adapter = new AcpQueryAdapter(client, promptContent, {
           contextWindow: getAcpContextWindow(),
           initialUsageEstimate: getAcpContextUsageEstimate(session),
           onContextUsageUpdate: (used) => this.persistAcpContextUsageEstimate(used),
           onConfigOptionsUpdate: (configOptions) => this.updateAcpModelCache(configOptions),
+          onSubmitted: () => {
+            if (submitted) return;
+            submitted = true;
+            this.ctx.messageHandler.markMessageSubmitted(message.uuid ?? '');
+            onSent();
+          },
+          onAccepted: () => {
+            this.ctx.messageHandler.markMessageAccepted(message.uuid ?? '');
+          },
         });
         this.ctx.queryObject = adapter;
 

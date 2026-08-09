@@ -28,7 +28,12 @@ function createMockClient() {
     loadSession: mock(async (sessionId: string) => ({ sessionId, configOptions: [] })),
     resumeSession: mock(async (sessionId: string) => ({ sessionId, configOptions: [] })),
     canLoadSession: mock(() => false),
-    sendPrompt: mock(async function* (_prompt: unknown) {
+    sendPrompt: mock(async function* (
+      _prompt: unknown,
+      callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+    ) {
+      callbacks?.onSubmitted?.();
+      callbacks?.onAccepted?.();
       yield {
         sessionId: 'acp-session-1',
         update: {
@@ -183,6 +188,10 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
     askUserQuestionHandler: {
       createCanUseToolCallback: mock(() => canUseTool),
     } as unknown as AskUserQuestionHandler,
+    messageHandler: {
+      markMessageSubmitted: mock(() => {}),
+      markMessageAccepted: mock(() => {}),
+    } as never,
     queryObject: null,
     queryPromise: null,
     queryAbortController: null,

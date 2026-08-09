@@ -72,7 +72,12 @@ class MockAcpClient {
     this.notifications.push(notification);
   }
 
-  async *sendPrompt(_prompt: AcpContentBlock[]): AsyncGenerator<AcpSessionUpdateNotification> {
+  async *sendPrompt(
+    _prompt: AcpContentBlock[],
+    callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+  ): AsyncGenerator<AcpSessionUpdateNotification> {
+    callbacks?.onSubmitted?.();
+    callbacks?.onAccepted?.();
     for (const n of this.notifications) {
       yield n;
     }
@@ -106,6 +111,26 @@ describe('AcpQueryAdapter', () => {
   // -------------------------------------------------------------------------
   // Iteration
   // -------------------------------------------------------------------------
+
+  test('forwards ACP delivery lifecycle callbacks at prompt iteration', async () => {
+    const client = new MockAcpClient('sess-1');
+    const onSubmitted = mock(() => {});
+    const onAccepted = mock(() => {});
+    const adapter = new AcpQueryAdapter(
+      client as unknown as InstanceType<
+        typeof import('../../../../src/lib/acp/acp-client').AcpClient
+      >,
+      [{ type: 'text', text: 'hello' }],
+      { onSubmitted, onAccepted }
+    );
+
+    for await (const _message of adapter) {
+      // Drain the adapter so its lazy ACP prompt request executes.
+    }
+
+    expect(onSubmitted).toHaveBeenCalledTimes(1);
+    expect(onAccepted).toHaveBeenCalledTimes(1);
+  });
 
   test('yields translated assistant messages from chunks', async () => {
     const client = new MockAcpClient('sess-1');

@@ -363,6 +363,12 @@ export class SDKMessageHandler {
       return true;
     }
 
+    const submittedMessage = db.getMessageByStatusAndUuid(session.id, 'submitted', message.uuid);
+    if (submittedMessage) {
+      await this.consumePersistedUserMessage(submittedMessage, message);
+      return true;
+    }
+
     const consumedMessage = db.getMessageByStatusAndUuid(session.id, 'consumed', message.uuid);
     if (consumedMessage) {
       this.acknowledgedPersistedUserThisTurn = true;
@@ -474,6 +480,35 @@ export class SDKMessageHandler {
     }
   }
 
+  markMessageSubmitted(messageId: string): void {
+    this.transitionPersistedMessage(messageId, 'enqueued', 'submitted');
+  }
+
+  markMessageAccepted(messageId: string): void {
+    // ACP acceptance is the provider-specific consume boundary. Reuse the same
+    // projection path as a normal SDK yield so status, timestamp, transcript
+    // delta, and server-side events stay consistent.
+    this.handleMessageYielded(messageId, Date.now());
+  }
+
+  private transitionPersistedMessage(
+    messageId: string,
+    fromStatus: 'enqueued',
+    toStatus: 'submitted'
+  ): void {
+    const { session, db, internalEventBus } = this.ctx;
+    const message = db.getMessageByStatusAndUuid(session.id, fromStatus, messageId);
+    if (!message) return;
+    db.updateMessageStatus([message.dbId], toStatus);
+    internalEventBus
+      .publish('messages.statusChanged', {
+        sessionId: session.id,
+        messageIds: [message.dbId],
+        status: toStatus,
+      })
+      .catch(() => {});
+  }
+
   /**
    * Handle message yielded by the generator to the SDK.
    *
@@ -487,7 +522,9 @@ export class SDKMessageHandler {
     const { session, db, internalEventBus, messageHub } = this.ctx;
 
     // Find the persisted message in DB by UUID without scanning every queued row.
-    const enqueuedMessage = db.getMessageByStatusAndUuid(session.id, 'enqueued', messageId);
+    const enqueuedMessage =
+      db.getMessageByStatusAndUuid(session.id, 'enqueued', messageId) ??
+      db.getMessageByStatusAndUuid(session.id, 'submitted', messageId);
     if (!enqueuedMessage) {
       // Could be a 'deferred' message being replayed
       const deferredMessage = db.getMessageByStatusAndUuid(session.id, 'deferred', messageId);

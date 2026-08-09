@@ -218,7 +218,11 @@ export class AcpTransport {
   /**
    * Send a JSON-RPC request and wait for the response.
    */
-  sendRequest(method: string, params?: unknown): Promise<AcpJsonRpcResponse> {
+  sendRequest(
+    method: string,
+    params?: unknown,
+    options?: { onSubmitted?: () => void }
+  ): Promise<AcpJsonRpcResponse> {
     if (this.closed) {
       return Promise.reject(new Error('Transport is closed'));
     }
@@ -245,7 +249,16 @@ export class AcpTransport {
       this.pendingRequests.set(id, { resolve, reject, timer });
 
       try {
-        this.process!.stdin!.write(JSON.stringify(request) + '\n');
+        this.process!.stdin!.write(JSON.stringify(request) + '\n', (error) => {
+          if (error) {
+            clearTimeout(timer);
+            if (this.pendingRequests.delete(id)) {
+              reject(new Error(`Failed to write request: ${error.message}`));
+            }
+            return;
+          }
+          options?.onSubmitted?.();
+        });
       } catch (err) {
         clearTimeout(timer);
         this.pendingRequests.delete(id);

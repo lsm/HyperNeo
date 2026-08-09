@@ -29,7 +29,7 @@ import {
 } from '../message-search';
 import type { SQLiteValue } from '../types';
 
-export type SendStatus = 'deferred' | 'enqueued' | 'consumed' | 'failed';
+export type SendStatus = 'deferred' | 'enqueued' | 'submitted' | 'consumed' | 'failed';
 
 const MESSAGE_SEARCH_TERMINAL_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const ROOM_SESSION_PREFIXES = ['room:chat:', 'planner:', 'coder:', 'leader:', 'general:'];
@@ -1416,7 +1416,7 @@ export class SDKMessageRepository {
 
     const placeholders = messageIds.map(() => '?').join(',');
     // #2338: BEFORE the flip, capture the user-anchor rows that are NOT yet
-    // anchored (still enqueued/deferred). Only these need a fresh turn when
+    // anchored (still deferred/enqueued/submitted). Only these need a fresh turn when
     // they become consumed/failed. Rows already consumed/failed are already
     // anchored and must keep their turn — recoverOrphanedConsumedMessages
     // flips already-consumed rows to 'failed', and re-bumping those would
@@ -1432,13 +1432,13 @@ export class SDKMessageRepository {
                   AND message_type = 'user'
                   AND is_renderable = 1
                   AND task_id IS NOT NULL
-                  AND send_status IN ('enqueued', 'deferred')
+                  AND send_status IN ('deferred', 'enqueued', 'submitted')
                 ORDER BY rowid ASC`
             )
             .all(...messageIds) as Array<{ id: string; task_id: string }>)
         : [];
     // A send_status transition can flip a user row's badge visibility
-    // (deferred/enqueued -> consumed/failed), so capture the affected sessions
+    // (deferred/enqueued/submitted -> consumed/failed), so capture the affected sessions
     // and recompute their counters after the update.
     const affectedSessions = this.supportsVisibleMessageCount()
       ? (this.db
