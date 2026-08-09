@@ -7,6 +7,8 @@ import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import { createSpaceTables } from '../../helpers/space-test-db';
+import { computeDefinitionVersion } from '../../../../src/lib/space/workflows/definition-version';
+import type { SpaceWorkflow } from '@hyperneo/shared';
 
 describe('SpaceWorkflowRunRepository', () => {
   let db: Database;
@@ -41,6 +43,21 @@ describe('SpaceWorkflowRunRepository', () => {
     db.close();
   });
 
+  function rawWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
+    return {
+      id: WORKFLOW_ID,
+      spaceId,
+      name: 'My Workflow',
+      nodes: [],
+      startNodeId: '',
+      tags: [],
+      completionAutonomyLevel: 3,
+      createdAt: 1,
+      updatedAt: 1,
+      ...overrides,
+    };
+  }
+
   describe('createRun', () => {
     it('creates a run with required fields', () => {
       const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Run #1' });
@@ -48,6 +65,7 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(run.id).toBeDefined();
       expect(run.spaceId).toBe(spaceId);
       expect(run.workflowId).toBe(WORKFLOW_ID);
+      expect(run.definitionVersion).toBeNull();
       expect(run.title).toBe('Run #1');
       expect(run.status).toBe('pending');
       expect(run.completedAt).toBeNull();
@@ -62,6 +80,95 @@ describe('SpaceWorkflowRunRepository', () => {
         description: 'Deploy v2.0',
       });
       expect(run.description).toBe('Deploy v2.0');
+    });
+  });
+
+  describe('createPinnedRun', () => {
+    it('atomically records and pins the raw workflow definition', () => {
+      const workflow = rawWorkflow({ name: 'Pinned' });
+      const expected = computeDefinitionVersion(workflow);
+
+      const run = repo.createPinnedRun({
+        spaceId,
+        workflowId: WORKFLOW_ID,
+        title: 'Pinned run',
+        rawWorkflow: workflow,
+      });
+
+      expect(run.definitionVersion).toBe(expected.versionHash);
+      const version = db
+        .prepare(
+          `SELECT payload, source FROM space_workflow_definition_versions
+           WHERE workflow_id = ? AND version_hash = ?`
+        )
+        .get(WORKFLOW_ID, expected.versionHash) as { payload: string; source: string };
+      expect(version.payload).toBe(expected.payload);
+      expect(version.source).toBe('run_create');
+    });
+
+    it('reuses one immutable version for identical definitions', () => {
+      const workflow = rawWorkflow();
+      const first = repo.createPinnedRun({
+        spaceId,
+        workflowId: WORKFLOW_ID,
+        title: 'First',
+        rawWorkflow: workflow,
+      });
+      const second = repo.createPinnedRun({
+        spaceId,
+        workflowId: WORKFLOW_ID,
+        title: 'Second',
+        rawWorkflow: workflow,
+      });
+
+      expect(second.definitionVersion).toBe(first.definitionVersion);
+      const count = db
+        .prepare(
+          `SELECT COUNT(*) AS count FROM space_workflow_definition_versions
+           WHERE workflow_id = ?`
+        )
+        .get(WORKFLOW_ID) as { count: number };
+      expect(count.count).toBe(1);
+    });
+
+    it('rolls back a newly appended version when run insertion fails', () => {
+      db.exec(`
+        CREATE TRIGGER reject_pinned_run BEFORE INSERT ON space_workflow_runs
+        BEGIN SELECT RAISE(ABORT, 'reject run'); END
+      `);
+
+      expect(() =>
+        repo.createPinnedRun({
+          spaceId,
+          workflowId: WORKFLOW_ID,
+          title: 'Rejected',
+          rawWorkflow: rawWorkflow(),
+        })
+      ).toThrow('reject run');
+      const count = db
+        .prepare(`SELECT COUNT(*) AS count FROM space_workflow_definition_versions`)
+        .get() as { count: number };
+      expect(count.count).toBe(0);
+    });
+
+    it('creates no run when the version append fails', () => {
+      db.exec(`
+        CREATE TRIGGER reject_version BEFORE INSERT ON space_workflow_definition_versions
+        BEGIN SELECT RAISE(ABORT, 'reject version'); END
+      `);
+
+      expect(() =>
+        repo.createPinnedRun({
+          spaceId,
+          workflowId: WORKFLOW_ID,
+          title: 'Rejected',
+          rawWorkflow: rawWorkflow(),
+        })
+      ).toThrow('reject version');
+      const count = db.prepare(`SELECT COUNT(*) AS count FROM space_workflow_runs`).get() as {
+        count: number;
+      };
+      expect(count.count).toBe(0);
     });
   });
 

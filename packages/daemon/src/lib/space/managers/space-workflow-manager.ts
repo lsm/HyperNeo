@@ -188,9 +188,20 @@ export class SpaceWorkflowManager {
   // -------------------------------------------------------------------------
 
   getWorkflow(id: string): SpaceWorkflow | null {
-    const wf = this.repo.getWorkflow(id);
-    if (!wf) return null;
-    return this.sanitizePostApprovalForLoad(wf);
+    const result = this.getWorkflowForRunStart(id);
+    return result?.workflow ?? null;
+  }
+
+  /** Load the raw persisted definition and its sanitized runtime view from one read. */
+  getWorkflowForRunStart(
+    id: string
+  ): { rawWorkflow: SpaceWorkflow; workflow: SpaceWorkflow } | null {
+    const rawWorkflow = this.repo.getWorkflow(id);
+    if (!rawWorkflow) return null;
+    return {
+      rawWorkflow,
+      workflow: this.sanitizePostApprovalForLoad(rawWorkflow),
+    };
   }
 
   /**
