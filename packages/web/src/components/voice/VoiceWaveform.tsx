@@ -27,7 +27,6 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 // case (320px viewport, agent running), with all controls flex-none.
 const BAR_PITCH_WIDE = 5; // ~3px column + 2px gap
 const BAR_PITCH_NARROW = 4; // ~3px column + 1px gap
-const MIN_BARS = 8;
 const MAX_SECONDS = 300; // matches useVoiceRecorder MAX_RECORDING_MS (5 min)
 const FLOOR = 0.03; // silence renders as small dots, like iMessage
 
@@ -67,7 +66,14 @@ export function VoiceWaveform({
     if (!row) return;
     const pitch = isNarrow ? BAR_PITCH_NARROW : BAR_PITCH_WIDE;
     const update = () => {
-      const next = Math.max(MIN_BARS, Math.floor(row.clientWidth / pitch));
+      // No lower clamp beyond 1: pitch-sized columns always fit their gaps
+      // (bar ≈ pitch - gap ≥ 1px), whereas a minimum count would force the
+      // gaps alone to overflow a near-zero row and collapse every bar to 0.
+      const next = Math.max(1, Math.floor(row.clientWidth / pitch));
+      // Shrinking: histRef still holds the longer history, but paint() reads
+      // indices 0..count-1 — the OLDEST samples — so the waveform would lag
+      // the mic by the count delta. Trim to the newest `next` entries.
+      if (histRef.current.length > next) histRef.current = histRef.current.slice(-next);
       setBarCount((n) => (n === next ? n : next));
     };
     update();
