@@ -6,14 +6,14 @@
  * authorized for compatibility with preserved DB rows.
  */
 
-import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
-import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
-import { createTables } from '../../../../src/storage/schema';
-import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
-import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';
-import { LiveQueryEngine } from '../../../../src/storage/live-query';
 import { setupLiveQueryHandlers } from '../../../../src/lib/rpc-handlers/live-query-handlers';
+import { LiveQueryEngine } from '../../../../src/storage/live-query';
+import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';
+import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
+import { createTables } from '../../../../src/storage/schema';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 
 type RequestHandler = (data: unknown, context: Partial<CallCtx>) => Promise<unknown> | unknown;
 type CallCtx = {
@@ -254,6 +254,22 @@ describe('setupLiveQueryHandlers', () => {
         subscriptionId: 'sub-1',
       })
     ).rejects.toThrow('expects 0 parameter(s), got 1');
+  });
+
+  test('subscribe messages.bySession: rejects a window above the server cap', async () => {
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata)
+       VALUES (?, ?, ?, ?, 'active', '{}', '{}')`
+    ).run('session-window-cap', 'Window Cap', now, now);
+
+    await expect(
+      setup.callHandler('liveQuery.subscribe', {
+        queryName: 'messages.bySession',
+        params: ['session-window-cap', 201],
+        subscriptionId: 'sub-window-cap',
+      })
+    ).rejects.toThrow('limit must be an integer in [1, 200]');
   });
 
   test('subscribe spaceTaskActivity.byTask: nonexistent task rejected', async () => {

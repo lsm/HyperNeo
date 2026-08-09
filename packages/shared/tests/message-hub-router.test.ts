@@ -1,7 +1,7 @@
-import { describe, test, expect, beforeEach, mock } from 'bun:test';
-import { MessageHubRouter, type ClientConnection } from '../src/message-hub/router';
+import { beforeEach, describe, expect, mock, test } from 'bun:test';
+import { createEventMessage, createRequestMessage, MessageType } from '../src/message-hub/protocol';
+import { type ClientConnection, MessageHubRouter } from '../src/message-hub/router';
 import type { HubMessage } from '../src/message-hub/types';
-import { MessageType, createEventMessage, createRequestMessage } from '../src/message-hub/protocol';
 import { generateUUID } from '../src/utils';
 
 // Mock WebSocket
@@ -355,6 +355,23 @@ describe('MessageHubRouter', () => {
 
       const sentMessage = JSON.parse(mockWs1.sentMessages[0]);
       expect(sentMessage.method).toBe('test.event');
+    });
+
+    test('refuses oversized messages before writing to the connection', () => {
+      router = new MessageHubRouter({ maxMessageSize: 512 });
+      const conn1 = createMockConnection(mockWs1);
+      const clientId = router.registerConnection(conn1);
+      const message = createRequestMessage({
+        method: 'test.request',
+        data: { content: 'x'.repeat(512) },
+        sessionId: 'session1',
+      });
+
+      expect(router.sendToClientDetailed(clientId, message)).toEqual({
+        ok: false,
+        reason: 'message_too_large',
+      });
+      expect(mockWs1.sentMessages).toHaveLength(0);
     });
 
     test('should return false when sending to non-existent client', () => {

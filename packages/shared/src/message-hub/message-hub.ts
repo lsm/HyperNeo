@@ -8,40 +8,41 @@
  * - Type-safe method registry
  */
 
-import { generateUUID } from '../utils.ts';
 import { createLogger } from '../logger.ts';
+import { generateUUID } from '../utils.ts';
 
 // Create logger for MessageHub (uses unified log levels)
 const log = createLogger('kai:messagehub');
+
 import {
-  type HubMessage,
-  MessageType,
-  GLOBAL_SESSION_ID,
-  ErrorCode,
+  createErrorResponseMessage,
   createEventMessage,
-  isResponseMessage,
-  isEventMessage,
-  validateMethod,
-  isValidMessage,
   createRequestMessage,
   createResponseMessage,
-  createErrorResponseMessage,
+  ErrorCode,
+  GLOBAL_SESSION_ID,
+  type HubMessage,
+  isEventMessage,
   isRequestMessage,
+  isResponseMessage,
+  isValidMessage,
+  MessageType,
+  validateMethod,
 } from './protocol.ts';
+import type { MessageHubRouter } from './router.ts';
 import type {
-  MessageHubOptions,
-  MessageHandler,
-  ConnectionStateHandler,
-  PendingCall,
-  IMessageTransport,
   CallContext,
-  ConnectionState,
   ChannelEventHandler,
-  QueryOptions,
+  ConnectionState,
+  ConnectionStateHandler,
   EventOptions,
+  IMessageTransport,
+  MessageHandler,
+  MessageHubOptions,
+  PendingCall,
+  QueryOptions,
   RequestHandler,
 } from './types.ts';
-import type { MessageHubRouter } from './router.ts';
 
 // Define UnsubscribeFn locally (removed from types.ts)
 type UnsubscribeFn = () => void;
@@ -401,7 +402,7 @@ export class MessageHub {
           }
 
           // Exponential backoff with jitter
-          const baseDelay = retryDelay * Math.pow(2, attempt - 1);
+          const baseDelay = retryDelay * 2 ** (attempt - 1);
           const jitter = Math.random() * baseDelay * 0.3;
           await new Promise((resolve) => setTimeout(resolve, baseDelay + jitter));
         }
@@ -750,10 +751,22 @@ export class MessageHub {
 
     // If we have a router and clientId, send to specific client
     if (this.router && clientId) {
-      const success = this.router.sendToClient(clientId, message);
-      if (!success) {
-        log.warn(`Failed to send response to client ${clientId}, falling back to broadcast`);
-        this.router.broadcast(message);
+      const result = this.router.sendToClientDetailed(clientId, message);
+      if (!result.ok && result.reason === 'message_too_large') {
+        const errorMessage = createErrorResponseMessage({
+          method: message.method,
+          error: {
+            code: ErrorCode.MESSAGE_TOO_LARGE,
+            message: 'Response is too large to send; load a smaller window',
+          },
+          sessionId: message.sessionId,
+          requestId: message.requestId ?? message.id,
+          channel: message.channel,
+        });
+        const errorResult = this.router.sendToClientDetailed(clientId, errorMessage);
+        if (!errorResult.ok) log.warn(`Failed to send size error to client ${clientId}`);
+      } else if (!result.ok) {
+        log.warn(`Failed to send response to client ${clientId}`);
       }
       return;
     }

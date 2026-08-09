@@ -7,22 +7,23 @@
  * Clients never send raw SQL.
  */
 
-import { Database as BunDatabase } from '../../storage/sqlite-compat';
-import type { MessageHub } from '@hyperneo/shared';
-import { createEventMessage, parseJson, parseJsonOptional } from '@hyperneo/shared';
-import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
 import type {
+  LiveQueryDeltaEvent,
+  LiveQuerySnapshotEvent,
   LiveQuerySubscribeRequest,
   LiveQuerySubscribeResponse,
   LiveQueryUnsubscribeRequest,
   LiveQueryUnsubscribeResponse,
-  LiveQuerySnapshotEvent,
-  LiveQueryDeltaEvent,
+  MessageHub,
 } from '@hyperneo/shared';
+import { createEventMessage, parseJson, parseJsonOptional } from '@hyperneo/shared';
+import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
 import type { LiveQueryEngine, LiveQueryHandle, QueryDiff } from '../../storage/live-query';
 import type { TableChangeScope } from '../../storage/reactive-database';
+import type { Database as BunDatabase } from '../../storage/sqlite-compat';
 import { Logger } from '../logger';
 import { mapActiveTurnEntryRow } from './activity-preview';
+
 // Facade re-export (activity-preview extraction): `buildActiveTurnSummariesFromRows`
 // was exported from this module before the extraction and is consumed via dynamic
 // import by tests. Re-exported so the public surface is unchanged.
@@ -3094,6 +3095,7 @@ function mapSpaceSessionRow(row: Record<string, unknown>): Record<string, unknow
  */
 const BACKGROUND_TASK_METADATA_SUBTYPES = ['task_started', 'task_updated', 'task_notification'];
 const BACKGROUND_TASK_METADATA_BATCH_SIZE = 300;
+const MAX_MESSAGES_BY_SESSION_WINDOW = 200;
 
 function toSqlStringList(subtypes: Iterable<string>): string {
   return [...subtypes].map((subtype) => `'${subtype.replace(/'/g, "''")}'`).join(', ');
@@ -3184,6 +3186,10 @@ latest_progress AS (
         CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.tool_use_id') END,
         ''
       ) != ''
+      AND COALESCE(
+        CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
+        task_id
+      ) IN (SELECT task_id FROM recent_task_ids)
   )
   WHERE rn = 1
 )
@@ -3920,9 +3926,14 @@ export function setupLiveQueryHandlers(
       // (e.g. NaN, negative numbers) doesn't silently produce an empty result
       // set that the client would interpret as "no messages".
       const limit = params[1];
-      if (typeof limit !== 'number' || !Number.isInteger(limit) || limit <= 0 || limit > 10000) {
+      if (
+        typeof limit !== 'number' ||
+        !Number.isInteger(limit) ||
+        limit <= 0 ||
+        limit > MAX_MESSAGES_BY_SESSION_WINDOW
+      ) {
         throw new Error(
-          `Unauthorized: messages.bySession limit must be an integer in [1, 10000], got ${String(limit)}`
+          `Unauthorized: messages.bySession limit must be an integer in [1, ${MAX_MESSAGES_BY_SESSION_WINDOW}], got ${String(limit)}`
         );
       }
     }
