@@ -1801,6 +1801,13 @@ export class AgentSession
       // query is running. See Codex (#2592). Durable so a yielded-but-unresumed
       // kickoff does not TTL-out into a duplicate re-feed (#3742616720).
       if (!alreadyConsumed) {
+        // Revalidate under the lock immediately before feeding: the session may
+        // have been archived (worktree/agent torn down) or the message removed/
+        // re-classified (removePending) between the handler's load and now. Abort
+        // — do not feed. See Codex (#3742774841 archive barrier, #3696 removePending).
+        if (!this.messageDeliveryValid(messageUuid)) {
+          return { kind: 'aborted' as const };
+        }
         await this.messageQueue.enqueueWithId(messageUuid, content, false, { durable: true });
       }
       return { kind: 'driving' as const, queryPromise };
@@ -1812,6 +1819,9 @@ export class AgentSession
       // instead of idle. See Codex (#2599).
       await this.stateManager.setQueued(messageUuid);
       return { outcome: 'blocked', retryAt: Date.now() + MESSAGE_DELIVERY_PARK_MS };
+    }
+    if (started.kind === 'aborted') {
+      return { outcome: 'aborted' };
     }
     // Long await OUTSIDE the lock — mid-turn steers can now feed. The lease
     // heartbeat (handler) keeps the job from being reclaimed as stale. QueryRunner
@@ -1840,7 +1850,12 @@ export class AgentSession
       // and can't promote (the parked turn holds the active-turn slot), so PARK it
       // with the turn's delay instead of requeueing every poll (hot loop). Anything
       // else (idle/…) → the turn ended; promote. See Codex (#3742693683).
-      if (status === 'processing') return 'feed' as const;
+      if (status === 'processing') {
+        // Revalidate under the lock before feeding (archive / removePending
+        // window between the handler's load and this feed). See Codex (#3742774841, #3696).
+        if (!this.messageDeliveryValid(messageUuid)) return 'aborted' as const;
+        return 'feed' as const;
+      }
       if (status === 'queued') return 'park' as const;
       return 'promote' as const;
     });
@@ -1850,6 +1865,9 @@ export class AgentSession
     }
     if (action === 'park') {
       return { outcome: 'park' };
+    }
+    if (action === 'aborted') {
+      return { outcome: 'aborted' };
     }
     // Feed OUTSIDE the lock. Resolves on onSent (SDK consumed the steer);
     // rejects on clear/turn-end/error → the handler fails the job → backoff →
@@ -1869,9 +1887,28 @@ export class AgentSession
    * HYPERNEO_MESSAGE_DELIVERY_V2 is set.
    */
   deliverChatMessage(messageUuid: string): void {
+    // Enqueue-time archive barrier: cancelForSession is point-in-time, so a send
+    // landing after it but before the phase-4 status flip would otherwise create a
+    // job that drives against a half-destroyed session. Skip the enqueue when the
+    // session is already archived; the handler + bridge revalidate again at feed
+    // time. See Codex (#3742774841).
+    if (this.db.getSession(this.session.id)?.status === 'archived') return;
     deliverMessage(this.db.getJobQueueRepo(), this.session.id, messageUuid, {
       origin: 'chat',
     });
+  }
+
+  /**
+   * Revalidation checked under the per-session lock immediately before feeding a
+   * delivery: false if the session was archived (worktree/agent torn down) or the
+   * message row is no longer pending delivery (removed by removePending, or
+   * re-classified to deferred/consumed/failed) since the handler loaded it. Closes
+   * the archive + removePending TOCTOU windows together. See Codex (#3742774841, #3696).
+   */
+  private messageDeliveryValid(messageUuid: string): boolean {
+    if (this.db.getSession(this.session.id)?.status === 'archived') return false;
+    const loaded = this.db.getSDKMessageRepo().getDeliveryContent(this.session.id, messageUuid);
+    return loaded !== null && loaded.sendStatus === 'enqueued';
   }
 
   trackAgentProcess(proc: TrackedAgentProcess): void {

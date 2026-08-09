@@ -336,6 +336,21 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       maxConcurrent,
       staleThresholdMs: 5 * 60 * 1000,
     });
+    // message_delivery runs on a DEDICATED processor with its own budget. A
+    // delivery turn holds its slot for the whole SDK turn (seconds→minutes, or
+    // indefinitely while awaiting user input); sharing the main processor's
+    // budget starved unrelated lanes (task schedules, long-horizon reminders,
+    // GitHub polling, cleanup, memory consolidation) whenever a few turns were
+    // active. A separate budget gives zero cross-lane contention without any
+    // shared-processor surgery. Steers still exempt-bypass THIS budget. See
+    // message-delivery-v2.md + Codex (#3742774839).
+    const messageDeliveryMaxConcurrent =
+      Number(process.env.HYPERNEO_MESSAGE_DELIVERY_MAX_CONCURRENT) || 8;
+    const messageDeliveryProcessor = new JobQueueProcessor(jobQueue, {
+      pollIntervalMs: 1000,
+      maxConcurrent: messageDeliveryMaxConcurrent,
+      staleThresholdMs: 5 * 60 * 1000,
+    });
     // --- setInterval inventory (out-of-scope for job-queue migration) ---
     // The following subsystems intentionally retain their own setInterval timers.
     // They were audited as part of the background-task migration (milestone 6) and
@@ -357,6 +372,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     //   • ProcessWatchdog timer (process-watchdog.ts)
     //       Last-resort OS process leak safety net; intentionally independent from the job queue.
     jobProcessor.setChangeNotifier((table) => {
+      reactiveDb.notifyChange(table);
+    });
+    messageDeliveryProcessor.setChangeNotifier((table) => {
       reactiveDb.notifyChange(table);
     });
     let sessionManager: SessionManager | null = null;
@@ -945,7 +963,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     // content from sdk_messages by UUID. getSession returns null for a closed/
     // evicted session → the handler fails the job (reclaimStale/processor
     // re-drives it once the session is back, or it dead-letters after backoff).
-    jobProcessor.register(
+    messageDeliveryProcessor.register(
       MESSAGE_DELIVERY,
       createMessageDeliveryHandler({
         jobQueue,
@@ -1154,6 +1172,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     // Start job queue processor last (after all handler registrations)
     jobProcessor.start();
     logInfo('[Daemon] Job queue processor started');
+    messageDeliveryProcessor.start();
+    logInfo('[Daemon] Message-delivery job processor started');
     if (process.env.NODE_ENV !== 'test') {
       processWatchdog.start();
       logInfo('[Daemon] Process watchdog started');
@@ -1281,6 +1301,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         }
         await jobProcessor.stop();
         logInfo('[Daemon] Job queue processor stopped');
+        await messageDeliveryProcessor.stop();
+        logInfo('[Daemon] Message-delivery job processor stopped');
 
         // Cleanup MessageHub (rejects remaining calls)
         messageHub.cleanup();

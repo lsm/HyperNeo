@@ -534,6 +534,34 @@ describe('handler — status-aware delivery (§8)', () => {
     // Delayed runAt (not Date.now()) — this is what breaks the every-poll hot loop.
     expect(after?.runAt ?? 0).toBeGreaterThan(before);
   });
+
+  it('turn aborted (archive/removePending at feed time) → completes without feeding (#3742774841/#3696)', async () => {
+    const session = new MockSession();
+    session.driveResult = { outcome: 'aborted' };
+    const job = turnJob(repo, 'msg-abort-turn');
+    const handler = createMessageDeliveryHandler({
+      jobQueue: repo,
+      getSession: () => session,
+      getMessageContent: () => ({ content: 'hello', sendStatus: 'enqueued' }),
+    });
+    const result = await handler(job);
+    expect(result).toEqual({ outcome: 'aborted' });
+    expect(session.driveCalls).toBe(1);
+  });
+
+  it('steer aborted (archive/removePending at feed time) → completes without feeding (#3742774841/#3696)', async () => {
+    const session = new MockSession();
+    session.feedResult = { outcome: 'aborted' };
+    const job = steerJob(repo, 'msg-abort-steer');
+    const handler = createMessageDeliveryHandler({
+      jobQueue: repo,
+      getSession: () => session,
+      getMessageContent: () => ({ content: 'steer', sendStatus: 'enqueued' }),
+    });
+    const result = await handler(job);
+    expect(result).toEqual({ outcome: 'aborted' });
+    expect(session.feedCalls).toBe(1);
+  });
 });
 
 // ── Repo: exempt dequeue + shutdown requeue (#2587 / #2593) ─────────────────

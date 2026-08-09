@@ -337,3 +337,16 @@ the delivery path must handle.
   idle) and later deferrals are honored.
 - **Archived sessions (#3742616723):** the handler rejects delivery (completes,
   does not drive) for sessions whose persisted status is `archived`.
+- **Dedicated delivery budget (#3742774839):** `message_delivery` runs on its own
+  `JobQueueProcessor` instance (`HYPERNEO_MESSAGE_DELIVERY_MAX_CONCURRENT`, default
+  8), so long-lived turns no longer share/starve the main processor's budget
+  (task schedules, long-horizon reminders, GitHub polling, cleanup, memory
+  consolidation). Steers still exempt-bypass the delivery budget. Cross-lane
+  contention is now zero.
+- **Archive barrier + revalidate-before-feed (#3742774841, #3696):** the archive
+  path cancels jobs at the START (phase 0), `deliverChatMessage` skips enqueue
+  for already-archived sessions (enqueue-time barrier), and the bridge
+  revalidates (session not archived AND message still `enqueued`) under the
+  per-session lock immediately before feeding — closing both the archive TOCTOU
+  and the removePending TOCTOU as one pattern. An invalid feed returns `aborted`
+  (complete, do not feed).

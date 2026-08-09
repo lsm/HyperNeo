@@ -184,8 +184,18 @@ export type DeliveryLoadResult = { content: DeliveryContent; sendStatus: string 
  */
 export const MESSAGE_DELIVERY_PARK_MS = 5_000;
 
-/** Outcome of driving a turn. `blocked` ⇒ the job is parked, not failed. */
-export type DriveTurnOutcome = { outcome: 'completed' } | { outcome: 'blocked'; retryAt: number };
+/**
+ * Outcome of driving a turn.
+ * - `completed` ⇒ the turn ran (or was already consumed and re-driven via history).
+ * - `blocked` ⇒ query startup is blocked (sdk_resume_choice); park the job.
+ * - `aborted` ⇒ revalidation immediately before feeding found the session archived
+ *   or the message removed/re-classified (removePending TOCTOU) — do NOT feed.
+ *   See Codex (#3742774841 archive barrier, #3696 removePending).
+ */
+export type DriveTurnOutcome =
+  | { outcome: 'completed' }
+  | { outcome: 'blocked'; retryAt: number }
+  | { outcome: 'aborted' };
 
 /**
  * Outcome of feeding a steer.
@@ -200,7 +210,8 @@ export type DriveTurnOutcome = { outcome: 'completed' } | { outcome: 'blocked'; 
 export type FeedSteerOutcome =
   | { outcome: 'consumed' }
   | { outcome: 'promote' }
-  | { outcome: 'park' };
+  | { outcome: 'park' }
+  | { outcome: 'aborted' };
 
 /**
  * The live transport owner for a session (AgentSession implements this). Kept as

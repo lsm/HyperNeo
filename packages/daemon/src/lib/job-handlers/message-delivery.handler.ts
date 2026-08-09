@@ -138,6 +138,11 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
           deps.jobQueue.requeue(job.id, result.retryAt);
           return { parked: 'sdk_resume_choice', retryAt: result.retryAt };
         }
+        if (result.outcome === 'aborted') {
+          // Bridge revalidation found the session archived or the message removed
+          // between load and feed — complete without feeding. See #3742774841/#3696.
+          return { outcome: 'aborted' };
+        }
         return { outcome: 'completed' };
       } finally {
         clearInterval(heartbeat);
@@ -158,6 +163,11 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       content,
       payload.parentToolUseId
     );
+    if (result.outcome === 'aborted') {
+      // Bridge revalidation found the session archived or the message removed
+      // between load and feed — complete without feeding. See #3742774841/#3696.
+      return { outcome: 'aborted' };
+    }
     if (result.outcome === 'park') {
       // The owning turn is blocked (sdk_resume_choice, session `queued`): the
       // steer can neither feed nor promote (the parked turn holds the active-turn
