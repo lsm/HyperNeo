@@ -25,7 +25,11 @@
 
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'preact/hooks';
 import { useMessageHub } from './useMessageHub';
-import type { LiveQuerySnapshotEvent, LiveQueryDeltaEvent } from '@hyperneo/shared';
+import type {
+  LiveQueryDeltaEvent,
+  LiveQueryErrorEvent,
+  LiveQuerySnapshotEvent,
+} from '@hyperneo/shared';
 
 export interface SessionGroupMessage {
   id: number | string;
@@ -370,6 +374,19 @@ export function useGroupMessages(
       });
     });
 
+    const unsubError = onEvent<LiveQueryErrorEvent>('liveQuery.error', (event) => {
+      if (event.subscriptionId !== activeSubIdRef.current) return;
+      if (event.phase === 'delta') {
+        request('liveQuery.subscribe', {
+          queryName: 'sessionGroupMessages.byGroup',
+          params: [groupId],
+          subscriptionId,
+        }).catch(() => setLoadedForGroupId(groupId));
+        return;
+      }
+      setLoadedForGroupId(groupId);
+    });
+
     // Send the subscribe request with retry on failure.
     // Up to MAX_RETRIES additional attempts after the first, with increasing delays.
     // IMPORTANT: RETRY_DELAYS_MS must have exactly MAX_RETRIES entries — adding an extra
@@ -418,6 +435,7 @@ export function useGroupMessages(
       // Remove event listeners first.
       unsubSnapshot();
       unsubDelta();
+      unsubError();
 
       // Clear the active sub ID so in-flight events from this subscription
       // are discarded once the new effect runs.

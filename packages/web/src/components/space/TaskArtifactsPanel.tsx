@@ -325,7 +325,7 @@ export function TaskArtifactsPanel({ runId, taskId, class: className }: TaskArti
   const [artifacts, setArtifacts] = useState<WorkflowRunArtifact[]>([]);
 
   // ── Todos (from message thread) ──────────────────────────────────────────
-  const { rows: messageRows } = useSpaceTaskMessages(taskId ?? null);
+  const { rows: messageRows, error: messageRowsError } = useSpaceTaskMessages(taskId ?? null);
 
   // File operations from tool calls (Write/Edit) — used when not a git repo
   const fileOps = useMemo<FileOperation[]>(() => {
@@ -765,7 +765,9 @@ export function TaskArtifactsPanel({ runId, taskId, class: className }: TaskArti
                 }
               />
               <div class="py-1" data-testid="artifacts-file-list">
-                {fileOps.length === 0 ? (
+                {messageRowsError ? (
+                  <p class="px-4 py-3 text-sm text-amber-500">{messageRowsError}</p>
+                ) : fileOps.length === 0 ? (
                   <p class="px-4 py-3 text-sm text-gray-400">No files written or edited yet</p>
                 ) : (
                   <div class="px-2 space-y-0.5">
