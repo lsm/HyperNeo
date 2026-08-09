@@ -234,8 +234,16 @@ export function setupSpaceWorkflowRunHandlers(
       if (workflows.length === 0) {
         throw new Error(`No workflows found for space: ${params.spaceId}`);
       }
-      const defaultWorkflow = workflows.find((w) => (w.tags ?? []).includes('default'));
-      workflowId = (defaultWorkflow ?? workflows[0]).id;
+      // Prefer a `default`-tagged workflow; when several exist (e.g. duplicate
+      // legacy rows awaiting cleanup), tie-break by most-recently-updated — the
+      // same deterministic scoring as selectDeterministicWorkflowFallback — so an
+      // auto-start does not silently pick an obsolete/customized oldest duplicate.
+      const defaultWorkflows = workflows.filter((w) => (w.tags ?? []).includes('default'));
+      const preferred =
+        defaultWorkflows.length > 0
+          ? [...defaultWorkflows].sort((a, b) => b.updatedAt - a.updatedAt)[0]
+          : workflows[0];
+      workflowId = preferred.id;
     } else {
       // Validate provided workflow exists and belongs to this space
       const workflow = spaceWorkflowManager.getWorkflow(workflowId);

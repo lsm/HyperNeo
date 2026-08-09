@@ -23,6 +23,7 @@ import { runMigrations } from '../../../../../src/storage/schema/index.ts';
 import {
   runMigration180,
   OLD_REVIEWER_PROMPT,
+  OLD_REVIEWER_PROMPT_PRE_2365,
   OLD_REVIEWER_DESCRIPTION,
   OLD_REVIEWER_TOOLS,
 } from '../../../../../src/storage/schema/m180-backfill-reviewer-bash-tools.ts';
@@ -165,6 +166,37 @@ describe('migration 179 — reviewer bash tool backfill', () => {
     expect(migratedPrompt).not.toContain('post_review');
     expect((row as unknown as AgentRow).description).toBe(REVIEWER_PRESET.description);
     // template_hash re-stamped to the current preset hash.
+    expect((row as unknown as AgentRow).template_hash).toBe(
+      computeAgentTemplateHash(REVIEWER_PRESET)
+    );
+  });
+
+  test('re-stamps a pristine pre-#2365 bash Reviewer seed too', () => {
+    // Spaces seeded before the shell-less Reviewer split carry the pre-#2365
+    // bash contract (which posted via a REST gh api repos/.../reviews command the
+    // reviewer Bash guard now blocks). It is a known pristine seed and must be
+    // migrated to the current preset, not left stale.
+    const spaceId = 'space-m179-pre2365';
+    insertSpace(db, spaceId);
+    insertAgent(db, {
+      id: 'agent-reviewer-pre2365',
+      spaceId,
+      name: 'Reviewer',
+      handle: 'reviewer',
+      tools: OLD_REVIEWER_TOOLS,
+      customPrompt: OLD_REVIEWER_PROMPT_PRE_2365,
+      description: OLD_REVIEWER_DESCRIPTION,
+      templateName: 'Reviewer',
+      templateHash: computeAgentTemplateHash(REVIEWER_PRESET),
+    });
+
+    runMigration180(db);
+
+    const row = getAgentRow('agent-reviewer-pre2365');
+    expect(parseTools(row as unknown as AgentRow)).toContain('Bash');
+    // The stale pre-#2365 prompt is replaced with the current contract.
+    expect((row as unknown as AgentRow).custom_prompt).toBe(REVIEWER_PRESET.customPrompt);
+    expect((row as unknown as AgentRow).custom_prompt).not.toContain('Verify goal alignment');
     expect((row as unknown as AgentRow).template_hash).toBe(
       computeAgentTemplateHash(REVIEWER_PRESET)
     );

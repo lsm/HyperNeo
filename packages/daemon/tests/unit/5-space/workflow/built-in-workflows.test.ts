@@ -59,6 +59,7 @@ import {
   REVIEW_ONLY_WORKFLOW,
   FULLSTACK_QA_POST_APPROVAL_PARAGRAPH,
   REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH,
+  RETIRED_PR_MERGER_SLOT_PROMPT,
   seedBuiltInWorkflows,
 } from '../../../../src/lib/space/workflows/built-in-workflows.ts';
 import { computeWorkflowHash } from '../../../../src/lib/space/workflows/template-hash.ts';
@@ -3449,13 +3450,10 @@ describe('seedBuiltInWorkflows()', () => {
             {
               agentId: MERGER_ID,
               name: 'merger',
-              // The pristine retired PR-Merger slot prompt marker — the strip
+              // The EXACT pristine retired PR-Merger slot prompt — the strip
               // guard requires the FULL retired seed identity (name + slot +
-              // prompt marker + route), so a customized node is preserved.
-              customPrompt: {
-                value:
-                  'You are the PR Merger — the designated shell-capable agent for post-approval merges.',
-              },
+              // EXACT prompt + route), so a customized node is preserved.
+              customPrompt: { value: RETIRED_PR_MERGER_SLOT_PROMPT },
             },
           ],
           postApproval: { targetAgent: 'merger', instructions: 'merge' },
@@ -3591,6 +3589,51 @@ describe('seedBuiltInWorkflows()', () => {
     expect(after.nodes.some((n) => n.name === 'Post-Approval')).toBe(true);
     const modelPa = after.nodes.find((n) => n.name === 'Post-Approval')!;
     expect(modelPa.agents[0].model).toBe('claude-sonnet-4-6');
+  });
+
+  test('preserves a Post-Approval node whose merger prompt was appended to', () => {
+    // The node keeps the seeded name/slot/model/route but the user APPENDED
+    // instructions to the merger prompt. The strip guard requires the EXACT
+    // retired prompt identity, so an append-only customization is preserved.
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const seededCoding = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === STABLE_CODING_WORKFLOW.name)!;
+    const codingId = seededCoding.id;
+    revertToLegacyIdentity(codingId, 'Coding Workflow', 'coding-workflow');
+    repo.updateWorkflow(codingId, {
+      nodes: [
+        ...seededCoding.nodes.map((n) =>
+          n.name === 'Coding' ? { ...n, postApproval: undefined } : n
+        ),
+        {
+          id: 'append-pa',
+          name: 'Post-Approval',
+          agents: [
+            {
+              agentId: MERGER_ID,
+              name: 'merger',
+              customPrompt: {
+                value: RETIRED_PR_MERGER_SLOT_PROMPT + '\n\nRemember to also sync the docs.',
+              },
+            },
+          ],
+          postApproval: { targetAgent: 'merger', instructions: 'merge' },
+        },
+      ],
+    });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'stale-pre-upgrade-hash',
+      codingId
+    );
+
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+
+    const after = manager.listWorkflows(SPACE_ID).find((w) => w.id === codingId)!;
+    // The appended-prompt Post-Approval node survives — not stripped.
+    expect(after.nodes.some((n) => n.name === 'Post-Approval')).toBe(true);
+    const appendPa = after.nodes.find((n) => n.name === 'Post-Approval')!;
+    expect(appendPa.agents[0].customPrompt?.value).toContain('Remember to also sync the docs.');
   });
 
   test('handle collision on a new stable template fails safely without aborting the seed', () => {

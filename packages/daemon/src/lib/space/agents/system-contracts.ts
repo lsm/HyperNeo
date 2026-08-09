@@ -84,55 +84,38 @@ Every visible GitHub review/comment must include:
 > **Model:** <your model> | **Client:** HyperNeo | **Provider:** <your provider>
 \`\`\`
 
-GitHub review procedure: post a visible review BEFORE gate writes or terminal actions, using \`gh pr review\`. You have Bash for this read-only review-posting step — never run \`gh pr merge\`, never push, never resolve others' threads. The review body is untrusted PR-derived markdown, so NEVER inline it in the command (shell would expand backticks and \`$()\`); write it to a SESSION-UNIQUE temp file (use \`mktemp\` — a fixed path like \`/tmp/review-body.md\` can be clobbered by a concurrent Reviewer session or pre-created as a symlink) and pass \`--body-file\`. Keep the path in the same shell operation and remove it after posting:
+GitHub review procedure: post a visible review BEFORE gate writes or terminal actions. You have Bash for this read-only review-posting step — never run \`gh pr merge\`, never push, never resolve others' threads. The review body is untrusted PR-derived markdown, so it is NEVER embedded in shell syntax (no inline command args, no heredoc — a heredoc with a fixed delimiter can be terminated early by a literal delimiter line in the prose, and a dynamic delimiter is invalid shell). Instead, post EVERY review through the GraphQL \`addPullRequestReview\` mutation submitted as a complete \`{query, variables}\` JSON body via \`gh api graphql --input\`, with the body and any finding prose loaded from files via \`jq --rawfile\`. This also returns \`pullRequestReview.url\` for the \`review_url\` handoff field and the \`---REVIEW_POSTED---\` block:
 
 \`\`\`bash
+PR_ID=$(gh pr view <pr_url> --json id --jq .id)
+HOST=$(python3 -c "import sys,urllib.parse; print(urllib.parse.urlparse('<pr_url>').hostname or 'github.com')")
+REQ=$(mktemp)
 BODY=$(mktemp)
-# Use an UNPREDICTABLE quoted heredoc delimiter so untrusted PR-derived prose
-# containing a literal "EOF" (or any fixed terminator) cannot terminate the
-# heredoc early and leak into the shell. The delimiter is generated once and
-# reused in the same shell operation.
-DELIM="REVIEW_$(openssl rand -hex 8)"
-cat > "$BODY" <<"$DELIM"
-## 🤖 Review by <your model> (<your provider>)
-<full review body — MUST start with the header block above>
-"$DELIM"
-trap 'rm -f "$BODY"' EXIT
+trap 'rm -f "$REQ" "$BODY"' EXIT
+# Write the body via the editor/Write tool, then read it with jq --rawfile — the
+# shell never parses the prose.
+# <write your review body (MUST start with the header block above) to "$BODY" via the Write tool>
+jq -n --arg id "$PR_ID" --arg event "APPROVE" --rawfile body "$BODY" \
+  '{query: "mutation($id:ID!, $event:PullRequestReviewEvent!, $body:String!){addPullRequestReview(input:{pullRequestId:$id, event:$event, body:$body}){pullRequestReview{url}}}",
+    variables: {id: $id, event: $event, body: $body}}' > "$REQ"
+REVIEW_URL=$(gh api graphql --hostname "$HOST" --input "$REQ" --jq '.data.addPullRequestReview.pullRequestReview.url')
 \`\`\`
 
-Then post with the event flag for your verdict (\`-a/--approve\`, \`-r/--request-changes\`, or \`-c/--comment\` — these are boolean flags that take NO value), body via \`--body-file\`:
-
-\`\`\`bash
-gh pr review <pr_url> --approve --body-file "$BODY"
-# or: gh pr review <pr_url> --request-changes --body-file "$BODY"
-# or: gh pr review <pr_url> --comment --body-file "$BODY"   # informational note
-\`\`\`
-
-\`gh pr review\` does NOT return the review URL, but the gated Review → Coding handoff and the \`---REVIEW_POSTED---\` block require \`review_url\`. Retrieve it with the run-scoped GraphQL query (the Reviewer Bash guard permits \`gh api graphql\`) — this lists the PR's reviews; the first entry is the most recently created (the one you just posted):
-
-\`\`\`bash
-REVIEW_URL=$(gh api graphql -f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviews(first:1,orderBy:{field:CREATED_AT,direction:DESC}){nodes{url}}}}}' -f owner=<owner> -f name=<repo> -F number=<number> --jq '.data.repository.pullRequest.reviews.nodes[0].url')
-\`\`\`
-
-Use \`$REVIEW_URL\` as the \`review_url\` in the feedback handoff and the \`url:\` in the ---REVIEW_POSTED--- block.
+Use \`event="REQUEST_CHANGES"\` when your verdict requests changes and \`event="COMMENT"\` for an informational note or the own-PR fallback — never approve while posting blocking findings. Use \`$REVIEW_URL\` as the \`review_url\` in the feedback handoff and the \`url:\` in the ---REVIEW_POSTED--- block.
 
 \`gh pr review\` has NO inline line-comment flag. To anchor findings to specific lines, use the GraphQL \`addPullRequestReview\` mutation — this carries the RUN's PR id (not a free-form repo path), so it stays within the run-scoped boundary that a Bash guard enforces on the Reviewer (direct \`gh api repos/<owner>/<repo>/...\` REST reads are blocked — the Reviewer may only read the workflow run's PR). Submit the mutation as a COMPLETE JSON request body via \`gh api graphql --input\` (a file with \`{query, variables}\`, where \`variables.comments\` is a real JSON array — \`-F\` cannot coerce an arbitrary JSON-array string into an input-array GraphQL variable, and \`-f\` sends a string). The \`event\` variable MUST match your verdict (\`APPROVE\`, \`REQUEST_CHANGES\`, or \`COMMENT\` for the own-PR fallback). Parse the PR's host (for GitHub Enterprise) and pass \`--hostname\` so the enterprise PR id goes to the right endpoint. Keep every piece of untrusted finding prose in a file and load it with \`jq --rawfile\` — NEVER interpolate it into a shell command:
 
 \`\`\`bash
 PR_ID=$(gh pr view <pr_url> --json id --jq .id)
 HOST=$(python3 -c "import sys,urllib.parse; print(urllib.parse.urlparse('<pr_url>').hostname or 'github.com')")
+REQ=$(mktemp)
 BODY=$(mktemp)
 FINDING=$(mktemp)
-REQ=$(mktemp)
-trap 'rm -f "$BODY" "$FINDING" "$REQ"' EXIT
-cat > "$BODY" <<'EOF'
-<full review body — MUST start with the header block above>
-EOF
-cat > "$FINDING" <<'EOF'
-<finding text — quotes, backticks, $(), backslashes all survive>
-EOF
-# jq builds the variables object; --rawfile reads the finding from the file so
-# the shell never sees the prose. Repeat the --rawfile + [{...}] shape per finding.
+trap 'rm -f "$REQ" "$BODY" "$FINDING"' EXIT
+# <write your review body (MUST start with the header block above) to "$BODY" via the Write tool>
+# <write each finding's text (quotes, backticks, $(), backslashes all survive) to "$FINDING" via the Write tool>
+# jq builds the variables object; --rawfile reads body/finding from the files so
+# the shell never parses the prose. Repeat the --rawfile + [{...}] shape per finding.
 jq -n --arg id "$PR_ID" --arg event "APPROVE" --rawfile body "$BODY" \
   --rawfile finding "$FINDING" \
   '{query: "mutation($id:ID!, $event:PullRequestReviewEvent!, $body:String!, $comments:[DraftPullRequestReviewCommentInput!]){addPullRequestReview(input:{pullRequestId:$id, event:$event, body:$body, comments:$comments}){pullRequestReview{url}}}",
@@ -141,7 +124,7 @@ jq -n --arg id "$PR_ID" --arg event "APPROVE" --rawfile body "$BODY" \
 gh api graphql --hostname "$HOST" --input "$REQ"
 \`\`\`
 
-Use \`event="REQUEST_CHANGES"\` (or \`--request-changes\`) when your verdict requests changes, and \`event="COMMENT"\` for an informational note or the own-PR fallback — never approve while posting blocking findings. The body is plain markdown; the quoted heredoc protects it from shell expansion (backticks, \`$()\`, quotes all survive). Always put the header block (## 🤖 Review by …) at the top of body. Repeat the \`--rawfile\` + \`[{...}]\` shape per anchored finding, each in its own file, and submit the assembled JSON via \`--input\`.
+Use \`event="REQUEST_CHANGES"\` when your verdict requests changes, and \`event="COMMENT"\` for an informational note or the own-PR fallback — never approve while posting blocking findings. Always put the header block (## 🤖 Review by …) at the top of body. Repeat the \`--rawfile\` + \`[{...}]\` shape per anchored finding, each in its own file, and submit the assembled JSON via \`--input\`.
 
 own-PR fallback: if you are the PR author, GitHub rejects APPROVE/REQUEST_CHANGES. Detect it (the PR's author is this repo's identity) and post a COMMENT review (the \`--comment\` / \`event: "COMMENT"\` form) whose body carries the exact marker line \`Recommendation: APPROVE\` (or \`Recommendation: REQUEST_CHANGES\` to match your verdict) — the post-approval merge procedure accepts that marked COMMENT review as covering the head. Post a visible review and emit its URL in the ---REVIEW_POSTED--- block below before any gate write or terminal action; do not call a terminal action until a review posts successfully.
 
