@@ -469,16 +469,17 @@ export function buildSlotOverrides(
   const taskModelOverride = modelOverrideKey
     ? context?.task?.workflowModelOverrides?.[modelOverrideKey]
     : undefined;
-  // Round-12 P1-3: a slot that predates REVIEWER_TOOL_GUARDS defines no
-  // toolGuards, yet its Reviewer agent now has Bash (M181 backfilled it). Without
-  // a fallback that slot would run Bash with NO guard at all. Only when the slot
-  // defines NO guards do we fall back to the agent-preset guards (the slot's own
-  // guards win — the slot author explicitly configured the surface).
-  const slotGuards = slot.toolGuards;
-  const effectiveGuards =
-    slotGuards && slotGuards.length > 0
-      ? slotGuards
-      : context?.resolveFallbackToolGuards?.(slot.agentId);
+  // Mandatory preset guards compose with slot-specific guards. A Reviewer may
+  // have unrelated custom guards, but those do not replace the Bash boundary
+  // that became required when M181 added Bash to historical Reviewer agents.
+  const slotGuards = slot.toolGuards ?? [];
+  const fallbackGuards = context?.resolveFallbackToolGuards?.(slot.agentId) ?? [];
+  const effectiveGuards = [...fallbackGuards];
+  for (const guard of slotGuards) {
+    if (!effectiveGuards.some((candidate) => JSON.stringify(candidate) === JSON.stringify(guard))) {
+      effectiveGuards.push(guard);
+    }
+  }
   return {
     model: taskModelOverride ?? slot.model,
     thinkingLevel: slot.thinkingLevel,

@@ -121,7 +121,7 @@ cat > "$BODY" <<'<the EXACT echoed delimiter>'
 # (inspected) commit and the post-approval merge check correctly rejects it as
 # not covering the current head.
 jq -n --arg id "$PR_ID" --arg headOid "$INSPECTED_HEAD_OID" --arg event "APPROVE" --rawfile body "$BODY" \
-  '{query: "mutation($id:ID!, $headOid:GitObjectID!, $event:PullRequestReviewEvent!, $body:String!, $comments:[DraftPullRequestReviewCommentInput!]){addPullRequestReview(input:{pullRequestId:$id, commitOID:$headOid, event:$event, body:$body, comments:$comments}){pullRequestReview{url}}}",
+  '{query: "mutation($id:ID!, $headOid:GitObjectID!, $event:PullRequestReviewEvent!, $body:String!, $comments:[DraftPullRequestReviewComment!]){addPullRequestReview(input:{pullRequestId:$id, commitOID:$headOid, event:$event, body:$body, comments:$comments}){pullRequestReview{url}}}",
     variables: {id: $id, headOid: $headOid, event: $event, body: $body, comments: []}}' > "$REQ"
 REVIEW_URL=$(gh api graphql --hostname "$HOST" --input "$REQ" --jq '.data.addPullRequestReview.pullRequestReview.url')
 \`\`\`
