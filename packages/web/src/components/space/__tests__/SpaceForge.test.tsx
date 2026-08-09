@@ -148,9 +148,10 @@ describe('SpaceForge', () => {
     vi.clearAllMocks();
   });
 
-  it('renders scope list cards without inline detail', async () => {
+  it('renders Evolution scope list cards without inline detail', async () => {
     render(<SpaceForge spaceId="space-1" />);
 
+    expect(screen.getByRole('heading', { name: 'Evolution scopes' })).toBeTruthy();
     expect(await screen.findByRole('heading', { name: 'Review quality scope' })).toBeTruthy();
     expect(screen.getByText('Improve code review outcomes')).toBeTruthy();
     expect(screen.getByText('Goal: Improve review loop')).toBeTruthy();

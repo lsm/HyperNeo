@@ -304,9 +304,9 @@ function createReviewTask(
     spaceId: scope.spaceId,
     goalId,
     evolutionScopeId: scopeId,
-    title: `Review Forge retrospective: ${scope.name}`,
+    title: `Review Evolution retrospective: ${scope.name}`,
     description: [
-      'Forge generated a draft retrospective episode from automation-selected evidence.',
+      'Evolve generated a draft retrospective episode from automation-selected evidence.',
       `Episode: ${episodeId}`,
       `Automation trigger: ${automationTriggerToken(payload)}`,
       `Evidence selected:\n${evidence.map((item) => `- ${item.id}: ${item.summary}`).join('\n')}`,

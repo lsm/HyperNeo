@@ -409,7 +409,7 @@ export class EvolutionEpisodeService {
     const { progress: _ignoredProgress, ...goalUpdate } = params.goalUpdate;
     const goal = this.deps.goalService.updateGoal(scope.spaceGoalId, goalUpdate, {
       source: 'rpc',
-      note: `Forge rollup accepted: ${episode.title}`,
+      note: `Evolution rollup accepted: ${episode.title}`,
     });
     const accepted = this.deps.evolutionRepo.updateEpisode(episode.id, {
       status: 'accepted',
@@ -882,7 +882,9 @@ function buildProposalTaskDescription(
   const parts = [description.trim()];
   if (reason.trim()) parts.push(`Proposal reason:\n${reason.trim()}`);
   if (evidenceEpisodeIds.length > 0) {
-    parts.push(`Forge evidence episodes:\n${evidenceEpisodeIds.map((id) => `- ${id}`).join('\n')}`);
+    parts.push(
+      `Evolution evidence episodes:\n${evidenceEpisodeIds.map((id) => `- ${id}`).join('\n')}`
+    );
   }
   return parts.filter(Boolean).join('\n\n');
 }

@@ -291,6 +291,7 @@ describe('TaskAuxiliaryPanel', () => {
       <TaskAuxiliaryPanel spaceId="space-1" navigationSpaceId="space-slug" taskId="task-1" />
     );
 
+    expect(getByText('Evolution scope')).toBeTruthy();
     fireEvent.click(getByText('Launch Goal'));
     await waitFor(() => expect(getByText('Launch Scope')).toBeTruthy());
     fireEvent.click(getByText('Launch Scope'));
