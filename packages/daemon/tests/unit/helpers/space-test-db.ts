@@ -544,7 +544,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			message_subtype_norm TEXT GENERATED ALWAYS AS (COALESCE(message_subtype, '')) VIRTUAL,
 			sdk_message TEXT NOT NULL,
 			timestamp TEXT NOT NULL,
-			send_status TEXT DEFAULT 'consumed' CHECK(send_status IN ('deferred', 'enqueued', 'consumed', 'failed')),
+			send_status TEXT DEFAULT 'consumed' CHECK(send_status IN ('deferred', 'enqueued', 'submitted', 'consumed', 'failed')),
 			origin TEXT DEFAULT NULL CHECK(origin IS NULL OR origin IN ('human', 'system')),
 			is_renderable INTEGER NOT NULL DEFAULT 1,
 			is_terminal INTEGER NOT NULL DEFAULT 0,

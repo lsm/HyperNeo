@@ -7985,7 +7985,7 @@ export function runMigration182(db: BunDatabase): void {
     .all() as Array<{ type: string; name: string; sql: string }>;
   const widenedSql = tableSql
     .replace(
-      /CREATE TABLE(?: IF NOT EXISTS)?\s+["'`\[]?sdk_messages["'`\]]?/i,
+      /CREATE TABLE(?: IF NOT EXISTS)?\s+["'`[]?sdk_messages["'`\]]?/i,
       'CREATE TABLE sdk_messages_m182_new'
     )
     .replace(
