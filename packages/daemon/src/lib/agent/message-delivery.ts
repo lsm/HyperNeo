@@ -187,8 +187,20 @@ export const MESSAGE_DELIVERY_PARK_MS = 5_000;
 /** Outcome of driving a turn. `blocked` ⇒ the job is parked, not failed. */
 export type DriveTurnOutcome = { outcome: 'completed' } | { outcome: 'blocked'; retryAt: number };
 
-/** Outcome of feeding a steer. `promote` ⇒ turn ended; re-enqueue as a turn. */
-export type FeedSteerOutcome = { outcome: 'consumed' } | { outcome: 'promote' };
+/**
+ * Outcome of feeding a steer.
+ * - `consumed` ⇒ the SDK consumed it (steered into the live turn).
+ * - `promote` ⇒ no live turn; re-enqueue as a turn.
+ * - `park` ⇒ the owning turn is BLOCKED (sdk_resume_choice, session `queued`),
+ *   not actively processing — the steer can neither feed (no live generator) nor
+ *   promote (the parked turn still holds the active-turn slot). Park it with the
+ *   turn's delay so it is NOT reclaimed every poll (hot loop); it re-evaluates
+ *   when the turn unblocks. See Codex (#3742693683).
+ */
+export type FeedSteerOutcome =
+  | { outcome: 'consumed' }
+  | { outcome: 'promote' }
+  | { outcome: 'park' };
 
 /**
  * The live transport owner for a session (AgentSession implements this). Kept as

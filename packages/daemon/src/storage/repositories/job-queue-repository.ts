@@ -224,6 +224,29 @@ export class JobQueueRepository {
   }
 
   /**
+   * Cancel (delete) every ACTIVE (pending/processing) `message_delivery` job for
+   * a session. Used at the START of `session.archive` (before any teardown) so a
+   * job claimed concurrently with the archive cannot drive a turn against the
+   * session while its agent/transcript/worktree are being torn down (phases 1–3
+   * run before the phase-4 `status='archived'` flip the handler guard checks).
+   * A processing job whose in-flight handler is still running self-settles when
+   * archive phase 1 cleans up the agent (its later complete()/fail()/requeue() is
+   * a no-op — the row is gone). The persisted message stays in `sdk_messages`.
+   * See message-delivery-v2.md + Codex (#3742616723 archive TOCTOU).
+   */
+  cancelForSession(sessionId: string, queue: string = 'message_delivery'): number {
+    const res = this.db
+      .prepare(
+        `DELETE FROM job_queue
+          WHERE queue = ?
+            AND json_extract(payload, '$.sessionId') = ?
+            AND status IN ('pending', 'processing')`
+      )
+      .run(queue, sessionId);
+    return res.changes;
+  }
+
+  /**
    * The set of messageUuids with an ACTIVE (pending/processing) message_delivery
    * job for a session. Used by the LEGACY replay paths
    * (replayPendingMessagesForImmediateMode / handleQueryTrigger /

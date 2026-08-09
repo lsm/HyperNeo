@@ -655,6 +655,19 @@ export class SessionLifecycle {
       return;
     }
 
+    // PHASE 0: Cancel active message_delivery jobs BEFORE any teardown. The
+    // handler's archived-session guard only checks the FINAL persisted status
+    // (flipped in phase 4), but phases 1–3 already tear down the agent,
+    // transcript, and worktree — a job claimed concurrently in that window would
+    // drive a turn against a half-destroyed session. Cancelling pending jobs up
+    // front removes them from the claim pool; any in-flight processing job
+    // self-settles when phase 1 cleans up the agent. See Codex (#3742616723).
+    try {
+      this.db.getJobQueueRepo()?.cancelForSession(sessionId);
+    } catch (error) {
+      this.logger.error(`[SessionLifecycle] archiveResources: delivery cancel failed:`, error);
+    }
+
     const completedPhases: string[] = [];
 
     // PHASE 1: Stop in-memory SDK subprocess.

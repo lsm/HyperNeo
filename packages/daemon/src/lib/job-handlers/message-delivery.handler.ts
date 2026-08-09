@@ -42,6 +42,7 @@ import type { Job, JobQueueRepository } from '../../storage/repositories/job-que
 import type { JobHandler } from '../../storage/job-queue-processor';
 import {
   asMessageDeliveryPayload,
+  MESSAGE_DELIVERY_PARK_MS,
   type DeliveryLoadResult,
   type MessageDeliverySession,
 } from '../agent/message-delivery';
@@ -157,19 +158,30 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       content,
       payload.parentToolUseId
     );
+    if (result.outcome === 'park') {
+      // The owning turn is blocked (sdk_resume_choice, session `queued`): the
+      // steer can neither feed nor promote (the parked turn holds the active-turn
+      // slot). Park it with the turn's delay so it is NOT reclaimed every poll
+      // (unbounded hot loop); it re-evaluates (feed/promote) when reclaimed after
+      // the delay. See Codex (#3742693683).
+      const retryAt = Date.now() + MESSAGE_DELIVERY_PARK_MS;
+      deps.jobQueue.requeue(job.id, retryAt);
+      return { parked: 'turn_blocked', retryAt };
+    }
     if (result.outcome === 'promote') {
       // The turn ended between enqueue and claim — convert THIS job to a turn
       // in place (requeueAs) rather than completing it + enqueuing a second.
       // One job for the messageUuid → no crash-window double-deliver. If a new
       // turn became active in the race window, the active-turn index raises
-      // UNIQUE on the UPDATE; fall back to requeuing as a steer (it'll feed the
-      // new turn). Either way the message is delivered exactly once.
+      // UNIQUE on the UPDATE; fall back to requeuing as a steer PARKED with the
+      // delay (not runAt=now) so it doesn't hot-loop — it re-evaluates later.
       try {
         deps.jobQueue.requeueAs(job.id, 'turn', Date.now());
         return { outcome: 'superseded', promoted: 'turn' };
       } catch (err) {
         if (/UNIQUE constraint/i.test(err instanceof Error ? err.message : String(err))) {
-          deps.jobQueue.requeueAs(job.id, 'steer', Date.now());
+          const retryAt = Date.now() + MESSAGE_DELIVERY_PARK_MS;
+          deps.jobQueue.requeueAs(job.id, 'steer', retryAt);
           return { outcome: 'superseded', promoted: 'steer' };
         }
         throw err;

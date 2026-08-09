@@ -1070,6 +1070,19 @@ function createIndexes(db: BunDatabase): void {
     `CREATE INDEX IF NOT EXISTS idx_job_queue_dequeue ON job_queue(queue, status, priority DESC, run_at ASC)`
   );
   db.exec(`CREATE INDEX IF NOT EXISTS idx_job_queue_status ON job_queue(status)`);
+  // message_delivery v2: atomic "one active turn per session" guard + turn-vs-steer
+  // arbiter. MUST exist on fresh DBs too — migrations run BEFORE createTables() (see
+  // database-core.ts), so migration 181 early-returns (no job_queue yet) on a fresh
+  // install and would otherwise leave this index absent, letting every turn insert
+  // succeed (no steers). createIndexes is the fresh-schema path; migration 181 covers
+  // existing-DB upgrades. `IF NOT EXISTS` makes both idempotent. See message-delivery-v2.md §6.
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_message_delivery_active_turn
+      ON job_queue (queue, json_extract(payload, '$.sessionId'))
+      WHERE queue = 'message_delivery'
+        AND json_extract(payload, '$.role') = 'turn'
+        AND status IN ('pending', 'processing')
+  `);
   // Workspace history index — supports ORDER BY last_used_at DESC in list()
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_workspace_history_last_used_at ON workspace_history(last_used_at DESC)`

@@ -1834,11 +1834,22 @@ export class AgentSession
     _parentToolUseId?: string | null
   ): Promise<FeedSteerOutcome> {
     const action = await withSessionLock(this.session.id, async () => {
-      return this.stateManager.getState().status === 'processing' ? 'feed' : 'promote';
+      const status = this.stateManager.getState().status;
+      // 'processing' → feed the live turn. 'queued' → the owning turn is parked
+      // (blocked on sdk_resume_choice): the steer can't feed (no live generator)
+      // and can't promote (the parked turn holds the active-turn slot), so PARK it
+      // with the turn's delay instead of requeueing every poll (hot loop). Anything
+      // else (idle/…) → the turn ended; promote. See Codex (#3742693683).
+      if (status === 'processing') return 'feed' as const;
+      if (status === 'queued') return 'park' as const;
+      return 'promote' as const;
     });
     if (action === 'promote') {
       // The active turn ended (or never started) — promote to a turn candidate.
       return { outcome: 'promote' };
+    }
+    if (action === 'park') {
+      return { outcome: 'park' };
     }
     // Feed OUTSIDE the lock. Resolves on onSent (SDK consumed the steer);
     // rejects on clear/turn-end/error → the handler fails the job → backoff →

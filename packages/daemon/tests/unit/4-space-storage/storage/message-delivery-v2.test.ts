@@ -516,6 +516,24 @@ describe('handler — status-aware delivery (§8)', () => {
     expect(result).toEqual({ outcome: 'archived' });
     expect(session.driveCalls).toBe(0);
   });
+
+  it('a steer whose owning turn is parked (queued) is PARKED with a delay, not hot-looped (#3683)', async () => {
+    const session = new MockSession();
+    session.feedResult = { outcome: 'park' };
+    const job = steerJob(repo, 'msg-park');
+    const handler = createMessageDeliveryHandler({
+      jobQueue: repo,
+      getSession: () => session,
+      getMessageContent: () => ({ content: 'steer', sendStatus: 'enqueued' }),
+    });
+    const before = Date.now();
+    const result = await handler(job);
+    expect(result).toMatchObject({ parked: 'turn_blocked' });
+    const after = repo.getJob(job.id);
+    expect(after?.status).toBe('pending'); // parked, not completed
+    // Delayed runAt (not Date.now()) — this is what breaks the every-poll hot loop.
+    expect(after?.runAt ?? 0).toBeGreaterThan(before);
+  });
 });
 
 // ── Repo: exempt dequeue + shutdown requeue (#2587 / #2593) ─────────────────
@@ -563,6 +581,18 @@ describe('repo — exempt dequeue + requeueAllProcessing (#2587/#2593)', () => {
     expect(
       all.every((j) => j.status === 'pending' && j.runAt === runAt && j.startedAt === null)
     ).toBe(true);
+  });
+
+  it('cancelForSession deletes pending+processing jobs for the session, leaves others (#3672)', () => {
+    deliverMessage(repo, SESSION, 'a', { origin: 'chat' }); // turn (pending)
+    deliverMessage(repo, SESSION, 'b', { origin: 'chat' }); // steer (pending)
+    deliverMessage(repo, 'other-session', 'c', { origin: 'chat' }); // other session
+    repo.dequeue(MESSAGE_DELIVERY, 1); // claim the turn 'a' → processing
+    const n = repo.cancelForSession(SESSION);
+    expect(n).toBe(2); // 'a' (processing) + 'b' (pending)
+    const remaining = repo.listJobs({ queue: MESSAGE_DELIVERY, limit: 10 });
+    expect(remaining).toHaveLength(1);
+    expect((remaining[0].payload as { sessionId: string }).sessionId).toBe('other-session');
   });
 });
 
