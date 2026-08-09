@@ -553,6 +553,9 @@ const EXCLUDED_TABLE_NAMES: string[] = [
   'space_session_groups',
   'space_session_group_members',
   'space_workflow_transitions',
+  // Immutable append-only workflow-definition version history (RFC §4 Phase 1) — internal
+  // audit/pinning substrate, not useful for ad-hoc agent queries.
+  'space_workflow_definition_versions',
   // Legacy dropped tables
   'messages',
   'tool_calls',
