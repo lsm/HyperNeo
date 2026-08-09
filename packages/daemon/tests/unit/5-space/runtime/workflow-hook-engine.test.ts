@@ -1712,6 +1712,136 @@ describe('wrapHandlerWithHooks', () => {
     ).toBeDefined();
   });
 
+  test('a revision-feedback send_message (cyclic channel) withdraws the sender queued terminal retry', async () => {
+    // The reviewer is codex-blocked on approve_task (queued). It then sends
+    // revision feedback back to the coder over the cyclic Review→Coding
+    // channel. The queued approve_task is withdrawn — otherwise it would
+    // replay once codex (or the 2h timeout-allow) resolves and close a task
+    // the reviewer asked for changes on.
+    const hookStateRepo = makeMockHookStateRepo();
+    const workflow: SpaceWorkflow = {
+      ...makeWorkflow([
+        makeHook({
+          id: 'codex-approve',
+          sourceNode: 'Review',
+          method: 'approve_task',
+          authorizedCallers: [{ sourceNode: 'Review', agentSlots: ['reviewer'] }],
+        }),
+      ]),
+      channels: [
+        { id: 'ch-forward', from: 'Coding', to: 'Review' },
+        { id: 'ch-feedback', from: 'Review', to: 'Coding', maxCycles: 5 },
+      ],
+    };
+    const mockExecutor = new MockHookExecutor();
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo,
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+    const reviewerMeta: HookActionMeta = {
+      sessionId: 'session-reviewer',
+      agentName: 'reviewer',
+      nodeId: 'node-review',
+      taskId: 'task-1',
+    };
+    const blocked: WorkflowHookResult = {
+      type: 'retryable_block',
+      reason: 'codex review bot approval missing',
+      retryAfterMs: 30_000,
+    };
+    hookStateRepo.ensure('run-1', 'codex-approve');
+    mockExecutor.setResult('codex-approve', blocked);
+    const handler = async () => ({
+      content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
+    });
+
+    // approve_task is codex-blocked → queued.
+    const approveWrapped = wrapHandlerWithHooks('approve_task', handler, engine, {}, reviewerMeta);
+    await approveWrapped({});
+    expect(
+      hookStateRepo.get('run-1', 'codex-approve')?.localState[QUEUED_RETRYABLE_ACTION_STATE_KEY]
+    ).toBeDefined();
+
+    // Revision feedback to the coder over the cyclic channel.
+    const sendWrapped = wrapHandlerWithHooks('send_message', handler, engine, {}, reviewerMeta);
+    await sendWrapped({ target: 'Coding', message: 'please fix X' });
+
+    // The queued approve_task was withdrawn by the revision send.
+    expect(
+      hookStateRepo.get('run-1', 'codex-approve')?.localState[QUEUED_RETRYABLE_ACTION_STATE_KEY]
+    ).toBeNull();
+  });
+
+  test('a non-revision (forward) send_message does NOT withdraw a queued terminal retry', async () => {
+    // A forward handoff or status/vote message is not revision feedback — it
+    // must not drop a pending close (the non-terminal clearing guard). The
+    // coder is codex-blocked on submit_for_approval and sends a forward
+    // message to Review over the non-cyclic Coding→Review channel: the
+    // queued submit_for_approval stays armed.
+    const hookStateRepo = makeMockHookStateRepo();
+    const workflow: SpaceWorkflow = {
+      ...makeWorkflow([
+        makeHook({
+          id: 'codex-submit',
+          sourceNode: 'Coding',
+          method: 'submit_for_approval',
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        }),
+      ]),
+      channels: [
+        { id: 'ch-forward', from: 'Coding', to: 'Review' },
+        { id: 'ch-feedback', from: 'Review', to: 'Coding', maxCycles: 5 },
+      ],
+    };
+    const mockExecutor = new MockHookExecutor();
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo,
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+    const blocked: WorkflowHookResult = {
+      type: 'retryable_block',
+      reason: 'codex review bot approval missing',
+      retryAfterMs: 30_000,
+    };
+    hookStateRepo.ensure('run-1', 'codex-submit');
+    mockExecutor.setResult('codex-submit', blocked);
+    const handler = async () => ({
+      content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
+    });
+
+    const submitWrapped = wrapHandlerWithHooks(
+      'submit_for_approval',
+      handler,
+      engine,
+      {},
+      defaultMeta
+    );
+    await submitWrapped({});
+    expect(
+      hookStateRepo.get('run-1', 'codex-submit')?.localState[QUEUED_RETRYABLE_ACTION_STATE_KEY]
+    ).toBeDefined();
+
+    // Forward handoff over the NON-cyclic Coding→Review channel.
+    const sendWrapped = wrapHandlerWithHooks('send_message', handler, engine, {}, defaultMeta);
+    await sendWrapped({ target: 'Review', message: 'PR ready for review' });
+
+    // The queued submit_for_approval is untouched — a forward send is not a
+    // revision round.
+    expect(
+      hookStateRepo.get('run-1', 'codex-submit')?.localState[QUEUED_RETRYABLE_ACTION_STATE_KEY]
+    ).toBeDefined();
+  });
+
   test('persists hook results to state repo', async () => {
     const hookStateRepo = makeMockHookStateRepo();
     const mockExecutor = new MockHookExecutor();

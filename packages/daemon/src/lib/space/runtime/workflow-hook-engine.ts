@@ -220,6 +220,11 @@ export class WorkflowHookEngine {
     return this.config.workflowRunId;
   }
 
+  /** The workflow definition (nodes/channels/hooks) backing this run. */
+  get workflow(): SpaceWorkflow {
+    return this.config.workflow;
+  }
+
   getRunStatus(): WorkflowRunStatus | undefined {
     return this.config.getWorkflowRunStatus?.(this.config.workflowRunId);
   }
@@ -339,6 +344,26 @@ export class WorkflowHookEngine {
     const clearedActionKeys: string[] = [];
     for (const hook of this.getQueuedRetryableActions()) {
       if (hook.methodName === methodName) continue;
+      if (!TERMINAL_RETRY_METHODS.has(hook.methodName)) continue;
+      if (!sameRetryableActionOwner(hook.meta, meta)) continue;
+      this.clearQueuedRetryableAction(hook.hookId);
+      clearedActionKeys.push(hook.actionKey);
+    }
+    return clearedActionKeys;
+  }
+
+  /**
+   * Clear ALL queued terminal retries owned by `meta`, regardless of method.
+   * Used when the owner's close intent is withdrawn by a revision-feedback
+   * send_message (routing work back to an implementer for another round): a
+   * codex-blocked approve_task must not replay and close the task after the
+   * reviewer requested changes. Distinct from clearConflictingTerminalRetries,
+   * which only clears OTHER terminal methods (the invoking action is about to
+   * replace the queued one of the same method).
+   */
+  clearOwnerTerminalRetries(meta: HookActionMeta): string[] {
+    const clearedActionKeys: string[] = [];
+    for (const hook of this.getQueuedRetryableActions()) {
       if (!TERMINAL_RETRY_METHODS.has(hook.methodName)) continue;
       if (!sameRetryableActionOwner(hook.meta, meta)) continue;
       this.clearQueuedRetryableAction(hook.hookId);
@@ -1441,6 +1466,58 @@ function sameRetryableActionOwner(left: HookActionMeta, right: HookActionMeta): 
   );
 }
 
+/**
+ * Resolve a channel endpoint or send_message target ref (a node name or an
+ * agent-slot name) to its node name. Channels address nodes by name or by an
+ * agent slot, and send_message targets do the same — this normalises both so a
+ * cyclic feedback channel can be matched regardless of how the sender
+ * addressed the implementer.
+ */
+function resolveNodeNameByRef(
+  ref: string | undefined,
+  nodes: SpaceWorkflow['nodes'] | undefined
+): string | undefined {
+  if (!ref || !nodes || ref === '*') return undefined;
+  const direct = nodes.find((node) => node.name === ref);
+  if (direct) return direct.name;
+  return nodes.find((node) => node.agents.some((agent) => agent.name === ref))?.name;
+}
+
+/**
+ * Whether a successful send_message routed work back over a cyclic
+ * (feedback/revision) channel — the sender is dispatching another round to an
+ * implementer rather than closing the task. Such a send withdraws the sender's
+ * pending terminal (close) intent: a codex-blocked approve_task must not replay
+ * and close the task after the reviewer requested changes. Non-cyclic sends
+ * (a forward handoff, a status/vote message) are NOT revision feedback, so a
+ * routine message cannot drop a pending close (the non-terminal clearing guard).
+ */
+function isRevisionFeedbackSend(
+  workflow: SpaceWorkflow | undefined,
+  senderNodeName: string | undefined,
+  target: unknown
+): boolean {
+  if (!workflow?.channels || !senderNodeName) return false;
+  const refs = typeof target === 'string' ? [target] : Array.isArray(target) ? target : [];
+  const targetNodeNames = new Set(
+    refs
+      .map((ref) =>
+        typeof ref === 'string' ? resolveNodeNameByRef(ref, workflow.nodes) : undefined
+      )
+      .filter((name): name is string => Boolean(name))
+  );
+  if (targetNodeNames.size === 0) return false;
+  return workflow.channels.some((channel) => {
+    if (channel.maxCycles === undefined) return false;
+    if (resolveNodeNameByRef(channel.from, workflow.nodes) !== senderNodeName) return false;
+    const endpoints = Array.isArray(channel.to) ? channel.to : [channel.to];
+    return endpoints.some((endpoint) => {
+      const nodeName = resolveNodeNameByRef(endpoint, workflow.nodes);
+      return nodeName !== undefined && targetNodeNames.has(nodeName);
+    });
+  });
+}
+
 async function replayRetryableAction<T extends Record<string, unknown>>(options: {
   actionKey: string;
   methodName: string;
@@ -1710,6 +1787,26 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
     // action of the same owner (the agent's latest terminal choice wins).
     for (const clearedKey of engine.clearConflictingTerminalRetries(methodName, meta)) {
       clearRetryableHookActionTimer(clearedKey);
+    }
+    // A send_message over a cyclic (feedback/revision) channel withdraws the
+    // sender's pending terminal intent — the reviewer is routing work back to
+    // the implementer for another round, so a codex-blocked approve_task must
+    // not replay and close the task once codex (or the 2h timeout-allow)
+    // resolves. Forward/status/vote sends are exempt: only a revision round
+    // withdraws the close, so a routine message cannot drop a pending close.
+    if (methodName === 'send_message') {
+      const senderNodeName = engine.workflow.nodes?.find((node) => node.id === meta.nodeId)?.name;
+      if (
+        isRevisionFeedbackSend(
+          engine.workflow,
+          senderNodeName,
+          (args as { target?: unknown }).target
+        )
+      ) {
+        for (const clearedKey of engine.clearOwnerTerminalRetries(meta)) {
+          clearRetryableHookActionTimer(clearedKey);
+        }
+      }
     }
     engine.clearQueuedRetryableActionsForKey(actionKey);
     clearRetryableHookActionTimer(actionKey);
