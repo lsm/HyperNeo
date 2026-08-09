@@ -902,7 +902,7 @@ describe('ScopeDetailPanel', () => {
     await screen.findByRole('heading', { name: 'Review quality scope' });
     fireEvent.click(screen.getByRole('button', { name: 'evidence' }));
     fireEvent.input(
-      screen.getByPlaceholderText('What happened? What evidence should Forge remember?'),
+      screen.getByPlaceholderText('What happened? What evidence should Evolve remember?'),
       { target: { value: 'Manual proof' } }
     );
     fireEvent.click(screen.getByRole('button', { name: 'Attach note' }));

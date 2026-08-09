@@ -1137,6 +1137,7 @@ describe('EvolutionEpisodeService', () => {
     });
     expect(result.task.description).toContain('Make actions clearer');
     expect(result.task.description).toContain('Proposal reason:\nUsers miss next steps');
+    expect(result.task.description).toContain('Evolution evidence episodes:');
     expect(result.task.description).toContain(episode.id);
   });
 

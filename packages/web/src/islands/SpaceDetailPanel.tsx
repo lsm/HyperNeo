@@ -675,7 +675,7 @@ export function SpaceDetailPanel({
           }
         />
         <SpaceNavItem
-          label="Forge"
+          label="Evolve"
           active={isForgeSelected}
           onClick={handleForgeClick}
           testId="space-detail-forge"

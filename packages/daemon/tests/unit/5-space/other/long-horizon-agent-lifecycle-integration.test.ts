@@ -368,7 +368,7 @@ describe('long-horizon agent lifecycle integration', () => {
     expect(reviewTask).toMatchObject({
       goalId: goal.id,
       evolutionScopeId: scope.id,
-      title: 'Review Forge retrospective: Product quality loop',
+      title: 'Review Evolution retrospective: Product quality loop',
       status: 'open',
     });
     expect(reviewTask?.labels).toContain('forge');

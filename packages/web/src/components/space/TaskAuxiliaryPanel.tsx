@@ -286,7 +286,7 @@ export function TaskAuxiliaryPanel({
         </DetailRow>
       )}
       {task.evolutionScopeId && (
-        <DetailRow label="Forge scope">
+        <DetailRow label="Evolution scope">
           <button
             type="button"
             onClick={() => {
