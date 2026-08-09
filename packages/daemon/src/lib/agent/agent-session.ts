@@ -1966,7 +1966,15 @@ export class AgentSession
         origin: 'chat',
       });
       if (role === 'turn') {
-        await this.stateManager.setQueued(messageUuid);
+        try {
+          // Preserve a legacy-owned live turn: role arbitration can return turn
+          // when no durable turn row exists even though the session is processing.
+          // DB-first publication failure is non-fatal after durable insertion —
+          // rejecting here would invite a client retry while this job still runs.
+          await this.stateManager.setQueuedIfIdle(messageUuid);
+        } catch (error) {
+          this.logger.warn('Queued-state publication failed after durable insertion:', error);
+        }
       }
     });
   }

@@ -1330,6 +1330,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         } catch {
           /* best-effort on shutdown */
         }
+        // Stop active sessions before draining delivery handlers: a turn handler
+        // awaits its session queryPromise, so requeueing the DB row alone cannot
+        // make stop() finish. Cleanup aborts those queries and lets the handlers
+        // unwind. Task-agent sessions go first for the same reason.
+        await taskAgentManager.cleanupAll();
+        await sessionManager.cleanup();
+        logInfo('[Daemon] Active agent sessions stopped');
+
         await jobProcessor.stop();
         logInfo('[Daemon] Job queue processor stopped');
         await messageDeliveryProcessor.stop();
@@ -1355,15 +1363,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         }
         logInfo('[Daemon] External event extensions stopped');
 
-        // Stop all Task Agent sessions before sessionManager.cleanup() so that
-        // Task Agent sessions are interrupted cleanly before the session pool drains.
-        await taskAgentManager.cleanupAll();
-
-        // Stop all agent sessions first — this closes any open SSE connections
-        // that are held by providers (e.g. AnthropicToCopilotBridgeProvider's embedded
-        // HTTP server). Provider shutdown must follow so server.close() is not
-        // blocked waiting for those connections to drain.
-        await sessionManager.cleanup();
+        // Active sessions were stopped before processor drain above. Provider
+        // shutdown follows so all SSE/CLI connections are already closed.
 
         // Shut down providers that hold background resources (e.g. embedded
         // HTTP servers and CLI subprocesses). Runs after sessionManager.cleanup()

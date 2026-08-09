@@ -983,6 +983,33 @@ describe('AgentSession', () => {
       expect(cancelDeliverySpy).toHaveBeenCalledWith(mockSession.id, 'uuid-1');
     });
 
+    it('deliverChatMessage preserves a legacy-owned processing turn', async () => {
+      const jobQueue = {
+        enqueue: mock(() => ({ id: 'job' })),
+      };
+      mockDb.getJobQueueRepo = mock(() => jobQueue);
+      const setQueuedIfIdle = mock(async () => false);
+      agentSession.stateManager.setQueuedIfIdle = setQueuedIfIdle;
+
+      await agentSession.deliverChatMessage('legacy-overlap');
+
+      expect(setQueuedIfIdle).toHaveBeenCalledWith('legacy-overlap');
+      expect(agentSession.getProcessingState().status).not.toBe('queued');
+    });
+
+    it('deliverChatMessage treats queued publication failure as non-fatal after insertion', async () => {
+      const jobQueue = {
+        enqueue: mock(() => ({ id: 'job' })),
+      };
+      mockDb.getJobQueueRepo = mock(() => jobQueue);
+      agentSession.stateManager.setQueuedIfIdle = mock(async () => {
+        throw new Error('subscriber failed');
+      });
+
+      await expect(agentSession.deliverChatMessage('publish-failure')).resolves.toBeUndefined();
+      expect(jobQueue.enqueue).toHaveBeenCalled();
+    });
+
     it('resetQuery should delegate to lifecycleManager', async () => {
       const resetSpy = mock(async () => ({ success: true }));
       // biome-ignore lint: test mock access
