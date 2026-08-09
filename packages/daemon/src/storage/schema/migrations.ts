@@ -7984,7 +7984,10 @@ export function runMigration182(db: BunDatabase): void {
       WHERE tbl_name = 'sdk_messages' AND type IN ('index', 'trigger') AND sql IS NOT NULL`)
     .all() as Array<{ type: string; name: string; sql: string }>;
   const widenedSql = tableSql
-    .replace(/CREATE TABLE(?: IF NOT EXISTS)? sdk_messages/i, 'CREATE TABLE sdk_messages_m182_new')
+    .replace(
+      /CREATE TABLE(?: IF NOT EXISTS)?\s+["'`\[]?sdk_messages["'`\]]?/i,
+      'CREATE TABLE sdk_messages_m182_new'
+    )
     .replace(
       /CHECK\s*\(send_status IN \('deferred', 'enqueued', 'consumed', 'failed'\)\)/,
       "CHECK(send_status IN ('deferred', 'enqueued', 'submitted', 'consumed', 'failed'))"
@@ -7999,6 +8002,9 @@ export function runMigration182(db: BunDatabase): void {
     .filter((column) => column.hidden === 0)
     .map((column) => column.name);
   const quoted = storedColumns.map((name) => `"${name.replaceAll('"', '""')}"`).join(', ');
+  const foreignKeys = (
+    db.prepare(`PRAGMA foreign_keys`).get() as { foreign_keys: number } | undefined
+  )?.foreign_keys;
 
   db.exec('PRAGMA foreign_keys = OFF');
   db.exec('BEGIN');
@@ -8013,7 +8019,7 @@ export function runMigration182(db: BunDatabase): void {
     db.exec('ROLLBACK');
     throw error;
   } finally {
-    db.exec('PRAGMA foreign_keys = ON');
+    db.exec(`PRAGMA foreign_keys = ${foreignKeys === 0 ? 'OFF' : 'ON'}`);
   }
 }
 
