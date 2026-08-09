@@ -5303,6 +5303,7 @@ export class TaskAgentManager {
       internalEventBus: this.config.internalEventBus,
       goalService: this.config.goalService,
       callerSessionId: subSessionId,
+      requiresPostApprovalOwner: dispatchedPostApprovalRoute !== undefined,
       resolveResultArtifactSummary: (task) => {
         // Delegated to the domain artifact profile (coding: the kindless
         // terminal `decision` summary).

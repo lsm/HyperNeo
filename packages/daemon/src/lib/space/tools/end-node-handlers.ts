@@ -92,8 +92,10 @@ export interface MarkCompleteHandlerDeps {
   taskRepo: Pick<SpaceTaskRepository, 'getTask'>;
   /** Optional summary captured from the latest result artifact for this task's workflow run. */
   resolveResultArtifactSummary?: (task: SpaceTask) => string | null;
-  /** Session invoking mark_complete; must match the routed post-approval session when set. */
+  /** Session invoking mark_complete; must match the routed post-approval session. */
   callerSessionId?: string;
+  /** Whether this workflow declares a dispatchable post-approval route. */
+  requiresPostApprovalOwner?: boolean;
   /** Task manager — used to transition and update the task atomically. */
   taskManager: Pick<SpaceTaskManager, 'setTaskStatus' | 'updateTask'>;
   /** Optional hub for emitting `space.task.updated` events. */
@@ -194,6 +196,7 @@ export function createMarkCompleteHandler(
     goalService,
     resolveResultArtifactSummary,
     callerSessionId,
+    requiresPostApprovalOwner = false,
     assertPrMerged,
   } = deps;
 
@@ -232,6 +235,13 @@ export function createMarkCompleteHandler(
       });
     }
 
+    if (requiresPostApprovalOwner && !task.postApprovalSessionId) {
+      return jsonResult({
+        success: false,
+        error:
+          'mark_complete is blocked until the routed post-approval session is recorded on the task.',
+      });
+    }
     if (
       task.postApprovalSessionId &&
       (!callerSessionId || task.postApprovalSessionId !== callerSessionId)
