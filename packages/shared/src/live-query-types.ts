@@ -37,4 +37,5 @@ export interface LiveQueryErrorEvent {
   subscriptionId: string;
   code: string;
   message: string;
+  phase: 'snapshot' | 'delta';
 }

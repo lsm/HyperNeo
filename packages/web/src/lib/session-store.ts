@@ -806,6 +806,15 @@ export class SessionStore {
       if (event.code === 'MESSAGE_TOO_LARGE') {
         this.messagesLoaded.value = true;
         toast.error('Session is too large to load in one window. Try loading less history.');
+        if (event.phase === 'delta') {
+          hub
+            .request('liveQuery.subscribe', {
+              queryName: 'messages.bySession',
+              params: [sessionId, LIVE_QUERY_MESSAGE_LIMIT],
+              subscriptionId,
+            })
+            .catch((error) => logger.warn('Failed to resynchronize messages LiveQuery:', error));
+        }
       }
     });
     this.cleanupFunctions.push(unsubError);

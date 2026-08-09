@@ -4053,6 +4053,7 @@ export function setupLiveQueryHandlers(
               subscriptionId,
               code: 'MESSAGE_TOO_LARGE',
               message: 'Live query update is too large to send; load a smaller window',
+              phase: diff.type,
             },
             sessionId,
           });
