@@ -821,10 +821,9 @@ describe('messages.bySession — SQL behavior', () => {
       timestamp: '2024-01-01 00:00:00',
     });
 
-    // The sidecar has three session_id=? parameters (one per CTE).
     const planRows = db
       .prepare(`EXPLAIN QUERY PLAN ${BACKGROUND_TASK_METADATA_SQL}`)
-      .all('s1', 's1', 's1', 's1') as Array<{ detail: string }>;
+      .all('s1', 's1', 's1', 's1', 's1') as Array<{ detail: string }>;
     const plan = planRows.map((row) => row.detail).join('\n');
     // The load-bearing assertion: the new index drives the subtype predicate.
     expect(plan).toContain('idx_sdk_messages_session_subtype_parent');

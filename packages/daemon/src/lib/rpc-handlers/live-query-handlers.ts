@@ -3143,13 +3143,24 @@ recent_progress AS (
   LIMIT ${BACKGROUND_TASK_METADATA_BATCH_SIZE}
 ),
 recent_task_ids AS (
-  SELECT DISTINCT task_id
+  SELECT DISTINCT candidate.task_id
   FROM (
     SELECT task_id FROM recent_metadata
     UNION ALL
     SELECT task_id FROM recent_progress
-  )
-  WHERE task_id IS NOT NULL AND task_id != ''
+  ) candidate
+  WHERE candidate.task_id IS NOT NULL AND candidate.task_id != ''
+    AND NOT EXISTS (
+      SELECT 1
+      FROM sdk_messages terminal
+      WHERE terminal.session_id = ?
+        AND terminal.parent_tool_use_id IS NULL
+        AND terminal.message_subtype_norm = 'task_notification'
+        AND COALESCE(
+          CASE WHEN json_valid(terminal.sdk_message) THEN json_extract(terminal.sdk_message, '$.task_id') END,
+          terminal.task_id
+        ) = candidate.task_id
+    )
 ),
 task_starts AS (
   SELECT
@@ -3801,6 +3812,7 @@ export function setupLiveQueryHandlers(
       const sessionId = params[0];
       if (typeof sessionId !== 'string' || sessionId.length === 0) return undefined;
       const rows = stmtBackgroundTaskMetadata.all(
+        sessionId,
         sessionId,
         sessionId,
         sessionId,

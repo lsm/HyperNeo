@@ -12,7 +12,12 @@
  */
 
 import { signal } from '@preact/signals';
-import type { AppMcpServer, LiveQuerySnapshotEvent, LiveQueryDeltaEvent } from '@hyperneo/shared';
+import type {
+  AppMcpServer,
+  LiveQueryDeltaEvent,
+  LiveQueryErrorEvent,
+  LiveQuerySnapshotEvent,
+} from '@hyperneo/shared';
 import { Logger } from '@hyperneo/shared';
 import { connectionManager } from './connection-manager';
 
@@ -94,6 +99,23 @@ class AppMcpStore {
         this.appMcpServers.value = current;
       });
       this.cleanups.push(unsubDelta);
+
+      const unsubError = hub.onEvent<LiveQueryErrorEvent>('liveQuery.error', (event) => {
+        if (event.subscriptionId !== SUBSCRIPTION_ID) return;
+        if (!this.activeSubscriptionIds.has(SUBSCRIPTION_ID)) return;
+        this.loading.value = true;
+        hub
+          .request('liveQuery.subscribe', {
+            queryName: 'mcpServers.global',
+            params: [],
+            subscriptionId: SUBSCRIPTION_ID,
+          })
+          .catch((err) => {
+            this.error.value = err instanceof Error ? err.message : 'MCP registry is too large';
+            this.loading.value = false;
+          });
+      });
+      this.cleanups.push(unsubError);
 
       // --- Reconnect handler ---
       // Re-subscribe with the same subscriptionId so we get a fresh snapshot
