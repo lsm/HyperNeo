@@ -312,7 +312,7 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
       await freshRuntime.stop();
     });
 
-    test('poll context resolves most recently updated PR URL from gate data', () => {
+    test('approved-PR resolution picks the most recently updated PR URL from gate data', () => {
       const run = workflowRunRepo.transitionStatus(
         workflowRunRepo.createRun({
           spaceId: SPACE_ID,
@@ -331,10 +331,12 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
 
       const runtime = makeRuntime({ gateDataRepo });
 
-      expect(runtime.getPollPrUrlForRun(run.id)).toBe('https://github.com/acme/widgets/pull/123');
+      expect(runtime.getApprovedPrUrlForRun(run.id)).toBe(
+        'https://github.com/acme/widgets/pull/123'
+      );
     });
 
-    test('poll context falls back to artifact PR URL when gate data has no PR URL', () => {
+    test('approved-PR resolution falls back to artifact PR URL when gate data has no PR URL', () => {
       const run = workflowRunRepo.transitionStatus(
         workflowRunRepo.createRun({
           spaceId: SPACE_ID,
@@ -357,7 +359,9 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
 
       const runtime = makeRuntime({ gateDataRepo, artifactRepo });
 
-      expect(runtime.getPollPrUrlForRun(run.id)).toBe('https://github.com/acme/widgets/pull/456');
+      expect(runtime.getApprovedPrUrlForRun(run.id)).toBe(
+        'https://github.com/acme/widgets/pull/456'
+      );
     });
 
     test('legacy gate polls remain disabled when workflow lookup fails', async () => {

@@ -338,20 +338,6 @@ export class SpaceRuntimeService {
       },
       deliverLongHorizonExternalEvent: (args) => this.deliverLongHorizonExternalEvent(args),
       onBlockedRunExternalEvent: (payload) => this.handleBlockedRunExternalEvent(payload),
-      onRunBlocked: (runId) => {
-        // Run just transitioned to blocked via tick-loop recovery, markFailed
-        // RPC, or gate rejection. Ensure the PR-event auto-subscription is
-        // registered so subsequent GitHub events match a target.
-        void this.notifyRunBlocked(runId);
-      },
-      onBeforeRedispatch: async () => {
-        // Rebuild PR auto-subs for active runs before rehydrate's persisted
-        // delivery replay and before the first redispatch sweep so crash-pending
-        // PR events find a matching target instead of being terminalized. Pass
-        // replay:false — retained events are replayed by the tick's
-        // post-rehydrate redispatch after executors/sessions are restored.
-        await this.rehydrateActiveRunPrEventSubscriptions(false);
-      },
     });
   }
 
@@ -1202,9 +1188,6 @@ export class SpaceRuntimeService {
       await this.provisionExistingSpaces();
       await this.recoverLongTermAgentInbox();
       await this.recoverStalledWorkflowRuns();
-      // PR auto-subscription rehydration is wired via the runtime's
-      // onBeforeRedispatch hook so it runs inside the first executeTick,
-      // before the redispatch sweep re-processes crash-pending events.
     })().catch((err) => {
       log.error('Failed to provision existing spaces during startup:', err);
     });
@@ -2263,48 +2246,8 @@ export class SpaceRuntimeService {
         this.handleGateDataChangedComplete(runId, activatedTasks, gateOpened),
       getPrUrlForRun: (rid) => this.resolvePrUrlForRun(rid),
     });
-    // Ensure the task-owned subscription independently of whether the named
-    // gate exists or opens. Gate evaluation and event interest are orthogonal.
-    await this.syncBlockedRunPrEventSubscription(runId, []);
     const activated = await router.onGateDataChanged(runId, gateId);
-    // Also fire the sync inline; the router's complete-hook covers the
-    // deferred retry path but the immediate path is re-entrantly invoked
-    // here so the result is reflected before the caller observes it.
-    await this.syncBlockedRunPrEventSubscription(runId, activated);
     return activated;
-  }
-
-  /**
-   * Ensure an active workflow run remains subscribed to GitHub PR events when a
-   * PR URL is resolvable from gate data / hook state / artifacts.
-   *
-   * Called from {@link notifyGateDataChanged}, direct resume paths, and the
-   * event-driven re-evaluation path. Also invoked directly by the `write_gate`
-   * MCP tool path in `TaskAgentManager` so agent-driven gate writes trigger the
-   * same sync as RPC-driven ones. Idempotent for the current PR URL and refreshes
-   * stale auto-subscriptions when the resolved PR URL changes.
-   */
-  async syncBlockedRunPrEventSubscription(
-    runId: string,
-    _activatedTasks: SpaceTask[]
-  ): Promise<void> {
-    const run = this.config.workflowRunRepo.getRun(runId);
-    if (!run || (run.status !== 'blocked' && run.status !== 'in_progress')) return;
-    // For a run already in_progress there is no pending transition to replay a
-    // retained PR event, so replay now (this path is also invoked directly by
-    // notifyGateDataChanged, not only via handleGateDataChangedComplete). For a
-    // blocked run, defer — handleGateDataChangedComplete replays after any
-    // transition (gate-open resume) or when the gate stays closed.
-    const replay = run.status === 'in_progress';
-    const result = this.runtime.ensurePrEventSubscriptionForRun(runId, { replay });
-    if (
-      !result.subscribed &&
-      result.reason &&
-      result.reason !== 'no resolvable PR URL' &&
-      result.reason !== 'already has current auto PR-event subscription'
-    ) {
-      log.warn(`SpaceRuntimeService: auto-subscribe for run ${runId}: ${result.reason}`);
-    }
   }
 
   /**
@@ -2312,11 +2255,10 @@ export class SpaceRuntimeService {
    * `onGateDataChanged` paths. Triggered via the router's
    * `onGateDataChangedComplete` config callback.
    *
-   * Registers/refreshes the PR auto-subscription via
-   * {@link syncBlockedRunPrEventSubscription}. When the gate opens and the run
-   * is currently `blocked`, also fires the full resume chain
-   * (transitionBlockedRunToInProgress + notify session) so the deferred retry
-   * path does not silently leave the workflow stuck despite the open gate.
+   * When the gate opens and the run is currently `blocked`, fires the full
+   * resume chain (transitionBlockedRunToInProgress + notify session) so the
+   * deferred retry path does not silently leave the workflow stuck despite the
+   * open gate.
    *
    * Public so TaskAgentManager's nodeAgentChannelRouter can route deferred
    * retries through the same chain — otherwise the retry fires
@@ -2327,7 +2269,6 @@ export class SpaceRuntimeService {
     activatedTasks: SpaceTask[],
     gateOpened = activatedTasks.length > 0
   ): Promise<void> {
-    await this.syncBlockedRunPrEventSubscription(runId, activatedTasks);
     // Resume the run only when EVERY gate is now open. Resuming on a partial
     // opening (e.g. an unrelated gate A is already satisfied while blocking
     // gate B is still closed) lets the tick loop immediately re-block the
@@ -2341,9 +2282,10 @@ export class SpaceRuntimeService {
         this.transitionBlockedRunToInProgress(runId);
       }
     }
-    // Replay retained PR events after any transition: for a gate-open resume
-    // the run is now in_progress so the event delivers to the resumed slot;
-    // when the gate stayed closed the replay re-evaluates the blocked gate.
+    // Replay retained events after any transition: for a gate-open resume
+    // the run is now in_progress so a retained event delivers to the resumed
+    // slot; when the gate stayed closed the replay re-evaluates the blocked
+    // gate.
     this.runtime.redispatchRetainedExternalEvents();
   }
 
@@ -2365,52 +2307,19 @@ export class SpaceRuntimeService {
   }
 
   /**
-   * Public entry point for code paths that transition a workflow run to
-   * `blocked` via direct `workflowRunRepo.transitionStatus(...)` calls
-   * (markFailed RPC, gate rejection, space-agent-tools block). Ensures the
-   * PR-event auto-subscription is registered for the run regardless of which
-   * code path performed the transition.
-   *
-   * Delegates to {@link SpaceRuntime.notifyRunBlocked} which performs the
-   * actual prUrl resolution and topic-trie registration. Idempotent.
-   */
-  /**
    * Public entry point for code paths that transition a workflow run out of
-   * `blocked` via direct repository calls. Resets blocked executions and keeps
-   * the task-owned PR subscription current; resuming a run does not consume it.
+   * `blocked` via direct repository calls. Resets blocked executions so the
+   * tick loop re-drives the recovered slot.
    */
   notifyRunResumed(runId: string): void {
     try {
       // Direct resume paths (spaceWorkflowRun.resume, approveGate after
       // rejection) bypass transitionBlockedRunToInProgress, so reset any
-      // blocked executions BEFORE ensuring the auto-sub so the subscription
-      // targets the recovered slot, not the stale blocked one.
+      // blocked executions so the next tick re-drives them.
       this.resetBlockedExecutionsForRun(runId);
-      const result = this.runtime.ensurePrEventSubscriptionForRun(runId);
-      if (
-        !result.subscribed &&
-        result.reason &&
-        result.reason !== 'no resolvable PR URL' &&
-        result.reason !== 'already has current auto PR-event subscription'
-      ) {
-        log.warn(`SpaceRuntimeService: notifyRunResumed for run ${runId}: ${result.reason}`);
-      }
     } catch (err) {
       log.warn(
         `SpaceRuntimeService: notifyRunResumed failed for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
-      );
-    }
-  }
-
-  async notifyRunBlocked(runId: string): Promise<void> {
-    try {
-      const result = this.runtime.notifyRunBlocked(runId);
-      if (!result.subscribed && result.reason && result.reason !== 'no resolvable PR URL') {
-        log.warn(`SpaceRuntimeService: notifyRunBlocked for run ${runId}: ${result.reason}`);
-      }
-    } catch (err) {
-      log.warn(
-        `SpaceRuntimeService: notifyRunBlocked failed for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
       );
     }
   }
@@ -2514,88 +2423,6 @@ export class SpaceRuntimeService {
           });
       }
     }
-  }
-
-  /**
-   * Re-register task-owned PR event auto-subscriptions after a daemon restart.
-   *
-   * Auto-subscriptions live in the SpaceRuntime's in-memory topic trie and are
-   * lost when the process restarts. This pass walks every task that may still
-   * react to PR events, resolves its PR URL from gate data / artifacts, and
-   * re-invokes {@link SpaceRuntime.registerPrEventSubscriptionForRun} so a later
-   * CI failure can reach the task even when its prior run already succeeded.
-   *
-   * Idempotent and best-effort: failures for individual runs are logged and
-   * swallowed so one bad run cannot block startup. Skips paused / stopped
-   * spaces — those are recovered by {@link rehydrateActiveRunPrEventSubscriptionsForSpace}
-   * when the space is resumed.
-   */
-  async rehydrateActiveRunPrEventSubscriptions(replay = true): Promise<void> {
-    try {
-      const spaces = await this.config.spaceManager.listSpaces(false);
-      let rehydrated = 0;
-      for (const space of spaces) {
-        if (space.paused || space.stopped) continue;
-        rehydrated += this.rehydrateActiveRunPrEventSubscriptionsForSpace(space.id, replay);
-      }
-      if (rehydrated > 0) {
-        log.info(
-          `SpaceRuntimeService: rehydrated ${rehydrated} task-owned PR event auto-subscription(s)`
-        );
-      }
-    } catch (err) {
-      log.error(
-        `SpaceRuntimeService: rehydrateActiveRunPrEventSubscriptions failed: ${err instanceof Error ? err.message : String(err)}`
-      );
-    }
-  }
-
-  async rehydrateBlockedRunPrEventSubscriptions(replay = true): Promise<void> {
-    await this.rehydrateActiveRunPrEventSubscriptions(replay);
-  }
-
-  /**
-   * Space-scoped variant of {@link rehydrateActiveRunPrEventSubscriptions}.
-   * Re-registers PR auto-subscriptions for eligible tasks in a single space —
-   * used by the space-resume path (`resumeSpace` RPC) to rebuild subscriptions
-   * for previously-paused spaces that were skipped at startup.
-   *
-   * `replay` (default true) is forwarded to {@link SpaceRuntime.ensurePrEventSubscriptionForRun};
-   * the startup `onBeforeRedispatch` path passes false so retained events are
-   * not replayed before executors/sessions are restored. Returns the count of
-   * successfully re-registered subscriptions. Errors for individual runs are
-   * logged and swallowed.
-   */
-  rehydrateActiveRunPrEventSubscriptionsForSpace(spaceId: string, replay = true): number {
-    let rehydrated = 0;
-    try {
-      const reactiveRuns = this.config.workflowRunRepo.listBySpace(spaceId).filter((run) => {
-        // Exclude cancelled runs (e.g. cancelled by space.stop while a review
-        // task survives) so a later space start does not recreate their auto PR
-        // subscription — matching the runtime's onSpaceResumed eligibility.
-        if (run.status === 'cancelled') return false;
-        const tasks = this.config.taskRepo.listByWorkflowRunIncludingArchived(run.id);
-        return tasks.some((task) => task.status !== 'cancelled' && task.status !== 'archived');
-      });
-      for (const run of reactiveRuns) {
-        const result = this.runtime.ensurePrEventSubscriptionForRun(run.id, { replay });
-        if (result.subscribed) rehydrated++;
-      }
-      if (rehydrated > 0) {
-        log.info(
-          `SpaceRuntimeService: rehydrated ${rehydrated} task-owned PR event auto-subscription(s) in space ${spaceId}`
-        );
-      }
-    } catch (err) {
-      log.error(
-        `SpaceRuntimeService: rehydrateActiveRunPrEventSubscriptionsForSpace(${spaceId}) failed: ${err instanceof Error ? err.message : String(err)}`
-      );
-    }
-    return rehydrated;
-  }
-
-  rehydrateBlockedRunPrEventSubscriptionsForSpace(spaceId: string, replay = true): number {
-    return this.rehydrateActiveRunPrEventSubscriptionsForSpace(spaceId, replay);
   }
 
   /**

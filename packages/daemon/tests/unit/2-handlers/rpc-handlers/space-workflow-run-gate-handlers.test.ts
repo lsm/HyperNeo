@@ -217,7 +217,6 @@ function createMockRuntimeService(): SpaceRuntimeService {
       startWorkflowRun: mock(async () => ({ run: mockRun, tasks: [] })),
     })),
     notifyGateDataChanged: mock(async () => {}),
-    notifyRunBlocked: mock(async () => {}),
     notifyRunResumed: mock(() => {}),
     start: mock(() => {}),
     stop: mock(() => {}),
