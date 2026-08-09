@@ -35,6 +35,17 @@
 
 import { beforeEach, afterEach, vi } from 'vitest';
 
+// happy-dom lacks ResizeObserver (VoiceWaveform uses it to size its columns).
+// Components derive their initial measurement synchronously, so a no-op stub
+// suffices; tests that exercise resize behavior stub clientWidth directly.
+if (typeof globalThis.ResizeObserver === 'undefined') {
+  globalThis.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver;
+}
+
 // Mock window.location with specific values (happy-dom doesn't set all properties)
 Object.defineProperty(global.window, 'location', {
   value: {

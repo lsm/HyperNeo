@@ -14,7 +14,17 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.useRealTimers();
+  delete (HTMLElement.prototype as { clientWidth?: number }).clientWidth;
 });
+
+// happy-dom reports clientWidth as 0; the waveform derives its column count
+// from it, so tests that assert a count stub the width explicitly.
+function stubClientWidth(px: number) {
+  Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+    configurable: true,
+    get: () => px,
+  });
+}
 
 describe('VoiceWaveform', () => {
   it('renders the elapsed timer at 0:00 while recording', () => {
@@ -61,8 +71,9 @@ describe('VoiceWaveform', () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
-  it('renders fewer columns with tighter gaps on narrow viewports', () => {
+  it('derives the column count from the row width on narrow viewports', () => {
     vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true }));
+    stubClientWidth(160); // narrow pitch is 4px → 40 columns
     render(
       <VoiceWaveform
         getLevel={() => 0}
@@ -71,12 +82,13 @@ describe('VoiceWaveform', () => {
         onCancel={() => {}}
       />
     );
-    expect(screen.getByTestId('voice-bars').children.length).toBe(12);
+    expect(screen.getByTestId('voice-bars').children.length).toBe(40);
   });
 
   it('drives the bar meters from getLevel via requestAnimationFrame', () => {
     // Restore a real rAF, then fake the clock so we can advance frames deterministically.
     vi.unstubAllGlobals();
+    stubClientWidth(600); // wide pitch is 5px → 120 columns
     vi.useFakeTimers();
     render(
       <VoiceWaveform
@@ -91,7 +103,7 @@ describe('VoiceWaveform', () => {
 
     const row = screen.getByTestId('voice-bars');
     const bars = [...row.children] as HTMLElement[];
-    expect(bars.length).toBe(72);
+    expect(bars.length).toBe(120);
     const scales = [...bars].map((b) => {
       const match = (b as HTMLElement).style.transform.match(/scaleY\(([\d.]+)\)/);
       return match ? Number.parseFloat(match[1]) : 0;
