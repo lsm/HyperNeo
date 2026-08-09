@@ -133,20 +133,20 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
 
   resolveInitialPrimaryLinkUrl(runId: string): string {
     // Approval handoffs persist pr_url in hook state (or legacy gate data).
-    // Choose the oldest such record and deliberately ignore mutable artifacts:
-    // agents may append newer link artifacts, but cannot change which PR the
-    // run originally submitted for review.
+    // Choose the latest validated handoff identity: a revision may legitimately
+    // replace a closed PR before final approval. Deliberately ignore artifacts
+    // whenever validated state exists so agents cannot substitute the PR later.
     type Candidate = { url: string; updatedAt: number };
-    let first: Candidate | null = null;
-    const earlier = (prev: Candidate | null, url: string, updatedAt: number): Candidate | null => {
+    let approved: Candidate | null = null;
+    const newer = (prev: Candidate | null, url: string, updatedAt: number): Candidate | null => {
       if (!url) return prev;
-      return !prev || updatedAt < prev.updatedAt ? { url, updatedAt } : prev;
+      return !prev || updatedAt > prev.updatedAt ? { url, updatedAt } : prev;
     };
 
     try {
       const gateDataRepo = this.sharedGateDataRepo ?? new GateDataRepository(this.db);
       for (const record of gateDataRepo.listByRun(runId)) {
-        first = earlier(first, legacyPrUrl(record.data), record.updatedAt);
+        approved = newer(approved, legacyPrUrl(record.data), record.updatedAt);
       }
     } catch (err) {
       log.warn(
@@ -157,7 +157,7 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
     try {
       const hookStateRepo = new WorkflowHookStateRepository(this.db);
       for (const snapshot of hookStateRepo.listByRun(runId)) {
-        first = earlier(first, legacyPrUrl(snapshot.localState), snapshot.updatedAt ?? 0);
+        approved = newer(approved, legacyPrUrl(snapshot.localState), snapshot.updatedAt ?? 0);
       }
     } catch (err) {
       log.warn(
@@ -165,10 +165,16 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
       );
     }
 
+    if (approved) return approved.url;
+
     // Backward compatibility for runs created before PR-ready hook state was
-    // persisted: bind to the OLDEST eligible artifact identity, never the
-    // freshest. Once established, a later agent-written artifact cannot replace
-    // the PR used for dispatch or completion.
+    // persisted: bind to the oldest eligible artifact. With no validated
+    // handoff state this is the least-mutable historical identity available.
+    let fallback: Candidate | null = null;
+    const earlier = (prev: Candidate | null, url: string, updatedAt: number): Candidate | null => {
+      if (!url) return prev;
+      return !prev || updatedAt < prev.updatedAt ? { url, updatedAt } : prev;
+    };
     if (this.artifactRepo) {
       try {
         for (const artifact of this.artifactRepo.listByRun(runId)) {
@@ -178,7 +184,7 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
                 ? artifact.data.url
                 : ''
               : legacyPrUrl(artifact.data);
-          first = earlier(first, url, artifact.updatedAt);
+          fallback = earlier(fallback, url, artifact.updatedAt);
         }
       } catch (err) {
         log.warn(
@@ -187,7 +193,7 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
       }
     }
 
-    return first?.url ?? '';
+    return fallback?.url ?? '';
   }
 
   summarizeRunOutcome(runId: string): string | null {

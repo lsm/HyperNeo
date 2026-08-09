@@ -238,7 +238,13 @@ export function setupSpaceWorkflowRunHandlers(
       // legacy rows awaiting cleanup), tie-break by most-recently-updated — the
       // same deterministic scoring as selectDeterministicWorkflowFallback — so an
       // auto-start does not silently pick an obsolete/customized oldest duplicate.
-      const defaultWorkflows = workflows.filter((w) => (w.tags ?? []).includes('default'));
+      const canonicalDefaults = workflows.filter(
+        (w) => w.templateName === 'Coding' && (w.tags ?? []).includes('default')
+      );
+      const defaultWorkflows =
+        canonicalDefaults.length > 0
+          ? canonicalDefaults
+          : workflows.filter((w) => (w.tags ?? []).includes('default'));
       const preferred =
         defaultWorkflows.length > 0
           ? [...defaultWorkflows].sort((a, b) => b.updatedAt - a.updatedAt)[0]

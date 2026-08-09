@@ -5290,6 +5290,7 @@ export class TaskAgentManager {
     // Instruction prose is deliberately irrelevant: customizing it must not
     // silently disable the safety contract.
     const isCoderOwnedMergeWorkflow =
+      workflow?.postApproval?.requirePrMerge === true ||
       (workflow?.nodes ?? []).some((node) => node.postApproval?.requirePrMerge === true) ||
       builtInWorkflowRequiresPrMerge(workflow?.templateName);
     const onMarkComplete = createMarkCompleteHandler({
