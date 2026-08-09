@@ -103,6 +103,11 @@ class AppMcpStore {
       const unsubError = hub.onEvent<LiveQueryErrorEvent>('liveQuery.error', (event) => {
         if (event.subscriptionId !== SUBSCRIPTION_ID) return;
         if (!this.activeSubscriptionIds.has(SUBSCRIPTION_ID)) return;
+        if (event.phase === 'snapshot') {
+          this.error.value = event.message;
+          this.loading.value = false;
+          return;
+        }
         this.loading.value = true;
         hub
           .request('liveQuery.subscribe', {
