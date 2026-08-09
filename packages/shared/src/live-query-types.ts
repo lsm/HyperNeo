@@ -32,3 +32,9 @@ export interface LiveQueryDeltaEvent {
   version: number;
   metadata?: Record<string, unknown>;
 }
+
+export interface LiveQueryErrorEvent {
+  subscriptionId: string;
+  code: string;
+  message: string;
+}

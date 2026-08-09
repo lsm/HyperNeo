@@ -3,6 +3,7 @@ import type {
   ActiveTurnSummary,
   ActivityEntry,
   LiveQueryDeltaEvent,
+  LiveQueryErrorEvent,
   LiveQuerySnapshotEvent,
 } from '@hyperneo/shared';
 import { useMessageHub } from './useMessageHub';
@@ -240,6 +241,17 @@ export function useSpaceTaskMessages(
       }
     });
 
+    const unsubError = onEvent<LiveQueryErrorEvent>('liveQuery.error', (event) => {
+      if (event.subscriptionId === activeSubIdRef.current) {
+        sawSnapshot = true;
+        setLoadedForTaskId(taskId);
+        return;
+      }
+      if (event.subscriptionId === activeTurnSubIdRef.current) {
+        setActiveTurnRows([]);
+      }
+    });
+
     const subscribe = (resetRetryCount = false) => {
       const hub = getHub();
       if (!hub) return;
@@ -312,6 +324,7 @@ export function useSpaceTaskMessages(
       snapshotRetryTimers.clear();
       unsubSnapshot();
       unsubDelta();
+      unsubError();
       unsubReconnect?.();
       activeSubIdRef.current = null;
       activeTurnSubIdRef.current = null;

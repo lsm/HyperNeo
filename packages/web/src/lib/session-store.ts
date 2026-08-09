@@ -57,6 +57,7 @@ import type {
   SessionState,
   LiveQuerySnapshotEvent,
   LiveQueryDeltaEvent,
+  LiveQueryErrorEvent,
 } from '@hyperneo/shared';
 import type { ChatMessage } from '@hyperneo/shared';
 import { Logger } from '@hyperneo/shared';
@@ -799,11 +800,7 @@ export class SessionStore {
     });
     this.cleanupFunctions.push(unsubDelta);
 
-    const unsubError = hub.onEvent<{
-      subscriptionId: string;
-      code: string;
-      message: string;
-    }>('liveQuery.error', (event) => {
+    const unsubError = hub.onEvent<LiveQueryErrorEvent>('liveQuery.error', (event) => {
       if (event.subscriptionId !== subscriptionId) return;
       if (this.activeMessagesSubscriptionId !== subscriptionId) return;
       if (event.code === 'MESSAGE_TOO_LARGE') {
