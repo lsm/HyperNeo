@@ -257,7 +257,18 @@ export class AcpTransport {
             }
             return;
           }
-          options?.onSubmitted?.();
+          try {
+            options?.onSubmitted?.();
+          } catch (err) {
+            // The submission callback runs after the write completed, so the
+            // outer try/catch cannot see a throw. Reject the request here —
+            // otherwise the exception escapes as an uncaught error and the
+            // request pends until timeout. See Codex (#3744105279).
+            clearTimeout(timer);
+            if (this.pendingRequests.delete(id)) {
+              reject(err instanceof Error ? err : new Error(String(err)));
+            }
+          }
         });
       } catch (err) {
         clearTimeout(timer);

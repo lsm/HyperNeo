@@ -866,9 +866,14 @@ export class AgentSession
     { changed: false } | { changed: true; dbId: string; uuid: string; removedFromMemory: boolean }
   > {
     return withSessionLock(this.session.id, async () => {
+      // Remove accepts BOTH pending states: the frontend Remove button sends
+      // the same RPC for current-turn (enqueued) and next-turn (deferred)
+      // messages — hardcoding 'enqueued' made deferred removal a silent no-op
+      // that reappeared on refresh. cancelDelivery is a safe no-op when the
+      // deferred row has no active job. See Codex (#3744105283).
       const result =
         mode === 'remove'
-          ? this.db.deletePendingUserMessage(this.session.id, messageDbId, 'enqueued')
+          ? this.db.deletePendingUserMessage(this.session.id, messageDbId)
           : this.db.deferEnqueuedUserMessage(this.session.id, messageDbId);
       if (!result?.uuid) return { changed: false as const };
 
@@ -894,25 +899,10 @@ export class AgentSession
     // the user explicitly stopped the turn.
     this.rateLimitWatchdog.cancel();
 
-    // Pre-claim v2 interrupt: queued state may represent a durable turn job that
-    // has not reached MessageQueue/query state yet. Revoke EVERY active durable
-    // delivery for the session — not just the queued-state owner: a pending steer
-    // survives an interrupt during `processing` otherwise, and is later claimed
-    // and promoted into a new turn, executing a prompt the user stopped. The
-    // in-flight turn's job row is deleted too; its handler self-settles (the
-    // interrupt aborts the SDK query, and the processor's auto-complete is a
-    // no-op on a deleted row). Terminalize each still-enqueued SDK row so no
-    // hidden prompt remains; consumed rows are untouched (they WERE delivered).
-    await withSessionLock(this.session.id, async () => {
-      const messageUuids =
-        this.db.getJobQueueRepo?.()?.cancelForSessionWithMessages(this.session.id) ?? [];
-      if (messageUuids.length === 0) return;
-      const sdkRepo = this.db.getSDKMessageRepo?.();
-      for (const messageUuid of messageUuids) {
-        sdkRepo?.markDeliveryFailedByUuid(this.session.id, messageUuid);
-      }
-    });
-
+    // The durable-delivery cancel lives in InterruptHandler.handleInterrupt —
+    // the single chokepoint every interrupt path reaches (client.interrupt RPC
+    // → agent.interruptRequest subscriber → the raw handler, and the space
+    // paths via this wrapper). See Codex (#3744105273).
     await this.interruptHandler.handleInterrupt();
   }
 

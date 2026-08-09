@@ -35,6 +35,9 @@ describe('InterruptHandler', () => {
   let queueStopSpy: ReturnType<typeof mock>;
   let sdkInterruptSpy: ReturnType<typeof mock>;
   let sdkCloseSpy: ReturnType<typeof mock>;
+  let cancelForSessionSpy: ReturnType<typeof mock>;
+  let markFailedSpy: ReturnType<typeof mock>;
+  let mockDb: InterruptHandlerContext['db'];
 
   beforeEach(() => {
     mockSession = {
@@ -91,6 +94,14 @@ describe('InterruptHandler', () => {
 
     mockAbortController = new AbortController();
     mockQueryPromise = null;
+
+    // Default: no durable delivery jobs (legacy path — the cancel is a no-op).
+    cancelForSessionSpy = mock(() => [] as string[]);
+    markFailedSpy = mock(() => null);
+    mockDb = {
+      getJobQueueRepo: mock(() => ({ cancelForSessionWithMessages: cancelForSessionSpy })),
+      getSDKMessageRepo: mock(() => ({ markDeliveryFailedByUuid: markFailedSpy })),
+    } as unknown as InterruptHandlerContext['db'];
   });
 
   function createContext(
@@ -102,6 +113,7 @@ describe('InterruptHandler', () => {
       messageQueue: mockMessageQueue,
       stateManager: mockStateManager,
       logger: mockLogger,
+      db: mockDb,
       queryObject: mockQueryObject,
       queryPromise: mockQueryPromise,
       queryAbortController: mockAbortController,
@@ -180,6 +192,49 @@ describe('InterruptHandler', () => {
       await handler.handleInterrupt();
 
       expect(sdkInterruptSpy).toHaveBeenCalled();
+    });
+
+    it('cancels ALL durable deliveries before anything else (#3743968030/#3744105273)', async () => {
+      cancelForSessionSpy = mock(() => ['turn-uuid', 'steer-uuid']);
+      mockDb = {
+        getJobQueueRepo: mock(() => ({ cancelForSessionWithMessages: cancelForSessionSpy })),
+        getSDKMessageRepo: mock(() => ({ markDeliveryFailedByUuid: markFailedSpy })),
+      } as unknown as InterruptHandlerContext['db'];
+      const callOrder: string[] = [];
+      cancelForSessionSpy.mockImplementation(() => {
+        callOrder.push('cancel');
+        return ['turn-uuid', 'steer-uuid'];
+      });
+      setInterruptedSpy.mockImplementation(async () => {
+        callOrder.push('setInterrupted');
+      });
+      handler = createHandler({ db: mockDb });
+
+      await handler.handleInterrupt();
+
+      expect(cancelForSessionSpy).toHaveBeenCalledWith('test-session-id');
+      expect(markFailedSpy).toHaveBeenCalledWith('test-session-id', 'turn-uuid');
+      expect(markFailedSpy).toHaveBeenCalledWith('test-session-id', 'steer-uuid');
+      // The durable cancel runs BEFORE the state flip — a processor claiming a
+      // job while the interrupt unwinds must find it already gone.
+      expect(callOrder).toEqual(['cancel', 'setInterrupted']);
+    });
+
+    it('cancels durable deliveries even when the session is already idle', async () => {
+      getStateSpy.mockReturnValue({ status: 'idle', phase: 'idle' });
+      cancelForSessionSpy = mock(() => ['pre-claim-uuid']);
+      mockDb = {
+        getJobQueueRepo: mock(() => ({ cancelForSessionWithMessages: cancelForSessionSpy })),
+        getSDKMessageRepo: mock(() => ({ markDeliveryFailedByUuid: markFailedSpy })),
+      } as unknown as InterruptHandlerContext['db'];
+      handler = createHandler({ db: mockDb });
+
+      await handler.handleInterrupt();
+
+      // The pre-claim window can leave a durable job pending while the state
+      // reads idle — the cancel must run before the idle early-return.
+      expect(cancelForSessionSpy).toHaveBeenCalledWith('test-session-id');
+      expect(markFailedSpy).toHaveBeenCalledWith('test-session-id', 'pre-claim-uuid');
     });
 
     it('should handle SDK interrupt() failure gracefully', async () => {

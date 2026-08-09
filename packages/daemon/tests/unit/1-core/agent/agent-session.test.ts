@@ -964,27 +964,23 @@ describe('AgentSession', () => {
       expect(handleInterruptSpy).toHaveBeenCalled();
     });
 
-    it('handleInterrupt cancels ALL durable deliveries, not just the queued owner (#3743968030)', async () => {
-      const cancelForSessionSpy = mock(() => ['turn-uuid', 'steer-uuid']);
-      const markFailedSpy = mock(() => null);
-      mockDb.getJobQueueRepo = mock(() => ({
-        cancelForSessionWithMessages: cancelForSessionSpy,
+    it('revokePendingDelivery remove accepts deferred (next-turn) rows too (#3744105283)', async () => {
+      const deletePendingSpy = mock(() => ({
+        dbId: 'db-1',
+        uuid: 'uuid-1',
+        status: 'deferred' as const,
       }));
-      mockDb.getSDKMessageRepo = mock(() => ({
-        markDeliveryFailedByUuid: markFailedSpy,
-      }));
-      // Session is PROCESSING (the old code returned early here, leaving a
-      // pending steer to be claimed and promoted after the interrupt).
-      // biome-ignore lint: test mock access
-      (agentSession as unknown as Record<string, unknown>).interruptHandler = {
-        handleInterrupt: mock(async () => {}),
-      };
+      const cancelDeliverySpy = mock(() => false);
+      mockDb.deletePendingUserMessage = deletePendingSpy;
+      mockDb.getJobQueueRepo = mock(() => ({ cancelDelivery: cancelDeliverySpy }));
 
-      await agentSession.handleInterrupt();
+      const result = await agentSession.revokePendingDelivery('db-1', 'remove');
 
-      expect(cancelForSessionSpy).toHaveBeenCalledWith(mockSession.id);
-      expect(markFailedSpy).toHaveBeenCalledWith(mockSession.id, 'turn-uuid');
-      expect(markFailedSpy).toHaveBeenCalledWith(mockSession.id, 'steer-uuid');
+      expect(result.changed).toBe(true);
+      // No hardcoded 'enqueued' filter — the frontend Remove button targets
+      // both current-turn (enqueued) and next-turn (deferred) rows.
+      expect(deletePendingSpy).toHaveBeenCalledWith(mockSession.id, 'db-1');
+      expect(cancelDeliverySpy).toHaveBeenCalledWith(mockSession.id, 'uuid-1');
     });
 
     it('resetQuery should delegate to lifecycleManager', async () => {
