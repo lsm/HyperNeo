@@ -59,6 +59,12 @@ export class MessageQueue {
   private queue: QueuedMessage[] = [];
   private waiters: Array<() => void> = [];
   private running: boolean = false;
+  private timeoutMs: number = MESSAGE_QUEUE_TIMEOUT_MS;
+
+  /** Test-only: shorten timeout to exercise delivery-state branches. */
+  overrideTimeoutMsForTest(ms: number): void {
+    this.timeoutMs = ms;
+  }
 
   // Messages atomically removed from `queue` by a generator, but not yet yielded.
   private claimed: Set<QueuedMessage> = new Set();
@@ -102,7 +108,7 @@ export class MessageQueue {
    * Used when caller needs the ID before the message is processed (e.g., for state tracking)
    *
    * Includes timeout detection: if the SDK doesn't consume the message within
-   * MESSAGE_QUEUE_TIMEOUT_MS, the promise is rejected with a timeout error.
+   * this.timeoutMs, the promise is rejected with a timeout error.
    * This prevents the session from getting stuck in 'queued' state indefinitely.
    */
   async enqueueWithId(
@@ -155,7 +161,7 @@ export class MessageQueue {
       // hang and the inFlight Set/size() would leak/overcount it indefinitely.
       queuedMessage.timeoutId = setTimeout(() => {
         const timeoutError = new Error(
-          `Message queue timeout: SDK did not consume message ${messageId} within ${MESSAGE_QUEUE_TIMEOUT_MS / 1000}s. ` +
+          `Message queue timeout: SDK did not consume message ${messageId} within ${this.timeoutMs / 1000}s. ` +
             `This usually indicates an SDK internal error. Please try again or create a new session.`
         );
         timeoutError.name = 'MessageQueueTimeoutError';
@@ -176,7 +182,7 @@ export class MessageQueue {
             queuedMessage.reject(timeoutError);
           }
         }
-      }, MESSAGE_QUEUE_TIMEOUT_MS);
+      }, this.timeoutMs);
 
       this.queue.push(queuedMessage);
       this.onMessageEnqueued?.(queuedMessage.id, queuedMessage.queuedAt);
@@ -295,7 +301,8 @@ export class MessageQueue {
    * generators will exit early instead of consuming messages meant for the new query.
    */
   async *messageGenerator(
-    sessionId: string
+    sessionId: string,
+    options?: { suppressPreYieldCallback?: boolean }
   ): AsyncGenerator<{ message: SDKUserMessage; onSent: () => void }> {
     // Capture the generation at the time this generator was created
     const myGeneration = this.generation;
@@ -345,7 +352,11 @@ export class MessageQueue {
       // Fire callback immediately before the actual yield. A failure means the
       // message was claimed but never yielded, so reject its acknowledgment.
       try {
-        if (!queuedMessage.internal && this.onMessageYielded) {
+        if (
+          !options?.suppressPreYieldCallback &&
+          !queuedMessage.internal &&
+          this.onMessageYielded
+        ) {
           this.onMessageYielded(queuedMessage.id, Date.now());
         }
       } catch (error) {

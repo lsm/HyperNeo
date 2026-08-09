@@ -1843,17 +1843,19 @@ export class AgentSession
       // would duplicate the prompt. History drives the turn; we only ensure the
       // query is running. See Codex (#2592). Durable so a yielded-but-unresumed
       // kickoff does not TTL-out into a duplicate re-feed (#3742616720).
+      let acknowledgment: Promise<void> | null = null;
       if (!alreadyConsumed) {
-        // Revalidate under the lock immediately before feeding: the session may
-        // have been archived (worktree/agent torn down) or the message removed/
-        // re-classified (removePending) between the handler's load and now. Abort
-        // — do not feed. See Codex (#3742774841 archive barrier, #3696 removePending).
+        // Revalidate and synchronously admit under the SAME lock used by
+        // remove/defer. Admission is the linearization point; the long provider
+        // acknowledgment is awaited only after releasing this lock.
         if (!this.messageDeliveryValid(messageUuid)) {
           return { kind: 'aborted' as const };
         }
-        await this.messageQueue.enqueueWithId(messageUuid, content, false, { durable: true });
+        acknowledgment = this.messageQueue.admitWithId(messageUuid, content, false, {
+          durable: true,
+        });
       }
-      return { kind: 'driving' as const, queryPromise };
+      return { kind: 'driving' as const, queryPromise, acknowledgment };
     });
     if (started.kind === 'blocked') {
       // Mirror the legacy startQueryAndEnqueue path: report the session as
@@ -1866,9 +1868,9 @@ export class AgentSession
     if (started.kind === 'aborted') {
       return { outcome: 'aborted' };
     }
-    // Long await OUTSIDE the lock — mid-turn steers can now feed. The lease
-    // heartbeat (handler) keeps the job from being reclaimed as stale. QueryRunner
-    // still owns in-process retry/error in step 1; a swallowed rejection is expected.
+    // Long awaits OUTSIDE the lock — ownership mutations and mid-turn steers can
+    // proceed while the provider acknowledges the kickoff and runs the turn.
+    await started.acknowledgment;
     await started.queryPromise.catch(() => {});
     return { outcome: 'completed' };
   }
@@ -1888,37 +1890,33 @@ export class AgentSession
   ): Promise<FeedSteerOutcome> {
     const action = await withSessionLock(this.session.id, async () => {
       const status = this.stateManager.getState().status;
-      // 'processing' → feed the live turn. 'queued' → the owning turn is parked
-      // (blocked on sdk_resume_choice): the steer can't feed (no live generator)
-      // and can't promote (the parked turn holds the active-turn slot), so PARK it
-      // with the turn's delay instead of requeueing every poll (hot loop). Anything
-      // else (idle/…) → the turn ended; promote. See Codex (#3742693683).
+      // 'processing' → validate + synchronously admit while remove/defer are
+      // excluded by this same lock. 'queued' → parked owner, so park this steer.
       if (status === 'processing') {
-        // Revalidate under the lock before feeding (archive / removePending
-        // window between the handler's load and this feed). See Codex (#3742774841, #3696).
-        if (!this.messageDeliveryValid(messageUuid)) return 'aborted' as const;
-        return 'feed' as const;
+        if (!this.messageDeliveryValid(messageUuid)) return { kind: 'aborted' as const };
+        return {
+          kind: 'feed' as const,
+          acknowledgment: this.messageQueue.admitWithId(messageUuid, content, false, {
+            durable: true,
+          }),
+        };
       }
-      if (status === 'queued') return 'park' as const;
-      return 'promote' as const;
+      if (status === 'queued') return { kind: 'park' as const };
+      return { kind: 'promote' as const };
     });
-    if (action === 'promote') {
+    if (action.kind === 'promote') {
       // The active turn ended (or never started) — promote to a turn candidate.
       return { outcome: 'promote' };
     }
-    if (action === 'park') {
+    if (action.kind === 'park') {
       return { outcome: 'park' };
     }
-    if (action === 'aborted') {
+    if (action.kind === 'aborted') {
       return { outcome: 'aborted' };
     }
-    // Feed OUTSIDE the lock. Resolves on onSent (SDK consumed the steer);
-    // rejects on clear/turn-end/error → the handler fails the job → backoff →
-    // re-feed (if active) or promote. Durable so a yielded-but-unresumed steer
-    // does not TTL-out (30s) into a duplicate re-feed — it resolves instead, the
-    // live SDK already holding the UUID. reclaimStale covers true crashes. See
-    // Codex (#3742616720).
-    await this.messageQueue.enqueueWithId(messageUuid, content, false, { durable: true });
+    // Admission happened atomically under the lock; only the provider
+    // acknowledgment is awaited here.
+    await action.acknowledgment;
     return { outcome: 'consumed' };
   }
 
