@@ -150,6 +150,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			id TEXT PRIMARY KEY,
 			space_id TEXT NOT NULL,
 			workflow_id TEXT NOT NULL,
+			definition_version TEXT,
 			title TEXT NOT NULL,
 			description TEXT,
 			status TEXT NOT NULL DEFAULT 'pending'
@@ -159,7 +160,9 @@ export function createSpaceTables(db: BunDatabase): void {
 			started_at INTEGER,
 			updated_at INTEGER NOT NULL,
 			completed_at INTEGER,
-			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+			FOREIGN KEY (workflow_id, definition_version)
+				REFERENCES space_workflow_definition_versions(workflow_id, version_hash)
 		)
 	`);
 
@@ -168,6 +171,9 @@ export function createSpaceTables(db: BunDatabase): void {
   );
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_space_workflow_runs_workflow_id ON space_workflow_runs(workflow_id)`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_workflow_runs_status ON space_workflow_runs(status)`
   );
 
   db.exec(`

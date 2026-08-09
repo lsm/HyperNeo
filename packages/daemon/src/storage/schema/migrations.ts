@@ -906,17 +906,22 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // brings existing databases to parity.
   run(migrationMarkerKey(180), () => runMigration180(db));
 
-  // Migration 181: Partial unique index uq_message_delivery_active_turn on
+  // Migration 181: Pin each new workflow run to an immutable definition version. Existing
+  // runs remain unpinned because the definition they originally executed cannot be inferred
+  // from the current mutable head. The composite FK makes every non-null pin resolvable.
+  run(migrationMarkerKey(181), () => runMigration181(db));
+
+  // Migration 182: Partial unique index uq_message_delivery_active_turn on
   // job_queue lane 'message_delivery' — the atomic "one active turn per
   // session" guard + turn-vs-steer arbiter for message-delivery v2. See
   // docs/features/message-delivery-v2.md §6. Idempotent (`CREATE INDEX IF NOT
   // EXISTS`); no-op on tables that pre-date the lane (no rows ⇒ no conflict).
-  // (Renumbered 180→181: dev shipped M180 for space_workflow_definition_versions
-  // in #2412, so this index bumped one.)
-  run(migrationMarkerKey(181), () => runMigration181(db));
-
-  // Migration 182: Widen sdk_messages.send_status for ACP delivery boundaries.
+  // (Renumbered 180→181→182: dev shipped M180 for space_workflow_definition_versions
+  // in #2412 and M181 for workflow-run definition pinning in #2425.)
   run(migrationMarkerKey(182), () => runMigration182(db));
+
+  // Migration 183: Widen sdk_messages.send_status for ACP delivery boundaries.
+  run(migrationMarkerKey(183), () => runMigration183(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -7946,7 +7951,7 @@ export function runMigration179(db: BunDatabase): void {
 }
 
 /**
- * Migration 181: Partial unique index enforcing "one active turn per session"
+ * Migration 182: Partial unique index enforcing "one active turn per session"
  * on job_queue lane 'message_delivery' (message-delivery v2). The index is the
  * atomic role arbiter: a `role='turn'` insert either succeeds or hits this
  * constraint, in which case `deliverMessage` inserts the message as `role=
@@ -7956,10 +7961,10 @@ export function runMigration179(db: BunDatabase): void {
  * correctly becomes a steer, not a competing turn. See
  * docs/features/message-delivery-v2.md §6. Idempotent (`CREATE ... IF NOT
  * EXISTS`); no-op on tables that pre-date the lane (no rows ⇒ no conflict).
- * (Renumbered 180→181: dev shipped M180 for space_workflow_definition_versions
- * in #2412.)
+ * (Renumbered 180→181→182: dev shipped M180 for space_workflow_definition_versions
+ * in #2412 and M181 for workflow-run definition pinning in #2425.)
  */
-export function runMigration181(db: BunDatabase): void {
+export function runMigration182(db: BunDatabase): void {
   if (!tableExists(db, 'job_queue')) return;
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS uq_message_delivery_active_turn
@@ -7971,10 +7976,10 @@ export function runMigration181(db: BunDatabase): void {
 }
 
 /**
- * Migration 182: Add the ACP submitted delivery state while preserving the
+ * Migration 183: Add the ACP submitted delivery state while preserving the
  * complete sdk_messages schema and dependent SQLite objects.
  */
-export function runMigration182(db: BunDatabase): void {
+export function runMigration183(db: BunDatabase): void {
   if (!tableExists(db, 'sdk_messages')) return;
   const tableSql = tableCreateSql(db, 'sdk_messages');
   if (!tableSql || tableSql.includes("'submitted'")) return;
@@ -12110,4 +12115,75 @@ export function runMigration180(db: BunDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_space_workflow_definition_versions_space
     ON space_workflow_definition_versions(space_id)
   `);
+}
+
+/**
+ * Migration 181: add a nullable creation-time definition pin to workflow runs.
+ *
+ * SQLite cannot add a composite foreign key with ALTER TABLE, so the run table is rebuilt.
+ * Existing runs deliberately keep a NULL pin: assigning the current definition head would
+ * falsely claim that it was the version they originally executed.
+ */
+export function runMigration181(db: BunDatabase): void {
+  if (!tableExists(db, 'space_workflow_runs')) return;
+  if (tableHasColumn(db, 'space_workflow_runs', 'definition_version')) return;
+  // Historical-marker tests and damaged/partial databases can expose only a sentinel table.
+  // Do not attempt a destructive rebuild unless the M71 run schema is fully present.
+  const requiredColumns = [
+    'space_id',
+    'workflow_id',
+    'title',
+    'description',
+    'status',
+    'failure_reason',
+    'created_at',
+    'started_at',
+    'updated_at',
+    'completed_at',
+  ];
+  if (requiredColumns.some((column) => !tableHasColumn(db, 'space_workflow_runs', column))) return;
+
+  db.exec('PRAGMA foreign_keys = OFF');
+  db.exec('BEGIN');
+  try {
+    db.exec(`
+      CREATE TABLE space_workflow_runs_m181_new (
+        id TEXT PRIMARY KEY,
+        space_id TEXT NOT NULL,
+        workflow_id TEXT NOT NULL,
+        definition_version TEXT,
+        title TEXT NOT NULL,
+        description TEXT,
+        status TEXT NOT NULL DEFAULT 'pending'
+          CHECK(status IN ('pending', 'in_progress', 'done', 'blocked', 'cancelled')),
+        failure_reason TEXT,
+        created_at INTEGER NOT NULL,
+        started_at INTEGER,
+        updated_at INTEGER NOT NULL,
+        completed_at INTEGER,
+        FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+        FOREIGN KEY (workflow_id, definition_version)
+          REFERENCES space_workflow_definition_versions(workflow_id, version_hash)
+      )
+    `);
+    db.exec(`
+      INSERT INTO space_workflow_runs_m181_new
+        (id, space_id, workflow_id, title, description, status, failure_reason,
+         created_at, started_at, updated_at, completed_at)
+      SELECT id, space_id, workflow_id, title, description, status, failure_reason,
+             created_at, started_at, updated_at, completed_at
+      FROM space_workflow_runs
+    `);
+    db.exec(`DROP TABLE space_workflow_runs`);
+    db.exec(`ALTER TABLE space_workflow_runs_m181_new RENAME TO space_workflow_runs`);
+    db.exec(`CREATE INDEX idx_space_workflow_runs_space_id ON space_workflow_runs(space_id)`);
+    db.exec(`CREATE INDEX idx_space_workflow_runs_workflow_id ON space_workflow_runs(workflow_id)`);
+    db.exec(`CREATE INDEX idx_space_workflow_runs_status ON space_workflow_runs(status)`);
+    db.exec(`COMMIT`);
+  } catch (err) {
+    db.exec(`ROLLBACK`);
+    throw err;
+  } finally {
+    db.exec('PRAGMA foreign_keys = ON');
+  }
 }

@@ -5624,17 +5624,6 @@ export class TaskAgentManager {
       gateDataRepo: this.config.gateDataRepo,
       onGateDataChanged: async (runId, gateId) => {
         const activated = await nodeAgentChannelRouter.onGateDataChanged(runId, gateId);
-        // Mirror the service-level notifyGateDataChanged post-hook so agent-driven
-        // gate writes (write_gate MCP tool) trigger the same PR-event
-        // auto-subscription / cleanup as RPC-driven gate writes.
-        try {
-          await this.config.spaceRuntimeService.syncBlockedRunPrEventSubscription(runId, activated);
-        } catch (err) {
-          log.warn(
-            `TaskAgentManager: syncBlockedRunPrEventSubscription failed for run ${runId}: ` +
-              `${err instanceof Error ? err.message : String(err)}`
-          );
-        }
         return activated;
       },
       gateRetryScheduler: this.config.spaceRuntimeService.getGateRetryScheduler(),

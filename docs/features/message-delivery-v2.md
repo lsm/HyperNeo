@@ -123,9 +123,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_message_delivery_active_turn
 Steers (`role = 'steer'`) are excluded, so they coexist with the active turn.
 
 **Two creation paths (both required):** the index is created in (a) `createIndexes`
-(the fresh-DB path, reached via `createTables`) AND (b) migration 181 (the
+(the fresh-DB path, reached via `createTables`) AND (b) migration 182 (the
 existing-DB upgrade path). `runMigrations` runs BEFORE `createTables`
-(`database-core.ts`), so on a fresh install migration 181 early-returns (no
+(`database-core.ts`), so on a fresh install migration 182 early-returns (no
 `job_queue` yet) — without the `createIndexes` copy the index would be absent and
 every turn insert would succeed (no steers). See Codex (#3742693688).
 

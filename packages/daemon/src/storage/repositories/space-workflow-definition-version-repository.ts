@@ -26,7 +26,7 @@
 import type { Database as BunDatabase } from '../sqlite-compat';
 
 /** How a version row came to be appended. */
-export type DefinitionVersionSource = 'create' | 'update' | 'backfill';
+export type DefinitionVersionSource = 'create' | 'update' | 'backfill' | 'run_create';
 
 export interface WorkflowDefinitionVersion {
   workflowId: string;

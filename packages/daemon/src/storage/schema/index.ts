@@ -1072,9 +1072,9 @@ function createIndexes(db: BunDatabase): void {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_job_queue_status ON job_queue(status)`);
   // message_delivery v2: atomic "one active turn per session" guard + turn-vs-steer
   // arbiter. MUST exist on fresh DBs too — migrations run BEFORE createTables() (see
-  // database-core.ts), so migration 181 early-returns (no job_queue yet) on a fresh
+  // database-core.ts), so migration 182 early-returns (no job_queue yet) on a fresh
   // install and would otherwise leave this index absent, letting every turn insert
-  // succeed (no steers). createIndexes is the fresh-schema path; migration 181 covers
+  // succeed (no steers). createIndexes is the fresh-schema path; migration 182 covers
   // existing-DB upgrades. `IF NOT EXISTS` makes both idempotent. See message-delivery-v2.md §6.
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS uq_message_delivery_active_turn

@@ -1,46 +1,92 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
-import { runMigration182 } from '../../../../../src/storage/schema/migrations';
+/**
+ * Migration 182 tests — `uq_message_delivery_active_turn` (message-delivery v2).
+ *
+ * The index is the atomic "one active turn per session" guard AND the
+ * turn-vs-steer arbiter. It must exist on BOTH schema paths:
+ *   - existing DB upgrade → `runMigration182` (job_queue already exists when
+ *     migrations run);
+ *   - fresh install → `createIndexes` (createTables), because `runMigrations`
+ *     runs BEFORE `createTables` (database-core.ts), so on a fresh DB migration
+ *     181 early-returns (no job_queue yet) and would otherwise leave the index
+ *     absent — every turn insert would succeed, nothing classified as a steer.
+ *
+ * See docs/features/message-delivery-v2.md §6 + Codex (#3742693688).
+ */
 
-describe('Migration 182: ACP delivery statuses', () => {
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
+import { createTables } from '../../../../../src/storage/schema';
+import { runMigration182 } from '../../../../../src/storage/schema/migrations';
+import { JobQueueRepository } from '../../../../../src/storage/repositories/job-queue-repository';
+import { MESSAGE_DELIVERY } from '../../../../../src/lib/job-queue-constants';
+import { deliverMessage } from '../../../../../src/lib/agent/message-delivery';
+
+function indexExists(db: BunDatabase, name: string): boolean {
+  return !!db.prepare(`SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?`).get(name);
+}
+
+function makeJobQueue(db: BunDatabase): void {
+  db.exec(`
+    CREATE TABLE job_queue (
+      id TEXT PRIMARY KEY,
+      queue TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      payload TEXT NOT NULL DEFAULT '{}',
+      result TEXT,
+      error TEXT,
+      priority INTEGER NOT NULL DEFAULT 0,
+      max_retries INTEGER NOT NULL DEFAULT 3,
+      retry_count INTEGER NOT NULL DEFAULT 0,
+      run_at INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      started_at INTEGER,
+      completed_at INTEGER
+    );
+  `);
+}
+
+describe('Migration 181: uq_message_delivery_active_turn', () => {
   let db: BunDatabase;
+
   beforeEach(() => {
     db = new BunDatabase(':memory:');
-    db.exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY); INSERT INTO sessions VALUES ('s');
-      CREATE TABLE sdk_messages (
-        id TEXT PRIMARY KEY, session_id TEXT NOT NULL, sdk_message TEXT NOT NULL,
-        send_status TEXT DEFAULT 'consumed' CHECK(send_status IN ('deferred', 'enqueued', 'consumed', 'failed')),
-        sdk_uuid TEXT, generated_uuid TEXT GENERATED ALWAYS AS (COALESCE(sdk_uuid, '')) VIRTUAL,
-        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-      );
-      CREATE INDEX sdk_messages_uuid_test ON sdk_messages(session_id, generated_uuid);
-      CREATE TABLE audit (message_id TEXT);
-      CREATE TRIGGER sdk_messages_audit AFTER INSERT ON sdk_messages BEGIN INSERT INTO audit VALUES (NEW.id); END;
-      INSERT INTO sdk_messages (id, session_id, sdk_message, send_status, sdk_uuid) VALUES ('m', 's', '{}', 'enqueued', 'u');`);
   });
   afterEach(() => db.close());
 
-  test('preserves data, generated columns, indexes, triggers, and foreign keys', () => {
+  test('FRESH-DB path: createTables creates the index (#3742693688)', () => {
+    // A brand-new install runs runMigrations (181 early-returns: no job_queue
+    // yet) THEN createTables. The index must come from createIndexes here.
+    createTables(db);
+    expect(indexExists(db, 'uq_message_delivery_active_turn')).toBe(true);
+
+    // And it enforces one active turn per session (turn-vs-steer arbiter).
+    const repo = new JobQueueRepository(db as never);
+    deliverMessage(repo, 'sess-fresh', 'msg-a', { origin: 'chat' }); // turn
+    deliverMessage(repo, 'sess-fresh', 'msg-b', { origin: 'chat' }); // → steer
+    const roles = repo
+      .listJobs({ queue: MESSAGE_DELIVERY, limit: 10 })
+      .map((j) => (j.payload as { role: string }).role)
+      .sort();
+    expect(roles).toEqual(['steer', 'turn']);
+  });
+
+  test('existing-DB upgrade: runMigration182 creates the index once job_queue exists', () => {
+    makeJobQueue(db);
+    expect(indexExists(db, 'uq_message_delivery_active_turn')).toBe(false);
     runMigration182(db);
-    db.exec(`UPDATE sdk_messages SET send_status = 'submitted' WHERE id = 'm'`);
-    expect(() =>
-      db.exec(`UPDATE sdk_messages SET send_status = 'accepted' WHERE id = 'm'`)
-    ).toThrow();
-    db.exec(
-      `INSERT INTO sdk_messages (id, session_id, sdk_message, send_status, sdk_uuid) VALUES ('m2', 's', '{}', 'submitted', 'u2')`
-    );
-    expect(db.prepare(`SELECT generated_uuid FROM sdk_messages WHERE id = 'm'`).get()).toEqual({
-      generated_uuid: 'u',
-    });
-    expect(
-      db
-        .prepare(
-          `SELECT name FROM sqlite_master WHERE type='index' AND name='sdk_messages_uuid_test'`
-        )
-        .get()
-    ).toBeTruthy();
-    expect(db.prepare(`SELECT COUNT(*) AS n FROM audit`).get()).toEqual({ n: 2 });
-    expect(db.prepare(`PRAGMA foreign_key_list('sdk_messages')`).all()).toHaveLength(1);
+    expect(indexExists(db, 'uq_message_delivery_active_turn')).toBe(true);
+  });
+
+  test('runMigration182 is a no-op (idempotent) when run twice', () => {
+    makeJobQueue(db);
+    runMigration182(db);
     expect(() => runMigration182(db)).not.toThrow();
+    expect(indexExists(db, 'uq_message_delivery_active_turn')).toBe(true);
+  });
+
+  test('runMigration182 is a guarded no-op before the table exists (fresh-DB migration order)', () => {
+    // No job_queue yet — the migration must not throw (createTables hasn't run).
+    expect(() => runMigration182(db)).not.toThrow();
+    expect(indexExists(db, 'uq_message_delivery_active_turn')).toBe(false);
   });
 });

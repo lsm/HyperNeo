@@ -1,6 +1,7 @@
 import type {
   ActorMessageProjectionRow,
   LiveQueryDeltaEvent,
+  LiveQueryErrorEvent,
   LiveQuerySnapshotEvent,
 } from '@hyperneo/shared';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
@@ -102,6 +103,15 @@ export function useActorMessageProjections({
       setRows((prev) => applyDelta(prev, event));
     });
 
+    const unsubError = onEvent<LiveQueryErrorEvent>('liveQuery.error', (event) => {
+      if (event.subscriptionId !== activeSubIdRef.current) return;
+      if (event.phase === 'delta') {
+        subscribe();
+        return;
+      }
+      setLoadedForKey(query.key);
+    });
+
     const subscribe = () => {
       const hub = getHub();
       if (!hub) return;
@@ -130,6 +140,7 @@ export function useActorMessageProjections({
     return () => {
       unsubSnapshot();
       unsubDelta();
+      unsubError();
       unsubReconnect?.();
       activeSubIdRef.current = null;
       Promise.resolve(request('liveQuery.unsubscribe', { subscriptionId })).catch(() => {});

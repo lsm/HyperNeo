@@ -1235,6 +1235,8 @@ export interface SpaceWorkflowRun {
   spaceId: string;
   /** ID of the workflow definition being executed */
   workflowId: string;
+  /** Immutable definition version pinned when the run was created; null for legacy runs. */
+  definitionVersion: string | null;
   /** Human-readable title for this run (e.g., "Deploy v2.1 — Run #3") */
   title: string;
   /** Optional description or goal for this run */

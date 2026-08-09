@@ -19,7 +19,7 @@
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
-import { mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { createTables } from '../../../../src/storage/schema';
@@ -343,6 +343,52 @@ describe('McpImportService', () => {
   // -----------------------------------------------------------------------
 
   describe('refreshAll', () => {
+    test('imports user-level ~/.claude/.mcp.json in the production path (no TEST_USER_SETTINGS_DIR)', () => {
+      // Regression for task #875: in production TEST_USER_SETTINGS_DIR is unset,
+      // so the user-level path must resolve to <home>/.claude/.mcp.json — NOT
+      // <home>/.mcp.json. Bun's os.homedir() ignores process.env.HOME, so the
+      // home dir is injected via the constructor to exercise this branch without
+      // touching the developer's real home directory.
+      const savedSettingsDir = process.env.TEST_USER_SETTINGS_DIR;
+      delete process.env.TEST_USER_SETTINGS_DIR;
+      const fakeHome = mkdtempSync(join(tmpdir(), 'fake-home-'));
+      // Share the same repo as the default `service` so assertions read through `repo`.
+      const prodService = new McpImportService(
+        { appMcpServers: repo } as unknown as Database,
+        fakeHome
+      );
+      try {
+        // The real file, where Claude Code and the working scanner expect it.
+        mkdirSync(join(fakeHome, '.claude'), { recursive: true });
+        writeMcpJson(join(fakeHome, '.claude', '.mcp.json'), {
+          mcpServers: {
+            'codebase-memory-mcp': { command: '/usr/local/bin/codebase-memory-mcp' },
+          },
+        });
+        // Decoy at the OLD (buggy) location <home>/.mcp.json — must NOT be read.
+        writeMcpJson(join(fakeHome, '.mcp.json'), {
+          mcpServers: { 'decoy-buggy-path': { command: 'should-not-import' } },
+        });
+
+        const { results } = prodService.refreshAll([]);
+        // The user-level file was scanned and added its entry.
+        const userResult = results.find(
+          (r) => r.sourcePath === join(fakeHome, '.claude', '.mcp.json')
+        );
+        expect(userResult?.added).toBe(1);
+
+        const imported = repo.getByName('codebase-memory-mcp');
+        expect(imported).not.toBeNull();
+        expect(imported!.source).toBe('imported');
+        expect(imported!.sourcePath).toBe(join(fakeHome, '.claude', '.mcp.json'));
+        // The decoy at <home>/.mcp.json must not have been picked up.
+        expect(repo.getByName('decoy-buggy-path')).toBeNull();
+      } finally {
+        rmSync(fakeHome, { recursive: true, force: true });
+        if (savedSettingsDir !== undefined) process.env.TEST_USER_SETTINGS_DIR = savedSettingsDir;
+      }
+    });
+
     test('scans each workspace plus the user-level file', () => {
       // workspace A
       const wsA = mkdtempSync(join(tmpRoot, 'ws-a-'));
@@ -359,7 +405,7 @@ describe('McpImportService', () => {
         mcpServers: { 'user-server': { command: 'u' } },
       });
 
-      const results = service.refreshAll([wsA, wsB]);
+      const { results } = service.refreshAll([wsA, wsB]);
       expect(results).toHaveLength(3);
       expect(results.every((r) => r.status === 'ok')).toBe(true);
 
@@ -382,8 +428,11 @@ describe('McpImportService', () => {
 
       // Passing an empty workspace list means the scanner doesn't visit the
       // path directly; the listImported() sweep must prune it because the
-      // sourcePath no longer exists.
-      service.refreshAll([]);
+      // sourcePath no longer exists. The prune is reported via `orphanPruned`,
+      // NOT any per-file result, so callers can total removals accurately.
+      const { results, orphanPruned } = service.refreshAll([]);
+      expect(results.every((r) => r.removed === 0)).toBe(true); // not in per-file results
+      expect(orphanPruned).toBe(1);
       expect(repo.getByName('ghost')).toBeNull();
     });
 
@@ -394,7 +443,7 @@ describe('McpImportService', () => {
       });
       const wsB = mkdtempSync(join(tmpRoot, 'ws-without-')); // no .mcp.json inside
 
-      const results = service.refreshAll([wsA, wsB]);
+      const { results } = service.refreshAll([wsA, wsB]);
       const byStatus = Object.fromEntries(results.map((r) => [r.sourcePath, r.status]));
       expect(byStatus[join(wsA, '.mcp.json')]).toBe('ok');
       expect(byStatus[join(wsB, '.mcp.json')]).toBe('missing');
@@ -429,7 +478,7 @@ describe('McpImportService', () => {
       writeMcpJson(join(ws, '.mcp.json'), {
         mcpServers: { once: { command: 'x' } },
       });
-      const results = service.refreshAll([ws, ws]);
+      const { results } = service.refreshAll([ws, ws]);
       // Workspace file + user file = 2 scans; the duplicate workspace path is collapsed.
       expect(results).toHaveLength(2);
       expect(repo.listBySourcePath(join(ws, '.mcp.json'))).toHaveLength(1);

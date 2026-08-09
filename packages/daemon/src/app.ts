@@ -560,7 +560,21 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     if (process.env.NODE_ENV !== 'test') {
       try {
         const workspacePaths = db.workspaceHistory.list(100).map((row) => row.path);
-        mcpImportService.refreshAll(workspacePaths);
+        const { results, orphanPruned } = mcpImportService.refreshAll(workspacePaths);
+        // Surface what the sweep did so a silent no-op (e.g. a mis-resolved
+        // path) is visible to operators. Previously a dropped user-level
+        // import left no trace — see task #875.
+        const added = results.reduce((s, r) => s + r.added, 0);
+        const updated = results.reduce((s, r) => s + r.updated, 0);
+        // Per-file removals plus orphan-pruned rows (workspaces that fell out
+        // of history), which refreshAll deletes without recording in any result.
+        const removed = results.reduce((s, r) => s + r.removed, 0) + orphanPruned;
+        const skippedFiles = results.filter((r) => r.status !== 'ok').length;
+        logInfo(
+          `[Daemon] MCP import sweep: ${added} added, ${updated} updated, ${removed} removed` +
+            (skippedFiles > 0 ? `, ${skippedFiles} file(s) skipped` : '') +
+            ` across ${results.length} scanned`
+        );
       } catch (err) {
         // Non-fatal: a bad `.mcp.json` must never block daemon startup. The
         // service already logs per-file; this outer catch is defensive.

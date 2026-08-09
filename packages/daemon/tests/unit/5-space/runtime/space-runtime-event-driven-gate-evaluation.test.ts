@@ -1,10 +1,14 @@
 /**
- * Service-level integration tests for event-driven gate evaluation (#616).
+ * Service-level integration tests for event-driven gate evaluation.
  *
- * Covers the full chain:
- *   gate blocks → auto-subscribe to GitHub PR events
- *   external event published → handleBlockedRunExternalEvent → notifyGateDataChanged
- *   gate opens → clearPrEventSubscriptionsForRun → session notified
+ * Covers the full chain (post #886, after the runtime-owned PR auto-subscription
+ * was removed in favor of the coder's prompt-driven dynamic subscription):
+ *   coder subscribes via subscribe_pr_events({}) → external event published
+ *   → handleBlockedRunExternalEvent → notifyGateDataChanged
+ *   → gate opens → session notified + run resumed.
+ *
+ * Also covers the leak fix: a PR event is delivered only to the coder's explicit
+ * subscription, never to a reviewer/QA slot that did not subscribe.
  *
  * Uses real SQLite-backed repos and a real ChannelRouter so the gate
  * activation path is exercised end-to-end. The TaskAgentManager is stubbed
@@ -40,6 +44,8 @@ const SPACE_ID = 'space-event-driven-gate-eval';
 const AGENT_ID = 'agent-event-driven-gate-eval';
 const PR_URL = 'https://github.com/lsm/neokai/pull/42';
 const PR_EVENT_TOPIC = 'github/lsm/neokai/pull_request/42.review_submitted';
+// The topic pattern the coder registers via subscribe_pr_events({}) for its PR.
+const CODER_PR_TOPIC_PATTERN = 'github/lsm/neokai/pull_request/42.*';
 
 interface TestContext {
   db: Database;
@@ -233,6 +239,12 @@ async function seedBlockedRunWithPr(
   const firstGateId = workflow.gates?.[0]?.id ?? 'gate';
   ctx.gateDataRepo.merge(run.id, firstGateId, { pr_url: PR_URL });
 
+  // The coder self-subscribes to its own PR events (subscribe_pr_events({})).
+  // This is the prompt-driven dynamic subscription that replaced the runtime's
+  // gate-blocked auto-subscription (task #886).
+  const task = ctx.taskRepo.listByWorkflowRun(run.id)[0]!;
+  runtime.registerSubscription(run.id, task.id, 'code', 'coder', CODER_PR_TOPIC_PATTERN);
+
   ctx.workflowRunRepo.updateRun(run.id, { status: 'blocked', failureReason: 'agentCrash' });
   // Execution stays in_progress with a live session so the blocked run is
   // still considered deliverable by handleExternalEvent.
@@ -240,7 +252,7 @@ async function seedBlockedRunWithPr(
 }
 
 describe('SpaceRuntimeService event-driven gate evaluation', () => {
-  test('notifyGateDataChanged auto-subscribes a blocked run to GitHub PR events when prUrl is resolvable', async () => {
+  test('coder prompt-driven dynamic subscription receives matching PR events', async () => {
     const ctx = await setup({
       gates: [
         {
@@ -261,10 +273,7 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
     const workflow = ctx.workflowManager.listWorkflows(SPACE_ID)[0]!;
     const { runId } = await seedBlockedRunWithPr(ctx, workflow.id);
 
-    // Force the auto-subscribe path by calling notifyGateDataChanged (still blocked).
-    await ctx.service.notifyGateDataChanged(runId, 'approval');
-
-    // Publish a PR event — the auto-subscription should match and deliver.
+    // Publish a PR event — the coder's dynamic subscription should match and deliver.
     const event: ExternalEvent = {
       id: `evt-${Math.random().toString(36).slice(2)}`,
       spaceId: SPACE_ID,
@@ -280,55 +289,69 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
 
     expect(ctx.injected.length).toBeGreaterThanOrEqual(1);
     expect(ctx.eventStore.getById(event.id)?.state).toBe('delivered');
+    void runId;
   });
 
-  test('notifyGateDataChanged replays a retained PR event for an already in_progress run', async () => {
+  test('a PR event is not delivered to a reviewer slot that did not subscribe (leak fix)', async () => {
     const ctx = await setup({
-      gates: [{ id: 'approval', fields: [approvedField, prUrlField] }],
-      channels: [{ id: 'ch-code-to-review', from: 'coder', to: 'reviewer', gateId: 'approval' }],
+      gates: [
+        {
+          id: 'approval',
+          fields: [approvedField, prUrlField],
+        },
+      ],
+      channels: [
+        {
+          id: 'ch-code-to-review',
+          from: 'coder',
+          to: 'reviewer',
+          gateId: 'approval',
+        },
+      ],
     });
+
     const workflow = ctx.workflowManager.listWorkflows(SPACE_ID)[0]!;
     const runtime = await ctx.service.createOrGetRuntime(SPACE_ID);
     const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-    const execution = ctx.nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
-    const coderSessionId = `session-coder-${run.id}`;
-    ctx.nodeExecutionRepo.update(execution.id, {
+
+    // The reviewer is the active node (review phase), with a live session but
+    // NO subscription — it never called subscribe_pr_events.
+    const reviewerExecution = ctx.nodeExecutionRepo.createOrIgnore({
+      workflowRunId: run.id,
+      workflowNodeId: 'review',
+      agentName: 'reviewer',
       status: 'in_progress',
-      agentSessionId: coderSessionId,
       startedAt: Date.now(),
     });
-    ctx.tam.alive.add(coderSessionId);
-    ctx.gateDataRepo.merge(run.id, 'approval', { pr_url: PR_URL });
-
-    // Halt the tick loop and clear any auto-sub the sweep created, so the next
-    // published PR event is genuinely retained (published, no delivery rows).
-    await runtime.stop();
-    runtime.clearPrEventSubscriptionsForRun(run.id);
+    const reviewerSessionId = `session-reviewer-${run.id}`;
+    ctx.nodeExecutionRepo.update(reviewerExecution.id, {
+      agentSessionId: reviewerSessionId,
+    });
+    ctx.tam.alive.add(reviewerSessionId);
+    ctx.workflowRunRepo.updateRun(run.id, { status: 'blocked', failureReason: 'agentCrash' });
 
     const event: ExternalEvent = {
-      id: `evt-retained-inprogress-${Math.random().toString(36).slice(2)}`,
+      id: `evt-leak-${Math.random().toString(36).slice(2)}`,
       spaceId: SPACE_ID,
       source: 'github',
       topic: PR_EVENT_TOPIC,
       occurredAt: Date.now(),
       ingestedAt: Date.now(),
-      dedupeKey: `dedupe-retained-inprogress-${Math.random().toString(36).slice(2)}`,
-      summary: 'review',
+      dedupeKey: `dedupe-leak-${Math.random().toString(36).slice(2)}`,
+      summary: 'CI green',
       payload: { action: 'review_submitted' },
     };
     await ctx.eventService.publish(event);
-    expect(ctx.eventStore.listDeliveries(event.id)).toHaveLength(0);
+
+    // No matching subscription → the reviewer session receives nothing. The
+    // event remains boundedly retained so an explicit coder subscription that
+    // registers moments later can replay it; no auto-subscription attaches to
+    // the active reviewer slot.
+    expect(ctx.injected.every((entry) => entry.sessionId !== reviewerSessionId)).toBe(true);
     expect(ctx.eventStore.getById(event.id)?.state).toBe('published');
-
-    // A gate-data write on the already in_progress run must create the sub AND
-    // replay the retained event — no transition will replay it.
-    await ctx.service.notifyGateDataChanged(run.id, 'approval');
-
-    expect(ctx.injected.length).toBeGreaterThanOrEqual(1);
-    expect(ctx.eventStore.getById(event.id)?.state).toBe('delivered');
   });
 
-  test('handleBlockedRunExternalEvent re-evaluates gates and clears auto-subscription when a gate opens', async () => {
+  test('handleBlockedRunExternalEvent re-evaluates gates and notifies the session when a gate opens', async () => {
     const ctx = await setup({
       gates: [
         {
@@ -427,7 +450,7 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
     expect(ctx.runtimeNotifications).toHaveLength(0);
   });
 
-  test('handleBlockedRunExternalEvent no-ops when the run has no PR URL', async () => {
+  test('handleBlockedRunExternalEvent no-ops when no gate opens', async () => {
     const ctx = await setup({
       gates: [
         {
@@ -561,241 +584,6 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
     expect(updatedTask?.pendingCheckpointType).toBeNull();
   });
 
-  test('rehydrateBlockedRunPrEventSubscriptions rebuilds auto-subscriptions for blocked runs after a restart', async () => {
-    const ctx = await setup({
-      gates: [
-        {
-          id: 'approval',
-          fields: [approvedField, prUrlField],
-        },
-      ],
-      channels: [
-        {
-          id: 'ch-code-to-review',
-          from: 'coder',
-          to: 'reviewer',
-          gateId: 'approval',
-        },
-      ],
-    });
-    const workflow = ctx.workflowManager.listWorkflows(SPACE_ID)[0]!;
-    const { runId } = await seedBlockedRunWithPr(ctx, workflow.id);
-
-    // Simulate restart: the topic trie is in-memory, so manually clear it.
-    ctx.service.runtime.clearPrEventSubscriptionsForRun(runId);
-    ctx.service.runtime.clearRunInterests(runId);
-
-    // Rehydrate — should rebuild the auto-subscription from persisted gate data.
-    await ctx.service.rehydrateBlockedRunPrEventSubscriptions();
-
-    // Publishing a PR event must now match and deliver.
-    const event: ExternalEvent = {
-      id: `evt-rehydrate-${Math.random().toString(36).slice(2)}`,
-      spaceId: SPACE_ID,
-      source: 'github',
-      topic: PR_EVENT_TOPIC,
-      occurredAt: Date.now(),
-      ingestedAt: Date.now(),
-      dedupeKey: `dedupe-rehydrate-${Math.random().toString(36).slice(2)}`,
-      summary: 'Codex approved',
-      payload: { action: 'review_submitted' },
-    };
-    await ctx.eventService.publish(event);
-    expect(ctx.injected.length).toBeGreaterThanOrEqual(1);
-  });
-
-  test('rehydrateBlockedRunPrEventSubscriptions skips runs without a resolvable PR URL', async () => {
-    const ctx = await setup({
-      gates: [
-        {
-          id: 'approval',
-          fields: [approvedField],
-        },
-      ],
-    });
-    const workflow = ctx.workflowManager.listWorkflows(SPACE_ID)[0]!;
-    const runtime = await ctx.service.createOrGetRuntime(SPACE_ID);
-    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-    ctx.workflowRunRepo.updateRun(run.id, { status: 'blocked', failureReason: 'agentCrash' });
-
-    // No pr_url in gate data — rehydrate must skip silently.
-    await ctx.service.rehydrateBlockedRunPrEventSubscriptions();
-
-    const event: ExternalEvent = {
-      id: `evt-no-prurl-rehydrate-${Math.random().toString(36).slice(2)}`,
-      spaceId: SPACE_ID,
-      source: 'github',
-      topic: PR_EVENT_TOPIC,
-      occurredAt: Date.now(),
-      ingestedAt: Date.now(),
-      dedupeKey: `dedupe-no-prurl-rehydrate-${Math.random().toString(36).slice(2)}`,
-      summary: 'noop',
-      payload: {},
-    };
-    await ctx.eventService.publish(event);
-    expect(ctx.injected).toHaveLength(0);
-  });
-
-  test('onRunBlocked fires sync when recoverStalledRuns transitions a run to blocked (no explicit gate write)', async () => {
-    const ctx = await setup({
-      gates: [
-        {
-          id: 'approval',
-          fields: [approvedField, prUrlField],
-        },
-      ],
-      channels: [
-        {
-          id: 'ch-code-to-review',
-          from: 'coder',
-          to: 'reviewer',
-          gateId: 'approval',
-        },
-      ],
-    });
-    const workflow = ctx.workflowManager.listWorkflows(SPACE_ID)[0]!;
-    const runtime = await ctx.service.createOrGetRuntime(SPACE_ID);
-    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-
-    // Seed gate data with a PR URL — but DO NOT call notifyGateDataChanged
-    // so the auto-subscription is NOT registered via the write_gate path.
-    ctx.gateDataRepo.merge(run.id, 'approval', { pr_url: PR_URL });
-
-    // Simulate the tick-loop stall path: cancel the only execution so
-    // recoverStalledRunsForSpace has no driveable work and transitions the
-    // run to blocked. The onRunBlocked hook should fire
-    // notifyRunBlocked automatically during the run→blocked transition;
-    // the fallback slot lookup reuses the cancelled execution's
-    // nodeId / agentName. NO manual re-activation of the execution — the
-    // test must reflect production behavior where the agent session is gone
-    // at the moment of stall-recovery.
-    const execution = ctx.nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
-    ctx.nodeExecutionRepo.update(execution.id, {
-      status: 'cancelled',
-      completedAt: Date.now(),
-    });
-    await runtime.recoverStalledRunsForSpace(SPACE_ID);
-
-    // Run is now blocked via the recovery path (not via gate write).
-    expect(ctx.workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
-
-    // Pre-satisfy the approval gate so the next re-evaluation opens it.
-    ctx.gateDataRepo.merge(run.id, 'approval', { approved: true, approvedAt: Date.now() });
-
-    // Publishing a PR event triggers fireBlockedRunExternalEventHook BEFORE
-    // the delivery filter — so even with no live execution to deliver to,
-    // the hook fires handleBlockedRunExternalEvent, the gate opens, and the
-    // run transitions blocked → in_progress. This is the production behavior
-    // asserted by this test (no manual session activation).
-    const event: ExternalEvent = {
-      id: `evt-recover-blocked-${Math.random().toString(36).slice(2)}`,
-      spaceId: SPACE_ID,
-      source: 'github',
-      topic: PR_EVENT_TOPIC,
-      occurredAt: Date.now(),
-      ingestedAt: Date.now(),
-      dedupeKey: `dedupe-recover-blocked-${Math.random().toString(36).slice(2)}`,
-      summary: 'Codex approved',
-      payload: {},
-    };
-    await ctx.eventService.publish(event);
-    // The hook chain is fire-and-forget; let the microtask queue drain so
-    // transitionBlockedRunToInProgress completes before assertion.
-    await new Promise((resolve) => setTimeout(resolve, 10));
-
-    // Hook fired → gate re-evaluated → opened → transitionBlockedRunToInProgress.
-    expect(ctx.workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
-  });
-
-  test('rehydrateBlockedRunPrEventSubscriptionsForSpace rebuilds subscriptions for a paused-then-resumed space', async () => {
-    const ctx = await setup({
-      gates: [
-        {
-          id: 'approval',
-          fields: [approvedField, prUrlField],
-        },
-      ],
-      channels: [
-        {
-          id: 'ch-code-to-review',
-          from: 'coder',
-          to: 'reviewer',
-          gateId: 'approval',
-        },
-      ],
-    });
-    const workflow = ctx.workflowManager.listWorkflows(SPACE_ID)[0]!;
-    const { runId } = await seedBlockedRunWithPr(ctx, workflow.id);
-
-    // Simulate restart wiping the in-memory topic trie.
-    ctx.service.runtime.clearPrEventSubscriptionsForRun(runId);
-    ctx.service.runtime.clearRunInterests(runId);
-
-    // Startup rehydrate happens once but skips paused spaces; verify the
-    // scoped variant works when called manually (mirrors the resume RPC).
-    const count = ctx.service.rehydrateBlockedRunPrEventSubscriptionsForSpace(SPACE_ID);
-    expect(count).toBe(1);
-
-    const event: ExternalEvent = {
-      id: `evt-resume-space-${Math.random().toString(36).slice(2)}`,
-      spaceId: SPACE_ID,
-      source: 'github',
-      topic: PR_EVENT_TOPIC,
-      occurredAt: Date.now(),
-      ingestedAt: Date.now(),
-      dedupeKey: `dedupe-resume-space-${Math.random().toString(36).slice(2)}`,
-      summary: 'Codex approved',
-      payload: {},
-    };
-    await ctx.eventService.publish(event);
-    expect(ctx.injected.length).toBeGreaterThanOrEqual(1);
-  });
-
-  test('notifyRunBlocked registers auto-subscription for runs blocked via direct transitionStatus (markFailed / gate rejection paths)', async () => {
-    const ctx = await setup({
-      gates: [
-        {
-          id: 'approval',
-          fields: [approvedField, prUrlField],
-        },
-      ],
-    });
-    const workflow = ctx.workflowManager.listWorkflows(SPACE_ID)[0]!;
-    const runtime = await ctx.service.createOrGetRuntime(SPACE_ID);
-    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-
-    // Seed gate data with PR URL.
-    ctx.gateDataRepo.merge(run.id, 'approval', { pr_url: PR_URL });
-    // Mark execution in_progress so the slot fallback resolves.
-    const execution = ctx.nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
-    const sessionId = `session-markfailed-${run.id}`;
-    ctx.nodeExecutionRepo.update(execution.id, {
-      status: 'in_progress',
-      agentSessionId: sessionId,
-      startedAt: Date.now(),
-    });
-    ctx.tam.alive.add(sessionId);
-
-    // Simulate markFailed RPC: direct transitionStatus + notifyRunBlocked.
-    ctx.workflowRunRepo.transitionStatus(run.id, 'blocked');
-    await ctx.service.notifyRunBlocked(run.id);
-
-    // Publishing a PR event must now match and deliver.
-    const event: ExternalEvent = {
-      id: `evt-markfailed-${Math.random().toString(36).slice(2)}`,
-      spaceId: SPACE_ID,
-      source: 'github',
-      topic: PR_EVENT_TOPIC,
-      occurredAt: Date.now(),
-      ingestedAt: Date.now(),
-      dedupeKey: `dedupe-markfailed-${Math.random().toString(36).slice(2)}`,
-      summary: 'Codex approved',
-      payload: {},
-    };
-    await ctx.eventService.publish(event);
-    expect(ctx.injected.length).toBeGreaterThanOrEqual(1);
-  });
-
   test('onBlockedRunExternalEvent respects spaceId — cross-space PR events do not fire gate re-eval', async () => {
     const ctx = await setup({
       gates: [
@@ -885,39 +673,6 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
     expect(updated?.failureReason ?? null).toBeNull();
   });
 
-  test('onBeforeRedispatch hook fires inside the first executeTick before redispatch sweep', async () => {
-    const calls: number[] = [];
-    // Construct a runtime directly so we can inject the hook before start().
-    const db = makeDb();
-    const workflowRunRepo = new SpaceWorkflowRunRepository(db);
-    const taskRepo = new SpaceTaskRepository(db);
-    const nodeExecutionRepo = new NodeExecutionRepository(db);
-    const workflowManager = new SpaceWorkflowManager(new SpaceWorkflowRepository(db));
-    const bus = new InternalEventBus<DaemonInternalEventMap>();
-    const commandBus = createInternalCommandBus();
-    const runtime = new SpaceRuntime({
-      db,
-      spaceManager: new SpaceManager(db),
-      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
-      spaceWorkflowManager: workflowManager,
-      workflowRunRepo,
-      taskRepo,
-      nodeExecutionRepo,
-      artifactProfile: new CodingArtifactProfile({ db }),
-      internalEventBus: bus,
-      commandBus,
-      externalEventStore: new ExternalEventStore(db),
-      tickIntervalMs: 60_000,
-      onBeforeRedispatch: async () => {
-        calls.push(Date.now());
-      },
-    });
-    // Bypass the normal start() path (which would also schedule ticks) and
-    // drive executeTick directly so the recovery branch runs once.
-    await runtime.executeTick();
-    expect(calls.length).toBeGreaterThanOrEqual(1);
-  });
-
   test('handleGateDataChangedComplete resumes the run when a deferred retry opens a gate', async () => {
     const ctx = await setup({
       gates: [
@@ -990,121 +745,6 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
     expect(updated?.blockReason ?? null).toBeNull();
     expect(updated?.result ?? null).toBeNull();
     expect(updated?.pendingCheckpointType ?? null).toBeNull();
-  });
-
-  test('transitionRunStatusAndEmit preserves PR auto-subscription when run leaves blocked for in_progress', async () => {
-    const ctx = await setup({
-      gates: [
-        {
-          id: 'approval',
-          fields: [approvedField, prUrlField],
-        },
-      ],
-      channels: [{ id: 'ch-code-to-review', from: 'coder', to: 'reviewer', gateId: 'approval' }],
-    });
-    const workflow = ctx.workflowManager.listWorkflows(SPACE_ID)[0]!;
-    const { runId, coderSessionId } = await seedBlockedRunWithPr(ctx, workflow.id);
-    await ctx.service.notifyRunBlocked(runId);
-
-    const runtime = await ctx.service.createOrGetRuntime(SPACE_ID);
-    await (
-      runtime as unknown as {
-        transitionRunStatusAndEmit(runId: string, nextStatus: 'in_progress'): Promise<unknown>;
-      }
-    ).transitionRunStatusAndEmit(runId, 'in_progress');
-
-    const targets = (
-      runtime as unknown as {
-        lookupSubscriptionTargets(topic: string): Array<{
-          workflowRunId?: string;
-          subscriptionKind?: string;
-        }>;
-      }
-    ).lookupSubscriptionTargets(PR_EVENT_TOPIC);
-    expect(targets.some((t) => t.workflowRunId === runId && t.subscriptionKind === 'auto')).toBe(
-      true
-    );
-
-    ctx.injected.length = 0;
-    const event: ExternalEvent = {
-      id: `evt-after-resume-${Math.random().toString(36).slice(2)}`,
-      spaceId: SPACE_ID,
-      source: 'github',
-      topic: PR_EVENT_TOPIC,
-      occurredAt: Date.now(),
-      ingestedAt: Date.now(),
-      dedupeKey: `dedupe-after-resume-${Math.random().toString(36).slice(2)}`,
-      summary: 'review comment while in_progress',
-      payload: {},
-    };
-    await ctx.eventService.publish(event);
-    expect(ctx.injected).toHaveLength(1);
-    expect(ctx.injected[0]!.sessionId).toBe(coderSessionId);
-  });
-
-  test('transitionRunStatusAndEmit preserves task-owned PR auto-subscription across terminal transitions', async () => {
-    const ctx = await setup({
-      gates: [
-        {
-          id: 'approval',
-          fields: [approvedField, prUrlField],
-        },
-      ],
-      channels: [{ id: 'ch-code-to-review', from: 'coder', to: 'reviewer', gateId: 'approval' }],
-    });
-    const workflow = ctx.workflowManager.listWorkflows(SPACE_ID)[0]!;
-    const runtime = await ctx.service.createOrGetRuntime(SPACE_ID);
-
-    for (const terminalStatus of ['cancelled', 'done'] as const) {
-      const { runId } = await seedBlockedRunWithPr(ctx, workflow.id);
-      await ctx.service.notifyRunBlocked(runId);
-
-      // Terminal run transitions no longer clear the task-owned PR subscription
-      // — it survives until the task itself is cancelled/archived, so a later CI
-      // failure can still reactivate the work. `done` requires an intermediate
-      // unblock because a blocked run cannot transition directly to `done`.
-      const transition = (
-        runtime as unknown as {
-          transitionRunStatusAndEmit(
-            runId: string,
-            nextStatus: 'in_progress' | 'cancelled' | 'done'
-          ): Promise<unknown>;
-        }
-      ).transitionRunStatusAndEmit.bind(runtime);
-      if (terminalStatus === 'done') {
-        await transition(runId, 'in_progress');
-      }
-      await transition(runId, terminalStatus);
-
-      const targets = (
-        runtime as unknown as {
-          lookupSubscriptionTargets(topic: string): Array<{
-            workflowRunId?: string;
-            subscriptionKind?: string;
-          }>;
-        }
-      ).lookupSubscriptionTargets(PR_EVENT_TOPIC);
-      expect(targets.some((t) => t.workflowRunId === runId && t.subscriptionKind === 'auto')).toBe(
-        true
-      );
-
-      ctx.injected.length = 0;
-      const event: ExternalEvent = {
-        id: `evt-after-${terminalStatus}-${Math.random().toString(36).slice(2)}`,
-        spaceId: SPACE_ID,
-        source: 'github',
-        topic: PR_EVENT_TOPIC,
-        occurredAt: Date.now(),
-        ingestedAt: Date.now(),
-        dedupeKey: `dedupe-after-${terminalStatus}-${Math.random().toString(36).slice(2)}`,
-        summary: `stale event after ${terminalStatus}`,
-        payload: {},
-      };
-      await ctx.eventService.publish(event);
-      // The event is accepted (a delivery is registered) because the task still
-      // owns the subscription; it is no longer ignored on a terminal run.
-      expect(ctx.eventStore.listDeliveries(event.id).length).toBeGreaterThanOrEqual(1);
-    }
   });
 
   test('handleBlockedRunExternalEvent does not treat a previously-open unrelated gate as newly opened', async () => {
@@ -1230,78 +870,6 @@ describe('SpaceRuntimeService event-driven gate evaluation', () => {
     expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
     // No courtesy notification fired.
     expect(runtimeNotifications).toHaveLength(0);
-  });
-
-  test('clearPrEventSubscriptionsForRun removes in-memory queued deliveries for the auto target', async () => {
-    const ctx = await setup({
-      gates: [
-        {
-          id: 'approval',
-          fields: [approvedField, prUrlField],
-        },
-      ],
-      channels: [{ id: 'ch-code-to-review', from: 'coder', to: 'reviewer', gateId: 'approval' }],
-    });
-    const workflow = ctx.workflowManager.listWorkflows(SPACE_ID)[0]!;
-    const { runId } = await seedBlockedRunWithPr(ctx, workflow.id);
-
-    // Make the execution target queueable but not yet deliverable so a PR
-    // event gets queued rather than delivered immediately.
-    const execution = ctx.nodeExecutionRepo.listByNode(runId, 'code')[0]!;
-    ctx.nodeExecutionRepo.update(execution.id, {
-      status: 'in_progress',
-      agentSessionId: null,
-      completedAt: null,
-    });
-    // Re-mark active session id AFTER cleared, so the slot exists but has no
-    // live session yet — exercise the queueing path.
-    ctx.nodeExecutionRepo.update(execution.id, {
-      status: 'in_progress',
-      agentSessionId: `session-queued-${runId}`,
-      completedAt: null,
-    });
-    ctx.tam.alive.delete(`session-queued-${runId}`); // ensure not "live"
-
-    const event: ExternalEvent = {
-      id: `evt-queued-${Math.random().toString(36).slice(2)}`,
-      spaceId: SPACE_ID,
-      source: 'github',
-      topic: PR_EVENT_TOPIC,
-      occurredAt: Date.now(),
-      ingestedAt: Date.now(),
-      dedupeKey: `dedupe-queued-${Math.random().toString(36).slice(2)}`,
-      summary: 'Queued delivery',
-      payload: {},
-    };
-    ctx.service.runtime.ensurePrEventSubscriptionForRun(runId);
-    await ctx.eventService.publish(event);
-    expect(ctx.eventStore.listDeliveries(event.id)).toHaveLength(1);
-
-    const pendingQueues = ctx.service.runtime as unknown as {
-      pendingExternalEventQueue: Map<string, unknown[]>;
-    };
-
-    // Now clear the auto subscription. Queued deliveries for the auto target
-    // must be purged so a later session spawn does not flush a stale
-    // delivery for a subscription that no longer exists.
-    ctx.service.runtime.clearPrEventSubscriptionsForRun(runId);
-    expect(pendingQueues.pendingExternalEventQueue.size).toBe(0);
-
-    // Re-attach a live session. The delivery for this event is no longer
-    // pending after the clear, so flushing the pending queue must not
-    // re-deliver it. Reset the captured injections so the assertion is scoped
-    // to the flush rather than the initial publish-time delivery.
-    ctx.injected.length = 0;
-    ctx.tam.alive.add(`session-queued-${runId}`);
-    ctx.service.runtime.flushPendingNodeQueue({
-      workflowRunId: runId,
-      taskId: ctx.taskRepo.listByWorkflowRun(runId)[0]!.id,
-      nodeId: 'code',
-      agentName: 'coder',
-      sessionId: `session-queued-${runId}`,
-    });
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(ctx.injected).toHaveLength(0);
   });
 
   test('P1 regression: approve gate then reject clears the gate-open cache so deliverMessage does not bypass', async () => {

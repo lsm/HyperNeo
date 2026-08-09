@@ -612,6 +612,17 @@ export class AgentSession
         hasUpdates = true;
       }
 
+      if (
+        init.type === 'worker' &&
+        init.agents &&
+        JSON.stringify(session.config.agents ?? null) !== JSON.stringify(init.agents)
+      ) {
+        const nextConfig: SessionConfig = { ...session.config, agents: init.agents };
+        updates.config = nextConfig;
+        session = { ...session, config: nextConfig };
+        hasUpdates = true;
+      }
+
       // Non-worker sessions should never run with a worktree path from stale persisted state.
       if (init.type && init.type !== 'worker' && session.worktree) {
         updates.worktree = undefined;

@@ -76,8 +76,8 @@ const RESEARCH_TOOLS = PERMISSIVE_TOOLS;
  * role — it never runs code. It posts PR reviews and line comments through
  * the `post_review` node-agent MCP tool (which calls the GitHub API
  * server-side), NOT via `gh api` in a shell, so Bash is intentionally absent.
- * The `Task`/* tools let the Reviewer dispatch exploration to the built-in
- * `general-purpose` sub-agent that ships with the `claude_code` preset.
+ * The `Task`/* tools let the Reviewer dispatch first-level exploration to the
+ * non-delegating `general-purpose` definition installed by createCustomAgentInit.
  *
  * `post_review` is NOT listed here on purpose: the tools profile only accepts
  * SDK built-ins (KNOWN_TOOLS) and gates deniable built-ins (DENIABLE_TOOLS).
@@ -166,8 +166,8 @@ interface PresetDefinition {
  * output block.
  *
  * Sub-agent delegation: the Reviewer has `Task`/`TaskOutput`/`TaskStop` on
- * its tool list and dispatches exploration to the built-in `general-purpose`
- * sub-agent shipped with the `claude_code` preset. Custom reviewer-specific
+ * its tool list and dispatches first-level exploration to the non-delegating
+ * `general-purpose` definition installed by createCustomAgentInit. Custom reviewer-specific
  * sub-agents (e.g. `reviewer-explorer`, `reviewer-fact-checker` in the Room
  * SDK) are a planned follow-up and will live in workflow templates /
  * SpaceWorkerAgent data, not in code.

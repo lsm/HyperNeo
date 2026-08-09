@@ -235,7 +235,6 @@ describe('categorizeFailureReason', () => {
     ['target_task_reactivation_failed', 'deliverability'],
     ['subscription_no_longer_active', 'deliverability'],
     ['invalid_target_ownership', 'deliverability'],
-    ['auto_pr_subscription_cleared', 'deliverability'],
     ['node_execution_cancelled', 'deliverability'],
     ['run_interests_rebuilt', 'deliverability'],
     ['run_terminal_cleanup', 'deliverability'],

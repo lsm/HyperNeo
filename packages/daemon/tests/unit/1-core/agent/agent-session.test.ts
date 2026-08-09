@@ -2490,6 +2490,69 @@ describe('AgentSession', () => {
       expect(persistedSession.config.mcpServers).toBeUndefined();
     });
 
+    it('should apply updated child-agent policy to an existing worker session', () => {
+      const existingSession = {
+        id: 'space:worker:test',
+        title: 'Worker',
+        workspacePath: '/test/workspace',
+        createdAt: new Date().toISOString(),
+        lastActiveAt: new Date().toISOString(),
+        status: 'active' as const,
+        config: { model: 'default', maxTokens: 8192, temperature: 1 },
+        metadata: {
+          messageCount: 0,
+          totalTokens: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          totalCost: 0,
+          toolCallCount: 0,
+        },
+        type: 'worker' as const,
+      } as Session;
+      const agents = {
+        'general-purpose': {
+          description: 'Investigate directly',
+          prompt: 'Do not delegate.',
+          disallowedTools: ['Agent', 'Task', 'TaskOutput', 'TaskStop'],
+        },
+      };
+      const mockDb = {
+        getSession: mock(() => existingSession),
+        createSession: mock(() => {}),
+        updateSession: mock(() => {}),
+        getMessagesByStatus: mock(() => []),
+      } as unknown as Database;
+      const mockInternalEventBus = {
+        publish: mock(async () => {}),
+        publishAsync: mock(() => {}),
+        subscribe: mock((_: string, __: Function, ___: object) => () => {}),
+      } as unknown as InternalEventBus<any>;
+
+      const agentSession = AgentSession.fromInit(
+        {
+          sessionId: existingSession.id,
+          workspacePath: existingSession.workspacePath,
+          type: 'worker',
+          model: 'default',
+          agents,
+        },
+        mockDb,
+        {} as MessageHub,
+        mockInternalEventBus,
+        mock(async () => 'test-key'),
+        'default'
+      );
+
+      expect(agentSession.getSessionData().config.agents).toEqual(agents);
+      expect(
+        (mockDb as unknown as { updateSession: ReturnType<typeof mock> }).updateSession.mock
+          .calls[0]
+      ).toEqual([
+        existingSession.id,
+        expect.objectContaining({ config: expect.objectContaining({ agents }) }),
+      ]);
+    });
+
     it('should update workspacePath for existing init sessions', () => {
       const existingSession = {
         id: 'room:test',

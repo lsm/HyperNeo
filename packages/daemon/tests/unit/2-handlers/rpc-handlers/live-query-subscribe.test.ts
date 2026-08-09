@@ -6,14 +6,14 @@
  * authorized for compatibility with preserved DB rows.
  */
 
-import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
-import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
-import { createTables } from '../../../../src/storage/schema';
-import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
-import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';
-import { LiveQueryEngine } from '../../../../src/storage/live-query';
 import { setupLiveQueryHandlers } from '../../../../src/lib/rpc-handlers/live-query-handlers';
+import { LiveQueryEngine } from '../../../../src/storage/live-query';
+import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';
+import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
+import { createTables } from '../../../../src/storage/schema';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 
 type RequestHandler = (data: unknown, context: Partial<CallCtx>) => Promise<unknown> | unknown;
 type CallCtx = {
@@ -43,11 +43,17 @@ function createMockSetup() {
   const handlers = new Map<string, RequestHandler>();
   let disconnectHandler: ((clientId: string) => void) | null = null;
   const sentMessages: SentMessage[] = [];
-  let sendToClientResult = true;
+  let sendToClientResult:
+    | { ok: true }
+    | { ok: false; reason: 'send_failed' | 'message_too_large' } = { ok: true };
   let routerEnabled = true;
 
   const mockRouter = {
     sendToClient: mock((clientId: string, message: unknown) => {
+      sentMessages.push({ clientId, message: message as SentMessage['message'] });
+      return sendToClientResult;
+    }),
+    sendToClientDetailed: mock((clientId: string, message: unknown) => {
       sentMessages.push({ clientId, message: message as SentMessage['message'] });
       return sendToClientResult;
     }),
@@ -92,6 +98,9 @@ function createMockSetup() {
     callHandler,
     fireDisconnect: (clientId: string) => disconnectHandler?.(clientId),
     setSendResult: (result: boolean) => {
+      sendToClientResult = result ? { ok: true } : { ok: false, reason: 'send_failed' };
+    },
+    setDetailedSendResult: (result: typeof sendToClientResult) => {
       sendToClientResult = result;
     },
     setRouterEnabled: (enabled: boolean) => {
@@ -256,6 +265,22 @@ describe('setupLiveQueryHandlers', () => {
     ).rejects.toThrow('expects 0 parameter(s), got 1');
   });
 
+  test('subscribe messages.bySession: rejects a window above the server cap', async () => {
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata)
+       VALUES (?, ?, ?, ?, 'active', '{}', '{}')`
+    ).run('session-window-cap', 'Window Cap', now, now);
+
+    await expect(
+      setup.callHandler('liveQuery.subscribe', {
+        queryName: 'messages.bySession',
+        params: ['session-window-cap', 201],
+        subscriptionId: 'sub-window-cap',
+      })
+    ).rejects.toThrow('limit must be an integer in [1, 200]');
+  });
+
   test('subscribe spaceTaskActivity.byTask: nonexistent task rejected', async () => {
     await expect(
       setup.callHandler('liveQuery.subscribe', {
@@ -373,6 +398,31 @@ describe('setupLiveQueryHandlers', () => {
     expect(msg.message.data.subscriptionId).toBe('sub-1');
     expect(Array.isArray(msg.message.data.rows)).toBe(true);
     expect(typeof msg.message.data.version).toBe('number');
+  });
+
+  test('oversized snapshot reports an error and rejects the subscription', async () => {
+    setup.setDetailedSendResult({ ok: false, reason: 'message_too_large' });
+    await expect(
+      setup.callHandler('liveQuery.subscribe', {
+        queryName: 'mcpServers.global',
+        params: [],
+        subscriptionId: 'sub-large',
+      })
+    ).rejects.toThrow('MESSAGE_TOO_LARGE');
+
+    expect(setup.sentMessages.map((sent) => sent.message.method)).toEqual([
+      'liveQuery.snapshot',
+      'liveQuery.error',
+    ]);
+
+    setup.setDetailedSendResult({ ok: true });
+    insertMcpServer(db, 'mcp-after-large', 'after-large');
+    reactiveDb.notifyChange('app_mcp_servers');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(setup.sentMessages.some((sent) => sent.message.method === 'liveQuery.delta')).toBe(
+      false
+    );
   });
 
   test('full lifecycle: subscribe, delta, unsubscribe', async () => {
