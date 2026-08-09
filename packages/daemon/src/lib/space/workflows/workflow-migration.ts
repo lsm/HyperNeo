@@ -44,6 +44,27 @@ const REVIEW_APPROVAL_SCRIPT = [
   'if [ -n "$PR_URL" ]; then jq -n --arg url "$PR_URL" \'{"type":"allow","data":{"approved":true,"pr_url":$url}}\'; else jq -n \'{"type":"allow","data":{"approved":true}}\'; fi',
 ].join('\n');
 
+/**
+ * Detects a legacy COMBINED codex-bearing approval hook script — the pre-#2409
+ * `buildApprovalsScript` / `buildReviewApprovalScript` baked the full codex +1
+ * wait (gh-api reaction lookup + a 2h timeout-allow) INLINE in the approval
+ * hook's bash. Identified by the CONJUNCTION of two markers both emitted only
+ * by those builders: the `((NOW_EPOCH - START_EPOCH)) -lt N` timeout comparison
+ * AND the `test("codex"` codex-bot login filter (the gh-api reaction lookup).
+ * Requiring both means a user-authored script that merely reuses the timeout
+ * arithmetic — but performs no codex lookup — is not mistaken for the combined
+ * form (which would wrongly clobber it). The approval-only scripts
+ * (`APPROVALS_SCRIPT` / `REVIEW_APPROVAL_SCRIPT`) and the feedback reset script
+ * emit neither marker. Used by the gateless re-emit pass to upgrade such a hook
+ * to approval-only so the declarative codex_review_approved hook is the single
+ * codex path (preserving its canonical-PR precedence over the legacy
+ * `.data.pr_url` read).
+ */
+const LEGACY_COMBINED_CODEX_TIMEOUT_RE = /\(\(NOW_EPOCH - START_EPOCH\)\) -lt \d+/;
+function isLegacyCombinedCodexScript(source: string): boolean {
+  return LEGACY_COMBINED_CODEX_TIMEOUT_RE.test(source) && source.includes('test("codex"');
+}
+
 type Pattern = {
   gateId: string;
   hookId: string;
@@ -757,20 +778,63 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
     for (const targetRef of targetNames) {
       const targetNode =
         targetRef === '*' ? undefined : resolveChannelNodeName(targetRef, workflow.nodes);
-      // Only re-emit on routes that have an approval hook (the migration's
-      // signal that this WAS an approval channel). Non-approval routes
-      // (feedback, post-approval) are skipped — requireCodexApproval never
-      // applied to them.
-      const hasApprovalHook = Array.from(hooksById.values()).some(
+      // Collect the route's ENABLED script approval hooks (the migration's signal
+      // that this WAS an approval channel). Disabled hooks never run at runtime
+      // (`resolveMatchingHooks` drops `enabled: false`), so they neither mark the
+      // route as codex-enforcing nor get upgraded. Non-approval routes (feedback,
+      // post-approval) are skipped — requireCodexApproval never applied to them.
+      const routeScriptHooks = Array.from(hooksById.values()).filter(
         (hook) =>
+          hook.enabled !== false &&
           hook.sourceNode === fromNode &&
           hook.targetNode === targetNode &&
           hook.method === 'send_message' &&
           hook.validator.kind === 'script'
       );
-      if (!hasApprovalHook) continue;
+      if (routeScriptHooks.length === 0) continue;
+      // Upgrade EVERY legacy combined codex-bearing approval script on the route
+      // (pre-#2409 buildApprovalsScript / buildReviewApprovalScript baked the
+      // full 2h codex +1 wait inline) to the approval-only form, so the
+      // declarative codex_review_approved hook emitted below is the SINGLE codex
+      // enforcement path — otherwise the legacy inline wait and the new hook
+      // would both block (~4h). Upgrading (rather than suppressing the hook)
+      // preserves the declarative validator's canonical-PR precedence
+      // (`codexApprovalPrUrl` resolves the run's primary PR link artifact),
+      // which the legacy inline script's `.data.pr_url` read lacks. Every script
+      // hook on the route is examined (not just the first) so a legacy script is
+      // upgraded regardless of its position. Scoped to non-template workflows:
+      // templates never carry a combined script (they migrate to approval-only),
+      // and a pre-#2409 saved template's revision-feedback reset hook clears
+      // codex state under the legacy id — upgrading would move it to a new id the
+      // reset doesn't target (a per-cycle reset regression). Non-template
+      // workflows have no reset hook (reset generation is template-only), so the
+      // upgrade is safe there; templates stay at the #2409 baseline.
+      if (!workflow.templateName) {
+        for (const scriptHook of routeScriptHooks) {
+          if (
+            scriptHook.validator.kind === 'script' &&
+            (scriptHook.id.startsWith('plan-approval:') ||
+              scriptHook.id.startsWith('review-approval:')) &&
+            isLegacyCombinedCodexScript(scriptHook.validator.source)
+          ) {
+            const upgradedSource = scriptHook.id.startsWith('review-approval:')
+              ? REVIEW_APPROVAL_SCRIPT
+              : APPROVALS_SCRIPT;
+            hooksById.set(scriptHook.id, {
+              ...scriptHook,
+              validator: {
+                kind: 'script',
+                interpreter: 'bash',
+                source: upgradedSource,
+                timeoutMs: 30_000,
+              },
+            });
+          }
+        }
+      }
       const hasRouteHook = Array.from(hooksById.values()).some(
         (hook) =>
+          hook.enabled !== false &&
           hook.sourceNode === fromNode &&
           hook.targetNode === targetNode &&
           hook.validator.kind === 'built_in' &&
