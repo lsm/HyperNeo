@@ -1217,12 +1217,18 @@ const CODER_OWNED_QA_PROMPT =
   'here — save a non-terminal QA note, and stop. When the current head is ' +
   'green, save the PR link and a passing decision artifact, then call approve_task or ' +
   'submit_for_approval. Do not merge. If the implementer later reports a post-approval merge blocker, ' +
-  "revalidate the changed head, then re-approve the CURRENT head on GitHub so the implementer's merge " +
-  'procedure can bind to it: post an `APPROVED` review (`gh pr review <pr_url> --approve`); on an ' +
-  'own-PR where GitHub rejects your self-APPROVE, post a `COMMENT` review whose body carries the exact ' +
-  'line `Recommendation: APPROVE` (the implementer accepts that marked comment as covering the head, ' +
-  'matching the own-PR fallback in the Reviewer System Contract). A stale approval on the old head does ' +
-  'not cover the new one. Then signal them to continue.';
+  're-approve the EXACT head you revalidated — a concurrent push must not inherit your approval. Capture ' +
+  '`VALIDATED_OID=$(gh pr view <pr_url> --json headRefOid --jq .headRefOid)` BEFORE you revalidate; after ' +
+  'revalidating, immediately before posting, re-check `gh pr view <pr_url> --json headRefOid --jq .headRefOid` ' +
+  'still equals `$VALIDATED_OID` — if it changed, revalidate the new head from scratch. Post the approval ' +
+  'bound to that head via the GraphQL `addPullRequestReview` mutation with `commitOID: "$VALIDATED_OID"` ' +
+  '(do NOT use `gh pr review`, which has no commit binding and would approve a head you never validated): ' +
+  '`PR_ID=$(gh pr view <pr_url> --json id --jq .id)`, build a `{query,variables}` JSON with jq ' +
+  '(`mutation($id:ID!,$head:GitObjectID!,$event:PullRequestReviewEvent!,$body:String!){addPullRequestReview(input:{pullRequestId:$id,commitOID:$head,event:$event,body:$body}){pullRequestReview{url}}}`), ' +
+  'and submit it with `gh api graphql --hostname <host> --input`; use `event:"APPROVE"`, or — on an own-PR ' +
+  'where GitHub rejects your self-APPROVE — `event:"COMMENT"` with a body carrying the exact line ' +
+  '`Recommendation: APPROVE` (the implementer accepts that marked comment as covering the head, matching ' +
+  'the own-PR fallback in the Reviewer System Contract). Then signal them to continue.';
 
 /**
  * Coding with QA Workflow (stable)

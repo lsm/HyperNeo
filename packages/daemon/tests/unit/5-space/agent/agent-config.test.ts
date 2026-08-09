@@ -266,7 +266,9 @@ describe('createCustomAgentInit — sub-session features', () => {
     expect(init.sdkToolsPreset).toBeUndefined();
     expect(init.allowedTools).toEqual(['Task', 'TaskOutput', 'TaskStop']);
     expect(init.agent).toBeUndefined();
-    expect(init.agents).toBeUndefined();
+    // The Reviewer dispatches exploration (Task) to the non-delegating
+    // `general-purpose` sub-agent installed by createCustomAgentInit.
+    expect(init.agents?.['general-purpose']).toBeDefined();
     // The Reviewer keeps Bash for read-only GitHub inspection and gh-CLI review
     // posting — Bash is NOT denied. Only the mutation tools are denied, so it
     // cannot modify the code under review.

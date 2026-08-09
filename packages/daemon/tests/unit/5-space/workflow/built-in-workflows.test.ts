@@ -6713,14 +6713,17 @@ test('CODING_WITH_QA_WORKFLOW QA node validates the PR and approves only when gr
 test('CODING_WITH_QA_WORKFLOW QA node routes post-approval merge-blockers via the Coding → QA channel', () => {
   const qaPrompt = CODING_WITH_QA_WORKFLOW.nodes.find((n) => n.name === 'QA')!.agents[0]
     .customPrompt!.value;
-  // The QA slot prompt must revalidate a changed head and re-approve the
-  // CURRENT head when the implementer reports a post-approval merge blocker —
-  // including the own-PR COMMENT fallback, since `post_review` is gone and QA
-  // is the re-approval authority. The recipient is the runtime-supplied
-  // implementer, not a hard-coded peer.
-  expect(qaPrompt).toContain('revalidate the changed head');
-  expect(qaPrompt).toContain('re-approve the CURRENT head');
-  expect(qaPrompt).toContain('gh pr review');
+  // The QA slot prompt must re-approve the EXACT validated head when the
+  // implementer reports a post-approval merge blocker — capturing the head OID
+  // before validation and binding the re-approval to it via the GraphQL
+  // addPullRequestReview commitOID (not `gh pr review`, which has no commit
+  // binding and would approve a head QA never validated), with the own-PR
+  // COMMENT fallback since `post_review` is gone. The recipient is the
+  // runtime-supplied implementer, not a hard-coded peer.
+  expect(qaPrompt).toContain('re-approve the EXACT head you revalidated');
+  expect(qaPrompt).toContain('VALIDATED_OID');
+  expect(qaPrompt).toContain('commitOID');
+  expect(qaPrompt).toContain('addPullRequestReview');
   expect(qaPrompt).toMatch(/own-PR where GitHub rejects your self-APPROVE/i);
   expect(qaPrompt).toContain('Recommendation: APPROVE');
   expect(qaPrompt).toMatch(/signal them to continue/i);
