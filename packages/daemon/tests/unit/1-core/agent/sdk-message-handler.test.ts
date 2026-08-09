@@ -1214,6 +1214,37 @@ describe('SDKMessageHandler', () => {
       );
     });
 
+    it('leaves an active durable steer enqueued and claimable at turn end (#3744401261)', async () => {
+      getMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) => {
+        if (status === 'enqueued') {
+          return [
+            {
+              dbId: 'db-steer',
+              uuid: 'durable-steer-uuid',
+              type: 'user',
+              timestamp: 1700000000000,
+              message: { role: 'user', content: [{ type: 'text', text: 'steer' }] },
+            },
+          ];
+        }
+        return [];
+      });
+      mockDb.getJobQueueRepo = mock(() => ({
+        activeDeliveryMessageUuids: () => new Set(['durable-steer-uuid']),
+      })) as never;
+
+      await handler.handleMessage({
+        type: 'result',
+        subtype: 'success',
+        uuid: 'result-uuid',
+        usage: { input_tokens: 1, output_tokens: 1 },
+        total_cost_usd: 0,
+        modelUsage: {},
+      } as unknown as SDKMessage);
+
+      expect(updateMessageStatusSpy).not.toHaveBeenCalledWith(['db-steer'], 'consumed');
+    });
+
     it('should handle result message with missing usage (bridge provider edge case)', async () => {
       // SDK 0.2.84+ may produce result messages without usage when using bridge
       // providers like anthropic-copilot. The handler must not crash.

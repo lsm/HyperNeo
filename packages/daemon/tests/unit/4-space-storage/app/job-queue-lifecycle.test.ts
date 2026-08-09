@@ -83,6 +83,36 @@ describe('JobQueueProcessor lifecycle', () => {
     expect(jobFinished).toBe(true); // stop() settled only after job completed
   });
 
+  it('stopPolling prevents a requeued in-flight job from being claimed twice during shutdown', async () => {
+    let handlerRuns = 0;
+    let release!: () => void;
+    const processor = new JobQueueProcessor(repo, { pollIntervalMs: 10, maxConcurrent: 2 });
+    processor.register('message_delivery', async () => {
+      handlerRuns++;
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    });
+    repo.enqueue({
+      queue: 'message_delivery',
+      payload: { sessionId: 's', messageUuid: 'm', role: 'turn' },
+    });
+
+    processor.start();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(handlerRuns).toBe(1);
+
+    // Real shutdown ordering: stop polling first, then requeue processing rows.
+    processor.stopPolling();
+    repo.requeueAllProcessing('message_delivery', Date.now());
+    await new Promise((resolve) => setTimeout(resolve, 30)); // > two former poll intervals
+
+    expect(handlerRuns).toBe(1);
+    expect(repo.listJobs({ queue: 'message_delivery' })[0]?.status).toBe('pending');
+    release();
+    await processor.stop();
+  });
+
   it('stop() resolves immediately when no in-flight jobs', async () => {
     const processor = new JobQueueProcessor(repo, { pollIntervalMs: 5000 });
     processor.start();

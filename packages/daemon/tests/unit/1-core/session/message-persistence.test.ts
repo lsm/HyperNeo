@@ -227,18 +227,9 @@ describe('MessagePersistence', () => {
     expect(mockAgentSession.startQueryAndEnqueue).not.toHaveBeenCalled();
   });
 
-  it('marks an idle v2 immediate delivery queued before publishing persisted', async () => {
+  it('publishes v2 persisted before queued ownership is assigned by turn insertion', async () => {
     const previous = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
     process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '1';
-    const calls: string[] = [];
-    mockAgentSession.stateManager.setQueuedIfIdle = mock(async () => {
-      calls.push('queued');
-      return true;
-    });
-    internalEventBusPublishSpy = mock(async (event: string) => {
-      if (event === 'message.persisted') calls.push('persisted');
-    });
-    mockInternalEventBus.publish = internalEventBusPublishSpy;
 
     try {
       await persistence.persist({
@@ -251,9 +242,12 @@ describe('MessagePersistence', () => {
       else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previous;
     }
 
-    expect(mockAgentSession.stateManager.setQueuedIfIdle).toHaveBeenCalledWith('msg-v2');
+    expect(mockAgentSession.stateManager.setQueuedIfIdle).not.toHaveBeenCalled();
     expect(mockAgentSession.startQueryAndEnqueue).not.toHaveBeenCalled();
-    expect(calls).toEqual(['queued', 'persisted']);
+    expect(mockInternalEventBus.publish).toHaveBeenCalledWith(
+      'message.persisted',
+      expect.objectContaining({ messageId: 'msg-v2' })
+    );
   });
 
   it('does not downgrade a busy v2 session from processing to queued', async () => {

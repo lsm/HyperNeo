@@ -47,7 +47,7 @@ export interface EventSubscriptionSetupContext {
    * instead of calling startQueryAndEnqueue. Optional — absent on sessions that
    * haven't opted into v2.
    */
-  deliverChatMessage?(messageId: string): void;
+  deliverChatMessage?(messageId: string): Promise<void>;
 }
 
 /**
@@ -132,7 +132,7 @@ export class EventSubscriptionSetup {
         // startQueryAndEnqueue directly (migrated in step 2). See
         // docs/features/message-delivery-v2.md §12.
         if (isMessageDeliveryV2Enabled() && this.ctx.deliverChatMessage) {
-          this.ctx.deliverChatMessage(data.messageId);
+          await this.ctx.deliverChatMessage(data.messageId);
           return;
         }
         // Start query and enqueue message

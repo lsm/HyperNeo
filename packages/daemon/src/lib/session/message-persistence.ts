@@ -293,34 +293,6 @@ export class MessagePersistence {
       if (shouldDispatchToQuery && !useV2Delivery) {
         await agentSession.startQueryAndEnqueue(messageId, messageContent);
       }
-      // v2: mark the session queued NOW (before the RPC acknowledges) so the
-      // pre-claim polling window — up to pollIntervalMs before the delivery
-      // processor claims the job — does not report idle. Otherwise a defer during
-      // that window is coerced to immediate (becomes a steer) and an immediate
-      // client.interrupt no-ops (sees idle), letting the prompt execute after the
-      // user tried to stop it. Only for a turn-bound message (session idle); a
-      // steer (session busy) is already non-idle, and setQueued would wrongly
-      // downgrade processing→queued. The handler transitions to processing on
-      // claim. The idle check must happen AT SET TIME (setQueuedIfIdle), not on
-      // the stale pre-persist snapshot: two concurrent immediate sends both
-      // observe idle before either reaches this await, and the first writer must
-      // own the marker so a concurrent steer can't. See Codex (#3742826489,
-      // #3743968035).
-      if (shouldDispatchToQuery && useV2Delivery && !isAgentBusy) {
-        try {
-          await agentSession.stateManager.setQueuedIfIdle(messageId);
-        } catch (error) {
-          // setQueuedIfIdle is DB-first: a session.updated subscriber may throw
-          // after the queued marker is already persisted. Publication failure
-          // must not prevent message.persisted below from creating the durable
-          // owner, or the hidden enqueued prompt is stranded without a job.
-          this.logger.warn(
-            '[MessagePersistence] Queued-state publication failed; continuing durable dispatch:',
-            error
-          );
-        }
-      }
-
       // 8. Emit 'message.persisted' for non-critical post-processing.
       // skipQueryStart reflects whether the inline start above already happened:
       // under v2 it is false so the subscriber proceeds to the v2 check and

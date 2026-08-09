@@ -429,9 +429,11 @@ export class SDKMessageHandler {
    */
   private async acknowledgeOldestQueuedUserOnTurnEnd(): Promise<void> {
     const { session, db, internalEventBus, messageHub } = this.ctx;
+    const durableOwned =
+      db.getJobQueueRepo?.()?.activeDeliveryMessageUuids(session.id) ?? new Set();
     const enqueuedUsers = db
       .getMessagesByStatus(session.id, 'enqueued')
-      .filter((enqueued) => isSDKUserMessage(enqueued));
+      .filter((enqueued) => isSDKUserMessage(enqueued) && !durableOwned.has(enqueued.uuid ?? ''));
 
     // Strictly-increasing consumedAt across the loop so two prompts consumed in
     // the same millisecond don't share a timestamp — rewind checkpoints are

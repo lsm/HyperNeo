@@ -88,12 +88,17 @@ export class JobQueueProcessor {
     this.tick();
   }
 
-  stop(): Promise<void> {
+  /** Stop claiming new work without waiting for in-flight handlers to drain. */
+  stopPolling(): void {
     this.running = false;
     if (this.pollTimer !== null) {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
     }
+  }
+
+  stop(): Promise<void> {
+    this.stopPolling();
     return new Promise<void>((resolve) => {
       if (this.inFlightCapped === 0 && this.inFlightExempt === 0) {
         resolve();

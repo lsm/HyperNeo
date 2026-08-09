@@ -100,7 +100,7 @@ export function deliverMessage(
   sessionId: string,
   messageUuid: string,
   options: DeliverMessageOptions
-): void {
+): MessageDeliveryRole {
   const basePayload: MessageDeliveryPayload = {
     sessionId,
     messageUuid,
@@ -119,7 +119,7 @@ export function deliverMessage(
       // crashes. §15 measures actual pressure.
       maxRetries: 8,
     });
-    return;
+    return options.role;
   }
 
   try {
@@ -128,6 +128,7 @@ export function deliverMessage(
       payload: basePayload,
       maxRetries: 8,
     });
+    return 'turn';
   } catch (err) {
     if (!isUniqueConstraintError(err)) throw err;
     // An active turn already exists for this session → this is a steer. The
@@ -137,6 +138,7 @@ export function deliverMessage(
       payload: { ...basePayload, role: 'steer' },
       maxRetries: 8,
     });
+    return 'steer';
   }
 }
 

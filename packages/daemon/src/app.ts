@@ -1024,6 +1024,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
                 /* dead-letter publish is best-effort */
               });
           }
+          // Release a pre-claim queued marker still owned by this terminal turn.
+          // Conditional settlement preserves any newer turn's ownership.
+          sessionManager
+            ?.getSession(payload.sessionId)
+            ?.settleSkippedDelivery(payload.messageUuid)
+            .catch(() => {
+              /* dead-letter state settlement is best-effort */
+            });
         },
       }
     );
@@ -1301,6 +1309,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         logInfo('[Daemon] Process watchdog stopped');
         oauthRefreshScheduler.stop();
         logInfo('[Daemon] OAuth refresh scheduler stopped');
+        // Stop delivery polling BEFORE requeueing its in-flight rows. Otherwise
+        // the next poll can reclaim a row while its original handler is still
+        // draining, creating two concurrent handlers for one prompt.
+        messageDeliveryProcessor.stopPolling();
+        logInfo('[Daemon] Message-delivery job polling stopped');
         // Requeue in-flight message_delivery turns to pending BEFORE draining the
         // processor: their handlers are still awaiting the live SDK turn, so
         // stop() would otherwise block on them until the CLI's shutdown timeout

@@ -682,8 +682,11 @@ export class AcpQueryRunner {
           onConfigOptionsUpdate: (configOptions) => this.updateAcpModelCache(configOptions),
           onSubmitted: () => {
             if (submitted) return;
-            submitted = true;
+            // Persist enqueued→submitted first. If this throws, AcpTransport
+            // rejects the request and the flag stays false, so the failure path
+            // cannot mistakenly settle only a nonexistent submitted row.
             this.ctx.messageHandler.markMessageSubmitted(message.uuid ?? '');
+            submitted = true;
             onSent();
           },
           onAccepted: () => {

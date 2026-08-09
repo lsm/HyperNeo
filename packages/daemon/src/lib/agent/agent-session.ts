@@ -1945,15 +1945,29 @@ export class AgentSession
     );
   }
 
-  deliverChatMessage(messageUuid: string): void {
-    // Enqueue-time archive barrier: cancelForSession is point-in-time, so a send
-    // landing after it but before the phase-4 status flip would otherwise create a
-    // job that drives against a half-destroyed session. Skip the enqueue when the
-    // session is already archived; the handler + bridge revalidate again at feed
-    // time. See Codex (#3742774841).
-    if (this.db.getSession(this.session.id)?.status === 'archived') return;
-    deliverMessage(this.db.getJobQueueRepo(), this.session.id, messageUuid, {
-      origin: 'chat',
+  async deliverChatMessage(messageUuid: string): Promise<void> {
+    await withSessionLock(this.session.id, async () => {
+      // Enqueue-time archive barrier: cancelForSession is point-in-time, so a send
+      // landing after it but before the phase-4 status flip would otherwise create a
+      // job that drives against a half-destroyed session. Skip the enqueue when the
+      // session is already archived; the handler + bridge revalidate again at feed
+      // time. See Codex (#3742774841).
+      if (this.db.getSession(this.session.id)?.status === 'archived') {
+        // Archive can win after MessagePersistence's post-save check but before
+        // this final admission point. Its point-in-time job cancellation then
+        // saw no job, so terminalize the saved enqueued row before rejecting.
+        this.db.getSDKMessageRepo().markDeliveryFailedByUuid(this.session.id, messageUuid);
+        throw new Error(`Session ${this.session.id} is archived`);
+      }
+      // Role arbitration and queued ownership are one critical section. The row
+      // that actually inserts as `turn` owns the marker; a concurrently-persisted
+      // steer can never steal it by publishing message.persisted first.
+      const role = deliverMessage(this.db.getJobQueueRepo(), this.session.id, messageUuid, {
+        origin: 'chat',
+      });
+      if (role === 'turn') {
+        await this.stateManager.setQueued(messageUuid);
+      }
     });
   }
 
