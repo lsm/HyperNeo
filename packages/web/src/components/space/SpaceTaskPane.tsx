@@ -821,9 +821,10 @@ export function SpaceTaskPane({
   // (the execution's live agentSessionId) is derived from this; without it the
   // session latch can't detect a detached worker, so opening a task directly in
   // thread would leave a stale session latched.
+  // Passing null (standalone task / no task) tears down any prior run's
+  // subscription so only the open task's run — if any — stays live.
   useEffect(() => {
-    if (!task?.workflowRunId) return;
-    spaceStore.ensureNodeExecutions().catch(() => {});
+    spaceStore.ensureNodeExecutions(task?.workflowRunId ?? null).catch(() => {});
   }, [task?.workflowRunId]);
 
   const handleCanvasToggle = useCallback(() => {
@@ -832,7 +833,7 @@ export function SpaceTaskPane({
       navigateToSpaceTask(navigationSpaceId, taskId, 'thread', true);
       return;
     }
-    spaceStore.ensureNodeExecutions().catch(() => {});
+    spaceStore.ensureNodeExecutions(task?.workflowRunId ?? null).catch(() => {});
     navigateToSpaceTask(navigationSpaceId, taskId, 'canvas', true);
   }, [activeView, canShowCanvasTab, navigationSpaceId, taskId]);
 
