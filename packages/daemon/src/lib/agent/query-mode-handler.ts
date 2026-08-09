@@ -53,8 +53,10 @@ export class QueryModeHandler {
       // Get all deferred messages, EXCLUDING any already owned by a durable v2
       // delivery job — on restart both the reclaimed v2 job and this legacy
       // replay would otherwise deliver the same message (duplicate). No-op when
-      // v2 is off (no message_delivery jobs → empty set). See §10 + Codex review.
-      const v2Owned = db.getJobQueueRepo().activeDeliveryMessageUuids(session.id);
+      // v2 is off (no message_delivery jobs → empty set) or the repo isn't wired
+      // (partial-mock contexts). See §10 + Codex review.
+      const v2Owned =
+        db.getJobQueueRepo?.()?.activeDeliveryMessageUuids?.(session.id) ?? new Set<string>();
       const deferredMessages = db
         .getMessagesByStatus(session.id, 'deferred')
         .filter((m) => !v2Owned.has((m.uuid ?? '') as string));
@@ -106,7 +108,8 @@ export class QueryModeHandler {
     try {
       // Get all queued messages, EXCLUDING any already owned by a durable v2
       // delivery job (see handleQueryTrigger for the restart duplicate guard).
-      const v2Owned = db.getJobQueueRepo().activeDeliveryMessageUuids(session.id);
+      const v2Owned =
+        db.getJobQueueRepo?.()?.activeDeliveryMessageUuids?.(session.id) ?? new Set<string>();
       const queuedMessages = db
         .getMessagesByStatus(session.id, 'enqueued')
         .filter((m) => !v2Owned.has((m.uuid ?? '') as string));
