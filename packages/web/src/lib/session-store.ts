@@ -783,11 +783,13 @@ export class SessionStore {
   ): Promise<void> {
     const subscriptionId = `messages:${sessionId}:${Date.now()}:${messageSubscriptionSeq++}`;
     this.activeMessagesSubscriptionId = subscriptionId;
+    let awaitingSnapshot = true;
 
     // Snapshot handler
     const unsubSnapshot = hub.onEvent<LiveQuerySnapshotEvent>('liveQuery.snapshot', (event) => {
       if (event.subscriptionId !== subscriptionId) return;
       if (this.activeMessagesSubscriptionId !== subscriptionId) return;
+      awaitingSnapshot = false;
       this._applyMessagesSnapshot(event.rows as ChatMessage[], event.metadata);
     });
     this.cleanupFunctions.push(unsubSnapshot);
@@ -796,6 +798,7 @@ export class SessionStore {
     const unsubDelta = hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
       if (event.subscriptionId !== subscriptionId) return;
       if (this.activeMessagesSubscriptionId !== subscriptionId) return;
+      if (awaitingSnapshot) return;
       this._applyMessagesDelta(event);
     });
     this.cleanupFunctions.push(unsubDelta);
@@ -804,7 +807,8 @@ export class SessionStore {
       if (event.subscriptionId !== subscriptionId) return;
       if (this.activeMessagesSubscriptionId !== subscriptionId) return;
       if (event.code === 'MESSAGE_TOO_LARGE') {
-        this.messagesLoaded.value = true;
+        awaitingSnapshot = true;
+        this.messagesLoaded.value = false;
         toast.error('Session is too large to load in one window. Try loading less history.');
         if (event.phase === 'delta') {
           hub

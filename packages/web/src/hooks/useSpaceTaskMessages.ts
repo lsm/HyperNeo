@@ -257,6 +257,20 @@ export function useSpaceTaskMessages(
         return;
       }
       if (event.subscriptionId === activeTurnSubIdRef.current) {
+        if (event.phase === 'delta') {
+          const hub = getHub();
+          if (hub) {
+            hub
+              .request('liveQuery.subscribe', {
+                queryName: 'spaceTaskActiveTurn.byTask',
+                params: [taskId],
+                subscriptionId: activeTurnSubscriptionId,
+              })
+              .catch(() => setActiveTurnRows([]));
+          }
+          return;
+        }
+        setError(event.message);
         setActiveTurnRows([]);
       }
     });
