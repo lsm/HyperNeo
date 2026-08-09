@@ -1167,10 +1167,39 @@ class SpaceStore {
         'spaceLongHorizonAgent.list',
         { spaceId }
       );
-      this.longHorizonAgents.value = result?.agents ?? [];
+      // Guard against a space switch during the await: a refresh started in
+      // space A must not overwrite space B's agent list if the user navigated
+      // away before the RPC resolved. Mirrors fetchAgents.
+      if (this.spaceId.value !== spaceId) return;
+      this.longHorizonAgents.value = (result?.agents ?? []).filter(
+        (agent) => agent.spaceId === spaceId
+      );
     } catch (err) {
-      logger.error('Failed to fetch long-horizon agents:', err);
-      this.longHorizonAgents.value = [];
+      // On failure, KEEP the cached list. Clearing it would empty the Agents
+      // view (and ensureConfigData won't re-fetch because configDataLoaded is
+      // still true), which is worse than showing slightly-stale data. The
+      // refresh caller retries the session load regardless.
+      logger.error('Failed to fetch long-horizon agents (keeping cached list):', err);
+    }
+  }
+
+  /**
+   * Force-refresh the long-horizon agent list for the current space (task #873).
+   *
+   * Unlike `ensureConfigData` (which dedupes once the config has loaded), this
+   * always re-fetches `spaceLongHorizonAgent.list`. The unavailable-session
+   * "Refresh agent record" action uses it to pick up a corrected `sessionId`
+   * after a reconnect/restart, instead of looping on a deleted id. No-op when
+   * no space is selected or the transport is unavailable.
+   */
+  async refreshLongHorizonAgents(): Promise<void> {
+    const spaceId = this.spaceId.value;
+    if (!spaceId) return;
+    try {
+      const hub = await connectionManager.getHub();
+      await this.fetchLongHorizonAgents(hub, spaceId);
+    } catch (err) {
+      logger.error('Failed to refresh long-horizon agents:', err);
     }
   }
 

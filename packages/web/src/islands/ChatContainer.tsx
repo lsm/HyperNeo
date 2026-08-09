@@ -45,6 +45,10 @@ import { ScrollToBottomButton } from '../components/ScrollToBottomButton.tsx';
 import { SDKMessageRenderer } from '../components/sdk/SDKMessageRenderer.tsx';
 import { RateLimitCooldownBanner } from '../components/sdk/RateLimitCooldownBanner.tsx';
 import { ToolsModal } from '../components/ToolsModal.tsx';
+import {
+  UnavailableSessionView,
+  type UnavailableAction,
+} from '../components/UnavailableSessionView.tsx';
 import { Button } from '../components/ui/Button.tsx';
 import { ContentContainer } from '../components/ui/ContentContainer.tsx';
 import { Modal } from '../components/ui/Modal.tsx';
@@ -72,6 +76,7 @@ import {
   replaceOverlayHistory,
 } from '../lib/router.ts';
 import { sessionStore, type SessionStore } from '../lib/session-store.ts';
+import type { SessionLoadErrorKind, SessionUnavailableKind } from '../lib/session-load-error.ts';
 import { searchHighlightMessageIdSignal, type SearchMessageLoadTarget } from '../lib/signals.ts';
 import { spaceStore } from '../lib/space-store.ts';
 import { connectionState } from '../lib/state.ts';
@@ -117,6 +122,61 @@ export function computeChatLoading(opts: {
   const fullyLoaded = sessionStateLoaded && messagesLoaded;
   const recoveringWithTranscript = isRecovering && fullyLoaded;
   return !error && (!sessionStateLoaded || !messagesLoaded) && !recoveringWithTranscript;
+}
+
+/**
+ * The single routing verdict for what the chat area should render (task #873).
+ *
+ * Extracted as a pure function so the per-error-class routing — including the
+ * invariant that an invalid nonempty session id never reaches the empty "No
+ * messages yet" placeholder — is unit-testable without a full render harness.
+ *
+ * Precedence:
+ *  1. pending agent overlay (no real session yet)
+ *  2. a classified load failure → the unavailable view (confirmed-gone OR a
+ *     transient/retryable load error; both are full-screen since there is no
+ *     transcript to show)
+ *  3. initial-load skeleton (or the timeout backstop)
+ *  4. legacy fatal fallback (error + no sessionInfo but no classified kind)
+ *  5. ready (the live chat; archived/terminated are surfaced as a banner here,
+ *     not as a separate route — their transcript stays readable)
+ *
+ * Recovery (isRecovering) is intentionally NOT a route: a recovering session
+ * keeps its transcript and shows a non-blocking banner, so it resolves to
+ * `ready` (or `loading` if it never finished its first load).
+ */
+export type ChatRoute = 'pending' | 'unavailable' | 'loading' | 'ready';
+
+export interface ChatRouteDecision {
+  route: ChatRoute;
+  /** Present only when `route === 'unavailable'`. */
+  unavailableKind?: SessionUnavailableKind;
+}
+
+export function resolveChatRoute(opts: {
+  pending: boolean;
+  loadErrorKind: SessionLoadErrorKind | null;
+  loading: boolean;
+  loadTimedOut: boolean;
+  legacyFatal: boolean;
+}): ChatRouteDecision {
+  if (opts.pending) return { route: 'pending' };
+  const kind = opts.loadErrorKind;
+  if (
+    kind === 'not-found' ||
+    kind === 'unauthorized' ||
+    kind === 'timeout' ||
+    kind === 'disconnected' ||
+    kind === 'unknown'
+  ) {
+    return { route: 'unavailable', unavailableKind: kind };
+  }
+  if (opts.loading) {
+    if (opts.loadTimedOut) return { route: 'unavailable', unavailableKind: 'timeout' };
+    return { route: 'loading' };
+  }
+  if (opts.legacyFatal) return { route: 'unavailable', unavailableKind: 'unknown' };
+  return { route: 'ready' };
 }
 
 export async function sendChatContainerMessage({
@@ -209,6 +269,15 @@ interface ChatContainerProps {
    * full multi-instance ownership rationale.
    */
   store?: SessionStore;
+  /**
+   * Context for the unavailable-session state's actions (task #873). These are
+   * only surfaced when the session can't be shown as a live chat (deleted /
+   * archived / unreachable). They let a long-horizon agent view offer
+   * "Refresh agent record" (re-fetch the agent — its sessionId may have
+   * changed after a reconnect/restart), beyond the always-present "Try again".
+   */
+  agentLabel?: string;
+  onRefreshAgent?: () => void;
 }
 
 export default function ChatContainer({
@@ -220,6 +289,8 @@ export default function ChatContainer({
   pendingAgent,
   onSendOverride,
   store = sessionStore,
+  agentLabel,
+  onRefreshAgent,
 }: ChatContainerProps) {
   // ========================================
   // Refs
@@ -553,6 +624,18 @@ export default function ChatContainer({
   const [isRecovering, setIsRecovering] = useState(store.isRecovering.value);
   useSignalEffect(() => {
     setIsRecovering(store.isRecovering.value);
+  });
+
+  // Sync the discriminated load-error kind. Set ONLY when the initial
+  // state.session fetch fails (or returns a definitive not-found) — never during
+  // recovery (transient refreshes retain the transcript) and never for a runtime
+  // error inside a live session. Drives routing to the unavailable / load-error
+  // view instead of the legacy collapsed "Failed to load session" screen.
+  const [loadErrorKind, setLoadErrorKind] = useState<SessionLoadErrorKind | null>(
+    store.loadErrorKind.value
+  );
+  useSignalEffect(() => {
+    setLoadErrorKind(store.loadErrorKind.value);
   });
 
   // Sync hasMoreMessages from sessionStore (inferred from initial load count)
@@ -1199,10 +1282,17 @@ export default function ChatContainer({
   const registerDropTarget = useCallback((fn: FileDropHandler | null) => {
     dropFilesRef.current = fn;
   }, []);
+  // A terminal session (archived / ended) loads successfully — its transcript
+  // stays readable — but the composer must be disabled and a banner shown. This
+  // is the soft unavailable state (vs. the full-screen view for not-found /
+  // unreachable). Derived from `session.status` so a session that transitions
+  // to archived mid-view also disables input.
+  const sessionTerminal = session?.status === 'archived' || session?.status === 'ended';
   const composerDisabled =
     isWaitingForInput ||
     !isConnected ||
     isRecovering ||
+    sessionTerminal ||
     modelSwitching ||
     coordinatorSwitching ||
     sandboxSwitching;
@@ -1210,6 +1300,36 @@ export default function ChatContainer({
   const { isDragging, dragHandlers } = useImageDropZone((files) => {
     void dropFilesRef.current?.(files);
   }, dropEnabled);
+
+  // Actions for the unavailable / load-error view (task #873). Context-aware:
+  // a long-horizon agent view offers "Refresh agent record" (its sessionId may
+  // have changed after a reconnect/restart); an overlay offers "Go back"; every
+  // case offers "Try again".
+  const handleUnavailableRetry = useCallback(() => {
+    store.select(sessionId);
+  }, [store, sessionId]);
+  const unavailableActions = useMemo<UnavailableAction[]>(() => {
+    const actions: UnavailableAction[] = [];
+    const hardUnavailable = loadErrorKind === 'not-found' || loadErrorKind === 'unauthorized';
+    if (onBack) {
+      actions.push({
+        label: agentLabel ? `Back to ${agentLabel}` : 'Go back',
+        onClick: onBack,
+        variant: hardUnavailable ? 'primary' : 'secondary',
+        testId: 'unavailable-back',
+      });
+    }
+    if (onRefreshAgent) {
+      actions.push({ label: 'Refresh', onClick: onRefreshAgent, testId: 'unavailable-refresh' });
+    }
+    actions.push({
+      label: 'Try again',
+      onClick: handleUnavailableRetry,
+      variant: !hardUnavailable && !onBack ? 'primary' : 'secondary',
+      testId: 'unavailable-retry',
+    });
+    return actions;
+  }, [loadErrorKind, onBack, onRefreshAgent, agentLabel, handleUnavailableRetry]);
 
   // ========================================
   // Pending Agent Render (before loading check)
@@ -1332,22 +1452,40 @@ export default function ChatContainer({
     );
   }
 
-  // Render loading state
-  if (loading) {
-    if (loadTimedOut) {
-      return (
-        <div class="flex-1 flex items-center justify-center bg-app-content">
-          <div class="text-center">
-            <div class="text-5xl mb-4">⚠️</div>
-            <h3 class="text-lg font-semibold text-gray-100 mb-2">Failed to load session</h3>
-            <p class="text-sm text-gray-400 mb-4">
-              Session may not exist or the connection timed out.
-            </p>
-            <Button onClick={() => store.select(sessionId)}>Retry</Button>
-          </div>
-        </div>
-      );
-    }
+  // ---- Unavailable / load-error routing (task #873) ----
+  // A classified load failure short-circuits to ONE accurate, per-cause state,
+  // replacing the legacy collapsed "Failed to load session" screen. Both
+  // confirmed-gone (not-found / unauthorized) and transient (timeout /
+  // disconnected / unknown) kinds render full-screen: there is no transcript
+  // for a session that never loaded, so this also guarantees an invalid
+  // nonempty session id never reaches the "No messages yet" placeholder.
+  // Archived / terminated are NOT load errors — they keep the transcript and
+  // are surfaced as a banner inside the main render below.
+  const storeHasNoSessionInfo =
+    store.sessionState.value !== null && store.sessionState.value?.sessionInfo === null;
+  const route = resolveChatRoute({
+    pending: false, // pendingAgent is handled by the early return above
+    loadErrorKind,
+    loading,
+    loadTimedOut,
+    legacyFatal: !!error && (!session || storeHasNoSessionInfo),
+  });
+
+  if (route.route === 'unavailable') {
+    const kind: SessionUnavailableKind = route.unavailableKind ?? 'unknown';
+    return (
+      <UnavailableSessionView
+        kind={kind}
+        actions={unavailableActions}
+        detail={kind === 'unknown' ? (error ?? undefined) : undefined}
+      />
+    );
+  }
+
+  // Initial-load skeleton (no load error). The 30s backstop resolves via
+  // resolveChatRoute to an unavailable 'timeout' above, so reaching here means
+  // a normal in-progress load.
+  if (route.route === 'loading') {
     return (
       // `relative` is required so the absolutely-positioned footer skeleton is
       // anchored to this container, matching the real ChatComposer positioning.
@@ -1372,24 +1510,9 @@ export default function ChatContainer({
     );
   }
 
-  // Render error state (with retry via sessionStore re-selection).
-  // Also catches the case where session state was cleared (sessionInfo null in the store)
-  // but the local `session` copy is still stale from a previous successful load.
-  const storeHasNoSessionInfo =
-    store.sessionState.value !== null && store.sessionState.value?.sessionInfo === null;
-  if (error && (!session || storeHasNoSessionInfo)) {
-    return (
-      <div class="flex-1 flex items-center justify-center bg-app-content">
-        <div class="text-center">
-          <div class="text-5xl mb-4">⚠️</div>
-          <h3 class="text-lg font-semibold text-gray-100 mb-2">Failed to load session</h3>
-          <p class="text-sm text-gray-400 mb-4">{error}</p>
-          <Button onClick={() => store.select(sessionId)}>Retry</Button>
-        </div>
-      </div>
-    );
-  }
-
+  // route === 'ready' (pending is handled above). Archived / terminated are
+  // surfaced as a banner inside this main render so the transcript stays
+  // readable; recovery shows its own non-blocking banner.
   return (
     <div
       class="flex-1 flex flex-col bg-app-content overflow-hidden relative"
@@ -1439,6 +1562,47 @@ export default function ChatContainer({
         >
           <div class="h-3 w-3 rounded-full border-2 border-blue-400 border-t-transparent animate-spin" />
           Reconnecting — restoring this session…
+        </div>
+      )}
+
+      {/* Terminal-session banner (archived / ended). The transcript stays
+          readable above; the composer is disabled (sessionTerminal). One
+          explicit, non-blocking state with the same contextual actions as the
+          full-screen unavailable view (Go back / Refresh when provided). */}
+      {sessionTerminal && !isInitialLoad && !error && (
+        <div
+          class="flex items-center justify-between gap-2 border-b border-amber-500/20 bg-amber-500/10 px-4 py-1.5 text-xs text-amber-200"
+          data-testid={`session-${session?.status}-banner`}
+          role="status"
+          aria-live="polite"
+        >
+          <span>
+            {session?.status === 'archived'
+              ? 'This session has been archived.'
+              : 'This session has ended.'}
+          </span>
+          {(onBack || onRefreshAgent) && (
+            <span class="flex items-center gap-2">
+              {onRefreshAgent && (
+                <button
+                  type="button"
+                  class="rounded px-1.5 py-0.5 text-amber-200 hover:bg-amber-500/20"
+                  onClick={onRefreshAgent}
+                >
+                  Refresh
+                </button>
+              )}
+              {onBack && (
+                <button
+                  type="button"
+                  class="rounded px-1.5 py-0.5 text-amber-200 hover:bg-amber-500/20"
+                  onClick={onBack}
+                >
+                  Go back
+                </button>
+              )}
+            </span>
+          )}
         </div>
       )}
 

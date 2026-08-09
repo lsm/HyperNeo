@@ -62,6 +62,12 @@ import type { ChatMessage } from '@hyperneo/shared';
 import { Logger } from '@hyperneo/shared';
 import { flattenSDKSlashCommands, type SDKSlashCommand } from '@hyperneo/shared/sdk';
 import { connectionManager } from './connection-manager';
+import {
+  classifySessionLoadError,
+  isHardUnavailable,
+  type SessionLoadErrorKind,
+} from './session-load-error';
+import { connectionState } from './state';
 import { slashCommandsSignal } from './signals';
 import { toast } from './toast';
 import type { StructuredError } from '../types/error';
@@ -254,6 +260,29 @@ export class SessionStore {
    */
   readonly isRecovering = signal<boolean>(false);
 
+  /**
+   * Discriminated kind of the most recent session-LOAD failure for the current
+   * session, or `null` when the load succeeded (or no failure has occurred).
+   *
+   * Distinct from `isRecovering` (a transient transport drop on a session that
+   * ALREADY loaded) and from a runtime `error` (a failure inside a live,
+   * loaded session — e.g. a provider auth error mid-turn, which keeps
+   * `sessionInfo`). `loadErrorKind` is set ONLY when the initial
+   * `state.session` fetch fails (or returns a definitive not-found), so the UI
+   * can route to an accurate unavailable / retryable load state instead of the
+   * legacy collapsed "Failed to load session".
+   *
+   * Transient recovery refreshes (`retainOnError`) deliberately do NOT set
+   * this — a temporary RPC failure during reconnect must not be mistaken for a
+   * confirmed missing/archived session, and must not wipe the cached transcript.
+   * Reset to `null` on session switch, on a successful load commit, and destroy.
+   *
+   * `archived` / `terminated` are NOT load errors — the RPC succeeds and the
+   * session row still exists. The UI derives those from `sessionInfo.status`
+   * directly (ChatContainer's archived/ended banner), not from this signal.
+   */
+  readonly loadErrorKind = signal<SessionLoadErrorKind | null>(null);
+
   /** API retry attempts (populated from session.retryAttempt events) */
   readonly retryAttempts = signal<
     Array<{
@@ -333,6 +362,17 @@ export class SessionStore {
    * reconnect refresh.
    */
   private destroyed = false;
+
+  /**
+   * Deletion tombstone: set when an out-of-band `session.deleted` event targets
+   * the active session. A `state.session` RPC captured BEFORE the deletion could
+   * otherwise commit AFTER it (clearing loadErrorKind back to null and reviving
+   * the deleted transcript); this flag makes fetchInitialSessionState and the
+   * state.session push handler skip their commit while the session is known to
+   * be gone. Reset on every doSelect (a retry/refresh re-issues the load, which
+   * the server will re-confirm as not-found).
+   */
+  private deleted = false;
 
   /**
    * Monotonic selection epoch, bumped on every doSelect (including a reselect
@@ -478,10 +518,16 @@ export class SessionStore {
     if (this.destroyed) {
       return;
     }
-    // Skip if already on this session and it loaded successfully (no error, not stuck loading).
-    // Allow re-selection when there is an error or when the session is still loading
-    // (e.g. timed out) so that the Retry button can restart the load.
-    const alreadyLoaded = this.sessionState.value !== null && !this.sessionState.value?.error;
+    // Skip if already on this session and it loaded successfully (no error, not stuck loading,
+    // and not in a load-error state). Allow re-selection when there is an error, when the
+    // session is still loading (e.g. timed out), OR when loadErrorKind is set — the latter
+    // covers an out-of-band deletion: the cached sessionState is still the pre-deletion
+    // success, so without this the unavailable view's "Try again" (and the same-id agent
+    // refresh) would no-op against the alreadyLoaded guard.
+    const alreadyLoaded =
+      this.sessionState.value !== null &&
+      !this.sessionState.value?.error &&
+      this.loadErrorKind.value === null;
     if (this.activeSessionId.value === sessionId && alreadyLoaded) {
       return;
     }
@@ -512,6 +558,12 @@ export class SessionStore {
     // readiness until it lands. Bounds any stuck recovery flag to the prior
     // session's lifetime.
     this.isRecovering.value = false;
+    // A fresh selection has no load error yet — the prior session's not-found
+    // / timeout must not leak into the new one (e.g. navigating from a deleted
+    // session to a live one). Also clear the deletion tombstone: a retry against
+    // the same id re-issues the load and lets the server re-confirm not-found.
+    this.loadErrorKind.value = null;
+    this.deleted = false;
     // No older rows paginated yet for the new session.
     this.hasPaginatedOlder = false;
     // Invalidate any in-flight LiveQuery events for the previous session.
@@ -596,6 +648,17 @@ export class SessionStore {
         if (state.revision !== undefined) this.lastAppliedRevision = state.revision;
         this.sessionState.value = state;
 
+        // A push carrying a live sessionInfo and no error means the session is
+        // reachable — clear any stale load-error kind so a push that recovers
+        // the session (e.g. the daemon re-broadcasts after a transient timeout)
+        // doesn't leave a not-found / timeout stranding the UI on the load-error
+        // view. A push that itself carries an error leaves the kind as-is.
+        // Skip if the session was deleted out-of-band — a deletion tombstone
+        // must not be cleared by a stale pre-deletion push.
+        if (state.sessionInfo && !state.error && !this.deleted) {
+          this.loadErrorKind.value = null;
+        }
+
         // Sync contextInfo from metadata to direct signal for fast access.
         // The metadata.lastContextInfo is the persisted source of truth.
         if (state.sessionInfo?.metadata?.lastContextInfo) {
@@ -668,14 +731,32 @@ export class SessionStore {
       });
       this.cleanupFunctions.push(unsubRetryAttempt);
 
-      // 4. Fetch session-scoped state (metadata + agent state + commands) via RPC.
+      // 4. Global `session.deleted` — the daemon publishes this when a session
+      //    is hard-deleted (e.g. from another tab/client). The per-session
+      //    `state.session` channel never re-broadcasts for a deleted row, so
+      //    without this the loaded view stays stale after an out-of-band
+      //    deletion. When the active session is deleted, flip to the
+      //    not-found unavailable state so the user isn't left interacting with a
+      //    ghost. loadErrorKind flips to 'not-found' even though the cached
+      //    sessionInfo is still present.
+      const unsubDeleted = hub.onEvent<{ sessionId: string }>('session.deleted', (event) => {
+        if (event?.sessionId && event.sessionId === sessionId && !this.destroyed) {
+          // Tombstone: an in-flight state.session fetch/push captured before
+          // the deletion must not revive the session by clearing loadErrorKind.
+          this.deleted = true;
+          this.loadErrorKind.value = 'not-found';
+        }
+      });
+      this.cleanupFunctions.push(unsubDeleted);
+
+      // 5. Fetch session-scoped state (metadata + agent state + commands) via RPC.
       //    Messages are NOT fetched here — they arrive via the LiveQuery snapshot
       //    below.  We still need the session RPC because session state is
       //    push-based (server decides when to broadcast) and there is no
       //    LiveQuery yet for the `sessions` row.
       await this.fetchInitialSessionState(hub, sessionId);
 
-      // 5. Subscribe to the messages LiveQuery for this session.
+      // 6. Subscribe to the messages LiveQuery for this session.
       //    Errors here are intentionally non-fatal — session state can still
       //    be useful to display (e.g. to show the error banner), and the
       //    LiveQuery will re-subscribe automatically on reconnect.
@@ -968,6 +1049,11 @@ export class SessionStore {
       // stale even though it committed while this RPC was in flight.
       this.lastCommittedFetchSeq > ticket;
     let result: SessionState;
+    // Discriminated load-error kind for THIS fetch (null on success). Captured
+    // while building an error `result` and committed alongside it below, so a
+    // superseded fetch (generation/ticket/revision guard) never leaks its
+    // not-found / timeout into the active session's `loadErrorKind`.
+    let loadKind: SessionLoadErrorKind | null = null;
     try {
       const sessionState = await hub.request<SessionState>('state.session', { sessionId });
       if (sessionState) {
@@ -977,39 +1063,47 @@ export class SessionStore {
         // is a definitive "not found", not a transient blip, so surface it as
         // an error regardless of caller.
         logger.error('Session state RPC returned null for session:', sessionId);
+        loadKind = 'not-found';
         result = {
           sessionInfo: null,
           agentState: { status: 'idle' },
           commandsData: { availableCommands: [] },
           error: {
-            message: 'Session not found',
-            details: { sessionId },
+            message: 'This session is no longer available.',
+            details: { sessionId, kind: 'not-found' },
             occurredAt: Date.now(),
           },
           timestamp: Date.now(),
         };
       }
     } catch (err) {
-      // Reconnect/refresh callers pass retainOnError so a transient RPC
-      // failure during reconnect PRESERVES the last valid state (letting the
-      // push-based state.session subscription recover it) instead of
-      // clobbering a restored transcript with a fatal load error. Initial
-      // load still sets the error so ChatContainer shows the load screen.
-      if (retainOnError) {
+      // Classify FIRST. A reconnect/resume refresh (retainOnError) must still
+      // surface an AUTHORITATIVE "Session not found" / unauthorized reply — the
+      // session was deleted (or access revoked) while we were reconnecting, so
+      // preserving its cached transcript would leave the user interacting with a
+      // ghost and strand recovery in an early-return loop. Only TRANSIENT
+      // failures (disconnected / timeout / unknown) are retained.
+      const classified = classifySessionLoadError(err, connectionState.value);
+      if (retainOnError && !isHardUnavailable(classified.kind)) {
         logger.warn('Session state refresh failed; retaining last valid state:', err);
-        // The RPC failed — but a newer push, a fresher fetch, or a daemon
-        // restart may have refreshed the state meanwhile. If so, recovery is
-        // still complete; only report not-refreshed when nothing newer applied.
+        // A transient refresh failure must NOT set a hard-unavailable
+        // loadErrorKind — that would route a recovering session (transcript
+        // still visible) to the unavailable screen. Leave loadErrorKind alone;
+        // isRecovering keeps the transcript read-only until the next attempt.
         return stateFreshenedSinceStart();
       }
+      // Hard failure (not-found / unauthorized), or any failure on the initial
+      // load: commit a distinct, actionable error instead of the legacy
+      // collapsed "Failed to load session".
+      loadKind = classified.kind;
       logger.error('Failed to fetch initial session state:', err);
       result = {
         sessionInfo: null,
         agentState: { status: 'idle' },
         commandsData: { availableCommands: [] },
         error: {
-          message: 'Failed to load session',
-          details: err,
+          message: classified.message,
+          details: { kind: classified.kind, cause: err },
           occurredAt: Date.now(),
         },
         timestamp: Date.now(),
@@ -1036,11 +1130,13 @@ export class SessionStore {
     this.reconcileDaemonEpoch(result.daemonEpoch);
     if (
       this.destroyed ||
+      this.deleted ||
       this.activeSessionId.value !== sessionId ||
       this.selectGeneration !== generation
     ) {
       // Recovery is moot (session switched/destroyed/reselected) —
-      // performRecovery's own guards abort it too.
+      // performRecovery's own guards abort it too. `deleted` blocks a fetch
+      // captured before an out-of-band deletion from reviving the session.
       return false;
     }
     if (ticket <= this.lastCommittedFetchSeq) {
@@ -1062,6 +1158,11 @@ export class SessionStore {
     if (result.revision !== undefined) this.lastAppliedRevision = result.revision;
 
     this.sessionState.value = result;
+    // Reflect this fetch's load outcome so the UI routes correctly. A
+    // successful load clears any stale kind (e.g. a Retry that lands after the
+    // session was restored); a failure sets the classified kind. Committed here
+    // — after the supersede guards — so a discarded fetch can't set it.
+    this.loadErrorKind.value = loadKind;
 
     // Persist contextInfo from metadata to direct signal so it survives page refresh.
     // Without this, _contextInfo stays null until the next context.updated event
@@ -1227,6 +1328,7 @@ export class SessionStore {
     this.releaseSessionChannel(oldSessionId);
     this.activeSessionId.value = null;
     this.isRecovering.value = false;
+    this.loadErrorKind.value = null;
     activeStores.delete(this);
   }
 

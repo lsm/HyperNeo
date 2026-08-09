@@ -10,7 +10,6 @@ import {
   navSectionSignal,
   settingsSectionSignal,
 } from '../lib/signals.ts';
-import { sessions } from '../lib/state.ts';
 import { navigateToSpace, navigateToSpaceTask, navigateToSpaceSession } from '../lib/router.ts';
 import { spaceStore } from '../lib/space-store.ts';
 import { isActionRequired, isActiveTask } from '../lib/task-filters.ts';
@@ -333,13 +332,15 @@ export default function MainContent() {
   const spaceSessionViewId = currentSpaceSessionIdSignal.value;
   const spaceTaskViewId = currentSpaceTaskIdSignal.value;
   const spaceViewMode = currentSpaceViewModeSignal.value;
-  const sessionsList = sessions.value;
   const navSection = navSectionSignal.value;
   const settingsSection = settingsSectionSignal.value;
 
-  // Validate that the current session actually exists in the sessions list
-  // (handles case where session is deleted in another tab)
-  const sessionExists = !!(sessionId && sessionsList.some((s) => s.id === sessionId));
+  // A session route mounts ChatContainer even when the id is NOT in the cached
+  // sessions list — a deep link to a stale/deleted id, or the list simply
+  // hasn't loaded yet. ChatContainer + the store resolve the correct state,
+  // including the unavailable-session view for a confirmed-missing id, so a
+  // deep link to an invalid nonempty id never silently falls through to the
+  // sessions list (task #873).
 
   // Compute a stable key that changes when the major content view changes.
   // This drives the animate-fadeIn-200 transition wrapper below.
@@ -350,7 +351,7 @@ export default function MainContent() {
     contentKey = `space-${spaceRouteId}-${spaceViewMode}`;
   } else if (navSection === 'spaces') {
     contentKey = 'spaces';
-  } else if (sessionExists) {
+  } else if (sessionId) {
     contentKey = `chat-${sessionId}`;
   } else if (navSection === 'chats') {
     contentKey = 'chats';
@@ -382,8 +383,11 @@ export default function MainContent() {
       return <SpacesHome />;
     }
 
-    // If there's a valid session, show the chat
-    if (sessionExists && sessionId) {
+    // A session route always shows the chat. For an id that isn't in the cached
+    // sessions list (deep link to a stale/deleted id, or list not yet loaded),
+    // ChatContainer's store load resolves the state — including the unavailable
+    // view for a confirmed-missing id — instead of falling through to the list.
+    if (sessionId) {
       return (
         <Suspense fallback={lazyFallback}>
           <ChatContainer key={sessionId} sessionId={sessionId} />

@@ -194,6 +194,13 @@ interface SessionStatusBarProps {
   onThinkingLevelChange?: (level: ThinkingLevel) => Promise<void> | void;
   // Coordinator switching guard for the model pill
   coordinatorSwitching?: boolean;
+  /**
+   * Per-session recovery flag (distinct from the global transport state). While
+   * true THIS session is rejoining its channel and re-syncing — the connection
+   * dot must read "Reconnecting…" (not "Ready") to match the recovery banner,
+   * and model controls stay disabled so the user can't switch models mid-sync.
+   */
+  isRecovering?: boolean;
 }
 
 export default function SessionStatusBar({
@@ -214,6 +221,7 @@ export default function SessionStatusBar({
   thinkingLevel: thinkingLevelProp,
   onThinkingLevelChange,
   coordinatorSwitching = false,
+  isRecovering = false,
 }: SessionStatusBarProps) {
   // Use useState + useSignalEffect to ensure component re-renders on signal change
   // This is more explicit than relying on implicit signal tracking
@@ -296,6 +304,17 @@ export default function SessionStatusBar({
     }
   }, [modelDropdown, thinkingDropdown]);
 
+  // Close any open dropdown the moment this session enters recovery — otherwise
+  // disabling only the trigger leaves the model/thinking options mounted and
+  // clickable (their buttons gate solely on modelSwitching), letting the user
+  // start a model switch while the session is rejoining and re-syncing.
+  useEffect(() => {
+    if (isRecovering) {
+      modelDropdown.close();
+      thinkingDropdown.close();
+    }
+  }, [isRecovering, modelDropdown, thinkingDropdown]);
+
   // Thinking level state (synced from session config)
   const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>(thinkingLevelProp || 'off');
 
@@ -371,12 +390,20 @@ export default function SessionStatusBar({
 
   return (
     <ContentContainer className="pb-2 flex items-center gap-4 justify-between">
-      {/* Left: Connection status */}
+      {/* Left: Connection status.
+          Harmonized with per-session recovery (task #873): when the transport
+          is connected but THIS session is still rejoining its channel, show
+          "Reconnecting…" instead of a contradictory "Ready". The global
+          disconnected/reconnecting/failed states pass through unchanged.
+          Mask the (stale) processing inputs while recovering — resolveStatus
+          prioritizes isProcessing/currentAction over connectionState, so a
+          cached processing state would otherwise show the agent's last action
+          during the exact recovery window this labels "Reconnecting…". */}
       <ConnectionStatus
-        connectionState={connState}
-        isProcessing={isProcessing}
-        currentAction={currentAction}
-        streamingPhase={streamingPhase}
+        connectionState={isRecovering && connState === 'connected' ? 'reconnecting' : connState}
+        isProcessing={isRecovering ? false : isProcessing}
+        currentAction={isRecovering ? undefined : currentAction}
+        streamingPhase={isRecovering ? undefined : streamingPhase}
       />
 
       {/* Right: Interactive controls and context usage */}
@@ -395,7 +422,7 @@ export default function SessionStatusBar({
                 class="control-btn inline-flex h-8 min-w-0 items-center gap-1.5 rounded-full border pl-2 pr-2.5 text-xs text-gray-200 transition-colors hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
                 style={pillStyle}
                 onClick={toggleModelDropdown}
-                disabled={modelLoading || modelSwitching || coordinatorSwitching}
+                disabled={modelLoading || modelSwitching || coordinatorSwitching || isRecovering}
                 title={
                   currentModelInfo ? `Switch Model (${currentModelInfo.name})` : 'Switch Model'
                 }
@@ -542,6 +569,11 @@ export default function SessionStatusBar({
                   thinkingLevel === 'off' ? 'border-dark-600/80' : 'border-transparent'
                 }`}
                 onClick={toggleThinkingDropdown}
+                // Disabled during recovery, matching the model trigger — the
+                // close-on-recovery effect only fires on the isRecovering
+                // transition, so without this the dropdown could be reopened in
+                // steady-state recovery and fire session.thinking.set mid-sync.
+                disabled={isRecovering}
                 title={`Thinking: ${THINKING_LEVEL_LABELS[thinkingLevel]}`}
               >
                 <ThinkingBorderRing level={thinkingLevel} />
@@ -562,6 +594,7 @@ export default function SessionStatusBar({
                       option.value === thinkingLevel ? 'text-amber-400' : 'text-gray-200'
                     }`}
                     onClick={() => handleThinkingLevelChange(option.value)}
+                    disabled={isRecovering}
                   >
                     <ThinkingLevelIcon level={option.value} />
                     {option.label}
