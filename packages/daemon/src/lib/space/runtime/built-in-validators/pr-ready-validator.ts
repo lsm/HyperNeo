@@ -98,6 +98,38 @@ export function createPrReadyValidator(
           : typeof context.hookLocalState.prUrl === 'string'
             ? context.hookLocalState.prUrl
             : undefined;
+      const isMergeReason = POST_APPROVAL_MERGE_REASONS.has(readSendReason(context) ?? '');
+      // Blocker / fix-push handoffs MUST carry data.pr_url bound to the frozen
+      // reviewed PR. Treating omission as safe lets an approved coder send
+      // `reason: "merge_blocked"` with no structured pr_url while naming a
+      // different PR in the free-form message — the re-approval authority then
+      // has no trusted identity to bind. So require the pr_url and a frozen
+      // identity to compare it against.
+      if (isMergeReason) {
+        if (typeof suppliedPrUrl !== 'string') {
+          return {
+            type: 'block',
+            reason:
+              'Post-approval blocker/fix handoff must carry data.pr_url bound to the reviewed PR (omission is not safe).',
+          };
+        }
+        if (!frozenPrUrl) {
+          return {
+            type: 'block',
+            reason:
+              'Post-approval blocker/fix handoff cannot be bound because this PR-ready hook has no frozen reviewed PR identity.',
+          };
+        }
+        if (suppliedPrUrl !== frozenPrUrl) {
+          return {
+            type: 'block',
+            reason: `Post-approval blocker/fix handoff PR ${suppliedPrUrl} does not match the reviewed PR ${frozenPrUrl}`,
+          };
+        }
+        return { type: 'allow' };
+      }
+      // Non-merge approved handoff: bind any supplied pr_url to the frozen
+      // identity (a missing pr_url is allowed here — it is not a blocker report).
       if (typeof suppliedPrUrl === 'string') {
         if (!frozenPrUrl) {
           return {
@@ -112,9 +144,6 @@ export function createPrReadyValidator(
             reason: `Post-approval handoff PR ${suppliedPrUrl} does not match the reviewed PR ${frozenPrUrl}`,
           };
         }
-      }
-      if (POST_APPROVAL_MERGE_REASONS.has(readSendReason(context) ?? '')) {
-        return { type: 'allow' };
       }
     }
     const deadlineMs = Date.now() + DEFAULT_TIMEOUT_MS;

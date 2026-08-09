@@ -64,20 +64,29 @@ export function createPostApprovalOnlyValidator(): (
       // when a pr_url is supplied but no frozen identity exists to compare it
       // against.
       const suppliedPrUrl = readSuppliedPrUrl(context);
-      if (typeof suppliedPrUrl === 'string') {
-        if (!context.frozenPrUrl) {
-          return {
-            type: 'block',
-            reason:
-              'Post-approval blocker handoff carries a pr_url, but this run has no frozen reviewed PR identity to bind it to.',
-          };
-        }
-        if (suppliedPrUrl !== context.frozenPrUrl) {
-          return {
-            type: 'block',
-            reason: `Post-approval blocker handoff PR ${suppliedPrUrl} does not match this run's reviewed PR ${context.frozenPrUrl}.`,
-          };
-        }
+      // Require data.pr_url (omission is not safe): an approved coder could
+      // otherwise send `reason: "merge_blocked"` with no structured pr_url while
+      // naming a different PR in the free-form message, leaving the re-approval
+      // authority with no trusted identity to bind.
+      if (typeof suppliedPrUrl !== 'string') {
+        return {
+          type: 'block',
+          reason:
+            'Post-approval blocker/fix handoff must carry data.pr_url bound to the reviewed PR (omission is not safe).',
+        };
+      }
+      if (!context.frozenPrUrl) {
+        return {
+          type: 'block',
+          reason:
+            'Post-approval blocker handoff carries a pr_url, but this run has no frozen reviewed PR identity to bind it to.',
+        };
+      }
+      if (suppliedPrUrl !== context.frozenPrUrl) {
+        return {
+          type: 'block',
+          reason: `Post-approval blocker handoff PR ${suppliedPrUrl} does not match this run's reviewed PR ${context.frozenPrUrl}.`,
+        };
       }
       return { type: 'allow' };
     }

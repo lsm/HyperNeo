@@ -41,21 +41,52 @@ function makeContext(overrides: Partial<HookExecutorContext> = {}): HookExecutor
 }
 
 describe('post_approval_only validator', () => {
-  test('allows a merge_blocked report while the task is approved', async () => {
-    const validator = createPostApprovalOnlyValidator();
-    const result = await validator(makeContext({ taskStatus: 'approved' }));
-    expect(result.type).toBe('allow');
-  });
-
-  test('allows a merge_fix_pushed report while the task is approved', async () => {
+  test('allows a merge_blocked report while the task is approved (pr_url matches frozen)', async () => {
     const validator = createPostApprovalOnlyValidator();
     const result = await validator(
       makeContext({
         taskStatus: 'approved',
-        params: { target: 'QA', message: 'pushed fix', data: { reason: 'merge_fix_pushed' } },
+        frozenPrUrl: 'https://github.com/acme/corp/pull/42',
+        params: {
+          target: 'QA',
+          message: 'blocked',
+          data: { reason: 'merge_blocked', pr_url: 'https://github.com/acme/corp/pull/42' },
+        },
       })
     );
     expect(result.type).toBe('allow');
+  });
+
+  test('allows a merge_fix_pushed report while the task is approved (pr_url matches frozen)', async () => {
+    const validator = createPostApprovalOnlyValidator();
+    const result = await validator(
+      makeContext({
+        taskStatus: 'approved',
+        frozenPrUrl: 'https://github.com/acme/corp/pull/42',
+        params: {
+          target: 'QA',
+          message: 'pushed fix',
+          data: {
+            reason: 'merge_fix_pushed',
+            pr_url: 'https://github.com/acme/corp/pull/42',
+          },
+        },
+      })
+    );
+    expect(result.type).toBe('allow');
+  });
+
+  test('blocks an approved merge report with NO pr_url (omission is not safe)', async () => {
+    const validator = createPostApprovalOnlyValidator();
+    const result = await validator(
+      makeContext({
+        taskStatus: 'approved',
+        frozenPrUrl: 'https://github.com/acme/corp/pull/42',
+        params: { target: 'QA', message: 'blocked', data: { reason: 'merge_blocked' } },
+      })
+    );
+    expect(result.type).toBe('block');
+    expect((result as { reason: string }).reason).toContain('must carry data.pr_url');
   });
 
   test('blocks a merge report while the task is in_progress (spoof guard)', async () => {
@@ -98,8 +129,16 @@ describe('post_approval_only validator', () => {
     const result = await validator(
       makeContext({
         taskStatus: 'approved',
+        frozenPrUrl: 'https://github.com/acme/corp/pull/42',
         params: { target: 'QA', message: 'blocked', data: '[truncated: large data field omitted]' },
-        rawParams: { target: 'QA', message: 'blocked', data: { reason: 'merge_blocked' } },
+        rawParams: {
+          target: 'QA',
+          message: 'blocked',
+          data: {
+            reason: 'merge_blocked',
+            pr_url: 'https://github.com/acme/corp/pull/42',
+          },
+        },
       })
     );
     expect(result.type).toBe('allow');
