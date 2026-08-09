@@ -754,13 +754,13 @@ export class AcpQueryRunner {
           }
         } finally {
           // The prompt reached the ACP subprocess (stdin write completed) but
-          // the run ended — interrupt, error, or adapter close — before any
-          // acceptance signal. Submitted rows are hidden from transcript
-          // queries, so settle explicitly or the prompt stays invisible and
-          // nonterminal until restart recovery. Fail-ambiguous: never
-          // auto-replayed. See Codex (#3743968032).
-          if (submitted && !accepted) {
-            this.ctx.messageHandler.markMessageSubmissionFailed(message.uuid ?? '');
+          // the run ended — interrupt, error, adapter close, or a submission
+          // boundary throw — before any acceptance signal. Settle fail-ambiguous
+          // so the row is visible-failed and never auto-replayed. Covers BOTH
+          // submitted (run ended) and enqueued (transition threw/was revoked),
+          // not just the submitted state. See Codex (#3743968032, #3744886836).
+          if (!accepted) {
+            this.ctx.messageHandler.markACPDeliveryFailed(message.uuid ?? '');
           }
         }
       }

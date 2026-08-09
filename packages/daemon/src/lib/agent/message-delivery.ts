@@ -109,6 +109,16 @@ export function deliverMessage(
     parentToolUseId: options.parentToolUseId ?? null,
   };
 
+  // Idempotency: if an active message_delivery job already exists for this UUID,
+  // return its role without inserting a second. The reset path creates+subscribes
+  // the replacement AgentSession before cleaning up the old one, so a message
+  // persisted in that overlap invokes this chokepoint twice (serialized on the
+  // per-session lock). Without this guard the second call inserts a steer for
+  // the same UUID the first inserted as a turn → the prompt reaches the SDK
+  // twice. See Codex (#3744886832).
+  const existingRole = jobQueue.getActiveDeliveryRole(sessionId, messageUuid);
+  if (existingRole) return existingRole;
+
   if (options.role) {
     jobQueue.enqueue({
       queue: MESSAGE_DELIVERY,
@@ -230,12 +240,14 @@ export interface MessageDeliverySession {
     messageUuid: string,
     content: DeliveryContent,
     parentToolUseId?: string | null,
-    alreadyConsumed?: boolean
+    alreadyConsumed?: boolean,
+    claimGuard?: () => boolean
   ): Promise<DriveTurnOutcome>;
   feedDeliverySteer(
     messageUuid: string,
     content: DeliveryContent,
-    parentToolUseId?: string | null
+    parentToolUseId?: string | null,
+    claimGuard?: () => boolean
   ): Promise<FeedSteerOutcome>;
   /** Clear queued state only if this skipped message still owns it. */
   settleSkippedDelivery?(messageUuid: string): Promise<void>;

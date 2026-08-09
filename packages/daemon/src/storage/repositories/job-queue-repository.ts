@@ -316,6 +316,29 @@ export class JobQueueRepository {
   }
 
   /**
+   * The role ('turn' | 'steer') of the active message_delivery job for a UUID,
+   * or null if none. Used by {@link deliverMessage}'s idempotency check so a
+   * reset-overlap double-persist (the same UUID enqueued by both the old and
+   * replacement session, serialized on the per-session lock) does not insert a
+   * turn AND a steer for the same prompt. See Codex (#3744886832).
+   */
+  getActiveDeliveryRole(sessionId: string, messageUuid: string): 'turn' | 'steer' | null {
+    const row = this.db
+      .prepare(
+        `SELECT json_extract(payload, '$.role') AS role
+           FROM job_queue
+          WHERE queue = 'message_delivery'
+            AND json_extract(payload, '$.sessionId') = ?
+            AND json_extract(payload, '$.messageUuid') = ?
+            AND status IN ('pending', 'processing')
+          LIMIT 1`
+      )
+      .get(sessionId, messageUuid) as { role: string | null } | undefined;
+    const role = row?.role;
+    return role === 'turn' || role === 'steer' ? role : null;
+  }
+
+  /**
    * The set of messageUuids with an ACTIVE (pending/processing) message_delivery
    * job for a session. Used by the LEGACY replay paths
    * (replayPendingMessagesForImmediateMode / handleQueryTrigger /

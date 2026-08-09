@@ -1854,7 +1854,7 @@ export class SDKMessageRepository {
       .prepare(
         `SELECT id FROM sdk_messages
            WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
-             AND send_status IN ('enqueued', 'deferred')
+             AND send_status IN ('enqueued', 'deferred', 'submitted')
            ORDER BY timestamp ASC LIMIT 1`
       )
       .get(sessionId, uuid) as { id: string } | undefined;

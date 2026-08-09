@@ -515,6 +515,26 @@ export class SDKMessageHandler {
       .catch(() => {});
   }
 
+  /**
+   * Fail-ambiguous terminalization for an ACP prompt that may have reached the
+   * subprocess but never got a definitive acceptance. Covers BOTH enqueued (the
+   * enqueued→submitted transition threw, or remove/defer won) AND submitted (the
+   * run ended before acceptance). The row becomes visible-failed and is never
+   * auto-replayed. See Codex (#3743968032, #3744886836).
+   */
+  markACPDeliveryFailed(messageId: string): void {
+    const { session, db, internalEventBus } = this.ctx;
+    const flipped = db.getSDKMessageRepo().markDeliveryFailedByUuid(session.id, messageId);
+    if (!flipped) return;
+    internalEventBus
+      .publish('messages.statusChanged', {
+        sessionId: session.id,
+        messageIds: [flipped],
+        status: 'failed',
+      })
+      .catch(() => {});
+  }
+
   private transitionPersistedMessage(
     messageId: string,
     fromStatus: 'enqueued',

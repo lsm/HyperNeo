@@ -1314,6 +1314,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         // draining, creating two concurrent handlers for one prompt.
         messageDeliveryProcessor.stopPolling();
         logInfo('[Daemon] Message-delivery job polling stopped');
+        // Stop the MAIN processor's polling too before session cleanup: a handler
+        // claimed in this window (e.g. a long-horizon reminder) can create/hydrate
+        // a session AFTER cleanup already drained it, leaving a live SDK process
+        // outside shutdown. Drains run after the session aborts below.
+        jobProcessor.stopPolling();
+        logInfo('[Daemon] Job queue polling stopped');
         // Requeue in-flight message_delivery turns to pending BEFORE draining the
         // processor: their handlers are still awaiting the live SDK turn, so
         // stop() would otherwise block on them until the CLI's shutdown timeout

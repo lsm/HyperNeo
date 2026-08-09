@@ -986,6 +986,7 @@ describe('AgentSession', () => {
     it('deliverChatMessage preserves a legacy-owned processing turn', async () => {
       const jobQueue = {
         enqueue: mock(() => ({ id: 'job' })),
+        getActiveDeliveryRole: mock(() => null),
       };
       mockDb.getJobQueueRepo = mock(() => jobQueue);
       const setQueuedIfIdle = mock(async () => false);
@@ -1000,6 +1001,7 @@ describe('AgentSession', () => {
     it('deliverChatMessage treats queued publication failure as non-fatal after insertion', async () => {
       const jobQueue = {
         enqueue: mock(() => ({ id: 'job' })),
+        getActiveDeliveryRole: mock(() => null),
       };
       mockDb.getJobQueueRepo = mock(() => jobQueue);
       agentSession.stateManager.setQueuedIfIdle = mock(async () => {

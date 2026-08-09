@@ -192,6 +192,7 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
       markMessageSubmitted: mock(() => true),
       markMessageAccepted: mock(() => {}),
       markMessageSubmissionFailed: mock(() => {}),
+      markACPDeliveryFailed: mock(() => {}),
     } as never,
     queryObject: null,
     queryPromise: null,
@@ -620,11 +621,11 @@ describe('AcpQueryRunner', () => {
     const handler = ctx.messageHandler as unknown as {
       markMessageSubmitted: ReturnType<typeof mock>;
       markMessageAccepted: ReturnType<typeof mock>;
-      markMessageSubmissionFailed: ReturnType<typeof mock>;
+      markACPDeliveryFailed: ReturnType<typeof mock>;
     };
     expect(handler.markMessageSubmitted).toHaveBeenCalledWith('user-message-1');
     expect(handler.markMessageAccepted).not.toHaveBeenCalled();
-    expect(handler.markMessageSubmissionFailed).toHaveBeenCalledWith('user-message-1');
+    expect(handler.markACPDeliveryFailed).toHaveBeenCalledWith('user-message-1');
   });
 
   test('preserves env-only Anthropic auth for ACP subprocesses', async () => {

@@ -1828,7 +1828,8 @@ export class AgentSession
     messageUuid: string,
     content: string | MessageContent[],
     _parentToolUseId?: string | null,
-    alreadyConsumed = false
+    alreadyConsumed = false,
+    claimGuard?: () => boolean
   ): Promise<DriveTurnOutcome> {
     // Brief critical section (per-session lock): start the query + feed the
     // kickoff so it is the FIRST message the generator yields (a steer grabbing
@@ -1842,6 +1843,13 @@ export class AgentSession
       // only after ensureQueryStarted races teardown. Reclaimed consumed turns
       // must validate too, while accepting their consumed ownership state.
       if (!this.messageDeliveryValid(messageUuid, alreadyConsumed)) {
+        return { kind: 'aborted' as const };
+      }
+      // Re-fence the lease inside the locked section: the handler's pre-lock
+      // isClaimCurrent check can pass, then a reclaim can win the row during the
+      // lock wait (a long steer/startup). The admission below must not feed a
+      // stale attempt. See Codex (#3744886834).
+      if (claimGuard && !claimGuard()) {
         return { kind: 'aborted' as const };
       }
       const queryStartResult = await this.lifecycleManager.ensureQueryStarted();
@@ -1898,13 +1906,18 @@ export class AgentSession
   async feedDeliverySteer(
     messageUuid: string,
     content: string | MessageContent[],
-    _parentToolUseId?: string | null
+    _parentToolUseId?: string | null,
+    claimGuard?: () => boolean
   ): Promise<FeedSteerOutcome> {
     const action = await withSessionLock(this.session.id, async () => {
       const status = this.stateManager.getState().status;
       // 'processing' → validate + synchronously admit while remove/defer are
       // excluded by this same lock. 'queued' → parked owner, so park this steer.
       if (status === 'processing') {
+        // Re-fence the lease inside the lock: the handler's pre-lock check can
+        // pass, then a reclaim can win the row during the lock wait. Admission
+        // must not feed a stale attempt. See Codex (#3744886834).
+        if (claimGuard && !claimGuard()) return { kind: 'aborted' as const };
         if (!this.messageDeliveryValid(messageUuid)) return { kind: 'aborted' as const };
         return {
           kind: 'feed' as const,
@@ -1962,9 +1975,19 @@ export class AgentSession
       // Role arbitration and queued ownership are one critical section. The row
       // that actually inserts as `turn` owns the marker; a concurrently-persisted
       // steer can never steal it by publishing message.persisted first.
-      const role = deliverMessage(this.db.getJobQueueRepo(), this.session.id, messageUuid, {
-        origin: 'chat',
-      });
+      let role: 'turn' | 'steer';
+      try {
+        role = deliverMessage(this.db.getJobQueueRepo(), this.session.id, messageUuid, {
+          origin: 'chat',
+        });
+      } catch (err) {
+        // The user row was already saved `enqueued` by MessagePersistence. If job
+        // insertion throws (transient SQLite failure), the hidden prompt has no
+        // durable owner — a client retry would create a second, and restart/replay
+        // could still run the orphaned original. Terminalize before propagating.
+        this.db.getSDKMessageRepo().markDeliveryFailedByUuid(this.session.id, messageUuid);
+        throw err;
+      }
       if (role === 'turn') {
         try {
           // Preserve a legacy-owned live turn: role arbitration can return turn
