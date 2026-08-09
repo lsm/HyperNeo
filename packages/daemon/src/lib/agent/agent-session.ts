@@ -1776,7 +1776,8 @@ export class AgentSession
   async driveDeliveryTurn(
     messageUuid: string,
     content: string | MessageContent[],
-    _parentToolUseId?: string | null
+    _parentToolUseId?: string | null,
+    alreadyConsumed = false
   ): Promise<DriveTurnOutcome> {
     // Brief critical section (per-session lock): start the query + feed the
     // kickoff so it is the FIRST message the generator yields (a steer grabbing
@@ -1793,12 +1794,23 @@ export class AgentSession
       if (!queryPromise) {
         throw new Error('message_delivery: query did not start; cannot drive turn');
       }
-      // Feed the kickoff (resolves on onSent = the SDK consumed it). Brief for a
-      // freshly-started query whose generator is actively iterating.
-      await this.messageQueue.enqueueWithId(messageUuid, content);
+      // Feed the kickoff (resolves on onSent = the SDK consumed it) UNLESS a
+      // prior attempt already did (alreadyConsumed = reclaim after a crash): the
+      // SDK resume-from-history already holds a consumed kickoff, so re-feeding
+      // would duplicate the prompt. History drives the turn; we only ensure the
+      // query is running. See Codex (#2592). Durable so a yielded-but-unresumed
+      // kickoff does not TTL-out into a duplicate re-feed (#3742616720).
+      if (!alreadyConsumed) {
+        await this.messageQueue.enqueueWithId(messageUuid, content, false, { durable: true });
+      }
       return { kind: 'driving' as const, queryPromise };
     });
     if (started.kind === 'blocked') {
+      // Mirror the legacy startQueryAndEnqueue path: report the session as
+      // queued while it waits on sdk_resume_choice, so later explicit deferrals
+      // are honored (isAgentBusy) and the UI shows blocked-state controls
+      // instead of idle. See Codex (#2599).
+      await this.stateManager.setQueued(messageUuid);
       return { outcome: 'blocked', retryAt: Date.now() + MESSAGE_DELIVERY_PARK_MS };
     }
     // Long await OUTSIDE the lock — mid-turn steers can now feed. The lease
@@ -1830,9 +1842,11 @@ export class AgentSession
     }
     // Feed OUTSIDE the lock. Resolves on onSent (SDK consumed the steer);
     // rejects on clear/turn-end/error → the handler fails the job → backoff →
-    // re-feed (if active) or promote. (A racy turn teardown may delay this up to
-    // the enqueueWithId TTL — §15 removes that TTL; reclaimStale covers liveness.)
-    await this.messageQueue.enqueueWithId(messageUuid, content);
+    // re-feed (if active) or promote. Durable so a yielded-but-unresumed steer
+    // does not TTL-out (30s) into a duplicate re-feed — it resolves instead, the
+    // live SDK already holding the UUID. reclaimStale covers true crashes. See
+    // Codex (#3742616720).
+    await this.messageQueue.enqueueWithId(messageUuid, content, false, { durable: true });
     return { outcome: 'consumed' };
   }
 

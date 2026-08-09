@@ -168,6 +168,15 @@ export function asMessageDeliveryPayload(
 export type DeliveryContent = string | MessageContent[];
 
 /**
+ * A loaded message's content paired with its persisted `send_status` — the
+ * status-aware loader result consumed by the handler. `sendStatus` is a string
+ * (`'enqueued' | 'consumed' | 'deferred' | 'failed'`) kept loose here to avoid
+ * coupling this module to the repository layer's `SendStatus` enum; the handler
+ * branches on the literal values. See {@link MessageDeliverySession}.
+ */
+export type DeliveryLoadResult = { content: DeliveryContent; sendStatus: string };
+
+/**
  * How long to park a turn job whose query startup is blocked (sdk_resume_choice)
  * before re-claiming. Short enough to feel responsive once the user answers;
  * long enough to not hot-loop. The job stays `pending` (not `processing`) while
@@ -186,10 +195,17 @@ export type FeedSteerOutcome = { outcome: 'consumed' } | { outcome: 'promote' };
  * an interface so the job handler + tests depend on the shape, not the class.
  */
 export interface MessageDeliverySession {
+  /**
+   * Drive a delivery turn. When `alreadyConsumed` is true, the kickoff was
+   * already fed by a prior attempt (reclaim after a crash) — the handler must
+   * NOT re-feed it (would duplicate the prompt; the SDK resume holds it), only
+   * ensure the query is running so history drives the turn. See Codex (#2592).
+   */
   driveDeliveryTurn(
     messageUuid: string,
     content: DeliveryContent,
-    parentToolUseId?: string | null
+    parentToolUseId?: string | null,
+    alreadyConsumed?: boolean
   ): Promise<DriveTurnOutcome>;
   feedDeliverySteer(
     messageUuid: string,

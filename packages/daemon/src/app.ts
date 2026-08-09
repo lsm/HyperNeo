@@ -950,17 +950,46 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       createMessageDeliveryHandler({
         jobQueue,
         getSession: (sessionId: string) => sessionManager?.getSession(sessionId) ?? null,
-        getMessageContent: (sessionId: string, messageUuid: string) => {
-          // Block-preserving loader (string OR content blocks incl. images /
-          // tool_results) — avoids the data-loss of the text-flattening
-          // getUserMessageByUuid.
-          return (
-            reactiveDb?.db
-              .getSDKMessageRepo()
-              .getUserMessageContentByUuid(sessionId, messageUuid) ?? null
-          );
+        // Status-aware loader: content + send_status. The handler branches on
+        // status (consumed = already delivered, don't re-feed; deferred = user
+        // deferred; failed = terminal) — see message-delivery.handler + #2592/#2597.
+        getMessageContent: (sessionId: string, messageUuid: string) =>
+          reactiveDb?.db.getSDKMessageRepo().getDeliveryContent(sessionId, messageUuid) ?? null,
+        // Reject delivery for archived sessions — their worktree + SDK subprocess
+        // are torn down; driving a turn would recreate resources or run in the
+        // fallback workspace. See Codex (#3742616723).
+        isSessionArchived: (sessionId: string) =>
+          reactiveDb?.db.getSession(sessionId)?.status === 'archived',
+      }),
+      {
+        // Steers bypass the turn concurrency cap (a separate exempt budget) so a
+        // mid-turn steer reaches the live turn before it ends, instead of being
+        // promoted to a later turn when all capped slots are driving turns. See
+        // Codex (#2587).
+        exemptJobs: { path: '$.role', equals: 'steer' },
+        // Dead-letter hook: a delivery job that exhausted its retry budget
+        // terminalizes the persisted message as `failed` and publishes the status
+        // change. Without this the row stays `enqueued`, which pagination hides —
+        // the user's prompt vanishes without a terminal error. See Codex (#2595).
+        onDead: (job) => {
+          const payload = job.payload as { sessionId?: string; messageUuid?: string };
+          if (!payload.sessionId || !payload.messageUuid) return;
+          const sdkRepo = reactiveDb?.db.getSDKMessageRepo();
+          if (!sdkRepo) return;
+          const flipped = sdkRepo.markDeliveryFailedByUuid(payload.sessionId, payload.messageUuid);
+          if (flipped) {
+            internalEventBus
+              .publish('messages.statusChanged', {
+                sessionId: payload.sessionId,
+                messageIds: [flipped],
+                status: 'failed',
+              })
+              .catch(() => {
+                /* dead-letter publish is best-effort */
+              });
+          }
         },
-      })
+      }
     );
 
     // Register task-schedule.fire handler.
@@ -1234,6 +1263,22 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         logInfo('[Daemon] Process watchdog stopped');
         oauthRefreshScheduler.stop();
         logInfo('[Daemon] OAuth refresh scheduler stopped');
+        // Requeue in-flight message_delivery turns to pending BEFORE draining the
+        // processor: their handlers are still awaiting the live SDK turn, so
+        // stop() would otherwise block on them until the CLI's shutdown timeout
+        // force-exits, leaving the rows `processing` with a fresh heartbeat. That
+        // blocks next-boot reclamation for the 5-min stale window AND leaves the
+        // active-turn index pointing at a turn no live handler drives (new prompts
+        // misrouted as steers). Requeueing makes them instantly reclaimable; the
+        // still-running handlers' later complete()/fail() is a no-op. See #2593.
+        try {
+          const requeued = jobQueue.requeueAllProcessing(MESSAGE_DELIVERY, Date.now());
+          if (requeued > 0) {
+            logInfo(`[Daemon] Requeued ${requeued} in-flight message_delivery job(s) for restart`);
+          }
+        } catch {
+          /* best-effort on shutdown */
+        }
         await jobProcessor.stop();
         logInfo('[Daemon] Job queue processor stopped');
 

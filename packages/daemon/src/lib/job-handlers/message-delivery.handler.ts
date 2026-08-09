@@ -21,19 +21,28 @@
  * the turn await so a long-but-live turn is not reclaimed + re-delivered; a
  * crashed handler stops heartbeating, so reclaimStale still recovers it.
  *
+ * Status-aware delivery (Codex #2592/#2597): the handler loads the message's
+ * `send_status` and only feeds messages still pending (`enqueued`). A `consumed`
+ * kickoff was already handed to the SDK by a prior attempt — re-feeding would
+ * duplicate the prompt, so the turn is re-driven without the feed (history
+ * replay holds it). A `deferred`/`failed` message is skipped (user deferred it /
+ * already terminal). Archived sessions are rejected outright (their worktree is
+ * gone). See message-delivery-v2.md §8.
+ *
  * The processor auto-completes a job on handler return and auto-fails on throw
- * (→ job_queue backoff → dead). Park uses `repo.requeue` (pending + runAt, no
- * retry bump); promote uses `repo.requeueAs` (converts the job to role:'turn'
- * in place — no second job, no crash-window double-deliver). The processor's
- * subsequent auto-complete() is a no-op in both cases (row is no longer
- * 'processing'). See docs/features/message-delivery-v2.md §8–§10.
+ * (→ job_queue backoff → dead; the lane's `onDead` then marks the persisted
+ * message `failed`). Park uses `repo.requeue` (pending + runAt, no retry bump);
+ * promote uses `repo.requeueAs` (converts the job to role:'turn' in place — no
+ * second job, no crash-window double-deliver). The processor's subsequent
+ * auto-complete() is a no-op in both cases (row is no longer 'processing'). See
+ * docs/features/message-delivery-v2.md §8–§10.
  */
 
 import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import type { JobHandler } from '../../storage/job-queue-processor';
 import {
   asMessageDeliveryPayload,
-  type DeliveryContent,
+  type DeliveryLoadResult,
   type MessageDeliverySession,
 } from '../agent/message-delivery';
 import { Logger } from '../logger';
@@ -42,8 +51,15 @@ export interface MessageDeliveryHandlerDeps {
   jobQueue: JobQueueRepository;
   /** Resolve the live session, or null if it's gone (closed/evicted). */
   getSession(sessionId: string): MessageDeliverySession | null;
-  /** Load the persisted message content by UUID (any send_status). */
-  getMessageContent(sessionId: string, messageUuid: string): DeliveryContent | null;
+  /** Load the persisted message content + send_status by UUID (any send_status). */
+  getMessageContent(sessionId: string, messageUuid: string): DeliveryLoadResult | null;
+  /**
+   * True if the session's persisted status is `archived` (worktree torn down).
+   * The handler completes — does not drive — archived sessions so a pending job
+   * claimed after archive can't run the prompt against a destroyed session. See
+   * Codex (#3742616723).
+   */
+  isSessionArchived?(sessionId: string): boolean;
 }
 
 /**
@@ -67,24 +83,48 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       throw new Error(`message_delivery: invalid payload ${JSON.stringify(job.payload)}`);
     }
 
+    // Archived session: worktree + SDK subprocess are torn down. Driving a turn
+    // here would recreate resources or run in the fallback workspace, so refuse
+    // — complete the job (not a delivery failure, so don't dead-letter). The
+    // session.archive path also cancels pending jobs, but this guards the claim
+    // race. See Codex (#3742616723).
+    if (deps.isSessionArchived?.(payload.sessionId)) {
+      return { outcome: 'archived' };
+    }
+
     // Resolve session + content. These are brief/side-effect-free — no lock
     // needed (the lock guards turn start/stop inside the bridge).
     const session = deps.getSession(payload.sessionId);
     if (!session) {
       throw new Error(`message_delivery: session ${payload.sessionId} not found`);
     }
-    const content = deps.getMessageContent(payload.sessionId, payload.messageUuid);
-    if (content === null) {
+    const loaded = deps.getMessageContent(payload.sessionId, payload.messageUuid);
+    if (loaded === null) {
       // Content gone (rewound/deleted) — nothing to deliver.
       log.warn(`message_delivery: content for ${payload.messageUuid} not found; completing.`);
       return { outcome: 'no_content' };
     }
+    const { content, sendStatus } = loaded;
+
+    // Only deliver messages still pending. `consumed`/`deferred`/`failed` are
+    // NOT re-fed (see the module doc + §8). `deferred`/`failed` skip outright;
+    // a `consumed` turn is re-driven without the feed (below).
+    if (sendStatus === 'deferred' || sendStatus === 'failed') {
+      return { outcome: 'skipped', sendStatus };
+    }
+    const alreadyConsumed = sendStatus === 'consumed';
 
     if (payload.role === 'turn') {
       // The bridge holds the per-session lock only for ensureQueryStarted +
       // kickoff feed; the turn await runs unlocked (so steering proceeds). The
       // lease heartbeat keeps the job from being reclaimed as stale mid-turn.
-      const turn = session.driveDeliveryTurn(payload.messageUuid, content, payload.parentToolUseId);
+      // When alreadyConsumed, the bridge skips the feed (no duplicate).
+      const turn = session.driveDeliveryTurn(
+        payload.messageUuid,
+        content,
+        payload.parentToolUseId,
+        alreadyConsumed
+      );
       const heartbeat = setInterval(() => deps.jobQueue.touchStartedAt(job.id), LEASE_HEARTBEAT_MS);
       if (typeof (heartbeat as { unref?: () => void }).unref === 'function') {
         (heartbeat as { unref: () => void }).unref();
@@ -103,8 +143,15 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       }
     }
 
-    // role === 'steer'. The bridge checks state under the lock (brief) and feeds
-    // unlocked (enqueueWithId resolves on onSent — concurrent-safe).
+    // role === 'steer'. A consumed steer was already fed by a prior attempt —
+    // done, don't re-feed (would duplicate). See Codex (#2592/#3742616720).
+    if (alreadyConsumed) {
+      return { outcome: 'already_consumed' };
+    }
+
+    // The bridge checks state under the lock (brief) and feeds unlocked
+    // (enqueueWithId resolves on onSent — concurrent-safe; durable so a
+    // yielded-but-unresumed steer does not TTL-out into a duplicate re-feed).
     const result = await session.feedDeliverySteer(
       payload.messageUuid,
       content,

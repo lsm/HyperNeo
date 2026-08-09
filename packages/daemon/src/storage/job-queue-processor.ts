@@ -1,4 +1,4 @@
-import type { Job, JobQueueRepository } from './repositories/job-queue-repository';
+import type { Job, JobQueueRepository, PayloadMatch } from './repositories/job-queue-repository';
 
 export type JobHandler = (job: Job) => Promise<Record<string, unknown> | void>;
 
@@ -8,10 +8,49 @@ export interface JobQueueProcessorOptions {
   staleThresholdMs?: number;
 }
 
+/**
+ * Per-lane options for {@link JobQueueProcessor.register}.
+ */
+export interface RegisterOptions {
+  /**
+   * Jobs whose payload matches this predicate are claimed in a separate
+   * "exempt" dequeue pass that is NOT subject to `maxConcurrent` — they run as
+   * soon as claimed, even when every capped slot is held by a long-running job.
+   *
+   * `message_delivery` registers its steers here (`{ path: '$.role', equals:
+   * 'steer' }`): a steer is short and must reach the live turn BEFORE that turn
+   * ends, so it cannot wait behind a full pool of turns (at `maxConcurrent=1` or
+   * once the default five slots are all driving turns, a queued steer would
+   * otherwise sit until a turn ends and then be promoted to a later turn instead
+   * of interleaving). Exempt jobs count against a separate budget so they can't
+   * starve capped jobs either. See message-delivery-v2.md + Codex (#2587).
+   */
+  exemptJobs?: PayloadMatch;
+  /**
+   * Invoked when a job in this lane exhausts its retry budget and goes `dead`.
+   * `message_delivery` uses this to terminalize the persisted message as
+   * `failed` + publish the status change — otherwise the row stays `enqueued`,
+   * which pagination hides, so the user's prompt vanishes without a terminal
+   * error. Hook errors are swallowed so a dead-letter side-effect can never
+   * break the processor. See message-delivery-v2.md + Codex (#2595).
+   */
+  onDead?: (job: Job) => void;
+}
+
+interface Registration {
+  handler: JobHandler;
+  exemptJobs?: PayloadMatch;
+  onDead?: (job: Job) => void;
+}
+
 export class JobQueueProcessor {
-  private handlers = new Map<string, JobHandler>();
+  private handlers = new Map<string, Registration>();
   private pollTimer: ReturnType<typeof setInterval> | null = null;
-  private inFlight = 0;
+  // Capped jobs count toward `maxConcurrent` (turns, and all non-exempt lanes).
+  private inFlightCapped = 0;
+  // Exempt jobs (message_delivery steers) run on a separate budget so they can't
+  // be starved by — nor starve — capped jobs. Both count toward `stop()` drain.
+  private inFlightExempt = 0;
   private running = false;
   private changeNotifier: ((table: string) => void) | null = null;
   private readonly pollIntervalMs: number;
@@ -29,8 +68,12 @@ export class JobQueueProcessor {
     this.staleThresholdMs = options?.staleThresholdMs ?? 5 * 60 * 1000;
   }
 
-  register(queue: string, handler: JobHandler): void {
-    this.handlers.set(queue, handler);
+  register(queue: string, handler: JobHandler, options?: RegisterOptions): void {
+    this.handlers.set(queue, {
+      handler,
+      exemptJobs: options?.exemptJobs,
+      onDead: options?.onDead,
+    });
   }
 
   start(): void {
@@ -52,12 +95,12 @@ export class JobQueueProcessor {
       this.pollTimer = null;
     }
     return new Promise<void>((resolve) => {
-      if (this.inFlight === 0) {
+      if (this.inFlightCapped === 0 && this.inFlightExempt === 0) {
         resolve();
         return;
       }
       const check = setInterval(() => {
-        if (this.inFlight === 0) {
+        if (this.inFlightCapped === 0 && this.inFlightExempt === 0) {
           clearInterval(check);
           resolve();
         }
@@ -68,43 +111,74 @@ export class JobQueueProcessor {
   async tick(): Promise<number> {
     this.checkStaleJobs();
 
-    const available = this.maxConcurrent - this.inFlight;
-    if (available <= 0) return 0;
-
     let claimed = 0;
-    let slots = available;
 
-    for (const queue of this.handlers.keys()) {
-      if (slots <= 0) break;
-      const jobs = this.repo.dequeue(queue, slots);
-      for (const job of jobs) {
-        this.processJob(job);
+    // Capped pass: subject to maxConcurrent. For lanes with an exempt spec,
+    // exclude exempt jobs (steers) so they're left for the exempt pass below and
+    // don't consume a turn slot.
+    let cappedSlots = this.maxConcurrent - this.inFlightCapped;
+    if (cappedSlots > 0) {
+      for (const [queue, reg] of this.handlers) {
+        if (cappedSlots <= 0) break;
+        const jobs = this.repo.dequeue(queue, cappedSlots, reg.exemptJobs);
+        for (const job of jobs) {
+          void this.processJob(job, false);
+        }
+        claimed += jobs.length;
+        cappedSlots -= jobs.length;
       }
-      claimed += jobs.length;
-      slots -= jobs.length;
+    }
+
+    // Exempt pass: NOT subject to maxConcurrent. Runs even when capped slots are
+    // full, so urgent jobs (steers) reach their target before it ends. Bounded
+    // by a separate budget (also maxConcurrent) so exempt jobs can't starve the
+    // capped pass either.
+    let exemptSlots = this.maxConcurrent - this.inFlightExempt;
+    if (exemptSlots > 0) {
+      for (const [queue, reg] of this.handlers) {
+        if (exemptSlots <= 0) break;
+        if (!reg.exemptJobs) continue;
+        const jobs = this.repo.dequeueExempt(queue, reg.exemptJobs, exemptSlots);
+        for (const job of jobs) {
+          void this.processJob(job, true);
+        }
+        claimed += jobs.length;
+        exemptSlots -= jobs.length;
+      }
     }
 
     return claimed;
   }
 
-  private async processJob(job: Job): Promise<void> {
-    this.inFlight++;
+  private async processJob(job: Job, exempt: boolean): Promise<void> {
+    if (exempt) this.inFlightExempt++;
+    else this.inFlightCapped++;
+    const reg = this.handlers.get(job.queue);
     try {
-      const handler = this.handlers.get(job.queue);
-      if (!handler) {
+      if (!reg) {
         this.repo.fail(job.id, `No handler registered for queue: ${job.queue}`);
         this.notifyChange();
         return;
       }
-      const result = await handler(job);
+      const result = await reg.handler(job);
+      // message_delivery parks/promotes by requeueing the job itself; the
+      // auto-complete here is then a no-op (row no longer 'processing').
       this.repo.complete(job.id, result ?? undefined);
       this.notifyChange();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      this.repo.fail(job.id, message);
+      const updated = this.repo.fail(job.id, message);
+      if (updated && updated.status === 'dead' && reg?.onDead) {
+        try {
+          reg.onDead(updated);
+        } catch {
+          // A dead-letter side-effect must never break the processor loop.
+        }
+      }
       this.notifyChange();
     } finally {
-      this.inFlight--;
+      if (exempt) this.inFlightExempt--;
+      else this.inFlightCapped--;
     }
   }
 

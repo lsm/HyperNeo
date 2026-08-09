@@ -40,6 +40,15 @@ function extractParentToolUseId(content: string | MessageContent[]): string | nu
  */
 const MESSAGE_QUEUE_TIMEOUT_MS = 30_000;
 
+function makeTimeoutError(messageId: string, timeoutMs: number): Error {
+  const error = new Error(
+    `Message queue timeout: SDK did not consume message ${messageId} within ${timeoutMs / 1000}s. ` +
+      `This usually indicates an SDK internal error. Please try again or create a new session.`
+  );
+  error.name = 'MessageQueueTimeoutError';
+  return error;
+}
+
 /**
  * Queued message waiting to be sent to Claude
  */
@@ -52,12 +61,31 @@ interface QueuedMessage {
   reject: (error: Error) => void;
   internal?: boolean; // If true, don't save to DB or emit to client
   timeoutId?: ReturnType<typeof setTimeout>; // Timeout handle for cleanup
+  /**
+   * Durable delivery feed (message_delivery v2). Changes timeout semantics: when
+   * the SDK has already YIELDED the message (it's in `inFlight`) but `onSent`
+   * never fires within the timeout, resolve instead of rejecting — the live SDK
+   * already holds this UUID, so a reject→retry→re-feed would execute the user's
+   * request twice. Still reject when the message was never yielded (genuine
+   * iterator stall — the SDK never received it, so a retry cannot duplicate).
+   * See message-delivery-v2.md + Codex (#3742616720).
+   */
+  durable?: boolean;
 }
 
 export class MessageQueue {
   private queue: QueuedMessage[] = [];
   private waiters: Array<() => void> = [];
   private running: boolean = false;
+
+  // Configurable enqueue timeout (default 30s). Overridden in tests via
+  // `overrideTimeoutMsForTest` to exercise the timeout path without a 30s wait.
+  private timeoutMs: number = MESSAGE_QUEUE_TIMEOUT_MS;
+
+  /** Test-only: shorten the enqueue timeout so the timeout path is exercisable. */
+  overrideTimeoutMsForTest(ms: number): void {
+    this.timeoutMs = ms;
+  }
 
   // Messages shifted out of `queue` and yielded to the SDK, but whose
   // enqueueWithId() promise has not yet resolved (onSent not called). clear()
@@ -109,7 +137,8 @@ export class MessageQueue {
   async enqueueWithId(
     messageId: string,
     content: string | MessageContent[],
-    internal: boolean = false
+    internal: boolean = false,
+    options?: { durable?: boolean }
   ): Promise<void> {
     return new Promise((resolve, reject) => {
       const queuedMessage: QueuedMessage = {
@@ -117,6 +146,7 @@ export class MessageQueue {
         content,
         timestamp: new Date().toISOString(),
         queuedAt: Date.now(),
+        durable: options?.durable,
         resolve: () => {
           // Clear timeout when message is successfully consumed
           if (queuedMessage.timeoutId) {
@@ -140,22 +170,28 @@ export class MessageQueue {
       // consumed) OR already shifted out and yielded but `onSent` never ran
       // (iterator terminated mid-flight) — otherwise the enqueue promise would
       // hang and the inFlight Set/size() would leak/overcount it indefinitely.
+      //
+      // Durable feeds (message_delivery v2) RESOLVE instead of reject in the
+      // yielded-but-unacknowledged case: the live SDK already holds this UUID, so
+      // a reject → handler fail → job retry → re-feed would execute the user's
+      // request twice. The not-yet-yielded case still rejects (genuine iterator
+      // stall — the SDK never received it, so a retry cannot duplicate). See
+      // message-delivery-v2.md + Codex (#3742616720).
       queuedMessage.timeoutId = setTimeout(() => {
-        const timeoutError = new Error(
-          `Message queue timeout: SDK did not consume message ${messageId} within ${MESSAGE_QUEUE_TIMEOUT_MS / 1000}s. ` +
-            `This usually indicates an SDK internal error. Please try again or create a new session.`
-        );
-        timeoutError.name = 'MessageQueueTimeoutError';
         const index = this.queue.indexOf(queuedMessage);
         if (index !== -1) {
           this.queue.splice(index, 1);
-          queuedMessage.reject(timeoutError);
+          queuedMessage.reject(makeTimeoutError(messageId, this.timeoutMs));
           return;
         }
         if (this.inFlight.delete(queuedMessage)) {
-          queuedMessage.reject(timeoutError);
+          if (queuedMessage.durable) {
+            queuedMessage.resolve(messageId);
+          } else {
+            queuedMessage.reject(makeTimeoutError(messageId, this.timeoutMs));
+          }
         }
-      }, MESSAGE_QUEUE_TIMEOUT_MS);
+      }, this.timeoutMs);
 
       this.queue.push(queuedMessage);
       this.onMessageEnqueued?.(queuedMessage.id, queuedMessage.queuedAt);

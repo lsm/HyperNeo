@@ -24,6 +24,7 @@ import {
   type FeedSteerOutcome,
 } from '../../../../src/lib/agent/message-delivery';
 import { createMessageDeliveryHandler } from '../../../../src/lib/job-handlers/message-delivery.handler';
+import { JobQueueProcessor } from '../../../../src/storage/job-queue-processor';
 import type { Job } from '../../../../src/storage/repositories/job-queue-repository';
 
 const SESSION = 'sess-conformance';
@@ -276,16 +277,19 @@ class MockSession implements MessageDeliverySession {
   lastUuid?: string;
   lastContent?: unknown;
   lastParentToolUseId?: string | null;
+  lastAlreadyConsumed = false;
 
   async driveDeliveryTurn(
     uuid: string,
     content: unknown,
-    parentToolUseId?: string | null
+    parentToolUseId?: string | null,
+    alreadyConsumed = false
   ): Promise<DriveTurnOutcome> {
     this.driveCalls++;
     this.lastUuid = uuid;
     this.lastContent = content;
     this.lastParentToolUseId = parentToolUseId;
+    this.lastAlreadyConsumed = alreadyConsumed;
     if (this.shouldThrow) throw new Error('turn exploded');
     return this.driveResult;
   }
@@ -336,7 +340,7 @@ describe('message-delivery v2 — handler (conformance)', () => {
     const handler = createMessageDeliveryHandler({
       jobQueue: repo,
       getSession: () => session,
-      getMessageContent: () => 'hello',
+      getMessageContent: () => ({ content: 'hello', sendStatus: 'enqueued' }),
     });
     const result = await handler(job);
     expect(result).toEqual({ outcome: 'completed' });
@@ -350,7 +354,7 @@ describe('message-delivery v2 — handler (conformance)', () => {
     const handler = createMessageDeliveryHandler({
       jobQueue: repo,
       getSession: () => session,
-      getMessageContent: () => 'hello',
+      getMessageContent: () => ({ content: 'hello', sendStatus: 'enqueued' }),
     });
     const result = await handler(job);
     expect(result).toMatchObject({ parked: 'sdk_resume_choice', retryAt: 12345 });
@@ -366,7 +370,7 @@ describe('message-delivery v2 — handler (conformance)', () => {
     const handler = createMessageDeliveryHandler({
       jobQueue: repo,
       getSession: () => session,
-      getMessageContent: () => 'hello',
+      getMessageContent: () => ({ content: 'hello', sendStatus: 'enqueued' }),
     });
     await expect(handler(job)).rejects.toThrow('turn exploded');
     // The processor would then fail() → backoff. The job stays processing here
@@ -380,7 +384,7 @@ describe('message-delivery v2 — handler (conformance)', () => {
     const handler = createMessageDeliveryHandler({
       jobQueue: repo,
       getSession: () => session,
-      getMessageContent: () => 'steer-content',
+      getMessageContent: () => ({ content: 'steer-content', sendStatus: 'enqueued' }),
     });
     const result = await handler(job);
     expect(result).toEqual({ outcome: 'consumed' });
@@ -395,7 +399,7 @@ describe('message-delivery v2 — handler (conformance)', () => {
     const handler = createMessageDeliveryHandler({
       jobQueue: repo,
       getSession: () => session,
-      getMessageContent: () => 'steer-content',
+      getMessageContent: () => ({ content: 'steer-content', sendStatus: 'enqueued' }),
     });
     const result = await handler(job);
     expect(result).toMatchObject({ outcome: 'superseded', promoted: 'turn' });
@@ -416,7 +420,7 @@ describe('message-delivery v2 — handler (conformance)', () => {
     const handler = createMessageDeliveryHandler({
       jobQueue: repo,
       getSession: () => null,
-      getMessageContent: () => 'hello',
+      getMessageContent: () => ({ content: 'hello', sendStatus: 'enqueued' }),
     });
     await expect(handler(job)).rejects.toThrow('not found');
   });
@@ -432,5 +436,194 @@ describe('message-delivery v2 — handler (conformance)', () => {
     const result = await handler(job);
     expect(result).toEqual({ outcome: 'no_content' });
     expect(session.driveCalls).toBe(0);
+  });
+});
+
+// ── Status-aware delivery (§8: #2592 consumed-kickoff, #2597 defer, #3742616723 archive) ─
+
+describe('handler — status-aware delivery (§8)', () => {
+  let db: Database;
+  let repo: JobQueueRepository;
+
+  beforeEach(() => {
+    ({ db, repo } = setupRepo());
+  });
+  afterEach(() => db.close());
+
+  it('consumed kickoff is NOT re-fed — turn driven with alreadyConsumed (#2592)', async () => {
+    const session = new MockSession();
+    const job = turnJob(repo, 'msg-consumed');
+    const handler = createMessageDeliveryHandler({
+      jobQueue: repo,
+      getSession: () => session,
+      getMessageContent: () => ({ content: 'hello', sendStatus: 'consumed' }),
+    });
+    const result = await handler(job);
+    expect(result).toEqual({ outcome: 'completed' });
+    expect(session.driveCalls).toBe(1);
+    expect(session.lastAlreadyConsumed).toBe(true); // ← the guard: no re-feed
+  });
+
+  it('deferred message is skipped, not force-fed into the turn (#2597)', async () => {
+    const session = new MockSession();
+    const job = turnJob(repo, 'msg-deferred');
+    const handler = createMessageDeliveryHandler({
+      jobQueue: repo,
+      getSession: () => session,
+      getMessageContent: () => ({ content: 'hello', sendStatus: 'deferred' }),
+    });
+    const result = await handler(job);
+    expect(result).toMatchObject({ outcome: 'skipped', sendStatus: 'deferred' });
+    expect(session.driveCalls).toBe(0);
+  });
+
+  it('failed message is skipped (terminal)', async () => {
+    const session = new MockSession();
+    const job = turnJob(repo, 'msg-failed');
+    const handler = createMessageDeliveryHandler({
+      jobQueue: repo,
+      getSession: () => session,
+      getMessageContent: () => ({ content: 'hello', sendStatus: 'failed' }),
+    });
+    const result = await handler(job);
+    expect(result).toMatchObject({ outcome: 'skipped', sendStatus: 'failed' });
+    expect(session.driveCalls).toBe(0);
+  });
+
+  it('consumed steer is not re-fed (already_consumed)', async () => {
+    const session = new MockSession();
+    const job = steerJob(repo, 'msg-steer-consumed');
+    const handler = createMessageDeliveryHandler({
+      jobQueue: repo,
+      getSession: () => session,
+      getMessageContent: () => ({ content: 'steer', sendStatus: 'consumed' }),
+    });
+    const result = await handler(job);
+    expect(result).toEqual({ outcome: 'already_consumed' });
+    expect(session.feedCalls).toBe(0);
+  });
+
+  it('archived session is rejected, not driven (#3742616723)', async () => {
+    const session = new MockSession();
+    const job = turnJob(repo, 'msg-archived');
+    const handler = createMessageDeliveryHandler({
+      jobQueue: repo,
+      getSession: () => session,
+      getMessageContent: () => ({ content: 'hello', sendStatus: 'enqueued' }),
+      isSessionArchived: () => true,
+    });
+    const result = await handler(job);
+    expect(result).toEqual({ outcome: 'archived' });
+    expect(session.driveCalls).toBe(0);
+  });
+});
+
+// ── Repo: exempt dequeue + shutdown requeue (#2587 / #2593) ─────────────────
+
+describe('repo — exempt dequeue + requeueAllProcessing (#2587/#2593)', () => {
+  let db: Database;
+  let repo: JobQueueRepository;
+
+  beforeEach(() => {
+    ({ db, repo } = setupRepo());
+  });
+  afterEach(() => db.close());
+
+  it('dequeue(exclude) claims turns but leaves steers; dequeueExempt claims steers', () => {
+    const steerSpec = { path: '$.role', equals: 'steer' };
+    deliverMessage(repo, SESSION, 'turn-1', { origin: 'chat' }); // turn
+    deliverMessage(repo, SESSION, 'steer-1', { origin: 'chat' }); // steer
+    // Capped dequeue excludes steers → claims only the turn.
+    const capped = repo.dequeue(MESSAGE_DELIVERY, 10, steerSpec);
+    expect(capped).toHaveLength(1);
+    expect((capped[0].payload as { role: string }).role).toBe('turn');
+    // Exempt dequeue claims the steer that was left behind.
+    const exempt = repo.dequeueExempt(MESSAGE_DELIVERY, steerSpec, 10);
+    expect(exempt).toHaveLength(1);
+    expect((exempt[0].payload as { role: string }).role).toBe('steer');
+  });
+
+  it('dequeue(exclude) is a no-op filter for lanes without an exempt spec', () => {
+    // No exclude → claims everything (backward compatible).
+    deliverMessage(repo, SESSION, 'a', { origin: 'chat' });
+    deliverMessage(repo, SESSION, 'b', { origin: 'chat' });
+    const claimed = repo.dequeue(MESSAGE_DELIVERY, 10);
+    expect(claimed).toHaveLength(2);
+  });
+
+  it('requeueAllProcessing returns every processing job to pending (runAt, no heartbeat) (#2593)', () => {
+    deliverMessage(repo, SESSION, 'a', { origin: 'chat' });
+    deliverMessage(repo, SESSION, 'b', { origin: 'chat' });
+    deliverMessage(repo, 'other-session', 'c', { origin: 'chat' });
+    repo.dequeue(MESSAGE_DELIVERY, 10); // claim all → processing
+    const runAt = Date.now();
+    const n = repo.requeueAllProcessing(MESSAGE_DELIVERY, runAt);
+    expect(n).toBe(3);
+    const all = repo.listJobs({ queue: MESSAGE_DELIVERY, limit: 50 });
+    expect(
+      all.every((j) => j.status === 'pending' && j.runAt === runAt && j.startedAt === null)
+    ).toBe(true);
+  });
+});
+
+// ── Processor: exempt pass + dead-letter hook (#2587 / #2595) ───────────────
+
+describe('processor — exempt pass + onDead (#2587/#2595)', () => {
+  let db: Database;
+  let repo: JobQueueRepository;
+
+  beforeEach(() => {
+    ({ db, repo } = setupRepo());
+  });
+  afterEach(() => db.close());
+
+  it('exempt steers run even when the single capped slot is held (maxConcurrent=1)', async () => {
+    const ran: string[] = [];
+    let releaseTurn!: () => void;
+    const turnBlocked = new Promise<void>((r) => {
+      releaseTurn = r;
+    });
+    const processor = new JobQueueProcessor(repo, { maxConcurrent: 1, pollIntervalMs: 999_999 });
+    processor.register(
+      MESSAGE_DELIVERY,
+      async (job) => {
+        const role = (job.payload as { role: string }).role;
+        ran.push(role);
+        if (role === 'turn') await turnBlocked; // hold the one capped slot
+        return { ok: true };
+      },
+      { exemptJobs: { path: '$.role', equals: 'steer' } }
+    );
+
+    deliverMessage(repo, SESSION, 't', { origin: 'chat' }); // turn
+    deliverMessage(repo, SESSION, 's', { origin: 'chat' }); // steer (turn active)
+    await processor.tick();
+    // Both handlers were invoked during tick: the turn holds the sole capped
+    // slot, yet the steer STILL ran via the exempt pass — the #2587 headline.
+    expect(ran).toEqual(['turn', 'steer']);
+    releaseTurn();
+    await processor.stop();
+  });
+
+  it('onDead fires (with the dead job) when a lane job exhausts retries (#2595)', async () => {
+    const dead: Job[] = [];
+    const processor = new JobQueueProcessor(repo, { maxConcurrent: 1, pollIntervalMs: 999_999 });
+    processor.register(
+      MESSAGE_DELIVERY,
+      async () => {
+        throw new Error('boom');
+      },
+      { onDead: (job) => dead.push(job) }
+    );
+    repo.enqueue({
+      queue: MESSAGE_DELIVERY,
+      payload: { sessionId: SESSION, messageUuid: 'd', role: 'turn', origin: 'chat' },
+      maxRetries: 0,
+    });
+    await processor.tick();
+    await new Promise((r) => setTimeout(r, 5)); // let the fire-and-forget fail + onDead fire
+    expect(dead).toHaveLength(1);
+    expect(dead[0].status).toBe('dead');
+    await processor.stop();
   });
 });

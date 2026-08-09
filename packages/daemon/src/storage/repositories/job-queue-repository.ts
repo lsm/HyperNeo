@@ -32,6 +32,19 @@ export interface EnqueueUniquePendingParams extends EnqueueParams {
   activeStatuses?: JobStatus[];
 }
 
+/**
+ * A payload equality predicate (`payload[jsonPath] === equals`). Used by the
+ * processor's exempt dequeue pass so jobs the lane declares exempt (e.g.
+ * message_delivery `role:'steer'`) are claimed separately from the
+ * maxConcurrent-capped turn jobs. See message-delivery-v2.md + Codex (#2587).
+ */
+export interface PayloadMatch {
+  /** JSON path into payload, e.g. '$.role'. */
+  path: string;
+  /** Scalar value the path must equal. */
+  equals: string;
+}
+
 export class JobQueueRepository {
   constructor(private db: BunDatabase) {}
 
@@ -72,27 +85,65 @@ export class JobQueueRepository {
     })();
   }
 
-  dequeue(queue: string, limit: number = 1): Job[] {
+  dequeue(queue: string, limit: number = 1, exclude?: PayloadMatch): Job[] {
+    const claimed: Job[] = [];
+
+    const txn = this.db.transaction(() => {
+      let sql = `SELECT * FROM job_queue WHERE queue = ? AND status = 'pending' AND run_at <= ?`;
+      const params: (string | number)[] = [queue, Date.now()];
+      if (exclude) {
+        // Leave jobs matching `exclude` (e.g. role:'steer') for the processor's
+        // exempt pass so they aren't claimed against the capped budget. COALESCE
+        // keeps path-less rows claimable (NULL → '' ≠ equals). See #2587.
+        sql += ` AND COALESCE(json_extract(payload, ?), '') != ?`;
+        params.push(exclude.path, exclude.equals);
+      }
+      sql += ` ORDER BY priority DESC, run_at ASC, created_at ASC LIMIT ?`;
+      params.push(limit);
+
+      const rows = this.db.prepare(sql).all(...params) as Record<string, unknown>[];
+      this.claimRows(rows, claimed);
+    });
+
+    txn();
+    return claimed;
+  }
+
+  /**
+   * Claim pending jobs whose payload matches {@link spec} (e.g. role:'steer'),
+   * atomically pending→processing. The processor's exempt pass calls this so
+   * matching jobs run even when the capped slots (`maxConcurrent`) are full —
+   * they count against a separate exempt budget, not the turn budget. This is
+   * what lets a mid-turn steer reach the live turn instead of being promoted to
+   * a later turn under slot pressure. See message-delivery-v2.md + Codex (#2587).
+   */
+  dequeueExempt(queue: string, spec: PayloadMatch, limit: number = 1): Job[] {
     const claimed: Job[] = [];
 
     const txn = this.db.transaction(() => {
       const rows = this.db
         .prepare(
-          `SELECT * FROM job_queue WHERE queue = ? AND status = 'pending' AND run_at <= ? ORDER BY priority DESC, run_at ASC, created_at ASC LIMIT ?`
+          `SELECT * FROM job_queue
+             WHERE queue = ? AND status = 'pending' AND run_at <= ?
+               AND json_extract(payload, ?) = ?
+           ORDER BY priority DESC, run_at ASC, created_at ASC LIMIT ?`
         )
-        .all(queue, Date.now(), limit) as Record<string, unknown>[];
-
-      const now = Date.now();
-      for (const row of rows) {
-        this.db
-          .prepare(`UPDATE job_queue SET status = 'processing', started_at = ? WHERE id = ?`)
-          .run(now, row.id as string);
-        claimed.push(this.getJob(row.id as string)!);
-      }
+        .all(queue, Date.now(), spec.path, spec.equals, limit) as Record<string, unknown>[];
+      this.claimRows(rows, claimed);
     });
 
     txn();
     return claimed;
+  }
+
+  private claimRows(rows: Record<string, unknown>[], claimed: Job[]): void {
+    const now = Date.now();
+    for (const row of rows) {
+      this.db
+        .prepare(`UPDATE job_queue SET status = 'processing', started_at = ? WHERE id = ?`)
+        .run(now, row.id as string);
+      claimed.push(this.getJob(row.id as string)!);
+    }
   }
 
   /**
@@ -136,6 +187,26 @@ export class JobQueueRepository {
       .run(role, runAt, jobId);
     if (res.changes === 0) return null;
     return this.getJob(jobId);
+  }
+
+  /**
+   * Requeue EVERY `processing` job in a lane back to `pending` (`run_at = runAt`),
+   * WITHOUT a retry bump. Used on daemon shutdown so an in-flight message_delivery
+   * turn — whose handler is still awaiting the SDK turn — is immediately
+   * reclaimable on the next boot's eager `reclaimStale`, instead of staying
+   * `processing` with a fresh heartbeat and blocking reclamation for the 5-minute
+   * stale window (which would also leave the active-turn index pointing at a turn
+   * no live handler is driving). The still-running handler's later
+   * `complete()`/`fail()` is a no-op (the row is no longer `processing`). See
+   * message-delivery-v2.md §10 + Codex (#2593).
+   */
+  requeueAllProcessing(queue: string, runAt: number): number {
+    const res = this.db
+      .prepare(
+        `UPDATE job_queue SET status = 'pending', run_at = ?, started_at = NULL WHERE queue = ? AND status = 'processing'`
+      )
+      .run(runAt, queue);
+    return res.changes;
   }
 
   /**

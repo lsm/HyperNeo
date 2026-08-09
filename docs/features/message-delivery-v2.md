@@ -296,14 +296,37 @@ the delivery path must handle.
 
 ## 15. Open implementation specifics
 
-- **Steer slot occupancy:** a steer job holds a worker slot until SDK consume
-  (usually seconds, spans the turn). Size `maxConcurrent` for
-  `sessions × concurrent steers`; if pressure appears, consolidate
-  steer-feeding into the turn-job (one slot per turn). Implement the
-  independent-job version first; measure.
-- **FIFO within a session:** `job_queue.dequeue` orders by `priority DESC,
-  run_at ASC` — add `created_at ASC` as a final tiebreaker (or a
-  delivery-specific dequeue) so steers and queued turns are delivered in send
-  order.
-- **Drop the 30s `enqueueWithId` TTL** for the delivery path; `reclaimStale`
-  is the only liveness check.
+- **Steer slot occupancy (resolved):** steers are now claimed in a separate
+  processor "exempt" pass that is NOT subject to `maxConcurrent`, so a mid-turn
+  steer reaches the live turn even when every capped slot is driving a turn
+  (the turn-job no longer starves steers). `dequeue(exclude=steer)` leaves steers
+  for `dequeueExempt`; both share a separate exempt budget so neither starves the
+  other. See `JobQueueProcessor.tick` + Codex (#2587).
+- **FIFO within a session (resolved):** `job_queue.dequeue` orders by
+  `priority DESC, run_at ASC, created_at ASC` — the `created_at` tiebreaker
+  delivers same-priority steers/turns in send order.
+- **30s `enqueueWithId` TTL (resolved):** delivery feeds call `enqueueWithId` with
+  `{ durable: true }`. The TTL still fires, but for a **yielded** message (the SDK
+  already holds the UUID) it RESOLVES instead of rejecting — a reject → retry →
+  re-feed would execute the user's request twice. A never-yielded message still
+  rejects (genuine stall; a retry cannot duplicate). `reclaimStale` remains the
+  crash-liveness check. See `MessageQueue` + Codex (#3742616720).
+
+### 15a. Resolved this iteration (Codex holistic pass)
+
+- **Consumed kickoff not re-fed (#2592):** the handler loads `send_status` and,
+  on reclaim of a `consumed` turn, drives it with `alreadyConsumed` (no feed) —
+  the SDK resume-from-history already holds it, so re-feeding would duplicate.
+  `deferred`/`failed` messages are skipped outright.
+- **Dead-letter → `failed` (#2595):** the lane's `onDead` hook marks the
+  persisted message `send_status='failed'` + publishes, so an exhausted job
+  surfaces a terminal error instead of vanishing behind pagination.
+- **Shutdown requeue (#2593):** `app.cleanup()` requeues in-flight
+  `message_delivery` jobs to pending before draining the processor, so they're
+  instantly reclaimable on the next boot (not stuck `processing` with a fresh
+  heartbeat for the 5-min stale window, nor misrouting new prompts as steers).
+- **Queued state on park (#2599):** a blocked startup (sdk_resume_choice) calls
+  `stateManager.setQueued` before parking, so the session reports queued (not
+  idle) and later deferrals are honored.
+- **Archived sessions (#3742616723):** the handler rejects delivery (completes,
+  does not drive) for sessions whose persisted status is `archived`.

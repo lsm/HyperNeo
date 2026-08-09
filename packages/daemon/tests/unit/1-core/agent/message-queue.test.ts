@@ -830,4 +830,43 @@ describe('MessageQueue', () => {
       queue.stop();
     });
   });
+
+  describe('durable delivery feeds — TTL bypass (#3742616720)', () => {
+    it('a yielded-but-unacknowledged DURABLE feed RESOLVES on timeout (no duplicate re-feed)', async () => {
+      const q = new MessageQueue();
+      q.overrideTimeoutMsForTest(40);
+      q.start();
+      const promise = q.enqueueWithId('msg-durable', 'hello', false, { durable: true });
+      // Drive the generator one step: the message is shifted out and yielded to
+      // the SDK (now in `inFlight`) but onSent never fires within the timeout.
+      const generator = q.messageGenerator('test-session');
+      const result = await generator.next();
+      expect(result.done).toBe(false);
+      // After the (short) timeout, a durable feed RESOLVES — the live SDK already
+      // holds the UUID, so a reject → handler fail → job retry → re-feed would
+      // execute the user's request twice.
+      await expect(promise).resolves.toBeUndefined();
+      q.stop();
+    });
+
+    it('a yielded-but-unacknowledged NON-durable feed still rejects (legacy behavior)', async () => {
+      const q = new MessageQueue();
+      q.overrideTimeoutMsForTest(40);
+      q.start();
+      const promise = q.enqueueWithId('msg-legacy', 'hello');
+      const generator = q.messageGenerator('test-session');
+      await generator.next(); // yield to inFlight, no onSent
+      await expect(promise).rejects.toThrow('Message queue timeout');
+      q.stop();
+    });
+
+    it('a DURABLE feed that was never yielded still rejects (genuine stall → safe retry)', async () => {
+      const q = new MessageQueue();
+      q.overrideTimeoutMsForTest(40);
+      // Do NOT start / drive the generator: the message stays in `queue` (never
+      // reached the SDK). A retry cannot duplicate it, so rejecting is correct.
+      const promise = q.enqueueWithId('msg-stalled', 'hello', false, { durable: true });
+      await expect(promise).rejects.toThrow('Message queue timeout');
+    });
+  });
 });
