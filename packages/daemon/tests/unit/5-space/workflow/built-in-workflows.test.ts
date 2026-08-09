@@ -6713,11 +6713,16 @@ test('CODING_WITH_QA_WORKFLOW QA node validates the PR and approves only when gr
 test('CODING_WITH_QA_WORKFLOW QA node routes post-approval merge-blockers via the Coding → QA channel', () => {
   const qaPrompt = CODING_WITH_QA_WORKFLOW.nodes.find((n) => n.name === 'QA')!.agents[0]
     .customPrompt!.value;
-  // The QA slot prompt must revalidate a changed head and re-post approval
-  // evidence when the implementer reports a post-approval merge blocker. The
-  // recipient is the runtime-supplied implementer, not a hard-coded peer.
+  // The QA slot prompt must revalidate a changed head and re-approve the
+  // CURRENT head when the implementer reports a post-approval merge blocker —
+  // including the own-PR COMMENT fallback, since `post_review` is gone and QA
+  // is the re-approval authority. The recipient is the runtime-supplied
+  // implementer, not a hard-coded peer.
   expect(qaPrompt).toContain('revalidate the changed head');
-  expect(qaPrompt).toMatch(/post fresh approval evidence/i);
+  expect(qaPrompt).toContain('re-approve the CURRENT head');
+  expect(qaPrompt).toContain('gh pr review');
+  expect(qaPrompt).toMatch(/own-PR where GitHub rejects your self-APPROVE/i);
+  expect(qaPrompt).toContain('Recommendation: APPROVE');
   expect(qaPrompt).toMatch(/signal them to continue/i);
   expect(qaPrompt).not.toMatch(/signal Coding to continue/i);
   // The channel exists for the coder to report blockers to QA.
