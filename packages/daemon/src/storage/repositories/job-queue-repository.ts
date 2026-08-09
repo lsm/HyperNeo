@@ -235,15 +235,52 @@ export class JobQueueRepository {
    * See message-delivery-v2.md + Codex (#3742616723 archive TOCTOU).
    */
   cancelForSession(sessionId: string, queue: string = 'message_delivery'): number {
-    const res = this.db
-      .prepare(
-        `DELETE FROM job_queue
-          WHERE queue = ?
-            AND json_extract(payload, '$.sessionId') = ?
-            AND status IN ('pending', 'processing')`
-      )
-      .run(queue, sessionId);
-    return res.changes;
+    return this.cancelForSessionWithMessages(sessionId, queue).length;
+  }
+
+  /**
+   * Cancel active jobs and return their message UUIDs so lifecycle callers can
+   * terminalize the matching persisted prompts instead of leaving hidden
+   * `enqueued` rows behind.
+   */
+  cancelForSessionWithMessages(sessionId: string, queue: string = 'message_delivery'): string[] {
+    return this.db.transaction(() => {
+      const rows = this.db
+        .prepare(
+          `SELECT json_extract(payload, '$.messageUuid') AS message_uuid
+             FROM job_queue
+            WHERE queue = ?
+              AND json_extract(payload, '$.sessionId') = ?
+              AND status IN ('pending', 'processing')`
+        )
+        .all(queue, sessionId) as Array<{ message_uuid: string | null }>;
+      this.db
+        .prepare(
+          `DELETE FROM job_queue
+            WHERE queue = ?
+              AND json_extract(payload, '$.sessionId') = ?
+              AND status IN ('pending', 'processing')`
+        )
+        .run(queue, sessionId);
+      return rows.flatMap((row) =>
+        typeof row.message_uuid === 'string' ? [row.message_uuid] : []
+      );
+    })();
+  }
+
+  /** Cancel one active durable delivery by message UUID. */
+  cancelDelivery(sessionId: string, messageUuid: string): boolean {
+    return (
+      this.db
+        .prepare(
+          `DELETE FROM job_queue
+            WHERE queue = 'message_delivery'
+              AND json_extract(payload, '$.sessionId') = ?
+              AND json_extract(payload, '$.messageUuid') = ?
+              AND status IN ('pending', 'processing')`
+        )
+        .run(sessionId, messageUuid).changes > 0
+    );
   }
 
   /**

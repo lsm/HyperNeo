@@ -655,22 +655,32 @@ export class SessionLifecycle {
       return;
     }
 
-    // PHASE 0: Cancel active message_delivery jobs BEFORE any teardown. The
-    // handler's archived-session guard only checks the FINAL persisted status
-    // (flipped in phase 4), but phases 1–3 already tear down the agent,
-    // transcript, and worktree — a job claimed concurrently in that window would
-    // drive a turn against a half-destroyed session. Cancelling pending jobs up
-    // front removes them from the claim pool; any in-flight processing job
-    // self-settles when phase 1 cleans up the agent. See Codex (#3742616723).
+    const completedPhases: string[] = [];
+    const archivedAt = new Date().toISOString();
+
+    // PHASE 0: Commit the persisted archive barrier BEFORE cancellation or any
+    // teardown. Every enqueue/hydrate/claim/feed guard now sees archived for the
+    // entire destructive window, so cancelForSession cannot be bypassed by a send
+    // arriving between point-in-time cancellation and phase 4.
+    await this.update(sessionId, { status: 'archived', archivedAt });
+    completedPhases.push('db-mark-archived');
+
+    // PHASE 1: Cancel active deliveries after the barrier. Terminalize any still
+    // enqueued prompt so archive cannot leave a hidden orphan after deleting its
+    // durable owner.
     try {
-      this.db.getJobQueueRepo()?.cancelForSession(sessionId);
+      const messageUuids =
+        this.db.getJobQueueRepo?.()?.cancelForSessionWithMessages(sessionId) ?? [];
+      const sdkRepo = this.db.getSDKMessageRepo?.();
+      for (const messageUuid of messageUuids) {
+        sdkRepo?.markDeliveryFailedByUuid(sessionId, messageUuid);
+      }
+      completedPhases.push('delivery-cancel');
     } catch (error) {
       this.logger.error(`[SessionLifecycle] archiveResources: delivery cancel failed:`, error);
     }
 
-    const completedPhases: string[] = [];
-
-    // PHASE 1: Stop in-memory SDK subprocess.
+    // PHASE 2: Stop in-memory SDK subprocess.
     if (agentSession) {
       try {
         await agentSession.cleanup();
@@ -728,10 +738,9 @@ export class SessionLifecycle {
       }
     }
 
-    // PHASE 4: Update session row (status=archived). DB row and sdk_messages are preserved.
-    // If the session had a worktree, clear it now that the on-disk worktree has been
-    // removed — otherwise UIs (and RPCs like `session.get`) would continue to surface a
-    // stale `session.worktree` pointing at a deleted path.
+    // FINALIZE: append cleanup metadata while preserving the archive barrier
+    // committed before teardown. If the session had a worktree, clear it now that
+    // the on-disk worktree has been removed.
     try {
       const archivedWorktreeMetadata = session.worktree
         ? {
@@ -749,7 +758,7 @@ export class SessionLifecycle {
 
       await this.update(sessionId, {
         status: 'archived',
-        archivedAt: new Date().toISOString(),
+        archivedAt,
         ...(session.worktree ? { worktree: undefined } : {}),
         ...(Object.keys(metadataUpdate).length > 0
           ? {
@@ -760,7 +769,7 @@ export class SessionLifecycle {
             }
           : {}),
       });
-      completedPhases.push('db-mark-archived');
+      completedPhases.push('db-finalize-archive');
     } catch (error) {
       this.logger.error(`[SessionLifecycle] archiveResources: status update failed:`, error);
       throw error;

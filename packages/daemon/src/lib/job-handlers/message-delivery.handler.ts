@@ -90,6 +90,7 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
     // session.archive path also cancels pending jobs, but this guards the claim
     // race. See Codex (#3742616723).
     if (deps.isSessionArchived?.(payload.sessionId)) {
+      await deps.getSession(payload.sessionId)?.settleSkippedDelivery?.(payload.messageUuid);
       return { outcome: 'archived' };
     }
 
@@ -103,6 +104,7 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
     if (loaded === null) {
       // Content gone (rewound/deleted) — nothing to deliver.
       log.warn(`message_delivery: content for ${payload.messageUuid} not found; completing.`);
+      await session.settleSkippedDelivery?.(payload.messageUuid);
       return { outcome: 'no_content' };
     }
     const { content, sendStatus } = loaded;
@@ -111,6 +113,7 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
     // NOT re-fed (see the module doc + §8). `deferred`/`failed` skip outright;
     // a `consumed` turn is re-driven without the feed (below).
     if (sendStatus === 'deferred' || sendStatus === 'failed') {
+      await session.settleSkippedDelivery?.(payload.messageUuid);
       return { outcome: 'skipped', sendStatus };
     }
     const alreadyConsumed = sendStatus === 'consumed';
@@ -141,6 +144,7 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
         if (result.outcome === 'aborted') {
           // Bridge revalidation found the session archived or the message removed
           // between load and feed — complete without feeding. See #3742774841/#3696.
+          await session.settleSkippedDelivery?.(payload.messageUuid);
           return { outcome: 'aborted' };
         }
         return { outcome: 'completed' };

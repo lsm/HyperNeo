@@ -622,6 +622,15 @@ describe('repo — exempt dequeue + requeueAllProcessing (#2587/#2593)', () => {
     expect(remaining).toHaveLength(1);
     expect((remaining[0].payload as { sessionId: string }).sessionId).toBe('other-session');
   });
+
+  it('cancelForSessionWithMessages returns cancelled UUIDs and cancelDelivery is scoped', () => {
+    deliverMessage(repo, SESSION, 'a', { origin: 'chat' });
+    deliverMessage(repo, SESSION, 'b', { origin: 'chat' });
+    expect(repo.cancelDelivery(SESSION, 'b')).toBe(true);
+    expect(repo.cancelDelivery(SESSION, 'b')).toBe(false);
+    expect(repo.cancelForSessionWithMessages(SESSION)).toEqual(['a']);
+    expect(repo.activeDeliveryMessageUuids(SESSION)).toEqual(new Set());
+  });
 });
 
 // ── Processor: exempt pass + dead-letter hook (#2587 / #2595) ───────────────

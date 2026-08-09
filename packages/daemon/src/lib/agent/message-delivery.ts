@@ -235,6 +235,8 @@ export interface MessageDeliverySession {
     content: DeliveryContent,
     parentToolUseId?: string | null
   ): Promise<FeedSteerOutcome>;
+  /** Clear queued state only if this skipped message still owns it. */
+  settleSkippedDelivery?(messageUuid: string): Promise<void>;
 }
 
 /**

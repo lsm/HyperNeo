@@ -843,6 +843,36 @@ export class AgentSession
     return this.messageQueue.remove(messageId);
   }
 
+  /**
+   * Revoke one not-yet-delivered durable message under the same per-session
+   * ownership lock used by transport admission. This linearizes remove/defer
+   * against the handler's final validation + synchronous queue admission.
+   */
+  async revokePendingDelivery(
+    messageDbId: string,
+    mode: 'remove' | 'defer'
+  ): Promise<
+    { changed: false } | { changed: true; dbId: string; uuid: string; removedFromMemory: boolean }
+  > {
+    return withSessionLock(this.session.id, async () => {
+      const result =
+        mode === 'remove'
+          ? this.db.deletePendingUserMessage(this.session.id, messageDbId, 'enqueued')
+          : this.db.deferEnqueuedUserMessage(this.session.id, messageDbId);
+      if (!result?.uuid) return { changed: false as const };
+
+      this.db.getJobQueueRepo().cancelDelivery(this.session.id, result.uuid);
+      const removedFromMemory = this.messageQueue.remove(result.uuid);
+      await this.stateManager.clearQueuedIfOwnedBy(result.uuid);
+      return {
+        changed: true as const,
+        dbId: result.dbId,
+        uuid: result.uuid,
+        removedFromMemory,
+      };
+    });
+  }
+
   // ============================================================================
   // Interrupt and Reset
   // ============================================================================
@@ -852,6 +882,19 @@ export class AgentSession
     // cooldown timer can't switch the model or replay the stale message after
     // the user explicitly stopped the turn.
     this.rateLimitWatchdog.cancel();
+
+    // Pre-claim v2 interrupt: queued state may represent a durable turn job that
+    // has not reached MessageQueue/query state yet. Revoke that durable owner and
+    // terminalize its hidden enqueued SDK row before the generic interrupt path
+    // returns the session to idle; otherwise the processor can claim it later and
+    // execute the prompt the user just stopped.
+    await withSessionLock(this.session.id, async () => {
+      const state = this.stateManager.getState();
+      if (state.status !== 'queued') return;
+      this.db.getJobQueueRepo().cancelDelivery(this.session.id, state.messageId);
+      this.db.getSDKMessageRepo().markDeliveryFailedByUuid(this.session.id, state.messageId);
+    });
+
     await this.interruptHandler.handleInterrupt();
   }
 
@@ -1886,6 +1929,12 @@ export class AgentSession
    * Flag-gated; the `message.persisted` subscriber calls this only when
    * HYPERNEO_MESSAGE_DELIVERY_V2 is set.
    */
+  async settleSkippedDelivery(messageUuid: string): Promise<void> {
+    await withSessionLock(this.session.id, () =>
+      this.stateManager.clearQueuedIfOwnedBy(messageUuid).then(() => undefined)
+    );
+  }
+
   deliverChatMessage(messageUuid: string): void {
     // Enqueue-time archive barrier: cancelForSession is point-in-time, so a send
     // landing after it but before the phase-4 status flip would otherwise create a

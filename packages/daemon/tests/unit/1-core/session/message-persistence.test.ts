@@ -222,6 +222,7 @@ describe('MessagePersistence', () => {
       })
     ).rejects.toThrow('Session test-session-id is archived');
 
+    expect(mockSessionCache.getAsync).not.toHaveBeenCalled();
     expect(saveUserMessageSpy).not.toHaveBeenCalled();
     expect(mockAgentSession.startQueryAndEnqueue).not.toHaveBeenCalled();
   });

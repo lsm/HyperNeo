@@ -296,9 +296,17 @@ export class Database {
 
   deletePendingUserMessage(
     sessionId: string,
-    messageId: string
+    messageId: string,
+    expectedStatus?: 'deferred' | 'enqueued'
   ): { dbId: string; uuid: string; status: 'deferred' | 'enqueued' } | null {
-    return this.sdkMessageRepo.deletePendingUserMessage(sessionId, messageId);
+    return this.sdkMessageRepo.deletePendingUserMessage(sessionId, messageId, expectedStatus);
+  }
+
+  deferEnqueuedUserMessage(
+    sessionId: string,
+    messageId: string
+  ): { dbId: string; uuid: string } | null {
+    return this.sdkMessageRepo.deferEnqueuedUserMessage(sessionId, messageId);
   }
 
   beginTransaction?(): void;

@@ -1514,7 +1514,8 @@ export class SDKMessageRepository {
    */
   deletePendingUserMessage(
     sessionId: string,
-    messageId: string
+    messageId: string,
+    expectedStatus?: 'deferred' | 'enqueued'
   ): { dbId: string; uuid: string; status: 'deferred' | 'enqueued' } | null {
     const row = this.db
       .prepare(
@@ -1524,9 +1525,10 @@ export class SDKMessageRepository {
 				    AND id = ?
 				    AND message_type = 'user'
 				    AND send_status IN ('deferred', 'enqueued')
+            AND (? IS NULL OR send_status = ?)
 				  LIMIT 1`
       )
-      .get(sessionId, messageId) as
+      .get(sessionId, messageId, expectedStatus ?? null, expectedStatus ?? null) as
       | { id: string; sdk_message: string; send_status: 'deferred' | 'enqueued' }
       | undefined;
 
@@ -1540,13 +1542,16 @@ export class SDKMessageRepository {
 				  WHERE session_id = ?
 				    AND id = ?
 				    AND message_type = 'user'
-				    AND send_status IN ('deferred', 'enqueued')`
+				    AND send_status IN ('deferred', 'enqueued')
+            AND (? IS NULL OR send_status = ?)`
     );
     // Wrap DELETE + counter recompute in one transaction (FTS cleanup below is
     // best-effort, outside the tx) so an FTS throw can't leave the counter stale.
     let deleted = false;
     this.db.transaction(() => {
-      deleted = deleteStmt.run(sessionId, messageId).changes > 0;
+      deleted =
+        deleteStmt.run(sessionId, messageId, expectedStatus ?? null, expectedStatus ?? null)
+          .changes > 0;
       if (deleted) this.recomputeVisibleMessageCount(sessionId);
     })();
 
@@ -1562,6 +1567,34 @@ export class SDKMessageRepository {
       uuid: message.uuid ?? '',
       status: row.send_status,
     };
+  }
+
+  /**
+   * Compare-and-set one enqueued user message to deferred. Returns its UUID only
+   * when this mutation wins before SDK/provider delivery.
+   */
+  deferEnqueuedUserMessage(
+    sessionId: string,
+    messageId: string
+  ): { dbId: string; uuid: string } | null {
+    const row = this.db
+      .prepare(
+        `SELECT id, sdk_message FROM sdk_messages
+          WHERE session_id = ? AND id = ? AND message_type = 'user'
+            AND send_status = 'enqueued' LIMIT 1`
+      )
+      .get(sessionId, messageId) as { id: string; sdk_message: string } | undefined;
+    if (!row) return null;
+    const changed = this.db
+      .prepare(
+        `UPDATE sdk_messages SET send_status = 'deferred'
+          WHERE session_id = ? AND id = ? AND message_type = 'user'
+            AND send_status = 'enqueued'`
+      )
+      .run(sessionId, messageId).changes;
+    if (changed === 0) return null;
+    const message = JSON.parse(row.sdk_message) as { uuid?: string };
+    return { dbId: row.id, uuid: message.uuid ?? '' };
   }
 
   /**

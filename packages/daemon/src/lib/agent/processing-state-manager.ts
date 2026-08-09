@@ -137,6 +137,20 @@ export class ProcessingStateManager {
   }
 
   /**
+   * Return to idle only when the queued marker still belongs to `messageId`.
+   * Delivery cancellation/skip paths use this compare-and-set so they cannot
+   * clear a newer message's queued/processing state.
+   */
+  async clearQueuedIfOwnedBy(messageId: string): Promise<boolean> {
+    const current = this.processingState;
+    if (current.status !== 'queued' || current.messageId !== messageId) {
+      return false;
+    }
+    await this.setIdle();
+    return true;
+  }
+
+  /**
    * Set state to processing
    */
   async setProcessing(messageId: string, phase: StreamingPhase = 'initializing'): Promise<void> {
