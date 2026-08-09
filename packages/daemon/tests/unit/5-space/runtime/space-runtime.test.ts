@@ -930,7 +930,16 @@ describe('SpaceRuntime', () => {
 
       expect(run.spaceId).toBe(SPACE_ID);
       expect(run.workflowId).toBe(workflow.id);
+      expect(run.definitionVersion).not.toBeNull();
       expect(run.status).toBe('in_progress');
+      expect(
+        db
+          .prepare(
+            `SELECT 1 FROM space_workflow_definition_versions
+             WHERE workflow_id = ? AND version_hash = ?`
+          )
+          .get(workflow.id, run.definitionVersion)
+      ).toBeDefined();
     });
 
     test('creates initial SpaceTask for the start step', async () => {

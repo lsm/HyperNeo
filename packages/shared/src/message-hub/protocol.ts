@@ -10,8 +10,8 @@
  * - Type-safe method registry
  */
 
-import { generateUUID } from '../utils.ts';
 import { createLogger } from '../logger.ts';
+import { generateUUID } from '../utils.ts';
 
 const log = createLogger('kai:messagehub:protocol');
 
@@ -238,6 +238,7 @@ export enum ErrorCode {
   // Transport errors
   TRANSPORT_ERROR = 'TRANSPORT_ERROR',
   NOT_CONNECTED = 'NOT_CONNECTED',
+  MESSAGE_TOO_LARGE = 'MESSAGE_TOO_LARGE',
 
   // General errors
   INTERNAL_ERROR = 'INTERNAL_ERROR',

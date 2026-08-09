@@ -147,8 +147,8 @@ interface PresetDefinition {
  * output block.
  *
  * Sub-agent delegation: the Reviewer has `Task`/`TaskOutput`/`TaskStop` on
- * its tool list and dispatches exploration to the built-in `general-purpose`
- * sub-agent shipped with the `claude_code` preset. Custom reviewer-specific
+ * its tool list and dispatches first-level exploration to the non-delegating
+ * `general-purpose` definition installed by createCustomAgentInit. Custom reviewer-specific
  * sub-agents (e.g. `reviewer-explorer`, `reviewer-fact-checker` in the Room
  * SDK) are a planned follow-up and will live in workflow templates /
  * SpaceWorkerAgent data, not in code.

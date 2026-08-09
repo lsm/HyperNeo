@@ -1,9 +1,9 @@
 /**
- * Migration 181 Tests — Backfill Bash + Cron tools onto existing Reviewer preset rows.
+ * Migration 182 Tests — Backfill Bash + Cron tools onto existing Reviewer preset rows.
  *
  * The Reviewer preset gained `Bash` + `CronCreate`/`CronDelete`/`CronList` when the
  * PR-process MCPs were removed. `seedPresetAgents()` runs only at Space creation, so
- * existing Spaces keep the shell-less Reviewer tool profile. M181 re-stamps ONLY
+ * existing Spaces keep the shell-less Reviewer tool profile. M182 re-stamps ONLY
  * unmodified seed rows (stored tools === the old shell-less profile); customized rows
  * are left to the drift/sync UI.
  *
@@ -21,14 +21,14 @@ import { join } from 'node:path';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../../src/storage/schema/index.ts';
 import {
-  runMigration181,
+  runMigration182,
   OLD_REVIEWER_PROMPT,
   OLD_REVIEWER_PROMPT_PRE_2365,
   OLD_REVIEWER_DESCRIPTION,
   OLD_REVIEWER_DESCRIPTION_PRE_2365,
   OLD_REVIEWER_TOOLS,
   OLD_REVIEWER_TOOLS_PRE_2365,
-} from '../../../../../src/storage/schema/m181-backfill-reviewer-bash-tools.ts';
+} from '../../../../../src/storage/schema/m182-backfill-reviewer-bash-tools.ts';
 import { getPresetAgentTemplates } from '../../../../../src/lib/space/agents/seed-agents.ts';
 import { computeAgentTemplateHash } from '../../../../../src/lib/space/agents/agent-template-hash.ts';
 
@@ -132,7 +132,7 @@ beforeEach(() => {
   db.prepare(`DELETE FROM spaces`).run();
 });
 
-describe('migration 181 — reviewer bash tool backfill', () => {
+describe('migration 182 — reviewer bash tool backfill', () => {
   test('re-stamps an unmodified Reviewer seed row with Bash + Cron AND the current prompt', () => {
     const spaceId = 'space-m179-a';
     insertSpace(db, spaceId);
@@ -148,7 +148,7 @@ describe('migration 181 — reviewer bash tool backfill', () => {
       templateHash: computeAgentTemplateHash(REVIEWER_PRESET),
     });
 
-    runMigration181(db);
+    runMigration182(db);
 
     const row = getAgentRow('agent-reviewer');
     const tools = parseTools(row as unknown as AgentRow);
@@ -193,7 +193,7 @@ describe('migration 181 — reviewer bash tool backfill', () => {
       templateHash: computeAgentTemplateHash(REVIEWER_PRESET),
     });
 
-    runMigration181(db);
+    runMigration182(db);
 
     const row = getAgentRow('agent-reviewer-pre2365');
     expect(parseTools(row as unknown as AgentRow)).toContain('Bash');
@@ -220,7 +220,7 @@ describe('migration 181 — reviewer bash tool backfill', () => {
       templateHash: 'some-hash',
     });
 
-    runMigration181(db);
+    runMigration182(db);
 
     const row = getAgentRow('agent-reviewer-custom');
     expect(parseTools(row as unknown as AgentRow)).toEqual(customTools);
@@ -246,7 +246,7 @@ describe('migration 181 — reviewer bash tool backfill', () => {
       templateHash: 'some-hash',
     });
 
-    runMigration181(db);
+    runMigration182(db);
 
     const row = getAgentRow('agent-reviewer-prompt-custom');
     expect(parseTools(row as unknown as AgentRow)).toEqual(REVIEWER_PRESET.tools);
@@ -275,7 +275,7 @@ describe('migration 181 — reviewer bash tool backfill', () => {
       templateHash: 'some-hash',
     });
 
-    runMigration181(db);
+    runMigration182(db);
 
     const row = getAgentRow('agent-reviewer-appended');
     expect(parseTools(row as unknown as AgentRow)).toEqual(REVIEWER_PRESET.tools);
@@ -300,8 +300,8 @@ describe('migration 181 — reviewer bash tool backfill', () => {
       templateHash: computeAgentTemplateHash(REVIEWER_PRESET),
     });
 
-    runMigration181(db);
-    runMigration181(db);
+    runMigration182(db);
+    runMigration182(db);
 
     const row = getAgentRow('agent-reviewer-current');
     expect(parseTools(row as unknown as AgentRow)).toEqual(REVIEWER_PRESET.tools);
@@ -321,14 +321,14 @@ describe('migration 181 — reviewer bash tool backfill', () => {
       templateHash: computeAgentTemplateHash(CODER_PRESET),
     });
 
-    runMigration181(db);
+    runMigration182(db);
 
     const row = getAgentRow('agent-coder');
     expect(parseTools(row as unknown as AgentRow)).toEqual(CODER_PRESET.tools);
   });
 
   test('safe no-op on empty space_agents', () => {
-    runMigration181(db);
+    runMigration182(db);
     // No throw; nothing to update.
     expect(true).toBe(true);
   });
@@ -347,7 +347,7 @@ describe('migration 181 — reviewer bash tool backfill', () => {
       templateHash: null,
     });
 
-    runMigration181(db);
+    runMigration182(db);
 
     const row = getAgentRow('agent-reviewer-user');
     // Untracked rows are never re-stamped (name is also not 'Reviewer').

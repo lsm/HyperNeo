@@ -281,7 +281,6 @@ describe('createCustomAgentInit — sub-session features', () => {
     expect(init.sdkToolsPreset).toBeUndefined();
     expect(init.allowedTools).toBeUndefined();
     expect(init.agent).toBeUndefined();
-    expect(init.agents).toBeUndefined();
     expect(init.disallowedTools).toEqual(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
     expect(init.disallowedTools).not.toContain('Bash');
   });
@@ -291,7 +290,6 @@ describe('createCustomAgentInit — sub-session features', () => {
     const init = createCustomAgentInit(config);
 
     expect(init.agent).toBeUndefined();
-    expect(init.agents).toBeUndefined();
     expect(init.sdkToolsPreset).toBeUndefined();
     expect(init.allowedTools).toBeUndefined();
     expect(init.disallowedTools).toBeUndefined();
@@ -302,7 +300,6 @@ describe('createCustomAgentInit — sub-session features', () => {
     const init = createCustomAgentInit(config);
 
     expect(init.agent).toBeUndefined();
-    expect(init.agents).toBeUndefined();
   });
 
   it('applies customPrompt slot expansion in system prompt', () => {

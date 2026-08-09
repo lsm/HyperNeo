@@ -325,7 +325,7 @@ export function TaskArtifactsPanel({ runId, taskId, class: className }: TaskArti
   const [artifacts, setArtifacts] = useState<WorkflowRunArtifact[]>([]);
 
   // ── Todos (from message thread) ──────────────────────────────────────────
-  const { rows: messageRows } = useSpaceTaskMessages(taskId ?? null);
+  const { rows: messageRows, error: messageRowsError } = useSpaceTaskMessages(taskId ?? null);
 
   // File operations from tool calls (Write/Edit) — used when not a git repo
   const fileOps = useMemo<FileOperation[]>(() => {
@@ -587,6 +587,8 @@ export function TaskArtifactsPanel({ runId, taskId, class: className }: TaskArti
               </div>
             </div>
           )}
+
+          {messageRowsError && <p class="px-4 py-3 text-sm text-amber-500">{messageRowsError}</p>}
 
           {isGitRepo ? (
             <>

@@ -17,9 +17,9 @@
  * - Decoupled from WebSocket specifics
  */
 
+import { ChannelManager } from './channel-manager.ts';
 import type { HubMessage } from './protocol.ts';
 import { isEventMessage } from './protocol.ts';
-import { ChannelManager } from './channel-manager.ts';
 
 /**
  * Abstract connection interface
@@ -53,7 +53,18 @@ export interface RouterLogger {
 export interface MessageHubRouterOptions {
   logger?: RouterLogger;
   debug?: boolean;
+  /** Maximum UTF-8 bytes allowed for one outbound wire message. */
+  maxMessageSize?: number;
 }
+
+export const DEFAULT_MAX_OUTBOUND_MESSAGE_SIZE = 40 * 1024 * 1024;
+
+export type SendToClientResult =
+  | { ok: true }
+  | {
+      ok: false;
+      reason: 'unavailable' | 'serialization_failed' | 'message_too_large' | 'send_failed';
+    };
 
 /**
  * Client information
@@ -89,10 +100,27 @@ export class MessageHubRouter {
 
   private logger: RouterLogger;
   private debug: boolean;
+  private readonly maxMessageSize: number;
 
   constructor(options: MessageHubRouterOptions = {}) {
     this.logger = options.logger || console;
     this.debug = options.debug || false;
+    this.maxMessageSize = options.maxMessageSize ?? DEFAULT_MAX_OUTBOUND_MESSAGE_SIZE;
+  }
+
+  private byteLength(value: string): number {
+    return new Blob([value]).size;
+  }
+
+  private serializeForSend(message: HubMessage): string | null {
+    const json = this.safeStringify(message);
+    const size = this.byteLength(json);
+    if (size <= this.maxMessageSize) return json;
+
+    this.logger.warn(
+      `[MessageHubRouter] Refusing oversized outbound message ${message.method} (${size} bytes; limit ${this.maxMessageSize})`
+    );
+    return null;
   }
 
   /**
@@ -208,43 +236,36 @@ export class MessageHubRouter {
    * Send a message to a specific client
    * FIX P2.1: Handle serialization errors and circular references
    */
-  sendToClient(clientId: string, message: HubMessage): boolean {
+  sendToClientDetailed(clientId: string, message: HubMessage): SendToClientResult {
     const client = this.getClientById(clientId);
-    if (!client) {
-      this.logger.warn(`[MessageHubRouter] Client not found: ${clientId}`);
-      return false;
+    if (!client || !client.connection.isOpen()) {
+      this.logger.warn(`[MessageHubRouter] Client unavailable: ${clientId}`);
+      return { ok: false, reason: 'unavailable' };
     }
 
-    if (!client.connection.isOpen()) {
-      this.logger.warn(`[MessageHubRouter] Client not ready: ${clientId}`);
-      return false;
-    }
-
-    // FIX P2.1: Handle serialization errors with circular reference detection
-    let json: string;
+    let json: string | null;
     try {
-      json = this.safeStringify(message);
+      json = this.serializeForSend(message);
+      if (json === null) return { ok: false, reason: 'message_too_large' };
     } catch (error) {
       this.logger.error(
         `[MessageHubRouter] Failed to serialize message for client ${clientId}:`,
         error
       );
-      // Log message type for debugging
-      const messageType = message?.type ?? 'unknown';
-      const messageId = message?.id ?? 'unknown';
-      this.logger.error(
-        `[MessageHubRouter] Failed message details - type: ${messageType}, id: ${messageId}`
-      );
-      return false;
+      return { ok: false, reason: 'serialization_failed' };
     }
 
     try {
       client.connection.send(json);
-      return true;
+      return { ok: true };
     } catch (error) {
       this.logger.error(`[MessageHubRouter] Failed to send to client ${clientId}:`, error);
-      return false;
+      return { ok: false, reason: 'send_failed' };
     }
+  }
+
+  sendToClient(clientId: string, message: HubMessage): boolean {
+    return this.sendToClientDetailed(clientId, message).ok;
   }
 
   /**
@@ -258,9 +279,12 @@ export class MessageHubRouter {
     skipped?: number;
   } {
     // FIX P2.1: Handle serialization errors with circular reference detection
-    let json: string;
+    let json: string | null;
     try {
-      json = this.safeStringify(message);
+      json = this.serializeForSend(message);
+      if (json === null) {
+        return { sent: 0, failed: this.clients.size, skipped: 0 };
+      }
     } catch (error) {
       this.logger.error(`[MessageHubRouter] Failed to serialize broadcast message:`, error);
       // Log message type for debugging
@@ -371,9 +395,18 @@ export class MessageHubRouter {
     }
 
     // Serialize once with circular reference handling
-    let json: string;
+    let json: string | null;
     try {
-      json = this.safeStringify(message);
+      json = this.serializeForSend(message);
+      if (json === null) {
+        return {
+          sent: 0,
+          failed: allRecipients.size,
+          totalSubscribers: allRecipients.size,
+          sessionId: message.sessionId,
+          method: message.method,
+        };
+      }
     } catch (error) {
       this.logger.error(`[MessageHubRouter] Failed to serialize channel event:`, error);
       return {

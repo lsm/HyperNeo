@@ -406,9 +406,6 @@ export function setupSpaceWorkflowRunHandlers(
         log.warn('Failed to emit space.workflowRun.updated:', err);
       });
 
-    // Register PR event auto-subscription for the newly-blocked run.
-    void spaceRuntimeService.notifyRunBlocked(params.id);
-
     return { run: updated };
   });
 
@@ -538,8 +535,6 @@ export function setupSpaceWorkflowRunHandlers(
       // is always persisted regardless of whether the status changed.
       if (run.status !== 'blocked') {
         workflowRunRepo.transitionStatus(params.runId, 'blocked');
-        // Register PR event auto-subscription for the rejected run.
-        void spaceRuntimeService.notifyRunBlocked(params.runId);
       }
       const updated =
         workflowRunRepo.updateRun(params.runId, { failureReason: 'humanRejected' }) ?? run;
