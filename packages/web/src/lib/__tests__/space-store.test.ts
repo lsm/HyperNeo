@@ -2859,4 +2859,36 @@ describe('SpaceStore — refreshLongHorizonAgents preserves cache on failure', (
     // stays true).
     expect(spaceStore.longHorizonAgents.value).toHaveLength(1);
   });
+
+  it('drops a longHorizonAgent.list result that arrived after a space switch', async () => {
+    spaceStore.spaceId.value = 'space-1';
+    // Seed the cache so a stale overwrite would be observable.
+    spaceStore.longHorizonAgents.value = [makeLongHorizonAgent('seeded')];
+    let resolveList: (value: { agents: SpaceLongHorizonAgent[] }) => void = () => {};
+    // The mock's request return union is inferred narrow from its default
+    // `{ agents: [] }`; cast the implementation so we can resolve non-empty
+    // agents for this one RPC.
+    mockHub.request.mockImplementation(((method: string) => {
+      if (method === 'spaceLongHorizonAgent.list') {
+        return new Promise<{ agents: SpaceLongHorizonAgent[] }>((r) => {
+          resolveList = r;
+        });
+      }
+      return Promise.resolve({});
+    }) as never);
+    const pending = spaceStore.refreshLongHorizonAgents();
+    // Wait for getHub to resolve and the list RPC to be issued (so resolveList
+    // is captured) BEFORE flipping the space.
+    await vi.waitFor(() =>
+      expect(mockHub.request).toHaveBeenCalledWith('spaceLongHorizonAgent.list', {
+        spaceId: 'space-1',
+      })
+    );
+    // Switch space before the list RPC resolves.
+    spaceStore.spaceId.value = 'space-2';
+    resolveList({ agents: [makeLongHorizonAgent('stale')] });
+    await pending;
+    // The stale (now space-2) result must NOT overwrite the seeded cache.
+    expect(spaceStore.longHorizonAgents.value.map((a) => a.id)).toEqual(['seeded']);
+  });
 });

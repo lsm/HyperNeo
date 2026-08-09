@@ -569,6 +569,11 @@ export default function SessionStatusBar({
                   thinkingLevel === 'off' ? 'border-dark-600/80' : 'border-transparent'
                 }`}
                 onClick={toggleThinkingDropdown}
+                // Disabled during recovery, matching the model trigger — the
+                // close-on-recovery effect only fires on the isRecovering
+                // transition, so without this the dropdown could be reopened in
+                // steady-state recovery and fire session.thinking.set mid-sync.
+                disabled={isRecovering}
                 title={`Thinking: ${THINKING_LEVEL_LABELS[thinkingLevel]}`}
               >
                 <ThinkingBorderRing level={thinkingLevel} />
@@ -589,6 +594,7 @@ export default function SessionStatusBar({
                       option.value === thinkingLevel ? 'text-amber-400' : 'text-gray-200'
                     }`}
                     onClick={() => handleThinkingLevelChange(option.value)}
+                    disabled={isRecovering}
                   >
                     <ThinkingLevelIcon level={option.value} />
                     {option.label}

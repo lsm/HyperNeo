@@ -1,16 +1,16 @@
 // @ts-nocheck
 /**
- * SessionStore load-error classification + availability (task #873).
+ * SessionStore load-error classification + post-load state (task #873).
  *
  * Verifies the store preserves backend error distinctions instead of collapsing
  * every load failure into "Failed to load session", that transient recovery
  * refreshes do NOT set a hard-unavailable kind (so the cached transcript is
- * retained), and that archived/terminated surface via `availability`.
+ * retained), and that archived/terminated surface via `sessionInfo.status`.
  *
  * Note: the hub mock resolves `liveQuery.subscribe` without firing a snapshot,
  * so `messagesLoaded` stays false here — that's fine, these tests target the
- * `state.session` load outcome (`loadErrorKind` / `availability`), which is
- * settled by the time the awaited `select()` returns.
+ * `state.session` load outcome (`loadErrorKind`), which is settled by the time
+ * the awaited `select()` returns.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -73,7 +73,7 @@ function installHub() {
   };
 }
 
-describe('SessionStore load-error classification + availability', () => {
+describe('SessionStore load-error classification + post-load state', () => {
   let api: ReturnType<typeof installHub>;
 
   beforeEach(() => {
