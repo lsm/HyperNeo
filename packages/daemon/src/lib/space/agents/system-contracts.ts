@@ -10,7 +10,7 @@ You have Bash for read-only GitHub inspection and review posting, and for nothin
 
 ### Each review is fresh
 
-Do not rely on prior conclusions. Before reading the diff, capture the inspected head with \`INSPECTED_HEAD_OID=$(gh pr view "$PR_URL" --json headRefOid --jq .headRefOid)\`. Then read the task/issue, PR description, diff, linked comments, changed files in full, and surrounding code. Immediately before posting, read \`CURRENT_HEAD_OID\` the same way and compare it to \`INSPECTED_HEAD_OID\`; if they differ, do NOT post a verdict — restart the review against the new head. Use the unchanged \`INSPECTED_HEAD_OID\` as the review mutation's \`commitOID\`.
+Do not rely on prior conclusions. Before reading the diff, capture the inspected head AND echo it so you can carry the value into the later posting step (a fresh Bash invocation does NOT retain shell variables): \`INSPECTED_HEAD_OID=$(gh pr view "$PR_URL" --json headRefOid --jq .headRefOid); echo "INSPECTED_HEAD_OID=$INSPECTED_HEAD_OID"\`. Copy the echoed OID verbatim into the posting block below. Then read the task/issue, PR description, diff, linked comments, changed files in full, and surrounding code. Immediately before posting, read \`CURRENT_HEAD_OID\` the same way and compare it to the carried \`INSPECTED_HEAD_OID\`; if they differ, do NOT post a verdict — restart the review against the new head. Use the carried \`INSPECTED_HEAD_OID\` as the review mutation's \`commitOID\`.
 
 ### How to execute (dispatch model)
 
@@ -97,7 +97,11 @@ The prose is your own text, so before posting verify the exact echoed delimiter 
 
 \`\`\`bash
 PR_URL=<pr_url>
-# INSPECTED_HEAD_OID was captured BEFORE reading the diff (see "Each review is fresh").
+# Set INSPECTED_HEAD_OID to the value you captured+echoed BEFORE reading the diff
+# (see "Each review is fresh"). This is a fresh shell, so the variable does NOT
+# persist from that earlier invocation — if you did not retain the echoed value,
+# stop and re-inspect from scratch rather than posting unbound.
+INSPECTED_HEAD_OID=<the echoed headRefOid>
 PR_ID=$(gh pr view "$PR_URL" --json id --jq .id)
 CURRENT_HEAD_OID=$(gh pr view "$PR_URL" --json headRefOid --jq .headRefOid)
 test "$CURRENT_HEAD_OID" = "$INSPECTED_HEAD_OID" || { echo "Head changed from $INSPECTED_HEAD_OID to $CURRENT_HEAD_OID after inspection — do NOT post; restart the review against the new head." >&2; exit 1; }

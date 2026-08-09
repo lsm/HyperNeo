@@ -1190,9 +1190,11 @@ const CODER_OWNED_QA_PROMPT =
   'green, save the PR link and a passing decision artifact, then call approve_task or ' +
   'submit_for_approval. Do not merge. If the implementer later reports a post-approval merge blocker, ' +
   're-approve the EXACT head you revalidated — a concurrent push must not inherit your approval. Capture ' +
-  '`VALIDATED_OID=$(gh pr view <pr_url> --json headRefOid --jq .headRefOid)` BEFORE you revalidate; after ' +
-  'revalidating, immediately before posting, re-check `gh pr view <pr_url> --json headRefOid --jq .headRefOid` ' +
-  'still equals `$VALIDATED_OID` — if it changed, revalidate the new head from scratch. Post the approval ' +
+  '`VALIDATED_OID=$(gh pr view <pr_url> --json headRefOid --jq .headRefOid)` and echo it ' +
+  '(`echo "VALIDATED_OID=$VALIDATED_OID"`) BEFORE you revalidate; revalidation spans later Bash invocations ' +
+  'that do NOT retain shell variables, so copy the echoed OID into the posting step. Immediately before ' +
+  'posting, re-check `gh pr view <pr_url> --json headRefOid --jq .headRefOid` still equals the carried ' +
+  '`$VALIDATED_OID` — if it changed, revalidate the new head from scratch. Post the approval ' +
   'bound to that head via the GraphQL `addPullRequestReview` mutation with `commitOID: "$VALIDATED_OID"` ' +
   '(do NOT use `gh pr review`, which has no commit binding and would approve a head you never validated): ' +
   '`PR_ID=$(gh pr view <pr_url> --json id --jq .id)`, build a `{query,variables}` JSON with jq ' +
