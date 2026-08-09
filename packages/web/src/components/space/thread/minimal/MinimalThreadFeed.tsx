@@ -836,8 +836,17 @@ function buildCompletedTurn(
         ...rosteredToolUseIdsFromRoster(base),
       ]);
       // Merge by timestamp (not append) so older outcomes don't land below
-      // newer activity, and apply the cap uniformly with the active path.
-      return mergeRosterWithNotifications(base, standaloneTaskNotificationEntries(rows, rostered));
+      // newer activity, but do NOT re-apply the 8-cap: a completed turn renders
+      // once, so capping would drop terminal metadata (incl. failures) on first
+      // paint and could let a late notification evict a retained tool whose
+      // folded status/summary/usage would vanish with its card. `base` is
+      // already capped to 8 tools, so this is at worst 8 tools + a few
+      // notifications — matching the prior [...base, ...standalone] layout.
+      return mergeRosterWithNotifications(
+        base,
+        standaloneTaskNotificationEntries(rows, rostered),
+        Infinity
+      );
     })(),
   };
 }
@@ -912,12 +921,36 @@ function standaloneTaskNotificationEntries(
  * notification at its true position: an old notification whose tool card has
  * scrolled out of the window rises to the top and falls off once N newer
  * entries exist, exactly like any other roster entry.
+ *
+ * `maxEntries` caps the merged result. The active turn passes
+ * `ROSTER_MAX_ENTRIES` (a standalone outcome ages out as newer activity fills
+ * the sliding window). The completed turn passes `Infinity` — it renders once,
+ * so "ageing out" would just drop terminal metadata (incl. failures) on first
+ * paint, and a late-arriving notification must not evict a retained tool whose
+ * folded status/summary/usage would vanish with its card. `base` is already
+ * capped to 8 tools, so the completed roster is at worst 8 tools + a few
+ * notifications, matching the prior layout.
+ *
+ * Same-millisecond ties break toward the standalone notification sorting FIRST
+ * (older): a standalone outcome originates from a tool that already scrolled
+ * out of the window, so on an equal timestamp it preceded the windowed
+ * activity — consistent with the insertion-order tie-break the compact feed
+ * uses (`useSpaceTaskMessages.sortRows`), and it keeps a stale outcome from
+ * artificially surviving the cap.
  */
 function mergeRosterWithNotifications(
   base: ActiveRosterEntry[],
-  notifications: RosterTaskNotificationEntry[]
+  notifications: RosterTaskNotificationEntry[],
+  maxEntries: number = ROSTER_MAX_ENTRIES
 ): ActiveRosterEntry[] {
-  return [...base, ...notifications].sort((a, b) => a.ts - b.ts).slice(-ROSTER_MAX_ENTRIES);
+  const merged = [...base, ...notifications].sort((a, b) => {
+    if (a.ts !== b.ts) return a.ts - b.ts;
+    const aNotif = a.kind === 'task_notification';
+    const bNotif = b.kind === 'task_notification';
+    if (aNotif !== bNotif) return aNotif ? -1 : 1;
+    return 0;
+  });
+  return maxEntries === Infinity ? merged : merged.slice(-maxEntries);
 }
 
 /**

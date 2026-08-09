@@ -1742,59 +1742,90 @@ describe('MinimalThreadFeed', () => {
     expect(taskEntries[0].textContent).toContain('3 tools');
   });
 
-  it('ages out a stale standalone task_notification in a completed turn once 8 newer tools exist', () => {
+  it('preserves both folded and standalone outcomes in a completed turn (no merged-cap eviction)', () => {
     const t = Date.now();
-    // An early sub-task completes (notification at t+1), then 8+ newer tools
-    // run before the turn ends. The notification's tool card has scrolled out
-    // of the 8-slot window, so it is standalone — but its timestamp predates
-    // the 8 newer tools, so it must age out instead of pinning to the bottom.
+    // >8 tools in a completed turn. tu-a1-0 (oldest) is capped out of the
+    // 8-tool roster → its notification (nt1) is standalone and arrives LATE
+    // (t+90, newer than the oldest retained tool's invocation ts). tu-a2-0 is
+    // the oldest RETAINED tool → its notification (nt2) folds onto its card.
+    // Re-applying an 8-cap after merging would let the late nt1 evict tu-a2-0,
+    // dropping nt2's folded status/summary with the card. The completed path
+    // must merge by ts for ordering but NOT re-cap, so both outcomes survive.
     const rows = [
       makeRow({
-        id: 'a0',
+        id: 'a1',
         label: 'Coder Agent',
         createdAt: t,
-        message: assistantToolUse('a0', [{ name: 'Task', input: { request: 'early subtask' } }]),
+        message: assistantToolUse('a1', [{ name: 'Task', input: { request: 'capped subtask' } }]),
       }),
       makeRow({
-        id: 'n0',
+        id: 'a2',
         label: 'Coder Agent',
-        createdAt: t + 1,
+        createdAt: t + 10,
+        message: assistantToolUse('a2', [{ name: 'Task', input: { request: 'retained subtask' } }]),
+      }),
+      makeRow({
+        id: 'a3',
+        label: 'Coder Agent',
+        createdAt: t + 20,
+        message: assistantToolUse(
+          'a3',
+          Array.from({ length: 7 }, (_, i) => ({
+            name: 'Bash',
+            input: { command: `fill ${i + 1}` },
+          }))
+        ),
+      }),
+      makeRow({
+        id: 'n2',
+        label: 'Coder Agent',
+        createdAt: t + 30,
         messageType: 'system',
         message: {
           type: 'system',
           subtype: 'task_notification',
           task_id: 'tk',
-          tool_use_id: 'tu-a0-0',
+          tool_use_id: 'tu-a2-0',
           status: 'completed',
-          summary: 'early completion',
+          summary: 'retained subtask done',
           output_file: '/tmp/o',
         },
       }),
       makeRow({
-        id: 'a1',
+        id: 'n1',
         label: 'Coder Agent',
-        createdAt: t + 100,
-        message: assistantToolUse(
-          'a1',
-          Array.from({ length: 9 }, (_, i) => ({
-            name: 'Bash',
-            input: { command: `echo ${i + 1}` },
-          }))
-        ),
+        createdAt: t + 90,
+        messageType: 'system',
+        message: {
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: 'tk',
+          tool_use_id: 'tu-a1-0',
+          status: 'completed',
+          summary: 'capped subtask done',
+          output_file: '/tmp/o',
+        },
       }),
-      makeRow({ id: 'r1', label: 'Coder Agent', createdAt: t + 200, message: resultMessage('r1') }),
+      makeRow({ id: 'r1', label: 'Coder Agent', createdAt: t + 100, message: resultMessage('r1') }),
     ];
 
     render(<MinimalThreadFeed parsedRows={rows} />);
 
     const entries = screen.getAllByTestId('minimal-thread-roster-entry');
-    // The stale notification aged out — no standalone task_notification line.
+    // nt1 (capped-out tool) renders as a standalone outcome line.
+    const standalone = entries.filter(
+      (e) => (e as HTMLElement).dataset.rosterKind === 'task_notification'
+    );
+    expect(standalone).toHaveLength(1);
+    expect(standalone[0].textContent).toContain('capped subtask done');
+    // nt2 (retained tool) is folded onto tu-a2-0's card, NOT evicted by nt1.
     expect(
-      entries.filter((e) => (e as HTMLElement).dataset.rosterKind === 'task_notification')
-    ).toHaveLength(0);
-    expect(screen.queryByText('Task completed')).toBeNull();
-    // The 8 newest tools fill the roster.
-    expect(entries.filter((e) => (e as HTMLElement).dataset.rosterKind === 'tool')).toHaveLength(8);
+      entries.some(
+        (e) =>
+          (e as HTMLElement).dataset.rosterKind === 'tool' &&
+          e.textContent?.includes('retained subtask done')
+      )
+    ).toBe(true);
   });
 
   it('does not duplicate a task_notification that folds onto a rostered tool (roster-only turn)', () => {
@@ -2130,6 +2161,152 @@ describe('MinimalThreadFeed', () => {
     expect(toolEntries).toHaveLength(8);
     expect(toolEntries[0].textContent).toContain('newer 2');
     expect(toolEntries[7].textContent).toContain('newer 9');
+  });
+
+  it('interleaves a standalone task_notification at its timestamp (mid-roster, not pinned)', () => {
+    const t = Date.now();
+    // The standalone notification's tool card scrolled out, but the notification
+    // itself arrived mid-stream (ts t+450 lands between windowed tools). It must
+    // interleave at its true position — not append to the bottom — so the newest
+    // tool stays at the bottom and the notification sits mid-roster.
+    const rows = [
+      makeRow({
+        id: 'a0',
+        label: 'Coder Agent',
+        createdAt: t,
+        turnIndex: 1,
+        message: assistantToolUse('a0', [{ name: 'Task', input: { request: 'old subtask' } }]),
+      }),
+      makeRow({
+        id: 'n0',
+        label: 'Coder Agent',
+        createdAt: t + 450,
+        turnIndex: 1,
+        messageType: 'system',
+        message: {
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: 'tk',
+          tool_use_id: 'tu-a0-0',
+          status: 'completed',
+          summary: 'mid notification',
+          output_file: '/tmp/o',
+        },
+      }),
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t + 800,
+        turnIndex: 1,
+        message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'echo 8' } }]),
+      }),
+    ];
+    const summary: ActiveTurnSummary = {
+      sessionId: 'space:s:task:t',
+      turnIndex: 1,
+      entries: [
+        { kind: 'tool_use', toolName: 'Bash', preview: 'tool 1', ts: t + 100, uuid: 'a1' },
+        { kind: 'tool_use', toolName: 'Bash', preview: 'tool 2', ts: t + 200, uuid: 'a1' },
+        { kind: 'tool_use', toolName: 'Bash', preview: 'tool 3', ts: t + 300, uuid: 'a1' },
+        { kind: 'tool_use', toolName: 'Bash', preview: 'tool 4', ts: t + 400, uuid: 'a1' },
+        { kind: 'tool_use', toolName: 'Bash', preview: 'tool 5', ts: t + 500, uuid: 'a1' },
+        { kind: 'tool_use', toolName: 'Bash', preview: 'tool 6', ts: t + 600, uuid: 'a1' },
+        { kind: 'tool_use', toolName: 'Bash', preview: 'tool 7', ts: t + 700, uuid: 'a1' },
+        { kind: 'tool_use', toolName: 'Bash', preview: 'tool 8', ts: t + 800, uuid: 'a1' },
+      ],
+    };
+
+    render(
+      <MinimalThreadFeed
+        parsedRows={rows}
+        activeAgentLabels={new Set(['Coder Agent'])}
+        activeTurnSummaries={[summary]}
+      />
+    );
+
+    const entries = screen.getAllByTestId('minimal-thread-roster-entry');
+    expect(entries).toHaveLength(8);
+    // The newest tool stays at the bottom — the notification did NOT pin there.
+    expect(entries[7].textContent).toContain('tool 8');
+    expect(entries[7].dataset.rosterKind).toBe('tool');
+    // The notification interleaves mid-roster at its timestamp (t+450, between
+    // tool 4 and tool 5), not at either edge.
+    const notifIdx = entries.findIndex(
+      (e) => (e as HTMLElement).dataset.rosterKind === 'task_notification'
+    );
+    expect(notifIdx).toBeGreaterThan(-1);
+    expect(notifIdx).toBeLessThan(7);
+    expect(entries[notifIdx].textContent).toContain('mid notification');
+    expect(entries[notifIdx - 1].textContent).toContain('tool 4');
+    expect(entries[notifIdx + 1].textContent).toContain('tool 5');
+  });
+
+  it('ages out a standalone task_notification that ties the window on the same millisecond', () => {
+    const t = Date.now();
+    // The standalone notification shares the exact ms (t+100) as the 8 windowed
+    // tools. Without an insertion-order tie-break the stable sort would treat
+    // the stale notification as newer than the equal-ts tools and let it
+    // survive the cap; the tie-break must sort it older so it ages out.
+    const rows = [
+      makeRow({
+        id: 'a0',
+        label: 'Coder Agent',
+        createdAt: t,
+        turnIndex: 1,
+        message: assistantToolUse('a0', [{ name: 'Task', input: { request: 'old subtask' } }]),
+      }),
+      makeRow({
+        id: 'n0',
+        label: 'Coder Agent',
+        createdAt: t + 100,
+        turnIndex: 1,
+        messageType: 'system',
+        message: {
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: 'tk',
+          tool_use_id: 'tu-a0-0',
+          status: 'completed',
+          summary: 'same ms completion',
+          output_file: '/tmp/o',
+        },
+      }),
+      makeRow({
+        id: 'a1',
+        label: 'Coder Agent',
+        createdAt: t + 100,
+        turnIndex: 1,
+        message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'echo 8' } }]),
+      }),
+    ];
+    const sameMs = t + 100;
+    const summary: ActiveTurnSummary = {
+      sessionId: 'space:s:task:t',
+      turnIndex: 1,
+      entries: Array.from({ length: 8 }, (_, i) => ({
+        kind: 'tool_use' as const,
+        toolName: 'Bash',
+        preview: `tie tool ${i + 1}`,
+        ts: sameMs,
+        uuid: 'a1',
+      })),
+    };
+
+    render(
+      <MinimalThreadFeed
+        parsedRows={rows}
+        activeAgentLabels={new Set(['Coder Agent'])}
+        activeTurnSummaries={[summary]}
+      />
+    );
+
+    const entries = screen.getAllByTestId('minimal-thread-roster-entry');
+    // The stale notification aged out on the tie — 8 tools fill the window.
+    expect(
+      entries.filter((e) => (e as HTMLElement).dataset.rosterKind === 'task_notification')
+    ).toHaveLength(0);
+    expect(screen.queryByText('Task completed')).toBeNull();
+    expect(entries.filter((e) => (e as HTMLElement).dataset.rosterKind === 'tool')).toHaveLength(8);
   });
 
   it('does not show the active rail on completed blocks', () => {
