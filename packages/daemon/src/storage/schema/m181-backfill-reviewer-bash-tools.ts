@@ -111,6 +111,7 @@ export function runMigration181(db: BunDatabase): void {
   // seeded space — there is nothing to re-stamp there.
   if (
     !tableHasColumn(db, 'space_agents', 'template_name') ||
+    !tableHasColumn(db, 'space_agents', 'name') ||
     !tableHasColumn(db, 'space_agents', 'tools') ||
     !tableHasColumn(db, 'space_agents', 'custom_prompt') ||
     !tableHasColumn(db, 'space_agents', 'description') ||
@@ -125,10 +126,13 @@ export function runMigration181(db: BunDatabase): void {
 
   const rows = db
     .prepare(
-      `SELECT id, tools, custom_prompt, description, template_hash FROM space_agents WHERE template_name = 'Reviewer'`
+      `SELECT id, template_name, tools, custom_prompt, description, template_hash
+       FROM space_agents
+       WHERE template_name = 'Reviewer' OR (template_name IS NULL AND name = 'Reviewer')`
     )
     .all() as Array<{
     id: string;
+    template_name: string | null;
     tools: string | null;
     custom_prompt: string | null;
     description: string | null;
@@ -136,7 +140,9 @@ export function runMigration181(db: BunDatabase): void {
   }>;
 
   const update = db.prepare(
-    `UPDATE space_agents SET tools = ?, custom_prompt = ?, description = ?, template_hash = ? WHERE id = ?`
+    `UPDATE space_agents
+     SET tools = ?, custom_prompt = ?, description = ?, template_name = 'Reviewer', template_hash = ?
+     WHERE id = ?`
   );
   let updated = 0;
 

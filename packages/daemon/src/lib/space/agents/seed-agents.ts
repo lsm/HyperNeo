@@ -295,7 +295,12 @@ export function isPristineRetiredPrMergerRow(agent: SpaceWorkerAgent): boolean {
     agent.templateName === 'PR Merger' &&
     agent.description === RETIRED_PR_MERGER_DESCRIPTION &&
     agent.customPrompt === RETIRED_PR_MERGER_PROMPT &&
-    arraysEqual(agent.tools ?? [], RETIRED_PR_MERGER_TOOLS)
+    arraysEqual(agent.tools ?? [], RETIRED_PR_MERGER_TOOLS) &&
+    agent.model === undefined &&
+    agent.thinkingLevel === undefined &&
+    agent.provider === undefined &&
+    agent.settingSources === undefined &&
+    (agent.status === undefined || agent.status === 'active')
   );
 }
 

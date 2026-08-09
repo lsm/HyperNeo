@@ -150,6 +150,15 @@ const LEGACY_PR_READY_TEMPLATE_ROUTES = new Set([
  * direction. This guard removes the accidental / prompt-injected vectors that
  * ARE regex-detectable.
  */
+const RETIRED_CODER_NO_MERGE_GUARD: DeclarativeToolGuard = {
+  matcher: 'Bash',
+  pattern:
+    '(?:^|[;&|()\\n`])\\s*(?:(?:env\\s+)?(?:[A-Za-z_][A-Za-z0-9_]*=[^\\s;&|()`]+|command)\\s+)*gh[\\s\\\\]+pr[\\s\\\\]+merge\\b',
+  decision: 'deny',
+  reason:
+    'Coder-role agents must not merge PRs. Their job is implementation only; the reviewer handles the merge after approval.',
+};
+
 export const REVIEWER_GH_API_REPO_GUARD: DeclarativeToolGuard = {
   matcher: 'Bash',
   pattern: 'gh\\b[^\\n]*?(?:\\bapi\\b[^\\n]*?repos\\/|(?:^|[\\s])(-R|--repo)(?:[\\s=]|$))',
@@ -301,7 +310,8 @@ const CODEX_REACTION_APPROVAL_GUIDANCE =
   'blocked), resolving the PR number and host from the run PR URL and reading `reactions` ' +
   '(parse the host and pass `--hostname` so GitHub Enterprise PRs are queried on the enterprise ' +
   'host, not the default github.com): ' +
-  "`HOST=$(python3 -c \"import sys,urllib.parse; print(urllib.parse.urlparse('<pr_url>').hostname or 'github.com')\"); gh api graphql --hostname \"$HOST\" -f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){issueOrPullRequest(number:$number){... on PullRequest {reactions(first:100){nodes{content user{login}}}}}}}' -f owner=<owner> -f name=<repo> -F number=<number>` " +
+  '`PR_URL=<pr_url>; HOST=${PR_URL#https://}; HOST=${HOST%%/*}; gh api graphql --hostname "$HOST" ' +
+  "-f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){issueOrPullRequest(number:$number){... on PullRequest {reactions(first:100){nodes{content user{login}}}}}}}' -f owner=<owner> -f name=<repo> -F number=<number>` " +
   'and inspect reactions from any login containing `codex` (case-insensitive — GitHub ' +
   'ships multiple variants such as `codex[bot]` and `chatgpt-codex-connector[bot]`, and ' +
   'the matcher accepts any of them): content `+1` means Codex passed, content `eyes` ' +
@@ -1695,11 +1705,20 @@ export function mergeNodeStructuralFieldsFromTemplate(
           legacyPromptValue !== undefined && legacyPromptValue !== existingCustomPrompt?.value
             ? { value: legacyPromptValue }
             : existingCustomPrompt;
+        const toolGuards =
+          templateAgent.toolGuards === undefined &&
+          agent.toolGuards?.length === 1 &&
+          JSON.stringify(agent.toolGuards[0]) === JSON.stringify(RETIRED_CODER_NO_MERGE_GUARD)
+            ? undefined
+            : templateAgent.toolGuards;
         return {
           ...agent,
-          ...(templateAgent.toolGuards === undefined
-            ? {}
-            : { toolGuards: templateAgent.toolGuards }),
+          ...(toolGuards === undefined
+            ? agent.toolGuards === undefined ||
+              JSON.stringify(agent.toolGuards) !== JSON.stringify([RETIRED_CODER_NO_MERGE_GUARD])
+              ? {}
+              : { toolGuards: undefined }
+            : { toolGuards }),
           ...(templateAgent.resetContextPerTurn === undefined
             ? {}
             : { resetContextPerTurn: templateAgent.resetContextPerTurn }),
