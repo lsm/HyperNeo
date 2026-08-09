@@ -101,8 +101,8 @@ export interface MarkCompleteHandlerDeps {
   /**
    * Optional merge-completion gate. When provided, `mark_complete` fails closed
    * until GitHub reports the task's PR merged (the coder owns the merge — there
-   * is no `merge_pr` gate anymore). Resolving no `pr_url` (a non-PR workflow)
-   * returns ok; the gate only blocks when a PR is in play and not merged. The
+   * is no `merge_pr` gate anymore). The gate decides whether a missing `pr_url`
+   * passes for non-PR workflows or blocks for workflows that require a PR. The
    * task stays `approved` on a block and the caller may retry after the merge.
    */
   assertPrMerged?: (task: SpaceTask) => Promise<{ ok: true } | { ok: false; error: string }>;
@@ -112,10 +112,11 @@ export interface MarkCompleteHandlerDeps {
  * Dependencies for the merge-completion gate factory.
  */
 export interface PrMergedGateDeps {
-  /** Resolve the task's PR URL (e.g. via the workflow run's primary link).
-   *  An empty string means "no PR in play" and the gate passes. */
+  /** Resolve the task's PR URL (e.g. via the workflow run's primary link). */
   resolvePrUrl: (task: SpaceTask) => string;
-  /** Query GitHub for the PR's `state`. Throws on lookup failure (fail closed). */
+  /** Block when no PR URL resolves. Use for workflows whose completion requires a PR. */
+  requirePrUrl?: boolean;
+  /** Query GitHub for the PR's state. Throws on lookup failure (fail closed). */
   getPrState: (prUrl: string) => Promise<string>;
 }
 
@@ -130,10 +131,19 @@ export interface PrMergedGateDeps {
 export function createPrMergedGate(
   deps: PrMergedGateDeps
 ): (task: SpaceTask) => Promise<{ ok: true } | { ok: false; error: string }> {
-  const { resolvePrUrl, getPrState } = deps;
+  const { resolvePrUrl, requirePrUrl = false, getPrState } = deps;
   return async (task) => {
     const prUrl = resolvePrUrl(task);
-    if (!prUrl) return { ok: true };
+    if (!prUrl) {
+      return requirePrUrl
+        ? {
+            ok: false,
+            error:
+              "mark_complete merge gate: could not resolve the run's PR URL. " +
+              'The task stays approved until a PR link is available and its merge is confirmed.',
+          }
+        : { ok: true };
+    }
 
     let state: string;
     try {

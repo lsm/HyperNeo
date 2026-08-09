@@ -96,8 +96,13 @@ The prose is your own text, so before posting verify the exact echoed delimiter 
 \`gh pr review\` has NO inline line-comment flag and its response omits the review URL, and querying the PR-wide latest review afterwards can race concurrent reviewers on the same PR (e.g. the four Plan Review slots). So post EVERY review through the GraphQL \`addPullRequestReview\` mutation, which RETURNS \`pullRequestReview.url\` for the exact review just created. The mutation carries the RUN's PR id (not a free-form repo path), so it stays within the run-scoped boundary that a Bash guard enforces on the Reviewer (direct \`gh api repos/<owner>/<repo>/...\` REST reads are blocked — the Reviewer may only read the workflow run's PR). Submit the mutation as a COMPLETE JSON request body via \`gh api graphql --input\` (a file with \`{query, variables}\`, where \`variables.comments\` is a real JSON array — \`-F\` cannot coerce an arbitrary JSON-array string into an input-array GraphQL variable, and \`-f\` sends a string). The \`event\` variable MUST match your verdict (\`APPROVE\`, \`REQUEST_CHANGES\`, or \`COMMENT\` for the own-PR fallback). Parse the PR's host (for GitHub Enterprise) and pass \`--hostname\` so the enterprise PR id goes to the right endpoint. Keep every piece of untrusted review prose in a file and load it with \`jq --rawfile\` — NEVER interpolate it into a shell command:
 
 \`\`\`bash
-PR_ID=$(gh pr view <pr_url> --json id --jq .id)
-HOST=$(python3 -c "import sys,urllib.parse; print(urllib.parse.urlparse('<pr_url>').hostname or 'github.com')")
+PR_URL=<pr_url>
+PR_ID=$(gh pr view "$PR_URL" --json id --jq .id)
+HEAD_OID=$(gh pr view "$PR_URL" --json headRefOid --jq .headRefOid)
+# Parse the PR host with PURE bash parameter expansion — no python3/interpreter
+# (the Reviewer Bash allowlist denies interpreters as unconstrained code exec).
+HOST=\${PR_URL#https://}
+HOST=\${HOST%%/*}
 REQ=$(mktemp)
 BODY=$(mktemp)
 trap 'rm -f "$REQ" "$BODY"' EXIT
@@ -109,13 +114,17 @@ cat > "$BODY" <<'<the EXACT echoed delimiter>'
 <the EXACT echoed delimiter>
 # jq builds the variables object; --rawfile reads the body from the file so the
 # shell never parses the prose. The mutation RETURNS the review URL directly.
-jq -n --arg id "$PR_ID" --arg event "APPROVE" --rawfile body "$BODY" \
-  '{query: "mutation($id:ID!, $event:PullRequestReviewEvent!, $body:String!, $comments:[DraftPullRequestReviewCommentInput!]){addPullRequestReview(input:{pullRequestId:$id, event:$event, body:$body, comments:$comments}){pullRequestReview{url}}}",
-    variables: {id: $id, event: $event, body: $body, comments: []}}' > "$REQ"
+# commitOID binds the review to the head you actually inspected — if the head
+# advanced between your diff-read and this post, the review attaches to the old
+# (inspected) commit and the post-approval merge check correctly rejects it as
+# not covering the current head.
+jq -n --arg id "$PR_ID" --arg headOid "$HEAD_OID" --arg event "APPROVE" --rawfile body "$BODY" \
+  '{query: "mutation($id:ID!, $headOid:GitObjectID!, $event:PullRequestReviewEvent!, $body:String!, $comments:[DraftPullRequestReviewCommentInput!]){addPullRequestReview(input:{pullRequestId:$id, commitOID:$headOid, event:$event, body:$body, comments:$comments}){pullRequestReview{url}}}",
+    variables: {id: $id, headOid: $headOid, event: $event, body: $body, comments: []}}' > "$REQ"
 REVIEW_URL=$(gh api graphql --hostname "$HOST" --input "$REQ" --jq '.data.addPullRequestReview.pullRequestReview.url')
 \`\`\`
 
-Use \`event="REQUEST_CHANGES"\` when your verdict requests changes, and \`event="COMMENT"\` for an informational note or the own-PR fallback — never approve while posting blocking findings. Always put the header block (## 🤖 Review by …) at the top of body. To anchor findings to specific lines, replace the empty \`comments: []\` with one entry per finding: write each finding's text to its OWN temp file with a QUOTED heredoc using the SAME per-invocation delimiter, then add one \`--rawfile findingN "$FINDINGN"\` argument per file and one \`--arg pathN "$PATHN"\` per file (the file path is passed as a jq VARIABLE, never interpolated into the jq program — a Git pathname may legally contain a double-quote or backslash that would break the program string), then put a matching \`{path:$pathN, line:<n>, side:"RIGHT", body:$findingN}\` object inside the \`comments\` array (repeat the \`--arg pathN\` + \`--rawfile findingN\` + \`[{...}]\` shape per finding) and submit the assembled JSON via \`--input\`.
+Use \`event="REQUEST_CHANGES"\` when your verdict requests changes, and \`event="COMMENT"\` for an informational note or the own-PR fallback — never approve while posting blocking findings. Always put the header block (## 🤖 Review by …) at the top of body. To anchor findings to specific lines, replace the empty \`comments: []\` with one entry per finding: write each finding's text to its OWN temp file with a QUOTED heredoc using the SAME per-invocation delimiter, then add one \`--rawfile findingN "$FINDINGN"\` argument per file and one \`--arg pathN "$PATHN"\` per file (the file path is passed as a jq VARIABLE, never interpolated into the jq program — a Git pathname may legally contain a double-quote or backslash that would break the program string), then put a matching \`{path:$pathN, line:<n>, side:<SIDE>, body:$findingN}\` object inside the \`comments\` array (repeat the \`--arg pathN\` + \`--rawfile findingN\` + \`[{...}]\` shape per finding) and submit the assembled JSON via \`--input\`. Choose \`side\` from the diff position where the comment lands: \`"RIGHT"\` for the head (added/modified) side, \`"LEFT"\` for the base/deleted side — GitHub rejects a draft comment on the wrong side and fails the whole mutation, so a finding on a deleted line must use \`LEFT\` (with \`startSide\` for ranges).
 
 Use \`$REVIEW_URL\` as the \`review_url\` in the feedback handoff and the \`url:\` in the ---REVIEW_POSTED--- block.
 

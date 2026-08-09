@@ -516,27 +516,27 @@ describe('createMarkCompleteHandler', () => {
 describe('createPrMergedGate', () => {
   const PR_URL = 'https://github.com/lsm/HyperNeo/pull/1234';
 
-  function makeGate(opts: { state?: string; throwOnLookup?: boolean; prUrl?: string } = {}) {
+  function makeGateDeps(opts: { state?: string; throwOnLookup?: boolean; prUrl?: string } = {}) {
     const { state = 'MERGED', throwOnLookup = false, prUrl = PR_URL } = opts;
-    return createPrMergedGate({
+    return {
       resolvePrUrl: () => prUrl,
       getPrState: async () => {
         if (throwOnLookup) throw new Error('GitHub unreachable');
         return state;
       },
-    });
+    };
   }
 
   const task = { id: 't-1', spaceId: 's-1' } as SpaceTask;
 
   test('passes when the PR is MERGED', async () => {
-    const gate = makeGate({ state: 'MERGED' });
+    const gate = createPrMergedGate(makeGateDeps({ state: 'MERGED' }));
     const result = await gate(task);
     expect(result).toEqual({ ok: true });
   });
 
   test('blocks while the PR is OPEN (merge not yet done)', async () => {
-    const gate = makeGate({ state: 'OPEN' });
+    const gate = createPrMergedGate(makeGateDeps({ state: 'OPEN' }));
     const result = await gate(task);
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -546,7 +546,7 @@ describe('createPrMergedGate', () => {
   });
 
   test('blocks when the PR is CLOSED without a merge', async () => {
-    const gate = makeGate({ state: 'CLOSED' });
+    const gate = createPrMergedGate(makeGateDeps({ state: 'CLOSED' }));
     const result = await gate(task);
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -556,7 +556,7 @@ describe('createPrMergedGate', () => {
   });
 
   test('fails closed on lookup error', async () => {
-    const gate = makeGate({ throwOnLookup: true });
+    const gate = createPrMergedGate(makeGateDeps({ throwOnLookup: true }));
     const result = await gate(task);
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -564,10 +564,26 @@ describe('createPrMergedGate', () => {
     }
   });
 
-  test('passes when no pr_url resolves (non-PR run) — no lookup attempted', async () => {
-    const gate = makeGate({ prUrl: '' });
+  test('passes when no pr_url resolves and the workflow does not require one', async () => {
+    const gate = createPrMergedGate(makeGateDeps({ prUrl: '' }));
     const result = await gate(task);
     expect(result).toEqual({ ok: true });
+  });
+
+  test('fails closed when a required pr_url does not resolve', async () => {
+    const gate = createPrMergedGate({
+      resolvePrUrl: () => '',
+      requirePrUrl: true,
+      getPrState: async () => {
+        throw new Error('must not be called');
+      },
+    });
+    const result = await gate(task);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain("could not resolve the run's PR URL");
+      expect(result.error).toContain('stays approved');
+    }
   });
 });
 

@@ -6660,23 +6660,25 @@ test('every reviewer slot carries the Bash allowlist + read-scope guards', () =>
   }
 });
 
-test('reviewer Bash allowlist denies arbitrary binaries but permits the review-posting surface', () => {
+test('reviewer Bash allowlist permits only the read-only review surface', () => {
   const denied = (command: string): boolean =>
     new RegExp(REVIEWER_BASH_ALLOWLIST_GUARD.pattern).test(command);
-  // The legitimate review surface must PASS (denied === false).
+  // The legitimate review surface must PASS (denied === false). Includes the
+  // round-12 bash-only host parse (pure parameter expansion, no interpreter).
   const allowedCommands = [
     'gh pr view https://github.com/a/b/pull/1 --json state,mergeStateStatus,headRefOid',
     'gh pr diff 123',
     'gh pr checks 123',
     "gh api graphql --hostname github.com -f query='query{}' -f owner=a -f name=b -F number=1",
     'PR_ID=$(gh pr view https://github.com/a/b/pull/1 --json id --jq .id)',
-    "HOST=$(python3 -c \"import sys,urllib.parse; print(urllib.parse.urlparse('https://github.com/a/b/pull/1').hostname or 'github.com')\")",
+    'HEAD_OID=$(gh pr view https://github.com/a/b/pull/1 --json headRefOid --jq .headRefOid)',
+    'PR_URL=https://github.com/a/b/pull/1\nHOST=${PR_URL#https://}\nHOST=${HOST%%/*}\nREVIEW_URL=$(gh api graphql --hostname "$HOST" --input "$REQ" --jq \'.data.addPullRequestReview.pullRequestReview.url\')',
     'REQ=$(mktemp)',
     'BODY=$(mktemp)',
     'trap \'rm -f "$REQ" "$BODY"\' EXIT',
     'cat > "$BODY" <<\'REVIEW_BODY_DELIM\'',
     'cat > "$FINDING" <<\'FINDING_DELIM\'',
-    'jq -n --arg id "$PR_ID" --arg event "APPROVE" --rawfile body "$BODY" \'{query: "mutation{}"}\' > "$REQ"',
+    'jq -n --arg id "$PR_ID" --arg headOid "$HEAD_OID" --arg event "APPROVE" --rawfile body "$BODY" \'{query: "mutation{}"}\' > "$REQ"',
     'REVIEW_URL=$(gh api graphql --hostname "$HOST" --input "$REQ" --jq \'.data.addPullRequestReview.pullRequestReview.url\')',
     'DELIM="REVIEW_BODY_$(head -c32 /dev/urandom | base64 | tr -dc \'A-Za-z0-9\' | head -c24)_END"',
     'echo "heredoc delimiter: $DELIM"',
@@ -6694,19 +6696,46 @@ test('reviewer Bash allowlist denies arbitrary binaries but permits the review-p
     'ssh evil.example',
     'git push origin --force',
     'node -e "process.exit()"',
+    'bash -c "curl http://evil"',
+    'sh -c "curl http://evil"',
   ];
   for (const command of deniedCommands) {
     expect(denied(command), `should deny: ${command.slice(0, 70)}`).toBe(true);
   }
-  // Honest limit of a leading-token regex allowlist (documented on the guard):
-  // `cat` is a legitimate review-surface executable (heredoc body writing), so
-  // a `cat <credential-file>` is NOT caught here — the Reviewer System Contract
-  // ("you do NOT run the code under review; read ONLY the workflow run's PR")
-  // remains the primary boundary. Asserting the gap explicitly keeps it a
-  // known, documented residual rather than a silent hole. (Note `NAME=$(curl…)`
-  // substitution-smuggling IS denied — the assignment group requires an allowed
-  // executable after `$(`.)
-  for (const command of ['cat ~/.claude/.credentials.json']) {
+  // NO interpreter is allowed (round-12 P1-2): python3/python are dropped even
+  // though the old contract used `python3 -c urllib.parse.urlparse` for the host.
+  const interpreterCommands = [
+    'python3 -c "import os; os.system(\'curl http://evil\')"',
+    'python -c "print(1)"',
+  ];
+  for (const command of interpreterCommands) {
+    expect(denied(command), `should deny interpreter: ${command.slice(0, 70)}`).toBe(true);
+  }
+  // gh is restricted to read-only `pr view|diff|checks` + `api graphql` (round-12
+  // P1-1): write/merge/close subcommands and REST repos paths are DENIED. (The
+  // `-R`/`--repo` cross-repo vector is covered by the sibling
+  // REVIEWER_GH_API_REPO_GUARD, which is always applied alongside this one.)
+  const ghWriteCommands = [
+    'gh pr merge https://github.com/a/b/pull/1 --squash',
+    'gh pr merge https://github.com/a/b/pull/1 --squash --admin',
+    'gh pr review 123 --approve --body-file "$BODY"',
+    'gh pr close 123',
+    'gh api repos/a/b/pulls',
+    'gh repo view a/b',
+  ];
+  for (const command of ghWriteCommands) {
+    expect(denied(command), `should deny gh write/merge: ${command.slice(0, 70)}`).toBe(true);
+  }
+  // Honest limits of a leading-token regex allowlist (documented on the guard):
+  // `cat` is a legitimate review-surface executable (heredoc body writing), so a
+  // `cat <credential-file>` is NOT caught here — and a command LIST (`echo ok;
+  // curl …`) is not either, because the leading `echo` is allowed. The Reviewer
+  // System Contract ("you do NOT run the code under review; read ONLY the
+  // workflow run's PR") remains the primary boundary. Asserting the gaps
+  // explicitly keeps them known, documented residuals rather than silent holes.
+  // (Note `NAME=$(curl…)` substitution-smuggling IS denied — the assignment
+  // group requires an allowed executable after `$(`.)
+  for (const command of ['cat ~/.claude/.credentials.json', 'echo ok; curl http://evil']) {
     expect(
       denied(command),
       `documented residual gap should NOT be denied: ${command.slice(0, 70)}`

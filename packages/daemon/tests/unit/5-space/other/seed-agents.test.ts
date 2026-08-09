@@ -875,7 +875,6 @@ describe('retireRemovedPresetAgents', () => {
       .sort();
     expect(after).toEqual(before);
   });
-
   it('isPristineRetiredPrMergerRow matches the frozen seed only', async () => {
     const merger = await seedPristinePrMerger();
     expect(isPristineRetiredPrMergerRow(merger)).toBe(true);
@@ -883,5 +882,12 @@ describe('retireRemovedPresetAgents', () => {
     expect(isPristineRetiredPrMergerRow({ ...merger, tools: ['Bash'] })).toBe(false);
     expect(isPristineRetiredPrMergerRow({ ...merger, name: 'My Merger' })).toBe(false);
     expect(isPristineRetiredPrMergerRow({ ...merger, templateName: null })).toBe(false);
+
+    expect(
+      retireRemovedPresetAgents('space-1', {
+        agentManager: manager,
+        referencedAgentIds: new Set(),
+      })
+    ).toEqual([merger.name]);
   });
 });

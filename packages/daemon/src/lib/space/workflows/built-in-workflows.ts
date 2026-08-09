@@ -172,9 +172,12 @@ export const REVIEWER_GH_API_REPO_GUARD: DeclarativeToolGuard = {
  * This guard denies ANY Bash command whose leading executable is not one of the
  * legitimate review-surface primitives:
  *
- *   - `gh`            — read-only `pr view|diff|checks` + `api graphql`
- *                       (reviewThreads query / addPullRequestReview mutation);
- *   - `python3`/`python` — the PR-host parse helper (`urllib.parse.urlparse`);
+ *   - `gh pr view|diff|checks` — the run-scoped read-only inspection commands
+ *       (default to the current branch's PR; no `-R`/`--repo` cross-repo flag);
+ *   - `gh api graphql` — the reviewThreads query and the addPullRequestReview
+ *       mutation (keyed on the run's PR id, not a free repo path). ALL OTHER
+ *       `gh` subcommands — including write/merge forms like `gh pr merge`,
+ *       `gh pr review`, `gh pr close`, and REST `gh api repos/...` — are denied;
  *   - `jq`            — building the GraphQL `--input` request JSON;
  *   - `mktemp`        — session-unique temp files for the review body;
  *   - `cat`, `echo`   — QUOTED-heredoc body writing + delimiter echo;
@@ -182,28 +185,38 @@ export const REVIEWER_GH_API_REPO_GUARD: DeclarativeToolGuard = {
  *   - `trap`, `rm`    — temp-file cleanup on exit;
  *   - `printf`, `true`, `false`, `:`, `test`, `[`, `read` — minor shell plumbing.
  *
- * A leading variable assignment (`NAME=…`) is stripped first, so
- * `HOST=$(python3 …)`, `PR_ID=$(gh …)`, `REQ=$(mktemp)`, and the
- * `DELIM="…$(head …|base64|tr …)…"` delimiter form all pass.
+ * No `python3`/`python` (or any other interpreter) is allowed: even though the
+ * old contract used `python3 -c urllib.parse.urlparse` to parse the PR host,
+ * an allowlisted interpreter is unconstrained code execution. The host is now
+ * parsed with PURE bash parameter expansion (`HOST=${PR_URL#https://};
+ * HOST=${HOST%%/*}`), which is shell syntax, not an external command.
+ *
+ * A leading variable assignment (`NAME=…`) is stripped first (including the
+ * `$(…)`/quoted forms), so `PR_ID=$(gh pr view …)`, `HOST=${PR_URL#https://}`,
+ * `REQ=$(mktemp)`, and `DELIM="…$(head …|base64|tr …)…"` all pass.
  *
  * Honest limits of a regex allowlist (mirroring the doc on
- * `REVIEWER_GH_API_REPO_GUARD`): the leading-token check cannot validate inside
- * command substitution (`HOST=$(curl …)`), and `cat <credential-file>` is
- * indistinguishable from the `cat > "$BODY" <<heredoc` posting form. This is
- * defense-in-depth only — the Reviewer System Contract remains the primary
- * boundary ("you do NOT run the code under review; never run merge/API writes;
- * read ONLY the workflow run's PR"). It raises the bar from "deny two gh
- * vectors" to "deny every non-review binary as the primary command".
+ * `REVIEWER_GH_API_REPO_GUARD`): the leading-token check validates only up to
+ * the first permitted token after assignment-unwrap — it cannot validate inside
+ * command substitution (`HOST=$(curl …)` is caught because `curl` becomes the
+ * leading token, but a command LIST such as `echo ok; curl …` is not), and
+ * `cat <credential-file>` is indistinguishable from the `cat > "$BODY"
+ * <<heredoc` posting form. This is defense-in-depth only — the Reviewer System
+ * Contract remains the primary boundary ("you do NOT run the code under review;
+ * never run merge/API writes; read ONLY the workflow run's PR"). It raises the
+ * bar from "deny two gh vectors" to "deny every non-review binary as the
+ * primary command, every write/merge gh subcommand, and every interpreter".
  */
 export const REVIEWER_BASH_ALLOWLIST_GUARD: DeclarativeToolGuard = {
   matcher: 'Bash',
   pattern:
-    '^(?!\\s*(?:(?:[A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*(?:\\$\\(|[\'"]|\\S+?\\s*)?)*(?:gh|python3|python|jq|mktemp|echo|cat|tr|base64|head|trap|rm|printf|true|false|:|test|\\[|read)\\b)',
+    '^(?!\\s*(?:(?:[A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*(?:\\$\\(|[\'"]|\\S+?\\s*)?)*(?:gh\\s+(?:pr\\s+(?:view|diff|checks)\\b|api\\s+graphql\\b)|jq|mktemp|echo|cat|tr|base64|head|trap|rm|printf|true|false|:|test|\\[|read)\\b)',
   decision: 'deny',
   reason:
     'Reviewer Bash is allowlisted: only the run-scoped read-only `gh pr view|diff|checks`, the `gh api graphql` reviewThreads query / addPullRequestReview mutation, ' +
-    'the `python3` PR-host parse helper, and the temp-file + jq plumbing that posts the review (mktemp, cat, echo, head, base64, tr, trap, rm) are permitted. ' +
-    'Arbitrary binaries (curl, wget, nc, ssh, env, git, node, …) are denied — the Reviewer never needs them, and they could disclose or exfiltrate daemon credentials.',
+    'and the temp-file + jq plumbing that posts the review (mktemp, cat, echo, head, base64, tr, trap, rm, printf) are permitted. ' +
+    '`gh` write/merge subcommands (gh pr merge, gh pr review, gh pr close, gh api repos/...) are DENIED, and NO interpreter (python3, python, node, bash, sh, ...) is allowed — ' +
+    'the reviewer must never execute code, and these vectors could disclose or exfiltrate daemon credentials or mutate the repository.',
 };
 
 /** Combined guard set applied to every built-in Reviewer slot. */

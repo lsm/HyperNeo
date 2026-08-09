@@ -26,7 +26,7 @@ import { getPresetAgentTemplates } from '../../lib/space/agents/seed-agents';
 import { computeAgentTemplateHash } from '../../lib/space/agents/agent-template-hash';
 import { Logger } from '../../lib/logger';
 
-const log = new Logger('migration-180');
+const log = new Logger('migration-181');
 
 // The pre-change Reviewer profile (shell-less, no cron) — rows whose stored
 // tools exactly match this set are unmodified seeds and safe to re-stamp.
