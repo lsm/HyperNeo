@@ -170,6 +170,19 @@ export class MessagePersistence {
     const session = agentSession.getSessionData();
 
     try {
+      // 0. Reject sends to archived sessions BEFORE persisting. An archived
+      // session's worktree/agent/transcript are torn down: under v2 the enqueue
+      // barrier (deliverChatMessage) would skip the delivery job, leaving an
+      // `enqueued` row hidden indefinitely while the RPC returns a misleadingly
+      // successful message id; under legacy the drive would run against a
+      // destroyed session. Rejecting here prevents the orphan for both paths.
+      // See Codex (#3742826487).
+      if (this.db.getSession?.(sessionId)?.status === 'archived') {
+        throw new Error(
+          `[MessagePersistence] Session ${sessionId} is archived; cannot accept new messages.`
+        );
+      }
+
       // 1. Validate image sizes (API limit is 5MB for base64-encoded data)
       if (images && images.length > 0) {
         validateImageSizes(images);
@@ -267,6 +280,18 @@ export class MessagePersistence {
       const useV2Delivery = isMessageDeliveryV2Enabled();
       if (shouldDispatchToQuery && !useV2Delivery) {
         await agentSession.startQueryAndEnqueue(messageId, messageContent);
+      }
+      // v2: mark the session queued NOW (before the RPC acknowledges) so the
+      // pre-claim polling window — up to pollIntervalMs before the delivery
+      // processor claims the job — does not report idle. Otherwise a defer during
+      // that window is coerced to immediate (becomes a steer) and an immediate
+      // client.interrupt no-ops (sees idle), letting the prompt execute after the
+      // user tried to stop it. Only for a turn-bound message (session idle); a
+      // steer (session busy) is already non-idle, and setQueued would wrongly
+      // downgrade processing→queued. The handler transitions to processing on
+      // claim. See Codex (#3742826489).
+      if (shouldDispatchToQuery && useV2Delivery && !isAgentBusy) {
+        await agentSession.stateManager.setQueued(messageId);
       }
 
       // 8. Emit 'message.persisted' for non-critical post-processing.
