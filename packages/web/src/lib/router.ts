@@ -41,6 +41,9 @@ const SPACE_CONFIGURE_TAB_ROUTE_PATTERN =
   /^\/space\/([a-z0-9-]+)\/configure\/(agents|workflows|settings)$/;
 const SPACE_GOALS_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/goals$/;
 const SPACE_MEMORIES_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/memories$/;
+const SPACE_EVOLVE_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/evolve$/;
+// Legacy alias of /evolve. Still accepted so existing bookmarks/links resolve;
+// applyPathToSignals normalizes it to /evolve via a history replacement.
 const SPACE_FORGE_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/forge$/;
 const SPACE_TASKS_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/tasks$/;
 const SPACE_TASKS_ARCHIVED_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/tasks\/archived$/;
@@ -106,6 +109,9 @@ export function getSpaceIdFromPath(path: string): string | null {
 
   const memoriesMatch = path.match(SPACE_MEMORIES_ROUTE_PATTERN);
   if (memoriesMatch) return memoriesMatch[1];
+
+  const evolveMatch = path.match(SPACE_EVOLVE_ROUTE_PATTERN);
+  if (evolveMatch) return evolveMatch[1];
 
   const forgeMatch = path.match(SPACE_FORGE_ROUTE_PATTERN);
   if (forgeMatch) return forgeMatch[1];
@@ -173,9 +179,21 @@ export function getSpaceMemoriesFromPath(path: string): string | null {
   return match ? match[1] : null;
 }
 
+export function getSpaceEvolveFromPath(path: string): string | null {
+  const evolveMatch = path.match(SPACE_EVOLVE_ROUTE_PATTERN);
+  if (evolveMatch) return evolveMatch[1];
+  // Legacy /forge alias resolves to the same space.
+  const forgeMatch = path.match(SPACE_FORGE_ROUTE_PATTERN);
+  return forgeMatch ? forgeMatch[1] : null;
+}
+
+/**
+ * Compatibility wrapper for the legacy /forge route. /forge is now an alias of
+ * the canonical /evolve route, so this recognizes both URL forms. Prefer
+ * {@link getSpaceEvolveFromPath} in new code.
+ */
 export function getSpaceForgeFromPath(path: string): string | null {
-  const match = path.match(SPACE_FORGE_ROUTE_PATTERN);
-  return match ? match[1] : null;
+  return getSpaceEvolveFromPath(path);
 }
 
 export function getSpaceTasksFromPath(path: string): string | null {
@@ -265,8 +283,16 @@ export function createSpaceMemoriesPath(spaceId: string): string {
   return `/space/${spaceId}/memories`;
 }
 
+export function createSpaceEvolvePath(spaceId: string): string {
+  return `/space/${spaceId}/evolve`;
+}
+
+/**
+ * Compatibility wrapper that generates the canonical /evolve path. Kept so
+ * existing imports keep working; new code should use {@link createSpaceEvolvePath}.
+ */
 export function createSpaceForgePath(spaceId: string): string {
-  return `/space/${spaceId}/forge`;
+  return createSpaceEvolvePath(spaceId);
 }
 
 export function createSpaceTasksPath(spaceId: string, tab?: string): string {
@@ -552,10 +578,10 @@ export function navigateToSpaceMemories(spaceId: string, replace = false): void 
   navSectionSignal.value = 'spaces';
 }
 
-export function navigateToSpaceForge(spaceId: string, replace = false): void {
+export function navigateToSpaceEvolve(spaceId: string, replace = false): void {
   if (routerState.isNavigating) return;
 
-  const targetPath = createSpaceForgePath(spaceId);
+  const targetPath = createSpaceEvolvePath(spaceId);
   if (getCurrentPath() !== targetPath) {
     routerState.isNavigating = true;
     try {
@@ -573,6 +599,14 @@ export function navigateToSpaceForge(spaceId: string, replace = false): void {
   currentSpaceAgentHandleSignal.value = null;
   currentSessionIdSignal.value = null;
   navSectionSignal.value = 'spaces';
+}
+
+/**
+ * Compatibility wrapper that navigates to the canonical /evolve route. Kept so
+ * existing imports keep working; new code should use {@link navigateToSpaceEvolve}.
+ */
+export function navigateToSpaceForge(spaceId: string, replace = false): void {
+  navigateToSpaceEvolve(spaceId, replace);
 }
 
 export function navigateToSpaceTasks(
@@ -718,6 +752,17 @@ function applyPathToSignals(path: string, search = window.location.search): stri
     );
   }
 
+  const legacyForgeMatch = path.match(SPACE_FORGE_ROUTE_PATTERN);
+  if (legacyForgeMatch) {
+    pushPath(
+      createSpaceEvolvePath(legacyForgeMatch[1]),
+      {
+        spaceId: legacyForgeMatch[1],
+      },
+      true
+    );
+  }
+
   const sessionId = getSessionIdFromPath(path);
   const spaceConfigureTab = getSpaceConfigureTabFromPath(path);
   const spaceConfigure = spaceConfigureTab
@@ -725,7 +770,7 @@ function applyPathToSignals(path: string, search = window.location.search): stri
     : getSpaceConfigureFromPath(path);
   const spaceGoals = getSpaceGoalsFromPath(path);
   const spaceMemories = getSpaceMemoriesFromPath(path);
-  const spaceForge = getSpaceForgeFromPath(path);
+  const spaceEvolve = getSpaceEvolveFromPath(path);
   const spaceTasksTab = getSpaceTasksTabFromPath(path);
   const spaceTasks = spaceTasksTab ? spaceTasksTab.spaceId : getSpaceTasksFromPath(path);
   const spaceTaskView = getSpaceTaskViewFromPath(path);
@@ -792,8 +837,8 @@ function applyPathToSignals(path: string, search = window.location.search): stri
       currentSpaceAgentHandleSignal.value = null;
       currentSessionIdSignal.value = null;
       navSectionSignal.value = 'spaces';
-    } else if (spaceForge) {
-      setCurrentSpaceRouteId(spaceForge);
+    } else if (spaceEvolve) {
+      setCurrentSpaceRouteId(spaceEvolve);
       currentSpaceViewModeSignal.value = 'forge';
       currentSpaceSessionIdSignal.value = null;
       currentSpaceTaskIdSignal.value = null;

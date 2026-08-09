@@ -461,7 +461,7 @@ describe('TaskAuxiliaryPanel — artifacts section', () => {
       getTransitionActions: () => [],
     }));
     vi.doMock('../../../lib/router', () => ({
-      navigateToSpaceForge: vi.fn(),
+      navigateToSpaceEvolve: vi.fn(),
       navigateToSpaceGoals: vi.fn(),
     }));
     vi.doMock('../ui/Dropdown', () => ({

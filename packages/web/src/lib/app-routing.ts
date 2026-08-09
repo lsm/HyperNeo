@@ -15,7 +15,7 @@ import {
   createSpacePath,
   createSpaceAgentPath,
   createSpaceConfigurePath,
-  createSpaceForgePath,
+  createSpaceEvolvePath,
   createSpaceGoalsPath,
   createSpaceMemoriesPath,
   createSpaceSessionPath,
@@ -67,7 +67,7 @@ export function deriveAppExpectedPath(state: AppRoutingState): string {
   if (spaceId && spaceViewMode === 'sessions') return createSpaceSessionsPath(spaceId);
   if (spaceId && spaceViewMode === 'goals') return createSpaceGoalsPath(spaceId);
   if (spaceId && spaceViewMode === 'memories') return createSpaceMemoriesPath(spaceId);
-  if (spaceId && spaceViewMode === 'forge') return createSpaceForgePath(spaceId);
+  if (spaceId && spaceViewMode === 'forge') return createSpaceEvolvePath(spaceId);
   if (spaceId && spaceViewMode === 'tasks') {
     return createSpaceTasksPath(
       spaceId,

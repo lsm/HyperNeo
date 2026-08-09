@@ -40,7 +40,7 @@ import {
   navigateToSpaceSessions,
   navigateToSpaceGoals,
   navigateToSpaceMemories,
-  navigateToSpaceForge,
+  navigateToSpaceEvolve,
   navigateToSpaceTasks,
   navigateToSpaceAgent,
   navigateToSpaceSession,
@@ -163,7 +163,7 @@ export function App() {
         } else if (spaceId && spaceViewMode === 'memories') {
           navigateToSpaceMemories(spaceId, true);
         } else if (spaceId && spaceViewMode === 'forge') {
-          navigateToSpaceForge(spaceId, true);
+          navigateToSpaceEvolve(spaceId, true);
         } else if (spaceId && spaceViewMode === 'tasks') {
           navigateToSpaceTasks(spaceId, undefined, true);
         } else if (spaceId && spaceViewMode === 'configure') {

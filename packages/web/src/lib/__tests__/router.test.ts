@@ -5,6 +5,7 @@ import {
   createSpaceAgentPath,
   createSpaceConfigurePath,
   createSpaceGoalsPath,
+  createSpaceEvolvePath,
   createSpaceForgePath,
   createSpacePath,
   createSpaceSessionPath,
@@ -15,6 +16,7 @@ import {
   getSpaceAgentFromPath,
   getSpaceConfigureTabFromPath,
   getSpaceGoalsFromPath,
+  getSpaceEvolveFromPath,
   getSpaceForgeFromPath,
   getSpaceIdFromPath,
   getSpaceTaskIdFromPath,
@@ -28,6 +30,7 @@ import {
   navigateToSpaceAgent,
   navigateToSpaceConfigure,
   navigateToSpaceGoals,
+  navigateToSpaceEvolve,
   navigateToSpaceForge,
   navigateToSpaceSession,
   navigateToSpacesPage,
@@ -108,8 +111,14 @@ describe('router', () => {
     );
     expect(createSpaceGoalsPath(SPACE_ID)).toBe(`/space/${SPACE_ID}/goals`);
     expect(getSpaceGoalsFromPath(`/space/${SPACE_ID}/goals`)).toBe(SPACE_ID);
-    expect(createSpaceForgePath(SPACE_ID)).toBe(`/space/${SPACE_ID}/forge`);
+    expect(createSpaceEvolvePath(SPACE_ID)).toBe(`/space/${SPACE_ID}/evolve`);
+    expect(getSpaceEvolveFromPath(`/space/${SPACE_ID}/evolve`)).toBe(SPACE_ID);
+    expect(getSpaceIdFromPath(`/space/${SPACE_ID}/evolve`)).toBe(SPACE_ID);
+    // Legacy /forge alias still resolves, and the Forge helpers are compat
+    // wrappers that delegate to the canonical /evolve helpers.
+    expect(createSpaceForgePath(SPACE_ID)).toBe(`/space/${SPACE_ID}/evolve`);
     expect(getSpaceForgeFromPath(`/space/${SPACE_ID}/forge`)).toBe(SPACE_ID);
+    expect(getSpaceForgeFromPath(`/space/${SPACE_ID}/evolve`)).toBe(SPACE_ID);
     expect(getSpaceIdFromPath(`/space/${SPACE_ID}/forge`)).toBe(SPACE_ID);
     expect(createSpaceTasksPath(SPACE_ID, 'action')).toBe(`/space/${SPACE_ID}/tasks/action`);
     expect(createSpaceSessionsPath(SPACE_ID)).toBe(`/space/${SPACE_ID}/sessions`);
@@ -195,6 +204,16 @@ describe('router', () => {
     expect(currentSpaceTaskIdSignal.value).toBeNull();
 
     cleanupRouter();
+    setPath(`/space/${SPACE_ID}/evolve`);
+    initializeRouter();
+
+    expect(currentSpaceIdSignal.value).toBe(SPACE_ID);
+    expect(currentSpaceViewModeSignal.value).toBe('forge');
+    expect(currentSpaceSessionIdSignal.value).toBeNull();
+    expect(currentSpaceTaskIdSignal.value).toBeNull();
+  });
+
+  it('redirects the legacy /forge route to the canonical /evolve route', () => {
     setPath(`/space/${SPACE_ID}/forge`);
     initializeRouter();
 
@@ -202,6 +221,28 @@ describe('router', () => {
     expect(currentSpaceViewModeSignal.value).toBe('forge');
     expect(currentSpaceSessionIdSignal.value).toBeNull();
     expect(currentSpaceTaskIdSignal.value).toBeNull();
+    expect(window.history.replaceState).toHaveBeenLastCalledWith(
+      {
+        spaceId: SPACE_ID,
+        path: `/space/${SPACE_ID}/evolve`,
+        [IN_APP_HISTORY_DEPTH_KEY]: 0,
+      },
+      '',
+      `/space/${SPACE_ID}/evolve`
+    );
+  });
+
+  it('navigates to the canonical /evolve route via the legacy Forge helper', () => {
+    navigateToSpaceForge(SPACE_ID);
+    finishNavigation();
+
+    expect(currentSpaceViewModeSignal.value).toBe('forge');
+    expect(currentSpaceIdSignal.value).toBe(SPACE_ID);
+    expect(window.history.pushState).toHaveBeenLastCalledWith(
+      { spaceId: SPACE_ID, path: `/space/${SPACE_ID}/evolve`, [IN_APP_HISTORY_DEPTH_KEY]: 1 },
+      '',
+      `/space/${SPACE_ID}/evolve`
+    );
   });
 
   it('redirects legacy archived task tabs to completed', () => {
@@ -329,14 +370,14 @@ describe('router', () => {
     expect(currentSpaceTaskIdSignal.value).toBeNull();
     finishNavigation();
 
-    navigateToSpaceForge(SPACE_ID);
+    navigateToSpaceEvolve(SPACE_ID);
     expect(currentSpaceViewModeSignal.value).toBe('forge');
     expect(currentSpaceSessionIdSignal.value).toBeNull();
     expect(currentSpaceTaskIdSignal.value).toBeNull();
     expect(window.history.pushState).toHaveBeenLastCalledWith(
-      { spaceId: SPACE_ID, path: `/space/${SPACE_ID}/forge`, [IN_APP_HISTORY_DEPTH_KEY]: 4 },
+      { spaceId: SPACE_ID, path: `/space/${SPACE_ID}/evolve`, [IN_APP_HISTORY_DEPTH_KEY]: 4 },
       '',
-      `/space/${SPACE_ID}/forge`
+      `/space/${SPACE_ID}/evolve`
     );
     finishNavigation();
 

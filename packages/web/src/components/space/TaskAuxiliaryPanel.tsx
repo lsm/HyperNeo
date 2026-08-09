@@ -2,7 +2,7 @@ import { getWorkflowRunExecutionStatusLabel } from '@hyperneo/shared';
 import type { SpaceTaskPriority, SpaceTaskStatus } from '@hyperneo/shared';
 import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { navigateToSpaceForge, navigateToSpaceGoals } from '../../lib/router';
+import { navigateToSpaceEvolve, navigateToSpaceGoals } from '../../lib/router';
 import { currentSpaceGoalIdSignal, currentSpaceScopeIdSignal } from '../../lib/signals';
 import { spaceStore } from '../../lib/space-store';
 import { getTaskStatusConfig } from '../../lib/task-status';
@@ -291,7 +291,7 @@ export function TaskAuxiliaryPanel({
             type="button"
             onClick={() => {
               currentSpaceScopeIdSignal.value = task.evolutionScopeId!;
-              navigateToSpaceForge(routeSpaceId);
+              navigateToSpaceEvolve(routeSpaceId);
             }}
             class="truncate text-blue-300 hover:text-blue-200"
           >

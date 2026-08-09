@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
-  mockNavigateToSpaceForge,
+  mockNavigateToSpaceEvolve,
   mockNavigateToSpaceGoals,
   mockSpace,
   mockTasks,
@@ -23,7 +23,7 @@ const {
   }
   const workflows = makeSignal<SpaceWorkflow[]>([]);
   return {
-    mockNavigateToSpaceForge: vi.fn(),
+    mockNavigateToSpaceEvolve: vi.fn(),
     mockNavigateToSpaceGoals: vi.fn(),
     mockSpace: makeSignal<Space | null>(null),
     mockTasks: makeSignal<SpaceTask[]>([]),
@@ -40,7 +40,7 @@ const {
 });
 
 vi.mock('../../../lib/router', () => ({
-  navigateToSpaceForge: mockNavigateToSpaceForge,
+  navigateToSpaceEvolve: mockNavigateToSpaceEvolve,
   navigateToSpaceGoals: mockNavigateToSpaceGoals,
 }));
 
@@ -190,7 +190,7 @@ describe('TaskAuxiliaryPanel', () => {
     mockSubmitForReview.mockResolvedValue(undefined);
     mockPublishTask.mockClear();
     mockPublishTask.mockResolvedValue(undefined);
-    mockNavigateToSpaceForge.mockClear();
+    mockNavigateToSpaceEvolve.mockClear();
     mockNavigateToSpaceGoals.mockClear();
     currentSpaceGoalIdSignal.value = null;
     currentSpaceScopeIdSignal.value = null;
@@ -297,7 +297,7 @@ describe('TaskAuxiliaryPanel', () => {
     fireEvent.click(getByText('Launch Scope'));
 
     expect(mockNavigateToSpaceGoals).toHaveBeenCalledWith('space-slug');
-    expect(mockNavigateToSpaceForge).toHaveBeenCalledWith('space-slug');
+    expect(mockNavigateToSpaceEvolve).toHaveBeenCalledWith('space-slug');
   });
 
   it('routes submit for review through submitForReview in the middle column', async () => {
