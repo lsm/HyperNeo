@@ -8,14 +8,20 @@
 
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { KNOWN_TOOLS } from '@hyperneo/shared';
+import { KNOWN_TOOLS, type SpaceWorkerAgent } from '@hyperneo/shared';
 import { setModelsCache } from '../../../../src/lib/model-service';
 import {
   getPresetAgentTemplates,
+  isPristineRetiredPrMergerRow,
   PRESET_AGENT_TOOLS,
+  RETIRED_PR_MERGER_DESCRIPTION,
+  RETIRED_PR_MERGER_PROMPT,
+  RETIRED_PR_MERGER_TOOLS,
+  retireRemovedPresetAgents,
   SUB_SESSION_FEATURES,
   seedPresetAgents,
 } from '../../../../src/lib/space/agents/seed-agents';
+import { computeAgentTemplateHash } from '../../../../src/lib/space/agents/agent-template-hash';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
 import { createSpaceAgentSchema, insertSpace } from '../../helpers/space-agent-schema';
@@ -764,5 +770,118 @@ describe('getPresetAgentTemplates', () => {
       const roleKey = t.handle;
       expect(t.tools).toEqual(PRESET_AGENT_TOOLS[roleKey]);
     }
+  });
+});
+
+// ===========================================================================
+// Retired preset cleanup (round-11 P2)
+// ===========================================================================
+
+describe('retireRemovedPresetAgents', () => {
+  let db: Database;
+  let manager: SpaceAgentManager;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    createSpaceAgentSchema(db);
+    insertSpace(db);
+    const repo = new SpaceAgentRepository(db as any);
+    manager = new SpaceAgentManager(repo);
+    setModelsCache(new Map());
+  });
+
+  afterEach(() => {
+    db.close();
+    setModelsCache(new Map());
+  });
+
+  function seedPristinePrMerger(): Promise<SpaceWorkerAgent> {
+    return manager
+      .create({
+        spaceId: 'space-1',
+        name: 'PR Merger',
+        handle: 'merger',
+        description: RETIRED_PR_MERGER_DESCRIPTION,
+        tools: [...RETIRED_PR_MERGER_TOOLS],
+        customPrompt: RETIRED_PR_MERGER_PROMPT,
+        templateName: 'PR Merger',
+        templateHash: computeAgentTemplateHash({
+          name: 'PR Merger',
+          handle: 'merger',
+          description: RETIRED_PR_MERGER_DESCRIPTION,
+          tools: [...RETIRED_PR_MERGER_TOOLS],
+          customPrompt: RETIRED_PR_MERGER_PROMPT,
+        }),
+      })
+      .then((r) => {
+        if (!r.ok) throw new Error(r.error);
+        return r.value;
+      });
+  }
+
+  it('deletes a pristine, unreferenced PR Merger row', async () => {
+    const merger = await seedPristinePrMerger();
+    const retired = retireRemovedPresetAgents('space-1', {
+      agentManager: manager,
+      referencedAgentIds: new Set(),
+    });
+    expect(retired).toEqual(['PR Merger']);
+    const remaining = manager.listBySpaceId('space-1').map((a) => a.id);
+    expect(remaining).not.toContain(merger.id);
+  });
+
+  it('protects a pristine row referenced by a workflow (active run / custom slot)', async () => {
+    const merger = await seedPristinePrMerger();
+    const retired = retireRemovedPresetAgents('space-1', {
+      agentManager: manager,
+      referencedAgentIds: new Set([merger.id]),
+    });
+    expect(retired).toEqual([]);
+    expect(manager.listBySpaceId('space-1').map((a) => a.id)).toContain(merger.id);
+  });
+
+  it('preserves a customized PR Merger row (renamed prompt)', async () => {
+    const merger = await seedPristinePrMerger();
+    manager.update(merger.id, { customPrompt: 'My custom merger prompt' });
+    const retired = retireRemovedPresetAgents('space-1', {
+      agentManager: manager,
+      referencedAgentIds: new Set(),
+    });
+    expect(retired).toEqual([]);
+    expect(manager.listBySpaceId('space-1').map((a) => a.id)).toContain(merger.id);
+  });
+
+  it('preserves a customized PR Merger row (tools changed)', async () => {
+    const merger = await seedPristinePrMerger();
+    manager.update(merger.id, { tools: ['Bash'] });
+    const retired = retireRemovedPresetAgents('space-1', {
+      agentManager: manager,
+      referencedAgentIds: new Set(),
+    });
+    expect(retired).toEqual([]);
+    expect(manager.listBySpaceId('space-1').map((a) => a.id)).toContain(merger.id);
+  });
+
+  it('never touches non-merger preset rows', async () => {
+    const { seeded } = await seedPresetAgents('space-1', manager);
+    const before = seeded.map((a) => a.id).sort();
+    retireRemovedPresetAgents('space-1', {
+      agentManager: manager,
+      referencedAgentIds: new Set(),
+    });
+    const after = manager
+      .listBySpaceId('space-1')
+      .map((a) => a.id)
+      .sort();
+    expect(after).toEqual(before);
+  });
+
+  it('isPristineRetiredPrMergerRow matches the frozen seed only', async () => {
+    const merger = await seedPristinePrMerger();
+    expect(isPristineRetiredPrMergerRow(merger)).toBe(true);
+    expect(isPristineRetiredPrMergerRow({ ...merger, customPrompt: 'edited' })).toBe(false);
+    expect(isPristineRetiredPrMergerRow({ ...merger, tools: ['Bash'] })).toBe(false);
+    expect(isPristineRetiredPrMergerRow({ ...merger, name: 'My Merger' })).toBe(false);
+    expect(isPristineRetiredPrMergerRow({ ...merger, templateName: null })).toBe(false);
   });
 });

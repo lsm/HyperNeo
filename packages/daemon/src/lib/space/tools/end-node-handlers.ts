@@ -98,6 +98,71 @@ export interface MarkCompleteHandlerDeps {
   internalEventBus?: Pick<InternalEventBus<DaemonInternalEventMap>, 'publish'>;
   /** Optional goal service for processing terminal goal-task side effects. */
   goalService?: Pick<SpaceGoalService, 'getGoal' | 'updateGoal' | 'handleTaskTerminal'>;
+  /**
+   * Optional merge-completion gate. When provided, `mark_complete` fails closed
+   * until GitHub reports the task's PR merged (the coder owns the merge — there
+   * is no `merge_pr` gate anymore). Resolving no `pr_url` (a non-PR workflow)
+   * returns ok; the gate only blocks when a PR is in play and not merged. The
+   * task stays `approved` on a block and the caller may retry after the merge.
+   */
+  assertPrMerged?: (task: SpaceTask) => Promise<{ ok: true } | { ok: false; error: string }>;
+}
+
+/**
+ * Dependencies for the merge-completion gate factory.
+ */
+export interface PrMergedGateDeps {
+  /** Resolve the task's PR URL (e.g. via the workflow run's primary link).
+   *  An empty string means "no PR in play" and the gate passes. */
+  resolvePrUrl: (task: SpaceTask) => string;
+  /** Query GitHub for the PR's `state`. Throws on lookup failure (fail closed). */
+  getPrState: (prUrl: string) => Promise<string>;
+}
+
+/**
+ * Merge-completion gate factory. Returns a `mark_complete` gate that fails
+ * closed until GitHub reports the task's PR MERGED. Mirrors the `pr_merged`
+ * validator's semantics (`state == MERGED` passes; `OPEN` is a retryable
+ * "not yet merged" block; anything else — CLOSED-without-merge or lookup
+ * failure — is a terminal block). The task stays `approved` on a block so the
+ * implementer can merge and retry.
+ */
+export function createPrMergedGate(
+  deps: PrMergedGateDeps
+): (task: SpaceTask) => Promise<{ ok: true } | { ok: false; error: string }> {
+  const { resolvePrUrl, getPrState } = deps;
+  return async (task) => {
+    const prUrl = resolvePrUrl(task);
+    if (!prUrl) return { ok: true };
+
+    let state: string;
+    try {
+      state = await getPrState(prUrl);
+    } catch (err) {
+      return {
+        ok: false,
+        error:
+          `mark_complete merge gate: could not verify the run's PR state for ${prUrl} ` +
+          `(${err instanceof Error ? err.message : String(err)}). The task stays approved until the PR is confirmed merged.`,
+      };
+    }
+
+    if (state === 'MERGED') return { ok: true };
+    if (state === 'OPEN') {
+      return {
+        ok: false,
+        error:
+          `mark_complete merge gate: the run's PR is still OPEN (${prUrl}). ` +
+          `Merge it before calling mark_complete (gh pr merge), then retry.`,
+      };
+    }
+    return {
+      ok: false,
+      error:
+        `mark_complete merge gate: the run's PR is ${state} (${prUrl}), not merged. ` +
+        `The task stays approved; resolve the PR before calling mark_complete.`,
+    };
+  };
 }
 
 /**
@@ -116,6 +181,7 @@ export function createMarkCompleteHandler(
     internalEventBus,
     goalService,
     resolveResultArtifactSummary,
+    assertPrMerged,
   } = deps;
 
   const handleGoalTerminal = (task: SpaceTask): void => {
@@ -151,6 +217,20 @@ export function createMarkCompleteHandler(
           `task is not in \`approved\` status (current: \`${task.status}\`); did you mean \`approve_task\`? ` +
           `mark_complete only transitions an already-approved task from 'approved' to 'done'.`,
       });
+    }
+
+    // Merge-completion gate: the coder owns the merge in the stable coding /
+    // research workflows, so the task must NOT flip to `done` while the run's
+    // PR is still open — otherwise a coder that abandons a conflicted merge or
+    // mistakes a merge-queue enqueue for completion would close the task with
+    // the PR unmerged. Fails closed until GitHub reports the PR MERGED. The
+    // closure resolves the pr_url itself and skips non-PR runs, so a bare
+    // `approved → done` (no PR) is unaffected.
+    if (assertPrMerged) {
+      const gate = await assertPrMerged(task);
+      if (!gate.ok) {
+        return jsonResult({ success: false, error: gate.error });
+      }
     }
 
     let goalUpdate: {

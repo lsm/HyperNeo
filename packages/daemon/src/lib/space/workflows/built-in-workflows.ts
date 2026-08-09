@@ -161,6 +161,57 @@ export const REVIEWER_GH_API_REPO_GUARD: DeclarativeToolGuard = {
     'Only the workflow run’s PR may be inspected.',
 };
 
+/**
+ * Reviewer Bash allowlist (defense-in-depth, round-11 P2).
+ *
+ * The Reviewer ingests attacker-authored PR content as its primary job, yet its
+ * Bash profile was unrestricted apart from the narrow `gh api repos/...` /
+ * `-R` deny guard above — so a prompt-injected reviewer could run arbitrary
+ * binaries (`curl`, `wget`, `nc`, `ssh`, `env`, …) and disclose or exfiltrate
+ * daemon credentials (env vars, `~/.claude/.credentials.json`, the Keychain).
+ * This guard denies ANY Bash command whose leading executable is not one of the
+ * legitimate review-surface primitives:
+ *
+ *   - `gh`            — read-only `pr view|diff|checks` + `api graphql`
+ *                       (reviewThreads query / addPullRequestReview mutation);
+ *   - `python3`/`python` — the PR-host parse helper (`urllib.parse.urlparse`);
+ *   - `jq`            — building the GraphQL `--input` request JSON;
+ *   - `mktemp`        — session-unique temp files for the review body;
+ *   - `cat`, `echo`   — QUOTED-heredoc body writing + delimiter echo;
+ *   - `head`, `base64`, `tr` — per-invocation heredoc delimiter generation;
+ *   - `trap`, `rm`    — temp-file cleanup on exit;
+ *   - `printf`, `true`, `false`, `:`, `test`, `[`, `read` — minor shell plumbing.
+ *
+ * A leading variable assignment (`NAME=…`) is stripped first, so
+ * `HOST=$(python3 …)`, `PR_ID=$(gh …)`, `REQ=$(mktemp)`, and the
+ * `DELIM="…$(head …|base64|tr …)…"` delimiter form all pass.
+ *
+ * Honest limits of a regex allowlist (mirroring the doc on
+ * `REVIEWER_GH_API_REPO_GUARD`): the leading-token check cannot validate inside
+ * command substitution (`HOST=$(curl …)`), and `cat <credential-file>` is
+ * indistinguishable from the `cat > "$BODY" <<heredoc` posting form. This is
+ * defense-in-depth only — the Reviewer System Contract remains the primary
+ * boundary ("you do NOT run the code under review; never run merge/API writes;
+ * read ONLY the workflow run's PR"). It raises the bar from "deny two gh
+ * vectors" to "deny every non-review binary as the primary command".
+ */
+export const REVIEWER_BASH_ALLOWLIST_GUARD: DeclarativeToolGuard = {
+  matcher: 'Bash',
+  pattern:
+    '^(?!\\s*(?:(?:[A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*(?:\\$\\(|[\'"]|\\S+?\\s*)?)*(?:gh|python3|python|jq|mktemp|echo|cat|tr|base64|head|trap|rm|printf|true|false|:|test|\\[|read)\\b)',
+  decision: 'deny',
+  reason:
+    'Reviewer Bash is allowlisted: only the run-scoped read-only `gh pr view|diff|checks`, the `gh api graphql` reviewThreads query / addPullRequestReview mutation, ' +
+    'the `python3` PR-host parse helper, and the temp-file + jq plumbing that posts the review (mktemp, cat, echo, head, base64, tr, trap, rm) are permitted. ' +
+    'Arbitrary binaries (curl, wget, nc, ssh, env, git, node, …) are denied — the Reviewer never needs them, and they could disclose or exfiltrate daemon credentials.',
+};
+
+/** Combined guard set applied to every built-in Reviewer slot. */
+export const REVIEWER_TOOL_GUARDS: DeclarativeToolGuard[] = [
+  REVIEWER_GH_API_REPO_GUARD,
+  REVIEWER_BASH_ALLOWLIST_GUARD,
+];
+
 // ---------------------------------------------------------------------------
 // Template node ID constants (used as stable IDs for workflow nodes and startNodeId)
 // ---------------------------------------------------------------------------
@@ -724,7 +775,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
           // WorkflowNodeAgent.resetContextPerTurn.
           resetContextPerTurn: true,
           customPrompt: { value: CODER_OWNED_REVIEW_PROMPT },
-          toolGuards: [REVIEWER_GH_API_REPO_GUARD],
+          toolGuards: REVIEWER_TOOL_GUARDS,
         },
       ],
     },
@@ -878,7 +929,7 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
               'heads; the Research agent merges. Do not mark the task complete — only the Research ' +
               'agent merges and closes.',
           },
-          toolGuards: [REVIEWER_GH_API_REPO_GUARD],
+          toolGuards: REVIEWER_TOOL_GUARDS,
         },
       ],
     },
@@ -952,7 +1003,7 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
               'call save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } }) to record the PR, then approve_task() or submit_for_approval only on APPROVE, otherwise stop. ' +
               'Do NOT attempt to merge the PR yourself. Never set a PR to auto-merge.',
           },
-          toolGuards: [REVIEWER_GH_API_REPO_GUARD],
+          toolGuards: REVIEWER_TOOL_GUARDS,
         },
       ],
     },
@@ -1050,7 +1101,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               '`data: { approvals: { architecture: "approved" }, pr_url: "<plan PR url>" }` ' +
               'to Task Dispatcher when approving. Send rejected votes with findings to Planning.',
           },
-          toolGuards: [REVIEWER_GH_API_REPO_GUARD],
+          toolGuards: REVIEWER_TOOL_GUARDS,
         },
         {
           agentId: 'Reviewer',
@@ -1067,7 +1118,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               '`data: { approvals: { security: "approved" }, pr_url: "<plan PR url>" }` ' +
               'to Task Dispatcher when approving. Send rejected votes with findings to Planning.',
           },
-          toolGuards: [REVIEWER_GH_API_REPO_GUARD],
+          toolGuards: REVIEWER_TOOL_GUARDS,
         },
         {
           agentId: 'Reviewer',
@@ -1084,7 +1135,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               '`data: { approvals: { correctness: "approved" }, pr_url: "<plan PR url>" }` ' +
               'to Task Dispatcher when approving. Send rejected votes with findings to Planning.',
           },
-          toolGuards: [REVIEWER_GH_API_REPO_GUARD],
+          toolGuards: REVIEWER_TOOL_GUARDS,
         },
         {
           agentId: 'Reviewer',
@@ -1101,7 +1152,7 @@ export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
               '`data: { approvals: { ux: "approved" }, pr_url: "<plan PR url>" }` ' +
               'to Task Dispatcher when approving. Send rejected votes with findings to Planning.',
           },
-          toolGuards: [REVIEWER_GH_API_REPO_GUARD],
+          toolGuards: REVIEWER_TOOL_GUARDS,
         },
       ],
     },
@@ -1271,7 +1322,7 @@ export const CODING_WITH_QA_WORKFLOW: SpaceWorkflow = {
           // the approved PR to QA instead of calling the end-node-only
           // approve_task — see CODER_OWNED_QA_REVIEW_PROMPT.
           customPrompt: { value: CODER_OWNED_QA_REVIEW_PROMPT },
-          toolGuards: [REVIEWER_GH_API_REPO_GUARD],
+          toolGuards: REVIEWER_TOOL_GUARDS,
         },
       ],
     },

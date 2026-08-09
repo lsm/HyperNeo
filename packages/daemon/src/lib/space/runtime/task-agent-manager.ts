@@ -87,7 +87,13 @@ export interface SubSessionMemberInfo {
   nodeId?: string;
 }
 import { createNodeAgentMcpServer } from '../tools/node-agent-tools';
-import { createEndNodeHandlers, createMarkCompleteHandler } from '../tools/end-node-handlers';
+import {
+  createEndNodeHandlers,
+  createMarkCompleteHandler,
+  createPrMergedGate,
+} from '../tools/end-node-handlers';
+import { CODER_OWNED_MERGE_INSTRUCTIONS } from '../workflows/post-approval-merge-template';
+import { createGithubConnector } from './connectors/github-connector';
 import { jsonResult } from '../tools/tool-result';
 import {
   assertExecutionValidAgainstWorkflow,
@@ -5229,6 +5235,19 @@ export class TaskAgentManager {
     // The handler self-validates status (rejects non-approved) — a spawned
     // agent that happens not to be running a post-approval step simply sees
     // the tool reject with a clear error.
+    // Merge-completion gate (round-11 P1): the coder owns the merge in the
+    // stable Coding / Coding-with-QA / Research workflows (no merger node, no
+    // `merge_pr` gate), so `mark_complete` must fail closed until GitHub
+    // reports the run's PR merged. Only installed when the workflow's
+    // post-approval route actually hands the implementer the merge
+    // instructions; workflows without a merge step are unaffected. The pr_url
+    // is resolved from the run's primary link exactly like the merge template
+    // resolves `{{pr_url}}`.
+    const isCoderOwnedMergeWorkflow = (workflow?.nodes ?? []).some(
+      (node) =>
+        node.postApproval?.targetAgent !== undefined &&
+        node.postApproval.instructions === CODER_OWNED_MERGE_INSTRUCTIONS
+    );
     const onMarkComplete = createMarkCompleteHandler({
       taskId,
       spaceId,
@@ -5242,6 +5261,23 @@ export class TaskAgentManager {
         if (!task.workflowRunId) return null;
         return this.config.artifactProfile?.summarizeRunOutcome(task.workflowRunId) ?? null;
       },
+      assertPrMerged: isCoderOwnedMergeWorkflow
+        ? createPrMergedGate({
+            resolvePrUrl: (task) =>
+              task.workflowRunId
+                ? (this.config.artifactProfile?.resolvePrimaryLinkUrl(task.workflowRunId) ?? '')
+                : '',
+            getPrState: async (prUrl) => {
+              const outcome = await createGithubConnector().ops.getPr(
+                { prUrl },
+                { workspacePath: '', params: {}, rawParams: {}, hookLocalState: {} }
+              );
+              if (!outcome.ok) throw new Error(outcome.error);
+              const state = (outcome.data as { state?: unknown } | null)?.state;
+              return typeof state === 'string' ? state : 'UNKNOWN';
+            },
+          })
+        : undefined,
     });
 
     // Self-heal callback for the agent-callable `restore_node_agent` tool.

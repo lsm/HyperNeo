@@ -252,6 +252,90 @@ export function getPresetAgentTemplates(): PresetAgentTemplate[] {
 }
 
 // ---------------------------------------------------------------------------
+// Retired preset cleanup
+// ---------------------------------------------------------------------------
+
+/**
+ * The EXACT pristine `PR Merger` preset seed, frozen from the era when the
+ * dedicated PR-merger agent existed (migration 170 backfilled it into every
+ * pre-existing Space; `seedPresetAgents()` seeded it into every Space created
+ * before the pivot). The pivot removed the preset and gave the merge to the
+ * coder/research agent, but existing `space_agents` rows were never deleted —
+ * migration 170 won't replay, and m180 touches only `Reviewer` rows. A pristine
+ * row is retired by {@link retireRemovedPresetAgents}; a customized row (any
+ * field differs from these constants) is the user's own and is preserved.
+ */
+export const RETIRED_PR_MERGER_TOOLS: readonly string[] = ['Bash', 'Read', 'Grep', 'Glob'];
+export const RETIRED_PR_MERGER_DESCRIPTION =
+  'Post-approval PR merge specialist. The designated execution agent: it runs gh pr merge, ' +
+  'branch cleanup, worktree sync, and conflict routing. Spawned only after a task is approved.';
+export const RETIRED_PR_MERGER_PROMPT =
+  'You are the PR Merger — the designated execution agent for post-approval PR merges. ' +
+  'You run after a task has been approved. Your sole job is to merge the approved PR using ' +
+  '`gh pr merge`, clean up the branch, sync the worktree, and route any merge conflicts back ' +
+  'to the implementation agent. You are given the exact merge procedure as your first message; ' +
+  'follow it precisely. Do NOT review code, do NOT write features, and do NOT call approve_task ' +
+  'or submit_for_approval — the task is already approved. When the merge and sync are complete, ' +
+  'call mark_complete to close the task.';
+
+function arraysEqual(a: string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((v, i) => v === b[i]);
+}
+
+/**
+ * Whether an agent row is an UNMODIFIED retired `PR Merger` seed. Every field
+ * must match the frozen seed exactly — a user who renamed the agent, changed
+ * its tools, edited its prompt/description, or dropped the preset tracking is
+ * the user's own and must NOT be deleted.
+ */
+export function isPristineRetiredPrMergerRow(agent: SpaceWorkerAgent): boolean {
+  return (
+    agent.name === 'PR Merger' &&
+    agent.handle === 'merger' &&
+    agent.templateName === 'PR Merger' &&
+    agent.description === RETIRED_PR_MERGER_DESCRIPTION &&
+    agent.customPrompt === RETIRED_PR_MERGER_PROMPT &&
+    arraysEqual(agent.tools ?? [], RETIRED_PR_MERGER_TOOLS)
+  );
+}
+
+export interface RetireRemovedPresetAgentsDeps {
+  agentManager: Pick<SpaceAgentManager, 'listBySpaceId' | 'delete'>;
+  /**
+   * Agent ids still referenced by ANY workflow node in the space. A pristine
+   * row is retired ONLY when nothing references it — an in-flight run whose
+   * merger node was deferred by `hasActiveRuns`, or a user-customized workflow
+   * that kept its merger slot, still resolves the agent by id, so deleting it
+   * would orphan that workflow. (Call after the re-stamp has stripped retired
+   * merger nodes from non-active-run workflows.)
+   */
+  referencedAgentIds: ReadonlySet<string>;
+}
+
+/**
+ * Delete pristine retired `PR Merger` preset rows that no workflow references.
+ * Customized rows and rows referenced by an active run / customized workflow are
+ * preserved. Returns the names of the retired agents.
+ */
+export function retireRemovedPresetAgents(
+  spaceId: string,
+  deps: RetireRemovedPresetAgentsDeps
+): string[] {
+  const retired: string[] = [];
+  for (const agent of deps.agentManager.listBySpaceId(spaceId)) {
+    if (!isPristineRetiredPrMergerRow(agent)) continue;
+    if (deps.referencedAgentIds.has(agent.id)) continue;
+    try {
+      deps.agentManager.delete(agent.id);
+      retired.push(agent.name);
+    } catch {
+      // Best-effort — a failed delete must not break startup.
+    }
+  }
+  return retired;
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 

@@ -36,7 +36,7 @@ import {
   seedBuiltInWorkflows,
 } from '../space/workflows/built-in-workflows';
 import { computeWorkflowHash } from '../space/workflows/template-hash';
-import { getPresetAgentTemplates } from '../space/agents/seed-agents';
+import { getPresetAgentTemplates, retireRemovedPresetAgents } from '../space/agents/seed-agents';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
 import { Logger } from '../logger';
 
@@ -369,6 +369,31 @@ export async function restampBuiltInWorkflowsOnStartup(
                 `in space "${space.name}" (${space.id}): ${err.error}`
             );
           }
+        }
+
+        // Round-11 P2: retire the removed `PR Merger` preset row once nothing
+        // references it. Runs AFTER the re-stamp above, so the strip has already
+        // removed the retired merger node from non-active-run workflows; a row
+        // still referenced by an active run (deferred strip) or a customized
+        // workflow (strip skipped) is protected. Deleting a pristine, unreferenced
+        // row removes the obsolete agent that m170 seeded but no live workflow uses.
+        const referencedAgentIds = new Set<string>();
+        for (const wf of workflowManager.listWorkflows(space.id)) {
+          for (const node of wf.nodes) {
+            for (const slot of node.agents) {
+              if (slot.agentId) referencedAgentIds.add(slot.agentId);
+            }
+          }
+        }
+        const retiredAgents = retireRemovedPresetAgents(space.id, {
+          agentManager: spaceAgentManager,
+          referencedAgentIds,
+        });
+        if (retiredAgents.length > 0) {
+          log.info(
+            `[startup] Retired removed preset agent(s) in space "${space.name}" ` +
+              `(${space.id}): ${retiredAgents.join(', ')}`
+          );
         }
       } catch (err) {
         log.warn(
