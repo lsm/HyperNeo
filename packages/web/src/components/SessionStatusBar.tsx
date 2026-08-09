@@ -394,12 +394,16 @@ export default function SessionStatusBar({
           Harmonized with per-session recovery (task #873): when the transport
           is connected but THIS session is still rejoining its channel, show
           "Reconnecting…" instead of a contradictory "Ready". The global
-          disconnected/reconnecting/failed states pass through unchanged. */}
+          disconnected/reconnecting/failed states pass through unchanged.
+          Mask the (stale) processing inputs while recovering — resolveStatus
+          prioritizes isProcessing/currentAction over connectionState, so a
+          cached processing state would otherwise show the agent's last action
+          during the exact recovery window this labels "Reconnecting…". */}
       <ConnectionStatus
         connectionState={isRecovering && connState === 'connected' ? 'reconnecting' : connState}
-        isProcessing={isProcessing}
-        currentAction={currentAction}
-        streamingPhase={streamingPhase}
+        isProcessing={isRecovering ? false : isProcessing}
+        currentAction={isRecovering ? undefined : currentAction}
+        streamingPhase={isRecovering ? undefined : streamingPhase}
       />
 
       {/* Right: Interactive controls and context usage */}

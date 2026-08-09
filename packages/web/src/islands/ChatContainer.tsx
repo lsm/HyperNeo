@@ -274,12 +274,10 @@ interface ChatContainerProps {
    * only surfaced when the session can't be shown as a live chat (deleted /
    * archived / unreachable). They let a long-horizon agent view offer
    * "Refresh agent record" (re-fetch the agent — its sessionId may have
-   * changed after a reconnect/restart) and "Start new" (recreate the session
-   * when allowed), beyond the always-present "Try again".
+   * changed after a reconnect/restart), beyond the always-present "Try again".
    */
   agentLabel?: string;
   onRefreshAgent?: () => void;
-  onRecreateAgent?: () => void;
 }
 
 export default function ChatContainer({
@@ -293,7 +291,6 @@ export default function ChatContainer({
   store = sessionStore,
   agentLabel,
   onRefreshAgent,
-  onRecreateAgent,
 }: ChatContainerProps) {
   // ========================================
   // Refs
@@ -1306,8 +1303,8 @@ export default function ChatContainer({
 
   // Actions for the unavailable / load-error view (task #873). Context-aware:
   // a long-horizon agent view offers "Refresh agent record" (its sessionId may
-  // have changed after a reconnect/restart) and "Start new" (recreate when
-  // allowed); an overlay offers "Go back"; every case offers "Try again".
+  // have changed after a reconnect/restart); an overlay offers "Go back"; every
+  // case offers "Try again".
   const handleUnavailableRetry = useCallback(() => {
     store.select(sessionId);
   }, [store, sessionId]);
@@ -1325,13 +1322,6 @@ export default function ChatContainer({
     if (onRefreshAgent) {
       actions.push({ label: 'Refresh', onClick: onRefreshAgent, testId: 'unavailable-refresh' });
     }
-    if (onRecreateAgent) {
-      actions.push({
-        label: 'Start new',
-        onClick: onRecreateAgent,
-        testId: 'unavailable-recreate',
-      });
-    }
     actions.push({
       label: 'Try again',
       onClick: handleUnavailableRetry,
@@ -1339,7 +1329,7 @@ export default function ChatContainer({
       testId: 'unavailable-retry',
     });
     return actions;
-  }, [loadErrorKind, onBack, onRefreshAgent, onRecreateAgent, agentLabel, handleUnavailableRetry]);
+  }, [loadErrorKind, onBack, onRefreshAgent, agentLabel, handleUnavailableRetry]);
 
   // ========================================
   // Pending Agent Render (before loading check)
@@ -1579,7 +1569,7 @@ export default function ChatContainer({
           readable above; the composer is disabled (sessionTerminal). One
           explicit, non-blocking state with the same contextual actions as the
           full-screen unavailable view (Go back / Refresh when provided). */}
-      {sessionTerminal && !isInitialLoad && (
+      {sessionTerminal && !isInitialLoad && !error && (
         <div
           class="flex items-center justify-between gap-2 border-b border-amber-500/20 bg-amber-500/10 px-4 py-1.5 text-xs text-amber-200"
           data-testid={`session-${session?.status}-banner`}

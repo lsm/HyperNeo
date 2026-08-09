@@ -15,6 +15,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { sessionStore } from '../session-store';
+import { isHardUnavailable } from '../session-load-error';
 
 // Configurable hub: stateSession controls the `state.session` RPC behaviour.
 const hub = {
@@ -96,7 +97,6 @@ describe('SessionStore load-error classification + availability', () => {
     };
     await sessionStore.select('deleted-session');
     expect(sessionStore.loadErrorKind.value).toBe('not-found');
-    expect(sessionStore.availability.value).toBe('not-found');
     expect(sessionStore.sessionInfo.value).toBeNull();
   });
 
@@ -104,7 +104,6 @@ describe('SessionStore load-error classification + availability', () => {
     stateSession = async () => null;
     await sessionStore.select('missing-session');
     expect(sessionStore.loadErrorKind.value).toBe('not-found');
-    expect(sessionStore.availability.value).toBe('not-found');
   });
 
   it('classifies a request timeout as timeout (transient — NOT hard-unavailable)', async () => {
@@ -113,9 +112,9 @@ describe('SessionStore load-error classification + availability', () => {
     };
     await sessionStore.select('slow-session');
     expect(sessionStore.loadErrorKind.value).toBe('timeout');
-    // Transient kinds must not surface as availability — the load-error view
-    // owns them, and a recovering retry can still succeed.
-    expect(sessionStore.availability.value).toBeNull();
+    // Transient kinds must not be treated as hard-unavailable — the load-error
+    // view owns them, and a recovering retry can still succeed.
+    expect(isHardUnavailable(sessionStore.loadErrorKind.value)).toBe(false);
   });
 
   it('classifies a "Not connected" throw as disconnected', async () => {
@@ -124,7 +123,7 @@ describe('SessionStore load-error classification + availability', () => {
     };
     await sessionStore.select('offline-session');
     expect(sessionStore.loadErrorKind.value).toBe('disconnected');
-    expect(sessionStore.availability.value).toBeNull();
+    expect(isHardUnavailable(sessionStore.loadErrorKind.value)).toBe(false);
   });
 
   it('does NOT collapse every failure to "Failed to load session"', async () => {
@@ -141,7 +140,6 @@ describe('SessionStore load-error classification + availability', () => {
     // First load succeeds.
     await sessionStore.select('s1');
     expect(sessionStore.loadErrorKind.value).toBeNull();
-    expect(sessionStore.availability.value).toBeNull();
 
     // A recovery refresh fails transiently — it must retain state and NOT flip
     // the kind to not-found/timeout (which would strand the live session on the
@@ -165,7 +163,6 @@ describe('SessionStore load-error classification + availability', () => {
     };
     await sessionStore.refresh();
     expect(sessionStore.loadErrorKind.value).toBe('not-found');
-    expect(sessionStore.availability.value).toBe('not-found');
   });
 
   it('reacts to an out-of-band session.deleted event for the active session', async () => {
@@ -176,13 +173,60 @@ describe('SessionStore load-error classification + availability', () => {
     expect(sessionStore.loadErrorKind.value).toBeNull();
     api.fire('session.deleted', { sessionId: 's1' });
     expect(sessionStore.loadErrorKind.value).toBe('not-found');
-    expect(sessionStore.availability.value).toBe('not-found');
   });
 
   it('ignores session.deleted for a different session', async () => {
     await sessionStore.select('s1');
     api.fire('session.deleted', { sessionId: 'some-other-session' });
     expect(sessionStore.loadErrorKind.value).toBeNull();
+  });
+
+  it('a stale state.session push after session.deleted does not revive the session', async () => {
+    // Deletion arrives, THEN a state.session push captured before the deletion
+    // lands late. The tombstone must stop it from clearing loadErrorKind and
+    // reviving the deleted transcript.
+    await sessionStore.select('s1');
+    api.fire('session.deleted', { sessionId: 's1' });
+    expect(sessionStore.loadErrorKind.value).toBe('not-found');
+    api.fire(
+      'state.session',
+      {
+        sessionInfo: { id: 's1', status: 'active' },
+        agentState: { status: 'idle' },
+        commandsData: { availableCommands: [] },
+        revision: 5,
+      },
+      { channel: 'session:s1' }
+    );
+    expect(sessionStore.loadErrorKind.value).toBe('not-found');
+  });
+
+  it('Try again re-fetches after an out-of-band deletion (not a no-op)', async () => {
+    let fetchCount = 0;
+    stateSession = async () => {
+      fetchCount += 1;
+      return {
+        sessionInfo: { id: 's1', status: 'active' },
+        agentState: { status: 'idle' },
+        commandsData: { availableCommands: [] },
+        revision: 1,
+      };
+    };
+    await sessionStore.select('s1');
+    expect(fetchCount).toBe(1);
+
+    // Deleted out-of-band; the cached sessionState is still the pre-deletion
+    // success, so the alreadyLoaded guard would normally no-op a re-select.
+    stateSession = async () => {
+      fetchCount += 1;
+      throw new Error('Session not found');
+    };
+    api.fire('session.deleted', { sessionId: 's1' });
+    await sessionStore.select('s1');
+    // The retry must bypass the guard and re-issue the load (server re-confirms
+    // not-found).
+    expect(fetchCount).toBe(2);
+    expect(sessionStore.loadErrorKind.value).toBe('not-found');
   });
 
   it('clears loadErrorKind once a successful push arrives after a transient failure', async () => {
@@ -206,7 +250,7 @@ describe('SessionStore load-error classification + availability', () => {
     expect(sessionStore.loadErrorKind.value).toBeNull();
   });
 
-  it('surfaces an archived session via availability (transcript stays readable)', async () => {
+  it('surfaces an archived session via sessionInfo.status (transcript stays readable)', async () => {
     stateSession = async () => ({
       sessionInfo: { id: 's1', status: 'archived' },
       agentState: { status: 'idle' },
@@ -214,8 +258,10 @@ describe('SessionStore load-error classification + availability', () => {
       revision: 1,
     });
     await sessionStore.select('s1');
+    // Archived is NOT a load error — the RPC succeeds, so loadErrorKind stays
+    // null and the UI reads the status directly for the archived banner.
     expect(sessionStore.loadErrorKind.value).toBeNull();
-    expect(sessionStore.availability.value).toBe('archived');
+    expect(sessionStore.sessionInfo.value?.status).toBe('archived');
   });
 
   it('resets loadErrorKind on session switch', async () => {
@@ -233,6 +279,5 @@ describe('SessionStore load-error classification + availability', () => {
     });
     await sessionStore.select('good');
     expect(sessionStore.loadErrorKind.value).toBeNull();
-    expect(sessionStore.availability.value).toBeNull();
   });
 });

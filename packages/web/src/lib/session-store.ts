@@ -66,7 +66,6 @@ import {
   classifySessionLoadError,
   isHardUnavailable,
   type SessionLoadErrorKind,
-  type SessionUnavailableKind,
 } from './session-load-error';
 import { connectionState } from './state';
 import { slashCommandsSignal } from './signals';
@@ -279,34 +278,10 @@ export class SessionStore {
    * Reset to `null` on session switch, on a successful load commit, and destroy.
    *
    * `archived` / `terminated` are NOT load errors — the RPC succeeds and the
-   * session row still exists. They surface via `availability` (derived from
-   * `sessionInfo.status`) so the UI can keep the transcript readable.
+   * session row still exists. The UI derives those from `sessionInfo.status`
+   * directly (ChatContainer's archived/ended banner), not from this signal.
    */
   readonly loadErrorKind = signal<SessionLoadErrorKind | null>(null);
-
-  /**
-   * The single availability verdict for the current session — what the chat
-   * view should show. Computed from `loadErrorKind` and `sessionInfo.status`
-   * so every consumer (base chat, simultaneously-mounted overlay) agrees on one
-   * state instead of each re-deriving it.
-   *
-   *  - hard-unavailable load error (not-found / unauthorized) → that kind
-   *  - session row loaded with status `archived` / `ended` → that kind
-   *  - otherwise → `null` (ready / loading / recovering — the caller decides
-   *    between those using `messagesLoaded`, `sessionState`, `isRecovering`)
-   *
-   * Transient load errors (`disconnected` / `timeout` / `unknown`) stay in
-   * `loadErrorKind` for the load-error view; they are intentionally NOT
-   * surfaced as `availability` so the recovering / retry path owns them.
-   */
-  readonly availability = computed<SessionUnavailableKind | null>(() => {
-    const loadKind = this.loadErrorKind.value;
-    if (isHardUnavailable(loadKind)) return loadKind;
-    const status = this.sessionInfo.value?.status;
-    if (status === 'archived') return 'archived';
-    if (status === 'ended') return 'terminated';
-    return null;
-  });
 
   /** API retry attempts (populated from session.retryAttempt events) */
   readonly retryAttempts = signal<
@@ -387,6 +362,17 @@ export class SessionStore {
    * reconnect refresh.
    */
   private destroyed = false;
+
+  /**
+   * Deletion tombstone: set when an out-of-band `session.deleted` event targets
+   * the active session. A `state.session` RPC captured BEFORE the deletion could
+   * otherwise commit AFTER it (clearing loadErrorKind back to null and reviving
+   * the deleted transcript); this flag makes fetchInitialSessionState and the
+   * state.session push handler skip their commit while the session is known to
+   * be gone. Reset on every doSelect (a retry/refresh re-issues the load, which
+   * the server will re-confirm as not-found).
+   */
+  private deleted = false;
 
   /**
    * Monotonic selection epoch, bumped on every doSelect (including a reselect
@@ -532,10 +518,16 @@ export class SessionStore {
     if (this.destroyed) {
       return;
     }
-    // Skip if already on this session and it loaded successfully (no error, not stuck loading).
-    // Allow re-selection when there is an error or when the session is still loading
-    // (e.g. timed out) so that the Retry button can restart the load.
-    const alreadyLoaded = this.sessionState.value !== null && !this.sessionState.value?.error;
+    // Skip if already on this session and it loaded successfully (no error, not stuck loading,
+    // and not in a load-error state). Allow re-selection when there is an error, when the
+    // session is still loading (e.g. timed out), OR when loadErrorKind is set — the latter
+    // covers an out-of-band deletion: the cached sessionState is still the pre-deletion
+    // success, so without this the unavailable view's "Try again" (and the same-id agent
+    // refresh) would no-op against the alreadyLoaded guard.
+    const alreadyLoaded =
+      this.sessionState.value !== null &&
+      !this.sessionState.value?.error &&
+      this.loadErrorKind.value === null;
     if (this.activeSessionId.value === sessionId && alreadyLoaded) {
       return;
     }
@@ -568,8 +560,10 @@ export class SessionStore {
     this.isRecovering.value = false;
     // A fresh selection has no load error yet — the prior session's not-found
     // / timeout must not leak into the new one (e.g. navigating from a deleted
-    // session to a live one).
+    // session to a live one). Also clear the deletion tombstone: a retry against
+    // the same id re-issues the load and lets the server re-confirm not-found.
     this.loadErrorKind.value = null;
+    this.deleted = false;
     // No older rows paginated yet for the new session.
     this.hasPaginatedOlder = false;
     // Invalidate any in-flight LiveQuery events for the previous session.
@@ -659,7 +653,9 @@ export class SessionStore {
         // the session (e.g. the daemon re-broadcasts after a transient timeout)
         // doesn't leave a not-found / timeout stranding the UI on the load-error
         // view. A push that itself carries an error leaves the kind as-is.
-        if (state.sessionInfo && !state.error) {
+        // Skip if the session was deleted out-of-band — a deletion tombstone
+        // must not be cleared by a stale pre-deletion push.
+        if (state.sessionInfo && !state.error && !this.deleted) {
           this.loadErrorKind.value = null;
         }
 
@@ -741,10 +737,13 @@ export class SessionStore {
       //    without this the loaded view stays stale after an out-of-band
       //    deletion. When the active session is deleted, flip to the
       //    not-found unavailable state so the user isn't left interacting with a
-      //    ghost. (availability resolves 'not-found' from loadErrorKind even
-      //    though the cached sessionInfo is still present.)
+      //    ghost. loadErrorKind flips to 'not-found' even though the cached
+      //    sessionInfo is still present.
       const unsubDeleted = hub.onEvent<{ sessionId: string }>('session.deleted', (event) => {
         if (event?.sessionId && event.sessionId === sessionId && !this.destroyed) {
+          // Tombstone: an in-flight state.session fetch/push captured before
+          // the deletion must not revive the session by clearing loadErrorKind.
+          this.deleted = true;
           this.loadErrorKind.value = 'not-found';
         }
       });
@@ -1131,11 +1130,13 @@ export class SessionStore {
     this.reconcileDaemonEpoch(result.daemonEpoch);
     if (
       this.destroyed ||
+      this.deleted ||
       this.activeSessionId.value !== sessionId ||
       this.selectGeneration !== generation
     ) {
       // Recovery is moot (session switched/destroyed/reselected) —
-      // performRecovery's own guards abort it too.
+      // performRecovery's own guards abort it too. `deleted` blocks a fetch
+      // captured before an out-of-band deletion from reviving the session.
       return false;
     }
     if (ticket <= this.lastCommittedFetchSeq) {
@@ -1157,7 +1158,7 @@ export class SessionStore {
     if (result.revision !== undefined) this.lastAppliedRevision = result.revision;
 
     this.sessionState.value = result;
-    // Reflect this fetch's load outcome so availability/UI route correctly. A
+    // Reflect this fetch's load outcome so the UI routes correctly. A
     // successful load clears any stale kind (e.g. a Retry that lands after the
     // session was restored); a failure sets the classified kind. Committed here
     // — after the supersede guards — so a discarded fetch can't set it.

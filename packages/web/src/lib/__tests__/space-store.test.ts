@@ -2839,3 +2839,24 @@ describe('SpaceStore — node execution LiveQuery subscriptions', () => {
     });
   });
 });
+
+describe('SpaceStore — refreshLongHorizonAgents preserves cache on failure', () => {
+  beforeEach(resetStore);
+  afterEach(() => vi.clearAllMocks());
+
+  it('keeps the cached agent list when a force-refresh fails (review fix)', async () => {
+    spaceStore.spaceId.value = 'space-1';
+    // Seed the cache as if a prior load succeeded.
+    spaceStore.longHorizonAgents.value = [makeLongHorizonAgent('lh-1')];
+    // The force-refresh RPC fails transiently.
+    mockHub.request.mockImplementation((method: string) => {
+      if (method === 'spaceLongHorizonAgent.list') return Promise.reject(new Error('timeout'));
+      return Promise.resolve({});
+    });
+    await spaceStore.refreshLongHorizonAgents();
+    // The cached list must be preserved — a transient refresh failure must not
+    // wipe the Agents view (ensureConfigData won't re-fetch: configDataLoaded
+    // stays true).
+    expect(spaceStore.longHorizonAgents.value).toHaveLength(1);
+  });
+});

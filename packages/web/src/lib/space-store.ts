@@ -1160,10 +1160,11 @@ class SpaceStore {
         (agent) => agent.spaceId === spaceId
       );
     } catch (err) {
-      logger.error('Failed to fetch long-horizon agents:', err);
-      if (this.spaceId.value === spaceId) {
-        this.longHorizonAgents.value = [];
-      }
+      // On failure, KEEP the cached list. Clearing it would empty the Agents
+      // view (and ensureConfigData won't re-fetch because configDataLoaded is
+      // still true), which is worse than showing slightly-stale data. The
+      // refresh caller retries the session load regardless.
+      logger.error('Failed to fetch long-horizon agents (keeping cached list):', err);
     }
   }
 

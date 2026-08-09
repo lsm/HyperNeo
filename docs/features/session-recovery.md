@@ -39,17 +39,21 @@ succeeds and the row still exists. They are derived from `sessionInfo.status`.
 ## Store model (`SessionStore`)
 
 - `loadErrorKind: Signal<SessionLoadErrorKind | null>` — set **only** when the
-  initial `state.session` fetch fails (or returns not-found). Reset on session
-  switch, on a successful load commit, and when a valid `state.session` push
-  arrives.
-- `availability: Computed<SessionUnavailableKind | null>` — the single verdict
-  the UI routes on: a hard-unavailable load kind (`not-found` / `unauthorized`),
-  or `archived` / `terminated` from status, else `null` (ready / loading /
-  recovering).
+  initial `state.session` fetch fails (or returns not-found), or when an
+  out-of-band `session.deleted` event targets the active session. Reset on
+  session switch, on a successful load commit, and when a valid `state.session`
+  push arrives.
+- **Routing reads the primitives directly.** `ChatContainer` routes on
+  `loadErrorKind` (load failures: not-found / unauthorized / timeout /
+  disconnected / unknown) and on `sessionInfo.status` (archived / ended) — there
+  is no separate "availability" computed; the two signals are the source of
+  truth.
 - **Transient recovery never sets a hard-unavailable kind.** The `retainOnError`
-  refresh path returns before committing, so a temporary RPC failure during
-  reconnect keeps `isRecovering` true and the transcript visible — it is never
-  mistaken for a confirmed-missing session.
+  refresh path classifies first and retains the cached transcript only for
+  transient failures (disconnected / timeout / unknown); an authoritative
+  not-found / unauthorized during reconnect commits the unavailable state
+  instead. A temporary failure keeps `isRecovering` true and the transcript
+  visible — it is never mistaken for a confirmed-missing session.
 
 ## UI routing (`ChatContainer`)
 
