@@ -274,6 +274,7 @@ class MockSession implements MessageDeliverySession {
   shouldThrow = false;
   driveCalls = 0;
   feedCalls = 0;
+  settleCalls: string[] = [];
   lastUuid?: string;
   lastContent?: unknown;
   lastParentToolUseId?: string | null;
@@ -304,6 +305,10 @@ class MockSession implements MessageDeliverySession {
     this.lastContent = content;
     this.lastParentToolUseId = parentToolUseId;
     return this.feedResult;
+  }
+
+  async settleSkippedDelivery(uuid: string): Promise<void> {
+    this.settleCalls.push(uuid);
   }
 }
 
@@ -547,6 +552,7 @@ describe('handler — status-aware delivery (§8)', () => {
     const result = await handler(job);
     expect(result).toEqual({ outcome: 'aborted' });
     expect(session.driveCalls).toBe(1);
+    expect(session.settleCalls).toEqual(['msg-abort-turn']);
   });
 
   it('steer aborted (archive/removePending at feed time) → completes without feeding (#3742774841/#3696)', async () => {
@@ -561,6 +567,7 @@ describe('handler — status-aware delivery (§8)', () => {
     const result = await handler(job);
     expect(result).toEqual({ outcome: 'aborted' });
     expect(session.feedCalls).toBe(1);
+    expect(session.settleCalls).toEqual(['msg-abort-steer']);
   });
 });
 

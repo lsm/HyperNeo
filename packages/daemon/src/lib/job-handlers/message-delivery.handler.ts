@@ -42,6 +42,7 @@ import type { Job, JobQueueRepository } from '../../storage/repositories/job-que
 import type { JobHandler } from '../../storage/job-queue-processor';
 import {
   asMessageDeliveryPayload,
+  isUniqueConstraintError,
   MESSAGE_DELIVERY_PARK_MS,
   type DeliveryLoadResult,
   type MessageDeliverySession,
@@ -170,6 +171,7 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
     if (result.outcome === 'aborted') {
       // Bridge revalidation found the session archived or the message removed
       // between load and feed — complete without feeding. See #3742774841/#3696.
+      await session.settleSkippedDelivery?.(payload.messageUuid);
       return { outcome: 'aborted' };
     }
     if (result.outcome === 'park') {
@@ -193,7 +195,7 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
         deps.jobQueue.requeueAs(job.id, 'turn', Date.now());
         return { outcome: 'superseded', promoted: 'turn' };
       } catch (err) {
-        if (/UNIQUE constraint/i.test(err instanceof Error ? err.message : String(err))) {
+        if (isUniqueConstraintError(err)) {
           const retryAt = Date.now() + MESSAGE_DELIVERY_PARK_MS;
           deps.jobQueue.requeueAs(job.id, 'steer', retryAt);
           return { outcome: 'superseded', promoted: 'steer' };

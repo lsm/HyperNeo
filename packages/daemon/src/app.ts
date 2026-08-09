@@ -85,6 +85,7 @@ import {
   TASK_SCHEDULE_FIRE,
 } from './lib/job-queue-constants';
 import { createMessageDeliveryHandler } from './lib/job-handlers/message-delivery.handler';
+import { asMessageDeliveryPayload } from './lib/agent/message-delivery';
 import { handleTaskScheduleFire } from './lib/job-handlers/task-schedule-fire.handler';
 import {
   backfillLongHorizonAgentReminderNextRunAt,
@@ -990,8 +991,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         // change. Without this the row stays `enqueued`, which pagination hides —
         // the user's prompt vanishes without a terminal error. See Codex (#2595).
         onDead: (job) => {
-          const payload = job.payload as { sessionId?: string; messageUuid?: string };
-          if (!payload.sessionId || !payload.messageUuid) return;
+          const payload = asMessageDeliveryPayload(job.payload);
+          if (!payload) return;
           const sdkRepo = reactiveDb?.db.getSDKMessageRepo();
           if (!sdkRepo) return;
           const flipped = sdkRepo.markDeliveryFailedByUuid(payload.sessionId, payload.messageUuid);
