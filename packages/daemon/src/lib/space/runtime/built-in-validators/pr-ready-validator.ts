@@ -86,10 +86,7 @@ export function createPrReadyValidator(
     // in-progress, so gating on `approved` prevents a sender from spoofing one
     // of these reasons to bypass the gate and activate Review with an unready
     // PR.
-    if (
-      context.taskStatus === 'approved' &&
-      POST_APPROVAL_MERGE_REASONS.has(readSendReason(context) ?? '')
-    ) {
+    if (context.taskStatus === 'approved') {
       const data = (context.rawParams ?? context.params)?.data;
       const suppliedPrUrl =
         data && typeof data === 'object' && 'pr_url' in data
@@ -116,7 +113,9 @@ export function createPrReadyValidator(
           };
         }
       }
-      return { type: 'allow' };
+      if (POST_APPROVAL_MERGE_REASONS.has(readSendReason(context) ?? '')) {
+        return { type: 'allow' };
+      }
     }
     const deadlineMs = Date.now() + DEFAULT_TIMEOUT_MS;
     const prUrlResult = await resolvePrUrl(context, spawnImpl, deadlineMs);

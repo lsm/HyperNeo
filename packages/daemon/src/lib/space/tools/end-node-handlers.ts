@@ -92,6 +92,8 @@ export interface MarkCompleteHandlerDeps {
   taskRepo: Pick<SpaceTaskRepository, 'getTask'>;
   /** Optional summary captured from the latest result artifact for this task's workflow run. */
   resolveResultArtifactSummary?: (task: SpaceTask) => string | null;
+  /** Session invoking mark_complete; must match the routed post-approval session when set. */
+  callerSessionId?: string;
   /** Task manager — used to transition and update the task atomically. */
   taskManager: Pick<SpaceTaskManager, 'setTaskStatus' | 'updateTask'>;
   /** Optional hub for emitting `space.task.updated` events. */
@@ -191,6 +193,7 @@ export function createMarkCompleteHandler(
     internalEventBus,
     goalService,
     resolveResultArtifactSummary,
+    callerSessionId,
     assertPrMerged,
   } = deps;
 
@@ -226,6 +229,16 @@ export function createMarkCompleteHandler(
         error:
           `task is not in \`approved\` status (current: \`${task.status}\`); did you mean \`approve_task\`? ` +
           `mark_complete only transitions an already-approved task from 'approved' to 'done'.`,
+      });
+    }
+
+    if (
+      task.postApprovalSessionId &&
+      (!callerSessionId || task.postApprovalSessionId !== callerSessionId)
+    ) {
+      return jsonResult({
+        success: false,
+        error: `mark_complete is restricted to the routed post-approval session ${task.postApprovalSessionId}.`,
       });
     }
 

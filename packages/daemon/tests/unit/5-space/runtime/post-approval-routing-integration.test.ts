@@ -379,6 +379,7 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
       spaceId: SPACE_ID,
       taskRepo: h.taskRepo,
       taskManager: h.taskManager,
+      callerSessionId: result.postApprovalSessionId,
     });
     const toolResult = await markComplete({});
     const parsed = JSON.parse(

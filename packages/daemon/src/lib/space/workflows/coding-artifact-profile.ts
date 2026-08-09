@@ -28,6 +28,12 @@ const log = new Logger('coding-artifact-profile');
 
 /** Gate id that records a multi-round review decision per cycle. */
 const REVIEW_POSTED_GATE = 'review-posted-gate';
+const LEGACY_PR_READY_GATE_IDS = new Set([
+  'code-ready-gate',
+  'research-ready-gate',
+  'plan-pr-gate',
+  'code-pr-gate',
+]);
 
 /**
  * The SQLite database type this profile consumes. Derived from the repository
@@ -146,7 +152,9 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
     try {
       const gateDataRepo = this.sharedGateDataRepo ?? new GateDataRepository(this.db);
       for (const record of gateDataRepo.listByRun(runId)) {
-        if (!record.gateId.includes('pr-ready')) continue;
+        if (!record.gateId.includes('pr-ready') && !LEGACY_PR_READY_GATE_IDS.has(record.gateId)) {
+          continue;
+        }
         approved = newer(approved, legacyPrUrl(record.data), record.updatedAt);
       }
     } catch (err) {
