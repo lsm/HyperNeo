@@ -53,7 +53,6 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
 
   useEffect(() => {
     spaceStore.ensureConfigData().catch(() => {});
-    spaceStore.ensureNodeExecutions().catch(() => {});
   }, [space.id]);
   const spaceId = currentSpaceIdSignal.value ?? '';
   /** null = list view; 'new' = create editor; <id> = edit editor */
