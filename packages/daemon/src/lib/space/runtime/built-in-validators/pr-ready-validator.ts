@@ -101,11 +101,20 @@ export function createPrReadyValidator(
           : typeof context.hookLocalState.prUrl === 'string'
             ? context.hookLocalState.prUrl
             : undefined;
-      if (typeof suppliedPrUrl === 'string' && frozenPrUrl && suppliedPrUrl !== frozenPrUrl) {
-        return {
-          type: 'block',
-          reason: `Post-approval handoff PR ${suppliedPrUrl} does not match the reviewed PR ${frozenPrUrl}`,
-        };
+      if (typeof suppliedPrUrl === 'string') {
+        if (!frozenPrUrl) {
+          return {
+            type: 'block',
+            reason:
+              'Post-approval handoff cannot set a PR URL because this PR-ready hook has no frozen reviewed PR identity.',
+          };
+        }
+        if (suppliedPrUrl !== frozenPrUrl) {
+          return {
+            type: 'block',
+            reason: `Post-approval handoff PR ${suppliedPrUrl} does not match the reviewed PR ${frozenPrUrl}`,
+          };
+        }
       }
       return { type: 'allow' };
     }

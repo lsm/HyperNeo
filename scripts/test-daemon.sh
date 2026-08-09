@@ -207,7 +207,7 @@ if [ "$RERUN" = true ]; then
 	# `migration-*.test.ts` files directly under `storage/` (both are assigned to
 	# the migration shards, so a --rerun must keep the same budget).
 	RERUN_TIMEOUT_FLAGS=""
-	if echo "$FAILING_FILES" | grep -qE "migrations/|migration-[0-9]+[^/]*\.test\.[jt]s"; then
+	if echo "$FAILING_FILES" | grep -qE "migrations/|migration-[0-9]+[^/]*(\.test|_test)\.[jt]s"; then
 		RERUN_TIMEOUT_FLAGS="--testTimeout=30000 --hookTimeout=30000"
 	fi
 	# shellcheck disable=SC2086

@@ -259,6 +259,19 @@ export class SpaceTaskRepository {
     return rows.map((r) => this.rowToSpaceTask(r));
   }
 
+  hasApprovedTaskForWorkflow(workflowId: string): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT 1
+         FROM space_tasks t
+         JOIN space_workflow_runs r ON r.id = t.workflow_run_id
+         WHERE r.workflow_id = ? AND t.status = 'approved'
+         LIMIT 1`
+      )
+      .get(workflowId);
+    return row !== undefined && row !== null;
+  }
+
   /**
    * List tasks for a workflow run
    */

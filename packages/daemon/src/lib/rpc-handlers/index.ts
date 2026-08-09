@@ -605,11 +605,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         .listByWorkflow(workflowId)
         .some(
           (run) =>
-            run.status === 'in_progress' ||
-            run.status === 'blocked' ||
-            run.status === 'pending' ||
-            spaceTaskRepo.listByWorkflowRun(run.id).some((task) => task.status === 'approved')
-        )
+            run.status === 'in_progress' || run.status === 'blocked' || run.status === 'pending'
+        ) || spaceTaskRepo.hasApprovedTaskForWorkflow(workflowId)
   )
     .then(() => {
       // Proactive drift detection — fire-and-forget; logs warnings for any

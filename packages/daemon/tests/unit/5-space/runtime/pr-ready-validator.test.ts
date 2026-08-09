@@ -183,6 +183,7 @@ describe('pr-ready validator', () => {
     const ctx: HookExecutorContext = {
       ...makeContext('https://github.com/acme/corp/pull/42'),
       taskStatus: 'approved',
+      hookLocalState: { pr_url: 'https://github.com/acme/corp/pull/42' },
       params: {
         target: 'Review',
         message: 'blocked',

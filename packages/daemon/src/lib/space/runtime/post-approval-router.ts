@@ -231,6 +231,14 @@ export function collectPostApprovalRoutes(workflow: SpaceWorkflow | null): PostA
   return workflow.postApproval ? [workflow.postApproval] : [];
 }
 
+export function collectDispatchablePostApprovalRoutes(
+  workflow: SpaceWorkflow | null
+): PostApprovalRoute[] {
+  return collectPostApprovalRoutes(workflow).filter(
+    (route) => route.targetAgent && route.targetAgent !== POST_APPROVAL_TASK_AGENT_TARGET
+  );
+}
+
 /**
  * Null out the four pending-completion fields on a task. Exported so the
  * dispatch layer (`SpaceRuntime.dispatchPostApproval`) can guarantee the
