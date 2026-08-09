@@ -954,7 +954,34 @@ describe('createCustomAgentInit', () => {
     expect(init.allowedTools).toBeUndefined();
     expect(init.disallowedTools).toBeUndefined();
     expect(init.agent).toBeUndefined();
-    expect(init.agents).toBeUndefined();
+  });
+
+  it('bounds Space worker delegation at one subagent generation', () => {
+    const init = createCustomAgentInit(
+      makeConfig({
+        customAgent: makeAgent({ customPrompt: 'Delegate independent investigations.' }),
+      })
+    );
+
+    // The parent keeps the preset defaults, including first-level Agent/Task tools.
+    expect(init.sdkToolsPreset).toBeUndefined();
+    expect(init.allowedTools).toBeUndefined();
+    expect(init.disallowedTools).toBeUndefined();
+
+    const child = init.agents?.['general-purpose'];
+    expect(child).toBeDefined();
+    expect(child?.tools).toEqual([
+      'Read',
+      'Bash',
+      'Grep',
+      'Glob',
+      'WebFetch',
+      'WebSearch',
+      'Skill',
+      'ToolSearch',
+    ]);
+    expect(child?.disallowedTools).toEqual(['Agent', 'Task', 'TaskOutput', 'TaskStop']);
+    expect(child?.prompt).toContain('must not spawn or delegate to other agents');
   });
 
   it('denies only omitted mutation tools for configured worker profiles', () => {
@@ -981,7 +1008,6 @@ describe('createCustomAgentInit', () => {
     expect(init.sdkToolsPreset).toBeUndefined();
     expect(init.allowedTools).toBeUndefined();
     expect(init.agent).toBeUndefined();
-    expect(init.agents).toBeUndefined();
     expect(init.disallowedTools).toEqual(['Bash', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
     expect(init.disallowedTools).not.toContain('mcp__node-agent__send_message');
     expect(init.disallowedTools).not.toContain('space-agent-tools__send_message');
@@ -1152,7 +1178,6 @@ describe('createCustomAgentInit', () => {
     );
 
     expect(init.agent).toBeUndefined();
-    expect(init.agents).toBeUndefined();
     expect(init.systemPrompt?.preset).toBe('claude_code');
     expect(init.systemPrompt?.append).toBe('Visible prompt');
     expect(init.sdkToolsPreset).toBeUndefined();
@@ -1172,7 +1197,6 @@ describe('createCustomAgentInit', () => {
     );
 
     expect(init.agent).toBeUndefined();
-    expect(init.agents).toBeUndefined();
     expect(init.sdkToolsPreset).toBeUndefined();
     expect(init.allowedTools).toBeUndefined();
     expect(init.disallowedTools).toBeUndefined();

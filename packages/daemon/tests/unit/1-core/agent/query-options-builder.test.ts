@@ -143,6 +143,29 @@ describe('QueryOptionsBuilder', () => {
       expect(options.agents).toBeDefined();
     });
 
+    it('preserves child delegation restrictions while exposing parent agent tools', async () => {
+      mockSession.config.provider = 'glm';
+      mockSession.config.agents = {
+        'general-purpose': {
+          description: 'Investigate directly',
+          tools: ['Read', 'Bash', 'Grep', 'Glob'],
+          disallowedTools: ['Agent', 'Task', 'TaskOutput', 'TaskStop'],
+          prompt: 'Do not delegate.',
+          model: 'inherit',
+        },
+      };
+
+      const options = await builder.build();
+
+      expect(options.tools).toEqual(
+        expect.arrayContaining(['Agent', 'Task', 'TaskOutput', 'TaskStop'])
+      );
+      expect(options.agents?.['general-purpose']).toMatchObject({
+        tools: ['Read', 'Bash', 'Grep', 'Glob'],
+        disallowedTools: ['Agent', 'Task', 'TaskOutput', 'TaskStop'],
+      });
+    });
+
     it('should include sandbox settings when configured', async () => {
       mockSession.config.sandbox = { enabled: true };
       const options = await builder.build();
