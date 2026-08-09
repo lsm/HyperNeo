@@ -32,6 +32,7 @@ import {
   currentSpaceAgentHandleSignal,
   currentSpaceCanonicalIdSignal,
   currentSpaceIdSignal,
+  currentSpaceSessionIdSignal,
   currentSpaceViewModeSignal,
   spaceOverlayAgentNameSignal,
   spaceOverlayHighlightMessageIdSignal,
@@ -128,7 +129,13 @@ export default function SpaceIsland({
     const viewedId = sessionViewId;
     if (!viewedId) return;
     await spaceStore.refreshLongHorizonAgents();
+    // Abort if the user navigated away — either to a different Space, or to a
+    // different session/view WITHIN the same Space. stillOnThisRouteSpace()
+    // only checks the Space id, so also compare the live route session id; an
+    // in-flight refresh must never navigate back to / re-select the old agent
+    // and clobber the store of the newly selected route.
     if (!stillOnThisRouteSpace()) return;
+    if (currentSpaceSessionIdSignal.value !== viewedId) return;
     const parsed = parseLongHorizonAgentSessionId(viewedId);
     const nextId = parsed
       ? (spaceStore.longHorizonAgents.value.find((a) => a.id === parsed.agentId)?.sessionId ?? null)
@@ -287,6 +294,10 @@ export default function SpaceIsland({
   // AgentOverlayChat uses a Portal so it doesn't affect layout.
   if (sessionViewId) {
     const isSpaceAgentSession = sessionViewId === `space:chat:${spaceId}`;
+    // The Refresh action re-fetches the long-horizon-agent record, so it only
+    // applies to coordinator / `space:agent:` sessions — a regular (archived)
+    // Space session has no agent record to refresh.
+    const isAgentSession = isSpaceAgentSession || sessionViewId.startsWith('space:agent:');
     return (
       <>
         <div
@@ -300,7 +311,7 @@ export default function SpaceIsland({
             titleOverride={isSpaceAgentSession ? 'Coordinator' : undefined}
             onBack={handleSessionBack}
             agentLabel={isSpaceAgentSession ? 'space' : undefined}
-            onRefreshAgent={handleRefreshAgentRecord}
+            onRefreshAgent={isAgentSession ? handleRefreshAgentRecord : undefined}
           />
         </div>
         {overlay}
