@@ -11,7 +11,7 @@
  * See docs/features/message-delivery-v2.md §13.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { runMigration182 } from '../../../../src/storage/schema/migrations';
