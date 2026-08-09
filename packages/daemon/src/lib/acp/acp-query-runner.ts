@@ -685,7 +685,13 @@ export class AcpQueryRunner {
             // Persist enqueued→submitted first. If this throws, AcpTransport
             // rejects the request and the flag stays false, so the failure path
             // cannot mistakenly settle only a nonexistent submitted row.
-            this.ctx.messageHandler.markMessageSubmitted(message.uuid ?? '');
+            const persisted = this.ctx.messageHandler.markMessageSubmitted(message.uuid ?? '');
+            if (!persisted) {
+              // remove/defer won after generator yield but before stdin submission.
+              // Throw inside AcpTransport's write callback so the request aborts;
+              // never acknowledge or execute a successfully revoked prompt.
+              throw new Error('ACP prompt was revoked before submission');
+            }
             submitted = true;
             onSent();
           },

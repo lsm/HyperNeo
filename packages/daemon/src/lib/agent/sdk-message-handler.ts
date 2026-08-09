@@ -482,8 +482,8 @@ export class SDKMessageHandler {
     }
   }
 
-  markMessageSubmitted(messageId: string): void {
-    this.transitionPersistedMessage(messageId, 'enqueued', 'submitted');
+  markMessageSubmitted(messageId: string): boolean {
+    return this.transitionPersistedMessage(messageId, 'enqueued', 'submitted');
   }
 
   markMessageAccepted(messageId: string): void {
@@ -519,10 +519,10 @@ export class SDKMessageHandler {
     messageId: string,
     fromStatus: 'enqueued',
     toStatus: 'submitted'
-  ): void {
+  ): boolean {
     const { session, db, internalEventBus } = this.ctx;
     const message = db.getMessageByStatusAndUuid(session.id, fromStatus, messageId);
-    if (!message) return;
+    if (!message) return false;
     db.updateMessageStatus([message.dbId], toStatus);
     internalEventBus
       .publish('messages.statusChanged', {
@@ -531,6 +531,7 @@ export class SDKMessageHandler {
         status: toStatus,
       })
       .catch(() => {});
+    return true;
   }
 
   /**

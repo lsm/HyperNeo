@@ -87,6 +87,12 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       throw new Error(`message_delivery: invalid payload ${JSON.stringify(job.payload)}`);
     }
 
+    // A reclaimed attempt replaces __claimToken on the row. Check immediately
+    // before every provider-facing path so a predecessor awakened after sleep or
+    // event-loop suspension cannot admit the same UUID again.
+    const claimCurrent = () => deps.jobQueue.isClaimCurrent(job.id, job.claimToken);
+    if (!claimCurrent()) return { outcome: 'stale_attempt' };
+
     // Archived session: worktree + SDK subprocess are torn down. Driving a turn
     // here would recreate resources or run in the fallback workspace, so refuse
     // — complete the job (not a delivery failure, so don't dead-letter). The
@@ -131,13 +137,17 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       // kickoff feed; the turn await runs unlocked (so steering proceeds). The
       // lease heartbeat keeps the job from being reclaimed as stale mid-turn.
       // When alreadyConsumed, the bridge skips the feed (no duplicate).
+      if (!claimCurrent()) return { outcome: 'stale_attempt' };
       const turn = session.driveDeliveryTurn(
         payload.messageUuid,
         content,
         payload.parentToolUseId,
         alreadyConsumed
       );
-      const heartbeat = setInterval(() => deps.jobQueue.touchStartedAt(job.id), LEASE_HEARTBEAT_MS);
+      const heartbeat = setInterval(
+        () => deps.jobQueue.touchStartedAt(job.id, job.claimToken),
+        LEASE_HEARTBEAT_MS
+      );
       if (typeof (heartbeat as { unref?: () => void }).unref === 'function') {
         (heartbeat as { unref: () => void }).unref();
       }
@@ -146,7 +156,7 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
         if (result.outcome === 'blocked') {
           // Park: return to pending with runAt, no retry bump. The processor's
           // auto-complete() is a no-op (row is no longer 'processing').
-          deps.jobQueue.requeue(job.id, result.retryAt);
+          deps.jobQueue.requeue(job.id, result.retryAt, job.claimToken);
           return { parked: 'sdk_resume_choice', retryAt: result.retryAt };
         }
         if (result.outcome === 'aborted') {
@@ -170,6 +180,7 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
     // The bridge checks state under the lock (brief) and feeds unlocked
     // (enqueueWithId resolves on onSent — concurrent-safe; durable so a
     // yielded-but-unresumed steer does not TTL-out into a duplicate re-feed).
+    if (!claimCurrent()) return { outcome: 'stale_attempt' };
     const result = await session.feedDeliverySteer(
       payload.messageUuid,
       content,
@@ -188,7 +199,7 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       // (unbounded hot loop); it re-evaluates (feed/promote) when reclaimed after
       // the delay. See Codex (#3742693683).
       const retryAt = Date.now() + MESSAGE_DELIVERY_PARK_MS;
-      deps.jobQueue.requeue(job.id, retryAt);
+      deps.jobQueue.requeue(job.id, retryAt, job.claimToken);
       return { parked: 'turn_blocked', retryAt };
     }
     if (result.outcome === 'promote') {

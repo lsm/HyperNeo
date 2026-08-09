@@ -189,7 +189,7 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
       createCanUseToolCallback: mock(() => canUseTool),
     } as unknown as AskUserQuestionHandler,
     messageHandler: {
-      markMessageSubmitted: mock(() => {}),
+      markMessageSubmitted: mock(() => true),
       markMessageAccepted: mock(() => {}),
       markMessageSubmissionFailed: mock(() => {}),
     } as never,
@@ -572,6 +572,32 @@ describe('AcpQueryRunner', () => {
     expect(onSDKMessage.mock.calls.some(([message]) => message.type === 'result')).toBe(true);
     expect(onMarkApiSuccess).toHaveBeenCalled();
     expect(stopSpy).toHaveBeenCalled();
+  });
+
+  test('aborts ACP submission when remove/defer already revoked the row (#3744696846)', async () => {
+    const client = createMockClient();
+    let promptBodyRan = false;
+    client.sendPrompt = mock(async function* (
+      _prompt: unknown,
+      callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+    ) {
+      callbacks?.onSubmitted?.();
+      promptBodyRan = true;
+      yield {
+        sessionId: 'acp-session-1',
+        update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'bad' } },
+      };
+    });
+    const { runner, ctx, onSent } = createRunnerFixture({ client });
+    (
+      ctx.messageHandler as unknown as { markMessageSubmitted: ReturnType<typeof mock> }
+    ).markMessageSubmitted = mock(() => false);
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    expect(onSent).not.toHaveBeenCalled();
+    expect(promptBodyRan).toBe(false);
   });
 
   test('settles a submitted-but-never-accepted prompt as failed when the run ends (#3743968032)', async () => {

@@ -168,11 +168,11 @@ export class JobQueueProcessor {
       const result = await reg.handler(job);
       // message_delivery parks/promotes by requeueing the job itself; the
       // auto-complete here is then a no-op (row no longer 'processing').
-      this.repo.complete(job.id, result ?? undefined);
+      this.repo.complete(job.id, result ?? undefined, job.claimToken);
       this.notifyChange();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      const updated = this.repo.fail(job.id, message);
+      const updated = this.repo.fail(job.id, message, job.claimToken);
       if (updated && updated.status === 'dead' && reg?.onDead) {
         try {
           reg.onDead(updated);

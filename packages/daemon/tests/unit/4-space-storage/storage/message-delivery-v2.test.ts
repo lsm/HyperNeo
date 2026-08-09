@@ -135,6 +135,21 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
   });
 
   describe('dequeue — FIFO within a session (§15: created_at tiebreaker)', () => {
+    it('orders exact same-millisecond ties by rowid ASC', () => {
+      const now = Date.now();
+      for (const uuid of ['first', 'second', 'third']) {
+        repo.enqueue({
+          queue: MESSAGE_DELIVERY,
+          payload: { sessionId: SESSION, messageUuid: uuid, role: 'steer', origin: 'chat' },
+          runAt: now,
+        });
+      }
+      // Force every documented sort key to tie; rowid must preserve insertion order.
+      db.prepare(`UPDATE job_queue SET priority = 0, run_at = ?, created_at = ?`).run(now, now);
+      const claimed = repo.dequeueExempt(MESSAGE_DELIVERY, { path: '$.role', equals: 'steer' }, 3);
+      expect(claimed.map((j) => j.payload.messageUuid)).toEqual(['first', 'second', 'third']);
+    });
+
     it('orders same-priority/run_at jobs by created_at ASC', () => {
       const now = Date.now();
       // Enqueue three jobs with identical priority + runAt but distinct created_at.
@@ -187,8 +202,14 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
       const after = repo.getJob(job.id);
       expect(after?.status).toBe('pending');
       expect(after?.startedAt).toBeNull();
-      // And it can be claimed again (redelivered).
-      expect(repo.dequeue(MESSAGE_DELIVERY, 1)).toHaveLength(1);
+      // And it can be claimed again (redelivered) with a fresh claim token.
+      const [reclaimedJob] = repo.dequeue(MESSAGE_DELIVERY, 1);
+      expect(reclaimedJob.claimToken).not.toBe(job.claimToken);
+      expect(repo.isClaimCurrent(job.id, job.claimToken)).toBe(false);
+      expect(repo.isClaimCurrent(reclaimedJob.id, reclaimedJob.claimToken)).toBe(true);
+      // The predecessor cannot heartbeat or requeue the replacement attempt.
+      expect(repo.touchStartedAt(job.id, job.claimToken)).toBe(false);
+      expect(repo.requeue(job.id, Date.now(), job.claimToken)).toBeNull();
     });
   });
 
