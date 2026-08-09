@@ -725,7 +725,7 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
       await expect(transport.send(message)).rejects.toThrow('WebSocket not connected');
     });
 
-    // 30s timeout needed for creating 51MB payload
+    // 30s timeout needed for creating 41MB payload
     it(
       'should handle oversized messages',
       async () => {
@@ -737,8 +737,8 @@ describe('WebSocketClientTransport - Network Failure Tests', () => {
         await transport.initialize();
         await new Promise((resolve) => setTimeout(resolve, 20));
 
-        // Create an oversized message (>50MB)
-        const largeData = 'x'.repeat(51 * 1024 * 1024);
+        // Create an oversized request (>40MB)
+        const largeData = 'x'.repeat(41 * 1024 * 1024);
         const message: HubMessage = {
           id: 'test-1',
           type: MessageType.REQUEST,
