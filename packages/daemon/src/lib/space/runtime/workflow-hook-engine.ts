@@ -609,6 +609,27 @@ export class WorkflowHookEngine {
               };
             } else {
               currentParams = patchedParams;
+              // A pr_ready patch_params success (it discovered the PR from
+              // templateData / the current branch because the sender omitted
+              // data.pr_url) is a successful handoff — stamp the frozen
+              // identity (hook-local + reserved key) just like the allow branch,
+              // using the now-patched params. Without this, the common no-pr_url
+              // handoff recorded no frozen identity and later blocker/fix
+              // handoffs failed closed.
+              if (
+                methodName === 'send_message' &&
+                hook.validator.kind === 'built_in' &&
+                hook.validator.id === 'pr_ready'
+              ) {
+                const prUrl = extractPrUrlFromParams(currentParams);
+                if (prUrl) {
+                  stateUpdates.push({ hookId: hook.id, state: { pr_url: prUrl } });
+                  stateUpdates.push({
+                    hookId: PR_READY_VALIDATED_IDENTITY_HOOK_ID,
+                    state: { pr_url: prUrl },
+                  });
+                }
+              }
             }
           }
           break;

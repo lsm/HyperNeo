@@ -231,11 +231,13 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
     )
     .sort();
 
-  // Serialize node-level post-approval routes.
+  // Serialize node-level post-approval routes (include requirePrMerge so a
+  // change to the completion-safety flag is detected as drift / a customized row).
   const nodePostApproval = workflow.nodes
     .filter((n) => n.postApproval)
     .map(
-      (n) => `${n.name}|${n.postApproval?.targetAgent ?? ''}|${n.postApproval?.instructions ?? ''}`
+      (n) =>
+        `${n.name}|${n.postApproval?.targetAgent ?? ''}|${n.postApproval?.instructions ?? ''}|${n.postApproval?.requirePrMerge ? '1' : '0'}`
     )
     .sort();
 
@@ -257,9 +259,9 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
     .map((n) => `${n.name}|${n.codexTimeoutSeconds}`)
     .sort();
 
-  // Serialize legacy workflow-level post-approval route.
+  // Serialize legacy workflow-level post-approval route (include requirePrMerge).
   const legacyPostApproval = workflow.postApproval
-    ? `${workflow.postApproval.targetAgent}|${workflow.postApproval.instructions ?? ''}`
+    ? `${workflow.postApproval.targetAgent}|${workflow.postApproval.instructions ?? ''}|${workflow.postApproval.requirePrMerge ? '1' : '0'}`
     : '';
 
   return {

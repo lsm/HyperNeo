@@ -647,10 +647,13 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       const run = spaceWorkflowRunRepo.getRun(runId);
       if (!run?.workflowId) return undefined;
       const wf = spaceWorkflowManager.getWorkflow(run.workflowId);
-      const hooks = wf?.hooks;
-      if (!hooks?.length) return undefined;
+      // Return undefined ONLY when the workflow can't be resolved (legacy
+      // fallback). When the workflow resolves — even with no pr_ready hooks —
+      // return an (empty) Set so the resolver uses exact-match (fail closed)
+      // rather than the substring legacy fallback.
+      if (!wf) return undefined;
       const ids = new Set<string>();
-      for (const h of hooks) {
+      for (const h of wf.hooks ?? []) {
         if (h.validator?.kind === 'built_in' && h.validator.id === 'pr_ready') ids.add(h.id);
       }
       return ids;
