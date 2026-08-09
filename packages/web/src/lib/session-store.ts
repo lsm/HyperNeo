@@ -799,6 +799,20 @@ export class SessionStore {
     });
     this.cleanupFunctions.push(unsubDelta);
 
+    const unsubError = hub.onEvent<{
+      subscriptionId: string;
+      code: string;
+      message: string;
+    }>('liveQuery.error', (event) => {
+      if (event.subscriptionId !== subscriptionId) return;
+      if (this.activeMessagesSubscriptionId !== subscriptionId) return;
+      if (event.code === 'MESSAGE_TOO_LARGE') {
+        this.messagesLoaded.value = true;
+        toast.error('Session is too large to load in one window. Try loading less history.');
+      }
+    });
+    this.cleanupFunctions.push(unsubError);
+
     // Connection handler — drives per-instance recovery for this session.
     // Fires on transport-level state changes (WebSocket drop + re-establish),
     // which is distinct from connection-manager's soft-staleness tab-resume

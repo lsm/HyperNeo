@@ -47,6 +47,16 @@ import type {
 // Define UnsubscribeFn locally (removed from types.ts)
 type UnsubscribeFn = () => void;
 
+export class MessageHubResponseError extends Error {
+  constructor(
+    message: string,
+    public readonly code?: string
+  ) {
+    super(message);
+    this.name = 'MessageHubResponseError';
+  }
+}
+
 /**
  * MessageHub class
  * Core implementation of unified messaging system
@@ -596,7 +606,7 @@ export class MessageHub {
 
     // Resolve or reject
     if (message.error) {
-      pending.reject(new Error(message.error));
+      pending.reject(new MessageHubResponseError(message.error, message.errorCode));
     } else {
       pending.resolve(message.data);
     }

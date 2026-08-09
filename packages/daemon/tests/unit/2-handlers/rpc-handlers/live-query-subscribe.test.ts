@@ -43,7 +43,9 @@ function createMockSetup() {
   const handlers = new Map<string, RequestHandler>();
   let disconnectHandler: ((clientId: string) => void) | null = null;
   const sentMessages: SentMessage[] = [];
-  let sendToClientResult = true;
+  let sendToClientResult:
+    | { ok: true }
+    | { ok: false; reason: 'send_failed' | 'message_too_large' } = { ok: true };
   let routerEnabled = true;
 
   const mockRouter = {
@@ -53,9 +55,7 @@ function createMockSetup() {
     }),
     sendToClientDetailed: mock((clientId: string, message: unknown) => {
       sentMessages.push({ clientId, message: message as SentMessage['message'] });
-      return sendToClientResult
-        ? ({ ok: true } as const)
-        : ({ ok: false, reason: 'send_failed' } as const);
+      return sendToClientResult;
     }),
   };
 
@@ -98,6 +98,9 @@ function createMockSetup() {
     callHandler,
     fireDisconnect: (clientId: string) => disconnectHandler?.(clientId),
     setSendResult: (result: boolean) => {
+      sendToClientResult = result ? { ok: true } : { ok: false, reason: 'send_failed' };
+    },
+    setDetailedSendResult: (result: typeof sendToClientResult) => {
       sendToClientResult = result;
     },
     setRouterEnabled: (enabled: boolean) => {
@@ -395,6 +398,27 @@ describe('setupLiveQueryHandlers', () => {
     expect(msg.message.data.subscriptionId).toBe('sub-1');
     expect(Array.isArray(msg.message.data.rows)).toBe(true);
     expect(typeof msg.message.data.version).toBe('number');
+  });
+
+  test('oversized snapshot reports an error and preserves the subscription', async () => {
+    setup.setDetailedSendResult({ ok: false, reason: 'message_too_large' });
+    await setup.callHandler('liveQuery.subscribe', {
+      queryName: 'mcpServers.global',
+      params: [],
+      subscriptionId: 'sub-large',
+    });
+
+    expect(setup.sentMessages.map((sent) => sent.message.method)).toEqual([
+      'liveQuery.snapshot',
+      'liveQuery.error',
+    ]);
+
+    setup.setDetailedSendResult({ ok: true });
+    insertMcpServer(db, 'mcp-after-large', 'after-large');
+    reactiveDb.notifyChange('app_mcp_servers');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(setup.sentMessages.some((sent) => sent.message.method === 'liveQuery.delta')).toBe(true);
   });
 
   test('full lifecycle: subscribe, delta, unsubscribe', async () => {

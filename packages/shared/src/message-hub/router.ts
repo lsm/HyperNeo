@@ -109,7 +109,7 @@ export class MessageHubRouter {
   }
 
   private byteLength(value: string): number {
-    return new TextEncoder().encode(value).length;
+    return new Blob([value]).size;
   }
 
   private serializeForSend(message: HubMessage): string | null {
