@@ -666,6 +666,58 @@ describe('visualStateToCreateParams', () => {
     expect(params.postApproval).toBeUndefined();
   });
 
+  it('preserves postApproval.requirePrMerge through create params (regression)', () => {
+    // Without this, a saved clone of a coder-owned workflow (Coding / Coding
+    // with QA / Research) loses the PR-merged gate, and mark_complete can close
+    // the task with the PR still open.
+    const state = makeState({
+      nodes: [
+        {
+          step: {
+            localId: 'local-1',
+            id: 's1',
+            name: 'Step 1',
+            agentId: 'a1',
+            postApproval: {
+              targetAgent: 'reviewer',
+              instructions: 'Merge PR {{pr_url}}.',
+              requirePrMerge: true,
+            },
+          },
+          position: { x: 50, y: 50 },
+        },
+      ],
+    });
+    const params = visualStateToCreateParams(state, 'space-1', 'WF');
+    expect(params.nodes?.[0].postApproval).toEqual({
+      targetAgent: 'step-1',
+      instructions: 'Merge PR {{pr_url}}.',
+      requirePrMerge: true,
+    });
+  });
+
+  it('omits postApproval.requirePrMerge when not set (no undefined leak)', () => {
+    const state = makeState({
+      nodes: [
+        {
+          step: {
+            localId: 'local-1',
+            id: 's1',
+            name: 'Step 1',
+            agentId: 'a1',
+            postApproval: {
+              targetAgent: 'reviewer',
+              instructions: 'Merge PR {{pr_url}}.',
+            },
+          },
+          position: { x: 50, y: 50 },
+        },
+      ],
+    });
+    const params = visualStateToCreateParams(state, 'space-1', 'WF');
+    expect(params.nodes?.[0].postApproval).not.toHaveProperty('requirePrMerge');
+  });
+
   it('endNodeId is undefined when not set on state', () => {
     const state = makeState();
     const params = visualStateToCreateParams(state, 'space-1', 'WF');

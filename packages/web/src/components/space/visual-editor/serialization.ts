@@ -355,6 +355,10 @@ function buildWorkflowFields(state: VisualEditorState): {
       ? {
           targetAgent: derivePostApprovalTargetAgent(agents, i),
           instructions: node.step.postApproval.instructions,
+          // Preserve the PR-merged gate flag — without it, a saved clone of a
+          // coder-owned workflow loses the mark_complete merge gate and can close
+          // the task with the PR still open.
+          ...(node.step.postApproval.requirePrMerge ? { requirePrMerge: true } : {}),
         }
       : undefined;
     return {
