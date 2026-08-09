@@ -228,11 +228,10 @@ describe('migration 181 — reviewer bash tool backfill', () => {
     expect((row as unknown as AgentRow).template_hash).toBe('some-hash');
   });
 
-  test('leaves a Reviewer with old tools but a customized prompt untouched', () => {
-    // The reviewer kept the old shell-less tool list but the user customized the
-    // prompt and description. The migration must NOT overwrite them (matching
-    // tools alone is not proof the prompt/description are unmodified) — the row
-    // is left for the drift/sync UI.
+  test('backfills old tools while preserving customized Reviewer prose', () => {
+    // The reviewer kept the old shell-less tool list but customized prompt and
+    // description. The migration must make the tool surface usable without
+    // overwriting prose; the stale hash keeps drift/sync available.
     const spaceId = 'space-m179-b2';
     insertSpace(db, spaceId);
     insertAgent(db, {
@@ -250,7 +249,7 @@ describe('migration 181 — reviewer bash tool backfill', () => {
     runMigration181(db);
 
     const row = getAgentRow('agent-reviewer-prompt-custom');
-    expect(parseTools(row as unknown as AgentRow)).toEqual(OLD_REVIEWER_TOOLS);
+    expect(parseTools(row as unknown as AgentRow)).toEqual(REVIEWER_PRESET.tools);
     expect((row as unknown as AgentRow).custom_prompt).toBe('My completely custom reviewer prompt');
     expect((row as unknown as AgentRow).description).toBe('My custom description');
     expect((row as unknown as AgentRow).template_hash).toBe('some-hash');
@@ -279,7 +278,7 @@ describe('migration 181 — reviewer bash tool backfill', () => {
     runMigration181(db);
 
     const row = getAgentRow('agent-reviewer-appended');
-    expect(parseTools(row as unknown as AgentRow)).toEqual(OLD_REVIEWER_TOOLS);
+    expect(parseTools(row as unknown as AgentRow)).toEqual(REVIEWER_PRESET.tools);
     // The appended prompt is preserved byte-for-byte (not replaced with the
     // current preset prompt), and the hash is left stale for drift/sync.
     expect((row as unknown as AgentRow).custom_prompt).toBe(appended);

@@ -146,6 +146,7 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
     try {
       const gateDataRepo = this.sharedGateDataRepo ?? new GateDataRepository(this.db);
       for (const record of gateDataRepo.listByRun(runId)) {
+        if (!record.gateId.includes('pr-ready')) continue;
         approved = newer(approved, legacyPrUrl(record.data), record.updatedAt);
       }
     } catch (err) {

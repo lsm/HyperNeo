@@ -218,7 +218,7 @@ export function appendPostApprovalCompletionInstructions(interpolatedInstruction
  * then dispatches AT MOST ONE route (the first); see `route()` for why
  * multi-route fan-out is not supported.
  */
-function collectPostApprovalRoutes(workflow: SpaceWorkflow | null): PostApprovalRoute[] {
+export function collectPostApprovalRoutes(workflow: SpaceWorkflow | null): PostApprovalRoute[] {
   if (!workflow) return [];
   // Approval is a task-level event: collect post-approval routes from EVERY
   // node, independent of which node submitted or approved.

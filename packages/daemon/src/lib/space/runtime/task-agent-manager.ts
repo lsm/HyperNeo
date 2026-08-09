@@ -98,6 +98,7 @@ import {
   REVIEWER_TOOL_GUARDS,
 } from '../workflows/built-in-workflows';
 import { createGithubConnector } from './connectors/github-connector';
+import { collectPostApprovalRoutes } from './post-approval-router';
 import { jsonResult } from '../tools/tool-result';
 import {
   assertExecutionValidAgainstWorkflow,
@@ -5289,9 +5290,9 @@ export class TaskAgentManager {
     // clones, with built-in identity as backward compatibility for existing rows.
     // Instruction prose is deliberately irrelevant: customizing it must not
     // silently disable the safety contract.
+    const dispatchedPostApprovalRoute = collectPostApprovalRoutes(workflow ?? null)[0];
     const isCoderOwnedMergeWorkflow =
-      workflow?.postApproval?.requirePrMerge === true ||
-      (workflow?.nodes ?? []).some((node) => node.postApproval?.requirePrMerge === true) ||
+      dispatchedPostApprovalRoute?.requirePrMerge === true ||
       builtInWorkflowRequiresPrMerge(workflow?.templateName);
     const onMarkComplete = createMarkCompleteHandler({
       taskId,

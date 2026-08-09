@@ -162,31 +162,26 @@ export function runMigration181(db: BunDatabase): void {
     // tools and a shorter description). Matching any single field alone is NOT
     // proof the row is unmodified; a row that differs in any way is a user
     // customization and is left to the drift/sync UI.
-    const shelllessTuple =
-      arraysEqual(storedTools, OLD_REVIEWER_TOOLS) &&
-      row.custom_prompt === OLD_REVIEWER_PROMPT &&
-      row.description === OLD_REVIEWER_DESCRIPTION;
-    const pre2365Tuple =
-      arraysEqual(storedTools, OLD_REVIEWER_TOOLS_PRE_2365) &&
+    const shelllessTools = arraysEqual(storedTools, OLD_REVIEWER_TOOLS);
+    const pre2365Tools = arraysEqual(storedTools, OLD_REVIEWER_TOOLS_PRE_2365);
+    if (!shelllessTools && !pre2365Tools) continue;
+
+    const pristineShelllessText =
+      row.custom_prompt === OLD_REVIEWER_PROMPT && row.description === OLD_REVIEWER_DESCRIPTION;
+    const pristinePre2365Text =
       row.custom_prompt === OLD_REVIEWER_PROMPT_PRE_2365 &&
       row.description === OLD_REVIEWER_DESCRIPTION_PRE_2365;
-    if (!shelllessTuple && !pre2365Tuple) {
-      continue;
-    }
+    const pristineText = pristineShelllessText || pristinePre2365Text;
 
-    // Migrate the WHOLE preset for an unmodified seed, not just tools: the old
-    // seed's customPrompt still says the reviewer has no shell and must use the
-    // now-removed get_pr_diff / post_review tools. If we only wrote tools but
-    // stamped the current hash (whose fingerprint includes customPrompt +
-    // description), the stored prompt would keep the obsolete no-shell guidance
-    // while `updateAvailable` collapses to false — so existing reviewers get
-    // contradictory instructions with no sync offered. Writing the full preset
-    // keeps the row genuinely current.
+    // Exact legacy tools prove this row needs a usable current tool surface.
+    // Preserve customized prose; only pristine seed text is upgraded wholesale.
+    // A preserved customization intentionally keeps a stale template hash so the
+    // drift UI still offers explicit prompt synchronization.
     update.run(
       JSON.stringify(reviewer.tools),
-      reviewer.customPrompt,
-      reviewer.description,
-      computeAgentTemplateHash(reviewer),
+      pristineText ? reviewer.customPrompt : row.custom_prompt,
+      pristineText ? reviewer.description : row.description,
+      pristineText ? computeAgentTemplateHash(reviewer) : row.template_hash,
       row.id
     );
     updated++;
