@@ -46,6 +46,7 @@ import {
   CODING_WORKFLOW,
   CODING_WORKFLOW as STABLE_CODING_WORKFLOW,
   CODING_WITH_QA_WORKFLOW,
+  builtInWorkflowRequiresPrMerge,
   LEGACY_CODING_TEMPLATE_IDENTITIES,
   mergeChannelsFromTemplate,
   mergeNodeStructuralFieldsFromTemplate,
@@ -1038,6 +1039,16 @@ describe('getBuiltInWorkflows()', () => {
   test('includes REVIEW_ONLY_WORKFLOW', () => {
     const names = getBuiltInWorkflows().map((w) => w.name);
     expect(names).toContain(REVIEW_ONLY_WORKFLOW.name);
+  });
+
+  test('identifies merge-required workflows by durable template identity', () => {
+    expect(builtInWorkflowRequiresPrMerge('Coding')).toBe(true);
+    expect(builtInWorkflowRequiresPrMerge('Coding Workflow')).toBe(true);
+    expect(builtInWorkflowRequiresPrMerge('Coding with QA')).toBe(true);
+    expect(builtInWorkflowRequiresPrMerge('Research Workflow')).toBe(true);
+    expect(builtInWorkflowRequiresPrMerge('Review-Only')).toBe(false);
+    expect(builtInWorkflowRequiresPrMerge('custom workflow')).toBe(false);
+    expect(builtInWorkflowRequiresPrMerge(null)).toBe(false);
   });
 
   test('no template references leader as agent', () => {

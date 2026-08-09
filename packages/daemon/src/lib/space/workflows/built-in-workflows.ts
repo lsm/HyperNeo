@@ -1519,6 +1519,22 @@ export function resolveBuiltInWorkflowTemplate(templateName: string): SpaceWorkf
   return getBuiltInWorkflows().find((workflow) => workflow.name === canonicalName);
 }
 
+/**
+ * Whether a built-in workflow's canonical route requires a merged PR before
+ * `mark_complete`. Resolve this from template identity rather than persisted
+ * instruction text: users may customize that prose without opting out of the
+ * workflow's merge safety contract.
+ */
+export function builtInWorkflowRequiresPrMerge(templateName: string | null | undefined): boolean {
+  if (!templateName) return false;
+  const template = resolveBuiltInWorkflowTemplate(templateName);
+  return (template?.nodes ?? []).some(
+    (node) =>
+      node.postApproval?.targetAgent !== undefined &&
+      node.postApproval.instructions === CODER_OWNED_MERGE_INSTRUCTIONS
+  );
+}
+
 export function getBuiltInWorkflows(): SpaceWorkflow[] {
   // CODING_WORKFLOW is first so a freshly seeded space persists it earliest
   // (lowest created_at) — and it is the only template tagged `default`. Default

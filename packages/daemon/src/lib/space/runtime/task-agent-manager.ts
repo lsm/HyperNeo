@@ -93,8 +93,10 @@ import {
   createMarkCompleteHandler,
   createPrMergedGate,
 } from '../tools/end-node-handlers';
-import { CODER_OWNED_MERGE_INSTRUCTIONS } from '../workflows/post-approval-merge-template';
-import { REVIEWER_TOOL_GUARDS } from '../workflows/built-in-workflows';
+import {
+  builtInWorkflowRequiresPrMerge,
+  REVIEWER_TOOL_GUARDS,
+} from '../workflows/built-in-workflows';
 import { createGithubConnector } from './connectors/github-connector';
 import { jsonResult } from '../tools/tool-result';
 import {
@@ -5283,19 +5285,12 @@ export class TaskAgentManager {
     // The handler self-validates status (rejects non-approved) — a spawned
     // agent that happens not to be running a post-approval step simply sees
     // the tool reject with a clear error.
-    // Merge-completion gate (round-11 P1): the coder owns the merge in the
-    // stable Coding / Coding-with-QA / Research workflows (no merger node, no
-    // `merge_pr` gate), so `mark_complete` must fail closed until GitHub
-    // reports the run's PR merged. Only installed when the workflow's
-    // post-approval route actually hands the implementer the merge
-    // instructions; workflows without a merge step are unaffected. The pr_url
-    // is resolved from the run's primary link exactly like the merge template
-    // resolves `{{pr_url}}`.
-    const isCoderOwnedMergeWorkflow = (workflow?.nodes ?? []).some(
-      (node) =>
-        node.postApproval?.targetAgent !== undefined &&
-        node.postApproval.instructions === CODER_OWNED_MERGE_INSTRUCTIONS
-    );
+    // Merge-completion gate: the coder owns the merge in the stable Coding /
+    // Coding-with-QA / Research workflows, so `mark_complete` must fail closed
+    // until GitHub reports the run's PR merged. Identify that contract from the
+    // durable built-in template identity, not the persisted instruction prose:
+    // append-only user customization must not silently disable the safety gate.
+    const isCoderOwnedMergeWorkflow = builtInWorkflowRequiresPrMerge(workflow?.templateName);
     const onMarkComplete = createMarkCompleteHandler({
       taskId,
       spaceId,

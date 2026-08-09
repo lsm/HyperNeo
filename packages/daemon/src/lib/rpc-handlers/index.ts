@@ -596,15 +596,19 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     spaceWorkflowManager,
     deps.spaceManager,
     deps.spaceAgentManager,
-    // Defer re-stamping any row that an in-flight (non-terminal) workflow run
-    // still references, so the run reloads against an unchanged topology. The
-    // run repo lives in this wiring scope; the seeder only needs a predicate.
+    // Defer re-stamping while a workflow is executing OR has approved work in
+    // its post-approval phase. The runtime marks the run `done` before it
+    // dispatches post-approval, so run status alone would let startup strip a
+    // legacy merger node while its approved task still needs that worker.
     (workflowId) =>
       spaceWorkflowRunRepo
         .listByWorkflow(workflowId)
         .some(
           (run) =>
-            run.status === 'in_progress' || run.status === 'blocked' || run.status === 'pending'
+            run.status === 'in_progress' ||
+            run.status === 'blocked' ||
+            run.status === 'pending' ||
+            spaceTaskRepo.listByWorkflowRun(run.id).some((task) => task.status === 'approved')
         )
   )
     .then(() => {
