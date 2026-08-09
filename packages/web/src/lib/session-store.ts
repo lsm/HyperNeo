@@ -735,14 +735,29 @@ export class SessionStore {
       });
       this.cleanupFunctions.push(unsubRetryAttempt);
 
-      // 4. Fetch session-scoped state (metadata + agent state + commands) via RPC.
+      // 4. Global `session.deleted` — the daemon publishes this when a session
+      //    is hard-deleted (e.g. from another tab/client). The per-session
+      //    `state.session` channel never re-broadcasts for a deleted row, so
+      //    without this the loaded view stays stale after an out-of-band
+      //    deletion. When the active session is deleted, flip to the
+      //    not-found unavailable state so the user isn't left interacting with a
+      //    ghost. (availability resolves 'not-found' from loadErrorKind even
+      //    though the cached sessionInfo is still present.)
+      const unsubDeleted = hub.onEvent<{ sessionId: string }>('session.deleted', (event) => {
+        if (event?.sessionId && event.sessionId === sessionId && !this.destroyed) {
+          this.loadErrorKind.value = 'not-found';
+        }
+      });
+      this.cleanupFunctions.push(unsubDeleted);
+
+      // 5. Fetch session-scoped state (metadata + agent state + commands) via RPC.
       //    Messages are NOT fetched here — they arrive via the LiveQuery snapshot
       //    below.  We still need the session RPC because session state is
       //    push-based (server decides when to broadcast) and there is no
       //    LiveQuery yet for the `sessions` row.
       await this.fetchInitialSessionState(hub, sessionId);
 
-      // 5. Subscribe to the messages LiveQuery for this session.
+      // 6. Subscribe to the messages LiveQuery for this session.
       //    Errors here are intentionally non-fatal — session state can still
       //    be useful to display (e.g. to show the error banner), and the
       //    LiveQuery will re-subscribe automatically on reconnect.
@@ -1063,12 +1078,14 @@ export class SessionStore {
         };
       }
     } catch (err) {
-      // Reconnect/refresh callers pass retainOnError so a transient RPC
-      // failure during reconnect PRESERVES the last valid state (letting the
-      // push-based state.session subscription recover it) instead of
-      // clobbering a restored transcript with a fatal load error. Initial
-      // load still sets the error so ChatContainer shows the load screen.
-      if (retainOnError) {
+      // Classify FIRST. A reconnect/resume refresh (retainOnError) must still
+      // surface an AUTHORITATIVE "Session not found" / unauthorized reply — the
+      // session was deleted (or access revoked) while we were reconnecting, so
+      // preserving its cached transcript would leave the user interacting with a
+      // ghost and strand recovery in an early-return loop. Only TRANSIENT
+      // failures (disconnected / timeout / unknown) are retained.
+      const classified = classifySessionLoadError(err, connectionState.value);
+      if (retainOnError && !isHardUnavailable(classified.kind)) {
         logger.warn('Session state refresh failed; retaining last valid state:', err);
         // A transient refresh failure must NOT set a hard-unavailable
         // loadErrorKind — that would route a recovering session (transcript
@@ -1076,12 +1093,9 @@ export class SessionStore {
         // isRecovering keeps the transcript read-only until the next attempt.
         return stateFreshenedSinceStart();
       }
-      // Classify the failure into a distinct, actionable kind instead of the
-      // legacy collapsed "Failed to load session". A definitive server reply
-      // (e.g. "Session not found") wins even when the transport reports
-      // reconnecting; only connection-shaped / generic errors fall back to the
-      // transport-derived "disconnected" kind.
-      const classified = classifySessionLoadError(err, connectionState.value);
+      // Hard failure (not-found / unauthorized), or any failure on the initial
+      // load: commit a distinct, actionable error instead of the legacy
+      // collapsed "Failed to load session".
       loadKind = classified.kind;
       logger.error('Failed to fetch initial session state:', err);
       result = {

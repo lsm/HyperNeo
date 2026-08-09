@@ -445,6 +445,18 @@ describe('SpaceIsland — overlay inerts the base chat (task #873)', () => {
       expect(layer?.hasAttribute('inert')).toBe(false);
     });
   });
+
+  it('inerts every base-content branch, not just session/task (review fix)', async () => {
+    // An overlay can persist across sidebar navigation, so the inert/hidden
+    // props must apply to the sessions view (and the other viewMode branches),
+    // not only the session + task-detail branches.
+    mockSpaceOverlaySessionIdSignal.value = 'overlay-session';
+    const { findByTestId } = render(<SpaceIsland spaceId="space-1" viewMode="sessions" />);
+    await findByTestId('agent-overlay-chat');
+    const view = await findByTestId('space-sessions-view');
+    expect(view.hasAttribute('inert')).toBe(true);
+    expect(view.getAttribute('aria-hidden')).toBe('true');
+  });
 });
 
 describe('SpaceIsland — route-driven views', () => {

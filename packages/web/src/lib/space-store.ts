@@ -1152,10 +1152,18 @@ class SpaceStore {
         'spaceLongHorizonAgent.list',
         { spaceId }
       );
-      this.longHorizonAgents.value = result?.agents ?? [];
+      // Guard against a space switch during the await: a refresh started in
+      // space A must not overwrite space B's agent list if the user navigated
+      // away before the RPC resolved. Mirrors fetchAgents.
+      if (this.spaceId.value !== spaceId) return;
+      this.longHorizonAgents.value = (result?.agents ?? []).filter(
+        (agent) => agent.spaceId === spaceId
+      );
     } catch (err) {
       logger.error('Failed to fetch long-horizon agents:', err);
-      this.longHorizonAgents.value = [];
+      if (this.spaceId.value === spaceId) {
+        this.longHorizonAgents.value = [];
+      }
     }
   }
 

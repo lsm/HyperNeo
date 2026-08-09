@@ -304,6 +304,17 @@ export default function SessionStatusBar({
     }
   }, [modelDropdown, thinkingDropdown]);
 
+  // Close any open dropdown the moment this session enters recovery — otherwise
+  // disabling only the trigger leaves the model/thinking options mounted and
+  // clickable (their buttons gate solely on modelSwitching), letting the user
+  // start a model switch while the session is rejoining and re-syncing.
+  useEffect(() => {
+    if (isRecovering) {
+      modelDropdown.close();
+      thinkingDropdown.close();
+    }
+  }, [isRecovering, modelDropdown, thinkingDropdown]);
+
   // Thinking level state (synced from session config)
   const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>(thinkingLevelProp || 'off');
 

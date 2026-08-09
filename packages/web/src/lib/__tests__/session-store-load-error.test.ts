@@ -153,6 +153,38 @@ describe('SessionStore load-error classification + availability', () => {
     expect(sessionStore.loadErrorKind.value).toBeNull();
   });
 
+  it('retainOnError DOES commit an authoritative not-found (deleted while reconnecting)', async () => {
+    // First load succeeds, then the session is deleted server-side during a
+    // reconnect/resume refresh. An authoritative "Session not found" must NOT be
+    // retained — the session is gone, so surface the unavailable state instead
+    // of looping forever on a cached ghost transcript.
+    await sessionStore.select('s1');
+    expect(sessionStore.loadErrorKind.value).toBeNull();
+    stateSession = async () => {
+      throw new Error('Session not found');
+    };
+    await sessionStore.refresh();
+    expect(sessionStore.loadErrorKind.value).toBe('not-found');
+    expect(sessionStore.availability.value).toBe('not-found');
+  });
+
+  it('reacts to an out-of-band session.deleted event for the active session', async () => {
+    // Load succeeds; then another tab/client deletes the session. The daemon
+    // publishes session.deleted globally — the store must flip to not-found so
+    // the view doesn't keep interacting with a stale session.
+    await sessionStore.select('s1');
+    expect(sessionStore.loadErrorKind.value).toBeNull();
+    api.fire('session.deleted', { sessionId: 's1' });
+    expect(sessionStore.loadErrorKind.value).toBe('not-found');
+    expect(sessionStore.availability.value).toBe('not-found');
+  });
+
+  it('ignores session.deleted for a different session', async () => {
+    await sessionStore.select('s1');
+    api.fire('session.deleted', { sessionId: 'some-other-session' });
+    expect(sessionStore.loadErrorKind.value).toBeNull();
+  });
+
   it('clears loadErrorKind once a successful push arrives after a transient failure', async () => {
     stateSession = async () => {
       throw new Error('Request timeout: state.session (10000ms)');

@@ -365,6 +365,7 @@ export default function SpaceIsland({
         <div
           class="flex-1 flex flex-col overflow-hidden bg-app-content"
           data-testid="space-tasks-view"
+          {...baseLayerProps}
         >
           <SpacePageHeader
             pageTitle="Tasks"
@@ -425,6 +426,7 @@ export default function SpaceIsland({
         <div
           class="flex-1 flex flex-col overflow-hidden bg-app-content"
           data-testid="space-goals-view"
+          {...baseLayerProps}
         >
           <SpacePageHeader pageTitle="Goals" />
           <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
@@ -444,6 +446,7 @@ export default function SpaceIsland({
         <div
           class="flex-1 flex flex-col overflow-hidden bg-app-content"
           data-testid="space-forge-view"
+          {...baseLayerProps}
         >
           <SpacePageHeader pageTitle="Forge" />
           <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
@@ -463,6 +466,7 @@ export default function SpaceIsland({
         <div
           class="flex-1 flex flex-col overflow-hidden bg-app-content"
           data-testid="space-sessions-view"
+          {...baseLayerProps}
         >
           <SpacePageHeader
             pageTitle="Sessions"
@@ -509,6 +513,7 @@ export default function SpaceIsland({
         <div
           class="flex-1 flex flex-col overflow-hidden bg-app-content"
           data-testid="space-agents-view"
+          {...baseLayerProps}
         >
           <SpacePageHeader pageTitle="Agents" />
           <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
@@ -532,6 +537,7 @@ export default function SpaceIsland({
         <div
           class="flex-1 flex flex-col overflow-hidden bg-app-content"
           data-testid="space-memories-view"
+          {...baseLayerProps}
         >
           <SpacePageHeader pageTitle="Memories" />
           <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
@@ -551,6 +557,7 @@ export default function SpaceIsland({
         <div
           class="flex-1 flex flex-col overflow-hidden bg-app-content"
           data-testid="space-configure-view"
+          {...baseLayerProps}
         >
           <SpacePageHeader pageTitle="Settings" />
           <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
@@ -570,6 +577,7 @@ export default function SpaceIsland({
       <div
         class="flex-1 flex flex-col overflow-hidden bg-app-content"
         data-testid="space-overview-view"
+        {...baseLayerProps}
       >
         <SpacePageHeader pageTitle="Overview" />
         <div class="flex-1 overflow-hidden flex flex-col min-w-0">
