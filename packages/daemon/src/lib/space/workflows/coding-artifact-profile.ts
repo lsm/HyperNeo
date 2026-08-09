@@ -152,7 +152,15 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
     try {
       const gateDataRepo = this.sharedGateDataRepo ?? new GateDataRepository(this.db);
       for (const record of gateDataRepo.listByRun(runId)) {
-        if (!record.gateId.includes('pr-ready') && !LEGACY_PR_READY_GATE_IDS.has(record.gateId)) {
+        // Only the exact legacy pr_ready gate IDs are trusted compatibility
+        // sources for the run's PR identity. A substring match (`includes(
+        // 'pr-ready')`) would let a custom gate with a colliding id (e.g.
+        // `post-pr-ready-notification`) supply a spoofed pr_url that, if written
+        // latest, would control merge-dispatch resolution and the mark_complete
+        // merge gate. The authoritative source on current runs is the pr_ready
+        // hook state (the engine stamps pr_url only for the pr_ready validator);
+        // this gate-data path is legacy-only (runs created before hook state).
+        if (!LEGACY_PR_READY_GATE_IDS.has(record.gateId)) {
           continue;
         }
         approved = newer(approved, legacyPrUrl(record.data), record.updatedAt);

@@ -110,46 +110,18 @@ const LEGACY_PR_READY_TEMPLATE_ROUTES = new Set([
 ]);
 
 // ---------------------------------------------------------------------------
-// Declarative tool guard: reviewer Bash stays scoped to the workflow run's PR
+// Retired declarative tool guard: coder-role agents must not merge
 // ---------------------------------------------------------------------------
 
 /**
- * Blocks the Reviewer's Bash from reading OTHER repositories through the
- * daemon's `gh` credentials.
- *
- * The reviewer has Bash for read-only inspection (per the pivot: the PR-process
- * MCPs were removed, and `gh pr view` / `gh pr diff` / `gh pr checks` / the
- * run-scoped `gh api graphql` reviewThreads query cover the legitimate read
- * surface). But a prompt-injected reviewer could otherwise run `gh api
- * repos/<owner>/<repo>/...` or `gh -R other/repo pr ...` against ANY
- * repository the daemon's credentials can reach — the removed `get_pr_diff`
- * handler bound reads to the workflow run's PR (an `isSamePrIdentity` guard);
- * the CLI has no such binding. This guard closes the two clear cross-repo
- * read vectors (REST `repos/<owner>/<repo>/...` paths and the `-R`/`--repo`
- * flag) while allowing the run-scoped `gh pr *` subcommands (which default to
- * the current branch's PR) and the GraphQL mutation form (which carries the
- * run's PR id, not a free repo path).
- *
- * Matches:
- *   - `gh api` calls targeting a REST `repos/<owner>/<repo>/...` path, and
- *   - `gh <subcommand> -R|--repo <owner>/<repo>` (cross-repo via the flag).
- * It does NOT block:
- *   - `gh pr view|diff|checks|review` without `-R`/`--repo` (scoped to the
- *     run's PR by default),
- *   - `gh api graphql` (the reviewThreads query uses the run's owner/name/number,
- *     and review posting uses the `addPullRequestReview` mutation keyed on the
- *     run's PR id — no free-form repo path),
- *   - non-`gh` commands (the reviewer still reads the worktree via Read/Grep).
- *
- * Defense-in-depth only, and NOT a complete run-scoped boundary: a regex
- * guard cannot validate a command against the workflow run's PR identity (an
- * explicit `gh pr view <other-repo-url>` or an arbitrary `gh api graphql`
- * repository query are indistinguishable from the legitimate run-PR forms).
- * The reviewer prompt therefore also instructs it to read ONLY the workflow
- * run's PR; the removed `get_pr_diff` MCP was the only hard run-scoped read
- * mechanism, and the pivot removed it in favor of Bash per the product
- * direction. This guard removes the accidental / prompt-injected vectors that
- * ARE regex-detectable.
+ * Retired coder no-merge guard. Kept verbatim (NOT applied to any built-in
+ * slot) so the restamp logic can recognize legacy seeded coder slots that
+ * carried it and clear their `toolGuards` during migration — the stable coder
+ * now OWNS the post-approval merge (`gh pr merge`), so a coder no-merge guard
+ * would break the coder's own merge. Matches `gh pr merge` and its wrapped
+ * forms. (A separate reviewer run-scoping guard was explored and removed per
+ * the product decision to govern Reviewer Bash by the System Contract prompt
+ * rather than a regex — see the system contract, not this constant.)
  */
 const RETIRED_CODER_NO_MERGE_GUARD: DeclarativeToolGuard = {
   matcher: 'Bash',
