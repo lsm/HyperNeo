@@ -821,10 +821,22 @@ export function SpaceTaskPane({
   // (the execution's live agentSessionId) is derived from this; without it the
   // session latch can't detect a detached worker, so opening a task directly in
   // thread would leave a stale session latched.
+  // Passing null (standalone task / no task) tears down any prior run's
+  // subscription so only the open task's run — if any — stays live.
   useEffect(() => {
-    if (!task?.workflowRunId) return;
-    spaceStore.ensureNodeExecutions().catch(() => {});
+    spaceStore.ensureNodeExecutions(task?.workflowRunId ?? null).catch(() => {});
   }, [task?.workflowRunId]);
+
+  // Release the node-execution subscription when the pane unmounts (closing the
+  // pane or navigating to another view in the same space) so no run keeps
+  // streaming with no open task. Empty deps → cleanup runs only on unmount, not
+  // on every task switch (the [workflowRunId] effect above handles rescoping).
+  // ensureNodeExecutions(null) is a safe no-op when nothing is active.
+  useEffect(() => {
+    return () => {
+      spaceStore.ensureNodeExecutions(null).catch(() => {});
+    };
+  }, []);
 
   const handleCanvasToggle = useCallback(() => {
     if (!canShowCanvasTab) return;
@@ -832,7 +844,7 @@ export function SpaceTaskPane({
       navigateToSpaceTask(navigationSpaceId, taskId, 'thread', true);
       return;
     }
-    spaceStore.ensureNodeExecutions().catch(() => {});
+    spaceStore.ensureNodeExecutions(task?.workflowRunId ?? null).catch(() => {});
     navigateToSpaceTask(navigationSpaceId, taskId, 'canvas', true);
   }, [activeView, canShowCanvasTab, navigationSpaceId, taskId]);
 
