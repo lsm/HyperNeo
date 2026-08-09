@@ -1159,6 +1159,26 @@ class SpaceStore {
     }
   }
 
+  /**
+   * Force-refresh the long-horizon agent list for the current space (task #873).
+   *
+   * Unlike `ensureConfigData` (which dedupes once the config has loaded), this
+   * always re-fetches `spaceLongHorizonAgent.list`. The unavailable-session
+   * "Refresh agent record" action uses it to pick up a corrected `sessionId`
+   * after a reconnect/restart, instead of looping on a deleted id. No-op when
+   * no space is selected or the transport is unavailable.
+   */
+  async refreshLongHorizonAgents(): Promise<void> {
+    const spaceId = this.spaceId.value;
+    if (!spaceId) return;
+    try {
+      const hub = await connectionManager.getHub();
+      await this.fetchLongHorizonAgents(hub, spaceId);
+    } catch (err) {
+      logger.error('Failed to refresh long-horizon agents:', err);
+    }
+  }
+
   private async fetchLongHorizonAgentTemplates(
     hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
     spaceId: string

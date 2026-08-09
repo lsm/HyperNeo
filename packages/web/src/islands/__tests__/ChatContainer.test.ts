@@ -6,7 +6,11 @@
  */
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { shouldBlockForPendingQuestion, computeChatLoading } from '../ChatContainer.tsx';
+import {
+  shouldBlockForPendingQuestion,
+  computeChatLoading,
+  resolveChatRoute,
+} from '../ChatContainer.tsx';
 import type { AgentProcessingState } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 // Vite-native raw import — works in both Node and browser-like test environments
@@ -724,5 +728,77 @@ describe('Pending Agent Mode', () => {
     // store — defaulting to the singleton — to the local `store` identifier.)
     const selectGuard = source.match(/pendingAgent[\s\S]*?store\.select\(/)?.[0] ?? '';
     expect(selectGuard).toContain('!');
+  });
+});
+
+describe('resolveChatRoute — unavailable / load-error routing (task #873)', () => {
+  // Baseline inputs for a healthy, loaded session.
+  const ready = {
+    pending: false,
+    loadErrorKind: null,
+    loading: false,
+    loadTimedOut: false,
+    legacyFatal: false,
+  };
+
+  it('routes a healthy loaded session to ready', () => {
+    expect(resolveChatRoute(ready).route).toBe('ready');
+  });
+
+  it('routes a pending agent to pending (before any load check)', () => {
+    expect(resolveChatRoute({ ...ready, pending: true }).route).toBe('pending');
+  });
+
+  it.each([
+    ['not-found', 'not-found'],
+    ['unauthorized', 'unauthorized'],
+    ['timeout', 'timeout'],
+    ['disconnected', 'disconnected'],
+    ['unknown', 'unknown'],
+  ] as const)('routes a %s load error to the unavailable view with that kind', (kind, expected) => {
+    const r = resolveChatRoute({ ...ready, loadErrorKind: kind });
+    expect(r.route).toBe('unavailable');
+    expect(r.unavailableKind).toBe(expected);
+  });
+
+  it('routes an in-progress initial load (no error) to the skeleton', () => {
+    expect(resolveChatRoute({ ...ready, loading: true }).route).toBe('loading');
+  });
+
+  it('routes the 30s load backstop to an unavailable timeout (not the skeleton)', () => {
+    const r = resolveChatRoute({ ...ready, loading: true, loadTimedOut: true });
+    expect(r.route).toBe('unavailable');
+    expect(r.unavailableKind).toBe('timeout');
+  });
+
+  it('routes the legacy fatal fallback (error, no sessionInfo, no kind) to unavailable unknown', () => {
+    const r = resolveChatRoute({ ...ready, legacyFatal: true });
+    expect(r.route).toBe('unavailable');
+    expect(r.unavailableKind).toBe('unknown');
+  });
+
+  it('a load error takes precedence over the loading skeleton', () => {
+    // Even while "loading" is still true, a classified not-found short-circuits
+    // to the unavailable view — so a stale nonempty id never reaches the empty
+    // "No messages yet" placeholder.
+    const r = resolveChatRoute({ ...ready, loading: true, loadErrorKind: 'not-found' });
+    expect(r.route).toBe('unavailable');
+    expect(r.unavailableKind).toBe('not-found');
+  });
+
+  it('an invalid nonempty session id never resolves to ready', () => {
+    // The core regression: a stale/deleted id must route to unavailable, never
+    // to the live chat (which would render the empty placeholder).
+    for (const kind of ['not-found', 'timeout', 'disconnected', 'unknown'] as const) {
+      const r = resolveChatRoute({ ...ready, loadErrorKind: kind });
+      expect(r.route).not.toBe('ready');
+    }
+  });
+
+  it('archived/terminated are NOT load errors — they resolve to ready (banner shown in-view)', () => {
+    // Archived/terminated come from sessionInfo.status, not from loadErrorKind,
+    // so resolveChatRoute (which only sees loadErrorKind) returns ready. The
+    // archived banner is rendered inside the ready view by ChatContainer.
+    expect(resolveChatRoute(ready).route).toBe('ready');
   });
 });

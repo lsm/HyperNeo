@@ -194,6 +194,13 @@ interface SessionStatusBarProps {
   onThinkingLevelChange?: (level: ThinkingLevel) => Promise<void> | void;
   // Coordinator switching guard for the model pill
   coordinatorSwitching?: boolean;
+  /**
+   * Per-session recovery flag (distinct from the global transport state). While
+   * true THIS session is rejoining its channel and re-syncing — the connection
+   * dot must read "Reconnecting…" (not "Ready") to match the recovery banner,
+   * and model controls stay disabled so the user can't switch models mid-sync.
+   */
+  isRecovering?: boolean;
 }
 
 export default function SessionStatusBar({
@@ -214,6 +221,7 @@ export default function SessionStatusBar({
   thinkingLevel: thinkingLevelProp,
   onThinkingLevelChange,
   coordinatorSwitching = false,
+  isRecovering = false,
 }: SessionStatusBarProps) {
   // Use useState + useSignalEffect to ensure component re-renders on signal change
   // This is more explicit than relying on implicit signal tracking
@@ -371,9 +379,13 @@ export default function SessionStatusBar({
 
   return (
     <ContentContainer className="pb-2 flex items-center gap-4 justify-between">
-      {/* Left: Connection status */}
+      {/* Left: Connection status.
+          Harmonized with per-session recovery (task #873): when the transport
+          is connected but THIS session is still rejoining its channel, show
+          "Reconnecting…" instead of a contradictory "Ready". The global
+          disconnected/reconnecting/failed states pass through unchanged. */}
       <ConnectionStatus
-        connectionState={connState}
+        connectionState={isRecovering && connState === 'connected' ? 'reconnecting' : connState}
         isProcessing={isProcessing}
         currentAction={currentAction}
         streamingPhase={streamingPhase}
@@ -395,7 +407,7 @@ export default function SessionStatusBar({
                 class="control-btn inline-flex h-8 min-w-0 items-center gap-1.5 rounded-full border pl-2 pr-2.5 text-xs text-gray-200 transition-colors hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
                 style={pillStyle}
                 onClick={toggleModelDropdown}
-                disabled={modelLoading || modelSwitching || coordinatorSwitching}
+                disabled={modelLoading || modelSwitching || coordinatorSwitching || isRecovering}
                 title={
                   currentModelInfo ? `Switch Model (${currentModelInfo.name})` : 'Switch Model'
                 }

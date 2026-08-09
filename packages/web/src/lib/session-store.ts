@@ -62,6 +62,13 @@ import type { ChatMessage } from '@hyperneo/shared';
 import { Logger } from '@hyperneo/shared';
 import { flattenSDKSlashCommands, type SDKSlashCommand } from '@hyperneo/shared/sdk';
 import { connectionManager } from './connection-manager';
+import {
+  classifySessionLoadError,
+  isHardUnavailable,
+  type SessionLoadErrorKind,
+  type SessionUnavailableKind,
+} from './session-load-error';
+import { connectionState } from './state';
 import { slashCommandsSignal } from './signals';
 import { toast } from './toast';
 import type { StructuredError } from '../types/error';
@@ -253,6 +260,53 @@ export class SessionStore {
    * false on session switch and destroy.
    */
   readonly isRecovering = signal<boolean>(false);
+
+  /**
+   * Discriminated kind of the most recent session-LOAD failure for the current
+   * session, or `null` when the load succeeded (or no failure has occurred).
+   *
+   * Distinct from `isRecovering` (a transient transport drop on a session that
+   * ALREADY loaded) and from a runtime `error` (a failure inside a live,
+   * loaded session — e.g. a provider auth error mid-turn, which keeps
+   * `sessionInfo`). `loadErrorKind` is set ONLY when the initial
+   * `state.session` fetch fails (or returns a definitive not-found), so the UI
+   * can route to an accurate unavailable / retryable load state instead of the
+   * legacy collapsed "Failed to load session".
+   *
+   * Transient recovery refreshes (`retainOnError`) deliberately do NOT set
+   * this — a temporary RPC failure during reconnect must not be mistaken for a
+   * confirmed missing/archived session, and must not wipe the cached transcript.
+   * Reset to `null` on session switch, on a successful load commit, and destroy.
+   *
+   * `archived` / `terminated` are NOT load errors — the RPC succeeds and the
+   * session row still exists. They surface via `availability` (derived from
+   * `sessionInfo.status`) so the UI can keep the transcript readable.
+   */
+  readonly loadErrorKind = signal<SessionLoadErrorKind | null>(null);
+
+  /**
+   * The single availability verdict for the current session — what the chat
+   * view should show. Computed from `loadErrorKind` and `sessionInfo.status`
+   * so every consumer (base chat, simultaneously-mounted overlay) agrees on one
+   * state instead of each re-deriving it.
+   *
+   *  - hard-unavailable load error (not-found / unauthorized) → that kind
+   *  - session row loaded with status `archived` / `ended` → that kind
+   *  - otherwise → `null` (ready / loading / recovering — the caller decides
+   *    between those using `messagesLoaded`, `sessionState`, `isRecovering`)
+   *
+   * Transient load errors (`disconnected` / `timeout` / `unknown`) stay in
+   * `loadErrorKind` for the load-error view; they are intentionally NOT
+   * surfaced as `availability` so the recovering / retry path owns them.
+   */
+  readonly availability = computed<SessionUnavailableKind | null>(() => {
+    const loadKind = this.loadErrorKind.value;
+    if (isHardUnavailable(loadKind)) return loadKind;
+    const status = this.sessionInfo.value?.status;
+    if (status === 'archived') return 'archived';
+    if (status === 'ended') return 'terminated';
+    return null;
+  });
 
   /** API retry attempts (populated from session.retryAttempt events) */
   readonly retryAttempts = signal<
@@ -512,6 +566,10 @@ export class SessionStore {
     // readiness until it lands. Bounds any stuck recovery flag to the prior
     // session's lifetime.
     this.isRecovering.value = false;
+    // A fresh selection has no load error yet — the prior session's not-found
+    // / timeout must not leak into the new one (e.g. navigating from a deleted
+    // session to a live one).
+    this.loadErrorKind.value = null;
     // No older rows paginated yet for the new session.
     this.hasPaginatedOlder = false;
     // Invalidate any in-flight LiveQuery events for the previous session.
@@ -595,6 +653,15 @@ export class SessionStore {
         }
         if (state.revision !== undefined) this.lastAppliedRevision = state.revision;
         this.sessionState.value = state;
+
+        // A push carrying a live sessionInfo and no error means the session is
+        // reachable — clear any stale load-error kind so a push that recovers
+        // the session (e.g. the daemon re-broadcasts after a transient timeout)
+        // doesn't leave a not-found / timeout stranding the UI on the load-error
+        // view. A push that itself carries an error leaves the kind as-is.
+        if (state.sessionInfo && !state.error) {
+          this.loadErrorKind.value = null;
+        }
 
         // Sync contextInfo from metadata to direct signal for fast access.
         // The metadata.lastContextInfo is the persisted source of truth.
@@ -968,6 +1035,11 @@ export class SessionStore {
       // stale even though it committed while this RPC was in flight.
       this.lastCommittedFetchSeq > ticket;
     let result: SessionState;
+    // Discriminated load-error kind for THIS fetch (null on success). Captured
+    // while building an error `result` and committed alongside it below, so a
+    // superseded fetch (generation/ticket/revision guard) never leaks its
+    // not-found / timeout into the active session's `loadErrorKind`.
+    let loadKind: SessionLoadErrorKind | null = null;
     try {
       const sessionState = await hub.request<SessionState>('state.session', { sessionId });
       if (sessionState) {
@@ -977,13 +1049,14 @@ export class SessionStore {
         // is a definitive "not found", not a transient blip, so surface it as
         // an error regardless of caller.
         logger.error('Session state RPC returned null for session:', sessionId);
+        loadKind = 'not-found';
         result = {
           sessionInfo: null,
           agentState: { status: 'idle' },
           commandsData: { availableCommands: [] },
           error: {
-            message: 'Session not found',
-            details: { sessionId },
+            message: 'This session is no longer available.',
+            details: { sessionId, kind: 'not-found' },
             occurredAt: Date.now(),
           },
           timestamp: Date.now(),
@@ -997,19 +1070,27 @@ export class SessionStore {
       // load still sets the error so ChatContainer shows the load screen.
       if (retainOnError) {
         logger.warn('Session state refresh failed; retaining last valid state:', err);
-        // The RPC failed — but a newer push, a fresher fetch, or a daemon
-        // restart may have refreshed the state meanwhile. If so, recovery is
-        // still complete; only report not-refreshed when nothing newer applied.
+        // A transient refresh failure must NOT set a hard-unavailable
+        // loadErrorKind — that would route a recovering session (transcript
+        // still visible) to the unavailable screen. Leave loadErrorKind alone;
+        // isRecovering keeps the transcript read-only until the next attempt.
         return stateFreshenedSinceStart();
       }
+      // Classify the failure into a distinct, actionable kind instead of the
+      // legacy collapsed "Failed to load session". A definitive server reply
+      // (e.g. "Session not found") wins even when the transport reports
+      // reconnecting; only connection-shaped / generic errors fall back to the
+      // transport-derived "disconnected" kind.
+      const classified = classifySessionLoadError(err, connectionState.value);
+      loadKind = classified.kind;
       logger.error('Failed to fetch initial session state:', err);
       result = {
         sessionInfo: null,
         agentState: { status: 'idle' },
         commandsData: { availableCommands: [] },
         error: {
-          message: 'Failed to load session',
-          details: err,
+          message: classified.message,
+          details: { kind: classified.kind, cause: err },
           occurredAt: Date.now(),
         },
         timestamp: Date.now(),
@@ -1062,6 +1143,11 @@ export class SessionStore {
     if (result.revision !== undefined) this.lastAppliedRevision = result.revision;
 
     this.sessionState.value = result;
+    // Reflect this fetch's load outcome so availability/UI route correctly. A
+    // successful load clears any stale kind (e.g. a Retry that lands after the
+    // session was restored); a failure sets the classified kind. Committed here
+    // — after the supersede guards — so a discarded fetch can't set it.
+    this.loadErrorKind.value = loadKind;
 
     // Persist contextInfo from metadata to direct signal so it survives page refresh.
     // Without this, _contextInfo stays null until the next context.updated event
@@ -1227,6 +1313,7 @@ export class SessionStore {
     this.releaseSessionChannel(oldSessionId);
     this.activeSessionId.value = null;
     this.isRecovering.value = false;
+    this.loadErrorKind.value = null;
     activeStores.delete(this);
   }
 

@@ -158,6 +158,7 @@ export function ChatComposer({
           thinkingLevel={thinkingLevel}
           onThinkingLevelChange={onThinkingLevelChange}
           coordinatorSwitching={coordinatorSwitching}
+          isRecovering={isRecovering}
         />
 
         {sessionStatus === 'archived' ? (

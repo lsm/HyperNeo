@@ -67,6 +67,15 @@ const mockCurrentSpaceCanonicalIdSignal = signal<string | null>(null);
 const mockCurrentSpaceAgentHandleSignal = signal<string | null>(null);
 const mockCurrentSpaceViewModeSignal = signal<string>('overview');
 
+// Overlay signals (task #873) — control whether an agent overlay is open over
+// the base content so the inert/aria-hidden behavior is testable.
+const mockSpaceOverlaySessionIdSignal = signal<string | null>(null);
+const mockSpaceOverlayAgentNameSignal = signal<string | null>(null);
+const mockSpaceOverlayHighlightMessageIdSignal = signal<string | null>(null);
+const mockSpaceOverlayPendingTaskIdSignal = signal<string | null>(null);
+const mockSpaceOverlayPendingAgentNameSignal = signal<string | null>(null);
+const mockSpaceOverlayTaskContextSignal = signal<unknown>(null);
+
 // Wire bridge so mockNavigateToSpaceConfigure can update the real signal
 configureTabBridge.signal = mockCurrentSpaceConfigureTabSignal;
 idBridge.signal = mockCurrentSpaceIdSignal;
@@ -89,6 +98,24 @@ vi.mock('../../lib/signals', async (importOriginal) => {
     },
     get currentSpaceViewModeSignal() {
       return mockCurrentSpaceViewModeSignal;
+    },
+    get spaceOverlaySessionIdSignal() {
+      return mockSpaceOverlaySessionIdSignal;
+    },
+    get spaceOverlayAgentNameSignal() {
+      return mockSpaceOverlayAgentNameSignal;
+    },
+    get spaceOverlayHighlightMessageIdSignal() {
+      return mockSpaceOverlayHighlightMessageIdSignal;
+    },
+    get spaceOverlayPendingTaskIdSignal() {
+      return mockSpaceOverlayPendingTaskIdSignal;
+    },
+    get spaceOverlayPendingAgentNameSignal() {
+      return mockSpaceOverlayPendingAgentNameSignal;
+    },
+    get spaceOverlayTaskContextSignal() {
+      return mockSpaceOverlayTaskContextSignal;
     },
   };
 });
@@ -235,6 +262,23 @@ vi.mock('../ChatContainer', () => ({
   ),
 }));
 
+// Stub the agent overlay so opening it doesn't drag in Portal/focus-trap/scroll
+// logic — the inert test only cares that the base layer is disabled when an
+// overlay is open, not the overlay's own internals.
+vi.mock('../../components/space/AgentOverlayChat', () => ({
+  AgentOverlayChat: ({ sessionId, agentName }: { sessionId?: string; agentName?: string }) => (
+    <div
+      data-testid="agent-overlay-chat"
+      data-session-id={sessionId ?? ''}
+      data-agent-name={agentName ?? ''}
+    />
+  ),
+}));
+
+vi.mock('../../lib/session-store', () => ({
+  sessionStore: { select: vi.fn() },
+}));
+
 vi.mock('../../lib/space-store', () => ({
   get spaceStore() {
     return {
@@ -253,6 +297,8 @@ vi.mock('../../lib/space-store', () => ({
       configDataLoaded: mockConfigDataLoaded,
       ensureConfigData: mockEnsureConfigData,
       ensureWorkflowDetails: mockEnsureWorkflowDetails,
+      refreshLongHorizonAgents: vi.fn().mockResolvedValue(undefined),
+      longHorizonAgents: signal([]),
       ensureNodeExecutions: vi.fn().mockResolvedValue(undefined),
       selectSpace: mockSelectSpace,
       workflowVersions: signal(new Map()),
@@ -341,6 +387,13 @@ beforeEach(() => {
   idBridge.signal.value = null;
   mockCurrentSpaceAgentHandleSignal.value = null;
   mockCurrentSpaceCanonicalIdSignal.value = null;
+  // Reset overlay signals so each test starts with no overlay open.
+  mockSpaceOverlaySessionIdSignal.value = null;
+  mockSpaceOverlayAgentNameSignal.value = null;
+  mockSpaceOverlayHighlightMessageIdSignal.value = null;
+  mockSpaceOverlayPendingTaskIdSignal.value = null;
+  mockSpaceOverlayPendingAgentNameSignal.value = null;
+  mockSpaceOverlayTaskContextSignal.value = null;
   mockNavigateToSpaceConfigure.mockClear();
   mockNavigateToSpaceSession.mockClear();
   mockNavigateToSpaceTask.mockClear();
@@ -353,6 +406,45 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+});
+
+describe('SpaceIsland — overlay inerts the base chat (task #873)', () => {
+  it('keeps the base session layer interactive when no overlay is open', async () => {
+    const { findByTestId } = render(
+      <SpaceIsland spaceId="space-1" viewMode="overview" sessionViewId="session-abc" />
+    );
+    const layer = await findByTestId('space-base-session-layer');
+    expect(layer.hasAttribute('inert')).toBe(false);
+    expect(layer.getAttribute('aria-hidden')).toBeNull();
+  });
+
+  it('inerts + hides the base session layer from the a11y tree while an overlay is open', async () => {
+    mockSpaceOverlaySessionIdSignal.value = 'overlay-session';
+    mockSpaceOverlayAgentNameSignal.value = 'Coder';
+    const { findByTestId } = render(
+      <SpaceIsland spaceId="space-1" viewMode="overview" sessionViewId="session-abc" />
+    );
+    // Overlay itself renders on top.
+    await findByTestId('agent-overlay-chat');
+    const layer = await findByTestId('space-base-session-layer');
+    expect(layer.hasAttribute('inert')).toBe(true);
+    expect(layer.getAttribute('aria-hidden')).toBe('true');
+  });
+
+  it('re-enables the base layer once the overlay closes', async () => {
+    mockSpaceOverlaySessionIdSignal.value = 'overlay-session';
+    const { findByTestId } = render(
+      <SpaceIsland spaceId="space-1" viewMode="overview" sessionViewId="session-abc" />
+    );
+    let layer = await findByTestId('space-base-session-layer');
+    expect(layer.hasAttribute('inert')).toBe(true);
+
+    mockSpaceOverlaySessionIdSignal.value = null;
+    await waitFor(() => {
+      layer = document.querySelector('[data-testid="space-base-session-layer"]') as HTMLElement;
+      expect(layer?.hasAttribute('inert')).toBe(false);
+    });
+  });
 });
 
 describe('SpaceIsland — route-driven views', () => {
