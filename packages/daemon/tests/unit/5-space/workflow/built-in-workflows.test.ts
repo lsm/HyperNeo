@@ -41,6 +41,7 @@ import {
   resolveCodexPollIntervalMs,
 } from '../../../../src/lib/space/runtime/gate-features.ts';
 import { CODER_OWNED_MERGE_INSTRUCTIONS } from '../../../../src/lib/space/workflows/post-approval-merge-template.ts';
+import { PR_MERGE_POST_APPROVAL_INSTRUCTIONS } from './fixtures/retired-post-approval-merge-template.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import {
   CODING_WORKFLOW,
@@ -61,6 +62,7 @@ import {
   FULLSTACK_QA_POST_APPROVAL_PARAGRAPH,
   REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH,
   RETIRED_PR_MERGER_SLOT_PROMPT,
+  RETIRED_MERGER_RAW_MERGE_GUARD,
   REVIEWER_BASH_ALLOWLIST_GUARD,
   REVIEWER_TOOL_GUARDS,
   seedBuiltInWorkflows,
@@ -3467,9 +3469,13 @@ describe('seedBuiltInWorkflows()', () => {
               // guard requires the FULL retired seed identity (name + slot +
               // EXACT prompt + route), so a customized node is preserved.
               customPrompt: { value: RETIRED_PR_MERGER_SLOT_PROMPT },
+              toolGuards: [RETIRED_MERGER_RAW_MERGE_GUARD],
             },
           ],
-          postApproval: { targetAgent: 'merger', instructions: 'merge' },
+          postApproval: {
+            targetAgent: 'merger',
+            instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
+          },
         },
       ],
       channels: [
@@ -3537,9 +3543,13 @@ describe('seedBuiltInWorkflows()', () => {
               agentId: MERGER_ID,
               name: 'merger',
               customPrompt: { value: RETIRED_PR_MERGER_SLOT_PROMPT },
+              toolGuards: [RETIRED_MERGER_RAW_MERGE_GUARD],
             },
           ],
-          postApproval: { targetAgent: 'merger', instructions: 'merge' },
+          postApproval: {
+            targetAgent: 'merger',
+            instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
+          },
         },
       ],
       channels: [
@@ -3657,7 +3667,10 @@ describe('seedBuiltInWorkflows()', () => {
               },
             },
           ],
-          postApproval: { targetAgent: 'merger', instructions: 'merge' },
+          postApproval: {
+            targetAgent: 'merger',
+            instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
+          },
         },
       ],
     });
@@ -3702,7 +3715,10 @@ describe('seedBuiltInWorkflows()', () => {
               },
             },
           ],
-          postApproval: { targetAgent: 'merger', instructions: 'merge' },
+          postApproval: {
+            targetAgent: 'merger',
+            instructions: PR_MERGE_POST_APPROVAL_INSTRUCTIONS,
+          },
         },
       ],
     });

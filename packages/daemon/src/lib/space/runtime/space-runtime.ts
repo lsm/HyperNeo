@@ -4173,22 +4173,22 @@ export class SpaceRuntime {
 
     // 2. Resolve the post-approval route context (PR URL + template tokens).
     //
-    // `{{pr_url}}` in the merge template is sourced from the run's primary link
-    // URL — resolved by the domain artifact profile (coding: the PR URL across
-    // gate data, hook state, and artifacts). The end-node reviewer persists the
-    // URL (a `link kind:'pr'`) immediately before calling `approve_task()`, so
-    // by the time we reach this branch the artifact row exists. We deliberately
-    // do NOT read from `SpaceTask`: migration 84 dropped `pr_url`/`pr_number`
-    // columns from `space_tasks` and moved PR metadata to the artifact store.
-    //
-    // Callers may still override by passing `pr_url` in `contextExtras`
-    // (RPC paths forward operator-supplied values) — their value wins
-    // because the spread order below places `contextExtras` after the
-    // artifact-resolved default.
+    // `{{pr_url}}` is the immutable PR identity established by the original
+    // review handoff. Do not use the freshest agent-writable link artifact here:
+    // dispatching merge instructions for a substituted PR could merge it before
+    // the final completion gate notices the mismatch.
     let resolvedPrUrl: string | undefined;
     if (approvedTask.workflowRunId) {
       resolvedPrUrl =
-        this.config.artifactProfile?.resolvePrimaryLinkUrl(approvedTask.workflowRunId) || undefined;
+        this.config.artifactProfile?.resolveInitialPrimaryLinkUrl?.(approvedTask.workflowRunId) ||
+        undefined;
+    }
+    const overridePrUrl =
+      typeof contextExtras.pr_url === 'string' ? contextExtras.pr_url : undefined;
+    if (overridePrUrl && resolvedPrUrl && overridePrUrl !== resolvedPrUrl) {
+      throw new Error(
+        `Post-approval PR URL override ${overridePrUrl} does not match the reviewed run PR ${resolvedPrUrl}`
+      );
     }
     // The template interpolator (see `post-approval-template.ts`) resolves
     // tokens by raw identifier match — `{{autonomy_level}}` looks up the
@@ -4220,8 +4220,8 @@ export class SpaceRuntime {
         : null;
     const approvalAuthorityName = approvalAuthorityNode?.name;
     const routeContext: PostApprovalRouteContext = {
-      ...(resolvedPrUrl ? { pr_url: resolvedPrUrl } : {}),
       ...contextExtras,
+      ...(resolvedPrUrl ? { pr_url: resolvedPrUrl } : {}),
       task_id: taskId,
       approvalSource,
       approval_source: approvalSource,

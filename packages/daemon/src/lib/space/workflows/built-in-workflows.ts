@@ -31,6 +31,7 @@ import type {
   WorkflowNodeAgentOverride,
 } from '@hyperneo/shared';
 import { generateUUID, hasEnabledGateFeature, resolveNodeAgents } from '@hyperneo/shared';
+import { createHash } from 'node:crypto';
 import { Logger } from '../../logger';
 import { QA_SYSTEM_CONTRACT } from '../agents/system-contracts.ts';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
@@ -2319,7 +2320,9 @@ function removeLegacyPrReadyGateChannels(
 
 const RETIRED_POST_APPROVAL_NODE = 'Post-Approval';
 const RETIRED_MERGER_SLOT_NAMES = new Set(['merger']);
-const RETIRED_MERGER_RAW_MERGE_GUARD: DeclarativeToolGuard = {
+const RETIRED_MERGE_INSTRUCTIONS_SHA256 =
+  '635b45c887a11bd6fcbebf05c5ab8670386532661b54bec25e2815b3854f90ad';
+export const RETIRED_MERGER_RAW_MERGE_GUARD: DeclarativeToolGuard = {
   matcher: 'Bash',
   pattern: 'gh\\b[^\\n]*?pr\\s+merge\\b|\\bmergePullRequest\\b|pulls\\/[^\\/\\s"]+\\/merge\\b',
   decision: 'deny',
@@ -2423,6 +2426,13 @@ function stripRetiredPostApproval({
   const isPristineMergerNode = (node: WorkflowNode): boolean => {
     if (node.name !== RETIRED_POST_APPROVAL_NODE) return false;
     if (node.postApproval?.targetAgent !== 'merger') return false;
+    const hasRetiredRoute =
+      typeof node.postApproval.instructions === 'string' &&
+      createHash('sha256').update(node.postApproval.instructions).digest('hex') ===
+        RETIRED_MERGE_INSTRUCTIONS_SHA256;
+    const hasMigratedDeferredRoute =
+      node.postApproval.instructions === CODER_OWNED_MERGE_INSTRUCTIONS;
+    if (!hasRetiredRoute && !hasMigratedDeferredRoute) return false;
     const mergerAgents = (node.agents ?? []).filter(
       (agent) => agent.name && RETIRED_MERGER_SLOT_NAMES.has(agent.name)
     );
@@ -2431,9 +2441,18 @@ function stripRetiredPostApproval({
       mergerAgents.length === 1 &&
       (node.agents?.length ?? 0) === 1 &&
       mergerAgents[0].model === undefined &&
+      mergerAgents[0].thinkingLevel === undefined &&
       mergerAgents[0].replaceAgentPrompt !== true &&
-      typeof mergerAgents[0].customPrompt?.value === 'string' &&
-      mergerAgents[0].customPrompt.value === RETIRED_PR_MERGER_SLOT_PROMPT
+      mergerAgents[0].disabledSkillIds === undefined &&
+      mergerAgents[0].extraMcpServers === undefined &&
+      mergerAgents[0].resetContextPerTurn === undefined &&
+      ((hasRetiredRoute &&
+        JSON.stringify(mergerAgents[0].toolGuards) ===
+          JSON.stringify([RETIRED_MERGER_RAW_MERGE_GUARD]) &&
+        mergerAgents[0].customPrompt?.value === RETIRED_PR_MERGER_SLOT_PROMPT) ||
+        (hasMigratedDeferredRoute &&
+          mergerAgents[0].toolGuards === undefined &&
+          mergerAgents[0].customPrompt?.value === CODER_OWNED_MERGE_PROMPT))
     );
   };
   const hasBuiltInMergerMarker = nodes.some(isPristineMergerNode);
@@ -2882,21 +2901,51 @@ export function seedBuiltInWorkflows(
         // can resume, but migrate its exact retired merge contract away from the
         // removed merge_pr tool. This is deliberately narrower than restamping:
         // customized merger prompts/guards/routes remain byte-for-byte untouched.
+        const templateNodesByName = new Map(template.nodes.map((node) => [node.name, node]));
         const nodes = row.nodes.map((node) => {
-          if (node.name !== RETIRED_POST_APPROVAL_NODE) return node;
-          const merger = node.agents.find((agent) => RETIRED_MERGER_SLOT_NAMES.has(agent.name));
+          const templateNode = templateNodesByName.get(node.name);
+          const agents = node.agents.map((agent) => {
+            const templateAgent = templateNode?.agents.find(
+              (candidate) => candidate.name === agent.name
+            );
+            if (!templateAgent) return agent;
+            const prompt = patchLegacyStableSlotPrompt(
+              agent.customPrompt?.value,
+              templateAgent.customPrompt?.value,
+              node.name,
+              agent.name
+            );
+            return prompt === agent.customPrompt?.value
+              ? agent
+              : { ...agent, customPrompt: prompt === undefined ? undefined : { value: prompt } };
+          });
+          if (node.name !== RETIRED_POST_APPROVAL_NODE) {
+            return JSON.stringify(agents) === JSON.stringify(node.agents)
+              ? node
+              : { ...node, agents };
+          }
+          const merger = agents.find((agent) => RETIRED_MERGER_SLOT_NAMES.has(agent.name));
           if (
             !merger ||
             merger.customPrompt?.value !== RETIRED_PR_MERGER_SLOT_PROMPT ||
+            merger.model !== undefined ||
+            merger.thinkingLevel !== undefined ||
+            merger.replaceAgentPrompt === true ||
+            merger.disabledSkillIds !== undefined ||
+            merger.extraMcpServers !== undefined ||
+            merger.resetContextPerTurn !== undefined ||
             JSON.stringify(merger.toolGuards) !==
               JSON.stringify([RETIRED_MERGER_RAW_MERGE_GUARD]) ||
-            node.postApproval?.targetAgent !== merger.name
+            node.postApproval?.targetAgent !== merger.name ||
+            typeof node.postApproval.instructions !== 'string' ||
+            createHash('sha256').update(node.postApproval.instructions).digest('hex') !==
+              RETIRED_MERGE_INSTRUCTIONS_SHA256
           ) {
             return node;
           }
           return {
             ...node,
-            agents: node.agents.map((agent) =>
+            agents: agents.map((agent) =>
               agent === merger
                 ? {
                     ...agent,
