@@ -100,7 +100,7 @@ PR_URL=<pr_url>
 # INSPECTED_HEAD_OID was captured BEFORE reading the diff (see "Each review is fresh").
 PR_ID=$(gh pr view "$PR_URL" --json id --jq .id)
 CURRENT_HEAD_OID=$(gh pr view "$PR_URL" --json headRefOid --jq .headRefOid)
-test "$CURRENT_HEAD_OID" = "$INSPECTED_HEAD_OID" || { false; }
+test "$CURRENT_HEAD_OID" = "$INSPECTED_HEAD_OID" || { echo "Head changed from $INSPECTED_HEAD_OID to $CURRENT_HEAD_OID after inspection — do NOT post; restart the review against the new head." >&2; exit 1; }
 # Parse the PR host with PURE bash parameter expansion — no python3/interpreter
 # (an interpreter is unconstrained code execution; the contract forbids it).
 HOST=\${PR_URL#https://}
@@ -124,6 +124,8 @@ jq -n --arg id "$PR_ID" --arg headOid "$INSPECTED_HEAD_OID" --arg event "APPROVE
   '{query: "mutation($id:ID!, $headOid:GitObjectID!, $event:PullRequestReviewEvent!, $body:String!, $comments:[DraftPullRequestReviewComment!]){addPullRequestReview(input:{pullRequestId:$id, commitOID:$headOid, event:$event, body:$body, comments:$comments}){pullRequestReview{url}}}",
     variables: {id: $id, headOid: $headOid, event: $event, body: $body, comments: []}}' > "$REQ"
 REVIEW_URL=$(gh api graphql --hostname "$HOST" --input "$REQ" --jq '.data.addPullRequestReview.pullRequestReview.url')
+test -n "$REVIEW_URL" || { echo "Review post returned no URL — do not claim a review was posted." >&2; exit 1; }
+echo "$REVIEW_URL"
 \`\`\`
 
 Use \`event="REQUEST_CHANGES"\` when your verdict requests changes, and \`event="COMMENT"\` for an informational note or the own-PR fallback — never approve while posting blocking findings. Always put the header block (## 🤖 Review by …) at the top of body. To anchor findings to specific lines, replace the empty \`comments: []\` with one entry per finding: write each finding's text to its OWN temp file with a QUOTED heredoc using the SAME per-invocation delimiter, then add one \`--rawfile findingN "$FINDINGN"\` argument per file and one \`--arg pathN "$PATHN"\` per file (the file path is passed as a jq VARIABLE, never interpolated into the jq program — a Git pathname may legally contain a double-quote or backslash that would break the program string), then put a matching \`{path:$pathN, line:<n>, side:<SIDE>, body:$findingN}\` object inside the \`comments\` array (repeat the \`--arg pathN\` + \`--rawfile findingN\` + \`[{...}]\` shape per finding) and submit the assembled JSON via \`--input\`. Choose \`side\` from the diff position where the comment lands: \`"RIGHT"\` for the head (added/modified) side, \`"LEFT"\` for the base/deleted side — GitHub rejects a draft comment on the wrong side and fails the whole mutation, so a finding on a deleted line must use \`LEFT\` (with \`startSide\` for ranges).
