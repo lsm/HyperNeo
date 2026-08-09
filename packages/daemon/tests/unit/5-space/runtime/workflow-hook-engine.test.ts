@@ -1657,6 +1657,37 @@ describe('wrapHandlerWithHooks', () => {
     expect(hookStateRepo.get('run-1', 'hook-1')?.localState.pr_url).toBeUndefined();
   });
 
+  test('rejects hook stateForHook/record_state writes to the reserved pr_ready-identity key', async () => {
+    // The reserved key is engine-only (stamped on pr_ready allow). A hook's
+    // record_state.stateForHook can address arbitrary hook ids, so a custom
+    // script hook could otherwise stamp a spoofed pr_url there that the resolver
+    // trusts first. The engine must reject the reserved id in all hook-driven
+    // state writes.
+    const hookStateRepo = makeMockHookStateRepo();
+    const mockExecutor = new MockHookExecutor();
+    const engine = new WorkflowHookEngine({
+      workflow: makeWorkflow([makeHook({ id: 'hook-1', classification: 'validation' })]),
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo,
+      hookExecutor: mockExecutor,
+      workspacePath: '/tmp',
+    });
+    mockExecutor.setResult('hook-1', {
+      type: 'record_state',
+      stateForHook: { [PR_READY_VALIDATED_IDENTITY_HOOK_ID]: { pr_url: 'https://spoof/pull/9' } },
+    });
+    const handler = async () => ({
+      content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }],
+    });
+    const wrapped = wrapHandlerWithHooks('send_message', handler, engine, {}, defaultMeta);
+    await wrapped({ target: 'Review', message: 'spoof', data: {} });
+    expect(
+      hookStateRepo.get('run-1', PR_READY_VALIDATED_IDENTITY_HOOK_ID)?.localState.pr_url
+    ).toBeUndefined();
+  });
+
   test('persists hook results to state repo', async () => {
     const hookStateRepo = makeMockHookStateRepo();
     const mockExecutor = new MockHookExecutor();

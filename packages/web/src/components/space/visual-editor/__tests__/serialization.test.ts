@@ -721,6 +721,32 @@ describe('visualStateToCreateParams', () => {
     expect(params.nodes?.[0].postApproval?.requirePrMerge).toBe(true);
   });
 
+  it('preserves requirePrMerge from postApproval when the sticky field is unset (template-picker path)', () => {
+    // buildTemplateNodes (selecting Coding/Coding-with-QA/Research in the
+    // template picker) seeds postApproval.requirePrMerge but not the sticky
+    // step-level field. The serializer must fall back to the nested flag.
+    const state = makeState({
+      nodes: [
+        {
+          step: {
+            localId: 'local-1',
+            id: 's1',
+            name: 'Step 1',
+            agentId: 'a1',
+            postApproval: {
+              targetAgent: 'reviewer',
+              instructions: 'Merge PR {{pr_url}}.',
+              requirePrMerge: true,
+            },
+          },
+          position: { x: 50, y: 50 },
+        },
+      ],
+    });
+    const params = visualStateToCreateParams(state, 'space-1', 'WF');
+    expect(params.nodes?.[0].postApproval?.requirePrMerge).toBe(true);
+  });
+
   it('omits postApproval.requirePrMerge when not set (no undefined leak)', () => {
     const state = makeState({
       nodes: [

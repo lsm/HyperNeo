@@ -509,7 +509,11 @@ export class WorkflowHookEngine {
           break;
 
         case 'block':
-          if (result.data && typeof result.data === 'object') {
+          if (
+            result.data &&
+            typeof result.data === 'object' &&
+            hook.id !== PR_READY_VALIDATED_IDENTITY_HOOK_ID
+          ) {
             stateUpdates.push({ hookId: hook.id, state: result.data as Record<string, unknown> });
           }
           if ((hook.classification ?? 'validation') === 'validation') {
@@ -617,11 +621,20 @@ export class WorkflowHookEngine {
           break;
 
         case 'record_state':
-          if (result.state && typeof result.state === 'object') {
+          if (
+            result.state &&
+            typeof result.state === 'object' &&
+            hook.id !== PR_READY_VALIDATED_IDENTITY_HOOK_ID
+          ) {
             stateUpdates.push({ hookId: hook.id, state: result.state as Record<string, unknown> });
           }
           if (isRecord(result.stateForHook)) {
             for (const [hookId, state] of Object.entries(result.stateForHook)) {
+              // Hooks cannot write the reserved pr_ready-identity key — it is
+              // engine-only (stamped on pr_ready allow), so the resolver can
+              // trust it as the authoritative run PR identity. record_state and
+              // stateForHook are user/hook-addressable; reject the reserved id.
+              if (hookId === PR_READY_VALIDATED_IDENTITY_HOOK_ID) continue;
               if (isRecord(state)) stateUpdates.push({ hookId, state });
             }
           }
