@@ -121,6 +121,14 @@ export interface ExternalEventDeliveryLogFilters {
   source?: string;
   eventId?: string;
   agentName?: string;
+  /**
+   * When set, restrict to deliveries for a single workflow run (the
+   * `workflow_run_id` column). Uses `idx_space_external_event_deliveries_run`.
+   * For long-horizon-agent deliveries this column holds `long_horizon:<spaceId>`.
+   */
+  workflowRunId?: string;
+  /** When set, restrict to deliveries targeting a single workflow node (`node_id`). */
+  nodeId?: string;
   limit?: number;
   offset?: number;
 }

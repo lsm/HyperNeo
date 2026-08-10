@@ -86,6 +86,7 @@ import {
   UnsubscribeExternalEventSchema,
   SubscribePrEventsSchema,
   GetExternalEventSchema,
+  ListDeliveriesSchema,
 } from './node-agent-tool-schemas';
 import type {
   ListPeersInput,
@@ -107,6 +108,7 @@ import type {
   UnsubscribeExternalEventInput,
   SubscribePrEventsInput,
   GetExternalEventInput,
+  ListDeliveriesInput,
 } from './node-agent-tool-schemas';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceTask } from '@hyperneo/shared';
@@ -1703,6 +1705,57 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       return jsonResult({ success: true, event: record.event, state: record.state });
     },
 
+    /**
+     * List recent per-subscription external-event deliveries for diagnosis —
+     * why an event was (or was not) delivered to a run/node. Read-only.
+     *
+     * Reads `space_external_event_deliveries` joined to `space_external_events`,
+     * which `db_query` cannot reach because those tables are space-scoped (by
+     * `space_id`), not session-scoped. Always scoped to the current space;
+     * defaults to the current workflow run. Each row carries the delivery state
+     * plus a lean event essence (topic, source, summary, url, event state).
+     */
+    async list_deliveries(args: ListDeliveriesInput): Promise<ToolResult> {
+      const { externalEventStore } = config;
+      if (!externalEventStore) {
+        return jsonResult({
+          success: false,
+          error: 'External event delivery lookup is not available.',
+        });
+      }
+      const limit = Math.min(args.limit ?? 50, 200);
+      const offset = args.offset ?? 0;
+      const records = externalEventStore.listDeliveryLog({
+        spaceId,
+        workflowRunId: args.workflowRunId ?? workflowRunId,
+        nodeId: args.nodeId,
+        status: args.state,
+        limit,
+        offset,
+      });
+      const deliveries = records.map((record) => ({
+        eventId: record.eventId,
+        deliveryKey: record.deliveryKey,
+        workflowRunId: record.workflowRunId,
+        taskId: record.taskId,
+        nodeId: record.nodeId,
+        agentName: record.agentName,
+        state: record.state,
+        failureReason: record.failureReason,
+        deliveredAt: record.deliveredAt,
+        updatedAt: record.updatedAt,
+        event: {
+          topic: record.event.topic,
+          source: record.event.source,
+          summary: record.event.summary,
+          externalUrl: record.event.externalUrl ?? null,
+          occurredAt: record.event.occurredAt,
+          state: record.eventState,
+        },
+      }));
+      return jsonResult({ success: true, deliveries });
+    },
+
     async approve_task(args: ApproveTaskInput): Promise<ToolResult> {
       if (!config.onApproveTask) {
         return jsonResult({
@@ -2076,6 +2129,16 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
               'Returns a not-found result for unknown ids.',
             GetExternalEventSchema.shape,
             (args) => handlers.get_external_event(args)
+          ),
+          tool(
+            'list_deliveries',
+            'Read-only diagnostic: list recent per-subscription external-event deliveries for a workflow run/node, ' +
+              'joined to their source events. Use this to investigate why an event was or was not delivered ' +
+              '(delivery state: pending / delivered / failed) and to see the event essence (topic, source, summary, url). ' +
+              'Always scoped to the current space; defaults to this workflow run. ' +
+              'These tables are space-scoped, so db_query cannot reach them — this tool is the surface for that state.',
+            ListDeliveriesSchema.shape,
+            (args) => handlers.list_deliveries(args)
           ),
         ]
       : []),
