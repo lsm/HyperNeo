@@ -1843,6 +1843,78 @@ describe('openai-responses-bridge server', () => {
   );
 
   it.skipIf(!isBun)(
+    'classifies a 200 JSON error by its embedded status (not hardcoded 400)',
+    async () => {
+      // A provider auth/quota failure can come back as HTTP 200 with an embedded
+      // numeric status (OpenAI `error.status`, or RFC 7807 top-level `status`).
+      // It must surface with its REAL classification (401 authentication_error)
+      // rather than a hardcoded 400 invalid_request_error — the latter could trip
+      // the fatal invalid-request circuit breaker on what is actually a transient
+      // auth/credential issue.
+      server = createOpenAIResponsesBridgeServer({
+        auth: { source: 'api_key', apiKey: 'sk-test' },
+        models,
+        fetchImpl: async () =>
+          new Response(
+            JSON.stringify({
+              error: {
+                type: 'authentication_error',
+                status: 401,
+                message: 'Expired API key',
+              },
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          ),
+      });
+
+      const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-5.3-codex',
+          max_tokens: 128,
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+      });
+
+      const body = (await resp.json()) as { error: { type: string; message: string } };
+      // Embedded 401 wins over the hardcoded 400, and the type matches the status.
+      expect(resp.status).toBe(401);
+      expect(body.error.type).toBe('authentication_error');
+      expect(body.error.message).toContain('Expired API key');
+    }
+  );
+
+  it.skipIf(!isBun)('falls back to 400 when a 200 JSON error has no embedded status', async () => {
+    // A JSON error with no numeric status keeps the legacy 400
+    // invalid_request_error classification (the embedded-status lookup is best
+    // effort and must not change behavior when no status is present).
+    server = createOpenAIResponsesBridgeServer({
+      auth: { source: 'api_key', apiKey: 'sk-test' },
+      models,
+      fetchImpl: async () =>
+        new Response(JSON.stringify({ error: { message: 'malformed payload' } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    });
+
+    const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gpt-5.3-codex',
+        max_tokens: 128,
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+    });
+
+    expect(resp.status).toBe(400);
+    const body = (await resp.json()) as { error: { type: string } };
+    expect(body.error.type).toBe('invalid_request_error');
+  });
+
+  it.skipIf(!isBun)(
     'does not treat a 200 JSON body with error:null as a terminal error',
     async () => {
       // A success body may carry `"error": null` — that is NOT an error body.
@@ -1960,6 +2032,68 @@ describe('openai-responses-bridge server', () => {
     });
     expect(messageDeltaEvent(events)).toBeUndefined();
   });
+
+  it.skipIf(!isBun)(
+    'does not open a thinking block or mark empty reasoning frames as productive',
+    async () => {
+      // An aborted/empty reasoning stream — only the `added` part marker and an
+      // empty thinking delta, then a completed with no output — must NOT open a
+      // thinking block and must NOT count as productive content. Otherwise the
+      // empty-stream guard would be skipped and an empty end_turn emitted, or a
+      // dangling empty thinking block would be left in the output.
+      server = createOpenAIResponsesBridgeServer({
+        auth: { source: 'api_key', apiKey: 'sk-test' },
+        models,
+        fetchImpl: async () =>
+          sse([
+            {
+              event: 'response.reasoning_summary_part.added',
+              data: { type: 'response.reasoning_summary_part.added' },
+            },
+            {
+              event: 'response.reasoning_summary_text.delta',
+              data: { type: 'response.reasoning_summary_text.delta', delta: '' },
+            },
+            {
+              event: 'response.reasoning_summary_part.done',
+              data: { type: 'response.reasoning_summary_part.done' },
+            },
+            {
+              event: 'response.completed',
+              data: {
+                type: 'response.completed',
+                response: { usage: { input_tokens: 1, output_tokens: 0 }, output: [] },
+              },
+            },
+          ]),
+      });
+
+      const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-5.3-codex',
+          max_tokens: 128,
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+      });
+
+      const events = await readSSEEvents(resp.body);
+      // No thinking block is ever opened, and no productive content means the
+      // turn surfaces as a retryable overloaded_error (not an empty end_turn).
+      expect(
+        events.filter(
+          (event) =>
+            event.event === 'content_block_start' &&
+            (event.data as { content_block?: { type?: string } }).content_block?.type === 'thinking'
+        )
+      ).toHaveLength(0);
+      expect(events.find((event) => event.event === 'error')?.data).toMatchObject({
+        error: { type: 'overloaded_error' },
+      });
+      expect(messageDeltaEvent(events)).toBeUndefined();
+    }
+  );
 
   it.skipIf(!isBun)(
     'honors a non-streaming JSON success response (ignoring stream:true)',

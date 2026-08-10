@@ -775,6 +775,35 @@ function isJsonErrorBody(text: string): boolean {
   return parsed.error != null || parsed.detail != null;
 }
 
+/**
+ * Extract a numeric HTTP status embedded in a JSON error body (OpenAI
+ * `error.status`/`error.code`, nested object, or RFC 7807 top-level `status`),
+ * so a non-transient 200-with-JSON-error surfaces with its REAL classification
+ * (e.g. 401 authentication_error) instead of being hardcoded to 400
+ * invalid_request_error — which would mislabel a provider auth/quota failure and
+ * risk tripping the fatal invalid-request circuit breaker. Returns undefined
+ * when no embedded status is present.
+ */
+function readEmbeddedErrorStatus(text: string): number | undefined {
+  const parsed = parseJsonObject(text);
+  if (!parsed) return undefined;
+  const errorObj =
+    parsed.error && typeof parsed.error === 'object' && !Array.isArray(parsed.error)
+      ? (parsed.error as Record<string, unknown>)
+      : undefined;
+  const candidates = [errorObj?.status, parsed.status, errorObj?.code, parsed.code];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'number' && Number.isFinite(candidate)) {
+      const n = Math.trunc(candidate);
+      if (n >= 400 && n < 600) return n;
+    } else if (typeof candidate === 'string' && /^\d{3}$/.test(candidate)) {
+      const n = Number(candidate);
+      if (n >= 400 && n < 600) return n;
+    }
+  }
+  return undefined;
+}
+
 /** Count occurrences of each distinct value in an array, keyed by its string form. */
 function countBy<T>(arr: T[]): Record<string, number> {
   const counts: Record<string, number> = {};
@@ -1137,21 +1166,23 @@ async function streamResponsesToAnthropic({
         continue;
       }
 
+      if (event.type === 'response.reasoning_summary_part.added') {
+        // Part marker only — wait for the actual thinking delta before opening a
+        // block, so an empty/aborted reasoning stream (only an `added` frame, or
+        // empty deltas) isn't marked productive and isn't mistaken for content.
+        continue;
+      }
       if (
-        event.type === 'response.reasoning_summary_part.added' ||
         event.type === 'response.reasoning_summary_text.delta' ||
         event.type === 'response.reasoning_text.delta'
       ) {
-        startThinkingBlock();
-        if (
-          event.type === 'response.reasoning_summary_text.delta' ||
-          event.type === 'response.reasoning_text.delta'
-        ) {
-          const delta = typeof event.delta === 'string' ? event.delta : '';
-          if (delta) {
-            send(thinkingDeltaSSE(thinkingBlockIndex, delta));
-            heuristicOutputTokens += Math.max(1, Math.ceil(delta.length / 4));
-          }
+        const delta = typeof event.delta === 'string' ? event.delta : '';
+        if (delta) {
+          // Open the thinking block (and mark the turn productive) only once
+          // real reasoning text arrives.
+          startThinkingBlock();
+          send(thinkingDeltaSSE(thinkingBlockIndex, delta));
+          heuristicOutputTokens += Math.max(1, Math.ceil(delta.length / 4));
         }
         continue;
       }
@@ -1832,13 +1863,20 @@ export function createOpenAIResponsesBridgeServer(
         // A JSON body that is NOT an error (e.g. a non-streaming success) still
         // flows through to the streamer.
         if (isJsonErrorBody(bodyText)) {
+          // Derive the terminal status/type from the embedded error when present,
+          // so an auth/quota failure (e.g. embedded 401 authentication_error)
+          // surfaces with its real classification rather than a hardcoded 400
+          // invalid_request_error (which could trip the fatal invalid-request
+          // circuit breaker).
+          const embeddedStatus = readEmbeddedErrorStatus(bodyText);
+          const errorStatus = embeddedStatus ?? 400;
           logger.warn(
-            `openai-responses: upstream returned a non-transient JSON error (HTTP 200): ` +
+            `openai-responses: upstream returned a non-transient JSON error (HTTP 200 → ${errorStatus}): ` +
               `${parseOpenAIError(openAIResponse.status, bodyText).slice(0, 200)}`
           );
           return sendJsonError(
-            400,
-            anthropicErrorTypeForHttpStatus(400),
+            errorStatus,
+            anthropicErrorTypeForHttpStatus(errorStatus),
             parseOpenAIError(openAIResponse.status, bodyText)
           );
         }

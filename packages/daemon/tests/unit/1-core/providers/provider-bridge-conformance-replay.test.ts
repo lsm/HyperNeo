@@ -904,8 +904,8 @@ describe('provider-bridge conformance replay — OpenAI Responses (Codex) bridge
 
       const starts = events.filter((e) => e.event === 'content_block_start');
       expect(starts).toHaveLength(2);
-      // summary_part.added opens the thinking block (index 0); summary_text.done
-      // closes it before the text block (index 1) opens.
+      // The first non-empty thinking delta opens the thinking block (index 0);
+      // summary_text.done closes it before the text block (index 1) opens.
       expect(
         (starts[0].data as { content_block: { type: string }; index: number }).content_block.type
       ).toBe('thinking');
@@ -952,7 +952,12 @@ describe('provider-bridge conformance replay — OpenAI Responses (Codex) bridge
       ]);
     });
 
-    it('opens then closes an empty thinking block when summary_part.added has no delta', async () => {
+    it('does not open a thinking block when summary_part.added has no delta', async () => {
+      // An aborted/empty reasoning stream (only the `added` part marker, no
+      // thinking delta) must NOT open a thinking block or mark the turn
+      // productive. The bridge waits for real thinking text before opening a
+      // block, so this contentless turn surfaces as a retryable overloaded_error
+      // instead of an empty end_turn — the core fix for the empty-200 failure.
       const out = await replayResponses(
         responsesSse([
           { type: 'response.reasoning_summary_part.added' },
@@ -961,19 +966,13 @@ describe('provider-bridge conformance replay — OpenAI Responses (Codex) bridge
         ])
       );
       const events = parseAnthropicSse(out);
-      const thinkingStart = events.find(
-        (e) =>
-          e.event === 'content_block_start' &&
-          (e.data as { content_block: { type: string } }).content_block.type === 'thinking'
-      )!.data as { index: number };
-      expect(blocksOfType(events, 'thinking')).toHaveLength(1);
+      expect(blocksOfType(events, 'thinking')).toHaveLength(0);
       expect(deltasOfType(events, 'thinking_delta')).toHaveLength(0);
-      // The opened block is closed with a matching content_block_stop at the
-      // same index — not just opened and left dangling.
-      const stopIndexes = events
-        .filter((e) => e.event === 'content_block_stop')
-        .map((e) => (e.data as { index: number }).index);
-      expect(stopIndexes).toContain(thinkingStart.index);
+      expect(eventTypes(events)).toEqual(['message_start', 'error', 'message_stop']);
+      const err = events.find((e) => e.event === 'error')!.data as {
+        error: { type: string };
+      };
+      expect(err.error.type).toBe('overloaded_error');
     });
   });
 
