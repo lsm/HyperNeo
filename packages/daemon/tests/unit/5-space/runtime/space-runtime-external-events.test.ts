@@ -6547,24 +6547,35 @@ describe('SpaceRuntime external event subscriptions', () => {
   });
 
   test('does not materialize a topicFrom interest from an untrusted PR host', async () => {
-    const workflow = createTopicFromWorkflow();
-    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-    markCoderLive(run.id, 'session-untrusted');
+    // Explicitly force the github.com-only default for this test (a caller-set
+    // GH_HOST would otherwise trust the evil host), then restore.
+    const previousGhHost = process.env.GH_HOST;
+    delete process.env.GH_HOST;
+    try {
+      const workflow = createTopicFromWorkflow();
+      const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      markCoderLive(run.id, 'session-untrusted');
 
-    // A GitHub-shaped path on an arbitrary host would resolve to a topic for the
-    // real owner/repo without the host allowlist (resolveTopicFromInterest's
-    // trust boundary). GH_HOST is unset here, so only github.com is trusted.
-    recordPrLinkArtifact(run.id, 'code', 'https://evil.example/lsm/neokai/pull/42');
-    runtime.materializeRunTopicFromInterests(run.id);
+      // A GitHub-shaped path on an arbitrary host would resolve to a topic for the
+      // real owner/repo without the host allowlist (resolveTopicFromInterest's
+      // trust boundary). GH_HOST is unset here, so only github.com is trusted.
+      recordPrLinkArtifact(run.id, 'code', 'https://evil.example/lsm/neokai/pull/42');
+      runtime.materializeRunTopicFromInterests(run.id);
 
-    const event = makeEvent();
-    await eventService.publish(event);
+      const event = makeEvent();
+      await eventService.publish(event);
 
-    expect(injected).toHaveLength(0);
-    expect(eventStore.getById(event.id)?.state).toBe('published');
+      expect(injected).toHaveLength(0);
+      expect(eventStore.getById(event.id)?.state).toBe('published');
+    } finally {
+      if (previousGhHost !== undefined) process.env.GH_HOST = previousGhHost;
+    }
   });
 
   test('materializes a topicFrom interest from a GitHub Enterprise host when GH_HOST is set', async () => {
+    // Snapshot + restore (not delete) so a caller-configured GH_HOST survives the
+    // test instead of being wiped for the rest of the worker.
+    const previousGhHost = process.env.GH_HOST;
     process.env.GH_HOST = 'ghe.example';
     try {
       // Rebuild the runtime's artifact profile + allowlist is unnecessary: the
@@ -6582,7 +6593,8 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(injected).toHaveLength(1);
       expect(injected[0]!.sessionId).toBe('session-ghe');
     } finally {
-      delete process.env.GH_HOST;
+      if (previousGhHost === undefined) delete process.env.GH_HOST;
+      else process.env.GH_HOST = previousGhHost;
     }
   });
 
