@@ -1150,11 +1150,7 @@ export class SpaceRuntime {
     nodes: WorkflowNode[]
   ): void {
     const primaryLink = this.resolvePrUrlForRun(workflowRunId);
-    // No primary link recorded yet: every `topicFrom` interest is inert. It
-    // materializes once a link-bearing artifact is recorded (record trigger) or
-    // on the next rehydrate.
-    if (!primaryLink) return;
-    const allowedHosts = this.topicFromAllowedHosts();
+    const allowedHosts = primaryLink ? this.topicFromAllowedHosts() : new Set<string>();
     for (const node of nodes) {
       let agents: ReturnType<typeof resolveNodeAgents>;
       try {
@@ -1164,14 +1160,15 @@ export class SpaceRuntime {
         // resolve. resolveNodeAgents is guarded the same way elsewhere.
         continue;
       }
-      // Drop this node's prior `topicFrom`-derived static subs before
-      // re-resolving. A replaced PR link must not leave the superseded topic in
-      // the trie (the node would keep receiving the old PR's events and, after
-      // enough replacements, exhaust the slot cap). Literal static `topic`
-      // interests and dynamic subs are untouched. (During rehydrate this is
-      // already handled by registerRunInterests' bulk static removal; doing it
-      // here too keeps the record-trigger path correct and the helper
-      // self-contained.)
+      // ALWAYS drop this node's prior `topicFrom`-derived static subs before
+      // re-resolving — even when there is no primary link. A replaced OR cleared
+      // PR link (e.g. an authorized later write empties `pr_url`) must make the
+      // superseded topic inert: without this, the node keeps receiving the old
+      // PR's events after durable state no longer identifies it, and repeated
+      // replacements exhaust the slot cap. Literal static `topic` interests and
+      // dynamic subs are untouched. (During rehydrate this is already handled by
+      // registerRunInterests' bulk static removal; doing it here too keeps the
+      // record-trigger path correct and the helper self-contained.)
       this.topicTrie.remove(
         (target) =>
           isWorkflowSubscriptionTarget(target) &&
@@ -1180,6 +1177,10 @@ export class SpaceRuntime {
           target.subscriptionKind === 'static' &&
           target.topicFromDerived === true
       );
+      // No primary link recorded (yet, or anymore): every `topicFrom` interest
+      // stays inert. It (re-)materializes once a link-bearing state change
+      // arrives (record trigger) or on the next rehydrate.
+      if (!primaryLink) continue;
       for (const agentEntry of agents) {
         for (const interest of agentEntry.eventInterests ?? []) {
           // Static `topic` interests are registered verbatim by the caller.
@@ -1903,11 +1904,6 @@ export class SpaceRuntime {
           // bypass the GateRetryScheduler and repeat gate evaluation.
           if (!anyRetryPending && !this.isStopped) {
             this.redispatchRetainedExternalEvents();
-            // Drain the new-target replay too: a sub materialized at depth > 0
-            // (inside a concurrent handler) defers into the same pending flag, so
-            // without this it would never fire and the new target would silently
-            // miss events already routed to other targets.
-            this.redispatchPublishedEventsToNewTargets();
           }
         }
       }
@@ -4924,6 +4920,13 @@ export class SpaceRuntime {
         // the raw redispatch would re-handle it; the guard defers to the
         // post-handling flush instead.
         this.redispatchRetainedExternalEvents();
+        // Also replay published events that already have a delivery to another
+        // target: a daemon stop between a primary-link commit and its
+        // record-trigger materialization leaves rehydrate to reconstruct the
+        // derived sub, and a retained event routed to another target before the
+        // stop would otherwise never reach it. Global (unscoped) — rehydrate
+        // covers all spaces' recovered runs; delivery filters per event.
+        this.redispatchPublishedEventsToNewTargets();
       }
 
       await this.attachStandaloneTasksToWorkflows();
@@ -5723,20 +5726,23 @@ export class SpaceRuntime {
    * Per-target safe: a target that already has a delivery row (any state) is
    * skipped, so only targets without one — i.e. subscriptions added since the
    * event was published — are dispatched. This never re-disturbs an existing
-   * target (no double-delivery) and skips the blocked-run hook/gate reeval (it
-   * already ran when the event was first handled). Fire-and-forget per event,
-   * like the retained-event replay.
+   * target (no double-delivery). The blocked-run gate hook IS invoked for the
+   * newly matched run (the normal path fired it before this subscription
+   * existed, so a blocked run's gate would not otherwise be re-checked).
+   * Fire-and-forget per event, like the retained-event replay.
    */
   private redispatchPublishedEventsToNewTargets(spaceId?: string): void {
     const store = this.config.externalEventStore;
     if (!store) return;
-    if (this.externalEventHandlingDepth > 0) {
-      // Defer to the post-handling flush (same re-entrancy guard as the retained
-      // replay) so we don't re-handle an in-flight event before its deliveries
-      // settle.
-      if (!this.isStopped) this.retainedEventRedispatchPending = true;
-      return;
-    }
+    // No depth guard (unlike redispatchRetainedExternalEvents): this path does
+    // NOT call handleExternalEvent, so it cannot re-handle an in-flight event.
+    // It dispatches only to targets without a delivery row (getDelivery check)
+    // and the per-target in-flight guard serializes any concurrent delivery, so
+    // running it at any depth — including from inside a concurrent handler — is
+    // safe and avoids the deferral loop the depth guard would cause (the
+    // retained replay's void handleExternalEvent increments depth, which would
+    // spuriously re-arm the deferred flag and loop on an unmatched retained
+    // event).
     for (const eventRecord of store.listPublishedEventsWithDeliveries(spaceId)) {
       void this.deliverPublishedEventToNewTargets(
         this.externalEventPayloadFromRecord(eventRecord.event)
@@ -5754,6 +5760,12 @@ export class SpaceRuntime {
         isWorkflowSubscriptionTarget(target) &&
         this.isWorkflowTargetOwnedBySpace(target, payload.spaceId)
     );
+    // Re-evaluate blocked-run gates for the newly matched targets. The normal
+    // handleExternalEvent path fires this hook before delivery (it is what
+    // resumes blocked runs), but it ran before this subscription existed, so a
+    // blocked run's gate would not otherwise be re-checked against this event.
+    // No-op for non-blocked runs; the hook dedups per run.
+    await this.fireBlockedRunExternalEventHook(payload, matches);
     for (const match of matches) {
       const target = this.resolveSubscriptionTarget(match);
       const deliveryKey = this.buildDeliveryKey(target, payload);

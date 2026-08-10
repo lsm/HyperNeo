@@ -6945,6 +6945,40 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(injected[0]!.sessionId).toBe('session-hook-state');
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
   });
+
+  test('clears derived subscriptions when the primary link disappears', async () => {
+    // The primary link can be cleared (e.g. an authorized later write empties
+    // pr_url). The derived topicFrom sub must become inert again — not keep
+    // receiving events for a PR the durable state no longer identifies.
+    const workflow = createTopicFromWorkflow();
+    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    markCoderLive(run.id, 'session-clear');
+
+    // Establish the link via gate data and materialize.
+    const gateDataRepo = new GateDataRepository(db);
+    gateDataRepo.set(run.id, 'pr-gate', { prUrl: PR_URL });
+    runtime.materializeRunTopicFromInterests(run.id);
+
+    const firstEvent = makeEvent();
+    await eventService.publish(firstEvent);
+    expect(injected).toHaveLength(1);
+
+    // Clear the primary link and re-materialize: the derived sub is removed.
+    gateDataRepo.set(run.id, 'pr-gate', { prUrl: '' });
+    runtime.materializeRunTopicFromInterests(run.id);
+
+    const secondEvent = makeEvent({
+      id: `evt-after-clear-${Math.random().toString(36).slice(2)}`,
+      topic: 'github/lsm/neokai/pull_request/42.review_dismissed',
+      summary: 'PR review dismissed',
+      dedupeKey: `dedupe-after-clear-${Math.random().toString(36).slice(2)}`,
+    });
+    await eventService.publish(secondEvent);
+
+    // No new delivery — the superseded topic is inert again.
+    expect(injected).toHaveLength(1);
+    expect(eventStore.getById(secondEvent.id)?.state).toBe('published');
+  });
 });
 
 describe('SpaceRuntime queue-health snapshot', () => {
