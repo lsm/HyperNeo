@@ -2136,6 +2136,94 @@ describe('openai-responses-bridge server', () => {
   );
 
   it.skipIf(!isBun)(
+    'synthesizes response.incomplete for a non-streaming JSON response truncated by max_output_tokens',
+    async () => {
+      // A Responses-compatible endpoint ignored stream:true and returned a
+      // one-shot JSON response whose status is `incomplete` (max_output_tokens
+      // exhaustion) with partial text. The bridge must surface that text with a
+      // `max_tokens` stop reason — NOT `end_turn`, and NOT retried as an overload.
+      server = createOpenAIResponsesBridgeServer({
+        auth: { source: 'api_key', apiKey: 'sk-test' },
+        models,
+        fetchImpl: async () =>
+          new Response(
+            JSON.stringify({
+              id: 'resp_inc',
+              object: 'response',
+              status: 'incomplete',
+              incomplete_details: { reason: 'max_output_tokens' },
+              output: [
+                { type: 'message', content: [{ type: 'output_text', text: 'partial answ' }] },
+              ],
+              usage: { input_tokens: 2, output_tokens: 128 },
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          ),
+      });
+
+      const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-5.3-codex',
+          max_tokens: 128,
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+      });
+
+      const events = await readSSEEvents(resp.body);
+      expect(resp.status).toBe(200);
+      // Partial text is surfaced, not lost.
+      expect(textDeltaEvents(events).join('')).toBe('partial answ');
+      // Truncation semantics preserved: max_tokens, not end_turn, and not retried.
+      expect(events.find((event) => event.event === 'error')).toBeUndefined();
+      expect(messageDeltaEvent(events)).toMatchObject({ delta: { stop_reason: 'max_tokens' } });
+    }
+  );
+
+  it.skipIf(!isBun)(
+    'does not retry a contentless non-streaming incomplete JSON response as an overload',
+    async () => {
+      // An incomplete response with NO visible output (the model spent its
+      // budget on reasoning) must report `max_tokens` — not be misclassified as
+      // an overload and retried (retrying a max_output_tokens exhaustion cannot
+      // help).
+      server = createOpenAIResponsesBridgeServer({
+        auth: { source: 'api_key', apiKey: 'sk-test' },
+        models,
+        fetchImpl: async () =>
+          new Response(
+            JSON.stringify({
+              id: 'resp_inc_empty',
+              object: 'response',
+              status: 'incomplete',
+              incomplete_details: { reason: 'max_output_tokens' },
+              output: [],
+              usage: { input_tokens: 2, output_tokens: 128 },
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          ),
+      });
+
+      const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-5.3-codex',
+          max_tokens: 128,
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+      });
+
+      const events = await readSSEEvents(resp.body);
+      expect(resp.status).toBe(200);
+      // NOT an overload retry — incomplete exhaustion is terminal.
+      expect(events.find((event) => event.event === 'error')).toBeUndefined();
+      expect(messageDeltaEvent(events)).toMatchObject({ delta: { stop_reason: 'max_tokens' } });
+    }
+  );
+
+  it.skipIf(!isBun)(
     'preserves the tool-turn continuation across an empty-stream retry',
     async () => {
       const capturedBodies: Record<string, unknown>[] = [];

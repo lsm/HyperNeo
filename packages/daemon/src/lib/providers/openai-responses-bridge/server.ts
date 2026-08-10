@@ -1149,6 +1149,59 @@ async function streamResponsesToAnthropic({
     heuristicOutputTokens += Math.max(1, Math.ceil(delta.length / 4));
   };
 
+  /**
+   * Extract content items from a terminal response object's `output` array
+   * (function_call / reasoning / message). Shared by the `response.completed`
+   * and `response.incomplete` handlers so a one-shot (non-streamed) response —
+   * whose entire payload lives in the output array, with no preceding delta
+   * frames — surfaces its text/tools instead of being mistaken for an empty
+   * stream. Text/refusal emission is a FALLBACK guarded by `!streamedText`, so
+   * the same content already delivered as deltas is not duplicated.
+   */
+  const extractOutputItems = (response: Record<string, unknown> | undefined): void => {
+    const output = response?.output;
+    if (!Array.isArray(output)) return;
+    for (const item of output) {
+      if (!item || typeof item !== 'object') continue;
+      const record = item as Record<string, unknown>;
+      if (record.type === 'function_call') {
+        if (typeof record.call_id === 'string' && typeof record.name === 'string') {
+          emitFunctionCall({
+            callId: record.call_id,
+            name: record.name,
+            argumentsText: typeof record.arguments === 'string' ? record.arguments : '{}',
+          });
+        }
+      }
+      if (record.type === 'reasoning') {
+        const encrypted =
+          typeof record.encrypted_content === 'string' ? record.encrypted_content : undefined;
+        if (encrypted) {
+          responseReasoningItems.push({ type: 'reasoning', encrypted_content: encrypted });
+        }
+      }
+      if (record.type === 'message') {
+        // output_text → text; refusal → text (a refusal is the assistant's text
+        // response). Symmetric to the streamed refusal.delta handling, so content
+        // delivered only in the output array isn't mistaken for an empty stream.
+        const content = record.content;
+        if (Array.isArray(content)) {
+          for (const block of content) {
+            if (!block || typeof block !== 'object') continue;
+            const blockRecord = block as Record<string, unknown>;
+            if (!streamedText && blockRecord.type === 'output_text') {
+              const text = blockRecord.text;
+              if (typeof text === 'string') emitTextContent(text);
+            } else if (!streamedText && blockRecord.type === 'refusal') {
+              const refusal = blockRecord.refusal;
+              if (typeof refusal === 'string') emitTextContent(refusal);
+            }
+          }
+        }
+      }
+    }
+  };
+
   try {
     if (!openAIResponse.body) {
       throw new Error('OpenAI API returned an empty streaming body');
@@ -1205,69 +1258,7 @@ async function streamResponsesToAnthropic({
       if (event.type === 'response.completed') {
         completedUsage = responseUsage(event.response);
         const responseId = typeof event.response?.id === 'string' ? event.response.id : undefined;
-        const output = event.response?.output;
-        if (Array.isArray(output)) {
-          for (const item of output) {
-            if (
-              item &&
-              typeof item === 'object' &&
-              (item as Record<string, unknown>).type === 'function_call'
-            ) {
-              const record = item as Record<string, unknown>;
-              if (typeof record.call_id === 'string' && typeof record.name === 'string') {
-                emitFunctionCall({
-                  callId: record.call_id,
-                  name: record.name,
-                  argumentsText: typeof record.arguments === 'string' ? record.arguments : '{}',
-                });
-              }
-            }
-            if (
-              item &&
-              typeof item === 'object' &&
-              (item as Record<string, unknown>).type === 'reasoning'
-            ) {
-              const record = item as Record<string, unknown>;
-              const encrypted =
-                typeof record.encrypted_content === 'string' ? record.encrypted_content : undefined;
-              if (encrypted) {
-                responseReasoningItems.push({
-                  type: 'reasoning',
-                  encrypted_content: encrypted,
-                });
-              }
-            }
-            if (
-              item &&
-              typeof item === 'object' &&
-              (item as Record<string, unknown>).type === 'message'
-            ) {
-              // Some Responses implementations deliver the final assistant text
-              // only in the completed output array (no preceding delta frames).
-              // Emit it so the turn isn't mistaken for an empty stream.
-              const content = (item as Record<string, unknown>).content;
-              if (Array.isArray(content)) {
-                for (const block of content) {
-                  if (!block || typeof block !== 'object') continue;
-                  const blockRecord = block as Record<string, unknown>;
-                  // output_text → text; refusal → text (a refusal is the
-                  // assistant's text response). Symmetric to the streamed
-                  // refusal.delta handling, so content delivered only in the
-                  // completed output array isn't mistaken for an empty stream.
-                  // FALLBACK only: if the same text was already streamed as
-                  // deltas, emitting it again here would duplicate the message.
-                  if (!streamedText && blockRecord.type === 'output_text') {
-                    const text = blockRecord.text;
-                    if (typeof text === 'string') emitTextContent(text);
-                  } else if (!streamedText && blockRecord.type === 'refusal') {
-                    const refusal = blockRecord.refusal;
-                    if (typeof refusal === 'string') emitTextContent(refusal);
-                  }
-                }
-              }
-            }
-          }
-        }
+        extractOutputItems(event.response);
         if (responseId) {
           for (const callId of emittedFunctionCalls) {
             onFunctionCallResponse?.(callId, responseId);
@@ -1282,6 +1273,11 @@ async function streamResponsesToAnthropic({
       if (event.type === 'response.incomplete') {
         incomplete = true;
         completedUsage = responseUsage(event.response);
+        // A one-shot (non-streamed) incomplete response carries its partial
+        // output only in the output array. Extract it so partial text is
+        // surfaced (with a max_tokens stop reason, set below) rather than lost,
+        // and so a contentless incomplete turn is not retried as an overload.
+        extractOutputItems(event.response);
         continue;
       }
 
@@ -1882,10 +1878,12 @@ export function createOpenAIResponsesBridgeServer(
         }
         // Non-error JSON: a Responses-compatible endpoint may have ignored
         // stream:true and returned a one-shot JSON response. Wrap a recognizable
-        // response object as a response.completed SSE event so the streamer
-        // emits its output instead of seeing no events and retrying as
-        // overloaded. An unrecognizable JSON shape still flows through (and
-        // surfaces an overloaded retry if genuinely empty).
+        // response object as a terminal SSE event so the streamer emits its
+        // output instead of seeing no events and retrying as overloaded. Preserve
+        // the object's own terminal status: an `incomplete` response (e.g.
+        // max_output_tokens exhaustion) must surface as `response.incomplete` so
+        // the bridge reports `max_tokens` (and skips the empty-stream overload
+        // guard) rather than mislabeling truncation as a clean `end_turn`.
         const responseObject = parseJsonObject(bodyText);
         if (
           responseObject &&
@@ -1893,8 +1891,10 @@ export function createOpenAIResponsesBridgeServer(
             responseObject.object === 'response' ||
             typeof responseObject.id === 'string')
         ) {
-          const sseBody = `event: response.completed\ndata: ${JSON.stringify({
-            type: 'response.completed',
+          const isIncomplete = responseObject.status === 'incomplete';
+          const terminalType = isIncomplete ? 'response.incomplete' : 'response.completed';
+          const sseBody = `event: ${terminalType}\ndata: ${JSON.stringify({
+            type: terminalType,
             response: responseObject,
           })}\n\n`;
           openAIResponse = new Response(sseBody, {
