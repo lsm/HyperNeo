@@ -27,6 +27,7 @@ import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import {
   legacyGateDefinitionHash,
   pinnedGateFingerprint,
+  stableStringify,
   stableVersionTimestamp,
 } from './definition-version';
 
@@ -57,16 +58,27 @@ export function rekeyPinnedGateOpenCaches(deps: GateCacheRekeyDeps): void {
       // the pinned version. Skip entries that don't match (stale) so they re-evaluate rather
       // than get promoted.
       const sanitizedHead = deps.manager.getWorkflow(run.workflowId);
+      const sanitized = deps.manager.getWorkflowForRun(run);
+      if (!sanitized) continue;
       if (sanitizedHead) {
         const headGate = (sanitizedHead.gates ?? []).find((g) => g.id === entry.gateId);
         const headOldFingerprint = headGate
           ? sanitizedHead.updatedAt + legacyGateDefinitionHash(headGate)
           : sanitizedHead.updatedAt;
         if (entry.workflowUpdatedAt !== headOldFingerprint) continue; // stale → re-evaluate
+
+        // The cache must be AUTHORITATIVE for the pinned gate, not just the head: if the run
+        // was pinned at creation and the head was edited afterward, the entry may have been
+        // opened under a more permissive head gate than the (stricter) pinned one. Re-keying it
+        // as-is would bypass evaluation of the pinned gate. Only re-key when the sanitized head
+        // and pinned gate definitions match (stableStringify is order-independent so repo vs
+        // stableStringify-payload key order doesn't matter).
+        const pinnedGateForCheck = (sanitized.gates ?? []).find((g) => g.id === entry.gateId);
+        if (stableStringify(headGate) !== stableStringify(pinnedGateForCheck)) {
+          continue; // head ≠ pinned → re-evaluate against the pinned definition
+        }
       }
 
-      const sanitized = deps.manager.getWorkflowForRun(run);
-      if (!sanitized) continue;
       const gateDef = (sanitized.gates ?? []).find((g) => g.id === entry.gateId);
       const expected = gateDef
         ? pinnedGateFingerprint(run.definitionVersion, gateDef)

@@ -824,6 +824,59 @@ describe('ChannelRouter', () => {
       expect(goodAfter.workflowUpdatedAt).toBe(pinnedGateFingerprint(versionHash, pinnedGate));
     });
 
+    test('sweep skips re-key when head and pinned gates differ (head edited after pin)', () => {
+      // PR-review P1: a run pinned at creation whose head gate was edited afterward — the
+      // cache was opened under the edited head, but the re-key would make it authoritative for
+      // the pinned (original) gate. Guard 2 compares head vs pinned gates; they differ → skip.
+      const gate: Gate = {
+        id: 'plan-gate',
+        fields: [{ name: 'plan', type: 'string', writers: ['planner'], check: { op: 'exists' } }],
+        resetOnCycle: false,
+      };
+      const channels: WorkflowChannel[] = [
+        { id: 'ch-1', from: 'planner', to: 'coder', gateId: 'plan-gate' },
+      ];
+      const workflow = buildWorkflowWithGates(
+        SPACE_ID,
+        workflowManager,
+        [
+          {
+            id: NODE_A,
+            name: 'Planner Node',
+            agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+          },
+          { id: NODE_B, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+        ],
+        channels,
+        [gate]
+      );
+      const raw = workflowManager.getWorkflowForRunStart(workflow.id)!.rawWorkflow;
+      const gateOpenStateRepo = new GateOpenStateRepository(db);
+      const runRepo = new SpaceWorkflowRunRepository(db, gateOpenStateRepo);
+      const run = runRepo.createPinnedRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Pinned',
+        rawWorkflow: raw,
+      });
+      runRepo.transitionStatus(run.id, 'in_progress');
+      // Edit the head: change resetOnCycle → head gate ≠ pinned gate.
+      workflowManager.updateWorkflow(workflow.id, {
+        gates: [{ ...gate, resetOnCycle: true }],
+      });
+      // Seed entry with the EDITED head's old fingerprint.
+      const editedHead = workflowManager.getWorkflow(workflow.id)!;
+      const editedHeadGate = (editedHead.gates ?? []).find((g) => g.id === 'plan-gate')!;
+      const oldFingerprint = editedHead.updatedAt + legacyGateDefinitionHash(editedHeadGate);
+      gateOpenStateRepo.markOpened(run.id, 'plan-gate', oldFingerprint);
+
+      rekeyPinnedGateOpenCaches({ gateOpenStateRepo, runRepo, manager: workflowManager });
+
+      // Guard 2: head gate (resetOnCycle: true) ≠ pinned gate (resetOnCycle: false) → skip.
+      const after = gateOpenStateRepo.isOpen(run.id, 'plan-gate');
+      expect(after.workflowUpdatedAt).toBe(oldFingerprint); // unchanged → will re-evaluate
+    });
+
     test('pinned run DB-backed gate-open cache survives a head edit (version-stable)', async () => {
       // PR-review P2: steady-state version-stability with a DB-backed gate-open-state repo.
       // An unrelated head edit must not invalidate a pinned run's gate cache.
