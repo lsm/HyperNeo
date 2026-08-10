@@ -735,12 +735,15 @@ export class AcpQueryRunner {
 
               if (!this.ctx.isCleaningUp()) {
                 const processingState = stateManager.getState();
-                // Mirrors the non-ACP runner: this idle is potentially terminal
-                // (the throwing message may have been the final result; no
-                // replacement query starts here), so drain the delivery waiters
-                // rather than suppress — otherwise a durable turn whose result
-                // handling threw hangs `processing` and blocks the turn slot.
-                await stateManager.setIdle();
+                // Mirrors the non-ACP runner: only publish the terminal idle
+                // (draining delivery waiters) when the throwing message ends the
+                // turn (the final `result`). A non-terminal message leaves the
+                // ACP run consuming; draining mid-run would release the
+                // active-turn slot while output is still being produced. For a
+                // `result` throw this is the terminal idle. (Codex P1.)
+                if ((acpMessage as SDKMessage).type === 'result') {
+                  await stateManager.setIdle();
+                }
 
                 await errorManager.handleError(
                   session.id,

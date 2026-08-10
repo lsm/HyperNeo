@@ -870,14 +870,18 @@ export class QueryRunner {
           // state persistence to avoid cascading "closed database" errors.
           if (!this.ctx.isCleaningUp()) {
             const processingState = stateManager.getState();
-            // This idle is potentially TERMINAL: if the throwing message was the
-            // final SDK `result`, no normal setIdle follows (the for-await just
-            // ends) and this path does NOT start a replacement query. Suppressing
-            // the delivery-waiter drain would leave driveDeliveryTurn waiting
-            // forever while its job heartbeats `processing`, blocking the
-            // active-turn slot. Drain (no suppress) so a durable turn whose
-            // result-handling threw still completes. (Codex P1.)
-            await stateManager.setIdle();
+            // Only publish the terminal idle (draining the delivery waiters) when
+            // the throwing message actually ends the turn — the final `result`.
+            // A non-terminal message (e.g. an `sdk.message` subscriber rejecting
+            // on an assistant message) leaves the live query still consuming:
+            // draining here would complete the durable job and release the
+            // active-turn slot while the turn is still producing output, letting
+            // a subsequent prompt admit as another turn against the same query.
+            // For a `result` throw the for-await ends and no normal idle follows,
+            // so this drain is the terminal one. (Codex P1.)
+            if ((message as SDKMessage).type === 'result') {
+              await stateManager.setIdle();
+            }
 
             await errorManager.handleError(
               session.id,
