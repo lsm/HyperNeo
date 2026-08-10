@@ -1400,8 +1400,8 @@ export type TemplateGateScriptStatus =
   /** The workflow was not seeded from a built-in template — no reload. */
   | 'no-template'
   /**
-   * Neither the template nor the stored gate has a script for this gate — a
-   * deliberately scriptless (field/validator-only) gate. Nothing to reload.
+   * The template defines no live script for this gate (or the gate is not
+   * reached via a template). Nothing to reload; the stored gate is used as-is.
    */
   | 'no-live-script'
   /**
@@ -1410,14 +1410,6 @@ export type TemplateGateScriptStatus =
    * fails to take effect until the workflow is resynced. Surfaced as a warning.
    */
   | 'live-ignored-no-stored'
-  /**
-   * The template no longer defines a script for this gate, but the stored gate
-   * still carries one (e.g. a gate retired to a built-in validator, like the
-   * old review-posted-gate bash script). The stored — now retired — script
-   * keeps executing because template restamping preserves existing scripts.
-   * Surfaced as a warning so operators resync and stop running the retired script.
-   */
-  | 'live-removed-stored-script'
   /** The stored script matches the live template across all executable fields — no-op. */
   | 'in-sync'
   /** The live template script differs from the stored script — reloaded (drift). */
@@ -1457,21 +1449,13 @@ export function resolveTemplateGateScript(
 /**
  * Pure decision core of {@link resolveTemplateGateScript}: combine a stored
  * gate with an optional live template script. Extracted so the live-script
- * branches (`no-live-script`, `live-ignored-no-stored`, `in-sync`, `reloaded`)
- * are unit-testable without mutating the built-in template registry.
+ * branches are unit-testable without mutating the built-in template registry.
  */
 export function applyTemplateGateScript(
   storedGate: Gate,
   liveScript: GateScript | undefined
 ): ResolvedTemplateGateScript {
-  if (!liveScript) {
-    // Distinguish a template that has REMOVED a script the stored gate still
-    // carries (retired script still executing) from a genuinely scriptless gate.
-    return {
-      gate: storedGate,
-      status: storedGate.script ? 'live-removed-stored-script' : 'no-live-script',
-    };
-  }
+  if (!liveScript) return { gate: storedGate, status: 'no-live-script' };
   if (!storedGate.script) return { gate: storedGate, status: 'live-ignored-no-stored' };
   // The effective gate substitutes the entire live script object, so a reload
   // changes behavior whenever ANY executable field differs — not just `source`.
@@ -1548,6 +1532,23 @@ export class GateScriptDiagnosticLedger {
 export const sharedGateScriptDiagnosticLedger = new GateScriptDiagnosticLedger();
 
 /**
+ * The statuses for which {@link logTemplateGateScriptReload} actually emits a
+ * log line. Single source of truth so call sites can avoid consuming dedup
+ * ledger capacity for the quiet statuses (`no-template` / `no-live-script` /
+ * `in-sync`) that never log — otherwise ordinary traffic would fill the ledger
+ * and a later mismatch would flood again.
+ */
+const GATE_SCRIPT_EMITTING_STATUSES: ReadonlySet<TemplateGateScriptStatus> = new Set([
+  'live-ignored-no-stored',
+  'reloaded',
+]);
+
+/** Whether a status produces a log line in {@link logTemplateGateScriptReload}. */
+export function isGateScriptStatusEmitting(status: TemplateGateScriptStatus): boolean {
+  return GATE_SCRIPT_EMITTING_STATUSES.has(status);
+}
+
+/**
  * Minimal logger surface {@link logTemplateGateScriptReload} needs. Accepts the
  * daemon {@link Logger} or any compatible test double.
  */
@@ -1557,13 +1558,15 @@ export interface TemplateGateScriptReloadLogger {
 }
 
 /**
- * Emit reload diagnostics for a resolved template gate script. Warns on the two
- * silent footguns — a live script ignored because the stored gate is scriptless
- * (`live-ignored-no-stored`), and a live template that has removed a script the
- * stored gate still runs (`live-removed-stored-script`) — and logs drift at
- * debug level (`reloaded`). Stays quiet for the common no-template /
- * no-live-script / in-sync paths. Callers should deduplicate via a
- * {@link GateScriptDiagnosticLedger} so persistent mismatches do not flood.
+ * Emit reload diagnostics for a resolved template gate script:
+ * - `live-ignored-no-stored` (WARN): the template defines a script but the
+ *   stored gate has none — an unambiguous footgun, since the template update
+ *   cannot take effect without a resync.
+ * - `reloaded` (DEBUG): the live template script differs from the stored one.
+ *
+ * Stays quiet for `no-template` / `no-live-script` / `in-sync`. Callers should
+ * gate the dedup ledger on {@link isGateScriptStatusEmitting} so persistent
+ * mismatches do not flood and quiet statuses do not consume ledger capacity.
  */
 export function logTemplateGateScriptReload(args: {
   log: TemplateGateScriptReloadLogger;
@@ -1573,6 +1576,7 @@ export function logTemplateGateScriptReload(args: {
   runId?: string;
 }): void {
   const { log, status, templateName, gateId, runId } = args;
+  if (!isGateScriptStatusEmitting(status)) return;
   const where = runId ? ` in run ${runId}` : '';
   const tmpl = templateName ?? '?';
   if (status === 'live-ignored-no-stored') {
@@ -1583,20 +1587,10 @@ export function logTemplateGateScriptReload(args: {
     );
     return;
   }
-  if (status === 'live-removed-stored-script') {
-    log.warn(
-      `Gate "${gateId}"${where}: built-in template "${tmpl}" no longer defines a gate script, but ` +
-        'the stored gate still carries one — the retired stored script is still executing. Resync ' +
-        'the workflow from the template to stop running it.'
-    );
-    return;
-  }
-  if (status === 'reloaded') {
-    log.debug(
-      `Gate "${gateId}"${where}: reloaded gate script from live template "${tmpl}" ` +
-        '(stored script differed from the template).'
-    );
-  }
+  log.debug(
+    `Gate "${gateId}"${where}: reloaded gate script from live template "${tmpl}" ` +
+      '(stored script differed from the template).'
+  );
 }
 
 /**

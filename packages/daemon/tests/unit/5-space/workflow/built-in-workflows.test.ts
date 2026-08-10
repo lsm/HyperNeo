@@ -63,6 +63,7 @@ import {
   gateScriptDiagnosticKey,
   getBuiltInGateScript,
   getBuiltInWorkflows,
+  isGateScriptStatusEmitting,
   logTemplateGateScriptReload,
   mergeGateStructuralFieldsFromTemplate,
   resolveTemplateGateScript,
@@ -4791,29 +4792,24 @@ describe('resolveTemplateGateScript() + applyTemplateGateScript()', () => {
     expect(result.gate).toBe(gate);
   });
 
-  test('returns live-removed-stored-script when the template dropped a script the stored gate still has', () => {
-    // Mirrors review-posted-gate: an older seeded gate still carries the retired
-    // bash script while the template no longer defines one for it.
+  test('returns no-live-script when the template has no live script (stored gate may still carry one)', () => {
+    // No live script is resolvable for this gate. A stored gate that still
+    // carries a script (e.g. a retired template script, or an operator-added
+    // custom script) is NOT flagged here: that case is ambiguous and cannot be
+    // distinguished from a legitimate customization at runtime, so it stays the
+    // quiet no-live-script rather than risking a false "resync" warning.
     const gate = makeGate(LIVE_SCRIPT);
     const result = resolveTemplateGateScript(gate, makeWorkflow(CODING_WORKFLOW.name));
-    expect(result.status).toBe('live-removed-stored-script');
-    // Effective gate keeps the stored (retired) script — behavior unchanged.
-    expect(result.gate).toBe(gate);
-    expect(result.gate.script?.source).toBe(LIVE_SCRIPT.source);
-  });
-
-  test('applyTemplateGateScript: no-live-script for a scriptless stored gate with no live script', () => {
-    const gate = makeGate(undefined);
-    const result = applyTemplateGateScript(gate, undefined);
     expect(result.status).toBe('no-live-script');
     expect(result.gate).toBe(gate);
   });
 
-  test('applyTemplateGateScript: live-removed-stored-script when stored has a script but no live script', () => {
-    const gate = makeGate(LIVE_SCRIPT);
-    const result = applyTemplateGateScript(gate, undefined);
-    expect(result.status).toBe('live-removed-stored-script');
-    expect(result.gate).toBe(gate);
+  test('applyTemplateGateScript: no-live-script for any stored gate when no live script is supplied', () => {
+    // Scriptless stored gate, no live script.
+    expect(applyTemplateGateScript(makeGate(undefined), undefined).status).toBe('no-live-script');
+    // Stored gate WITH a script but no live script — still no-live-script (see
+    // the resolveTemplateGateScript test above for why this is not flagged).
+    expect(applyTemplateGateScript(makeGate(LIVE_SCRIPT), undefined).status).toBe('no-live-script');
   });
 
   test('applyTemplateGateScript: live-ignored-no-stored footgun (live script present, stored scriptless)', () => {
@@ -4886,22 +4882,6 @@ describe('logTemplateGateScriptReload()', () => {
     expect(calls[0].message).toContain('NOT applied');
   });
 
-  test('warns on live-removed-stored-script (template dropped a script the stored gate still runs)', () => {
-    const { log, calls } = makeLogger();
-    logTemplateGateScriptReload({
-      log,
-      status: 'live-removed-stored-script',
-      templateName: 'Coding',
-      gateId: 'review-posted-gate',
-      runId: 'run-7',
-    });
-    expect(calls).toHaveLength(1);
-    expect(calls[0].level).toBe('warn');
-    expect(calls[0].message).toContain('review-posted-gate');
-    expect(calls[0].message).toContain('no longer defines a gate script');
-    expect(calls[0].message).toContain('still executing');
-  });
-
   test('logs drift at debug level for reloaded', () => {
     const { log, calls } = makeLogger();
     logTemplateGateScriptReload({
@@ -4938,6 +4918,17 @@ describe('logTemplateGateScriptReload()', () => {
 });
 
 describe('gateScriptDiagnosticKey() + GateScriptDiagnosticLedger', () => {
+  test('isGateScriptStatusEmitting is true only for statuses that log', () => {
+    // Only these consume ledger capacity at the call sites.
+    for (const status of ['live-ignored-no-stored', 'reloaded'] as const) {
+      expect(isGateScriptStatusEmitting(status)).toBe(true);
+    }
+    // Quiet statuses must not consume the ledger.
+    for (const status of ['no-template', 'no-live-script', 'in-sync'] as const) {
+      expect(isGateScriptStatusEmitting(status)).toBe(false);
+    }
+  });
+
   test('gateScriptDiagnosticKey combines runId, gateId, and status (empty runId when absent)', () => {
     expect(gateScriptDiagnosticKey('run-1', 'g', 'reloaded')).toBe('run-1|g|reloaded');
     expect(gateScriptDiagnosticKey(undefined, 'g', 'in-sync')).toBe('|g|in-sync');

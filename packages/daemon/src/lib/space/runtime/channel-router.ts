@@ -59,6 +59,7 @@ import type { GateScriptContext } from './gate-script-executor';
 import { executeGateScript } from './gate-script-executor';
 import {
   gateScriptDiagnosticKey,
+  isGateScriptStatusEmitting,
   logTemplateGateScriptReload,
   resolveTemplateGateScript,
   sharedGateScriptDiagnosticLedger,
@@ -1426,6 +1427,17 @@ export class ChannelRouter {
     const effectiveGateDef = getEffectiveGate(gateDef, workflow, sourceNodeName);
     if (effectiveGateDef.validator) return true;
     if (effectiveGateDef.script && (workflow.templateName || !gateDef.script)) return true;
+    // Known limitation (gate-script reload diagnostics, follow-up): the checks
+    // above use getEffectiveGate (the feature registry), which does NOT reflect
+    // a script supplied purely via the built-in template reload path
+    // (getBuiltInGateScript, applied in doEvaluateGate). So a template that
+    // ADDS a script to a previously-scriptless, cached-open, non-cyclic gate
+    // would not force re-evaluation here, and the live-ignored-no-stored
+    // diagnostic would be bypassed on that cached path. Unreachable today — no
+    // built-in template ships a script gate — and the reachable
+    // live-removed-stored-script case (stored gate already carries a script) IS
+    // re-evaluated by the line above. When a template reintroduces a script
+    // gate, consult getBuiltInGateScript here so the cache invalidates.
     // Known limitation (deferred, #835 follow-up): forcing re-evaluation here
     // bypasses the cache READ, but a prior cacheGateOpened() entry is NOT cleared
     // when the re-evaluation returns closed. allWorkflowGatesOpen() (the
@@ -1556,8 +1568,10 @@ export class ChannelRouter {
       workflow
     );
     // Persistent mismatches (e.g. live-ignored-no-stored) would otherwise warn on
-    // every gate evaluation/retry; dedupe to once per run+gate+status.
+    // every gate evaluation/retry; dedupe to once per run+gate+status. Only
+    // emitting statuses touch the ledger so quiet statuses don't consume capacity.
     if (
+      isGateScriptStatusEmitting(gateScriptStatus) &&
       sharedGateScriptDiagnosticLedger.shouldEmit(
         gateScriptDiagnosticKey(runId, gateId, gateScriptStatus)
       )

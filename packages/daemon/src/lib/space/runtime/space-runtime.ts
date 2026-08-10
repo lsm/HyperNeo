@@ -82,6 +82,7 @@ import {
 import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format';
 import {
   gateScriptDiagnosticKey,
+  isGateScriptStatusEmitting,
   logTemplateGateScriptReload,
   resolveTemplateGateScript,
   sharedGateScriptDiagnosticLedger,
@@ -6195,6 +6196,7 @@ export class SpaceRuntime {
       workflow
     );
     if (
+      isGateScriptStatusEmitting(gateScriptStatus) &&
       sharedGateScriptDiagnosticLedger.shouldEmit(
         gateScriptDiagnosticKey(runId, storedGate.id, gateScriptStatus)
       )
