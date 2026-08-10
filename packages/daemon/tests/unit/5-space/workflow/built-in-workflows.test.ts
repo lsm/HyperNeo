@@ -27,6 +27,10 @@ import {
 } from '../../../../src/lib/space/export-format.ts';
 import { validateGate } from '../../../../src/lib/space/runtime/gate-evaluator.ts';
 import { executeGateScript } from '../../../../src/lib/space/runtime/gate-script-executor.ts';
+import {
+  executeHookScript,
+  type HookExecutorContext,
+} from '../../../../src/lib/space/runtime/hook-executor.ts';
 import { ChannelResolver } from '../../../../src/lib/space/runtime/channel-resolver.ts';
 
 /**
@@ -2907,6 +2911,7 @@ describe('seedBuiltInWorkflows()', () => {
     expect(source).toContain('ALLOWED_HOST="${GH_HOST:-github.com}"');
     expect(source).toContain('PR host ${PR_HOST} is not allowed for GitHub lookups');
     expect(source).toContain('FRESH_REACTION_OK');
+    // A reaction needs a recorded wait for THIS head (a +1 is not head-bound).
     expect(source).toContain('[ -n "$WAIT_STARTED" ]');
     expect(source).toContain('[ "$WAIT_HEAD" = "$HEAD_OID" ]');
     expect(source).toContain('codex_fresh_reaction_count');
@@ -2914,6 +2919,338 @@ describe('seedBuiltInWorkflows()', () => {
     expect(source).toContain('codex_approved":false');
     expect(source).toContain('codex_timed_out":true');
   });
+
+  test('migrated Codex approval hooks anchor +1 freshness to the head push time, not the handoff', () => {
+    // #900: a Codex +1 that lands BEFORE the reviewer's approval handoff is still
+    // valid for an unchanged head — it predates the handoff, not the code. The
+    // hook measures reaction freshness from the server-recorded push time of the
+    // current head (the non-forgeable PushEvent created_at), not from
+    // codex_wait_started_at (the handoff) or the forgeable commit committer date.
+    const reviewWorkflow = migrateWorkflowGateProgressionToHooks({
+      ...CODING_WITH_QA_WORKFLOW,
+      nodes: CODING_WITH_QA_WORKFLOW.nodes.map((n) =>
+        n.name === 'Review' ? { ...n, requireCodexApproval: true } : n
+      ),
+      templateName: CODING_WITH_QA_WORKFLOW.name,
+      templateGates: CODING_WITH_QA_WORKFLOW.gates ?? [],
+    }).workflow;
+    const reviewHook = reviewWorkflow.hooks?.find(
+      (h) => h.sourceNode === 'Review' && h.targetNode === 'QA'
+    );
+    const reviewSource = reviewHook?.validator.kind === 'script' ? reviewHook.validator.source : '';
+    // Freshness baseline is the head's PushEvent push time (not the commit date).
+    expect(reviewSource).toContain('repos/${EVENTS_OWNER}/${EVENTS_REPO}/events');
+    expect(reviewSource).toContain('PushEvent');
+    expect(reviewSource).toContain('.payload.head');
+    expect(reviewSource).toContain('HEAD_BASELINE=');
+    expect(reviewSource).not.toContain('.commit.committer.date');
+    // Fresh reactions use the head baseline with a `>=` second-precision compare
+    // (ms stripped on both sides), not the handoff time.
+    expect(reviewSource).toContain('--arg since "$HEAD_BASELINE"');
+    expect(reviewSource).toContain('>= $since');
+    expect(reviewSource).not.toContain('--arg since "$WAIT_STARTED"');
+    // PushEvents are filtered to the PR head ref (headRefName fetched + matched).
+    expect(reviewSource).toContain('headRefName');
+    expect(reviewSource).toContain('refs/heads/" + $ref');
+    // Cross-repo PRs read push events from the head (fork) repository.
+    expect(reviewSource).toContain('headRepositoryOwner.login');
+    expect(reviewSource).toContain('headRepository.name');
+    expect(reviewSource).toContain('repos/${EVENTS_OWNER}/${EVENTS_REPO}/events');
+    // A reaction needs a recorded wait for THIS head (a +1 is not head-bound);
+    // empty-head + empty-baseline guards (fail-closed) are present.
+    expect(reviewSource).toContain('[ -n "$WAIT_STARTED" ]');
+    expect(reviewSource).toContain('[ "$WAIT_HEAD" = "$HEAD_OID" ]');
+    expect(reviewSource).toContain('[ -z "$HEAD_OID" ]');
+    expect(reviewSource).toContain('[ -z "$HEAD_BASELINE" ]');
+
+    // The plan-approval hook shares the same head-anchored freshness.
+    const planWorkflow = migrateWorkflowGateProgressionToHooks({
+      ...PLAN_AND_DECOMPOSE_WORKFLOW,
+      templateName: PLAN_AND_DECOMPOSE_WORKFLOW.name,
+      templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
+    }).workflow;
+    const planHook = planWorkflow.hooks?.find(
+      (h) => h.sourceNode === 'Plan Review' && h.targetNode === 'Task Dispatcher'
+    );
+    const planSource = planHook?.validator.kind === 'script' ? planHook.validator.source : '';
+    expect(planSource).toContain('repos/${EVENTS_OWNER}/${EVENTS_REPO}/events');
+    expect(planSource).toContain('headRefName');
+    expect(planSource).toContain('headRepositoryOwner.login');
+    expect(planSource).toContain('--arg since "$HEAD_BASELINE"');
+  });
+
+  // GATED (Vitest/Node): requires Bun.spawn in production executeHookScript.
+  // Runs the review-approval hook against a mocked `gh` for one freshness
+  // scenario. `pushTime` is the PushEvent created_at for HEAD (null = no matching
+  // event → workflow-start fallback or fail-closed); `reactionTime` is the codex
+  // +1 created_at. Owns its mock bin / PATH / workspace lifecycle.
+  async function runReviewApprovalHook(scenario: {
+    pushTime: string | null;
+    reactionTime: string;
+    hookLocalState?: Record<string, unknown>;
+    workflowStartIso?: string;
+    headRepo?: { owner: string; name: string } | null;
+  }) {
+    const workflow = migrateWorkflowGateProgressionToHooks({
+      ...CODING_WITH_QA_WORKFLOW,
+      nodes: CODING_WITH_QA_WORKFLOW.nodes.map((n) =>
+        n.name === 'Review' ? { ...n, requireCodexApproval: true } : n
+      ),
+      templateName: CODING_WITH_QA_WORKFLOW.name,
+      templateGates: CODING_WITH_QA_WORKFLOW.gates ?? [],
+    }).workflow;
+    const hook = workflow.hooks?.find((h) => h.sourceNode === 'Review' && h.targetNode === 'QA');
+    if (hook?.validator.kind !== 'script') throw new Error('expected review-approval script hook');
+    const SHA = 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2';
+    const prUrl = 'https://github.com/test/repo/pull/42';
+    // Cross-repo PRs push to the fork; the hook must read events from there.
+    const headRepo = scenario.headRepo ?? { owner: 'test', name: 'repo' };
+    const headRepoFields =
+      scenario.headRepo === null
+        ? ''
+        : `"headRepositoryOwner":{"login":"${headRepo.owner}"},"headRepository":{"name":"${headRepo.name}"},`;
+    const eventsPath = `repos/${headRepo.owner}/${headRepo.name}/events`;
+    const eventsPayload =
+      scenario.pushTime === null
+        ? '[[{"type":"PushEvent","created_at":"1990-01-01T00:00:00Z","payload":{"ref":"refs/heads/codex-test-branch","head":"deadbeef","commits":[]}}]]'
+        : `[[{"type":"PushEvent","created_at":"${scenario.pushTime}","payload":{"ref":"refs/heads/codex-test-branch","head":"${SHA}","commits":[{"sha":"${SHA}"}]}}]]`;
+    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-review-hook-'));
+    const binDir = join(workspace, 'bin');
+    const ghPath = join(binDir, 'gh');
+    const prevPath = process.env.PATH;
+    try {
+      mkdirSync(binDir);
+      writeFileSync(
+        ghPath,
+        [
+          '#!/usr/bin/env bash',
+          'if [[ "$*" == *"pr view"* ]]; then',
+          `  printf '%s\\n' '{"number":42,"headRefOid":"${SHA}","headRefName":"codex-test-branch",${headRepoFields}"url":"https://github.com/test/repo/pull/42"}'`,
+          '  exit 0',
+          'fi',
+          `if [[ "$*" == *"${eventsPath}"* ]]; then`,
+          `  printf '%s\\n' '${eventsPayload}'`,
+          '  exit 0',
+          'fi',
+          'if [[ "$*" == *"repos/test/repo/issues/42/comments"* ]]; then',
+          `  printf '%s\\n' '[[]]'`,
+          '  exit 0',
+          'fi',
+          'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
+          `  printf '%s\\n' '[[{"user":{"login":"chatgpt-codex-connector[bot]","type":"User"},"content":"+1","created_at":"${scenario.reactionTime}"}]]'`,
+          '  exit 0',
+          'fi',
+          'printf "unexpected gh args: %s\\n" "$*" >&2',
+          'exit 2',
+        ].join('\n')
+      );
+      chmodSync(ghPath, 0o755);
+      process.env.PATH = `${binDir}:${prevPath ?? ''}`;
+      const ctx: HookExecutorContext = {
+        workspacePath: workspace,
+        runId: 'run-1',
+        hookId: hook.id,
+        methodName: 'send_message',
+        params: { data: { approved: true, pr_url: prUrl } },
+        nodeId: 'node-review',
+        nodeName: 'Review',
+        sessionId: 'session-1',
+        taskId: 'task-1',
+        hookLocalState: scenario.hookLocalState ?? {
+          codex_wait_started_at: new Date(Date.now() - 10 * 60 * 1000)
+            .toISOString()
+            .replace(/\.\d{3}Z$/, 'Z'),
+          codex_wait_head_oid: SHA,
+        },
+        currentArtifacts: [],
+        permittedExternalLookups: ['github'],
+      };
+      if (scenario.workflowStartIso !== undefined) {
+        ctx.workflowRunCreatedAt = Date.parse(scenario.workflowStartIso);
+      }
+      return await executeHookScript(hook.validator, ctx);
+    } finally {
+      process.env.PATH = prevPath;
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  }
+
+  test.skipIf(!isBun)(
+    'review-approval hook allows a too-early Codex +1 (before the handoff) for the current head',
+    async () => {
+      // Reproduces #900: chatgpt-codex-connector[bot] reacted +1 at 01:54:54 for
+      // the current head (pushed 01:50), BEFORE the reviewer's handoff at 02:02.
+      // Handoff-anchored freshness discarded this (+1 predates
+      // codex_wait_started_at) on every retry, leaving only the 2h timeout.
+      // Head-push-anchored freshness (+1 newer than the push) accepts the retry.
+      const result = await runReviewApprovalHook({
+        pushTime: '2026-08-10T01:50:00Z',
+        reactionTime: '2026-08-10T01:54:54Z',
+        hookLocalState: {
+          codex_wait_started_at: '2026-08-10T02:02:00Z',
+          codex_wait_head_oid: 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2',
+        },
+      });
+      expect(result.result.type).toBe('allow');
+      expect(result.result.data).toMatchObject({
+        codex_approved: true,
+        codex_fresh_reaction_count: 1,
+      });
+    }
+  );
+
+  test.skipIf(!isBun)(
+    'review-approval hook waits on the FIRST handoff: a +1 alone cannot prove it is for the current head',
+    async () => {
+      // A +1 is not head-bound, so the reaction path requires a recorded wait
+      // for THIS head before it can satisfy the hook. On the first handoff (no
+      // recorded wait) a head-fresh +1 still blocks — it could linger from a
+      // prior head whose review landed after this push. Only a SHA comment
+      // (COMMENT_OK) may approve the first handoff. #900 is still fixed: the
+      // recorded-wait retry (see the too-early test) accepts the +1.
+      const result = await runReviewApprovalHook({
+        pushTime: '2026-08-10T01:50:00Z',
+        reactionTime: '2026-08-10T01:54:54Z',
+        hookLocalState: {},
+      });
+      expect(result.result.type).toBe('block');
+    }
+  );
+
+  // GATED (Vitest/Node): requires Bun.spawn in production executeHookScript.
+  test.skipIf(!isBun)(
+    'review-approval hook rejects a stale Codex +1 older than the head push',
+    async () => {
+      // The head-push anchor must not weaken the guarantee: a +1 from a previous
+      // cycle (before the current head was pushed) is stale and must not satisfy
+      // the hook even with a valid retry state. WAIT_STARTED is recent so the 2h
+      // timeout has NOT elapsed — the stale +1 must be rejected by the freshness
+      // filter, not by a timeout-allow.
+      const recentHandoff = new Date(Date.now() - 10 * 60 * 1000)
+        .toISOString()
+        .replace(/\.\d{3}Z$/, 'Z');
+      const result = await runReviewApprovalHook({
+        pushTime: '2026-08-10T03:00:00Z',
+        reactionTime: '2026-08-10T01:54:54Z',
+        hookLocalState: {
+          codex_wait_started_at: recentHandoff,
+          codex_wait_head_oid: 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2',
+        },
+      });
+      // +1 (01:54) predates the head push (03:00) → stale → blocked. Assert the
+      // specific freshness reason so the test cannot pass on an unrelated
+      // mock/parse error that happens to yield a block.
+      expect(result.result.type).toBe('block');
+      if (result.result.type !== 'block') return;
+      expect(result.result.reason).toContain('fresh Codex bot approval');
+    }
+  );
+
+  test.skipIf(!isBun)(
+    'review-approval hook residual race: a post-push +1 satisfies a recorded wait even if it reviewed an earlier head',
+    async () => {
+      // Documented limitation: a +1 is not commit-bound. Once a wait is recorded
+      // for head B, a +1 whose created_at follows B's push satisfies the hook —
+      // whether Codex reviewed B or computed it for an earlier head A and posted
+      // it late. The head-push anchor cannot tell these apart (the window is wider
+      // than dev's handoff anchor, which is the cost of fixing #900). This test
+      // pins that behavior so the residual is explicit; closing it fully would
+      // require COMMENT_OK-only approvals. The first handoff is still safe (see
+      // the FIRST-handoff test) — only a recorded-wait retry has this residual.
+      const result = await runReviewApprovalHook({
+        pushTime: '2026-08-10T03:00:00Z', // head B pushed at 03:00
+        reactionTime: '2026-08-10T03:30:00Z', // +1 at 03:30 post-dates push_B
+        // default hookLocalState = recorded wait for head B
+      });
+      expect(result.result.type).toBe('allow');
+      expect(result.result.data).toMatchObject({ codex_approved: true });
+    }
+  );
+
+  test.skipIf(!isBun)(
+    'review-approval hook falls back to the workflow-run start when the push event is unavailable',
+    async () => {
+      // If the events API returns no PushEvent for HEAD (expired / paginated
+      // past), freshness falls back to the non-forgeable workflow-run start. A
+      // +1 after the run start still counts.
+      const result = await runReviewApprovalHook({
+        pushTime: null,
+        reactionTime: '2026-08-10T01:54:54Z',
+        workflowStartIso: '2026-08-10T01:00:00Z',
+      });
+      expect(result.result.type).toBe('allow');
+      expect(result.result.data).toMatchObject({ codex_approved: true });
+    }
+  );
+
+  test.skipIf(!isBun)(
+    'review-approval hook reads push events from the HEAD (fork) repository for cross-repository PRs',
+    async () => {
+      // Cross-repo PRs push to the fork, not the base repo. The hook must query
+      // the head repository's event stream (headRepositoryOwner/headRepository)
+      // to resolve the push baseline — otherwise it falls to the coarse
+      // workflow-start, widening the window. The mock serves the PushEvent only
+      // on the fork path; if the hook queried the base repo it would miss and
+      // the hook would block (fallback), failing this assertion.
+      const result = await runReviewApprovalHook({
+        pushTime: '2026-08-10T01:50:00Z',
+        reactionTime: '2026-08-10T01:54:54Z',
+        headRepo: { owner: 'fork-owner', name: 'fork-repo' },
+      });
+      expect(result.result.type).toBe('allow');
+      expect(result.result.data).toMatchObject({ codex_approved: true });
+    }
+  );
+
+  test.skipIf(!isBun)(
+    'review-approval hook queries the BASE repo events when gh pr view omits head-repo fields',
+    async () => {
+      // Older gh / some PR shapes return no headRepositoryOwner/headRepository.
+      // EVENTS_OWNER/REPO must then fall back to the base owner/repo (parsed from
+      // the PR URL) — assigned AFTER OWNER/REPO are set. No workflow-start is
+      // injected, so a working baseline (from the base push event) is required to
+      // ALLOW; if EVENTS were assigned before OWNER/REPO (the regression), the
+      // fallback would be empty → repos//events 404 → fail-closed block.
+      const result = await runReviewApprovalHook({
+        pushTime: '2026-08-10T01:50:00Z',
+        reactionTime: '2026-08-10T01:54:54Z',
+        headRepo: null, // gh pr view omits headRepository fields
+      });
+      expect(result.result.type).toBe('allow');
+      expect(result.result.data).toMatchObject({ codex_approved: true });
+    }
+  );
+
+  test.skipIf(!isBun)(
+    'review-approval hook normalizes a millisecond workflow-start baseline before comparing',
+    async () => {
+      // The fallback baseline (HYPERNEO_WORKFLOW_START_ISO) is JS ms-precision;
+      // the hook strips ms before the lexicographic `>=` against GitHub's
+      // second-precision created_at. A +1 a second later is accepted.
+      const result = await runReviewApprovalHook({
+        pushTime: null,
+        reactionTime: '2026-08-10T01:50:24Z',
+        workflowStartIso: '2026-08-10T01:50:23.500Z',
+      });
+      expect(result.result.type).toBe('allow');
+      expect(result.result.data).toMatchObject({ codex_approved: true });
+    }
+  );
+
+  test.skipIf(!isBun)(
+    'review-approval hook fails closed when no freshness baseline can be resolved',
+    async () => {
+      // P2 #3: if the push event is unavailable AND no workflow-run start is
+      // injected, there is no non-forgeable baseline, so no reaction counts as
+      // fresh (a SHA comment naming HEAD_OID still would). Must block, not accept
+      // every +1 via an empty `$since`.
+      const result = await runReviewApprovalHook({
+        pushTime: null,
+        reactionTime: '2026-08-10T01:54:54Z',
+      });
+      expect(result.result.type).toBe('block');
+    }
+  );
 
   test('route-specific migrated hook ids distinguish normalized node-name collisions', () => {
     const workflow = migrateWorkflowGateProgressionToHooks({
@@ -6546,6 +6883,89 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
       expect(preserved.validator.source).toBe(customSource);
       expect(preserved.validator.source).toContain('-lt 5');
     }
+  });
+
+  test('migrateWorkflowGateProgressionToHooks post-pass rebuilds deployed approval hooks whose source drifted from the builder output', () => {
+    // #900: once a channel is migrated its gateId is stripped, so the main loop
+    // can no longer reach it. A deployed review-approval hook still carrying the
+    // PRE-fix source (handoff-anchored freshness) must be rebuilt to the current
+    // (head-anchored) source on the next load — otherwise a builder-logic fix
+    // never reaches already-deployed spaces. The post-pass rebuilds on ANY
+    // source drift, not only a timeout change.
+    const baseWorkflow = migrateWorkflowGateProgressionToHooks({
+      ...CODING_WITH_QA_WORKFLOW,
+      nodes: CODING_WITH_QA_WORKFLOW.nodes.map((n) =>
+        n.name === 'Review' ? { ...n, requireCodexApproval: true } : n
+      ),
+      templateName: CODING_WITH_QA_WORKFLOW.name,
+      templateGates: CODING_WITH_QA_WORKFLOW.gates ?? [],
+    }).workflow;
+    const freshHook = baseWorkflow.hooks?.find(
+      (h) => h.sourceNode === 'Review' && h.targetNode === 'QA'
+    );
+    expect(freshHook?.validator.kind).toBe('script');
+    if (freshHook?.validator.kind !== 'script') return;
+    const canonicalSource = freshHook.validator.source;
+    expect(canonicalSource).toContain('--arg since "$HEAD_BASELINE"');
+
+    // Deployed hook baked with stale (handoff-anchored) freshness. The timeout
+    // marker is untouched, so the post-pass scope guard still recognizes it as a
+    // generated codex script — only the freshness anchor differs.
+    const staleSource = canonicalSource.replace(
+      '--arg since "$HEAD_BASELINE"',
+      '--arg since "$WAIT_STARTED"'
+    );
+    expect(staleSource).not.toBe(canonicalSource);
+
+    const reMigrated = migrateWorkflowGateProgressionToHooks({
+      ...baseWorkflow,
+      nodes: baseWorkflow.nodes.map((n) =>
+        n.name === 'Review' ? { ...n, requireCodexApproval: true } : n
+      ),
+      hooks: baseWorkflow.hooks!.map((h) =>
+        h.id === freshHook.id && h.validator.kind === 'script'
+          ? { ...h, validator: { ...h.validator, source: staleSource } }
+          : h
+      ),
+      templateName: CODING_WITH_QA_WORKFLOW.name,
+      templateGates: CODING_WITH_QA_WORKFLOW.gates ?? [],
+    }).workflow;
+    const rebuiltHook = reMigrated.hooks?.find((h) => h.id === freshHook.id);
+    expect(rebuiltHook?.validator.kind).toBe('script');
+    if (rebuiltHook?.validator.kind !== 'script') return;
+    // Post-pass rebuilt the drifted source back to the current builder output.
+    expect(rebuiltHook.validator.source).toBe(canonicalSource);
+    expect(rebuiltHook.validator.source).toContain('--arg since "$HEAD_BASELINE"');
+  });
+
+  test('migrateWorkflowGateProgressionToHooks post-pass is idempotent on review-approval hooks', () => {
+    // Mirror of the plan-approval idempotency check for the review-approval hook:
+    // re-running migration over its own output (review-approval channel already
+    // migrated) must be byte-identical. The post-pass full-source comparison must
+    // not churn a hook already at the current builder output.
+    const baseProps = {
+      ...CODING_WITH_QA_WORKFLOW,
+      nodes: CODING_WITH_QA_WORKFLOW.nodes.map((n) =>
+        n.name === 'Review' ? { ...n, requireCodexApproval: true } : n
+      ),
+      templateName: CODING_WITH_QA_WORKFLOW.name,
+      templateGates: CODING_WITH_QA_WORKFLOW.gates ?? [],
+    };
+    const first = migrateWorkflowGateProgressionToHooks(baseProps).workflow;
+    const firstHook = first.hooks?.find((h) => h.sourceNode === 'Review' && h.targetNode === 'QA');
+    expect(firstHook?.validator.kind).toBe('script');
+    if (firstHook?.validator.kind !== 'script') return;
+
+    const second = migrateWorkflowGateProgressionToHooks({
+      ...baseProps,
+      channels: first.channels,
+      gates: first.gates,
+      hooks: first.hooks,
+    }).workflow;
+    const secondHook = second.hooks?.find((h) => h.id === firstHook.id);
+    expect(secondHook?.validator.kind).toBe('script');
+    if (secondHook?.validator.kind !== 'script') return;
+    expect(secondHook.validator.source).toBe(firstHook.validator.source);
   });
 
   test('CODING_WITH_QA_WORKFLOW reviewer prompt defers to the central gated handoff', () => {
