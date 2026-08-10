@@ -1277,7 +1277,9 @@ export class SpaceRuntime {
     // them). Idempotent and bounded by the published-event retention TTL.
     // Rehydrate is untouched: it rebuilds the full trie before events flow.
     this.redispatchRetainedExternalEvents();
-    this.redispatchPublishedEventsToNewTargets();
+    // Scope the new-target replay to this run's space so it doesn't scan other
+    // spaces' published events.
+    this.redispatchPublishedEventsToNewTargets(run.spaceId);
   }
 
   private registerRunInterestsFromWorkflow(run: SpaceWorkflowRun, workflow: SpaceWorkflow): void {
@@ -1901,6 +1903,11 @@ export class SpaceRuntime {
           // bypass the GateRetryScheduler and repeat gate evaluation.
           if (!anyRetryPending && !this.isStopped) {
             this.redispatchRetainedExternalEvents();
+            // Drain the new-target replay too: a sub materialized at depth > 0
+            // (inside a concurrent handler) defers into the same pending flag, so
+            // without this it would never fire and the new target would silently
+            // miss events already routed to other targets.
+            this.redispatchPublishedEventsToNewTargets();
           }
         }
       }
@@ -5720,7 +5727,7 @@ export class SpaceRuntime {
    * already ran when the event was first handled). Fire-and-forget per event,
    * like the retained-event replay.
    */
-  private redispatchPublishedEventsToNewTargets(): void {
+  private redispatchPublishedEventsToNewTargets(spaceId?: string): void {
     const store = this.config.externalEventStore;
     if (!store) return;
     if (this.externalEventHandlingDepth > 0) {
@@ -5730,7 +5737,7 @@ export class SpaceRuntime {
       if (!this.isStopped) this.retainedEventRedispatchPending = true;
       return;
     }
-    for (const eventRecord of store.listPublishedEventsWithDeliveries()) {
+    for (const eventRecord of store.listPublishedEventsWithDeliveries(spaceId)) {
       void this.deliverPublishedEventToNewTargets(
         this.externalEventPayloadFromRecord(eventRecord.event)
       );

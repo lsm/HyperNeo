@@ -695,18 +695,33 @@ export class ExternalEventStore {
    * the no-delivery replay (listPublishedEventsWithoutDeliveries) handles the
    * pure-gap case. Per-target delivery dedup (deliveryKey + terminal/in-flight
    * guards) ensures only targets without an existing delivery are dispatched.
+   *
+   * Pass `spaceId` to scope the scan to one space (the per-run materialization
+   * trigger knows its space); omit it for a global flush.
    */
-  listPublishedEventsWithDeliveries(): ExternalEventRecord[] {
-    const rows = this.db
-      .prepare(
-        `SELECT e.* FROM space_external_events e
-				 WHERE e.state = 'published'
-				   AND EXISTS (
-				     SELECT 1 FROM space_external_event_deliveries d WHERE d.event_id = e.id
-				   )
-				 ORDER BY e.updated_at, e.id`
-      )
-      .all() as ExternalEventRow[];
+  listPublishedEventsWithDeliveries(spaceId?: string): ExternalEventRecord[] {
+    const rows = spaceId
+      ? (this.db
+          .prepare(
+            `SELECT e.* FROM space_external_events e
+ 				 WHERE e.state = 'published'
+ 				   AND e.space_id = ?
+ 				   AND EXISTS (
+ 				     SELECT 1 FROM space_external_event_deliveries d WHERE d.event_id = e.id
+ 				   )
+ 				 ORDER BY e.updated_at, e.id`
+          )
+          .all(spaceId) as ExternalEventRow[])
+      : (this.db
+          .prepare(
+            `SELECT e.* FROM space_external_events e
+ 				 WHERE e.state = 'published'
+ 				   AND EXISTS (
+ 				     SELECT 1 FROM space_external_event_deliveries d WHERE d.event_id = e.id
+ 				   )
+ 				 ORDER BY e.updated_at, e.id`
+          )
+          .all() as ExternalEventRow[]);
     return rows.map(rowToRecord);
   }
 

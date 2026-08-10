@@ -412,15 +412,15 @@ export interface NodeAgentToolsConfig {
    * Optional callback fired after a node records an artifact via `save_artifact`,
    * so generic infra can react to durable state changes. Currently wires the
    * `topicFrom` auto-materialization: when a primary-link-bearing artifact is
-   * recorded, the authoring node's topicFrom interests resolve against the run's
-   * now-current primary link and register as static subscriptions — letting the
-   * authoring node auto-receive its own PR's GitHub events without calling a
-   * subscribe tool.
+   * recorded, the run's topicFrom interests (across EVERY declaring node) resolve
+   * against the run's now-current primary link and register as static
+   * subscriptions — letting each declaring node auto-receive the run's PR GitHub
+   * events without calling a subscribe tool.
    *
    * Fire-and-forget from the tool's perspective: errors are logged by the
-   * runtime and never block the artifact save. Only the authoring node's
-   * interests are touched. Omitted in unit tests that don't exercise the
-   * materialization path.
+   * runtime and never block the artifact save. `nodeId` identifies the authoring
+   * node; the materialization itself is run-scoped. Omitted in unit tests that
+   * don't exercise the materialization path.
    */
   onArtifactRecorded?: (args: { workflowRunId: string; nodeId: string }) => void;
   /**

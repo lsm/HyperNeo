@@ -6732,6 +6732,12 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(injected[0]!.sessionId).toBe('session-coder-routed');
     const coderDelivery = eventStore.listDeliveries(event.id).find((d) => d.agentName === 'coder');
     expect(coderDelivery?.state).toBe('delivered');
+    // The existing target (watch) is NOT re-disturbed: exactly one delivery row
+    // for it (the original pending one), no duplicate from the replay.
+    const watchDeliveries = eventStore
+      .listDeliveries(event.id)
+      .filter((d) => d.agentName === 'watcher');
+    expect(watchDeliveries).toHaveLength(1);
   });
 
   test('replays a retained event that arrived before the PR link was recorded', async () => {
