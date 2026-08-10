@@ -49,12 +49,10 @@ function buildApprovalsScript(timeoutSeconds: number = CODEX_REVIEW_BOT_TIMEOUT_
     'if [ -z "$HEAD_OID" ]; then echo "Could not resolve current PR head for Codex validation" >&2; exit 1; fi',
     'HEAD_REF=$(jq -r \'.headRefName // empty\' <<< "$PR_JSON")',
     // For cross-repository PRs, pushes to the PR branch land in the HEAD (fork)
-    // repository, not the base — read push events from there so the baseline
-    // resolves. Falls back to the base owner/repo when the fields are absent.
+    // repository, not the base — extract its owner/name here; the events query
+    // below uses them, falling back to the base owner/repo (parsed after this).
     'HEAD_REPO_OWNER=$(jq -r \'.headRepositoryOwner.login // empty\' <<< "$PR_JSON")',
     'HEAD_REPO_NAME=$(jq -r \'.headRepository.name // empty\' <<< "$PR_JSON")',
-    'EVENTS_OWNER="${HEAD_REPO_OWNER:-$OWNER}"',
-    'EVENTS_REPO="${HEAD_REPO_NAME:-$REPO}"',
     'PR_API_URL=$(jq -r \'.url // empty\' <<< "$PR_JSON")',
     'PR_HOST=$(sed -E "s#https://([^/]+)/.*#\\1#" <<< "$PR_API_URL")',
     'OWNER=$(sed -E "s#https://[^/]+/([^/]+)/([^/]+)/pull/[0-9]+.*#\\1#" <<< "$PR_API_URL")',
@@ -79,12 +77,15 @@ function buildApprovalsScript(timeoutSeconds: number = CODEX_REVIEW_BOT_TIMEOUT_
     // the PR's head ref (payload.ref == refs/heads/<head ref>) whose head/commits
     // include HEAD_OID — filtering by ref means a push of the same SHA to another
     // branch cannot advance the baseline. Push events are read from the HEAD
-    // repository (headRepositoryOwner/headRepository) so cross-repository PRs
-    // resolve a baseline too — pushes to the PR branch land in the fork, not the
-    // base repo. If that lookup fails we fall back to the non-forgeable (but
+    // repository (headRepositoryOwner/headRepository) so public/same-org
+    // cross-repository PRs resolve a baseline (pushes land in the fork, not the
+    // base); private forks the token can't read still 404 → workflow-start
+    // fallback. If that lookup fails we fall back to the non-forgeable (but
     // coarse) workflow-run start; without a baseline no reaction counts as fresh.
     // ms are stripped so a lexicographic comparison against GitHub's
     // second-precision created_at is exact.
+    'EVENTS_OWNER="${HEAD_REPO_OWNER:-$OWNER}"',
+    'EVENTS_REPO="${HEAD_REPO_NAME:-$REPO}"',
     'PUSH_EVENTS=$(gh api --hostname "$PR_HOST" --paginate --slurp "repos/${EVENTS_OWNER}/${EVENTS_REPO}/events?per_page=100" 2>/dev/null || true)',
     'HEAD_BASELINE=$(jq -r --arg head "$HEAD_OID" --arg ref "$HEAD_REF" \'[.[][] | select(.type == "PushEvent") | select(.payload.ref == ("refs/heads/" + $ref)) | select((.payload.head // "") == $head or any((.payload.commits // [])[]; (.sha // "") == $head))] | .[0].created_at // empty\' <<< "$PUSH_EVENTS" 2>/dev/null || true)',
     'HEAD_BASELINE="${HEAD_BASELINE:-${HYPERNEO_WORKFLOW_START_ISO:-}}"',
@@ -152,12 +153,10 @@ function buildReviewApprovalScript(
     'if [ -z "$HEAD_OID" ]; then echo "Could not resolve current PR head for Codex validation" >&2; exit 1; fi',
     'HEAD_REF=$(jq -r \'.headRefName // empty\' <<< "$PR_JSON")',
     // For cross-repository PRs, pushes to the PR branch land in the HEAD (fork)
-    // repository, not the base — read push events from there so the baseline
-    // resolves. Falls back to the base owner/repo when the fields are absent.
+    // repository, not the base — extract its owner/name here; the events query
+    // below uses them, falling back to the base owner/repo (parsed after this).
     'HEAD_REPO_OWNER=$(jq -r \'.headRepositoryOwner.login // empty\' <<< "$PR_JSON")',
     'HEAD_REPO_NAME=$(jq -r \'.headRepository.name // empty\' <<< "$PR_JSON")',
-    'EVENTS_OWNER="${HEAD_REPO_OWNER:-$OWNER}"',
-    'EVENTS_REPO="${HEAD_REPO_NAME:-$REPO}"',
     'PR_API_URL=$(jq -r \'.url // empty\' <<< "$PR_JSON")',
     'PR_HOST=$(sed -E "s#https://([^/]+)/.*#\\1#" <<< "$PR_API_URL")',
     'OWNER=$(sed -E "s#https://[^/]+/([^/]+)/([^/]+)/pull/[0-9]+.*#\\1#" <<< "$PR_API_URL")',
@@ -182,12 +181,15 @@ function buildReviewApprovalScript(
     // the PR's head ref (payload.ref == refs/heads/<head ref>) whose head/commits
     // include HEAD_OID — filtering by ref means a push of the same SHA to another
     // branch cannot advance the baseline. Push events are read from the HEAD
-    // repository (headRepositoryOwner/headRepository) so cross-repository PRs
-    // resolve a baseline too — pushes to the PR branch land in the fork, not the
-    // base repo. If that lookup fails we fall back to the non-forgeable (but
+    // repository (headRepositoryOwner/headRepository) so public/same-org
+    // cross-repository PRs resolve a baseline (pushes land in the fork, not the
+    // base); private forks the token can't read still 404 → workflow-start
+    // fallback. If that lookup fails we fall back to the non-forgeable (but
     // coarse) workflow-run start; without a baseline no reaction counts as fresh.
     // ms are stripped so a lexicographic comparison against GitHub's
     // second-precision created_at is exact.
+    'EVENTS_OWNER="${HEAD_REPO_OWNER:-$OWNER}"',
+    'EVENTS_REPO="${HEAD_REPO_NAME:-$REPO}"',
     'PUSH_EVENTS=$(gh api --hostname "$PR_HOST" --paginate --slurp "repos/${EVENTS_OWNER}/${EVENTS_REPO}/events?per_page=100" 2>/dev/null || true)',
     'HEAD_BASELINE=$(jq -r --arg head "$HEAD_OID" --arg ref "$HEAD_REF" \'[.[][] | select(.type == "PushEvent") | select(.payload.ref == ("refs/heads/" + $ref)) | select((.payload.head // "") == $head or any((.payload.commits // [])[]; (.sha // "") == $head))] | .[0].created_at // empty\' <<< "$PUSH_EVENTS" 2>/dev/null || true)',
     'HEAD_BASELINE="${HEAD_BASELINE:-${HYPERNEO_WORKFLOW_START_ISO:-}}"',
@@ -674,7 +676,10 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
   // silently clobber a custom hook that happens to use `-lt N` for an
   // unrelated shell comparison. Custom hooks (no anchored marker) never reach
   // the full-source equality check below, so user-authored logic is never
-  // rewritten.
+  // rewritten. Note: a hand-edit to a GENERATED codex hook (one that still
+  // carries the anchored marker) IS reverted to the builder output on the next
+  // load — by design, so deployed generated hooks track current logic; operators
+  // wanting a persistent custom check must use a hook without the marker.
   const TIMEOUT_CMP_RE = /\(\(NOW_EPOCH - START_EPOCH\)\) -lt (\d+) /;
   for (const hook of hooksById.values()) {
     if (hook.validator.kind !== 'script') continue;

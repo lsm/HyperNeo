@@ -2989,7 +2989,7 @@ describe('seedBuiltInWorkflows()', () => {
     reactionTime: string;
     hookLocalState?: Record<string, unknown>;
     workflowStartIso?: string;
-    headRepo?: { owner: string; name: string };
+    headRepo?: { owner: string; name: string } | null;
   }) {
     const workflow = migrateWorkflowGateProgressionToHooks({
       ...CODING_WITH_QA_WORKFLOW,
@@ -3005,6 +3005,10 @@ describe('seedBuiltInWorkflows()', () => {
     const prUrl = 'https://github.com/test/repo/pull/42';
     // Cross-repo PRs push to the fork; the hook must read events from there.
     const headRepo = scenario.headRepo ?? { owner: 'test', name: 'repo' };
+    const headRepoFields =
+      scenario.headRepo === null
+        ? ''
+        : `"headRepositoryOwner":{"login":"${headRepo.owner}"},"headRepository":{"name":"${headRepo.name}"},`;
     const eventsPath = `repos/${headRepo.owner}/${headRepo.name}/events`;
     const eventsPayload =
       scenario.pushTime === null
@@ -3021,7 +3025,7 @@ describe('seedBuiltInWorkflows()', () => {
         [
           '#!/usr/bin/env bash',
           'if [[ "$*" == *"pr view"* ]]; then',
-          `  printf '%s\\n' '{"number":42,"headRefOid":"${SHA}","headRefName":"codex-test-branch","headRepositoryOwner":{"login":"${headRepo.owner}"},"headRepository":{"name":"${headRepo.name}"},"url":"https://github.com/test/repo/pull/42"}'`,
+          `  printf '%s\\n' '{"number":42,"headRefOid":"${SHA}","headRefName":"codex-test-branch",${headRepoFields}"url":"https://github.com/test/repo/pull/42"}'`,
           '  exit 0',
           'fi',
           `if [[ "$*" == *"${eventsPath}"* ]]; then`,
@@ -3192,6 +3196,25 @@ describe('seedBuiltInWorkflows()', () => {
         pushTime: '2026-08-10T01:50:00Z',
         reactionTime: '2026-08-10T01:54:54Z',
         headRepo: { owner: 'fork-owner', name: 'fork-repo' },
+      });
+      expect(result.result.type).toBe('allow');
+      expect(result.result.data).toMatchObject({ codex_approved: true });
+    }
+  );
+
+  test.skipIf(!isBun)(
+    'review-approval hook queries the BASE repo events when gh pr view omits head-repo fields',
+    async () => {
+      // Older gh / some PR shapes return no headRepositoryOwner/headRepository.
+      // EVENTS_OWNER/REPO must then fall back to the base owner/repo (parsed from
+      // the PR URL) — assigned AFTER OWNER/REPO are set. No workflow-start is
+      // injected, so a working baseline (from the base push event) is required to
+      // ALLOW; if EVENTS were assigned before OWNER/REPO (the regression), the
+      // fallback would be empty → repos//events 404 → fail-closed block.
+      const result = await runReviewApprovalHook({
+        pushTime: '2026-08-10T01:50:00Z',
+        reactionTime: '2026-08-10T01:54:54Z',
+        headRepo: null, // gh pr view omits headRepository fields
       });
       expect(result.result.type).toBe('allow');
       expect(result.result.data).toMatchObject({ codex_approved: true });
