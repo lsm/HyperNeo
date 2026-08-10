@@ -62,10 +62,7 @@ import { SpaceTaskRepository } from '../../storage/repositories/space-task-repos
 import { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
 import { GateDataRepository } from '../../storage/repositories/gate-data-repository';
 import { GateOpenStateRepository } from '../../storage/repositories/gate-open-state-repository';
-import {
-  pinnedGateFingerprint,
-  stableVersionTimestamp,
-} from '../../lib/space/workflows/definition-version';
+import { rekeyPinnedGateOpenCaches } from '../../lib/space/workflows/gate-cache-rekey';
 import { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository';
 import { WorkflowRunArtifactCacheRepository } from '../../storage/repositories/workflow-run-artifact-cache-repository';
 import { WorkflowHookStateRepository } from '../../storage/repositories/workflow-hook-state-repository';
@@ -567,24 +564,15 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     },
   };
   const spaceWorkflowManager = new SpaceWorkflowManager(spaceWorkflowRepo, agentLookup);
-  // Phase-1 read-cutover gate-open cache sweep: re-key any persisted gate-open entry whose
-  // run is pinned to the version-stable fingerprint basis. This preserves a backfilled
-  // in-flight run's existing open-gate cache across the cutover (no re-evaluation) by hashing
-  // the SAME sanitized gate the runtime read path fingerprints. Idempotent + runs every boot,
-  // so a crash between pin and re-key recovers on the next restart.
-  for (const entry of gateOpenStateRepo.listAllOpenEntries()) {
-    const run = spaceWorkflowRunRepo.getRun(entry.runId);
-    if (!run?.definitionVersion) continue; // unpinned → no version-stable basis yet
-    const sanitized = spaceWorkflowManager.getWorkflowForRun(run);
-    if (!sanitized) continue;
-    const gateDef = (sanitized.gates ?? []).find((g) => g.id === entry.gateId);
-    const expected = gateDef
-      ? pinnedGateFingerprint(run.definitionVersion, gateDef)
-      : stableVersionTimestamp(run.definitionVersion);
-    if (entry.workflowUpdatedAt !== expected) {
-      gateOpenStateRepo.markOpened(entry.runId, entry.gateId, expected);
-    }
-  }
+  // Phase-1 read-cutover gate-open cache sweep: re-key persisted gate-open entries for pinned
+  // runs to the version-stable fingerprint basis (preserving backfilled in-flight runs' caches
+  // across the cutover). Idempotent + every boot → crash-safe. See gate-cache-rekey.ts.
+  rekeyPinnedGateOpenCaches({
+    gateOpenStateRepo,
+    runRepo: spaceWorkflowRunRepo,
+    workflowRepo: spaceWorkflowRepo,
+    manager: spaceWorkflowManager,
+  });
 
   const spaceTaskManagerFactory: SpaceTaskManagerFactory = (spaceId: string) => {
     return new SpaceTaskManager(

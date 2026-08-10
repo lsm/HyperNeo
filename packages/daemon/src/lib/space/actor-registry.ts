@@ -61,15 +61,14 @@ export class SpaceActorRegistryAdapter {
 
     // Cache resolved (pinned) definitions per (workflowId, version). Runs of the same
     // workflow can be pinned to different versions after an edit, so keying by workflowId
-    // alone would conflate them; runs that share a version still dedup here.
+    // alone would conflate them; runs that share a version still dedup here. Resolved lazily
+    // only for runs that have pending node-agent messages — the per-run execution loop below
+    // does not need the workflow, so deferring keeps actor lookup near per-workflow cost
+    // instead of scaling with the full versioned run history.
     const workflowByKey = new Map<string, SpaceWorkflow>();
     const definitionKey = (wfId: string, version: string | null): string =>
       `${wfId}:${version ?? 'head'}`;
     for (const run of this.repos.workflowRunRepo.listBySpace(spaceId)) {
-      const key = definitionKey(run.workflowId, run.definitionVersion);
-      const workflow = workflowByKey.get(key) ?? this.repos.workflowRepo.getWorkflowForRun(run);
-      if (workflow) workflowByKey.set(key, workflow);
-
       for (const execution of this.repos.nodeExecutionRepo.listByWorkflowRun(run.id)) {
         this.add(actors, workerActorFromExecution(spaceId, execution));
       }
