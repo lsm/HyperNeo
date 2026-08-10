@@ -76,6 +76,18 @@ export class ProcessingStateManager {
   }
 
   /**
+   * Resolve + clear ALL idle waiters. Used when a rate-limit retry is superseded
+   * (the durable turn it would have re-driven is abandoned): resolves the waiter
+   * — rather than cancelling it — so an awaiting driveDeliveryTurn completes its
+   * job instead of hanging `processing`.
+   */
+  releaseIdleWaiters(): void {
+    const waiters = [...this.idleWaiters.values()];
+    this.idleWaiters.clear();
+    for (const resolve of waiters) resolve();
+  }
+
+  /**
    * Restore processing state from database
    * Called on session initialization to recover state after restart
    */

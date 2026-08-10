@@ -1154,6 +1154,9 @@ export class AgentSession
         this.rateLimitWatchdog.isSuperseded(episodeGeneration)
       ) {
         this.logger.info('Rate limit auto-retry aborted before re-enqueue (episode superseded).');
+        // The durable turn this retry would have re-driven is abandoned — release
+        // its turn-end waiter so the job doesn't hang `processing`.
+        this.stateManager.releaseIdleWaiters();
         return false;
       }
 
@@ -1855,26 +1858,24 @@ export class AgentSession
       if (claimGuard && !claimGuard()) {
         return { kind: 'aborted' as const };
       }
-      // Arm the turn-end wait BEFORE ensureQueryStarted: a reclaimed consumed
-      // turn resumes from history during the async query start, and a fast
-      // terminal idle would be missed by a waiter armed afterward (the job would
-      // then hang `processing` because the streaming queryPromise never resolves
-      // at turn-end). On the 'blocked' path the waiter resolves harmlessly on a
-      // later idle — the job parks and re-drives, re-arming. See
-      // ProcessingStateManager.waitForIdleTransition.
-      const turnEnd = this.stateManager.waitForIdleTransition();
       const queryStartResult = await this.lifecycleManager.ensureQueryStarted();
       if (queryStartResult === 'blocked') {
-        // Park: cancel the turn-end waiter so it doesn't accumulate across the
-        // 5s reclaims. The next drive attempt arms a fresh one.
-        turnEnd.cancel();
         return { kind: 'blocked' as const };
       }
       const queryPromise = this.queryPromise;
       if (!queryPromise) {
-        turnEnd.cancel();
         throw new Error('message_delivery: query did not start; cannot drive turn');
       }
+      // Arm the turn-end wait AFTER ensureQueryStarted: ensureQueryStarted awaits
+      // a preceding interrupt's completion, and that interrupt's terminal
+      // setIdle() fires BEFORE the await resolves — arming earlier would let it
+      // resolve this turn's waiter for a turn that hasn't started yet. If the
+      // session is somehow already idle here (an instant reclaimed turn ended
+      // during startup), complete immediately rather than hanging on an idle
+      // that already passed.
+      const turnEnd = this.stateManager.isIdle()
+        ? { promise: Promise.resolve(), cancel: () => {} }
+        : this.stateManager.waitForIdleTransition();
       // Feed the kickoff (resolves on onSent = the SDK consumed it) UNLESS a
       // prior attempt already did (alreadyConsumed = reclaim after a crash): the
       // SDK resume-from-history already holds a consumed kickoff, so re-feeding
@@ -2022,6 +2023,11 @@ export class AgentSession
         throw err;
       }
       if (role === 'turn') {
+        // A new chat turn supersedes any armed rate-limit cooldown: cancel the
+        // watchdog so its timer doesn't replay the previous prompt instead of
+        // letting this turn run. The legacy inline path did this at the top of
+        // startQueryAndEnqueue; the v2 chat path bypasses it, so do it here.
+        this.rateLimitWatchdog.cancel();
         try {
           // Preserve a legacy-owned live turn: role arbitration can return turn
           // when no durable turn row exists even though the session is processing.

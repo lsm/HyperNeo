@@ -85,7 +85,7 @@ import {
   TASK_SCHEDULE_FIRE,
 } from './lib/job-queue-constants';
 import { createMessageDeliveryHandler } from './lib/job-handlers/message-delivery.handler';
-import { asMessageDeliveryPayload, isMessageDeliveryV2Enabled } from './lib/agent/message-delivery';
+import { asMessageDeliveryPayload } from './lib/agent/message-delivery';
 import { handleTaskScheduleFire } from './lib/job-handlers/task-schedule-fire.handler';
 import {
   backfillLongHorizonAgentReminderNextRunAt,
@@ -970,21 +970,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       MEMORY_CONSOLIDATION,
       createMemoryConsolidationHandler(db.agentMemory, jobQueue)
     );
-
-    // Message-delivery v2 rollback: if v2 is OFF at boot (the
-    // HYPERNEO_MESSAGE_DELIVERY_V2=0 opt-out), drain durable delivery jobs left
-    // over from a prior v2-on run so they don't linger under the legacy regime
-    // — new messages take the legacy inline path, and the drained jobs'
-    // sdk_messages rows (still enqueued/consumed) fall to the legacy replay +
-    // orphan-recovery backstops.
-    if (!isMessageDeliveryV2Enabled()) {
-      const drained = jobQueue.cancelAllMessageDelivery();
-      if (drained > 0) {
-        logInfo(
-          `message_delivery: v2 disabled at boot; cancelled ${drained} lingering durable job(s)`
-        );
-      }
-    }
 
     // Message-delivery v2 — durable user-message delivery on job_queue (flag-
     // gated for ordinary chat; see docs/features/message-delivery-v2.md). The
