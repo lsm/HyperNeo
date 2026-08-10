@@ -2110,7 +2110,7 @@ export class TaskAgentManager {
     if (!task?.workflowRunId) return false;
     const run = this.config.workflowRunRepo.getRun(task.workflowRunId);
     if (!run?.workflowId) return false;
-    const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+    const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
     if (!workflow) return false;
     const node = workflow.nodes.find((n) => n.id === workflowNodeId);
     if (!node) return false;
@@ -2141,7 +2141,7 @@ export class TaskAgentManager {
     if (!task?.workflowRunId) return [];
     const run = this.config.workflowRunRepo.getRun(task.workflowRunId);
     if (!run?.workflowId) return [];
-    const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+    const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
     if (!workflow) return [];
     const names = new Set<string>();
     for (const node of workflow.nodes) {
@@ -2242,7 +2242,7 @@ export class TaskAgentManager {
     if (!task?.workflowRunId) return undefined;
     const run = this.config.workflowRunRepo.getRun(task.workflowRunId);
     if (!run?.workflowId) return undefined;
-    const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+    const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
     return resolvePostApprovalTargetAgentName(workflow);
   }
 
@@ -2260,7 +2260,7 @@ export class TaskAgentManager {
     if (!task?.workflowRunId) return undefined;
     const run = this.config.workflowRunRepo.getRun(task.workflowRunId);
     if (!run?.workflowId) return undefined;
-    const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+    const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
     return resolvePostApprovalRouteNodeId(workflow);
   }
 
@@ -2545,7 +2545,7 @@ export class TaskAgentManager {
     const workspacePath = this.getTaskWorktreePath(taskId) ?? space.workspacePath;
 
     const workflow = workflowRun?.workflowId
-      ? this.config.spaceWorkflowManager.getWorkflow(workflowRun.workflowId)
+      ? this.config.spaceWorkflowManager.getWorkflowForRun(workflowRun)
       : null;
 
     // Resolve the persisted slot from provenance so the slot's current config
@@ -2761,7 +2761,7 @@ export class TaskAgentManager {
       if (task?.workflowRunId) {
         const run = this.config.workflowRunRepo.getRun(task.workflowRunId);
         if (run?.workflowId) {
-          const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+          const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
           const node = workflow?.nodes.find((candidate) => candidate.id === options.workflowNodeId);
           const slots = node ? resolveNodeAgents(node) : [];
           if (!slots.some((slot) => slot.name === agentName)) return [];
@@ -2775,7 +2775,7 @@ export class TaskAgentManager {
     const task = this.config.taskRepo.getTask(taskId);
     const run = this.config.workflowRunRepo.getRun(workflowRunId);
     const workflow = run?.workflowId
-      ? this.config.spaceWorkflowManager.getWorkflow(run.workflowId)
+      ? this.config.spaceWorkflowManager.getWorkflowForRun(run)
       : null;
     const space = task ? await this.config.spaceManager.getSpace(task.spaceId) : null;
     if (!task || !run || !workflow || !space) return [];
@@ -2818,7 +2818,7 @@ export class TaskAgentManager {
       if (!task?.workflowRunId) return false;
       const run = this.config.workflowRunRepo.getRun(task.workflowRunId);
       if (!run?.workflowId) return false;
-      const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+      const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
       if (!workflow) return false;
       const spaceManager = this.config.spaceManager;
       const space = await spaceManager.getSpace(task.spaceId);
@@ -3909,7 +3909,7 @@ export class TaskAgentManager {
   private workflowNodeNameForRun(workflowRunId: string, workflowNodeId: string): string | null {
     const run = this.config.workflowRunRepo.getRun(workflowRunId);
     if (!run?.workflowId) return null;
-    const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+    const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
     return workflow?.nodes.find((node) => node.id === workflowNodeId)?.name ?? null;
   }
 
@@ -3924,7 +3924,7 @@ export class TaskAgentManager {
     if (!execution?.workflowRunId || !execution.workflowNodeId) return false;
     const run = this.config.workflowRunRepo.getRun(execution.workflowRunId);
     if (!run?.workflowId) return false;
-    const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+    const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
     const node = workflow?.nodes.find((candidate) => candidate.id === execution.workflowNodeId);
     if (!node) return false;
     // resolveNodeAgents throws on a node with an empty agents array (e.g. a
@@ -4109,7 +4109,7 @@ export class TaskAgentManager {
     if (!task || task.status === 'done' || task.status === 'cancelled') return false;
     const run = this.config.workflowRunRepo.getRun(workflowRunId);
     if (!run || run.status === 'done' || run.status === 'cancelled') return false;
-    const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+    const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
     const hookStateRepo = new WorkflowHookStateRepository(this.config.db.getDatabase());
     for (const hook of workflow?.hooks ?? []) {
       const state = hookStateRepo.get(workflowRunId, hook.id)?.localState;
@@ -4236,7 +4236,7 @@ export class TaskAgentManager {
       return null;
     }
     const workflow = workflowRun?.workflowId
-      ? this.config.spaceWorkflowManager.getWorkflow(workflowRun.workflowId)
+      ? this.config.spaceWorkflowManager.getWorkflowForRun(workflowRun)
       : null;
     const workflowRunId = execution.workflowRunId;
 
@@ -5035,7 +5035,7 @@ export class TaskAgentManager {
     const workflowNodeId = workflowNodeIdHint ?? execution?.workflowNodeId ?? '';
     const run = this.config.workflowRunRepo.getRun(workflowRunId);
     const workflow = run?.workflowId
-      ? (this.config.spaceWorkflowManager.getWorkflow(run.workflowId) ?? null)
+      ? (this.config.spaceWorkflowManager.getWorkflowForRun(run) ?? null)
       : null;
     const channels = workflow?.channels ?? [];
     const channelResolver = new ChannelResolver(channels);

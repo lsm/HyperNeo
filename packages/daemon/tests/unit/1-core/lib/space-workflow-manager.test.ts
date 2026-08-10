@@ -10,6 +10,7 @@ import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/sp
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
 import { createSpaceAgentSchema, insertSpace } from '../../helpers/space-agent-schema';
 import { SpaceWorkflowDefinitionVersionRepository } from '../../../../src/storage/repositories/space-workflow-definition-version-repository';
+import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import { computeDefinitionVersion } from '../../../../src/lib/space/workflows/definition-version';
 
 describe('SpaceWorkflowManager', () => {
@@ -937,10 +938,28 @@ describe('SpaceWorkflowManager', () => {
         FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
       )`;
     let versionRepo: SpaceWorkflowDefinitionVersionRepository;
+    let runRepo: SpaceWorkflowRunRepository;
+    const RUNS_DDL = `
+      CREATE TABLE space_workflow_runs (
+        id TEXT PRIMARY KEY,
+        space_id TEXT NOT NULL,
+        workflow_id TEXT NOT NULL,
+        definition_version TEXT,
+        title TEXT NOT NULL,
+        description TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        failure_reason TEXT,
+        created_at INTEGER NOT NULL,
+        started_at INTEGER,
+        updated_at INTEGER NOT NULL,
+        completed_at INTEGER
+      )`;
 
     beforeEach(() => {
       db.exec(VERSIONS_DDL);
+      db.exec(RUNS_DDL);
       versionRepo = new SpaceWorkflowDefinitionVersionRepository(db as any);
+      runRepo = new SpaceWorkflowRunRepository(db as any);
     });
 
     /** Append a version row for the current head and return its hash. */
@@ -1020,6 +1039,60 @@ describe('SpaceWorkflowManager', () => {
       expect(resolved.completionAutonomyLevel).toBe(live.completionAutonomyLevel);
       expect(resolved.startNodeId).toBe(live.startNodeId);
       expect(typeof resolved.updatedAt).toBe('number');
+    });
+
+    it('falls back to the live head when the pinned payload cannot be parsed', () => {
+      const wf = manager.createWorkflow({
+        spaceId: 'space-1',
+        name: 'W',
+        nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+        completionAutonomyLevel: 3,
+      });
+      // A damaged version row: hash present, payload corrupt.
+      versionRepo.appendVersion({
+        workflowId: wf.id,
+        spaceId: 'space-1',
+        versionHash: 'corrupt-payload',
+        payload: '{not valid json',
+        source: 'run_create',
+        createdAt: Date.now(),
+      });
+      const resolved = manager.getWorkflowForRun({
+        workflowId: wf.id,
+        definitionVersion: 'corrupt-payload',
+      });
+      // Parse failure must not break the run — it resolves to the live head.
+      expect(resolved).toEqual(manager.getWorkflow(wf.id));
+    });
+
+    it('backfill pins a legacy run to its head, and the pin resolves behaviorally equal to the head', () => {
+      const wf = manager.createWorkflow({
+        spaceId: 'space-1',
+        name: 'Backfill Target',
+        nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+        completionAutonomyLevel: 3,
+      });
+      // Legacy run with no creation-time pin.
+      const run = runRepo.createRun({ spaceId: 'space-1', workflowId: wf.id, title: 'Legacy' });
+      expect(run.definitionVersion).toBeNull();
+
+      // Startup backfill: pin to the current head (the raw repo read, as wired in rpc-handlers).
+      const count = runRepo.backfillDefinitionPins((id) => repo.getWorkflow(id));
+      expect(count).toBe(1);
+
+      const pinned = runRepo.getRun(run.id)!;
+      expect(pinned.definitionVersion).not.toBeNull();
+      // The pin equals the head's version (content-neutral cutover).
+      expect(pinned.definitionVersion).toBe(
+        computeDefinitionVersion(repo.getWorkflow(wf.id)!).versionHash
+      );
+
+      // Resolving through the pin is behaviorally equal to reading the live head.
+      const resolved = manager.getWorkflowForRun(pinned)!;
+      const head = manager.getWorkflow(wf.id)!;
+      expect(resolved.nodes).toEqual(head.nodes);
+      expect(resolved.name).toBe(head.name);
+      expect(resolved.completionAutonomyLevel).toBe(head.completionAutonomyLevel);
     });
   });
 });

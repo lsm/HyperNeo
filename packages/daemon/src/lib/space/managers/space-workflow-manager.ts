@@ -239,39 +239,24 @@ export class SpaceWorkflowManager {
    * run is backfilled to a pin equal to its current head, so resolving through the pin
    * changes nothing at cutover time; only a later edit diverges, which is the invariant.
    *
-   * Known boundary (RFC §4 #2): built-in gate SCRIPTS and `templateGates` are injected
-   * from the live template/registry at sanitize time, so a template upgrade still affects a
-   * pinned run's built-in gates. Pinning the definition's user-authored content (nodes,
-   * channels, gates-as-data, agents, post-approval) is the invariant delivered here;
-   * built-in gate-script pinning is a tracked Phase-1 sub-task.
+   * Known boundary (RFC §4 #2): built-in gate SCRIPTS and `templateGates` are injected at
+   * sanitize time from `BUILT_IN_TEMPLATE_GATES` — a compile-time static map, not a runtime
+   * registry — so they are stable within a daemon version but are NOT captured in the pinned
+   * payload. The invariant therefore holds for user-authored content (nodes, channels,
+   * gates-as-data, agents, post-approval) and for built-in gates within a version, but does
+   * NOT hold for built-in gates across a daemon upgrade. RFC §4 #2 calls this out as
+   * unresolved; capturing built-in gate scripts in the pinned payload is tracked Phase-1 work.
    */
   getWorkflowForRun(run: {
     workflowId: string;
     definitionVersion: string | null;
   }): SpaceWorkflow | null {
-    const versionHash = run.definitionVersion;
-    if (versionHash) {
-      try {
-        const version = this.repo.getDefinitionVersion(run.workflowId, versionHash);
-        if (version) {
-          const parsed = JSON.parse(version.payload) as SpaceWorkflow;
-          return this.sanitizePostApprovalForLoad({
-            ...parsed,
-            createdAt: version.createdAt,
-            updatedAt: version.createdAt,
-          });
-        }
-        // Version row absent (deleted-then-recreated workflow id, or a damaged row): fall
-        // through to the live head rather than executing nothing.
-      } catch (err) {
-        logger.warn(
-          `getWorkflowForRun: failed to rehydrate pinned version ${versionHash} for ` +
-            `workflow ${run.workflowId}; falling back to live head:`,
-          err
-        );
-      }
-    }
-    return this.getWorkflow(run.workflowId);
+    // Delegate pin-resolution to the repository (raw rehydration + stable timestamps +
+    // head fallback — see SpaceWorkflowRepository.getWorkflowForRun), then apply the same
+    // load-time sanitization the live path uses (sanitize-at-rehydrate). One pin-resolution
+    // implementation shared by the sanitized (manager) and raw (repo) callers.
+    const raw = this.repo.getWorkflowForRun(run);
+    return raw ? this.sanitizePostApprovalForLoad(raw) : null;
   }
 
   /**

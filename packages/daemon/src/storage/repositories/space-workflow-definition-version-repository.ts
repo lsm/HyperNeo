@@ -10,10 +10,10 @@
  * never mutates a prior version.
  *
  * Read cutover (Phase 1): run reads resolve through these rows. `getVersion` is the reader
- * `SpaceWorkflowRepository.getDefinitionVersion` / `getWorkflowForRun` use to resolve a
- * pinned run to its definition version instead of the mutable `space_workflows` head row, so
- * a later edit cannot change what an in-flight run executes. List/count readers remain
- * deferred — no runtime caller needs them yet.
+ * `SpaceWorkflowRepository.getWorkflowForRun` uses to resolve a pinned run to its definition
+ * version instead of the mutable `space_workflows` head row, so a later edit cannot change
+ * what an in-flight run executes. List/count readers remain deferred — no runtime caller
+ * needs them yet.
  *
  * Foreign keys: there is intentionally NO FK to `space_workflows(id)` — the RFC's
  * orphan/tombstone policy requires pinned versions to survive deletion of the mutable head

@@ -405,5 +405,22 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(second).toBe(0);
       expect(calls).toBeGreaterThan(0);
     });
+
+    it('backfillDefinitionPins isolates failures: one bad run does not block the others', () => {
+      const good = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Good' });
+      const bad = repo.createRun({ spaceId, workflowId: 'broken-wf', title: 'Bad' });
+      const wf = rawWorkflow();
+      const expectedHash = computeDefinitionVersion(wf).versionHash;
+
+      const count = repo.backfillDefinitionPins((id) => {
+        if (id === 'broken-wf') throw new Error('boom'); // loader failure for one run
+        return wf;
+      });
+
+      // The good run is still pinned; the bad one is skipped (left null → fallback), not fatal.
+      expect(count).toBe(1);
+      expect(repo.getRun(good.id)!.definitionVersion).toBe(expectedHash);
+      expect(repo.getRun(bad.id)!.definitionVersion).toBeNull();
+    });
   });
 });

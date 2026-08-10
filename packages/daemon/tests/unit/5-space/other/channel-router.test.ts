@@ -330,6 +330,54 @@ describe('ChannelRouter', () => {
       );
     });
 
+    test('lazy activation reads the PINNED node definition, not a later head edit (read cutover)', async () => {
+      // P1 regression guard: activation must resolve the node from the run's pinned
+      // definition, so editing an agent slot after run creation does not change who gets
+      // activated for the in-flight run.
+      const workflow = buildWorkflow(SPACE_ID, workflowManager, [
+        {
+          id: NODE_A,
+          name: 'Multi Agent Node',
+          agents: [{ agentId: AGENT_CODER, name: 'coder-slot' }],
+        },
+        { id: 'node-end', name: 'End Node', agentId: AGENT_CUSTOM },
+      ]);
+
+      // Pin the run to the current (single-slot) definition.
+      const raw = workflowManager.getWorkflowForRunStart(workflow.id)!.rawWorkflow;
+      const run = workflowRunRepo.createPinnedRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Pinned Run',
+        rawWorkflow: raw,
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+      // Edit the HEAD to add a second slot the pinned version does not have.
+      const head = workflowManager.getWorkflow(workflow.id)!;
+      workflowManager.updateWorkflow(workflow.id, {
+        nodes: head.nodes.map((n) =>
+          n.id === NODE_A
+            ? {
+                ...n,
+                agents: [...(n.agents ?? []), { agentId: AGENT_PLANNER, name: 'planner-slot' }],
+              }
+            : n
+        ),
+      });
+      expect(
+        workflowManager.getWorkflow(workflow.id)!.nodes.find((n) => n.id === NODE_A)!.agents
+      ).toHaveLength(2);
+
+      // Lazy activation must use the PINNED single-slot definition.
+      await router.activateNode(run.id, NODE_A);
+      const slots = new NodeExecutionRepository(db)
+        .listByNode(run.id, NODE_A)
+        .map((e) => e.agentName);
+      expect(slots).toEqual(['coder-slot']);
+      expect(slots).not.toContain('planner-slot');
+    });
+
     test('sets correct taskType for custom-role agent', async () => {
       const workflow = buildWorkflow(SPACE_ID, workflowManager, [
         {
