@@ -801,9 +801,13 @@ export class SpaceWorkflowManager {
             )}"; expected one of ${[...KNOWN_TOPIC_FROM_SOURCES].map((s) => `"${s}"`).join(', ')}`
           );
         }
-        if (typeof topicFrom.pattern !== 'string' || topicFrom.pattern.trim().length === 0) {
+        if (
+          typeof topicFrom.pattern !== 'string' ||
+          topicFrom.pattern.length === 0 ||
+          topicFrom.pattern !== topicFrom.pattern.trim()
+        ) {
           throw new WorkflowValidationError(
-            `${interestLoc}.topicFrom.pattern: must be a non-empty string`
+            `${interestLoc}.topicFrom.pattern: must be a non-empty string with no surrounding whitespace`
           );
         }
       }

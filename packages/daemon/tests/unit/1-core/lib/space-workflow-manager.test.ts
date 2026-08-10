@@ -328,6 +328,39 @@ describe('SpaceWorkflowManager', () => {
       ).toThrow('topicFrom.pattern: must be a non-empty string');
     });
 
+    it('rejects a topicFrom pattern with surrounding whitespace', () => {
+      // The Zod import path trims the pattern; the manager must keep direct
+      // creation consistent so a stored pattern always resolves to a usable
+      // glob (surrounding spaces would survive resolution and fail the trie).
+      expect(() =>
+        manager.createWorkflow({
+          spaceId: 'space-1',
+          name: 'Padded Pattern Workflow',
+          nodes: [
+            {
+              id: 'node-1',
+              name: 'Step One',
+              agents: [
+                {
+                  agentId: 'agent-1',
+                  name: 'coder',
+                  eventInterests: [
+                    {
+                      topicFrom: {
+                        source: 'primaryLink',
+                        pattern: ' github/{owner}/{repo}/pull_request/{number}.* ',
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          completionAutonomyLevel: 3,
+        })
+      ).toThrow('no surrounding whitespace');
+    });
+
     it('rejects a topicFrom with an unknown source', () => {
       expect(() =>
         manager.createWorkflow({
