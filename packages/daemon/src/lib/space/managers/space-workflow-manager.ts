@@ -33,6 +33,7 @@ import {
 } from '../workflows/post-approval-validator';
 import { validateGate } from '../runtime/gate-evaluator';
 import { isApprovalGate } from '../runtime/gate-features';
+import { KNOWN_TOPIC_FROM_SOURCES } from '../runtime/parse-pr-url';
 // Side-effect: seed the connector registry before workflow validation runs, so
 // externalLookups are admitted via the registry (see connectors/production.ts).
 import '../runtime/connectors/production';
@@ -759,10 +760,54 @@ export class SpaceWorkflowManager {
         );
       }
       for (let k = 0; k < interests.length; k++) {
-        const validation = validateGlobPattern(interests[k].topic);
-        if (!validation.valid) {
+        const interestLoc = `${loc}[${k}]`;
+        // Network JSON isn't protected by the TypeScript interface, so read the
+        // interest defensively. Exactly one of `topic` / `topicFrom` must be set.
+        const rawInterest = interests[k] as {
+          topic?: unknown;
+          topicFrom?: { source?: unknown; pattern?: unknown } | undefined;
+          label?: unknown;
+        };
+        // Presence is independent of type: a malformed `{ topic: 123 }` is still
+        // "topic set" and must trip the exactly-one-of check (or a type error),
+        // not silently fall through to the `topicFrom` branch.
+        const hasTopic = rawInterest.topic !== undefined && rawInterest.topic !== null;
+        const hasTopicFrom = rawInterest.topicFrom !== undefined && rawInterest.topicFrom !== null;
+        if (hasTopic === hasTopicFrom) {
           throw new WorkflowValidationError(
-            `${loc}[${k}].topic: ${validation.reason ?? 'invalid external-event topic pattern'}`
+            `${interestLoc}: exactly one of "topic" or "topicFrom" must be set`
+          );
+        }
+        if (hasTopic) {
+          if (typeof rawInterest.topic !== 'string') {
+            throw new WorkflowValidationError(`${interestLoc}.topic: must be a string`);
+          }
+          const validation = validateGlobPattern(rawInterest.topic);
+          if (!validation.valid) {
+            throw new WorkflowValidationError(
+              `${interestLoc}.topic: ${validation.reason ?? 'invalid external-event topic pattern'}`
+            );
+          }
+          continue;
+        }
+        const topicFrom = rawInterest.topicFrom!;
+        if (
+          typeof topicFrom.source !== 'string' ||
+          !KNOWN_TOPIC_FROM_SOURCES.has(topicFrom.source)
+        ) {
+          throw new WorkflowValidationError(
+            `${interestLoc}.topicFrom.source: unknown source "${String(
+              topicFrom.source
+            )}"; expected one of ${[...KNOWN_TOPIC_FROM_SOURCES].map((s) => `"${s}"`).join(', ')}`
+          );
+        }
+        if (
+          typeof topicFrom.pattern !== 'string' ||
+          topicFrom.pattern.length === 0 ||
+          topicFrom.pattern !== topicFrom.pattern.trim()
+        ) {
+          throw new WorkflowValidationError(
+            `${interestLoc}.topicFrom.pattern: must be a non-empty string with no surrounding whitespace`
           );
         }
       }

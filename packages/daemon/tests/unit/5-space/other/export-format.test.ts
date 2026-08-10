@@ -111,7 +111,7 @@ describe('exportAgent', () => {
     const agent = makeAgent();
     const exported = exportAgent(agent);
 
-    expect(exported.version).toBe(1);
+    expect(exported.version).toBe(2);
     expect(exported.type).toBe('agent');
     expect(exported.name).toBe('My Coder');
     // role field was removed from SpaceWorkerAgent in M71
@@ -276,7 +276,7 @@ describe('exportWorkflow', () => {
 
   test('has version 1 and type workflow', () => {
     const exported = exportWorkflow(makeWorkflow(), []);
-    expect(exported.version).toBe(1);
+    expect(exported.version).toBe(2);
     expect(exported.type).toBe('workflow');
   });
 });
@@ -294,7 +294,7 @@ describe('exportBundle', () => {
       exportedFrom: '/workspace/foo',
     });
 
-    expect(bundle.version).toBe(1);
+    expect(bundle.version).toBe(2);
     expect(bundle.type).toBe('bundle');
     expect(bundle.name).toBe('My Bundle');
     expect(bundle.description).toBe('A test bundle');
@@ -330,7 +330,7 @@ describe('validateExportedAgent', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.name).toBe('My Coder');
-      expect(result.value.version).toBe(1);
+      expect(result.value.version).toBe(2);
     }
   });
 
@@ -368,13 +368,31 @@ describe('validateExportedAgent', () => {
     expect(result.ok).toBe(false);
   });
 
-  test('rejects version > 1 with "requires newer version" message', () => {
+  test('accepts v2 (current export version)', () => {
     const data = { version: 2, type: 'agent', name: 'Bot', role: 'general' };
+    const result = validateExportedAgent(data);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.version).toBe(2);
+    }
+  });
+
+  test('accepts v1 (retained import support)', () => {
+    const data = { version: 1, type: 'agent', name: 'Bot', role: 'general' };
+    const result = validateExportedAgent(data);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.version).toBe(1);
+    }
+  });
+
+  test('rejects version > 2 with "requires newer version" message', () => {
+    const data = { version: 3, type: 'agent', name: 'Bot', role: 'general' };
     const result = validateExportedAgent(data);
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error).toContain('requires newer version');
-      expect(result.error).toContain('version 2');
+      expect(result.error).toContain('version 3');
     }
   });
 
@@ -428,7 +446,7 @@ describe('validateExportedWorkflow', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.name).toBe('CI Workflow');
-      expect(result.value.version).toBe(1);
+      expect(result.value.version).toBe(2);
       expect(result.value.startNode).toBe('Code step');
     }
   });
@@ -568,6 +586,118 @@ describe('validateExportedWorkflow', () => {
 });
 
 // ---------------------------------------------------------------------------
+// validateExportedWorkflow — eventInterest topic / topicFrom
+// ---------------------------------------------------------------------------
+
+describe('validateExportedWorkflow — eventInterest topic/topicFrom', () => {
+  function makeWorkflowWithInterests(eventInterests: unknown, version: 1 | 2 = 2) {
+    return {
+      version,
+      type: 'workflow',
+      name: 'Interests',
+      nodes: [{ agents: [{ agentRef: 'Coder', name: 'coder', eventInterests }], name: 'Step' }],
+      startNode: 'Step',
+      tags: [],
+    };
+  }
+
+  test('accepts a static topic interest (v1)', () => {
+    const result = validateExportedWorkflow(
+      makeWorkflowWithInterests([{ topic: 'github/a/b/pull_request/1.*' }], 1)
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  test('accepts a topicFrom interest with a primaryLink source', () => {
+    const result = validateExportedWorkflow(
+      makeWorkflowWithInterests([
+        {
+          topicFrom: {
+            source: 'primaryLink',
+            pattern: 'github/{owner}/{repo}/pull_request/{number}.*',
+          },
+        },
+      ])
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  test('rejects a topicFrom interest in a version-1 workflow (topicFrom is v2-only)', () => {
+    const result = validateExportedWorkflow(
+      makeWorkflowWithInterests(
+        [
+          {
+            topicFrom: {
+              source: 'primaryLink',
+              pattern: 'github/{owner}/{repo}/pull_request/{number}.*',
+            },
+          },
+        ],
+        1
+      )
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('requires version 2');
+    }
+  });
+
+  test('rejects an interest with both topic and topicFrom set', () => {
+    const result = validateExportedWorkflow(
+      makeWorkflowWithInterests([
+        {
+          topic: 'github/a/b/pull_request/1.*',
+          topicFrom: {
+            source: 'primaryLink',
+            pattern: 'github/{owner}/{repo}/pull_request/{number}.*',
+          },
+        },
+      ])
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('exactly one of');
+    }
+  });
+
+  test('rejects an interest with neither topic nor topicFrom set', () => {
+    const result = validateExportedWorkflow(makeWorkflowWithInterests([{ label: 'x' }]));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('exactly one of');
+    }
+  });
+
+  test('rejects a topicFrom with an unknown source', () => {
+    const result = validateExportedWorkflow(
+      makeWorkflowWithInterests([
+        {
+          topicFrom: {
+            source: 'taskField',
+            pattern: 'github/{owner}/{repo}/pull_request/{number}.*',
+          },
+        },
+      ])
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  test('rejects a topicFrom with an empty pattern', () => {
+    const result = validateExportedWorkflow(
+      makeWorkflowWithInterests([{ topicFrom: { source: 'primaryLink', pattern: '' } }])
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  test('rejects a topicFrom with a whitespace-only pattern (aligned with manager)', () => {
+    const result = validateExportedWorkflow(
+      makeWorkflowWithInterests([{ topicFrom: { source: 'primaryLink', pattern: '   ' } }])
+    );
+    expect(result.ok).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // validateExportBundle
 // ---------------------------------------------------------------------------
 
@@ -580,7 +710,7 @@ describe('validateExportBundle', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.name).toBe('Bundle');
-      expect(result.value.version).toBe(1);
+      expect(result.value.version).toBe(2);
       expect(result.value.agents).toHaveLength(3);
       expect(result.value.workflows).toHaveLength(1);
     }
@@ -607,11 +737,12 @@ describe('validateExportBundle', () => {
     expect(validateExportBundle([]).ok).toBe(false);
   });
 
-  test('rejects bundle whose nested agent has version > 1', () => {
+  test('rejects bundle whose nested agent has version > 2', () => {
     const bundle = exportBundle([makeAgent()], [], 'B') as Record<string, unknown>;
-    // Override the nested agent's version to simulate a v2 agent embedded in a v1 bundle
+    // Override the nested agent's version to simulate an unsupported agent
+    // embedded in a current (v2) bundle.
     const agents = bundle.agents as Array<Record<string, unknown>>;
-    agents[0] = { ...agents[0], version: 2 };
+    agents[0] = { ...agents[0], version: 3 };
     const result = validateExportBundle(bundle);
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -620,7 +751,7 @@ describe('validateExportBundle', () => {
     }
   });
 
-  test('rejects bundle whose nested workflow has version > 1', () => {
+  test('rejects bundle whose nested workflow has version > 2', () => {
     const bundle = exportBundle([], [makeWorkflow()], 'B') as Record<string, unknown>;
     const workflows = bundle.workflows as Array<Record<string, unknown>>;
     workflows[0] = { ...workflows[0], version: 3 };
@@ -629,6 +760,19 @@ describe('validateExportBundle', () => {
     if (!result.ok) {
       expect(result.error).toContain('workflows[0]');
       expect(result.error).toContain('requires newer version');
+    }
+  });
+
+  test('rejects bundle whose nested item version exceeds the root bundle version', () => {
+    // A v1-rooted bundle cannot carry a v2 nested workflow — the nested item is
+    // re-stamped to the root version on output, which would smuggle a v2-only
+    // feature (topicFrom) into a v1 bundle.
+    const bundle = exportBundle([], [makeWorkflow()], 'B') as Record<string, unknown>;
+    bundle.version = 1; // root claims v1, but nested workflows are v2
+    const result = validateExportBundle(bundle);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('exceeds bundle version 1');
     }
   });
 
@@ -698,6 +842,66 @@ describe('round-trip: export → JSON → validate', () => {
       expect(result.value.nodes[2].agents[0].agentRef).toBe('Simple Agent');
       // startNode preserved as node name
       expect(result.value.startNode).toBe('Code step');
+    }
+  });
+
+  test('topicFrom interest round-trips through export/import (v2)', () => {
+    // The v2 bump exists to make topicFrom portable; exercise it end-to-end
+    // (export → JSON serialize/parse → validate) rather than relying on opaque
+    // pass-through + the bundle re-stamp.
+    const workflow: SpaceWorkflow = {
+      id: 'wf-topicfrom',
+      spaceId: 'space-uuid-1',
+      name: 'Dynamic Topic Workflow',
+      nodes: [
+        {
+          id: 'node-1',
+          name: 'Code step',
+          agents: [
+            {
+              agentId: 'agent-uuid-1',
+              name: 'coder',
+              eventInterests: [
+                {
+                  topicFrom: {
+                    source: 'primaryLink',
+                    pattern: 'github/{owner}/{repo}/pull_request/{number}.*',
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      startNodeId: 'node-1',
+      tags: [],
+      createdAt: 1000,
+      updatedAt: 2000,
+    };
+    const agents = [makeAgent()];
+
+    // Workflow round-trip.
+    const exported = exportWorkflow(workflow, agents);
+    expect(exported.version).toBe(2);
+    const result = validateExportedWorkflow(JSON.parse(JSON.stringify(exported)) as unknown);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.version).toBe(2);
+      expect(result.value.nodes[0].agents[0].eventInterests?.[0]?.topicFrom).toEqual({
+        source: 'primaryLink',
+        pattern: 'github/{owner}/{repo}/pull_request/{number}.*',
+      });
+    }
+
+    // Bundle round-trip: topicFrom survives the nested-workflow re-stamp at v2.
+    const bundle = exportBundle(agents, [workflow], 'TopicFrom Bundle');
+    const bundleResult = validateExportBundle(JSON.parse(JSON.stringify(bundle)) as unknown);
+    expect(bundleResult.ok).toBe(true);
+    if (bundleResult.ok) {
+      expect(bundleResult.value.version).toBe(2);
+      expect(
+        bundleResult.value.workflows[0].nodes[0].agents[0].eventInterests?.[0]?.topicFrom
+      ).toBeDefined();
     }
   });
 
