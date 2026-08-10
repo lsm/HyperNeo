@@ -2878,14 +2878,7 @@ export class TaskAgentManager {
         },
         getPrUrlForRun: (runId) => this.resolvePrUrlForRun(runId),
         onCyclicGateReset: (runId) => {
-          try {
-            this.config.spaceRuntimeService.invalidatePrimaryLinkForRun(runId);
-            this.config.spaceRuntimeService.materializeRunTopicFromInterests(runId);
-          } catch (err) {
-            log.warn(
-              `onCyclicGateReset: failed to rematerialize for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
-            );
-          }
+          this.config.spaceRuntimeService.handleCyclicGateReset(runId);
         },
       });
 
@@ -5115,19 +5108,11 @@ export class TaskAgentManager {
       },
       getPrUrlForRun: (runId) => this.resolvePrUrlForRun(runId),
       // A cyclic gate reset clears gate data, which can remove a pr_url that was
-      // the run's sole primary-link source. Invalidate the cached link and
-      // re-materialize so the superseded PR's topicFrom subscription is cleaned
-      // up (the materializer's cleanup runs even with no link). Trie-only — no
-      // replay needed (no new sub).
+      // the run's sole primary-link source (or expose an older fallback). The
+      // shared handler invalidates the cached link, re-materializes, and replays
+      // retained events only if the trie changed.
       onCyclicGateReset: (runId) => {
-        try {
-          this.config.spaceRuntimeService.invalidatePrimaryLinkForRun(runId);
-          this.config.spaceRuntimeService.materializeRunTopicFromInterests(runId);
-        } catch (err) {
-          log.warn(
-            `onCyclicGateReset: failed to rematerialize for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
-          );
-        }
+        this.config.spaceRuntimeService.handleCyclicGateReset(runId);
       },
     });
     const agentMessageRouter = new AgentMessageRouter({
@@ -5536,8 +5521,11 @@ export class TaskAgentManager {
           if (touchesPrimaryLink) {
             try {
               this.config.spaceRuntimeService.invalidatePrimaryLinkForRun(workflowRunId);
-              this.config.spaceRuntimeService.materializeRunTopicFromInterests(workflowRunId);
-              this.config.spaceRuntimeService.replayRetainedEventsForMaterialization(workflowRunId);
+              if (this.config.spaceRuntimeService.materializeRunTopicFromInterests(workflowRunId)) {
+                this.config.spaceRuntimeService.replayRetainedEventsForMaterialization(
+                  workflowRunId
+                );
+              }
             } catch (err) {
               log.warn(
                 `onHookStateUpdated: failed to materialize topicFrom interests for hook ` +
@@ -5576,8 +5564,9 @@ export class TaskAgentManager {
           if (linkBearing) {
             this.config.spaceRuntimeService.invalidatePrimaryLinkForRun(runId);
           }
-          this.config.spaceRuntimeService.materializeRunTopicFromInterests(runId);
-          this.config.spaceRuntimeService.replayRetainedEventsForMaterialization(runId);
+          if (this.config.spaceRuntimeService.materializeRunTopicFromInterests(runId)) {
+            this.config.spaceRuntimeService.replayRetainedEventsForMaterialization(runId);
+          }
         } catch (err) {
           log.warn(
             `onGateDataMerged: failed to materialize topicFrom interests for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
@@ -5617,8 +5606,12 @@ export class TaskAgentManager {
           if (linkBearing) {
             this.config.spaceRuntimeService.invalidatePrimaryLinkForRun(workflowRunId);
           }
-          this.config.spaceRuntimeService.materializeRunTopicFromInterests(workflowRunId);
-          this.config.spaceRuntimeService.replayRetainedEventsForMaterialization(workflowRunId);
+          // Replay only when materialization touched the trie, so an ordinary
+          // non-link artifact save on a non-topicFrom workflow doesn't trigger a
+          // global retained-event scan.
+          if (this.config.spaceRuntimeService.materializeRunTopicFromInterests(workflowRunId)) {
+            this.config.spaceRuntimeService.replayRetainedEventsForMaterialization(workflowRunId);
+          }
         } catch (err) {
           log.warn(
             `onArtifactRecorded: failed to materialize topicFrom interests for ` +

@@ -1245,40 +1245,46 @@ export class SpaceRuntime {
    * terminal (cancel/archive/done already cleared interests — an in-flight
    * save_artifact completing after teardown must not re-add a derived sub).
    *
+   * Returns true when it actually did trie-work (the workflow declares a
+   * topicFrom interest and the run is active) — callers use this to skip the
+   * retained-event replay when nothing could have changed, so an ordinary
+   * non-link artifact/gate write on a non-topicFrom workflow doesn't trigger a
+   * global retained-event scan.
+   *
    * Public for the node-agent-tools record triggers (save_artifact +
    * onGateDataChanged), wired via SpaceRuntimeService. Generic infra: knows
    * `primaryLink` resolution, not "PR".
    */
-  materializeRunTopicFromInterests(workflowRunId: string): void {
+  materializeRunTopicFromInterests(workflowRunId: string): boolean {
     // Don't touch the trie or kick off replay after the runtime has stopped:
     // the void replay helpers start async event handling that could inject into
     // a torn-down session or hit closed SQLite handles. stop() doesn't drain
     // these fire-and-forget tasks, so guard at the entry point.
-    if (this.isStopped) return;
+    if (this.isStopped) return false;
     const run = this.config.workflowRunRepo.getRun(workflowRunId);
-    if (!run) return;
+    if (!run) return false;
     // Skip terminal runs: cancel/done already cleared the run's interests
     // (clearRunInterests), and an in-flight save_artifact/gate-write completing
     // after teardown must not re-add a derived static sub that would fan later
     // events out to a terminal target (failed on delivery) and persist as a
     // leaked trie entry. Mirrors the eligibility check used during rehydrate (a
     // blocked run is NOT terminal — it still receives events when unblocked).
-    if (run.status === 'cancelled' || isWorkflowRunSucceeded(run.status)) return;
-    const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
-    if (!workflow) return;
+    if (run.status === 'cancelled' || isWorkflowRunSucceeded(run.status)) return false;
+    const workflow = this.resolveFrozenWorkflowForRun(run);
+    if (!workflow) return false;
     // Cheap guard: nothing to do unless SOME node declares a topicFrom interest.
     // Avoids resolving the primary link on every unrelated artifact save (notes,
     // metrics, …) or gate write by workflows that never use topicFrom.
-    if (!workflow.nodes.some((node) => nodeDeclaresTopicFrom(node))) return;
+    if (!workflow.nodes.some((node) => nodeDeclaresTopicFrom(node))) return false;
     const task = this.pickCanonicalTaskForRun(
       run,
       this.config.taskRepo.listByWorkflowRun(workflowRunId)
     );
-    if (!task) return;
+    if (!task) return false;
     // The canonical task may be cancelled/archived/done even while the run row
     // lingers — same terminal guard as the run check above.
     if (task.status === 'cancelled' || task.status === 'archived' || task.status === 'done') {
-      return;
+      return false;
     }
     this.materializeTopicFromInterestsForNodes(workflowRunId, task.id, workflow.nodes);
     // NOTE: no replay here — trie-work only, so the trie effect is testable in
@@ -1286,6 +1292,22 @@ export class SpaceRuntime {
     // after this (a topicFrom sub created mid-run must receive events that landed
     // before the link was recorded). Rehydrate doesn't need it: it rebuilds the
     // full trie before events flow.
+    return true;
+  }
+
+  /**
+   * Resolve the workflow definition FROZEN for a run (the one captured in its
+   * executor meta at start), falling back to the current persisted definition
+   * when the executor isn't tracked (before registration / after teardown).
+   * Materialization must use the frozen definition so a mid-run workflow edit
+   * can't subscribe newly-added slots that don't belong to the run, or skip the
+   * cleanup loop for removed nodes (leaving their old derived topics active).
+   */
+  private resolveFrozenWorkflowForRun(run: SpaceWorkflowRun): SpaceWorkflow | null {
+    return (
+      this.executorMeta.get(run.id)?.workflow ??
+      this.config.spaceWorkflowManager.getWorkflow(run.workflowId)
+    );
   }
 
   /**
@@ -1563,26 +1585,6 @@ export class SpaceRuntime {
   clearRunInterests(workflowRunId: string): void {
     this.topicTrie.remove(
       (target) => isWorkflowSubscriptionTarget(target) && target.workflowRunId === workflowRunId
-    );
-    this.clearQueuedDeliveriesForRun(workflowRunId, 'run_terminal_cleanup');
-    this.primaryLinkByUrl.delete(workflowRunId);
-  }
-
-  /**
-   * Like {@link clearRunInterests} but preserves agent-created `dynamic`
-   * subscriptions. Used for a retryable task cancellation: the run's static and
-   * runtime-auto interests are cleared (the task is no longer active), but a
-   * reused worker session keeps the topics it registered via
-   * `subscribe_external_event` so a later retry still receives them. A full
-   * `clearRunInterests` (also dropping dynamic) is used for permanent teardown
-   * (archive, space delete).
-   */
-  clearRunInterestsPreservingDynamic(workflowRunId: string): void {
-    this.topicTrie.remove(
-      (target) =>
-        isWorkflowSubscriptionTarget(target) &&
-        target.workflowRunId === workflowRunId &&
-        target.subscriptionKind !== 'dynamic'
     );
     this.clearQueuedDeliveriesForRun(workflowRunId, 'run_terminal_cleanup');
     this.primaryLinkByUrl.delete(workflowRunId);
@@ -5054,6 +5056,7 @@ export class SpaceRuntime {
     if (!startNode) {
       this.executors.delete(run.id);
       this.executorMeta.delete(run.id);
+      this.primaryLinkByUrl.delete(run.id);
       await this.transitionRunStatusAndEmit(run.id, 'cancelled');
       throw new Error(`Start node "${workflow.startNodeId}" not found in workflow "${workflowId}"`);
     }
@@ -5104,6 +5107,7 @@ export class SpaceRuntime {
       // Clean up the executor/meta entries so the run is not orphaned in the map.
       this.executors.delete(run.id);
       this.executorMeta.delete(run.id);
+      this.primaryLinkByUrl.delete(run.id);
       // Cancel the DB run record so rehydrateExecutors() does not silently loop
       // over it on next server restart (an in_progress run with no tasks would
       // sit in the executor map indefinitely, never advancing and never erroring).
@@ -9501,6 +9505,7 @@ export class SpaceRuntime {
         }
         this.executors.delete(runId);
         this.executorMeta.delete(runId);
+        this.primaryLinkByUrl.delete(runId);
       }
     }
   }

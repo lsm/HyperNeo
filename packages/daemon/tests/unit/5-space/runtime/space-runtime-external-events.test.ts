@@ -7170,6 +7170,50 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(injected).toHaveLength(2);
     expect(injected[1]!.message).toContain(freshEvent.id);
   });
+
+  test('handleCyclicGateReset sequence replays a retained event for the fallback link', async () => {
+    // A cyclic reset clears the freshest primary-link source and may expose an
+    // older fallback; handleCyclicGateReset (invalidate + rematerialize +
+    // conditional replay) must deliver a retained event for the now-current
+    // fallback. This is the substance every ChannelRouter onCyclicGateReset
+    // invokes via the service handler.
+    const workflow = createTopicFromWorkflow();
+    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    markCoderLive(run.id, 'session-cyclic-fallback');
+
+    // Establish link 42.
+    recordPrLinkArtifact(run.id, 'code', PR_URL);
+    materializeAndReplay(run.id);
+
+    // A newer link (99) is written directly (no trigger invalidate), and an
+    // event for it lands while the cached link is still 42 → retained.
+    artifactRepo.upsert({
+      id: crypto.randomUUID(),
+      runId: run.id,
+      nodeId: 'code',
+      artifactType: 'link',
+      artifactKey: deriveArtifactKey('link', { kind: 'pr' }),
+      data: { kind: 'pr', url: 'https://github.com/lsm/neokai/pull/99' },
+    });
+    const fallbackEvent = makeEvent({
+      id: `evt-fallback-99-${Math.random().toString(36).slice(2)}`,
+      topic: 'github/lsm/neokai/pull_request/99.review_submitted',
+      summary: 'PR 99 review (fallback)',
+      dedupeKey: `dedupe-fallback-99-${Math.random().toString(36).slice(2)}`,
+    });
+    await eventService.publish(fallbackEvent);
+    expect(eventStore.getById(fallbackEvent.id)?.state).toBe('published');
+
+    // Cyclic handler: invalidate (re-resolve → 99) + rematerialize (cleanup 42,
+    // add 99) + replay (deliver the retained 99 event).
+    runtime.invalidatePrimaryLinkForRun(run.id);
+    if (runtime.materializeRunTopicFromInterests(run.id)) {
+      runtime.replayRetainedEventsForMaterialization(run.id);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(eventStore.getById(fallbackEvent.id)?.state).toBe('delivered');
+  });
 });
 
 describe('SpaceRuntime queue-health snapshot', () => {

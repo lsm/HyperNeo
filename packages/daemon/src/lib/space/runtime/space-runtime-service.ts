@@ -1056,8 +1056,24 @@ export class SpaceRuntimeService {
    * without calling a subscribe tool. Thin pass-through to the runtime; wired to
    * the node-agent-tools `save_artifact` and `onGateDataChanged` triggers.
    */
-  materializeRunTopicFromInterests(workflowRunId: string): void {
-    this.runtime.materializeRunTopicFromInterests(workflowRunId);
+  materializeRunTopicFromInterests(workflowRunId: string): boolean {
+    return this.runtime.materializeRunTopicFromInterests(workflowRunId);
+  }
+
+  /**
+   * Shared handler for a cyclic `resetOnCycle` gate reset (wired into every
+   * ChannelRouter's onCyclicGateReset). The reset clears gate data, which can
+   * remove a pr_url that was the run's sole primary-link source, OR expose an
+   * older fallback link — so invalidate the cached resolution, re-materialize
+   * (cleans up the superseded sub / registers the fallback), and replay retained
+   * events only if materialization actually touched the trie (no global scan when
+   * the workflow has no topicFrom or the run is terminal).
+   */
+  handleCyclicGateReset(runId: string): void {
+    this.runtime.invalidatePrimaryLinkForRun(runId);
+    if (this.runtime.materializeRunTopicFromInterests(runId)) {
+      this.runtime.replayRetainedEventsForMaterialization(runId);
+    }
   }
 
   /**
@@ -2279,6 +2295,7 @@ export class SpaceRuntimeService {
       onGateDataChangedComplete: (runId, _gateId, activatedTasks, gateOpened) =>
         this.handleGateDataChangedComplete(runId, activatedTasks, gateOpened),
       getPrUrlForRun: (rid) => this.resolvePrUrlForRun(rid),
+      onCyclicGateReset: (runId) => this.handleCyclicGateReset(runId),
     });
     const activated = await router.onGateDataChanged(runId, gateId);
     return activated;

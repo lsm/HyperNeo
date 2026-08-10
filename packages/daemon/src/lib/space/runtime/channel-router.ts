@@ -1828,7 +1828,7 @@ export class ChannelRouter {
     // were actually reset.
     if (cyclicGates.length > 0) {
       try {
-        void this.config.onCyclicGateReset?.(runId);
+        this.config.onCyclicGateReset?.(runId);
       } catch (err) {
         log.warn(
           `onCyclicGateReset failed for run ${runId}: ${err instanceof Error ? err.message : String(err)}`

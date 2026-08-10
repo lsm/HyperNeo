@@ -1538,6 +1538,20 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       try {
         const artifactKey = deriveArtifactKey(shape, normalized, keyArg);
 
+        // Capture whether the row about to be overwritten carried a legacy
+        // pr_url/prUrl BEFORE the upsert replaces it — a re-upsert that omits the
+        // field clears the durable link, and the record trigger must still
+        // invalidate the cached primary link. listByRun is an indexed per-run
+        // read (bounded).
+        const previousCarriedPrUrl = artifactRepo
+          .listByRun(workflowRunId)
+          .some(
+            (a) =>
+              a.artifactType === shape &&
+              a.artifactKey === artifactKey &&
+              ('prUrl' in (a.data ?? {}) || 'pr_url' in (a.data ?? {}))
+          );
+
         const record = artifactRepo.upsert({
           id: crypto.randomUUID(),
           runId: workflowRunId,
@@ -1566,7 +1580,14 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
           // linkBearing: a `link` shape or any artifact carrying a legacy
           // prUrl/pr_url field could change the run's primary link, so the
           // consumer invalidates its cached resolution before re-materializing.
-          const linkBearing = shape === 'link' || 'prUrl' in normalized || 'pr_url' in normalized;
+          // Includes a removal: a non-link artifact that previously carried
+          // pr_url, re-upserted under the same key with data that omits it,
+          // clears the durable link (captured above as previousCarriedPrUrl).
+          const linkBearing =
+            shape === 'link' ||
+            'prUrl' in normalized ||
+            'pr_url' in normalized ||
+            previousCarriedPrUrl;
           config.onArtifactRecorded?.(workflowRunId, linkBearing);
         } catch (recordedErr) {
           log.warn(
