@@ -24,6 +24,11 @@ export class ProcessingStateManager {
   private isCompacting = false;
   private logger: Logger;
   private onIdleCallback?: () => Promise<void>;
+  /**
+   * Resolvers awaiting the next idle transition (the message-delivery bridge
+   * awaiting a turn's end). Drained in {@link setIdle}.
+   */
+  private idleWaiters: Array<() => void> = [];
 
   constructor(
     private sessionId: string,
@@ -39,6 +44,21 @@ export class ProcessingStateManager {
    */
   setOnIdleCallback(callback: () => Promise<void>): void {
     this.onIdleCallback = callback;
+  }
+
+  /**
+   * Resolve when the session next transitions to idle. The message-delivery
+   * bridge arms this to await a turn's completion: the v2 delivery job must stay
+   * `processing` for the SDK turn's duration and complete at turn-end. Awaiting
+   * `queryPromise` is wrong in streaming-input mode — it resolves only on
+   * query-CLOSE (never at turn-end), so the turn job would hang `processing`
+   * forever and every subsequent message would misclassify as a steer. Arm
+   * BEFORE the turn starts so a fast turn's idle cannot be missed.
+   */
+  waitForIdleTransition(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      this.idleWaiters.push(resolve);
+    });
   }
 
   /**
@@ -117,6 +137,13 @@ export class ProcessingStateManager {
    */
   async setIdle(): Promise<void> {
     await this.setState({ status: 'idle' });
+
+    // Resolve turn-end waiters (e.g. the message-delivery bridge awaiting this
+    // turn's completion) before the onIdle callback so the delivery job
+    // completes promptly at turn-end.
+    const waiters = this.idleWaiters;
+    this.idleWaiters = [];
+    for (const resolve of waiters) resolve();
 
     // Execute idle callback if set (e.g., for deferred restarts)
     if (this.onIdleCallback) {

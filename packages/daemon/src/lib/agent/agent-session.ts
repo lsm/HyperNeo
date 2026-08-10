@@ -1859,6 +1859,14 @@ export class AgentSession
       if (!queryPromise) {
         throw new Error('message_delivery: query did not start; cannot drive turn');
       }
+      // Arm the turn-end wait BEFORE the kickoff can be consumed: the delivery
+      // job must stay `processing` for the SDK turn's duration and complete at
+      // turn-end (the idle transition), not at query-close. queryPromise only
+      // resolves on query-CLOSE — in streaming-input mode that is never at
+      // turn-end, so awaiting it alone hangs the job `processing` forever and
+      // every later message misclassifies as a steer. See
+      // ProcessingStateManager.waitForIdleTransition.
+      const turnEnd = this.stateManager.waitForIdleTransition();
       // Feed the kickoff (resolves on onSent = the SDK consumed it) UNLESS a
       // prior attempt already did (alreadyConsumed = reclaim after a crash): the
       // SDK resume-from-history already holds a consumed kickoff, so re-feeding
@@ -1879,7 +1887,7 @@ export class AgentSession
           durable: true,
         });
       }
-      return { kind: 'driving' as const, queryPromise, acknowledgment };
+      return { kind: 'driving' as const, queryPromise, turnEnd, acknowledgment };
     });
     if (started.kind === 'blocked') {
       // Mirror the legacy startQueryAndEnqueue path: report the session as
@@ -1895,7 +1903,11 @@ export class AgentSession
     // Long awaits OUTSIDE the lock — ownership mutations and mid-turn steers can
     // proceed while the provider acknowledges the kickoff and runs the turn.
     await started.acknowledgment;
-    await started.queryPromise.catch(() => {});
+    // Complete at TURN-END (the idle transition). queryPromise is raced only as
+    // a safety net for a query that closes without an idle (e.g. a hard crash);
+    // in streaming-input mode queryPromise never resolves at turn-end, so
+    // turnEnd wins and the job completes promptly when the SDK finishes the turn.
+    await Promise.race([started.turnEnd, started.queryPromise.catch(() => {})]);
     return { outcome: 'completed' };
   }
 
