@@ -919,11 +919,12 @@ describe('node-agent-tools: save_artifact', () => {
     expect(artifacts[0].nodeId).toBe(ctx.nodeId);
   });
 
-  test('save_artifact fires onArtifactRecorded with the authoring run after a successful write', async () => {
-    const calls: string[] = [];
+  test('save_artifact fires onArtifactRecorded with the authoring run + linkBearing after a successful write', async () => {
+    const calls: Array<{ workflowRunId: string; linkBearing: boolean }> = [];
     const handlers = createNodeAgentToolHandlers(
       makeConfig(ctx, {
-        onArtifactRecorded: (workflowRunId) => calls.push(workflowRunId),
+        onArtifactRecorded: (workflowRunId, linkBearing) =>
+          calls.push({ workflowRunId, linkBearing }),
       })
     );
     const result = await handlers.save_artifact({
@@ -934,17 +935,31 @@ describe('node-agent-tools: save_artifact', () => {
     const parsed = JSON.parse(result.content[0].text);
 
     // The record trigger fires exactly once, after the durable write, scoped to
-    // the authoring run — so the runtime can re-materialize topicFrom interests
-    // against the just-recorded primary link.
+    // the authoring run; linkBearing is true for a `link` shape so the consumer
+    // invalidates its cached primary link before re-materializing.
     expect(parsed.success).toBe(true);
-    expect(calls).toEqual([ctx.workflowRunId]);
+    expect(calls).toEqual([{ workflowRunId: ctx.workflowRunId, linkBearing: true }]);
+  });
+
+  test('save_artifact reports linkBearing=false for a non-link artifact', async () => {
+    const calls: Array<{ workflowRunId: string; linkBearing: boolean }> = [];
+    const handlers = createNodeAgentToolHandlers(
+      makeConfig(ctx, {
+        onArtifactRecorded: (workflowRunId, linkBearing) =>
+          calls.push({ workflowRunId, linkBearing }),
+      })
+    );
+    await handlers.save_artifact({ shape: 'note', data: { text: 'status' } });
+
+    expect(calls).toEqual([{ workflowRunId: ctx.workflowRunId, linkBearing: false }]);
   });
 
   test('save_artifact does not fire onArtifactRecorded when the write fails validation', async () => {
-    const calls: string[] = [];
+    const calls: Array<{ workflowRunId: string; linkBearing: boolean }> = [];
     const handlers = createNodeAgentToolHandlers(
       makeConfig(ctx, {
-        onArtifactRecorded: (workflowRunId) => calls.push(workflowRunId),
+        onArtifactRecorded: (workflowRunId, linkBearing) =>
+          calls.push({ workflowRunId, linkBearing }),
       })
     );
     // Empty payload fails shape validation before the upsert, so the record
@@ -2106,6 +2121,55 @@ describe('node-agent-tools: send_message (gate-write)', () => {
     expect(calls).toHaveLength(1);
     expect(calls[0].runId).toBe(ctx.workflowRunId);
     expect(calls[0].gateId).toBe('gate-callback');
+  });
+
+  test('onGateDataMerged fires at the durable merge with linkBearing=true for a pr_url gate write', async () => {
+    // Fires right after gateDataRepo.merge (before gate re-eval), so a scripted
+    // gate establishing pr_url materializes even if re-eval throws/is rate
+    // limited. linkBearing reflects whether the merged data carries pr_url.
+    const gate: Gate = {
+      id: 'gate-merged-link',
+      fields: [{ name: 'pr_url', type: 'string', writers: ['*'], check: { op: 'exists' } }],
+      resetOnCycle: false,
+    };
+    const workflow = makeWorkflowWithGatedChannel(gate);
+    const calls: Array<{ runId: string; linkBearing: boolean }> = [];
+    const config = makeConfig(ctx, {
+      workflow,
+      channelResolver: makeResolver(workflow.channels ?? []),
+      onGateDataMerged: (runId, linkBearing) => calls.push({ runId, linkBearing }),
+    });
+    const handlers = createNodeAgentToolHandlers(config);
+
+    await handlers.send_message({
+      target: 'reviewer',
+      message: 'pr',
+      data: { pr_url: 'https://github.com/acme/app/pull/42' },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(calls).toEqual([{ runId: ctx.workflowRunId, linkBearing: true }]);
+  });
+
+  test('onGateDataMerged reports linkBearing=false for a gate write without pr_url', async () => {
+    const gate: Gate = {
+      id: 'gate-merged-note',
+      fields: [{ name: 'note', type: 'string', writers: ['*'], check: { op: 'exists' } }],
+      resetOnCycle: false,
+    };
+    const workflow = makeWorkflowWithGatedChannel(gate);
+    const calls: Array<{ runId: string; linkBearing: boolean }> = [];
+    const config = makeConfig(ctx, {
+      workflow,
+      channelResolver: makeResolver(workflow.channels ?? []),
+      onGateDataMerged: (runId, linkBearing) => calls.push({ runId, linkBearing }),
+    });
+    const handlers = createNodeAgentToolHandlers(config);
+
+    await handlers.send_message({ target: 'reviewer', message: 'status', data: { note: 'ok' } });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(calls).toEqual([{ runId: ctx.workflowRunId, linkBearing: false }]);
   });
 
   test('onGateDataChanged fires after queued-only gated delivery via send_message', async () => {

@@ -778,6 +778,11 @@ export function createSpaceTables(db: BunDatabase): void {
 	`);
 
   db.exec(`
+		CREATE INDEX IF NOT EXISTS idx_space_external_events_space_state
+		ON space_external_events(space_id, state)
+	`);
+
+  db.exec(`
 		CREATE TABLE IF NOT EXISTS space_external_event_deliveries (
 			event_id TEXT NOT NULL,
 			delivery_key TEXT NOT NULL,

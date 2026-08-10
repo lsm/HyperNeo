@@ -906,6 +906,15 @@ export class SpaceRuntime {
   private promptTooLongRecovery = new Map<string, PromptTooLongRecoveryState>();
   private readonly toolContinuationRepo: ToolContinuationRecoveryRepository;
   private readonly topicTrie = new TopicTrie<SubscriptionTarget>();
+  /**
+   * Per-run cache of the resolved primary-link URL, so a burst of materialize
+   * triggers (e.g. the coder saving many non-link artifacts) doesn't re-run
+   * resolvePrimaryLinkUrl's gate-data + hook-state + artifact scans each time.
+   * Invalidated by {@link invalidatePrimaryLinkForRun} on a link-bearing write
+   * (a `link` artifact, or any gate-data/hook-state write carrying pr_url).
+   * Empty on a fresh runtime instance, so rehydrate resolves cold.
+   */
+  private readonly primaryLinkByUrl = new Map<string, string>();
   private readonly pendingExternalEventQueue = new Map<string, PendingExternalEvent[]>();
   private readonly externalEventRetryTimers = new Map<string, Timer>();
   private readonly externalEventRetryCounts = new Map<string, number>();
@@ -1115,11 +1124,14 @@ export class SpaceRuntime {
   }
 
   /**
-   * Trust boundary for `topicFrom` primary-link resolution. Mirrors the
-   * github-connector's `validatePrLookupHost` allowlist (github.com plus the
-   * configured GH_HOST) so a GitHub Enterprise deployment's PR links resolve,
-   * while a link from an arbitrary host cannot subscribe to an unrelated repo's
-   * events.
+   * Trust boundary for `topicFrom` primary-link resolution: the HOST allowlist
+   * (github.com plus the configured GH_HOST), NOT the repo. parsePrUrl accepts a
+   * GitHub-shaped path on any host, so without this check a link like
+   * `https://evil.example/acme/widgets/pull/7` would resolve to a topic for the
+   * real `acme/widgets` repo and let the run subscribe to an unrelated repo's
+   * events. Mirrors github-connector's `validatePrLookupHost`; resolveTopicFrom
+   * Interest enforces it (returns null for an untrusted host) before any owner/
+   * repo/number segment is used.
    */
   private topicFromAllowedHosts(): ReadonlySet<string> {
     const hosts = new Set<string>(['github.com']);
@@ -1238,6 +1250,11 @@ export class SpaceRuntime {
    * `primaryLink` resolution, not "PR".
    */
   materializeRunTopicFromInterests(workflowRunId: string): void {
+    // Don't touch the trie or kick off replay after the runtime has stopped:
+    // the void replay helpers start async event handling that could inject into
+    // a torn-down session or hit closed SQLite handles. stop() doesn't drain
+    // these fire-and-forget tasks, so guard at the entry point.
+    if (this.isStopped) return;
     const run = this.config.workflowRunRepo.getRun(workflowRunId);
     if (!run) return;
     // Skip terminal runs: cancel/done already cleared the run's interests
@@ -1264,23 +1281,35 @@ export class SpaceRuntime {
       return;
     }
     this.materializeTopicFromInterestsForNodes(workflowRunId, task.id, workflow.nodes);
-    // Replay retained `published` events. Unlike template-declared static
-    // interests (rebuilt during rehydrate BEFORE the runtime accepts events),
-    // a topicFrom-static sub is created MID-RUN by this trigger — after events
-    // are already flowing. An event that landed between PR creation and the link
-    // being recorded (the PR `opened` event, a fast check_run, an early reaction)
-    // would otherwise stay `published` until TTL, even though a node declared
-    // `pull_request/{number}.*`. registerSubscription's own replay only covers
-    // `dynamic` subs, and topicFrom must stay `static` (the rehydrate path
-    // registers static; mixing kinds would double-deliver), so replay explicitly
-    // here. Two passes cover both gap shapes: events with no delivery yet, and
-    // events already routed to other targets (a new target must still receive
-    // them). Idempotent and bounded by the published-event retention TTL.
-    // Rehydrate is untouched: it rebuilds the full trie before events flow.
+    // NOTE: no replay here — trie-work only, so the trie effect is testable in
+    // isolation. Triggers call replayRetainedEventsForMaterialization explicitly
+    // after this (a topicFrom sub created mid-run must receive events that landed
+    // before the link was recorded). Rehydrate doesn't need it: it rebuilds the
+    // full trie before events flow.
+  }
+
+  /**
+   * Replay retained `published` events so a freshly-materialized topicFrom sub
+   * (created mid-run by a trigger, after events are already flowing) receives
+   * any that landed before the link was recorded. Split out of
+   * {@link materializeRunTopicFromInterests} for testability (the trie effect and
+   * the replay are independently observable).
+   *
+   * Two passes cover both gap shapes: events with no delivery yet (the pure-gap
+   * case), and events already routed to other targets (a new target must still
+   * receive them — registerSubscription's own replay only covers `dynamic`
+   * subs, and topicFrom must stay `static` since rehydrate registers static).
+   * Idempotent and bounded by the published-event retention TTL. Public via
+   * SpaceRuntimeService; the node-agent-tools triggers call it after
+   * materializeRunTopicFromInterests.
+   */
+  replayRetainedEventsForMaterialization(workflowRunId: string): void {
+    if (this.isStopped) return;
     this.redispatchRetainedExternalEvents();
     // Scope the new-target replay to this run's space so it doesn't scan other
     // spaces' published events.
-    this.redispatchPublishedEventsToNewTargets(run.spaceId);
+    const run = this.config.workflowRunRepo.getRun(workflowRunId);
+    this.redispatchPublishedEventsToNewTargets(run?.spaceId);
   }
 
   private registerRunInterestsFromWorkflow(run: SpaceWorkflowRun, workflow: SpaceWorkflow): void {
@@ -9281,10 +9310,28 @@ export class SpaceRuntime {
    */
 
   private resolvePrUrlForRun(runId: string): string {
+    // Cached per run (see primaryLinkByUrl): resolvePrimaryLinkUrl scans gate
+    // data, hook state, and artifacts, and a burst of materialize triggers
+    // shouldn't re-run those scans when the link hasn't changed. The cache is
+    // invalidated by invalidatePrimaryLinkForRun on link-bearing writes.
+    const cached = this.primaryLinkByUrl.get(runId);
+    if (cached !== undefined) return cached;
     // Delegated to the domain artifact profile (coding: resolves the PR URL).
     // Generic infra does not know which `link` is the PR, so without a profile
     // there is no primary link to resolve.
-    return this.config.artifactProfile?.resolvePrimaryLinkUrl(runId) ?? '';
+    const url = this.config.artifactProfile?.resolvePrimaryLinkUrl(runId) ?? '';
+    this.primaryLinkByUrl.set(runId, url);
+    return url;
+  }
+
+  /**
+   * Drop the cached primary link for a run. Call after a link-bearing durable
+   * write (a `link` artifact, or gate-data/hook-state carrying pr_url) so the
+   * next resolution re-scans. Public via SpaceRuntimeService for the
+   * node-agent-tools triggers.
+   */
+  invalidatePrimaryLinkForRun(runId: string): void {
+    this.primaryLinkByUrl.delete(runId);
   }
 
   private resolvePrimaryResultArtifactSummary(runId: string): string | undefined {

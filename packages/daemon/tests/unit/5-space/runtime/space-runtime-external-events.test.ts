@@ -6433,6 +6433,10 @@ describe('SpaceRuntime external event subscriptions', () => {
       artifactKey: deriveArtifactKey('link', { kind: 'pr' }),
       data: { kind: 'pr', url: prUrl },
     });
+    // A production save_artifact would fire onArtifactRecorded(linkBearing=true),
+    // which invalidates the runtime's cached primary link. This helper writes the
+    // row directly, so invalidate explicitly to match.
+    runtime.invalidatePrimaryLinkForRun(runId);
   }
 
   /** Mark the coder node's execution live with a deliverable session. */
@@ -6444,6 +6448,17 @@ describe('SpaceRuntime external event subscriptions', () => {
       startedAt: Date.now(),
     });
     tam.alive.add(sessionId);
+  }
+
+  /**
+   * Mirror the production trigger: trie-work then retained-event replay. Use this
+   * in gap tests (event published BEFORE the link) so the replay runs; tests that
+   * publish AFTER materialize deliver via the normal path and need only the
+   * trie-work (a plain materializeRunTopicFromInterests call).
+   */
+  function materializeAndReplay(runId: string): void {
+    runtime.materializeRunTopicFromInterests(runId);
+    runtime.replayRetainedEventsForMaterialization(runId);
   }
 
   /** Build a workflow whose coder node declares a topicFrom interest. */
@@ -6734,7 +6749,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(event.id)?.state).toBe('published');
 
     recordPrLinkArtifact(run.id, 'code', PR_URL);
-    runtime.materializeRunTopicFromInterests(run.id);
+    materializeAndReplay(run.id);
     await new Promise((resolve) => setTimeout(resolve, 10));
 
     // The coder (new target) receives the retained event. The source event stays
@@ -6810,7 +6825,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     );
 
     recordPrLinkArtifact(run.id, 'code', PR_URL);
-    runtime.materializeRunTopicFromInterests(run.id);
+    materializeAndReplay(run.id);
     await new Promise((resolve) => setTimeout(resolve, 10));
 
     // The coder does NOT receive the stale event, and the source event stays
@@ -6838,7 +6853,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     // fire-and-forget handler (like the dynamic-subscription gap path), so let
     // it settle before asserting.
     recordPrLinkArtifact(run.id, 'code', PR_URL);
-    runtime.materializeRunTopicFromInterests(run.id);
+    materializeAndReplay(run.id);
     await new Promise((resolve) => setTimeout(resolve, 10));
 
     expect(injected).toHaveLength(1);
@@ -7044,7 +7059,10 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(injected).toHaveLength(1);
 
     // Clear the primary link and re-materialize: the derived sub is removed.
+    // (Invalidate the cached link — a production onGateDataMerged would do this
+    // for a pr_url-bearing gate write; this test writes gate data directly.)
     gateDataRepo.set(run.id, 'pr-gate', { prUrl: '' });
+    runtime.invalidatePrimaryLinkForRun(run.id);
     runtime.materializeRunTopicFromInterests(run.id);
 
     const secondEvent = makeEvent({
@@ -7058,6 +7076,55 @@ describe('SpaceRuntime external event subscriptions', () => {
     // No new delivery — the superseded topic is inert again.
     expect(injected).toHaveLength(1);
     expect(eventStore.getById(secondEvent.id)?.state).toBe('published');
+  });
+
+  test('skips (no throw) a topicFrom interest that resolves to an invalid glob', async () => {
+    // An unsupported placeholder (here `{host}`) is left literal by
+    // resolveTopicFromInterest, so the resolved topic contains `{`/`}` and fails
+    // validateGlobPattern. registerSubscription returns {success:false}; the
+    // materializer must log-and-skip it rather than throw, and no sub is
+    // registered.
+    const workflow = workflowManager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: `Workflow ${Math.random()}`,
+      description: '',
+      nodes: [
+        {
+          id: 'code',
+          name: 'Code',
+          agents: [
+            {
+              agentId: AGENT_ID,
+              name: 'coder',
+              eventInterests: [
+                {
+                  topicFrom: {
+                    source: 'primaryLink',
+                    pattern: 'github/{host}/{repo}/pull_request/{number}.*',
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      transitions: [],
+      startNodeId: 'code',
+      rules: [],
+      tags: [],
+    });
+    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    markCoderLive(run.id, 'session-invalid-glob');
+
+    recordPrLinkArtifact(run.id, 'code', PR_URL);
+    expect(() => runtime.materializeRunTopicFromInterests(run.id)).not.toThrow();
+
+    const event = makeEvent();
+    await eventService.publish(event);
+
+    // No sub registered → no delivery.
+    expect(injected).toHaveLength(0);
+    expect(eventStore.getById(event.id)?.state).toBe('published');
   });
 });
 

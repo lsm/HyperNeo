@@ -5501,13 +5501,18 @@ export class TaskAgentManager {
           // interest stays inert until an unrelated artifact/gate update or
           // restart. Best-effort; the runtime is terminal-run guarded and the
           // cheap topicFrom guard skips non-topicFrom workflows.
-          const local = hookState.localState;
-          const carriesPrimaryLink =
-            (typeof local?.prUrl === 'string' && local.prUrl.length > 0) ||
-            (typeof local?.pr_url === 'string' && local.pr_url.length > 0);
-          if (carriesPrimaryLink) {
+          const local = hookState.localState ?? {};
+          // Fire whenever either key is PRESENT (incl. an empty string): a hook
+          // returning record_state with pr_url:'' clears the primary link, and the
+          // derived-sub cleanup in the materializer must still run or the
+          // superseded PR's subscription leaks. Checking presence (not non-empty)
+          // covers both establish- and clear-link writes.
+          const touchesPrimaryLink = 'prUrl' in local || 'pr_url' in local;
+          if (touchesPrimaryLink) {
             try {
+              this.config.spaceRuntimeService.invalidatePrimaryLinkForRun(workflowRunId);
               this.config.spaceRuntimeService.materializeRunTopicFromInterests(workflowRunId);
+              this.config.spaceRuntimeService.replayRetainedEventsForMaterialization(workflowRunId);
             } catch (err) {
               log.warn(
                 `onHookStateUpdated: failed to materialize topicFrom interests for hook ` +
@@ -5541,9 +5546,13 @@ export class TaskAgentManager {
       // delay can exceed the retained-event TTL). Materialize here so a topicFrom
       // interest resolves from the committed pr_url regardless of the deferral.
       // Best-effort, run-scoped, terminal-run guarded.
-      onGateDataMerged: (runId) => {
+      onGateDataMerged: (runId, linkBearing) => {
         try {
+          if (linkBearing) {
+            this.config.spaceRuntimeService.invalidatePrimaryLinkForRun(runId);
+          }
           this.config.spaceRuntimeService.materializeRunTopicFromInterests(runId);
+          this.config.spaceRuntimeService.replayRetainedEventsForMaterialization(runId);
         } catch (err) {
           log.warn(
             `onGateDataMerged: failed to materialize topicFrom interests for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
@@ -5578,9 +5587,13 @@ export class TaskAgentManager {
       // declared a topicFrom interest for this run's PR). No-op unless the
       // workflow declares a topicFrom interest; the runtime is best-effort,
       // terminal-run guarded, and never throws here.
-      onArtifactRecorded: (workflowRunId) => {
+      onArtifactRecorded: (workflowRunId, linkBearing) => {
         try {
+          if (linkBearing) {
+            this.config.spaceRuntimeService.invalidatePrimaryLinkForRun(workflowRunId);
+          }
           this.config.spaceRuntimeService.materializeRunTopicFromInterests(workflowRunId);
+          this.config.spaceRuntimeService.replayRetainedEventsForMaterialization(workflowRunId);
         } catch (err) {
           log.warn(
             `onArtifactRecorded: failed to materialize topicFrom interests for ` +

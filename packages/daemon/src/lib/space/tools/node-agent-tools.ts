@@ -339,9 +339,11 @@ export interface NodeAgentToolsConfig {
    *
    * Named \`onGateDataMerged\` (not \`onGateDataCommitted\`) to avoid collision
    * with the domain profile's \`WorkflowArtifactProfile.onGateDataCommitted\`
-   * (a different hook firing ~50 lines away in the same handler).
+   * (a different hook firing ~50 lines away in the same handler). \`linkBearing\`
+   * is true when the merged gate data carries a \`prUrl\`/\`pr_url\` field, so the
+   * consumer can invalidate a cached primary link before re-materializing.
    */
-  onGateDataMerged?: (workflowRunId: string) => void;
+  onGateDataMerged?: (workflowRunId: string, linkBearing: boolean) => void;
   /**
    * Optional shared retry scheduler for deferred gate-data refreshes after
    * rate-limited gate writes/delivery. When provided, `send_message` schedules
@@ -433,11 +435,14 @@ export interface NodeAgentToolsConfig {
    * subscriptions — letting each declaring node auto-receive the run's PR GitHub
    * events without calling a subscribe tool.
    *
-   * Fire-and-forget from the tool's perspective: errors are logged by the
-   * runtime and never block the artifact save. Omitted in unit tests that don't
-   * exercise the materialization path.
+   * `linkBearing` is true when the artifact could change the run's primary link
+   * (a `link` shape, or any artifact carrying a legacy `prUrl`/`pr_url` field);
+   * the consumer uses it to invalidate a cached primary link before
+   * re-materializing. Fire-and-forget from the tool's perspective: errors are
+   * logged by the runtime and never block the artifact save. Omitted in unit
+   * tests that don't exercise the materialization path.
    */
-  onArtifactRecorded?: (workflowRunId: string) => void;
+  onArtifactRecorded?: (workflowRunId: string, linkBearing: boolean) => void;
   /**
    * Task repository for list_tasks and get_task tools.
    * Optional — when absent, task read tools are not registered.
@@ -1041,6 +1046,22 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
                       )
                     : gateDataRepo.merge(workflowRunId, gateId, partialToMerge);
                 const updatedRecord = gateDataRepo.get(workflowRunId, gateId);
+                // Fire the durable-commit trigger IMMEDIATELY after the merge — before
+                // gate re-evaluation, the rate-limit check, and any profile hook. A
+                // scripted gate write may establish pr_url, and gate re-evaluation
+                // (the onGateDataChanged notify) is deferred when rate-limited; a
+                // custom gate executor that throws after the merge would otherwise
+                // skip this and leave the topicFrom sub inert. The runtime is
+                // best-effort, run-scoped, terminal-run guarded, and idempotent.
+                try {
+                  const mergedData = updated.data ?? {};
+                  const linkBearing = 'prUrl' in mergedData || 'pr_url' in mergedData;
+                  config.onGateDataMerged?.(workflowRunId, linkBearing);
+                } catch (err) {
+                  log.warn(
+                    `send_message: onGateDataMerged callback failed for gate ${gateId} in ${workflowRunId}: ${err instanceof Error ? err.message : String(err)}`
+                  );
+                }
                 const freshPrUrl =
                   config.artifactProfile?.resolvePrimaryLinkUrl(workflowRunId) ?? '';
                 const evalResult = await evaluateGate(
@@ -1110,19 +1131,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
                     .catch((err) => {
                       log.warn(`Failed to emit space.gateData.updated for gate "${gateId}":`, err);
                     });
-                }
-
-                // Fire the durable-commit trigger BEFORE the rate-limit check: a
-                // scripted gate write may establish pr_url, and gate re-evaluation
-                // (the onGateDataChanged notify) is deferred when rate-limited — a
-                // GitHub reset delay can exceed the retained-event TTL, so deferring
-                // materialization would let early PR events expire first.
-                try {
-                  config.onGateDataMerged?.(workflowRunId);
-                } catch (err) {
-                  log.warn(
-                    `send_message: onGateDataMerged callback failed for gate ${gateId} in ${workflowRunId}: ${err instanceof Error ? err.message : String(err)}`
-                  );
                 }
 
                 // If gate evaluation hit a rate limit, surface the retryable error
@@ -1555,7 +1563,11 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         // (or a future callback that forgets to guard) must never flip the tool
         // result to failure and cause a caller to retry a write that succeeded.
         try {
-          config.onArtifactRecorded?.(workflowRunId);
+          // linkBearing: a `link` shape or any artifact carrying a legacy
+          // prUrl/pr_url field could change the run's primary link, so the
+          // consumer invalidates its cached resolution before re-materializing.
+          const linkBearing = shape === 'link' || 'prUrl' in normalized || 'pr_url' in normalized;
+          config.onArtifactRecorded?.(workflowRunId, linkBearing);
         } catch (recordedErr) {
           log.warn(
             `save_artifact: onArtifactRecorded callback failed for ${workflowRunId}: ${recordedErr instanceof Error ? recordedErr.message : String(recordedErr)}`

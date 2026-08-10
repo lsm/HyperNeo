@@ -1061,6 +1061,24 @@ export class SpaceRuntimeService {
   }
 
   /**
+   * Replay retained published events for a run after its topicFrom interests
+   * materialize, so a mid-run sub receives events that landed before the link
+   * was recorded. Split from materializeRunTopicFromInterests for testability;
+   * triggers call both.
+   */
+  replayRetainedEventsForMaterialization(workflowRunId: string): void {
+    this.runtime.replayRetainedEventsForMaterialization(workflowRunId);
+  }
+
+  /**
+   * Drop the cached primary link for a run after a link-bearing write, so the
+   * next materialization re-resolves. Thin pass-through to the runtime.
+   */
+  invalidatePrimaryLinkForRun(workflowRunId: string): void {
+    this.runtime.invalidatePrimaryLinkForRun(workflowRunId);
+  }
+
+  /**
    * Stop all active work for a space: terminates running agent sessions and
    * cancels all in-progress/open tasks and active workflow runs.
    *

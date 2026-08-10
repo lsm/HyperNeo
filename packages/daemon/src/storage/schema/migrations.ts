@@ -931,6 +931,10 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // definition-version pinning, M182 for the message-delivery-v2 active-turn
   // index, and M183 for the sdk_messages.send_status widen.)
   run(migrationMarkerKey(184), () => runMigration184(db));
+
+  // Migration 185: composite (space_id, state) index on space_external_events
+  // for the space-scoped new-target replay (listPublishedEventsWithDeliveries).
+  run(migrationMarkerKey(185), () => runMigration185(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -12206,4 +12210,24 @@ export function runMigration181(db: BunDatabase): void {
  */
 export function runMigration184(db: BunDatabase): void {
   runMigration184External(db);
+}
+
+/**
+ * Migration 185: composite (space_id, state) index on space_external_events.
+ *
+ * `ExternalEventStore.listPublishedEventsWithDeliveries(spaceId)` filters on
+ * both columns (a space-scoped replay for newly-materialized topicFrom subs),
+ * but the pre-existing indexes cover only (state, updated_at),
+ * (space_id, source, dedupe_key), and (space_id, source, ingested_at) — none
+ * lead with (space_id, state). Without this index the space-scoped scan reads
+ * every published event across all spaces to apply the space filter. Low-impact
+ * today (the result set is TTL-bounded), but the index makes the scoped query a
+ * direct seek. Idempotent (`CREATE INDEX IF NOT EXISTS`).
+ */
+export function runMigration185(db: BunDatabase): void {
+  if (!tableExists(db, 'space_external_events')) return;
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_space_external_events_space_state
+     ON space_external_events(space_id, state)`
+  );
 }
