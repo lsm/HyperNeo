@@ -4553,6 +4553,17 @@ export class TaskAgentManager {
     return this.config.db.getJobQueueRepo().activeDeliveryMessageUuids(sessionId).size > 0;
   }
 
+  /**
+   * Inject a handoff/user message into a sub-session under v2 durable delivery.
+   * Idempotent on the message UUID (hoisted before the deferred save AND the
+   * resetContextPerTurn clear): a flush retry reusing the pending-row id reuses
+   * the existing `sdk_messages` row instead of inserting a duplicate, and an
+   * already-consumed row short-circuits (no `/clear`, no re-drive). Defers when
+   * the target is busy / rate-limited / parent-limited (marking the row
+   * `deferred` for QueryModeHandler replay); otherwise enqueues a durable
+   * `message_delivery` job via {@link deliverAndMarkQueued}. Returns the row id
+   * (the stable message UUID when a row already exists).
+   */
   private async injectMessageIntoSession(
     session: AgentSession,
     message: string,

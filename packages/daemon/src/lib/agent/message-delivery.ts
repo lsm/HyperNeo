@@ -360,15 +360,17 @@ export async function withSessionLock<T>(sessionId: string, fn: () => Promise<T>
  * session queued — as ONE per-session critical section (under
  * {@link withSessionLock}). Role arbitration and queued ownership must be atomic
  * so a concurrently-injected steer can never win the queued marker that belongs
- * to the turn. This is the shared primitive behind `AgentSession.deliverChatMessage`
- * and the migrated Space / long-term-agent injectors; the caller persists the
- * user message BEFORE calling this (the handler reloads content by UUID).
+ * to the turn. Used by the migrated Space (`spaceAgentInjector`,
+ * `injectMessageIntoSession`) and long-term-agent injectors; the caller persists
+ * the user message BEFORE calling this (the handler reloads content by UUID).
+ * (`AgentSession.deliverChatMessage` inlines the same deliver + mark-queued
+ * sequence rather than calling this — it needs the role for its cooldown
+ * supersession, so it doesn't fit the shared shape.)
  *
- * `stateManager` is optional so callers whose session view doesn't expose it
- * (e.g. the long-term-agent structural type) skip the queued marker rather than
- * crash; on a real AgentSession it is present and the marker is set.
- * `onEnqueueFailure` (if provided) terminalizes the persisted row when
- * `deliverMessage` throws, mirroring `deliverChatMessage`'s failure handling.
+ * `stateManager` is optional: when absent (e.g. a long-term-agent session view
+ * that doesn't expose it) the queued marker is skipped instead of crashing; on a
+ * real AgentSession it is present and the marker is set. `onEnqueueFailure`
+ * (if provided) terminalizes the persisted row when `deliverMessage` throws.
  */
 export async function deliverAndMarkQueued(args: {
   jobQueue: JobQueueRepository;

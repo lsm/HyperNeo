@@ -646,6 +646,8 @@ export class SpaceRuntimeService {
           origin: 'long_term_agent',
           onEnqueueFailure: () => sdkMessageRepo.markDeliveryFailedByUuid(sessionId, id),
         });
+        // Ceiling on the wait for the SDK to consume the message (onSent).
+        // Matches the legacy 30s MessageQueue timeout; override for tests.
         const consumptionTimeoutMs =
           Number(process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS) || 30_000;
         await Promise.race([
