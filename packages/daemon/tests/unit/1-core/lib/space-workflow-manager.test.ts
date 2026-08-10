@@ -1054,10 +1054,9 @@ describe('SpaceWorkflowManager', () => {
       expect(resolved.gates ?? []).toEqual(live.gates ?? []);
       expect(resolved.completionAutonomyLevel).toBe(live.completionAutonomyLevel);
       expect(resolved.startNodeId).toBe(live.startNodeId);
-      // updatedAt preserves the pre-cutover basis (the head's updatedAt), so the
-      // gate-open cache fingerprint matches the live path — a backfilled run's existing
-      // cache survives the cutover.
-      expect(resolved.updatedAt).toBe(live.updatedAt);
+      // updatedAt is derived from the immutable version hash, so the gate-open cache
+      // fingerprint is version-stable for the run's lifetime and does not churn on head edits.
+      expect(resolved.updatedAt).toBe(stableVersionTimestamp(pin));
     });
 
     it('falls back to the live head when the pinned payload cannot be parsed', () => {
@@ -1118,16 +1117,14 @@ describe('SpaceWorkflowManager', () => {
       expect(resolved.nodes).toEqual(head.nodes);
       expect(resolved.name).toBe(head.name);
       expect(resolved.completionAutonomyLevel).toBe(head.completionAutonomyLevel);
-      // updatedAt preserves the head's value, so a backfilled in-flight run's existing
-      // gate-open cache (fingerprinted with that head timestamp) survives the cutover.
-      expect(resolved.updatedAt).toBe(head.updatedAt);
+      // updatedAt is version-derived, so the gate-open cache fingerprint is version-stable.
+      expect(resolved.updatedAt).toBe(stableVersionTimestamp(pinned.definitionVersion!));
     });
 
     it('rehydrated updatedAt tracks the live head, independent of a reused version row', () => {
       // PR-review #11/cutover: appendVersion is INSERT OR IGNORE, so a reused hash keeps its
-      // original created_at. The rehydrated updatedAt must NOT depend on that row timestamp
-      // (else initial-vs-recovered could diverge) — it reads the live head's updatedAt
-      // instead, which also preserves the pre-cutover gate-fingerprint basis.
+      // original created_at. The rehydrated updatedAt must depend only on the version hash,
+      // not the row's created_at, so initial and recovered reads fingerprint identically.
       const wf = manager.createWorkflow({
         spaceId: 'space-1',
         name: 'W',
@@ -1136,7 +1133,6 @@ describe('SpaceWorkflowManager', () => {
       });
       const raw = repo.getWorkflow(wf.id)!;
       const { versionHash, payload } = computeDefinitionVersion(raw);
-      const headUpdatedAt = raw.updatedAt;
       // Append the version row with an ARBITRARY created_at (simulating a pre-cutover /
       // reused row whose created_at is not the current head's updatedAt).
       versionRepo.appendVersion({
@@ -1151,8 +1147,8 @@ describe('SpaceWorkflowManager', () => {
         workflowId: wf.id,
         definitionVersion: versionHash,
       })!;
-      // updatedAt is the live head's value — NOT the stale row created_at (1).
-      expect(resolved.updatedAt).toBe(headUpdatedAt);
+      // updatedAt depends only on the version hash — NOT the stale row created_at (1).
+      expect(resolved.updatedAt).toBe(stableVersionTimestamp(versionHash));
       expect(resolved.updatedAt).not.toBe(1);
       // Equal across resolves (initial == recovery).
       const resolvedAgain = manager.getWorkflowForRun({
@@ -1162,9 +1158,9 @@ describe('SpaceWorkflowManager', () => {
       expect(resolvedAgain.updatedAt).toBe(resolved.updatedAt);
     });
 
-    it('falls back to a version-derived updatedAt when the head is deleted', () => {
-      // A deleted-definition orphan has no head timestamp to preserve; the fingerprint basis
-      // falls back to a version-hash-derived value (stable per version).
+    it('still resolves (version-derived updatedAt) when the head is deleted', () => {
+      // A deleted-definition orphan: the run still resolves its pinned payload, with the
+      // version-hash-derived updatedAt (stable per version — no head required).
       const wf = manager.createWorkflow({
         spaceId: 'space-1',
         name: 'W',
@@ -1209,10 +1205,11 @@ describe('SpaceWorkflowManager', () => {
       const resolvedA = manager.getWorkflowForRun(runA)!;
       const resolvedB = manager.getWorkflowForRun(runB)!;
       // Distinct pinned CONTENT — the property the actor-registry version-keyed cache
-      // preserves. (updatedAt is the shared live-head timestamp; it does not distinguish
-      // the runs, and does not need to — the gate-open cache is keyed per-runId.)
+      // preserves. Different version hashes also yield different version-derived gate
+      // fingerprints (updatedAt), so each run's gate-open cache is self-consistent.
       expect(resolvedA.name).toBe('V1');
       expect(resolvedB.name).toBe('V2');
+      expect(resolvedA.updatedAt).not.toBe(resolvedB.updatedAt);
     });
   });
 });

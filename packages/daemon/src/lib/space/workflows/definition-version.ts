@@ -120,3 +120,30 @@ export function stableVersionTimestamp(versionHash: string): number {
   }
   return h;
 }
+
+/**
+ * The gate-definition hash component of `ChannelRouter.generateGateFingerprint` (extracted
+ * so the cutover re-key reproduces the exact post-cutover fingerprint). Mirrors the
+ * inline hash historically in `generateGateFingerprint`: a fast non-cryptographic 32-bit
+ * hash of the gate definition JSON, suitable only for cache invalidation.
+ */
+export function gateDefinitionHash(gate: unknown): number {
+  const gateJson = JSON.stringify(gate);
+  let hash = 0;
+  for (let i = 0; i < gateJson.length; i++) {
+    hash = (hash << 5) - hash + gateJson.charCodeAt(i);
+    hash = hash & hash;
+  }
+  return hash;
+}
+
+/**
+ * The gate-open cache fingerprint a pinned run uses post-cutover:
+ * `stableVersionTimestamp(versionHash) + gateDefinitionHash(gate)`. The startup backfill
+ * re-keys a backfilled run's existing persisted gate-open entries to this value, so the
+ * cache survives the cutover (the basis switches from the live head's `updatedAt` to the
+ * immutable version hash) WITHOUT re-evaluating gates.
+ */
+export function pinnedGateFingerprint(versionHash: string, gate: unknown): number {
+  return stableVersionTimestamp(versionHash) + gateDefinitionHash(gate);
+}

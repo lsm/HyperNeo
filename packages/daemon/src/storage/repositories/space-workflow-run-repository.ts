@@ -152,13 +152,23 @@ export class SpaceWorkflowRunRepository {
    * matching today's behavior). Idempotent and per-run guarded: a single malformed row
    * must not propagate and prevent daemon startup.
    */
-  backfillDefinitionPins(loadWorkflow: (workflowId: string) => SpaceWorkflow | null): number {
+  backfillDefinitionPins(
+    loadWorkflow: (workflowId: string) => SpaceWorkflow | null,
+    onRunPinned?: (runId: string, versionHash: string, gates: SpaceWorkflow['gates']) => void
+  ): number {
     let count = 0;
     for (const run of this.listPinnableRuns()) {
       try {
         const workflow = loadWorkflow(run.workflowId);
         if (!workflow) continue; // deleted head → leave unpinned (read-cutover fallback)
-        if (this.pinExistingRun(run.id, workflow)) count += 1;
+        const { versionHash } = computeDefinitionVersion(workflow);
+        if (this.pinExistingRun(run.id, workflow)) {
+          count += 1;
+          // Notify the caller (the startup wiring) so it can re-key this run's persisted
+          // gate-open entries to the version-stable fingerprint basis — preserving the cache
+          // across the cutover without re-evaluating gates.
+          onRunPinned?.(run.id, versionHash, workflow.gates);
+        }
       } catch (err) {
         log.warn(`backfillDefinitionPins: skipped run ${run.id} (non-fatal):`, err);
       }

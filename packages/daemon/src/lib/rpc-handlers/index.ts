@@ -62,6 +62,10 @@ import { SpaceTaskRepository } from '../../storage/repositories/space-task-repos
 import { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
 import { GateDataRepository } from '../../storage/repositories/gate-data-repository';
 import { GateOpenStateRepository } from '../../storage/repositories/gate-open-state-repository';
+import {
+  pinnedGateFingerprint,
+  stableVersionTimestamp,
+} from '../../lib/space/workflows/definition-version';
 import { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository';
 import { WorkflowRunArtifactCacheRepository } from '../../storage/repositories/workflow-run-artifact-cache-repository';
 import { WorkflowHookStateRepository } from '../../storage/repositories/workflow-hook-state-repository';
@@ -552,7 +556,22 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   // backfill) so resolving a run through its pinned version is content-neutral at cutover:
   // each run's pin equals what it executes today. Idempotent; runs whose head was deleted
   // stay unpinned and resolve via the read-cutover fallback to the live read.
-  spaceWorkflowRunRepo.backfillDefinitionPins((id) => spaceWorkflowRepo.getWorkflow(id));
+  spaceWorkflowRunRepo.backfillDefinitionPins(
+    (id) => spaceWorkflowRepo.getWorkflow(id),
+    (runId, versionHash, gates) => {
+      // Re-key each persisted gate-open entry to the version-stable fingerprint basis, so a
+      // backfilled in-flight run's existing gate-open cache survives the read cutover instead
+      // of mismatching the new basis and re-evaluating (which a transient failure could block).
+      for (const open of gateOpenStateRepo.listOpenedByRun(runId)) {
+        const gateDef = (gates ?? []).find((g) => g.id === open.gateId);
+        // Mirrors generateGateFingerprint: updatedAt (+ gateDef hash when the gate exists).
+        const fingerprint = gateDef
+          ? pinnedGateFingerprint(versionHash, gateDef)
+          : stableVersionTimestamp(versionHash);
+        gateOpenStateRepo.markOpened(runId, open.gateId, fingerprint);
+      }
+    }
+  );
   const spaceAgentRepo = new SpaceAgentRepository(deps.db.getDatabase());
   const longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(deps.db.getDatabase());
   const agentLookup: SpaceAgentLookup = {

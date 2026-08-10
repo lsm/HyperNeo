@@ -42,6 +42,7 @@ import type {
 import { resolveNodeAgents, isChannelCyclic, computeGateDefaults } from '@hyperneo/shared';
 import type { NodeExecution } from '@hyperneo/shared';
 import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator';
+import { gateDefinitionHash } from '../workflows/definition-version';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
@@ -1303,20 +1304,9 @@ export class ChannelRouter {
     const gateDef = (workflow.gates ?? []).find((g) => g.id === gateId);
     if (!gateDef) return workflow.updatedAt;
 
-    // Create a simple hash from the gate definition JSON
-    // This is a fast, non-cryptographic hash suitable for cache invalidation
-    const gateJson = JSON.stringify(gateDef);
-    let hash = 0;
-    for (let i = 0; i < gateJson.length; i++) {
-      hash = (hash << 5) - hash + gateJson.charCodeAt(i);
-      hash = hash & hash; // Convert to 32-bit integer
-    }
-
-    // Combine timestamp and hash using addition instead of bitwise shift
-    // to avoid 32-bit truncation (JavaScript bitwise ops are 32-bit).
-    // This creates a unique fingerprint that changes when either the workflow
-    // is updated OR the gate definition is edited.
-    return workflow.updatedAt + hash;
+    // Combine timestamp and the gate-definition hash (shared with the cutover re-key via
+    // `gateDefinitionHash`, so a re-keyed pinned-run entry matches what this computes).
+    return workflow.updatedAt + gateDefinitionHash(gateDef);
   }
 
   /** Build the cache key for a `(runId, gateId)` pair. */

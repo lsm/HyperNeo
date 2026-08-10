@@ -7,8 +7,13 @@ import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import { createSpaceTables } from '../../helpers/space-test-db';
-import { computeDefinitionVersion } from '../../../../src/lib/space/workflows/definition-version';
-import type { SpaceWorkflow } from '@hyperneo/shared';
+import {
+  computeDefinitionVersion,
+  pinnedGateFingerprint,
+  stableVersionTimestamp,
+} from '../../../../src/lib/space/workflows/definition-version';
+import { GateOpenStateRepository } from '../../../../src/storage/repositories/gate-open-state-repository';
+import type { Gate, SpaceWorkflow } from '@hyperneo/shared';
 
 describe('SpaceWorkflowRunRepository', () => {
   let db: Database;
@@ -450,6 +455,47 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(count).toBe(1);
       expect(repo.getRun(good.id)!.definitionVersion).toBe(expectedHash);
       expect(repo.getRun(bad.id)!.definitionVersion).toBeNull();
+    });
+
+    it('onRunPinned re-keys persisted gate-open entries to the version-stable basis', () => {
+      // PR-review cutover: a backfilled in-flight run's existing gate-open cache was
+      // fingerprinted with the OLD basis (the head's updatedAt). The onRunPinned callback
+      // (wired in rpc-handlers) re-keys it to the version-stable basis so the cache survives
+      // the cutover without re-evaluating gates.
+      const gate: Gate = {
+        id: 'g1',
+        fields: [{ name: 'f', type: 'string', writers: [], check: { op: 'exists' } }],
+        resetOnCycle: false,
+      };
+      const wf = rawWorkflow({ gates: [gate] });
+      const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Legacy' });
+      seedTaskForRun(run.id, spaceId);
+
+      const gateOpenStateRepo = new GateOpenStateRepository(
+        db as unknown as import('../../../../src/storage/sqlite-compat').Database
+      );
+      // Pre-cutover open-gate entry, fingerprinted with the OLD basis (the head's updatedAt).
+      gateOpenStateRepo.markOpened(run.id, 'g1', wf.updatedAt);
+      const { versionHash } = computeDefinitionVersion(wf);
+
+      repo.backfillDefinitionPins(
+        () => wf,
+        (runId, vh, gates) => {
+          for (const open of gateOpenStateRepo.listOpenedByRun(runId)) {
+            const gateDef = (gates ?? []).find((g) => g.id === open.gateId);
+            const fingerprint = gateDef
+              ? pinnedGateFingerprint(vh, gateDef)
+              : stableVersionTimestamp(vh);
+            gateOpenStateRepo.markOpened(runId, open.gateId, fingerprint);
+          }
+        }
+      );
+
+      // The entry is re-keyed to the version-stable basis — matching what
+      // getWorkflowForRun (stableVersionTimestamp-derived updatedAt) fingerprints post-cutover.
+      const rekeyed = gateOpenStateRepo.isOpen(run.id, 'g1');
+      expect(rekeyed.open).toBe(true);
+      expect(rekeyed.workflowUpdatedAt).toBe(pinnedGateFingerprint(versionHash, gate));
     });
   });
 });
