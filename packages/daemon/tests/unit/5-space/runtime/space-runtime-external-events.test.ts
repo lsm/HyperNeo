@@ -22,6 +22,7 @@ import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository';
+import { WorkflowHookStateRepository } from '../../../../src/storage/repositories/workflow-hook-state-repository';
 import { CodingArtifactProfile } from '../../../../src/lib/space/workflows/coding-artifact-profile';
 import type { WorkflowArtifactProfile } from '../../../../src/lib/space/runtime/artifact-profile';
 import { createSpaceTables } from '../../helpers/space-test-db';
@@ -6915,6 +6916,27 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     expect(injected).toHaveLength(1);
     expect(injected[0]!.sessionId).toBe('session-gate-data');
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
+  });
+
+  test('materializes a topicFrom interest from a primary link established via hook state', async () => {
+    // resolvePrimaryLinkUrl also treats pr_ready hook state (pr_url/prUrl) as a
+    // primary-link source. A custom workflow whose pr_ready hook targets an
+    // UNGATED channel records pr_url into hook state without firing
+    // onGateDataChanged — the onHookStateUpdated trigger covers it.
+    const workflow = createTopicFromWorkflow();
+    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    markCoderLive(run.id, 'session-hook-state');
+
+    const hookStateRepo = new WorkflowHookStateRepository(db);
+    hookStateRepo.ensure(run.id, 'pr-ready', { pr_url: PR_URL });
+    runtime.materializeRunTopicFromInterests(run.id);
+
+    const event = makeEvent();
+    await eventService.publish(event);
+
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-hook-state');
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
   });
 });

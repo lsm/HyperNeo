@@ -5494,6 +5494,27 @@ export class TaskAgentManager {
                 `Failed to emit space.hookState.updated for hook ${hookId}: ${err instanceof Error ? err.message : String(err)}`
               );
             });
+          // A `pr_ready` hook (gated OR ungated) stamps `pr_url` into hook state,
+          // which resolvePrimaryLinkUrl treats as a primary-link source. Ungated
+          // sends don't fire onGateDataChanged, so trigger materialization here
+          // when the update carries a primary link — otherwise a topicFrom
+          // interest stays inert until an unrelated artifact/gate update or
+          // restart. Best-effort; the runtime is terminal-run guarded and the
+          // cheap topicFrom guard skips non-topicFrom workflows.
+          const local = hookState.localState;
+          const carriesPrimaryLink =
+            (typeof local?.prUrl === 'string' && local.prUrl.length > 0) ||
+            (typeof local?.pr_url === 'string' && local.pr_url.length > 0);
+          if (carriesPrimaryLink) {
+            try {
+              this.config.spaceRuntimeService.materializeRunTopicFromInterests(workflowRunId);
+            } catch (err) {
+              log.warn(
+                `onHookStateUpdated: failed to materialize topicFrom interests for hook ` +
+                  `${hookId} in run ${workflowRunId}: ${err instanceof Error ? err.message : String(err)}`
+              );
+            }
+          }
         },
       });
     }
