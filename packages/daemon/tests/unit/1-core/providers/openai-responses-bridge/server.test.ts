@@ -2137,6 +2137,45 @@ describe('openai-responses-bridge server', () => {
   );
 
   it.skipIf(!isBun)(
+    'surfaces a flat (unwrapped) 200 JSON error as terminal (not retried as overload)',
+    async () => {
+      // A proxy may return 200 application/json with a FLAT permanent error — no
+      // `error`/`detail` wrapper, just a top-level type, e.g.
+      // {"type":"invalid_request_error","message":"bad input"}. isJsonErrorBody
+      // must recognize the recognized top-level error type so the body routes to
+      // the terminal JSON-error path; otherwise the SSE parser yields no events
+      // and the empty-stream guard relabels it overloaded_error (retryable),
+      // hiding the diagnostic and retrying an invalid request.
+      server = createOpenAIResponsesBridgeServer({
+        auth: { source: 'api_key', apiKey: 'sk-test' },
+        models,
+        fetchImpl: async () =>
+          new Response(JSON.stringify({ type: 'invalid_request_error', message: 'bad input' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+      });
+
+      const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-5.3-codex',
+          max_tokens: 128,
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+      });
+
+      // Terminal 400 invalid_request_error with the diagnostic — not a retryable
+      // overload and not an SSE stream.
+      expect(resp.status).toBe(400);
+      const body = (await resp.json()) as { error: { type: string; message: string } };
+      expect(body.error.type).toBe('invalid_request_error');
+      expect(body.error.message).toContain('bad input');
+    }
+  );
+
+  it.skipIf(!isBun)(
     'does not treat a 200 JSON body with error:null as a terminal error',
     async () => {
       // A success body may carry `"error": null` — that is NOT an error body.

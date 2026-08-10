@@ -765,17 +765,29 @@ function parseOpenAIError(status: number, text: string): string {
 }
 
 /**
- * True when a JSON body is an error response (OpenAI/Anthropic `error` field or
- * RFC 7807 `detail`), vs. a non-streaming success body. Used to surface a
- * non-transient 200-with-JSON-error as a terminal error instead of letting the
- * empty-stream guard relabel it as a retryable overload.
+ * True when a JSON body is an error response, vs. a non-streaming success body.
+ * Recognizes three shapes so a non-transient 200-with-JSON-error surfaces as a
+ * terminal error instead of letting the empty-stream guard relabel it as a
+ * retryable overload:
+ *   - OpenAI/Anthropic wrapped `error` field,
+ *   - RFC 7807 `detail`, or
+ *   - a FLAT body carrying only a recognized top-level error type/code, e.g.
+ *     `{"type":"invalid_request_error","message":"bad input"}` (no wrapper).
  */
 function isJsonErrorBody(text: string): boolean {
   const parsed = parseJsonObject(text);
   if (!parsed) return false;
   // `!= null` (not `!== undefined`): a success body may carry `"error": null`,
   // which must NOT be treated as an error.
-  return parsed.error != null || parsed.detail != null;
+  if (parsed.error != null || parsed.detail != null) return true;
+  // A flat error (no error/detail wrapper) may carry only a recognized error
+  // type/code at the top level. Recognize it so the body routes here (terminal
+  // JSON-error path) rather than to the SSE parser, which sees no events and
+  // would relabel the permanent failure as overloaded_error.
+  return (
+    isOpenAiErrorTypeName(typeof parsed.type === 'string' ? parsed.type : undefined) ||
+    isOpenAiErrorTypeName(typeof parsed.code === 'string' ? parsed.code : undefined)
+  );
 }
 
 /**
