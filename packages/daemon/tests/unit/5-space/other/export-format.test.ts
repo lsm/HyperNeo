@@ -845,6 +845,66 @@ describe('round-trip: export → JSON → validate', () => {
     }
   });
 
+  test('topicFrom interest round-trips through export/import (v2)', () => {
+    // The v2 bump exists to make topicFrom portable; exercise it end-to-end
+    // (export → JSON serialize/parse → validate) rather than relying on opaque
+    // pass-through + the bundle re-stamp.
+    const workflow: SpaceWorkflow = {
+      id: 'wf-topicfrom',
+      spaceId: 'space-uuid-1',
+      name: 'Dynamic Topic Workflow',
+      nodes: [
+        {
+          id: 'node-1',
+          name: 'Code step',
+          agents: [
+            {
+              agentId: 'agent-uuid-1',
+              name: 'coder',
+              eventInterests: [
+                {
+                  topicFrom: {
+                    source: 'primaryLink',
+                    pattern: 'github/{owner}/{repo}/pull_request/{number}.*',
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      startNodeId: 'node-1',
+      tags: [],
+      createdAt: 1000,
+      updatedAt: 2000,
+    };
+    const agents = [makeAgent()];
+
+    // Workflow round-trip.
+    const exported = exportWorkflow(workflow, agents);
+    expect(exported.version).toBe(2);
+    const result = validateExportedWorkflow(JSON.parse(JSON.stringify(exported)) as unknown);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.version).toBe(2);
+      expect(result.value.nodes[0].agents[0].eventInterests?.[0]?.topicFrom).toEqual({
+        source: 'primaryLink',
+        pattern: 'github/{owner}/{repo}/pull_request/{number}.*',
+      });
+    }
+
+    // Bundle round-trip: topicFrom survives the nested-workflow re-stamp at v2.
+    const bundle = exportBundle(agents, [workflow], 'TopicFrom Bundle');
+    const bundleResult = validateExportBundle(JSON.parse(JSON.stringify(bundle)) as unknown);
+    expect(bundleResult.ok).toBe(true);
+    if (bundleResult.ok) {
+      expect(bundleResult.value.version).toBe(2);
+      expect(
+        bundleResult.value.workflows[0].nodes[0].agents[0].eventInterests?.[0]?.topicFrom
+      ).toBeDefined();
+    }
+  });
+
   test('bundle round-trip', () => {
     const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
     const workflows = [makeWorkflow()];

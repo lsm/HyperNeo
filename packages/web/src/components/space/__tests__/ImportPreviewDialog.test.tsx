@@ -9,7 +9,7 @@ import type { ImportPreviewResult, ImportConflictResolution } from '../ImportPre
 import type { SpaceExportBundle } from '@hyperneo/shared';
 
 const makeBundle = (): SpaceExportBundle => ({
-  version: 1,
+  version: 2,
   type: 'bundle',
   name: 'Test Bundle',
   agents: [],
