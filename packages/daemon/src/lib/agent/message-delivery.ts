@@ -278,3 +278,48 @@ export async function withSessionLock<T>(sessionId: string, fn: () => Promise<T>
     if (sessionLocks.get(sessionId) === next) sessionLocks.delete(sessionId);
   }
 }
+
+/**
+ * Enqueue a durable delivery job and, when it inserts as a turn, mark the
+ * session queued — as ONE per-session critical section (under
+ * {@link withSessionLock}). Role arbitration and queued ownership must be atomic
+ * so a concurrently-injected steer can never win the queued marker that belongs
+ * to the turn. This is the shared primitive behind `AgentSession.deliverChatMessage`
+ * and the migrated Space / long-term-agent injectors; the caller persists the
+ * user message BEFORE calling this (the handler reloads content by UUID).
+ *
+ * `stateManager` is optional so callers whose session view doesn't expose it
+ * (e.g. the long-term-agent structural type) skip the queued marker rather than
+ * crash; on a real AgentSession it is present and the marker is set.
+ * `onEnqueueFailure` (if provided) terminalizes the persisted row when
+ * `deliverMessage` throws, mirroring `deliverChatMessage`'s failure handling.
+ */
+export async function deliverAndMarkQueued(args: {
+  jobQueue: JobQueueRepository;
+  stateManager?: { setQueuedIfIdle(messageId: string): Promise<boolean> };
+  sessionId: string;
+  messageUuid: string;
+  origin: MessageDeliveryOrigin;
+  onEnqueueFailure?: () => void;
+}): Promise<void> {
+  await withSessionLock(args.sessionId, async () => {
+    let role: MessageDeliveryRole;
+    try {
+      role = deliverMessage(args.jobQueue, args.sessionId, args.messageUuid, {
+        origin: args.origin,
+        parentToolUseId: null,
+      });
+    } catch (err) {
+      args.onEnqueueFailure?.();
+      throw err;
+    }
+    if (role === 'turn' && args.stateManager) {
+      try {
+        await args.stateManager.setQueuedIfIdle(args.messageUuid);
+      } catch {
+        // Non-fatal — the durable job is already enqueued; the handler will
+        // drive the turn. Mirrors deliverChatMessage's warn-and-continue.
+      }
+    }
+  });
+}

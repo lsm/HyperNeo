@@ -153,6 +153,33 @@ describe('ProcessingStateManager', () => {
     });
   });
 
+  describe('waitForIdleTransition', () => {
+    test('resolves on the next plain setIdle (terminal turn-end)', async () => {
+      let resolved = false;
+      void manager.waitForIdleTransition().then(() => {
+        resolved = true;
+      });
+      expect(resolved).toBe(false);
+      await manager.setIdle();
+      expect(resolved).toBe(true);
+    });
+
+    test('does NOT resolve on a suppressed (retry mid-point) setIdle, then does on a terminal one', async () => {
+      // The contract every retry-path setIdle site depends on: a retry
+      // mid-point (QueryRunner startup/message-not-found/transient, rate-limit,
+      // ACP, AskUserQuestion restart) suppresses the drain so the durable
+      // delivery job isn't completed while the prompt is still being retried.
+      let resolved = false;
+      void manager.waitForIdleTransition().then(() => {
+        resolved = true;
+      });
+      await manager.setIdle({ suppressDeliveryWaiters: true });
+      expect(resolved).toBe(false);
+      await manager.setIdle();
+      expect(resolved).toBe(true);
+    });
+  });
+
   describe('setQueued', () => {
     test('transitions to queued state', async () => {
       await manager.setQueued('msg-123');

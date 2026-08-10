@@ -56,7 +56,10 @@ import type { UUID } from 'crypto';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { AgentSessionInit } from '../../../lib/agent/agent-session';
 import { AgentSession } from '../../../lib/agent/agent-session';
-import { deliverMessage, isMessageDeliveryV2Enabled } from '../../../lib/agent/message-delivery';
+import {
+  deliverAndMarkQueued,
+  isMessageDeliveryV2Enabled,
+} from '../../../lib/agent/message-delivery';
 import { validateImageSizes } from '../../session/message-persistence';
 import type { Database } from '../../../storage/database';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
@@ -4519,19 +4522,6 @@ export class TaskAgentManager {
   // -------------------------------------------------------------------------
 
   /**
-   * Inject a message (optionally with image attachments) into an AgentSession.
-   *
-   * Mirrors the multi-modal content shape produced by `buildMessageContent`
-   * in `MessagePersistence.persist` (the regular non-space chat path): when
-   * `images` is non-empty the SDK message content becomes a multi-modal
-   * block array (images first, then text) and is passed through to
-   * `MessageQueue.enqueueWithId`, which already accepts
-   * `string | MessageContent[]`. Image base64 sizes are validated against
-   * the same Anthropic API limit as the non-space path via
-   * `validateImageSizes` so users get the same early "resize image" error
-   * instead of a downstream API failure.
-   */
-  /**
    * True if any message_delivery job (turn or steer) is pending or processing
    * for the session. Used to gate resetContextPerTurn so a `/clear` does not race
    * a v2 turn whose job is enqueued but not yet claimed — the session's live
@@ -4656,36 +4646,19 @@ export class TaskAgentManager {
       // the job is claimed. Image/multimodal content is persisted verbatim and
       // reloaded by the handler, so no special enqueue handling is needed.
       const dbId = this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued', origin);
-      let role: 'turn' | 'steer';
-      try {
-        // deliverMessage enqueues a message_delivery job (role turn/steer decided
-        // atomically by the job_queue index); the handler then owns
-        // ensureQueryStarted and feeding the live transport.
-        role = deliverMessage(this.config.db.getJobQueueRepo(), sessionId, messageId, {
-          origin: 'space_inject',
-          parentToolUseId: null,
-        });
-      } catch (err) {
-        // The row was just saved 'enqueued'; if durable enqueue throws the prompt
-        // has no owner — terminalize it so a restart/replay can't run the orphaned
-        // original. Mirrors AgentSession.deliverChatMessage's failure handling.
-        this.config.db.getSDKMessageRepo().markDeliveryFailedByUuid(sessionId, messageId);
-        throw err;
-      }
-      if (role === 'turn') {
-        // Mark the session queued so task-pause / live-session checks treat a
-        // pending turn job as non-idle. Without this, a pause that lands before
-        // the delivery processor claims the job skips the (idle-reporting)
-        // session, and the handler later runs the agent while the task is paused.
-        try {
-          await session.stateManager.setQueuedIfIdle(messageId);
-        } catch (error) {
-          log.warn(
-            `TaskAgentManager: queued-state publication failed for ${sessionId}: ` +
-              `${error instanceof Error ? error.message : String(error)}`
-          );
-        }
-      }
+      // Enqueue the durable delivery job + mark queued as one per-session critical
+      // section (deliverAndMarkQueued holds withSessionLock so a concurrent steer
+      // can't steal the turn's queued marker). The handler then owns
+      // ensureQueryStarted and feeding the live transport.
+      await deliverAndMarkQueued({
+        jobQueue: this.config.db.getJobQueueRepo(),
+        stateManager: session.stateManager,
+        sessionId,
+        messageUuid: messageId,
+        origin: 'space_inject',
+        onEnqueueFailure: () =>
+          this.config.db.getSDKMessageRepo().markDeliveryFailedByUuid(sessionId, messageId),
+      });
       return dbId;
     }
     // Legacy inline path (HYPERNEO_MESSAGE_DELIVERY_V2=0 opt-out).

@@ -86,7 +86,7 @@ import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
 import { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
 import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository';
 import { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository';
-import { deliverMessage, isMessageDeliveryV2Enabled } from '../agent/message-delivery';
+import { deliverAndMarkQueued, isMessageDeliveryV2Enabled } from '../agent/message-delivery';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import type { JobQueueProcessor } from '../../storage/job-queue-processor';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';
@@ -886,32 +886,18 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     };
     if (isMessageDeliveryV2Enabled()) {
       // Persist first (content lives in sdk_messages), then enqueue a durable
-      // message_delivery job — the handler claims it and drives the turn.
+      // message_delivery job + mark queued as one per-session critical section —
+      // the handler claims the job and drives the turn.
       deps.reactiveDb.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
-      let role: 'turn' | 'steer';
-      try {
-        role = deliverMessage(deps.reactiveDb.db.getJobQueueRepo(), sessionId, messageId, {
-          origin: 'space_agent',
-          parentToolUseId: null,
-        });
-      } catch (err) {
-        // The row was just saved 'enqueued'; if durable enqueue throws the prompt
-        // has no owner — terminalize it so a restart/replay can't run the orphaned
-        // original. Mirrors AgentSession.deliverChatMessage's failure handling.
-        deps.reactiveDb.db.getSDKMessageRepo().markDeliveryFailedByUuid(sessionId, messageId);
-        throw err;
-      }
-      if (role === 'turn') {
-        // Mark the session queued so a 'defer' message arriving before the
-        // processor claims the job is preserved for the next turn (its busy
-        // check only sees processing/queued) rather than classified as a steer
-        // on this pending turn. Mirrors deliverChatMessage / injectMessage.
-        try {
-          await session.stateManager.setQueuedIfIdle(messageId);
-        } catch {
-          // non-fatal — the durable job is already enqueued
-        }
-      }
+      await deliverAndMarkQueued({
+        jobQueue: deps.reactiveDb.db.getJobQueueRepo(),
+        stateManager: session.stateManager,
+        sessionId,
+        messageUuid: messageId,
+        origin: 'space_agent',
+        onEnqueueFailure: () =>
+          deps.reactiveDb.db.getSDKMessageRepo().markDeliveryFailedByUuid(sessionId, messageId),
+      });
     } else {
       // Legacy inline path (HYPERNEO_MESSAGE_DELIVERY_V2=0 opt-out).
       await session.ensureQueryStarted();

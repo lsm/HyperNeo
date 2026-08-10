@@ -32,6 +32,7 @@ function makeManager(opts: {
   slotResets?: boolean;
   nodeMissing?: boolean;
   nodeEmptyAgents?: boolean;
+  hasActiveDeliveryJob?: boolean;
 }): {
   manager: TaskAgentManager;
   session: Record<string, ReturnType<typeof mock>>;
@@ -68,9 +69,13 @@ function makeManager(opts: {
       getDatabase: () => ({}),
       saveUserMessage,
       // The resetContextPerTurn gate calls hasActiveDeliveryJob (→ getJobQueueRepo
-      // .activeDeliveryMessageUuids) regardless of the delivery path; return empty
-      // so the gate evaluates as if no durable turn is pending.
-      getJobQueueRepo: () => ({ activeDeliveryMessageUuids: () => new Set<string>() }),
+      // .activeDeliveryMessageUuids) regardless of the delivery path. Return a
+      // pending job when the test opts in, so the gate's BLOCKING branch (don't
+      // clear while a durable turn is pending) is exercised.
+      getJobQueueRepo: () => ({
+        activeDeliveryMessageUuids: () =>
+          new Set<string>(opts.hasActiveDeliveryJob ? ['pending-job'] : []),
+      }),
     },
     internalEventBus: {
       subscribe: mock(() => () => {}),
@@ -144,6 +149,29 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
 
     expect(session.clearMock).toHaveBeenCalledTimes(1);
     // The handoff is still delivered and persisted (UI thread continuity).
+    expect(session.saveUserMessage).toHaveBeenCalled();
+    expect(session.enqueueMock).toHaveBeenCalled();
+  });
+
+  it('does NOT clear when a durable turn is already pending for the session', async () => {
+    const { manager, session } = makeManager({ slotResets: true, hasActiveDeliveryJob: true });
+    const live = {
+      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
+      getProcessingState: () => ({ status: 'idle' }),
+      ensureQueryStarted: session.ensureStartedMock,
+      clearConversationContext: session.clearMock,
+      messageQueue: { enqueueWithId: session.enqueueMock },
+    } as unknown as AgentSession;
+    indexSession(manager, live);
+
+    await manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
+
+    // A durable turn is pending (activeDeliveryMessageUuids non-empty) — the
+    // resetContextPerTurn gate must BLOCK the clear so it doesn't race the
+    // pending v2 turn, even though the slot is reset-enabled + idle + has prior
+    // context (the conditions that would otherwise clear).
+    expect(session.clearMock).not.toHaveBeenCalled();
+    // The handoff is still delivered and persisted.
     expect(session.saveUserMessage).toHaveBeenCalled();
     expect(session.enqueueMock).toHaveBeenCalled();
   });

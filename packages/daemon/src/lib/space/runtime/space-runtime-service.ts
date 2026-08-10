@@ -49,7 +49,7 @@ import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-l
 import type { TaskAgentManager } from './task-agent-manager';
 import type { SessionManager } from '../../session-manager';
 import type { AgentSession } from '../../agent/agent-session';
-import { deliverMessage, isMessageDeliveryV2Enabled } from '../../agent/message-delivery';
+import { deliverAndMarkQueued, isMessageDeliveryV2Enabled } from '../../agent/message-delivery';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
 import { SpaceRuntime } from './space-runtime';
 import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine';
@@ -616,28 +616,16 @@ export class SpaceRuntimeService {
         sdkMessageRepo.reopenDeliveryByUuid(sessionId, id);
       }
       // else (enqueued/deferred/submitted): row exists; just (re-)enqueue —
-      // deliverMessage dedups the active job via getActiveDeliveryRole.
-      let role: 'turn' | 'steer';
-      try {
-        role = deliverMessage(reactiveDb.getJobQueueRepo(), sessionId, id, {
-          origin: 'long_term_agent',
-          parentToolUseId: null,
-        });
-      } catch (err) {
-        // The row was saved 'enqueued'; if durable enqueue throws the prompt has
-        // no owner — terminalize it. Mirrors deliverChatMessage's handling.
-        reactiveDb.getSDKMessageRepo().markDeliveryFailedByUuid(sessionId, id);
-        throw err;
-      }
-      if (role === 'turn' && session.stateManager) {
-        // Mark the session queued so it reports non-idle while the turn job is
-        // pending, mirroring deliverChatMessage / the other injectors.
-        try {
-          await session.stateManager.setQueuedIfIdle(id);
-        } catch {
-          // non-fatal — the durable job is already enqueued
-        }
-      }
+      // deliverMessage dedups the active job via getActiveDeliveryRole. Enqueue
+      // + mark queued as one per-session critical section (deliverAndMarkQueued).
+      await deliverAndMarkQueued({
+        jobQueue: reactiveDb.getJobQueueRepo(),
+        stateManager: session.stateManager,
+        sessionId,
+        messageUuid: id,
+        origin: 'long_term_agent',
+        onEnqueueFailure: () => sdkMessageRepo.markDeliveryFailedByUuid(sessionId, id),
+      });
     } else {
       // Legacy inline path (HYPERNEO_MESSAGE_DELIVERY_V2=0 opt-out).
       await session.ensureQueryStarted();

@@ -133,9 +133,6 @@ export class ProcessingStateManager {
   }
 
   /**
-   * Set state to idle
-   */
-  /**
    * Set state to idle. Pass `{ suppressDeliveryWaiters: true }` on a
    * NON-terminal idle — one that is immediately followed by a query re-start
    * (e.g. QueryRunner's startup-timeout / message-not-found / transient-
