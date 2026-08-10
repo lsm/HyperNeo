@@ -2939,7 +2939,7 @@ describe('seedBuiltInWorkflows()', () => {
     );
     const reviewSource = reviewHook?.validator.kind === 'script' ? reviewHook.validator.source : '';
     // Freshness baseline is the head's PushEvent push time (not the commit date).
-    expect(reviewSource).toContain('repos/${OWNER}/${REPO}/events');
+    expect(reviewSource).toContain('repos/${EVENTS_OWNER}/${EVENTS_REPO}/events');
     expect(reviewSource).toContain('PushEvent');
     expect(reviewSource).toContain('.payload.head');
     expect(reviewSource).toContain('HEAD_BASELINE=');
@@ -2952,6 +2952,10 @@ describe('seedBuiltInWorkflows()', () => {
     // PushEvents are filtered to the PR head ref (headRefName fetched + matched).
     expect(reviewSource).toContain('headRefName');
     expect(reviewSource).toContain('refs/heads/" + $ref');
+    // Cross-repo PRs read push events from the head (fork) repository.
+    expect(reviewSource).toContain('headRepositoryOwner.login');
+    expect(reviewSource).toContain('headRepository.name');
+    expect(reviewSource).toContain('repos/${EVENTS_OWNER}/${EVENTS_REPO}/events');
     // A reaction needs a recorded wait for THIS head (a +1 is not head-bound);
     // empty-head + empty-baseline guards (fail-closed) are present.
     expect(reviewSource).toContain('[ -n "$WAIT_STARTED" ]');
@@ -2969,8 +2973,9 @@ describe('seedBuiltInWorkflows()', () => {
       (h) => h.sourceNode === 'Plan Review' && h.targetNode === 'Task Dispatcher'
     );
     const planSource = planHook?.validator.kind === 'script' ? planHook.validator.source : '';
-    expect(planSource).toContain('repos/${OWNER}/${REPO}/events');
+    expect(planSource).toContain('repos/${EVENTS_OWNER}/${EVENTS_REPO}/events');
     expect(planSource).toContain('headRefName');
+    expect(planSource).toContain('headRepositoryOwner.login');
     expect(planSource).toContain('--arg since "$HEAD_BASELINE"');
   });
 
@@ -2984,6 +2989,7 @@ describe('seedBuiltInWorkflows()', () => {
     reactionTime: string;
     hookLocalState?: Record<string, unknown>;
     workflowStartIso?: string;
+    headRepo?: { owner: string; name: string };
   }) {
     const workflow = migrateWorkflowGateProgressionToHooks({
       ...CODING_WITH_QA_WORKFLOW,
@@ -2997,6 +3003,9 @@ describe('seedBuiltInWorkflows()', () => {
     if (hook?.validator.kind !== 'script') throw new Error('expected review-approval script hook');
     const SHA = 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2';
     const prUrl = 'https://github.com/test/repo/pull/42';
+    // Cross-repo PRs push to the fork; the hook must read events from there.
+    const headRepo = scenario.headRepo ?? { owner: 'test', name: 'repo' };
+    const eventsPath = `repos/${headRepo.owner}/${headRepo.name}/events`;
     const eventsPayload =
       scenario.pushTime === null
         ? '[[{"type":"PushEvent","created_at":"1990-01-01T00:00:00Z","payload":{"ref":"refs/heads/codex-test-branch","head":"deadbeef","commits":[]}}]]'
@@ -3012,10 +3021,10 @@ describe('seedBuiltInWorkflows()', () => {
         [
           '#!/usr/bin/env bash',
           'if [[ "$*" == *"pr view"* ]]; then',
-          `  printf '%s\\n' '{"number":42,"headRefOid":"${SHA}","headRefName":"codex-test-branch","url":"https://github.com/test/repo/pull/42"}'`,
+          `  printf '%s\\n' '{"number":42,"headRefOid":"${SHA}","headRefName":"codex-test-branch","headRepositoryOwner":{"login":"${headRepo.owner}"},"headRepository":{"name":"${headRepo.name}"},"url":"https://github.com/test/repo/pull/42"}'`,
           '  exit 0',
           'fi',
-          'if [[ "$*" == *"repos/test/repo/events"* ]]; then',
+          `if [[ "$*" == *"${eventsPath}"* ]]; then`,
           `  printf '%s\\n' '${eventsPayload}'`,
           '  exit 0',
           'fi',
@@ -3164,6 +3173,25 @@ describe('seedBuiltInWorkflows()', () => {
         pushTime: null,
         reactionTime: '2026-08-10T01:54:54Z',
         workflowStartIso: '2026-08-10T01:00:00Z',
+      });
+      expect(result.result.type).toBe('allow');
+      expect(result.result.data).toMatchObject({ codex_approved: true });
+    }
+  );
+
+  test.skipIf(!isBun)(
+    'review-approval hook reads push events from the HEAD (fork) repository for cross-repository PRs',
+    async () => {
+      // Cross-repo PRs push to the fork, not the base repo. The hook must query
+      // the head repository's event stream (headRepositoryOwner/headRepository)
+      // to resolve the push baseline — otherwise it falls to the coarse
+      // workflow-start, widening the window. The mock serves the PushEvent only
+      // on the fork path; if the hook queried the base repo it would miss and
+      // the hook would block (fallback), failing this assertion.
+      const result = await runReviewApprovalHook({
+        pushTime: '2026-08-10T01:50:00Z',
+        reactionTime: '2026-08-10T01:54:54Z',
+        headRepo: { owner: 'fork-owner', name: 'fork-repo' },
       });
       expect(result.result.type).toBe('allow');
       expect(result.result.data).toMatchObject({ codex_approved: true });

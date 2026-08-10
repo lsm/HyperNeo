@@ -43,11 +43,18 @@ function buildApprovalsScript(timeoutSeconds: number = CODEX_REVIEW_BOT_TIMEOUT_
     'if [ "$COUNT" -lt 4 ]; then jq -n --argjson approvals "$MERGED" --argjson count "$COUNT" \'{"type":"block","reason":"Plan dispatch requires four approved plan-review votes","data":{"approvals":$approvals,"approval_count":$count}}\'; exit 0; fi',
     'PR_URL=$(jq -r \'(.data.pr_url // .pr_url // empty)\' <<< "${HYPERNEO_PARAMS_JSON:-{}}" 2>/dev/null || true)',
     'if [ -z "$PR_URL" ]; then echo "Plan approval requires pr_url for Codex validation" >&2; exit 1; fi',
-    'if ! PR_JSON=$(gh pr view "$PR_URL" --json number,headRefOid,url,headRefName 2>/dev/null); then echo "Failed to fetch plan PR for Codex validation" >&2; exit 1; fi',
+    'if ! PR_JSON=$(gh pr view "$PR_URL" --json number,headRefOid,url,headRefName,headRepositoryOwner,headRepository 2>/dev/null); then echo "Failed to fetch plan PR for Codex validation" >&2; exit 1; fi',
     'PR_NUMBER=$(jq -r \'.number\' <<< "$PR_JSON")',
     'HEAD_OID=$(jq -r \'.headRefOid // empty\' <<< "$PR_JSON")',
     'if [ -z "$HEAD_OID" ]; then echo "Could not resolve current PR head for Codex validation" >&2; exit 1; fi',
     'HEAD_REF=$(jq -r \'.headRefName // empty\' <<< "$PR_JSON")',
+    // For cross-repository PRs, pushes to the PR branch land in the HEAD (fork)
+    // repository, not the base — read push events from there so the baseline
+    // resolves. Falls back to the base owner/repo when the fields are absent.
+    'HEAD_REPO_OWNER=$(jq -r \'.headRepositoryOwner.login // empty\' <<< "$PR_JSON")',
+    'HEAD_REPO_NAME=$(jq -r \'.headRepository.name // empty\' <<< "$PR_JSON")',
+    'EVENTS_OWNER="${HEAD_REPO_OWNER:-$OWNER}"',
+    'EVENTS_REPO="${HEAD_REPO_NAME:-$REPO}"',
     'PR_API_URL=$(jq -r \'.url // empty\' <<< "$PR_JSON")',
     'PR_HOST=$(sed -E "s#https://([^/]+)/.*#\\1#" <<< "$PR_API_URL")',
     'OWNER=$(sed -E "s#https://[^/]+/([^/]+)/([^/]+)/pull/[0-9]+.*#\\1#" <<< "$PR_API_URL")',
@@ -71,14 +78,14 @@ function buildApprovalsScript(timeoutSeconds: number = CODEX_REVIEW_BOT_TIMEOUT_
     // — only a SHA comment (COMMENT_OK) may. The push time is the PushEvent to
     // the PR's head ref (payload.ref == refs/heads/<head ref>) whose head/commits
     // include HEAD_OID — filtering by ref means a push of the same SHA to another
-    // branch cannot advance the baseline. If that lookup fails we fall back to
-    // the non-forgeable (but coarse) workflow-run start; without a baseline no
-    // reaction counts as fresh. (Fork-PR heads resolve no push baseline —
-    // PushEvents live in the fork and this lookup hits the base repo — so they
-    // fall to the workflow-start/fail-closed path; same-repo workflows are
-    // unaffected.) ms are stripped so a lexicographic comparison against GitHub's
+    // branch cannot advance the baseline. Push events are read from the HEAD
+    // repository (headRepositoryOwner/headRepository) so cross-repository PRs
+    // resolve a baseline too — pushes to the PR branch land in the fork, not the
+    // base repo. If that lookup fails we fall back to the non-forgeable (but
+    // coarse) workflow-run start; without a baseline no reaction counts as fresh.
+    // ms are stripped so a lexicographic comparison against GitHub's
     // second-precision created_at is exact.
-    'PUSH_EVENTS=$(gh api --hostname "$PR_HOST" --paginate --slurp "repos/${OWNER}/${REPO}/events?per_page=100" 2>/dev/null || true)',
+    'PUSH_EVENTS=$(gh api --hostname "$PR_HOST" --paginate --slurp "repos/${EVENTS_OWNER}/${EVENTS_REPO}/events?per_page=100" 2>/dev/null || true)',
     'HEAD_BASELINE=$(jq -r --arg head "$HEAD_OID" --arg ref "$HEAD_REF" \'[.[][] | select(.type == "PushEvent") | select(.payload.ref == ("refs/heads/" + $ref)) | select((.payload.head // "") == $head or any((.payload.commits // [])[]; (.sha // "") == $head))] | .[0].created_at // empty\' <<< "$PUSH_EVENTS" 2>/dev/null || true)',
     'HEAD_BASELINE="${HEAD_BASELINE:-${HYPERNEO_WORKFLOW_START_ISO:-}}"',
     'if [ -n "$HEAD_BASELINE" ] && [[ "$HEAD_BASELINE" =~ \\.[0-9]+Z$ ]]; then HEAD_BASELINE="${HEAD_BASELINE%.*}Z"; fi',
@@ -139,11 +146,18 @@ function buildReviewApprovalScript(
     'if [ -z "$PR_URL" ]; then echo "Review approval handoff requires pr_url for Codex validation" >&2; exit 1; fi',
     'WAIT_STARTED=$(jq -r \'.codex_wait_started_at // empty\' <<< "${HYPERNEO_HOOK_LOCAL_STATE_JSON:-{}}" 2>/dev/null || true)',
     'WAIT_HEAD=$(jq -r \'.codex_wait_head_oid // empty\' <<< "${HYPERNEO_HOOK_LOCAL_STATE_JSON:-{}}" 2>/dev/null || true)',
-    'if ! PR_JSON=$(gh pr view "$PR_URL" --json number,headRefOid,url,headRefName 2>/dev/null); then echo "Failed to fetch PR for Codex validation" >&2; exit 1; fi',
+    'if ! PR_JSON=$(gh pr view "$PR_URL" --json number,headRefOid,url,headRefName,headRepositoryOwner,headRepository 2>/dev/null); then echo "Failed to fetch PR for Codex validation" >&2; exit 1; fi',
     'PR_NUMBER=$(jq -r \'.number\' <<< "$PR_JSON")',
     'HEAD_OID=$(jq -r \'.headRefOid // empty\' <<< "$PR_JSON")',
     'if [ -z "$HEAD_OID" ]; then echo "Could not resolve current PR head for Codex validation" >&2; exit 1; fi',
     'HEAD_REF=$(jq -r \'.headRefName // empty\' <<< "$PR_JSON")',
+    // For cross-repository PRs, pushes to the PR branch land in the HEAD (fork)
+    // repository, not the base — read push events from there so the baseline
+    // resolves. Falls back to the base owner/repo when the fields are absent.
+    'HEAD_REPO_OWNER=$(jq -r \'.headRepositoryOwner.login // empty\' <<< "$PR_JSON")',
+    'HEAD_REPO_NAME=$(jq -r \'.headRepository.name // empty\' <<< "$PR_JSON")',
+    'EVENTS_OWNER="${HEAD_REPO_OWNER:-$OWNER}"',
+    'EVENTS_REPO="${HEAD_REPO_NAME:-$REPO}"',
     'PR_API_URL=$(jq -r \'.url // empty\' <<< "$PR_JSON")',
     'PR_HOST=$(sed -E "s#https://([^/]+)/.*#\\1#" <<< "$PR_API_URL")',
     'OWNER=$(sed -E "s#https://[^/]+/([^/]+)/([^/]+)/pull/[0-9]+.*#\\1#" <<< "$PR_API_URL")',
@@ -167,14 +181,14 @@ function buildReviewApprovalScript(
     // — only a SHA comment (COMMENT_OK) may. The push time is the PushEvent to
     // the PR's head ref (payload.ref == refs/heads/<head ref>) whose head/commits
     // include HEAD_OID — filtering by ref means a push of the same SHA to another
-    // branch cannot advance the baseline. If that lookup fails we fall back to
-    // the non-forgeable (but coarse) workflow-run start; without a baseline no
-    // reaction counts as fresh. (Fork-PR heads resolve no push baseline —
-    // PushEvents live in the fork and this lookup hits the base repo — so they
-    // fall to the workflow-start/fail-closed path; same-repo workflows are
-    // unaffected.) ms are stripped so a lexicographic comparison against GitHub's
+    // branch cannot advance the baseline. Push events are read from the HEAD
+    // repository (headRepositoryOwner/headRepository) so cross-repository PRs
+    // resolve a baseline too — pushes to the PR branch land in the fork, not the
+    // base repo. If that lookup fails we fall back to the non-forgeable (but
+    // coarse) workflow-run start; without a baseline no reaction counts as fresh.
+    // ms are stripped so a lexicographic comparison against GitHub's
     // second-precision created_at is exact.
-    'PUSH_EVENTS=$(gh api --hostname "$PR_HOST" --paginate --slurp "repos/${OWNER}/${REPO}/events?per_page=100" 2>/dev/null || true)',
+    'PUSH_EVENTS=$(gh api --hostname "$PR_HOST" --paginate --slurp "repos/${EVENTS_OWNER}/${EVENTS_REPO}/events?per_page=100" 2>/dev/null || true)',
     'HEAD_BASELINE=$(jq -r --arg head "$HEAD_OID" --arg ref "$HEAD_REF" \'[.[][] | select(.type == "PushEvent") | select(.payload.ref == ("refs/heads/" + $ref)) | select((.payload.head // "") == $head or any((.payload.commits // [])[]; (.sha // "") == $head))] | .[0].created_at // empty\' <<< "$PUSH_EVENTS" 2>/dev/null || true)',
     'HEAD_BASELINE="${HEAD_BASELINE:-${HYPERNEO_WORKFLOW_START_ISO:-}}"',
     'if [ -n "$HEAD_BASELINE" ] && [[ "$HEAD_BASELINE" =~ \\.[0-9]+Z$ ]]; then HEAD_BASELINE="${HEAD_BASELINE%.*}Z"; fi',
