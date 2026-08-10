@@ -1034,6 +1034,11 @@ async function streamResponsesToAnthropic({
   // fail the turn terminally (the compaction-killer this guards against).
   let producedContent = false;
   let productiveNotified = false;
+  // True once any non-empty text/refusal was STREAMED (via output_text.delta /
+  // refusal.delta). Used to suppress re-emitting the same text from the
+  // response.completed output array, which some upstreams include alongside the
+  // deltas (otherwise the assistant text would be duplicated).
+  let streamedText = false;
   // Set producedContent and fire onProductive once, on the first content block.
   const markProducedContent = (): void => {
     producedContent = true;
@@ -1096,8 +1101,14 @@ async function streamResponsesToAnthropic({
     emittedFunctionCalls.add(call.callId);
   };
 
-  /** Open a text block (if needed) and emit a text delta, marking the turn productive. */
+  /**
+   * Open a text block and emit a non-empty text delta, marking the turn
+   * productive. An empty delta (e.g. an empty output_text.delta frame) is a
+   * no-op — it must not open an empty block or mark the turn productive, or the
+   * empty-stream guard would be skipped and an empty end_turn emitted.
+   */
   const emitTextContent = (delta: string) => {
+    if (!delta) return;
     ensureStarted();
     closeThinkingBlock();
     if (!textOpen) {
@@ -1105,10 +1116,8 @@ async function streamResponsesToAnthropic({
       textOpen = true;
       markProducedContent();
     }
-    if (delta) {
-      send(textDeltaSSE(blockIndex, delta));
-      heuristicOutputTokens += Math.max(1, Math.ceil(delta.length / 4));
-    }
+    send(textDeltaSSE(blockIndex, delta));
+    heuristicOutputTokens += Math.max(1, Math.ceil(delta.length / 4));
   };
 
   try {
@@ -1122,7 +1131,9 @@ async function streamResponsesToAnthropic({
         // answer); surface its delta as an ordinary text block so the SDK — and
         // the empty-stream guard below — see real content rather than an empty
         // turn that would otherwise be retried as an overload.
-        emitTextContent(typeof event.delta === 'string' ? event.delta : '');
+        const delta = typeof event.delta === 'string' ? event.delta : '';
+        if (delta) streamedText = true;
+        emitTextContent(delta);
         continue;
       }
 
@@ -1210,12 +1221,14 @@ async function streamResponsesToAnthropic({
                   const blockRecord = block as Record<string, unknown>;
                   // output_text → text; refusal → text (a refusal is the
                   // assistant's text response). Symmetric to the streamed
-                  // refusal.delta handling, so a refusal delivered only in the
+                  // refusal.delta handling, so content delivered only in the
                   // completed output array isn't mistaken for an empty stream.
-                  if (blockRecord.type === 'output_text') {
+                  // FALLBACK only: if the same text was already streamed as
+                  // deltas, emitting it again here would duplicate the message.
+                  if (!streamedText && blockRecord.type === 'output_text') {
                     const text = blockRecord.text;
                     if (typeof text === 'string') emitTextContent(text);
-                  } else if (blockRecord.type === 'refusal') {
+                  } else if (!streamedText && blockRecord.type === 'refusal') {
                     const refusal = blockRecord.refusal;
                     if (typeof refusal === 'string') emitTextContent(refusal);
                   }
@@ -1829,11 +1842,33 @@ export function createOpenAIResponsesBridgeServer(
             parseOpenAIError(openAIResponse.status, bodyText)
           );
         }
-        // Non-error JSON: reconstruct so the streaming path handles it as before.
-        openAIResponse = new Response(bodyText, {
-          status: openAIResponse.status,
-          headers: { 'Content-Type': upstreamContentType },
-        });
+        // Non-error JSON: a Responses-compatible endpoint may have ignored
+        // stream:true and returned a one-shot JSON response. Wrap a recognizable
+        // response object as a response.completed SSE event so the streamer
+        // emits its output instead of seeing no events and retrying as
+        // overloaded. An unrecognizable JSON shape still flows through (and
+        // surfaces an overloaded retry if genuinely empty).
+        const responseObject = parseJsonObject(bodyText);
+        if (
+          responseObject &&
+          (responseObject.output !== undefined ||
+            responseObject.object === 'response' ||
+            typeof responseObject.id === 'string')
+        ) {
+          const sseBody = `event: response.completed\ndata: ${JSON.stringify({
+            type: 'response.completed',
+            response: responseObject,
+          })}\n\n`;
+          openAIResponse = new Response(sseBody, {
+            status: openAIResponse.status,
+            headers: { 'Content-Type': 'text/event-stream' },
+          });
+        } else {
+          openAIResponse = new Response(bodyText, {
+            status: openAIResponse.status,
+            headers: { 'Content-Type': upstreamContentType },
+          });
+        }
       }
 
       const estimatedInputTokens = continuation

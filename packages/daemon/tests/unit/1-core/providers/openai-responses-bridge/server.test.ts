@@ -1880,6 +1880,128 @@ describe('openai-responses-bridge server', () => {
   );
 
   it.skipIf(!isBun)(
+    'does not duplicate text when both deltas and completed output are present',
+    async () => {
+      server = createOpenAIResponsesBridgeServer({
+        auth: { source: 'api_key', apiKey: 'sk-test' },
+        models,
+        fetchImpl: async () =>
+          sse([
+            {
+              event: 'response.output_text.delta',
+              data: { type: 'response.output_text.delta', delta: 'hello' },
+            },
+            {
+              event: 'response.completed',
+              data: {
+                type: 'response.completed',
+                // Assembled text repeated in the completed output (some upstreams).
+                response: {
+                  usage: { input_tokens: 2, output_tokens: 1 },
+                  output: [{ type: 'message', content: [{ type: 'output_text', text: 'hello' }] }],
+                },
+              },
+            },
+          ]),
+      });
+
+      const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-5.3-codex',
+          max_tokens: 128,
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+      });
+
+      const events = await readSSEEvents(resp.body);
+      expect(resp.status).toBe(200);
+      // The streamed delta wins; the completed output is not re-emitted.
+      expect(textDeltaEvents(events).join('')).toBe('hello');
+    }
+  );
+
+  it.skipIf(!isBun)('does not mark an empty output_text.delta frame as productive', async () => {
+    server = createOpenAIResponsesBridgeServer({
+      auth: { source: 'api_key', apiKey: 'sk-test' },
+      models,
+      // Only an empty delta frame, then a completed with no output → zero content.
+      fetchImpl: async () =>
+        sse([
+          {
+            event: 'response.output_text.delta',
+            data: { type: 'response.output_text.delta', delta: '' },
+          },
+          {
+            event: 'response.completed',
+            data: {
+              type: 'response.completed',
+              response: { usage: { input_tokens: 1, output_tokens: 0 }, output: [] },
+            },
+          },
+        ]),
+    });
+
+    const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gpt-5.3-codex',
+        max_tokens: 128,
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+    });
+
+    const events = await readSSEEvents(resp.body);
+    // No real content → retryable overloaded, not an empty end_turn.
+    expect(events.find((event) => event.event === 'error')?.data).toMatchObject({
+      error: { type: 'overloaded_error' },
+    });
+    expect(messageDeltaEvent(events)).toBeUndefined();
+  });
+
+  it.skipIf(!isBun)(
+    'honors a non-streaming JSON success response (ignoring stream:true)',
+    async () => {
+      server = createOpenAIResponsesBridgeServer({
+        auth: { source: 'api_key', apiKey: 'sk-test' },
+        models,
+        // A Responses-compatible endpoint ignored stream:true and returned a
+        // one-shot JSON response with the assistant output.
+        fetchImpl: async () =>
+          new Response(
+            JSON.stringify({
+              id: 'resp_1',
+              object: 'response',
+              output: [
+                { type: 'message', content: [{ type: 'output_text', text: 'json answer' }] },
+              ],
+              usage: { input_tokens: 2, output_tokens: 1 },
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          ),
+      });
+
+      const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-5.3-codex',
+          max_tokens: 128,
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+      });
+
+      const events = await readSSEEvents(resp.body);
+      expect(resp.status).toBe(200);
+      expect(textDeltaEvents(events).join('')).toBe('json answer');
+      expect(events.find((event) => event.event === 'error')).toBeUndefined();
+      expect(messageDeltaEvent(events)).toMatchObject({ delta: { stop_reason: 'end_turn' } });
+    }
+  );
+
+  it.skipIf(!isBun)(
     'preserves the tool-turn continuation across an empty-stream retry',
     async () => {
       const capturedBodies: Record<string, unknown>[] = [];
