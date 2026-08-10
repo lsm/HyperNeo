@@ -2039,8 +2039,16 @@ export class AgentSession
       // steer can never steal it by publishing message.persisted first.
       let role: 'turn' | 'steer';
       try {
+        // Legacy-owned turn guard (see deliverAndMarkQueued): a session can be
+        // `processing` a legacy-replayed turn with no active v2 turn row; force a
+        // steer so this chat parks behind it instead of racing it. The deferred
+        // legacy-replay migration removes the need for this guard. (Codex P1.)
+        const legacyOwnedTurn =
+          this.stateManager.getState().status === 'processing' &&
+          !this.db.getJobQueueRepo().hasActiveTurnDelivery(this.session.id);
         role = deliverMessage(this.db.getJobQueueRepo(), this.session.id, messageUuid, {
           origin: 'chat',
+          ...(legacyOwnedTurn ? { role: 'steer' as const } : {}),
         });
       } catch (err) {
         // The user row was already saved `enqueued` by MessagePersistence. If job

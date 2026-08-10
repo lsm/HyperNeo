@@ -579,7 +579,10 @@ export class SpaceRuntimeService {
       ensureQueryStarted(): Promise<void>;
       messageQueue: { enqueueWithId: (id: string, message: string) => Promise<void> };
       /** Present on real AgentSessions; marked optional so test mocks need not stub it. */
-      stateManager?: { setQueuedIfIdle(messageId: string): Promise<boolean> };
+      stateManager?: {
+        setQueuedIfIdle(messageId: string): Promise<boolean>;
+        getState(): { status: string };
+      };
     },
     message: string,
     messageId?: string
