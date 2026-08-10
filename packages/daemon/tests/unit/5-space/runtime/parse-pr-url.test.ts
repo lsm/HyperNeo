@@ -99,16 +99,21 @@ describe('resolveTopicFromInterest', () => {
   test('resolves an Enterprise PR URL into the host-agnostic github/ taxonomy', () => {
     // GitHub events are published under the literal `github/` source prefix
     // regardless of github.com vs. GHE, so an Enterprise PR resolves the same
-    // way as github.com (host is not part of the topic).
+    // way as github.com (host is not part of the topic). The Enterprise host
+    // must be admitted via allowedHosts (the runtime derives it from GH_HOST).
     const interest: Pick<EventInterest, 'topicFrom'> = {
       topicFrom: {
         source: 'primaryLink',
         pattern: 'github/{owner}/{repo}/pull_request/{number}.*',
       },
     };
-    expect(resolveTopicFromInterest(interest, 'https://github.example.com/team/repo/pull/99')).toBe(
-      'github/team/repo/pull_request/99.*'
-    );
+    expect(
+      resolveTopicFromInterest(
+        interest,
+        'https://github.example.com/team/repo/pull/99',
+        new Set(['github.com', 'github.example.com'])
+      )
+    ).toBe('github/team/repo/pull_request/99.*');
   });
 
   test('does not substitute {host} (unsupported: events are published host-agnostic)', () => {
@@ -120,12 +125,30 @@ describe('resolveTopicFromInterest', () => {
     };
     const resolved = resolveTopicFromInterest(
       interest,
-      'https://github.example.com/team/repo/pull/99'
+      'https://github.example.com/team/repo/pull/99',
+      new Set(['github.com', 'github.example.com'])
     );
     // `{host}` is left as a literal token rather than expanded — the GitHub
     // topic taxonomy has no host segment, so expanding it could never match.
     expect(resolved).toBe('{host}/team/repo/pull_request/99.*');
     expect(validateGlobPattern(resolved!).valid).toBe(false);
+  });
+
+  test('returns null for a primary link on an untrusted host', () => {
+    // parsePrUrl accepts a GitHub-shaped path on any host, so a link like this
+    // must not resolve to a topic for the real acme/widgets repo. Only an
+    // allowed host (github.com by default, plus a configured GH_HOST) resolves.
+    expect(
+      resolveTopicFromInterest(primaryLinkInterest, 'https://evil.example/acme/widgets/pull/7')
+    ).toBeNull();
+    // ...and the same link IS resolved once its host is admitted.
+    expect(
+      resolveTopicFromInterest(
+        primaryLinkInterest,
+        'https://evil.example/acme/widgets/pull/7',
+        new Set(['github.com', 'evil.example'])
+      )
+    ).toBe('github/acme/widgets/pull_request/7.*');
   });
 
   test('only substitutes the known placeholders; unknown tokens are left as-is', () => {

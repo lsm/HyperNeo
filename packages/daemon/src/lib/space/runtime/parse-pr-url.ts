@@ -70,7 +70,18 @@ export const KNOWN_TOPIC_FROM_SOURCES: ReadonlySet<string> = new Set<string>(['p
  *   use `interest.topic` directly), or
  * - the `source` is not a known resolver, or
  * - the primary link cannot be parsed as a GitHub PR URL (malformed, an issue
- *   URL, a non-GitHub host, or empty).
+ *   URL, or empty), or
+ * - the primary link's host is not in `allowedHosts` (defaults to github.com;
+ *   GitHub Enterprise deployments must include their GH_HOST — see
+ *   github-connector's validatePrLookupHost), or
+ * - a substituted identity component is not a literal topic segment.
+ *
+ * `allowedHosts` is the trust boundary: parsePrUrl accepts a GitHub-shaped path
+ * on any host, so without this check a link like
+ * `https://evil.example/acme/widgets/pull/7` would resolve to a topic for the
+ * real `acme/widgets` repo and let the run subscribe to an unrelated repo's
+ * events. Pass the host allowlist explicitly (the runtime derives it from
+ * GH_HOST); the github.com-only default is fail-safe for GHE if omitted.
  *
  * Pure: no I/O, no logging. The caller decides what to do with `null` (skip the
  * interest, defer until a link exists, …). Resolved topics are validated as glob
@@ -87,7 +98,8 @@ export const KNOWN_TOPIC_FROM_SOURCES: ReadonlySet<string> = new Set<string>(['p
  */
 export function resolveTopicFromInterest(
   interest: Pick<EventInterest, 'topicFrom'>,
-  primaryLinkUrl: string | undefined | null
+  primaryLinkUrl: string | undefined | null,
+  allowedHosts: ReadonlySet<string> = new Set(['github.com'])
 ): string | null {
   const { topicFrom } = interest;
   // The known-sources set is the single switch point: a source must be admitted
@@ -97,6 +109,14 @@ export function resolveTopicFromInterest(
   if (!topicFrom || !KNOWN_TOPIC_FROM_SOURCES.has(topicFrom.source)) return null;
   const parsed = parsePrUrl(typeof primaryLinkUrl === 'string' ? primaryLinkUrl : '');
   if (!parsed) return null;
+  // Only resolve primary links from a trusted GitHub host. parsePrUrl accepts a
+  // GitHub-shaped path on any host, so `https://evil.example/acme/widgets/pull/7`
+  // would otherwise resolve to a topic for the real `acme/widgets` repo and let
+  // the run subscribe to an unrelated repository's events. The default allows
+  // only github.com; GitHub Enterprise deployments must include their GH_HOST
+  // (mirroring github-connector's validatePrLookupHost allowlist). This is the
+  // trust boundary and runs before any component is used.
+  if (!allowedHosts.has(parsed.host)) return null;
   // Substituted identity components must be literal topic segments. The trie
   // treats `*` as a wildcard, and the placeholder substitutions below are
   // applied sequentially over the result, so a component carrying `*` or
