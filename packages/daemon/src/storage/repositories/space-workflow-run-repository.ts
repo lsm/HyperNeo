@@ -67,7 +67,9 @@ export class SpaceWorkflowRunRepository {
         versionHash,
         payload,
         source: 'run_create',
-        createdAt: Date.now(),
+        // Content timestamp (see recordDefinitionVersion): preserves the gate-open cache
+        // fingerprint across the read cutover.
+        createdAt: params.rawWorkflow.updatedAt,
       });
       return this.insertRun(params, versionHash);
     })();
@@ -114,7 +116,10 @@ export class SpaceWorkflowRunRepository {
         versionHash,
         payload,
         source: 'backfill',
-        createdAt: Date.now(),
+        // Content timestamp (see recordDefinitionVersion): a backfilled in-progress run
+        // rehydrates with the head's updatedAt, matching the gate-open cache it already
+        // has — no spurious gate re-evaluation at cutover.
+        createdAt: rawWorkflow.updatedAt,
       });
       const result = this.db
         .prepare(

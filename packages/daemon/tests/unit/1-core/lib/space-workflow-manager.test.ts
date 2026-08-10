@@ -972,7 +972,9 @@ describe('SpaceWorkflowManager', () => {
         versionHash,
         payload,
         source: 'run_create',
-        createdAt: Date.now(),
+        // Content timestamp, mirroring recordDefinitionVersion — preserves the gate-open
+        // cache fingerprint across the read cutover.
+        createdAt: raw.updatedAt,
       });
       return versionHash;
     }
@@ -1038,7 +1040,9 @@ describe('SpaceWorkflowManager', () => {
       expect(resolved.gates ?? []).toEqual(live.gates ?? []);
       expect(resolved.completionAutonomyLevel).toBe(live.completionAutonomyLevel);
       expect(resolved.startNodeId).toBe(live.startNodeId);
-      expect(typeof resolved.updatedAt).toBe('number');
+      // updatedAt is the content timestamp, so the gate-open cache fingerprint matches the
+      // live path — no spurious gate re-evaluation when pin equals head.
+      expect(resolved.updatedAt).toBe(live.updatedAt);
     });
 
     it('falls back to the live head when the pinned payload cannot be parsed', () => {
@@ -1093,6 +1097,9 @@ describe('SpaceWorkflowManager', () => {
       expect(resolved.nodes).toEqual(head.nodes);
       expect(resolved.name).toBe(head.name);
       expect(resolved.completionAutonomyLevel).toBe(head.completionAutonomyLevel);
+      // updatedAt matches the head, so a backfilled in-progress run's existing gate-open
+      // cache fingerprint survives the cutover (no spurious gate re-evaluation).
+      expect(resolved.updatedAt).toBe(head.updatedAt);
     });
   });
 });

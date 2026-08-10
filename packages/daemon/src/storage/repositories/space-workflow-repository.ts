@@ -581,10 +581,17 @@ export class SpaceWorkflowRepository {
         versionHash,
         payload,
         source,
-        createdAt: Date.now(),
+        // The version's createdAt is the CONTENT's updatedAt, not the append time. The
+        // read cutover rehydrates a pinned run with this value as the workflow's
+        // `updatedAt`, so the gate-open cache fingerprint (updatedAt + gateDef hash)
+        // matches what an existing run already cached — a backfilled in-progress run does
+        // not spuriously re-evaluate already-open gates at cutover (which a transient
+        // script failure could then block). For create/update the head's updatedAt is the
+        // write timestamp, so this is equivalent to Date.now() on those paths.
+        createdAt: workflow.updatedAt,
       });
     } catch (err) {
-      log.warn('Failed to record workflow definition version (shadow mode, non-fatal):', err);
+      log.warn('Failed to record workflow definition version (non-fatal):', err);
     }
   }
 
