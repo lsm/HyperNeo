@@ -566,6 +566,8 @@ export class SpaceRuntimeService {
       getSessionData(): Session;
       ensureQueryStarted(): Promise<void>;
       messageQueue: { enqueueWithId: (id: string, message: string) => Promise<void> };
+      /** Present on real AgentSessions; marked optional so test mocks need not stub it. */
+      stateManager?: { setQueuedIfIdle(messageId: string): Promise<boolean> };
     },
     message: string,
     messageId?: string
@@ -615,8 +617,9 @@ export class SpaceRuntimeService {
       }
       // else (enqueued/deferred/submitted): row exists; just (re-)enqueue —
       // deliverMessage dedups the active job via getActiveDeliveryRole.
+      let role: 'turn' | 'steer';
       try {
-        deliverMessage(reactiveDb.getJobQueueRepo(), sessionId, id, {
+        role = deliverMessage(reactiveDb.getJobQueueRepo(), sessionId, id, {
           origin: 'long_term_agent',
           parentToolUseId: null,
         });
@@ -625,6 +628,15 @@ export class SpaceRuntimeService {
         // no owner — terminalize it. Mirrors deliverChatMessage's handling.
         reactiveDb.getSDKMessageRepo().markDeliveryFailedByUuid(sessionId, id);
         throw err;
+      }
+      if (role === 'turn' && session.stateManager) {
+        // Mark the session queued so it reports non-idle while the turn job is
+        // pending, mirroring deliverChatMessage / the other injectors.
+        try {
+          await session.stateManager.setQueuedIfIdle(id);
+        } catch {
+          // non-fatal — the durable job is already enqueued
+        }
       }
     } else {
       // Legacy inline path (HYPERNEO_MESSAGE_DELIVERY_V2=0 opt-out).
