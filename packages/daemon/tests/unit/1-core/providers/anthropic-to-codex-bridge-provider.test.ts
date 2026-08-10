@@ -461,6 +461,39 @@ describe('AnthropicToCodexBridgeProvider', () => {
       }
     });
 
+    it('caps GPT-5.6 at 272K on the ChatGPT Codex (OAuth) backend', async () => {
+      // The 272K input cap is specific to the chatgpt.com Codex backend; the
+      // api.openai.com API used by OPENAI_API_KEY honors the published 1.05M
+      // (covered by the api-key tests above). buildSdkConfig must apply the cap
+      // only on the OAuth path — both in CLAUDE_CODE_AUTO_COMPACT_WINDOW and the
+      // bridge /v1/models metadata the SDK reads.
+      const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'hyperneo-codex-oauth-window-'));
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: 'oauth-access-token',
+        refresh: 'oauth-refresh-token',
+        expires: Date.now() + 3600_000,
+        accountId: 'user_abc123',
+      });
+      const p = makeProvider({}, hyperneoDir, path.join(tmpDir, 'codex'));
+      try {
+        await p.getApiKey(); // populates cachedBridgeAuth (chatgpt_oauth via accountId)
+        const cfg = p.buildSdkConfig('gpt-5.6-sol', { workspacePath: '/tmp/ws-oauth-window' });
+        expect(cfg.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('272000');
+        // …and the bridge's /v1/models metadata (what the SDK reads).
+        const resp = await fetch(`${cfg.envVars.ANTHROPIC_BASE_URL}/v1/models`);
+        const body = (await resp.json()) as { data: Array<{ id: string; context_window: number }> };
+        const byId = new Map(body.data.map((m) => [m.id, m.context_window]));
+        expect(byId.get('gpt-5.6-sol')).toBe(272000);
+        // A non-GPT-5.6 model is unaffected (its published window is already 272K).
+        expect(byId.get('gpt-5.5')).toBe(272000);
+      } finally {
+        p.stopAllBridgeServers();
+        rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
     it('reuses the same bridge server after OAuth token refresh', async () => {
       const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'hyperneo-build-cfg-refresh-'));
       try {

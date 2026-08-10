@@ -1,5 +1,10 @@
 import type { ModelInfo } from '@hyperneo/shared';
 
+// Published context windows (what the official api.openai.com API honors and
+// what the model picker advertises). GPT-5.6's published spec is 1.05M; the
+// ChatGPT Codex backend (chatgpt.com/backend-api/codex) silently caps its INPUT
+// context at 272K — see codexBackendContextWindow() for that override, applied
+// only on the OAuth path so API-key routing keeps the full published window.
 export const MODEL_CONTEXT_WINDOWS = {
   'gpt-5.6-sol': 1050000,
   'gpt-5.6-terra': 1050000,
@@ -85,6 +90,32 @@ export function resolveCodexBridgeModelId(modelId: string): CodexBridgeModelId |
 export function getModelContextWindow(modelId: string): number | undefined {
   const resolved = resolveCodexBridgeModelId(modelId);
   return resolved ? MODEL_CONTEXT_WINDOWS[resolved] : undefined;
+}
+
+/**
+ * Per-model INPUT-context overrides for the ChatGPT Codex backend
+ * (chatgpt.com/backend-api/codex), which caps GPT-5.6 input at 272K despite the
+ * 1.05M published spec (silently reduced from 372K around 2026-07-13). The
+ * official api.openai.com API used by OPENAI_API_KEY honors the published
+ * window, so this override is applied only on the ChatGPT OAuth path — reporting
+ * it there stops conversations and compaction requests from growing past the
+ * real cap and triggering empty/aborted 200s.
+ */
+const CODEX_BACKEND_CONTEXT_WINDOW_OVERRIDES: Partial<Record<CodexBridgeModelId, number>> = {
+  'gpt-5.6-sol': 272000,
+  'gpt-5.6-terra': 272000,
+  'gpt-5.6-luna': 272000,
+};
+
+/**
+ * Effective INPUT context window for the ChatGPT Codex backend. Falls back to
+ * the published MODEL_CONTEXT_WINDOWS value for models the backend does not
+ * cap differently (and for unknown IDs).
+ */
+export function codexBackendContextWindow(modelId: string): number | undefined {
+  const resolved = resolveCodexBridgeModelId(modelId);
+  if (!resolved) return undefined;
+  return CODEX_BACKEND_CONTEXT_WINDOW_OVERRIDES[resolved] ?? MODEL_CONTEXT_WINDOWS[resolved];
 }
 
 function getProviderAliases(id: CodexBridgeModelId, primaryAlias: string): string[] {

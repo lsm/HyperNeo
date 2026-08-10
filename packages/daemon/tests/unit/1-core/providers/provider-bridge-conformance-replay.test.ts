@@ -247,8 +247,11 @@ afterEach(() => {
 
 // Helper: a minimal valid Codex SSE response the mocked upstream can return so
 // the bridge completes its SSE pipe cleanly. The OAuth tests only assert on the
-// captured upstream REQUEST, not this body.
+// captured upstream REQUEST, not this body. A content delta is included so the
+// response represents a real turn (a content-less response would trip the
+// bridge's empty-stream guard and emit a retryable error instead).
 const MINIMAL_CODEX_SSE = responsesSse([
+  { type: 'response.output_text.delta', delta: 'ok' },
   { type: 'response.completed', response: { id: 'resp_test', usage: {} } },
 ]);
 
@@ -870,14 +873,19 @@ describe('provider-bridge conformance replay — OpenAI Responses (Codex) bridge
       expect(msgDelta.usage.output_tokens).toBe(7);
     });
 
-    it('emits message_start/message_delta/message_stop for an empty stream (just [DONE])', async () => {
+    it('surfaces a retryable overloaded_error for an empty stream (just [DONE])', async () => {
+      // A stream that carries only the [DONE] terminator (no content events) is
+      // the overload/aborted shape. The bridge must NOT emit an empty end_turn
+      // (the SDK treats a zero-content turn as malformed and fails it
+      // terminally); instead it surfaces a retryable error so the query-runner
+      // re-issues the turn.
       const out = await replayResponses('data: [DONE]\n\n');
       const events = parseAnthropicSse(out);
-      expect(eventTypes(events)).toEqual(['message_start', 'message_delta', 'message_stop']);
-      const msgDelta = events.find((e) => e.event === 'message_delta')!.data as {
-        delta: { stop_reason: string };
+      expect(eventTypes(events)).toEqual(['message_start', 'error', 'message_stop']);
+      const err = events.find((e) => e.event === 'error')!.data as {
+        error: { type: string };
       };
-      expect(msgDelta.delta.stop_reason).toBe('end_turn');
+      expect(err.error.type).toBe('overloaded_error');
     });
   });
 
@@ -896,8 +904,8 @@ describe('provider-bridge conformance replay — OpenAI Responses (Codex) bridge
 
       const starts = events.filter((e) => e.event === 'content_block_start');
       expect(starts).toHaveLength(2);
-      // summary_part.added opens the thinking block (index 0); summary_text.done
-      // closes it before the text block (index 1) opens.
+      // The first non-empty thinking delta opens the thinking block (index 0);
+      // summary_text.done closes it before the text block (index 1) opens.
       expect(
         (starts[0].data as { content_block: { type: string }; index: number }).content_block.type
       ).toBe('thinking');
@@ -944,7 +952,12 @@ describe('provider-bridge conformance replay — OpenAI Responses (Codex) bridge
       ]);
     });
 
-    it('opens then closes an empty thinking block when summary_part.added has no delta', async () => {
+    it('does not open a thinking block when summary_part.added has no delta', async () => {
+      // An aborted/empty reasoning stream (only the `added` part marker, no
+      // thinking delta) must NOT open a thinking block or mark the turn
+      // productive. The bridge waits for real thinking text before opening a
+      // block, so this contentless turn surfaces as a retryable overloaded_error
+      // instead of an empty end_turn — the core fix for the empty-200 failure.
       const out = await replayResponses(
         responsesSse([
           { type: 'response.reasoning_summary_part.added' },
@@ -953,19 +966,13 @@ describe('provider-bridge conformance replay — OpenAI Responses (Codex) bridge
         ])
       );
       const events = parseAnthropicSse(out);
-      const thinkingStart = events.find(
-        (e) =>
-          e.event === 'content_block_start' &&
-          (e.data as { content_block: { type: string } }).content_block.type === 'thinking'
-      )!.data as { index: number };
-      expect(blocksOfType(events, 'thinking')).toHaveLength(1);
+      expect(blocksOfType(events, 'thinking')).toHaveLength(0);
       expect(deltasOfType(events, 'thinking_delta')).toHaveLength(0);
-      // The opened block is closed with a matching content_block_stop at the
-      // same index — not just opened and left dangling.
-      const stopIndexes = events
-        .filter((e) => e.event === 'content_block_stop')
-        .map((e) => (e.data as { index: number }).index);
-      expect(stopIndexes).toContain(thinkingStart.index);
+      expect(eventTypes(events)).toEqual(['message_start', 'error', 'message_stop']);
+      const err = events.find((e) => e.event === 'error')!.data as {
+        error: { type: string };
+      };
+      expect(err.error.type).toBe('overloaded_error');
     });
   });
 
@@ -1081,6 +1088,9 @@ describe('provider-bridge conformance replay — OpenAI Responses (Codex) bridge
     it('reads reasoning_tokens from output_tokens_details and aliases prompt/completion_tokens', async () => {
       const out = await replayResponses(
         responsesSse([
+          // A content delta is required so the turn is not treated as an empty
+          // stream; usage is still read from response.completed below.
+          { type: 'response.output_text.delta', delta: 'ok' },
           {
             type: 'response.completed',
             response: {
@@ -1129,6 +1139,7 @@ describe('provider-bridge conformance replay — OpenAI Responses (Codex) bridge
       let captured: unknown[] = [];
       await replayResponses(
         responsesSse([
+          { type: 'response.output_text.delta', delta: 'answer' },
           {
             type: 'response.completed',
             response: {

@@ -29,10 +29,13 @@ import {
 } from '../provider-anthropic-compat/translator.js';
 import { getModelContextWindow as getCodexModelContextWindow } from '../codex-models.js';
 import { createAnthropicErrorBody, type AnthropicErrorType } from '../shared/error-envelope.js';
-import { anthropicErrorTypeForHttpStatus } from '@hyperneo/shared/provider/error-taxonomy';
+import {
+  anthropicErrorTypeForHttpStatus,
+  httpStatusForSymbolicErrorType,
+  isProviderErrorCodeOrType,
+} from '@hyperneo/shared/provider/error-taxonomy';
 import {
   isJsonContentType,
-  isOpenAiTransientErrorType,
   normalizeOpenAiUpstreamError,
 } from '../shared/normalize-upstream-error.js';
 import { Logger } from '../../logger.js';
@@ -761,6 +764,81 @@ function parseOpenAIError(status: number, text: string): string {
   return text || `OpenAI API request failed with status ${status}`;
 }
 
+/**
+ * True when a JSON body is an error response, vs. a non-streaming success body.
+ * Recognizes three shapes so a non-transient 200-with-JSON-error surfaces as a
+ * terminal error instead of letting the empty-stream guard relabel it as a
+ * retryable overload:
+ *   - OpenAI/Anthropic wrapped `error` field,
+ *   - RFC 7807 `detail`, or
+ *   - a FLAT body carrying only a recognized top-level error type/code, e.g.
+ *     `{"type":"invalid_request_error","message":"bad input"}` (no wrapper).
+ */
+function isJsonErrorBody(text: string): boolean {
+  const parsed = parseJsonObject(text);
+  if (!parsed) return false;
+  // `!= null` (not `!== undefined`): a success body may carry `"error": null`,
+  // which must NOT be treated as an error.
+  if (parsed.error != null || parsed.detail != null) return true;
+  // A flat error (no error/detail wrapper) may carry only a recognized error
+  // type/code/status at the top level — a symbolic name (e.g.
+  // `invalid_request_error`), a terminal provider code (`model_not_found`), or a
+  // numeric 4xx/5xx (`401`). Recognize any of them so the body routes here
+  // (terminal JSON-error path) rather than to the SSE parser, which sees no
+  // events and would relabel the permanent failure as overloaded_error. Accepts
+  // number-or-string, so a numeric `code`/`status` is covered too.
+  return (
+    isProviderErrorCodeOrType(parsed.type) ||
+    isProviderErrorCodeOrType(parsed.code) ||
+    isProviderErrorCodeOrType(parsed.status)
+  );
+}
+
+/**
+ * Extract a numeric HTTP status embedded in a JSON error body, so a
+ * non-transient 200-with-JSON-error surfaces with its REAL classification
+ * (e.g. 401 authentication_error) instead of being hardcoded to 400
+ * invalid_request_error — which would mislabel a provider auth/quota failure and
+ * risk tripping the fatal invalid-request circuit breaker. Recognizes, in order:
+ * a numeric `error.status`/`error.code` (or RFC 7807 top-level `status`, incl.
+ * its 3-digit string form), then a symbolic `error.type`/`type` (e.g.
+ * `authentication_error` → 401) via the shared taxonomy. Returns undefined when
+ * no embedded status or recognized symbol is present.
+ */
+function readEmbeddedErrorStatus(text: string): number | undefined {
+  const parsed = parseJsonObject(text);
+  if (!parsed) return undefined;
+  const errorObj =
+    parsed.error && typeof parsed.error === 'object' && !Array.isArray(parsed.error)
+      ? (parsed.error as Record<string, unknown>)
+      : undefined;
+  const candidates = [errorObj?.status, parsed.status, errorObj?.code, parsed.code];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'number' && Number.isFinite(candidate)) {
+      const n = Math.trunc(candidate);
+      if (n >= 400 && n < 600) return n;
+    } else if (typeof candidate === 'string' && /^\d{3}$/.test(candidate)) {
+      const n = Number(candidate);
+      if (n >= 400 && n < 600) return n;
+    }
+  }
+  // No numeric status — fall back to a symbolic type/code classification so a
+  // credential/overload/rate-limit error isn't mislabeled as a 400. Some proxies
+  // carry the classification in `error.code` (or a top-level `code`) rather than
+  // `type`, so check both fields, nested then top-level.
+  const symbolicCandidates = [
+    typeof errorObj?.type === 'string' ? errorObj.type : undefined,
+    typeof errorObj?.code === 'string' ? errorObj.code : undefined,
+    typeof parsed.type === 'string' ? parsed.type : undefined,
+    typeof parsed.code === 'string' ? parsed.code : undefined,
+  ];
+  for (const candidate of symbolicCandidates) {
+    const symbolicStatus = httpStatusForSymbolicErrorType(candidate);
+    if (symbolicStatus !== undefined) return symbolicStatus;
+  }
+  return undefined;
+}
+
 /** Count occurrences of each distinct value in an array, keyed by its string form. */
 function countBy<T>(arr: T[]): Record<string, number> {
   const counts: Record<string, number> = {};
@@ -947,6 +1025,7 @@ async function streamResponsesToAnthropic({
   estimatedInputTokens,
   onFunctionCallResponse,
   onReasoningItems,
+  onProductive,
   modelContextWindow,
 }: {
   openAIResponse: Response;
@@ -955,6 +1034,13 @@ async function streamResponsesToAnthropic({
   estimatedInputTokens: number;
   onFunctionCallResponse?: (callId: string, responseId: string) => void;
   onReasoningItems?: (items: ResponsesReasoningItem[]) => void;
+  /**
+   * Fired once, when the first content block is produced. The request handler
+   * uses it to consume the tool-turn continuation only once the stream is
+   * confirmed productive — so an empty/non-productive stream that triggers a
+   * retry leaves the continuation intact for the retry to reuse.
+   */
+  onProductive?: () => void;
   /**
    * Context window for the active model, resolved from the bridge config's models
    * list at session creation time. Takes precedence over the Codex-only
@@ -1002,6 +1088,32 @@ async function streamResponsesToAnthropic({
     reasoningTokens?: number | null;
   } | null = null;
   let incomplete = false;
+  // True once any content block (text / thinking / tool_use) has been emitted.
+  // The bridge commits HTTP 200 before reading the upstream body (see the
+  // fire-and-forget streamResponsesToAnthropic at the call site), so when the
+  // upstream returns a non-productive 200 (overload / aborted) we cannot retry
+  // at the transport layer. If this stays false after the stream completes, we
+  // surface a retryable overloaded_error SSE instead of an empty end_turn — an
+  // empty turn is malformed per the Messages spec and the SDK would otherwise
+  // fail the turn terminally (the compaction-killer this guards against).
+  let producedContent = false;
+  // True once any non-empty text/refusal was STREAMED (via output_text.delta /
+  // refusal.delta). Used to suppress re-emitting the same text from the
+  // response.completed output array, which some upstreams include alongside the
+  // deltas (otherwise the assistant text would be duplicated).
+  let streamedText = false;
+  // True once any non-empty thinking was STREAMED (via reasoning_summary_text /
+  // reasoning_text deltas). Used to suppress re-emitting the same summary from a
+  // terminal reasoning item's `summary` array in one-shot (delta-less) responses.
+  let streamedThinking = false;
+  // Set producedContent and fire onProductive once, on the first content block.
+  // The early-return makes producedContent double as the "already notified" flag,
+  // so onProductive fires exactly once without a second boolean.
+  const markProducedContent = (): void => {
+    if (producedContent) return;
+    producedContent = true;
+    onProductive?.();
+  };
   const emittedFunctionCalls = new Set<string>();
   const responseReasoningItems: ResponsesReasoningItem[] = [];
 
@@ -1032,6 +1144,7 @@ async function streamResponsesToAnthropic({
     thinkingBlockIndex = blockIndex;
     send(contentBlockStartThinkingSSE(thinkingBlockIndex));
     thinkingOpen = true;
+    markProducedContent();
   };
 
   const closeThinkingBlock = () => {
@@ -1048,10 +1161,118 @@ async function streamResponsesToAnthropic({
     closeThinkingBlock();
     closeTextBlock();
     if (!send(contentBlockStartToolUseSSE(blockIndex, call.callId, call.name))) return;
+    markProducedContent();
     if (!send(inputJsonDeltaSSE(blockIndex, call.argumentsText || '{}'))) return;
     if (!send(contentBlockStopSSE(blockIndex))) return;
     blockIndex++;
     emittedFunctionCalls.add(call.callId);
+  };
+
+  /**
+   * Open a text block and emit a non-empty text delta, marking the turn
+   * productive. An empty delta (e.g. an empty output_text.delta frame) is a
+   * no-op — it must not open an empty block or mark the turn productive, or the
+   * empty-stream guard would be skipped and an empty end_turn emitted.
+   */
+  const emitTextContent = (delta: string) => {
+    if (!delta) return;
+    ensureStarted();
+    closeThinkingBlock();
+    if (!textOpen) {
+      send(contentBlockStartTextSSE(blockIndex));
+      textOpen = true;
+      markProducedContent();
+    }
+    send(textDeltaSSE(blockIndex, delta));
+    heuristicOutputTokens += Math.max(1, Math.ceil(delta.length / 4));
+  };
+
+  /**
+   * Extract content items from a terminal response object's `output` array
+   * (function_call / reasoning / message). Shared by the `response.completed`
+   * and `response.incomplete` handlers so a one-shot (non-streamed) response —
+   * whose entire payload lives in the output array, with no preceding delta
+   * frames — surfaces its text/tools instead of being mistaken for an empty
+   * stream. Text/refusal emission is a FALLBACK guarded by `!streamedText`, so
+   * the same content already delivered as deltas is not duplicated.
+   */
+  const extractOutputItems = (response: Record<string, unknown> | undefined): void => {
+    const output = response?.output;
+    if (!Array.isArray(output)) return;
+    for (const item of output) {
+      if (!item || typeof item !== 'object') continue;
+      const record = item as Record<string, unknown>;
+      if (record.type === 'function_call') {
+        // Skip a function_call whose arguments the token limit interrupted
+        // (item status `incomplete`): emitting it would set a tool_use stop
+        // reason that shadows max_tokens, and the SDK would attempt an
+        // unfinished/default-`{}` invocation. Only terminal (completed) calls
+        // are emitted; absent status is treated as completed for back-compat.
+        if (
+          record.status !== 'incomplete' &&
+          typeof record.call_id === 'string' &&
+          typeof record.name === 'string'
+        ) {
+          emitFunctionCall({
+            callId: record.call_id,
+            name: record.name,
+            argumentsText: typeof record.arguments === 'string' ? record.arguments : '{}',
+          });
+        }
+      }
+      if (record.type === 'reasoning') {
+        // Collect encrypted reasoning for multi-turn continuation. Encrypted
+        // reasoning alone is NOT displayable, so it does not mark the turn
+        // productive — a reasoning-only turn stays non-productive so it hits the
+        // empty-stream guard (and the reasoning cache gate preserves the prior
+        // turn's cache on a retried turn).
+        const encrypted =
+          typeof record.encrypted_content === 'string' ? record.encrypted_content : undefined;
+        if (encrypted) {
+          responseReasoningItems.push({ type: 'reasoning', encrypted_content: encrypted });
+        }
+        // The visible reasoning SUMMARY (summary_text entries), however, IS
+        // displayable — the streaming path emits it as thinking deltas. For a
+        // one-shot (delta-less) response, emit it here so a turn whose only
+        // visible content is reasoning isn't mistaken for an empty stream
+        // (mislabeled as overload when completed, or contentless when
+        // incomplete). FALLBACK only: if the same summary was already streamed
+        // as deltas, emitting it again would duplicate the thinking block.
+        const summary = record.summary;
+        if (Array.isArray(summary) && !streamedThinking) {
+          for (const part of summary) {
+            if (!part || typeof part !== 'object') continue;
+            const partRecord = part as Record<string, unknown>;
+            if (partRecord.type !== 'summary_text') continue;
+            const text = partRecord.text;
+            if (typeof text === 'string' && text) {
+              startThinkingBlock();
+              send(thinkingDeltaSSE(thinkingBlockIndex, text));
+              heuristicOutputTokens += Math.max(1, Math.ceil(text.length / 4));
+            }
+          }
+        }
+      }
+      if (record.type === 'message') {
+        // output_text → text; refusal → text (a refusal is the assistant's text
+        // response). Symmetric to the streamed refusal.delta handling, so content
+        // delivered only in the output array isn't mistaken for an empty stream.
+        const content = record.content;
+        if (Array.isArray(content)) {
+          for (const block of content) {
+            if (!block || typeof block !== 'object') continue;
+            const blockRecord = block as Record<string, unknown>;
+            if (!streamedText && blockRecord.type === 'output_text') {
+              const text = blockRecord.text;
+              if (typeof text === 'string') emitTextContent(text);
+            } else if (!streamedText && blockRecord.type === 'refusal') {
+              const refusal = blockRecord.refusal;
+              if (typeof refusal === 'string') emitTextContent(refusal);
+            }
+          }
+        }
+      }
+    }
   };
 
   try {
@@ -1060,36 +1281,35 @@ async function streamResponsesToAnthropic({
     }
 
     for await (const event of readOpenAIStream(openAIResponse.body)) {
-      if (event.type === 'response.output_text.delta') {
-        ensureStarted();
-        closeThinkingBlock();
-        if (!textOpen) {
-          send(contentBlockStartTextSSE(blockIndex));
-          textOpen = true;
-        }
+      if (event.type === 'response.output_text.delta' || event.type === 'response.refusal.delta') {
+        // A refusal is the assistant's text response (the model declining to
+        // answer); surface its delta as an ordinary text block so the SDK — and
+        // the empty-stream guard below — see real content rather than an empty
+        // turn that would otherwise be retried as an overload.
         const delta = typeof event.delta === 'string' ? event.delta : '';
-        if (delta) {
-          send(textDeltaSSE(blockIndex, delta));
-          heuristicOutputTokens += Math.max(1, Math.ceil(delta.length / 4));
-        }
+        if (delta) streamedText = true;
+        emitTextContent(delta);
         continue;
       }
 
+      if (event.type === 'response.reasoning_summary_part.added') {
+        // Part marker only — wait for the actual thinking delta before opening a
+        // block, so an empty/aborted reasoning stream (only an `added` frame, or
+        // empty deltas) isn't marked productive and isn't mistaken for content.
+        continue;
+      }
       if (
-        event.type === 'response.reasoning_summary_part.added' ||
         event.type === 'response.reasoning_summary_text.delta' ||
         event.type === 'response.reasoning_text.delta'
       ) {
-        startThinkingBlock();
-        if (
-          event.type === 'response.reasoning_summary_text.delta' ||
-          event.type === 'response.reasoning_text.delta'
-        ) {
-          const delta = typeof event.delta === 'string' ? event.delta : '';
-          if (delta) {
-            send(thinkingDeltaSSE(thinkingBlockIndex, delta));
-            heuristicOutputTokens += Math.max(1, Math.ceil(delta.length / 4));
-          }
+        const delta = typeof event.delta === 'string' ? event.delta : '';
+        if (delta) {
+          // Open the thinking block (and mark the turn productive) only once
+          // real reasoning text arrives.
+          streamedThinking = true;
+          startThinkingBlock();
+          send(thinkingDeltaSSE(thinkingBlockIndex, delta));
+          heuristicOutputTokens += Math.max(1, Math.ceil(delta.length / 4));
         }
         continue;
       }
@@ -1112,66 +1332,57 @@ async function streamResponsesToAnthropic({
       if (event.type === 'response.completed') {
         completedUsage = responseUsage(event.response);
         const responseId = typeof event.response?.id === 'string' ? event.response.id : undefined;
-        const output = event.response?.output;
-        if (Array.isArray(output)) {
-          for (const item of output) {
-            if (
-              item &&
-              typeof item === 'object' &&
-              (item as Record<string, unknown>).type === 'function_call'
-            ) {
-              const record = item as Record<string, unknown>;
-              if (typeof record.call_id === 'string' && typeof record.name === 'string') {
-                emitFunctionCall({
-                  callId: record.call_id,
-                  name: record.name,
-                  argumentsText: typeof record.arguments === 'string' ? record.arguments : '{}',
-                });
-              }
-            }
-            if (
-              item &&
-              typeof item === 'object' &&
-              (item as Record<string, unknown>).type === 'reasoning'
-            ) {
-              const record = item as Record<string, unknown>;
-              const encrypted =
-                typeof record.encrypted_content === 'string' ? record.encrypted_content : undefined;
-              if (encrypted) {
-                responseReasoningItems.push({
-                  type: 'reasoning',
-                  encrypted_content: encrypted,
-                });
-              }
-            }
-          }
-        }
+        extractOutputItems(event.response);
         if (responseId) {
           for (const callId of emittedFunctionCalls) {
             onFunctionCallResponse?.(callId, responseId);
           }
         }
-        onReasoningItems?.(responseReasoningItems);
+        // NOTE: onReasoningItems is deferred to after the stream completes (see
+        // the fall-through below) so a non-productive completion does not
+        // overwrite the last successful turn's cached reasoning.
         continue;
       }
 
       if (event.type === 'response.incomplete') {
         incomplete = true;
         completedUsage = responseUsage(event.response);
+        const responseId = typeof event.response?.id === 'string' ? event.response.id : undefined;
+        // A one-shot (non-streamed) incomplete response carries its partial
+        // output only in the output array. Extract it so partial text is
+        // surfaced (with a max_tokens stop reason, set below) rather than lost,
+        // and so a contentless incomplete turn is not retried as an overload.
+        extractOutputItems(event.response);
+        // A function_call emitted from an incomplete turn (status completed — the
+        // turn hit max_output_tokens AFTER the call finished) is real: record its
+        // response.id so the tool-result turn can attach previous_response_id
+        // instead of resending the whole conversation (mirrors response.completed).
+        if (responseId) {
+          for (const callId of emittedFunctionCalls) {
+            onFunctionCallResponse?.(callId, responseId);
+          }
+        }
         continue;
       }
 
       const sseEvent = (event as { sseEvent?: string }).sseEvent;
       // An error frame is signalled by the payload type (`error` /
       // `response.failed`), the raw SSE `event:` name, OR a data-only frame
-      // whose payload type is a known transient error category (e.g.
-      // {"type":"server_error"} with no event line).
+      // whose payload carries a recognized error indicator in `type`, `code`, OR
+      // `status` — a symbolic name (transient or terminal), a terminal provider
+      // code, or a numeric 4xx/5xx. Checking all three fields (not just `type`)
+      // catches frames like {"code":"model_not_found"} or {"status":429} that
+      // carry no `type`, so a permanent error data-only frame never falls through
+      // to the empty-stream guard and is retried as an overloaded_error.
+      const payload = event as Record<string, unknown>;
       if (
         event.type === 'response.failed' ||
         event.type === 'error' ||
         sseEvent === 'error' ||
         sseEvent === 'response.failed' ||
-        (event.type !== undefined && isOpenAiTransientErrorType(event.type))
+        isProviderErrorCodeOrType(payload.type) ||
+        isProviderErrorCodeOrType(payload.code) ||
+        isProviderErrorCodeOrType(payload.status)
       ) {
         ensureStarted();
         closeThinkingBlock();
@@ -1224,7 +1435,33 @@ async function streamResponsesToAnthropic({
           errorBody && typeof (errorBody as Record<string, unknown>).message === 'string'
             ? ((errorBody as Record<string, unknown>).message as string)
             : undefined;
-        send(errorSSE(normalized?.type ?? 'api_error', bodyMessage ?? streamErrorMessage(event)));
+        // A transient payload (rate_limit / overloaded) is classified by the
+        // normalizer. A terminal payload (e.g. invalid_request_error,
+        // authentication_error) is NOT transient, so the normalizer returns null
+        // — surface its real Anthropic type (derived from the symbolic payload)
+        // so the upstream diagnostic is visible and the error is not retried.
+        // Keep the retryable `api_error` default only for a bare/unknown error
+        // (no recognizable type), matching prior behavior.
+        let errorType: AnthropicErrorType;
+        if (normalized) {
+          errorType = normalized.type;
+        } else {
+          // Read the symbolic classification from `type` OR `code` (some
+          // payloads carry it in code), so a terminal frame like
+          // {"code":"authentication_error"} surfaces 401 instead of the default.
+          const symbolicStatus =
+            httpStatusForSymbolicErrorType(
+              typeof topLevelError.type === 'string' ? topLevelError.type : undefined
+            ) ??
+            httpStatusForSymbolicErrorType(
+              typeof topLevelError.code === 'string' ? topLevelError.code : undefined
+            );
+          errorType =
+            symbolicStatus !== undefined
+              ? anthropicErrorTypeForHttpStatus(symbolicStatus)
+              : 'api_error';
+        }
+        send(errorSSE(errorType, bodyMessage ?? streamErrorMessage(event)));
         send(messageStopSSE());
         closeController();
         return;
@@ -1234,6 +1471,54 @@ async function streamResponsesToAnthropic({
     ensureStarted();
     closeThinkingBlock();
     closeTextBlock();
+    // Cache this turn's reasoning for multi-turn continuation whenever the turn
+    // is ACCEPTED — i.e. it is NOT about to be retried as an overloaded error.
+    // The only retried case is a fully contentless, non-incomplete stream
+    // (`!producedContent && !incomplete`), which hits the guard below and would
+    // have its (reasoning-only or empty) cache corrupt the retry
+    // (anthropicMessagesToResponsesInput would reinsert it before the wrong user
+    // message, and a nonempty cache disables the previous_response_id path on
+    // tool-result turns). A contentless `response.incomplete`, by contrast, is
+    // ACCEPTED as a max_tokens turn — not retried — so it must still refresh the
+    // cache (replacing the prior turn's reasoning, or clearing it when this turn
+    // added none); otherwise the next user turn reuses stale reasoning from an
+    // older assistant turn and can alter the request or trip a stale-reasoning
+    // 400. Deferring past the loop lets us distinguish retried vs accepted here.
+    if (producedContent || incomplete) {
+      onReasoningItems?.(responseReasoningItems);
+    }
+    // The upstream returned 200 and the stream completed without an error event,
+    // yet produced ZERO content blocks (no text / reasoning / tool_use) and was
+    // not truncated by max_output_tokens. An empty Anthropic turn is malformed per
+    // the Messages spec, and because the bridge already committed the 200 headers
+    // before reading the body, the SDK cannot retry it at the transport layer.
+    // Emit a retryable overloaded_error SSE instead of an empty end_turn: the SDK
+    // surfaces the overloaded_error type (see core/streaming.js), the query-runner
+    // (B4) recognises 'overloaded' as a transient provider error, and re-issues
+    // the whole query — so compaction self-heals instead of dying on the empty
+    // 200. This is the failure mode that killed compaction on very large OpenAI
+    // requests (empty/non-productive 200).
+    //
+    // A contentless `response.incomplete` is excluded: that is max_output_tokens
+    // exhaustion (the model spent its budget on reasoning before any visible
+    // output), not a transient overload — retrying would not help — so it falls
+    // through to the `max_tokens` stop reason below.
+    if (!producedContent && !incomplete) {
+      logger.warn(
+        'openai-responses: upstream 200 produced an empty stream with no content ' +
+          'blocks; surfacing as retryable overloaded_error instead of an empty end_turn'
+      );
+      send(
+        errorSSE(
+          'overloaded_error',
+          'OpenAI returned an empty response stream (HTTP 200, no content blocks) — ' +
+            'likely a transient overloaded response.'
+        )
+      );
+      send(messageStopSSE());
+      closeController();
+      return;
+    }
     // If the model emitted tool calls before an incomplete event, let the SDK execute
     // them; the follow-up turn can carry the continuation forward.
     const stopReason =
@@ -1675,7 +1960,8 @@ export function createOpenAIResponsesBridgeServer(
       // emit a successful empty end_turn, hiding a body-embedded transient
       // error. Only pre-buffer when the content-type explicitly says JSON — a
       // real SSE stream with a missing/mislabeled content-type flows straight
-      // through to the streamer.
+      // through to the streamer, which separately detects a non-productive
+      // empty SSE stream and surfaces a retryable overloaded_error.
       const upstreamContentType = openAIResponse.headers.get('content-type') ?? '';
       if (openAIResponse.ok && isJsonContentType(upstreamContentType)) {
         const bodyText = await openAIResponse.text();
@@ -1687,14 +1973,62 @@ export function createOpenAIResponsesBridgeServer(
           );
           return sendRetryableUpstreamError(normalized);
         }
-        // Non-transient: reconstruct so the streaming path handles it as before.
-        openAIResponse = new Response(bodyText, {
-          status: openAIResponse.status,
-          headers: { 'Content-Type': upstreamContentType },
-        });
+        // A non-transient JSON *error* body (e.g. invalid_request_error) must
+        // surface as a terminal error. Otherwise the JSON yields no SSE events
+        // and the empty-stream guard below would relabel it as a retryable
+        // overload, causing repeated requests that hide the upstream diagnostic.
+        // A JSON body that is NOT an error (e.g. a non-streaming success) still
+        // flows through to the streamer.
+        if (isJsonErrorBody(bodyText)) {
+          // Derive the terminal status/type from the embedded error when present,
+          // so an auth/quota failure (e.g. embedded 401 authentication_error)
+          // surfaces with its real classification rather than a hardcoded 400
+          // invalid_request_error (which could trip the fatal invalid-request
+          // circuit breaker).
+          const embeddedStatus = readEmbeddedErrorStatus(bodyText);
+          const errorStatus = embeddedStatus ?? 400;
+          logger.warn(
+            `openai-responses: upstream returned a non-transient JSON error (HTTP 200 → ${errorStatus}): ` +
+              `${parseOpenAIError(openAIResponse.status, bodyText).slice(0, 200)}`
+          );
+          return sendJsonError(
+            errorStatus,
+            anthropicErrorTypeForHttpStatus(errorStatus),
+            parseOpenAIError(openAIResponse.status, bodyText)
+          );
+        }
+        // Non-error JSON: a Responses-compatible endpoint may have ignored
+        // stream:true and returned a one-shot JSON response. Wrap a recognizable
+        // response object as a terminal SSE event so the streamer emits its
+        // output instead of seeing no events and retrying as overloaded. Preserve
+        // the object's own terminal status: an `incomplete` response (e.g.
+        // max_output_tokens exhaustion) must surface as `response.incomplete` so
+        // the bridge reports `max_tokens` (and skips the empty-stream overload
+        // guard) rather than mislabeling truncation as a clean `end_turn`.
+        const parsedResponse = parseJsonObject(bodyText);
+        if (
+          parsedResponse &&
+          (parsedResponse.output !== undefined ||
+            parsedResponse.object === 'response' ||
+            typeof parsedResponse.id === 'string')
+        ) {
+          const isIncomplete = parsedResponse.status === 'incomplete';
+          const terminalType = isIncomplete ? 'response.incomplete' : 'response.completed';
+          const sseBody = `event: ${terminalType}\ndata: ${JSON.stringify({
+            type: terminalType,
+            response: parsedResponse,
+          })}\n\n`;
+          openAIResponse = new Response(sseBody, {
+            status: openAIResponse.status,
+            headers: { 'Content-Type': 'text/event-stream' },
+          });
+        } else {
+          openAIResponse = new Response(bodyText, {
+            status: openAIResponse.status,
+            headers: { 'Content-Type': upstreamContentType },
+          });
+        }
       }
-
-      consumeContinuation(sessionId, resolvedContinuation);
 
       const estimatedInputTokens = continuation
         ? estimateResponsesPayloadTokens(body, continuation.input)
@@ -1721,6 +2055,15 @@ export function createOpenAIResponsesBridgeServer(
                 }),
             onReasoningItems(items) {
               storeReasoningItems(sessionId, items);
+            },
+            // Consume the tool-turn continuation only once the stream produces
+            // content. The bridge commits HTTP 200 before reading the body, so an
+            // empty/non-productive stream surfaces as a retryable error and the
+            // query-runner re-issues the turn — if the continuation were consumed
+            // eagerly, the retry could no longer attach previous_response_id and
+            // would resend the whole conversation.
+            onProductive() {
+              consumeContinuation(sessionId, resolvedContinuation);
             },
           });
         },

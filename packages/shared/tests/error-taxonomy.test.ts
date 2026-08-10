@@ -27,6 +27,9 @@ import {
   TRANSIENT_RATE_LIMIT_CODES,
   actionForProviderErrorKind,
   anthropicErrorTypeForHttpStatus,
+  httpStatusForSymbolicErrorType,
+  isOpenAiErrorTypeName,
+  isProviderErrorCodeOrType,
   isRetryableProviderError,
   matchPromptTooLong,
   providerErrorKindForHttpStatus,
@@ -125,6 +128,101 @@ describe('anthropicErrorTypeForHttpStatus', () => {
       expect(anthropicErrorTypeForHttpStatus(status)).toBe(expected);
     });
   }
+});
+
+describe('httpStatusForSymbolicErrorType', () => {
+  // Each recognized symbol resolves to a status whose
+  // anthropicErrorTypeForHttpStatus round-trips back to a NON-invalid-request
+  // type — so a 200 JSON error carrying only that symbol never defaults to 400
+  // invalid_request_error (which would trip the fatal invalid-request breaker).
+  const cases: Array<[string, number]> = [
+    ['authentication_error', 401],
+    ['AUTHENTICATION_ERROR', 401], // case-insensitive
+    ['permission_error', 403],
+    ['not_found_error', 404],
+    ['request_too_large', 413],
+    ['rate_limit_error', 429],
+    ['rate_limit_exceeded', 429],
+    ['overloaded_error', 529],
+    ['server_error', 500],
+    ['api_error', 500],
+  ];
+  for (const [symbol, expected] of cases) {
+    test(`${symbol} → ${expected}`, () => {
+      expect(httpStatusForSymbolicErrorType(symbol)).toBe(expected);
+      // Round-trips to a distinct (non-invalid-request) Anthropic type.
+      expect(anthropicErrorTypeForHttpStatus(expected)).not.toBe('invalid_request_error');
+    });
+  }
+  test('invalid_request_error resolves to 400 (its real type, not the retryable default)', () => {
+    // invalid_request_error is the one symbol that round-trips to itself; it is
+    // listed so a terminal bad-request payload surfaces as invalid_request_error
+    // rather than the retryable api_error default.
+    expect(httpStatusForSymbolicErrorType('invalid_request_error')).toBe(400);
+    expect(anthropicErrorTypeForHttpStatus(400)).toBe('invalid_request_error');
+  });
+  test('returns undefined for unrecognized / empty / non-string symbols', () => {
+    expect(httpStatusForSymbolicErrorType('not_a_real_type')).toBeUndefined();
+    expect(httpStatusForSymbolicErrorType('')).toBeUndefined();
+    expect(httpStatusForSymbolicErrorType(undefined)).toBeUndefined();
+  });
+});
+
+describe('isOpenAiErrorTypeName', () => {
+  test('admits recognized transient and terminal error type names', () => {
+    // Transient.
+    expect(isOpenAiErrorTypeName('server_error')).toBe(true);
+    expect(isOpenAiErrorTypeName('rate_limit_exceeded')).toBe(true);
+    expect(isOpenAiErrorTypeName('overloaded_error')).toBe(true);
+    // Terminal.
+    expect(isOpenAiErrorTypeName('invalid_request_error')).toBe(true);
+    expect(isOpenAiErrorTypeName('authentication_error')).toBe(true);
+    expect(isOpenAiErrorTypeName('not_found_error')).toBe(true);
+    // HTTP-status codes some gateways put in type/code.
+    expect(isOpenAiErrorTypeName('429')).toBe(true);
+    // Case-insensitive.
+    expect(isOpenAiErrorTypeName('INVALID_REQUEST_ERROR')).toBe(true);
+  });
+  test('rejects non-error frame types (heartbeat/metadata/event discriminators)', () => {
+    expect(isOpenAiErrorTypeName('ping')).toBe(false);
+    expect(isOpenAiErrorTypeName('response.completed')).toBe(false);
+    expect(isOpenAiErrorTypeName('response.output_text.delta')).toBe(false);
+    expect(isOpenAiErrorTypeName('')).toBe(false);
+    expect(isOpenAiErrorTypeName(undefined)).toBe(false);
+  });
+});
+
+describe('isProviderErrorCodeOrType', () => {
+  test('admits symbolic names, terminal provider codes, and numeric statuses', () => {
+    // Symbolic type/code names (transient or terminal).
+    expect(isProviderErrorCodeOrType('invalid_request_error')).toBe(true);
+    expect(isProviderErrorCodeOrType('authentication_error')).toBe(true);
+    expect(isProviderErrorCodeOrType('server_error')).toBe(true);
+    // Terminal provider codes carried only as loose-text signals.
+    expect(isProviderErrorCodeOrType('model_not_found')).toBe(true);
+    expect(isProviderErrorCodeOrType('insufficient_quota')).toBe(true);
+    // Numeric codes/statuses (number or 3-digit string), 4xx and 5xx.
+    expect(isProviderErrorCodeOrType(401)).toBe(true);
+    expect(isProviderErrorCodeOrType('429')).toBe(true);
+    expect(isProviderErrorCodeOrType(503)).toBe(true);
+    expect(isProviderErrorCodeOrType('502')).toBe(true);
+    // Case-insensitive symbolic names.
+    expect(isProviderErrorCodeOrType('AUTHENTICATION_ERROR')).toBe(true);
+  });
+  test('rejects non-error values and out-of-range / embedded numbers', () => {
+    // Non-error frame types / lifecycle statuses.
+    expect(isProviderErrorCodeOrType('ping')).toBe(false);
+    expect(isProviderErrorCodeOrType('completed')).toBe(false);
+    expect(isProviderErrorCodeOrType('incomplete')).toBe(false);
+    // Out-of-range numeric statuses.
+    expect(isProviderErrorCodeOrType(200)).toBe(false);
+    expect(isProviderErrorCodeOrType(302)).toBe(false);
+    // Word boundaries: "4010 tokens" must not match a 4xx, nor 600+ as 5xx.
+    expect(isProviderErrorCodeOrType('4010')).toBe(false);
+    expect(isProviderErrorCodeOrType('')).toBe(false);
+    expect(isProviderErrorCodeOrType(undefined)).toBe(false);
+    expect(isProviderErrorCodeOrType(null)).toBe(false);
+  });
 });
 
 describe('providerErrorKindForHttpStatus', () => {

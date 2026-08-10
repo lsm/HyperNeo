@@ -37,7 +37,11 @@ import {
   type OpenAIResponsesBridgeServer,
   createOpenAIResponsesBridgeServer,
 } from './openai-responses-bridge/server.js';
-import { getCodexBridgeModelInfos, CODEX_TO_SDK_MODEL } from './codex-models.js';
+import {
+  getCodexBridgeModelInfos,
+  CODEX_TO_SDK_MODEL,
+  codexBackendContextWindow,
+} from './codex-models.js';
 import { Logger } from '../logger.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -432,12 +436,18 @@ export class AnthropicToCodexBridgeProvider implements Provider {
     return userAliases;
   }
 
-  private responsesBridgeModels() {
+  private responsesBridgeModels(isChatgptOAuth: boolean) {
     const codexModels = ANTHROPIC_CODEX_MODELS.map((model) => ({
       id: model.id,
       display_name: model.name,
       created_at: `${model.releaseDate ?? '2026-01-01'}T00:00:00Z`,
-      context_window: model.contextWindow,
+      // The ChatGPT Codex backend caps GPT-5.6 input at 272K (not the 1.05M
+      // published spec); report that cap on the OAuth path so the SDK compacts
+      // before exceeding it. API-key routing (api.openai.com) keeps the full
+      // published window.
+      context_window: isChatgptOAuth
+        ? (codexBackendContextWindow(model.id) ?? model.contextWindow)
+        : model.contextWindow,
       max_tokens: model.id.startsWith('gpt-5.6-') ? 128000 : 16384,
     }));
     return codexModels;
@@ -687,6 +697,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       throw new Error(`Unknown Codex model: ${modelId}`);
     }
     const resolvedId = entry.id;
+    const isChatgptOAuth = auth?.source === 'chatgpt_oauth';
 
     if (!bridgeServer) {
       if (!auth) {
@@ -696,7 +707,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       }
       bridgeServer = createOpenAIResponsesBridgeServer({
         auth: auth ?? { source: 'api_key', apiKey: '' },
-        models: this.responsesBridgeModels(),
+        models: this.responsesBridgeModels(isChatgptOAuth),
         modelAliases: this.modelAliases(),
       });
       this.bridgeServers.set(bridgeKey, bridgeServer);
@@ -723,7 +734,11 @@ export class AnthropicToCodexBridgeProvider implements Provider {
       envVars: {
         ANTHROPIC_BASE_URL: bridgeBaseUrl,
         ANTHROPIC_API_KEY: `codex-bridge-${sessionId}`,
-        CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(entry.contextWindow),
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(
+          isChatgptOAuth
+            ? (codexBackendContextWindow(resolvedId) ?? entry.contextWindow)
+            : entry.contextWindow
+        ),
         CLAUDE_CODE_OAUTH_TOKEN: '',
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
         // Route all tiers to real Codex model IDs. SDK uses these for sub-agent
