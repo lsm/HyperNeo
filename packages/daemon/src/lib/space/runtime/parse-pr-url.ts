@@ -116,7 +116,14 @@ export function resolveTopicFromInterest(
   // only github.com; GitHub Enterprise deployments must include their GH_HOST
   // (mirroring github-connector's validatePrLookupHost allowlist). This is the
   // trust boundary and runs before any component is used.
-  if (!allowedHosts.has(parsed.host)) return null;
+  //
+  // Normalize like `new URL(...).hostname` (which the connector uses): parsePrUrl
+  // captures host via `/[^/]+/`, which is case-preserving and port-including, so
+  // lowercase and strip a trailing port before comparing - otherwise a mixed-case
+  // host or a port-bearing GHE link (`ghe.example:8443` with `GH_HOST=ghe.example`)
+  // is silently rejected.
+  const host = parsed.host.toLowerCase().replace(/:\d+$/, '');
+  if (!allowedHosts.has(host)) return null;
   // Substituted identity components must be literal topic segments. The trie
   // treats `*` as a wildcard, and the placeholder substitutions below are
   // applied sequentially over the result, so a component carrying `*` or

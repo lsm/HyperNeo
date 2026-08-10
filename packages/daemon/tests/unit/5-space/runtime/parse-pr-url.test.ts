@@ -151,6 +151,22 @@ describe('resolveTopicFromInterest', () => {
     ).toBe('github/acme/widgets/pull_request/7.*');
   });
 
+  test('normalizes host case and port before the allowedHosts check (mirrors new URL().hostname)', () => {
+    // parsePrUrl captures host case-preserving and port-including; the connector
+    // compares via new URL(...).hostname (lowercased, port-stripped). A mixed-case
+    // host and a port-bearing GHE link must resolve, not be silently rejected.
+    expect(
+      resolveTopicFromInterest(primaryLinkInterest, 'https://GitHub.com/lsm/neokai/pull/42')
+    ).toBe('github/lsm/neokai/pull_request/42.*');
+    expect(
+      resolveTopicFromInterest(
+        primaryLinkInterest,
+        'https://ghe.example:8443/team/repo/pull/9',
+        new Set(['github.com', 'ghe.example'])
+      )
+    ).toBe('github/team/repo/pull_request/9.*');
+  });
+
   test('only substitutes the known placeholders; unknown tokens are left as-is', () => {
     const interest: Pick<EventInterest, 'topicFrom'> = {
       topicFrom: {
