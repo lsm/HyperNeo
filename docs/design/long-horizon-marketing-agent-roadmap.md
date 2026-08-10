@@ -30,7 +30,9 @@ outcome report / reminder / external event / inactive-agent inbox
 
 Do not implement owner-report delivery before this prerequisite is complete. In particular, durable enqueue is not synonymous with model-visible delivery, and V2 does not currently rehydrate missing sessions.
 
-> Note: PR #2341 is already merged and is unrelated to Message Delivery V2. PR #2417 is the merged V2 substrate; the remaining receipt and Space/LH migration work is the actual dependency.
+Space task **#860, “Add idempotent message delivery ownership,”** is the active Message Delivery V2 follow-up and the concrete prerequisite for this roadmap's V1–V3 foundation. It is itself sequenced after task #859. Rebase this roadmap's implementation work on the merged `dev` state from #860 rather than duplicating its generic delivery ownership or ordinary chat/Space submission work.
+
+> Note: PR #2341 is already merged and is unrelated to Message Delivery V2. PR #2417 is the merged V2 substrate; task #860 owns the active follow-up.
 
 ## State and authority model
 
