@@ -1216,6 +1216,18 @@ export class SpaceRuntime {
     );
     if (!task) return;
     this.materializeTopicFromInterestsForNodes(workflowRunId, task.id, [node]);
+    // Replay retained `published` events. Unlike template-declared static
+    // interests (rebuilt during rehydrate BEFORE the runtime accepts events),
+    // a topicFrom-static sub is created MID-RUN by this record trigger — after
+    // events are already flowing. An event that landed between PR creation and
+    // this save_artifact (the PR `opened` event, a fast check_run, an early
+    // reaction) would otherwise stay `published` until TTL, even though the node
+    // declared `pull_request/{number}.*`. registerSubscription's own replay only
+    // covers `dynamic` subs, and topicFrom must stay `static` (the rehydrate path
+    // registers static; mixing kinds would double-deliver), so replay explicitly
+    // here. Idempotent and bounded by the published-event retention TTL.
+    // Rehydrate is untouched: it rebuilds the full trie before events flow.
+    this.redispatchRetainedExternalEvents();
   }
 
   private registerRunInterestsFromWorkflow(run: SpaceWorkflowRun, workflow: SpaceWorkflow): void {

@@ -6600,6 +6600,85 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     expect(injected).toHaveLength(0);
   });
+
+  test('replays a retained event that arrived before the PR link was recorded', async () => {
+    const workflow = createTopicFromWorkflow();
+    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    markCoderLive(run.id, 'session-gap');
+
+    // The event lands in the gap between PR creation and save_artifact — before
+    // any subscription exists. It is accepted (retained as `published`).
+    const event = makeEvent();
+    await eventService.publish(event);
+    expect(eventStore.getById(event.id)?.state).toBe('published');
+    expect(eventStore.listDeliveries(event.id)).toHaveLength(0);
+
+    // Recording the PR link materializes the topicFrom sub; the record trigger
+    // replays retained events so the gap event is delivered now, rather than
+    // sitting `published` until TTL. Replay re-handles the event via a
+    // fire-and-forget handler (like the dynamic-subscription gap path), so let
+    // it settle before asserting.
+    recordPrLinkArtifact(run.id, 'code', PR_URL);
+    runtime.materializeTopicFromInterestsForNode(run.id, 'code');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-gap');
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
+  });
+
+  test('coexists with a static topic interest on the same node', async () => {
+    // A node may declare both a concrete static `topic` and a `topicFrom`
+    // template. Both must register (the static verbatim, the template resolved
+    // against the primary link) without one crowding out the other.
+    const workflow = workflowManager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: `Workflow ${Math.random()}`,
+      description: '',
+      nodes: [
+        {
+          id: 'code',
+          name: 'Code',
+          agents: [
+            {
+              agentId: AGENT_ID,
+              name: 'coder',
+              eventInterests: [
+                { topic: 'github/*/neokai/check_run/*' },
+                { topicFrom: { source: 'primaryLink', pattern: TOPIC_FROM_PATTERN } },
+              ],
+            },
+          ],
+        },
+      ],
+      transitions: [],
+      startNodeId: 'code',
+      rules: [],
+      tags: [],
+    });
+    const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    const task = tasks[0]!;
+    markCoderLive(run.id, 'session-mixed');
+    recordPrLinkArtifact(run.id, 'code', PR_URL);
+    // registerRunInterests handles both the static topic (verbatim) and the
+    // topicFrom interest (resolved from the recorded primary link).
+    runtime.registerRunInterests(run.id, task.id, workflow.nodes);
+
+    // One event matches the resolved topicFrom sub, the other the static topic.
+    const reviewEvent = makeEvent();
+    const checkEvent = makeEvent({
+      id: `evt-check-${Math.random().toString(36).slice(2)}`,
+      topic: 'github/lsm/neokai/check_run/42.completed',
+      summary: 'CI check completed',
+      dedupeKey: `dedupe-check-${Math.random().toString(36).slice(2)}`,
+    });
+    await eventService.publish(reviewEvent);
+    await eventService.publish(checkEvent);
+
+    expect(injected).toHaveLength(2);
+    expect(eventStore.getById(reviewEvent.id)?.state).toBe('delivered');
+    expect(eventStore.getById(checkEvent.id)?.state).toBe('delivered');
+  });
 });
 
 describe('SpaceRuntime queue-health snapshot', () => {
