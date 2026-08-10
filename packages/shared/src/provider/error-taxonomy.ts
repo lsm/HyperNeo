@@ -496,6 +496,48 @@ export function anthropicErrorTypeForHttpStatus(status: number): AnthropicErrorT
   );
 }
 
+/**
+ * Hand-authored reverse map for symbolic error types/codes that are
+ * UNAMBIGUOUS — each maps to exactly one HTTP status. A 200 JSON error may carry
+ * only a symbolic classification with no numeric status (e.g.
+ * `{"error":{"type":"authentication_error"}}`); resolving it here lets a bridge
+ * surface the real status/type instead of defaulting to 400 invalid_request_error,
+ * which would mislabel a credential/overload/rate-limit failure and count it
+ * toward the fatal invalid-request circuit breaker.
+ *
+ * NOT derived from PROVIDER_ERROR_TAXONOMY: `api_error` and
+ * `invalid_request_error` are each reused as the anthropicType across several
+ * kinds, so a derived anthropicType→status map would collide. Only single-intent
+ * symbols are listed; `invalid_request_error` and anything unrecognized fall
+ * through to the caller's default. `api_error` and `server_error` ARE included
+ * (mapped to 500) because their honest classification is a retryable 5xx, never
+ * a 400 — leaving them to fall through to 400 would be the exact fatal-breaker
+ * mislabel this map exists to prevent.
+ */
+const SYMBOLIC_ERROR_TYPE_TO_STATUS: Readonly<Record<string, number>> = {
+  // Anthropic wire types (each used by exactly one kind).
+  authentication_error: 401,
+  permission_error: 403,
+  not_found_error: 404,
+  request_too_large: 413,
+  rate_limit_error: 429,
+  overloaded_error: 529,
+  // OpenAI / common symbolic codes with a single unambiguous intent.
+  rate_limit_exceeded: 429,
+  server_error: 500,
+  api_error: 500,
+};
+
+/**
+ * Resolve a symbolic error type/code (e.g. `authentication_error`,
+ * `rate_limit_exceeded`) to its canonical HTTP status, or undefined when the
+ * symbol is unrecognized (caller falls back to its default). Case-insensitive.
+ */
+export function httpStatusForSymbolicErrorType(type: string | undefined): number | undefined {
+  if (typeof type !== 'string' || type.length === 0) return undefined;
+  return SYMBOLIC_ERROR_TYPE_TO_STATUS[type.toLowerCase()];
+}
+
 // ---------------------------------------------------------------------------
 // Prompt-too-long detection
 // ---------------------------------------------------------------------------

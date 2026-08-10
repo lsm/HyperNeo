@@ -29,7 +29,10 @@ import {
 } from '../provider-anthropic-compat/translator.js';
 import { getModelContextWindow as getCodexModelContextWindow } from '../codex-models.js';
 import { createAnthropicErrorBody, type AnthropicErrorType } from '../shared/error-envelope.js';
-import { anthropicErrorTypeForHttpStatus } from '@hyperneo/shared/provider/error-taxonomy';
+import {
+  anthropicErrorTypeForHttpStatus,
+  httpStatusForSymbolicErrorType,
+} from '@hyperneo/shared/provider/error-taxonomy';
 import {
   isJsonContentType,
   isOpenAiTransientErrorType,
@@ -776,13 +779,15 @@ function isJsonErrorBody(text: string): boolean {
 }
 
 /**
- * Extract a numeric HTTP status embedded in a JSON error body (OpenAI
- * `error.status`/`error.code`, nested object, or RFC 7807 top-level `status`),
- * so a non-transient 200-with-JSON-error surfaces with its REAL classification
+ * Extract a numeric HTTP status embedded in a JSON error body, so a
+ * non-transient 200-with-JSON-error surfaces with its REAL classification
  * (e.g. 401 authentication_error) instead of being hardcoded to 400
  * invalid_request_error — which would mislabel a provider auth/quota failure and
- * risk tripping the fatal invalid-request circuit breaker. Returns undefined
- * when no embedded status is present.
+ * risk tripping the fatal invalid-request circuit breaker. Recognizes, in order:
+ * a numeric `error.status`/`error.code` (or RFC 7807 top-level `status`, incl.
+ * its 3-digit string form), then a symbolic `error.type`/`type` (e.g.
+ * `authentication_error` → 401) via the shared taxonomy. Returns undefined when
+ * no embedded status or recognized symbol is present.
  */
 function readEmbeddedErrorStatus(text: string): number | undefined {
   const parsed = parseJsonObject(text);
@@ -801,7 +806,13 @@ function readEmbeddedErrorStatus(text: string): number | undefined {
       if (n >= 400 && n < 600) return n;
     }
   }
-  return undefined;
+  // No numeric status — fall back to a symbolic type/code classification so a
+  // credential/overload/rate-limit error isn't mislabeled as a 400.
+  return (
+    httpStatusForSymbolicErrorType(
+      typeof errorObj?.type === 'string' ? errorObj.type : undefined
+    ) ?? httpStatusForSymbolicErrorType(typeof parsed.type === 'string' ? parsed.type : undefined)
+  );
 }
 
 /** Count occurrences of each distinct value in an array, keyed by its string form. */
@@ -1067,6 +1078,10 @@ async function streamResponsesToAnthropic({
   // response.completed output array, which some upstreams include alongside the
   // deltas (otherwise the assistant text would be duplicated).
   let streamedText = false;
+  // True once any non-empty thinking was STREAMED (via reasoning_summary_text /
+  // reasoning_text deltas). Used to suppress re-emitting the same summary from a
+  // terminal reasoning item's `summary` array in one-shot (delta-less) responses.
+  let streamedThinking = false;
   // Set producedContent and fire onProductive once, on the first content block.
   // The early-return makes producedContent double as the "already notified" flag,
   // so onProductive fires exactly once without a second boolean.
@@ -1164,7 +1179,16 @@ async function streamResponsesToAnthropic({
       if (!item || typeof item !== 'object') continue;
       const record = item as Record<string, unknown>;
       if (record.type === 'function_call') {
-        if (typeof record.call_id === 'string' && typeof record.name === 'string') {
+        // Skip a function_call whose arguments the token limit interrupted
+        // (item status `incomplete`): emitting it would set a tool_use stop
+        // reason that shadows max_tokens, and the SDK would attempt an
+        // unfinished/default-`{}` invocation. Only terminal (completed) calls
+        // are emitted; absent status is treated as completed for back-compat.
+        if (
+          record.status !== 'incomplete' &&
+          typeof record.call_id === 'string' &&
+          typeof record.name === 'string'
+        ) {
           emitFunctionCall({
             callId: record.call_id,
             name: record.name,
@@ -1173,15 +1197,36 @@ async function streamResponsesToAnthropic({
         }
       }
       if (record.type === 'reasoning') {
-        // Collect encrypted reasoning for multi-turn continuation, but do NOT
-        // call markProducedContent here: reasoning alone is not displayable
-        // content. A reasoning-only turn must stay non-productive so it hits the
-        // empty-stream guard (and the reasoning cache is gated on producedContent
-        // after the loop, preserving the prior turn's cache on a retried turn).
+        // Collect encrypted reasoning for multi-turn continuation. Encrypted
+        // reasoning alone is NOT displayable, so it does not mark the turn
+        // productive — a reasoning-only turn stays non-productive so it hits the
+        // empty-stream guard (and the reasoning cache gate preserves the prior
+        // turn's cache on a retried turn).
         const encrypted =
           typeof record.encrypted_content === 'string' ? record.encrypted_content : undefined;
         if (encrypted) {
           responseReasoningItems.push({ type: 'reasoning', encrypted_content: encrypted });
+        }
+        // The visible reasoning SUMMARY (summary_text entries), however, IS
+        // displayable — the streaming path emits it as thinking deltas. For a
+        // one-shot (delta-less) response, emit it here so a turn whose only
+        // visible content is reasoning isn't mistaken for an empty stream
+        // (mislabeled as overload when completed, or contentless when
+        // incomplete). FALLBACK only: if the same summary was already streamed
+        // as deltas, emitting it again would duplicate the thinking block.
+        const summary = record.summary;
+        if (Array.isArray(summary) && !streamedThinking) {
+          for (const part of summary) {
+            if (!part || typeof part !== 'object') continue;
+            const partRecord = part as Record<string, unknown>;
+            if (partRecord.type !== 'summary_text') continue;
+            const text = partRecord.text;
+            if (typeof text === 'string' && text) {
+              startThinkingBlock();
+              send(thinkingDeltaSSE(thinkingBlockIndex, text));
+              heuristicOutputTokens += Math.max(1, Math.ceil(text.length / 4));
+            }
+          }
         }
       }
       if (record.type === 'message') {
@@ -1237,6 +1282,7 @@ async function streamResponsesToAnthropic({
         if (delta) {
           // Open the thinking block (and mark the turn productive) only once
           // real reasoning text arrives.
+          streamedThinking = true;
           startThinkingBlock();
           send(thinkingDeltaSSE(thinkingBlockIndex, delta));
           heuristicOutputTokens += Math.max(1, Math.ceil(delta.length / 4));

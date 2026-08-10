@@ -854,6 +854,66 @@ describe('openai-responses-bridge server', () => {
     });
   });
 
+  it.skipIf(!isBun)(
+    'skips an incomplete function_call in a truncated response (max_tokens, not tool_use)',
+    async () => {
+      // A response.incomplete may carry a function_call whose arguments the
+      // token limit interrupted (item status `incomplete`). Emitting it would set
+      // a tool_use stop reason that shadows max_tokens, and the SDK would attempt
+      // an unfinished/default-`{}` invocation. The bridge must skip it and report
+      // the truncation as max_tokens instead.
+      server = createOpenAIResponsesBridgeServer({
+        auth: { source: 'api_key', apiKey: 'sk-test' },
+        models,
+        fetchImpl: async () =>
+          sse([
+            {
+              event: 'response.incomplete',
+              data: {
+                type: 'response.incomplete',
+                response: {
+                  usage: { input_tokens: 10, output_tokens: 4096 },
+                  output: [
+                    {
+                      type: 'function_call',
+                      status: 'incomplete',
+                      call_id: 'call_trunc',
+                      name: 'lookup',
+                      arguments: '{"q":"par', // truncated mid-argument
+                    },
+                  ],
+                },
+              },
+            },
+          ]),
+      });
+
+      const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-5.3-codex',
+          max_tokens: 4096,
+          messages: [{ role: 'user', content: 'Use the tool.' }],
+          tools: [{ name: 'lookup', input_schema: { type: 'object' } }],
+        }),
+      });
+
+      const events = await readSSEEvents(resp.body);
+      // No tool_use block is emitted for the interrupted call.
+      expect(
+        events.filter(
+          (event) =>
+            event.event === 'content_block_start' &&
+            (event.data as { content_block?: { type?: string } }).content_block?.type === 'tool_use'
+        )
+      ).toHaveLength(0);
+      // Truncation is reported as max_tokens, not tool_use, and not retried.
+      expect(events.find((event) => event.event === 'error')).toBeUndefined();
+      expect(messageDeltaEvent(events)).toMatchObject({ delta: { stop_reason: 'max_tokens' } });
+    }
+  );
+
   it.skipIf(!isBun)('continues tool_result turns with previous_response_id', async () => {
     const capturedBodies: Record<string, unknown>[] = [];
     server = createOpenAIResponsesBridgeServer({
@@ -1991,6 +2051,43 @@ describe('openai-responses-bridge server', () => {
       expect(resp.status).toBe(401);
       const body = (await resp.json()) as { error: { type: string } };
       expect(body.error.type).toBe('authentication_error');
+    }
+  );
+
+  it.skipIf(!isBun)(
+    'classifies a 200 JSON error by a symbolic type when no numeric status is present',
+    async () => {
+      // Some 200 JSON errors carry only a symbolic type (no numeric status/code),
+      // e.g. {"error":{"type":"authentication_error"}}. Without symbolic
+      // resolution this falls back to 400 invalid_request_error — mislabeling a
+      // credential failure and counting it toward the fatal invalid-request
+      // circuit breaker. The symbolic type must resolve to its real status.
+      server = createOpenAIResponsesBridgeServer({
+        auth: { source: 'api_key', apiKey: 'sk-test' },
+        models,
+        fetchImpl: async () =>
+          new Response(
+            JSON.stringify({
+              error: { type: 'authentication_error', message: 'Invalid API key' },
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          ),
+      });
+
+      const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-5.3-codex',
+          max_tokens: 128,
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+      });
+
+      expect(resp.status).toBe(401);
+      const body = (await resp.json()) as { error: { type: string; message: string } };
+      expect(body.error.type).toBe('authentication_error');
+      expect(body.error.message).toContain('Invalid API key');
     }
   );
 
@@ -4213,6 +4310,60 @@ describe('openai-responses-bridge server', () => {
       delta: { stop_reason: 'end_turn' },
     });
   });
+
+  it.skipIf(!isBun)(
+    'emits reasoning summary_text from a delta-less terminal response as thinking',
+    async () => {
+      // A one-shot (delta-less) response may place visible reasoning only in a
+      // terminal reasoning item's `summary` array. The streaming equivalent
+      // emits thinking deltas; the one-shot path must do the same so the turn is
+      // NOT mistaken for an empty stream (mislabeled as overload when completed).
+      server = createOpenAIResponsesBridgeServer({
+        auth: { source: 'api_key', apiKey: 'sk-test' },
+        models,
+        fetchImpl: async () =>
+          sse([
+            {
+              event: 'response.completed',
+              data: {
+                type: 'response.completed',
+                response: {
+                  usage: { input_tokens: 5, output_tokens: 3 },
+                  output: [
+                    {
+                      type: 'reasoning',
+                      summary: [{ type: 'summary_text', text: 'Reasoned about the answer' }],
+                    },
+                  ],
+                },
+              },
+            },
+          ]),
+      });
+
+      const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-5.3-codex',
+          max_tokens: 128,
+          messages: [{ role: 'user', content: 'Think then answer.' }],
+          thinking: { type: 'enabled', budget_tokens: 16000 },
+        }),
+      });
+
+      const events = await readSSEEvents(resp.body);
+      // The summary surfaces as a thinking block (and marks the turn productive).
+      const thinkingDeltas = events
+        .filter((e) => e.event === 'content_block_delta')
+        .map((e) => (e.data.delta as { thinking?: string }).thinking)
+        .filter(Boolean);
+      expect(thinkingDeltas.join('')).toBe('Reasoned about the answer');
+      // Not mislabeled as an empty-stream overload.
+      expect(events.find((event) => event.event === 'error')).toBeUndefined();
+      expect(messageDeltaEvent(events)).toMatchObject({ delta: { stop_reason: 'end_turn' } });
+    }
+  );
 
   it.skipIf(!isBun)('passes encrypted reasoning content through on multi-turn', async () => {
     const capturedBodies: Record<string, unknown>[] = [];

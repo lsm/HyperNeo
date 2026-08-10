@@ -27,6 +27,7 @@ import {
   TRANSIENT_RATE_LIMIT_CODES,
   actionForProviderErrorKind,
   anthropicErrorTypeForHttpStatus,
+  httpStatusForSymbolicErrorType,
   isRetryableProviderError,
   matchPromptTooLong,
   providerErrorKindForHttpStatus,
@@ -125,6 +126,38 @@ describe('anthropicErrorTypeForHttpStatus', () => {
       expect(anthropicErrorTypeForHttpStatus(status)).toBe(expected);
     });
   }
+});
+
+describe('httpStatusForSymbolicErrorType', () => {
+  // Each recognized symbol resolves to a status whose
+  // anthropicErrorTypeForHttpStatus round-trips back to a NON-invalid-request
+  // type — so a 200 JSON error carrying only that symbol never defaults to 400
+  // invalid_request_error (which would trip the fatal invalid-request breaker).
+  const cases: Array<[string, number]> = [
+    ['authentication_error', 401],
+    ['AUTHENTICATION_ERROR', 401], // case-insensitive
+    ['permission_error', 403],
+    ['not_found_error', 404],
+    ['request_too_large', 413],
+    ['rate_limit_error', 429],
+    ['rate_limit_exceeded', 429],
+    ['overloaded_error', 529],
+    ['server_error', 500],
+    ['api_error', 500],
+  ];
+  for (const [symbol, expected] of cases) {
+    test(`${symbol} → ${expected}`, () => {
+      expect(httpStatusForSymbolicErrorType(symbol)).toBe(expected);
+      // Round-trips to a distinct (non-invalid-request) Anthropic type.
+      expect(anthropicErrorTypeForHttpStatus(expected)).not.toBe('invalid_request_error');
+    });
+  }
+  test('returns undefined for unrecognized / empty / non-string symbols', () => {
+    expect(httpStatusForSymbolicErrorType('invalid_request_error')).toBeUndefined();
+    expect(httpStatusForSymbolicErrorType('not_a_real_type')).toBeUndefined();
+    expect(httpStatusForSymbolicErrorType('')).toBeUndefined();
+    expect(httpStatusForSymbolicErrorType(undefined)).toBeUndefined();
+  });
 });
 
 describe('providerErrorKindForHttpStatus', () => {
