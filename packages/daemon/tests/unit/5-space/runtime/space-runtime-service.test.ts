@@ -909,8 +909,10 @@ describe('SpaceRuntimeService', () => {
         })),
         listBySpaceId: mock(() => []),
       } as unknown as SpaceAgentManager;
+      const { reactiveDb } = buildDurableDeliveryReactiveDb();
       const svc = new SpaceRuntimeService({
         ...buildConfigWithSession(sessionManager, spaceManager),
+        reactiveDb,
         spaceAgentManager,
         spaceAgentInboxRepo: {} as SpaceRuntimeServiceConfig['spaceAgentInboxRepo'],
       });
@@ -1065,8 +1067,10 @@ describe('SpaceRuntimeService', () => {
         })),
         update: mock(() => {}),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
+      const { reactiveDb } = buildDurableDeliveryReactiveDb();
       const svc = new SpaceRuntimeService({
         ...buildConfigWithSession(sessionManager, createMockSpaceManager(mockSpace)),
+        reactiveDb,
         longHorizonAgentRepo,
       });
 
@@ -1198,6 +1202,90 @@ describe('SpaceRuntimeService', () => {
         expect.objectContaining({ uuid: 'delivery-1', type: 'user' }),
         'enqueued'
       );
+    });
+
+    test('long-horizon delivery terminalizes the persisted row if durable enqueue throws', async () => {
+      const sessionId = longTermAgentSessionId(mockSpace.id, 'lh-agent-1');
+      const createdSession = {
+        ...makeSession(),
+        getSessionData: mock(() => ({ id: sessionId, metadata: {}, config: {} })),
+        ensureQueryStarted: mock(async () => {}),
+        messageQueue: { enqueueWithId: mock(async () => {}) },
+      } as unknown as AgentSession;
+      const sessionManager = makeSessionManager(null);
+      (
+        sessionManager.createSession as Mock<typeof sessionManager.createSession>
+      ).mockImplementation(async () => sessionId);
+      (sessionManager.getSessionAsync as Mock<typeof sessionManager.getSessionAsync>)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(createdSession);
+      const longHorizonAgentRepo = {
+        getById: mock(() => ({
+          id: 'lh-agent-1',
+          spaceId: mockSpace.id,
+          handle: 'mcp-agent',
+          displayName: 'MCP Agent',
+          templateKey: null,
+          status: 'active',
+          sessionId: null,
+          instructions: 'Do work.',
+          autonomyLevel: null,
+          model: null,
+          thinkingLevel: null,
+          provider: null,
+          settingSources: null,
+          toolPermissions: {},
+          createdAt: NOW,
+          updatedAt: NOW,
+        })),
+        update: mock(() => {}),
+      } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
+
+      // A reactiveDb whose durable-enqueue throws, simulating a transient SQLite
+      // failure at the persist→deliver boundary (the window P1 guards).
+      const markDeliveryFailedByUuid = mock(() => null);
+      const reactiveDb = {
+        db: {
+          saveUserMessage: mock(() => 'db-msg'),
+          getSDKMessageRepo: () => ({ markDeliveryFailedByUuid }),
+          getJobQueueRepo: () => ({
+            getActiveDeliveryRole: () => null,
+            enqueue: () => {
+              throw new Error('sqlite locked');
+            },
+          }),
+        },
+      } as unknown as SpaceRuntimeServiceConfig['reactiveDb'];
+
+      const svc = new SpaceRuntimeService({
+        ...buildConfigWithSession(sessionManager, createMockSpaceManager(mockSpace)),
+        reactiveDb,
+        longHorizonAgentRepo,
+      });
+
+      // The throw propagates out of deliverLongHorizonExternalEvent (no internal
+      // catch wraps injectLongTermAgentMessage).
+      await expect(
+        (
+          svc as unknown as {
+            deliverLongHorizonExternalEvent(args: {
+              spaceId: string;
+              agentId: string;
+              message: string;
+              idempotencyKey: string;
+            }): Promise<{ delivered: boolean }>;
+          }
+        ).deliverLongHorizonExternalEvent({
+          spaceId: mockSpace.id,
+          agentId: 'lh-agent-1',
+          message: 'event payload',
+          idempotencyKey: 'delivery-1',
+        })
+      ).rejects.toThrow('sqlite locked');
+
+      // The row was saved 'enqueued' before the throw; the catch must terminalize
+      // it so it is not stranded ownerless and replayed as an orphan on restart.
+      expect(markDeliveryFailedByUuid).toHaveBeenCalledWith(sessionId, 'delivery-1');
     });
 
     test('session.reset re-provisions reset long-term Space agents before query replay', async () => {

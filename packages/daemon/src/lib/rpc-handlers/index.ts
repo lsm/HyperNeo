@@ -86,7 +86,7 @@ import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
 import { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
 import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository';
 import { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository';
-import { deliverMessage } from '../agent/message-delivery';
+import { deliverMessage, isMessageDeliveryV2Enabled } from '../agent/message-delivery';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import type { JobQueueProcessor } from '../../storage/job-queue-processor';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';
@@ -884,14 +884,28 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         content: [{ type: 'text' as const, text: message }],
       },
     };
-    // Persist first (content lives in sdk_messages), then enqueue a durable
-    // message_delivery job — the handler claims it and drives the turn. Replaces
-    // the inline ensureQueryStarted + enqueueWithId (no durable owner).
-    deps.reactiveDb.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
-    deliverMessage(deps.reactiveDb.db.getJobQueueRepo(), sessionId, messageId, {
-      origin: 'space_agent',
-      parentToolUseId: null,
-    });
+    if (isMessageDeliveryV2Enabled()) {
+      // Persist first (content lives in sdk_messages), then enqueue a durable
+      // message_delivery job — the handler claims it and drives the turn.
+      deps.reactiveDb.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+      try {
+        deliverMessage(deps.reactiveDb.db.getJobQueueRepo(), sessionId, messageId, {
+          origin: 'space_agent',
+          parentToolUseId: null,
+        });
+      } catch (err) {
+        // The row was just saved 'enqueued'; if durable enqueue throws the prompt
+        // has no owner — terminalize it so a restart/replay can't run the orphaned
+        // original. Mirrors AgentSession.deliverChatMessage's failure handling.
+        deps.reactiveDb.db.getSDKMessageRepo().markDeliveryFailedByUuid(sessionId, messageId);
+        throw err;
+      }
+    } else {
+      // Legacy inline path (HYPERNEO_MESSAGE_DELIVERY_V2=0 opt-out).
+      await session.ensureQueryStarted();
+      deps.reactiveDb.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+      await session.messageQueue.enqueueWithId(messageId, message);
+    }
   };
 
   // Task Agent Manager — manages Task Agent session lifecycle and message injection.

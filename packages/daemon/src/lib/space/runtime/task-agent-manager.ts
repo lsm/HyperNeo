@@ -56,7 +56,7 @@ import type { UUID } from 'crypto';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { AgentSessionInit } from '../../../lib/agent/agent-session';
 import { AgentSession } from '../../../lib/agent/agent-session';
-import { deliverMessage } from '../../../lib/agent/message-delivery';
+import { deliverMessage, isMessageDeliveryV2Enabled } from '../../../lib/agent/message-delivery';
 import { validateImageSizes } from '../../session/message-persistence';
 import type { Database } from '../../../storage/database';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
@@ -4650,20 +4650,36 @@ export class TaskAgentManager {
       }
     }
 
-    // Persist the kickoff BEFORE enqueuing the durable delivery job — the handler
-    // reloads content by UUID, so the sdk_messages row must exist when the job is
-    // claimed (else the handler sees no content and drops the message). Image /
-    // multi-modal content is persisted verbatim in sdkUserMessage and reloaded by
-    // the handler, so no special enqueue handling is needed.
+    if (isMessageDeliveryV2Enabled()) {
+      // Persist the kickoff BEFORE enqueuing the durable delivery job — the
+      // handler reloads content by UUID, so the sdk_messages row must exist when
+      // the job is claimed. Image/multimodal content is persisted verbatim and
+      // reloaded by the handler, so no special enqueue handling is needed.
+      const dbId = this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued', origin);
+      try {
+        // deliverMessage enqueues a message_delivery job (role turn/steer decided
+        // atomically by the job_queue index); the handler then owns
+        // ensureQueryStarted and feeding the live transport.
+        deliverMessage(this.config.db.getJobQueueRepo(), sessionId, messageId, {
+          origin: 'space_inject',
+          parentToolUseId: null,
+        });
+      } catch (err) {
+        // The row was just saved 'enqueued'; if durable enqueue throws the prompt
+        // has no owner — terminalize it so a restart/replay can't run the orphaned
+        // original. Mirrors AgentSession.deliverChatMessage's failure handling.
+        this.config.db.getSDKMessageRepo().markDeliveryFailedByUuid(sessionId, messageId);
+        throw err;
+      }
+      return dbId;
+    }
+    // Legacy inline path (HYPERNEO_MESSAGE_DELIVERY_V2=0 opt-out).
+    await session.ensureQueryStarted();
     const dbId = this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued', origin);
-    // deliverMessage enqueues a message_delivery job (role turn/steer decided
-    // atomically by the job_queue index); the handler then owns ensureQueryStarted
-    // and feeding the live transport. Replaces the inline ensureQueryStarted +
-    // enqueueWithId, which had no durable owner.
-    deliverMessage(this.config.db.getJobQueueRepo(), sessionId, messageId, {
-      origin: 'space_inject',
-      parentToolUseId: null,
-    });
+    // When images are present, enqueue the multi-modal content array so the SDK
+    // sees image blocks alongside the text. Otherwise pass the plain string to
+    // preserve the existing behaviour for callers that don't supply images.
+    await session.messageQueue.enqueueWithId(messageId, hasImages ? sdkContent : message);
     return dbId;
   }
 

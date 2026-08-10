@@ -49,7 +49,7 @@ import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-l
 import type { TaskAgentManager } from './task-agent-manager';
 import type { SessionManager } from '../../session-manager';
 import type { AgentSession } from '../../agent/agent-session';
-import { deliverMessage } from '../../agent/message-delivery';
+import { deliverMessage, isMessageDeliveryV2Enabled } from '../../agent/message-delivery';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
 import { SpaceRuntime } from './space-runtime';
 import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine';
@@ -583,17 +583,37 @@ export class SpaceRuntimeService {
         content: [{ type: 'text' as const, text: message }],
       },
     };
-    // Persist first, then enqueue a durable message_delivery job — the handler
-    // claims it and drives the turn. Replaces the inline ensureQueryStarted +
-    // enqueueWithId (no durable owner). reactiveDb is optional on the config but
-    // always present in production wiring; skip (matching prior behavior) if absent.
     const reactiveDb = this.config.reactiveDb?.db;
-    if (reactiveDb) {
+    if (!reactiveDb) {
+      // reactiveDb is optional on the config but always present in production
+      // wiring. Under v2 the handler reloads content by UUID, so without it the
+      // message can be neither persisted nor delivered — fail loudly rather than
+      // silently dropping it.
+      throw new Error(
+        `injectLongTermAgentMessage: reactiveDb unavailable; cannot deliver to ${sessionId}`
+      );
+    }
+    if (isMessageDeliveryV2Enabled()) {
+      // Persist first (content lives in sdk_messages), then enqueue a durable
+      // message_delivery job — the handler claims it and drives the turn.
       reactiveDb.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
-      deliverMessage(reactiveDb.getJobQueueRepo(), sessionId, id, {
-        origin: 'long_term_agent',
-        parentToolUseId: null,
-      });
+      try {
+        deliverMessage(reactiveDb.getJobQueueRepo(), sessionId, id, {
+          origin: 'long_term_agent',
+          parentToolUseId: null,
+        });
+      } catch (err) {
+        // The row was just saved 'enqueued'; if durable enqueue throws the prompt
+        // has no owner — terminalize it so a restart/replay can't run the orphaned
+        // original. Mirrors AgentSession.deliverChatMessage's failure handling.
+        reactiveDb.getSDKMessageRepo().markDeliveryFailedByUuid(sessionId, id);
+        throw err;
+      }
+    } else {
+      // Legacy inline path (HYPERNEO_MESSAGE_DELIVERY_V2=0 opt-out).
+      await session.ensureQueryStarted();
+      reactiveDb.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+      await session.messageQueue.enqueueWithId(id, message);
     }
     return id;
   }
