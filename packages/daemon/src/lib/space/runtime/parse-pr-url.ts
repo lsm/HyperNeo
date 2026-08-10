@@ -121,9 +121,11 @@ export function resolveTopicFromInterest(
   // captures host via `/[^/]+/`, which is case-preserving and port-including, so
   // lowercase and strip a trailing port before comparing - otherwise a mixed-case
   // host or a port-bearing GHE link (`ghe.example:8443` with `GH_HOST=ghe.example`)
-  // is silently rejected.
-  const host = parsed.host.toLowerCase().replace(/:\d+$/, '');
-  if (!allowedHosts.has(host)) return null;
+  // is silently rejected. Allowlist entries (built from GH_HOST by the runtime)
+  // may carry the same quirks, so normalize both sides.
+  const normalizeHost = (value: string): string => value.toLowerCase().replace(/:\d+$/, '');
+  const host = normalizeHost(parsed.host);
+  if (![...allowedHosts].some((allowed) => normalizeHost(allowed) === host)) return null;
   // Substituted identity components must be literal topic segments. The trie
   // treats `*` as a wildcard, and the placeholder substitutions below are
   // applied sequentially over the result, so a component carrying `*` or

@@ -165,6 +165,15 @@ describe('resolveTopicFromInterest', () => {
         new Set(['github.com', 'ghe.example'])
       )
     ).toBe('github/team/repo/pull_request/9.*');
+    // Allowlist entries may also carry mixed case or a port (e.g. a raw GH_HOST);
+    // both sides are normalized, so this still resolves.
+    expect(
+      resolveTopicFromInterest(
+        primaryLinkInterest,
+        'https://ghe.example/team/repo/pull/9',
+        new Set(['GHE.EXAMPLE:8443'])
+      )
+    ).toBe('github/team/repo/pull_request/9.*');
   });
 
   test('only substitutes the known placeholders; unknown tokens are left as-is', () => {
