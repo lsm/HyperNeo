@@ -327,6 +327,18 @@ export interface NodeAgentToolsConfig {
    */
   onGateDataChanged?: (runId: string, gateId: string) => Promise<unknown>;
   /**
+   * Optional callback fired at the DURABLE gate-data merge (before gate
+   * re-evaluation and before any rate-limit deferral), so generic infra can
+   * react to a committed primary-link source without waiting for the
+   * rate-limit-deferred {@link onGateDataChanged} notify. Currently wires the
+   * `topicFrom` auto-materialization: a scripted gate write that establishes
+   * `pr_url` materializes immediately, even when gate re-evaluation is
+   * rate-limited (a GitHub reset delay can exceed the retained-event TTL, so
+   * deferring would let early PR events expire first). Best-effort, run-scoped,
+   * terminal-run guarded. Omitted in unit tests that don't exercise it.
+   */
+  onGateDataCommitted?: (workflowRunId: string) => void;
+  /**
    * Optional shared retry scheduler for deferred gate-data refreshes after
    * rate-limited gate writes/delivery. When provided, `send_message` schedules
    * refreshes through this scheduler so retries are coalesced across all
@@ -1095,6 +1107,19 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
                     .catch((err) => {
                       log.warn(`Failed to emit space.gateData.updated for gate "${gateId}":`, err);
                     });
+                }
+
+                // Fire the durable-commit trigger BEFORE the rate-limit check: a
+                // scripted gate write may establish pr_url, and gate re-evaluation
+                // (the onGateDataChanged notify) is deferred when rate-limited — a
+                // GitHub reset delay can exceed the retained-event TTL, so deferring
+                // materialization would let early PR events expire first.
+                try {
+                  config.onGateDataCommitted?.(workflowRunId);
+                } catch (err) {
+                  log.warn(
+                    `save_message: onGateDataCommitted callback failed for gate ${gateId} in ${workflowRunId}: ${err instanceof Error ? err.message : String(err)}`
+                  );
                 }
 
                 // If gate evaluation hit a rate limit, surface the retryable error

@@ -5533,27 +5533,22 @@ export class TaskAgentManager {
       internalEventBus: this.config.internalEventBus,
       workflow,
       gateDataRepo: this.config.gateDataRepo,
-      onGateDataChanged: async (runId, gateId) => {
-        // A gated send_message may have established (or updated) the run's
-        // primary link — either directly (a `pr_url`/`prUrl` field committed to
-        // gate data) or via a `pr_ready` hook that stamped hook state during the
-        // send. resolvePrimaryLinkUrl treats both as sources, so re-materialize
-        // every declaring node's topicFrom interests just like save_artifact does.
-        // Run this BEFORE the awaited gate reevaluation: if the reevaluation
-        // rejects (e.g. a cyclic channel hitting maxCycles), control would
-        // otherwise never reach the materialization, leaving durable pr_url/hook
-        // state but no declared PR sub. No-op unless the workflow declares a
-        // topicFrom interest; the runtime is best-effort, terminal-run guarded,
-        // and never throws here.
+      onGateDataChanged: async (runId, gateId) =>
+        nodeAgentChannelRouter.onGateDataChanged(runId, gateId),
+      // Durable gate-data commit (before gate re-eval / rate-limit deferral): a
+      // scripted gate write may establish pr_url, and the onGateDataChanged notify
+      // above is deferred when gate re-evaluation is rate-limited (a GitHub reset
+      // delay can exceed the retained-event TTL). Materialize here so a topicFrom
+      // interest resolves from the committed pr_url regardless of the deferral.
+      // Best-effort, run-scoped, terminal-run guarded.
+      onGateDataCommitted: (runId) => {
         try {
           this.config.spaceRuntimeService.materializeRunTopicFromInterests(runId);
         } catch (err) {
           log.warn(
-            `onGateDataChanged: failed to materialize topicFrom interests for gate ` +
-              `${gateId} in run ${runId}: ${err instanceof Error ? err.message : String(err)}`
+            `onGateDataCommitted: failed to materialize topicFrom interests for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
           );
         }
-        return nodeAgentChannelRouter.onGateDataChanged(runId, gateId);
       },
       gateRetryScheduler: this.config.spaceRuntimeService.getGateRetryScheduler(),
       scriptExecutor: executeGateScript,

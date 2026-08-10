@@ -5776,12 +5776,6 @@ export class SpaceRuntime {
         isWorkflowSubscriptionTarget(target) &&
         this.isWorkflowTargetOwnedBySpace(target, payload.spaceId)
     );
-    // Re-evaluate blocked-run gates for the newly matched targets. The normal
-    // handleExternalEvent path fires this hook before delivery (it is what
-    // resumes blocked runs), but it ran before this subscription existed, so a
-    // blocked run's gate would not otherwise be re-checked against this event.
-    // No-op for non-blocked runs; the hook dedups per run.
-    await this.fireBlockedRunExternalEventHook(payload, matches);
     // Register ALL missing targets BEFORE awaiting any delivery, matching the
     // normal routing path's persistence ordering: if an early delivery completes
     // and terminalizes the source event, a crash before the next iteration must
@@ -5807,6 +5801,19 @@ export class SpaceRuntime {
         continue;
       }
       toDeliver.push({ target, deliveryKey });
+    }
+    // Re-evaluate blocked-run gates, but only for runs with a NEW target (one
+    // we just registered). The normal handleExternalEvent path fires this hook
+    // before delivery — it is what resumes blocked runs — but it ran before this
+    // subscription existed. Passing the full match list (which includes targets
+    // that already have a delivery) would re-run external-state gate evaluation
+    // for an event the blocked run already processed, repeating GitHub calls /
+    // advancing retry state. No-op for non-blocked runs; per-run dedup.
+    if (toDeliver.length > 0) {
+      await this.fireBlockedRunExternalEventHook(
+        payload,
+        toDeliver.map((entry) => entry.target)
+      );
     }
     for (const { target, deliveryKey } of toDeliver) {
       await this.deliverExternalEventToWorkflowTarget(target, payload, deliveryKey);
