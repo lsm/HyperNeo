@@ -162,10 +162,10 @@ export interface SpaceRuntimeConfig {
   /** Long-horizon agent repository for durable external-event subscriptions. */
   longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
   /**
-   * Durable workflow-run event subscription store. Source of truth for both
-   * `static` (template) and `dynamic` (agent-registered) runtime subscriptions;
-   * the in-memory topic trie is rebuilt from it on rehydrate. Auto-created from
-   * `db` when not supplied.
+   * Durable workflow-run event subscription store. Source of truth for
+   * agent-registered `dynamic` runtime subscriptions (static template interests
+   * are re-materialized from the workflow definition); the in-memory topic trie
+   * is rebuilt from it on rehydrate. Auto-created from `db` when not supplied.
    */
   workflowEventSubscriptionRepo?: SpaceWorkflowEventSubscriptionRepository;
   /** Workflow manager for loading workflow definitions */
@@ -1053,9 +1053,9 @@ export class SpaceRuntime {
   ): void {
     // Refresh only workflow-defined static interests, preserving agent-created
     // (dynamic) subscriptions so an agent that explicitly subscribed keeps
-    // receiving events after a re-registration. Write-through: drop the run's
-    // static rows from the durable store too so the trie (rebuilt from it on
-    // rehydrate) stays a pure derived index.
+    // receiving events after a re-registration. Static interests are not
+    // persisted (they are re-materialized from the definition), so the durable
+    // clear is a defensive no-op kept for symmetry with the trie removal.
     this.workflowEventSubscriptionRepo.deleteStaticByRun(workflowRunId);
     this.topicTrie.remove(
       (target) =>
@@ -1156,25 +1156,30 @@ export class SpaceRuntime {
       topic: trimmed,
       subscriptionKind,
     });
-    // Write-through: persist the subscription so it survives a daemon restart.
-    // The trie is rebuilt from this table on rehydrate, making it a pure
-    // derived index. The slot+topic+kind is the upsert key, so re-registering
-    // the same topic is idempotent (mirrors the trie remove-then-insert above).
-    const run = this.config.workflowRunRepo.getRun(workflowRunId);
-    if (run) {
-      this.workflowEventSubscriptionRepo.upsert({
-        spaceId: run.spaceId,
-        workflowRunId,
-        taskId,
-        nodeId,
-        agentName,
-        topic: trimmed,
-        subscriptionKind,
-      });
-    } else {
-      log.warn(
-        `SpaceRuntime: could not persist subscription for ${workflowRunId}/${nodeId}/${agentName}: run not found`
-      );
+    // Write-through: persist DYNAMIC subscriptions so they survive a daemon
+    // restart — these cannot be re-derived, so the table is their only source.
+    // Static (template) interests are deliberately NOT persisted: they are
+    // re-materialized from the workflow definition on rehydrate
+    // (`ensureExecutorRegistered` / the static-rebuild loop), which already
+    // applies the correct review/post-approval eligibility. The slot+topic+kind
+    // is the upsert key, so re-registering is idempotent.
+    if (subscriptionKind === 'dynamic') {
+      const spaceId = this.config.workflowRunRepo.getRun(workflowRunId)?.spaceId;
+      if (spaceId) {
+        this.workflowEventSubscriptionRepo.upsert({
+          spaceId,
+          workflowRunId,
+          taskId,
+          nodeId,
+          agentName,
+          topic: trimmed,
+          subscriptionKind,
+        });
+      } else {
+        log.warn(
+          `SpaceRuntime: could not persist subscription for ${workflowRunId}/${nodeId}/${agentName}: run not found`
+        );
+      }
     }
     // An event can arrive in the brief interval between an external resource
     // being created and the actor registering its dynamic interest. Unmatched
@@ -5572,37 +5577,62 @@ export class SpaceRuntime {
   }
 
   /**
-   * Rebuild the workflow-subscription portion of the topic trie purely from
-   * the durable `space_workflow_event_subscriptions` table. This is what makes
-   * the trie a derived index: both `static` template interests and
-   * agent-registered `dynamic` interests are reconstructed here on daemon
-   * rehydrate, so a subscription an agent created at runtime (and persisted
-   * write-through by `registerSubscription`) survives a restart.
+   * Restore agent-registered `dynamic` workflow subscriptions from the durable
+   * `space_workflow_event_subscriptions` table into the in-memory trie on daemon
+   * rehydrate. This is what lets a subscription an agent created at runtime
+   * (e.g. a coder subscribing to its own PR) survive a restart — dynamic
+   * interests cannot be re-derived, so the table is their source of truth.
    *
-   * `sessionId` is intentionally not persisted — it is resolved dynamically
-   * from the live node execution at delivery time (`resolveSubscriptionTarget`),
-   * so the rebuilt target carries only the durable identity fields.
+   * `static` template interests are NOT restored here: they are re-materialized
+   * from the workflow definition by `ensureExecutorRegistered` and the
+   * static-rebuild loop, whose eligibility already covers the post-approval
+   * review phase (a succeeded run whose canonical task parks at `approved`).
+   * Rebuilding static here would duplicate that work under a stricter gate
+   * (`isRunInterestRebuildEligible` excludes done runs) and drop those review
+   * interests, so this method clears/re-inserts `dynamic` entries only.
+   *
+   * Every persisted dynamic row is restored as-is. The task-lifecycle cleanup
+   * (`SpaceRuntimeService` → `clearTaskInterests` on task `done`/`archived`, and
+   * `clearRunInterests` on space teardown) already removes rows once a task can
+   * no longer deliver, so the table holds only live interests — including
+   * dynamic subscriptions on succeeded runs whose task is still in
+   * `review`/`approved`, which must keep receiving events through the
+   * post-approval phase.
+   *
+   * `sessionId` is intentionally not persisted — it is resolved dynamically from
+   * the live node execution at delivery time (`resolveSubscriptionTarget`).
    */
   private rehydrateWorkflowSubscriptions(spaceId: string): void {
-    // Drop any existing workflow-subscription trie entries owned by this
-    // space so the trie is a faithful projection of the table. No-op on a
-    // fresh runtime (the trie starts empty) but keeps the method idempotent
-    // and mirrors rehydrateLongHorizonSubscriptions.
     const spaceRunIds = new Set(
       this.config.workflowRunRepo.listBySpace(spaceId).map((run) => run.id)
     );
+    // Clear only the dynamic trie entries owned by this space so the rebuild is
+    // idempotent WITHOUT clobbering static interests the def-re-materialization
+    // paths (`ensureExecutorRegistered`, run before this, and the static-rebuild
+    // loop, run after) have already established.
     this.topicTrie.remove(
-      (target) => isWorkflowSubscriptionTarget(target) && spaceRunIds.has(target.workflowRunId)
+      (target) =>
+        isWorkflowSubscriptionTarget(target) &&
+        spaceRunIds.has(target.workflowRunId) &&
+        target.subscriptionKind === 'dynamic'
     );
     for (const sub of this.workflowEventSubscriptionRepo.listBySpace(spaceId)) {
-      this.topicTrie.insert(sub.topic, {
-        workflowRunId: sub.workflowRunId,
-        taskId: sub.taskId,
-        nodeId: sub.nodeId,
-        agentName: sub.agentName,
-        topic: sub.topic,
-        subscriptionKind: sub.subscriptionKind,
-      });
+      try {
+        this.topicTrie.insert(sub.topic, {
+          workflowRunId: sub.workflowRunId,
+          taskId: sub.taskId,
+          nodeId: sub.nodeId,
+          agentName: sub.agentName,
+          topic: sub.topic,
+          subscriptionKind: sub.subscriptionKind,
+        });
+      } catch (err) {
+        log.warn(
+          `SpaceRuntime: skipping malformed workflow subscription ${sub.id} ` +
+            `(${sub.workflowRunId}/${sub.nodeId}/${sub.agentName} ${sub.topic}) during rehydrate: ` +
+            (err instanceof Error ? err.message : String(err))
+        );
+      }
     }
   }
 

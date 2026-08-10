@@ -294,7 +294,9 @@ export class SpaceRuntimeService {
     this.nodeExecutionRepo =
       this.config.nodeExecutionRepo ?? new NodeExecutionRepository(this.config.db);
     // Durable workflow event subscription store — single shared instance for
-    // the runtime's topic trie to rebuild from on rehydrate.
+    // the runtime's topic trie to rebuild from on rehydrate. Created here (and
+    // passed into the runtime) so the service and runtime share one repo; the
+    // runtime has its own auto-create fallback only for standalone construction.
     this.workflowEventSubscriptionRepo =
       this.config.workflowEventSubscriptionRepo ??
       new SpaceWorkflowEventSubscriptionRepository(this.config.db);

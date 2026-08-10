@@ -63,9 +63,10 @@ export class SpaceWorkflowEventSubscriptionRepository {
    * Insert or update a subscription keyed by (slot, topic_normalized, kind).
    * Idempotent — re-registering the same topic for the same slot touches
    * `updated_at` rather than creating a duplicate row, matching the trie's
-   * remove-then-insert dedup.
+   * remove-then-insert dedup. Returns void; callers that need the row read it
+   * back via the list methods.
    */
-  upsert(params: UpsertWorkflowEventSubscriptionParams): SpaceWorkflowEventSubscription {
+  upsert(params: UpsertWorkflowEventSubscriptionParams): void {
     const now = Date.now();
     this.db
       .prepare(
@@ -89,21 +90,6 @@ export class SpaceWorkflowEventSubscriptionRepository {
         now,
         now
       );
-    const row = this.db
-      .prepare(
-        `SELECT * FROM space_workflow_event_subscriptions
-		 WHERE workflow_run_id = ? AND task_id = ? AND node_id = ? AND agent_name = ?
-		   AND topic_normalized = ? AND subscription_kind = ?`
-      )
-      .get(
-        params.workflowRunId,
-        params.taskId,
-        params.nodeId,
-        params.agentName,
-        normalizeTopic(params.topic),
-        params.subscriptionKind
-      ) as Record<string, unknown> | undefined;
-    return rowToSubscription(row as Record<string, unknown>);
   }
 
   /**
@@ -191,23 +177,6 @@ export class SpaceWorkflowEventSubscriptionRepository {
 		 WHERE space_id = ? ORDER BY created_at ASC`
       )
       .all(spaceId) as Record<string, unknown>[];
-    return rows.map(rowToSubscription);
-  }
-
-  listByRun(workflowRunId: string): SpaceWorkflowEventSubscription[] {
-    const rows = this.db
-      .prepare(
-        `SELECT * FROM space_workflow_event_subscriptions
-		 WHERE workflow_run_id = ? ORDER BY created_at ASC`
-      )
-      .all(workflowRunId) as Record<string, unknown>[];
-    return rows.map(rowToSubscription);
-  }
-
-  listAll(): SpaceWorkflowEventSubscription[] {
-    const rows = this.db
-      .prepare(`SELECT * FROM space_workflow_event_subscriptions ORDER BY created_at ASC`)
-      .all() as Record<string, unknown>[];
     return rows.map(rowToSubscription);
   }
 }

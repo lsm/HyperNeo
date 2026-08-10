@@ -56,6 +56,7 @@ function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string): void {
 interface TrieInspector {
   lookupSubscriptionTargets(topic: string): Array<{
     workflowRunId?: string;
+    taskId?: string;
     nodeId?: string;
     agentName?: string;
     subscriptionKind?: 'static' | 'dynamic';
@@ -91,11 +92,14 @@ describe('SpaceRuntime workflow subscription persistence', () => {
     });
   }
 
-  /** Create a workflow + a (pending) run. Pending runs are excluded from
-   * executor rehydration, keeping these tests focused on the trie. */
+  /** Create a workflow + a (pending) run with a canonical in_progress task.
+   * Pending runs are excluded from executor rehydration (keeping these tests
+   * focused on the trie), and the task makes the run `isRunInterestRebuildEligible`
+   * so the rebuild path reconstructs its subscriptions. */
   function createRun(options: { eventInterests?: Array<{ topic: string }> } = {}): {
     workflow: SpaceWorkflow;
     runId: string;
+    taskId: string;
   } {
     const workflow = workflowManager.createWorkflow({
       spaceId: SPACE_ID,
@@ -124,7 +128,14 @@ describe('SpaceRuntime workflow subscription persistence', () => {
       workflowId: workflow.id,
       title: 'Persist Run',
     });
-    return { workflow, runId: run.id };
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      workflowRunId: run.id,
+      title: 'Persist Run',
+      description: '',
+      status: 'in_progress',
+    });
+    return { workflow, runId: run.id, taskId: task.id };
   }
 
   beforeEach(() => {
@@ -153,10 +164,10 @@ describe('SpaceRuntime workflow subscription persistence', () => {
 
   test('registerSubscription writes through to the table and the trie', () => {
     const runtime = makeRuntime();
-    const { runId } = createRun();
+    const { runId, taskId } = createRun();
     const topic = 'github/owner/repo/pull_request/42.*';
 
-    const result = runtime.registerSubscription(runId, 'task-1', 'code', 'coder', topic);
+    const result = runtime.registerSubscription(runId, taskId, 'code', 'coder', topic);
 
     expect(result.success).toBe(true);
     // Trie has the target...
@@ -164,6 +175,7 @@ describe('SpaceRuntime workflow subscription persistence', () => {
     expect(trieMatches).toHaveLength(1);
     expect(trieMatches[0]).toMatchObject({
       workflowRunId: runId,
+      taskId,
       nodeId: 'code',
       agentName: 'coder',
       subscriptionKind: 'dynamic',
@@ -173,7 +185,7 @@ describe('SpaceRuntime workflow subscription persistence', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
       workflowRunId: runId,
-      taskId: 'task-1',
+      taskId,
       nodeId: 'code',
       agentName: 'coder',
       topic,
@@ -181,18 +193,18 @@ describe('SpaceRuntime workflow subscription persistence', () => {
     });
   });
 
-  test('registerRunInterests writes static interests through to the table', () => {
+  test('registerRunInterests registers static interests in the trie but does not persist them', () => {
+    // Static interests are re-materialized from the workflow definition on
+    // rehydrate, so they live in the trie only — the durable table backs
+    // dynamic subscriptions exclusively.
     const runtime = makeRuntime();
-    const { workflow, runId } = createRun({
+    const { workflow, runId, taskId } = createRun({
       eventInterests: [{ topic: 'github/owner/repo/issues/*' }],
     });
 
-    runtime.registerRunInterests(runId, 'task-1', workflow.nodes);
+    runtime.registerRunInterests(runId, taskId, workflow.nodes);
 
-    const rows = subscriptionRepo.listBySpace(SPACE_ID);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]!.subscriptionKind).toBe('static');
-    expect(rows[0]!.topic).toBe('github/owner/repo/issues/*');
+    expect(subscriptionRepo.listBySpace(SPACE_ID)).toHaveLength(0);
     expect(trieOf(runtime).lookupSubscriptionTargets('github/owner/repo/issues/7')).toHaveLength(1);
   });
 
@@ -202,12 +214,12 @@ describe('SpaceRuntime workflow subscription persistence', () => {
 
   test('unregisterSubscription removes from both the table and the trie', () => {
     const runtime = makeRuntime();
-    const { runId } = createRun();
+    const { runId, taskId } = createRun();
     const topic = 'github/owner/repo/pull_request/42.*';
-    runtime.registerSubscription(runId, 'task-1', 'code', 'coder', topic);
+    runtime.registerSubscription(runId, taskId, 'code', 'coder', topic);
     expect(subscriptionRepo.listBySpace(SPACE_ID)).toHaveLength(1);
 
-    runtime.unregisterSubscription(runId, 'task-1', 'code', 'coder', topic);
+    runtime.unregisterSubscription(runId, taskId, 'code', 'coder', topic);
 
     expect(subscriptionRepo.listBySpace(SPACE_ID)).toHaveLength(0);
     expect(trieOf(runtime).lookupSubscriptionTargets(topic)).toHaveLength(0);
@@ -215,11 +227,11 @@ describe('SpaceRuntime workflow subscription persistence', () => {
 
   test('unregisterExecution removes the whole slot from both stores', () => {
     const runtime = makeRuntime();
-    const { runId } = createRun();
-    runtime.registerSubscription(runId, 'task-1', 'code', 'coder', 'github/a/*');
-    runtime.registerSubscription(runId, 'task-1', 'code', 'coder', 'github/b/*');
+    const { runId, taskId } = createRun();
+    runtime.registerSubscription(runId, taskId, 'code', 'coder', 'github/a/*');
+    runtime.registerSubscription(runId, taskId, 'code', 'coder', 'github/b/*');
 
-    runtime.unregisterExecution(runId, 'task-1', 'code', 'coder');
+    runtime.unregisterExecution(runId, taskId, 'code', 'coder');
 
     expect(subscriptionRepo.listBySpace(SPACE_ID)).toHaveLength(0);
     expect(trieOf(runtime).lookupSubscriptionTargets('github/a/x')).toHaveLength(0);
@@ -228,27 +240,27 @@ describe('SpaceRuntime workflow subscription persistence', () => {
 
   test('clearRunInterests drops every subscription for the run', () => {
     const runtime = makeRuntime();
-    const { runId } = createRun();
-    runtime.registerSubscription(runId, 'task-1', 'code', 'coder', 'github/a/*');
+    const { runId, taskId } = createRun();
+    runtime.registerSubscription(runId, taskId, 'code', 'coder', 'github/a/*');
 
     runtime.clearRunInterests(runId);
 
-    expect(subscriptionRepo.listByRun(runId)).toHaveLength(0);
+    expect(subscriptionRepo.listBySpace(SPACE_ID)).toHaveLength(0);
     expect(trieOf(runtime).lookupSubscriptionTargets('github/a/x')).toHaveLength(0);
   });
 
   test('clearRunInterestsPreservingDynamic keeps dynamic rows in both stores', () => {
     const runtime = makeRuntime();
-    const { workflow, runId } = createRun({
+    const { workflow, runId, taskId } = createRun({
       eventInterests: [{ topic: 'github/static/*' }],
     });
     // One static (from the workflow) + one dynamic (agent-registered).
-    runtime.registerRunInterests(runId, 'task-1', workflow.nodes);
-    runtime.registerSubscription(runId, 'task-1', 'code', 'coder', 'github/dynamic/*');
+    runtime.registerRunInterests(runId, taskId, workflow.nodes);
+    runtime.registerSubscription(runId, taskId, 'code', 'coder', 'github/dynamic/*');
 
     runtime.clearRunInterestsPreservingDynamic(runId);
 
-    const rows = subscriptionRepo.listByRun(runId);
+    const rows = subscriptionRepo.listBySpace(SPACE_ID);
     expect(rows).toHaveLength(1);
     expect(rows[0]!.subscriptionKind).toBe('dynamic');
     expect(trieOf(runtime).lookupSubscriptionTargets('github/static/x')).toHaveLength(0);
@@ -261,11 +273,11 @@ describe('SpaceRuntime workflow subscription persistence', () => {
 
   test('a dynamic subscription survives a daemon restart (trie rebuilt from table)', async () => {
     const topic = 'github/owner/repo/pull_request/42.*';
-    const { runId } = createRun();
+    const { runId, taskId } = createRun();
 
     // --- First runtime: agent registers a dynamic subscription. ---
     const runtime1 = makeRuntime();
-    runtime1.registerSubscription(runId, 'task-1', 'code', 'coder', topic);
+    runtime1.registerSubscription(runId, taskId, 'code', 'coder', topic);
     expect(trieOf(runtime1).lookupSubscriptionTargets(topic)).toHaveLength(1);
     // Durable row exists independently of the runtime instance.
     expect(subscriptionRepo.listBySpace(SPACE_ID)).toHaveLength(1);
@@ -282,6 +294,7 @@ describe('SpaceRuntime workflow subscription persistence', () => {
     expect(rebuilt).toHaveLength(1);
     expect(rebuilt[0]).toMatchObject({
       workflowRunId: runId,
+      taskId,
       nodeId: 'code',
       agentName: 'coder',
       subscriptionKind: 'dynamic',
@@ -291,38 +304,102 @@ describe('SpaceRuntime workflow subscription persistence', () => {
   test('static and dynamic subscriptions are both reconstructed identically on rehydrate', async () => {
     const staticTopic = 'github/owner/repo/issues/*';
     const dynamicTopic = 'github/owner/repo/pull_request/42.*';
-    const { workflow, runId } = createRun({ eventInterests: [{ topic: staticTopic }] });
+    const { workflow, runId, taskId } = createRun({ eventInterests: [{ topic: staticTopic }] });
 
     const runtime1 = makeRuntime();
-    runtime1.registerRunInterests(runId, 'task-1', workflow.nodes);
-    runtime1.registerSubscription(runId, 'task-1', 'code', 'coder', dynamicTopic);
-    expect(subscriptionRepo.listBySpace(SPACE_ID)).toHaveLength(2);
+    runtime1.registerRunInterests(runId, taskId, workflow.nodes);
+    runtime1.registerSubscription(runId, taskId, 'code', 'coder', dynamicTopic);
+    // Only the dynamic interest is persisted; static is re-derived from the def.
+    expect(subscriptionRepo.listBySpace(SPACE_ID)).toHaveLength(1);
+    expect(subscriptionRepo.listBySpace(SPACE_ID)[0]!.subscriptionKind).toBe('dynamic');
 
     const runtime2 = makeRuntime();
     await runtime2.rehydrateExecutors();
 
-    // Static interest matches its glob...
+    // Static interest is re-materialized from the workflow definition...
     expect(trieOf(runtime2).lookupSubscriptionTargets('github/owner/repo/issues/9')).toHaveLength(
       1
     );
-    // ...and so does the dynamic one. Both kinds rebuilt from the table.
+    // ...and the dynamic one is restored from the table, with the routing
+    // taskId preserved.
     const dynamicMatches = trieOf(runtime2).lookupSubscriptionTargets(dynamicTopic);
     expect(dynamicMatches).toHaveLength(1);
     expect(dynamicMatches[0]!.subscriptionKind).toBe('dynamic');
+    expect(dynamicMatches[0]!.taskId).toBe(taskId);
   });
 
   test('rehydrate drops a subscription that was cleared before restart', async () => {
     const topic = 'github/owner/repo/pull_request/42.*';
-    const { runId } = createRun();
+    const { runId, taskId } = createRun();
 
     const runtime1 = makeRuntime();
-    runtime1.registerSubscription(runId, 'task-1', 'code', 'coder', topic);
-    runtime1.unregisterSubscription(runId, 'task-1', 'code', 'coder', topic);
+    runtime1.registerSubscription(runId, taskId, 'code', 'coder', topic);
+    runtime1.unregisterSubscription(runId, taskId, 'code', 'coder', topic);
     expect(subscriptionRepo.listBySpace(SPACE_ID)).toHaveLength(0);
 
     const runtime2 = makeRuntime();
     await runtime2.rehydrateExecutors();
 
     expect(trieOf(runtime2).lookupSubscriptionTargets(topic)).toHaveLength(0);
+  });
+
+  test('rehydrate preserves a dynamic subscription on a succeeded run whose task is still in review', async () => {
+    // A succeeded run whose canonical task parks at `review`/`approved` is in
+    // the post-approval phase and still delivers events, so its dynamic
+    // subscription must survive restart. (When the task finally goes
+    // `done`/`archived`, the task-lifecycle cleanup clears the row, and a
+    // subsequent rehydrate finds nothing to restore — covered by the
+    // "cleared before restart" test above.)
+    const topic = 'github/owner/repo/pull_request/42.*';
+    const { runId, taskId } = createRun();
+
+    const runtime1 = makeRuntime();
+    runtime1.registerSubscription(runId, taskId, 'code', 'coder', topic);
+    expect(subscriptionRepo.listBySpace(SPACE_ID)).toHaveLength(1);
+
+    // Run succeeds; its task enters review between sessions.
+    workflowRunRepo.updateRun(runId, { status: 'done', completedAt: Date.now() });
+    taskRepo.updateTask(taskId, { status: 'review' });
+
+    const runtime2 = makeRuntime();
+    await runtime2.rehydrateExecutors();
+
+    expect(trieOf(runtime2).lookupSubscriptionTargets(topic)).toHaveLength(1);
+    expect(subscriptionRepo.listBySpace(SPACE_ID)).toHaveLength(1);
+  });
+
+  test('rehydrateExecutors is idempotent (no duplicate trie entries on repeat)', async () => {
+    const topic = 'github/owner/repo/pull_request/42.*';
+    const { runId, taskId } = createRun();
+
+    const runtime1 = makeRuntime();
+    runtime1.registerSubscription(runId, taskId, 'code', 'coder', topic);
+
+    const runtime2 = makeRuntime();
+    await runtime2.rehydrateExecutors();
+    await runtime2.rehydrateExecutors();
+
+    expect(trieOf(runtime2).lookupSubscriptionTargets(topic)).toHaveLength(1);
+    expect(subscriptionRepo.listBySpace(SPACE_ID)).toHaveLength(1);
+  });
+
+  test('registerSubscription still inserts into the trie when the run cannot be resolved (table write skipped)', () => {
+    // The run-not-found warn branch: getRun returns null, so the durable write
+    // is skipped, but the in-memory trie still receives the entry so the
+    // session that registered it keeps receiving events.
+    const runtime = makeRuntime();
+    const topic = 'github/owner/repo/pull_request/42.*';
+
+    const result = runtime.registerSubscription(
+      'run-does-not-exist',
+      'task-x',
+      'code',
+      'coder',
+      topic
+    );
+
+    expect(result.success).toBe(true);
+    expect(trieOf(runtime).lookupSubscriptionTargets(topic)).toHaveLength(1);
+    expect(subscriptionRepo.listBySpace(SPACE_ID)).toHaveLength(0);
   });
 });

@@ -1,15 +1,17 @@
 import type { Database as BunDatabase } from '../sqlite-compat';
 
 /**
- * Durable store for runtime-registered workflow external-event subscriptions.
+ * Durable store for agent-registered (`dynamic`) workflow external-event
+ * subscriptions.
  *
- * The in-memory `TopicTrie` in `SpaceRuntime` is a *derived index* over this
- * table: every runtime subscription (workflow-template `static` interests and
- * agent-registered `dynamic` interests) is written through here, and the trie
- * is rebuilt from these rows on daemon rehydrate. Without this table, ad-hoc
- * `dynamic` subscriptions (e.g. a coder subscribing to its own PR via
- * `subscribe_pr_events`) lived only in the trie and were silently lost on
- * daemon restart.
+ * The in-memory `TopicTrie` in `SpaceRuntime` derives its `dynamic` entries
+ * from this table on daemon rehydrate. Dynamic interests cannot be re-derived
+ * from the workflow definition (they are created at runtime via MCP tooling such
+ * as `subscribe_pr_events`), so this table is their only source of truth —
+ * without it they lived only in the trie and were silently lost on daemon
+ * restart. Workflow-template `static` interests are NOT persisted here: they are
+ * re-materialized from the definition by `ensureExecutorRegistered` / the
+ * static-rebuild loop on rehydrate.
  *
  * Keying: a subscription is uniquely identified by its agent slot
  * (workflow_run_id + task_id + node_id + agent_name), the (case-insensitive)
