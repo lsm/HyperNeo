@@ -58,6 +58,17 @@ describe('SpaceWorkflowRunRepository', () => {
     };
   }
 
+  /** Seed a canonical task for a run. Backfill only considers runs with a non-archived
+   * task, so tests exercising listPinnableRuns / backfillDefinitionPins must seed one. */
+  function seedTaskForRun(runId: string, sId: string, opts: { archived?: boolean } = {}): void {
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO space_tasks
+         (id, space_id, task_number, title, status, workflow_run_id, archived_at, created_at, updated_at)
+       VALUES (?, ?, ?, 'Task', 'open', ?, ?, ?, ?)`
+    ).run(`task-${runId}`, sId, runId, runId, opts.archived ? now : null, now, now);
+  }
+
   describe('createRun', () => {
     it('creates a run with required fields', () => {
       const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Run #1' });
@@ -329,6 +340,7 @@ describe('SpaceWorkflowRunRepository', () => {
   describe('pinExistingRun + backfillDefinitionPins (Phase 1 read-cutover backfill)', () => {
     it('listPinnableRuns returns only runs without a definition pin', () => {
       const legacy = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Legacy' });
+      seedTaskForRun(legacy.id, spaceId);
       const pinned = repo.createPinnedRun({
         spaceId,
         workflowId: WORKFLOW_ID,
@@ -338,6 +350,17 @@ describe('SpaceWorkflowRunRepository', () => {
       const ids = repo.listPinnableRuns().map((r) => r.id);
       expect(ids).toContain(legacy.id);
       expect(ids).not.toContain(pinned.id);
+    });
+
+    it('listPinnableRuns excludes runs whose canonical task is archived (tombstoned)', () => {
+      const live = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Live' });
+      seedTaskForRun(live.id, spaceId);
+      const archived = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Archived' });
+      seedTaskForRun(archived.id, spaceId, { archived: true });
+
+      const ids = repo.listPinnableRuns().map((r) => r.id);
+      expect(ids).toContain(live.id);
+      expect(ids).not.toContain(archived.id); // tombstoned — not worth pinning
     });
 
     it('pinExistingRun stamps a pin and appends the version row atomically', () => {
@@ -375,6 +398,8 @@ describe('SpaceWorkflowRunRepository', () => {
     it('backfillDefinitionPins pins every unpinned run with an existing head', () => {
       const a = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'A' });
       const b = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'B' });
+      seedTaskForRun(a.id, spaceId);
+      seedTaskForRun(b.id, spaceId);
       const wf = rawWorkflow();
       const expectedHash = computeDefinitionVersion(wf).versionHash;
 
@@ -388,6 +413,8 @@ describe('SpaceWorkflowRunRepository', () => {
     it('backfillDefinitionPins leaves runs unpinned when the head is deleted and is idempotent', () => {
       const live = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Live' });
       const orphan = repo.createRun({ spaceId, workflowId: 'deleted-wf', title: 'Orphan' });
+      seedTaskForRun(live.id, spaceId);
+      seedTaskForRun(orphan.id, spaceId);
       const wf = rawWorkflow();
 
       let calls = 0;
@@ -409,6 +436,8 @@ describe('SpaceWorkflowRunRepository', () => {
     it('backfillDefinitionPins isolates failures: one bad run does not block the others', () => {
       const good = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Good' });
       const bad = repo.createRun({ spaceId, workflowId: 'broken-wf', title: 'Bad' });
+      seedTaskForRun(good.id, spaceId);
+      seedTaskForRun(bad.id, spaceId);
       const wf = rawWorkflow();
       const expectedHash = computeDefinitionVersion(wf).versionHash;
 

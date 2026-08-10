@@ -99,3 +99,24 @@ export function computeDefinitionVersion(workflow: SpaceWorkflow): ComputedDefin
   const versionHash = createHash('sha256').update(payload).digest('hex');
   return { versionHash, payload };
 }
+
+/**
+ * A deterministic 32-bit timestamp-substitute derived from a definition version hash. The
+ * Phase-1 read cutover rehydrates a pinned run's `updatedAt` with this value so the
+ * gate-open cache fingerprint (`updatedAt + gateDef hash`, `generateGateFingerprint`) is
+ * STABLE for a pinned definition — identical on first activation and on recovery — because
+ * it depends only on the immutable version identity, not on when the version row was
+ * appended. That matters because `appendVersion` is `INSERT OR IGNORE`: a reused hash
+ * (A→B→A edit, or a row left from the pre-cutover release) keeps its original `created_at`
+ * and discards a newly supplied timestamp, so deriving the fingerprint from the row's
+ * timestamp would diverge between initial and recovered reads. The value is used solely as
+ * a fingerprint basis (no execution code reads the rehydrated `updatedAt` otherwise), so it
+ * need only be stable and collision-light per version.
+ */
+export function stableVersionTimestamp(versionHash: string): number {
+  let h = 0;
+  for (let i = 0; i < versionHash.length; i++) {
+    h = (Math.imul(31, h) + versionHash.charCodeAt(i)) | 0;
+  }
+  return h;
+}

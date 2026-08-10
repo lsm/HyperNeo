@@ -30,7 +30,10 @@ import type {
   UpdateSpaceWorkflowParams,
 } from '@hyperneo/shared';
 import { Logger } from '../../lib/logger';
-import { computeDefinitionVersion } from '../../lib/space/workflows/definition-version';
+import {
+  computeDefinitionVersion,
+  stableVersionTimestamp,
+} from '../../lib/space/workflows/definition-version';
 import {
   SpaceWorkflowDefinitionVersionRepository,
   type DefinitionVersionSource,
@@ -318,7 +321,14 @@ export class SpaceWorkflowRepository {
         const version = this.definitionVersions.getVersion(run.workflowId, versionHash);
         if (version) {
           const parsed = JSON.parse(version.payload) as SpaceWorkflow;
-          return { ...parsed, createdAt: version.createdAt, updatedAt: version.createdAt };
+          // updatedAt is derived from the immutable version hash (not the row's created_at,
+          // which INSERT OR IGNORE can leave stale on a reused hash) so the gate-open cache
+          // fingerprint is identical on first activation and recovery.
+          return {
+            ...parsed,
+            createdAt: version.createdAt,
+            updatedAt: stableVersionTimestamp(versionHash),
+          };
         }
       } catch (err) {
         log.warn(
@@ -581,14 +591,7 @@ export class SpaceWorkflowRepository {
         versionHash,
         payload,
         source,
-        // The version's createdAt is the CONTENT's updatedAt, not the append time. The
-        // read cutover rehydrates a pinned run with this value as the workflow's
-        // `updatedAt`, so the gate-open cache fingerprint (updatedAt + gateDef hash)
-        // matches what an existing run already cached — a backfilled in-progress run does
-        // not spuriously re-evaluate already-open gates at cutover (which a transient
-        // script failure could then block). For create/update the head's updatedAt is the
-        // write timestamp, so this is equivalent to Date.now() on those paths.
-        createdAt: workflow.updatedAt,
+        createdAt: Date.now(),
       });
     } catch (err) {
       log.warn('Failed to record workflow definition version (non-fatal):', err);

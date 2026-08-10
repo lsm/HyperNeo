@@ -67,26 +67,30 @@ export class SpaceWorkflowRunRepository {
         versionHash,
         payload,
         source: 'run_create',
-        // Content timestamp (see recordDefinitionVersion): preserves the gate-open cache
-        // fingerprint across the read cutover.
-        createdAt: params.rawWorkflow.updatedAt,
+        createdAt: Date.now(),
       });
       return this.insertRun(params, versionHash);
     })();
   }
 
   /**
-   * List runs that have no creation-time definition pin — rows that pre-date Phase-1
-   * pinning, plus any whose head was deleted before the startup backfill could reach them.
+   * List unpinned runs that are still executable — rows that pre-date Phase-1 pinning (plus
+   * any whose head was deleted before backfill) AND whose canonical task is not archived.
    * The startup backfill pins these so the read cutover can resolve them through an
-   * immutable version instead of the mutable head.
+   * immutable version instead of the mutable head. Archived (tombstoned) runs are excluded:
+   * they can never be executed again, so pinning them only burns startup work and creates
+   * unexecutable pins (RFC §4/§11 scope the upgrade backfill to non-archived runs).
    */
   listPinnableRuns(): Array<{ id: string; workflowId: string; spaceId: string }> {
     const rows = this.db
       .prepare(
-        `SELECT id, workflow_id, space_id FROM space_workflow_runs
-         WHERE definition_version IS NULL
-         ORDER BY created_at ASC, rowid ASC`
+        `SELECT r.id, r.workflow_id, r.space_id FROM space_workflow_runs r
+         WHERE r.definition_version IS NULL
+           AND EXISTS (
+             SELECT 1 FROM space_tasks t
+             WHERE t.workflow_run_id = r.id AND t.archived_at IS NULL
+           )
+         ORDER BY r.created_at ASC, r.rowid ASC`
       )
       .all() as Array<{ id: string; workflow_id: string; space_id: string }>;
     return rows.map((r) => ({
@@ -116,17 +120,18 @@ export class SpaceWorkflowRunRepository {
         versionHash,
         payload,
         source: 'backfill',
-        // Content timestamp (see recordDefinitionVersion): a backfilled in-progress run
-        // rehydrates with the head's updatedAt, matching the gate-open cache it already
-        // has — no spurious gate re-evaluation at cutover.
-        createdAt: rawWorkflow.updatedAt,
+        createdAt: Date.now(),
       });
+      // Stamp only the definition pin — do NOT bump updated_at. This is an internal
+      // migration with no run activity; bumping it would distort UI recency ordering of
+      // terminal runs (VisualWorkflowEditor sorts by updated_at), surfacing an older
+      // backfilled run over the genuinely latest one.
       const result = this.db
         .prepare(
-          `UPDATE space_workflow_runs SET definition_version = ?, updated_at = ?
+          `UPDATE space_workflow_runs SET definition_version = ?
            WHERE id = ? AND definition_version IS NULL`
         )
-        .run(versionHash, Date.now(), runId);
+        .run(versionHash, runId);
       return result.changes > 0;
     })();
   }

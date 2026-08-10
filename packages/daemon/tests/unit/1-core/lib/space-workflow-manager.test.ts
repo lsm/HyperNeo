@@ -11,7 +11,10 @@ import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-w
 import { createSpaceAgentSchema, insertSpace } from '../../helpers/space-agent-schema';
 import { SpaceWorkflowDefinitionVersionRepository } from '../../../../src/storage/repositories/space-workflow-definition-version-repository';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
-import { computeDefinitionVersion } from '../../../../src/lib/space/workflows/definition-version';
+import {
+  computeDefinitionVersion,
+  stableVersionTimestamp,
+} from '../../../../src/lib/space/workflows/definition-version';
 
 describe('SpaceWorkflowManager', () => {
   let db: Database;
@@ -954,10 +957,23 @@ describe('SpaceWorkflowManager', () => {
         updated_at INTEGER NOT NULL,
         completed_at INTEGER
       )`;
+    const TASKS_DDL = `
+      CREATE TABLE space_tasks (
+        id TEXT PRIMARY KEY,
+        space_id TEXT NOT NULL,
+        task_number INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        workflow_run_id TEXT,
+        archived_at INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )`;
 
     beforeEach(() => {
       db.exec(VERSIONS_DDL);
       db.exec(RUNS_DDL);
+      db.exec(TASKS_DDL);
       versionRepo = new SpaceWorkflowDefinitionVersionRepository(db as any);
       runRepo = new SpaceWorkflowRunRepository(db as any);
     });
@@ -972,9 +988,7 @@ describe('SpaceWorkflowManager', () => {
         versionHash,
         payload,
         source: 'run_create',
-        // Content timestamp, mirroring recordDefinitionVersion — preserves the gate-open
-        // cache fingerprint across the read cutover.
-        createdAt: raw.updatedAt,
+        createdAt: Date.now(),
       });
       return versionHash;
     }
@@ -1040,9 +1054,10 @@ describe('SpaceWorkflowManager', () => {
       expect(resolved.gates ?? []).toEqual(live.gates ?? []);
       expect(resolved.completionAutonomyLevel).toBe(live.completionAutonomyLevel);
       expect(resolved.startNodeId).toBe(live.startNodeId);
-      // updatedAt is the content timestamp, so the gate-open cache fingerprint matches the
-      // live path — no spurious gate re-evaluation when pin equals head.
-      expect(resolved.updatedAt).toBe(live.updatedAt);
+      // updatedAt is derived from the immutable version hash, so the gate-open cache
+      // fingerprint is stable for the run's lifetime (identical on first activation and
+      // recovery), independent of when the version row was appended.
+      expect(resolved.updatedAt).toBe(stableVersionTimestamp(pin));
     });
 
     it('falls back to the live head when the pinned payload cannot be parsed', () => {
@@ -1078,6 +1093,12 @@ describe('SpaceWorkflowManager', () => {
       });
       // Legacy run with no creation-time pin.
       const run = runRepo.createRun({ spaceId: 'space-1', workflowId: wf.id, title: 'Legacy' });
+      // Backfill only considers runs with a non-archived canonical task.
+      const now = Date.now();
+      db.prepare(
+        `INSERT INTO space_tasks (id, space_id, task_number, title, status, workflow_run_id, created_at, updated_at)
+         VALUES (?, 'space-1', ?, 'Legacy', 'open', ?, ?, ?)`
+      ).run(`task-${run.id}`, run.id, run.id, now, now);
       expect(run.definitionVersion).toBeNull();
 
       // Startup backfill: pin to the current head (the raw repo read, as wired in rpc-handlers).
@@ -1097,9 +1118,45 @@ describe('SpaceWorkflowManager', () => {
       expect(resolved.nodes).toEqual(head.nodes);
       expect(resolved.name).toBe(head.name);
       expect(resolved.completionAutonomyLevel).toBe(head.completionAutonomyLevel);
-      // updatedAt matches the head, so a backfilled in-progress run's existing gate-open
-      // cache fingerprint survives the cutover (no spurious gate re-evaluation).
-      expect(resolved.updatedAt).toBe(head.updatedAt);
+      // updatedAt is version-derived, so the gate-open cache fingerprint is stable for the
+      // backfilled run regardless of when its version row was appended.
+      expect(resolved.updatedAt).toBe(stableVersionTimestamp(pinned.definitionVersion!));
+    });
+
+    it('rehydrated updatedAt is version-stable across a reused version row (INSERT OR IGNORE)', () => {
+      // PR-review #11: appendVersion is INSERT OR IGNORE, so a reused hash (A→B→A, or a
+      // pre-cutover row) keeps its original created_at. The rehydrated updatedAt must
+      // depend only on the version hash, not the row's created_at, so initial and
+      // recovered reads fingerprint identically.
+      const wf = manager.createWorkflow({
+        spaceId: 'space-1',
+        name: 'W',
+        nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+        completionAutonomyLevel: 3,
+      });
+      const raw = repo.getWorkflow(wf.id)!;
+      const { versionHash, payload } = computeDefinitionVersion(raw);
+      // Append the version row with an ARBITRARY created_at (simulating a pre-cutover /
+      // reused row whose created_at is not the current head's updatedAt).
+      versionRepo.appendVersion({
+        workflowId: wf.id,
+        spaceId: 'space-1',
+        versionHash,
+        payload,
+        source: 'create',
+        createdAt: 1,
+      });
+      const resolved = manager.getWorkflowForRun({
+        workflowId: wf.id,
+        definitionVersion: versionHash,
+      })!;
+      expect(resolved.updatedAt).toBe(stableVersionTimestamp(versionHash));
+      // It is independent of the row's created_at (1), and equal across resolves.
+      const resolvedAgain = manager.getWorkflowForRun({
+        workflowId: wf.id,
+        definitionVersion: versionHash,
+      })!;
+      expect(resolvedAgain.updatedAt).toBe(resolved.updatedAt);
     });
   });
 });

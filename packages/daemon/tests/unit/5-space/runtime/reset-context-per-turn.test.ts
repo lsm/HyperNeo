@@ -91,6 +91,7 @@ function makeManager(opts: {
     },
     spaceWorkflowManager: {
       getWorkflow: mock(() => workflow),
+      getWorkflowForRun: mock(() => workflow),
     },
   } as unknown as TaskAgentManagerConfig;
 
