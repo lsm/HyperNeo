@@ -1043,7 +1043,9 @@ export function setupSpaceWorkflowRunHandlers(
     const run = workflowRunRepo.getRun(params.runId);
     if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
 
-    const workflow = spaceWorkflowManager.getWorkflow(run.workflowId);
+    // Run-scoped: hook-definition banners must reflect the run's pinned definition, so a
+    // live hook edit can't leave a blocked pinned hook without UI resume controls.
+    const workflow = spaceWorkflowManager.getWorkflowForRun(run);
     const hookStates = hookStateRepo.listByRun(params.runId);
 
     return {

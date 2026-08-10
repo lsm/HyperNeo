@@ -651,7 +651,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     resolvePrReadyHookIds: (runId: string) => {
       const run = spaceWorkflowRunRepo.getRun(runId);
       if (!run?.workflowId) return undefined;
-      const wf = spaceWorkflowManager.getWorkflow(run.workflowId);
+      // Run-scoped: resolve PR-ready hook IDs from the run's pinned definition so a live
+      // hook edit can't change which hook output is trusted for PR-identity resolution.
+      const wf = spaceWorkflowManager.getWorkflowForRun(run);
       // Return undefined ONLY when the workflow can't be resolved (legacy
       // fallback). When the workflow resolves — even with no pr_ready hooks —
       // return an (empty) Set so the resolver uses exact-match (fail closed)
