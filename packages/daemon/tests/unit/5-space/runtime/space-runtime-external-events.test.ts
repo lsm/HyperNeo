@@ -5366,6 +5366,11 @@ describe('SpaceRuntime external event subscriptions', () => {
     });
 
     await runtime.rehydrateExecutors();
+    // Subscriptions are now durable: a restart rehydrates them from the table
+    // (see space-runtime-workflow-subscription-persistence.test.ts), so
+    // restarting alone no longer drops the interest. Explicitly unregister to
+    // exercise the removed-subscription path the rest of this test asserts on.
+    runtime.unregisterSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC);
     runtime.flushPendingNodeQueue({
       workflowRunId: run.id,
       taskId: task.id,

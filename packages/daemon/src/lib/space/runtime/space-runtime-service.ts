@@ -39,6 +39,7 @@ import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositor
 import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository';
 import type { SpaceAgentInboxRepository } from '../../../storage/repositories/space-agent-inbox-repository';
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
+import { SpaceWorkflowEventSubscriptionRepository } from '../../../storage/repositories/space-workflow-event-subscription-repository';
 import { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { WorkflowArtifactProfile } from './artifact-profile';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
@@ -116,6 +117,11 @@ export interface SpaceRuntimeServiceConfig {
   taskRepo: SpaceTaskRepository;
   /** Node execution repository for workflow-internal execution state */
   nodeExecutionRepo?: NodeExecutionRepository;
+  /**
+   * Durable workflow-run event subscription store. Source of truth for the
+   * runtime's in-memory topic trie. Auto-created from `db` when not supplied.
+   */
+  workflowEventSubscriptionRepo?: SpaceWorkflowEventSubscriptionRepository;
   reactiveDb?: ReactiveDatabase;
   /**
    * Optional Task Agent Manager to wire into the underlying SpaceRuntime.
@@ -237,6 +243,7 @@ export class SpaceRuntimeService {
   private taskAgentManager: TaskAgentManager | null = null;
   /** Resolved nodeExecutionRepo — created from db if not provided in config. */
   private readonly nodeExecutionRepo: NodeExecutionRepository;
+  private readonly workflowEventSubscriptionRepo: SpaceWorkflowEventSubscriptionRepository;
   private readonly actorRegistry: SpaceActorRegistryAdapter | null;
   /** Audit log repository for MCP write operations. */
   private readonly auditLogRepo: McpAuditLogRepository;
@@ -286,6 +293,11 @@ export class SpaceRuntimeService {
     // Ensure nodeExecutionRepo is available — create from db if not provided.
     this.nodeExecutionRepo =
       this.config.nodeExecutionRepo ?? new NodeExecutionRepository(this.config.db);
+    // Durable workflow event subscription store — single shared instance for
+    // the runtime's topic trie to rebuild from on rehydrate.
+    this.workflowEventSubscriptionRepo =
+      this.config.workflowEventSubscriptionRepo ??
+      new SpaceWorkflowEventSubscriptionRepository(this.config.db);
     this.actorRegistry = config.actorRegistryRepos
       ? new SpaceActorRegistryAdapter(config.actorRegistryRepos)
       : null;
@@ -300,6 +312,7 @@ export class SpaceRuntimeService {
     this.runtime = new SpaceRuntime({
       ...config,
       nodeExecutionRepo: this.nodeExecutionRepo,
+      workflowEventSubscriptionRepo: this.workflowEventSubscriptionRepo,
       queueHealthMetrics: this.queueHealthMetrics,
       selectWorkflowWithLlm: config.selectWorkflowWithLlm ?? selectWorkflowWithLlmDefault,
       internalEventBus: config.internalEventBus,

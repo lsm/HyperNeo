@@ -66,6 +66,7 @@ import type { NodeExecutionRepository } from '../../../storage/repositories/node
 import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
 import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
+import { SpaceWorkflowEventSubscriptionRepository } from '../../../storage/repositories/space-workflow-event-subscription-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository';
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository';
@@ -160,6 +161,13 @@ export interface SpaceRuntimeConfig {
   spaceAgentManager: SpaceAgentManager;
   /** Long-horizon agent repository for durable external-event subscriptions. */
   longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
+  /**
+   * Durable workflow-run event subscription store. Source of truth for both
+   * `static` (template) and `dynamic` (agent-registered) runtime subscriptions;
+   * the in-memory topic trie is rebuilt from it on rehydrate. Auto-created from
+   * `db` when not supplied.
+   */
+  workflowEventSubscriptionRepo?: SpaceWorkflowEventSubscriptionRepository;
   /** Workflow manager for loading workflow definitions */
   spaceWorkflowManager: SpaceWorkflowManager;
   /** Workflow run repository for run CRUD and status updates */
@@ -872,6 +880,7 @@ export class SpaceRuntime {
    */
   private promptTooLongRecovery = new Map<string, PromptTooLongRecoveryState>();
   private readonly toolContinuationRepo: ToolContinuationRecoveryRepository;
+  private readonly workflowEventSubscriptionRepo: SpaceWorkflowEventSubscriptionRepository;
   private readonly topicTrie = new TopicTrie<SubscriptionTarget>();
   private readonly pendingExternalEventQueue = new Map<string, PendingExternalEvent[]>();
   private readonly externalEventRetryTimers = new Map<string, Timer>();
@@ -952,6 +961,15 @@ export class SpaceRuntime {
     this.toolContinuationRepo = new ToolContinuationRecoveryRepository(config.db);
     if (hasSqlExec(config.db)) {
       this.toolContinuationRepo.ensureSchema();
+    }
+    // Workflow-run event subscriptions are the durable source of truth for the
+    // in-memory topic trie; auto-create the repo + table so the trie can be
+    // rebuilt purely from it on rehydrate.
+    this.workflowEventSubscriptionRepo =
+      config.workflowEventSubscriptionRepo ??
+      new SpaceWorkflowEventSubscriptionRepository(config.db);
+    if (hasSqlExec(config.db)) {
+      this.workflowEventSubscriptionRepo.ensureSchema();
     }
     this.queueHealthMetrics = config.queueHealthMetrics ?? new ExternalEventQueueMetrics();
     this.subscribeExternalEventPublished();
@@ -1035,7 +1053,10 @@ export class SpaceRuntime {
   ): void {
     // Refresh only workflow-defined static interests, preserving agent-created
     // (dynamic) subscriptions so an agent that explicitly subscribed keeps
-    // receiving events after a re-registration.
+    // receiving events after a re-registration. Write-through: drop the run's
+    // static rows from the durable store too so the trie (rebuilt from it on
+    // rehydrate) stays a pure derived index.
+    this.workflowEventSubscriptionRepo.deleteStaticByRun(workflowRunId);
     this.topicTrie.remove(
       (target) =>
         isWorkflowSubscriptionTarget(target) &&
@@ -1135,6 +1156,26 @@ export class SpaceRuntime {
       topic: trimmed,
       subscriptionKind,
     });
+    // Write-through: persist the subscription so it survives a daemon restart.
+    // The trie is rebuilt from this table on rehydrate, making it a pure
+    // derived index. The slot+topic+kind is the upsert key, so re-registering
+    // the same topic is idempotent (mirrors the trie remove-then-insert above).
+    const run = this.config.workflowRunRepo.getRun(workflowRunId);
+    if (run) {
+      this.workflowEventSubscriptionRepo.upsert({
+        spaceId: run.spaceId,
+        workflowRunId,
+        taskId,
+        nodeId,
+        agentName,
+        topic: trimmed,
+        subscriptionKind,
+      });
+    } else {
+      log.warn(
+        `SpaceRuntime: could not persist subscription for ${workflowRunId}/${nodeId}/${agentName}: run not found`
+      );
+    }
     // An event can arrive in the brief interval between an external resource
     // being created and the actor registering its dynamic interest. Unmatched
     // events stay `published` for the bounded retention TTL; replay here so a
@@ -1265,6 +1306,14 @@ export class SpaceRuntime {
       return { success: false, error: validation.reason ?? 'invalid pattern' };
     }
     const normalized = trimmed.toLowerCase();
+    this.workflowEventSubscriptionRepo.deleteBySlotTopic(
+      workflowRunId,
+      taskId,
+      nodeId,
+      agentName,
+      trimmed,
+      'dynamic'
+    );
     this.topicTrie.remove(
       (target) =>
         isWorkflowSubscriptionTarget(target) &&
@@ -1284,6 +1333,7 @@ export class SpaceRuntime {
     nodeId: string,
     agentName: string
   ): void {
+    this.workflowEventSubscriptionRepo.deleteBySlot(workflowRunId, taskId, nodeId, agentName);
     this.topicTrie.remove(
       (target) =>
         isWorkflowSubscriptionTarget(target) &&
@@ -1299,6 +1349,7 @@ export class SpaceRuntime {
   }
 
   clearRunInterests(workflowRunId: string): void {
+    this.workflowEventSubscriptionRepo.deleteByRun(workflowRunId);
     this.topicTrie.remove(
       (target) => isWorkflowSubscriptionTarget(target) && target.workflowRunId === workflowRunId
     );
@@ -1315,6 +1366,7 @@ export class SpaceRuntime {
    * (archive, space delete).
    */
   clearRunInterestsPreservingDynamic(workflowRunId: string): void {
+    this.workflowEventSubscriptionRepo.deleteByRunPreservingDynamic(workflowRunId);
     this.topicTrie.remove(
       (target) =>
         isWorkflowSubscriptionTarget(target) &&
@@ -1341,6 +1393,7 @@ export class SpaceRuntime {
   }
 
   clearTaskInterests(taskId: string): void {
+    this.workflowEventSubscriptionRepo.deleteByTask(taskId);
     this.topicTrie.remove(
       (target) => isWorkflowSubscriptionTarget(target) && target.taskId === taskId
     );
@@ -1354,6 +1407,7 @@ export class SpaceRuntime {
    * topics for a potential retry.
    */
   clearTaskInterestsPreservingDynamic(taskId: string): void {
+    this.workflowEventSubscriptionRepo.deleteByTaskPreservingDynamic(taskId);
     this.topicTrie.remove(
       (target) =>
         isWorkflowSubscriptionTarget(target) &&
@@ -5517,6 +5571,41 @@ export class SpaceRuntime {
     }
   }
 
+  /**
+   * Rebuild the workflow-subscription portion of the topic trie purely from
+   * the durable `space_workflow_event_subscriptions` table. This is what makes
+   * the trie a derived index: both `static` template interests and
+   * agent-registered `dynamic` interests are reconstructed here on daemon
+   * rehydrate, so a subscription an agent created at runtime (and persisted
+   * write-through by `registerSubscription`) survives a restart.
+   *
+   * `sessionId` is intentionally not persisted — it is resolved dynamically
+   * from the live node execution at delivery time (`resolveSubscriptionTarget`),
+   * so the rebuilt target carries only the durable identity fields.
+   */
+  private rehydrateWorkflowSubscriptions(spaceId: string): void {
+    // Drop any existing workflow-subscription trie entries owned by this
+    // space so the trie is a faithful projection of the table. No-op on a
+    // fresh runtime (the trie starts empty) but keeps the method idempotent
+    // and mirrors rehydrateLongHorizonSubscriptions.
+    const spaceRunIds = new Set(
+      this.config.workflowRunRepo.listBySpace(spaceId).map((run) => run.id)
+    );
+    this.topicTrie.remove(
+      (target) => isWorkflowSubscriptionTarget(target) && spaceRunIds.has(target.workflowRunId)
+    );
+    for (const sub of this.workflowEventSubscriptionRepo.listBySpace(spaceId)) {
+      this.topicTrie.insert(sub.topic, {
+        workflowRunId: sub.workflowRunId,
+        taskId: sub.taskId,
+        nodeId: sub.nodeId,
+        agentName: sub.agentName,
+        topic: sub.topic,
+        subscriptionKind: sub.subscriptionKind,
+      });
+    }
+  }
+
   private isTargetStillSubscribed(
     target: Pick<WorkflowSubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>,
     topic: string
@@ -5586,6 +5675,10 @@ export class SpaceRuntime {
         await this.ensureExecutorRegistered(run, space);
       }
       this.rehydrateLongHorizonSubscriptions(space.id);
+      // Rebuild the workflow-subscription trie from the durable table so an
+      // agent-registered dynamic subscription survives the restart. Runs before
+      // the paused-space short-circuit so a resumed space finds its trie intact.
+      this.rehydrateWorkflowSubscriptions(space.id);
       // Re-register workflow-defined static event interests for eligible runs
       // BEFORE persisted-delivery replay. Executor rehydration intentionally
       // excludes most succeeded runs, so a run relying on a workflow
