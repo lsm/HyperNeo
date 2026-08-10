@@ -57,7 +57,13 @@ export const KNOWN_TOPIC_FROM_SOURCES: ReadonlySet<string> = new Set<string>(['p
  * pattern by filling the `pattern`'s placeholders from the run's primary link.
  *
  * For the `primaryLink` source the supported placeholders are `{owner}`,
- * `{repo}`, `{number}`, and `{host}` — all four come from {@link parsePrUrl}.
+ * `{repo}`, and `{number}` — the segments of the GitHub event topic taxonomy
+ * (`github/{owner}/{repo}/{resource}/{entity}.{action}`), all derived from
+ * {@link parsePrUrl}. `{host}` is intentionally NOT supported: GitHub events are
+ * published host-agnostic (always under the literal `github/` source prefix, per
+ * `github-normalizer`), so a `{host}`-derived segment can never match. Any
+ * unsupported token (e.g. `{host}`, `{branch}`) is left as-is and surfaces as an
+ * invalid glob at registration.
  *
  * Returns `null` when:
  * - the interest has no `topicFrom` (it is a static `topic` interest — callers
@@ -108,8 +114,7 @@ export function resolveTopicFromInterest(
       return topicFrom.pattern
         .replaceAll('{owner}', parsed.owner)
         .replaceAll('{repo}', parsed.repo)
-        .replaceAll('{number}', parsed.number)
-        .replaceAll('{host}', parsed.host);
+        .replaceAll('{number}', parsed.number);
     default:
       return null;
   }

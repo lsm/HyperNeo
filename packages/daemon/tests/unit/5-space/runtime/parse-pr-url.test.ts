@@ -96,16 +96,36 @@ describe('resolveTopicFromInterest', () => {
     expect(validateGlobPattern(resolved!).valid).toBe(true);
   });
 
-  test('fills the {host} placeholder from a GitHub Enterprise URL', () => {
+  test('resolves an Enterprise PR URL into the host-agnostic github/ taxonomy', () => {
+    // GitHub events are published under the literal `github/` source prefix
+    // regardless of github.com vs. GHE, so an Enterprise PR resolves the same
+    // way as github.com (host is not part of the topic).
+    const interest: Pick<EventInterest, 'topicFrom'> = {
+      topicFrom: {
+        source: 'primaryLink',
+        pattern: 'github/{owner}/{repo}/pull_request/{number}.*',
+      },
+    };
+    expect(resolveTopicFromInterest(interest, 'https://github.example.com/team/repo/pull/99')).toBe(
+      'github/team/repo/pull_request/99.*'
+    );
+  });
+
+  test('does not substitute {host} (unsupported: events are published host-agnostic)', () => {
     const interest: Pick<EventInterest, 'topicFrom'> = {
       topicFrom: {
         source: 'primaryLink',
         pattern: '{host}/{owner}/{repo}/pull_request/{number}.*',
       },
     };
-    expect(resolveTopicFromInterest(interest, 'https://github.example.com/team/repo/pull/99')).toBe(
-      'github.example.com/team/repo/pull_request/99.*'
+    const resolved = resolveTopicFromInterest(
+      interest,
+      'https://github.example.com/team/repo/pull/99'
     );
+    // `{host}` is left as a literal token rather than expanded — the GitHub
+    // topic taxonomy has no host segment, so expanding it could never match.
+    expect(resolved).toBe('{host}/team/repo/pull_request/99.*');
+    expect(validateGlobPattern(resolved!).valid).toBe(false);
   });
 
   test('only substitutes the known placeholders; unknown tokens are left as-is', () => {
