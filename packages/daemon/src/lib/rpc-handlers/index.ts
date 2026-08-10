@@ -86,7 +86,11 @@ import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
 import { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
 import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository';
 import { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository';
-import { deliverAndMarkQueued, isMessageDeliveryV2Enabled } from '../agent/message-delivery';
+import {
+  deliverAndMarkQueued,
+  isMessageDeliveryV2Enabled,
+  waitForDeliveryConsumption,
+} from '../agent/message-delivery';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import type { JobQueueProcessor } from '../../storage/job-queue-processor';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';
@@ -900,14 +904,38 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       } else if (existing.sendStatus === 'failed') {
         sdkMessageRepo.reopenDeliveryByUuid(sessionId, messageId);
       }
-      await deliverAndMarkQueued({
-        jobQueue: deps.reactiveDb.db.getJobQueueRepo(),
-        stateManager: session.stateManager,
-        sessionId,
-        messageUuid: messageId,
-        origin: 'space_agent',
-        onEnqueueFailure: () => sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId),
-      });
+      // Await SDK consumption (onSent) before returning, mirroring the LTA +
+      // task-agent injectors + the legacy enqueueWithId path. Without this a
+      // direct send_message handoff (no retained source row to retry) is recorded
+      // as delivered after a bare enqueue that may yet dead-letter. Rejects on
+      // timeout so the router doesn't acknowledge a delivery that may fail; the
+      // durable job keeps running and a later retry re-registers the wait. (Codex P1.)
+      const consumed = waitForDeliveryConsumption(messageId);
+      let consumptionTimeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await deliverAndMarkQueued({
+          jobQueue: deps.reactiveDb.db.getJobQueueRepo(),
+          stateManager: session.stateManager,
+          sessionId,
+          messageUuid: messageId,
+          origin: 'space_agent',
+          onEnqueueFailure: () => sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId),
+        });
+        const consumptionTimeoutMs =
+          Number(process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS) || 30_000;
+        await Promise.race([
+          consumed.promise,
+          new Promise<void>((_, reject) => {
+            consumptionTimeout = setTimeout(
+              () => reject(new Error('space-agent handoff not consumed within timeout')),
+              consumptionTimeoutMs
+            );
+          }),
+        ]);
+      } finally {
+        if (consumptionTimeout) clearTimeout(consumptionTimeout);
+        consumed.cancel();
+      }
     } else {
       // Legacy inline path (HYPERNEO_MESSAGE_DELIVERY_V2=0 opt-out).
       await session.ensureQueryStarted();

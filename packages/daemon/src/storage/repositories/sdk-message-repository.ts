@@ -1897,15 +1897,17 @@ export class SDKMessageRepository {
    * existing `enqueued` row (e.g. a `failed` row just reopened). Without this the
    * row stays `enqueued` and QueryModeHandler's deferred replay — which selects
    * only `send_status='deferred'` — never picks it up, so the handoff is lost on
-   * an idle parent-limited session. Mirrors {@link reopenDeliveryByUuid}; only
-   * flips rows still pending delivery. (Codex P1.)
+   * an idle parent-limited session. Only flips `enqueued` rows — NOT `submitted`
+   * (ACP): a submitted prompt already reached the subprocess, and deferring it
+   * would leave SDKMessageHandler unable to match its acceptance, so the row
+   * replays later and the handoff executes twice. (Codex P1.)
    */
   markDeliveryDeferredByUuid(sessionId: string, uuid: string): string | null {
     const row = this.db
       .prepare(
         `SELECT id FROM sdk_messages
            WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
-             AND send_status IN ('enqueued', 'submitted')
+             AND send_status = 'enqueued'
            ORDER BY timestamp ASC LIMIT 1`
       )
       .get(sessionId, uuid) as { id: string } | undefined;
