@@ -53,11 +53,24 @@ function buildApprovalsScript(timeoutSeconds: number = CODEX_REVIEW_BOT_TIMEOUT_
     'if [ -z "$PR_HOST" ] || [ -z "$OWNER" ] || [ -z "$REPO" ] || [ "$OWNER" = "$PR_API_URL" ]; then echo "Failed to resolve repository from PR URL" >&2; exit 1; fi',
     'ALLOWED_HOST="${GH_HOST:-github.com}"',
     'if [ "$PR_HOST" != "github.com" ] && [ "$PR_HOST" != "$ALLOWED_HOST" ]; then echo "PR host ${PR_HOST} is not allowed for GitHub lookups" >&2; exit 1; fi',
+    // Codex-approval freshness is anchored to the CURRENT HEAD commit, not the
+    // reviewer's handoff: a +1 created after the head commit's date provably saw
+    // this code, so a Codex +1 that lands BEFORE the reviewer hands off still
+    // counts (it cannot be stale for an unchanged head). This matches the Plan
+    // Review / Reviewer prompt guarantee ("a +1 newer than the current PR head
+    // commit counts; an older one from a previous cycle is stale"). Falls back
+    // to the workflow-run start when the commit lookup is unavailable.
+    // Milliseconds are stripped so a lexicographic `>` against GitHub's
+    // second-precision reaction created_at compares equal-second timestamps
+    // correctly (otherwise 23Z would wrongly sort after 23.500Z).
+    'HEAD_BASELINE=$(gh api --hostname "$PR_HOST" "repos/${OWNER}/${REPO}/commits/${HEAD_OID}" --jq \'.commit.committer.date // .commit.author.date // empty\' 2>/dev/null || true)',
+    'HEAD_BASELINE="${HEAD_BASELINE:-${HYPERNEO_WORKFLOW_START_ISO:-}}"',
+    'if [ -n "$HEAD_BASELINE" ] && [[ "$HEAD_BASELINE" =~ \\.[0-9]+Z$ ]]; then HEAD_BASELINE="${HEAD_BASELINE%.*}Z"; fi',
     'COMMENTS=$(gh api --hostname "$PR_HOST" --paginate --slurp "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/comments?per_page=100") || { echo "Failed to fetch Codex comments" >&2; exit 1; }',
     'REACTIONS=$(gh api --hostname "$PR_HOST" --paginate --slurp "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/reactions?per_page=100") || { echo "Failed to fetch Codex reactions" >&2; exit 1; }',
     'COMMENT_OK=$(jq --arg head "$HEAD_OID" \'[.[][] | select(((.user.login // "") | test("codex"; "i")) and ((.user.login // "") | endswith("[bot]")) and ((.body // "") | contains($head)))] | length\' <<< "$COMMENTS")',
     'REACTION_OK=$(jq \'[.[][] | select(((.user.login // "") | test("codex"; "i")) and ((.user.login // "") | endswith("[bot]")) and .content == "+1")] | length\' <<< "$REACTIONS")',
-    'FRESH_REACTION_OK=$(jq --arg since "$WAIT_STARTED" \'[.[][] | select(((.user.login // "") | test("codex"; "i")) and ((.user.login // "") | endswith("[bot]")) and .content == "+1" and (.created_at // "") > $since)] | length\' <<< "$REACTIONS")',
+    'FRESH_REACTION_OK=$(jq --arg since "$HEAD_BASELINE" \'[.[][] | select(((.user.login // "") | test("codex"; "i")) and ((.user.login // "") | endswith("[bot]")) and .content == "+1" and (.created_at // "") > $since)] | length\' <<< "$REACTIONS")',
     'if [ "$COMMENT_OK" != "0" ] || { [ -n "$WAIT_STARTED" ] && [ "$WAIT_HEAD" = "$HEAD_OID" ] && [ "$FRESH_REACTION_OK" != "0" ]; }; then jq -n --argjson approvals "$MERGED" --argjson reaction_count "$REACTION_OK" --argjson fresh_reaction_count "$FRESH_REACTION_OK" \'{"type":"allow","data":{"approvals":$approvals,"codex_approved":true,"codex_reaction_count":$reaction_count,"codex_fresh_reaction_count":$fresh_reaction_count}}\'; exit 0; fi',
     'NOW_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)',
     `if [ -z "$WAIT_STARTED" ] || [ "$WAIT_HEAD" != "$HEAD_OID" ]; then jq -n --argjson approvals "$MERGED" --arg started "$NOW_ISO" --arg head "$HEAD_OID" '{"type":"block","reason":"Plan approval requires fresh Codex bot approval for current head or ${label} timeout from approval handoff","data":{"approvals":$approvals,"approval_count":4,"codex_wait_started_at":$started,"codex_wait_head_oid":$head}}'; exit 0; fi`,
@@ -117,11 +130,24 @@ function buildReviewApprovalScript(
     'if [ -z "$PR_HOST" ] || [ -z "$OWNER" ] || [ -z "$REPO" ] || [ "$OWNER" = "$PR_API_URL" ]; then echo "Failed to resolve repository from PR URL" >&2; exit 1; fi',
     'ALLOWED_HOST="${GH_HOST:-github.com}"',
     'if [ "$PR_HOST" != "github.com" ] && [ "$PR_HOST" != "$ALLOWED_HOST" ]; then echo "PR host ${PR_HOST} is not allowed for GitHub lookups" >&2; exit 1; fi',
+    // Codex-approval freshness is anchored to the CURRENT HEAD commit, not the
+    // reviewer's handoff: a +1 created after the head commit's date provably saw
+    // this code, so a Codex +1 that lands BEFORE the reviewer hands off still
+    // counts (it cannot be stale for an unchanged head). This matches the Plan
+    // Review / Reviewer prompt guarantee ("a +1 newer than the current PR head
+    // commit counts; an older one from a previous cycle is stale"). Falls back
+    // to the workflow-run start when the commit lookup is unavailable.
+    // Milliseconds are stripped so a lexicographic `>` against GitHub's
+    // second-precision reaction created_at compares equal-second timestamps
+    // correctly (otherwise 23Z would wrongly sort after 23.500Z).
+    'HEAD_BASELINE=$(gh api --hostname "$PR_HOST" "repos/${OWNER}/${REPO}/commits/${HEAD_OID}" --jq \'.commit.committer.date // .commit.author.date // empty\' 2>/dev/null || true)',
+    'HEAD_BASELINE="${HEAD_BASELINE:-${HYPERNEO_WORKFLOW_START_ISO:-}}"',
+    'if [ -n "$HEAD_BASELINE" ] && [[ "$HEAD_BASELINE" =~ \\.[0-9]+Z$ ]]; then HEAD_BASELINE="${HEAD_BASELINE%.*}Z"; fi',
     'COMMENTS=$(gh api --hostname "$PR_HOST" --paginate --slurp "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/comments?per_page=100") || { echo "Failed to fetch Codex comments" >&2; exit 1; }',
     'REACTIONS=$(gh api --hostname "$PR_HOST" --paginate --slurp "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/reactions?per_page=100") || { echo "Failed to fetch Codex reactions" >&2; exit 1; }',
     'COMMENT_OK=$(jq --arg head "$HEAD_OID" \'[.[][] | select(((.user.login // "") | test("codex"; "i")) and ((.user.login // "") | endswith("[bot]")) and ((.body // "") | contains($head)))] | length\' <<< "$COMMENTS")',
     'REACTION_OK=$(jq \'[.[][] | select(((.user.login // "") | test("codex"; "i")) and ((.user.login // "") | endswith("[bot]")) and .content == "+1")] | length\' <<< "$REACTIONS")',
-    'FRESH_REACTION_OK=$(jq --arg since "$WAIT_STARTED" \'[.[][] | select(((.user.login // "") | test("codex"; "i")) and ((.user.login // "") | endswith("[bot]")) and .content == "+1" and (.created_at // "") > $since)] | length\' <<< "$REACTIONS")',
+    'FRESH_REACTION_OK=$(jq --arg since "$HEAD_BASELINE" \'[.[][] | select(((.user.login // "") | test("codex"; "i")) and ((.user.login // "") | endswith("[bot]")) and .content == "+1" and (.created_at // "") > $since)] | length\' <<< "$REACTIONS")',
     'if [ "$COMMENT_OK" != "0" ] || { [ -n "$WAIT_STARTED" ] && [ "$WAIT_HEAD" = "$HEAD_OID" ] && [ "$FRESH_REACTION_OK" != "0" ]; }; then jq -n --arg url "$PR_URL" --argjson reaction_count "$REACTION_OK" --argjson fresh_reaction_count "$FRESH_REACTION_OK" \'{"type":"allow","data":{"approved":true,"pr_url":$url,"codex_approved":true,"codex_reaction_count":$reaction_count,"codex_fresh_reaction_count":$fresh_reaction_count}}\'; exit 0; fi',
     'NOW_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)',
     `if [ -z "$WAIT_STARTED" ] || [ "$WAIT_HEAD" != "$HEAD_OID" ]; then jq -n --arg started "$NOW_ISO" --arg head "$HEAD_OID" '{"type":"block","reason":"Review approval requires fresh Codex bot approval for current head or ${label} timeout from approval handoff","data":{"codex_wait_started_at":$started,"codex_wait_head_oid":$head}}'; exit 0; fi`,
@@ -578,23 +604,25 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
     }
   }
 
-  // Post-pass: regenerate already-migrated plan/review approval hooks when
-  // the source node's codexTimeoutSeconds has changed since the hook was
-  // built. Once a channel is migrated, its gateId is stripped, so the main
-  // migration loop above can no longer reach it; without this pass, an
-  // RPC/import/editor update that changes codexTimeoutSeconds would persist
-  // on the node but leave the existing hook source baked with the old
-  // timeout (typically the 7200s default).
+  // Post-pass: refresh already-migrated plan/review approval hooks whenever
+  // their source drifts from the current builder output. Once a channel is
+  // migrated its gateId is stripped, so the main migration loop above can no
+  // longer reach it; without this pass, a change to codexTimeoutSeconds OR to
+  // the builder logic itself (e.g. the head-anchored Codex-freshness fix)
+  // would persist on the node while the deployed hook kept the old source.
+  // Rebuilding on any source drift is what lets a builder-logic fix reach
+  // already-deployed spaces on their next workflow load.
   //
   // Scope guard: the regex is anchored to the timeout comparison
   // `((NOW_EPOCH - START_EPOCH)) -lt N`, which is emitted ONLY by
   // buildApprovalsScript / buildReviewApprovalScript. This uniquely
-  // identifies the timeout check rather than any `-lt N` in the script —
-  // buildApprovalsScript also emits `if [ "$COUNT" -lt 4 ]` for the
-  // approval-vote count, and a naive `/-lt (\d+) /` would match that first
-  // (returning 4) and either always rebuild (when 4 != expectedTimeout) or
+  // identifies a generated codex script rather than any `-lt N` in the
+  // source — buildApprovalsScript also emits `if [ "$COUNT" -lt 4 ]` for the
+  // approval-vote count, and a naive `/-lt (\d+) /` would match that and
   // silently clobber a custom hook that happens to use `-lt N` for an
-  // unrelated shell comparison.
+  // unrelated shell comparison. Custom hooks (no anchored marker) never reach
+  // the full-source equality check below, so user-authored logic is never
+  // rewritten.
   const TIMEOUT_CMP_RE = /\(\(NOW_EPOCH - START_EPOCH\)\) -lt (\d+) /;
   for (const hook of hooksById.values()) {
     if (hook.validator.kind !== 'script') continue;
@@ -603,9 +631,7 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
     if (!isPlan && !isReview) continue;
     const sourceNode = workflow.nodes?.find((node) => node.name === hook.sourceNode);
     if (!sourceNode?.requireCodexApproval) continue;
-    const match = hook.validator.source.match(TIMEOUT_CMP_RE);
-    if (!match) continue; // not a generated codex script; leave custom hooks alone
-    const bakedTimeout = Number.parseInt(match[1]!, 10);
+    if (!TIMEOUT_CMP_RE.test(hook.validator.source)) continue; // not a generated codex script
     // Treat a cleared (`undefined`) override as the global default so a
     // save that removes codexTimeoutSeconds still rebuilds the hook back
     // to the default window instead of leaving the prior custom value.
@@ -613,10 +639,13 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
       sourceNode.codexTimeoutSeconds === undefined
         ? CODEX_REVIEW_BOT_TIMEOUT_SECONDS
         : resolveCodexTimeoutSeconds(sourceNode.codexTimeoutSeconds);
-    if (bakedTimeout === expectedTimeout) continue;
     const rebuiltScript = isPlan
       ? buildApprovalsScript(expectedTimeout)
       : buildReviewApprovalScript(expectedTimeout);
+    // Up to date (same timeout AND same builder logic) → leave as-is. Any drift
+    // — a changed timeout or a builder-logic update — rebuilds. The builders are
+    // pure functions of the timeout, so this is idempotent across passes.
+    if (hook.validator.source === rebuiltScript) continue;
     hooksById.set(hook.id, {
       ...hook,
       validator: { ...hook.validator, source: rebuiltScript },
