@@ -590,9 +590,9 @@ describe('validateExportedWorkflow', () => {
 // ---------------------------------------------------------------------------
 
 describe('validateExportedWorkflow — eventInterest topic/topicFrom', () => {
-  function makeWorkflowWithInterests(eventInterests: unknown) {
+  function makeWorkflowWithInterests(eventInterests: unknown, version: 1 | 2 = 2) {
     return {
-      version: 1,
+      version,
       type: 'workflow',
       name: 'Interests',
       nodes: [{ agents: [{ agentRef: 'Coder', name: 'coder', eventInterests }], name: 'Step' }],
@@ -601,9 +601,9 @@ describe('validateExportedWorkflow — eventInterest topic/topicFrom', () => {
     };
   }
 
-  test('accepts a static topic interest', () => {
+  test('accepts a static topic interest (v1)', () => {
     const result = validateExportedWorkflow(
-      makeWorkflowWithInterests([{ topic: 'github/a/b/pull_request/1.*' }])
+      makeWorkflowWithInterests([{ topic: 'github/a/b/pull_request/1.*' }], 1)
     );
     expect(result.ok).toBe(true);
   });
@@ -620,6 +620,26 @@ describe('validateExportedWorkflow — eventInterest topic/topicFrom', () => {
       ])
     );
     expect(result.ok).toBe(true);
+  });
+
+  test('rejects a topicFrom interest in a version-1 workflow (topicFrom is v2-only)', () => {
+    const result = validateExportedWorkflow(
+      makeWorkflowWithInterests(
+        [
+          {
+            topicFrom: {
+              source: 'primaryLink',
+              pattern: 'github/{owner}/{repo}/pull_request/{number}.*',
+            },
+          },
+        ],
+        1
+      )
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('requires version 2');
+    }
   });
 
   test('rejects an interest with both topic and topicFrom set', () => {
@@ -740,6 +760,19 @@ describe('validateExportBundle', () => {
     if (!result.ok) {
       expect(result.error).toContain('workflows[0]');
       expect(result.error).toContain('requires newer version');
+    }
+  });
+
+  test('rejects bundle whose nested item version exceeds the root bundle version', () => {
+    // A v1-rooted bundle cannot carry a v2 nested workflow — the nested item is
+    // re-stamped to the root version on output, which would smuggle a v2-only
+    // feature (topicFrom) into a v1 bundle.
+    const bundle = exportBundle([], [makeWorkflow()], 'B') as Record<string, unknown>;
+    bundle.version = 1; // root claims v1, but nested workflows are v2
+    const result = validateExportBundle(bundle);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('exceeds bundle version 1');
     }
   });
 

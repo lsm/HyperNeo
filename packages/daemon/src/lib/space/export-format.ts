@@ -618,6 +618,28 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
     }
   }
 
+  // topicFrom is a version-2 feature. A version-1 workflow must not carry it,
+  // or the version compatibility gate is meaningless: a v1-only client would
+  // reject the bundle as malformed rather than via the version path.
+  if (version === 1) {
+    for (let n = 0; n < result.data.nodes.length; n++) {
+      const agents = result.data.nodes[n].agents;
+      for (let a = 0; a < agents.length; a++) {
+        const interests = agents[a].eventInterests ?? [];
+        for (let k = 0; k < interests.length; k++) {
+          if ((interests[k] as { topicFrom?: unknown }).topicFrom !== undefined) {
+            return {
+              ok: false,
+              error:
+                `invalid: nodes[${n}].agents[${a}].eventInterests[${k}] uses topicFrom, ` +
+                'which requires version 2 (this workflow declares version 1)',
+            };
+          }
+        }
+      }
+    }
+  }
+
   // Zod's `z.number().min(1).max(5)` widens to `number`; at runtime the schema
   // guarantees 1-5, so we assert to the nominal SpaceAutonomyLevel union.
   return {
@@ -656,6 +678,17 @@ export function validateExportBundle(data: unknown): ValidationResult<SpaceExpor
     if (!agentResult.ok) {
       return { ok: false, error: `agents[${i}]: ${agentResult.error}` };
     }
+    // Nested items are re-stamped to the bundle's root version on output, so a
+    // nested item claiming a newer (but still supported) version than the root
+    // would silently downgrade — and smuggle a newer-only feature like topicFrom
+    // into a v1 bundle. (Unsupported versions are already rejected above.)
+    const nestedAgentVersion = (rawAgents[i] as Record<string, unknown>).version;
+    if (typeof nestedAgentVersion === 'number' && nestedAgentVersion > version) {
+      return {
+        ok: false,
+        error: `agents[${i}]: version ${nestedAgentVersion} exceeds bundle version ${version}`,
+      };
+    }
   }
   const rawWorkflows = Array.isArray(raw.workflows) ? raw.workflows : [];
   const bundleHandles = new Set<string>();
@@ -663,6 +696,13 @@ export function validateExportBundle(data: unknown): ValidationResult<SpaceExpor
     const wfResult = validateExportedWorkflow(rawWorkflows[i]);
     if (!wfResult.ok) {
       return { ok: false, error: `workflows[${i}]: ${wfResult.error}` };
+    }
+    const nestedWfVersion = (rawWorkflows[i] as Record<string, unknown>).version;
+    if (typeof nestedWfVersion === 'number' && nestedWfVersion > version) {
+      return {
+        ok: false,
+        error: `workflows[${i}]: version ${nestedWfVersion} exceeds bundle version ${version}`,
+      };
     }
     // Reject duplicate handles within the same bundle — silently rewriting the second
     // handle would make round-trip identity order-dependent.
