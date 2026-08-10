@@ -1719,6 +1719,127 @@ describe('openai-responses-bridge server', () => {
     }
   );
 
+  it.skipIf(!isBun)(
+    'preserves the tool-turn continuation across an empty-stream retry',
+    async () => {
+      const capturedBodies: Record<string, unknown>[] = [];
+      server = createOpenAIResponsesBridgeServer({
+        auth: { source: 'api_key', apiKey: 'sk-test' },
+        models,
+        fetchImpl: async (_url, init) => {
+          const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          capturedBodies.push(body);
+          // Turn 1: function call → caches the continuation (call_abc → resp_tool).
+          if (capturedBodies.length === 1) {
+            return sse([
+              {
+                event: 'response.function_call_arguments.done',
+                data: {
+                  type: 'response.function_call_arguments.done',
+                  call_id: 'call_abc',
+                  name: 'lookup',
+                  arguments: '{"q":"x"}',
+                },
+              },
+              {
+                event: 'response.completed',
+                data: {
+                  type: 'response.completed',
+                  response: {
+                    id: 'resp_tool',
+                    usage: { input_tokens: 1, output_tokens: 1 },
+                    output: [],
+                  },
+                },
+              },
+            ]);
+          }
+          // Turn 2: tool-result turn — upstream returns an EMPTY 200 (the bug shape).
+          if (capturedBodies.length === 2) {
+            return new Response('', { headers: { 'Content-Type': 'text/event-stream' } });
+          }
+          // Turn 3: retry of the same tool-result turn — succeeds with text.
+          return sse([
+            {
+              event: 'response.output_text.delta',
+              data: { type: 'response.output_text.delta', delta: 'done' },
+            },
+            {
+              event: 'response.completed',
+              data: {
+                type: 'response.completed',
+                response: {
+                  id: 'resp_done',
+                  usage: { input_tokens: 1, output_tokens: 1 },
+                  output: [],
+                },
+              },
+            },
+          ]);
+        },
+      });
+
+      const continuationBody = JSON.stringify({
+        model: 'gpt-5.3-codex',
+        max_tokens: 128,
+        messages: [
+          { role: 'user', content: 'Use the tool.' },
+          {
+            role: 'assistant',
+            content: [{ type: 'tool_use', id: 'call_abc', name: 'lookup', input: { q: 'x' } }],
+          },
+          {
+            role: 'user',
+            content: [{ type: 'tool_result', tool_use_id: 'call_abc', content: 'found' }],
+          },
+        ],
+        tools: [{ name: 'lookup', input_schema: { type: 'object' } }],
+      });
+
+      // Turn 1: trigger the function call to cache the continuation.
+      const first = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-5.3-codex',
+          max_tokens: 128,
+          messages: [{ role: 'user', content: 'Use the tool.' }],
+          tools: [{ name: 'lookup', input_schema: { type: 'object' } }],
+        }),
+      });
+      await readSSEEvents(first.body);
+
+      // Turn 2: empty stream — surfaces a retryable overloaded_error and must NOT
+      // consume the continuation.
+      const second = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: continuationBody,
+      });
+      const secondEvents = await readSSEEvents(second.body);
+      expect(secondEvents.find((e) => e.event === 'error')?.data).toMatchObject({
+        error: { type: 'overloaded_error' },
+      });
+
+      // Turn 3: same tool-result turn — the continuation must still be available
+      // (previous_response_id attached, only the tool output sent). Without the
+      // fix, the empty-stream turn would have consumed the continuation and turn 3
+      // would resend the whole conversation.
+      const third = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: continuationBody,
+      });
+      await readSSEEvents(third.body);
+
+      expect(capturedBodies[1]?.previous_response_id).toBe('resp_tool');
+      expect(capturedBodies[2]?.previous_response_id).toBe('resp_tool');
+      expect(capturedBodies[2]?.input).toEqual([
+        { type: 'function_call_output', call_id: 'call_abc', output: 'found' },
+      ]);
+    }
+  );
+
   it.skipIf(!isBun)('returns 400 for unsupported user content blocks', async () => {
     server = createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },

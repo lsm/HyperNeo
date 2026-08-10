@@ -947,6 +947,7 @@ async function streamResponsesToAnthropic({
   estimatedInputTokens,
   onFunctionCallResponse,
   onReasoningItems,
+  onProductive,
   modelContextWindow,
 }: {
   openAIResponse: Response;
@@ -955,6 +956,13 @@ async function streamResponsesToAnthropic({
   estimatedInputTokens: number;
   onFunctionCallResponse?: (callId: string, responseId: string) => void;
   onReasoningItems?: (items: ResponsesReasoningItem[]) => void;
+  /**
+   * Fired once, when the first content block is produced. The request handler
+   * uses it to consume the tool-turn continuation only once the stream is
+   * confirmed productive — so an empty/non-productive stream that triggers a
+   * retry leaves the continuation intact for the retry to reuse.
+   */
+  onProductive?: () => void;
   /**
    * Context window for the active model, resolved from the bridge config's models
    * list at session creation time. Takes precedence over the Codex-only
@@ -1011,6 +1019,15 @@ async function streamResponsesToAnthropic({
   // empty turn is malformed per the Messages spec and the SDK would otherwise
   // fail the turn terminally (the compaction-killer this guards against).
   let producedContent = false;
+  let productiveNotified = false;
+  // Set producedContent and fire onProductive once, on the first content block.
+  const markProducedContent = (): void => {
+    producedContent = true;
+    if (!productiveNotified) {
+      productiveNotified = true;
+      onProductive?.();
+    }
+  };
   const emittedFunctionCalls = new Set<string>();
   const responseReasoningItems: ResponsesReasoningItem[] = [];
 
@@ -1041,7 +1058,7 @@ async function streamResponsesToAnthropic({
     thinkingBlockIndex = blockIndex;
     send(contentBlockStartThinkingSSE(thinkingBlockIndex));
     thinkingOpen = true;
-    producedContent = true;
+    markProducedContent();
   };
 
   const closeThinkingBlock = () => {
@@ -1058,7 +1075,7 @@ async function streamResponsesToAnthropic({
     closeThinkingBlock();
     closeTextBlock();
     if (!send(contentBlockStartToolUseSSE(blockIndex, call.callId, call.name))) return;
-    producedContent = true;
+    markProducedContent();
     if (!send(inputJsonDeltaSSE(blockIndex, call.argumentsText || '{}'))) return;
     if (!send(contentBlockStopSSE(blockIndex))) return;
     blockIndex++;
@@ -1081,7 +1098,7 @@ async function streamResponsesToAnthropic({
         if (!textOpen) {
           send(contentBlockStartTextSSE(blockIndex));
           textOpen = true;
-          producedContent = true;
+          markProducedContent();
         }
         const delta = typeof event.delta === 'string' ? event.delta : '';
         if (delta) {
@@ -1757,8 +1774,6 @@ export function createOpenAIResponsesBridgeServer(
         });
       }
 
-      consumeContinuation(sessionId, resolvedContinuation);
-
       const estimatedInputTokens = continuation
         ? estimateResponsesPayloadTokens(body, continuation.input)
         : estimateResponsesPayloadTokens(body, requestBody.input);
@@ -1784,6 +1799,15 @@ export function createOpenAIResponsesBridgeServer(
                 }),
             onReasoningItems(items) {
               storeReasoningItems(sessionId, items);
+            },
+            // Consume the tool-turn continuation only once the stream produces
+            // content. The bridge commits HTTP 200 before reading the body, so an
+            // empty/non-productive stream surfaces as a retryable error and the
+            // query-runner re-issues the turn — if the continuation were consumed
+            // eagerly, the retry could no longer attach previous_response_id and
+            // would resend the whole conversation.
+            onProductive() {
+              consumeContinuation(sessionId, resolvedContinuation);
             },
           });
         },
