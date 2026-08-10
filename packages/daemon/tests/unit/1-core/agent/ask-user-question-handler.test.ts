@@ -30,6 +30,7 @@ describe('AskUserQuestionHandler', () => {
   let setProcessingSpy: ReturnType<typeof mock>;
   let setIdleSpy: ReturnType<typeof mock>;
   let getStateSpy: ReturnType<typeof mock>;
+  let releaseIdleWaitersSpy: ReturnType<typeof mock>;
   let updateQuestionDraftSpy: ReturnType<typeof mock>;
   let updateSessionSpy: ReturnType<typeof mock>;
   let enqueueWithIdSpy: ReturnType<typeof mock>;
@@ -68,6 +69,7 @@ describe('AskUserQuestionHandler', () => {
       currentState = { status: 'idle' };
     });
     getStateSpy = mock(() => currentState);
+    releaseIdleWaitersSpy = mock(() => {});
     updateQuestionDraftSpy = mock(async () => {});
 
     mockStateManager = {
@@ -75,6 +77,7 @@ describe('AskUserQuestionHandler', () => {
       setProcessing: setProcessingSpy,
       setIdle: setIdleSpy,
       getState: getStateSpy,
+      releaseIdleWaiters: releaseIdleWaitersSpy,
       updateQuestionDraft: updateQuestionDraftSpy,
     } as unknown as ProcessingStateManager;
 
@@ -224,6 +227,39 @@ describe('AskUserQuestionHandler', () => {
       await expect(
         handler.handleQuestionResponse('tool-123', [{ questionIndex: 0, selectedLabels: ['A'] }])
       ).rejects.toThrow('agent is not waiting for input');
+    });
+
+    it('releases the durable turn waiter if the injected_as_tool_result publication rejects (Codex P1)', async () => {
+      // The publish sits between the suppressed idle and the reinjection try; a
+      // rejecting subscriber would stop execution before the reinjection catch's
+      // terminal idle, leaving the suppressed waiter pending (the question is
+      // already resolved, so nothing retries it). The wrap releases the waiter.
+      const pendingQuestion: PendingUserQuestion = {
+        toolUseId: 'tool-123',
+        questions: [
+          {
+            question: 'What do you want?',
+            header: 'Choice',
+            options: [
+              { label: 'A', description: 'A' },
+              { label: 'B', description: 'B' },
+            ],
+            multiSelect: false,
+          },
+        ],
+        askedAt: Date.now(),
+      };
+      currentState = { status: 'waiting_for_input', pendingQuestion };
+      (emitSpy as ReturnType<typeof mock>).mockImplementation(async (event: string) => {
+        if (event === 'question.injected_as_tool_result') {
+          throw new Error('subscriber rejected');
+        }
+      });
+
+      await expect(
+        handler.handleQuestionResponse('tool-123', [{ questionIndex: 0, selectedLabels: ['A'] }])
+      ).rejects.toThrow('subscriber rejected');
+      expect(releaseIdleWaitersSpy).toHaveBeenCalledTimes(1);
     });
 
     it('should queue answer + inject tool_result when no pending resolver (post-restart)', async () => {

@@ -482,12 +482,22 @@ export class AskUserQuestionHandler {
 
     const mode: 'submitted' | 'cancelled' = result.behavior === 'allow' ? 'submitted' : 'cancelled';
 
-    await internalEventBus.publish('question.injected_as_tool_result', {
-      sessionId: session.id,
-      toolUseId,
-      mode,
-      viaCanUseTool: false,
-    });
+    // This publish sits between the suppressed idle above and the reinjection
+    // try below; a rejecting subscriber would stop execution before the
+    // reinjection catch's terminal idle, leaving the durable turn waiter
+    // pending (the question is already resolved, so nothing retries it). Wrap it
+    // in the same release-on-failure cleanup. (Codex P1.)
+    try {
+      await internalEventBus.publish('question.injected_as_tool_result', {
+        sessionId: session.id,
+        toolUseId,
+        mode,
+        viaCanUseTool: false,
+      });
+    } catch (publishError) {
+      stateManager.releaseIdleWaiters();
+      throw publishError;
+    }
 
     // Best-effort: start the SDK query and enqueue the tool_result. If the
     // agent session has no ensureQueryStarted (e.g. a unit-test context),

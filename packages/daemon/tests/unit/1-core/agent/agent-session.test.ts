@@ -1766,6 +1766,41 @@ describe('AgentSession', () => {
       expect(clearSpy).not.toHaveBeenCalled();
     });
 
+    it('executeRateLimitAutoRetry suppresses the waiter drain when startQueryAndEnqueue throws (Codex P1)', async () => {
+      // The retry catch must NOT drain: returning false makes the watchdog
+      // schedule another startup attempt for this same episode, so the old
+      // prompt is still slated for replay — draining would complete the durable
+      // job and free the active-turn slot mid-retry. Every setIdle in the retry
+      // path is suppressed; the waiter is released only on supersession.
+      const setIdleSpy = mock(async (_opts?: { suppressDeliveryWaiters?: boolean }) => {});
+      agentSession.stateManager.setIdle = setIdleSpy;
+      // biome-ignore lint: test mock access
+      (agentSession as unknown as Record<string, unknown>).rateLimitWatchdog = {
+        isSuperseded: () => false, // episode still active → retry proceeds
+        clearPendingCooldown: () => {}, // startQueryAndEnqueue (generation provided) clears the timer
+      };
+      // biome-ignore lint: test mock access
+      (agentSession as unknown as Record<string, unknown>).lifecycleManager = {
+        startQueryAndEnqueue: mock(async () => {
+          throw new Error('startup failed');
+        }),
+      };
+      const result = await (
+        agentSession as unknown as {
+          executeRateLimitAutoRetry: (
+            msg: { uuid: string; content: string } | null,
+            gen?: number
+          ) => Promise<boolean>;
+        }
+      ).executeRateLimitAutoRetry({ uuid: 'msg-1', content: 'hi' }, 7);
+      expect(result).toBe(false);
+      // The catch's setIdle (and the try's) are both suppressed — no drain.
+      expect(setIdleSpy).toHaveBeenCalled();
+      for (const call of setIdleSpy.mock.calls) {
+        expect(call[0]).toEqual({ suppressDeliveryWaiters: true });
+      }
+    });
+
     it('only clears the timer for a recovery re-enqueue (generation provided)', async () => {
       // An internal recovery re-enqueue is the SAME episode — clear only the
       // timer, don't bump the generation (which would self-abort the in-flight

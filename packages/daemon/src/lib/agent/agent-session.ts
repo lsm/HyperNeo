@@ -1176,7 +1176,14 @@ export class AgentSession
       return true;
     } catch (error) {
       this.logger.error('Rate limit auto-retry failed:', error);
-      await this.stateManager.setIdle();
+      // Suppress the drain: returning false makes the watchdog schedule another
+      // startup attempt for this same episode, so the old prompt is still slated
+      // for replay — draining here would complete the durable job and free the
+      // active-turn slot while the retry continues, letting a new message admit
+      // as a competing turn. The waiter is released when the episode is actually
+      // abandoned (supersession → releaseIdleWaiters(gen) above) or superseded by
+      // a successful retry (terminal idle). (Codex P1.)
+      await this.stateManager.setIdle({ suppressDeliveryWaiters: true });
       return false;
     }
   }
