@@ -16,6 +16,7 @@ import { describe, expect, it, mock, beforeAll, afterAll } from 'bun:test';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import { signalDeliveryConsumed } from '../../../../src/lib/agent/message-delivery';
 
 const SESSION_ID = 'reviewer-session-1';
 const RUN_ID = 'run-1';
@@ -51,7 +52,14 @@ function makeManager(opts: {
   // v2 durable-delivery plumbing (harmless under the legacy path, which never
   // reaches these repos): the dedup guard's getDeliveryContent + the
   // deliverMessage jobQueue calls.
-  const jobQueueEnqueue = mock(() => ({ id: 'job-1' }));
+  // Test simplification: signal SDK consumption at enqueue time so the v2
+  // consumption-await in injectMessageIntoSession resolves (production signals
+  // from the bridge on the SDK's onSent; these tests don't drive a real turn).
+  const jobQueueEnqueue = mock((args: { payload?: { messageUuid?: string } }) => {
+    const uuid = args?.payload?.messageUuid;
+    if (uuid) signalDeliveryConsumed(uuid);
+    return { id: 'job-1' };
+  });
   const reopenDeliveryByUuid = mock(() => null);
   const markDeliveryDeferredByUuid = mock(() => null);
 

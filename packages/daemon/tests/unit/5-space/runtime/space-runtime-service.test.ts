@@ -915,9 +915,11 @@ describe('SpaceRuntimeService', () => {
       expect(inboxRepo.enqueue).not.toHaveBeenCalled();
       // injectLongTermAgentMessage persists durably + enqueues a message_delivery
       // job (v2); assert the durable persist instead of the removed inline feed.
+      // The delivery now reuses the message record's stable id ('message-1') so a
+      // consumption-timeout retry doesn't mint a second durable job. (Codex P1.)
       expect(saveUserMessage).toHaveBeenCalledWith(
         sessionId,
-        expect.objectContaining({ uuid: expect.stringMatching(/^msg_/), type: 'user' }),
+        expect.objectContaining({ uuid: 'message-1', type: 'user' }),
         'enqueued'
       );
     });

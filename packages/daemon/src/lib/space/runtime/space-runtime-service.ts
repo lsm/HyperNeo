@@ -475,7 +475,15 @@ export class SpaceRuntimeService {
   ): Promise<string | null> {
     const session = await this.ensureLongTermAgentSession(actor);
     if (!session) return null;
-    await this.injectLongTermAgentMessage(session, message.body);
+    // Pass the message's stable identifier so a consumption-timeout retry
+    // (injectLongTermAgentMessage rejects but the durable job keeps running)
+    // reuses the same UUID — the idempotent persist + getActiveDeliveryRole guard
+    // then prevent a second durable job + duplicated agent actions. (Codex P1.)
+    await this.injectLongTermAgentMessage(
+      session,
+      message.body,
+      message.idempotencyKey ?? message.messageId
+    );
     return session.getSessionData().id;
   }
 
