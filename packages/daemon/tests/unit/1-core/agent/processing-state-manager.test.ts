@@ -156,7 +156,7 @@ describe('ProcessingStateManager', () => {
   describe('waitForIdleTransition', () => {
     test('resolves on the next plain setIdle (terminal turn-end)', async () => {
       let resolved = false;
-      void manager.waitForIdleTransition().then(() => {
+      void manager.waitForIdleTransition().promise.then(() => {
         resolved = true;
       });
       expect(resolved).toBe(false);
@@ -170,12 +170,44 @@ describe('ProcessingStateManager', () => {
       // ACP, AskUserQuestion restart) suppresses the drain so the durable
       // delivery job isn't completed while the prompt is still being retried.
       let resolved = false;
-      void manager.waitForIdleTransition().then(() => {
+      void manager.waitForIdleTransition().promise.then(() => {
         resolved = true;
       });
       await manager.setIdle({ suppressDeliveryWaiters: true });
       expect(resolved).toBe(false);
       await manager.setIdle();
+      expect(resolved).toBe(true);
+    });
+
+    test('cancel() removes the waiter so it never resolves (failure/park path)', async () => {
+      // driveDeliveryTurn cancels its turn-end waiter on the blocked (park) and
+      // query-didn't-start paths so waiters don't accumulate across reclaims.
+      let resolved = false;
+      const handle = manager.waitForIdleTransition();
+      void handle.promise.then(() => {
+        resolved = true;
+      });
+      handle.cancel();
+      await manager.setIdle(); // a terminal idle must NOT resolve a cancelled waiter
+      expect(resolved).toBe(false);
+    });
+
+    test('drains waiters even when idle-state publication throws', async () => {
+      // Resilient drain (setIdle try/finally): the state is persisted before
+      // publish, so a publish failure must still release a waiting turn.
+      const failingBus = {
+        publish: mock(async () => {
+          throw new Error('publish failed');
+        }),
+        publishAsync: mock(async () => {}),
+        subscribe: mock(() => () => {}),
+      } as unknown as InternalEventBus<any>;
+      const failingManager = new ProcessingStateManager(sessionId, failingBus, createMockDb());
+      let resolved = false;
+      void failingManager.waitForIdleTransition().promise.then(() => {
+        resolved = true;
+      });
+      await expect(failingManager.setIdle()).rejects.toThrow('publish failed');
       expect(resolved).toBe(true);
     });
   });

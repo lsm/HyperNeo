@@ -517,6 +517,16 @@ export class AskUserQuestionHandler {
         `AskUserQuestion ${toolUseId}: failed to inject tool_result after restart`,
         error
       );
+      // The answer reinjection failed, so this turn can't continue: end it
+      // (terminal setIdle) to release the durable-delivery turn waiter —
+      // otherwise driveDeliveryTurn's job hangs `processing` waiting for an
+      // idle that will never come. Best-effort; don't let a publish failure
+      // mask the original error.
+      try {
+        await stateManager.setIdle();
+      } catch {
+        /* non-fatal — the turn is abandoned either way */
+      }
       // Leave the queued answer in place — a future canUseTool fire can
       // still consume it. Do not rethrow; the user's RPC already
       // succeeded from their perspective (the question is marked

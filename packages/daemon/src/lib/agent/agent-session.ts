@@ -1865,10 +1865,14 @@ export class AgentSession
       const turnEnd = this.stateManager.waitForIdleTransition();
       const queryStartResult = await this.lifecycleManager.ensureQueryStarted();
       if (queryStartResult === 'blocked') {
+        // Park: cancel the turn-end waiter so it doesn't accumulate across the
+        // 5s reclaims. The next drive attempt arms a fresh one.
+        turnEnd.cancel();
         return { kind: 'blocked' as const };
       }
       const queryPromise = this.queryPromise;
       if (!queryPromise) {
+        turnEnd.cancel();
         throw new Error('message_delivery: query did not start; cannot drive turn');
       }
       // Feed the kickoff (resolves on onSent = the SDK consumed it) UNLESS a
@@ -1885,6 +1889,7 @@ export class AgentSession
         // Without this recheck both attempts would admit the same kickoff. See
         // Codex (#3744971818).
         if (claimGuard && !claimGuard()) {
+          turnEnd.cancel();
           return { kind: 'aborted' as const };
         }
         acknowledgment = this.messageQueue.admitWithId(messageUuid, content, false, {
@@ -1911,7 +1916,13 @@ export class AgentSession
     // a safety net for a query that closes without an idle (e.g. a hard crash);
     // in streaming-input mode queryPromise never resolves at turn-end, so
     // turnEnd wins and the job completes promptly when the SDK finishes the turn.
-    await Promise.race([started.turnEnd, started.queryPromise.catch(() => {})]);
+    try {
+      await Promise.race([started.turnEnd.promise, started.queryPromise.catch(() => {})]);
+    } finally {
+      // Cancel the waiter if it didn't win the race (e.g. queryPromise resolved
+      // on query-close) so it isn't left in the map.
+      started.turnEnd.cancel();
+    }
     return { outcome: 'completed' };
   }
 

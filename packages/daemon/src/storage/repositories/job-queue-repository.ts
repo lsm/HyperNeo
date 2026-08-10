@@ -272,6 +272,26 @@ export class JobQueueRepository {
   }
 
   /**
+   * Cancel (delete) every ACTIVE (pending/processing) `message_delivery` job
+   * across ALL sessions. Used at daemon startup when message-delivery v2 is
+   * OFF (the `HYPERNEO_MESSAGE_DELIVERY_V2=0` rollback) so jobs left over from a
+   * prior v2-on run don't linger — new messages take the legacy inline path, so
+   * any surviving durable job would either be driven by the (still-registered)
+   * v2 handler or sit stale. Cancelling them hands their `sdk_messages` rows
+   * (still `enqueued`/`consumed`) to the legacy replay + orphan-recovery
+   * backstops. Returns the count cancelled.
+   */
+  cancelAllMessageDelivery(queue: string = 'message_delivery'): number {
+    const res = this.db
+      .prepare(
+        `DELETE FROM job_queue
+           WHERE queue = ? AND status IN ('pending', 'processing')`
+      )
+      .run(queue);
+    return res.changes;
+  }
+
+  /**
    * Cancel active jobs and return their message UUIDs so lifecycle callers can
    * terminalize the matching persisted prompts instead of leaving hidden
    * `enqueued` rows behind.
