@@ -29,6 +29,7 @@ import {
   anthropicErrorTypeForHttpStatus,
   httpStatusForSymbolicErrorType,
   isOpenAiErrorTypeName,
+  isProviderErrorCodeOrType,
   isRetryableProviderError,
   matchPromptTooLong,
   providerErrorKindForHttpStatus,
@@ -188,6 +189,39 @@ describe('isOpenAiErrorTypeName', () => {
     expect(isOpenAiErrorTypeName('response.output_text.delta')).toBe(false);
     expect(isOpenAiErrorTypeName('')).toBe(false);
     expect(isOpenAiErrorTypeName(undefined)).toBe(false);
+  });
+});
+
+describe('isProviderErrorCodeOrType', () => {
+  test('admits symbolic names, terminal provider codes, and numeric statuses', () => {
+    // Symbolic type/code names (transient or terminal).
+    expect(isProviderErrorCodeOrType('invalid_request_error')).toBe(true);
+    expect(isProviderErrorCodeOrType('authentication_error')).toBe(true);
+    expect(isProviderErrorCodeOrType('server_error')).toBe(true);
+    // Terminal provider codes carried only as loose-text signals.
+    expect(isProviderErrorCodeOrType('model_not_found')).toBe(true);
+    expect(isProviderErrorCodeOrType('insufficient_quota')).toBe(true);
+    // Numeric codes/statuses (number or 3-digit string), 4xx and 5xx.
+    expect(isProviderErrorCodeOrType(401)).toBe(true);
+    expect(isProviderErrorCodeOrType('429')).toBe(true);
+    expect(isProviderErrorCodeOrType(503)).toBe(true);
+    expect(isProviderErrorCodeOrType('502')).toBe(true);
+    // Case-insensitive symbolic names.
+    expect(isProviderErrorCodeOrType('AUTHENTICATION_ERROR')).toBe(true);
+  });
+  test('rejects non-error values and out-of-range / embedded numbers', () => {
+    // Non-error frame types / lifecycle statuses.
+    expect(isProviderErrorCodeOrType('ping')).toBe(false);
+    expect(isProviderErrorCodeOrType('completed')).toBe(false);
+    expect(isProviderErrorCodeOrType('incomplete')).toBe(false);
+    // Out-of-range numeric statuses.
+    expect(isProviderErrorCodeOrType(200)).toBe(false);
+    expect(isProviderErrorCodeOrType(302)).toBe(false);
+    // Word boundaries: "4010 tokens" must not match a 4xx, nor 600+ as 5xx.
+    expect(isProviderErrorCodeOrType('4010')).toBe(false);
+    expect(isProviderErrorCodeOrType('')).toBe(false);
+    expect(isProviderErrorCodeOrType(undefined)).toBe(false);
+    expect(isProviderErrorCodeOrType(null)).toBe(false);
   });
 });
 

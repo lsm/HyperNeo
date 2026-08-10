@@ -32,7 +32,7 @@ import { createAnthropicErrorBody, type AnthropicErrorType } from '../shared/err
 import {
   anthropicErrorTypeForHttpStatus,
   httpStatusForSymbolicErrorType,
-  isOpenAiErrorTypeName,
+  isProviderErrorCodeOrType,
 } from '@hyperneo/shared/provider/error-taxonomy';
 import {
   isJsonContentType,
@@ -781,12 +781,16 @@ function isJsonErrorBody(text: string): boolean {
   // which must NOT be treated as an error.
   if (parsed.error != null || parsed.detail != null) return true;
   // A flat error (no error/detail wrapper) may carry only a recognized error
-  // type/code at the top level. Recognize it so the body routes here (terminal
-  // JSON-error path) rather than to the SSE parser, which sees no events and
-  // would relabel the permanent failure as overloaded_error.
+  // type/code/status at the top level — a symbolic name (e.g.
+  // `invalid_request_error`), a terminal provider code (`model_not_found`), or a
+  // numeric 4xx/5xx (`401`). Recognize any of them so the body routes here
+  // (terminal JSON-error path) rather than to the SSE parser, which sees no
+  // events and would relabel the permanent failure as overloaded_error. Accepts
+  // number-or-string, so a numeric `code`/`status` is covered too.
   return (
-    isOpenAiErrorTypeName(typeof parsed.type === 'string' ? parsed.type : undefined) ||
-    isOpenAiErrorTypeName(typeof parsed.code === 'string' ? parsed.code : undefined)
+    isProviderErrorCodeOrType(parsed.type) ||
+    isProviderErrorCodeOrType(parsed.code) ||
+    isProviderErrorCodeOrType(parsed.status)
   );
 }
 
@@ -819,12 +823,20 @@ function readEmbeddedErrorStatus(text: string): number | undefined {
     }
   }
   // No numeric status — fall back to a symbolic type/code classification so a
-  // credential/overload/rate-limit error isn't mislabeled as a 400.
-  return (
-    httpStatusForSymbolicErrorType(
-      typeof errorObj?.type === 'string' ? errorObj.type : undefined
-    ) ?? httpStatusForSymbolicErrorType(typeof parsed.type === 'string' ? parsed.type : undefined)
-  );
+  // credential/overload/rate-limit error isn't mislabeled as a 400. Some proxies
+  // carry the classification in `error.code` (or a top-level `code`) rather than
+  // `type`, so check both fields, nested then top-level.
+  const symbolicCandidates = [
+    typeof errorObj?.type === 'string' ? errorObj.type : undefined,
+    typeof errorObj?.code === 'string' ? errorObj.code : undefined,
+    typeof parsed.type === 'string' ? parsed.type : undefined,
+    typeof parsed.code === 'string' ? parsed.code : undefined,
+  ];
+  for (const candidate of symbolicCandidates) {
+    const symbolicStatus = httpStatusForSymbolicErrorType(candidate);
+    if (symbolicStatus !== undefined) return symbolicStatus;
+  }
+  return undefined;
 }
 
 /** Count occurrences of each distinct value in an array, keyed by its string form. */
@@ -1346,17 +1358,17 @@ async function streamResponsesToAnthropic({
       const sseEvent = (event as { sseEvent?: string }).sseEvent;
       // An error frame is signalled by the payload type (`error` /
       // `response.failed`), the raw SSE `event:` name, OR a data-only frame
-      // whose payload `type` is ANY recognized error category — transient
-      // (e.g. {"type":"server_error"}) OR terminal (e.g.
-      // {"type":"invalid_request_error"}). Admitting terminal types too
-      // prevents a permanent error data-only frame from falling through to the
-      // empty-stream guard and being retried as an overloaded_error.
+      // whose payload `type`/`code` is ANY recognized error indicator — a
+      // symbolic name (transient or terminal), a terminal provider code, or a
+      // numeric 4xx/5xx. Admitting terminal codes too prevents a permanent
+      // error data-only frame from falling through to the empty-stream guard
+      // and being retried as an overloaded_error.
       if (
         event.type === 'response.failed' ||
         event.type === 'error' ||
         sseEvent === 'error' ||
         sseEvent === 'response.failed' ||
-        (event.type !== undefined && isOpenAiErrorTypeName(event.type))
+        (event.type !== undefined && isProviderErrorCodeOrType(event.type))
       ) {
         ensureStarted();
         closeThinkingBlock();

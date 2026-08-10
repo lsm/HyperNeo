@@ -567,6 +567,45 @@ export function isOpenAiErrorTypeName(type: string | undefined): boolean {
   return RECOGNIZED_ERROR_TYPE_NAMES.has(type.toLowerCase());
 }
 
+/**
+ * Terminal provider codes that some proxies carry only as loose-text signals
+ * (e.g. `model_not_found`, `insufficient_quota`) and therefore are NOT in
+ * {@link RECOGNIZED_ERROR_TYPE_NAMES}. Lowercased, for exact matching against a
+ * flat error's `code`/`type` field.
+ */
+const TERMINAL_PROVIDER_CODE_NAMES: ReadonlySet<string> = new Set(
+  TERMINAL_PROVIDER_ERROR_TEXT.map((s) => s.toLowerCase())
+);
+
+/**
+ * True if a value (as found in a flat JSON error's `code`/`type`/`status`
+ * field) is a recognized error indicator of ANY kind:
+ *   - a symbolic error type/code name (transient or terminal — e.g.
+ *     `authentication_error`, `invalid_request_error`),
+ *   - a terminal provider code stored only as a loose-text signal (e.g.
+ *     `model_not_found`, `insufficient_quota`), or
+ *   - a numeric 4xx/5xx status (number, or a 3-digit string).
+ * Used to recognize a flat 200 JSON error that carries no `error`/`detail`
+ * wrapper, so it routes to the terminal error path instead of the empty-stream
+ * overloaded retry. Accepts `unknown` so the caller can pass a `code`/`status`
+ * field that may be a number or a string without pre-coercing.
+ */
+export function isProviderErrorCodeOrType(value: unknown): boolean {
+  if (typeof value === 'string') {
+    if (value.length === 0) return false;
+    const v = value.toLowerCase();
+    if (RECOGNIZED_ERROR_TYPE_NAMES.has(v)) return true;
+    if (TERMINAL_PROVIDER_CODE_NAMES.has(v)) return true;
+    // Word-bounded so "4010 tokens" / "15003 tokens" don't false-positive.
+    if (HTTP_4XX_STATUS_RE.test(value) || HTTP_5XX_STATUS_RE.test(value)) return true;
+    return false;
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value >= 400 && value < 600;
+  }
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // Prompt-too-long detection
 // ---------------------------------------------------------------------------

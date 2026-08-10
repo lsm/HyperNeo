@@ -2176,6 +2176,103 @@ describe('openai-responses-bridge server', () => {
   );
 
   it.skipIf(!isBun)(
+    'surfaces a flat JSON error carrying a terminal provider code (not retried as overload)',
+    async () => {
+      // A flat error may use a terminal provider CODE stored only as a loose-text
+      // signal, e.g. {"code":"model_not_found",...}. The flat-error detector must
+      // recognize the terminal code so the body routes to the terminal JSON-error
+      // path (surfaces terminal, defaulting to invalid_request_error) instead of
+      // the empty-stream overloaded retry.
+      server = createOpenAIResponsesBridgeServer({
+        auth: { source: 'api_key', apiKey: 'sk-test' },
+        models,
+        fetchImpl: async () =>
+          new Response(JSON.stringify({ code: 'model_not_found', message: 'unknown model' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+      });
+
+      const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-5.3-codex',
+          max_tokens: 128,
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+      });
+
+      // Terminal error with the diagnostic — NOT a retryable overload.
+      expect(resp.status).toBe(400);
+      const body = (await resp.json()) as { error: { type: string; message: string } };
+      expect(body.error.type).toBe('invalid_request_error');
+      expect(body.error.message).toContain('unknown model');
+    }
+  );
+
+  it.skipIf(!isBun)('classifies a flat JSON error with a numeric code by that status', async () => {
+    // A flat error may carry a NUMERIC code, e.g. {"code":401,...}. The
+    // detector must recognize the 4xx and the classifier must surface 401
+    // authentication_error (not a 400 invalid_request / overloaded retry).
+    server = createOpenAIResponsesBridgeServer({
+      auth: { source: 'api_key', apiKey: 'sk-test' },
+      models,
+      fetchImpl: async () =>
+        new Response(JSON.stringify({ code: 401, message: 'unauthorized' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    });
+
+    const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gpt-5.3-codex',
+        max_tokens: 128,
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+    });
+
+    expect(resp.status).toBe(401);
+    const body = (await resp.json()) as { error: { type: string; message: string } };
+    expect(body.error.type).toBe('authentication_error');
+    expect(body.error.message).toContain('unauthorized');
+  });
+
+  it.skipIf(!isBun)('classifies a JSON error whose symbolic type lives in error.code', async () => {
+    // Some proxies put the symbolic classification in error.code rather than
+    // error.type, e.g. {"error":{"code":"authentication_error",...}}. The
+    // classifier must read error.code (and top-level code) so it surfaces 401
+    // authentication_error instead of defaulting to 400 invalid_request_error.
+    server = createOpenAIResponsesBridgeServer({
+      auth: { source: 'api_key', apiKey: 'sk-test' },
+      models,
+      fetchImpl: async () =>
+        new Response(
+          JSON.stringify({ error: { code: 'authentication_error', message: 'expired' } }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        ),
+    });
+
+    const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gpt-5.3-codex',
+        max_tokens: 128,
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+    });
+
+    expect(resp.status).toBe(401);
+    const body = (await resp.json()) as { error: { type: string; message: string } };
+    expect(body.error.type).toBe('authentication_error');
+    expect(body.error.message).toContain('expired');
+  });
+
+  it.skipIf(!isBun)(
     'does not treat a 200 JSON body with error:null as a terminal error',
     async () => {
       // A success body may carry `"error": null` — that is NOT an error body.
