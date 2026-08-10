@@ -2877,6 +2877,16 @@ export class TaskAgentManager {
           );
         },
         getPrUrlForRun: (runId) => this.resolvePrUrlForRun(runId),
+        onCyclicGateReset: (runId) => {
+          try {
+            this.config.spaceRuntimeService.invalidatePrimaryLinkForRun(runId);
+            this.config.spaceRuntimeService.materializeRunTopicFromInterests(runId);
+          } catch (err) {
+            log.warn(
+              `onCyclicGateReset: failed to rematerialize for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
+            );
+          }
+        },
       });
 
       await channelRouter.activateNode(run.id, targetNodeId, {
@@ -5104,6 +5114,21 @@ export class TaskAgentManager {
         );
       },
       getPrUrlForRun: (runId) => this.resolvePrUrlForRun(runId),
+      // A cyclic gate reset clears gate data, which can remove a pr_url that was
+      // the run's sole primary-link source. Invalidate the cached link and
+      // re-materialize so the superseded PR's topicFrom subscription is cleaned
+      // up (the materializer's cleanup runs even with no link). Trie-only — no
+      // replay needed (no new sub).
+      onCyclicGateReset: (runId) => {
+        try {
+          this.config.spaceRuntimeService.invalidatePrimaryLinkForRun(runId);
+          this.config.spaceRuntimeService.materializeRunTopicFromInterests(runId);
+        } catch (err) {
+          log.warn(
+            `onCyclicGateReset: failed to rematerialize for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      },
     });
     const agentMessageRouter = new AgentMessageRouter({
       nodeExecutionRepo: this.config.nodeExecutionRepo,

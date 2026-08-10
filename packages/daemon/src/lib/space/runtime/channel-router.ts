@@ -355,6 +355,15 @@ export interface ChannelRouterConfig {
     gateOpened: boolean
   ) => Promise<void> | void;
   /**
+   * Optional callback invoked after a cyclic channel's `resetOnCycle` gates are
+   * reset (see incrementAndResetCyclicChannel). The reset clears gate data to
+   * defaults, which can remove a `pr_url` that was the run's sole primary-link
+   * source — wired by TaskAgentManager to invalidate the runtime's cached
+   * primary link and re-materialize topicFrom interests so the superseded PR's
+   * subscription is cleaned up.
+   */
+  onCyclicGateReset?: (runId: string) => Promise<void> | void;
+  /**
    * Optional callback that resolves the current PR URL for a workflow run.
    * Injected into gate script environments as `PR_URL` so feature scripts
    * (e.g. codex reaction checks) can access the PR even when the gate's
@@ -1809,6 +1818,20 @@ export class ChannelRouter {
       if (!incremented) {
         throw new ActivationError(
           `Cyclic channel (index ${channelIndex}) reached the maximum cycle count (${maxCycles}) during delivery.`
+        );
+      }
+    }
+    // The reset above cleared gate data to defaults, which can remove a pr_url
+    // that was the run's sole primary-link source. Notify the runtime so it
+    // invalidates its cached link and re-materializes (cleaning up the
+    // superseded PR's topicFrom subscription). Fire-and-forget; only when gates
+    // were actually reset.
+    if (cyclicGates.length > 0) {
+      try {
+        void this.config.onCyclicGateReset?.(runId);
+      } catch (err) {
+        log.warn(
+          `onCyclicGateReset failed for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
         );
       }
     }

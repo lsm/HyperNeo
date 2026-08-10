@@ -7126,6 +7126,50 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(injected).toHaveLength(0);
     expect(eventStore.getById(event.id)?.state).toBe('published');
   });
+
+  test('caches the resolved primary link across triggers until a link-bearing write', async () => {
+    // Validates the M1 per-run cache: a second materialize without an
+    // intervening link-bearing write reuses the cached link (no re-scan), so a
+    // direct (non-triggered) link update is NOT picked up until the cache is
+    // invalidated. After invalidation the new link resolves.
+    const workflow = createTopicFromWorkflow();
+    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    markCoderLive(run.id, 'session-cache');
+
+    // Establish link 42 (recordPrLinkArtifact invalidates + materialize).
+    recordPrLinkArtifact(run.id, 'code', PR_URL);
+    runtime.materializeRunTopicFromInterests(run.id);
+
+    // Direct-write a NEW link (99) WITHOUT invalidating (bypassing the trigger a
+    // production save_artifact would fire). The cache still holds 42.
+    artifactRepo.upsert({
+      id: crypto.randomUUID(),
+      runId: run.id,
+      nodeId: 'code',
+      artifactType: 'link',
+      artifactKey: deriveArtifactKey('link', { kind: 'pr' }),
+      data: { kind: 'pr', url: 'https://github.com/lsm/neokai/pull/99' },
+    });
+    runtime.materializeRunTopicFromInterests(run.id); // cache hit → still 42
+
+    const staleEvent = makeEvent(); // pull_request/42 — the cached link
+    await eventService.publish(staleEvent);
+    expect(injected).toHaveLength(1);
+
+    // Now invalidate (as a link-bearing trigger would) and re-materialize: the
+    // fresh scan picks up 99, the 42 sub is cleaned up.
+    runtime.invalidatePrimaryLinkForRun(run.id);
+    runtime.materializeRunTopicFromInterests(run.id);
+    const freshEvent = makeEvent({
+      id: `evt-99-${Math.random().toString(36).slice(2)}`,
+      topic: 'github/lsm/neokai/pull_request/99.review_submitted',
+      summary: 'PR 99 review',
+      dedupeKey: `dedupe-99-${Math.random().toString(36).slice(2)}`,
+    });
+    await eventService.publish(freshEvent);
+    expect(injected).toHaveLength(2);
+    expect(injected[1]!.message).toContain(freshEvent.id);
+  });
 });
 
 describe('SpaceRuntime queue-health snapshot', () => {

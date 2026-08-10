@@ -1565,6 +1565,7 @@ export class SpaceRuntime {
       (target) => isWorkflowSubscriptionTarget(target) && target.workflowRunId === workflowRunId
     );
     this.clearQueuedDeliveriesForRun(workflowRunId, 'run_terminal_cleanup');
+    this.primaryLinkByUrl.delete(workflowRunId);
   }
 
   /**
@@ -1584,6 +1585,7 @@ export class SpaceRuntime {
         target.subscriptionKind !== 'dynamic'
     );
     this.clearQueuedDeliveriesForRun(workflowRunId, 'run_terminal_cleanup');
+    this.primaryLinkByUrl.delete(workflowRunId);
   }
 
   /**
@@ -4837,6 +4839,9 @@ export class SpaceRuntime {
     // ticking this now-stopped runtime.
     this.runtimeGeneration += 1;
     this.isStopped = true;
+    // Drop the per-run primary-link cache so a restart (same instance) doesn't
+    // serve stale resolutions, and to bound memory across stop/start cycles.
+    this.primaryLinkByUrl.clear();
     // Cancel any deferred retained-event flush so an in-flight handleExternalEvent
     // finally doesn't process retained webhooks after shutdown.
     this.retainedEventRedispatchPending = false;
@@ -6495,6 +6500,15 @@ export class SpaceRuntime {
       log.warn(
         `SpaceRuntime.recoverStalledRuns: cyclic channel "${channel.id ?? channelIndex}" reached maxCycles during recovery activation`
       );
+    }
+    // The reset above (cyclicGates.length > 0) cleared gate data, which can
+    // remove a pr_url that was the run's sole primary-link source. Invalidate
+    // the cached link and re-materialize so the superseded PR's topicFrom
+    // subscription is cleaned up (mirrors the ChannelRouter onCyclicGateReset
+    // wiring for the delivery path).
+    if (cyclicGates.length > 0) {
+      this.invalidatePrimaryLinkForRun(runId);
+      this.materializeRunTopicFromInterests(runId);
     }
   }
 
