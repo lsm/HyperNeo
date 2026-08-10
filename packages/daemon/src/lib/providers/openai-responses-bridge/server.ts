@@ -1358,16 +1358,20 @@ async function streamResponsesToAnthropic({
     ensureStarted();
     closeThinkingBlock();
     closeTextBlock();
-    // Cache this turn's reasoning for multi-turn continuation ONLY when the turn
-    // actually produced (displayed) content — i.e. it is NOT about to be retried
-    // as an overloaded error. A contentless turn (encrypted reasoning only, or
-    // fully empty) hits the guard below and is retried; caching its reasoning
-    // would overwrite the prior turn's cache and corrupt the retry
+    // Cache this turn's reasoning for multi-turn continuation whenever the turn
+    // is ACCEPTED — i.e. it is NOT about to be retried as an overloaded error.
+    // The only retried case is a fully contentless, non-incomplete stream
+    // (`!producedContent && !incomplete`), which hits the guard below and would
+    // have its (reasoning-only or empty) cache corrupt the retry
     // (anthropicMessagesToResponsesInput would reinsert it before the wrong user
     // message, and a nonempty cache disables the previous_response_id path on
-    // tool-result turns). Deferring past the loop and gating on producedContent
-    // preserves the prior cache for any retried turn.
-    if (producedContent) {
+    // tool-result turns). A contentless `response.incomplete`, by contrast, is
+    // ACCEPTED as a max_tokens turn — not retried — so it must still refresh the
+    // cache (replacing the prior turn's reasoning, or clearing it when this turn
+    // added none); otherwise the next user turn reuses stale reasoning from an
+    // older assistant turn and can alter the request or trip a stale-reasoning
+    // 400. Deferring past the loop lets us distinguish retried vs accepted here.
+    if (producedContent || incomplete) {
       onReasoningItems?.(responseReasoningItems);
     }
     // The upstream returned 200 and the stream completed without an error event,

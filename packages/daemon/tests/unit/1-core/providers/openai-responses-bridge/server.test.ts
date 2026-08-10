@@ -3469,6 +3469,54 @@ describe('openai-responses-bridge server', () => {
     expect(reasoningCalls).toEqual([]);
   });
 
+  it('refreshes the reasoning cache for a contentless incomplete turn (direct)', async () => {
+    // A contentless response.incomplete is ACCEPTED as a max_tokens turn, not
+    // retried as an overload. Unlike a retried empty turn, it must refresh the
+    // reasoning cache (here replacing the prior turn's reasoning with this
+    // turn's, or clearing it when the turn added none) — otherwise the next user
+    // turn reuses stale reasoning from an older assistant turn.
+    const reasoningCalls: unknown[][] = [];
+    const openAIStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder();
+        controller.enqueue(
+          encoder.encode(
+            `event: response.incomplete\ndata: ${JSON.stringify({
+              type: 'response.incomplete',
+              // Contentless (max_output_tokens spent on reasoning before any text),
+              // but the turn IS accepted — incomplete, not retried.
+              response: {
+                usage: { input_tokens: 1, output_tokens: 4096 },
+                output: [{ type: 'reasoning', encrypted_content: 'ENC_INCOMPLETE' }],
+              },
+            })}\n\n`
+          )
+        );
+        controller.close();
+      },
+    });
+    const anthropicStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        void _openAIResponsesBridgeServerTesting.streamResponsesToAnthropic({
+          openAIResponse: new Response(openAIStream, {
+            headers: { 'Content-Type': 'text/event-stream' },
+          }),
+          controller,
+          model: 'gpt-5.3-codex',
+          estimatedInputTokens: 1,
+          onReasoningItems: (items) => reasoningCalls.push(items),
+        });
+      },
+    });
+
+    const events = await readSSEEvents(anthropicStream);
+    // Accepted as max_tokens, NOT retried as an overload.
+    expect(events.find((event) => event.event === 'error')).toBeUndefined();
+    expect(messageDeltaEvent(events)).toMatchObject({ delta: { stop_reason: 'max_tokens' } });
+    // The cache is refreshed with this turn's reasoning, not left stale.
+    expect(reasoningCalls).toEqual([[{ type: 'reasoning', encrypted_content: 'ENC_INCOMPLETE' }]]);
+  });
+
   it.skipIf(!isBun)(
     'allows high-token Codex requests through the bridge before the real 272k limit',
     async () => {
