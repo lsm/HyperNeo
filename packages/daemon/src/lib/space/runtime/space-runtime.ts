@@ -62,6 +62,7 @@ import { ChannelCycleRepository } from '../../../storage/repositories/channel-cy
 import { normalizeMeaningfulTaskResult } from '../task-result-utils';
 import { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { WorkflowArtifactProfile } from './artifact-profile';
+import { resolveTopicFromInterest } from './parse-pr-url';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
 import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository';
@@ -378,6 +379,27 @@ function isLongHorizonSubscriptionTarget(
   target: SubscriptionTarget
 ): target is LongHorizonSubscriptionTarget {
   return target.kind === 'long_horizon_agent';
+}
+
+/**
+ * Whether a workflow node declares any `topicFrom` (dynamic-template) event
+ * interest across its agent slots. Used as a cheap guard so the record-trigger
+ * materialization skips nodes (and avoids resolving the primary link) that have
+ * nothing to materialize — the common case for nodes using only static `topic`
+ * interests or none at all.
+ */
+function nodeDeclaresTopicFrom(node: WorkflowNode): boolean {
+  try {
+    for (const agent of resolveNodeAgents(node)) {
+      for (const interest of agent.eventInterests ?? []) {
+        if (interest.topicFrom !== undefined) return true;
+      }
+    }
+  } catch {
+    // Malformed node (resolveNodeAgents throws on an empty agents array with no
+    // legacy agentId): treat as "no topicFrom".
+  }
+  return false;
 }
 
 interface PendingExternalEvent {
@@ -1048,11 +1070,11 @@ export class SpaceRuntime {
     for (const node of nodes) {
       for (const agentEntry of resolveNodeAgents(node)) {
         for (const interest of agentEntry.eventInterests ?? []) {
-          // Only static `topic` interests are registered here. A `topicFrom`
-          // interest is resolved into a concrete topic against the run's primary
+          // Static `topic` interests are concrete globs registered verbatim. A
+          // `topicFrom` interest is a template resolved against the run's primary
           // link at subscription time (see `resolveTopicFromInterest`); that
-          // resolution is wired in a later PR, so `topicFrom` interests are
-          // intentionally inert here and must not enter the trie yet.
+          // resolution is handled below so the topic trie stays fully derivable
+          // from durable state across restarts.
           if (typeof interest.topic !== 'string') continue;
           const result = this.registerSubscription(
             workflowRunId,
@@ -1073,6 +1095,127 @@ export class SpaceRuntime {
         }
       }
     }
+    // Re-materialize `topicFrom` interests from the run's current primary link.
+    // Inert until a link is recorded (resolveTopicFromInterest returns null),
+    // so this is also the rehydrate path that re-derives the trie from recorded
+    // workflow_run_artifacts. Generic infra: knows `primaryLink` resolution,
+    // not "PR" — different link-bearing artifacts resolve via their own source.
+    this.materializeTopicFromInterestsForNodes(workflowRunId, taskId, nodes);
+  }
+
+  /**
+   * Trust boundary for `topicFrom` primary-link resolution. Mirrors the
+   * github-connector's `validatePrLookupHost` allowlist (github.com plus the
+   * configured GH_HOST) so a GitHub Enterprise deployment's PR links resolve,
+   * while a link from an arbitrary host cannot subscribe to an unrelated repo's
+   * events.
+   */
+  private topicFromAllowedHosts(): ReadonlySet<string> {
+    const hosts = new Set<string>(['github.com']);
+    const ghHost = process.env.GH_HOST;
+    if (typeof ghHost === 'string' && ghHost.length > 0) hosts.add(ghHost);
+    return hosts;
+  }
+
+  /**
+   * Resolve each node's `topicFrom` event interests against the run's current
+   * primary link and register the resolved topics as static subscriptions.
+   *
+   * Best-effort: an interest that cannot resolve (no `topicFrom`, an unknown
+   * source, an unparseable or untrusted primary link, or a resolved topic that
+   * fails glob validation) is logged and skipped rather than throwing — a
+   * workflow-authoring error in one template must not break run rehydrate or an
+   * unrelated artifact save. Registration is idempotent: `registerSubscription`
+   * upserts the (run/node/agent/topic/kind) entry, so re-materializing on every
+   * rehydrate or artifact record produces no duplicates.
+   *
+   * Pure-ish helper shared by the rehydrate path (`registerRunInterests`) and
+   * the record-triggered path (`materializeTopicFromInterestsForNode`); both
+   * must derive identical trie state from the same durable inputs.
+   */
+  private materializeTopicFromInterestsForNodes(
+    workflowRunId: string,
+    taskId: string,
+    nodes: WorkflowNode[]
+  ): void {
+    const primaryLink = this.resolvePrUrlForRun(workflowRunId);
+    // No primary link recorded yet: every `topicFrom` interest is inert. It
+    // materializes once a link-bearing artifact is recorded (record trigger) or
+    // on the next rehydrate.
+    if (!primaryLink) return;
+    const allowedHosts = this.topicFromAllowedHosts();
+    for (const node of nodes) {
+      let agents: ReturnType<typeof resolveNodeAgents>;
+      try {
+        agents = resolveNodeAgents(node);
+      } catch {
+        // Malformed node (e.g. empty agents with no legacy agentId): nothing to
+        // resolve. resolveNodeAgents is guarded the same way elsewhere.
+        continue;
+      }
+      for (const agentEntry of agents) {
+        for (const interest of agentEntry.eventInterests ?? []) {
+          // Static `topic` interests are registered verbatim by the caller.
+          if (typeof interest.topic === 'string') continue;
+          const resolved = resolveTopicFromInterest(interest, primaryLink, allowedHosts);
+          // null: no topicFrom, unknown source, unparseable link, or untrusted
+          // host. The interest simply cannot resolve yet — skip silently.
+          if (resolved === null) continue;
+          const result = this.registerSubscription(
+            workflowRunId,
+            taskId,
+            node.id,
+            agentEntry.name,
+            resolved,
+            { subscriptionKind: 'static' }
+          );
+          if (!result.success) {
+            log.warn(
+              `SpaceRuntime: skipping unresolvable topicFrom interest for ` +
+                `${workflowRunId}/${node.id}/${agentEntry.name}: ${result.error ?? 'invalid pattern'}`
+            );
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Re-materialize a single node's `topicFrom` event interests after that node
+   * recorded an artifact. Resolves the authoring node's topicFrom interests
+   * against the run's now-current primary link (read from the just-recorded
+   * artifact) and registers them as static subscriptions — so the authoring
+   * node auto-receives its own PR's GitHub events the moment it records the PR
+   * link, without the model calling a subscribe tool.
+   *
+   * Narrower than `registerRunInterests` (which rebuilds ALL of a run's static
+   * interests): this touches only the authoring node's interests, leaving other
+   * nodes' subscriptions intact. Cheap when the node declares no topicFrom
+   * interests (returns before any DB read beyond the workflow lookup). No-op
+   * when the run/workflow/node is unknown or the node has no topicFrom interest.
+   *
+   * Public for the node-agent-tools record trigger (wired via
+   * SpaceRuntimeService). Generic infra: knows `primaryLink` resolution, not
+   * "PR".
+   */
+  materializeTopicFromInterestsForNode(workflowRunId: string, nodeId: string): void {
+    const run = this.config.workflowRunRepo.getRun(workflowRunId);
+    if (!run) return;
+    const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+    if (!workflow) return;
+    const node = workflow.nodes.find((n) => n.id === nodeId);
+    if (!node) return;
+    // Cheap guard: nothing to do unless the authoring node declares at least
+    // one `topicFrom` interest. Avoids resolving the primary link on every
+    // unrelated artifact save (notes, metrics, …) by nodes that never use
+    // topicFrom.
+    if (!nodeDeclaresTopicFrom(node)) return;
+    const task = this.pickCanonicalTaskForRun(
+      run,
+      this.config.taskRepo.listByWorkflowRun(workflowRunId)
+    );
+    if (!task) return;
+    this.materializeTopicFromInterestsForNodes(workflowRunId, task.id, [node]);
   }
 
   private registerRunInterestsFromWorkflow(run: SpaceWorkflowRun, workflow: SpaceWorkflow): void {

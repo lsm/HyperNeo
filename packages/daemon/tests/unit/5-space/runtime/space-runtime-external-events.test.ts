@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
-import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
+import { deriveArtifactKey, type SpaceTask, type SpaceWorkflow } from '@hyperneo/shared';
 import { ExternalEventService } from '../../../../src/lib/external-events/external-event-service';
 import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store';
 import { ExternalEventQueueMetrics } from '../../../../src/lib/external-events/queue-health-metrics';
@@ -6409,6 +6409,196 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(injected[0]!.sessionId).toBe('session-activation-defer');
     expect(injected[0]!.deliveryMode).toBe('defer');
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
+  });
+
+  // -------------------------------------------------------------------------
+  // topicFrom materialization (PR 2 of the external-event subscription
+  // refactor). A `topicFrom` interest is a template resolved against the run's
+  // primary link at subscription time; it materializes when the authoring node
+  // records its PR link (record trigger) and is re-derived from recorded
+  // workflow_run_artifacts on rehydrate.
+  // -------------------------------------------------------------------------
+
+  const TOPIC_FROM_PATTERN = 'github/{owner}/{repo}/pull_request/{number}.*';
+  const PR_URL = 'https://github.com/lsm/neokai/pull/42';
+
+  /** Record a primary-link (PR) artifact for a run, as save_artifact would. */
+  function recordPrLinkArtifact(runId: string, nodeId: string, prUrl: string): void {
+    artifactRepo.upsert({
+      id: crypto.randomUUID(),
+      runId,
+      nodeId,
+      artifactType: 'link',
+      artifactKey: deriveArtifactKey('link', { kind: 'pr' }),
+      data: { kind: 'pr', url: prUrl },
+    });
+  }
+
+  /** Mark the coder node's execution live with a deliverable session. */
+  function markCoderLive(runId: string, sessionId: string): void {
+    const execution = nodeExecutionRepo.listByNode(runId, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: sessionId,
+      startedAt: Date.now(),
+    });
+    tam.alive.add(sessionId);
+  }
+
+  /** Build a workflow whose coder node declares a topicFrom interest. */
+  function createTopicFromWorkflow(nodeId = 'code'): SpaceWorkflow {
+    return workflowManager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: `Workflow ${Math.random()}`,
+      description: '',
+      nodes: [
+        {
+          id: nodeId,
+          name: 'Code',
+          agents: [
+            {
+              agentId: AGENT_ID,
+              name: 'coder',
+              eventInterests: [
+                { topicFrom: { source: 'primaryLink', pattern: TOPIC_FROM_PATTERN } },
+              ],
+            },
+          ],
+        },
+      ],
+      transitions: [],
+      startNodeId: nodeId,
+      rules: [],
+      tags: [],
+    });
+  }
+
+  test('materializes a topicFrom interest when the authoring node records its PR link', async () => {
+    const workflow = createTopicFromWorkflow();
+    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    markCoderLive(run.id, 'session-topicfrom');
+
+    // No subscription exists until the primary link is recorded.
+    recordPrLinkArtifact(run.id, 'code', PR_URL);
+    runtime.materializeTopicFromInterestsForNode(run.id, 'code');
+
+    const event = makeEvent();
+    await eventService.publish(event);
+
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-topicfrom');
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
+  });
+
+  test('keeps a topicFrom interest inert until a primary link is recorded', async () => {
+    const workflow = createTopicFromWorkflow();
+    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    markCoderLive(run.id, 'session-inert');
+
+    // No PR link recorded yet: materialization is a no-op.
+    runtime.materializeTopicFromInterestsForNode(run.id, 'code');
+
+    const event = makeEvent();
+    await eventService.publish(event);
+
+    expect(injected).toHaveLength(0);
+    expect(eventStore.getById(event.id)?.state).toBe('published');
+  });
+
+  test('materialization is idempotent across repeated record triggers', async () => {
+    const workflow = createTopicFromWorkflow();
+    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    markCoderLive(run.id, 'session-idempotent');
+
+    recordPrLinkArtifact(run.id, 'code', PR_URL);
+    // Re-recording the same link (upsert) and re-materializing must not create
+    // duplicate subscriptions.
+    recordPrLinkArtifact(run.id, 'code', PR_URL);
+    runtime.materializeTopicFromInterestsForNode(run.id, 'code');
+    runtime.materializeTopicFromInterestsForNode(run.id, 'code');
+
+    const event = makeEvent();
+    await eventService.publish(event);
+
+    expect(injected).toHaveLength(1);
+    expect(eventStore.listDeliveries(event.id)).toHaveLength(1);
+  });
+
+  test('re-materializes topicFrom interests from recorded artifacts on rehydrate', async () => {
+    const workflow = createTopicFromWorkflow();
+    const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    const task = tasks[0]!;
+    // Primary link already durable (recorded before this runtime instance).
+    recordPrLinkArtifact(run.id, 'code', PR_URL);
+    markCoderLive(run.id, 'session-rehydrate');
+
+    // Fresh runtime instance: the topic trie is empty. The rehydrate path
+    // (registerRunInterests, called by registerRunInterestsFromWorkflow) must
+    // re-derive the topicFrom subscription from the recorded artifact.
+    runtime.registerRunInterests(run.id, task.id, workflow.nodes);
+
+    const event = makeEvent();
+    await eventService.publish(event);
+
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-rehydrate');
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
+  });
+
+  test('does not materialize a topicFrom interest from an untrusted PR host', async () => {
+    const workflow = createTopicFromWorkflow();
+    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    markCoderLive(run.id, 'session-untrusted');
+
+    // A GitHub-shaped path on an arbitrary host would resolve to a topic for the
+    // real owner/repo without the host allowlist (resolveTopicFromInterest's
+    // trust boundary). GH_HOST is unset here, so only github.com is trusted.
+    recordPrLinkArtifact(run.id, 'code', 'https://evil.example/lsm/neokai/pull/42');
+    runtime.materializeTopicFromInterestsForNode(run.id, 'code');
+
+    const event = makeEvent();
+    await eventService.publish(event);
+
+    expect(injected).toHaveLength(0);
+    expect(eventStore.getById(event.id)?.state).toBe('published');
+  });
+
+  test('materializes a topicFrom interest from a GitHub Enterprise host when GH_HOST is set', async () => {
+    process.env.GH_HOST = 'ghe.example';
+    try {
+      // Rebuild the runtime's artifact profile + allowlist is unnecessary: the
+      // allowlist is derived live from process.env.GH_HOST on each call.
+      const workflow = createTopicFromWorkflow();
+      const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      markCoderLive(run.id, 'session-ghe');
+
+      recordPrLinkArtifact(run.id, 'code', 'https://ghe.example/lsm/neokai/pull/42');
+      runtime.materializeTopicFromInterestsForNode(run.id, 'code');
+
+      const event = makeEvent();
+      await eventService.publish(event);
+
+      expect(injected).toHaveLength(1);
+      expect(injected[0]!.sessionId).toBe('session-ghe');
+    } finally {
+      delete process.env.GH_HOST;
+    }
+  });
+
+  test('record trigger is a no-op for a node without a topicFrom interest', async () => {
+    const workflow = createWorkflow();
+    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    markCoderLive(run.id, 'session-no-topicfrom');
+
+    recordPrLinkArtifact(run.id, 'code', PR_URL);
+    // A node with only a static `topic` interest (or none) must not gain a
+    // topicFrom-derived subscription, and the call must not throw.
+    expect(() => runtime.materializeTopicFromInterestsForNode(run.id, 'code')).not.toThrow();
+
+    const event = makeEvent();
+    await eventService.publish(event);
+
+    expect(injected).toHaveLength(0);
   });
 });
 

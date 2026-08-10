@@ -5538,6 +5538,23 @@ export class TaskAgentManager {
       onUnsubscribeExternalEvent,
       artifactRepo: this.config.artifactRepo,
       artifactProfile: this.config.artifactProfile,
+      // Record trigger: a node recording an artifact may have established (or
+      // updated) the run's primary link, so re-materialize its topicFrom
+      // interests. No-op unless the authoring node declares a topicFrom
+      // interest; the runtime is best-effort and never throws here.
+      onArtifactRecorded: ({ workflowRunId, nodeId }) => {
+        try {
+          this.config.spaceRuntimeService.materializeTopicFromInterestsForNode(
+            workflowRunId,
+            nodeId
+          );
+        } catch (err) {
+          log.warn(
+            `onArtifactRecorded: failed to materialize topicFrom interests for ` +
+              `${workflowRunId}/${nodeId}: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      },
       taskRepo: this.config.taskRepo,
       auditLogRepo: this.auditLogRepo,
       externalEventStore: this.config.externalEventStore,

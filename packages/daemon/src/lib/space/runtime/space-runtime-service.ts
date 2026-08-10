@@ -1050,6 +1050,16 @@ export class SpaceRuntimeService {
   }
 
   /**
+   * Re-materialize a single node's `topicFrom` event interests after that node
+   * records an artifact, so the authoring node auto-subscribes to its own PR's
+   * GitHub events without calling a subscribe tool. Thin pass-through to the
+   * runtime; wired to the node-agent-tools `save_artifact` record trigger.
+   */
+  materializeTopicFromInterestsForNode(workflowRunId: string, nodeId: string): void {
+    this.runtime.materializeTopicFromInterestsForNode(workflowRunId, nodeId);
+  }
+
+  /**
    * Stop all active work for a space: terminates running agent sessions and
    * cancels all in-progress/open tasks and active workflow runs.
    *

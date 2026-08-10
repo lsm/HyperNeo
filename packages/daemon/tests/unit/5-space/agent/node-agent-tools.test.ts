@@ -919,6 +919,41 @@ describe('node-agent-tools: save_artifact', () => {
     expect(artifacts[0].nodeId).toBe(ctx.nodeId);
   });
 
+  test('save_artifact fires onArtifactRecorded with the authoring run/node after a successful write', async () => {
+    const calls: Array<{ workflowRunId: string; nodeId: string }> = [];
+    const handlers = createNodeAgentToolHandlers(
+      makeConfig(ctx, {
+        onArtifactRecorded: (args) => calls.push(args),
+      })
+    );
+    const result = await handlers.save_artifact({
+      shape: 'link',
+      kind: 'pr',
+      data: { url: 'https://github.com/acme/app/pull/42' },
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    // The record trigger fires exactly once, after the durable write, scoped to
+    // the authoring run + node — so the runtime can re-materialize topicFrom
+    // interests against the just-recorded primary link.
+    expect(parsed.success).toBe(true);
+    expect(calls).toEqual([{ workflowRunId: ctx.workflowRunId, nodeId: ctx.nodeId }]);
+  });
+
+  test('save_artifact does not fire onArtifactRecorded when the write fails validation', async () => {
+    const calls: Array<{ workflowRunId: string; nodeId: string }> = [];
+    const handlers = createNodeAgentToolHandlers(
+      makeConfig(ctx, {
+        onArtifactRecorded: (args) => calls.push(args),
+      })
+    );
+    // Empty payload fails shape validation before the upsert, so the record
+    // trigger must not fire.
+    await handlers.save_artifact({ shape: 'note' });
+
+    expect(calls).toHaveLength(0);
+  });
+
   test('save_artifact({ shape: "link", kind, data }) persists a structured link', async () => {
     const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
     const result = await handlers.save_artifact({
