@@ -1510,6 +1510,52 @@ describe('openai-responses-bridge server', () => {
     expect(messageDeltaEvent(events)).toBeUndefined();
   });
 
+  it.skipIf(!isBun)(
+    'surfaces a mid-stream error event directly (never the empty-stream overload guard)',
+    async () => {
+      // Boundary pin: an error frame (response.failed / error) makes the handler
+      // emit the error SSE, message_stop, and early-return — structurally it can
+      // NEVER fall through to the empty-stream overloaded guard, even when the
+      // stream produced no content before the error. Without this guarantee a
+      // contentless error-then-end stream could be mistaken for an empty 200 and
+      // retried as an overload, swallowing the real upstream failure.
+      server = createOpenAIResponsesBridgeServer({
+        auth: { source: 'api_key', apiKey: 'sk-test' },
+        models,
+        fetchImpl: async () =>
+          sse([
+            {
+              event: 'response.failed',
+              data: {
+                type: 'response.failed',
+                response: { error: { message: 'upstream blew up' } },
+              },
+            },
+          ]),
+      });
+
+      const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-5.3-codex',
+          max_tokens: 128,
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+      });
+
+      const events = await readSSEEvents(resp.body);
+      const errorEvent = events.find((event) => event.event === 'error');
+      // The error frame wins: the surfaced type is the upstream failure's
+      // classification (api_error), NOT the empty-stream overloaded_error guard.
+      expect(errorEvent?.data).toMatchObject({
+        error: { type: 'api_error', message: 'upstream blew up' },
+      });
+      expect(events.at(-1)?.event).toBe('message_stop');
+      expect(messageDeltaEvent(events)).toBeUndefined();
+    }
+  );
+
   it.skipIf(!isBun)('maps upstream streaming error events to Anthropic SSE errors', async () => {
     server = createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
@@ -1913,6 +1959,40 @@ describe('openai-responses-bridge server', () => {
     const body = (await resp.json()) as { error: { type: string } };
     expect(body.error.type).toBe('invalid_request_error');
   });
+
+  it.skipIf(!isBun)(
+    'classifies a 200 RFC 7807 problem+json error by its top-level string status',
+    async () => {
+      // RFC 7807 problem+json carries the status as a top-level STRING
+      // (`{"status":"401","detail":"..."}`), distinct from OpenAI's nested
+      // numeric `error.status`. readEmbeddedErrorStatus must recognise the
+      // string form too, so an auth failure surfaces as 401 authentication_error
+      // rather than the hardcoded 400 invalid_request_error.
+      server = createOpenAIResponsesBridgeServer({
+        auth: { source: 'api_key', apiKey: 'sk-test' },
+        models,
+        fetchImpl: async () =>
+          new Response(JSON.stringify({ status: '401', detail: 'Unauthorized' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/problem+json' },
+          }),
+      });
+
+      const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-5.3-codex',
+          max_tokens: 128,
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+      });
+
+      expect(resp.status).toBe(401);
+      const body = (await resp.json()) as { error: { type: string } };
+      expect(body.error.type).toBe('authentication_error');
+    }
+  );
 
   it.skipIf(!isBun)(
     'does not treat a 200 JSON body with error:null as a terminal error',

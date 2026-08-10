@@ -1062,19 +1062,18 @@ async function streamResponsesToAnthropic({
   // empty turn is malformed per the Messages spec and the SDK would otherwise
   // fail the turn terminally (the compaction-killer this guards against).
   let producedContent = false;
-  let productiveNotified = false;
   // True once any non-empty text/refusal was STREAMED (via output_text.delta /
   // refusal.delta). Used to suppress re-emitting the same text from the
   // response.completed output array, which some upstreams include alongside the
   // deltas (otherwise the assistant text would be duplicated).
   let streamedText = false;
   // Set producedContent and fire onProductive once, on the first content block.
+  // The early-return makes producedContent double as the "already notified" flag,
+  // so onProductive fires exactly once without a second boolean.
   const markProducedContent = (): void => {
+    if (producedContent) return;
     producedContent = true;
-    if (!productiveNotified) {
-      productiveNotified = true;
-      onProductive?.();
-    }
+    onProductive?.();
   };
   const emittedFunctionCalls = new Set<string>();
   const responseReasoningItems: ResponsesReasoningItem[] = [];
@@ -1174,6 +1173,11 @@ async function streamResponsesToAnthropic({
         }
       }
       if (record.type === 'reasoning') {
+        // Collect encrypted reasoning for multi-turn continuation, but do NOT
+        // call markProducedContent here: reasoning alone is not displayable
+        // content. A reasoning-only turn must stay non-productive so it hits the
+        // empty-stream guard (and the reasoning cache is gated on producedContent
+        // after the loop, preserving the prior turn's cache on a retried turn).
         const encrypted =
           typeof record.encrypted_content === 'string' ? record.encrypted_content : undefined;
         if (encrypted) {
@@ -1884,18 +1888,18 @@ export function createOpenAIResponsesBridgeServer(
         // max_output_tokens exhaustion) must surface as `response.incomplete` so
         // the bridge reports `max_tokens` (and skips the empty-stream overload
         // guard) rather than mislabeling truncation as a clean `end_turn`.
-        const responseObject = parseJsonObject(bodyText);
+        const parsedResponse = parseJsonObject(bodyText);
         if (
-          responseObject &&
-          (responseObject.output !== undefined ||
-            responseObject.object === 'response' ||
-            typeof responseObject.id === 'string')
+          parsedResponse &&
+          (parsedResponse.output !== undefined ||
+            parsedResponse.object === 'response' ||
+            typeof parsedResponse.id === 'string')
         ) {
-          const isIncomplete = responseObject.status === 'incomplete';
+          const isIncomplete = parsedResponse.status === 'incomplete';
           const terminalType = isIncomplete ? 'response.incomplete' : 'response.completed';
           const sseBody = `event: ${terminalType}\ndata: ${JSON.stringify({
             type: terminalType,
-            response: responseObject,
+            response: parsedResponse,
           })}\n\n`;
           openAIResponse = new Response(sseBody, {
             status: openAIResponse.status,
