@@ -167,23 +167,17 @@ describe('resolveTopicFromInterest', () => {
     expect(resolveTopicFromInterest(interest, 'https://github.com/lsm/neokai/pull/42')).toBeNull();
   });
 
-  test('returns null when a parsed identity component contains a wildcard', () => {
-    // A malformed primary link with wildcard owner/repo must not expand into a
-    // wildcard subscription (the trie treats `*` as match-all). Identity
-    // components are treated as literals, so refuse to resolve.
+  test('returns null when a substituted identity component is not a literal segment', () => {
+    // A wildcard owner/repo must not expand into a wildcard subscription (the
+    // trie treats `*` as match-all), and template syntax in a component must
+    // not be re-interpreted by the sequential placeholder substitution.
     expect(
       resolveTopicFromInterest(primaryLinkInterest, 'https://github.com/*/*/pull/42')
     ).toBeNull();
+    // owner `{repo}` would otherwise be substituted in, then re-scanned by the
+    // `{repo}` pass — collapsing owner and repo to the same value (wrong repo).
     expect(
-      resolveTopicFromInterest(
-        {
-          topicFrom: {
-            source: 'primaryLink',
-            pattern: '{host}/{owner}/{repo}/pull_request/{number}.*',
-          },
-        },
-        'https://git*.example.com/team/repo/pull/9'
-      )
+      resolveTopicFromInterest(primaryLinkInterest, 'https://github.com/{repo}/victim/pull/42')
     ).toBeNull();
   });
 });

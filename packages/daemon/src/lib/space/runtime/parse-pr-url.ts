@@ -97,15 +97,19 @@ export function resolveTopicFromInterest(
   if (!topicFrom || !KNOWN_TOPIC_FROM_SOURCES.has(topicFrom.source)) return null;
   const parsed = parsePrUrl(typeof primaryLinkUrl === 'string' ? primaryLinkUrl : '');
   if (!parsed) return null;
-  // Treat resolved identity components as literals: the trie treats `*` as a
-  // wildcard, so a malformed primary link such as `github/*/*/pull/42` must not
-  // expand into a subscription that matches every repository. A real GitHub
-  // owner/repo/host/number never contains `*`, so refuse to resolve if any does.
+  // Substituted identity components must be literal topic segments. The trie
+  // treats `*` as a wildcard, and the placeholder substitutions below are
+  // applied sequentially over the result, so a component carrying `*` or
+  // template syntax (e.g. owner `{repo}` from a malformed link like
+  // `github/{repo}/victim/pull/42`) could otherwise inject a wildcard or
+  // re-trigger a later `{repo}` substitution and subscribe to the wrong repo.
+  // `host` is never substituted, so it is not constrained here. A real GitHub
+  // owner/repo/number matches `[a-zA-Z0-9._-]+`.
+  const literalSegment = /^[a-zA-Z0-9._-]+$/;
   if (
-    parsed.owner.includes('*') ||
-    parsed.repo.includes('*') ||
-    parsed.number.includes('*') ||
-    parsed.host.includes('*')
+    !literalSegment.test(parsed.owner) ||
+    !literalSegment.test(parsed.repo) ||
+    !literalSegment.test(parsed.number)
   ) {
     return null;
   }

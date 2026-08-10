@@ -2141,8 +2141,8 @@ export interface EventInterest {
    *
    * The `pattern` is a template whose placeholders are filled by the resolver
    * for the given `source`. For `'primaryLink'` the placeholders are
-   * `{owner}`, `{repo}`, `{number}`, and `{host}`, derived from the run's
-   * primary link (e.g. its PR URL) — example:
+   * `{owner}`, `{repo}`, and `{number}` (the segments of the GitHub event topic
+   * taxonomy), derived from the run's primary link (e.g. its PR URL) — example:
    * `'github/{owner}/{repo}/pull_request/{number}.*'`.
    *
    * This lets a static workflow definition subscribe to "this run's own PR"
