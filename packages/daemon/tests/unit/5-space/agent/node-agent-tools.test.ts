@@ -919,11 +919,11 @@ describe('node-agent-tools: save_artifact', () => {
     expect(artifacts[0].nodeId).toBe(ctx.nodeId);
   });
 
-  test('save_artifact fires onArtifactRecorded with the authoring run/node after a successful write', async () => {
-    const calls: Array<{ workflowRunId: string; nodeId: string }> = [];
+  test('save_artifact fires onArtifactRecorded with the authoring run after a successful write', async () => {
+    const calls: string[] = [];
     const handlers = createNodeAgentToolHandlers(
       makeConfig(ctx, {
-        onArtifactRecorded: (args) => calls.push(args),
+        onArtifactRecorded: (workflowRunId) => calls.push(workflowRunId),
       })
     );
     const result = await handlers.save_artifact({
@@ -934,17 +934,17 @@ describe('node-agent-tools: save_artifact', () => {
     const parsed = JSON.parse(result.content[0].text);
 
     // The record trigger fires exactly once, after the durable write, scoped to
-    // the authoring run + node — so the runtime can re-materialize topicFrom
-    // interests against the just-recorded primary link.
+    // the authoring run — so the runtime can re-materialize topicFrom interests
+    // against the just-recorded primary link.
     expect(parsed.success).toBe(true);
-    expect(calls).toEqual([{ workflowRunId: ctx.workflowRunId, nodeId: ctx.nodeId }]);
+    expect(calls).toEqual([ctx.workflowRunId]);
   });
 
   test('save_artifact does not fire onArtifactRecorded when the write fails validation', async () => {
-    const calls: Array<{ workflowRunId: string; nodeId: string }> = [];
+    const calls: string[] = [];
     const handlers = createNodeAgentToolHandlers(
       makeConfig(ctx, {
-        onArtifactRecorded: (args) => calls.push(args),
+        onArtifactRecorded: (workflowRunId) => calls.push(workflowRunId),
       })
     );
     // Empty payload fails shape validation before the upsert, so the record

@@ -336,8 +336,12 @@ export interface NodeAgentToolsConfig {
    * rate-limited (a GitHub reset delay can exceed the retained-event TTL, so
    * deferring would let early PR events expire first). Best-effort, run-scoped,
    * terminal-run guarded. Omitted in unit tests that don't exercise it.
+   *
+   * Named \`onGateDataMerged\` (not \`onGateDataCommitted\`) to avoid collision
+   * with the domain profile's \`WorkflowArtifactProfile.onGateDataCommitted\`
+   * (a different hook firing ~50 lines away in the same handler).
    */
-  onGateDataCommitted?: (workflowRunId: string) => void;
+  onGateDataMerged?: (workflowRunId: string) => void;
   /**
    * Optional shared retry scheduler for deferred gate-data refreshes after
    * rate-limited gate writes/delivery. When provided, `send_message` schedules
@@ -430,11 +434,10 @@ export interface NodeAgentToolsConfig {
    * events without calling a subscribe tool.
    *
    * Fire-and-forget from the tool's perspective: errors are logged by the
-   * runtime and never block the artifact save. `nodeId` identifies the authoring
-   * node; the materialization itself is run-scoped. Omitted in unit tests that
-   * don't exercise the materialization path.
+   * runtime and never block the artifact save. Omitted in unit tests that don't
+   * exercise the materialization path.
    */
-  onArtifactRecorded?: (args: { workflowRunId: string; nodeId: string }) => void;
+  onArtifactRecorded?: (workflowRunId: string) => void;
   /**
    * Task repository for list_tasks and get_task tools.
    * Optional — when absent, task read tools are not registered.
@@ -1115,10 +1118,10 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
                 // GitHub reset delay can exceed the retained-event TTL, so deferring
                 // materialization would let early PR events expire first.
                 try {
-                  config.onGateDataCommitted?.(workflowRunId);
+                  config.onGateDataMerged?.(workflowRunId);
                 } catch (err) {
                   log.warn(
-                    `save_message: onGateDataCommitted callback failed for gate ${gateId} in ${workflowRunId}: ${err instanceof Error ? err.message : String(err)}`
+                    `send_message: onGateDataMerged callback failed for gate ${gateId} in ${workflowRunId}: ${err instanceof Error ? err.message : String(err)}`
                   );
                 }
 
@@ -1552,10 +1555,10 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         // (or a future callback that forgets to guard) must never flip the tool
         // result to failure and cause a caller to retry a write that succeeded.
         try {
-          config.onArtifactRecorded?.({ workflowRunId, nodeId: workflowNodeId });
+          config.onArtifactRecorded?.(workflowRunId);
         } catch (recordedErr) {
           log.warn(
-            `save_artifact: onArtifactRecorded callback failed for ${workflowRunId}/${workflowNodeId}: ${recordedErr instanceof Error ? recordedErr.message : String(recordedErr)}`
+            `save_artifact: onArtifactRecorded callback failed for ${workflowRunId}: ${recordedErr instanceof Error ? recordedErr.message : String(recordedErr)}`
           );
         }
 

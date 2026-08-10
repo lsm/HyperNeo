@@ -5541,12 +5541,12 @@ export class TaskAgentManager {
       // delay can exceed the retained-event TTL). Materialize here so a topicFrom
       // interest resolves from the committed pr_url regardless of the deferral.
       // Best-effort, run-scoped, terminal-run guarded.
-      onGateDataCommitted: (runId) => {
+      onGateDataMerged: (runId) => {
         try {
           this.config.spaceRuntimeService.materializeRunTopicFromInterests(runId);
         } catch (err) {
           log.warn(
-            `onGateDataCommitted: failed to materialize topicFrom interests for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
+            `onGateDataMerged: failed to materialize topicFrom interests for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
           );
         }
       },
@@ -5578,7 +5578,7 @@ export class TaskAgentManager {
       // declared a topicFrom interest for this run's PR). No-op unless the
       // workflow declares a topicFrom interest; the runtime is best-effort,
       // terminal-run guarded, and never throws here.
-      onArtifactRecorded: ({ workflowRunId }) => {
+      onArtifactRecorded: (workflowRunId) => {
         try {
           this.config.spaceRuntimeService.materializeRunTopicFromInterests(workflowRunId);
         } catch (err) {

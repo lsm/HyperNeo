@@ -5755,20 +5755,18 @@ export class SpaceRuntime {
   ): Promise<void> {
     const store = this.config.externalEventStore;
     if (!store) return;
-    // Drop expired events: a retained routed event can outlive the TTL (e.g. a
+    // Skip expired events: a retained routed event can outlive the TTL (e.g. a
     // delivery preserved across a long paused downtime). listPublishedEventsWith
     // Deliveries has no age filter, so without this the new-target path would
     // inject a stale webhook the normal retry/requeue paths reject as
-    // ttl_expired. Terminalize it (the no-delivery TTL sweep skips events that
-    // already have a delivery row) so the replay doesn't re-select it forever.
+    // ttl_expired. Do NOT force-terminalize the event here — that would orphan
+    // the other targets' pending delivery rows (restart requeue requires
+    // state==='published'). Just skip this target; the event's existing
+    // deliveries resolve via their own lifecycle (queue TTL / activation), and
+    // markEventFailedIfAnyDeliveryTerminalFailed / markEventDeliveredIfAll
+    // DeliveriesDelivered terminalize the source event once they settle —
+    // matching every other site that handles events with delivery rows.
     if (this.isPublishedExternalEventExpired(payload)) {
-      try {
-        store.markEventFailed(payload.eventId, { terminal: true, reason: 'ttl_expired' });
-      } catch (err) {
-        log.warn(
-          `SpaceRuntime: markEventFailed (ttl_expired) for ${payload.eventId} failed: ${err instanceof Error ? err.message : String(err)}`
-        );
-      }
       return;
     }
     const matches = this.lookupSubscriptionTargets(payload.topic).filter(

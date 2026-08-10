@@ -6752,6 +6752,74 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(watchDeliveries).toHaveLength(1);
   });
 
+  test('does not deliver an expired routed event to a newly materialized target', async () => {
+    // Same 2-target shape as above, but the retained event is past the
+    // published-event TTL (e.g. a delivery preserved across a long paused
+    // downtime). The new-target replay must skip it (no stale webhook) and must
+    // NOT force-terminalize the source event — its existing delivery to the
+    // other target is still pending and restart requeue requires state
+    // 'published'. It settles via its own delivery lifecycle.
+    const workflow = workflowManager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: `Workflow ${Math.random()}`,
+      description: '',
+      nodes: [
+        {
+          id: 'code',
+          name: 'Code',
+          agents: [
+            {
+              agentId: AGENT_ID,
+              name: 'coder',
+              eventInterests: [
+                { topicFrom: { source: 'primaryLink', pattern: TOPIC_FROM_PATTERN } },
+              ],
+            },
+          ],
+        },
+        {
+          id: 'watch',
+          name: 'Watch',
+          agents: [
+            {
+              agentId: `${AGENT_ID}-watcher`,
+              name: 'watcher',
+              eventInterests: [{ topic: 'github/lsm/neokai/pull_request/*' }],
+            },
+          ],
+        },
+      ],
+      transitions: [],
+      startNodeId: 'code',
+      rules: [],
+      tags: [],
+    });
+    const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    const task = tasks[0]!;
+    runtime.registerRunInterests(run.id, task.id, workflow.nodes);
+    markCoderLive(run.id, 'session-coder-expired');
+
+    const event = makeEvent();
+    await eventService.publish(event);
+    expect(eventStore.getById(event.id)?.state).toBe('published');
+
+    // Backdate the source event past EXTERNAL_EVENT_QUEUE_TTL_MS (5 min default).
+    db.prepare('UPDATE space_external_events SET created_at = ? WHERE id = ?').run(
+      Date.now() - 400_000,
+      event.id
+    );
+
+    recordPrLinkArtifact(run.id, 'code', PR_URL);
+    runtime.materializeRunTopicFromInterests(run.id);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // The coder does NOT receive the stale event, and the source event stays
+    // published (not force-terminalized) so the other target's pending delivery
+    // remains requeueable.
+    expect(injected).toHaveLength(0);
+    expect(eventStore.getById(event.id)?.state).toBe('published');
+  });
+
   test('replays a retained event that arrived before the PR link was recorded', async () => {
     const workflow = createTopicFromWorkflow();
     const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
