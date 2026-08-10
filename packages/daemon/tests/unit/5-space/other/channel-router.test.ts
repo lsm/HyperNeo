@@ -661,7 +661,7 @@ describe('ChannelRouter', () => {
       expect(afterSecond).toBe(afterFirst);
     });
 
-    test('sweep re-keys deleted-head orphans unconditionally (no head to validate)', async () => {
+    test('sweep skips deleted-head orphans (no provenance → leave stale)', async () => {
       // PR-review P3: a pinned run whose head was deleted has no head fingerprint to compare
       // against — the sweep re-keys its entries unconditionally so the orphan's cache still
       // resolves against its pinned version.
@@ -713,10 +713,8 @@ describe('ChannelRouter', () => {
       rekeyPinnedGateOpenCaches({ gateOpenStateRepo, runRepo, manager: workflowManager });
       const after = gateOpenStateRepo.isOpen(run.id, 'plan-gate');
       expect(after.open).toBe(true);
-      // Re-keyed unconditionally to the version-stable basis (gate present → + gate hash).
-      const sanitizedPinned = workflowManager.getWorkflowForRun(runRepo.getRun(run.id)!)!;
-      const pinnedGate = (sanitizedPinned.gates ?? []).find((g) => g.id === 'plan-gate')!;
-      expect(after.workflowUpdatedAt).toBe(pinnedGateFingerprint(versionHash, pinnedGate));
+      // NOT re-keyed — orphan entries (deleted head) have no provenance; left stale for re-eval.
+      expect(after.workflowUpdatedAt).toBe(1); // unchanged from the seeded stale value
     });
 
     test('gateDefinitionHash is order-independent (locks the gate-open cache match invariant)', () => {

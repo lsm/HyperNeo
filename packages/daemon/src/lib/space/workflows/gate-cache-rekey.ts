@@ -58,25 +58,23 @@ export function rekeyPinnedGateOpenCaches(deps: GateCacheRekeyDeps): void {
       // the pinned version. Skip entries that don't match (stale) so they re-evaluate rather
       // than get promoted.
       const sanitizedHead = deps.manager.getWorkflow(run.workflowId);
+      if (!sanitizedHead) continue; // deleted-head orphan → no provenance → leave stale
       const sanitized = deps.manager.getWorkflowForRun(run);
       if (!sanitized) continue;
-      if (sanitizedHead) {
-        const headGate = (sanitizedHead.gates ?? []).find((g) => g.id === entry.gateId);
-        const headOldFingerprint = headGate
-          ? sanitizedHead.updatedAt + legacyGateDefinitionHash(headGate)
-          : sanitizedHead.updatedAt;
-        if (entry.workflowUpdatedAt !== headOldFingerprint) continue; // stale → re-evaluate
 
-        // The cache must be AUTHORITATIVE for the pinned gate, not just the head: if the run
-        // was pinned at creation and the head was edited afterward, the entry may have been
-        // opened under a more permissive head gate than the (stricter) pinned one. Re-keying it
-        // as-is would bypass evaluation of the pinned gate. Only re-key when the sanitized head
-        // and pinned gate definitions match (stableStringify is order-independent so repo vs
-        // stableStringify-payload key order doesn't matter).
-        const pinnedGateForCheck = (sanitized.gates ?? []).find((g) => g.id === entry.gateId);
-        if (stableStringify(headGate) !== stableStringify(pinnedGateForCheck)) {
-          continue; // head ≠ pinned → re-evaluate against the pinned definition
-        }
+      // Guard 1: stored fingerprint matches the head's pre-cutover fingerprint.
+      const headGate = (sanitizedHead.gates ?? []).find((g) => g.id === entry.gateId);
+      const headOldFingerprint = headGate
+        ? sanitizedHead.updatedAt + legacyGateDefinitionHash(headGate)
+        : sanitizedHead.updatedAt;
+      if (entry.workflowUpdatedAt !== headOldFingerprint) continue; // stale → re-evaluate
+
+      // Guard 2: the head and pinned gates must match — if the head was edited after the run
+      // was pinned, the cache may have been opened under a more permissive gate than the
+      // (stricter) pinned one; re-keying it would bypass evaluation.
+      const pinnedGateForCheck = (sanitized.gates ?? []).find((g) => g.id === entry.gateId);
+      if (stableStringify(headGate) !== stableStringify(pinnedGateForCheck)) {
+        continue; // head ≠ pinned → re-evaluate against the pinned definition
       }
 
       const gateDef = (sanitized.gates ?? []).find((g) => g.id === entry.gateId);
