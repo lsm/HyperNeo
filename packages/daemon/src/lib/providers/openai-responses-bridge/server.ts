@@ -761,6 +761,18 @@ function parseOpenAIError(status: number, text: string): string {
   return text || `OpenAI API request failed with status ${status}`;
 }
 
+/**
+ * True when a JSON body is an error response (OpenAI/Anthropic `error` field or
+ * RFC 7807 `detail`), vs. a non-streaming success body. Used to surface a
+ * non-transient 200-with-JSON-error as a terminal error instead of letting the
+ * empty-stream guard relabel it as a retryable overload.
+ */
+function isJsonErrorBody(text: string): boolean {
+  const parsed = parseJsonObject(text);
+  if (!parsed) return false;
+  return parsed.error !== undefined || parsed.detail !== undefined;
+}
+
 /** Count occurrences of each distinct value in an array, keyed by its string form. */
 function countBy<T>(arr: T[]): Record<string, number> {
   const counts: Record<string, number> = {};
@@ -1082,6 +1094,21 @@ async function streamResponsesToAnthropic({
     emittedFunctionCalls.add(call.callId);
   };
 
+  /** Open a text block (if needed) and emit a text delta, marking the turn productive. */
+  const emitTextContent = (delta: string) => {
+    ensureStarted();
+    closeThinkingBlock();
+    if (!textOpen) {
+      send(contentBlockStartTextSSE(blockIndex));
+      textOpen = true;
+      markProducedContent();
+    }
+    if (delta) {
+      send(textDeltaSSE(blockIndex, delta));
+      heuristicOutputTokens += Math.max(1, Math.ceil(delta.length / 4));
+    }
+  };
+
   try {
     if (!openAIResponse.body) {
       throw new Error('OpenAI API returned an empty streaming body');
@@ -1093,18 +1120,7 @@ async function streamResponsesToAnthropic({
         // answer); surface its delta as an ordinary text block so the SDK — and
         // the empty-stream guard below — see real content rather than an empty
         // turn that would otherwise be retried as an overload.
-        ensureStarted();
-        closeThinkingBlock();
-        if (!textOpen) {
-          send(contentBlockStartTextSSE(blockIndex));
-          textOpen = true;
-          markProducedContent();
-        }
-        const delta = typeof event.delta === 'string' ? event.delta : '';
-        if (delta) {
-          send(textDeltaSSE(blockIndex, delta));
-          heuristicOutputTokens += Math.max(1, Math.ceil(delta.length / 4));
-        }
+        emitTextContent(typeof event.delta === 'string' ? event.delta : '');
         continue;
       }
 
@@ -1175,6 +1191,28 @@ async function streamResponsesToAnthropic({
                   type: 'reasoning',
                   encrypted_content: encrypted,
                 });
+              }
+            }
+            if (
+              item &&
+              typeof item === 'object' &&
+              (item as Record<string, unknown>).type === 'message'
+            ) {
+              // Some Responses implementations deliver the final assistant text
+              // only in the completed output array (no preceding delta frames).
+              // Emit it so the turn isn't mistaken for an empty stream.
+              const content = (item as Record<string, unknown>).content;
+              if (Array.isArray(content)) {
+                for (const block of content) {
+                  if (
+                    block &&
+                    typeof block === 'object' &&
+                    (block as Record<string, unknown>).type === 'output_text'
+                  ) {
+                    const text = (block as Record<string, unknown>).text;
+                    if (typeof text === 'string') emitTextContent(text);
+                  }
+                }
               }
             }
           }
@@ -1269,16 +1307,16 @@ async function streamResponsesToAnthropic({
     ensureStarted();
     closeThinkingBlock();
     closeTextBlock();
-    // Cache this turn's reasoning for multi-turn continuation unless the turn was
-    // truly empty. A non-productive completion carries an empty
-    // responseReasoningItems; calling onReasoningItems([]) would delete the last
-    // successful turn's cached reasoning (storeReasoningItems overwrites),
-    // breaking the retry's continuation state. So this is gated on "produced any
-    // content OR any reasoning" and deferred past the stream loop (the
-    // response.completed handler no longer calls it directly): a contentless
-    // turn that still carried reasoning (e.g. reasoning-only output) keeps its
-    // reasoning for the retry, while a fully empty turn preserves the prior cache.
-    if (producedContent || responseReasoningItems.length > 0) {
+    // Cache this turn's reasoning for multi-turn continuation ONLY when the turn
+    // actually produced (displayed) content — i.e. it is NOT about to be retried
+    // as an overloaded error. A contentless turn (encrypted reasoning only, or
+    // fully empty) hits the guard below and is retried; caching its reasoning
+    // would overwrite the prior turn's cache and corrupt the retry
+    // (anthropicMessagesToResponsesInput would reinsert it before the wrong user
+    // message, and a nonempty cache disables the previous_response_id path on
+    // tool-result turns). Deferring past the loop and gating on producedContent
+    // preserves the prior cache for any retried turn.
+    if (producedContent) {
       onReasoningItems?.(responseReasoningItems);
     }
     // The upstream returned 200 and the stream completed without an error event,
@@ -1767,7 +1805,24 @@ export function createOpenAIResponsesBridgeServer(
           );
           return sendRetryableUpstreamError(normalized);
         }
-        // Non-transient: reconstruct so the streaming path handles it as before.
+        // A non-transient JSON *error* body (e.g. invalid_request_error) must
+        // surface as a terminal error. Otherwise the JSON yields no SSE events
+        // and the empty-stream guard below would relabel it as a retryable
+        // overload, causing repeated requests that hide the upstream diagnostic.
+        // A JSON body that is NOT an error (e.g. a non-streaming success) still
+        // flows through to the streamer.
+        if (isJsonErrorBody(bodyText)) {
+          logger.warn(
+            `openai-responses: upstream returned a non-transient JSON error (HTTP 200): ` +
+              `${parseOpenAIError(openAIResponse.status, bodyText).slice(0, 200)}`
+          );
+          return sendJsonError(
+            400,
+            anthropicErrorTypeForHttpStatus(400),
+            parseOpenAIError(openAIResponse.status, bodyText)
+          );
+        }
+        // Non-error JSON: reconstruct so the streaming path handles it as before.
         openAIResponse = new Response(bodyText, {
           status: openAIResponse.status,
           headers: { 'Content-Type': upstreamContentType },

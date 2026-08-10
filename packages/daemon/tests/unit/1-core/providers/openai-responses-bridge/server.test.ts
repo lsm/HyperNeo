@@ -1720,6 +1720,86 @@ describe('openai-responses-bridge server', () => {
   );
 
   it.skipIf(!isBun)(
+    'honors assistant text delivered only in response.completed.output',
+    async () => {
+      server = createOpenAIResponsesBridgeServer({
+        auth: { source: 'api_key', apiKey: 'sk-test' },
+        models,
+        // No streamed delta frames — the final text arrives only in the completed
+        // output array (a non-standard but real Responses implementation shape).
+        fetchImpl: async () =>
+          sse([
+            {
+              event: 'response.completed',
+              data: {
+                type: 'response.completed',
+                response: {
+                  usage: { input_tokens: 2, output_tokens: 1 },
+                  output: [
+                    {
+                      type: 'message',
+                      content: [{ type: 'output_text', text: 'final answer' }],
+                    },
+                  ],
+                },
+              },
+            },
+          ]),
+      });
+
+      const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-5.3-codex',
+          max_tokens: 128,
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+      });
+
+      const events = await readSSEEvents(resp.body);
+      expect(resp.status).toBe(200);
+      expect(textDeltaEvents(events).join('')).toBe('final answer');
+      expect(events.find((event) => event.event === 'error')).toBeUndefined();
+      expect(messageDeltaEvent(events)).toMatchObject({ delta: { stop_reason: 'end_turn' } });
+    }
+  );
+
+  it.skipIf(!isBun)(
+    'surfaces a non-transient 200 JSON error as terminal (not retried as overload)',
+    async () => {
+      server = createOpenAIResponsesBridgeServer({
+        auth: { source: 'api_key', apiKey: 'sk-test' },
+        models,
+        fetchImpl: async () =>
+          new Response(
+            JSON.stringify({
+              error: { type: 'invalid_request_error', message: 'bad request body' },
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          ),
+      });
+
+      const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-5.3-codex',
+          max_tokens: 128,
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+      });
+
+      const body = (await resp.json()) as { error: { type: string; message: string } };
+      // Terminal 400 (non-retryable), preserving the upstream diagnostic — not a
+      // retryable overloaded_error that would loop on a permanent error.
+      expect(resp.status).toBe(400);
+      expect(body.error.type).toBe('invalid_request_error');
+      expect(body.error.message).toContain('bad request body');
+    }
+  );
+
+  it.skipIf(!isBun)(
     'preserves the tool-turn continuation across an empty-stream retry',
     async () => {
       const capturedBodies: Record<string, unknown>[] = [];
@@ -2326,6 +2406,10 @@ describe('openai-responses-bridge server', () => {
           return sse([
             ...(isFirstTurn
               ? [
+                  {
+                    event: 'response.reasoning_summary_text.delta',
+                    data: { type: 'response.reasoning_summary_text.delta', delta: 'thinking' },
+                  },
                   {
                     event: 'response.completed',
                     data: {
