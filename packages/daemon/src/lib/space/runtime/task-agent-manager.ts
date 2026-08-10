@@ -3433,10 +3433,16 @@ export class TaskAgentManager {
     // 1. Stop sub-sessions (interrupt + cleanup, no DB delete).
     // stopSessionPreserveDb unsubscribes listeners and drops completion
     // callbacks for each session ID as part of its teardown.
+    // preserveDeliveryJobs: shutdown requeues in-flight message_delivery rows
+    // for the next boot (app.ts) BEFORE this runs — cancelling them here would
+    // delete the durable handoff we just preserved. The query still aborts so
+    // cleanup doesn't block; only the durable-job cancel is skipped.
     const nodeMap = this.subSessions.get(taskId);
     if (nodeMap) {
       for (const [subSessionId, session] of nodeMap) {
-        await this.stopSessionPreserveDb(subSessionId, session);
+        await this.stopSessionPreserveDb(subSessionId, session, {
+          preserveDeliveryJobs: true,
+        });
         this.agentSessionIndex.delete(subSessionId);
       }
       this.subSessions.delete(taskId);
@@ -4724,7 +4730,7 @@ export class TaskAgentManager {
   private async stopSessionPreserveDb(
     sessionId: string,
     session: AgentSession,
-    options: { strict?: boolean } = {}
+    options: { strict?: boolean; preserveDeliveryJobs?: boolean } = {}
   ): Promise<void> {
     const unsub = this.sessionListeners.get(sessionId);
     if (!options.strict && unsub) {
@@ -4737,7 +4743,13 @@ export class TaskAgentManager {
 
     let stopError: unknown;
     try {
-      await session.handleInterrupt();
+      // preserveDeliveryJobs: on a restart-bound shutdown stop, do NOT cancel
+      // the session's message_delivery jobs — app.ts already requeued them for
+      // the next boot, and handleInterrupt's default cancel would delete the
+      // durable handoff we just preserved. (Codex P1.)
+      await session.handleInterrupt(
+        options.preserveDeliveryJobs ? { preserveDeliveryJobs: true } : undefined
+      );
     } catch (err) {
       stopError = err;
       log.warn(`TaskAgentManager: failed to interrupt session ${sessionId}:`, err);

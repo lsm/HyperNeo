@@ -893,7 +893,7 @@ export class AgentSession
   // Interrupt and Reset
   // ============================================================================
 
-  async handleInterrupt(): Promise<void> {
+  async handleInterrupt(opts?: { preserveDeliveryJobs?: boolean }): Promise<void> {
     // Cancel any rate-limit recovery so an in-flight fallback switch / armed
     // cooldown timer can't switch the model or replay the stale message after
     // the user explicitly stopped the turn.
@@ -902,8 +902,9 @@ export class AgentSession
     // The durable-delivery cancel lives in InterruptHandler.handleInterrupt —
     // the single chokepoint every interrupt path reaches (client.interrupt RPC
     // → agent.interruptRequest subscriber → the raw handler, and the space
-    // paths via this wrapper). See Codex (#3744105273).
-    await this.interruptHandler.handleInterrupt();
+    // paths via this wrapper). See Codex (#3744105273). `preserveDeliveryJobs`
+    // is forwarded for restart-bound shutdown stops.
+    await this.interruptHandler.handleInterrupt(opts);
   }
 
   async resetQuery(options?: {

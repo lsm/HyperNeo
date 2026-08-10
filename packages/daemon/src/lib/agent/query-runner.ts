@@ -870,7 +870,14 @@ export class QueryRunner {
           // state persistence to avoid cascading "closed database" errors.
           if (!this.ctx.isCleaningUp()) {
             const processingState = stateManager.getState();
-            await stateManager.setIdle({ suppressDeliveryWaiters: true });
+            // This idle is potentially TERMINAL: if the throwing message was the
+            // final SDK `result`, no normal setIdle follows (the for-await just
+            // ends) and this path does NOT start a replacement query. Suppressing
+            // the delivery-waiter drain would leave driveDeliveryTurn waiting
+            // forever while its job heartbeats `processing`, blocking the
+            // active-turn slot. Drain (no suppress) so a durable turn whose
+            // result-handling threw still completes. (Codex P1.)
+            await stateManager.setIdle();
 
             await errorManager.handleError(
               session.id,

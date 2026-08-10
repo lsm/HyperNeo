@@ -712,6 +712,34 @@ describe('QueryLifecycleManager', () => {
       expect(startStreamingCalled).toBe(false);
     });
 
+    test('no-restart reset drains delivery waiters; restart reset suppresses them (Codex P1)', async () => {
+      // A no-restart reset is a TERMINAL idle (no startStreamingQuery follows):
+      // the turn-end waiter must drain or driveDeliveryTurn hangs `processing`,
+      // blocking the active-turn slot. A restart reset is a retry mid-point (the
+      // query re-starts immediately after) → suppress the drain. The
+      // post-stop setIdle gates suppressDeliveryWaiters on restartAfter.
+      mockContext.queryObject = {
+        interrupt: mock(async () => {}),
+      } as unknown as QueryLifecycleManagerContext['queryObject'];
+      mockContext.queryPromise = Promise.resolve();
+
+      manager = new QueryLifecycleManager(mockContext);
+      await manager.reset({ restartAfter: false });
+      expect(setIdleSpy).toHaveBeenCalledWith({ suppressDeliveryWaiters: false });
+
+      // The first reset's stop() nulls queryObject/queryPromise; re-establish a
+      // running query so the restart half exercises the post-stop setIdle (not
+      // the no-query early-return path). Isolate the spy across halves.
+      setIdleSpy.mockClear();
+      mockContext.queryObject = {
+        interrupt: mock(async () => {}),
+      } as unknown as QueryLifecycleManagerContext['queryObject'];
+      mockContext.queryPromise = Promise.resolve();
+      manager = new QueryLifecycleManager(mockContext);
+      await manager.reset({ restartAfter: true });
+      expect(setIdleSpy).toHaveBeenCalledWith({ suppressDeliveryWaiters: true });
+    });
+
     test('returns error on failure', async () => {
       const failingContext = createMockContext({
         queryObject: {

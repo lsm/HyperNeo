@@ -491,9 +491,15 @@ export class QueryLifecycleManager {
         catchQueryErrors: true,
       });
 
-      // Post-stop: Reset state
+      // Post-stop: Reset state. Suppress the delivery-waiter drain ONLY when a
+      // restart follows (this is a retry mid-point — the query is re-started
+      // below). When restartAfter is false the reset is TERMINAL (no
+      // startStreamingQuery): the turn that was driving a durable job is
+      // abandoned, so its turn-end waiter MUST drain here or driveDeliveryTurn
+      // hangs forever (the job keeps heartbeating `processing`, blocking the
+      // active-turn slot). (Codex P1.)
       this.ctx.firstMessageReceived = false;
-      await stateManager.setIdle({ suppressDeliveryWaiters: true });
+      await stateManager.setIdle({ suppressDeliveryWaiters: restartAfter });
 
       // Clear models cache to ensure fresh model info is fetched from DB
       // This is critical for model switch to pick up the new model

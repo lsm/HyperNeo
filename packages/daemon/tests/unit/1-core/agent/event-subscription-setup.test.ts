@@ -263,6 +263,69 @@ describe('EventSubscriptionSetup', () => {
         expect(row.sendStatus).toBe('failed');
         raw.close();
       });
+
+      it('handleInterrupt({preserveDeliveryJobs:true}) keeps requeued delivery jobs for restart (Codex P1)', async () => {
+        // Daemon shutdown requeues in-flight message_delivery rows for the next
+        // boot BEFORE stopping sessions; the shutdown stop path
+        // (stopSessionPreserveDb) must NOT then cancel them. handleInterrupt with
+        // preserveDeliveryJobs skips the durable-job cancel while still aborting
+        // the in-flight query. (The default user-interrupt path cancels — see
+        // the test above.)
+        const raw = new BunDatabase(':memory:');
+        createTables(raw);
+        const jobQueueRepo = new JobQueueRepository(raw);
+        const sdkRepo = new SDKMessageRepository(raw);
+        const sessionId = 'test-session-id';
+        const messageUuid = '22222222-3333-4444-5555-666666666666';
+
+        raw
+          .prepare(
+            `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid)
+             VALUES (?, ?, 'user', ?, ?, 'enqueued', ?)`
+          )
+          .run(
+            'db-msg-2',
+            sessionId,
+            JSON.stringify({ uuid: messageUuid }),
+            new Date().toISOString(),
+            messageUuid
+          );
+        deliverMessage(jobQueueRepo, sessionId, messageUuid, { origin: 'space_inject' });
+        expect((raw.prepare(`SELECT COUNT(*) AS n FROM job_queue`).get() as { n: number }).n).toBe(
+          1
+        );
+
+        const realInterruptHandler = new InterruptHandler({
+          session: mockContext.session,
+          messageHub: { event: () => {} } as never,
+          messageQueue: { size: () => 0, clear: () => {}, stop: () => {} } as never,
+          stateManager: {
+            getState: () => ({ status: 'processing', phase: 'streaming' }),
+            setInterrupted: async () => {},
+            setIdle: async () => {},
+          } as never,
+          logger: { warn: () => {}, error: () => {}, info: () => {}, debug: () => {} } as never,
+          db: {
+            getJobQueueRepo: () => jobQueueRepo,
+            getSDKMessageRepo: () => sdkRepo,
+          } as never,
+          queryObject: null,
+          queryPromise: null,
+          queryAbortController: null,
+        });
+
+        await realInterruptHandler.handleInterrupt({ preserveDeliveryJobs: true });
+
+        // The job + its enqueued SDK row survive — preserved for restart reclaim.
+        expect((raw.prepare(`SELECT COUNT(*) AS n FROM job_queue`).get() as { n: number }).n).toBe(
+          1
+        );
+        const row = raw
+          .prepare(`SELECT send_status AS sendStatus FROM sdk_messages WHERE id = 'db-msg-2'`)
+          .get() as { sendStatus: string };
+        expect(row.sendStatus).toBe('enqueued');
+        raw.close();
+      });
     });
 
     describe('agent.resetRequest handler', () => {

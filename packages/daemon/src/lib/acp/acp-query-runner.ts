@@ -735,7 +735,12 @@ export class AcpQueryRunner {
 
               if (!this.ctx.isCleaningUp()) {
                 const processingState = stateManager.getState();
-                await stateManager.setIdle({ suppressDeliveryWaiters: true });
+                // Mirrors the non-ACP runner: this idle is potentially terminal
+                // (the throwing message may have been the final result; no
+                // replacement query starts here), so drain the delivery waiters
+                // rather than suppress — otherwise a durable turn whose result
+                // handling threw hangs `processing` and blocks the turn slot.
+                await stateManager.setIdle();
 
                 await errorManager.handleError(
                   session.id,
