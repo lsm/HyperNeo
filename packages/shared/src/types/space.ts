@@ -2876,8 +2876,8 @@ export interface ExportedWorkflowNode {
  * Space-specific fields (`id`, `spaceId`, `createdAt`, `updatedAt`) are stripped.
  */
 export interface ExportedSpaceWorkerAgent {
-  /** Format version — always 1 for this revision */
-  version: 1;
+  /** Format version (1 or 2; v2 adds optional `topicFrom` on eventInterests). */
+  version: 1 | 2;
   /** Discriminator for the exported entity type */
   type: 'agent';
   /** Human-readable name */
@@ -2920,8 +2920,8 @@ export interface ExportedSpaceWorkerAgent {
  * Channel IDs are stripped; `from`/`to` use node/agent names.
  */
 export interface ExportedSpaceWorkflow {
-  /** Format version — always 1 for this revision */
-  version: 1;
+  /** Format version (1 or 2; v2 adds optional `topicFrom` on eventInterests). */
+  version: 1 | 2;
   /** Discriminator for the exported entity type */
   type: 'workflow';
   /** Human-readable name */
@@ -2969,8 +2969,8 @@ export interface ExportedSpaceWorkflow {
  * The bundle is the top-level unit of the export/import file format.
  */
 export interface SpaceExportBundle {
-  /** Format version — always 1 for this revision */
-  version: 1;
+  /** Format version (1 or 2; v2 adds optional `topicFrom` on eventInterests). */
+  version: 1 | 2;
   /** Discriminator for the top-level type */
   type: 'bundle';
   /** Human-readable bundle name */

@@ -146,4 +146,24 @@ describe('resolveTopicFromInterest', () => {
     } as Pick<EventInterest, 'topicFrom'>;
     expect(resolveTopicFromInterest(interest, 'https://github.com/lsm/neokai/pull/42')).toBeNull();
   });
+
+  test('returns null when a parsed identity component contains a wildcard', () => {
+    // A malformed primary link with wildcard owner/repo must not expand into a
+    // wildcard subscription (the trie treats `*` as match-all). Identity
+    // components are treated as literals, so refuse to resolve.
+    expect(
+      resolveTopicFromInterest(primaryLinkInterest, 'https://github.com/*/*/pull/42')
+    ).toBeNull();
+    expect(
+      resolveTopicFromInterest(
+        {
+          topicFrom: {
+            source: 'primaryLink',
+            pattern: '{host}/{owner}/{repo}/pull_request/{number}.*',
+          },
+        },
+        'https://git*.example.com/team/repo/pull/9'
+      )
+    ).toBeNull();
+  });
 });

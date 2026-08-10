@@ -5,6 +5,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import type { EventInterest } from '@hyperneo/shared';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
@@ -355,6 +356,53 @@ describe('SpaceWorkflowManager', () => {
           completionAutonomyLevel: 3,
         })
       ).toThrow('topicFrom.source: unknown source "taskField"');
+    });
+
+    it('rejects a malformed topic value paired with topicFrom (presence before type)', () => {
+      // `{ topic: 123, topicFrom: {...} }`: topic is present (even though not a
+      // string), so both branches are "set" → exactly-one-of must fire, rather
+      // than the malformed topic silently falling through to the topicFrom path.
+      const bothSet = [
+        {
+          topic: 123,
+          topicFrom: {
+            source: 'primaryLink',
+            pattern: 'github/{owner}/{repo}/pull_request/{number}.*',
+          },
+        },
+      ] as unknown as EventInterest[];
+      expect(() =>
+        manager.createWorkflow({
+          spaceId: 'space-1',
+          name: 'Malformed Topic Workflow',
+          nodes: [
+            {
+              id: 'node-1',
+              name: 'Step One',
+              agents: [{ agentId: 'agent-1', name: 'coder', eventInterests: bothSet }],
+            },
+          ],
+          completionAutonomyLevel: 3,
+        })
+      ).toThrow('exactly one of "topic" or "topicFrom" must be set');
+    });
+
+    it('rejects a non-string topic value when topicFrom is absent', () => {
+      const badTopic = [{ topic: 123 }] as unknown as EventInterest[];
+      expect(() =>
+        manager.createWorkflow({
+          spaceId: 'space-1',
+          name: 'NonString Topic Workflow',
+          nodes: [
+            {
+              id: 'node-1',
+              name: 'Step One',
+              agents: [{ agentId: 'agent-1', name: 'coder', eventInterests: badTopic }],
+            },
+          ],
+          completionAutonomyLevel: 3,
+        })
+      ).toThrow('node[0].agents[0].eventInterests[0].topic: must be a string');
     });
   });
 

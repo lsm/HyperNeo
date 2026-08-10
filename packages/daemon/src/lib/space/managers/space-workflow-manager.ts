@@ -768,7 +768,10 @@ export class SpaceWorkflowManager {
           topicFrom?: { source?: unknown; pattern?: unknown } | undefined;
           label?: unknown;
         };
-        const hasTopic = typeof rawInterest.topic === 'string';
+        // Presence is independent of type: a malformed `{ topic: 123 }` is still
+        // "topic set" and must trip the exactly-one-of check (or a type error),
+        // not silently fall through to the `topicFrom` branch.
+        const hasTopic = rawInterest.topic !== undefined && rawInterest.topic !== null;
         const hasTopicFrom = rawInterest.topicFrom !== undefined && rawInterest.topicFrom !== null;
         if (hasTopic === hasTopicFrom) {
           throw new WorkflowValidationError(
@@ -776,7 +779,10 @@ export class SpaceWorkflowManager {
           );
         }
         if (hasTopic) {
-          const validation = validateGlobPattern(rawInterest.topic as string);
+          if (typeof rawInterest.topic !== 'string') {
+            throw new WorkflowValidationError(`${interestLoc}.topic: must be a string`);
+          }
+          const validation = validateGlobPattern(rawInterest.topic);
           if (!validation.valid) {
             throw new WorkflowValidationError(
               `${interestLoc}.topic: ${validation.reason ?? 'invalid external-event topic pattern'}`

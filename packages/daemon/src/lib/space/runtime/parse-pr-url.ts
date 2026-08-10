@@ -91,6 +91,18 @@ export function resolveTopicFromInterest(
   if (!topicFrom || !KNOWN_TOPIC_FROM_SOURCES.has(topicFrom.source)) return null;
   const parsed = parsePrUrl(typeof primaryLinkUrl === 'string' ? primaryLinkUrl : '');
   if (!parsed) return null;
+  // Treat resolved identity components as literals: the trie treats `*` as a
+  // wildcard, so a malformed primary link such as `github/*/*/pull/42` must not
+  // expand into a subscription that matches every repository. A real GitHub
+  // owner/repo/host/number never contains `*`, so refuse to resolve if any does.
+  if (
+    parsed.owner.includes('*') ||
+    parsed.repo.includes('*') ||
+    parsed.number.includes('*') ||
+    parsed.host.includes('*')
+  ) {
+    return null;
+  }
   switch (topicFrom.source) {
     case 'primaryLink':
       return topicFrom.pattern

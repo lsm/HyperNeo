@@ -111,7 +111,7 @@ describe('exportAgent', () => {
     const agent = makeAgent();
     const exported = exportAgent(agent);
 
-    expect(exported.version).toBe(1);
+    expect(exported.version).toBe(2);
     expect(exported.type).toBe('agent');
     expect(exported.name).toBe('My Coder');
     // role field was removed from SpaceWorkerAgent in M71
@@ -276,7 +276,7 @@ describe('exportWorkflow', () => {
 
   test('has version 1 and type workflow', () => {
     const exported = exportWorkflow(makeWorkflow(), []);
-    expect(exported.version).toBe(1);
+    expect(exported.version).toBe(2);
     expect(exported.type).toBe('workflow');
   });
 });
@@ -294,7 +294,7 @@ describe('exportBundle', () => {
       exportedFrom: '/workspace/foo',
     });
 
-    expect(bundle.version).toBe(1);
+    expect(bundle.version).toBe(2);
     expect(bundle.type).toBe('bundle');
     expect(bundle.name).toBe('My Bundle');
     expect(bundle.description).toBe('A test bundle');
@@ -330,7 +330,7 @@ describe('validateExportedAgent', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.name).toBe('My Coder');
-      expect(result.value.version).toBe(1);
+      expect(result.value.version).toBe(2);
     }
   });
 
@@ -368,13 +368,31 @@ describe('validateExportedAgent', () => {
     expect(result.ok).toBe(false);
   });
 
-  test('rejects version > 1 with "requires newer version" message', () => {
+  test('accepts v2 (current export version)', () => {
     const data = { version: 2, type: 'agent', name: 'Bot', role: 'general' };
+    const result = validateExportedAgent(data);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.version).toBe(2);
+    }
+  });
+
+  test('accepts v1 (retained import support)', () => {
+    const data = { version: 1, type: 'agent', name: 'Bot', role: 'general' };
+    const result = validateExportedAgent(data);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.version).toBe(1);
+    }
+  });
+
+  test('rejects version > 2 with "requires newer version" message', () => {
+    const data = { version: 3, type: 'agent', name: 'Bot', role: 'general' };
     const result = validateExportedAgent(data);
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error).toContain('requires newer version');
-      expect(result.error).toContain('version 2');
+      expect(result.error).toContain('version 3');
     }
   });
 
@@ -428,7 +446,7 @@ describe('validateExportedWorkflow', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.name).toBe('CI Workflow');
-      expect(result.value.version).toBe(1);
+      expect(result.value.version).toBe(2);
       expect(result.value.startNode).toBe('Code step');
     }
   });
@@ -672,7 +690,7 @@ describe('validateExportBundle', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.name).toBe('Bundle');
-      expect(result.value.version).toBe(1);
+      expect(result.value.version).toBe(2);
       expect(result.value.agents).toHaveLength(3);
       expect(result.value.workflows).toHaveLength(1);
     }
@@ -699,11 +717,12 @@ describe('validateExportBundle', () => {
     expect(validateExportBundle([]).ok).toBe(false);
   });
 
-  test('rejects bundle whose nested agent has version > 1', () => {
+  test('rejects bundle whose nested agent has version > 2', () => {
     const bundle = exportBundle([makeAgent()], [], 'B') as Record<string, unknown>;
-    // Override the nested agent's version to simulate a v2 agent embedded in a v1 bundle
+    // Override the nested agent's version to simulate an unsupported agent
+    // embedded in a current (v2) bundle.
     const agents = bundle.agents as Array<Record<string, unknown>>;
-    agents[0] = { ...agents[0], version: 2 };
+    agents[0] = { ...agents[0], version: 3 };
     const result = validateExportBundle(bundle);
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -712,7 +731,7 @@ describe('validateExportBundle', () => {
     }
   });
 
-  test('rejects bundle whose nested workflow has version > 1', () => {
+  test('rejects bundle whose nested workflow has version > 2', () => {
     const bundle = exportBundle([], [makeWorkflow()], 'B') as Record<string, unknown>;
     const workflows = bundle.workflows as Array<Record<string, unknown>>;
     workflows[0] = { ...workflows[0], version: 3 };
