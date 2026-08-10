@@ -4656,11 +4656,12 @@ export class TaskAgentManager {
       // the job is claimed. Image/multimodal content is persisted verbatim and
       // reloaded by the handler, so no special enqueue handling is needed.
       const dbId = this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued', origin);
+      let role: 'turn' | 'steer';
       try {
         // deliverMessage enqueues a message_delivery job (role turn/steer decided
         // atomically by the job_queue index); the handler then owns
         // ensureQueryStarted and feeding the live transport.
-        deliverMessage(this.config.db.getJobQueueRepo(), sessionId, messageId, {
+        role = deliverMessage(this.config.db.getJobQueueRepo(), sessionId, messageId, {
           origin: 'space_inject',
           parentToolUseId: null,
         });
@@ -4670,6 +4671,20 @@ export class TaskAgentManager {
         // original. Mirrors AgentSession.deliverChatMessage's failure handling.
         this.config.db.getSDKMessageRepo().markDeliveryFailedByUuid(sessionId, messageId);
         throw err;
+      }
+      if (role === 'turn') {
+        // Mark the session queued so task-pause / live-session checks treat a
+        // pending turn job as non-idle. Without this, a pause that lands before
+        // the delivery processor claims the job skips the (idle-reporting)
+        // session, and the handler later runs the agent while the task is paused.
+        try {
+          await session.stateManager.setQueuedIfIdle(messageId);
+        } catch (error) {
+          log.warn(
+            `TaskAgentManager: queued-state publication failed for ${sessionId}: ` +
+              `${error instanceof Error ? error.message : String(error)}`
+          );
+        }
       }
       return dbId;
     }

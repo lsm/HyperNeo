@@ -594,18 +594,28 @@ export class SpaceRuntimeService {
       );
     }
     if (isMessageDeliveryV2Enabled()) {
-      // Persist first (content lives in sdk_messages), then enqueue a durable
-      // message_delivery job — the handler claims it and drives the turn.
-      reactiveDb.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+      // Idempotent persist: external-event delivery / inbox flush can be retried
+      // with the same idempotency key after a crash between job insertion and
+      // source bookkeeping. sdk_uuid is indexed but not unique, so an
+      // unconditional save would insert a duplicate row that lingers forever.
+      // Skip the save when a row already exists, and never re-drive a terminal
+      // (consumed/failed/deferred/submitted) message.
+      const existing = reactiveDb.getSDKMessageRepo().getDeliveryContent(sessionId, id);
+      if (!existing) {
+        reactiveDb.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+      } else if (existing.sendStatus !== 'enqueued') {
+        return id; // already terminal — a crash-retry must not re-drive it
+      }
+      // else: persisted 'enqueued' but crashed before the job — enqueue it;
+      // deliverMessage dedups the active job via getActiveDeliveryRole.
       try {
         deliverMessage(reactiveDb.getJobQueueRepo(), sessionId, id, {
           origin: 'long_term_agent',
           parentToolUseId: null,
         });
       } catch (err) {
-        // The row was just saved 'enqueued'; if durable enqueue throws the prompt
-        // has no owner — terminalize it so a restart/replay can't run the orphaned
-        // original. Mirrors AgentSession.deliverChatMessage's failure handling.
+        // The row was saved 'enqueued'; if durable enqueue throws the prompt has
+        // no owner — terminalize it. Mirrors deliverChatMessage's handling.
         reactiveDb.getSDKMessageRepo().markDeliveryFailedByUuid(sessionId, id);
         throw err;
       }
