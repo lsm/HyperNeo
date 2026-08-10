@@ -1521,11 +1521,18 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 
         // Record trigger: after a durable artifact write, let generic infra
         // re-derive state that depends on it. The runtime re-materializes the
-        // authoring node's topicFrom interests against the run's now-current
-        // primary link (no-op unless the node declares a topicFrom interest).
-        // Best-effort: the runtime logs and never throws, so a materialization
-        // failure cannot break the artifact save.
-        config.onArtifactRecorded?.({ workflowRunId, nodeId: workflowNodeId });
+        // run's topicFrom interests against the now-current primary link (no-op
+        // unless the workflow declares a topicFrom interest). Isolated in its own
+        // try/catch — the durable write already committed, so a callback failure
+        // (or a future callback that forgets to guard) must never flip the tool
+        // result to failure and cause a caller to retry a write that succeeded.
+        try {
+          config.onArtifactRecorded?.({ workflowRunId, nodeId: workflowNodeId });
+        } catch (recordedErr) {
+          log.warn(
+            `save_artifact: onArtifactRecorded callback failed for ${workflowRunId}/${workflowNodeId}: ${recordedErr instanceof Error ? recordedErr.message : String(recordedErr)}`
+          );
+        }
 
         return jsonResult({
           success: true,

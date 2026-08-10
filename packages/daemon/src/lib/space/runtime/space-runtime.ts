@@ -5755,6 +5755,22 @@ export class SpaceRuntime {
   ): Promise<void> {
     const store = this.config.externalEventStore;
     if (!store) return;
+    // Drop expired events: a retained routed event can outlive the TTL (e.g. a
+    // delivery preserved across a long paused downtime). listPublishedEventsWith
+    // Deliveries has no age filter, so without this the new-target path would
+    // inject a stale webhook the normal retry/requeue paths reject as
+    // ttl_expired. Terminalize it (the no-delivery TTL sweep skips events that
+    // already have a delivery row) so the replay doesn't re-select it forever.
+    if (this.isPublishedExternalEventExpired(payload)) {
+      try {
+        store.markEventFailed(payload.eventId, { terminal: true, reason: 'ttl_expired' });
+      } catch (err) {
+        log.warn(
+          `SpaceRuntime: markEventFailed (ttl_expired) for ${payload.eventId} failed: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+      return;
+    }
     const matches = this.lookupSubscriptionTargets(payload.topic).filter(
       (target): target is WorkflowSubscriptionTarget =>
         isWorkflowSubscriptionTarget(target) &&
@@ -5766,6 +5782,12 @@ export class SpaceRuntime {
     // blocked run's gate would not otherwise be re-checked against this event.
     // No-op for non-blocked runs; the hook dedups per run.
     await this.fireBlockedRunExternalEventHook(payload, matches);
+    // Register ALL missing targets BEFORE awaiting any delivery, matching the
+    // normal routing path's persistence ordering: if an early delivery completes
+    // and terminalizes the source event, a crash before the next iteration must
+    // not leave later matching targets without a delivery row (restart only
+    // scans published events, so they would be unrecoverable).
+    const toDeliver: Array<{ target: WorkflowSubscriptionTarget; deliveryKey: string }> = [];
     for (const match of matches) {
       const target = this.resolveSubscriptionTarget(match);
       const deliveryKey = this.buildDeliveryKey(target, payload);
@@ -5784,6 +5806,9 @@ export class SpaceRuntime {
         );
         continue;
       }
+      toDeliver.push({ target, deliveryKey });
+    }
+    for (const { target, deliveryKey } of toDeliver) {
       await this.deliverExternalEventToWorkflowTarget(target, payload, deliveryKey);
     }
   }

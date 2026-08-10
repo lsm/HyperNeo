@@ -954,6 +954,28 @@ describe('node-agent-tools: save_artifact', () => {
     expect(calls).toHaveLength(0);
   });
 
+  test('save_artifact still succeeds when the onArtifactRecorded callback throws', async () => {
+    // The durable write already committed before the record trigger fires. A
+    // throwing callback (or a future callback that forgets to guard) must not
+    // flip the tool result to failure and cause a caller to retry a write that
+    // succeeded.
+    const handlers = createNodeAgentToolHandlers(
+      makeConfig(ctx, {
+        onArtifactRecorded: () => {
+          throw new Error('callback exploded');
+        },
+      })
+    );
+    const result = await handlers.save_artifact({
+      shape: 'note',
+      data: { text: 'survives callback failure' },
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(true);
+    expect(ctx.artifactRepo.listByRun(ctx.workflowRunId, { artifactType: 'note' })).toHaveLength(1);
+  });
+
   test('save_artifact({ shape: "link", kind, data }) persists a structured link', async () => {
     const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
     const result = await handlers.save_artifact({
