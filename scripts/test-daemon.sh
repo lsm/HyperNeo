@@ -161,18 +161,31 @@ verify_shards() {
 			bi=$((bi + 1))
 		done
 		local workflow="$REPO_ROOT/.github/workflows/main.yml"
+		# Parse the active shard matrix once: extract the `shard: [...]` flow
+		# sequence and normalize to one token per line. Membership is checked
+		# against THIS parsed list (grep -qxF per token), never by grepping the
+		# whole file — a commented-out matrix entry (`# 5-space-runtime-b`) must
+		# not satisfy the check, or CI silently drops the bucket.
+		local matrix_tokens=""
+		if [ -f "$workflow" ]; then
+			matrix_tokens=$(grep -E '^[[:space:]]*shard:[[:space:]]*\[' "$workflow" \
+				| head -n1 \
+				| sed -E 's/^[^[]*\[//; s/\].*$//' \
+				| tr ',' '\n' \
+				| sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
+		fi
+		if [ -z "$matrix_tokens" ]; then
+			echo "  ERROR: could not parse a 'shard: [...]' matrix in $workflow -- --verify can't confirm CI wiring" >&2
+			errors=$((errors + 1))
+		fi
 		if [ "${#expected[@]}" -gt 0 ]; then
 			for ename in "${expected[@]}"; do
 				if ! printf '%s\n' "${SHARDS[@]}" | grep -qxF "$ename"; then
 					echo "  ERROR: '$ename' is missing from SHARDS (split_count=$count for '$prefix'). Add it + the CI matrix entry, or lower split_count." >&2
 					errors=$((errors + 1))
 				fi
-				# Best-effort: every scheduled bucket must also be wired into the
-				# CI matrix. Greps the workflow file (a matrix entry is a literal
-				# shard name, never a substring of another), so a missing entry
-				# fails --verify instead of silently skipping a bucket in CI.
-				if [ -f "$workflow" ] && ! grep -qF "$ename" "$workflow"; then
-					echo "  ERROR: '$ename' is in SHARDS but missing from the CI matrix in .github/workflows/main.yml" >&2
+				if [ -n "$matrix_tokens" ] && ! printf '%s\n' "$matrix_tokens" | grep -qxF "$ename"; then
+					echo "  ERROR: '$ename' is in SHARDS but missing from the active shard matrix in .github/workflows/main.yml" >&2
 					errors=$((errors + 1))
 				fi
 			done
