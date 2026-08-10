@@ -1158,5 +1158,39 @@ describe('SpaceWorkflowManager', () => {
       })!;
       expect(resolvedAgain.updatedAt).toBe(resolved.updatedAt);
     });
+
+    it('two runs of one workflow pinned to different versions resolve distinctly', () => {
+      // PR-review #4: the property the actor-registry version-keyed cache enforces — two
+      // runs of the same workflow, pinned to different versions, must resolve to their own
+      // pinned content, not a shared head.
+      const wf = manager.createWorkflow({
+        spaceId: 'space-1',
+        name: 'V1',
+        nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+        completionAutonomyLevel: 3,
+      });
+      const runA = runRepo.createPinnedRun({
+        spaceId: 'space-1',
+        workflowId: wf.id,
+        title: 'A',
+        rawWorkflow: repo.getWorkflow(wf.id)!,
+      });
+      // Edit the head → V2, then pin a second run to it.
+      manager.updateWorkflow(wf.id, { name: 'V2' });
+      const runB = runRepo.createPinnedRun({
+        spaceId: 'space-1',
+        workflowId: wf.id,
+        title: 'B',
+        rawWorkflow: repo.getWorkflow(wf.id)!,
+      });
+
+      expect(runA.definitionVersion).not.toBe(runB.definitionVersion);
+      const resolvedA = manager.getWorkflowForRun(runA)!;
+      const resolvedB = manager.getWorkflowForRun(runB)!;
+      expect(resolvedA.name).toBe('V1');
+      expect(resolvedB.name).toBe('V2');
+      // Different version hashes → different version-derived fingerprints.
+      expect(resolvedA.updatedAt).not.toBe(resolvedB.updatedAt);
+    });
   });
 });

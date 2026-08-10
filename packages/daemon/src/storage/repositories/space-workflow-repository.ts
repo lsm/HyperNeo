@@ -577,9 +577,11 @@ export class SpaceWorkflowRepository {
   }
 
   /**
-   * Record an immutable version snapshot of the definition (RFC §4, Phase 1 — shadow mode).
-   * Best-effort: a failure here must never break a definition write, because no run read path
-   * depends on these rows yet. Idempotent on `(workflow_id, version_hash)` — re-stamping a
+   * Record an immutable version snapshot of the definition (RFC §4, Phase 1). Best-effort
+   * at write time: a failure here must never break a definition write — the read cutover
+   * resolves a pinned run through `getWorkflowForRun`, which falls back to the live head if
+   * a version row is missing, so a missed append degrades to the pre-cutover read rather
+   * than failing. Idempotent on `(workflow_id, version_hash)` — re-stamping a
    * behaviorally-identical definition is a silent no-op.
    */
   private recordDefinitionVersion(workflow: SpaceWorkflow, source: DefinitionVersionSource): void {

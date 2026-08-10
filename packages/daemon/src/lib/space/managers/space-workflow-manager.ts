@@ -227,11 +227,14 @@ export class SpaceWorkflowManager {
    * the live path applies, so "this run reads version V" is well-defined regardless of read
    * site (manager or raw repo) — the sanitize-at-rehydrate model (see `definition-version.ts`).
    *
-   * Stable timestamps: the pinned payload strips `createdAt`/`updatedAt` (volatile), so we
-   * re-attach the version row's `created_at` to both. A pinned definition never changes, so
-   * staleness signals keyed on `updatedAt` (e.g. `generateGateFingerprint`) are correctly
-   * stable for the run's lifetime — the gate-open cache must not churn under a definition
-   * that, by pinning contract, will not change.
+   * Stable timestamps: the pinned payload strips `createdAt`/`updatedAt` (volatile). The
+   * rehydrated `updatedAt` is derived from the immutable version hash
+   * (`stableVersionTimestamp`), NOT the version row's `created_at` — `appendVersion` is
+   * `INSERT OR IGNORE`, so a reused hash (A→B→A, or a pre-cutover row) keeps its original
+   * `created_at` and would otherwise make initial-vs-recovered gate fingerprints diverge.
+   * Deriving from the hash makes the gate-open cache fingerprint identical on first
+   * activation and recovery. (`createdAt` is the row's append time and is not used as a
+   * staleness signal.)
    *
    * Fallback: a null pin (legacy run pre-backfill, or an archived orphan whose version row
    * is absent) — or any rehydration failure — resolves to the live head, preserving exact

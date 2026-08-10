@@ -378,6 +378,57 @@ describe('ChannelRouter', () => {
       expect(slots).not.toContain('planner-slot');
     });
 
+    test('gate-open cache fingerprint is stable across a re-resolve (recovery)', async () => {
+      // PR-review #3: a pinned run's gate-open cache must survive recovery (a fresh
+      // getWorkflowForRun re-resolve), because the fingerprint is derived from the immutable
+      // version hash, not a volatile timestamp. Otherwise recovery would re-evaluate gates.
+      const gate: Gate = {
+        id: 'plan-gate',
+        fields: [{ name: 'plan', type: 'string', writers: ['planner'], check: { op: 'exists' } }],
+        resetOnCycle: false,
+      };
+      const channels: WorkflowChannel[] = [
+        { id: 'ch-1', from: 'planner', to: 'coder', gateId: 'plan-gate' },
+      ];
+      const workflow = buildWorkflowWithGates(
+        SPACE_ID,
+        workflowManager,
+        [
+          {
+            id: NODE_A,
+            name: 'Planner Node',
+            agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+          },
+          { id: NODE_B, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+        ],
+        channels,
+        [gate]
+      );
+      const raw = workflowManager.getWorkflowForRunStart(workflow.id)!.rawWorkflow;
+      const run = workflowRunRepo.createPinnedRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Pinned',
+        rawWorkflow: raw,
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+      // Initial activation resolves + caches the gate as open.
+      const initial = workflowManager.getWorkflowForRun(run)!;
+      (
+        router as unknown as { cacheGateOpened: (r: string, g: string, w: SpaceWorkflow) => void }
+      ).cacheGateOpened(run.id, 'plan-gate', initial);
+      // Recovery: a fresh resolution of the same pinned definition.
+      const recovered = workflowManager.getWorkflowForRun(run)!;
+      const isOpen = (
+        router as unknown as {
+          isGateCachedOpen: (r: string, g: string, w: SpaceWorkflow) => boolean;
+        }
+      ).isGateCachedOpen(run.id, 'plan-gate', recovered);
+      // The fingerprint is version-derived, so the cache survives the re-resolve.
+      expect(isOpen).toBe(true);
+    });
+
     test('sets correct taskType for custom-role agent', async () => {
       const workflow = buildWorkflow(SPACE_ID, workflowManager, [
         {

@@ -1025,9 +1025,10 @@ export class ChannelRouter {
     // Without this, an unrelated gate that was already open before the run
     // blocked would falsely report gateOpened=true during re-evaluation and
     // trigger the resume chain in multi-gate workflows.
-    const workflowForSnapshot = this.config.workflowManager.getWorkflowForRun(run);
-    const wasOpenBefore =
-      workflowForSnapshot && this.isGateCachedOpen(runId, gateId, workflowForSnapshot);
+    // Resolve the pinned definition once; reused for the open-cache snapshot below and the
+    // channel lookup after the tombstone/terminal early-returns.
+    const workflow = this.config.workflowManager.getWorkflowForRun(run);
+    const wasOpenBefore = workflow && this.isGateCachedOpen(runId, gateId, workflow);
 
     // Archived tasks and terminal runs are tombstones for passive gate refresh.
     // Only explicit activation paths opt into terminal reopen.
@@ -1045,7 +1046,6 @@ export class ChannelRouter {
       this.evictRunCache(runId);
     }
 
-    const workflow = this.config.workflowManager.getWorkflowForRun(run);
     if (!workflow) return [];
 
     if (!this.config.gateDataRepo) return [];

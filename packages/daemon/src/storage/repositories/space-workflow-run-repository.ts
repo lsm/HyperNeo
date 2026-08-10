@@ -75,9 +75,12 @@ export class SpaceWorkflowRunRepository {
 
   /**
    * List unpinned runs that are still executable — rows that pre-date Phase-1 pinning (plus
-   * any whose head was deleted before backfill) AND whose canonical task is not archived.
-   * The startup backfill pins these so the read cutover can resolve them through an
-   * immutable version instead of the mutable head. Archived (tombstoned) runs are excluded:
+   * any whose head was deleted before backfill) AND that have at least one non-archived
+   * task. A run whose tasks are all archived is a tombstone, so the predicate is
+   * "EXISTS a non-archived task" rather than strictly "the canonical task is non-archived"
+   * — a run with a live canonical task plus archived duplicates still qualifies. The
+   * startup backfill pins these so the read cutover can resolve them through an immutable
+   * version instead of the mutable head. Fully-archived (tombstoned) runs are excluded:
    * they can never be executed again, so pinning them only burns startup work and creates
    * unexecutable pins (RFC §4/§11 scope the upgrade backfill to non-archived runs).
    */
