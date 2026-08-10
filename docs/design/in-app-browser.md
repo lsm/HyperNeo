@@ -235,32 +235,35 @@ an **explicit client→daemon ACK**:
 
 ```ts
 // ILLUSTRATIVE — see "Screencast correctness rules" below for the binding contract.
-// State is keyed per (sessionId, pageId); MessageHub keeps ONE handler per request
-// method, so browser.frameAck is registered once at service startup and routed by
-// CallContext.sessionId + frameId (never re-registered per page).
+// State is keyed per (sessionId, pageId); EACH Stream owns its page's CDP client,
+// so an ACK always releases the ORIGINATING page's slot (a frame ACK'd after a
+// tab switch belongs to a now-inactive page). MessageHub keeps ONE handler per
+// request method, so browser.frameAck is registered once and routed by session +
+// frameId.
 const cdp = await page.context().newCDPSession(page);
-await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 70, maxWidth: 1280, maxHeight: 800 });
 
 interface Stream {
+  cdp: typeof cdp;                                       // owning CDP client for THIS page
   inflight: { frameId: string; cdpSessionId: string; timer: Timer } | null;
   newest: { frame: Frame; cdpSessionId: string } | null;
 }
-const streams = new Map<string, Stream>();                 // key: `${sessionId}:${pageId}`
-const ackCdp = (id: string) => cdp.send('Page.screencastFrameAck', { sessionId: id });
+const streams = new Map<string, Stream>();               // key: `${sessionId}:${pageId}`
+const ackCdp = (s: Stream, id: string) => s.cdp.send('Page.screencastFrameAck', { sessionId: id });
 
+await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 70, maxWidth: 1280, maxHeight: 800 });
 cdp.on('Page.screencastFrame', ({ data, metadata, sessionId }) => {
   const s = streams.get(key)!;
-  if (s.newest) ackCdp(s.newest.cdpSessionId);            // supersede: ack + drop the queued frame
+  if (s.newest) ackCdp(s, s.newest.cdpSessionId);        // supersede: ack + drop the queued frame
   s.newest = { frame: { jpeg: data, metadata, frameId: randomUUID(), pageId, epoch, seq: nextSeq() }, cdpSessionId: sessionId };
   if (!s.inflight) dispatch(s);
 });
 
 function dispatch(s: Stream) {
   if (!s.newest) return;
-  const { frameId, cdpSessionId } = { frameId: s.newest.frame.frameId, cdpSessionId: s.newest.cdpSessionId };
+  const frameId = s.newest.frame.frameId, cdpSessionId = s.newest.cdpSessionId;
   const timer = setTimeout(() => {                        // captured by frameId; cleared on resolve
     if (s.inflight?.frameId !== frameId) return;          // already resolved by ACK/teardown
-    ackCdp(cdpSessionId); s.inflight = null; if (s.newest) dispatch(s);
+    ackCdp(s, cdpSessionId); s.inflight = null; if (s.newest) dispatch(s);
   }, ACK_TIMEOUT_MS);
   s.inflight = { frameId, cdpSessionId, timer };
   gateway.publish('browser.frame', s.newest.frame, sessionChannel);  // event: session:<id> channel
@@ -271,14 +274,14 @@ function dispatch(s: Stream) {
 hub.handle('browser.frameAck', ({ frameId }, ctx) => {
   const s = streamByFrameId(ctx.sessionId, frameId);      // search ALL the session's page streams
   if (!s?.inflight || s.inflight.frameId !== frameId) return;  // not found, or stale/resolved
-  clearTimeout(s.inflight.timer); ackCdp(s.inflight.cdpSessionId); s.inflight = null;
+  clearTimeout(s.inflight.timer); ackCdp(s, s.inflight.cdpSessionId); s.inflight = null;
   if (s.newest) dispatch(s);
 });
 
-// teardown / pane leave: ack BOTH retained frames, clear the timer, drop state
+// teardown / pane leave: ack BOTH retained frames on every stream, clear timers
 onSessionLeave(sid => { for (const s of streamsFor(sid)) {
-  if (s.inflight) { clearTimeout(s.inflight.timer); ackCdp(s.inflight.cdpSessionId); }
-  if (s.newest) ackCdp(s.newest.cdpSessionId);
+  if (s.inflight) { clearTimeout(s.inflight.timer); ackCdp(s, s.inflight.cdpSessionId); }
+  if (s.newest) ackCdp(s, s.newest.cdpSessionId);
   s.inflight = s.newest = null;
 }});
 ```
@@ -305,9 +308,11 @@ request method. These invariants are the binding contract for the loop above:
 - **Teardown acks both retained frames.** On pane leave / page close / session
   end, ack `inflight` (clearing its timer) **and** `newest`, then drop both.
 - **Late-subscriber activation snapshot.** `browser.activated` is fire-and-forget
-  and MessageHub does not replay it. When a pane registers or reconnects, the
-  daemon returns the current `{ pageId, epoch }` before streaming, so a pane
-  mounting after a switch knows the epoch it must match.
+  and MessageHub does not replay it, and `channel.join` returns only an ack — so
+  the pane must complete an explicit `browser.activationSnapshot` request on
+  mount/reconnect **before** consuming the stream, returning the current
+  `{ pageId, epoch }` (and the latest frame). A pane mounting after a switch then
+  knows the epoch it must match.
 - **Pane guards its channel.** A client may have joined several `session:*`
   channels and MessageHub dispatches by method name, so the pane's frame and
   activation handlers must explicitly require `context.channel === 'session:<sessionId>'`.
@@ -470,6 +475,14 @@ does not. These must be handled by design, not by accident:
    payload redaction or suppression for `browser.input` / `browser.frame`
    (e.g. log only metadata, never the payload) before this traffic is routed
    through MessageHub.
+7. **Secure the persistent broker's CDP endpoint (required for bridge option 2).**
+   A CDP endpoint grants complete control of the authenticated browser — cookies,
+   storage, screenshots, arbitrary page evaluation — and raw Chromium
+   remote-debugging has no application-level auth. Require a loopback-only (or
+   OS-permissioned) transport behind an authenticated broker/proxy; never bind it
+   broadly or log the endpoint. Any local process — or any network peer if it is
+   exposed beyond loopback — could otherwise attach alongside the MCP process and
+   steal the session.
 
 ## Tradeoffs
 
@@ -516,7 +529,7 @@ All proposed, none present today:
 | `packages/daemon/package.json` | Add a pinned `playwright` runtime dependency |
 | `packages/daemon/src/lib/browser/` (new) | `BrowserEngineService` — owns the daemon-lifetime shared Chromium, per-page CDP sessions, backpressure-gated frame loop keyed on `browser.frameAck`, epoch-tagged frames, input router, agent action primitives (MCP) |
 | Existing browser skills | Reimplemented on the service (replace) **or** reworked to attach to a persistent daemon broker (attach) — see [Shared browser bridge](#shared-browser-bridge). The naive attach to `chrome-devtools-mcp` does not survive a query boundary. |
-| MessageHub (new) | Method `browser.frame` (pub, session channel) + `browser.activated` (pub, epoch/page announcement); request methods `browser.frameAck`, `browser.input` (carrying displayed `epoch`), `browser.action` — all session-scoped. No `onConsumed` — ACKs are explicit. Every CDP frame acked exactly once. |
+| MessageHub (new) | Events: `browser.frame` + `browser.activated` (pub, `session:<id>` channel). Requests (raw session-id scope): `browser.activationSnapshot` (handshake on mount → `{ pageId, epoch }`), `browser.frameAck`, `browser.input` (carrying displayed `epoch`), `browser.action`. No `onConsumed` — ACKs explicit. |
 | MessageHub logging | Method-specific redaction for `browser.input`/`browser.frame` so debug/trace logs never carry passwords, IME text, or authenticated page pixels |
 | Session lifecycle | Teardown hooks on archive/delete/hard-reset + daemon shutdown: close pages, CDP sessions, browser, listeners, credential-bearing profile; profile-retention policy |
 | `packages/web` (new component) | Preact `<BrowserPane sessionId>` — joins session channel, renders to `<canvas>`, sends `browser.frameAck`, maps pointer coords from frame metadata, forwards pointer + keyboard protocols, suppresses input across epoch changes |
@@ -569,6 +582,13 @@ Round-5 (P2 robustness):
 - **Monotonic frame sequence** — pane discards stale decodes so a slow older frame can't overwrite a newer one within an epoch.
 - **Input-state reset on interrupt** — held modifiers/buttons released on disconnect/blur/teardown/epoch change.
 
+Round-6 (transport correctness + scope):
+
+- **Owning CDP client per stream** — each Stream stores its page's CDP session; ACKs route through it so a post-switch ACK releases the originating page's slot.
+- **Concrete activation handshake** — `browser.activationSnapshot` request completed on mount before streaming (`channel.join` returns only an ack).
+- **Secured CDP endpoint** — loopback-only + authenticated broker for the persistent-broker option.
+- **Persistent-profile rehydration** and **clipboard bridge** — logged as open questions (new scope).
+
 Still open:
 
 - **Bridge choice** — service-owned (replace) vs. persistent broker (attach). The central decision; drives how much existing skill code is rewritten.
@@ -577,3 +597,5 @@ Still open:
 - **Recording exclusion mechanism** — how sensitive-page frames and keystrokes are identified and excluded from rewind/persistence.
 - **Credential policy** — whether the agent may read authenticated sessions at all, or only for an explicit allowlist of origins.
 - **Chromium lifecycle host** — daemon-managed vs. (optionally) Tauri-shell-managed.
+- **Persistent-profile rehydration** — daemon-lifetime Chromium dies on restart/upgrade; define a stable per-session user-data dir with lazy reopen so authenticated state survives a daemon restart, plus restart-recovery and cleanup.
+- **Clipboard bridge** — copy/paste does not cross the remote-browser ↔ user-machine boundary (`page.keyboard` paste reads the daemon host's clipboard, not the user's). Define consent-aware copy/paste payloads between pane and broker, with the same sensitive-input log redaction.
