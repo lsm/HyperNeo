@@ -28,6 +28,7 @@ import {
   actionForProviderErrorKind,
   anthropicErrorTypeForHttpStatus,
   httpStatusForSymbolicErrorType,
+  isOpenAiErrorTypeName,
   isRetryableProviderError,
   matchPromptTooLong,
   providerErrorKindForHttpStatus,
@@ -152,11 +153,41 @@ describe('httpStatusForSymbolicErrorType', () => {
       expect(anthropicErrorTypeForHttpStatus(expected)).not.toBe('invalid_request_error');
     });
   }
+  test('invalid_request_error resolves to 400 (its real type, not the retryable default)', () => {
+    // invalid_request_error is the one symbol that round-trips to itself; it is
+    // listed so a terminal bad-request payload surfaces as invalid_request_error
+    // rather than the retryable api_error default.
+    expect(httpStatusForSymbolicErrorType('invalid_request_error')).toBe(400);
+    expect(anthropicErrorTypeForHttpStatus(400)).toBe('invalid_request_error');
+  });
   test('returns undefined for unrecognized / empty / non-string symbols', () => {
-    expect(httpStatusForSymbolicErrorType('invalid_request_error')).toBeUndefined();
     expect(httpStatusForSymbolicErrorType('not_a_real_type')).toBeUndefined();
     expect(httpStatusForSymbolicErrorType('')).toBeUndefined();
     expect(httpStatusForSymbolicErrorType(undefined)).toBeUndefined();
+  });
+});
+
+describe('isOpenAiErrorTypeName', () => {
+  test('admits recognized transient and terminal error type names', () => {
+    // Transient.
+    expect(isOpenAiErrorTypeName('server_error')).toBe(true);
+    expect(isOpenAiErrorTypeName('rate_limit_exceeded')).toBe(true);
+    expect(isOpenAiErrorTypeName('overloaded_error')).toBe(true);
+    // Terminal.
+    expect(isOpenAiErrorTypeName('invalid_request_error')).toBe(true);
+    expect(isOpenAiErrorTypeName('authentication_error')).toBe(true);
+    expect(isOpenAiErrorTypeName('not_found_error')).toBe(true);
+    // HTTP-status codes some gateways put in type/code.
+    expect(isOpenAiErrorTypeName('429')).toBe(true);
+    // Case-insensitive.
+    expect(isOpenAiErrorTypeName('INVALID_REQUEST_ERROR')).toBe(true);
+  });
+  test('rejects non-error frame types (heartbeat/metadata/event discriminators)', () => {
+    expect(isOpenAiErrorTypeName('ping')).toBe(false);
+    expect(isOpenAiErrorTypeName('response.completed')).toBe(false);
+    expect(isOpenAiErrorTypeName('response.output_text.delta')).toBe(false);
+    expect(isOpenAiErrorTypeName('')).toBe(false);
+    expect(isOpenAiErrorTypeName(undefined)).toBe(false);
   });
 });
 

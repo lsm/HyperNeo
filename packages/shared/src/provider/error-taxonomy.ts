@@ -507,12 +507,14 @@ export function anthropicErrorTypeForHttpStatus(status: number): AnthropicErrorT
  *
  * NOT derived from PROVIDER_ERROR_TAXONOMY: `api_error` and
  * `invalid_request_error` are each reused as the anthropicType across several
- * kinds, so a derived anthropicType→status map would collide. Only single-intent
- * symbols are listed; `invalid_request_error` and anything unrecognized fall
- * through to the caller's default. `api_error` and `server_error` ARE included
- * (mapped to 500) because their honest classification is a retryable 5xx, never
- * a 400 — leaving them to fall through to 400 would be the exact fatal-breaker
- * mislabel this map exists to prevent.
+ * kinds, so a derived anthropicType→status map would collide. The single-intent
+ * symbols are listed; `invalid_request_error` is included (→400) so a terminal
+ * bad-request payload surfaces with its real type rather than the retryable
+ * `api_error` default; anything unrecognized falls through to the caller's
+ * default. `api_error` and `server_error` ARE included (mapped to 500) because
+ * their honest classification is a retryable 5xx, never a 400 — leaving them to
+ * fall through to 400 would be the exact fatal-breaker mislabel this map exists
+ * to prevent.
  */
 const SYMBOLIC_ERROR_TYPE_TO_STATUS: Readonly<Record<string, number>> = {
   // Anthropic wire types (each used by exactly one kind).
@@ -522,6 +524,7 @@ const SYMBOLIC_ERROR_TYPE_TO_STATUS: Readonly<Record<string, number>> = {
   request_too_large: 413,
   rate_limit_error: 429,
   overloaded_error: 529,
+  invalid_request_error: 400,
   // OpenAI / common symbolic codes with a single unambiguous intent.
   rate_limit_exceeded: 429,
   server_error: 500,
@@ -536,6 +539,32 @@ const SYMBOLIC_ERROR_TYPE_TO_STATUS: Readonly<Record<string, number>> = {
 export function httpStatusForSymbolicErrorType(type: string | undefined): number | undefined {
   if (typeof type !== 'string' || type.length === 0) return undefined;
   return SYMBOLIC_ERROR_TYPE_TO_STATUS[type.toLowerCase()];
+}
+
+/**
+ * Every recognized error type/code name across the taxonomy (Anthropic wire
+ * types + provider codes, lowercased), including numeric string codes some
+ * gateways put in `type`/`code` (e.g. `"429"`). Used to tell a type-only flat
+ * error frame (e.g. `{"type":"invalid_request_error"}`) from an unknown
+ * heartbeat/metadata frame (e.g. `{"type":"ping"}`), regardless of whether the
+ * type is transient or terminal. Derived from the taxonomy so it cannot drift.
+ */
+const RECOGNIZED_ERROR_TYPE_NAMES: ReadonlySet<string> = new Set(
+  PROVIDER_ERROR_TAXONOMY.flatMap((entry) => [
+    ...(entry.anthropicType !== undefined ? [entry.anthropicType] : []),
+    ...(entry.providerCodes ?? []),
+  ]).map((name) => name.toLowerCase())
+);
+
+/**
+ * True if a string is a recognized error type/code name (transient OR
+ * terminal) — OpenAI/Anthropic symbolic names plus the HTTP-status codes some
+ * gateways put in `type`/`code`. Admits a flat error frame by its payload
+ * `type` while still ignoring unknown heartbeat/metadata frames.
+ */
+export function isOpenAiErrorTypeName(type: string | undefined): boolean {
+  if (typeof type !== 'string' || type.length === 0) return false;
+  return RECOGNIZED_ERROR_TYPE_NAMES.has(type.toLowerCase());
 }
 
 // ---------------------------------------------------------------------------

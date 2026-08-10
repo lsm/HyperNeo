@@ -32,10 +32,10 @@ import { createAnthropicErrorBody, type AnthropicErrorType } from '../shared/err
 import {
   anthropicErrorTypeForHttpStatus,
   httpStatusForSymbolicErrorType,
+  isOpenAiErrorTypeName,
 } from '@hyperneo/shared/provider/error-taxonomy';
 import {
   isJsonContentType,
-  isOpenAiTransientErrorType,
   normalizeOpenAiUpstreamError,
 } from '../shared/normalize-upstream-error.js';
 import { Logger } from '../../logger.js';
@@ -1334,14 +1334,17 @@ async function streamResponsesToAnthropic({
       const sseEvent = (event as { sseEvent?: string }).sseEvent;
       // An error frame is signalled by the payload type (`error` /
       // `response.failed`), the raw SSE `event:` name, OR a data-only frame
-      // whose payload type is a known transient error category (e.g.
-      // {"type":"server_error"} with no event line).
+      // whose payload `type` is ANY recognized error category — transient
+      // (e.g. {"type":"server_error"}) OR terminal (e.g.
+      // {"type":"invalid_request_error"}). Admitting terminal types too
+      // prevents a permanent error data-only frame from falling through to the
+      // empty-stream guard and being retried as an overloaded_error.
       if (
         event.type === 'response.failed' ||
         event.type === 'error' ||
         sseEvent === 'error' ||
         sseEvent === 'response.failed' ||
-        (event.type !== undefined && isOpenAiTransientErrorType(event.type))
+        (event.type !== undefined && isOpenAiErrorTypeName(event.type))
       ) {
         ensureStarted();
         closeThinkingBlock();
@@ -1394,7 +1397,26 @@ async function streamResponsesToAnthropic({
           errorBody && typeof (errorBody as Record<string, unknown>).message === 'string'
             ? ((errorBody as Record<string, unknown>).message as string)
             : undefined;
-        send(errorSSE(normalized?.type ?? 'api_error', bodyMessage ?? streamErrorMessage(event)));
+        // A transient payload (rate_limit / overloaded) is classified by the
+        // normalizer. A terminal payload (e.g. invalid_request_error,
+        // authentication_error) is NOT transient, so the normalizer returns null
+        // — surface its real Anthropic type (derived from the symbolic payload)
+        // so the upstream diagnostic is visible and the error is not retried.
+        // Keep the retryable `api_error` default only for a bare/unknown error
+        // (no recognizable type), matching prior behavior.
+        let errorType: AnthropicErrorType;
+        if (normalized) {
+          errorType = normalized.type;
+        } else {
+          const symbolicStatus = httpStatusForSymbolicErrorType(
+            typeof topLevelError.type === 'string' ? topLevelError.type : undefined
+          );
+          errorType =
+            symbolicStatus !== undefined
+              ? anthropicErrorTypeForHttpStatus(symbolicStatus)
+              : 'api_error';
+        }
+        send(errorSSE(errorType, bodyMessage ?? streamErrorMessage(event)));
         send(messageStopSSE());
         closeController();
         return;

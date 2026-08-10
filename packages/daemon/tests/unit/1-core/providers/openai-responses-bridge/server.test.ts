@@ -1616,6 +1616,51 @@ describe('openai-responses-bridge server', () => {
     }
   );
 
+  it.skipIf(!isBun)(
+    'surfaces a data-only terminal error frame with its real type (not retried as overload)',
+    async () => {
+      // A Responses-compatible proxy may emit a data-only terminal error with no
+      // `event: error` line, e.g. data: {"type":"invalid_request_error",...}.
+      // The terminal type is not transient, so without recognizing it the error
+      // branch would be skipped, no content produced, and the empty-stream guard
+      // would relabel the permanent error as overloaded_error (retryable) —
+      // hiding the diagnostic and retrying an invalid request. The bridge must
+      // surface the terminal type instead.
+      server = createOpenAIResponsesBridgeServer({
+        auth: { source: 'api_key', apiKey: 'sk-test' },
+        models,
+        fetchImpl: async () =>
+          // Raw SSE: a data-only frame, no `event:` line.
+          new Response(
+            `data: ${JSON.stringify({
+              type: 'invalid_request_error',
+              message: 'bad input',
+            })}\n\n`,
+            { status: 200, headers: { 'Content-Type': 'text/event-stream' } }
+          ),
+      });
+
+      const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-5.3-codex',
+          max_tokens: 128,
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+      });
+
+      const events = await readSSEEvents(resp.body);
+      const errorEvent = events.find((event) => event.event === 'error');
+      // Terminal type + diagnostic surface — NOT the empty-stream overloaded_error.
+      expect(errorEvent?.data).toMatchObject({
+        error: { type: 'invalid_request_error', message: 'bad input' },
+      });
+      expect(events.at(-1)?.event).toBe('message_stop');
+      expect(messageDeltaEvent(events)).toBeUndefined();
+    }
+  );
+
   it.skipIf(!isBun)('maps upstream streaming error events to Anthropic SSE errors', async () => {
     server = createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
