@@ -662,9 +662,9 @@ describe('ChannelRouter', () => {
     });
 
     test('sweep skips deleted-head orphans (no provenance → leave stale)', async () => {
-      // PR-review P3: a pinned run whose head was deleted has no head fingerprint to compare
-      // against — the sweep re-keys its entries unconditionally so the orphan's cache still
-      // resolves against its pinned version.
+      // PR-review P1: a pinned run whose head was deleted has no head fingerprint to compare
+      // against — the sweep skips its entries (no provenance) so the orphan's cache is left
+      // stale for re-evaluation rather than promoted unconditionally.
       const gate: Gate = {
         id: 'plan-gate',
         fields: [{ name: 'plan', type: 'string', writers: ['planner'], check: { op: 'exists' } }],

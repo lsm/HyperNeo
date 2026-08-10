@@ -17,7 +17,7 @@
  * re-keyed. If the head was edited after the gate cached, the entry is stale (cached for an
  * older head) — promoting it would bypass re-evaluation and could skip a tightened gate, so
  * stale entries are left for the router to re-evaluate. Deleted-head orphans have no head to
- * compare against and are re-keyed unconditionally.
+ * compare against and are skipped — left stale for the router to re-evaluate.
  */
 
 import { Logger } from '../../logger';
