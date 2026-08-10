@@ -2882,6 +2882,195 @@ describe('node-agent-tools: get_external_event', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Tests: list_deliveries
+// ---------------------------------------------------------------------------
+
+/**
+ * Seed a delivery row (pending by default) for the given event in the test
+ * space, attached to the context's default run/node unless overridden.
+ */
+function seedDelivery(
+  store: ExternalEventStore,
+  event: ExternalEvent,
+  overrides: {
+    deliveryKey?: string;
+    workflowRunId?: string;
+    taskId?: string;
+    nodeId?: string;
+    agentName?: string;
+  } = {}
+): void {
+  store.store(event);
+  store.registerExpectedDelivery(event.id, overrides.deliveryKey ?? `dk-${event.id}`, {
+    workflowRunId: overrides.workflowRunId ?? 'run-node-tools-default',
+    taskId: overrides.taskId ?? 'task-node-tools-default',
+    nodeId: overrides.nodeId ?? 'node-node-tools-default',
+    agentName: overrides.agentName ?? 'coder',
+  });
+}
+
+describe('node-agent-tools: list_deliveries', () => {
+  let ctx: TestCtx;
+
+  beforeEach(() => {
+    ctx = makeCtx();
+  });
+
+  afterEach(() => {
+    ctx.db.close();
+  });
+
+  test('returns deliveries for the current run by default with event essence', async () => {
+    const store = new ExternalEventStore(ctx.db);
+    const event = makeGitHubEvent({ spaceId: ctx.spaceId });
+    seedDelivery(store, event, { deliveryKey: 'dk-default' });
+
+    const handlers = createNodeAgentToolHandlers(makeConfig(ctx, { externalEventStore: store }));
+    const result = await handlers.list_deliveries({});
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.success).toBe(true);
+    expect(data.deliveries).toHaveLength(1);
+    const delivery = data.deliveries[0];
+    expect(delivery.deliveryKey).toBe('dk-default');
+    expect(delivery.state).toBe('pending');
+    expect(delivery.workflowRunId).toBe(ctx.workflowRunId);
+    expect(delivery.nodeId).toBe(ctx.nodeId);
+    // Event essence is joined in.
+    expect(delivery.event.topic).toBe(event.topic);
+    expect(delivery.event.source).toBe('github');
+    expect(delivery.event.summary).toBe(event.summary);
+    expect(delivery.event.externalUrl).toBe(event.externalUrl);
+    expect(delivery.event.state).toBe('published');
+  });
+
+  test('filters by nodeId within the current run', async () => {
+    const store = new ExternalEventStore(ctx.db);
+    const event = makeGitHubEvent({ spaceId: ctx.spaceId });
+    seedDelivery(store, event, {
+      deliveryKey: 'dk-coder',
+      nodeId: 'node-coder',
+      agentName: 'coder',
+    });
+    seedDelivery(store, event, {
+      deliveryKey: 'dk-reviewer',
+      nodeId: 'node-reviewer',
+      agentName: 'reviewer',
+    });
+
+    const handlers = createNodeAgentToolHandlers(makeConfig(ctx, { externalEventStore: store }));
+    const result = await handlers.list_deliveries({ nodeId: 'node-reviewer' });
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.deliveries).toHaveLength(1);
+    expect(data.deliveries[0].deliveryKey).toBe('dk-reviewer');
+  });
+
+  test('filters by delivery state', async () => {
+    const store = new ExternalEventStore(ctx.db);
+    const event = makeGitHubEvent({ spaceId: ctx.spaceId });
+    seedDelivery(store, event, { deliveryKey: 'dk-pending' });
+    seedDelivery(store, event, { deliveryKey: 'dk-delivered' });
+    store.markDeliveryDelivered(event.id, 'dk-delivered');
+
+    const handlers = createNodeAgentToolHandlers(makeConfig(ctx, { externalEventStore: store }));
+
+    const delivered = await handlers.list_deliveries({ state: 'delivered' });
+    const deliveredData = JSON.parse(delivered.content[0].text);
+    expect(deliveredData.deliveries).toHaveLength(1);
+    expect(deliveredData.deliveries[0].deliveryKey).toBe('dk-delivered');
+    expect(deliveredData.deliveries[0].state).toBe('delivered');
+
+    const pending = await handlers.list_deliveries({ state: 'pending' });
+    const pendingData = JSON.parse(pending.content[0].text);
+    expect(pendingData.deliveries).toHaveLength(1);
+    expect(pendingData.deliveries[0].deliveryKey).toBe('dk-pending');
+  });
+
+  test('isolates by workflow run — another run is excluded by default', async () => {
+    const store = new ExternalEventStore(ctx.db);
+    const event = makeGitHubEvent({ spaceId: ctx.spaceId });
+    seedDelivery(store, event, { deliveryKey: 'dk-mine' });
+    seedDelivery(store, event, {
+      deliveryKey: 'dk-other-run',
+      workflowRunId: 'run-node-tools-other',
+    });
+
+    const handlers = createNodeAgentToolHandlers(makeConfig(ctx, { externalEventStore: store }));
+    const result = await handlers.list_deliveries({});
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.deliveries).toHaveLength(1);
+    expect(data.deliveries[0].deliveryKey).toBe('dk-mine');
+
+    // Explicit override reaches the other run (same space).
+    const other = await handlers.list_deliveries({ workflowRunId: 'run-node-tools-other' });
+    const otherData = JSON.parse(other.content[0].text);
+    expect(otherData.deliveries).toHaveLength(1);
+    expect(otherData.deliveries[0].deliveryKey).toBe('dk-other-run');
+  });
+
+  test('does not leak deliveries from another space', async () => {
+    const store = new ExternalEventStore(ctx.db);
+    // A delivery in the current run/space.
+    const ownEvent = makeGitHubEvent({ spaceId: ctx.spaceId });
+    seedDelivery(store, ownEvent, { deliveryKey: 'dk-own' });
+
+    // A delivery with the SAME run id but in a different space.
+    ctx.db
+      .prepare(
+        `INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
+         allowed_models, session_ids, slug, status, created_at, updated_at)
+         VALUES (?, '/tmp/space-other-list', ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
+      )
+      .run('space-other-list', 'Space other', 'space-other-list', Date.now(), Date.now());
+    const foreignEvent = makeGitHubEvent({
+      spaceId: 'space-other-list',
+      id: crypto.randomUUID(),
+      dedupeKey: `dedupe-foreign-${Math.random().toString(36).slice(2)}`,
+    });
+    seedDelivery(store, foreignEvent, {
+      deliveryKey: 'dk-foreign',
+      workflowRunId: ctx.workflowRunId,
+    });
+
+    const handlers = createNodeAgentToolHandlers(makeConfig(ctx, { externalEventStore: store }));
+    const result = await handlers.list_deliveries({});
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.deliveries).toHaveLength(1);
+    expect(data.deliveries[0].deliveryKey).toBe('dk-own');
+  });
+
+  test('returns unavailable when the store is not wired', async () => {
+    const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
+    const result = await handlers.list_deliveries({});
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.success).toBe(false);
+    expect(data.error).toContain('not available');
+  });
+
+  test('createNodeAgentMcpServer registers list_deliveries only when the store is wired', () => {
+    const store = new ExternalEventStore(ctx.db);
+
+    const withoutStore = createNodeAgentMcpServer(makeConfig(ctx));
+    const withoutRegistered = Object.keys(
+      (withoutStore as unknown as { instance: { _registeredTools: Record<string, unknown> } })
+        .instance._registeredTools
+    );
+    expect(withoutRegistered).not.toContain('list_deliveries');
+
+    const withStore = createNodeAgentMcpServer(makeConfig(ctx, { externalEventStore: store }));
+    const withRegistered = Object.keys(
+      (withStore as unknown as { instance: { _registeredTools: Record<string, unknown> } }).instance
+        ._registeredTools
+    );
+    expect(withRegistered).toContain('list_deliveries');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tests: createNodeAgentMcpServer (factory)
 // ---------------------------------------------------------------------------
 
