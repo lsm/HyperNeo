@@ -327,7 +327,9 @@ export interface TaskAgentManagerConfig {
   spaceAgentInjector?: (
     spaceId: string,
     message: string,
-    replyToSessionId?: string | null
+    replyToSessionId?: string | null,
+    /** Pending-row id (crash-retry dedup key); forwarded as the delivery UUID. */
+    explicitMessageId?: string
   ) => Promise<void>;
   /**
    * Schedule service — shared business logic for managing task schedules.
@@ -1837,7 +1839,7 @@ export class TaskAgentManager {
         const replyTo =
           extractReplyToSessionId(message) ??
           (registry && row.taskId ? registry.get(row.taskId) : null);
-        await inject(spaceId, message, replyTo);
+        await inject(spaceId, message, replyTo, row.id);
         repo.markDelivered(row.id, spaceChatSessionId);
         this.emitPendingDelivered(row.id, spaceChatSessionId, row);
       } catch (err) {

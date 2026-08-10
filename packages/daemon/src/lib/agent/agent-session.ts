@@ -1869,13 +1869,12 @@ export class AgentSession
       // Arm the turn-end wait AFTER ensureQueryStarted: ensureQueryStarted awaits
       // a preceding interrupt's completion, and that interrupt's terminal
       // setIdle() fires BEFORE the await resolves — arming earlier would let it
-      // resolve this turn's waiter for a turn that hasn't started yet. If the
-      // session is somehow already idle here (an instant reclaimed turn ended
-      // during startup), complete immediately rather than hanging on an idle
-      // that already passed.
-      const turnEnd = this.stateManager.isIdle()
-        ? { promise: Promise.resolve(), cancel: () => {} }
-        : this.stateManager.waitForIdleTransition();
+      // resolve this turn's waiter for a turn that hasn't started yet. Don't
+      // short-circuit on a current isIdle(): a reclaimed consumed turn is
+      // restored as idle and the streaming query doesn't leave idle until input
+      // is observed, so treating that pre-input idle as terminal would complete
+      // the durable job while history replay is still running.
+      const turnEnd = this.stateManager.waitForIdleTransition();
       // Feed the kickoff (resolves on onSent = the SDK consumed it) UNLESS a
       // prior attempt already did (alreadyConsumed = reclaim after a crash): the
       // SDK resume-from-history already holds a consumed kickoff, so re-feeding

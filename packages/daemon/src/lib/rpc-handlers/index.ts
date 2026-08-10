@@ -858,7 +858,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   const spaceAgentInjector = async (
     spaceId: string,
     message: string,
-    replyToSessionId?: string | null
+    replyToSessionId?: string | null,
+    explicitMessageId?: string
   ): Promise<void> => {
     let sessionId = replyToSessionId || `space:chat:${spaceId}`;
     let session = await sessionManagerRef.getSessionAsync(sessionId);
@@ -872,7 +873,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     if (!session) {
       throw new Error(`Session not found for Space Agent reply routing: ${sessionId}`);
     }
-    const messageId = generateUUID();
+    // An explicit id (the pending-row id from flushPendingMessagesForSpaceAgent)
+    // dedups a crash-retry: deliverAndMarkQueued/getActiveDeliveryRole keys on it.
+    const messageId = explicitMessageId ?? generateUUID();
     const sdkUserMessage: SDKUserMessage & { isSynthetic: boolean } = {
       type: 'user' as const,
       uuid: messageId as UUID,
