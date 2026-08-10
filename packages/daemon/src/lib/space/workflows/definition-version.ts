@@ -123,20 +123,36 @@ export function stableVersionTimestamp(versionHash: string): number {
 
 /**
  * The gate-definition hash component of `ChannelRouter.generateGateFingerprint` (extracted
- * so the cutover re-key reproduces the exact post-cutover fingerprint). Mirrors the
- * inline hash historically in `generateGateFingerprint`: a fast non-cryptographic 32-bit
- * hash of the gate definition JSON, suitable only for cache invalidation.
+ * so the cutover re-key reproduces the exact post-cutover fingerprint). A fast
+ * non-cryptographic 32-bit hash, suitable only for cache invalidation.
+ *
+ * ORDER-INDEPENDENT (uses `stableStringify`, keys sorted): the runtime and the re-key each
+ * resolve a sanitized gate, and making the hash insensitive to key order means a future
+ * refactor can't silently break the gate-open cache match by comparing gates whose keys were
+ * materialized in different orders (e.g. a stableStringify-roundtripped pinned gate vs an
+ * insertion-order head gate). `legacyGateDefinitionHash` is the order-sensitive counterpart
+ * kept for the one place that must match historical, pre-cutover stored values.
  */
 export function gateDefinitionHash(gate: unknown): number {
-  // The historical inline hash from `generateGateFingerprint`: a fast non-cryptographic
-  // 32-bit hash of `JSON.stringify(gate)` (order-sensitive). NOT stripped of
-  // `legacyGateMetadata`: both the runtime and the re-key resolve the SAME sanitized object
-  // (legacyGateMetadata present) so they hash identically, and the validity guard must hash
-  // the identical object the pre-cutover runtime fingerprinted to match the stored value.
-  const gateJson = JSON.stringify(gate);
+  return hashJson(stableStringify(gate));
+}
+
+/**
+ * The ORDER-SENSITIVE (bare `JSON.stringify`) gate hash — the exact hash the pre-cutover
+ * `generateGateFingerprint` used to compute the stored gate-open fingerprints. Used ONLY by
+ * the cutover validity guard (`gate-cache-rekey.ts`), which must reproduce those historical
+ * stored values to decide whether an entry is still valid for the current head. Everywhere
+ * else uses the order-independent `gateDefinitionHash`.
+ */
+export function legacyGateDefinitionHash(gate: unknown): number {
+  return hashJson(JSON.stringify(gate));
+}
+
+/** Fast non-cryptographic 32-bit hash of a string (the historical inline fingerprint hash). */
+function hashJson(value: string): number {
   let hash = 0;
-  for (let i = 0; i < gateJson.length; i++) {
-    hash = (hash << 5) - hash + gateJson.charCodeAt(i);
+  for (let i = 0; i < value.length; i++) {
+    hash = (hash << 5) - hash + value.charCodeAt(i);
     hash = hash & hash;
   }
   return hash;

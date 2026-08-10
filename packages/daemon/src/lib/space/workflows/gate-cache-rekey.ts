@@ -24,7 +24,7 @@ import type { GateOpenStateRepository } from '../../../storage/repositories/gate
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import {
-  gateDefinitionHash,
+  legacyGateDefinitionHash,
   pinnedGateFingerprint,
   stableVersionTimestamp,
 } from './definition-version';
@@ -43,15 +43,16 @@ export function rekeyPinnedGateOpenCaches(deps: GateCacheRekeyDeps): void {
 
     // Validity guard (see module doc): reproduce the EXACT pre-cutover fingerprint — the
     // sanitized HEAD gate (legacyGateMetadata present, as markDeprecatedGate adds) hashed with
-    // the same bare gateDefinitionHash the pre-cutover generateGateFingerprint used. Use the
-    // manager's HEAD read (getWorkflow), NOT the pinned resolution (getWorkflowForRun), which
-    // post-cutover returns the pinned version. Skip entries that don't match (stale) so they
-    // re-evaluate rather than get promoted.
+    // legacyGateDefinitionHash (the order-sensitive bare hash the pre-cutover
+    // generateGateFingerprint used to compute stored values). Use the manager's HEAD read
+    // (getWorkflow), NOT the pinned resolution (getWorkflowForRun), which post-cutover returns
+    // the pinned version. Skip entries that don't match (stale) so they re-evaluate rather
+    // than get promoted.
     const sanitizedHead = deps.manager.getWorkflow(run.workflowId);
     if (sanitizedHead) {
       const headGate = (sanitizedHead.gates ?? []).find((g) => g.id === entry.gateId);
       const headOldFingerprint = headGate
-        ? sanitizedHead.updatedAt + gateDefinitionHash(headGate)
+        ? sanitizedHead.updatedAt + legacyGateDefinitionHash(headGate)
         : sanitizedHead.updatedAt;
       if (entry.workflowUpdatedAt !== headOldFingerprint) continue; // stale → re-evaluate
     }

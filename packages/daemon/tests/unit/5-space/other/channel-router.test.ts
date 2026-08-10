@@ -54,6 +54,7 @@ import { registerBuiltInValidator } from '../../../../src/lib/space/runtime/buil
 import {
   computeDefinitionVersion,
   gateDefinitionHash,
+  legacyGateDefinitionHash,
   pinnedGateFingerprint,
   stableVersionTimestamp,
 } from '../../../../src/lib/space/workflows/definition-version';
@@ -507,7 +508,7 @@ describe('ChannelRouter', () => {
       gateOpenStateRepo.markOpened(
         run.id,
         'plan-gate',
-        sanitizedHead.updatedAt + gateDefinitionHash(headGate)
+        sanitizedHead.updatedAt + legacyGateDefinitionHash(headGate)
       );
       // Also seed an entry for a gate that does NOT exist in the workflow — the sweep's
       // missing-gateDef branch must re-key it to the bare version-stable timestamp (matching
@@ -648,7 +649,7 @@ describe('ChannelRouter', () => {
       gateOpenStateRepo.markOpened(
         run.id,
         'plan-gate',
-        sanitizedHead.updatedAt + gateDefinitionHash(headGate)
+        sanitizedHead.updatedAt + legacyGateDefinitionHash(headGate)
       );
 
       runRepo.backfillDefinitionPins(() => headRaw);
@@ -716,6 +717,35 @@ describe('ChannelRouter', () => {
       const sanitizedPinned = workflowManager.getWorkflowForRun(runRepo.getRun(run.id)!)!;
       const pinnedGate = (sanitizedPinned.gates ?? []).find((g) => g.id === 'plan-gate')!;
       expect(after.workflowUpdatedAt).toBe(pinnedGateFingerprint(versionHash, pinnedGate));
+    });
+
+    test('gateDefinitionHash is order-independent (locks the gate-open cache match invariant)', () => {
+      // PR-review: the runtime + re-key must hash the same logical gate identically regardless
+      // of how its keys were materialized — a pinned gate comes from a stableStringify payload
+      // (sorted keys), a head gate from insertion order. gateDefinitionHash is order-independent
+      // so a future refactor comparing the two can't silently break the cache match. The
+      // order-sensitive legacyGateDefinitionHash is kept ONLY for the validity guard (matching
+      // historical stored values).
+      const field = { name: 'plan', type: 'string', writers: ['planner'], check: { op: 'exists' } };
+      const insertionOrder = {
+        id: 'plan-gate',
+        resetOnCycle: false,
+        fields: [field],
+        legacyGateMetadata: { deprecated: true },
+      };
+      // Same logical content, keys materialized in a different order.
+      const shuffled = {
+        legacyGateMetadata: { deprecated: true },
+        fields: [field],
+        resetOnCycle: false,
+        id: 'plan-gate',
+      };
+
+      // gateDefinitionHash is order-independent — both key orders hash equally.
+      expect(gateDefinitionHash(insertionOrder)).toBe(gateDefinitionHash(shuffled));
+      // The legacy (validity-guard) hash is order-sensitive by design — confirms the two
+      // variants differ where it matters, so the guard's stored-value match is exact.
+      expect(legacyGateDefinitionHash(insertionOrder)).not.toBe(legacyGateDefinitionHash(shuffled));
     });
 
     test('pinned run DB-backed gate-open cache survives a head edit (version-stable)', async () => {
