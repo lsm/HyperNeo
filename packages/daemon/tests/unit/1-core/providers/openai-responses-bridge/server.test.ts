@@ -1661,6 +1661,47 @@ describe('openai-responses-bridge server', () => {
     }
   );
 
+  it.skipIf(!isBun)(
+    'surfaces a data-only SSE error carrying only a code or numeric status',
+    async () => {
+      // A data-only error frame may carry the indicator in `code` or a numeric
+      // `status`, with NO `type` and no `event:` line. The error-frame guard must
+      // check code/status too (not just type), or the frame falls through to the
+      // empty-stream guard and is retried as overloaded_error. Here the symbolic
+      // classification lives in `code`, so the classifier must read it too.
+      server = createOpenAIResponsesBridgeServer({
+        auth: { source: 'api_key', apiKey: 'sk-test' },
+        models,
+        fetchImpl: async () =>
+          new Response(
+            `data: ${JSON.stringify({
+              code: 'authentication_error',
+              message: 'expired',
+            })}\n\n`,
+            { status: 200, headers: { 'Content-Type': 'text/event-stream' } }
+          ),
+      });
+
+      const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-5.3-codex',
+          max_tokens: 128,
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+      });
+
+      const events = await readSSEEvents(resp.body);
+      // Caught and classified from the `code` field (401 authentication_error) —
+      // NOT the empty-stream overloaded_error retry.
+      expect(events.find((event) => event.event === 'error')?.data).toMatchObject({
+        error: { type: 'authentication_error', message: 'expired' },
+      });
+      expect(events.find((event) => event.event === 'message_delta')).toBeUndefined();
+    }
+  );
+
   it.skipIf(!isBun)('maps upstream streaming error events to Anthropic SSE errors', async () => {
     server = createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
@@ -3793,6 +3834,68 @@ describe('openai-responses-bridge server', () => {
     expect(messageDeltaEvent(events)).toMatchObject({ delta: { stop_reason: 'max_tokens' } });
     // The cache is refreshed with this turn's reasoning, not left stale.
     expect(reasoningCalls).toEqual([[{ type: 'reasoning', encrypted_content: 'ENC_INCOMPLETE' }]]);
+  });
+
+  it('records the response id for a completed tool call in an incomplete turn (direct)', async () => {
+    // An incomplete turn may still contain a COMPLETED function_call (the turn hit
+    // max_output_tokens AFTER the call finished). The emitted tool_use is real, so
+    // its response.id must be recorded via onFunctionCallResponse — otherwise the
+    // tool-result turn cannot attach previous_response_id and resends the whole
+    // conversation (mirrors the response.completed branch).
+    const continuationCalls: Array<[string, string]> = [];
+    const openAIStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder();
+        controller.enqueue(
+          encoder.encode(
+            `event: response.incomplete\ndata: ${JSON.stringify({
+              type: 'response.incomplete',
+              response: {
+                id: 'resp_inc_tool',
+                usage: { input_tokens: 1, output_tokens: 4096 },
+                output: [
+                  {
+                    type: 'function_call',
+                    // status completed (absent) — the call finished before truncation.
+                    call_id: 'call_inc',
+                    name: 'lookup',
+                    arguments: '{"q":"x"}',
+                  },
+                ],
+              },
+            })}\n\n`
+          )
+        );
+        controller.close();
+      },
+    });
+    const anthropicStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        void _openAIResponsesBridgeServerTesting.streamResponsesToAnthropic({
+          openAIResponse: new Response(openAIStream, {
+            headers: { 'Content-Type': 'text/event-stream' },
+          }),
+          controller,
+          model: 'gpt-5.3-codex',
+          estimatedInputTokens: 1,
+          onFunctionCallResponse: (callId, responseId) => {
+            continuationCalls.push([callId, responseId]);
+          },
+        });
+      },
+    });
+
+    const events = await readSSEEvents(anthropicStream);
+    // The completed call was emitted (tool_use), and its response.id recorded so
+    // the tool-result turn can continue with previous_response_id.
+    expect(
+      events.filter(
+        (event) =>
+          event.event === 'content_block_start' &&
+          (event.data as { content_block?: { type?: string } }).content_block?.type === 'tool_use'
+      )
+    ).toHaveLength(1);
+    expect(continuationCalls).toEqual([['call_inc', 'resp_inc_tool']]);
   });
 
   it.skipIf(!isBun)(

@@ -1347,28 +1347,42 @@ async function streamResponsesToAnthropic({
       if (event.type === 'response.incomplete') {
         incomplete = true;
         completedUsage = responseUsage(event.response);
+        const responseId = typeof event.response?.id === 'string' ? event.response.id : undefined;
         // A one-shot (non-streamed) incomplete response carries its partial
         // output only in the output array. Extract it so partial text is
         // surfaced (with a max_tokens stop reason, set below) rather than lost,
         // and so a contentless incomplete turn is not retried as an overload.
         extractOutputItems(event.response);
+        // A function_call emitted from an incomplete turn (status completed — the
+        // turn hit max_output_tokens AFTER the call finished) is real: record its
+        // response.id so the tool-result turn can attach previous_response_id
+        // instead of resending the whole conversation (mirrors response.completed).
+        if (responseId) {
+          for (const callId of emittedFunctionCalls) {
+            onFunctionCallResponse?.(callId, responseId);
+          }
+        }
         continue;
       }
 
       const sseEvent = (event as { sseEvent?: string }).sseEvent;
       // An error frame is signalled by the payload type (`error` /
       // `response.failed`), the raw SSE `event:` name, OR a data-only frame
-      // whose payload `type`/`code` is ANY recognized error indicator — a
-      // symbolic name (transient or terminal), a terminal provider code, or a
-      // numeric 4xx/5xx. Admitting terminal codes too prevents a permanent
-      // error data-only frame from falling through to the empty-stream guard
-      // and being retried as an overloaded_error.
+      // whose payload carries a recognized error indicator in `type`, `code`, OR
+      // `status` — a symbolic name (transient or terminal), a terminal provider
+      // code, or a numeric 4xx/5xx. Checking all three fields (not just `type`)
+      // catches frames like {"code":"model_not_found"} or {"status":429} that
+      // carry no `type`, so a permanent error data-only frame never falls through
+      // to the empty-stream guard and is retried as an overloaded_error.
+      const payload = event as Record<string, unknown>;
       if (
         event.type === 'response.failed' ||
         event.type === 'error' ||
         sseEvent === 'error' ||
         sseEvent === 'response.failed' ||
-        (event.type !== undefined && isProviderErrorCodeOrType(event.type))
+        isProviderErrorCodeOrType(payload.type) ||
+        isProviderErrorCodeOrType(payload.code) ||
+        isProviderErrorCodeOrType(payload.status)
       ) {
         ensureStarted();
         closeThinkingBlock();
@@ -1432,9 +1446,16 @@ async function streamResponsesToAnthropic({
         if (normalized) {
           errorType = normalized.type;
         } else {
-          const symbolicStatus = httpStatusForSymbolicErrorType(
-            typeof topLevelError.type === 'string' ? topLevelError.type : undefined
-          );
+          // Read the symbolic classification from `type` OR `code` (some
+          // payloads carry it in code), so a terminal frame like
+          // {"code":"authentication_error"} surfaces 401 instead of the default.
+          const symbolicStatus =
+            httpStatusForSymbolicErrorType(
+              typeof topLevelError.type === 'string' ? topLevelError.type : undefined
+            ) ??
+            httpStatusForSymbolicErrorType(
+              typeof topLevelError.code === 'string' ? topLevelError.code : undefined
+            );
           errorType =
             symbolicStatus !== undefined
               ? anthropicErrorTypeForHttpStatus(symbolicStatus)
