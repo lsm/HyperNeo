@@ -267,6 +267,36 @@ describe('SpaceRuntime workflow subscription persistence', () => {
     expect(trieOf(runtime).lookupSubscriptionTargets('github/dynamic/x')).toHaveLength(1);
   });
 
+  test('clearTaskInterests removes the task subscriptions from both stores', () => {
+    const runtime = makeRuntime();
+    const { runId, taskId } = createRun();
+    runtime.registerSubscription(runId, taskId, 'code', 'coder', 'github/a/*');
+
+    runtime.clearTaskInterests(taskId);
+
+    expect(subscriptionRepo.listBySpace(SPACE_ID)).toHaveLength(0);
+    expect(trieOf(runtime).lookupSubscriptionTargets('github/a/x')).toHaveLength(0);
+  });
+
+  test('clearTaskInterestsPreservingDynamic keeps dynamic rows in both stores', () => {
+    const runtime = makeRuntime();
+    const { workflow, runId, taskId } = createRun({
+      eventInterests: [{ topic: 'github/static/*' }],
+    });
+    runtime.registerRunInterests(runId, taskId, workflow.nodes);
+    runtime.registerSubscription(runId, taskId, 'code', 'coder', 'github/dynamic/*');
+
+    runtime.clearTaskInterestsPreservingDynamic(taskId);
+
+    // Static cleared from the trie; dynamic kept in both. The table holds only
+    // the dynamic row (static was never persisted).
+    const rows = subscriptionRepo.listBySpace(SPACE_ID);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.subscriptionKind).toBe('dynamic');
+    expect(trieOf(runtime).lookupSubscriptionTargets('github/static/x')).toHaveLength(0);
+    expect(trieOf(runtime).lookupSubscriptionTargets('github/dynamic/x')).toHaveLength(1);
+  });
+
   // -------------------------------------------------------------------------
   // Rebuild-from-table (the restart-survival fix)
   // -------------------------------------------------------------------------
@@ -377,6 +407,47 @@ describe('SpaceRuntime workflow subscription persistence', () => {
 
     const runtime2 = makeRuntime();
     await runtime2.rehydrateExecutors();
+    await runtime2.rehydrateExecutors();
+
+    expect(trieOf(runtime2).lookupSubscriptionTargets(topic)).toHaveLength(1);
+    expect(subscriptionRepo.listBySpace(SPACE_ID)).toHaveLength(1);
+  });
+
+  test('rehydrate purges a row whose task is terminal at restart (crash window)', async () => {
+    // If the daemon died between committing a task's `done` status and the
+    // task-lifecycle subscriber clearing the subscription row, the row survives.
+    // The rebuild reconciles against the current task status and purges it so it
+    // is not restored as a terminally-failing target. (Cancelled-task rows are
+    // NOT purged — the lifecycle preserves them for retry.)
+    const topic = 'github/owner/repo/pull_request/42.*';
+    const { runId, taskId } = createRun();
+
+    const runtime1 = makeRuntime();
+    runtime1.registerSubscription(runId, taskId, 'code', 'coder', topic);
+    expect(subscriptionRepo.listBySpace(SPACE_ID)).toHaveLength(1);
+
+    // Task went terminal but the lifecycle subscriber never ran (crash window).
+    taskRepo.updateTask(taskId, { status: 'done', completedAt: Date.now() });
+
+    const runtime2 = makeRuntime();
+    await runtime2.rehydrateExecutors();
+
+    expect(trieOf(runtime2).lookupSubscriptionTargets(topic)).toHaveLength(0);
+    expect(subscriptionRepo.listBySpace(SPACE_ID)).toHaveLength(0);
+  });
+
+  test('rehydrate keeps a row whose task is cancelled (retry semantics)', async () => {
+    const topic = 'github/owner/repo/pull_request/42.*';
+    const { runId, taskId } = createRun();
+
+    const runtime1 = makeRuntime();
+    runtime1.registerSubscription(runId, taskId, 'code', 'coder', topic);
+
+    // Cancelled tasks preserve dynamic interests for a potential retry
+    // (clearTaskInterestsPreservingDynamic), so the row survives rehydrate.
+    taskRepo.updateTask(taskId, { status: 'cancelled' });
+
+    const runtime2 = makeRuntime();
     await runtime2.rehydrateExecutors();
 
     expect(trieOf(runtime2).lookupSubscriptionTargets(topic)).toHaveLength(1);

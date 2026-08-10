@@ -111,15 +111,6 @@ describe('SpaceWorkflowEventSubscriptionRepository', () => {
     expect(remaining[0]!.nodeId).toBe('other-node');
   });
 
-  test('deleteStaticByRun removes only static interests for the run', () => {
-    upsert(repo, { topic: 'github/a', subscriptionKind: 'static' });
-    upsert(repo, { topic: 'github/b', subscriptionKind: 'dynamic' });
-    repo.deleteStaticByRun(RUN_ID);
-    const remaining = repo.listBySpace(SPACE_ID);
-    expect(remaining).toHaveLength(1);
-    expect(remaining[0]!.subscriptionKind).toBe('dynamic');
-  });
-
   test('deleteByRun removes every subscription for the run', () => {
     upsert(repo, { topic: 'github/a' });
     upsert(repo, { workflowRunId: 'run-2', topic: 'github/b' });
@@ -129,15 +120,6 @@ describe('SpaceWorkflowEventSubscriptionRepository', () => {
     expect(bySpace.filter((r) => r.workflowRunId === 'run-2')).toHaveLength(1);
   });
 
-  test('deleteByRunPreservingDynamic keeps dynamic rows for the run', () => {
-    upsert(repo, { topic: 'github/a', subscriptionKind: 'static' });
-    upsert(repo, { topic: 'github/b', subscriptionKind: 'dynamic' });
-    repo.deleteByRunPreservingDynamic(RUN_ID);
-    const remaining = repo.listBySpace(SPACE_ID);
-    expect(remaining).toHaveLength(1);
-    expect(remaining[0]!.subscriptionKind).toBe('dynamic');
-  });
-
   test('deleteByTask removes every subscription for the task', () => {
     upsert(repo, { taskId: 'task-1', topic: 'github/a' });
     upsert(repo, { taskId: 'task-2', topic: 'github/b' });
@@ -145,14 +127,5 @@ describe('SpaceWorkflowEventSubscriptionRepository', () => {
     const remaining = repo.listBySpace(SPACE_ID);
     expect(remaining).toHaveLength(1);
     expect(remaining[0]!.taskId).toBe('task-2');
-  });
-
-  test('deleteByTaskPreservingDynamic keeps dynamic rows for the task', () => {
-    upsert(repo, { taskId: 'task-1', topic: 'github/a', subscriptionKind: 'static' });
-    upsert(repo, { taskId: 'task-1', topic: 'github/b', subscriptionKind: 'dynamic' });
-    repo.deleteByTaskPreservingDynamic('task-1');
-    const remaining = repo.listBySpace(SPACE_ID);
-    expect(remaining).toHaveLength(1);
-    expect(remaining[0]!.subscriptionKind).toBe('dynamic');
   });
 });

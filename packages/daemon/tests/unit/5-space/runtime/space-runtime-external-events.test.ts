@@ -4046,7 +4046,10 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     const rehydratedDelivery = eventStore.listDeliveries(event.id)[0]!;
     expect(rehydratedDelivery.state).toBe('failed');
-    expect(rehydratedDelivery.failureReason).toBe('target_task_terminal');
+    // The done task's subscription row is reconciled (purged) during rehydrate,
+    // so the requeued pending delivery finds no subscriber and terminalizes
+    // with subscription_no_longer_active rather than hanging.
+    expect(rehydratedDelivery.failureReason).toBe('subscription_no_longer_active');
     expect(eventStore.listPendingDeliveries()).not.toContainEqual(rehydratedDelivery);
     expect(eventStore.getById(event.id)?.state).toBe('failed');
   });

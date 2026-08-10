@@ -935,12 +935,13 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   // Migration 185: Persist workflow-run event subscriptions (PR 5 of the
   //   external-event subscription refactor). Creates
-  //   `space_workflow_event_subscriptions` as the single durable source of
-  //   truth for runtime subscriptions (static template interests + dynamic
-  //   agent-registered interests), so the in-memory TopicTrie can be rebuilt
-  //   purely from this table on rehydrate instead of dropping ad-hoc dynamic
-  //   subscriptions on daemon restart. Idempotent; new databases get the same
-  //   table from createTables().
+  //   `space_workflow_event_subscriptions` as the durable source of truth for
+  //   agent-registered `dynamic` subscriptions (static template interests are
+  //   re-materialized from the workflow definition, so they are not persisted),
+  //   so the in-memory TopicTrie's dynamic entries can be rebuilt from this
+  //   table on rehydrate instead of dropping ad-hoc dynamic subscriptions on
+  //   daemon restart. Idempotent; new databases get the same table from
+  //   createTables().
   run(migrationMarkerKey(185), () => runMigration185(db));
 }
 

@@ -123,16 +123,6 @@ export class SpaceWorkflowEventSubscriptionRepository {
       .run(workflowRunId, taskId, nodeId, agentName);
   }
 
-  /** Remove all `static` interests for a run (template re-materialization). */
-  deleteStaticByRun(workflowRunId: string): void {
-    this.db
-      .prepare(
-        `DELETE FROM space_workflow_event_subscriptions
-		 WHERE workflow_run_id = ? AND subscription_kind = 'static'`
-      )
-      .run(workflowRunId);
-  }
-
   /** Remove every subscription for a run (full teardown). */
   deleteByRun(workflowRunId: string): void {
     this.db
@@ -140,33 +130,9 @@ export class SpaceWorkflowEventSubscriptionRepository {
       .run(workflowRunId);
   }
 
-  /**
-   * Remove every subscription for a run except agent-registered `dynamic`
-   * ones, so a reused worker session keeps its `subscribe_external_event`
-   * topics across a retryable cancellation.
-   */
-  deleteByRunPreservingDynamic(workflowRunId: string): void {
-    this.db
-      .prepare(
-        `DELETE FROM space_workflow_event_subscriptions
-		 WHERE workflow_run_id = ? AND subscription_kind != 'dynamic'`
-      )
-      .run(workflowRunId);
-  }
-
   /** Remove every subscription for a task (noncanonical duplicate cleanup). */
   deleteByTask(taskId: string): void {
     this.db.prepare(`DELETE FROM space_workflow_event_subscriptions WHERE task_id = ?`).run(taskId);
-  }
-
-  /** Task-scoped removal preserving agent-registered dynamic subscriptions. */
-  deleteByTaskPreservingDynamic(taskId: string): void {
-    this.db
-      .prepare(
-        `DELETE FROM space_workflow_event_subscriptions
-		 WHERE task_id = ? AND subscription_kind != 'dynamic'`
-      )
-      .run(taskId);
   }
 
   /** All subscriptions for a space — drives the per-space trie rebuild. */
