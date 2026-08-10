@@ -455,8 +455,17 @@ export class AskUserQuestionHandler {
     // perspective. Going to idle (rather than processing) lets the SDK
     // query restart cleanly via ensureQueryStarted(). Suppress the delivery-
     // waiter drain: this idle is a retry mid-point (the query restarts below to
-    // inject the tool result), not a terminal turn-end.
-    await stateManager.setIdle({ suppressDeliveryWaiters: true });
+    // inject the tool result), not a terminal turn-end. If the suppressed idle
+    // rejects (e.g. a session.updated subscriber fails during publish), release
+    // the waiter before propagating — this sits outside the reinjection try
+    // below, so without the release the durable turn would hang `processing`.
+    // (Codex P1.)
+    try {
+      await stateManager.setIdle({ suppressDeliveryWaiters: true });
+    } catch (idleError) {
+      stateManager.releaseIdleWaiters();
+      throw idleError;
+    }
 
     // Build the tool_result content text. For `allow`, serialize the answers
     // as JSON so the agent can parse them. For `deny`, use the cancellation

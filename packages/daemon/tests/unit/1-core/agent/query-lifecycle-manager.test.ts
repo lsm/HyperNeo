@@ -572,6 +572,26 @@ describe('QueryLifecycleManager', () => {
       expect(releaseIdleWaitersSpy).toHaveBeenCalledTimes(1);
     });
 
+    test('does NOT release waiters when restart fails before the old query is stopped (Codex P1)', async () => {
+      // A failure before stop() — here a session.errorClear subscriber rejecting
+      // — leaves the original SDK query still running. Releasing the waiter would
+      // complete the delivery job and free the active-turn slot mid-turn. Only
+      // release once the suppressed idle is reached (stop succeeded).
+      const failingContext = createMockContext({
+        internalEventBus: {
+          publish: mock(async () => {
+            throw new Error('errorClear subscriber rejected');
+          }),
+          publishAsync: mock(async () => {}),
+          subscribe: mock(() => () => {}),
+        } as unknown as QueryLifecycleManagerContext['internalEventBus'],
+      });
+      const failingManager = new QueryLifecycleManager(failingContext);
+
+      await expect(failingManager.restart()).rejects.toThrow('Query restart failed');
+      expect(releaseIdleWaitersSpy).not.toHaveBeenCalled();
+    });
+
     test('throws on stop failure with meaningful message', async () => {
       const failingContext = createMockContext({
         queryObject: {
@@ -757,6 +777,26 @@ describe('QueryLifecycleManager', () => {
       manager = new QueryLifecycleManager(mockContext);
       await manager.reset({ restartAfter: true });
       expect(setIdleSpy).toHaveBeenCalledWith({ suppressDeliveryWaiters: true });
+    });
+
+    test('a restartAfter reset that fails replacement startup releases the waiter (Codex P1)', async () => {
+      // The suppressed idle (restartAfter) deferred the drain to the restart;
+      // if cache-clear / resume-choice / startStreamingQuery then throws, the
+      // catch must release the waiter or the durable turn hangs `processing`.
+      const failingContext = createMockContext({
+        queryObject: {
+          interrupt: mock(async () => {}),
+        } as unknown as QueryLifecycleManagerContext['queryObject'],
+        queryPromise: Promise.resolve(),
+        startStreamingQuery: async () => {
+          throw new Error('Start failed');
+        },
+      });
+      const failingManager = new QueryLifecycleManager(failingContext);
+
+      const result = await failingManager.reset({ restartAfter: true });
+      expect(result.success).toBe(false);
+      expect(releaseIdleWaitersSpy).toHaveBeenCalledTimes(1);
     });
 
     test('returns error on failure', async () => {
