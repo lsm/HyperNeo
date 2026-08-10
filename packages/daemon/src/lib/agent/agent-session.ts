@@ -1942,7 +1942,7 @@ export class AgentSession
       // confirm the source record only after genuine consumption, not bare
       // enqueue (which can still dead-letter). No-op when no waiter is armed.
       // (Codex P1.)
-      signalDeliveryConsumed(messageUuid);
+      signalDeliveryConsumed(this.session.id, messageUuid);
       await Promise.race([started.turnEnd.promise, started.queryPromise.catch(() => {})]);
     } finally {
       // Cancel the waiter if it didn't win the race (e.g. queryPromise resolved
@@ -2003,7 +2003,7 @@ export class AgentSession
     await action.acknowledgment;
     // The steer was consumed by the live turn (onSent) — signal long-horizon
     // delivery waiters awaiting consumption. No-op when none are armed. (Codex P1.)
-    signalDeliveryConsumed(messageUuid);
+    signalDeliveryConsumed(this.session.id, messageUuid);
     return { outcome: 'consumed' };
   }
 

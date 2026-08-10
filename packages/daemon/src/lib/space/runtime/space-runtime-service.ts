@@ -642,6 +642,7 @@ export class SpaceRuntimeService {
       // id, so its retry reopens + self-heals; terminalizing would kill a legit
       // in-flight job). (Codex P1.)
       await awaitDeliveryConsumption({
+        sessionId,
         messageUuid: id,
         deliver: () =>
           deliverAndMarkQueued({

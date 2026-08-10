@@ -805,42 +805,42 @@ describe('processor — exempt pass + onDead (#2587/#2595)', () => {
 describe('delivery consumption signal (long-horizon delivered = consumed)', () => {
   it('waitForDeliveryConsumption resolves when signalDeliveryConsumed fires for the UUID', async () => {
     let resolved = false;
-    const handle = waitForDeliveryConsumption('consume-1');
+    const handle = waitForDeliveryConsumption('sess', 'consume-1');
     void handle.promise.then(() => {
       resolved = true;
     });
     expect(resolved).toBe(false);
-    signalDeliveryConsumed('consume-1');
+    signalDeliveryConsumed('sess', 'consume-1');
     await Promise.resolve(); // flush the resolution microtask
     expect(resolved).toBe(true);
   });
 
   it('cancel() removes the waiter so a later signal does not resolve it', async () => {
     let resolved = false;
-    const handle = waitForDeliveryConsumption('consume-2');
+    const handle = waitForDeliveryConsumption('sess', 'consume-2');
     void handle.promise.then(() => {
       resolved = true;
     });
     handle.cancel();
-    signalDeliveryConsumed('consume-2'); // no waiter left — must not resolve
+    signalDeliveryConsumed('sess', 'consume-2'); // no waiter left — must not resolve
     await Promise.resolve();
     expect(resolved).toBe(false);
   });
 
   it('signalDeliveryConsumed is a no-op when no waiter is armed (e.g. consumption before any caller registers)', () => {
-    expect(() => signalDeliveryConsumed('consume-orphan')).not.toThrow();
+    expect(() => signalDeliveryConsumed('sess', 'consume-orphan')).not.toThrow();
   });
 
   it('multiple waiters for the same UUID all resolve on one signal', async () => {
     let a = false;
     let b = false;
-    void waitForDeliveryConsumption('consume-3').promise.then(() => {
+    void waitForDeliveryConsumption('sess', 'consume-3').promise.then(() => {
       a = true;
     });
-    void waitForDeliveryConsumption('consume-3').promise.then(() => {
+    void waitForDeliveryConsumption('sess', 'consume-3').promise.then(() => {
       b = true;
     });
-    signalDeliveryConsumed('consume-3');
+    signalDeliveryConsumed('sess', 'consume-3');
     await Promise.resolve();
     expect(a).toBe(true);
     expect(b).toBe(true);
@@ -891,6 +891,7 @@ describe('awaitDeliveryConsumption — terminalize a fresh job on timeout (no-st
     const terminalize = mock(() => {});
     await expect(
       awaitDeliveryConsumption({
+        sessionId: 'sess',
         messageUuid: 'fresh-timeout',
         deliver,
         terminalizeOnTimeout: terminalize,
@@ -902,10 +903,11 @@ describe('awaitDeliveryConsumption — terminalize a fresh job on timeout (no-st
 
   it('does NOT call terminalizeOnTimeout when consumption is signalled in time', async () => {
     const deliver = mock(async () => {
-      signalDeliveryConsumed('fresh-consumed');
+      signalDeliveryConsumed('sess', 'fresh-consumed');
     });
     const terminalize = mock(() => {});
     await awaitDeliveryConsumption({
+      sessionId: 'sess',
       messageUuid: 'fresh-consumed',
       deliver,
       terminalizeOnTimeout: terminalize,

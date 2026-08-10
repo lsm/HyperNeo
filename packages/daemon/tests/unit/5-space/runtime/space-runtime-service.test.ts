@@ -609,9 +609,9 @@ describe('SpaceRuntimeService', () => {
             // delivery is acknowledged. (Production signals from the bridge on
             // the SDK's onSent; these tests don't drive a real turn.) The
             // dedicated timeout test uses a repo that does NOT signal.
-            enqueue: (args: { payload?: { messageUuid?: string } }) => {
+            enqueue: (args: { payload?: { sessionId?: string; messageUuid?: string } }) => {
               const uuid = args?.payload?.messageUuid;
-              if (uuid) signalDeliveryConsumed(uuid);
+              if (uuid) signalDeliveryConsumed(args!.payload!.sessionId!, uuid);
               return { id: 'job-1' };
             },
           }),
@@ -1462,9 +1462,9 @@ describe('SpaceRuntimeService', () => {
       const saveUserMessage = mock(() => 'db-msg');
       // Signal consumption at enqueue so the consumption-await resolves (test
       // simplification — see buildDurableDeliveryReactiveDb).
-      const enqueue = mock((args: { payload?: { messageUuid?: string } }) => {
+      const enqueue = mock((args: { payload?: { sessionId?: string; messageUuid?: string } }) => {
         const uuid = args?.payload?.messageUuid;
-        if (uuid) signalDeliveryConsumed(uuid);
+        if (uuid) signalDeliveryConsumed(args!.payload!.sessionId!, uuid);
         return { id: 'job-1' };
       });
       const reopenDeliveryByUuid = mock(() => 'db-id');

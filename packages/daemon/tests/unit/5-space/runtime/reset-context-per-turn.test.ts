@@ -55,11 +55,13 @@ function makeManager(opts: {
   // Test simplification: signal SDK consumption at enqueue time so the v2
   // consumption-await in injectMessageIntoSession resolves (production signals
   // from the bridge on the SDK's onSent; these tests don't drive a real turn).
-  const jobQueueEnqueue = mock((args: { payload?: { messageUuid?: string } }) => {
-    const uuid = args?.payload?.messageUuid;
-    if (uuid) signalDeliveryConsumed(uuid);
-    return { id: 'job-1' };
-  });
+  const jobQueueEnqueue = mock(
+    (args: { payload?: { sessionId?: string; messageUuid?: string } }) => {
+      const uuid = args?.payload?.messageUuid;
+      if (uuid) signalDeliveryConsumed(args!.payload!.sessionId!, uuid);
+      return { id: 'job-1' };
+    }
+  );
   const reopenDeliveryByUuid = mock(() => null);
   const markDeliveryDeferredByUuid = mock(() => null);
 

@@ -913,6 +913,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       // stops it being consumed alongside the retry (duplicate). The flush path
       // carries a stable id (existing row), so it omits the terminalize. (Codex P1.)
       await awaitDeliveryConsumption({
+        sessionId,
         messageUuid: messageId,
         deliver: () =>
           deliverAndMarkQueued({

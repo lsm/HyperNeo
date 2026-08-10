@@ -4730,6 +4730,7 @@ export class TaskAgentManager {
       // flush path carries a stable id (existing row), so it omits the
       // terminalize and self-heals via retry. (Codex P1.)
       await awaitDeliveryConsumption({
+        sessionId,
         messageUuid: messageId,
         deliver: () =>
           deliverAndMarkQueued({

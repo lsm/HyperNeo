@@ -275,57 +275,66 @@ export interface MessageDeliverySession {
 }
 
 /**
- * Per-messageUuid consumption waiters. The long-horizon injector awaits its
- * durable job's SDK consumption (onSent) before confirming the source record —
- * restoring the legacy "delivered = consumed" semantic that the v2 fire-and-
- * forget enqueue regressed. The bridge signals here from
+ * Per-(session, messageUuid) consumption waiters. The long-horizon injector
+ * awaits its durable job's SDK consumption (onSent) before confirming the
+ * source record — restoring the legacy "delivered = consumed" semantic that the
+ * v2 fire-and-forget enqueue regressed. The bridge signals here from
  * {@link MessageDeliverySession.driveDeliveryTurn}/{@link feedDeliverySteer}
- * when the SDK admits the message. (Codex P1.)
+ * when the SDK admits the message. Keyed by BOTH session + UUID so a multi-
+ * target delivery (the same MessageRecord/id to several agents) can't let one
+ * session's consumption signal resolve another session's waiter. (Codex P1.)
  */
 const deliveryConsumptionWaiters = new Map<string, Set<() => void>>();
 
+const consumptionKey = (sessionId: string, messageUuid: string) => `${sessionId}\0${messageUuid}`;
+
 /**
  * Register a wait for the durable job's SDK consumption. The `promise` resolves
- * when {@link signalDeliveryConsumed} fires for this UUID (or never, if the job
- * never reaches the SDK — bound the wait with a timeout and call `cancel()` to
- * avoid leaking the entry).
+ * when {@link signalDeliveryConsumed} fires for this session + UUID (or never,
+ * if the job never reaches the SDK — bound the wait with a timeout and call
+ * `cancel()` to avoid leaking the entry).
  */
-export function waitForDeliveryConsumption(messageUuid: string): {
+export function waitForDeliveryConsumption(
+  sessionId: string,
+  messageUuid: string
+): {
   promise: Promise<void>;
   cancel: () => void;
 } {
+  const key = consumptionKey(sessionId, messageUuid);
   let resolve!: () => void;
   const promise = new Promise<void>((r) => {
     resolve = r;
   });
-  let waiters = deliveryConsumptionWaiters.get(messageUuid);
+  let waiters = deliveryConsumptionWaiters.get(key);
   if (!waiters) {
     waiters = new Set();
-    deliveryConsumptionWaiters.set(messageUuid, waiters);
+    deliveryConsumptionWaiters.set(key, waiters);
   }
   waiters.add(resolve);
   return {
     promise,
     cancel: () => {
-      const set = deliveryConsumptionWaiters.get(messageUuid);
+      const set = deliveryConsumptionWaiters.get(key);
       if (set) {
         set.delete(resolve);
-        if (set.size === 0) deliveryConsumptionWaiters.delete(messageUuid);
+        if (set.size === 0) deliveryConsumptionWaiters.delete(key);
       }
     },
   };
 }
 
 /**
- * Signal that the durable job for `messageUuid` was consumed by the SDK (onSent).
- * Resolves all waiters and clears the entry. No-op if none are waiting
- * (e.g. consumption before any caller registered, or a delivery with no
- * long-horizon source awaiting).
+ * Signal that the durable job for `messageUuid` was consumed by the SDK (onSent)
+ * in `sessionId`. Resolves all waiters for that (session, UUID) and clears the
+ * entry. No-op if none are waiting (e.g. consumption before any caller
+ * registered, or a delivery with no long-horizon source awaiting). Session-
+ * scoped so a multi-target delivery can't cross-resolve. (Codex P1.)
  */
-export function signalDeliveryConsumed(messageUuid: string): void {
-  const waiters = deliveryConsumptionWaiters.get(messageUuid);
+export function signalDeliveryConsumed(sessionId: string, messageUuid: string): void {
+  const waiters = deliveryConsumptionWaiters.get(consumptionKey(sessionId, messageUuid));
   if (!waiters) return;
-  deliveryConsumptionWaiters.delete(messageUuid);
+  deliveryConsumptionWaiters.delete(consumptionKey(sessionId, messageUuid));
   for (const resolve of waiters) resolve();
 }
 
@@ -345,11 +354,12 @@ export function signalDeliveryConsumed(messageUuid: string): void {
  * so the job can self-heal via a retry that re-registers the wait. (Codex P1.)
  */
 export async function awaitDeliveryConsumption(args: {
+  sessionId: string;
   messageUuid: string;
   deliver: () => Promise<void>;
   terminalizeOnTimeout?: () => void;
 }): Promise<void> {
-  const consumed = waitForDeliveryConsumption(args.messageUuid);
+  const consumed = waitForDeliveryConsumption(args.sessionId, args.messageUuid);
   let consumptionTimeout: ReturnType<typeof setTimeout> | undefined;
   try {
     await args.deliver();
