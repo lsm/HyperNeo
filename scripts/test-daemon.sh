@@ -9,6 +9,7 @@
 #   ./scripts/test-daemon.sh 5-space-runtime-a # Run a single shard
 #   ./scripts/test-daemon.sh --rerun        # Rerun only previously failing files
 #   ./scripts/test-daemon.sh --show-failures # Show failure details from last run
+#   ./scripts/test-daemon.sh --verify       # Validate shard config without running tests
 
 set -uo pipefail
 
@@ -33,6 +34,234 @@ FAILURES_FILE="$RESULTS_DIR/failures.txt"
 PRELOAD="$REPO_ROOT/packages/daemon/tests/unit/setup.ts"
 TEST_ROOT="$REPO_ROOT/packages/daemon/tests/unit"
 
+# Reusable directory sharding by stable hash (no hand-listed file lists).
+# shellcheck disable=SC1091 # path is dynamic via $REPO_ROOT
+source "$REPO_ROOT/scripts/lib/shard-split.sh"
+
+# ── Hash-split shard configuration ──────────────────────────────────────────
+# Oversized directories are split into N buckets by stableHash(repo-root-relative
+# path) % N (see scripts/lib/shard-split.sh), so a new test file auto-routes to a
+# bucket with NO manual file list. The file LIST is the only thing eliminated —
+# rebalancing is editing one number (the split count) plus adding/removing the
+# matching -a/-b/… shard entry, never editing individual files (see below).
+#
+# One line per split. Format:  <prefix>|<split_count>|<globs>
+#   <prefix>       public shard-name prefix; buckets are <prefix>-a, -b, -c, …
+#                  with the suffix letter mapping to a 0-based bucket index
+#                  (a→0, b→1, … up to z→25).
+#   <split_count>  N — the number to edit when rebalancing.
+#   <globs>        ';'-separated bash globs (relative to $TEST_ROOT) whose union
+#                  is the directory's complete test set. Daemon vitest also runs
+#                  `*_test.ts`, so list that glob too wherever such files exist
+#                  (--verify's find cross-check covers both suffixes and will
+#                  flag a missing one).
+#
+# Changing N also means adding/removing the matching -a/-b/… entry in the SHARDS
+# list below and in the CI matrix at .github/workflows/main.yml — but a FILE LIST
+# is never edited by hand. Validate any change with: ./scripts/test-daemon.sh --verify
+HASH_SPLIT_SPECS=(
+	"5-space-runtime|2|5-space/runtime/*.test.ts;5-space/runtime/connectors/*.test.ts"
+)
+
+# Map a hash-split shard's suffix letter to a 0-based bucket index (a→0 … z→25).
+shard_suffix_to_index() {
+	local s="$1"
+	[ "${#s}" -eq 1 ] || return 1
+	case "$s" in [a-z]) ;; *) return 1 ;; esac
+	echo $(( $(printf '%d' "'$s") - 97 ))
+}
+
+# Inverse of shard_suffix_to_index: 0→a, 1→b, … (valid for 0..25). Used by
+# --verify to derive the expected shard name for a bucket index.
+shard_index_to_suffix() {
+	local i="$1"
+	local letters="abcdefghijklmnopqrstuvwxyz"
+	[[ "$i" =~ ^[0-9]+$ ]] && [ "$i" -ge 0 ] && [ "$i" -le 25 ] || return 1
+	printf '%s' "${letters:i:1}"
+}
+
+# Resolve a hash-split shard name (e.g. 5-space-runtime-a) to its bucket's files.
+# Prints absolute test paths and returns 0 on a match, 1 if $1 is not a hash split.
+hash_split_resolve() {
+	local shard="$1"
+	local spec prefix count globs suffix bucket
+	for spec in "${HASH_SPLIT_SPECS[@]}"; do
+		IFS='|' read -r prefix count globs <<<"$spec"
+		case "$shard" in
+			"$prefix"-*)
+				suffix="${shard#"$prefix"-}"
+				bucket=$(shard_suffix_to_index "$suffix") || return 1
+				local abs=() g
+				local IFS=';'
+				for g in $globs; do abs+=("$TEST_ROOT/$g"); done
+				shard_split_bucket "$REPO_ROOT" "$count" "$bucket" "${abs[@]}"
+				return $?
+				;;
+		esac
+	done
+	return 1
+}
+
+# Validate the shard configuration without running any tests:
+#   - every shard in SHARDS resolves to at least one existing file;
+#   - each hash-split's split_count is consistent with SHARDS (every bucket
+#     -a/-b/… has a SHARDS entry, and none is stale) — catches a rebalance that
+#     bumps N without wiring in the new bucket, which would silently drop a
+#     whole bucket from CI;
+#   - each hash-split's globs capture its directory tree exactly. The cross-check
+#     uses an independent `find` over BOTH daemon test suffixes (*.test.ts and
+#     *_test.ts, matching vitest.config) so its net is strictly wider than the
+#     spec globs — a file the globs miss (new suffix, new subdir) shows up as
+#     find_count != total and fails --verify;
+#   - buckets partition that set with no overlap;
+#   - per-bucket balance is reported, and an empty bucket is warned about.
+# Exits non-zero on any error. Used by CI (see .github/workflows/main.yml).
+verify_shards() {
+	local errors=0
+	local warnings=0
+	local shard paths p
+
+	echo "Verifying daemon shard configuration..."
+
+	# 1. Every declared shard resolves to at least one existing path.
+	for shard in "${SHARDS[@]}"; do
+		paths=($(shard_paths "$shard"))
+		if [ "${#paths[@]}" -eq 0 ]; then
+			echo "  ERROR: shard '$shard' resolved to 0 files" >&2
+			errors=$((errors + 1))
+			continue
+		fi
+		for p in "${paths[@]}"; do
+			if [ ! -e "$p" ]; then
+				echo "  ERROR: shard '$shard' references missing path: $p" >&2
+				errors=$((errors + 1))
+			fi
+		done
+	done
+
+	# 2. Each hash-split is internally consistent and covers its directory tree.
+	local spec prefix count globs
+	for spec in "${HASH_SPLIT_SPECS[@]}"; do
+		IFS='|' read -r prefix count globs <<<"$spec"
+
+		# 2a. split_count ↔ SHARDS + CI-matrix consistency. Derive the expected
+		# bucket shard names (prefix-a … prefix-<letter(count-1)>) and require
+		# each to be in SHARDS AND in the CI matrix workflow file, with no stray
+		# prefix-* entries in SHARDS. Otherwise bumping N silently drops a bucket
+		# from CI (the union check below is an identity and won't catch it).
+		local bi=0 expected=() suffix ename found
+		while [ "$bi" -lt "$count" ]; do
+			if suffix=$(shard_index_to_suffix "$bi"); then
+				expected+=("$prefix-$suffix")
+			else
+				echo "  ERROR: '$prefix' split_count=$count exceeds the a-z bucket range" >&2
+				errors=$((errors + 1))
+				break
+			fi
+			bi=$((bi + 1))
+		done
+		local workflow="$REPO_ROOT/.github/workflows/main.yml"
+		# Parse the active shard matrix once: extract the `shard: [...]` flow
+		# sequence and normalize to one token per line. Membership is checked
+		# against THIS parsed list (grep -qxF per token), never by grepping the
+		# whole file — a commented-out matrix entry (`# 5-space-runtime-b`) must
+		# not satisfy the check, or CI silently drops the bucket.
+		local matrix_tokens=""
+		if [ -f "$workflow" ]; then
+			matrix_tokens=$(grep -E '^[[:space:]]*shard:[[:space:]]*\[' "$workflow" \
+				| head -n1 \
+				| sed -E 's/^[^[]*\[//; s/\].*$//' \
+				| tr ',' '\n' \
+				| sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
+		fi
+		if [ -z "$matrix_tokens" ]; then
+			echo "  ERROR: could not parse a 'shard: [...]' matrix in $workflow -- --verify can't confirm CI wiring" >&2
+			errors=$((errors + 1))
+		fi
+		if [ "${#expected[@]}" -gt 0 ]; then
+			for ename in "${expected[@]}"; do
+				if ! printf '%s\n' "${SHARDS[@]}" | grep -qxF "$ename"; then
+					echo "  ERROR: '$ename' is missing from SHARDS (split_count=$count for '$prefix'). Add it + the CI matrix entry, or lower split_count." >&2
+					errors=$((errors + 1))
+				fi
+				if [ -n "$matrix_tokens" ] && ! printf '%s\n' "$matrix_tokens" | grep -qxF "$ename"; then
+					echo "  ERROR: '$ename' is in SHARDS but missing from the active shard matrix in .github/workflows/main.yml" >&2
+					errors=$((errors + 1))
+				fi
+			done
+			for shard in "${SHARDS[@]}"; do
+				case "$shard" in
+					"$prefix"-*)
+						found=0
+						for ename in "${expected[@]}"; do [ "$ename" = "$shard" ] && found=1 && break; done
+						if [ "$found" -eq 0 ]; then
+							echo "  ERROR: SHARDS has '$shard' but split_count=$count for '$prefix'. Remove it or raise split_count." >&2
+							errors=$((errors + 1))
+						fi
+						;;
+				esac
+			done
+		fi
+
+		# 2b. Globs capture the directory tree. Expand globs and the directories
+		# they scope; the find cross-check enumerates BOTH daemon test suffixes so
+		# its net is wider than the spec globs.
+		local abs=() g dirs=()
+		local IFS=';'
+		for g in $globs; do
+			abs+=("$TEST_ROOT/$g")
+			dirs+=("$TEST_ROOT/$(dirname "$g")")
+		done
+
+		local total find_count
+		total=$(shard_split_count "$REPO_ROOT" "${abs[@]}")
+		# Independent enumeration over both *.test.ts and *_test.ts (vitest runs
+		# both); -type f excludes the directories themselves. A glob that misses
+		# a new file/suffix/subdir surfaces as find_count != total.
+		find_count=$(find "${dirs[@]}" -type f \( -name '*.test.ts' -o -name '*_test.ts' \) | sort -u | wc -l | tr -d ' ')
+		if [ "$find_count" -ne "$total" ]; then
+			echo "  ERROR: '$prefix' globs match $total file(s) but find reports $find_count (both suffixes) — a glob is missing files (e.g. a *_test.ts)" >&2
+			errors=$((errors + 1))
+		fi
+
+		# 2c. Union of all buckets must equal the total (no file dropped/doubled).
+		local i=0 union=""
+		while [ "$i" -lt "$count" ]; do
+			union+=$(shard_split_bucket "$REPO_ROOT" "$count" "$i" "${abs[@]}")$'\n'
+			i=$((i + 1))
+		done
+		local union_unique
+		union_unique=$(printf '%s' "$union" | sed '/^$/d' | sort -u | wc -l | tr -d ' ')
+		if [ "$union_unique" -ne "$total" ]; then
+			echo "  ERROR: '$prefix' buckets cover $union_unique/$total files (expected exact coverage)" >&2
+			errors=$((errors + 1))
+		fi
+
+		# 2d. Report balance; warn on empty buckets (a CI shard would run nothing).
+		local rep zero z
+		rep=$(shard_split_report "$REPO_ROOT" "$count" "${abs[@]}")
+		printf '  %-18s %d-way split, %d files:\n' "$prefix" "$count" "$total"
+		printf '%s\n' "$rep" | awk -F'\t' '{printf "      bucket %s: %s file(s)\n", $1, $2}'
+		zero=$(printf '%s\n' "$rep" | awk -F'\t' '$2 == 0 {print $1}')
+		for z in $zero; do
+			echo "  WARNING: '$prefix' bucket $z resolved to 0 files — a CI shard would run nothing" >&2
+			warnings=$((warnings + 1))
+		done
+	done
+
+	if [ "$errors" -gt 0 ]; then
+		echo ""
+		echo "FAILED: $errors shard configuration error(s)." >&2
+		exit 1
+	fi
+	echo ""
+	if [ "$warnings" -gt 0 ]; then
+		echo "Shard configuration OK with $warnings warning(s)."
+	else
+		echo "Shard configuration OK."
+	fi
+}
+
 # Split storage migration tests dynamically so new files are picked up without
 # editing this script. Bash glob order is deterministic.
 migration_shard_paths() {
@@ -56,6 +285,14 @@ migration_shard_paths() {
 
 # Map shard name to one or more test paths. Shards are balanced by CI wall time.
 shard_paths() {
+	# Hash-split shards (e.g. 5-space-runtime-a/b) are resolved dynamically by
+	# stable hash — no hand-listed files. See HASH_SPLIT_SPECS above.
+	local resolved
+	if resolved=$(hash_split_resolve "$1"); then
+		printf '%s\n' "$resolved"
+		return 0
+	fi
+
 	case "$1" in
 	0-shared-handlers-workflow)
 		# Under Vitest each test file is module-isolated, so the old "shared first"
@@ -89,49 +326,8 @@ shard_paths() {
 	5-space-agent-other)
 		printf '%s\n' "$TEST_ROOT/5-space"/*.test.ts "$TEST_ROOT/5-space/agent" "$TEST_ROOT/5-space/other"
 		;;
-	5-space-runtime-a)
-		printf '%s\n' \
-			"$TEST_ROOT/5-space/runtime/prompt-too-long-recovery.test.ts" \
-			"$TEST_ROOT/5-space/runtime/prompt-too-long-replay.test.ts" \
-			"$TEST_ROOT/5-space/runtime/space-worktree-manager.test.ts" \
-			"$TEST_ROOT/5-space/runtime/space-runtime.test.ts" \
-			"$TEST_ROOT/5-space/runtime/space-runtime-tick-loop.test.ts" \
-			"$TEST_ROOT/5-space/runtime/task-dependency-enforcement.test.ts" \
-			"$TEST_ROOT/5-space/runtime/last-message-classifier.test.ts" \
-			"$TEST_ROOT/5-space/runtime/space-runtime-stalled-recovery.test.ts" \
-			"$TEST_ROOT/5-space/runtime/space-runtime-edge-cases.test.ts" \
-			"$TEST_ROOT/5-space/runtime/task-draft-status.test.ts" \
-			"$TEST_ROOT/5-space/runtime/space-agent-task-creation-flow.test.ts" \
-			"$TEST_ROOT/5-space/runtime/space-agent-autonomy.test.ts" \
-			"$TEST_ROOT/5-space/runtime/space-runtime-llm-workflow-selection.test.ts" \
-			"$TEST_ROOT/5-space/runtime/space-runtime-disabled-workflow.test.ts" \
-			"$TEST_ROOT/5-space/runtime/reply-routing-registry.test.ts" \
-			"$TEST_ROOT/5-space/runtime/space-runtime-orphan-question.test.ts"
-		;;
-	5-space-runtime-b)
-		printf '%s\n' \
-			"$TEST_ROOT/5-space/runtime/space-agent-tools.test.ts" \
-			"$TEST_ROOT/5-space/runtime/space-runtime-external-events.test.ts" \
-			"$TEST_ROOT/5-space/runtime/github-subscription-pattern.test.ts" \
-			"$TEST_ROOT/5-space/runtime/long-horizon-subscription-pattern.test.ts" \
-			"$TEST_ROOT/5-space/runtime/space-runtime-event-driven-gate-evaluation.test.ts" \
-			"$TEST_ROOT/5-space/runtime/external-event-delivery-e2e.test.ts" \
-			"$TEST_ROOT/5-space/runtime/parse-pr-url.test.ts" \
-			"$TEST_ROOT/5-space/runtime/space-workflow.test.ts" \
-			"$TEST_ROOT/5-space/runtime/space-runtime-notifications.test.ts" \
-			"$TEST_ROOT/5-space/runtime/space-runtime-completion.test.ts" \
-			"$TEST_ROOT/5-space/runtime/space-runtime-rehydration.test.ts" \
-			"$TEST_ROOT/5-space/runtime/post-approval-router.test.ts" \
-			"$TEST_ROOT/5-space/runtime/post-approval-routing-integration.test.ts" \
-			"$TEST_ROOT/5-space/runtime/space-runtime-dispatch-post-approval.test.ts" \
-			"$TEST_ROOT/5-space/runtime/space-runtime-service.test.ts" \
-			"$TEST_ROOT/5-space/runtime/task-status-transitions.test.ts" \
-			"$TEST_ROOT/5-space/runtime/space-slug.test.ts" \
-			"$TEST_ROOT/5-space/runtime/space-chat-agent.test.ts" \
-			"$TEST_ROOT/5-space/runtime/space-mcp-session-policy.test.ts" \
-			"$TEST_ROOT/5-space/runtime/topic-trie.test.ts" \
-			"$TEST_ROOT/5-space/runtime/connectors"
-		;;
+	# 5-space-runtime-a/b are resolved by hash_split_resolve above (stable hash
+	# over the full 5-space/runtime tree, so no file is ever hand-listed or dropped).
 	*)
 		return 1
 		;;
@@ -142,6 +338,7 @@ shard_paths() {
 COVERAGE=false
 RERUN=false
 SHOW_FAILURES=false
+VERIFY=false
 TARGET_SHARD=""
 
 for arg in "$@"; do
@@ -149,9 +346,18 @@ for arg in "$@"; do
 	--coverage)       COVERAGE=true ;;
 	--rerun)          RERUN=true ;;
 	--show-failures)  SHOW_FAILURES=true ;;
+	--verify)         VERIFY=true ;;
 	*)                TARGET_SHARD="$arg" ;;
 	esac
 done
+
+# --- Verify shard configuration (no tests run) ---
+# Exits after validating that every shard resolves and every hash-split covers
+# its directory. Used by CI to guard against silent file-drop regressions.
+if [ "$VERIFY" = true ]; then
+	verify_shards
+	exit $?
+fi
 
 mkdir -p "$RESULTS_DIR"
 
@@ -280,7 +486,9 @@ for shard in "${RUN_SHARDS[@]}"; do
 	rm -f "$JUNIT_FILE" "$LOG_FILE"
 	TEST_PATHS=($(shard_paths "$shard"))
 	if [ "${#TEST_PATHS[@]}" -eq 0 ]; then
-		echo "Unknown daemon test shard: $shard" >&2
+		echo "Shard '$shard' resolved to 0 test files." >&2
+		echo "  (Unknown shard name, or a hash-split bucket that is empty.)" >&2
+		echo "  Known shards: ${SHARDS[*]}" >&2
 		exit 1
 	fi
 
