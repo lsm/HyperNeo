@@ -321,13 +321,20 @@ export class SpaceWorkflowRepository {
         const version = this.definitionVersions.getVersion(run.workflowId, versionHash);
         if (version) {
           const parsed = JSON.parse(version.payload) as SpaceWorkflow;
-          // updatedAt is derived from the immutable version hash (not the row's created_at,
-          // which INSERT OR IGNORE can leave stale on a reused hash) so the gate-open cache
-          // fingerprint is identical on first activation and recovery.
+          // Preserve the pre-cutover gate-fingerprint basis: rehydrate `updatedAt` from the
+          // LIVE head's `updatedAt` (a cheap PK lookup), so a backfilled in-flight run's
+          // existing gate-open cache (fingerprinted with that same head timestamp) survives
+          // the cutover instead of being invalidated and re-evaluated. This also keeps
+          // first-activation and recovery consistent while the head is unchanged. Only when
+          // the head is gone (deleted-definition orphan) do we fall back to a version-derived
+          // value — there is no head timestamp to match.
+          const headRow = this.db
+            .prepare('SELECT updated_at FROM space_workflows WHERE id = ?')
+            .get(run.workflowId) as { updated_at: number } | undefined;
           return {
             ...parsed,
             createdAt: version.createdAt,
-            updatedAt: stableVersionTimestamp(versionHash),
+            updatedAt: headRow?.updated_at ?? stableVersionTimestamp(versionHash),
           };
         }
       } catch (err) {
