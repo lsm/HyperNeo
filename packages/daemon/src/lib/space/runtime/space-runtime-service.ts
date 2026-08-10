@@ -1050,13 +1050,14 @@ export class SpaceRuntimeService {
   }
 
   /**
-   * Re-materialize a single node's `topicFrom` event interests after that node
-   * records an artifact, so the authoring node auto-subscribes to its own PR's
-   * GitHub events without calling a subscribe tool. Thin pass-through to the
-   * runtime; wired to the node-agent-tools `save_artifact` record trigger.
+   * Re-materialize the run's `topicFrom` event interests after a primary-link-
+   * bearing state change (an artifact recorded via `save_artifact`, or a gate/hook
+   * write), so every declaring node auto-subscribes to the run's PR GitHub events
+   * without calling a subscribe tool. Thin pass-through to the runtime; wired to
+   * the node-agent-tools `save_artifact` and `onGateDataChanged` triggers.
    */
-  materializeTopicFromInterestsForNode(workflowRunId: string, nodeId: string): void {
-    this.runtime.materializeTopicFromInterestsForNode(workflowRunId, nodeId);
+  materializeRunTopicFromInterests(workflowRunId: string): void {
+    this.runtime.materializeRunTopicFromInterests(workflowRunId);
   }
 
   /**

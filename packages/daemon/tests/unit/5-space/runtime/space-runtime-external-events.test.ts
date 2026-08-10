@@ -6480,7 +6480,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     // No subscription exists until the primary link is recorded.
     recordPrLinkArtifact(run.id, 'code', PR_URL);
-    runtime.materializeTopicFromInterestsForNode(run.id, 'code');
+    runtime.materializeRunTopicFromInterests(run.id);
 
     const event = makeEvent();
     await eventService.publish(event);
@@ -6496,7 +6496,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     markCoderLive(run.id, 'session-inert');
 
     // No PR link recorded yet: materialization is a no-op.
-    runtime.materializeTopicFromInterestsForNode(run.id, 'code');
+    runtime.materializeRunTopicFromInterests(run.id);
 
     const event = makeEvent();
     await eventService.publish(event);
@@ -6514,8 +6514,8 @@ describe('SpaceRuntime external event subscriptions', () => {
     // Re-recording the same link (upsert) and re-materializing must not create
     // duplicate subscriptions.
     recordPrLinkArtifact(run.id, 'code', PR_URL);
-    runtime.materializeTopicFromInterestsForNode(run.id, 'code');
-    runtime.materializeTopicFromInterestsForNode(run.id, 'code');
+    runtime.materializeRunTopicFromInterests(run.id);
+    runtime.materializeRunTopicFromInterests(run.id);
 
     const event = makeEvent();
     await eventService.publish(event);
@@ -6554,7 +6554,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     // real owner/repo without the host allowlist (resolveTopicFromInterest's
     // trust boundary). GH_HOST is unset here, so only github.com is trusted.
     recordPrLinkArtifact(run.id, 'code', 'https://evil.example/lsm/neokai/pull/42');
-    runtime.materializeTopicFromInterestsForNode(run.id, 'code');
+    runtime.materializeRunTopicFromInterests(run.id);
 
     const event = makeEvent();
     await eventService.publish(event);
@@ -6573,7 +6573,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       markCoderLive(run.id, 'session-ghe');
 
       recordPrLinkArtifact(run.id, 'code', 'https://ghe.example/lsm/neokai/pull/42');
-      runtime.materializeTopicFromInterestsForNode(run.id, 'code');
+      runtime.materializeRunTopicFromInterests(run.id);
 
       const event = makeEvent();
       await eventService.publish(event);
@@ -6585,20 +6585,84 @@ describe('SpaceRuntime external event subscriptions', () => {
     }
   });
 
-  test('record trigger is a no-op for a node without a topicFrom interest', async () => {
+  test('record trigger is a no-op for a workflow without topicFrom interests', async () => {
     const workflow = createWorkflow();
     const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
     markCoderLive(run.id, 'session-no-topicfrom');
 
     recordPrLinkArtifact(run.id, 'code', PR_URL);
-    // A node with only a static `topic` interest (or none) must not gain a
-    // topicFrom-derived subscription, and the call must not throw.
-    expect(() => runtime.materializeTopicFromInterestsForNode(run.id, 'code')).not.toThrow();
+    // A workflow whose nodes use only static `topic` interests (or none) must
+    // not gain a topicFrom-derived subscription, and the call must not throw.
+    expect(() => runtime.materializeRunTopicFromInterests(run.id)).not.toThrow();
 
     const event = makeEvent();
     await eventService.publish(event);
 
     expect(injected).toHaveLength(0);
+  });
+
+  test('materializes every declaring node, not just the link authoring node', async () => {
+    // Node A (coder) records the PR link; node B (watcher) declares the
+    // topicFrom interest. The trigger is run-scoped, so B's interest must
+    // materialize against the link A recorded — otherwise B would stay inert
+    // until an unrelated rehydrate.
+    const workflow = workflowManager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: `Workflow ${Math.random()}`,
+      description: '',
+      nodes: [
+        {
+          id: 'code',
+          name: 'Code',
+          agents: [{ agentId: AGENT_ID, name: 'coder' }],
+        },
+        {
+          id: 'watch',
+          name: 'Watch',
+          agents: [
+            {
+              agentId: `${AGENT_ID}-watcher`,
+              name: 'watcher',
+              eventInterests: [
+                { topicFrom: { source: 'primaryLink', pattern: TOPIC_FROM_PATTERN } },
+              ],
+            },
+          ],
+        },
+      ],
+      transitions: [],
+      startNodeId: 'code',
+      rules: [],
+      tags: [],
+    });
+    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+    // The watcher node has a live session; the coder records the link. The watch
+    // node is not the start node, so create its execution and mark it live.
+    const watchExecution = nodeExecutionRepo.createOrIgnore({
+      workflowRunId: run.id,
+      workflowNodeId: 'watch',
+      agentName: 'watcher',
+      status: 'in_progress',
+      agentSessionId: 'session-watcher',
+      startedAt: Date.now(),
+    });
+    nodeExecutionRepo.update(watchExecution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-watcher',
+      startedAt: Date.now(),
+    });
+    tam.alive.add('session-watcher');
+
+    recordPrLinkArtifact(run.id, 'code', PR_URL);
+    runtime.materializeRunTopicFromInterests(run.id);
+
+    const event = makeEvent();
+    await eventService.publish(event);
+
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-watcher');
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
   });
 
   test('replays a retained event that arrived before the PR link was recorded', async () => {
@@ -6619,7 +6683,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     // fire-and-forget handler (like the dynamic-subscription gap path), so let
     // it settle before asserting.
     recordPrLinkArtifact(run.id, 'code', PR_URL);
-    runtime.materializeTopicFromInterestsForNode(run.id, 'code');
+    runtime.materializeRunTopicFromInterests(run.id);
     await new Promise((resolve) => setTimeout(resolve, 10));
 
     expect(injected).toHaveLength(1);
@@ -6687,11 +6751,11 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     // First PR link → resolves to pull_request/42.*.
     recordPrLinkArtifact(run.id, 'code', PR_URL);
-    runtime.materializeTopicFromInterestsForNode(run.id, 'code');
+    runtime.materializeRunTopicFromInterests(run.id);
 
     // The PR is replaced (closed + reopened as a new number) → pull_request/99.*.
     recordPrLinkArtifact(run.id, 'code', 'https://github.com/lsm/neokai/pull/99');
-    runtime.materializeTopicFromInterestsForNode(run.id, 'code');
+    runtime.materializeRunTopicFromInterests(run.id);
 
     const staleEvent = makeEvent();
     const freshEvent = makeEvent({
@@ -6732,7 +6796,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     // Recording the PR link must still materialize the declarative PR sub — the
     // cap exempts topicFrom-derived interests from the agent's dynamic budget.
     recordPrLinkArtifact(run.id, 'code', PR_URL);
-    expect(() => runtime.materializeTopicFromInterestsForNode(run.id, 'code')).not.toThrow();
+    expect(() => runtime.materializeRunTopicFromInterests(run.id)).not.toThrow();
 
     const event = makeEvent();
     await eventService.publish(event);
@@ -6753,7 +6817,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     // An in-flight save_artifact completes after teardown and records the link.
     recordPrLinkArtifact(run.id, 'code', PR_URL);
-    runtime.materializeTopicFromInterestsForNode(run.id, 'code');
+    runtime.materializeRunTopicFromInterests(run.id);
 
     const event = makeEvent();
     await eventService.publish(event);
@@ -6776,7 +6840,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     const gateDataRepo = new GateDataRepository(db);
     gateDataRepo.set(run.id, 'pr-gate', { prUrl: PR_URL });
-    runtime.materializeTopicFromInterestsForNode(run.id, 'code');
+    runtime.materializeRunTopicFromInterests(run.id);
 
     const event = makeEvent();
     await eventService.publish(event);

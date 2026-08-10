@@ -5518,18 +5518,15 @@ export class TaskAgentManager {
         // primary link — either directly (a `pr_url`/`prUrl` field committed to
         // gate data) or via a `pr_ready` hook that stamped hook state during the
         // send. resolvePrimaryLinkUrl treats both as sources, so re-materialize
-        // the authoring node's topicFrom interests just like save_artifact does.
-        // No-op unless this node declares a topicFrom interest; the runtime is
+        // every declaring node's topicFrom interests just like save_artifact does.
+        // No-op unless the workflow declares a topicFrom interest; the runtime is
         // best-effort, terminal-run guarded, and never throws here.
         try {
-          this.config.spaceRuntimeService.materializeTopicFromInterestsForNode(
-            runId,
-            workflowNodeId
-          );
+          this.config.spaceRuntimeService.materializeRunTopicFromInterests(runId);
         } catch (err) {
           log.warn(
             `onGateDataChanged: failed to materialize topicFrom interests for gate ` +
-              `${gateId} in run ${runId}/${workflowNodeId}: ${err instanceof Error ? err.message : String(err)}`
+              `${gateId} in run ${runId}: ${err instanceof Error ? err.message : String(err)}`
           );
         }
         return activated;
@@ -5557,19 +5554,18 @@ export class TaskAgentManager {
       artifactRepo: this.config.artifactRepo,
       artifactProfile: this.config.artifactProfile,
       // Record trigger: a node recording an artifact may have established (or
-      // updated) the run's primary link, so re-materialize its topicFrom
-      // interests. No-op unless the authoring node declares a topicFrom
-      // interest; the runtime is best-effort and never throws here.
-      onArtifactRecorded: ({ workflowRunId, nodeId }) => {
+      // updated) the run's primary link, so re-materialize every declaring node's
+      // topicFrom interests (the link's authoring node AND any other node that
+      // declared a topicFrom interest for this run's PR). No-op unless the
+      // workflow declares a topicFrom interest; the runtime is best-effort,
+      // terminal-run guarded, and never throws here.
+      onArtifactRecorded: ({ workflowRunId }) => {
         try {
-          this.config.spaceRuntimeService.materializeTopicFromInterestsForNode(
-            workflowRunId,
-            nodeId
-          );
+          this.config.spaceRuntimeService.materializeRunTopicFromInterests(workflowRunId);
         } catch (err) {
           log.warn(
             `onArtifactRecorded: failed to materialize topicFrom interests for ` +
-              `${workflowRunId}/${nodeId}: ${err instanceof Error ? err.message : String(err)}`
+              `${workflowRunId}: ${err instanceof Error ? err.message : String(err)}`
           );
         }
       },

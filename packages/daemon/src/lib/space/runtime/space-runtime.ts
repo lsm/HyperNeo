@@ -1211,42 +1211,47 @@ export class SpaceRuntime {
   }
 
   /**
-   * Re-materialize a single node's `topicFrom` event interests after that node
-   * recorded an artifact. Resolves the authoring node's topicFrom interests
-   * against the run's now-current primary link (read from the just-recorded
-   * artifact) and registers them as static subscriptions — so the authoring
-   * node auto-receives its own PR's GitHub events the moment it records the PR
-   * link, without the model calling a subscribe tool.
+   * Re-materialize the run's `topicFrom` event interests after a primary-link-
+   * bearing state change (an artifact recorded via save_artifact, or a gate/hook
+   * write). Resolves EVERY declaring node's topicFrom interests against the run's
+   * now-current primary link and registers them as static subscriptions — so each
+   * node auto-receives the run's PR GitHub events the moment the link is
+   * established, without the model calling a subscribe tool.
    *
-   * Narrower than `registerRunInterests` (which rebuilds ALL of a run's static
-   * interests): this touches only the authoring node's interests, leaving other
-   * nodes' subscriptions intact. Cheap when the node declares no topicFrom
-   * interests (returns before any DB read beyond the workflow lookup). No-op
-   * when the run/workflow/node is unknown or the node has no topicFrom interest.
+   * Run-scoped, not authoring-node-scoped: a primary link recorded by node A must
+   * also materialize node B's declared topicFrom interest (a downstream node that
+   * waits on the PR's events). Workflow interests are otherwise registered only
+   * at run setup / lifecycle rebuild, so without this a non-authoring declaring
+   * node would stay inert until an unrelated rebuild.
    *
-   * Public for the node-agent-tools record trigger (wired via
-   * SpaceRuntimeService). Generic infra: knows `primaryLink` resolution, not
-   * "PR".
+   * Cheaper than `registerRunInterests` (which rebuilds ALL static interests): a
+   * no-op unless the workflow declares at least one topicFrom interest, and it
+   * touches only topicFrom-derived entries (literal static `topic` and dynamic
+   * subs are preserved). No-op when the run/workflow is unknown, no node declares
+   * topicFrom, the primary link is unresolved, or the run/canonical task is
+   * terminal (cancel/archive/done already cleared interests — an in-flight
+   * save_artifact completing after teardown must not re-add a derived sub).
+   *
+   * Public for the node-agent-tools record triggers (save_artifact +
+   * onGateDataChanged), wired via SpaceRuntimeService. Generic infra: knows
+   * `primaryLink` resolution, not "PR".
    */
-  materializeTopicFromInterestsForNode(workflowRunId: string, nodeId: string): void {
+  materializeRunTopicFromInterests(workflowRunId: string): void {
     const run = this.config.workflowRunRepo.getRun(workflowRunId);
     if (!run) return;
-    // Skip terminal runs: cancel/archive/done already cleared the run's interests
-    // (clearRunInterests), and an in-flight save_artifact completing after teardown
-    // must not re-add a derived static sub that would fan later events out to a
-    // terminal target (failed on delivery) and persist as a leaked trie entry.
-    // Mirrors the eligibility check used during rehydrate (a blocked run is NOT
-    // terminal — it still receives events when unblocked).
+    // Skip terminal runs: cancel/done already cleared the run's interests
+    // (clearRunInterests), and an in-flight save_artifact/gate-write completing
+    // after teardown must not re-add a derived static sub that would fan later
+    // events out to a terminal target (failed on delivery) and persist as a
+    // leaked trie entry. Mirrors the eligibility check used during rehydrate (a
+    // blocked run is NOT terminal — it still receives events when unblocked).
     if (run.status === 'cancelled' || isWorkflowRunSucceeded(run.status)) return;
     const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
     if (!workflow) return;
-    const node = workflow.nodes.find((n) => n.id === nodeId);
-    if (!node) return;
-    // Cheap guard: nothing to do unless the authoring node declares at least
-    // one `topicFrom` interest. Avoids resolving the primary link on every
-    // unrelated artifact save (notes, metrics, …) by nodes that never use
-    // topicFrom.
-    if (!nodeDeclaresTopicFrom(node)) return;
+    // Cheap guard: nothing to do unless SOME node declares a topicFrom interest.
+    // Avoids resolving the primary link on every unrelated artifact save (notes,
+    // metrics, …) or gate write by workflows that never use topicFrom.
+    if (!workflow.nodes.some((node) => nodeDeclaresTopicFrom(node))) return;
     const task = this.pickCanonicalTaskForRun(
       run,
       this.config.taskRepo.listByWorkflowRun(workflowRunId)
@@ -1257,15 +1262,15 @@ export class SpaceRuntime {
     if (task.status === 'cancelled' || task.status === 'archived' || task.status === 'done') {
       return;
     }
-    this.materializeTopicFromInterestsForNodes(workflowRunId, task.id, [node]);
+    this.materializeTopicFromInterestsForNodes(workflowRunId, task.id, workflow.nodes);
     // Replay retained `published` events. Unlike template-declared static
     // interests (rebuilt during rehydrate BEFORE the runtime accepts events),
-    // a topicFrom-static sub is created MID-RUN by this record trigger — after
-    // events are already flowing. An event that landed between PR creation and
-    // this save_artifact (the PR `opened` event, a fast check_run, an early
-    // reaction) would otherwise stay `published` until TTL, even though the node
-    // declared `pull_request/{number}.*`. registerSubscription's own replay only
-    // covers `dynamic` subs, and topicFrom must stay `static` (the rehydrate path
+    // a topicFrom-static sub is created MID-RUN by this trigger — after events
+    // are already flowing. An event that landed between PR creation and the link
+    // being recorded (the PR `opened` event, a fast check_run, an early reaction)
+    // would otherwise stay `published` until TTL, even though a node declared
+    // `pull_request/{number}.*`. registerSubscription's own replay only covers
+    // `dynamic` subs, and topicFrom must stay `static` (the rehydrate path
     // registers static; mixing kinds would double-deliver), so replay explicitly
     // here. Idempotent and bounded by the published-event retention TTL.
     // Rehydrate is untouched: it rebuilds the full trie before events flow.
