@@ -231,6 +231,21 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
     )
     .sort();
 
+  // Serialize per-agent static external-event interests (e.g. the implementer
+  // slot's primaryLink PR-event interest, task #907) so a change to a slot's
+  // eventInterests is detected as drift and re-stamped into installed spaces
+  // via mergeNodeStructuralFieldsFromTemplate (which overwrites eventInterests
+  // from the template). Only emitted when at least one slot has interests —
+  // see the resetContext comment for why empty is omitted (so this upgrade does
+  // not mass-restamp built-ins whose slots carry no event interest).
+  const nodeAgentEventInterestsEntries = workflow.nodes
+    .flatMap((n) =>
+      n.agents
+        .filter((a) => Array.isArray(a.eventInterests) && a.eventInterests.length > 0)
+        .map((a) => `${n.name}|${a.name}|${JSON.stringify(a.eventInterests)}`)
+    )
+    .sort();
+
   // Serialize node-level post-approval routes (include requirePrMerge so a
   // change to the completion-safety flag is detected as drift / a customized row).
   const nodePostApproval = workflow.nodes
@@ -278,6 +293,9 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
       : {}),
     ...(nodeAgentToolGuardsEntries.length > 0
       ? { nodeAgentToolGuards: nodeAgentToolGuardsEntries }
+      : {}),
+    ...(nodeAgentEventInterestsEntries.length > 0
+      ? { nodeAgentEventInterests: nodeAgentEventInterestsEntries }
       : {}),
     completionAutonomyLevel: workflow.completionAutonomyLevel,
     nodePostApproval,

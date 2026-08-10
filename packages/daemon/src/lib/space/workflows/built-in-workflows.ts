@@ -22,6 +22,7 @@
 
 import type {
   DeclarativeToolGuard,
+  EventInterest,
   Gate,
   GateField,
   GateScript,
@@ -421,6 +422,29 @@ const REVIEW_REVIEW_NODE = 'tpl-review-review';
 // stable workflows' Coding → Review channel carries the inherited code-pr-ready
 // pr_ready hook. Restating the target/field here would create a second source of
 // truth that drifts (same issue fixed for CODER_OWNED_QA_REVIEW_PROMPT).
+/**
+ * Declarative PR-event subscription shared by the implementer slots of the
+ * default coding flows (Coding, Research, Coding with QA).
+ *
+ * `topicFrom` is resolved against the run's primary link (its PR URL) at
+ * subscription time: the `{owner}/{repo}/{number}` placeholders fill from the
+ * PR so the slot subscribes to "this run's own PR" — review comments, CI
+ * failures, reactions — without a PR number baked into the template. The coder
+ * receiving its own PR events directly is the pub/sub design intent (no smart
+ * routing, no emitter-binding); see `space-event-routing-subscribe-receive`.
+ *
+ * Structural template config: `mergeNodeStructuralFieldsFromTemplate` overwrites
+ * each implementer slot's `eventInterests` from the template (and
+ * `buildWorkflowFingerprint` includes it), so existing seeded spaces acquire
+ * this on the next restamp rather than only fresh spaces. Inert at registration
+ * until `topicFrom` resolution is wired in (PR 2); declaring it here is the
+ * data change (task #907).
+ */
+const IMPLEMENTER_PR_EVENT_INTEREST: EventInterest = {
+  topicFrom: { source: 'primaryLink', pattern: 'github/{owner}/{repo}/pull_request/{number}.*' },
+  label: 'My PR events',
+};
+
 const CODER_OWNED_MERGE_PROMPT =
   'You are the Coder. Implement the task, add focused tests, and keep one pull request updated. ' +
   'When the PR is ready for review, hand it off via the gated handoff described in Your Role in This ' +
@@ -675,6 +699,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
           agentId: 'Coder',
           name: 'coder',
           customPrompt: { value: CODER_OWNED_MERGE_PROMPT },
+          eventInterests: [IMPLEMENTER_PR_EVENT_INTEREST],
         },
       ],
       postApproval: {
@@ -792,6 +817,7 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
         {
           agentId: 'Research',
           name: 'research',
+          eventInterests: [IMPLEMENTER_PR_EVENT_INTEREST],
           customPrompt: {
             value:
               'You are the Research agent in a Research→Reviewer iterative workflow. Your job is to ' +
@@ -1232,6 +1258,7 @@ export const CODING_WITH_QA_WORKFLOW: SpaceWorkflow = {
           agentId: 'Coder',
           name: 'coder',
           customPrompt: { value: CODER_OWNED_MERGE_PROMPT },
+          eventInterests: [IMPLEMENTER_PR_EVENT_INTEREST],
         },
       ],
       postApproval: {
@@ -1559,6 +1586,7 @@ export function mergeNodeStructuralFieldsFromTemplate(
     {
       toolGuards: DeclarativeToolGuard[] | undefined;
       resetContextPerTurn: boolean | undefined;
+      eventInterests: EventInterest[] | undefined;
       customPrompt?: WorkflowNodeAgentOverride;
     }
   >();
@@ -1567,6 +1595,7 @@ export function mergeNodeStructuralFieldsFromTemplate(
       templateAgentsByKey.set(`${node.name}::${agent.name}`, {
         toolGuards: agent.toolGuards,
         resetContextPerTurn: agent.resetContextPerTurn,
+        eventInterests: agent.eventInterests,
         customPrompt: agent.customPrompt,
       });
     }
@@ -1632,12 +1661,26 @@ export function mergeNodeStructuralFieldsFromTemplate(
           (resolvedToolGuards !== undefined &&
             agent.toolGuards !== undefined &&
             JSON.stringify(resolvedToolGuards) === JSON.stringify(agent.toolGuards));
+        // Structural external-event interests: when the template defines a
+        // slot's eventInterests (e.g. the implementer's primaryLink PR-event
+        // interest), overwrite from the template so existing seeded spaces
+        // acquire it on restamp — the interest is template-owned behavior, not
+        // user config. When the template leaves the slot undefined, preserve
+        // whatever the slot carries (built-in templates manage only the
+        // implementer slots; an unmanaged slot is never cleared here).
+        const templateEventInterests = templateAgent.eventInterests;
+        const eventInterestsMatchesTemplate =
+          templateEventInterests === undefined
+            ? true
+            : agent.eventInterests !== undefined &&
+              JSON.stringify(agent.eventInterests) === JSON.stringify(templateEventInterests);
         return {
           ...agent,
           ...(toolGuardsUnchanged ? {} : { toolGuards: resolvedToolGuards }),
           ...(templateAgent.resetContextPerTurn === undefined
             ? {}
             : { resetContextPerTurn: templateAgent.resetContextPerTurn }),
+          ...(eventInterestsMatchesTemplate ? {} : { eventInterests: templateEventInterests }),
           ...(finalPrompt === existingCustomPrompt ? {} : { customPrompt: finalPrompt }),
         };
       }),
