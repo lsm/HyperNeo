@@ -1002,6 +1002,15 @@ async function streamResponsesToAnthropic({
     reasoningTokens?: number | null;
   } | null = null;
   let incomplete = false;
+  // True once any content block (text / thinking / tool_use) has been emitted.
+  // The bridge commits HTTP 200 before reading the upstream body (see the
+  // fire-and-forget streamResponsesToAnthropic at the call site), so when the
+  // upstream returns a non-productive 200 (overload / aborted) we cannot retry
+  // at the transport layer. If this stays false after the stream completes, we
+  // surface a retryable overloaded_error SSE instead of an empty end_turn — an
+  // empty turn is malformed per the Messages spec and the SDK would otherwise
+  // fail the turn terminally (the compaction-killer this guards against).
+  let producedContent = false;
   const emittedFunctionCalls = new Set<string>();
   const responseReasoningItems: ResponsesReasoningItem[] = [];
 
@@ -1032,6 +1041,7 @@ async function streamResponsesToAnthropic({
     thinkingBlockIndex = blockIndex;
     send(contentBlockStartThinkingSSE(thinkingBlockIndex));
     thinkingOpen = true;
+    producedContent = true;
   };
 
   const closeThinkingBlock = () => {
@@ -1048,6 +1058,7 @@ async function streamResponsesToAnthropic({
     closeThinkingBlock();
     closeTextBlock();
     if (!send(contentBlockStartToolUseSSE(blockIndex, call.callId, call.name))) return;
+    producedContent = true;
     if (!send(inputJsonDeltaSSE(blockIndex, call.argumentsText || '{}'))) return;
     if (!send(contentBlockStopSSE(blockIndex))) return;
     blockIndex++;
@@ -1066,6 +1077,7 @@ async function streamResponsesToAnthropic({
         if (!textOpen) {
           send(contentBlockStartTextSSE(blockIndex));
           textOpen = true;
+          producedContent = true;
         }
         const delta = typeof event.delta === 'string' ? event.delta : '';
         if (delta) {
@@ -1234,6 +1246,32 @@ async function streamResponsesToAnthropic({
     ensureStarted();
     closeThinkingBlock();
     closeTextBlock();
+    // The upstream returned 200 and the stream completed without an error event,
+    // yet produced ZERO content blocks (no text / reasoning / tool_use). An empty
+    // Anthropic turn is malformed per the Messages spec, and because the bridge
+    // already committed the 200 headers before reading the body, the SDK cannot
+    // retry it at the transport layer. Emit a retryable overloaded_error SSE
+    // instead of an empty end_turn: the SDK surfaces the overloaded_error type
+    // (see core/streaming.js), the query-runner (B4) recognises 'overloaded' as a
+    // transient provider error, and re-issues the whole query — so compaction
+    // self-heals instead of dying on the empty 200. This is the failure mode that
+    // killed compaction on very large OpenAI requests (empty/non-productive 200).
+    if (!producedContent) {
+      logger.warn(
+        'openai-responses: upstream 200 produced an empty stream with no content ' +
+          'blocks; surfacing as retryable overloaded_error instead of an empty end_turn'
+      );
+      send(
+        errorSSE(
+          'overloaded_error',
+          'OpenAI returned an empty response stream (HTTP 200, no content blocks) — ' +
+            'likely a transient overloaded response.'
+        )
+      );
+      send(messageStopSSE());
+      closeController();
+      return;
+    }
     // If the model emitted tool calls before an incomplete event, let the SDK execute
     // them; the follow-up turn can carry the continuation forward.
     const stopReason =
@@ -1675,7 +1713,8 @@ export function createOpenAIResponsesBridgeServer(
       // emit a successful empty end_turn, hiding a body-embedded transient
       // error. Only pre-buffer when the content-type explicitly says JSON — a
       // real SSE stream with a missing/mislabeled content-type flows straight
-      // through to the streamer.
+      // through to the streamer, which separately detects a non-productive
+      // empty SSE stream and surfaces a retryable overloaded_error.
       const upstreamContentType = openAIResponse.headers.get('content-type') ?? '';
       if (openAIResponse.ok && isJsonContentType(upstreamContentType)) {
         const bodyText = await openAIResponse.text();

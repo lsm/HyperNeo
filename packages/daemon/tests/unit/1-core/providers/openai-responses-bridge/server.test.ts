@@ -5,6 +5,7 @@ import {
   subscribeToStructuredLogs,
   LogLevel,
 } from '@hyperneo/shared';
+import { isRetryableProviderError } from '@hyperneo/shared/provider/error-taxonomy';
 import {
   _openAIResponsesBridgeServerTesting,
   anthropicMessagesToResponsesInput,
@@ -1545,6 +1546,94 @@ describe('openai-responses-bridge server', () => {
     expect(messageDeltaEvent(events)).toBeUndefined();
   });
 
+  it.skipIf(!isBun)(
+    'surfaces a retryable overloaded_error for an empty upstream 200 SSE stream',
+    async () => {
+      server = createOpenAIResponsesBridgeServer({
+        auth: { source: 'api_key', apiKey: 'sk-test' },
+        models,
+        // 200 + text/event-stream with ZERO data events — the overload/aborted
+        // shape that previously produced an empty end_turn and killed compaction.
+        fetchImpl: async () =>
+          new Response('', { headers: { 'Content-Type': 'text/event-stream' } }),
+      });
+
+      const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-5.3-codex',
+          max_tokens: 128,
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+      });
+
+      const events = await readSSEEvents(resp.body);
+      // HTTP 200 is committed before the body is read, so the retryable error
+      // surfaces as an in-stream SSE event rather than a non-200 status.
+      expect(resp.status).toBe(200);
+      expect(events.find((event) => event.event === 'error')?.data).toMatchObject({
+        type: 'error',
+        error: { type: 'overloaded_error' },
+      });
+      expect(events.at(-1)?.event).toBe('message_stop');
+      // No empty end_turn was emitted.
+      expect(messageDeltaEvent(events)).toBeUndefined();
+      expect(textDeltaEvents(events)).toEqual([]);
+    }
+  );
+
+  it.skipIf(!isBun)(
+    'surfaces a retryable overloaded_error when a 200 stream yields only non-content events',
+    async () => {
+      server = createOpenAIResponsesBridgeServer({
+        auth: { source: 'api_key', apiKey: 'sk-test' },
+        models,
+        fetchImpl: async () =>
+          sse([
+            {
+              event: 'response.created',
+              data: { type: 'response.created', response: { id: 'resp_1' } },
+            },
+            {
+              event: 'response.completed',
+              data: {
+                type: 'response.completed',
+                // Completed but with empty output — no text / reasoning / tool_use.
+                response: { usage: { input_tokens: 1, output_tokens: 0 }, output: [] },
+              },
+            },
+          ]),
+      });
+
+      const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-5.3-codex',
+          max_tokens: 128,
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+      });
+
+      const events = await readSSEEvents(resp.body);
+      expect(resp.status).toBe(200);
+      const errorData = events.find((event) => event.event === 'error')?.data as
+        | { error?: { type?: string } }
+        | undefined;
+      expect(errorData?.error?.type).toBe('overloaded_error');
+      expect(events.at(-1)?.event).toBe('message_stop');
+      expect(messageDeltaEvent(events)).toBeUndefined();
+
+      // The SDK surfaces an in-stream error event as JSON.stringify(body)
+      // (core/error.js makeMessage), so the 'overloaded_error' type reaches the
+      // query-runner's retry detector. Verify that retry contract end-to-end:
+      // the surfaced string is recognised as retryable, so the turn (compaction)
+      // self-heals instead of failing.
+      expect(isRetryableProviderError(JSON.stringify(errorData))).toBe(true);
+    }
+  );
+
   it.skipIf(!isBun)('returns 400 for unsupported user content blocks', async () => {
     server = createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
@@ -2392,6 +2481,73 @@ describe('openai-responses-bridge server', () => {
       error: { type: 'api_error' },
     });
     expect(events.at(-1)?.event).toBe('message_stop');
+  });
+
+  it('emits a retryable overloaded_error for an empty upstream stream (direct)', async () => {
+    const openAIStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        // 200 body with no SSE data events at all (the empty 200 shape).
+        controller.close();
+      },
+    });
+    const anthropicStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        void _openAIResponsesBridgeServerTesting.streamResponsesToAnthropic({
+          openAIResponse: new Response(openAIStream, {
+            headers: { 'Content-Type': 'text/event-stream' },
+          }),
+          controller,
+          model: 'gpt-5.3-codex',
+          estimatedInputTokens: 1,
+        });
+      },
+    });
+
+    const events = await readSSEEvents(anthropicStream);
+    expect(events.find((event) => event.event === 'error')?.data).toMatchObject({
+      type: 'error',
+      error: { type: 'overloaded_error' },
+    });
+    expect(events.at(-1)?.event).toBe('message_stop');
+    expect(messageDeltaEvent(events)).toBeUndefined();
+  });
+
+  it('still emits end_turn (not overloaded_error) when content is produced (direct)', async () => {
+    const openAIStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder();
+        const write = (event: string, data: unknown): void =>
+          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+        write('response.output_text.delta', {
+          type: 'response.output_text.delta',
+          delta: 'hello',
+        });
+        write('response.completed', {
+          type: 'response.completed',
+          response: { usage: { input_tokens: 1, output_tokens: 1 }, output: [] },
+        });
+        controller.close();
+      },
+    });
+    const anthropicStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        void _openAIResponsesBridgeServerTesting.streamResponsesToAnthropic({
+          openAIResponse: new Response(openAIStream, {
+            headers: { 'Content-Type': 'text/event-stream' },
+          }),
+          controller,
+          model: 'gpt-5.3-codex',
+          estimatedInputTokens: 1,
+        });
+      },
+    });
+
+    const events = await readSSEEvents(anthropicStream);
+    expect(textDeltaEvents(events).join('')).toBe('hello');
+    expect(messageDeltaEvent(events)).toMatchObject({
+      delta: { stop_reason: 'end_turn' },
+    });
+    expect(events.find((event) => event.event === 'error')).toBeUndefined();
   });
 
   it.skipIf(!isBun)(
