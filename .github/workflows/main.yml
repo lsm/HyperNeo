@@ -82,6 +82,11 @@ jobs:
       - name: Validate online test matrix coverage
         run: bash scripts/validate-online-test-matrix.sh
 
+      - name: Validate daemon shard configuration
+        run: |
+          bash scripts/lib/shard-split.sh --self-test
+          ./scripts/test-daemon.sh --verify
+
       - name: Validate space task RPC handler tests
         run: bun run check:space-task-handler-tests
 
