@@ -10,9 +10,10 @@
  *
  * See docs/features/message-delivery-v2.md for the full design.
  *
- * Flag-gated (HYPERNEO_MESSAGE_DELIVERY_V2); ordinary chat is routed first
- * (§12 step 1). Space injectors + diagnostics re-pointing + decommissioning of
- * the phase-1 reconciliation machinery follow in steps 2–4.
+ * Default-on (opt out with `HYPERNEO_MESSAGE_DELIVERY_V2=0`). Ordinary chat and
+ * the Space / long-term-agent injectors all route through `deliverMessage`; the
+ * legacy deferred-replay and rate-limit-retry kickoffs remain on the inline path
+ * (backstopped by `recoverOrphanedConsumedMessages`) pending a follow-up.
  */
 
 import type { MessageContent } from '@hyperneo/shared';
@@ -44,15 +45,14 @@ export type MessageDeliveryPayload = {
 };
 
 /**
- * The env-var gate for the v2 path. While off, ordinary chat keeps using the
- * `message.persisted → startQueryAndEnqueue` flow untouched. Steps 2–4 migrate
- * the remaining origins and then decommission the old path.
+ * The env-var gate for the v2 path. Default ON — durable delivery owns dispatch
+ * for ordinary chat and the Space/long-term-agent injectors. Set
+ * `HYPERNEO_MESSAGE_DELIVERY_V2=0` (or `=false`) to roll back to the legacy
+ * `message.persisted → startQueryAndEnqueue` inline flow.
  */
 export function isMessageDeliveryV2Enabled(): boolean {
-  return (
-    process.env.HYPERNEO_MESSAGE_DELIVERY_V2 === '1' ||
-    process.env.HYPERNEO_MESSAGE_DELIVERY_V2 === 'true'
-  );
+  const v = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+  return v !== '0' && v !== 'false';
 }
 
 /**

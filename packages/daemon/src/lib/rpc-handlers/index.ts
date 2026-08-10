@@ -86,6 +86,7 @@ import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
 import { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
 import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository';
 import { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository';
+import { deliverMessage } from '../agent/message-delivery';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import type { JobQueueProcessor } from '../../storage/job-queue-processor';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';
@@ -883,9 +884,14 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         content: [{ type: 'text' as const, text: message }],
       },
     };
-    await session.ensureQueryStarted();
+    // Persist first (content lives in sdk_messages), then enqueue a durable
+    // message_delivery job — the handler claims it and drives the turn. Replaces
+    // the inline ensureQueryStarted + enqueueWithId (no durable owner).
     deps.reactiveDb.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
-    await session.messageQueue.enqueueWithId(messageId, message);
+    deliverMessage(deps.reactiveDb.db.getJobQueueRepo(), sessionId, messageId, {
+      origin: 'space_agent',
+      parentToolUseId: null,
+    });
   };
 
   // Task Agent Manager — manages Task Agent session lifecycle and message injection.

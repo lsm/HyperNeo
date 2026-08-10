@@ -1955,8 +1955,8 @@ export class AgentSession
    * Ordinary-chat entry for message-delivery v2: enqueue a durable delivery job
    * (role decided atomically by the job_queue index) instead of driving the
    * query inline. The message_delivery handler then drives/feeds the turn.
-   * Flag-gated; the `message.persisted` subscriber calls this only when
-   * HYPERNEO_MESSAGE_DELIVERY_V2 is set.
+   * Default-on (HYPERNEO_MESSAGE_DELIVERY_V2); the `message.persisted`
+   * subscriber calls this unless the flag is explicitly disabled (=0).
    */
   async settleSkippedDelivery(messageUuid: string): Promise<void> {
     await withSessionLock(this.session.id, () =>

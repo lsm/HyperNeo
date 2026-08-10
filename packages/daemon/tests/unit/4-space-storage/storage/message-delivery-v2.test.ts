@@ -125,6 +125,35 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
       expect(turns).toHaveLength(2);
     });
 
+    it('is idempotent per UUID — a second deliverMessage for the same UUID is a no-op', () => {
+      // The reset path can persist + deliver the same UUID twice (the replacement
+      // session is created before the old one is cleaned up). Without the
+      // getActiveDeliveryRole guard, the second call would insert a steer for the
+      // UUID the first inserted as a turn → the prompt reaches the SDK twice.
+      const role1 = deliverMessage(repo, SESSION, 'dup', { origin: 'chat' });
+      const role2 = deliverMessage(repo, SESSION, 'dup', { origin: 'chat' });
+      expect(role1).toBe('turn');
+      expect(role2).toBe('turn'); // returns the existing role, no second insert
+      const dup = jobsFor(repo, SESSION).filter(
+        (j) => (j.payload as { messageUuid: string }).messageUuid === 'dup'
+      );
+      expect(dup).toHaveLength(1);
+    });
+
+    it('idempotency returns the existing steer role, not a fresh insert', () => {
+      deliverMessage(repo, SESSION, 'turn', { origin: 'chat' });
+      // 'steer-uuid' becomes a steer because a turn is active.
+      const role1 = deliverMessage(repo, SESSION, 'steer-uuid', { origin: 'chat' });
+      expect(role1).toBe('steer');
+      // A second call for the same steer UUID must return 'steer', not insert again.
+      const role2 = deliverMessage(repo, SESSION, 'steer-uuid', { origin: 'chat' });
+      expect(role2).toBe('steer');
+      const steers = jobsFor(repo, SESSION).filter(
+        (j) => (j.payload as { messageUuid: string }).messageUuid === 'steer-uuid'
+      );
+      expect(steers).toHaveLength(1);
+    });
+
     it('isUniqueConstraintError detects SQLite UNIQUE failures', () => {
       expect(isUniqueConstraintError(new Error('UNIQUE constraint failed: job_queue.queue'))).toBe(
         true

@@ -56,6 +56,7 @@ import type { UUID } from 'crypto';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { AgentSessionInit } from '../../../lib/agent/agent-session';
 import { AgentSession } from '../../../lib/agent/agent-session';
+import { deliverMessage } from '../../../lib/agent/message-delivery';
 import { validateImageSizes } from '../../session/message-persistence';
 import type { Database } from '../../../storage/database';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
@@ -4530,6 +4531,16 @@ export class TaskAgentManager {
    * `validateImageSizes` so users get the same early "resize image" error
    * instead of a downstream API failure.
    */
+  /**
+   * True if any message_delivery job (turn or steer) is pending or processing
+   * for the session. Used to gate resetContextPerTurn so a `/clear` does not race
+   * a v2 turn whose job is enqueued but not yet claimed — the session's live
+   * processing state lags the durable job state under v2. Read-only indexed SELECT.
+   */
+  private hasActiveDeliveryJob(sessionId: string): boolean {
+    return this.config.db.getJobQueueRepo().activeDeliveryMessageUuids(sessionId).size > 0;
+  }
+
   private async injectMessageIntoSession(
     session: AgentSession,
     message: string,
@@ -4615,16 +4626,19 @@ export class TaskAgentManager {
     // is processed. Only task inputs clear — human input and system recovery are
     // classified at the inject entry points and never reach here as 'task'. Skip
     // when there is no prior context (the slot's first turn — a fresh session has
-    // no sdkSessionId yet) or when the session is mid-turn (busy), so the clear
-    // cannot race with queued input and never wastes a no-op clear. `/clear` is
-    // an SDK command, so the gate is sdkSessionId: an ACP (codex) slot with the
-    // flag set clears nothing until ACP grows an equivalent.
+    // no sdkSessionId yet), when the session is mid-turn (busy), OR when a
+    // durable delivery job is already pending/processing for the session (the v2
+    // turn will drive shortly; a clear now would race it), so the clear cannot
+    // race with queued input and never wastes a no-op clear. `/clear` is an SDK
+    // command, so the gate is sdkSessionId: an ACP (codex) slot with the flag set
+    // clears nothing until ACP grows an equivalent.
     const hasPriorContext = !!session.session.sdkSessionId;
     const shouldClearContext =
       inputKind === 'task' &&
       !isBusy &&
       hasPriorContext &&
-      this.slotResetsContextForSession(sessionId);
+      this.slotResetsContextForSession(sessionId) &&
+      !this.hasActiveDeliveryJob(sessionId);
     if (shouldClearContext) {
       try {
         await session.clearConversationContext();
@@ -4636,12 +4650,20 @@ export class TaskAgentManager {
       }
     }
 
-    await session.ensureQueryStarted();
+    // Persist the kickoff BEFORE enqueuing the durable delivery job — the handler
+    // reloads content by UUID, so the sdk_messages row must exist when the job is
+    // claimed (else the handler sees no content and drops the message). Image /
+    // multi-modal content is persisted verbatim in sdkUserMessage and reloaded by
+    // the handler, so no special enqueue handling is needed.
     const dbId = this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued', origin);
-    // When images are present, enqueue the multi-modal content array so the SDK
-    // sees image blocks alongside the text. Otherwise pass the plain string to
-    // preserve the existing behaviour for callers that don't supply images.
-    await session.messageQueue.enqueueWithId(messageId, hasImages ? sdkContent : message);
+    // deliverMessage enqueues a message_delivery job (role turn/steer decided
+    // atomically by the job_queue index); the handler then owns ensureQueryStarted
+    // and feeding the live transport. Replaces the inline ensureQueryStarted +
+    // enqueueWithId, which had no durable owner.
+    deliverMessage(this.config.db.getJobQueueRepo(), sessionId, messageId, {
+      origin: 'space_inject',
+      parentToolUseId: null,
+    });
     return dbId;
   }
 

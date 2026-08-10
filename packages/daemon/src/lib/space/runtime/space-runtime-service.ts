@@ -49,6 +49,7 @@ import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-l
 import type { TaskAgentManager } from './task-agent-manager';
 import type { SessionManager } from '../../session-manager';
 import type { AgentSession } from '../../agent/agent-session';
+import { deliverMessage } from '../../agent/message-delivery';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
 import { SpaceRuntime } from './space-runtime';
 import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine';
@@ -582,9 +583,18 @@ export class SpaceRuntimeService {
         content: [{ type: 'text' as const, text: message }],
       },
     };
-    await session.ensureQueryStarted();
-    this.config.reactiveDb?.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
-    await session.messageQueue.enqueueWithId(id, message);
+    // Persist first, then enqueue a durable message_delivery job — the handler
+    // claims it and drives the turn. Replaces the inline ensureQueryStarted +
+    // enqueueWithId (no durable owner). reactiveDb is optional on the config but
+    // always present in production wiring; skip (matching prior behavior) if absent.
+    const reactiveDb = this.config.reactiveDb?.db;
+    if (reactiveDb) {
+      reactiveDb.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+      deliverMessage(reactiveDb.getJobQueueRepo(), sessionId, id, {
+        origin: 'long_term_agent',
+        parentToolUseId: null,
+      });
+    }
     return id;
   }
 

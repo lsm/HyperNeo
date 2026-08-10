@@ -554,6 +554,31 @@ describe('SpaceRuntimeService', () => {
       };
     }
 
+    /**
+     * A reactiveDb whose db façade records durable delivery: a saveUserMessage
+     * spy + an inert jobQueue repo. injectLongTermAgentMessage now persists the
+     * message via saveUserMessage then enqueues a message_delivery job via
+     * deliverMessage (v2), so long-horizon delivery tests assert on
+     * saveUserMessage (the durable persist) instead of the removed inline
+     * session.messageQueue.enqueueWithId feed.
+     */
+    function buildDurableDeliveryReactiveDb(): {
+      reactiveDb: SpaceRuntimeServiceConfig['reactiveDb'];
+      saveUserMessage: ReturnType<typeof mock>;
+    } {
+      const saveUserMessage = mock(() => 'db-msg');
+      const reactiveDb = {
+        db: {
+          saveUserMessage,
+          getJobQueueRepo: () => ({
+            getActiveDeliveryRole: () => null,
+            enqueue: () => ({ id: 'job-1' }),
+          }),
+        },
+      } as unknown as SpaceRuntimeServiceConfig['reactiveDb'];
+      return { reactiveDb, saveUserMessage };
+    }
+
     test('attaches MCP server and system prompt to the space:chat session (merge, not replace)', async () => {
       const session = makeSession();
       const sessionManager = makeSessionManager(session);
@@ -818,8 +843,10 @@ describe('SpaceRuntimeService', () => {
         })),
         update: mock(() => {}),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
+      const { reactiveDb, saveUserMessage } = buildDurableDeliveryReactiveDb();
       const svc = new SpaceRuntimeService({
         ...buildConfigWithSession(sessionManager, createMockSpaceManager(mockSpace)),
+        reactiveDb,
         longHorizonAgentRepo,
         spaceAgentInboxRepo:
           inboxRepo as unknown as SpaceRuntimeServiceConfig['spaceAgentInboxRepo'],
@@ -845,9 +872,12 @@ describe('SpaceRuntimeService', () => {
 
       expect(deliveredSessionId).toBe(sessionId);
       expect(inboxRepo.enqueue).not.toHaveBeenCalled();
-      expect(createdSession.messageQueue.enqueueWithId).toHaveBeenCalledWith(
-        expect.stringMatching(/^msg_/),
-        'hello'
+      // injectLongTermAgentMessage persists durably + enqueues a message_delivery
+      // job (v2); assert the durable persist instead of the removed inline feed.
+      expect(saveUserMessage).toHaveBeenCalledWith(
+        sessionId,
+        expect.objectContaining({ uuid: expect.stringMatching(/^msg_/), type: 'user' }),
+        'enqueued'
       );
     });
 
@@ -948,8 +978,10 @@ describe('SpaceRuntimeService', () => {
         })),
         update: mock(() => {}),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
+      const { reactiveDb, saveUserMessage } = buildDurableDeliveryReactiveDb();
       const svc = new SpaceRuntimeService({
         ...buildConfigWithSession(sessionManager, createMockSpaceManager(mockSpace)),
+        reactiveDb,
         longHorizonAgentRepo,
       });
 
@@ -986,9 +1018,10 @@ describe('SpaceRuntimeService', () => {
           }),
         })
       );
-      expect(createdSession.messageQueue.enqueueWithId).toHaveBeenCalledWith(
-        'delivery-1',
-        'event payload'
+      expect(saveUserMessage).toHaveBeenCalledWith(
+        sessionId,
+        expect.objectContaining({ uuid: 'delivery-1', type: 'user' }),
+        'enqueued'
       );
     });
 
@@ -1109,8 +1142,10 @@ describe('SpaceRuntimeService', () => {
         })),
         update: mock(() => {}),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
+      const { reactiveDb, saveUserMessage } = buildDurableDeliveryReactiveDb();
       const svc = new SpaceRuntimeService({
         ...buildConfigWithSession(sessionManager, createMockSpaceManager(mockSpace)),
+        reactiveDb,
         longHorizonAgentRepo,
       });
 
@@ -1158,9 +1193,10 @@ describe('SpaceRuntimeService', () => {
       };
       expect(updateCall.systemPrompt.append).toContain('Use updated tools.');
       expect(updateCall.systemPrompt.append).toContain(LONG_HORIZON_SCHEDULING_GUARDRAIL);
-      expect(existingSession.messageQueue.enqueueWithId).toHaveBeenCalledWith(
-        'delivery-1',
-        'event payload'
+      expect(saveUserMessage).toHaveBeenCalledWith(
+        sessionId,
+        expect.objectContaining({ uuid: 'delivery-1', type: 'user' }),
+        'enqueued'
       );
     });
 
