@@ -81,8 +81,10 @@ import {
 } from '../managers/space-workflow-manager';
 import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format';
 import {
+  gateScriptDiagnosticKey,
   logTemplateGateScriptReload,
   resolveTemplateGateScript,
+  sharedGateScriptDiagnosticLedger,
 } from '../workflows/built-in-workflows';
 import { getEffectiveGate } from './gate-features';
 import { deliveryModeFromFailureReason } from './delivery-mode';
@@ -6192,13 +6194,19 @@ export class SpaceRuntime {
       storedGate,
       workflow
     );
-    logTemplateGateScriptReload({
-      log,
-      status: gateScriptStatus,
-      templateName: workflow.templateName,
-      gateId: storedGate.id,
-      runId,
-    });
+    if (
+      sharedGateScriptDiagnosticLedger.shouldEmit(
+        gateScriptDiagnosticKey(runId, storedGate.id, gateScriptStatus)
+      )
+    ) {
+      logTemplateGateScriptReload({
+        log,
+        status: gateScriptStatus,
+        templateName: workflow.templateName,
+        gateId: storedGate.id,
+        runId,
+      });
+    }
     let gate = liveTemplateGate;
     gate = getEffectiveGate(gate, workflow, sourceName ?? channel.from);
     const gateDataRepo = new GateDataRepository(this.config.db);

@@ -58,8 +58,10 @@ import { evaluateGate, type GateEvalResult, type GateScriptExecutorFn } from './
 import type { GateScriptContext } from './gate-script-executor';
 import { executeGateScript } from './gate-script-executor';
 import {
+  gateScriptDiagnosticKey,
   logTemplateGateScriptReload,
   resolveTemplateGateScript,
+  sharedGateScriptDiagnosticLedger,
 } from '../workflows/built-in-workflows';
 import { getEffectiveGate } from './gate-features';
 import { RATE_LIMIT_MIN_BACKOFF_MS } from './rate-limit-detector';
@@ -1553,13 +1555,21 @@ export class ChannelRouter {
       storedGateDef,
       workflow
     );
-    logTemplateGateScriptReload({
-      log,
-      status: gateScriptStatus,
-      templateName: workflow.templateName,
-      gateId,
-      runId,
-    });
+    // Persistent mismatches (e.g. live-ignored-no-stored) would otherwise warn on
+    // every gate evaluation/retry; dedupe to once per run+gate+status.
+    if (
+      sharedGateScriptDiagnosticLedger.shouldEmit(
+        gateScriptDiagnosticKey(runId, gateId, gateScriptStatus)
+      )
+    ) {
+      logTemplateGateScriptReload({
+        log,
+        status: gateScriptStatus,
+        templateName: workflow.templateName,
+        gateId,
+        runId,
+      });
+    }
     let gateDef = liveTemplateGate;
     gateDef = getEffectiveGate(gateDef, workflow, sourceNodeName);
 
