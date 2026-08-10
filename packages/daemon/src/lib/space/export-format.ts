@@ -81,15 +81,32 @@ const declarativeToolGuardSchema = z.object({
 
 export const MAX_AGENT_SLOT_EVENT_INTERESTS = 10;
 
-const eventInterestSchema = z.object({
-  topic: z
-    .string()
-    .min(1)
-    .refine((topic) => validateGlobPattern(topic).valid, {
-      message: 'topic must be a valid external-event glob pattern',
-    }),
-  label: z.string().optional(),
+const eventInterestTopicFromSchema = z.object({
+  source: z.literal('primaryLink'),
+  pattern: z.string().min(1),
 });
+
+const eventInterestSchema = z
+  .object({
+    topic: z
+      .string()
+      .min(1)
+      .refine((topic) => validateGlobPattern(topic).valid, {
+        message: 'topic must be a valid external-event glob pattern',
+      })
+      .optional(),
+    /**
+     * Dynamic topic template. Exactly one of `topic` / `topicFrom` is required —
+     * enforced by the refine below. The `pattern` carries placeholders resolved
+     * at subscription time (see `resolveTopicFromInterest`), so it is NOT
+     * validated as a glob here.
+     */
+    topicFrom: eventInterestTopicFromSchema.optional(),
+    label: z.string().optional(),
+  })
+  .refine((data) => (data.topic !== undefined) !== (data.topicFrom !== undefined), {
+    message: 'exactly one of "topic" or "topicFrom" must be set',
+  });
 
 const thinkingLevelSchema = z.preprocess(
   (val) => (val === 'auto' ? 'off' : val),

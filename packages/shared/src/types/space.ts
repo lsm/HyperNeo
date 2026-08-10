@@ -2130,8 +2130,29 @@ export interface EventInterest {
    *
    * The topic pattern IS the filter — the format encodes source identity,
    * scope (e.g. owner/repo for GitHub), resource, and entity/action.
+   *
+   * Exactly one of `topic` and {@link EventInterest.topicFrom} must be set.
    */
-  topic: string;
+  topic?: string;
+
+  /**
+   * Resolve the subscription topic dynamically at subscription time from a
+   * workflow run's durable state, rather than from a static literal.
+   *
+   * The `pattern` is a template whose placeholders are filled by the resolver
+   * for the given `source`. For `'primaryLink'` the placeholders are
+   * `{owner}`, `{repo}`, `{number}`, and `{host}`, derived from the run's
+   * primary link (e.g. its PR URL) — example:
+   * `'github/{owner}/{repo}/pull_request/{number}.*'`.
+   *
+   * This lets a static workflow definition subscribe to "this run's own PR"
+   * without baking a PR number into the template. The in-memory topic trie
+   * remains a pure derived index: `topicFrom` is resolved to a concrete `topic`
+   * before any subscription is registered, so the trie never stores templates.
+   *
+   * Exactly one of {@link EventInterest.topic} and `topicFrom` must be set.
+   */
+  topicFrom?: { source: 'primaryLink'; pattern: string };
 
   /**
    * Optional label for diagnostics. Not used in matching logic.
@@ -2189,9 +2210,11 @@ export interface WorkflowNodeAgent {
   extraMcpServers?: Record<string, McpServerConfig>;
   /**
    * Static external event subscriptions for this workflow agent slot.
-   * Dynamic runtime subscriptions are managed through node-agent MCP tools.
+   * Each interest carries either a static `topic` glob or a `topicFrom` template
+   * resolved at subscription time. Dynamic runtime subscriptions are managed
+   * through node-agent MCP tools.
    */
-  eventInterests?: Array<{ topic: string; label?: string }>;
+  eventInterests?: EventInterest[];
   /**
    * Optional per-slot timeout (milliseconds) used by the runtime to decide
    * when an agent that is still alive but apparently stuck should be

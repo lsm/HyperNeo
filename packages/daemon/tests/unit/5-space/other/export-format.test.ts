@@ -568,6 +568,91 @@ describe('validateExportedWorkflow', () => {
 });
 
 // ---------------------------------------------------------------------------
+// validateExportedWorkflow — eventInterest topic / topicFrom
+// ---------------------------------------------------------------------------
+
+describe('validateExportedWorkflow — eventInterest topic/topicFrom', () => {
+  function makeWorkflowWithInterests(eventInterests: unknown) {
+    return {
+      version: 1,
+      type: 'workflow',
+      name: 'Interests',
+      nodes: [{ agents: [{ agentRef: 'Coder', name: 'coder', eventInterests }], name: 'Step' }],
+      startNode: 'Step',
+      tags: [],
+    };
+  }
+
+  test('accepts a static topic interest', () => {
+    const result = validateExportedWorkflow(
+      makeWorkflowWithInterests([{ topic: 'github/a/b/pull_request/1.*' }])
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  test('accepts a topicFrom interest with a primaryLink source', () => {
+    const result = validateExportedWorkflow(
+      makeWorkflowWithInterests([
+        {
+          topicFrom: {
+            source: 'primaryLink',
+            pattern: 'github/{owner}/{repo}/pull_request/{number}.*',
+          },
+        },
+      ])
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  test('rejects an interest with both topic and topicFrom set', () => {
+    const result = validateExportedWorkflow(
+      makeWorkflowWithInterests([
+        {
+          topic: 'github/a/b/pull_request/1.*',
+          topicFrom: {
+            source: 'primaryLink',
+            pattern: 'github/{owner}/{repo}/pull_request/{number}.*',
+          },
+        },
+      ])
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('exactly one of');
+    }
+  });
+
+  test('rejects an interest with neither topic nor topicFrom set', () => {
+    const result = validateExportedWorkflow(makeWorkflowWithInterests([{ label: 'x' }]));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('exactly one of');
+    }
+  });
+
+  test('rejects a topicFrom with an unknown source', () => {
+    const result = validateExportedWorkflow(
+      makeWorkflowWithInterests([
+        {
+          topicFrom: {
+            source: 'taskField',
+            pattern: 'github/{owner}/{repo}/pull_request/{number}.*',
+          },
+        },
+      ])
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  test('rejects a topicFrom with an empty pattern', () => {
+    const result = validateExportedWorkflow(
+      makeWorkflowWithInterests([{ topicFrom: { source: 'primaryLink', pattern: '' } }])
+    );
+    expect(result.ok).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // validateExportBundle
 // ---------------------------------------------------------------------------
 

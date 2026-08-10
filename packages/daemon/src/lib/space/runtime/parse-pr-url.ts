@@ -1,3 +1,5 @@
+import type { EventInterest } from '@hyperneo/shared';
+
 /**
  * Parse a GitHub pull-request URL into its host/owner/repo/number components.
  *
@@ -10,6 +12,7 @@
  * - `pr-ready-validator.ts` — to scope `gh api graphql` calls
  * - `space-runtime.ts` — to build the GitHub event topic pattern when
  *   auto-subscribing a blocked run to PR reaction/review events
+ * - `resolveTopicFromInterest` — to fill `topicFrom` placeholders
  */
 export interface ParsedPrUrl {
   host: string;
@@ -36,4 +39,59 @@ export function parsePrUrl(url: string): ParsedPrUrl | null {
  */
 export function buildPrEventTopicPattern(parsed: ParsedPrUrl): string {
   return `github/${parsed.owner}/${parsed.repo}/pull_request/${parsed.number}.*`;
+}
+
+/**
+ * Recognized {@link EventInterest.topicFrom} `source` values.
+ *
+ * Each source resolves a different placeholder vocabulary from a workflow run's
+ * durable state. `primaryLink` fills placeholders from the run's primary GitHub
+ * link (PR URL) via {@link parsePrUrl}. Extensible: a future source (a task
+ * field, an artifact, …) adds an entry here plus a resolver branch in
+ * {@link resolveTopicFromInterest}.
+ */
+export const KNOWN_TOPIC_FROM_SOURCES: ReadonlySet<string> = new Set<string>(['primaryLink']);
+
+/**
+ * Resolve a `topicFrom`-style {@link EventInterest} into a concrete topic glob
+ * pattern by filling the `pattern`'s placeholders from the run's primary link.
+ *
+ * For the `primaryLink` source the supported placeholders are `{owner}`,
+ * `{repo}`, `{number}`, and `{host}` — all four come from {@link parsePrUrl}.
+ *
+ * Returns `null` when:
+ * - the interest has no `topicFrom` (it is a static `topic` interest — callers
+ *   use `interest.topic` directly), or
+ * - the `source` is not a known resolver, or
+ * - the primary link cannot be parsed as a GitHub PR URL (malformed, an issue
+ *   URL, a non-GitHub host, or empty).
+ *
+ * Pure: no I/O, no logging. The caller decides what to do with `null` (skip the
+ * interest, defer until a link exists, …). Resolved topics are validated as glob
+ * patterns by the trie at registration time, so unknown placeholders left in the
+ * template (which would yield invalid characters) surface there.
+ *
+ * Example:
+ * ```ts
+ * resolveTopicFromInterest(
+ *   { topicFrom: { source: 'primaryLink', pattern: 'github/{owner}/{repo}/pull_request/{number}.*' } },
+ *   'https://github.com/lsm/neokai/pull/42',
+ * ) === 'github/lsm/neokai/pull_request/42.*'
+ * ```
+ */
+export function resolveTopicFromInterest(
+  interest: Pick<EventInterest, 'topicFrom'>,
+  primaryLinkUrl: string | undefined | null
+): string | null {
+  const topicFrom = interest.topicFrom as { source?: string; pattern?: string } | undefined;
+  if (!topicFrom || topicFrom.source !== 'primaryLink') return null;
+  const pattern = topicFrom.pattern;
+  if (typeof pattern !== 'string') return null;
+  const parsed = parsePrUrl(typeof primaryLinkUrl === 'string' ? primaryLinkUrl : '');
+  if (!parsed) return null;
+  return pattern
+    .replaceAll('{owner}', parsed.owner)
+    .replaceAll('{repo}', parsed.repo)
+    .replaceAll('{number}', parsed.number)
+    .replaceAll('{host}', parsed.host);
 }

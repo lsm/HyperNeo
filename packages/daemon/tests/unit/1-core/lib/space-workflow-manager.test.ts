@@ -213,6 +213,151 @@ describe('SpaceWorkflowManager', () => {
     });
   });
 
+  describe('dynamic topicFrom event interest validation', () => {
+    it('accepts a valid topicFrom interest on create', () => {
+      const result = manager.createWorkflow({
+        spaceId: 'space-1',
+        name: 'Dynamic Topic Workflow',
+        nodes: [
+          {
+            id: 'node-1',
+            name: 'Step One',
+            agents: [
+              {
+                agentId: 'agent-1',
+                name: 'coder',
+                eventInterests: [
+                  {
+                    topicFrom: {
+                      source: 'primaryLink',
+                      pattern: 'github/{owner}/{repo}/pull_request/{number}.*',
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        completionAutonomyLevel: 3,
+      });
+      expect(result.nodes[0].agents[0].eventInterests).toEqual([
+        {
+          topicFrom: {
+            source: 'primaryLink',
+            pattern: 'github/{owner}/{repo}/pull_request/{number}.*',
+          },
+        },
+      ]);
+    });
+
+    it('rejects an interest with both topic and topicFrom set', () => {
+      expect(() =>
+        manager.createWorkflow({
+          spaceId: 'space-1',
+          name: 'Both Set Workflow',
+          nodes: [
+            {
+              id: 'node-1',
+              name: 'Step One',
+              agents: [
+                {
+                  agentId: 'agent-1',
+                  name: 'coder',
+                  eventInterests: [
+                    {
+                      topic: 'github/lsm/neokai/pull_request/42.*',
+                      topicFrom: {
+                        source: 'primaryLink',
+                        pattern: 'github/{owner}/{repo}/pull_request/{number}.*',
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          completionAutonomyLevel: 3,
+        })
+      ).toThrow('exactly one of "topic" or "topicFrom" must be set');
+    });
+
+    it('rejects an interest with neither topic nor topicFrom set', () => {
+      expect(() =>
+        manager.createWorkflow({
+          spaceId: 'space-1',
+          name: 'Neither Set Workflow',
+          nodes: [
+            {
+              id: 'node-1',
+              name: 'Step One',
+              agents: [
+                {
+                  agentId: 'agent-1',
+                  name: 'coder',
+                  eventInterests: [{ label: 'no topic' }],
+                },
+              ],
+            },
+          ],
+          completionAutonomyLevel: 3,
+        })
+      ).toThrow('exactly one of "topic" or "topicFrom" must be set');
+    });
+
+    it('rejects a topicFrom with an empty/whitespace pattern', () => {
+      expect(() =>
+        manager.createWorkflow({
+          spaceId: 'space-1',
+          name: 'Empty Pattern Workflow',
+          nodes: [
+            {
+              id: 'node-1',
+              name: 'Step One',
+              agents: [
+                {
+                  agentId: 'agent-1',
+                  name: 'coder',
+                  eventInterests: [{ topicFrom: { source: 'primaryLink', pattern: '   ' } }],
+                },
+              ],
+            },
+          ],
+          completionAutonomyLevel: 3,
+        })
+      ).toThrow('topicFrom.pattern: must be a non-empty string');
+    });
+
+    it('rejects a topicFrom with an unknown source', () => {
+      expect(() =>
+        manager.createWorkflow({
+          spaceId: 'space-1',
+          name: 'Unknown Source Workflow',
+          nodes: [
+            {
+              id: 'node-1',
+              name: 'Step One',
+              agents: [
+                {
+                  agentId: 'agent-1',
+                  name: 'coder',
+                  eventInterests: [
+                    {
+                      topicFrom: {
+                        source: 'taskField',
+                        pattern: 'github/{owner}/{repo}/pull_request/{number}.*',
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          completionAutonomyLevel: 3,
+        })
+      ).toThrow('topicFrom.source: unknown source "taskField"');
+    });
+  });
+
   describe('start/end node validation on update', () => {
     it('keeps startNodeId/endNodeId unchanged when omitted', () => {
       const created = manager.createWorkflow({
