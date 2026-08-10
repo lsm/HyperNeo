@@ -144,11 +144,11 @@ verify_shards() {
 	for spec in "${HASH_SPLIT_SPECS[@]}"; do
 		IFS='|' read -r prefix count globs <<<"$spec"
 
-		# 2a. split_count ↔ SHARDS consistency. Derive the expected bucket shard
-		# names (prefix-a … prefix-<letter(count-1)>) and require each to be in
-		# SHARDS, with no stray prefix-* entries. Otherwise bumping N silently
-		# drops a bucket from CI (the union check below is an identity and won't
-		# catch it). The CI-matrix half of the sync can't be checked from here.
+		# 2a. split_count ↔ SHARDS + CI-matrix consistency. Derive the expected
+		# bucket shard names (prefix-a … prefix-<letter(count-1)>) and require
+		# each to be in SHARDS AND in the CI matrix workflow file, with no stray
+		# prefix-* entries in SHARDS. Otherwise bumping N silently drops a bucket
+		# from CI (the union check below is an identity and won't catch it).
 		local bi=0 expected=() suffix ename found
 		while [ "$bi" -lt "$count" ]; do
 			if suffix=$(shard_index_to_suffix "$bi"); then
@@ -160,10 +160,19 @@ verify_shards() {
 			fi
 			bi=$((bi + 1))
 		done
+		local workflow="$REPO_ROOT/.github/workflows/main.yml"
 		if [ "${#expected[@]}" -gt 0 ]; then
 			for ename in "${expected[@]}"; do
 				if ! printf '%s\n' "${SHARDS[@]}" | grep -qxF "$ename"; then
 					echo "  ERROR: '$ename' is missing from SHARDS (split_count=$count for '$prefix'). Add it + the CI matrix entry, or lower split_count." >&2
+					errors=$((errors + 1))
+				fi
+				# Best-effort: every scheduled bucket must also be wired into the
+				# CI matrix. Greps the workflow file (a matrix entry is a literal
+				# shard name, never a substring of another), so a missing entry
+				# fails --verify instead of silently skipping a bucket in CI.
+				if [ -f "$workflow" ] && ! grep -qF "$ename" "$workflow"; then
+					echo "  ERROR: '$ename' is in SHARDS but missing from the CI matrix in .github/workflows/main.yml" >&2
 					errors=$((errors + 1))
 				fi
 			done
