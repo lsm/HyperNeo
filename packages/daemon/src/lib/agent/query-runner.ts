@@ -870,7 +870,7 @@ export class QueryRunner {
           // state persistence to avoid cascading "closed database" errors.
           if (!this.ctx.isCleaningUp()) {
             const processingState = stateManager.getState();
-            await stateManager.setIdle();
+            await stateManager.setIdle({ suppressDeliveryWaiters: true });
 
             await errorManager.handleError(
               session.id,

@@ -210,6 +210,56 @@ describe('ProcessingStateManager', () => {
       await expect(failingManager.setIdle()).rejects.toThrow('publish failed');
       expect(resolved).toBe(true);
     });
+
+    test('releaseIdleWaiters(gen) resolves only the matching episode, not a newer turn', async () => {
+      // The race this guards: a superseded rate-limit retry (episode gen 0)
+      // releases its turn-end waiter so its abandoned job doesn't hang — but a
+      // NEWER turn (gen 1, armed after a cancel/reset bumped the generation) must
+      // NOT have its waiter resolved, or its durable job completes prematurely and
+      // frees the active-turn slot for a competing turn. driveDeliveryTurn tags
+      // each waiter with the rate-limit generation at arm time; the superseded
+      // retry releases only its own gen.
+      let oldResolved = false;
+      let newResolved = false;
+      void manager.waitForIdleTransition(0).promise.then(() => {
+        oldResolved = true;
+      });
+      void manager.waitForIdleTransition(1).promise.then(() => {
+        newResolved = true;
+      });
+
+      manager.releaseIdleWaiters(0); // superseded gen-0 retry releases its own
+      // releaseIdleWaiters is synchronous; flush the resolution microtask before
+      // asserting (the .then handlers run on the next microtask tick).
+      await Promise.resolve();
+
+      expect(oldResolved).toBe(true);
+      expect(newResolved).toBe(false);
+
+      // The newer turn's waiter still resolves on a real terminal idle.
+      await manager.setIdle();
+      expect(newResolved).toBe(true);
+    });
+
+    test('releaseIdleWaiters() with no generation resolves all waiters (unscoped fallback)', async () => {
+      // Omitting the generation (a release site that has no episode context)
+      // resolves every armed waiter — preserving the original drain-all behavior
+      // for callers that don't track a generation.
+      let aResolved = false;
+      let bResolved = false;
+      void manager.waitForIdleTransition(0).promise.then(() => {
+        aResolved = true;
+      });
+      void manager.waitForIdleTransition(5).promise.then(() => {
+        bResolved = true;
+      });
+
+      manager.releaseIdleWaiters();
+      await Promise.resolve();
+
+      expect(aResolved).toBe(true);
+      expect(bResolved).toBe(true);
+    });
   });
 
   describe('setQueued', () => {

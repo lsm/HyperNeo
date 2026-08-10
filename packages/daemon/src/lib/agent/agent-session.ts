@@ -1155,8 +1155,10 @@ export class AgentSession
       ) {
         this.logger.info('Rate limit auto-retry aborted before re-enqueue (episode superseded).');
         // The durable turn this retry would have re-driven is abandoned — release
-        // its turn-end waiter so the job doesn't hang `processing`.
-        this.stateManager.releaseIdleWaiters();
+        // its turn-end waiter so the job doesn't hang `processing`. Scope the
+        // release to this episode's generation so a NEWER turn's waiter (armed
+        // after the cancel/reset bumped the generation) is left untouched.
+        this.stateManager.releaseIdleWaiters(episodeGeneration);
         return false;
       }
 
@@ -1874,7 +1876,16 @@ export class AgentSession
       // restored as idle and the streaming query doesn't leave idle until input
       // is observed, so treating that pre-input idle as terminal would complete
       // the durable job while history replay is still running.
-      const turnEnd = this.stateManager.waitForIdleTransition();
+      // Tag the waiter with the current rate-limit episode generation so a
+      // narrowly-scoped release (a superseded rate-limit retry calling
+      // releaseIdleWaiters(episodeGeneration)) resolves only this turn's waiter
+      // — not a newer turn's waiter armed after a cancel()/reset() bumped the
+      // generation. The generation here equals the one scheduleRetry later
+      // captures as episodeGeneration (its own supersession guard keeps the
+      // generation stable at this value through the 429'd turn's life).
+      const turnEnd = this.stateManager.waitForIdleTransition(
+        this.rateLimitWatchdog.getGeneration()
+      );
       // Feed the kickoff (resolves on onSent = the SDK consumed it) UNLESS a
       // prior attempt already did (alreadyConsumed = reclaim after a crash): the
       // SDK resume-from-history already holds a consumed kickoff, so re-feeding
@@ -1911,16 +1922,16 @@ export class AgentSession
     }
     // Long awaits OUTSIDE the lock — ownership mutations and mid-turn steers can
     // proceed while the provider acknowledges the kickoff and runs the turn.
-    await started.acknowledgment;
     // Complete at TURN-END (the idle transition). queryPromise is raced only as
     // a safety net for a query that closes without an idle (e.g. a hard crash);
     // in streaming-input mode queryPromise never resolves at turn-end, so
     // turnEnd wins and the job completes promptly when the SDK finishes the turn.
     try {
+      await started.acknowledgment;
       await Promise.race([started.turnEnd.promise, started.queryPromise.catch(() => {})]);
     } finally {
       // Cancel the waiter if it didn't win the race (e.g. queryPromise resolved
-      // on query-close) so it isn't left in the map.
+      // on query-close, or acknowledgment rejected) so it isn't left in the map.
       started.turnEnd.cancel();
     }
     return { outcome: 'completed' };

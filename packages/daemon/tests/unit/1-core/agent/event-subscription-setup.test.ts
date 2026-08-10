@@ -97,6 +97,10 @@ describe('EventSubscriptionSetup', () => {
       queryModeHandler: mockQueryModeHandler,
       resetQuery: mock(async () => ({ success: true })),
       startQueryAndEnqueue: mock(async () => {}),
+      // AgentSession provides this in production (v2 default-on). Including it
+      // here exercises the real message.persisted branch instead of silently
+      // falling through to startQueryAndEnqueue merely because the mock omitted it.
+      deliverChatMessage: mock(async () => {}),
     };
 
     setup = new EventSubscriptionSetup(mockContext);
@@ -311,7 +315,11 @@ describe('EventSubscriptionSetup', () => {
     });
 
     describe('message.persisted handler', () => {
-      it('should call startQueryAndEnqueue with messageId and content', async () => {
+      it('v2 default routes through deliverChatMessage, not startQueryAndEnqueue', async () => {
+        // With v2 default-on and deliverChatMessage wired (production state), an
+        // ordinary persisted message enqueues a durable job_queue row instead of
+        // driving the query inline. Asserting startQueryAndEnqueue here would only
+        // pass because the mock omitted deliverChatMessage — masking the real path.
         setup.setup();
 
         const callback = registeredCallbacks.get('message.persisted')!;
@@ -321,8 +329,29 @@ describe('EventSubscriptionSetup', () => {
           messageContent: 'Hello',
         });
 
-        // Note: User messages in the DB serve as rewind points - no separate checkpoint tracking needed
+        expect(mockContext.deliverChatMessage).toHaveBeenCalledWith('msg-123');
+        expect(mockContext.startQueryAndEnqueue).not.toHaveBeenCalled();
+      });
+
+      it('opt-out (HYPERNEO_MESSAGE_DELIVERY_V2=0) falls back to startQueryAndEnqueue', async () => {
+        const previous = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+        process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '0';
+        try {
+          setup.setup();
+
+          const callback = registeredCallbacks.get('message.persisted')!;
+          await callback({
+            sessionId: 'test-session-id',
+            messageId: 'msg-123',
+            messageContent: 'Hello',
+          });
+        } finally {
+          if (previous === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+          else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previous;
+        }
+
         expect(mockContext.startQueryAndEnqueue).toHaveBeenCalledWith('msg-123', 'Hello');
+        expect(mockContext.deliverChatMessage).not.toHaveBeenCalled();
       });
 
       it('should skip query start when persistence already delivered synchronously', async () => {
@@ -337,6 +366,7 @@ describe('EventSubscriptionSetup', () => {
         });
 
         expect(mockContext.startQueryAndEnqueue).not.toHaveBeenCalled();
+        expect(mockContext.deliverChatMessage).not.toHaveBeenCalled();
       });
     });
 

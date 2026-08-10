@@ -28,9 +28,12 @@ export class ProcessingStateManager {
    * Resolvers awaiting the next terminal idle transition (the message-delivery
    * bridge awaiting a turn's end), keyed by arm id so a caller can cancel its
    * own waiter (failure/park paths) without leaking or accumulating across
-   * reclaims. Drained in {@link setIdle}.
+   * reclaims. Each carries an optional episode-generation tag so a narrowly-
+   * scoped release (a superseded rate-limit retry) only resolves waiters from
+   * that episode — not a newer turn's waiter armed after the generation bumped.
+   * Drained in {@link setIdle} (terminal) / {@link releaseIdleWaiters}.
    */
-  private idleWaiters: Map<number, () => void> = new Map();
+  private idleWaiters: Map<number, { resolve: () => void; gen?: number }> = new Map();
   private nextIdleWaiterId = 0;
 
   constructor(
@@ -60,13 +63,13 @@ export class ProcessingStateManager {
    * abandoned — nobody awaits it). Arm BEFORE the turn starts so a fast turn's
    * idle cannot be missed.
    */
-  waitForIdleTransition(): { promise: Promise<void>; cancel: () => void } {
+  waitForIdleTransition(episodeGen?: number): { promise: Promise<void>; cancel: () => void } {
     let resolve!: () => void;
     const promise = new Promise<void>((r) => {
       resolve = r;
     });
     const id = this.nextIdleWaiterId++;
-    this.idleWaiters.set(id, resolve);
+    this.idleWaiters.set(id, { resolve, gen: episodeGen });
     return {
       promise,
       cancel: () => {
@@ -76,15 +79,19 @@ export class ProcessingStateManager {
   }
 
   /**
-   * Resolve + clear ALL idle waiters. Used when a rate-limit retry is superseded
+   * Resolve + clear idle waiters. Used when a rate-limit retry is superseded
    * (the durable turn it would have re-driven is abandoned): resolves the waiter
    * — rather than cancelling it — so an awaiting driveDeliveryTurn completes its
-   * job instead of hanging `processing`.
+   * job instead of hanging `processing`. Pass an `episodeGen` to resolve ONLY
+   * waiters armed under that episode (a retry must not release a newer turn's
+   * waiter armed after the generation bumped); omit it to resolve all.
    */
-  releaseIdleWaiters(): void {
-    const waiters = [...this.idleWaiters.values()];
-    this.idleWaiters.clear();
-    for (const resolve of waiters) resolve();
+  releaseIdleWaiters(episodeGen?: number): void {
+    const matching = [...this.idleWaiters.entries()].filter(
+      ([, w]) => episodeGen === undefined || w.gen === episodeGen
+    );
+    for (const [id] of matching) this.idleWaiters.delete(id);
+    for (const [, w] of matching) w.resolve();
   }
 
   /**
@@ -178,7 +185,7 @@ export class ProcessingStateManager {
       if (!opts?.suppressDeliveryWaiters) {
         const waiters = [...this.idleWaiters.values()];
         this.idleWaiters.clear();
-        for (const resolve of waiters) resolve();
+        for (const w of waiters) w.resolve();
       }
     }
 

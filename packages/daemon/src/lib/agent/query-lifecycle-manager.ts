@@ -391,7 +391,7 @@ export class QueryLifecycleManager {
       // the old queryPromise, the old query's finally block may run AFTER the
       // new query increments the generation — triggering the stale-query guard
       // and skipping setIdle(). This explicit call guarantees clean state.
-      await this.ctx.stateManager.setIdle();
+      await this.ctx.stateManager.setIdle({ suppressDeliveryWaiters: true });
 
       // Validate and repair SDK session file before restarting.
       // Includes cross-path migration when effective CWD changed since session init.
@@ -493,7 +493,7 @@ export class QueryLifecycleManager {
 
       // Post-stop: Reset state
       this.ctx.firstMessageReceived = false;
-      await stateManager.setIdle();
+      await stateManager.setIdle({ suppressDeliveryWaiters: true });
 
       // Clear models cache to ensure fresh model info is fetched from DB
       // This is critical for model switch to pick up the new model

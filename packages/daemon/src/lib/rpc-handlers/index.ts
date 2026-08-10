@@ -888,18 +888,25 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       },
     };
     if (isMessageDeliveryV2Enabled()) {
-      // Persist first (content lives in sdk_messages), then enqueue a durable
-      // message_delivery job + mark queued as one per-session critical section —
-      // the handler claims the job and drives the turn.
-      deps.reactiveDb.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+      // Idempotent persist (mirrors the LTA injector): when retried with a
+      // stable id (the pending-row id from flushPendingMessagesForSpaceAgent),
+      // don't insert a duplicate sdk_messages row or re-drive a terminal one.
+      const sdkMessageRepo = deps.reactiveDb.db.getSDKMessageRepo();
+      const existing = sdkMessageRepo.getDeliveryContent(sessionId, messageId);
+      if (!existing) {
+        deps.reactiveDb.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+      } else if (existing.sendStatus === 'consumed') {
+        return; // genuinely delivered on a prior attempt — don't re-drive
+      } else if (existing.sendStatus === 'failed') {
+        sdkMessageRepo.reopenDeliveryByUuid(sessionId, messageId);
+      }
       await deliverAndMarkQueued({
         jobQueue: deps.reactiveDb.db.getJobQueueRepo(),
         stateManager: session.stateManager,
         sessionId,
         messageUuid: messageId,
         origin: 'space_agent',
-        onEnqueueFailure: () =>
-          deps.reactiveDb.db.getSDKMessageRepo().markDeliveryFailedByUuid(sessionId, messageId),
+        onEnqueueFailure: () => sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId),
       });
     } else {
       // Legacy inline path (HYPERNEO_MESSAGE_DELIVERY_V2=0 opt-out).

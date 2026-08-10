@@ -1986,7 +1986,8 @@ export class TaskAgentManager {
             origin,
             isSyntheticMessage,
             images,
-            inputKind
+            inputKind,
+            messageId
           );
         }
       }
