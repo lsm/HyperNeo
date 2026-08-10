@@ -598,15 +598,22 @@ export class SpaceRuntimeService {
       // with the same idempotency key after a crash between job insertion and
       // source bookkeeping. sdk_uuid is indexed but not unique, so an
       // unconditional save would insert a duplicate row that lingers forever.
-      // Skip the save when a row already exists, and never re-drive a terminal
-      // (consumed/failed/deferred/submitted) message.
-      const existing = reactiveDb.getSDKMessageRepo().getDeliveryContent(sessionId, id);
+      // Distinguish prior outcomes: a `consumed` row genuinely ran (don't
+      // re-drive); a `failed` row means a prior attempt's enqueue threw and
+      // terminalized it — reopen it so this retry can deliver; an `enqueued`
+      // row just needs its job (re-)enqueued.
+      const sdkMessageRepo = reactiveDb.getSDKMessageRepo();
+      const existing = sdkMessageRepo.getDeliveryContent(sessionId, id);
       if (!existing) {
         reactiveDb.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
-      } else if (existing.sendStatus !== 'enqueued') {
-        return id; // already terminal — a crash-retry must not re-drive it
+      } else if (existing.sendStatus === 'consumed') {
+        return id; // genuinely delivered on a prior attempt — don't re-drive
+      } else if (existing.sendStatus === 'failed') {
+        // Prior enqueue threw and terminalized the row; the handler skips
+        // `failed`, so reopen it before re-enqueueing.
+        sdkMessageRepo.reopenDeliveryByUuid(sessionId, id);
       }
-      // else: persisted 'enqueued' but crashed before the job — enqueue it;
+      // else (enqueued/deferred/submitted): row exists; just (re-)enqueue —
       // deliverMessage dedups the active job via getActiveDeliveryRole.
       try {
         deliverMessage(reactiveDb.getJobQueueRepo(), sessionId, id, {
