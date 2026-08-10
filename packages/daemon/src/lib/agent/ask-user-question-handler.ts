@@ -453,8 +453,10 @@ export class AskUserQuestionHandler {
 
     // Drop waiting_for_input state — the question is resolved from the user's
     // perspective. Going to idle (rather than processing) lets the SDK
-    // query restart cleanly via ensureQueryStarted().
-    await stateManager.setIdle();
+    // query restart cleanly via ensureQueryStarted(). Suppress the delivery-
+    // waiter drain: this idle is a retry mid-point (the query restarts below to
+    // inject the tool result), not a terminal turn-end.
+    await stateManager.setIdle({ suppressDeliveryWaiters: true });
 
     // Build the tool_result content text. For `allow`, serialize the answers
     // as JSON so the agent can parse them. For `deny`, use the cancellation

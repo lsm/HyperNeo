@@ -875,7 +875,7 @@ export class AcpQueryRunner {
           ? 'Auto-retrying ACP query after startup timeout (1 retry).'
           : 'Auto-retrying ACP query after transient connection error (1 retry).'
       );
-      await stateManager.setIdle();
+      await stateManager.setIdle({ suppressDeliveryWaiters: true });
 
       if (isStartupTimeout && createdAcpSessionDuringRun && !receivedAcpMessageDuringRun) {
         this.persistAcpSessionId(undefined);

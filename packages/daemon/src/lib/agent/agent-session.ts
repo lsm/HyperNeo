@@ -1855,6 +1855,14 @@ export class AgentSession
       if (claimGuard && !claimGuard()) {
         return { kind: 'aborted' as const };
       }
+      // Arm the turn-end wait BEFORE ensureQueryStarted: a reclaimed consumed
+      // turn resumes from history during the async query start, and a fast
+      // terminal idle would be missed by a waiter armed afterward (the job would
+      // then hang `processing` because the streaming queryPromise never resolves
+      // at turn-end). On the 'blocked' path the waiter resolves harmlessly on a
+      // later idle — the job parks and re-drives, re-arming. See
+      // ProcessingStateManager.waitForIdleTransition.
+      const turnEnd = this.stateManager.waitForIdleTransition();
       const queryStartResult = await this.lifecycleManager.ensureQueryStarted();
       if (queryStartResult === 'blocked') {
         return { kind: 'blocked' as const };
@@ -1863,14 +1871,6 @@ export class AgentSession
       if (!queryPromise) {
         throw new Error('message_delivery: query did not start; cannot drive turn');
       }
-      // Arm the turn-end wait BEFORE the kickoff can be consumed: the delivery
-      // job must stay `processing` for the SDK turn's duration and complete at
-      // turn-end (the idle transition), not at query-close. queryPromise only
-      // resolves on query-CLOSE — in streaming-input mode that is never at
-      // turn-end, so awaiting it alone hangs the job `processing` forever and
-      // every later message misclassifies as a steer. See
-      // ProcessingStateManager.waitForIdleTransition.
-      const turnEnd = this.stateManager.waitForIdleTransition();
       // Feed the kickoff (resolves on onSent = the SDK consumed it) UNLESS a
       // prior attempt already did (alreadyConsumed = reclaim after a crash): the
       // SDK resume-from-history already holds a consumed kickoff, so re-feeding
