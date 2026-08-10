@@ -20,6 +20,7 @@
  * compare against and are re-keyed unconditionally.
  */
 
+import { Logger } from '../../logger';
 import type { GateOpenStateRepository } from '../../../storage/repositories/gate-open-state-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
@@ -28,6 +29,8 @@ import {
   pinnedGateFingerprint,
   stableVersionTimestamp,
 } from './definition-version';
+
+const log = new Logger('gate-cache-rekey');
 
 export interface GateCacheRekeyDeps {
   gateOpenStateRepo: GateOpenStateRepository;
@@ -38,33 +41,44 @@ export interface GateCacheRekeyDeps {
 /** Re-key persisted gate-open entries for pinned runs to the version-stable fingerprint basis. */
 export function rekeyPinnedGateOpenCaches(deps: GateCacheRekeyDeps): void {
   for (const entry of deps.gateOpenStateRepo.listAllOpenEntries()) {
-    const run = deps.runRepo.getRun(entry.runId);
-    if (!run?.definitionVersion) continue; // unpinned → no version-stable basis yet
+    // Per-entry isolation — mirrors the sibling startup sweeps (backfillExistingDefinitionVersions,
+    // backfillDefinitionPins): manager.getWorkflow/getWorkflowForRun run the throw-prone
+    // rowToWorkflow/rowToNode path, so a single malformed workflow head must not abort the sweep
+    // (which would leave every later entry on the old basis → spurious gate re-eval at cutover).
+    try {
+      const run = deps.runRepo.getRun(entry.runId);
+      if (!run?.definitionVersion) continue; // unpinned → no version-stable basis yet
 
-    // Validity guard (see module doc): reproduce the EXACT pre-cutover fingerprint — the
-    // sanitized HEAD gate (legacyGateMetadata present, as markDeprecatedGate adds) hashed with
-    // legacyGateDefinitionHash (the order-sensitive bare hash the pre-cutover
-    // generateGateFingerprint used to compute stored values). Use the manager's HEAD read
-    // (getWorkflow), NOT the pinned resolution (getWorkflowForRun), which post-cutover returns
-    // the pinned version. Skip entries that don't match (stale) so they re-evaluate rather
-    // than get promoted.
-    const sanitizedHead = deps.manager.getWorkflow(run.workflowId);
-    if (sanitizedHead) {
-      const headGate = (sanitizedHead.gates ?? []).find((g) => g.id === entry.gateId);
-      const headOldFingerprint = headGate
-        ? sanitizedHead.updatedAt + legacyGateDefinitionHash(headGate)
-        : sanitizedHead.updatedAt;
-      if (entry.workflowUpdatedAt !== headOldFingerprint) continue; // stale → re-evaluate
-    }
+      // Validity guard (see module doc): reproduce the EXACT pre-cutover fingerprint — the
+      // sanitized HEAD gate (legacyGateMetadata present, as markDeprecatedGate adds) hashed with
+      // legacyGateDefinitionHash (the order-sensitive bare hash the pre-cutover
+      // generateGateFingerprint used to compute stored values). Use the manager's HEAD read
+      // (getWorkflow), NOT the pinned resolution (getWorkflowForRun), which post-cutover returns
+      // the pinned version. Skip entries that don't match (stale) so they re-evaluate rather
+      // than get promoted.
+      const sanitizedHead = deps.manager.getWorkflow(run.workflowId);
+      if (sanitizedHead) {
+        const headGate = (sanitizedHead.gates ?? []).find((g) => g.id === entry.gateId);
+        const headOldFingerprint = headGate
+          ? sanitizedHead.updatedAt + legacyGateDefinitionHash(headGate)
+          : sanitizedHead.updatedAt;
+        if (entry.workflowUpdatedAt !== headOldFingerprint) continue; // stale → re-evaluate
+      }
 
-    const sanitized = deps.manager.getWorkflowForRun(run);
-    if (!sanitized) continue;
-    const gateDef = (sanitized.gates ?? []).find((g) => g.id === entry.gateId);
-    const expected = gateDef
-      ? pinnedGateFingerprint(run.definitionVersion, gateDef)
-      : stableVersionTimestamp(run.definitionVersion);
-    if (entry.workflowUpdatedAt !== expected) {
-      deps.gateOpenStateRepo.markOpened(entry.runId, entry.gateId, expected);
+      const sanitized = deps.manager.getWorkflowForRun(run);
+      if (!sanitized) continue;
+      const gateDef = (sanitized.gates ?? []).find((g) => g.id === entry.gateId);
+      const expected = gateDef
+        ? pinnedGateFingerprint(run.definitionVersion, gateDef)
+        : stableVersionTimestamp(run.definitionVersion);
+      if (entry.workflowUpdatedAt !== expected) {
+        deps.gateOpenStateRepo.markOpened(entry.runId, entry.gateId, expected);
+      }
+    } catch (err) {
+      log.warn(
+        `rekeyPinnedGateOpenCaches: skipped gate-open entry ${entry.runId}/${entry.gateId} (non-fatal):`,
+        err
+      );
     }
   }
 }

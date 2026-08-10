@@ -748,6 +748,82 @@ describe('ChannelRouter', () => {
       expect(legacyGateDefinitionHash(insertionOrder)).not.toBe(legacyGateDefinitionHash(shuffled));
     });
 
+    test('sweep isolates failures — a malformed run does not abort re-keying of others', () => {
+      // PR-review P1: the re-key sweep must be per-entry isolated (like its sibling startup
+      // sweeps). A malformed pinned-resolution throws in manager.getWorkflowForRun; without a
+      // try/catch the sweep would abort and every later entry would stay on the old basis. Here
+      // one run's resolution throws, but the other run's entry is still re-keyed.
+      const gate: Gate = {
+        id: 'plan-gate',
+        fields: [{ name: 'plan', type: 'string', writers: ['planner'], check: { op: 'exists' } }],
+        resetOnCycle: false,
+      };
+      const channels: WorkflowChannel[] = [
+        { id: 'ch-1', from: 'planner', to: 'coder', gateId: 'plan-gate' },
+      ];
+      const wf = buildWorkflowWithGates(
+        SPACE_ID,
+        workflowManager,
+        [
+          {
+            id: NODE_A,
+            name: 'Planner Node',
+            agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+          },
+          { id: NODE_B, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+        ],
+        channels,
+        [gate]
+      );
+      const headRaw = workflowManager.getWorkflowForRunStart(wf.id)!.rawWorkflow;
+      const { versionHash } = computeDefinitionVersion(headRaw);
+
+      const gateOpenStateRepo = new GateOpenStateRepository(db);
+      const runRepo = new SpaceWorkflowRunRepository(db, gateOpenStateRepo);
+      const goodRun = runRepo.createRun({ spaceId: SPACE_ID, workflowId: wf.id, title: 'Good' });
+      const badRun = runRepo.createRun({ spaceId: SPACE_ID, workflowId: wf.id, title: 'Bad' });
+      for (const r of [goodRun, badRun]) {
+        taskRepo.createTask({
+          spaceId: SPACE_ID,
+          title: 'T',
+          description: '',
+          status: 'open',
+          workflowRunId: r.id,
+        });
+        runRepo.transitionStatus(r.id, 'in_progress');
+      }
+      // Seed both with the old-basis fingerprint (sanitized head gate).
+      const head = workflowManager.getWorkflow(wf.id)!;
+      const headGate = (head.gates ?? []).find((g) => g.id === 'plan-gate')!;
+      const oldFingerprint = head.updatedAt + legacyGateDefinitionHash(headGate);
+      gateOpenStateRepo.markOpened(goodRun.id, 'plan-gate', oldFingerprint);
+      gateOpenStateRepo.markOpened(badRun.id, 'plan-gate', oldFingerprint);
+
+      runRepo.backfillDefinitionPins(() => headRaw);
+
+      // Manager whose pinned resolution throws for the bad run (simulating a malformed row).
+      const throwingManager = {
+        getWorkflow: (id: string) => workflowManager.getWorkflow(id),
+        getWorkflowForRun: (run: {
+          id: string;
+          workflowId: string;
+          definitionVersion: string | null;
+        }) => {
+          if (run.id === badRun.id) throw new Error('malformed pinned resolution');
+          return workflowManager.getWorkflowForRun(run);
+        },
+      } as unknown as import('../../../../src/lib/space/managers/space-workflow-manager').SpaceWorkflowManager;
+
+      // Must not throw — the bad entry is skipped, the good entry still re-keyed.
+      rekeyPinnedGateOpenCaches({ gateOpenStateRepo, runRepo, manager: throwingManager });
+
+      const goodAfter = gateOpenStateRepo.isOpen(goodRun.id, 'plan-gate');
+      expect(goodAfter.open).toBe(true);
+      const sanitizedPinned = workflowManager.getWorkflowForRun(runRepo.getRun(goodRun.id)!)!;
+      const pinnedGate = (sanitizedPinned.gates ?? []).find((g) => g.id === 'plan-gate')!;
+      expect(goodAfter.workflowUpdatedAt).toBe(pinnedGateFingerprint(versionHash, pinnedGate));
+    });
+
     test('pinned run DB-backed gate-open cache survives a head edit (version-stable)', async () => {
       // PR-review P2: steady-state version-stability with a DB-backed gate-open-state repo.
       // An unrelated head edit must not invalidate a pinned run's gate cache.
