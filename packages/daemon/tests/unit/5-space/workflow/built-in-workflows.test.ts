@@ -2911,9 +2911,8 @@ describe('seedBuiltInWorkflows()', () => {
     expect(source).toContain('ALLOWED_HOST="${GH_HOST:-github.com}"');
     expect(source).toContain('PR host ${PR_HOST} is not allowed for GitHub lookups');
     expect(source).toContain('FRESH_REACTION_OK');
-    // Reaction path allows on the first handoff (empty wait-head) or a same-head
-    // retry; the wait-head match is retained, the handoff-time guard is not.
-    expect(source).toContain('[ -z "$WAIT_HEAD" ]');
+    // A reaction needs a recorded wait for THIS head (a +1 is not head-bound).
+    expect(source).toContain('[ -n "$WAIT_STARTED" ]');
     expect(source).toContain('[ "$WAIT_HEAD" = "$HEAD_OID" ]');
     expect(source).toContain('codex_fresh_reaction_count');
     expect(source).toContain('codex_reaction_count');
@@ -2950,10 +2949,12 @@ describe('seedBuiltInWorkflows()', () => {
     expect(reviewSource).toContain('--arg since "$HEAD_BASELINE"');
     expect(reviewSource).toContain('>= $since');
     expect(reviewSource).not.toContain('--arg since "$WAIT_STARTED"');
-    // Reaction path allows on the first handoff (no recorded wait) or a same-head
-    // retry — the head-anchored +1 is the proof; the wait state only books the
-    // timeout. Empty-head + empty-baseline guards (fail-closed) are present.
-    expect(reviewSource).toContain('[ -z "$WAIT_HEAD" ]');
+    // PushEvents are filtered to the PR head ref (headRefName fetched + matched).
+    expect(reviewSource).toContain('headRefName');
+    expect(reviewSource).toContain('refs/heads/" + $ref');
+    // A reaction needs a recorded wait for THIS head (a +1 is not head-bound);
+    // empty-head + empty-baseline guards (fail-closed) are present.
+    expect(reviewSource).toContain('[ -n "$WAIT_STARTED" ]');
     expect(reviewSource).toContain('[ "$WAIT_HEAD" = "$HEAD_OID" ]');
     expect(reviewSource).toContain('[ -z "$HEAD_OID" ]');
     expect(reviewSource).toContain('[ -z "$HEAD_BASELINE" ]');
@@ -2969,6 +2970,7 @@ describe('seedBuiltInWorkflows()', () => {
     );
     const planSource = planHook?.validator.kind === 'script' ? planHook.validator.source : '';
     expect(planSource).toContain('repos/${OWNER}/${REPO}/events');
+    expect(planSource).toContain('headRefName');
     expect(planSource).toContain('--arg since "$HEAD_BASELINE"');
   });
 
@@ -2997,8 +2999,8 @@ describe('seedBuiltInWorkflows()', () => {
     const prUrl = 'https://github.com/test/repo/pull/42';
     const eventsPayload =
       scenario.pushTime === null
-        ? '[[{"type":"PushEvent","created_at":"1990-01-01T00:00:00Z","payload":{"head":"deadbeef","commits":[]}}]]'
-        : `[[{"type":"PushEvent","created_at":"${scenario.pushTime}","payload":{"head":"${SHA}","commits":[{"sha":"${SHA}"}]}}]]`;
+        ? '[[{"type":"PushEvent","created_at":"1990-01-01T00:00:00Z","payload":{"ref":"refs/heads/codex-test-branch","head":"deadbeef","commits":[]}}]]'
+        : `[[{"type":"PushEvent","created_at":"${scenario.pushTime}","payload":{"ref":"refs/heads/codex-test-branch","head":"${SHA}","commits":[{"sha":"${SHA}"}]}}]]`;
     const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-review-hook-'));
     const binDir = join(workspace, 'bin');
     const ghPath = join(binDir, 'gh');
@@ -3010,7 +3012,7 @@ describe('seedBuiltInWorkflows()', () => {
         [
           '#!/usr/bin/env bash',
           'if [[ "$*" == *"pr view"* ]]; then',
-          `  printf '%s\\n' '{"number":42,"headRefOid":"${SHA}","url":"https://github.com/test/repo/pull/42"}'`,
+          `  printf '%s\\n' '{"number":42,"headRefOid":"${SHA}","headRefName":"codex-test-branch","url":"https://github.com/test/repo/pull/42"}'`,
           '  exit 0',
           'fi',
           'if [[ "$*" == *"repos/test/repo/events"* ]]; then',
@@ -3041,7 +3043,12 @@ describe('seedBuiltInWorkflows()', () => {
         nodeName: 'Review',
         sessionId: 'session-1',
         taskId: 'task-1',
-        hookLocalState: scenario.hookLocalState ?? {},
+        hookLocalState: scenario.hookLocalState ?? {
+          codex_wait_started_at: new Date(Date.now() - 10 * 60 * 1000)
+            .toISOString()
+            .replace(/\.\d{3}Z$/, 'Z'),
+          codex_wait_head_oid: SHA,
+        },
         currentArtifacts: [],
         permittedExternalLookups: ['github'],
       };
@@ -3080,18 +3087,20 @@ describe('seedBuiltInWorkflows()', () => {
   );
 
   test.skipIf(!isBun)(
-    'review-approval hook allows a current-head +1 on the FIRST handoff (no recorded wait)',
+    'review-approval hook waits on the FIRST handoff: a +1 alone cannot prove it is for the current head',
     async () => {
-      // P1 #2: with freshness head-anchored, the reaction path no longer needs a
-      // recorded codex_wait_started_at, so a pre-existing +1 for the current head
-      // satisfies the hook immediately — no forced first-block-then-retry cycle.
+      // A +1 is not head-bound, so the reaction path requires a recorded wait
+      // for THIS head before it can satisfy the hook. On the first handoff (no
+      // recorded wait) a head-fresh +1 still blocks — it could linger from a
+      // prior head whose review landed after this push. Only a SHA comment
+      // (COMMENT_OK) may approve the first handoff. #900 is still fixed: the
+      // recorded-wait retry (see the too-early test) accepts the +1.
       const result = await runReviewApprovalHook({
         pushTime: '2026-08-10T01:50:00Z',
         reactionTime: '2026-08-10T01:54:54Z',
         hookLocalState: {},
       });
-      expect(result.result.type).toBe('allow');
-      expect(result.result.data).toMatchObject({ codex_approved: true });
+      expect(result.result.type).toBe('block');
     }
   );
 
@@ -3134,7 +3143,6 @@ describe('seedBuiltInWorkflows()', () => {
         pushTime: null,
         reactionTime: '2026-08-10T01:54:54Z',
         workflowStartIso: '2026-08-10T01:00:00Z',
-        hookLocalState: {},
       });
       expect(result.result.type).toBe('allow');
       expect(result.result.data).toMatchObject({ codex_approved: true });
@@ -3151,7 +3159,6 @@ describe('seedBuiltInWorkflows()', () => {
         pushTime: null,
         reactionTime: '2026-08-10T01:50:24Z',
         workflowStartIso: '2026-08-10T01:50:23.500Z',
-        hookLocalState: {},
       });
       expect(result.result.type).toBe('allow');
       expect(result.result.data).toMatchObject({ codex_approved: true });
@@ -3168,7 +3175,6 @@ describe('seedBuiltInWorkflows()', () => {
       const result = await runReviewApprovalHook({
         pushTime: null,
         reactionTime: '2026-08-10T01:54:54Z',
-        hookLocalState: {},
       });
       expect(result.result.type).toBe('block');
     }

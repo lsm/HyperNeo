@@ -43,10 +43,11 @@ function buildApprovalsScript(timeoutSeconds: number = CODEX_REVIEW_BOT_TIMEOUT_
     'if [ "$COUNT" -lt 4 ]; then jq -n --argjson approvals "$MERGED" --argjson count "$COUNT" \'{"type":"block","reason":"Plan dispatch requires four approved plan-review votes","data":{"approvals":$approvals,"approval_count":$count}}\'; exit 0; fi',
     'PR_URL=$(jq -r \'(.data.pr_url // .pr_url // empty)\' <<< "${HYPERNEO_PARAMS_JSON:-{}}" 2>/dev/null || true)',
     'if [ -z "$PR_URL" ]; then echo "Plan approval requires pr_url for Codex validation" >&2; exit 1; fi',
-    'if ! PR_JSON=$(gh pr view "$PR_URL" --json number,headRefOid,url 2>/dev/null); then echo "Failed to fetch plan PR for Codex validation" >&2; exit 1; fi',
+    'if ! PR_JSON=$(gh pr view "$PR_URL" --json number,headRefOid,url,headRefName 2>/dev/null); then echo "Failed to fetch plan PR for Codex validation" >&2; exit 1; fi',
     'PR_NUMBER=$(jq -r \'.number\' <<< "$PR_JSON")',
     'HEAD_OID=$(jq -r \'.headRefOid // empty\' <<< "$PR_JSON")',
     'if [ -z "$HEAD_OID" ]; then echo "Could not resolve current PR head for Codex validation" >&2; exit 1; fi',
+    'HEAD_REF=$(jq -r \'.headRefName // empty\' <<< "$PR_JSON")',
     'PR_API_URL=$(jq -r \'.url // empty\' <<< "$PR_JSON")',
     'PR_HOST=$(sed -E "s#https://([^/]+)/.*#\\1#" <<< "$PR_API_URL")',
     'OWNER=$(sed -E "s#https://[^/]+/([^/]+)/([^/]+)/pull/[0-9]+.*#\\1#" <<< "$PR_API_URL")',
@@ -56,18 +57,22 @@ function buildApprovalsScript(timeoutSeconds: number = CODEX_REVIEW_BOT_TIMEOUT_
     'if [ "$PR_HOST" != "github.com" ] && [ "$PR_HOST" != "$ALLOWED_HOST" ]; then echo "PR host ${PR_HOST} is not allowed for GitHub lookups" >&2; exit 1; fi',
     // Codex-approval freshness is anchored to the server-recorded PUSH time of
     // the current HEAD — not the reviewer's handoff and not the (forgeable)
-    // commit committer date. A +1 created after GitHub received the push
-    // provably saw this code, so a Codex +1 that lands BEFORE the reviewer hands
-    // off still counts (it cannot be stale for an unchanged head), AND a
-    // compromised coder cannot back-date a new head (GIT_COMMITTER_DATE) to
-    // satisfy a prior +1 from an older head. The push time is the repo PushEvent
-    // whose head/commits include HEAD_OID; if that lookup fails we fall back to
-    // the non-forgeable (but coarse) workflow-run start. Without a baseline, no
-    // reaction counts as fresh — though a codex comment naming HEAD_OID still
-    // passes (COMMENT_OK). Milliseconds are stripped so a lexicographic
-    // comparison against GitHub's second-precision created_at is exact.
+    // commit committer date. A +1 created after GitHub received the push provably
+    // saw this code, AND a compromised coder cannot back-date a new head
+    // (GIT_COMMITTER_DATE) to satisfy a prior +1 from an older head. The push
+    // time is the PushEvent to the PR's head ref (payload.ref == refs/heads/<head
+    // ref>) whose head/commits include HEAD_OID — filtering by ref means a push
+    // of the same SHA to another branch cannot advance the baseline. If that
+    // lookup fails we fall back to the non-forgeable (but coarse) workflow-run
+    // start; without a baseline no reaction counts as fresh (a SHA comment
+    // naming HEAD_OID still passes via COMMENT_OK). A reaction can satisfy the
+    // hook only after a wait is recorded for THIS head (codex_wait_head_oid ==
+    // HEAD_OID): a +1 is not head-bound, so the first handoff cannot be approved
+    // by a +1 that may linger from a prior head — only COMMENT_OK may. ms are
+    // stripped so a lexicographic comparison against GitHub's second-precision
+    // created_at is exact.
     'PUSH_EVENTS=$(gh api --hostname "$PR_HOST" --paginate --slurp "repos/${OWNER}/${REPO}/events?per_page=100" 2>/dev/null || true)',
-    'HEAD_BASELINE=$(jq -r --arg head "$HEAD_OID" \'[.[][] | select(.type == "PushEvent") | select((.payload.head // "") == $head or any((.payload.commits // [])[]; (.sha // "") == $head))] | .[0].created_at // empty\' <<< "$PUSH_EVENTS" 2>/dev/null || true)',
+    'HEAD_BASELINE=$(jq -r --arg head "$HEAD_OID" --arg ref "$HEAD_REF" \'[.[][] | select(.type == "PushEvent") | select(.payload.ref == ("refs/heads/" + $ref)) | select((.payload.head // "") == $head or any((.payload.commits // [])[]; (.sha // "") == $head))] | .[0].created_at // empty\' <<< "$PUSH_EVENTS" 2>/dev/null || true)',
     'HEAD_BASELINE="${HEAD_BASELINE:-${HYPERNEO_WORKFLOW_START_ISO:-}}"',
     'if [ -n "$HEAD_BASELINE" ] && [[ "$HEAD_BASELINE" =~ \\.[0-9]+Z$ ]]; then HEAD_BASELINE="${HEAD_BASELINE%.*}Z"; fi',
     'COMMENTS=$(gh api --hostname "$PR_HOST" --paginate --slurp "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/comments?per_page=100") || { echo "Failed to fetch Codex comments" >&2; exit 1; }',
@@ -78,7 +83,7 @@ function buildApprovalsScript(timeoutSeconds: number = CODEX_REVIEW_BOT_TIMEOUT_
     // Fail-closed: without a freshness baseline we cannot prove a reaction is
     // for the current head, so treat none as fresh (a SHA comment still may).
     'if [ -z "$HEAD_BASELINE" ]; then FRESH_REACTION_OK=0; fi',
-    'if [ "$COMMENT_OK" != "0" ] || { { [ -z "$WAIT_HEAD" ] || [ "$WAIT_HEAD" = "$HEAD_OID" ]; } && [ "$FRESH_REACTION_OK" != "0" ]; }; then jq -n --argjson approvals "$MERGED" --argjson reaction_count "$REACTION_OK" --argjson fresh_reaction_count "$FRESH_REACTION_OK" \'{"type":"allow","data":{"approvals":$approvals,"codex_approved":true,"codex_reaction_count":$reaction_count,"codex_fresh_reaction_count":$fresh_reaction_count}}\'; exit 0; fi',
+    'if [ "$COMMENT_OK" != "0" ] || { [ -n "$WAIT_STARTED" ] && [ "$WAIT_HEAD" = "$HEAD_OID" ] && [ "$FRESH_REACTION_OK" != "0" ]; }; then jq -n --argjson approvals "$MERGED" --argjson reaction_count "$REACTION_OK" --argjson fresh_reaction_count "$FRESH_REACTION_OK" \'{"type":"allow","data":{"approvals":$approvals,"codex_approved":true,"codex_reaction_count":$reaction_count,"codex_fresh_reaction_count":$fresh_reaction_count}}\'; exit 0; fi',
     'NOW_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)',
     `if [ -z "$WAIT_STARTED" ] || [ "$WAIT_HEAD" != "$HEAD_OID" ]; then jq -n --argjson approvals "$MERGED" --arg started "$NOW_ISO" --arg head "$HEAD_OID" '{"type":"block","reason":"Plan approval requires fresh Codex bot approval for current head or ${label} timeout from approval handoff","data":{"approvals":$approvals,"approval_count":4,"codex_wait_started_at":$started,"codex_wait_head_oid":$head}}'; exit 0; fi`,
     'WAIT_STARTED_PARSE=${WAIT_STARTED%%.*}; WAIT_STARTED_PARSE=${WAIT_STARTED_PARSE%Z}Z',
@@ -127,10 +132,11 @@ function buildReviewApprovalScript(
     'if [ -z "$PR_URL" ]; then echo "Review approval handoff requires pr_url for Codex validation" >&2; exit 1; fi',
     'WAIT_STARTED=$(jq -r \'.codex_wait_started_at // empty\' <<< "${HYPERNEO_HOOK_LOCAL_STATE_JSON:-{}}" 2>/dev/null || true)',
     'WAIT_HEAD=$(jq -r \'.codex_wait_head_oid // empty\' <<< "${HYPERNEO_HOOK_LOCAL_STATE_JSON:-{}}" 2>/dev/null || true)',
-    'if ! PR_JSON=$(gh pr view "$PR_URL" --json number,headRefOid,url 2>/dev/null); then echo "Failed to fetch PR for Codex validation" >&2; exit 1; fi',
+    'if ! PR_JSON=$(gh pr view "$PR_URL" --json number,headRefOid,url,headRefName 2>/dev/null); then echo "Failed to fetch PR for Codex validation" >&2; exit 1; fi',
     'PR_NUMBER=$(jq -r \'.number\' <<< "$PR_JSON")',
     'HEAD_OID=$(jq -r \'.headRefOid // empty\' <<< "$PR_JSON")',
     'if [ -z "$HEAD_OID" ]; then echo "Could not resolve current PR head for Codex validation" >&2; exit 1; fi',
+    'HEAD_REF=$(jq -r \'.headRefName // empty\' <<< "$PR_JSON")',
     'PR_API_URL=$(jq -r \'.url // empty\' <<< "$PR_JSON")',
     'PR_HOST=$(sed -E "s#https://([^/]+)/.*#\\1#" <<< "$PR_API_URL")',
     'OWNER=$(sed -E "s#https://[^/]+/([^/]+)/([^/]+)/pull/[0-9]+.*#\\1#" <<< "$PR_API_URL")',
@@ -140,18 +146,22 @@ function buildReviewApprovalScript(
     'if [ "$PR_HOST" != "github.com" ] && [ "$PR_HOST" != "$ALLOWED_HOST" ]; then echo "PR host ${PR_HOST} is not allowed for GitHub lookups" >&2; exit 1; fi',
     // Codex-approval freshness is anchored to the server-recorded PUSH time of
     // the current HEAD — not the reviewer's handoff and not the (forgeable)
-    // commit committer date. A +1 created after GitHub received the push
-    // provably saw this code, so a Codex +1 that lands BEFORE the reviewer hands
-    // off still counts (it cannot be stale for an unchanged head), AND a
-    // compromised coder cannot back-date a new head (GIT_COMMITTER_DATE) to
-    // satisfy a prior +1 from an older head. The push time is the repo PushEvent
-    // whose head/commits include HEAD_OID; if that lookup fails we fall back to
-    // the non-forgeable (but coarse) workflow-run start. Without a baseline, no
-    // reaction counts as fresh — though a codex comment naming HEAD_OID still
-    // passes (COMMENT_OK). Milliseconds are stripped so a lexicographic
-    // comparison against GitHub's second-precision created_at is exact.
+    // commit committer date. A +1 created after GitHub received the push provably
+    // saw this code, AND a compromised coder cannot back-date a new head
+    // (GIT_COMMITTER_DATE) to satisfy a prior +1 from an older head. The push
+    // time is the PushEvent to the PR's head ref (payload.ref == refs/heads/<head
+    // ref>) whose head/commits include HEAD_OID — filtering by ref means a push
+    // of the same SHA to another branch cannot advance the baseline. If that
+    // lookup fails we fall back to the non-forgeable (but coarse) workflow-run
+    // start; without a baseline no reaction counts as fresh (a SHA comment
+    // naming HEAD_OID still passes via COMMENT_OK). A reaction can satisfy the
+    // hook only after a wait is recorded for THIS head (codex_wait_head_oid ==
+    // HEAD_OID): a +1 is not head-bound, so the first handoff cannot be approved
+    // by a +1 that may linger from a prior head — only COMMENT_OK may. ms are
+    // stripped so a lexicographic comparison against GitHub's second-precision
+    // created_at is exact.
     'PUSH_EVENTS=$(gh api --hostname "$PR_HOST" --paginate --slurp "repos/${OWNER}/${REPO}/events?per_page=100" 2>/dev/null || true)',
-    'HEAD_BASELINE=$(jq -r --arg head "$HEAD_OID" \'[.[][] | select(.type == "PushEvent") | select((.payload.head // "") == $head or any((.payload.commits // [])[]; (.sha // "") == $head))] | .[0].created_at // empty\' <<< "$PUSH_EVENTS" 2>/dev/null || true)',
+    'HEAD_BASELINE=$(jq -r --arg head "$HEAD_OID" --arg ref "$HEAD_REF" \'[.[][] | select(.type == "PushEvent") | select(.payload.ref == ("refs/heads/" + $ref)) | select((.payload.head // "") == $head or any((.payload.commits // [])[]; (.sha // "") == $head))] | .[0].created_at // empty\' <<< "$PUSH_EVENTS" 2>/dev/null || true)',
     'HEAD_BASELINE="${HEAD_BASELINE:-${HYPERNEO_WORKFLOW_START_ISO:-}}"',
     'if [ -n "$HEAD_BASELINE" ] && [[ "$HEAD_BASELINE" =~ \\.[0-9]+Z$ ]]; then HEAD_BASELINE="${HEAD_BASELINE%.*}Z"; fi',
     'COMMENTS=$(gh api --hostname "$PR_HOST" --paginate --slurp "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/comments?per_page=100") || { echo "Failed to fetch Codex comments" >&2; exit 1; }',
@@ -162,7 +172,7 @@ function buildReviewApprovalScript(
     // Fail-closed: without a freshness baseline we cannot prove a reaction is
     // for the current head, so treat none as fresh (a SHA comment still may).
     'if [ -z "$HEAD_BASELINE" ]; then FRESH_REACTION_OK=0; fi',
-    'if [ "$COMMENT_OK" != "0" ] || { { [ -z "$WAIT_HEAD" ] || [ "$WAIT_HEAD" = "$HEAD_OID" ]; } && [ "$FRESH_REACTION_OK" != "0" ]; }; then jq -n --arg url "$PR_URL" --argjson reaction_count "$REACTION_OK" --argjson fresh_reaction_count "$FRESH_REACTION_OK" \'{"type":"allow","data":{"approved":true,"pr_url":$url,"codex_approved":true,"codex_reaction_count":$reaction_count,"codex_fresh_reaction_count":$fresh_reaction_count}}\'; exit 0; fi',
+    'if [ "$COMMENT_OK" != "0" ] || { [ -n "$WAIT_STARTED" ] && [ "$WAIT_HEAD" = "$HEAD_OID" ] && [ "$FRESH_REACTION_OK" != "0" ]; }; then jq -n --arg url "$PR_URL" --argjson reaction_count "$REACTION_OK" --argjson fresh_reaction_count "$FRESH_REACTION_OK" \'{"type":"allow","data":{"approved":true,"pr_url":$url,"codex_approved":true,"codex_reaction_count":$reaction_count,"codex_fresh_reaction_count":$fresh_reaction_count}}\'; exit 0; fi',
     'NOW_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)',
     `if [ -z "$WAIT_STARTED" ] || [ "$WAIT_HEAD" != "$HEAD_OID" ]; then jq -n --arg started "$NOW_ISO" --arg head "$HEAD_OID" '{"type":"block","reason":"Review approval requires fresh Codex bot approval for current head or ${label} timeout from approval handoff","data":{"codex_wait_started_at":$started,"codex_wait_head_oid":$head}}'; exit 0; fi`,
     'WAIT_STARTED_PARSE=${WAIT_STARTED%%.*}; WAIT_STARTED_PARSE=${WAIT_STARTED_PARSE%Z}Z',
