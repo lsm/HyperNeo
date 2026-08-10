@@ -17,8 +17,29 @@
  */
 
 import type { MessageContent } from '@hyperneo/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import { MESSAGE_DELIVERY } from '../job-queue-constants';
+
+/**
+ * On an SDK-message handling error, publish the terminal idle (draining the
+ * delivery waiters) ONLY when the throwing message ends the turn — the final
+ * `result`. A non-terminal message (e.g. an assistant message whose
+ * `sdk.message` subscriber rejected) leaves the live query still consuming;
+ * draining mid-turn would complete the durable job and release the active-turn
+ * slot while output is still being produced, letting a later prompt admit as
+ * another turn against the same query. The query's own `finally` publishes the
+ * terminal idle when the generator closes. Shared by the Claude and ACP runners'
+ * handleSDKMessage catch blocks. (Codex P1.)
+ */
+export async function drainDeliveryWaitersOnTerminalSDKMessage(
+  stateManager: { setIdle(): Promise<void> },
+  message: SDKMessage
+): Promise<void> {
+  if (message.type === 'result') {
+    await stateManager.setIdle();
+  }
+}
 
 /** Which slot a delivery occupies relative to its session's active turn. */
 export type MessageDeliveryRole = 'turn' | 'steer';

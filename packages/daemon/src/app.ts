@@ -85,6 +85,7 @@ import {
   TASK_SCHEDULE_FIRE,
 } from './lib/job-queue-constants';
 import { createMessageDeliveryHandler } from './lib/job-handlers/message-delivery.handler';
+import { settleMessageDeliveryDeadLetter } from './lib/job-handlers/message-delivery-dead-letter';
 import { asMessageDeliveryPayload } from './lib/agent/message-delivery';
 import { handleTaskScheduleFire } from './lib/job-handlers/task-schedule-fire.handler';
 import {
@@ -1021,43 +1022,24 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           if (!payload) return;
           const sdkRepo = reactiveDb?.db.getSDKMessageRepo();
           if (!sdkRepo) return;
-          const flipped = sdkRepo.markDeliveryFailedByUuid(payload.sessionId, payload.messageUuid);
-          if (flipped) {
-            internalEventBus
-              .publish('messages.statusChanged', {
-                sessionId: payload.sessionId,
-                messageIds: [flipped],
+          const session = sessionManager?.getSession(payload.sessionId);
+          // Settlement (mark failed → broadcast → session.error for space_inject
+          // → release queued marker) is extracted + unit-tested; the ordering
+          // (session.error before the settlement idle) is load-bearing. See
+          // message-delivery-dead-letter.ts. (Codex P1.)
+          void settleMessageDeliveryDeadLetter(payload, {
+            markDeliveryFailedByUuid: (sid, uuid) => sdkRepo.markDeliveryFailedByUuid(sid, uuid),
+            publishStatusChanged: (sid, messageIds) =>
+              internalEventBus.publish('messages.statusChanged', {
+                sessionId: sid,
+                messageIds,
                 status: 'failed',
-              })
-              .catch(() => {
-                /* dead-letter publish is best-effort */
-              });
-          }
-          // For a task-agent kickoff that dead-lettered before reaching the SDK,
-          // emit session.error and AWAIT it before settling the queued marker:
-          // the marker settlement publishes an idle that registerCompletionCallback
-          // would otherwise treat as successful work (the failed kickoff row
-          // itself satisfies the SDK-message count). session.error fires the
-          // callback's error path → handleSubSessionError marks the execution
-          // blocked instead. Wrapped because onDead is sync; the body runs
-          // ordered fire-and-forget. (Codex P1.)
-          void (async () => {
-            if (payload.origin === 'space_inject') {
-              try {
-                await internalEventBus.publish('session.error', {
-                  sessionId: payload.sessionId,
-                  error: 'Task-agent kickoff delivery exhausted its retries (dead-lettered).',
-                });
-              } catch {
-                /* best-effort */
-              }
-            }
-            // Release a pre-claim queued marker still owned by this terminal turn.
-            // Conditional settlement preserves any newer turn's ownership.
-            await sessionManager
-              ?.getSession(payload.sessionId)
-              ?.settleSkippedDelivery(payload.messageUuid);
-          })().catch(() => {
+              }),
+            publishSessionError: (sid, error) =>
+              internalEventBus.publish('session.error', { sessionId: sid, error }),
+            settleSkippedDelivery: (uuid) =>
+              session?.settleSkippedDelivery(uuid) ?? Promise.resolve(),
+          }).catch(() => {
             /* dead-letter state settlement is best-effort */
           });
         },

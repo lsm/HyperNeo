@@ -16,6 +16,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { MessageContent, MessageHub, Session } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { drainDeliveryWaitersOnTerminalSDKMessage } from './message-delivery';
 import type { UUID } from 'crypto';
 import { Database } from '../../storage/database';
 import { ErrorCategory, ErrorManager } from '../error-manager';
@@ -872,16 +873,7 @@ export class QueryRunner {
             const processingState = stateManager.getState();
             // Only publish the terminal idle (draining the delivery waiters) when
             // the throwing message actually ends the turn — the final `result`.
-            // A non-terminal message (e.g. an `sdk.message` subscriber rejecting
-            // on an assistant message) leaves the live query still consuming:
-            // draining here would complete the durable job and release the
-            // active-turn slot while the turn is still producing output, letting
-            // a subsequent prompt admit as another turn against the same query.
-            // For a `result` throw the for-await ends and no normal idle follows,
-            // so this drain is the terminal one. (Codex P1.)
-            if ((message as SDKMessage).type === 'result') {
-              await stateManager.setIdle();
-            }
+            await drainDeliveryWaitersOnTerminalSDKMessage(stateManager, message as SDKMessage);
 
             await errorManager.handleError(
               session.id,

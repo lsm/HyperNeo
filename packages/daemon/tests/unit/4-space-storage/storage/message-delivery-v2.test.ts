@@ -18,6 +18,7 @@ import { runMigration182 } from '../../../../src/storage/schema/migrations';
 import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants';
 import {
   deliverMessage,
+  drainDeliveryWaitersOnTerminalSDKMessage,
   isUniqueConstraintError,
   signalDeliveryConsumed,
   waitForDeliveryConsumption,
@@ -28,6 +29,7 @@ import {
 import { createMessageDeliveryHandler } from '../../../../src/lib/job-handlers/message-delivery.handler';
 import { JobQueueProcessor } from '../../../../src/storage/job-queue-processor';
 import type { Job } from '../../../../src/storage/repositories/job-queue-repository';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
 
 const SESSION = 'sess-conformance';
 
@@ -799,5 +801,34 @@ describe('delivery consumption signal (long-horizon delivered = consumed)', () =
     await Promise.resolve();
     expect(a).toBe(true);
     expect(b).toBe(true);
+  });
+});
+
+describe('drainDeliveryWaitersOnTerminalSDKMessage (handleSDKMessage-catch gating)', () => {
+  // Covers both runners' handleSDKMessage catch blocks (Claude query-runner +
+  // ACP acp-query-runner), which both route through this helper. A non-terminal
+  // message throw must NOT free the active-turn slot mid-turn; only the final
+  // `result` does. (Codex P1.)
+
+  it('calls setIdle (drains) when the throwing message is the final result', async () => {
+    const setIdle = mock(async () => {});
+    await drainDeliveryWaitersOnTerminalSDKMessage({ setIdle }, { type: 'result' } as SDKMessage);
+    expect(setIdle).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT call setIdle for a non-terminal (assistant) message throw', async () => {
+    const setIdle = mock(async () => {});
+    await drainDeliveryWaitersOnTerminalSDKMessage({ setIdle }, {
+      type: 'assistant',
+    } as SDKMessage);
+    expect(setIdle).not.toHaveBeenCalled();
+  });
+
+  it('does NOT call setIdle for a stream_event / non-result message', async () => {
+    const setIdle = mock(async () => {});
+    await drainDeliveryWaitersOnTerminalSDKMessage({ setIdle }, {
+      type: 'stream_event',
+    } as SDKMessage);
+    expect(setIdle).not.toHaveBeenCalled();
   });
 });

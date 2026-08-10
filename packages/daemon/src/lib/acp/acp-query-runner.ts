@@ -21,6 +21,7 @@ import { getProviderRegistry } from '../providers/factory';
 import { getProviderService, getUserConfiguredAnthropicEnv } from '../provider-service';
 import { AcpProvider } from '../providers/acp-provider';
 import { TRANSIENT_CONNECTION_ERROR_SUBSTRINGS } from '../agent/transient-error-patterns';
+import { drainDeliveryWaitersOnTerminalSDKMessage } from '../agent/message-delivery';
 import {
   refreshQueryEnvFromProcess,
   type QueryRunnerContext,
@@ -737,13 +738,11 @@ export class AcpQueryRunner {
                 const processingState = stateManager.getState();
                 // Mirrors the non-ACP runner: only publish the terminal idle
                 // (draining delivery waiters) when the throwing message ends the
-                // turn (the final `result`). A non-terminal message leaves the
-                // ACP run consuming; draining mid-run would release the
-                // active-turn slot while output is still being produced. For a
-                // `result` throw this is the terminal idle. (Codex P1.)
-                if ((acpMessage as SDKMessage).type === 'result') {
-                  await stateManager.setIdle();
-                }
+                // turn (the final `result`).
+                await drainDeliveryWaitersOnTerminalSDKMessage(
+                  stateManager,
+                  acpMessage as SDKMessage
+                );
 
                 await errorManager.handleError(
                   session.id,
