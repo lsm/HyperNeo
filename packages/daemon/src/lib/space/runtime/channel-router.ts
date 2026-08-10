@@ -57,7 +57,10 @@ import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-man
 import { evaluateGate, type GateEvalResult, type GateScriptExecutorFn } from './gate-evaluator';
 import type { GateScriptContext } from './gate-script-executor';
 import { executeGateScript } from './gate-script-executor';
-import { getBuiltInGateScript } from '../workflows/built-in-workflows';
+import {
+  logTemplateGateScriptReload,
+  resolveTemplateGateScript,
+} from '../workflows/built-in-workflows';
 import { getEffectiveGate } from './gate-features';
 import { RATE_LIMIT_MIN_BACKOFF_MS } from './rate-limit-detector';
 import { GateRetryScheduler } from './gate-retry-scheduler';
@@ -1546,13 +1549,18 @@ export class ChannelRouter {
     // was baked in at seed time. This ensures that template script updates (bug
     // fixes, new fallback logic, etc.) take immediate effect for all running
     // workflow instances without requiring a resync.
-    let gateDef = storedGateDef;
-    if (workflow.templateName) {
-      const liveScript = getBuiltInGateScript(workflow.templateName, gateId);
-      if (liveScript && storedGateDef.script) {
-        gateDef = { ...storedGateDef, script: liveScript };
-      }
-    }
+    const { gate: liveTemplateGate, status: gateScriptStatus } = resolveTemplateGateScript(
+      storedGateDef,
+      workflow
+    );
+    logTemplateGateScriptReload({
+      log,
+      status: gateScriptStatus,
+      templateName: workflow.templateName,
+      gateId,
+      runId,
+    });
+    let gateDef = liveTemplateGate;
     gateDef = getEffectiveGate(gateDef, workflow, sourceNodeName);
 
     // Load runtime data from DB; fall back to computed defaults from fields

@@ -20,7 +20,14 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { SpaceWorkerAgent, SpaceWorkflow, WorkflowHook, WorkflowNode } from '@hyperneo/shared';
+import type {
+  Gate,
+  GateScript,
+  SpaceWorkerAgent,
+  SpaceWorkflow,
+  WorkflowHook,
+  WorkflowNode,
+} from '@hyperneo/shared';
 import {
   exportWorkflow,
   validateExportedWorkflow,
@@ -51,9 +58,12 @@ import {
   LEGACY_CODING_TEMPLATE_IDENTITIES,
   mergeChannelsFromTemplate,
   mergeNodeStructuralFieldsFromTemplate,
+  applyTemplateGateScript,
   getBuiltInGateScript,
   getBuiltInWorkflows,
+  logTemplateGateScriptReload,
   mergeGateStructuralFieldsFromTemplate,
+  resolveTemplateGateScript,
   PLAN_AND_DECOMPOSE_WORKFLOW,
   validateWorkflowTemplateGateWriters,
   type WorkflowMigrationWarning,
@@ -4722,6 +4732,159 @@ describe('getBuiltInGateScript()', () => {
       ...getBuiltInWorkflows().flatMap((w) => w.gates ?? []),
     ].find((g) => g.id === 'review-posted-gate');
     expect(gate?.validator).toEqual({ kind: 'built_in', id: 'review_posted' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveTemplateGateScript() + logTemplateGateScriptReload()
+// ---------------------------------------------------------------------------
+// The reload helper is the single source of truth for "always evaluate with the
+// current template gate script." These tests pin its effective-gate behavior
+// (identical to the former inline logic) and each diagnostic status, including
+// the silent footgun where a live script is ignored because the stored gate is
+// scriptless.
+
+describe('resolveTemplateGateScript() + applyTemplateGateScript()', () => {
+  const LIVE_SCRIPT: GateScript = { interpreter: 'bash', source: 'echo live', timeoutMs: 5000 };
+
+  function makeGate(script?: GateScript): Gate {
+    return {
+      id: 'test-gate',
+      fields: [{ name: 'pr_url', type: 'string', writers: ['*'], check: { op: 'exists' } }],
+      ...(script ? { script } : {}),
+      resetOnCycle: false,
+    };
+  }
+
+  function makeWorkflow(templateName?: string): SpaceWorkflow {
+    return {
+      id: 'wf',
+      spaceId: 'space',
+      name: 'Workflow',
+      handle: 'workflow',
+      description: '',
+      nodes: [],
+      startNodeId: '',
+      endNodeId: '',
+      tags: [],
+      channels: [],
+      createdAt: 0,
+      updatedAt: 0,
+      ...(templateName ? { templateName } : {}),
+    };
+  }
+
+  test('returns no-template and the stored gate when the workflow has no templateName', () => {
+    const gate = makeGate(LIVE_SCRIPT);
+    const result = resolveTemplateGateScript(gate, makeWorkflow(undefined));
+    expect(result.status).toBe('no-template');
+    expect(result.gate).toBe(gate);
+  });
+
+  test('returns no-live-script when the template has no script for this gate', () => {
+    // CODING_WORKFLOW's review-posted-gate is a validator gate with no script,
+    // so the template carries no live script for it.
+    const gate = makeGate(LIVE_SCRIPT);
+    const result = resolveTemplateGateScript(gate, makeWorkflow(CODING_WORKFLOW.name));
+    expect(result.status).toBe('no-live-script');
+    expect(result.gate).toBe(gate);
+  });
+
+  test('applyTemplateGateScript: no-live-script when no live script is supplied', () => {
+    const gate = makeGate(LIVE_SCRIPT);
+    const result = applyTemplateGateScript(gate, undefined);
+    expect(result.status).toBe('no-live-script');
+    expect(result.gate).toBe(gate);
+  });
+
+  test('applyTemplateGateScript: live-ignored-no-stored footgun (live script present, stored scriptless)', () => {
+    const scriptlessGate = makeGate(undefined);
+    const result = applyTemplateGateScript(scriptlessGate, LIVE_SCRIPT);
+    expect(result.status).toBe('live-ignored-no-stored');
+    // The live script is NOT applied — the stored gate stays scriptless.
+    expect(result.gate).toBe(scriptlessGate);
+    expect(result.gate.script).toBeUndefined();
+  });
+
+  test('applyTemplateGateScript: in-sync when the stored source matches the live source', () => {
+    const stored = makeGate({ ...LIVE_SCRIPT });
+    const result = applyTemplateGateScript(stored, LIVE_SCRIPT);
+    expect(result.status).toBe('in-sync');
+    expect(result.gate.script?.source).toBe(LIVE_SCRIPT.source);
+  });
+
+  test('applyTemplateGateScript: reloaded when the stored source differs (drift)', () => {
+    const stale: GateScript = { ...LIVE_SCRIPT, source: 'echo stale drifted' };
+    const stored = makeGate(stale);
+    const result = applyTemplateGateScript(stored, LIVE_SCRIPT);
+    expect(result.status).toBe('reloaded');
+    // Effective gate uses the live template script, not the stale stored one.
+    expect(result.gate.script?.source).toBe(LIVE_SCRIPT.source);
+    expect(result.gate.script).not.toBe(stored.script);
+  });
+});
+
+describe('logTemplateGateScriptReload()', () => {
+  function makeLogger() {
+    const calls: { level: 'warn' | 'debug'; message: string }[] = [];
+    return {
+      log: {
+        warn: (...args: unknown[]) => calls.push({ level: 'warn', message: args.join(' ') }),
+        debug: (...args: unknown[]) => calls.push({ level: 'debug', message: args.join(' ') }),
+      },
+      calls,
+    };
+  }
+
+  test('warns on the live-ignored-no-stored footgun and includes the gate id and template', () => {
+    const { log, calls } = makeLogger();
+    logTemplateGateScriptReload({
+      log,
+      status: 'live-ignored-no-stored',
+      templateName: 'Coding',
+      gateId: 'review-posted-gate',
+      runId: 'run-42',
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].level).toBe('warn');
+    expect(calls[0].message).toContain('review-posted-gate');
+    expect(calls[0].message).toContain('Coding');
+    expect(calls[0].message).toContain('run-42');
+    expect(calls[0].message).toContain('NOT applied');
+  });
+
+  test('logs drift at debug level for reloaded', () => {
+    const { log, calls } = makeLogger();
+    logTemplateGateScriptReload({
+      log,
+      status: 'reloaded',
+      templateName: 'Coding',
+      gateId: 'g1',
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].level).toBe('debug');
+    expect(calls[0].message).toContain('g1');
+    expect(calls[0].message).toContain('reloaded');
+  });
+
+  test('stays quiet for the common no-template / no-live-script / in-sync paths', () => {
+    for (const status of ['no-template', 'no-live-script', 'in-sync'] as const) {
+      const { log, calls } = makeLogger();
+      logTemplateGateScriptReload({ log, status, templateName: 'Coding', gateId: 'g1' });
+      expect(calls).toHaveLength(0);
+    }
+  });
+
+  test('tolerates a missing templateName and runId in the warning', () => {
+    const { log, calls } = makeLogger();
+    logTemplateGateScriptReload({
+      log,
+      status: 'live-ignored-no-stored',
+      gateId: 'g1',
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].message).toContain('g1');
+    expect(calls[0].message).toContain('?');
   });
 });
 
