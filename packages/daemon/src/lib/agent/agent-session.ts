@@ -1137,8 +1137,12 @@ export class AgentSession
     );
 
     try {
-      // Ensure the session is idle before starting a new query
-      await this.stateManager.setIdle();
+      // Ensure the session is idle before starting a new query. Suppress the
+      // delivery-waiter drain: this idle is a retry mid-point (the query is
+      // re-started below via startQueryAndEnqueue), not a terminal turn-end —
+      // draining here would complete the durable job while the prompt is still
+      // being retried, freeing the active-turn slot for a competing turn.
+      await this.stateManager.setIdle({ suppressDeliveryWaiters: true });
 
       // A cancel/reset/interrupt during the setIdle await (or the preceding
       // switch teardown) bumps the episode generation. Don't re-enqueue the stale

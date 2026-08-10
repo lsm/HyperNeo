@@ -888,8 +888,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       // Persist first (content lives in sdk_messages), then enqueue a durable
       // message_delivery job — the handler claims it and drives the turn.
       deps.reactiveDb.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+      let role: 'turn' | 'steer';
       try {
-        deliverMessage(deps.reactiveDb.db.getJobQueueRepo(), sessionId, messageId, {
+        role = deliverMessage(deps.reactiveDb.db.getJobQueueRepo(), sessionId, messageId, {
           origin: 'space_agent',
           parentToolUseId: null,
         });
@@ -899,6 +900,17 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         // original. Mirrors AgentSession.deliverChatMessage's failure handling.
         deps.reactiveDb.db.getSDKMessageRepo().markDeliveryFailedByUuid(sessionId, messageId);
         throw err;
+      }
+      if (role === 'turn') {
+        // Mark the session queued so a 'defer' message arriving before the
+        // processor claims the job is preserved for the next turn (its busy
+        // check only sees processing/queued) rather than classified as a steer
+        // on this pending turn. Mirrors deliverChatMessage / injectMessage.
+        try {
+          await session.stateManager.setQueuedIfIdle(messageId);
+        } catch {
+          // non-fatal — the durable job is already enqueued
+        }
       }
     } else {
       // Legacy inline path (HYPERNEO_MESSAGE_DELIVERY_V2=0 opt-out).
