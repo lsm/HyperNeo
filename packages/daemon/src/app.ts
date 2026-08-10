@@ -982,7 +982,16 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       MESSAGE_DELIVERY,
       createMessageDeliveryHandler({
         jobQueue,
-        getSession: (sessionId: string) => sessionManager?.getSession(sessionId) ?? null,
+        // Resolve task-agent sub-sessions through TaskAgentManager FIRST: the
+        // provisioned session carries the node-agent MCP server + callbacks that
+        // a generic SessionManager-cached AgentSession lacks, so QueryRunner
+        // would reject startup on its MCP invariant. If the sub-session isn't
+        // rehydrated yet (restart race), fall back to SessionManager — the job
+        // fails on the generic session and retries once rehydration provisions it.
+        getSession: (sessionId: string) =>
+          taskAgentManager?.getSubSession(sessionId) ??
+          sessionManager?.getSession(sessionId) ??
+          null,
         // Status-aware loader: content + send_status. The handler branches on
         // status (consumed = already delivered, don't re-feed; deferred = user
         // deferred; failed = terminal) — see message-delivery.handler + #2592/#2597.

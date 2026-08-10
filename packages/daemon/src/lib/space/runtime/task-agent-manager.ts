@@ -1716,7 +1716,15 @@ export class TaskAgentManager {
             })
         : `[Message from human]: ${row.message}`;
       try {
-        await this.injectSubSessionMessage(sessionId, message, isSyntheticMessage);
+        await this.injectSubSessionMessage(
+          sessionId,
+          message,
+          isSyntheticMessage,
+          undefined,
+          undefined,
+          undefined,
+          row.id
+        );
         repo.markDelivered(row.id, sessionId);
         this.emitPendingDelivered(row.id, sessionId, row);
       } catch (err) {
@@ -1886,7 +1894,8 @@ export class TaskAgentManager {
      * — must pass 'system' so they do NOT trigger a `resetContextPerTurn`
      * clear (the contract: only task inputs clear).
      */
-    inputKindOverride?: MessageInputKind
+    inputKindOverride?: MessageInputKind,
+    messageId?: string
   ): Promise<string> {
     const inputKind: MessageInputKind =
       inputKindOverride ?? (isSyntheticMessage ? 'task' : 'human');
@@ -1897,7 +1906,8 @@ export class TaskAgentManager {
       isSyntheticMessage,
       images,
       deliveryMode,
-      inputKind
+      inputKind,
+      messageId
     );
   }
 
@@ -1920,7 +1930,8 @@ export class TaskAgentManager {
     isSyntheticMessage = true,
     images?: MessageImage[],
     deliveryMode: 'immediate' | 'defer' = 'immediate',
-    inputKind: MessageInputKind = 'task'
+    inputKind: MessageInputKind = 'task',
+    messageId?: string
   ): Promise<string> {
     // Reject inject for a cancelled/archived task or cancelled run — the session
     // may still be in memory (idle, not evicted on cancel) but must not be
@@ -1957,7 +1968,8 @@ export class TaskAgentManager {
           origin,
           isSyntheticMessage,
           images,
-          inputKind
+          inputKind,
+          messageId
         );
       }
 
@@ -1987,7 +1999,8 @@ export class TaskAgentManager {
           origin,
           isSyntheticMessage,
           images,
-          inputKind
+          inputKind,
+          messageId
         );
       }
       throw new Error(`Sub-session not found: ${subSessionId}`);
@@ -4538,7 +4551,8 @@ export class TaskAgentManager {
     origin?: MessageOrigin,
     isSyntheticMessage = true,
     images?: MessageImage[],
-    inputKind: MessageInputKind = 'task'
+    inputKind: MessageInputKind = 'task',
+    explicitMessageId?: string
   ): Promise<string> {
     const sessionId = session.session.id;
     const state = session.getProcessingState();
@@ -4558,7 +4572,9 @@ export class TaskAgentManager {
       state.status === 'interrupted' ||
       state.status === 'rate_limit_cooldown';
 
-    const messageId = generateUUID();
+    // An explicit id (the pending-message row id from flushPendingMessagesForTarget)
+    // makes a crash-retry dedup: deliverMessage/getActiveDeliveryRole keys on it.
+    const messageId = explicitMessageId ?? generateUUID();
     const hasImages = !!images && images.length > 0;
     // Validate base64 size up-front so users get the same early "resize image"
     // error returned by the live-session persistence path instead of a late,
