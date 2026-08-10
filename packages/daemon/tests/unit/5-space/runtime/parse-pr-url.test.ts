@@ -5,6 +5,7 @@ import {
   parsePrUrl,
   resolveTopicFromInterest,
 } from '../../../../src/lib/space/runtime/parse-pr-url';
+import { validateGlobPattern } from '../../../../src/lib/external-events/topic-validator';
 
 describe('parsePrUrl', () => {
   test('parses a canonical github.com PR URL', () => {
@@ -86,9 +87,13 @@ describe('resolveTopicFromInterest', () => {
   };
 
   test('resolves a primaryLink pattern from a canonical github.com PR URL', () => {
-    expect(
-      resolveTopicFromInterest(primaryLinkInterest, 'https://github.com/lsm/neokai/pull/42')
-    ).toBe('github/lsm/neokai/pull_request/42.*');
+    const resolved = resolveTopicFromInterest(
+      primaryLinkInterest,
+      'https://github.com/lsm/neokai/pull/42'
+    );
+    expect(resolved).toBe('github/lsm/neokai/pull_request/42.*');
+    // A resolved topic must be a valid glob the trie can register.
+    expect(validateGlobPattern(resolved!).valid).toBe(true);
   });
 
   test('fills the {host} placeholder from a GitHub Enterprise URL', () => {
@@ -110,9 +115,11 @@ describe('resolveTopicFromInterest', () => {
         pattern: 'github/{owner}/{repo}/pull_request/{number}/{action}.x',
       },
     };
-    expect(resolveTopicFromInterest(interest, 'https://github.com/lsm/neokai/pull/42')).toBe(
-      'github/lsm/neokai/pull_request/42/{action}.x'
-    );
+    const resolved = resolveTopicFromInterest(interest, 'https://github.com/lsm/neokai/pull/42');
+    expect(resolved).toBe('github/lsm/neokai/pull_request/42/{action}.x');
+    // An unresolved placeholder leaves `{`/`}` in the topic, which the trie
+    // rejects — surfacing the caller's malformed template at registration.
+    expect(validateGlobPattern(resolved!).valid).toBe(false);
   });
 
   test('returns null when the interest has no topicFrom (static topic)', () => {

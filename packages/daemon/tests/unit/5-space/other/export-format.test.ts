@@ -650,6 +650,13 @@ describe('validateExportedWorkflow — eventInterest topic/topicFrom', () => {
     );
     expect(result.ok).toBe(false);
   });
+
+  test('rejects a topicFrom with a whitespace-only pattern (aligned with manager)', () => {
+    const result = validateExportedWorkflow(
+      makeWorkflowWithInterests([{ topicFrom: { source: 'primaryLink', pattern: '   ' } }])
+    );
+    expect(result.ok).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

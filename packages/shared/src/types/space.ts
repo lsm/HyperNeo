@@ -2146,9 +2146,12 @@ export interface EventInterest {
    * `'github/{owner}/{repo}/pull_request/{number}.*'`.
    *
    * This lets a static workflow definition subscribe to "this run's own PR"
-   * without baking a PR number into the template. The in-memory topic trie
-   * remains a pure derived index: `topicFrom` is resolved to a concrete `topic`
-   * before any subscription is registered, so the trie never stores templates.
+   * without baking a PR number into the template. Design intent (the topic-trie
+   * invariant): `topicFrom` is resolved to a concrete `topic` before any
+   * subscription is registered, so the trie never stores templates. The
+   * resolver itself (`resolveTopicFromInterest`) ships here, but wiring it into
+   * registration is a follow-up PR — in this PR `topicFrom` is validated but
+   * inert at registration time (see `SpaceRuntime.registerRunInterests`).
    *
    * Exactly one of {@link EventInterest.topic} and `topicFrom` must be set.
    */

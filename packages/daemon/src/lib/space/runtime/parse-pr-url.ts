@@ -83,15 +83,22 @@ export function resolveTopicFromInterest(
   interest: Pick<EventInterest, 'topicFrom'>,
   primaryLinkUrl: string | undefined | null
 ): string | null {
-  const topicFrom = interest.topicFrom as { source?: string; pattern?: string } | undefined;
-  if (!topicFrom || topicFrom.source !== 'primaryLink') return null;
-  const pattern = topicFrom.pattern;
-  if (typeof pattern !== 'string') return null;
+  const { topicFrom } = interest;
+  // The known-sources set is the single switch point: a source must be admitted
+  // here before its resolver branch runs. Adding a source means adding it to the
+  // set plus a `case` below — never a silent null elsewhere. Without this gate a
+  // source the manager validator accepts would be unresolved here (returns null).
+  if (!topicFrom || !KNOWN_TOPIC_FROM_SOURCES.has(topicFrom.source)) return null;
   const parsed = parsePrUrl(typeof primaryLinkUrl === 'string' ? primaryLinkUrl : '');
   if (!parsed) return null;
-  return pattern
-    .replaceAll('{owner}', parsed.owner)
-    .replaceAll('{repo}', parsed.repo)
-    .replaceAll('{number}', parsed.number)
-    .replaceAll('{host}', parsed.host);
+  switch (topicFrom.source) {
+    case 'primaryLink':
+      return topicFrom.pattern
+        .replaceAll('{owner}', parsed.owner)
+        .replaceAll('{repo}', parsed.repo)
+        .replaceAll('{number}', parsed.number)
+        .replaceAll('{host}', parsed.host);
+    default:
+      return null;
+  }
 }

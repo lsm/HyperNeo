@@ -83,7 +83,10 @@ export const MAX_AGENT_SLOT_EVENT_INTERESTS = 10;
 
 const eventInterestTopicFromSchema = z.object({
   source: z.literal('primaryLink'),
-  pattern: z.string().min(1),
+  // `.trim().min(1)` mirrors the manager validator (whitespace-only is not a
+  // usable pattern); a bare `.min(1)` would let whitespace slip through import
+  // only to fail later at createWorkflow.
+  pattern: z.string().trim().min(1),
 });
 
 const eventInterestSchema = z
