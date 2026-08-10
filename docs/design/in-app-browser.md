@@ -2,10 +2,11 @@
 
 > **Status:** Exploratory design. Not implemented. This document captures a
 > design discussion and a recommended approach; it does not describe shipped
-> behaviour. Revised twice after automated review (Codex) — the second pass
-> checked the design against HyperNeo's actual source (MessageHub transport,
-> `chrome-devtools-mcp` lifecycle, the Playwright dependency, the desktop
-> bundle) and corrected several API-level inaccuracies. See
+> behaviour. Revised three times after automated review (Codex). Round 2 checked
+> the design against HyperNeo's actual source (MessageHub transport,
+> `chrome-devtools-mcp` lifecycle, the Playwright dependency, the desktop bundle)
+> and corrected API-level inaccuracies; round 3 tightened the screencast ack
+> invariant, activation/epoch handling, log redaction, and pointer modifiers. See
 > [Open Questions](#open-questions).
 
 ## Goal
@@ -234,15 +235,22 @@ an **explicit client→daemon ACK**:
 
 ```ts
 // per page, on activation. Method is a STABLE string; scoping is the channel.
+// INVARIANT: every CDP frame received is acked exactly once — either after the
+// client ACKs the forwarded frame, or immediately when it is dropped (superseded,
+// ACK-timeout, or session teardown). Without this, leaked CDP flow-control slots
+// eventually stall frame delivery.
 const cdp = await page.context().newCDPSession(page);
 await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 70, maxWidth: 1280, maxHeight: 800 });
 
 let inflight: { frameId: string; cdpSessionId: string } | null = null;
 let newest: { frame: Frame; cdpSessionId: string } | null = null;
 
+const ackCdp = (id: string) => cdp.send('Page.screencastFrameAck', { sessionId: id });
+
 cdp.on('Page.screencastFrame', ({ data, metadata, sessionId }) => {
+  if (newest) ackCdp(newest.cdpSessionId);   // supersede: ack the queued frame we're about to drop
   newest = { frame: { jpeg: data, metadata, frameId: randomUUID(), pageId, epoch }, cdpSessionId: sessionId };
-  if (!inflight) dispatch();            // send only when nothing is in flight to the client
+  if (!inflight) dispatch();
 });
 
 function dispatch() {
@@ -250,16 +258,22 @@ function dispatch() {
   inflight = { frameId: newest.frame.frameId, cdpSessionId: newest.cdpSessionId };
   const f = newest.frame; newest = null;
   gateway.publish('browser.frame', f, sessionChannel);   // fire-and-forget; NO onConsumed exists
-  armAckTimeout(inflight.frameId);                       // resume if the ACK never comes
+  armAckTimeout(inflight.frameId, () => {                 // timeout: abandon + ack CDP, then resume
+    ackCdp(inflight!.cdpSessionId);
+    inflight = null;
+    if (newest) dispatch();
+  });
 }
 
-// Explicit ACK request — this is how the daemon learns the frame was consumed:
-hub.handle('browser.frameAck', ({ frameId }) => {
+hub.handle('browser.frameAck', ({ frameId }) => {         // explicit ACK: how the daemon learns consumption
   if (inflight?.frameId !== frameId) return;
-  cdp.send('Page.screencastFrameAck', { sessionId: inflight.cdpSessionId }); // ack CDP AFTER client ACK
+  ackCdp(inflight.cdpSessionId);
   inflight = null;
-  if (newest) dispatch();                                                   // drain newest pending
+  if (newest) dispatch();
 });
+
+// teardown / pane disconnect: ack whatever we're still holding, then drop it
+onSessionLeave(() => { if (inflight) { ackCdp(inflight.cdpSessionId); inflight = null; } });
 ```
 
 Frames flow daemon → WS → canvas at roughly 10–30 fps depending on quality/size.
@@ -274,12 +288,19 @@ unless the client tells it. The protocol:
 - Each frame carries a unique `frameId`. After the pane draws it, the pane sends
   a `browser.frameAck { frameId }` request. The daemon acks CDP
   (`Page.screencastFrameAck`) **only on receipt** — never on enqueue. This keeps
-  at most one frame in flight and drops stale intermediates.
+  at most one frame in flight to the client and drops stale intermediates.
+- **Ack every CDP frame exactly once (required).** `screencastFrameAck` is CDP's
+  only flow-control point, and Chromium emits frames into bounded slots — so
+  every received frame must be acked, including ones the daemon *drops*: a
+  superseded queued frame is acked when overwritten; the in-flight frame is
+  acked on ACK-timeout and on teardown/disconnect. The loop above enforces this
+  via `ackCdp(...)` on each of those paths. Missing any one leaks slots and
+  stalls delivery.
 - **Disconnect:** when the pane's socket closes (or leaves the session channel),
-  the daemon drops `inflight` and resumes dispatch, otherwise it would wait
-  forever for an ACK from a gone client.
-- **Timeout:** if no ACK arrives within N ms, drop `inflight` and resume, so a
-  dropped ACK cannot permanently stall the stream.
+  the daemon acks and drops `inflight` then resumes dispatch — otherwise it
+  would wait forever for an ACK from a gone client.
+- **Timeout:** if no ACK arrives within N ms, ack and drop `inflight` and resume,
+  so a dropped ACK cannot permanently stall the stream.
 - **Multiple subscribers:** if more than one pane can subscribe to a session
   (e.g. desktop + browser tab), require an ACK from each, or explicitly document
   a single-subscriber-per-session assumption. State this in the implementation.
@@ -312,12 +333,17 @@ above:
 | Client event | Playwright call |
 |---|---|
 | move | `page.mouse.move(cssX, cssY)` |
-| button down | `page.mouse.down({ button, modifiers })` |
-| button up | `page.mouse.up({ button, modifiers })` |
+| button down | `page.mouse.down({ button, clickCount })` |
+| button up | `page.mouse.up({ button, clickCount })` |
 | wheel | `page.mouse.wheel(deltaX, deltaY)` |
+| modifier hold (Ctrl/Shift/Alt/Meta) | `page.keyboard.down(modifier)` **before** the mouse action; `page.keyboard.up(modifier)` **after** |
 
 Compose click/drag from down→(move)→up at the client; the broker forwards each
-transition.
+transition. **Modifier state is held via synchronized `keyboard.down`/`up`
+around the mouse action** — Playwright's `mouse.down`/`mouse.up` do not accept a
+`modifiers` option; they inherit modifier state from preceding `keyboard.down`
+calls. (For precise control, dispatch raw CDP `Input.dispatchMouseEvent` with its
+modifier bitmask instead.)
 
 #### Keyboard-event protocol (required)
 
@@ -346,10 +372,18 @@ choosing this approach) the broker must:
   or suppress inactive streams so every tab does not encode).
 - **Tag every frame with `pageId` + `epoch`** (epoch increments on activation
   change). A tab switch cannot be made atomic merely by stopping the old
-  screencast and repointing input — a stale frame from the old tab may already
-  be in the WS pipeline and render after input has begun routing to the new page.
-  The pane discards frames and **disables input until it renders the first frame
-  of the new epoch**, which makes the render + input switch atomic.
+  screencast and repointing input — a stale old-epoch frame may already be in the
+  WS pipeline and arrive *before* the first new-epoch frame.
+- **Announce activation out-of-band, and stamp input with epoch (required).**
+  Because a frame is the wrong carrier for the *first* signal of a new epoch,
+  the daemon sends an explicit `browser.activated { pageId, epoch }` event the
+  instant it switches the active page — before any frame for the new page and
+  before it repoints input. The pane bumps its expected epoch on receipt and
+  disables input until it renders the first frame whose `epoch` matches.
+  Independently, every `browser.input` request carries the pane's currently
+  displayed `epoch`, and the daemon **rejects inputs whose epoch ≠ the active
+  epoch** — a belt-and-suspenders guard against the stale-frame race. Together
+  these make the render + input switch atomic.
 
 ### Agent observation (what the model sees)
 
@@ -394,6 +428,15 @@ does not. These must be handled by design, not by accident:
    keychain and an empty profile, so password managers will not fill. The human
    types the password, and it then lives in the Chromium's cookies/profile until
    the session's teardown policy clears it.
+6. **Redact browser traffic from MessageHub logs (required).** MessageHub logs
+   full inbound/outbound message objects at `LOG_LEVEL=debug`/`trace`
+   (`packages/shared/src/message-hub/message-hub.ts`). Routed naively,
+   `browser.input` would log passwords and IME text and `browser.frame` would
+   log authenticated page pixels as base64 — and excluding them from
+   rewind/persistence does **not** prevent that disclosure. Add method-specific
+   payload redaction or suppression for `browser.input` / `browser.frame`
+   (e.g. log only metadata, never the payload) before this traffic is routed
+   through MessageHub.
 
 ## Tradeoffs
 
@@ -434,7 +477,8 @@ All proposed, none present today:
 | `packages/daemon/package.json` | Add a pinned `playwright` runtime dependency |
 | `packages/daemon/src/lib/browser/` (new) | `BrowserEngineService` — owns the daemon-lifetime shared Chromium, per-page CDP sessions, backpressure-gated frame loop keyed on `browser.frameAck`, epoch-tagged frames, input router, agent action primitives (MCP) |
 | Existing browser skills | Reimplemented on the service (replace) **or** reworked to attach to a persistent daemon broker (attach) — see [Shared browser bridge](#shared-browser-bridge). The naive attach to `chrome-devtools-mcp` does not survive a query boundary. |
-| MessageHub (new) | Method `browser.frame` (pub, session channel); request methods `browser.frameAck`, `browser.input`, `browser.action` (all session-scoped). No `onConsumed` — ACKs are explicit. |
+| MessageHub (new) | Method `browser.frame` (pub, session channel) + `browser.activated` (pub, epoch/page announcement); request methods `browser.frameAck`, `browser.input` (carrying displayed `epoch`), `browser.action` — all session-scoped. No `onConsumed` — ACKs are explicit. Every CDP frame acked exactly once. |
+| MessageHub logging | Method-specific redaction for `browser.input`/`browser.frame` so debug/trace logs never carry passwords, IME text, or authenticated page pixels |
 | Session lifecycle | Teardown hooks on archive/delete/hard-reset + daemon shutdown: close pages, CDP sessions, browser, listeners, credential-bearing profile; profile-retention policy |
 | `packages/web` (new component) | Preact `<BrowserPane sessionId>` — joins session channel, renders to `<canvas>`, sends `browser.frameAck`, maps pointer coords from frame metadata, forwards pointer + keyboard protocols, suppresses input across epoch changes |
 | `packages/desktop` (config/build only) | For the bundle path: add Chromium to `externalBin`/bundle + `build-sidecar.sh`; locate at runtime; release/signing. Rust webview code unchanged. |
@@ -466,6 +510,13 @@ Resolved in this revision (specified, not yet implemented):
 - **Keyboard protocol** — keydown/keyup/press/text mutually exclusive for printable keys; `insertText` for composition.
 - **Playwright runtime dependency** — add pinned dep to `packages/daemon`.
 - **Chromium packaging** — bundle (with desktop config/build changes) vs. first-run installer.
+
+Round-3 (mechanism correctness):
+
+- **CDP frame acking** — every received frame acked exactly once: forwarded frames on client ACK, dropped frames (superseded / ACK-timeout / teardown) immediately.
+- **Activation out-of-band + epoch on input** — `browser.activated {pageId, epoch}` event sent before repointing input; `browser.input` carries the displayed `epoch` and the daemon rejects mismatches, for an atomic tab switch.
+- **Log redaction** — `browser.input` / `browser.frame` payloads redacted in MessageHub debug/trace logs (passwords, IME text, authenticated pixels).
+- **Pointer modifiers** — held via synchronized `keyboard.down`/`up` (or CDP `Input.dispatchMouseEvent` bitmask), since Playwright `mouse.down`/`up` have no `modifiers` option.
 
 Still open:
 
