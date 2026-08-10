@@ -101,6 +101,15 @@ export function computeDefinitionVersion(workflow: SpaceWorkflow): ComputedDefin
 }
 
 /**
+ * Verify a stored payload matches its version hash (SHA-256). Used by the read cutover to
+ * reject corrupted/tampered version rows before rehydrating them — on mismatch the caller
+ * falls through to the live head instead.
+ */
+export function verifyDefinitionVersion(payload: string, versionHash: string): boolean {
+  return createHash('sha256').update(payload).digest('hex') === versionHash;
+}
+
+/**
  * A deterministic 32-bit timestamp-substitute derived from a definition version hash. The
  * Phase-1 read cutover rehydrates a pinned run's `updatedAt` with this value so the
  * gate-open cache fingerprint (`updatedAt + gateDef hash`, `generateGateFingerprint`) is

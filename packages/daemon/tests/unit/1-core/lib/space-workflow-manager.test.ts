@@ -1083,6 +1083,54 @@ describe('SpaceWorkflowManager', () => {
       expect(resolved).toEqual(manager.getWorkflow(wf.id));
     });
 
+    it('falls back to the live head when the pinned payload has an invalid shape', () => {
+      const wf = manager.createWorkflow({
+        spaceId: 'space-1',
+        name: 'W',
+        nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+        completionAutonomyLevel: 3,
+      });
+      // Valid JSON but no .nodes array — would crash sanitizePostApprovalForLoad if unchecked.
+      versionRepo.appendVersion({
+        workflowId: wf.id,
+        spaceId: 'space-1',
+        versionHash: 'corrupt-shape',
+        payload: '{}',
+        source: 'run_create',
+        createdAt: Date.now(),
+      });
+      const resolved = manager.getWorkflowForRun({
+        workflowId: wf.id,
+        definitionVersion: 'corrupt-shape',
+      });
+      expect(resolved).toEqual(manager.getWorkflow(wf.id));
+    });
+
+    it('falls back to the live head when the payload hash does not match the version hash', () => {
+      const wf = manager.createWorkflow({
+        spaceId: 'space-1',
+        name: 'W',
+        nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+        completionAutonomyLevel: 3,
+      });
+      // Valid shape but the versionHash doesn't match the payload's SHA-256.
+      const raw = repo.getWorkflow(wf.id)!;
+      const { payload } = computeDefinitionVersion(raw);
+      versionRepo.appendVersion({
+        workflowId: wf.id,
+        spaceId: 'space-1',
+        versionHash: 'wrong-hash',
+        payload,
+        source: 'run_create',
+        createdAt: Date.now(),
+      });
+      const resolved = manager.getWorkflowForRun({
+        workflowId: wf.id,
+        definitionVersion: 'wrong-hash',
+      });
+      expect(resolved).toEqual(manager.getWorkflow(wf.id));
+    });
+
     it('backfill pins a legacy run to its head, and the pin resolves behaviorally equal to the head', () => {
       const wf = manager.createWorkflow({
         spaceId: 'space-1',

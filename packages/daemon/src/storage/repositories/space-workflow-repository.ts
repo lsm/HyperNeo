@@ -33,6 +33,7 @@ import { Logger } from '../../lib/logger';
 import {
   computeDefinitionVersion,
   stableVersionTimestamp,
+  verifyDefinitionVersion,
 } from '../../lib/space/workflows/definition-version';
 import {
   SpaceWorkflowDefinitionVersionRepository,
@@ -321,6 +322,22 @@ export class SpaceWorkflowRepository {
         const version = this.definitionVersions.getVersion(run.workflowId, versionHash);
         if (version) {
           const parsed = JSON.parse(version.payload) as SpaceWorkflow;
+          // Validate shape + integrity before trusting the pinned payload: a corrupt or
+          // tampered row (valid JSON but wrong shape or hash mismatch) must not flow into
+          // sanitizePostApprovalForLoad (which assumes .nodes is an array). Fall through to
+          // the live head instead of returning a malformed object.
+          if (!parsed || !Array.isArray(parsed.nodes)) {
+            log.warn(
+              `getWorkflowForRun: pinned payload for ${versionHash} has invalid shape; falling back to live head`
+            );
+            return this.getWorkflow(run.workflowId);
+          }
+          if (!verifyDefinitionVersion(version.payload, versionHash)) {
+            log.warn(
+              `getWorkflowForRun: payload hash mismatch for workflow ${run.workflowId} (version ${versionHash}); falling back to live head`
+            );
+            return this.getWorkflow(run.workflowId);
+          }
           // updatedAt is derived from the immutable version hash so the gate-open cache
           // fingerprint is version-stable: it does not churn on unrelated head edits, and is
           // identical on first activation and recovery (independent of when the version row
