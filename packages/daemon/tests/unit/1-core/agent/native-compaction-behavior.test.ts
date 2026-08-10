@@ -55,6 +55,7 @@ import type {
 import { setModelsCache } from '../../../../src/lib/model-service';
 import {
   getModelContextWindow,
+  codexBackendContextWindow,
   MODEL_CONTEXT_WINDOWS,
 } from '../../../../src/lib/providers/codex-models';
 import { KimiProvider } from '../../../../src/lib/providers/kimi-provider';
@@ -211,9 +212,9 @@ describe('N2: thresholds — active SDK window (kimi/codex) + dormant fallback r
     // expectation (env-var wiring itself is covered by
     // anthropic-to-codex-bridge-provider.test.ts). Catalog as of #2278 (GPT-5.6).
     const EXPECTED_WINDOWS: Record<string, number> = {
-      'gpt-5.6-sol': 272_000,
-      'gpt-5.6-terra': 272_000,
-      'gpt-5.6-luna': 272_000,
+      'gpt-5.6-sol': 1_050_000,
+      'gpt-5.6-terra': 1_050_000,
+      'gpt-5.6-luna': 1_050_000,
       'gpt-5.5': 272_000,
       'gpt-5.3-codex': 272_000,
       'gpt-5.4': 272_000,
@@ -224,11 +225,28 @@ describe('N2: thresholds — active SDK window (kimi/codex) + dormant fallback r
       expect(getModelContextWindow(id), id).toBe(window);
     }
     // Alias resolution: codex-mini moved from gpt-5.4-mini (128k) to gpt-5.6-luna
-    // in #2278; codex-latest resolves to gpt-5.6-sol. gpt-5.6 windows are 272k —
-    // the Codex backend's real input cap (not the 1.05M published spec).
-    expect(getModelContextWindow('codex-mini')).toBe(272_000);
-    expect(getModelContextWindow('codex-latest')).toBe(272_000);
+    // in #2278; codex-latest resolves to gpt-5.6-sol. The catalogue keeps the
+    // published spec (gpt-5.6 = 1.05M); the ChatGPT Codex backend cap is applied
+    // separately via codexBackendContextWindow (see the next test).
+    expect(getModelContextWindow('codex-mini')).toBe(1_050_000);
+    expect(getModelContextWindow('codex-latest')).toBe(1_050_000);
     expect(getModelContextWindow('codex-5.4-mini')).toBe(128_000);
+  });
+
+  it('codexBackendContextWindow caps GPT-5.6 at 272K for the ChatGPT Codex backend', () => {
+    // The catalogue (getModelContextWindow) reports the published 1.05M spec,
+    // which the official api.openai.com API honors. The ChatGPT Codex backend
+    // (chatgpt.com/backend-api/codex) silently caps GPT-5.6 INPUT at 272K;
+    // codexBackendContextWindow reports that cap so the OAuth path compacts
+    // before exceeding it. Non-GPT-5.6 models are unaffected.
+    expect(codexBackendContextWindow('gpt-5.6-sol')).toBe(272_000);
+    expect(codexBackendContextWindow('gpt-5.6-terra')).toBe(272_000);
+    expect(codexBackendContextWindow('gpt-5.6-luna')).toBe(272_000);
+    expect(codexBackendContextWindow('codex-mini')).toBe(272_000);
+    expect(codexBackendContextWindow('codex-latest')).toBe(272_000);
+    // Unaffected models keep their published window.
+    expect(codexBackendContextWindow('gpt-5.5')).toBe(272_000);
+    expect(codexBackendContextWindow('gpt-5.4-mini')).toBe(128_000);
   });
 
   it('Kimi buildSdkConfig arms CLAUDE_CODE_AUTO_COMPACT_WINDOW per model (K2.7=262144, K3=1M)', () => {

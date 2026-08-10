@@ -228,7 +228,7 @@ describe('Model Service', () => {
 
       expect(model).not.toBeNull();
       expect(model?.provider).toBe('anthropic-codex');
-      expect(model?.contextWindow).toBe(272000);
+      expect(model?.contextWindow).toBe(1050000);
       expect(model?.preferContextWindowMetadata).toBe(true);
     });
 
@@ -239,7 +239,7 @@ describe('Model Service', () => {
 
       expect(model).not.toBeNull();
       expect(model?.id).toBe('gpt-5.6-sol');
-      expect(model?.contextWindow).toBe(272000);
+      expect(model?.contextWindow).toBe(1050000);
     });
 
     it('should overlay Codex metadata for matching Copilot OpenAI models', async () => {
@@ -388,7 +388,7 @@ describe('Model Service', () => {
       } as ProviderLike);
 
       const modelInfo = await getModelInfo('gpt-5.6-sol', 'global', 'anthropic-codex');
-      expect(modelInfo?.contextWindow).toBe(272000);
+      expect(modelInfo?.contextWindow).toBe(1050000);
       expect(await isValidModel('gpt-5.6-sol', 'global', 'anthropic-codex')).toBe(false);
     });
 
@@ -740,7 +740,7 @@ describe('Model Service', () => {
       } as any);
 
       expect(model?.id).toBe('gpt-5.6-sol');
-      expect(model?.contextWindow).toBe(272000);
+      expect(model?.contextWindow).toBe(1050000);
     });
 
     it('should return null when the session provider is missing', async () => {

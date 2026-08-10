@@ -191,7 +191,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
     });
 
     it('reports the maximum Codex context window', () => {
-      expect(provider.capabilities.maxContextWindow).toBe(272000);
+      expect(provider.capabilities.maxContextWindow).toBe(1050000);
     });
 
     it('advertises thinking when the Responses adapter is active', () => {
@@ -455,6 +455,39 @@ describe('AnthropicToCodexBridgeProvider', () => {
         expect(cfgWithAuth.envVars.ANTHROPIC_BASE_URL).not.toBe(
           cfgWithoutAuth.envVars.ANTHROPIC_BASE_URL
         );
+      } finally {
+        p.stopAllBridgeServers();
+        rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it('caps GPT-5.6 at 272K on the ChatGPT Codex (OAuth) backend', async () => {
+      // The 272K input cap is specific to the chatgpt.com Codex backend; the
+      // api.openai.com API used by OPENAI_API_KEY honors the published 1.05M
+      // (covered by the api-key tests above). buildSdkConfig must apply the cap
+      // only on the OAuth path — both in CLAUDE_CODE_AUTO_COMPACT_WINDOW and the
+      // bridge /v1/models metadata the SDK reads.
+      const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'hyperneo-codex-oauth-window-'));
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      writeHyperNeoAuth(hyperneoDir, {
+        type: 'oauth',
+        access: 'oauth-access-token',
+        refresh: 'oauth-refresh-token',
+        expires: Date.now() + 3600_000,
+        accountId: 'user_abc123',
+      });
+      const p = makeProvider({}, hyperneoDir, path.join(tmpDir, 'codex'));
+      try {
+        await p.getApiKey(); // populates cachedBridgeAuth (chatgpt_oauth via accountId)
+        const cfg = p.buildSdkConfig('gpt-5.6-sol', { workspacePath: '/tmp/ws-oauth-window' });
+        expect(cfg.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('272000');
+        // …and the bridge's /v1/models metadata (what the SDK reads).
+        const resp = await fetch(`${cfg.envVars.ANTHROPIC_BASE_URL}/v1/models`);
+        const body = (await resp.json()) as { data: Array<{ id: string; context_window: number }> };
+        const byId = new Map(body.data.map((m) => [m.id, m.context_window]));
+        expect(byId.get('gpt-5.6-sol')).toBe(272000);
+        // A non-GPT-5.6 model is unaffected (its published window is already 272K).
+        expect(byId.get('gpt-5.5')).toBe(272000);
       } finally {
         p.stopAllBridgeServers();
         rmSync(tmpDir, { recursive: true, force: true });
@@ -733,7 +766,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.6-terra');
       expect(cfg.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('gpt-5.6-luna');
       expect(cfg.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('gpt-5.6-sol');
-      expect(cfg.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('272000');
+      expect(cfg.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1050000');
     });
 
     it('routes GPT-5.6 Sol using real Codex ID with context metadata', async () => {
@@ -743,7 +776,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 
       const models = await provider.getModels();
       const sol = models.find((model) => model.id === 'gpt-5.6-sol');
-      expect(sol?.contextWindow).toBe(272_000);
+      expect(sol?.contextWindow).toBe(1_050_000);
       expect(sol?.preferContextWindowMetadata).toBe(true);
       expect(sol?.sdkModelIds).toContain('gpt-5.6-sol');
     });
@@ -758,7 +791,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       const cfg = provider.buildSdkConfig('codex-mini', { workspacePath: '/tmp/ws-mini' });
       expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.6-luna');
       expect(cfg.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('gpt-5.6-luna');
-      expect(cfg.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('272000');
+      expect(cfg.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1050000');
     });
 
     it('keeps cross-tier fallback registrations isolated by SDK alias', async () => {
@@ -857,9 +890,9 @@ describe('AnthropicToCodexBridgeProvider', () => {
       };
       const byId = new Map(body.data.map((m) => [m.id, m.context_window]));
       // Real Codex models advertise their actual context windows.
-      expect(byId.get('gpt-5.6-sol')).toBe(272_000);
-      expect(byId.get('gpt-5.6-terra')).toBe(272_000);
-      expect(byId.get('gpt-5.6-luna')).toBe(272_000);
+      expect(byId.get('gpt-5.6-sol')).toBe(1_050_000);
+      expect(byId.get('gpt-5.6-terra')).toBe(1_050_000);
+      expect(byId.get('gpt-5.6-luna')).toBe(1_050_000);
       expect(byId.get('gpt-5.5')).toBe(272_000);
       expect(byId.get('gpt-5.4-mini')).toBe(128_000);
       // No Anthropic alias models should be present.
@@ -959,9 +992,9 @@ describe('AnthropicToCodexBridgeProvider', () => {
       const models = await provider.getModels();
       const contextWindows = new Map(models.map((model) => [model.id, model.contextWindow]));
 
-      expect(contextWindows.get('gpt-5.6-sol')).toBe(272000);
-      expect(contextWindows.get('gpt-5.6-terra')).toBe(272000);
-      expect(contextWindows.get('gpt-5.6-luna')).toBe(272000);
+      expect(contextWindows.get('gpt-5.6-sol')).toBe(1050000);
+      expect(contextWindows.get('gpt-5.6-terra')).toBe(1050000);
+      expect(contextWindows.get('gpt-5.6-luna')).toBe(1050000);
       expect(contextWindows.get('gpt-5.3-codex')).toBe(272000);
       expect(contextWindows.get('gpt-5.4')).toBe(272000);
       expect(contextWindows.get('gpt-5.5')).toBe(272000);

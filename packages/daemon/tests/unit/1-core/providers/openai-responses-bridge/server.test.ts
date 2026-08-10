@@ -3277,7 +3277,7 @@ describe('openai-responses-bridge server', () => {
           id: 'gpt-5.6-sol',
           display_name: 'GPT-5.6 Sol',
           created_at: '2026-07-09T00:00:00Z',
-          context_window: 272000,
+          context_window: 1050000,
         },
       ],
       fetchImpl: async (_url, init) => {
@@ -3318,7 +3318,7 @@ describe('openai-responses-bridge server', () => {
           id: 'gpt-5.6-terra',
           display_name: 'GPT-5.6 Terra',
           created_at: '2026-07-09T00:00:00Z',
-          context_window: 272000,
+          context_window: 1050000,
         },
       ],
       fetchImpl: async (_url, init) => {
@@ -3397,7 +3397,7 @@ describe('openai-responses-bridge server', () => {
           id: 'gpt-5.6-luna',
           display_name: 'GPT-5.6 Luna',
           created_at: '2026-07-09T00:00:00Z',
-          context_window: 272000,
+          context_window: 1050000,
         },
       ],
       fetchImpl: async (_url, init) => {
