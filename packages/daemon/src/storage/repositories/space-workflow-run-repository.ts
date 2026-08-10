@@ -158,8 +158,8 @@ export class SpaceWorkflowRunRepository {
       try {
         const workflow = loadWorkflow(run.workflowId);
         if (!workflow) continue; // deleted head → leave unpinned (read-cutover fallback)
-        // pinExistingRun re-keys the run's persisted gate-open entries to the version-stable
-        // fingerprint basis atomically with the pin (see that method).
+        // pinExistingRun only stamps the pin; the gate-open cache re-key is a separate
+        // idempotent startup sweep (rekeyPinnedGateOpenCaches) that runs after this.
         if (this.pinExistingRun(run.id, workflow)) count += 1;
       } catch (err) {
         log.warn(`backfillDefinitionPins: skipped run ${run.id} (non-fatal):`, err);

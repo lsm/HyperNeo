@@ -128,19 +128,12 @@ export function stableVersionTimestamp(versionHash: string): number {
  * hash of the gate definition JSON, suitable only for cache invalidation.
  */
 export function gateDefinitionHash(gate: unknown): number {
-  // Strip `legacyGateMetadata` before hashing: it is presentation-only, added by
-  // `markDeprecatedGate` during the manager's load-time sanitization, NOT persisted on the
-  // raw repo row. The cutover re-key hashes the RAW gate (pre-sanitization) while the
-  // runtime read path hashes the SANITIZED gate (with legacyGateMetadata); ignoring this
-  // field makes the two hash identically so the re-keyed fingerprint matches what
-  // `generateGateFingerprint` computes on the sanitized resolution. Behavioral gate fields
-  // (id, fields, resetOnCycle, …) still participate, so real gate edits still invalidate.
-  let hashable = gate;
-  if (gate && typeof gate === 'object' && 'legacyGateMetadata' in gate) {
-    const { legacyGateMetadata: _drop, ...rest } = gate as Record<string, unknown>;
-    hashable = rest;
-  }
-  const gateJson = JSON.stringify(hashable);
+  // The historical inline hash from `generateGateFingerprint`: a fast non-cryptographic
+  // 32-bit hash of `JSON.stringify(gate)` (order-sensitive). NOT stripped of
+  // `legacyGateMetadata`: both the runtime and the re-key resolve the SAME sanitized object
+  // (legacyGateMetadata present) so they hash identically, and the validity guard must hash
+  // the identical object the pre-cutover runtime fingerprinted to match the stored value.
+  const gateJson = JSON.stringify(gate);
   let hash = 0;
   for (let i = 0; i < gateJson.length; i++) {
     hash = (hash << 5) - hash + gateJson.charCodeAt(i);

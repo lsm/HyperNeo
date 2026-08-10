@@ -78,21 +78,6 @@ export class GateOpenStateRepository {
   }
 
   /**
-   * List every gate currently cached open for a run, with its stored fingerprint. Used by
-   * the Phase-1 read-cutover backfill to re-key persisted entries to the version-stable
-   * fingerprint basis so they survive the cutover without re-evaluation.
-   */
-  listOpenedByRun(runId: string): Array<{ gateId: string; workflowUpdatedAt: number }> {
-    const rows = this.db
-      .prepare('SELECT gate_id, opened_workflow_updated_at FROM gate_open_state WHERE run_id = ?')
-      .all(runId) as Array<{ gate_id: string; opened_workflow_updated_at: number }>;
-    return rows.map((r) => ({
-      gateId: r.gate_id,
-      workflowUpdatedAt: r.opened_workflow_updated_at,
-    }));
-  }
-
-  /**
    * List every persisted gate-open entry across all runs. Used by the Phase-1 read-cutover
    * startup sweep to re-key entries whose run is pinned to the version-stable fingerprint
    * basis — so a backfilled in-flight run's cache survives the cutover, and a crash between

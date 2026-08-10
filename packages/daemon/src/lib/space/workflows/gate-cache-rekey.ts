@@ -22,7 +22,6 @@
 
 import type { GateOpenStateRepository } from '../../../storage/repositories/gate-open-state-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
-import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import {
   gateDefinitionHash,
@@ -33,7 +32,6 @@ import {
 export interface GateCacheRekeyDeps {
   gateOpenStateRepo: GateOpenStateRepository;
   runRepo: SpaceWorkflowRunRepository;
-  workflowRepo: SpaceWorkflowRepository;
   manager: SpaceWorkflowManager;
 }
 
@@ -43,14 +41,18 @@ export function rekeyPinnedGateOpenCaches(deps: GateCacheRekeyDeps): void {
     const run = deps.runRepo.getRun(entry.runId);
     if (!run?.definitionVersion) continue; // unpinned → no version-stable basis yet
 
-    // Validity guard (see module doc): skip entries that don't match the current head's
-    // pre-cutover fingerprint — they're stale and must be re-evaluated, not promoted.
-    const head = deps.workflowRepo.getWorkflow(run.workflowId);
-    if (head) {
-      const headGate = (head.gates ?? []).find((g) => g.id === entry.gateId);
+    // Validity guard (see module doc): reproduce the EXACT pre-cutover fingerprint — the
+    // sanitized HEAD gate (legacyGateMetadata present, as markDeprecatedGate adds) hashed with
+    // the same bare gateDefinitionHash the pre-cutover generateGateFingerprint used. Use the
+    // manager's HEAD read (getWorkflow), NOT the pinned resolution (getWorkflowForRun), which
+    // post-cutover returns the pinned version. Skip entries that don't match (stale) so they
+    // re-evaluate rather than get promoted.
+    const sanitizedHead = deps.manager.getWorkflow(run.workflowId);
+    if (sanitizedHead) {
+      const headGate = (sanitizedHead.gates ?? []).find((g) => g.id === entry.gateId);
       const headOldFingerprint = headGate
-        ? head.updatedAt + gateDefinitionHash(headGate)
-        : head.updatedAt;
+        ? sanitizedHead.updatedAt + gateDefinitionHash(headGate)
+        : sanitizedHead.updatedAt;
       if (entry.workflowUpdatedAt !== headOldFingerprint) continue; // stale → re-evaluate
     }
 

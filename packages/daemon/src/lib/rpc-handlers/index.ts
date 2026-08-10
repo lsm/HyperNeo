@@ -570,7 +570,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   rekeyPinnedGateOpenCaches({
     gateOpenStateRepo,
     runRepo: spaceWorkflowRunRepo,
-    workflowRepo: spaceWorkflowRepo,
     manager: spaceWorkflowManager,
   });
 

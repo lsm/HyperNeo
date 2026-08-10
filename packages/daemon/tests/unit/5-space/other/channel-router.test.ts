@@ -51,7 +51,12 @@ import type { Gate, SpaceWorkflow, WorkflowChannel } from '@hyperneo/shared';
 import { computeGateDefaults } from '@hyperneo/shared';
 import { registerGateFeature } from '../../../../src/lib/space/runtime/gate-features.ts';
 import { registerBuiltInValidator } from '../../../../src/lib/space/runtime/built-in-validator-registry.ts';
-import { gateDefinitionHash } from '../../../../src/lib/space/workflows/definition-version';
+import {
+  computeDefinitionVersion,
+  gateDefinitionHash,
+  pinnedGateFingerprint,
+  stableVersionTimestamp,
+} from '../../../../src/lib/space/workflows/definition-version';
 import { rekeyPinnedGateOpenCaches } from '../../../../src/lib/space/workflows/gate-cache-rekey';
 
 /**
@@ -493,28 +498,28 @@ describe('ChannelRouter', () => {
         workflowRunId: run.id,
       });
       runRepo.transitionStatus(run.id, 'in_progress');
-      // Pre-cutover open-gate entry fingerprinted with the OLD basis — the full fingerprint
-      // generateGateFingerprint would have stored (head.updatedAt + gate-def hash), not just
-      // the timestamp.
-      const headGate = (headRaw.gates ?? []).find((g) => g.id === 'plan-gate')!;
+      // Pre-cutover open-gate entry fingerprinted with the EXACT old basis the pre-cutover
+      // runtime stored: generateGateFingerprint on the SANITIZED head gate (legacyGateMetadata
+      // present) — head.updatedAt + gateDefinitionHash(sanitizedHeadGate). Seeding with the
+      // raw gate or a stripped hash would NOT match (the bug class the validity guard fixes).
+      const sanitizedHead = workflowManager.getWorkflow(workflow.id)!;
+      const headGate = (sanitizedHead.gates ?? []).find((g) => g.id === 'plan-gate')!;
       gateOpenStateRepo.markOpened(
         run.id,
         'plan-gate',
-        headRaw.updatedAt + gateDefinitionHash(headGate)
+        sanitizedHead.updatedAt + gateDefinitionHash(headGate)
       );
       // Also seed an entry for a gate that does NOT exist in the workflow — the sweep's
       // missing-gateDef branch must re-key it to the bare version-stable timestamp (matching
       // generateGateFingerprint's no-gateDef fallback = updatedAt).
-      gateOpenStateRepo.markOpened(run.id, 'ghost-gate', headRaw.updatedAt);
+      gateOpenStateRepo.markOpened(run.id, 'ghost-gate', sanitizedHead.updatedAt);
 
       // Backfill pins the run; the shared startup sweep then re-keys each persisted gate-open
       // entry via the SAME sanitized resolution the runtime read path uses.
-      const workflowRepo = new SpaceWorkflowRepository(db);
       runRepo.backfillDefinitionPins(() => headRaw);
       rekeyPinnedGateOpenCaches({
         gateOpenStateRepo,
         runRepo,
-        workflowRepo,
         manager: workflowManager,
       });
 
@@ -579,16 +584,14 @@ describe('ChannelRouter', () => {
         workflowRunId: run.id,
       });
       runRepo.transitionStatus(run.id, 'in_progress');
-      // Seed a STALE entry — a fingerprint that does not match the current head (simulating a
-      // gate cached against an older, since-edited head).
+      // Seed a STALE entry — a fingerprint that does not match the current head's pre-cutover
+      // fingerprint (simulating a gate cached against an older, since-edited head).
       gateOpenStateRepo.markOpened(run.id, 'plan-gate', headRaw.updatedAt - 9999);
 
-      const workflowRepo = new SpaceWorkflowRepository(db);
       runRepo.backfillDefinitionPins(() => headRaw);
       rekeyPinnedGateOpenCaches({
         gateOpenStateRepo,
         runRepo,
-        workflowRepo,
         manager: workflowManager,
       });
 
@@ -597,6 +600,122 @@ describe('ChannelRouter', () => {
       const after = gateOpenStateRepo.isOpen(run.id, 'plan-gate');
       expect(after.open).toBe(true);
       expect(after.workflowUpdatedAt).toBe(headRaw.updatedAt - 9999); // unchanged → will miss → re-eval
+    });
+
+    test('sweep is idempotent (a second run is a no-op) — crash-recovery safe', async () => {
+      // PR-review P3: the sweep runs every boot; a crash mid-sweep must recover. Running it
+      // twice yields the same state (already-re-keyed entries are not rewritten).
+      const gate: Gate = {
+        id: 'plan-gate',
+        fields: [{ name: 'plan', type: 'string', writers: ['planner'], check: { op: 'exists' } }],
+        resetOnCycle: false,
+      };
+      const channels: WorkflowChannel[] = [
+        { id: 'ch-1', from: 'planner', to: 'coder', gateId: 'plan-gate' },
+      ];
+      const workflow = buildWorkflowWithGates(
+        SPACE_ID,
+        workflowManager,
+        [
+          {
+            id: NODE_A,
+            name: 'Planner Node',
+            agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+          },
+          { id: NODE_B, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+        ],
+        channels,
+        [gate]
+      );
+      const headRaw = workflowManager.getWorkflowForRunStart(workflow.id)!.rawWorkflow;
+      const gateOpenStateRepo = new GateOpenStateRepository(db);
+      const runRepo = new SpaceWorkflowRunRepository(db, gateOpenStateRepo);
+      const run = runRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Legacy',
+      });
+      taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'T',
+        description: '',
+        status: 'open',
+        workflowRunId: run.id,
+      });
+      runRepo.transitionStatus(run.id, 'in_progress');
+      const sanitizedHead = workflowManager.getWorkflow(workflow.id)!;
+      const headGate = (sanitizedHead.gates ?? []).find((g) => g.id === 'plan-gate')!;
+      gateOpenStateRepo.markOpened(
+        run.id,
+        'plan-gate',
+        sanitizedHead.updatedAt + gateDefinitionHash(headGate)
+      );
+
+      runRepo.backfillDefinitionPins(() => headRaw);
+      rekeyPinnedGateOpenCaches({ gateOpenStateRepo, runRepo, manager: workflowManager });
+      const afterFirst = gateOpenStateRepo.isOpen(run.id, 'plan-gate').workflowUpdatedAt;
+      // Second sweep: no further writes (entry already on the version-stable basis).
+      rekeyPinnedGateOpenCaches({ gateOpenStateRepo, runRepo, manager: workflowManager });
+      const afterSecond = gateOpenStateRepo.isOpen(run.id, 'plan-gate').workflowUpdatedAt;
+      expect(afterSecond).toBe(afterFirst);
+    });
+
+    test('sweep re-keys deleted-head orphans unconditionally (no head to validate)', async () => {
+      // PR-review P3: a pinned run whose head was deleted has no head fingerprint to compare
+      // against — the sweep re-keys its entries unconditionally so the orphan's cache still
+      // resolves against its pinned version.
+      const gate: Gate = {
+        id: 'plan-gate',
+        fields: [{ name: 'plan', type: 'string', writers: ['planner'], check: { op: 'exists' } }],
+        resetOnCycle: false,
+      };
+      const channels: WorkflowChannel[] = [
+        { id: 'ch-1', from: 'planner', to: 'coder', gateId: 'plan-gate' },
+      ];
+      const workflow = buildWorkflowWithGates(
+        SPACE_ID,
+        workflowManager,
+        [
+          {
+            id: NODE_A,
+            name: 'Planner Node',
+            agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+          },
+          { id: NODE_B, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+        ],
+        channels,
+        [gate]
+      );
+      const headRaw = workflowManager.getWorkflowForRunStart(workflow.id)!.rawWorkflow;
+      const { versionHash } = computeDefinitionVersion(headRaw);
+      const gateOpenStateRepo = new GateOpenStateRepository(db);
+      const runRepo = new SpaceWorkflowRunRepository(db, gateOpenStateRepo);
+      const run = runRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Legacy',
+      });
+      taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'T',
+        description: '',
+        status: 'open',
+        workflowRunId: run.id,
+      });
+      runRepo.transitionStatus(run.id, 'in_progress');
+      // Pin, then DELETE the head (orphan the run's pinned version).
+      runRepo.backfillDefinitionPins(() => headRaw);
+      db.prepare(`DELETE FROM space_workflows WHERE id = ?`).run(workflow.id);
+      // A deliberately stale-looking entry; with no head the validity guard is skipped.
+      gateOpenStateRepo.markOpened(run.id, 'plan-gate', 1);
+
+      rekeyPinnedGateOpenCaches({ gateOpenStateRepo, runRepo, manager: workflowManager });
+      const after = gateOpenStateRepo.isOpen(run.id, 'plan-gate');
+      expect(after.open).toBe(true);
+      // Re-keyed unconditionally to the version-stable basis (gate present → + gate hash).
+      const sanitizedPinned = workflowManager.getWorkflowForRun(runRepo.getRun(run.id)!)!;
+      const pinnedGate = (sanitizedPinned.gates ?? []).find((g) => g.id === 'plan-gate')!;
+      expect(after.workflowUpdatedAt).toBe(pinnedGateFingerprint(versionHash, pinnedGate));
     });
 
     test('pinned run DB-backed gate-open cache survives a head edit (version-stable)', async () => {
