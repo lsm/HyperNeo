@@ -1634,6 +1634,91 @@ describe('openai-responses-bridge server', () => {
     }
   );
 
+  it.skipIf(!isBun)(
+    'preserves max_tokens for a contentless response.incomplete (not overloaded)',
+    async () => {
+      server = createOpenAIResponsesBridgeServer({
+        auth: { source: 'api_key', apiKey: 'sk-test' },
+        models,
+        fetchImpl: async () =>
+          sse([
+            {
+              event: 'response.incomplete',
+              data: {
+                type: 'response.incomplete',
+                // Model exhausted max_output_tokens before any visible content.
+                response: { usage: { input_tokens: 3, output_tokens: 0 } },
+              },
+            },
+          ]),
+      });
+
+      const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-5.3-codex',
+          max_tokens: 1,
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+      });
+
+      const events = await readSSEEvents(resp.body);
+      expect(resp.status).toBe(200);
+      // max_output_tokens exhaustion is NOT a transient overload — retrying it
+      // would not help — so it surfaces with a max_tokens stop reason, not an
+      // overloaded error.
+      expect(events.find((event) => event.event === 'error')).toBeUndefined();
+      expect(messageDeltaEvent(events)).toMatchObject({
+        delta: { stop_reason: 'max_tokens' },
+      });
+    }
+  );
+
+  it.skipIf(!isBun)(
+    'surfaces a refusal as text content instead of retrying it as an overload',
+    async () => {
+      server = createOpenAIResponsesBridgeServer({
+        auth: { source: 'api_key', apiKey: 'sk-test' },
+        models,
+        fetchImpl: async () =>
+          sse([
+            {
+              event: 'response.refusal.delta',
+              data: { type: 'response.refusal.delta', delta: 'I cannot help with that.' },
+            },
+            {
+              event: 'response.completed',
+              data: {
+                type: 'response.completed',
+                response: { usage: { input_tokens: 2, output_tokens: 1 }, output: [] },
+              },
+            },
+          ]),
+      });
+
+      const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-5.3-codex',
+          max_tokens: 128,
+          messages: [{ role: 'user', content: 'do something unsafe' }],
+        }),
+      });
+
+      const events = await readSSEEvents(resp.body);
+      expect(resp.status).toBe(200);
+      // The refusal text is surfaced as the assistant's text content...
+      expect(textDeltaEvents(events).join('')).toBe('I cannot help with that.');
+      // ...not retried as an overload (which would loop on a deterministic refusal).
+      expect(events.find((event) => event.event === 'error')).toBeUndefined();
+      expect(messageDeltaEvent(events)).toMatchObject({
+        delta: { stop_reason: 'end_turn' },
+      });
+    }
+  );
+
   it.skipIf(!isBun)('returns 400 for unsupported user content blocks', async () => {
     server = createOpenAIResponsesBridgeServer({
       auth: { source: 'api_key', apiKey: 'sk-test' },
@@ -2548,6 +2633,85 @@ describe('openai-responses-bridge server', () => {
       delta: { stop_reason: 'end_turn' },
     });
     expect(events.find((event) => event.event === 'error')).toBeUndefined();
+  });
+
+  it('does not overwrite cached reasoning on a non-productive stream (direct)', async () => {
+    // A non-productive completion (empty output) must NOT call onReasoningItems
+    // with an empty array — storeReasoningItems would delete the last successful
+    // turn's cached reasoning, breaking the retry's multi-turn continuation.
+    const reasoningCalls: unknown[][] = [];
+    const openAIStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder();
+        controller.enqueue(
+          encoder.encode(
+            `event: response.completed\ndata: ${JSON.stringify({
+              type: 'response.completed',
+              // Non-productive: completed with empty output (no content/reasoning).
+              response: { usage: { input_tokens: 1, output_tokens: 0 }, output: [] },
+            })}\n\n`
+          )
+        );
+        controller.close();
+      },
+    });
+    const anthropicStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        void _openAIResponsesBridgeServerTesting.streamResponsesToAnthropic({
+          openAIResponse: new Response(openAIStream, {
+            headers: { 'Content-Type': 'text/event-stream' },
+          }),
+          controller,
+          model: 'gpt-5.3-codex',
+          estimatedInputTokens: 1,
+          onReasoningItems: (items) => reasoningCalls.push(items),
+        });
+      },
+    });
+
+    await readSSEEvents(anthropicStream);
+    expect(reasoningCalls).toEqual([]);
+  });
+
+  it('caches reasoning for a productive turn carrying it (direct)', async () => {
+    // A productive turn (text + reasoning in completed output) MUST call
+    // onReasoningItems so the reasoning carries to the next turn.
+    const reasoningCalls: unknown[][] = [];
+    const openAIStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder();
+        const write = (event: string, data: unknown): void =>
+          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+        write('response.output_text.delta', {
+          type: 'response.output_text.delta',
+          delta: 'answer',
+        });
+        write('response.completed', {
+          type: 'response.completed',
+          response: {
+            usage: { input_tokens: 1, output_tokens: 1 },
+            output: [{ type: 'reasoning', encrypted_content: 'ENC_123' }],
+          },
+        });
+        controller.close();
+      },
+    });
+    const anthropicStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        void _openAIResponsesBridgeServerTesting.streamResponsesToAnthropic({
+          openAIResponse: new Response(openAIStream, {
+            headers: { 'Content-Type': 'text/event-stream' },
+          }),
+          controller,
+          model: 'gpt-5.3-codex',
+          estimatedInputTokens: 1,
+          onReasoningItems: (items) => reasoningCalls.push(items),
+        });
+      },
+    });
+
+    await readSSEEvents(anthropicStream);
+    expect(reasoningCalls).toEqual([[{ type: 'reasoning', encrypted_content: 'ENC_123' }]]);
   });
 
   it.skipIf(!isBun)(

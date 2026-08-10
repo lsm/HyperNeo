@@ -1071,7 +1071,11 @@ async function streamResponsesToAnthropic({
     }
 
     for await (const event of readOpenAIStream(openAIResponse.body)) {
-      if (event.type === 'response.output_text.delta') {
+      if (event.type === 'response.output_text.delta' || event.type === 'response.refusal.delta') {
+        // A refusal is the assistant's text response (the model declining to
+        // answer); surface its delta as an ordinary text block so the SDK — and
+        // the empty-stream guard below — see real content rather than an empty
+        // turn that would otherwise be retried as an overload.
         ensureStarted();
         closeThinkingBlock();
         if (!textOpen) {
@@ -1163,7 +1167,9 @@ async function streamResponsesToAnthropic({
             onFunctionCallResponse?.(callId, responseId);
           }
         }
-        onReasoningItems?.(responseReasoningItems);
+        // NOTE: onReasoningItems is deferred to after the stream completes (see
+        // the fall-through below) so a non-productive completion does not
+        // overwrite the last successful turn's cached reasoning.
         continue;
       }
 
@@ -1246,17 +1252,35 @@ async function streamResponsesToAnthropic({
     ensureStarted();
     closeThinkingBlock();
     closeTextBlock();
+    // Cache this turn's reasoning for multi-turn continuation unless the turn was
+    // truly empty. A non-productive completion carries an empty
+    // responseReasoningItems; calling onReasoningItems([]) would delete the last
+    // successful turn's cached reasoning (storeReasoningItems overwrites),
+    // breaking the retry's continuation state. So this is gated on "produced any
+    // content OR any reasoning" and deferred past the stream loop (the
+    // response.completed handler no longer calls it directly): a contentless
+    // turn that still carried reasoning (e.g. reasoning-only output) keeps its
+    // reasoning for the retry, while a fully empty turn preserves the prior cache.
+    if (producedContent || responseReasoningItems.length > 0) {
+      onReasoningItems?.(responseReasoningItems);
+    }
     // The upstream returned 200 and the stream completed without an error event,
-    // yet produced ZERO content blocks (no text / reasoning / tool_use). An empty
-    // Anthropic turn is malformed per the Messages spec, and because the bridge
-    // already committed the 200 headers before reading the body, the SDK cannot
-    // retry it at the transport layer. Emit a retryable overloaded_error SSE
-    // instead of an empty end_turn: the SDK surfaces the overloaded_error type
-    // (see core/streaming.js), the query-runner (B4) recognises 'overloaded' as a
-    // transient provider error, and re-issues the whole query — so compaction
-    // self-heals instead of dying on the empty 200. This is the failure mode that
-    // killed compaction on very large OpenAI requests (empty/non-productive 200).
-    if (!producedContent) {
+    // yet produced ZERO content blocks (no text / reasoning / tool_use) and was
+    // not truncated by max_output_tokens. An empty Anthropic turn is malformed per
+    // the Messages spec, and because the bridge already committed the 200 headers
+    // before reading the body, the SDK cannot retry it at the transport layer.
+    // Emit a retryable overloaded_error SSE instead of an empty end_turn: the SDK
+    // surfaces the overloaded_error type (see core/streaming.js), the query-runner
+    // (B4) recognises 'overloaded' as a transient provider error, and re-issues
+    // the whole query — so compaction self-heals instead of dying on the empty
+    // 200. This is the failure mode that killed compaction on very large OpenAI
+    // requests (empty/non-productive 200).
+    //
+    // A contentless `response.incomplete` is excluded: that is max_output_tokens
+    // exhaustion (the model spent its budget on reasoning before any visible
+    // output), not a transient overload — retrying would not help — so it falls
+    // through to the `max_tokens` stop reason below.
+    if (!producedContent && !incomplete) {
       logger.warn(
         'openai-responses: upstream 200 produced an empty stream with no content ' +
           'blocks; surfacing as retryable overloaded_error instead of an empty end_turn'
