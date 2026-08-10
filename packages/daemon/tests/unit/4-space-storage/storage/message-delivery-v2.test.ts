@@ -11,12 +11,13 @@
  * See docs/features/message-delivery-v2.md §13.
  */
 
-import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, mock } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { runMigration182 } from '../../../../src/storage/schema/migrations';
 import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants';
 import {
+  awaitDeliveryConsumption,
   deliverAndMarkQueued,
   deliverMessage,
   drainDeliveryWaitersOnTerminalSDKMessage,
@@ -872,5 +873,43 @@ describe('drainDeliveryWaitersOnTerminalSDKMessage (handleSDKMessage-catch gatin
       type: 'stream_event',
     } as SDKMessage);
     expect(setIdle).not.toHaveBeenCalled();
+  });
+});
+
+describe('awaitDeliveryConsumption — terminalize a fresh job on timeout (no-stable-id dedup)', () => {
+  const prev = process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS;
+  beforeAll(() => {
+    process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = '20';
+  });
+  afterAll(() => {
+    if (prev === undefined) delete process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS;
+    else process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = prev;
+  });
+
+  it('calls terminalizeOnTimeout + rejects when consumption is not signalled (fresh job)', async () => {
+    const deliver = mock(async () => {});
+    const terminalize = mock(() => {});
+    await expect(
+      awaitDeliveryConsumption({
+        messageUuid: 'fresh-timeout',
+        deliver,
+        terminalizeOnTimeout: terminalize,
+      })
+    ).rejects.toThrow('not consumed within timeout');
+    expect(deliver).toHaveBeenCalledTimes(1);
+    expect(terminalize).toHaveBeenCalledTimes(1); // terminalized so a retry won't duplicate
+  });
+
+  it('does NOT call terminalizeOnTimeout when consumption is signalled in time', async () => {
+    const deliver = mock(async () => {
+      signalDeliveryConsumed('fresh-consumed');
+    });
+    const terminalize = mock(() => {});
+    await awaitDeliveryConsumption({
+      messageUuid: 'fresh-consumed',
+      deliver,
+      terminalizeOnTimeout: terminalize,
+    });
+    expect(terminalize).not.toHaveBeenCalled();
   });
 });

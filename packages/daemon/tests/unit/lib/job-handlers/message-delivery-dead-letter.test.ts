@@ -46,6 +46,17 @@ const CHAT_PAYLOAD: MessageDeliveryPayload = {
   parentToolUseId: null,
 };
 
+// A mid-turn handoff to a running node session is a space_inject STEER (not the
+// node's kickoff turn). It must NOT emit session.error — only a dead-lettered
+// kickoff (turn) marks the execution blocked. (Codex P1.)
+const SPACE_INJECT_STEER_PAYLOAD: MessageDeliveryPayload = {
+  sessionId: 'sess-1',
+  messageUuid: 'uuid-3',
+  role: 'steer',
+  origin: 'space_inject',
+  parentToolUseId: null,
+};
+
 describe('settleMessageDeliveryDeadLetter (onDead → session.error → settle ordering)', () => {
   it('for a space_inject kickoff, publishes session.error BEFORE settling the queued marker', async () => {
     // The settlement idle would let registerCompletionCallback read the
@@ -71,6 +82,18 @@ describe('settleMessageDeliveryDeadLetter (onDead → session.error → settle o
 
     expect(calls).not.toContain('sessionError');
     expect(settlement.publishSessionError).not.toHaveBeenCalled();
+    expect(calls).toContain('settle');
+  });
+
+  it('does NOT publish session.error for a space_inject STEER (mid-turn handoff, not the kickoff)', async () => {
+    // A mid-turn handoff to a running node session is a space_inject steer; the
+    // node's kickoff + current turn already succeeded, so its dead-letter must
+    // not fire the completion callback's error path and block the execution.
+    const { settlement, calls } = recordingSettlement();
+    await settleMessageDeliveryDeadLetter(SPACE_INJECT_STEER_PAYLOAD, settlement);
+
+    expect(settlement.publishSessionError).not.toHaveBeenCalled();
+    expect(calls).not.toContain('sessionError');
     expect(calls).toContain('settle');
   });
 

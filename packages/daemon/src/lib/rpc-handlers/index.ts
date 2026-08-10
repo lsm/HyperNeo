@@ -87,9 +87,9 @@ import { SpaceWorkflowRepository } from '../../storage/repositories/space-workfl
 import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository';
 import { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository';
 import {
+  awaitDeliveryConsumption,
   deliverAndMarkQueued,
   isMessageDeliveryV2Enabled,
-  waitForDeliveryConsumption,
 } from '../agent/message-delivery';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import type { JobQueueProcessor } from '../../storage/job-queue-processor';
@@ -897,6 +897,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       // don't insert a duplicate sdk_messages row or re-drive a terminal one.
       const sdkMessageRepo = deps.reactiveDb.db.getSDKMessageRepo();
       const existing = sdkMessageRepo.getDeliveryContent(sessionId, messageId);
+      const fresh = !existing;
       if (!existing) {
         deps.reactiveDb.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
       } else if (existing.sendStatus === 'consumed') {
@@ -904,38 +905,31 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       } else if (existing.sendStatus === 'failed') {
         sdkMessageRepo.reopenDeliveryByUuid(sessionId, messageId);
       }
-      // Await SDK consumption (onSent) before returning, mirroring the LTA +
-      // task-agent injectors + the legacy enqueueWithId path. Without this a
-      // direct send_message handoff (no retained source row to retry) is recorded
-      // as delivered after a bare enqueue that may yet dead-letter. Rejects on
-      // timeout so the router doesn't acknowledge a delivery that may fail; the
-      // durable job keeps running and a later retry re-registers the wait. (Codex P1.)
-      const consumed = waitForDeliveryConsumption(messageId);
-      let consumptionTimeout: ReturnType<typeof setTimeout> | undefined;
-      try {
-        await deliverAndMarkQueued({
-          jobQueue: deps.reactiveDb.db.getJobQueueRepo(),
-          stateManager: session.stateManager,
-          sessionId,
-          messageUuid: messageId,
-          origin: 'space_agent',
-          onEnqueueFailure: () => sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId),
-        });
-        const consumptionTimeoutMs =
-          Number(process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS) || 30_000;
-        await Promise.race([
-          consumed.promise,
-          new Promise<void>((_, reject) => {
-            consumptionTimeout = setTimeout(
-              () => reject(new Error('space-agent handoff not consumed within timeout')),
-              consumptionTimeoutMs
-            );
+      // Await SDK consumption (onSent) before returning — a direct send_message
+      // handoff has no retained source row to retry, so it must not record
+      // delivered after a bare enqueue that may yet dead-letter. On timeout,
+      // terminalize ONLY a fresh row: direct send_message carries no stable id,
+      // so a retry mints a fresh UUID — terminalizing the timed-out fresh job
+      // stops it being consumed alongside the retry (duplicate). The flush path
+      // carries a stable id (existing row), so it omits the terminalize. (Codex P1.)
+      await awaitDeliveryConsumption({
+        messageUuid: messageId,
+        deliver: () =>
+          deliverAndMarkQueued({
+            jobQueue: deps.reactiveDb.db.getJobQueueRepo(),
+            stateManager: session.stateManager,
+            sessionId,
+            messageUuid: messageId,
+            origin: 'space_agent',
+            onEnqueueFailure: () => sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId),
           }),
-        ]);
-      } finally {
-        if (consumptionTimeout) clearTimeout(consumptionTimeout);
-        consumed.cancel();
-      }
+        ...(fresh
+          ? {
+              terminalizeOnTimeout: () =>
+                sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId),
+            }
+          : {}),
+      });
     } else {
       // Legacy inline path (HYPERNEO_MESSAGE_DELIVERY_V2=0 opt-out).
       await session.ensureQueryStarted();

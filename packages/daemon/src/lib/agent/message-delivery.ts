@@ -330,6 +330,50 @@ export function signalDeliveryConsumed(messageUuid: string): void {
 }
 
 /**
+ * Await a durable delivery job's SDK consumption (onSent) after enqueueing it,
+ * restoring the legacy "delivered = consumed" semantic. `deliver` performs the
+ * enqueue (e.g. {@link deliverAndMarkQueued}); the await races the consumption
+ * signal against a timeout (HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS, default
+ * 30s, matching the legacy MessageQueue timeout) and rejects on timeout so a
+ * caller doesn't acknowledge a delivery that may yet dead-letter.
+ *
+ * `terminalizeOnTimeout` is invoked on timeout (or if `deliver` throws) ONLY for
+ * paths that created a FRESH job this call (no prior row). It terminalizes the
+ * persisted row so the durable job isn't later consumed alongside a retry that
+ * mints a fresh UUID (direct send_message paths carry no stable id) — preventing
+ * a duplicate. OMIT it for existing-row paths (stable id, e.g. the inbox flush)
+ * so the job can self-heal via a retry that re-registers the wait. (Codex P1.)
+ */
+export async function awaitDeliveryConsumption(args: {
+  messageUuid: string;
+  deliver: () => Promise<void>;
+  terminalizeOnTimeout?: () => void;
+}): Promise<void> {
+  const consumed = waitForDeliveryConsumption(args.messageUuid);
+  let consumptionTimeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await args.deliver();
+    const consumptionTimeoutMs =
+      Number(process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS) || 30_000;
+    await Promise.race([
+      consumed.promise,
+      new Promise<void>((_, reject) => {
+        consumptionTimeout = setTimeout(
+          () => reject(new Error('delivery not consumed within timeout')),
+          consumptionTimeoutMs
+        );
+      }),
+    ]);
+  } catch (err) {
+    args.terminalizeOnTimeout?.();
+    throw err;
+  } finally {
+    if (consumptionTimeout) clearTimeout(consumptionTimeout);
+    consumed.cancel();
+  }
+}
+
+/**
  * In-process per-session mutex. Guards ONLY the brief turn start/stop + steer
  * state-check windows — NOT the long turn await. The feed itself is
  * concurrent-safe (§8). Holding this lock across a full SDK turn would block

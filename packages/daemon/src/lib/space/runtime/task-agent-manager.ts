@@ -57,9 +57,9 @@ import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { AgentSessionInit } from '../../../lib/agent/agent-session';
 import { AgentSession } from '../../../lib/agent/agent-session';
 import {
+  awaitDeliveryConsumption,
   deliverAndMarkQueued,
   isMessageDeliveryV2Enabled,
-  waitForDeliveryConsumption,
 } from '../../../lib/agent/message-delivery';
 import { validateImageSizes } from '../../session/message-persistence';
 import type { Database } from '../../../storage/database';
@@ -4721,40 +4721,32 @@ export class TaskAgentManager {
         ? messageId
         : this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued', origin);
       const sdkMessageRepo = this.config.db.getSDKMessageRepo();
-      // Restore the legacy "delivered = consumed by the SDK" semantic (the legacy
-      // path awaited messageQueue.enqueueWithId until onSent). Without this, a
-      // direct handoff (e.g. the live send_message path) returns delivered after a
-      // bare enqueue, but the job can later dead-letter without the recipient ever
-      // seeing it — and unlike the flush path there's no retained source row to
-      // retry. Await SDK consumption (onSent), rejecting on timeout so callers
-      // don't acknowledge a delivery that may yet dead-letter; the durable job
-      // keeps running and a later retry re-registers the wait. (Codex P1.)
-      const consumed = waitForDeliveryConsumption(messageId);
-      let consumptionTimeout: ReturnType<typeof setTimeout> | undefined;
-      try {
-        await deliverAndMarkQueued({
-          jobQueue: this.config.db.getJobQueueRepo(),
-          stateManager: session.stateManager,
-          sessionId,
-          messageUuid: messageId,
-          origin: 'space_inject',
-          onEnqueueFailure: () => sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId),
-        });
-        const consumptionTimeoutMs =
-          Number(process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS) || 30_000;
-        await Promise.race([
-          consumed.promise,
-          new Promise<void>((_, reject) => {
-            consumptionTimeout = setTimeout(
-              () => reject(new Error('task-agent handoff not consumed within timeout')),
-              consumptionTimeoutMs
-            );
+      // Await SDK consumption (onSent) before returning — a direct handoff (the
+      // live send_message path) has no retained source row to retry, so it must
+      // not report delivered after a bare enqueue that may yet dead-letter. On
+      // timeout, terminalize ONLY a fresh row: direct send_message carries no
+      // stable id, so a retry mints a fresh UUID — terminalizing the timed-out
+      // fresh job stops it being consumed alongside the retry (duplicate). The
+      // flush path carries a stable id (existing row), so it omits the
+      // terminalize and self-heals via retry. (Codex P1.)
+      await awaitDeliveryConsumption({
+        messageUuid: messageId,
+        deliver: () =>
+          deliverAndMarkQueued({
+            jobQueue: this.config.db.getJobQueueRepo(),
+            stateManager: session.stateManager,
+            sessionId,
+            messageUuid: messageId,
+            origin: 'space_inject',
+            onEnqueueFailure: () => sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId),
           }),
-        ]);
-      } finally {
-        if (consumptionTimeout) clearTimeout(consumptionTimeout);
-        consumed.cancel();
-      }
+        ...(!existing
+          ? {
+              terminalizeOnTimeout: () =>
+                sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId),
+            }
+          : {}),
+      });
       return dbId;
     }
     // Legacy inline path (HYPERNEO_MESSAGE_DELIVERY_V2=0 opt-out).

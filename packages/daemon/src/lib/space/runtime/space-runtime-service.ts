@@ -50,9 +50,9 @@ import type { TaskAgentManager } from './task-agent-manager';
 import type { SessionManager } from '../../session-manager';
 import type { AgentSession } from '../../agent/agent-session';
 import {
+  awaitDeliveryConsumption,
   deliverAndMarkQueued,
   isMessageDeliveryV2Enabled,
-  waitForDeliveryConsumption,
 } from '../../agent/message-delivery';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
 import { SpaceRuntime } from './space-runtime';
@@ -621,6 +621,7 @@ export class SpaceRuntimeService {
       // row just needs its job (re-)enqueued.
       const sdkMessageRepo = reactiveDb.getSDKMessageRepo();
       const existing = sdkMessageRepo.getDeliveryContent(sessionId, id);
+      const fresh = !existing;
       if (!existing) {
         reactiveDb.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
       } else if (existing.sendStatus === 'consumed') {
@@ -634,46 +635,27 @@ export class SpaceRuntimeService {
       // deliverMessage dedups the active job via getActiveDeliveryRole. Enqueue
       // + mark queued as one per-session critical section (deliverAndMarkQueued).
       //
-      // Restore the legacy "delivered = consumed by the SDK" semantic: register
-      // the consumption wait BEFORE enqueuing (the handler can claim + consume
-      // quickly), then await the SDK's onSent before returning. Callers
+      // Await SDK consumption (onSent) before returning — callers
       // (flushLongTermAgentInbox / deliverLongHorizonExternalEvent) thus confirm
-      // the source record only after genuine consumption — not bare enqueue,
-      // which can still dead-letter. Bounded by a timeout (matching the legacy
-      // 30s MessageQueue timeout; overridable for tests) so a parked/busy session
-      // can't hang the flush. On timeout the job is still pending/retrying and
-      // may yet dead-letter, so REJECT (do not acknowledge) — callers catch and
-      // retry the source record; the durable job keeps running and a later retry
-      // re-registers the wait, so a slow-but-successful delivery self-heals.
-      // (Codex P1.)
-      const consumed = waitForDeliveryConsumption(id);
-      let consumptionTimeout: ReturnType<typeof setTimeout> | undefined;
-      try {
-        await deliverAndMarkQueued({
-          jobQueue: reactiveDb.getJobQueueRepo(),
-          stateManager: session.stateManager,
-          sessionId,
-          messageUuid: id,
-          origin: 'long_term_agent',
-          onEnqueueFailure: () => sdkMessageRepo.markDeliveryFailedByUuid(sessionId, id),
-        });
-        // Ceiling on the wait for the SDK to consume the message (onSent).
-        // Matches the legacy 30s MessageQueue timeout; override for tests.
-        const consumptionTimeoutMs =
-          Number(process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS) || 30_000;
-        await Promise.race([
-          consumed.promise,
-          new Promise<void>((_, reject) => {
-            consumptionTimeout = setTimeout(
-              () => reject(new Error('long-term-agent delivery not consumed within timeout')),
-              consumptionTimeoutMs
-            );
+      // the source record only after genuine consumption, not bare enqueue. On
+      // timeout, terminalize ONLY a fresh row (the inbox flush carries a stable
+      // id, so its retry reopens + self-heals; terminalizing would kill a legit
+      // in-flight job). (Codex P1.)
+      await awaitDeliveryConsumption({
+        messageUuid: id,
+        deliver: () =>
+          deliverAndMarkQueued({
+            jobQueue: reactiveDb.getJobQueueRepo(),
+            stateManager: session.stateManager,
+            sessionId,
+            messageUuid: id,
+            origin: 'long_term_agent',
+            onEnqueueFailure: () => sdkMessageRepo.markDeliveryFailedByUuid(sessionId, id),
           }),
-        ]);
-      } finally {
-        if (consumptionTimeout) clearTimeout(consumptionTimeout);
-        consumed.cancel();
-      }
+        ...(fresh
+          ? { terminalizeOnTimeout: () => sdkMessageRepo.markDeliveryFailedByUuid(sessionId, id) }
+          : {}),
+      });
     } else {
       // Legacy inline path (HYPERNEO_MESSAGE_DELIVERY_V2=0 opt-out).
       await session.ensureQueryStarted();

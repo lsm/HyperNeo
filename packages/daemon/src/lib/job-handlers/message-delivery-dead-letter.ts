@@ -39,9 +39,16 @@ export async function settleMessageDeliveryDeadLetter(
 ): Promise<void> {
   const flipped = settlement.markDeliveryFailedByUuid(payload.sessionId, payload.messageUuid);
   if (flipped) {
-    void settlement.publishStatusChanged(payload.sessionId, [flipped]);
+    // Fire-and-forget BUT guarded: a rejecting messages.statusChanged subscriber
+    // must not surface as an unhandled rejection in the dead-letter path. (Codex P1.)
+    void settlement.publishStatusChanged(payload.sessionId, [flipped]).catch(() => {});
   }
-  if (payload.origin === 'space_inject') {
+  // Only a dead-lettered KICKOFF (the node's initial turn) should mark the
+  // execution blocked. `space_inject` is also the origin for ordinary peer/human
+  // handoffs delivered to an already-running node session, which are steers
+  // (role !== 'turn') — a failed mid-turn handoff must NOT block a node whose
+  // kickoff + current turn succeeded. (Codex P1.)
+  if (payload.origin === 'space_inject' && payload.role === 'turn') {
     try {
       await settlement.publishSessionError(payload.sessionId, DEAD_LETTER_SESSION_ERROR);
     } catch {
