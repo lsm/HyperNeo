@@ -13,6 +13,14 @@ import type {
 import { ExternalEventStore } from '../external-event-store';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import {
+  checkRunAppKeyFrom,
+  checkRunConclusionFrom,
+  checkRunIdFrom,
+  checkRunNameFrom,
+  checkRunOccurredAt,
+  isNonFailureConclusion,
+} from './github-check-run-fields';
+import {
   normalizeGitHubCheckRun,
   normalizeGitHubDeployment,
   normalizeGitHubDeploymentStatus,
@@ -4465,43 +4473,6 @@ function headShaFromPullRequest(row: unknown): string {
   return typeof sha === 'string' ? sha : '';
 }
 
-function checkRunIdFrom(row: unknown): number | string {
-  if (!row || typeof row !== 'object') return 'unknown';
-  const id = (row as { id?: unknown }).id;
-  return typeof id === 'number' || typeof id === 'string' ? id : 'unknown';
-}
-
-function checkRunConclusionFrom(row: unknown): string {
-  if (!row || typeof row !== 'object') return '';
-  const conclusion = (row as { conclusion?: unknown }).conclusion;
-  return typeof conclusion === 'string' ? conclusion : '';
-}
-
-function checkRunAppKeyFrom(row: unknown): string {
-  if (!row || typeof row !== 'object') return '';
-  const app = (row as { app?: unknown }).app;
-  if (!app || typeof app !== 'object') return '';
-  const slug = (app as { slug?: unknown }).slug;
-  if (typeof slug === 'string' && slug) return slug;
-  const id = (app as { id?: unknown }).id;
-  return typeof id === 'number' ? String(id) : '';
-}
-
-function checkRunNameFrom(row: unknown): string {
-  if (!row || typeof row !== 'object') return '';
-  const name = (row as { name?: unknown }).name;
-  return typeof name === 'string' ? name : '';
-}
-
-/**
- * Returns true for conclusions that represent a non-failure (CI is green or
- * skipped). Used to suppress earlier failed runs of the same check name when a
- * newer run superseded them.
- */
-function isNonFailureConclusion(conclusion: string): boolean {
-  return conclusion === 'success' || conclusion === 'skipped' || conclusion === 'neutral';
-}
-
 function headRepoFromPullRequest(row: unknown, watched: GitHubWatchedRepo): string {
   if (!row || typeof row !== 'object') return gitHubRepoPath(watched.owner, watched.repo);
   const head = (row as { head?: unknown }).head;
@@ -4527,12 +4498,6 @@ function parseHeadRefKey(key: string): { repoPath: string; headSha: string } {
     repoPath: separator > 0 ? key.slice(0, separator) : '',
     headSha: separator > 0 ? key.slice(separator + 1) : key,
   };
-}
-
-function checkRunOccurredAt(row: unknown): number {
-  if (!row || typeof row !== 'object') return Date.now();
-  const checkRun = row as { completed_at?: unknown; updated_at?: unknown; started_at?: unknown };
-  return parseGitHubTimestamp(checkRun.completed_at ?? checkRun.updated_at ?? checkRun.started_at);
 }
 
 function addPullRequestNumberByHeadSha(

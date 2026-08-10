@@ -201,11 +201,51 @@ family from `space/tools/space-agent-tools.ts`.
   not byte-identical duplication of a free function and consolidating it would touch
   the class surface, so it is out of scope for a leaf extraction.
 
+## Increment 5
+
+**`external-events/github/github-check-run-fields.ts`** — extracted the GitHub
+`check_run` row field decoders from `github-event-extension.ts`.
+
+- **Family:** reading typed fields off a raw GitHub `check_run` row — six
+  `unknown → primitive` decoders (`checkRunIdFrom`, `checkRunConclusionFrom`,
+  `checkRunAppKeyFrom`, `checkRunNameFrom`, `checkRunOccurredAt`) plus the
+  `isNonFailureConclusion` predicate that classifies a conclusion string. Closed
+  internal dependency boundary: only `checkRunOccurredAt` reaches downward, to
+  `parseGitHubTimestamp` from `github-normalizer`.
+- **Why it scored highest:**
+  - *Cohesion:* all six share one concern — decoding a `check_run` row — and are
+    consumed together in a single contiguous block of the check-run polling
+    handler. Nothing outside the family is needed except the one timestamp helper.
+  - *Churn / conflict:* isolates a stable pure decoder family out of the
+    4601-line `github-event-extension.ts` (~31 commits/yr — the largest
+    external-events production module), leaving the class as the imperative shell
+    that polls.
+  - *Coverage:* none of the six had **any** direct unit tests (each was referenced
+    only at its own definition site); characterization tests now pin every branch —
+    including the app `slug`-over-`id` precedence in `checkRunAppKeyFrom`, the
+    `completed_at → updated_at → started_at` precedence in `checkRunOccurredAt`,
+    and its `Date.now()` / `parseGitHubTimestamp` fallbacks for non-object and
+    unparseable rows.
+  - *Regression risk:* low — pure deterministic functions; the consumer suite
+    (`github-event-extension`, 209 tests) passes unchanged.
+- **Narrow surface:** all six functions are exported (each has an external caller
+  in the extension); the leaf has no module-private members.
+- **Dependency direction:** the new leaf lives in `external-events/github/`
+  alongside `github-normalizer.ts`, the only module it depends on (downward).
+  `github-event-extension.ts` already imported downward from `github-normalizer`,
+  so no new direction was introduced.
+- **Deferred:** the neighboring PR-row and head-ref decoder families
+  (`pullRequestNumberFrom`, `headShaFromPullRequest`, `gitHubRepoPath`,
+  `headRepoFromPullRequest`, `headRefKey` / `parseHeadRefKey`, etc.) remain in
+  `github-event-extension.ts`; they are separate responsibility families and can
+  be extracted in their own increments.
+
 ## Increment log
 
 | # | Module extracted | From | PR | Outcome |
 |---|---|---|---|---|
 | 1 | `rpc-handlers/activity-preview.ts` | `live-query-handlers.ts` | #2383 | Pure leaf family moved behind facade; characterization tests added for previously-untested formatters. |
 | 2 | `external-events/github-subscription-pattern.ts` | `space/runtime/space-runtime.ts` + `rpc-handlers/space-long-horizon-agent-handlers.ts` | #2393 | Pure GitHub topic-grammar leaf extracted; verbatim duplicate across two files consolidated behind a 2-function surface; characterization tests added for every branch. |
-| 3 | `external-events/long-horizon-subscription-pattern.ts` | `space/runtime/space-runtime.ts` + `rpc-handlers/space-long-horizon-agent-handlers.ts` | _(this PR)_ | Pure long-horizon topic composer extracted; verbatim duplicate across two files consolidated behind a 1-function surface; characterization tests added for every branch. |
-| 4 | `space/agent-handle.ts` | `space/tools/space-agent-tools.ts` + `space/tools/node-agent-tools.ts` | _(this PR)_ | Pure agent handle/name-token normalization family extracted; verbatim `normalizeAgentNameToken` duplicate across two tool files consolidated behind a 3-function surface; characterization tests added for every branch. |
+| 3 | `external-events/long-horizon-subscription-pattern.ts` | `space/runtime/space-runtime.ts` + `rpc-handlers/space-long-horizon-agent-handlers.ts` | #2403 | Pure long-horizon topic composer extracted; verbatim duplicate across two files consolidated behind a 1-function surface; characterization tests added for every branch. |
+| 4 | `space/agent-handle.ts` | `space/tools/space-agent-tools.ts` + `space/tools/node-agent-tools.ts` | #2418 | Pure agent handle/name-token normalization family extracted; verbatim `normalizeAgentNameToken` duplicate across two tool files consolidated behind a 3-function surface; characterization tests added for every branch. |
+| 5 | `external-events/github/github-check-run-fields.ts` | `external-events/github/github-event-extension.ts` | _(this PR)_ | Pure GitHub `check_run` row field decoders extracted behind a 6-function surface; characterization tests added for every branch (previously no direct unit coverage). |
