@@ -1033,14 +1033,33 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
                 /* dead-letter publish is best-effort */
               });
           }
-          // Release a pre-claim queued marker still owned by this terminal turn.
-          // Conditional settlement preserves any newer turn's ownership.
-          sessionManager
-            ?.getSession(payload.sessionId)
-            ?.settleSkippedDelivery(payload.messageUuid)
-            .catch(() => {
-              /* dead-letter state settlement is best-effort */
-            });
+          // For a task-agent kickoff that dead-lettered before reaching the SDK,
+          // emit session.error and AWAIT it before settling the queued marker:
+          // the marker settlement publishes an idle that registerCompletionCallback
+          // would otherwise treat as successful work (the failed kickoff row
+          // itself satisfies the SDK-message count). session.error fires the
+          // callback's error path → handleSubSessionError marks the execution
+          // blocked instead. Wrapped because onDead is sync; the body runs
+          // ordered fire-and-forget. (Codex P1.)
+          void (async () => {
+            if (payload.origin === 'space_inject') {
+              try {
+                await internalEventBus.publish('session.error', {
+                  sessionId: payload.sessionId,
+                  error: 'Task-agent kickoff delivery exhausted its retries (dead-lettered).',
+                });
+              } catch {
+                /* best-effort */
+              }
+            }
+            // Release a pre-claim queued marker still owned by this terminal turn.
+            // Conditional settlement preserves any newer turn's ownership.
+            await sessionManager
+              ?.getSession(payload.sessionId)
+              ?.settleSkippedDelivery(payload.messageUuid);
+          })().catch(() => {
+            /* dead-letter state settlement is best-effort */
+          });
         },
       }
     );

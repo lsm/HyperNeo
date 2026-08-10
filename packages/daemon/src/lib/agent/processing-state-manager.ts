@@ -35,6 +35,14 @@ export class ProcessingStateManager {
    */
   private idleWaiters: Map<number, { resolve: () => void; gen?: number }> = new Map();
   private nextIdleWaiterId = 0;
+  /**
+   * True while the deferred-restart `onIdleCallback` is running. A reentrant
+   * `setIdle` from the callback's own stop/start must NOT re-fire the callback
+   * (double restart) NOR drain the waiters (the outer call owns the drain,
+   * deferred until the restart completes so durable turn ownership survives the
+   * restart). (Codex P1.)
+   */
+  private idleCallbackInFlight = false;
 
   constructor(
     private sessionId: string,
@@ -175,27 +183,38 @@ export class ProcessingStateManager {
    * being retried, freeing the active-turn slot for a competing turn.
    */
   async setIdle(opts?: { suppressDeliveryWaiters?: boolean }): Promise<void> {
+    // If a deferred-restart callback is in flight (a reentrant idle from its
+    // stop/start), suppress the drain too — the outer call owns it, deferred
+    // until the restart completes so durable turn ownership survives the restart.
+    const suppressDrain = opts?.suppressDeliveryWaiters || this.idleCallbackInFlight;
     // setState persists the idle state BEFORE publishing it, so drain the
     // turn-end waiters in a finally — the state IS idle even if the event
     // publication throws, and a waiting delivery job must not hang on a
     // publish failure. Only on a TERMINAL idle (suppress on retry mid-points).
     try {
       await this.setState({ status: 'idle' });
+      // Run the deferred-restart callback BEFORE releasing durable turn
+      // ownership (draining the waiters). Resolving the waiters first would let
+      // driveDeliveryTurn complete + free the active-turn slot while the callback
+      // is still stopping/starting the query, so a message arriving in that
+      // window could start a new turn concurrent with the restart. The reentrant
+      // guard prevents a double restart from the callback's own idle transition.
+      if (this.onIdleCallback && !this.idleCallbackInFlight) {
+        this.idleCallbackInFlight = true;
+        try {
+          await this.onIdleCallback();
+        } catch (error) {
+          this.logger.error('Error in onIdle callback:', error);
+          // Don't re-throw - callback errors shouldn't break state transitions
+        } finally {
+          this.idleCallbackInFlight = false;
+        }
+      }
     } finally {
-      if (!opts?.suppressDeliveryWaiters) {
+      if (!suppressDrain) {
         const waiters = [...this.idleWaiters.values()];
         this.idleWaiters.clear();
         for (const w of waiters) w.resolve();
-      }
-    }
-
-    // Execute idle callback if set (e.g., for deferred restarts)
-    if (this.onIdleCallback) {
-      try {
-        await this.onIdleCallback();
-      } catch (error) {
-        this.logger.error('Error in onIdle callback:', error);
-        // Don't re-throw - callback errors shouldn't break state transitions
       }
     }
   }

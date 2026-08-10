@@ -49,7 +49,11 @@ import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-l
 import type { TaskAgentManager } from './task-agent-manager';
 import type { SessionManager } from '../../session-manager';
 import type { AgentSession } from '../../agent/agent-session';
-import { deliverAndMarkQueued, isMessageDeliveryV2Enabled } from '../../agent/message-delivery';
+import {
+  deliverAndMarkQueued,
+  isMessageDeliveryV2Enabled,
+  waitForDeliveryConsumption,
+} from '../../agent/message-delivery';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
 import { SpaceRuntime } from './space-runtime';
 import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine';
@@ -618,14 +622,39 @@ export class SpaceRuntimeService {
       // else (enqueued/deferred/submitted): row exists; just (re-)enqueue —
       // deliverMessage dedups the active job via getActiveDeliveryRole. Enqueue
       // + mark queued as one per-session critical section (deliverAndMarkQueued).
-      await deliverAndMarkQueued({
-        jobQueue: reactiveDb.getJobQueueRepo(),
-        stateManager: session.stateManager,
-        sessionId,
-        messageUuid: id,
-        origin: 'long_term_agent',
-        onEnqueueFailure: () => sdkMessageRepo.markDeliveryFailedByUuid(sessionId, id),
-      });
+      //
+      // Restore the legacy "delivered = consumed by the SDK" semantic: register
+      // the consumption wait BEFORE enqueuing (the handler can claim + consume
+      // quickly), then await the SDK's onSent before returning. Callers
+      // (flushLongTermAgentInbox / deliverLongHorizonExternalEvent) thus confirm
+      // the source record only after genuine consumption — not bare enqueue,
+      // which can still dead-letter. Bounded by a timeout (matching the legacy
+      // 30s MessageQueue timeout; overridable for tests) so a parked/busy session
+      // can't hang the flush; on timeout we proceed (the bare-enqueue floor).
+      // (Codex P1.)
+      const consumed = waitForDeliveryConsumption(id);
+      let consumptionTimeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await deliverAndMarkQueued({
+          jobQueue: reactiveDb.getJobQueueRepo(),
+          stateManager: session.stateManager,
+          sessionId,
+          messageUuid: id,
+          origin: 'long_term_agent',
+          onEnqueueFailure: () => sdkMessageRepo.markDeliveryFailedByUuid(sessionId, id),
+        });
+        const consumptionTimeoutMs =
+          Number(process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS) || 30_000;
+        await Promise.race([
+          consumed.promise,
+          new Promise<void>((resolve) => {
+            consumptionTimeout = setTimeout(resolve, consumptionTimeoutMs);
+          }),
+        ]);
+      } finally {
+        if (consumptionTimeout) clearTimeout(consumptionTimeout);
+        consumed.cancel();
+      }
     } else {
       // Legacy inline path (HYPERNEO_MESSAGE_DELIVERY_V2=0 opt-out).
       await session.ensureQueryStarted();

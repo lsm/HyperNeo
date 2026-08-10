@@ -19,6 +19,8 @@ import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants';
 import {
   deliverMessage,
   isUniqueConstraintError,
+  signalDeliveryConsumed,
+  waitForDeliveryConsumption,
   type MessageDeliverySession,
   type DriveTurnOutcome,
   type FeedSteerOutcome,
@@ -752,5 +754,50 @@ describe('processor — exempt pass + onDead (#2587/#2595)', () => {
     expect(dead).toHaveLength(1);
     expect(dead[0].status).toBe('dead');
     await processor.stop();
+  });
+});
+
+describe('delivery consumption signal (long-horizon delivered = consumed)', () => {
+  it('waitForDeliveryConsumption resolves when signalDeliveryConsumed fires for the UUID', async () => {
+    let resolved = false;
+    const handle = waitForDeliveryConsumption('consume-1');
+    void handle.promise.then(() => {
+      resolved = true;
+    });
+    expect(resolved).toBe(false);
+    signalDeliveryConsumed('consume-1');
+    await Promise.resolve(); // flush the resolution microtask
+    expect(resolved).toBe(true);
+  });
+
+  it('cancel() removes the waiter so a later signal does not resolve it', async () => {
+    let resolved = false;
+    const handle = waitForDeliveryConsumption('consume-2');
+    void handle.promise.then(() => {
+      resolved = true;
+    });
+    handle.cancel();
+    signalDeliveryConsumed('consume-2'); // no waiter left — must not resolve
+    await Promise.resolve();
+    expect(resolved).toBe(false);
+  });
+
+  it('signalDeliveryConsumed is a no-op when no waiter is armed (e.g. consumption before any caller registers)', () => {
+    expect(() => signalDeliveryConsumed('consume-orphan')).not.toThrow();
+  });
+
+  it('multiple waiters for the same UUID all resolve on one signal', async () => {
+    let a = false;
+    let b = false;
+    void waitForDeliveryConsumption('consume-3').promise.then(() => {
+      a = true;
+    });
+    void waitForDeliveryConsumption('consume-3').promise.then(() => {
+      b = true;
+    });
+    signalDeliveryConsumed('consume-3');
+    await Promise.resolve();
+    expect(a).toBe(true);
+    expect(b).toBe(true);
   });
 });

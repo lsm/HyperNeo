@@ -262,6 +262,51 @@ describe('ProcessingStateManager', () => {
     });
   });
 
+  describe('onIdleCallback ordering (deferred restart)', () => {
+    test('fires the callback BEFORE draining delivery waiters (ownership held through the restart)', async () => {
+      // A deferred restart (settings change) runs as the onIdleCallback. It must
+      // run BEFORE the waiters drain, or driveDeliveryTurn completes + frees the
+      // active-turn slot while the restart is still stopping/starting the query
+      // — a message arriving then starts a new turn concurrent with the restart.
+      let waiterResolvedAtCallback = true;
+      let waiterResolved = false;
+      void manager.waitForIdleTransition().promise.then(() => {
+        waiterResolved = true;
+      });
+      manager.setOnIdleCallback(async () => {
+        // At callback time the waiter must still be pending — drain is deferred.
+        waiterResolvedAtCallback = waiterResolved;
+      });
+
+      await manager.setIdle();
+      await Promise.resolve();
+
+      expect(waiterResolvedAtCallback).toBe(false); // NOT drained during the callback
+      expect(waiterResolved).toBe(true); // drained after the callback completed
+    });
+
+    test('a reentrant setIdle during the callback does not re-fire it or drain early', async () => {
+      // The callback's restart drives its own idle (reentrant setIdle). The guard
+      // must prevent a double restart AND keep the drain deferred to the outer
+      // call (a reentrant drain would defeat the ordering above).
+      let fires = 0;
+      let outerResolved = false;
+      void manager.waitForIdleTransition().promise.then(() => {
+        outerResolved = true;
+      });
+      manager.setOnIdleCallback(async () => {
+        fires += 1;
+        await manager.setIdle(); // reentrant idle from the restart's stop/start
+      });
+
+      await manager.setIdle();
+      await Promise.resolve();
+
+      expect(fires).toBe(1); // reentrant idle did NOT re-fire the callback
+      expect(outerResolved).toBe(true); // outer call drained after the callback
+    });
+  });
+
   describe('setQueued', () => {
     test('transitions to queued state', async () => {
       await manager.setQueued('msg-123');

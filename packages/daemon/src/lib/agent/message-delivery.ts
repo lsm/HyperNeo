@@ -254,6 +254,61 @@ export interface MessageDeliverySession {
 }
 
 /**
+ * Per-messageUuid consumption waiters. The long-horizon injector awaits its
+ * durable job's SDK consumption (onSent) before confirming the source record —
+ * restoring the legacy "delivered = consumed" semantic that the v2 fire-and-
+ * forget enqueue regressed. The bridge signals here from
+ * {@link MessageDeliverySession.driveDeliveryTurn}/{@link feedDeliverySteer}
+ * when the SDK admits the message. (Codex P1.)
+ */
+const deliveryConsumptionWaiters = new Map<string, Set<() => void>>();
+
+/**
+ * Register a wait for the durable job's SDK consumption. The `promise` resolves
+ * when {@link signalDeliveryConsumed} fires for this UUID (or never, if the job
+ * never reaches the SDK — bound the wait with a timeout and call `cancel()` to
+ * avoid leaking the entry).
+ */
+export function waitForDeliveryConsumption(messageUuid: string): {
+  promise: Promise<void>;
+  cancel: () => void;
+} {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  let waiters = deliveryConsumptionWaiters.get(messageUuid);
+  if (!waiters) {
+    waiters = new Set();
+    deliveryConsumptionWaiters.set(messageUuid, waiters);
+  }
+  waiters.add(resolve);
+  return {
+    promise,
+    cancel: () => {
+      const set = deliveryConsumptionWaiters.get(messageUuid);
+      if (set) {
+        set.delete(resolve);
+        if (set.size === 0) deliveryConsumptionWaiters.delete(messageUuid);
+      }
+    },
+  };
+}
+
+/**
+ * Signal that the durable job for `messageUuid` was consumed by the SDK (onSent).
+ * Resolves all waiters and clears the entry. No-op if none are waiting
+ * (e.g. consumption before any caller registered, or a delivery with no
+ * long-horizon source awaiting).
+ */
+export function signalDeliveryConsumed(messageUuid: string): void {
+  const waiters = deliveryConsumptionWaiters.get(messageUuid);
+  if (!waiters) return;
+  deliveryConsumptionWaiters.delete(messageUuid);
+  for (const resolve of waiters) resolve();
+}
+
+/**
  * In-process per-session mutex. Guards ONLY the brief turn start/stop + steer
  * state-check windows — NOT the long turn await. The feed itself is
  * concurrent-safe (§8). Holding this lock across a full SDK turn would block

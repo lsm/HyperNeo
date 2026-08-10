@@ -10,7 +10,17 @@
  * - setTaskAgentManager(): wires TaskAgentManager into the underlying SpaceRuntime
  */
 
-import { describe, test, expect, beforeEach, afterEach, mock, type Mock } from 'bun:test';
+import {
+  describe,
+  test,
+  expect,
+  beforeEach,
+  afterEach,
+  beforeAll,
+  afterAll,
+  mock,
+  type Mock,
+} from 'bun:test';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
@@ -137,6 +147,22 @@ function buildLongHorizonAgent(
 describe('SpaceRuntimeService', () => {
   let spaceManager: SpaceManager;
   let service: SpaceRuntimeService;
+
+  // v2 long-horizon delivery awaits the durable job's SDK consumption before
+  // confirming the source record. These tests don't drive a real SDK turn, so
+  // the wait would hit its timeout; shorten it so the suite stays fast. The
+  // dedicated consumption test signals explicitly and ignores this.
+  const previousConsumptionTimeout = process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS;
+  beforeAll(() => {
+    process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = '50';
+  });
+  afterAll(() => {
+    if (previousConsumptionTimeout === undefined) {
+      delete process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS;
+    } else {
+      process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = previousConsumptionTimeout;
+    }
+  });
 
   beforeEach(() => {
     spaceManager = createMockSpaceManager(mockSpace);
