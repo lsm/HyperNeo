@@ -383,10 +383,9 @@ describe('SpaceRuntime workflow subscription persistence', () => {
     expect(subscriptionRepo.listBySpace(SPACE_ID)).toHaveLength(1);
   });
 
-  test('registerSubscription still inserts into the trie when the run cannot be resolved (table write skipped)', () => {
-    // The run-not-found warn branch: getRun returns null, so the durable write
-    // is skipped, but the in-memory trie still receives the entry so the
-    // session that registered it keeps receiving events.
+  test('registerSubscription rejects when the run cannot be resolved (no trie entry, no row)', () => {
+    // A stale worker whose run is gone would yield an undeliverable, non-durable
+    // target, so registration fails fast before mutating the trie or table.
     const runtime = makeRuntime();
     const topic = 'github/owner/repo/pull_request/42.*';
 
@@ -398,8 +397,9 @@ describe('SpaceRuntime workflow subscription persistence', () => {
       topic
     );
 
-    expect(result.success).toBe(true);
-    expect(trieOf(runtime).lookupSubscriptionTargets(topic)).toHaveLength(1);
+    expect(result.success).toBe(false);
+    expect(result.error).toBeTruthy();
+    expect(trieOf(runtime).lookupSubscriptionTargets(topic)).toHaveLength(0);
     expect(subscriptionRepo.listBySpace(SPACE_ID)).toHaveLength(0);
   });
 });

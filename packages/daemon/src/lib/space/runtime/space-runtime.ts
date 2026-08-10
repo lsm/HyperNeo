@@ -1123,6 +1123,14 @@ export class SpaceRuntime {
     }
     const normalized = trimmed.toLowerCase();
     const subscriptionKind = options.subscriptionKind ?? 'dynamic';
+    // Resolve the run once, before mutating the trie. The run scopes the
+    // durable write, and a stale worker whose run is already gone would yield
+    // an undeliverable, non-durable target — reject it up front rather than
+    // inserting a trie entry that silently disappears on restart.
+    const run = this.config.workflowRunRepo.getRun(workflowRunId);
+    if (!run) {
+      return { success: false, error: `Workflow run not found: ${workflowRunId}` };
+    }
     this.topicTrie.remove(
       (target) =>
         isWorkflowSubscriptionTarget(target) &&
@@ -1164,22 +1172,15 @@ export class SpaceRuntime {
     // applies the correct review/post-approval eligibility. The slot+topic+kind
     // is the upsert key, so re-registering is idempotent.
     if (subscriptionKind === 'dynamic') {
-      const spaceId = this.config.workflowRunRepo.getRun(workflowRunId)?.spaceId;
-      if (spaceId) {
-        this.workflowEventSubscriptionRepo.upsert({
-          spaceId,
-          workflowRunId,
-          taskId,
-          nodeId,
-          agentName,
-          topic: trimmed,
-          subscriptionKind,
-        });
-      } else {
-        log.warn(
-          `SpaceRuntime: could not persist subscription for ${workflowRunId}/${nodeId}/${agentName}: run not found`
-        );
-      }
+      this.workflowEventSubscriptionRepo.upsert({
+        spaceId: run.spaceId,
+        workflowRunId,
+        taskId,
+        nodeId,
+        agentName,
+        topic: trimmed,
+        subscriptionKind,
+      });
     }
     // An event can arrive in the brief interval between an external resource
     // being created and the actor registering its dynamic interest. Unmatched
@@ -5592,12 +5593,17 @@ export class SpaceRuntime {
    * interests, so this method clears/re-inserts `dynamic` entries only.
    *
    * Every persisted dynamic row is restored as-is. The task-lifecycle cleanup
-   * (`SpaceRuntimeService` → `clearTaskInterests` on task `done`/`archived`, and
-   * `clearRunInterests` on space teardown) already removes rows once a task can
-   * no longer deliver, so the table holds only live interests — including
-   * dynamic subscriptions on succeeded runs whose task is still in
-   * `review`/`approved`, which must keep receiving events through the
-   * post-approval phase.
+   * (`SpaceRuntimeService` → `clearTaskInterests` on task `done`/`archived`,
+   * `clearTaskInterestsPreservingDynamic` on `cancelled`, and `clearRunInterests`
+   * on space teardown) removes rows once a task can no longer deliver, so the
+   * table holds only live interests — including dynamic subscriptions on
+   * succeeded runs whose task is still in `review`/`approved` (the post-approval
+   * phase), which must keep receiving events. A row that survives only because
+   * the daemon died in the window between a task's terminal-status commit and
+   * the lifecycle subscriber is restored too; its deliveries then fail cleanly
+   * with `target_task_terminal` (the established terminal-delivery semantics)
+   * and the row is cleared on the next lifecycle event — so no special
+   * rehydrate-time reconciliation is needed.
    *
    * `sessionId` is intentionally not persisted — it is resolved dynamically from
    * the live node execution at delivery time (`resolveSubscriptionTarget`).
@@ -5616,6 +5622,16 @@ export class SpaceRuntime {
         spaceRunIds.has(target.workflowRunId) &&
         target.subscriptionKind === 'dynamic'
     );
+    // Restore every persisted dynamic row. The task-lifecycle cleanup
+    // (clearTaskInterests on task done/archived, clearRunInterests on space
+    // teardown) removes rows once a task can no longer deliver, so the table
+    // holds only live interests — including dynamic subscriptions on succeeded
+    // runs whose task is still in review/approved (the post-approval phase). A
+    // row that survives only because the daemon died in the window between a
+    // task's terminal-status commit and the lifecycle subscriber is restored
+    // too; its deliveries then fail cleanly with target_task_terminal and the
+    // row is cleared on the next lifecycle event, so no special reconciliation
+    // is needed here.
     for (const sub of this.workflowEventSubscriptionRepo.listBySpace(spaceId)) {
       try {
         this.topicTrie.insert(sub.topic, {
