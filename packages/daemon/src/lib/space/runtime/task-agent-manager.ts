@@ -4617,6 +4617,28 @@ export class TaskAgentManager {
       },
     };
 
+    // Idempotent persist guard (v2), hoisted BEFORE the deferred save AND the
+    // resetContextPerTurn clear. A flush retry / concurrent flush reuses the
+    // pending-row id, but saveUserMessage mints a fresh row id each call.
+    // Without this guard up front, (a) the deferred branch inserts a SECOND
+    // deferred row with the same non-unique sdk_uuid — QueryModeHandler replays
+    // every deferred row, so the handoff delivers multiple times; and (b) a
+    // crash after the delivery job completed but before markDelivered retries
+    // the same id, reaches resetContextPerTurn's /clear, and rotates away the
+    // context holding the just-delivered handoff. `consumed` ⇒ already
+    // delivered — return without clearing/re-saving/re-driving; `failed` ⇒ a
+    // prior enqueue threw and terminalized it — reopen. (Codex P1.)
+    const v2Enabled = isMessageDeliveryV2Enabled();
+    const existing = v2Enabled
+      ? this.config.db.getSDKMessageRepo().getDeliveryContent(sessionId, messageId)
+      : null;
+    if (existing?.sendStatus === 'consumed') {
+      return messageId; // genuinely delivered on a prior attempt — no clear, no re-drive
+    }
+    if (existing?.sendStatus === 'failed') {
+      this.config.db.getSDKMessageRepo().reopenDeliveryByUuid(sessionId, messageId);
+    }
+
     // defer + busy → persist as deferred for replay after current turn completes.
     // A session in rate_limit_cooldown is paused on a rate/usage cap — ALWAYS
     // defer incoming messages (even `immediate` delivery from an external event
@@ -4632,7 +4654,11 @@ export class TaskAgentManager {
     const parentTask = parentTaskId ? this.config.taskRepo.getTask(parentTaskId) : null;
     const parentLimited = parentTask ? isRateOrUsageLimited(parentTask.status) : false;
     if ((deliveryMode === 'defer' && isBusy) || inRateLimitCooldown || parentLimited) {
-      const dbId = this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'deferred', origin);
+      // Reuse the existing row if present (idempotent); only insert on the first
+      // attempt — a duplicate deferred row would replay the handoff multiple times.
+      const dbId = existing
+        ? messageId
+        : this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'deferred', origin);
       return dbId;
     }
 
@@ -4665,32 +4691,16 @@ export class TaskAgentManager {
       }
     }
 
-    if (isMessageDeliveryV2Enabled()) {
-      // Idempotent persist (mirrors the LTA + Space-agent injectors): a flush
-      // retry after a crash between injection and markDelivered reuses the same
-      // pending-row id, but saveUserMessage mints a fresh row id each call — so
-      // without this guard the retry inserts a SECOND sdk_messages row (same
-      // sdk_uuid). sdk_uuid isn't unique and getDeliveryContent picks the oldest,
-      // so the retry's row strands as `enqueued`; if the first job already
-      // completed, the retry additionally re-drives the oldest consumed turn.
-      // Distinguish prior outcomes: `consumed` ⇒ genuinely delivered, don't
-      // re-drive; `failed` ⇒ a prior enqueue threw and terminalized it, reopen;
-      // otherwise the row exists, just (re-)enqueue its job. (Codex P1.)
-      const sdkMessageRepo = this.config.db.getSDKMessageRepo();
-      const existing = sdkMessageRepo.getDeliveryContent(sessionId, messageId);
-      if (existing?.sendStatus === 'consumed') {
-        return messageId; // genuinely delivered on a prior attempt — don't re-drive
-      }
-      if (existing?.sendStatus === 'failed') {
-        sdkMessageRepo.reopenDeliveryByUuid(sessionId, messageId);
-      }
+    if (v2Enabled) {
+      // The idempotent lookup + consumed/failed handling ran hoisted above; here
+      // only the (re-)enqueue + queued marker remain. Reuse the existing row if
+      // present, else insert `enqueued`. deliverAndMarkQueued holds withSessionLock
+      // so a concurrent steer can't steal the turn's queued marker; the handler
+      // then owns ensureQueryStarted and feeding the live transport.
       const dbId = existing
-        ? messageId // row already persisted (enqueued/deferred/reopened) — reuse it
+        ? messageId
         : this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued', origin);
-      // Enqueue the durable delivery job + mark queued as one per-session critical
-      // section (deliverAndMarkQueued holds withSessionLock so a concurrent steer
-      // can't steal the turn's queued marker). The handler then owns
-      // ensureQueryStarted and feeding the live transport.
+      const sdkMessageRepo = this.config.db.getSDKMessageRepo();
       await deliverAndMarkQueued({
         jobQueue: this.config.db.getJobQueueRepo(),
         stateManager: session.stateManager,

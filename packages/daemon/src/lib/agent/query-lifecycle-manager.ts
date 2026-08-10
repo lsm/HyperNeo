@@ -425,6 +425,13 @@ export class QueryLifecycleManager {
 
       await this.ctx.startStreamingQuery();
     } catch (error) {
+      // restart failed BEFORE a replacement query was established (validation,
+      // cache clear, or startStreamingQuery threw). The suppressed setIdle above
+      // left the active delivery waiter pending — release it so the durable turn
+      // doesn't hang `processing` and block the active-turn slot. The waiter
+      // resolves (driveDeliveryTurn completes the job); the failed restart
+      // surfaces its own error to the caller. (Codex P1.)
+      this.ctx.stateManager.releaseIdleWaiters();
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       throw new Error(`Query restart failed: ${errorMessage}`);
     }

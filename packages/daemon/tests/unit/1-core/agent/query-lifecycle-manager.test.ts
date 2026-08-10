@@ -41,6 +41,7 @@ describe('QueryLifecycleManager', () => {
   let setIdleSpy: ReturnType<typeof mock>;
   let setQueuedSpy: ReturnType<typeof mock>;
   let getStateSpy: ReturnType<typeof mock>;
+  let releaseIdleWaitersSpy: ReturnType<typeof mock>;
   let resetCircuitBreakerSpy: ReturnType<typeof mock>;
   let getInterruptPromiseSpy: ReturnType<typeof mock>;
   let handleErrorSpy: ReturnType<typeof mock>;
@@ -87,6 +88,7 @@ describe('QueryLifecycleManager', () => {
     setIdleSpy = mock(async () => {});
     setQueuedSpy = mock(async () => {});
     getStateSpy = mock(() => ({ status: 'idle' }));
+    releaseIdleWaitersSpy = mock(() => {});
     resetCircuitBreakerSpy = mock(() => {});
     getInterruptPromiseSpy = mock(() => null);
     handleErrorSpy = mock(async () => {});
@@ -124,6 +126,7 @@ describe('QueryLifecycleManager', () => {
         setIdle: setIdleSpy,
         setQueued: setQueuedSpy,
         getState: getStateSpy,
+        releaseIdleWaiters: releaseIdleWaitersSpy,
       } as unknown as ProcessingStateManager,
       messageHandler: {
         resetCircuitBreaker: resetCircuitBreakerSpy,
@@ -551,6 +554,22 @@ describe('QueryLifecycleManager', () => {
       const failingManager = new QueryLifecycleManager(failingContext);
 
       await expect(failingManager.restart()).rejects.toThrow('Query restart failed: Start failed');
+    });
+
+    test('releases delivery waiters when restart fails before a replacement query starts (Codex P1)', async () => {
+      // The post-stop setIdle suppresses the waiter drain (the turn continues in
+      // the restarted query). If startStreamingQuery throws, no replacement is
+      // established — release the waiter so the durable turn doesn't hang
+      // `processing` and block the active-turn slot.
+      const failingContext = createMockContext({
+        startStreamingQuery: async () => {
+          throw new Error('Start failed');
+        },
+      });
+      const failingManager = new QueryLifecycleManager(failingContext);
+
+      await expect(failingManager.restart()).rejects.toThrow('Query restart failed');
+      expect(releaseIdleWaitersSpy).toHaveBeenCalledTimes(1);
     });
 
     test('throws on stop failure with meaningful message', async () => {

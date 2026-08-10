@@ -452,4 +452,29 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
     expect(session.saveUserMessage).not.toHaveBeenCalled();
     expect(session.jobQueueEnqueue).toHaveBeenCalled();
   });
+
+  it('a retry finding an existing CONSUMED row skips resetContextPerTurn (no /clear of the just-delivered handoff)', async () => {
+    // A crash after the delivery job completed but before markDelivered retries
+    // the same stable id. The slot has resetContextPerTurn + prior context, so
+    // it WOULD /clear — but the consumed check runs first (hoisted above the
+    // clear) and returns, so the context holding the just-delivered handoff is
+    // not rotated away. (Codex P1.)
+    const { manager, session } = makeManager({
+      slotResets: true,
+      deliveryContent: { sendStatus: 'consumed' },
+    });
+    const live = {
+      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
+      getProcessingState: () => ({ status: 'idle' }),
+      ensureQueryStarted: session.ensureStartedMock,
+      clearConversationContext: session.clearMock,
+      messageQueue: { enqueueWithId: session.enqueueMock },
+    } as unknown as AgentSession;
+    indexSession(manager, live);
+
+    await manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
+
+    expect(session.clearMock).not.toHaveBeenCalled();
+    expect(session.saveUserMessage).not.toHaveBeenCalled();
+  });
 });
