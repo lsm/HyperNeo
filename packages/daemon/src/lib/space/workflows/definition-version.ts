@@ -22,16 +22,15 @@
  * Determinism contract (for the Phase-1 read cutover): the payload is the RAW persisted
  * definition — `SpaceWorkflowRepository.getWorkflow()` output, BEFORE any
  * `SpaceWorkflowManager` sanitization (e.g. `postApproval` normalization). The chosen model
- * is **sanitize-at-rehydrate**: when the cutover resolves a pinned run to its version, it
- * must apply the same sanitization the kernel applies to a live read, so "this run reads
- * version V" is well-defined regardless of whether a given read site goes through the
- * manager or the raw repo. Pinning down that read path uniformly (or switching to
- * sanitize-at-record) is cutover-PR scope; until then the payload faithfully captures what
- * is stored, which is all shadow mode needs.
+ * is **sanitize-at-rehydrate**: the cutover applies the same sanitization the kernel applies
+ * to a live read when it resolves a pinned run to its version, so "this run reads version V"
+ * is well-defined regardless of whether a given read site goes through the manager or the
+ * raw repo (see `SpaceWorkflowManager.getWorkflowForRun`).
  *
- * Shadow mode (introduced in this PR): versions are computed and appended on every
- * definition write. No run read path resolves through them yet; the Phase-1 read cutover
- * (pinning a run to its creation-time version) lands in a later PR.
+ * Versions are computed and appended on every definition write. The Phase-1 read cutover
+ * resolves a pinned run to its creation-time version via `getWorkflowForRun` (manager,
+ * sanitized) / `SpaceWorkflowRepository.getWorkflowForRun` (raw), so a later edit to the
+ * mutable head cannot change what an in-flight run executes.
  */
 
 import { createHash } from 'node:crypto';

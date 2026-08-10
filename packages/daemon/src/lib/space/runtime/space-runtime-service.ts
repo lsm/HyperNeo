@@ -2303,7 +2303,7 @@ export class SpaceRuntimeService {
   private allWorkflowGatesOpen(runId: string): boolean {
     const run = this.config.workflowRunRepo.getRun(runId);
     if (!run) return false;
-    const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+    const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
     const gates = workflow?.gates ?? [];
     if (gates.length === 0) return true;
     return gates.every(
@@ -2346,7 +2346,7 @@ export class SpaceRuntimeService {
     const { runId, event } = payload;
     const run = this.config.workflowRunRepo.getRun(runId);
     if (!run || run.status !== 'blocked') return false;
-    const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+    const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
     if (!workflow) return false;
 
     let anyOpened = false;

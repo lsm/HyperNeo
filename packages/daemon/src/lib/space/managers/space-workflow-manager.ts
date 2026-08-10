@@ -218,6 +218,63 @@ export class SpaceWorkflowManager {
   }
 
   /**
+   * Resolve the definition an in-flight run executes (RFC §4 Phase 1 read cutover).
+   *
+   * A pinned run reads the IMMUTABLE version it was created with — not the mutable
+   * `space_workflows` head — so a later edit to the definition cannot change what an
+   * in-flight run executes. The pinned payload is the raw persisted definition captured at
+   * run creation; we rehydrate it through the SAME sanitization (`sanitizePostApprovalForLoad`)
+   * the live path applies, so "this run reads version V" is well-defined regardless of read
+   * site (manager or raw repo) — the sanitize-at-rehydrate model (see `definition-version.ts`).
+   *
+   * Stable timestamps: the pinned payload strips `createdAt`/`updatedAt` (volatile), so we
+   * re-attach the version row's `created_at` to both. A pinned definition never changes, so
+   * staleness signals keyed on `updatedAt` (e.g. `generateGateFingerprint`) are correctly
+   * stable for the run's lifetime — the gate-open cache must not churn under a definition
+   * that, by pinning contract, will not change.
+   *
+   * Fallback: a null pin (legacy run pre-backfill, or an archived orphan whose version row
+   * is absent) — or any rehydration failure — resolves to the live head, preserving exact
+   * pre-cutover behavior. This is why the cutover is content-neutral: every pre-existing
+   * run is backfilled to a pin equal to its current head, so resolving through the pin
+   * changes nothing at cutover time; only a later edit diverges, which is the invariant.
+   *
+   * Known boundary (RFC §4 #2): built-in gate SCRIPTS and `templateGates` are injected
+   * from the live template/registry at sanitize time, so a template upgrade still affects a
+   * pinned run's built-in gates. Pinning the definition's user-authored content (nodes,
+   * channels, gates-as-data, agents, post-approval) is the invariant delivered here;
+   * built-in gate-script pinning is a tracked Phase-1 sub-task.
+   */
+  getWorkflowForRun(run: {
+    workflowId: string;
+    definitionVersion: string | null;
+  }): SpaceWorkflow | null {
+    const versionHash = run.definitionVersion;
+    if (versionHash) {
+      try {
+        const version = this.repo.getDefinitionVersion(run.workflowId, versionHash);
+        if (version) {
+          const parsed = JSON.parse(version.payload) as SpaceWorkflow;
+          return this.sanitizePostApprovalForLoad({
+            ...parsed,
+            createdAt: version.createdAt,
+            updatedAt: version.createdAt,
+          });
+        }
+        // Version row absent (deleted-then-recreated workflow id, or a damaged row): fall
+        // through to the live head rather than executing nothing.
+      } catch (err) {
+        logger.warn(
+          `getWorkflowForRun: failed to rehydrate pinned version ${versionHash} for ` +
+            `workflow ${run.workflowId}; falling back to live head:`,
+          err
+        );
+      }
+    }
+    return this.getWorkflow(run.workflowId);
+  }
+
+  /**
    * Get a workflow by its handle within a specific space.
    */
   getWorkflowByHandle(spaceId: string, handle: string): SpaceWorkflow | null {

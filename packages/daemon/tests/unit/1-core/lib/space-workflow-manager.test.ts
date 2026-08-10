@@ -9,6 +9,8 @@ import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
 import { createSpaceAgentSchema, insertSpace } from '../../helpers/space-agent-schema';
+import { SpaceWorkflowDefinitionVersionRepository } from '../../../../src/storage/repositories/space-workflow-definition-version-repository';
+import { computeDefinitionVersion } from '../../../../src/lib/space/workflows/definition-version';
 
 describe('SpaceWorkflowManager', () => {
   let db: Database;
@@ -919,6 +921,105 @@ describe('SpaceWorkflowManager', () => {
       });
       expect(updated).not.toBeNull();
       expect(updated!.gates![0].features).toEqual({ codex_review_bot: true });
+    });
+  });
+
+  describe('getWorkflowForRun (Phase 1 read cutover)', () => {
+    const VERSIONS_DDL = `
+      CREATE TABLE space_workflow_definition_versions (
+        workflow_id TEXT NOT NULL,
+        version_hash TEXT NOT NULL,
+        space_id TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        source TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (workflow_id, version_hash),
+        FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+      )`;
+    let versionRepo: SpaceWorkflowDefinitionVersionRepository;
+
+    beforeEach(() => {
+      db.exec(VERSIONS_DDL);
+      versionRepo = new SpaceWorkflowDefinitionVersionRepository(db as any);
+    });
+
+    /** Append a version row for the current head and return its hash. */
+    function pinHead(workflowId: string): string {
+      const raw = repo.getWorkflow(workflowId)!;
+      const { versionHash, payload } = computeDefinitionVersion(raw);
+      versionRepo.appendVersion({
+        workflowId,
+        spaceId: 'space-1',
+        versionHash,
+        payload,
+        source: 'run_create',
+        createdAt: Date.now(),
+      });
+      return versionHash;
+    }
+
+    it('falls back to the live head when the run has no pin', () => {
+      const wf = manager.createWorkflow({
+        spaceId: 'space-1',
+        name: 'W',
+        nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+        completionAutonomyLevel: 3,
+      });
+      const resolved = manager.getWorkflowForRun({ workflowId: wf.id, definitionVersion: null });
+      expect(resolved).toEqual(manager.getWorkflow(wf.id));
+    });
+
+    it('resolves a pinned run through its immutable version, ignoring later head edits', () => {
+      const wf = manager.createWorkflow({
+        spaceId: 'space-1',
+        name: 'Original',
+        nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+        completionAutonomyLevel: 3,
+      });
+      const pin = pinHead(wf.id);
+
+      // Edit the mutable head AFTER the run was pinned.
+      manager.updateWorkflow(wf.id, { name: 'Edited' });
+
+      const resolved = manager.getWorkflowForRun({ workflowId: wf.id, definitionVersion: pin });
+      expect(resolved!.name).toBe('Original'); // pinned version wins
+      expect(manager.getWorkflow(wf.id)!.name).toBe('Edited'); // head moved on
+    });
+
+    it('falls back to the live head when the pinned version row is absent', () => {
+      const wf = manager.createWorkflow({
+        spaceId: 'space-1',
+        name: 'W',
+        nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+        completionAutonomyLevel: 3,
+      });
+      const resolved = manager.getWorkflowForRun({
+        workflowId: wf.id,
+        definitionVersion: 'version-row-that-does-not-exist',
+      });
+      expect(resolved).toEqual(manager.getWorkflow(wf.id));
+    });
+
+    it('rehydrates a pinned version through sanitize, behaviorally equal to the live path', () => {
+      const wf = manager.createWorkflow({
+        spaceId: 'space-1',
+        name: 'W',
+        nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+        completionAutonomyLevel: 4,
+      });
+      const pin = pinHead(wf.id);
+      const resolved = manager.getWorkflowForRun({ workflowId: wf.id, definitionVersion: pin })!;
+      const live = manager.getWorkflow(wf.id)!;
+
+      // Behavioral fields match. layout/templateHash are absent on the pinned view
+      // (non-behavioral, stripped from the version payload) and timestamps are stable
+      // (the version row's created_at) rather than the head's volatile values.
+      expect(resolved.nodes).toEqual(live.nodes);
+      expect(resolved.channels ?? []).toEqual(live.channels ?? []);
+      expect(resolved.gates ?? []).toEqual(live.gates ?? []);
+      expect(resolved.completionAutonomyLevel).toBe(live.completionAutonomyLevel);
+      expect(resolved.startNodeId).toBe(live.startNodeId);
+      expect(typeof resolved.updatedAt).toBe('number');
     });
   });
 });

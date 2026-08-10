@@ -522,7 +522,7 @@ export class ChannelRouter {
     }
 
     // ── 3. Resolve the workflow and node ───────────────────────────────────
-    const workflow = this.config.workflowManager.getWorkflow(run.workflowId);
+    const workflow = this.config.workflowManager.getWorkflowForRun(run);
     if (!workflow) {
       throw new ActivationError(`Workflow not found: ${run.workflowId}`);
     }
@@ -647,7 +647,7 @@ export class ChannelRouter {
       this.evictRunCache(runId);
     }
 
-    const workflow = this.config.workflowManager.getWorkflow(run.workflowId);
+    const workflow = this.config.workflowManager.getWorkflowForRun(run);
     if (!workflow) throw new ActivationError(`Workflow not found: ${run.workflowId}`);
 
     const match = this.findMatchingWorkflowChannel(workflow, fromRole, toTarget);
@@ -823,7 +823,7 @@ export class ChannelRouter {
       this.evictRunCache(runId);
     }
 
-    const workflow = this.config.workflowManager.getWorkflow(run.workflowId);
+    const workflow = this.config.workflowManager.getWorkflowForRun(run);
     if (!workflow) {
       throw new ActivationError(`Workflow not found: ${run.workflowId}`);
     }
@@ -1025,7 +1025,7 @@ export class ChannelRouter {
     // Without this, an unrelated gate that was already open before the run
     // blocked would falsely report gateOpened=true during re-evaluation and
     // trigger the resume chain in multi-gate workflows.
-    const workflowForSnapshot = this.config.workflowManager.getWorkflow(run.workflowId);
+    const workflowForSnapshot = this.config.workflowManager.getWorkflowForRun(run);
     const wasOpenBefore =
       workflowForSnapshot && this.isGateCachedOpen(runId, gateId, workflowForSnapshot);
 
@@ -1045,7 +1045,7 @@ export class ChannelRouter {
       this.evictRunCache(runId);
     }
 
-    const workflow = this.config.workflowManager.getWorkflow(run.workflowId);
+    const workflow = this.config.workflowManager.getWorkflowForRun(run);
     if (!workflow) return [];
 
     if (!this.config.gateDataRepo) return [];
@@ -1656,7 +1656,7 @@ export class ChannelRouter {
   private getActiveTasksForNode(runId: string, nodeId: string): SpaceTask[] {
     const run = this.config.workflowRunRepo.getRun(runId);
     if (!run) return [];
-    const workflow = this.config.workflowManager.getWorkflow(run.workflowId);
+    const workflow = this.config.workflowManager.getWorkflowForRun(run);
     const node =
       workflow?.nodes.find((n) => n.id === nodeId) ??
       workflow?.nodes.find((n) => n.name === nodeId);

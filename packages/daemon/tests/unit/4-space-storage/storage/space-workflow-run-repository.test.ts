@@ -325,4 +325,85 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(fetched.startedAt).not.toBeNull();
     });
   });
+
+  describe('pinExistingRun + backfillDefinitionPins (Phase 1 read-cutover backfill)', () => {
+    it('listPinnableRuns returns only runs without a definition pin', () => {
+      const legacy = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Legacy' });
+      const pinned = repo.createPinnedRun({
+        spaceId,
+        workflowId: WORKFLOW_ID,
+        title: 'Pinned',
+        rawWorkflow: rawWorkflow(),
+      });
+      const ids = repo.listPinnableRuns().map((r) => r.id);
+      expect(ids).toContain(legacy.id);
+      expect(ids).not.toContain(pinned.id);
+    });
+
+    it('pinExistingRun stamps a pin and appends the version row atomically', () => {
+      const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Legacy' });
+      expect(run.definitionVersion).toBeNull();
+
+      const wf = rawWorkflow({ name: 'Backfilled' });
+      const ok = repo.pinExistingRun(run.id, wf);
+
+      expect(ok).toBe(true);
+      const stamped = repo.getRun(run.id)!;
+      expect(stamped.definitionVersion).toBe(computeDefinitionVersion(wf).versionHash);
+      const row = db
+        .prepare(
+          `SELECT source FROM space_workflow_definition_versions
+           WHERE workflow_id = ? AND version_hash = ?`
+        )
+        .get(WORKFLOW_ID, stamped.definitionVersion) as { source: string };
+      expect(row.source).toBe('backfill');
+    });
+
+    it('pinExistingRun is idempotent and never overwrites an existing pin', () => {
+      const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Legacy' });
+      const first = rawWorkflow({ name: 'First' });
+      repo.pinExistingRun(run.id, first);
+      const firstPin = repo.getRun(run.id)!.definitionVersion;
+
+      // A second call with a DIFFERENT head must not overwrite (WHERE definition_version IS NULL).
+      const ok = repo.pinExistingRun(run.id, rawWorkflow({ name: 'Second' }));
+
+      expect(ok).toBe(false);
+      expect(repo.getRun(run.id)!.definitionVersion).toBe(firstPin);
+    });
+
+    it('backfillDefinitionPins pins every unpinned run with an existing head', () => {
+      const a = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'A' });
+      const b = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'B' });
+      const wf = rawWorkflow();
+      const expectedHash = computeDefinitionVersion(wf).versionHash;
+
+      const count = repo.backfillDefinitionPins(() => wf);
+
+      expect(count).toBe(2);
+      expect(repo.getRun(a.id)!.definitionVersion).toBe(expectedHash);
+      expect(repo.getRun(b.id)!.definitionVersion).toBe(expectedHash);
+    });
+
+    it('backfillDefinitionPins leaves runs unpinned when the head is deleted and is idempotent', () => {
+      const live = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Live' });
+      const orphan = repo.createRun({ spaceId, workflowId: 'deleted-wf', title: 'Orphan' });
+      const wf = rawWorkflow();
+
+      let calls = 0;
+      const count = repo.backfillDefinitionPins((id) => {
+        calls += 1;
+        return id === WORKFLOW_ID ? wf : null; // deleted head → null
+      });
+
+      expect(count).toBe(1); // only the live run
+      expect(repo.getRun(live.id)!.definitionVersion).not.toBeNull();
+      expect(repo.getRun(orphan.id)!.definitionVersion).toBeNull(); // skipped, stays on fallback
+
+      // Second pass: every remaining run is either pinned or unbackfillable → no work.
+      const second = repo.backfillDefinitionPins((id) => (id === WORKFLOW_ID ? wf : null));
+      expect(second).toBe(0);
+      expect(calls).toBeGreaterThan(0);
+    });
+  });
 });

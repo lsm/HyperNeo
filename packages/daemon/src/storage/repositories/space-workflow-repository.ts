@@ -34,6 +34,7 @@ import { computeDefinitionVersion } from '../../lib/space/workflows/definition-v
 import {
   SpaceWorkflowDefinitionVersionRepository,
   type DefinitionVersionSource,
+  type WorkflowDefinitionVersion,
 } from './space-workflow-definition-version-repository';
 
 const log = new Logger('space-workflow-repository');
@@ -297,6 +298,50 @@ export class SpaceWorkflowRepository {
     const nodes = this.fetchNodes(id, ctx);
     this.emitMigrationLog(row, ctx);
     return rowToWorkflow(row, nodes);
+  }
+
+  /**
+   * Fetch an immutable definition-version snapshot (RFC §4, Phase 1). The Phase-1 read
+   * cutover resolves a pinned run's definition through this rather than the mutable head,
+   * so a later edit to the definition cannot change what an in-flight run executes. There
+   * is intentionally no FK from these rows to `space_workflows(id)` — pinned versions
+   * survive deletion of the head (orphan/tombstone policy), so a null return means the
+   * version row itself is absent, not that the workflow was deleted.
+   */
+  getDefinitionVersion(workflowId: string, versionHash: string): WorkflowDefinitionVersion | null {
+    return this.definitionVersions.getVersion(workflowId, versionHash);
+  }
+
+  /**
+   * Resolve the RAW persisted definition an in-flight run executes (RFC §4 Phase 1 read
+   * cutover), without manager-level sanitization. Mirrors `getWorkflow` (raw) but resolves
+   * a pinned run through its immutable version instead of the mutable head. Callers that
+   * need the sanitized runtime view use `SpaceWorkflowManager.getWorkflowForRun`; this raw
+   * variant serves paths (e.g. delivery-permission checks) that today read the raw repo
+   * row. See the manager method for the stable-timestamp, fallback, and built-in-gate
+   * boundary rationale.
+   */
+  getWorkflowForRun(run: {
+    workflowId: string;
+    definitionVersion: string | null;
+  }): SpaceWorkflow | null {
+    const versionHash = run.definitionVersion;
+    if (versionHash) {
+      try {
+        const version = this.definitionVersions.getVersion(run.workflowId, versionHash);
+        if (version) {
+          const parsed = JSON.parse(version.payload) as SpaceWorkflow;
+          return { ...parsed, createdAt: version.createdAt, updatedAt: version.createdAt };
+        }
+      } catch (err) {
+        log.warn(
+          `getWorkflowForRun: failed to rehydrate pinned version ${versionHash} for workflow ` +
+            `${run.workflowId}; falling back to live head:`,
+          err
+        );
+      }
+    }
+    return this.getWorkflow(run.workflowId);
   }
 
   listWorkflows(spaceId: string): SpaceWorkflow[] {

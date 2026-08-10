@@ -18,6 +18,9 @@ import { SpaceWorkflowDefinitionVersionRepository } from './space-workflow-defin
 import type { SQLiteValue } from '../types';
 import { assertValidTransition } from '../../lib/space/runtime/workflow-run-status-machine';
 import type { GateOpenStateRepository } from './gate-open-state-repository';
+import { Logger } from '../../lib/logger';
+
+const log = new Logger('space-workflow-run-repository');
 
 export interface UpdateWorkflowRunParams {
   title?: string;
@@ -68,6 +71,86 @@ export class SpaceWorkflowRunRepository {
       });
       return this.insertRun(params, versionHash);
     })();
+  }
+
+  /**
+   * List runs that have no creation-time definition pin — rows that pre-date Phase-1
+   * pinning, plus any whose head was deleted before the startup backfill could reach them.
+   * The startup backfill pins these so the read cutover can resolve them through an
+   * immutable version instead of the mutable head.
+   */
+  listPinnableRuns(): Array<{ id: string; workflowId: string; spaceId: string }> {
+    const rows = this.db
+      .prepare(
+        `SELECT id, workflow_id, space_id FROM space_workflow_runs
+         WHERE definition_version IS NULL
+         ORDER BY created_at ASC, rowid ASC`
+      )
+      .all() as Array<{ id: string; workflow_id: string; space_id: string }>;
+    return rows.map((r) => ({
+      id: r.id,
+      workflowId: r.workflow_id,
+      spaceId: r.space_id,
+    }));
+  }
+
+  /**
+   * Atomically append the immutable definition snapshot and pin an EXISTING run to it.
+   * The startup backfill uses this for runs that pre-date creation-time pinning. Mirrors
+   * `createPinnedRun` but UPDATEs an existing row instead of inserting.
+   *
+   * Idempotent: `appendVersion` is `INSERT OR IGNORE` and the stamp carries a
+   * `WHERE definition_version IS NULL` guard, so re-running on an already-pinned run is a
+   * no-op and the version history never duplicates. Returns false if the run was already
+   * pinned (or no longer exists).
+   */
+  pinExistingRun(runId: string, rawWorkflow: SpaceWorkflow): boolean {
+    const { versionHash, payload } = computeDefinitionVersion(rawWorkflow);
+    const appendVersion = new SpaceWorkflowDefinitionVersionRepository(this.db);
+    return this.db.transaction(() => {
+      appendVersion.appendVersion({
+        workflowId: rawWorkflow.id,
+        spaceId: rawWorkflow.spaceId,
+        versionHash,
+        payload,
+        source: 'backfill',
+        createdAt: Date.now(),
+      });
+      const result = this.db
+        .prepare(
+          `UPDATE space_workflow_runs SET definition_version = ?, updated_at = ?
+           WHERE id = ? AND definition_version IS NULL`
+        )
+        .run(versionHash, Date.now(), runId);
+      return result.changes > 0;
+    })();
+  }
+
+  /**
+   * Pin every existing run that lacks a creation-time definition version to its current
+   * head (RFC §4 Phase 1 read-cutover backfill). `loadWorkflow` resolves a workflow id to
+   * its RAW persisted definition — the repo-level read, pre-sanitization, the same input
+   * `createPinnedRun` pins — so a run is stamped with the version of exactly what it
+   * executes today.
+   *
+   * Content-neutral by construction: at cutover time each run's pin equals its current
+   * head, so resolving through the pin changes nothing for in-flight runs. Runs whose head
+   * has been deleted are skipped (left null → the read-cutover fallback returns null,
+   * matching today's behavior). Idempotent and per-run guarded: a single malformed row
+   * must not propagate and prevent daemon startup.
+   */
+  backfillDefinitionPins(loadWorkflow: (workflowId: string) => SpaceWorkflow | null): number {
+    let count = 0;
+    for (const run of this.listPinnableRuns()) {
+      try {
+        const workflow = loadWorkflow(run.workflowId);
+        if (!workflow) continue; // deleted head → leave unpinned (read-cutover fallback)
+        if (this.pinExistingRun(run.id, workflow)) count += 1;
+      } catch (err) {
+        log.warn(`backfillDefinitionPins: skipped run ${run.id} (non-fatal):`, err);
+      }
+    }
+    return count;
   }
 
   private insertRun(

@@ -548,6 +548,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   // (RFC §4 Phase 1 rollout backfill) so a later edit can't erase the rollout-time
   // definition. Idempotent — a no-op on subsequent boots once every head is captured.
   spaceWorkflowRepo.backfillExistingDefinitionVersions();
+  // Pin every pre-existing run to its current definition head (RFC §4 Phase 1 read-cutover
+  // backfill) so resolving a run through its pinned version is content-neutral at cutover:
+  // each run's pin equals what it executes today. Idempotent; runs whose head was deleted
+  // stay unpinned and resolve via the read-cutover fallback to the live read.
+  spaceWorkflowRunRepo.backfillDefinitionPins((id) => spaceWorkflowRepo.getWorkflow(id));
   const spaceAgentRepo = new SpaceAgentRepository(deps.db.getDatabase());
   const longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(deps.db.getDatabase());
   const agentLookup: SpaceAgentLookup = {
