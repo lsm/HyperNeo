@@ -211,9 +211,9 @@ describe('N2: thresholds — active SDK window (kimi/codex) + dormant fallback r
     // expectation (env-var wiring itself is covered by
     // anthropic-to-codex-bridge-provider.test.ts). Catalog as of #2278 (GPT-5.6).
     const EXPECTED_WINDOWS: Record<string, number> = {
-      'gpt-5.6-sol': 1_050_000,
-      'gpt-5.6-terra': 1_050_000,
-      'gpt-5.6-luna': 1_050_000,
+      'gpt-5.6-sol': 272_000,
+      'gpt-5.6-terra': 272_000,
+      'gpt-5.6-luna': 272_000,
       'gpt-5.5': 272_000,
       'gpt-5.3-codex': 272_000,
       'gpt-5.4': 272_000,
@@ -223,10 +223,11 @@ describe('N2: thresholds — active SDK window (kimi/codex) + dormant fallback r
     for (const [id, window] of Object.entries(EXPECTED_WINDOWS)) {
       expect(getModelContextWindow(id), id).toBe(window);
     }
-    // Alias resolution: codex-mini moved from gpt-5.4-mini (128k) to gpt-5.6-luna (1.05M)
-    // in #2278; codex-latest now resolves to gpt-5.6-sol.
-    expect(getModelContextWindow('codex-mini')).toBe(1_050_000);
-    expect(getModelContextWindow('codex-latest')).toBe(1_050_000);
+    // Alias resolution: codex-mini moved from gpt-5.4-mini (128k) to gpt-5.6-luna
+    // in #2278; codex-latest resolves to gpt-5.6-sol. gpt-5.6 windows are 272k —
+    // the Codex backend's real input cap (not the 1.05M published spec).
+    expect(getModelContextWindow('codex-mini')).toBe(272_000);
+    expect(getModelContextWindow('codex-latest')).toBe(272_000);
     expect(getModelContextWindow('codex-5.4-mini')).toBe(128_000);
   });
 

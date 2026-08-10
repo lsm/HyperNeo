@@ -1,9 +1,16 @@
 import type { ModelInfo } from '@hyperneo/shared';
 
 export const MODEL_CONTEXT_WINDOWS = {
-  'gpt-5.6-sol': 1050000,
-  'gpt-5.6-terra': 1050000,
-  'gpt-5.6-luna': 1050000,
+  // GPT-5.6 Codex models: the published spec advertises a 1.05M-token window,
+  // but the Codex backend's server-side model catalog caps the INPUT context at
+  // 272K (silently reduced from 372K around 2026-07-13). Reporting the larger
+  // published value let conversations — and compaction summarization requests —
+  // grow past the real 272K cap, which the backend answered with an
+  // empty/aborted 200 (the compaction-killer). 272K matches the actual cap and
+  // the other Codex models below.
+  'gpt-5.6-sol': 272000,
+  'gpt-5.6-terra': 272000,
+  'gpt-5.6-luna': 272000,
   'gpt-5.5': 272000,
   'gpt-5.3-codex': 272000,
   'gpt-5.4': 272000,
