@@ -845,6 +845,32 @@ describe('delivery consumption signal (long-horizon delivered = consumed)', () =
     expect(a).toBe(true);
     expect(b).toBe(true);
   });
+
+  it('a waiter for (sess-A, uuid-X) stays PENDING when sess-B signals the same UUID (cross-session scoping)', async () => {
+    // Guards the r23 scoping fix: the registry is keyed by (session, UUID), not
+    // UUID alone, so a multi-target delivery fanning the same MessageRecord out
+    // to several agents can't let one session's consumption signal resolve
+    // another session's waiter.
+    let aResolved = false;
+    let bResolved = false;
+    void waitForDeliveryConsumption('sess-A', 'shared-uuid').promise.then(() => {
+      aResolved = true;
+    });
+    void waitForDeliveryConsumption('sess-B', 'shared-uuid').promise.then(() => {
+      bResolved = true;
+    });
+
+    signalDeliveryConsumed('sess-B', 'shared-uuid'); // only sess-B's waiter resolves
+    await Promise.resolve();
+
+    expect(bResolved).toBe(true);
+    expect(aResolved).toBe(false); // sess-A's waiter is untouched
+
+    // sess-A's waiter still resolves on ITS OWN signal.
+    signalDeliveryConsumed('sess-A', 'shared-uuid');
+    await Promise.resolve();
+    expect(aResolved).toBe(true);
+  });
 });
 
 describe('drainDeliveryWaitersOnTerminalSDKMessage (handleSDKMessage-catch gating)', () => {
