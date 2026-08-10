@@ -1891,6 +1891,29 @@ export class SDKMessageRepository {
     return row.id;
   }
 
+  /**
+   * Flip a pending delivery row to `deferred` by UUID. Used when a retry reaches
+   * the deferred branch (target busy / rate-limited / parent-limited) holding an
+   * existing `enqueued` row (e.g. a `failed` row just reopened). Without this the
+   * row stays `enqueued` and QueryModeHandler's deferred replay — which selects
+   * only `send_status='deferred'` — never picks it up, so the handoff is lost on
+   * an idle parent-limited session. Mirrors {@link reopenDeliveryByUuid}; only
+   * flips rows still pending delivery. (Codex P1.)
+   */
+  markDeliveryDeferredByUuid(sessionId: string, uuid: string): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT id FROM sdk_messages
+           WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
+             AND send_status IN ('enqueued', 'submitted')
+           ORDER BY timestamp ASC LIMIT 1`
+      )
+      .get(sessionId, uuid) as { id: string } | undefined;
+    if (!row) return null;
+    this.updateMessageStatus([row.id], 'deferred');
+    return row.id;
+  }
+
   private parseUserMessageRow(
     row: { sdk_message: string; timestamp: string },
     uuid: string

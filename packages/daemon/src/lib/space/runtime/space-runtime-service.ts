@@ -630,7 +630,10 @@ export class SpaceRuntimeService {
       // the source record only after genuine consumption — not bare enqueue,
       // which can still dead-letter. Bounded by a timeout (matching the legacy
       // 30s MessageQueue timeout; overridable for tests) so a parked/busy session
-      // can't hang the flush; on timeout we proceed (the bare-enqueue floor).
+      // can't hang the flush. On timeout the job is still pending/retrying and
+      // may yet dead-letter, so REJECT (do not acknowledge) — callers catch and
+      // retry the source record; the durable job keeps running and a later retry
+      // re-registers the wait, so a slow-but-successful delivery self-heals.
       // (Codex P1.)
       const consumed = waitForDeliveryConsumption(id);
       let consumptionTimeout: ReturnType<typeof setTimeout> | undefined;
@@ -647,8 +650,11 @@ export class SpaceRuntimeService {
           Number(process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS) || 30_000;
         await Promise.race([
           consumed.promise,
-          new Promise<void>((resolve) => {
-            consumptionTimeout = setTimeout(resolve, consumptionTimeoutMs);
+          new Promise<void>((_, reject) => {
+            consumptionTimeout = setTimeout(
+              () => reject(new Error('long-term-agent delivery not consumed within timeout')),
+              consumptionTimeoutMs
+            );
           }),
         ]);
       } finally {

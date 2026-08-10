@@ -53,6 +53,7 @@ function makeManager(opts: {
   // deliverMessage jobQueue calls.
   const jobQueueEnqueue = mock(() => ({ id: 'job-1' }));
   const reopenDeliveryByUuid = mock(() => null);
+  const markDeliveryDeferredByUuid = mock(() => null);
 
   function makeSession(o: MockSessionOptions) {
     return {
@@ -85,6 +86,7 @@ function makeManager(opts: {
         getDeliveryContent: () => opts.deliveryContent ?? null,
         reopenDeliveryByUuid,
         markDeliveryFailedByUuid: () => null,
+        markDeliveryDeferredByUuid,
       }),
       // The resetContextPerTurn gate calls hasActiveDeliveryJob (→ getJobQueueRepo
       // .activeDeliveryMessageUuids) regardless of the delivery path. Return a
@@ -135,6 +137,7 @@ function makeManager(opts: {
       saveUserMessage,
       jobQueueEnqueue,
       reopenDeliveryByUuid,
+      markDeliveryDeferredByUuid,
     },
   };
 }
@@ -476,5 +479,28 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
 
     expect(session.clearMock).not.toHaveBeenCalled();
     expect(session.saveUserMessage).not.toHaveBeenCalled();
+  });
+
+  it('a failed-row retry that hits the deferred branch marks the row deferred (replay-selectable)', async () => {
+    // A prior attempt's enqueue failed (→ row 'failed'); a retry while the
+    // target is in rate_limit_cooldown reaches the deferred branch. The row was
+    // reopened to 'enqueued' — the deferred branch must flip it to 'deferred'
+    // or QueryModeHandler's replay (send_status='deferred' only) never selects
+    // it and the handoff is lost. (Codex P1.)
+    const { manager, session } = makeManager({ deliveryContent: { sendStatus: 'failed' } });
+    const live = {
+      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
+      getProcessingState: () => ({ status: 'rate_limit_cooldown' }),
+      ensureQueryStarted: session.ensureStartedMock,
+      clearConversationContext: session.clearMock,
+      messageQueue: { enqueueWithId: session.enqueueMock },
+    } as unknown as AgentSession;
+    indexSession(manager, live);
+
+    await manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
+
+    expect(session.reopenDeliveryByUuid).toHaveBeenCalledTimes(1); // failed → enqueued
+    expect(session.markDeliveryDeferredByUuid).toHaveBeenCalledTimes(1); // enqueued → deferred
+    expect(session.saveUserMessage).not.toHaveBeenCalled(); // row reused, no duplicate
   });
 });

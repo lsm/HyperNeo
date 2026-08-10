@@ -4654,6 +4654,14 @@ export class TaskAgentManager {
     const parentTask = parentTaskId ? this.config.taskRepo.getTask(parentTaskId) : null;
     const parentLimited = parentTask ? isRateOrUsageLimited(parentTask.status) : false;
     if ((deliveryMode === 'defer' && isBusy) || inRateLimitCooldown || parentLimited) {
+      // An existing row that isn't already `deferred` (e.g. a `failed` row just
+      // reopened to `enqueued`) must be flipped to `deferred` here, or
+      // QueryModeHandler's replay — which selects only `send_status='deferred'` —
+      // never picks it up and the handoff is lost on an idle parent-limited
+      // session. (Codex P1.)
+      if (v2Enabled && existing && existing.sendStatus !== 'deferred') {
+        this.config.db.getSDKMessageRepo().markDeliveryDeferredByUuid(sessionId, messageId);
+      }
       // Reuse the existing row if present (idempotent); only insert on the first
       // attempt — a duplicate deferred row would replay the handoff multiple times.
       const dbId = existing
