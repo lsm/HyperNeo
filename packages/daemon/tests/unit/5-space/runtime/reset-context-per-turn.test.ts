@@ -12,7 +12,7 @@
  * in agent-session-clear-context.test.ts; here clearConversationContext is
  * mocked so we assert purely on the DECISION to invoke it.
  */
-import { describe, expect, it, mock } from 'bun:test';
+import { describe, expect, it, mock, beforeAll, afterAll } from 'bun:test';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
@@ -67,6 +67,10 @@ function makeManager(opts: {
     db: {
       getDatabase: () => ({}),
       saveUserMessage,
+      // The resetContextPerTurn gate calls hasActiveDeliveryJob (→ getJobQueueRepo
+      // .activeDeliveryMessageUuids) regardless of the delivery path; return empty
+      // so the gate evaluates as if no durable turn is pending.
+      getJobQueueRepo: () => ({ activeDeliveryMessageUuids: () => new Set<string>() }),
     },
     internalEventBus: {
       subscribe: mock(() => () => {}),
@@ -110,6 +114,19 @@ function indexSession(manager: TaskAgentManager, session: AgentSession): void {
 }
 
 describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
+  // These tests validate the resetContextPerTurn CLEAR decision, which is
+  // delivery-mechanism agnostic (the clear runs before the v2/legacy branch).
+  // Opt into the legacy inline path so the mock session — which has no
+  // stateManager and only a gate-level jobQueue stub — exercises the clear
+  // decision rather than the durable-delivery plumbing.
+  const previousFlag = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+  beforeAll(() => {
+    process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '0';
+  });
+  afterAll(() => {
+    if (previousFlag === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+    else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previousFlag;
+  });
   it('clears SDK context before a task handoff to a resetContextPerTurn slot with prior context', async () => {
     const { manager, session } = makeManager({ slotResets: true });
     // Build a session that already has prior SDK context (a prior turn ran).

@@ -135,15 +135,26 @@ export class ProcessingStateManager {
   /**
    * Set state to idle
    */
-  async setIdle(): Promise<void> {
+  /**
+   * Set state to idle. Pass `{ suppressDeliveryWaiters: true }` on a
+   * NON-terminal idle — one that is immediately followed by a query re-start
+   * (e.g. QueryRunner's startup-timeout / message-not-found / transient-
+   * connection auto-retries call setIdle before recursing into runQuery).
+   * Resolving the delivery waiters on such a retry idle would let
+   * driveDeliveryTurn complete the durable job while the same prompt is still
+   * being retried, freeing the active-turn slot for a competing turn.
+   */
+  async setIdle(opts?: { suppressDeliveryWaiters?: boolean }): Promise<void> {
     await this.setState({ status: 'idle' });
 
     // Resolve turn-end waiters (e.g. the message-delivery bridge awaiting this
     // turn's completion) before the onIdle callback so the delivery job
-    // completes promptly at turn-end.
-    const waiters = this.idleWaiters;
-    this.idleWaiters = [];
-    for (const resolve of waiters) resolve();
+    // completes promptly at turn-end — but only on a TERMINAL idle.
+    if (!opts?.suppressDeliveryWaiters) {
+      const waiters = this.idleWaiters;
+      this.idleWaiters = [];
+      for (const resolve of waiters) resolve();
+    }
 
     // Execute idle callback if set (e.g., for deferred restarts)
     if (this.onIdleCallback) {
