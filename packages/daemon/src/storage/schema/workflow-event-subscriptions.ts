@@ -31,8 +31,11 @@ export function createWorkflowEventSubscriptionTables(db: BunDatabase): void {
 			agent_name TEXT NOT NULL,
 			topic TEXT NOT NULL,
 			topic_normalized TEXT NOT NULL,
+			-- Only 'dynamic' subscriptions are persisted here (static template
+			-- interests are re-materialized from the workflow definition), so the
+			-- kind is fixed to 'dynamic'. The column is retained for schema clarity.
 			subscription_kind TEXT NOT NULL DEFAULT 'dynamic'
-				CHECK(subscription_kind IN ('static', 'dynamic')),
+				CHECK(subscription_kind = 'dynamic'),
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			UNIQUE(workflow_run_id, task_id, node_id, agent_name, topic_normalized, subscription_kind),

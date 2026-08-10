@@ -15,7 +15,12 @@ import { generateUUID } from '@hyperneo/shared';
 import { createWorkflowEventSubscriptionTables } from '../schema/workflow-event-subscriptions';
 import type { Database as BunDatabase } from '../sqlite-compat';
 
-export type WorkflowSubscriptionKind = 'static' | 'dynamic';
+/**
+ * The persisted kind. Only `dynamic` subscriptions are stored — static template
+ * interests are re-materialized from the workflow definition, so the table's
+ * CHECK constrains this to `'dynamic'`.
+ */
+export type WorkflowSubscriptionKind = 'dynamic';
 
 export interface SpaceWorkflowEventSubscription {
   id: string;

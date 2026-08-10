@@ -35,10 +35,9 @@ function upsert(
     nodeId: string;
     agentName: string;
     topic: string;
-    subscriptionKind: 'static' | 'dynamic';
   }> = {}
 ) {
-  return repo.upsert({
+  repo.upsert({
     spaceId: SPACE_ID,
     workflowRunId: RUN_ID,
     taskId: TASK_ID,
@@ -85,20 +84,37 @@ describe('SpaceWorkflowEventSubscriptionRepository', () => {
     expect(repo.listBySpace(SPACE_ID)[0]!.topic).toBe('github/owner/repo');
   });
 
-  test('upsert keeps distinct kinds and topics as separate rows', () => {
-    upsert(repo, { topic: 'github/a', subscriptionKind: 'static' });
-    upsert(repo, { topic: 'github/a', subscriptionKind: 'dynamic' });
-    upsert(repo, { topic: 'github/b', subscriptionKind: 'dynamic' });
+  test('upsert keeps distinct topics as separate rows', () => {
+    upsert(repo, { topic: 'github/a' });
+    upsert(repo, { topic: 'github/b' });
+    upsert(repo, { topic: 'github/c' });
     expect(repo.listBySpace(SPACE_ID)).toHaveLength(3);
   });
 
-  test('deleteBySlotTopic removes only the matching slot+topic+kind', () => {
-    upsert(repo, { topic: 'github/a', subscriptionKind: 'dynamic' });
-    upsert(repo, { topic: 'github/a', subscriptionKind: 'static' });
+  test('upsert rejects a non-dynamic subscription kind (CHECK constraint)', () => {
+    expect(() =>
+      repo.upsert({
+        spaceId: SPACE_ID,
+        workflowRunId: RUN_ID,
+        taskId: TASK_ID,
+        nodeId: NODE_ID,
+        agentName: AGENT,
+        topic: 'github/a',
+        // Cast keeps the call shape honest about the runtime contract: only
+        // 'dynamic' is persisted.
+        subscriptionKind: 'static' as 'dynamic',
+      })
+    ).toThrow();
+    expect(repo.listBySpace(SPACE_ID)).toHaveLength(0);
+  });
+
+  test('deleteBySlotTopic removes only the matching slot+topic', () => {
+    upsert(repo, { topic: 'github/a' });
+    upsert(repo, { topic: 'github/b' });
     repo.deleteBySlotTopic(RUN_ID, TASK_ID, NODE_ID, AGENT, 'GITHUB/A', 'dynamic');
     const remaining = repo.listBySpace(SPACE_ID);
     expect(remaining).toHaveLength(1);
-    expect(remaining[0]!.subscriptionKind).toBe('static');
+    expect(remaining[0]!.topic).toBe('github/b');
   });
 
   test('deleteBySlot removes every topic for the agent slot', () => {

@@ -4065,10 +4065,12 @@ describe('SpaceRuntime external event subscriptions', () => {
     const event = makeEvent();
     await eventService.publish(event);
 
-    const delivery = eventStore.listDeliveries(event.id)[0]!;
-    expect(delivery.state).toBe('failed');
-    expect(delivery.failureReason).toBe('target_task_terminal');
-    expect(eventStore.getById(event.id)?.state).toBe('failed');
+    // The cancelled run's subscription row is purged during the rehydrate that
+    // executeTick triggers (cancelled-RUN teardown), so the event has no
+    // subscriber and no delivery is created — matching production, where
+    // cancelWorkflowRun's clearRunInterests would already have dropped the row.
+    expect(eventStore.listDeliveries(event.id)).toHaveLength(0);
+    expect(eventStore.getById(event.id)?.state).not.toBe('delivered');
   });
 
   test('refreshes active run interests when subscriptions are rebuilt', async () => {

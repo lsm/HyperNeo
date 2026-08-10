@@ -68,6 +68,18 @@ function trieOf(runtime: SpaceRuntime): TrieInspector {
   return runtime as unknown as TrieInspector;
 }
 
+/**
+ * Repository wrapper whose `upsert` can be made to throw on demand, to exercise
+ * the registerSubscription rollback that restores a displaced subscription.
+ */
+class FailingUpsertRepo extends SpaceWorkflowEventSubscriptionRepository {
+  failNextUpsert = false;
+  upsert(params: Parameters<SpaceWorkflowEventSubscriptionRepository['upsert']>[0]): void {
+    if (this.failNextUpsert) throw new Error('injected upsert failure');
+    super.upsert(params);
+  }
+}
+
 describe('SpaceRuntime workflow subscription persistence', () => {
   let db: BunDatabase;
   let workflowRunRepo: SpaceWorkflowRunRepository;
@@ -96,18 +108,21 @@ describe('SpaceRuntime workflow subscription persistence', () => {
    * Pending runs are excluded from executor rehydration (keeping these tests
    * focused on the trie), and the task makes the run `isRunInterestRebuildEligible`
    * so the rebuild path reconstructs its subscriptions. */
-  function createRun(options: { eventInterests?: Array<{ topic: string }> } = {}): {
+  function createRun(
+    options: { eventInterests?: Array<{ topic: string }>; nodeId?: string } = {}
+  ): {
     workflow: SpaceWorkflow;
     runId: string;
     taskId: string;
   } {
+    const nodeId = options.nodeId ?? 'code';
     const workflow = workflowManager.createWorkflow({
       spaceId: SPACE_ID,
       name: `Workflow-${Math.random()}`,
       description: '',
       nodes: [
         {
-          id: 'code',
+          id: nodeId,
           name: 'Code',
           agents: [
             {
@@ -119,7 +134,7 @@ describe('SpaceRuntime workflow subscription persistence', () => {
         },
       ],
       transitions: [],
-      startNodeId: 'code',
+      startNodeId: nodeId,
       rules: [],
       tags: [],
     });
@@ -471,6 +486,80 @@ describe('SpaceRuntime workflow subscription persistence', () => {
     expect(result.success).toBe(false);
     expect(result.error).toBeTruthy();
     expect(trieOf(runtime).lookupSubscriptionTargets(topic)).toHaveLength(0);
+    expect(subscriptionRepo.listBySpace(SPACE_ID)).toHaveLength(0);
+  });
+
+  test('registerSubscription rejects a terminal-task subscription', () => {
+    const runtime = makeRuntime();
+    const { runId, taskId } = createRun();
+    taskRepo.updateTask(taskId, { status: 'done', completedAt: Date.now() });
+
+    const result = runtime.registerSubscription(
+      runId,
+      taskId,
+      'code',
+      'coder',
+      'github/owner/repo/pull_request/42.*'
+    );
+
+    expect(result.success).toBe(false);
+    expect(
+      trieOf(runtime).lookupSubscriptionTargets('github/owner/repo/pull_request/42.*')
+    ).toHaveLength(0);
+    expect(subscriptionRepo.listBySpace(SPACE_ID)).toHaveLength(0);
+  });
+
+  test('registerSubscription rejects a subscription for a task not owned by the run', () => {
+    const runtime = makeRuntime();
+    const a = createRun();
+    const b = createRun({ nodeId: 'code-b' });
+    // b's task does not belong to a's run.
+    const result = runtime.registerSubscription(a.runId, b.taskId, 'code', 'coder', 'github/a/*');
+
+    expect(result.success).toBe(false);
+    expect(subscriptionRepo.listBySpace(SPACE_ID)).toHaveLength(0);
+  });
+
+  test('a failed re-registration restores the displaced subscription', () => {
+    const repo = new FailingUpsertRepo(db);
+    const runtime = makeRuntime({ workflowEventSubscriptionRepo: repo });
+    const { runId, taskId } = createRun();
+    const topic = 'github/owner/repo/pull_request/42.*';
+
+    // Register successfully — the trie + table carry the subscription.
+    runtime.registerSubscription(runId, taskId, 'code', 'coder', topic);
+    expect(trieOf(runtime).lookupSubscriptionTargets(topic)).toHaveLength(1);
+    expect(subscriptionRepo.listBySpace(SPACE_ID)).toHaveLength(1);
+
+    // Re-register the same topic with an injected upsert failure. The dedup
+    // displaced the existing entry; the rollback must restore it rather than
+    // leave the trie diverged from the still-persisted row.
+    repo.failNextUpsert = true;
+    const result = runtime.registerSubscription(runId, taskId, 'code', 'coder', topic);
+
+    expect(result.success).toBe(false);
+    expect(trieOf(runtime).lookupSubscriptionTargets(topic)).toHaveLength(1);
+    expect(subscriptionRepo.listBySpace(SPACE_ID)).toHaveLength(1);
+  });
+
+  test('rehydrate purges subscriptions for a cancelled run', async () => {
+    // A crash between cancelWorkflowRun committing `cancelled` and its
+    // clearRunInterests leaves rows that the rehydrate must purge (cancelled-RUN
+    // teardown), while a cancelled TASK on a non-cancelled run is preserved.
+    const topic = 'github/owner/repo/pull_request/42.*';
+    const { runId, taskId } = createRun();
+
+    const runtime1 = makeRuntime();
+    runtime1.registerSubscription(runId, taskId, 'code', 'coder', topic);
+    expect(subscriptionRepo.listBySpace(SPACE_ID)).toHaveLength(1);
+
+    // Run cancelled between sessions (clearRunInterests did not fire).
+    workflowRunRepo.updateRun(runId, { status: 'cancelled' });
+
+    const runtime2 = makeRuntime();
+    await runtime2.rehydrateExecutors();
+
+    expect(trieOf(runtime2).lookupSubscriptionTargets(topic)).toHaveLength(0);
     expect(subscriptionRepo.listBySpace(SPACE_ID)).toHaveLength(0);
   });
 });
