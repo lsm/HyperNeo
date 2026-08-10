@@ -4660,11 +4660,27 @@ export class TaskAgentManager {
     }
 
     if (isMessageDeliveryV2Enabled()) {
-      // Persist the kickoff BEFORE enqueuing the durable delivery job — the
-      // handler reloads content by UUID, so the sdk_messages row must exist when
-      // the job is claimed. Image/multimodal content is persisted verbatim and
-      // reloaded by the handler, so no special enqueue handling is needed.
-      const dbId = this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued', origin);
+      // Idempotent persist (mirrors the LTA + Space-agent injectors): a flush
+      // retry after a crash between injection and markDelivered reuses the same
+      // pending-row id, but saveUserMessage mints a fresh row id each call — so
+      // without this guard the retry inserts a SECOND sdk_messages row (same
+      // sdk_uuid). sdk_uuid isn't unique and getDeliveryContent picks the oldest,
+      // so the retry's row strands as `enqueued`; if the first job already
+      // completed, the retry additionally re-drives the oldest consumed turn.
+      // Distinguish prior outcomes: `consumed` ⇒ genuinely delivered, don't
+      // re-drive; `failed` ⇒ a prior enqueue threw and terminalized it, reopen;
+      // otherwise the row exists, just (re-)enqueue its job. (Codex P1.)
+      const sdkMessageRepo = this.config.db.getSDKMessageRepo();
+      const existing = sdkMessageRepo.getDeliveryContent(sessionId, messageId);
+      if (existing?.sendStatus === 'consumed') {
+        return messageId; // genuinely delivered on a prior attempt — don't re-drive
+      }
+      if (existing?.sendStatus === 'failed') {
+        sdkMessageRepo.reopenDeliveryByUuid(sessionId, messageId);
+      }
+      const dbId = existing
+        ? messageId // row already persisted (enqueued/deferred/reopened) — reuse it
+        : this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued', origin);
       // Enqueue the durable delivery job + mark queued as one per-session critical
       // section (deliverAndMarkQueued holds withSessionLock so a concurrent steer
       // can't steal the turn's queued marker). The handler then owns
@@ -4675,8 +4691,7 @@ export class TaskAgentManager {
         sessionId,
         messageUuid: messageId,
         origin: 'space_inject',
-        onEnqueueFailure: () =>
-          this.config.db.getSDKMessageRepo().markDeliveryFailedByUuid(sessionId, messageId),
+        onEnqueueFailure: () => sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId),
       });
       return dbId;
     }

@@ -1012,6 +1012,72 @@ describe('AgentSession', () => {
       expect(jobQueue.enqueue).toHaveBeenCalled();
     });
 
+    it('deliverChatMessage cancels a rate-limit cooldown for a replacement chat even when classified as a steer', async () => {
+      // During rate_limit_cooldown the prior durable turn still occupies the
+      // active-turn slot, so the replacement is classified as a steer. It must
+      // STILL cancel the cooldown or the watchdog's timer replays the stale
+      // prompt instead of letting the user's replacement take over. (Codex P1.)
+      let turnAttempt = 0;
+      const jobQueue = {
+        enqueue: mock(() => {
+          turnAttempt++;
+          if (turnAttempt === 1) {
+            // First (turn) insert hits the active-turn unique index → re-insert as steer.
+            throw new Error('UNIQUE constraint failed: job_queue.uq_message_delivery_active_turn');
+          }
+          return { id: 'job' };
+        }),
+        getActiveDeliveryRole: mock(() => null),
+      };
+      mockDb.getJobQueueRepo = mock(() => jobQueue);
+      const cancelSpy = mock(() => {});
+      // biome-ignore lint: test mock access
+      (agentSession as unknown as Record<string, unknown>).rateLimitWatchdog = {
+        cancel: cancelSpy,
+      };
+      agentSession.stateManager.setQueuedIfIdle = mock(async () => false);
+      await agentSession.stateManager.setRateLimitCooldown({
+        retryCount: 0,
+        maxRetries: 5,
+        retryAt: Date.now() + 60_000,
+      });
+
+      await agentSession.deliverChatMessage('cooldown-replacement');
+
+      expect(cancelSpy).toHaveBeenCalledTimes(1);
+      // A steer does not claim the queued marker (only the turn owner does).
+      expect(agentSession.stateManager.setQueuedIfIdle).not.toHaveBeenCalled();
+    });
+
+    it('deliverChatMessage does NOT bump the watchdog generation for a steer into a live turn', async () => {
+      // A normal steer feeds a LIVE turn; cancelling here would bump the episode
+      // generation and desync the rate-limit episode from the active turn's
+      // turn-end waiter tag (P1-2), stranding it on a later 429. Only a turn, or
+      // a steer during rate_limit_cooldown, may cancel.
+      let turnAttempt = 0;
+      const jobQueue = {
+        enqueue: mock(() => {
+          turnAttempt++;
+          if (turnAttempt === 1) {
+            throw new Error('UNIQUE constraint failed: job_queue.uq_message_delivery_active_turn');
+          }
+          return { id: 'job' };
+        }),
+        getActiveDeliveryRole: mock(() => null),
+      };
+      mockDb.getJobQueueRepo = mock(() => jobQueue);
+      const cancelSpy = mock(() => {});
+      // biome-ignore lint: test mock access
+      (agentSession as unknown as Record<string, unknown>).rateLimitWatchdog = {
+        cancel: cancelSpy,
+      };
+      agentSession.stateManager.setQueuedIfIdle = mock(async () => false);
+
+      await agentSession.deliverChatMessage('live-steer');
+
+      expect(cancelSpy).not.toHaveBeenCalled();
+    });
+
     it('resetQuery should delegate to lifecycleManager', async () => {
       const resetSpy = mock(async () => ({ success: true }));
       // biome-ignore lint: test mock access

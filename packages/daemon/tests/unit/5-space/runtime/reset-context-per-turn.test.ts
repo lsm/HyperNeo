@@ -33,6 +33,12 @@ function makeManager(opts: {
   nodeMissing?: boolean;
   nodeEmptyAgents?: boolean;
   hasActiveDeliveryJob?: boolean;
+  /**
+   * Controls the v2 idempotent-persist guard: the sendStatus getDeliveryContent
+   * returns for the message (undefined ⇒ no existing row → fresh persist). Used
+   * by the v2 dedup describe to exercise the consumed/failed/enqueued branches.
+   */
+  deliveryContent?: { sendStatus: string };
 }): {
   manager: TaskAgentManager;
   session: Record<string, ReturnType<typeof mock>>;
@@ -42,6 +48,11 @@ function makeManager(opts: {
   const enqueueMock = mock(async () => {});
   const getProcessingState = mock(() => ({ status: 'idle' }));
   const saveUserMessage = mock(() => 'db-id');
+  // v2 durable-delivery plumbing (harmless under the legacy path, which never
+  // reaches these repos): the dedup guard's getDeliveryContent + the
+  // deliverMessage jobQueue calls.
+  const jobQueueEnqueue = mock(() => ({ id: 'job-1' }));
+  const reopenDeliveryByUuid = mock(() => null);
 
   function makeSession(o: MockSessionOptions) {
     return {
@@ -68,13 +79,23 @@ function makeManager(opts: {
     db: {
       getDatabase: () => ({}),
       saveUserMessage,
+      getSDKMessageRepo: () => ({
+        // The v2 dedup guard: return the configured prior outcome, or null when
+        // no row exists yet (the first-inject case).
+        getDeliveryContent: () => opts.deliveryContent ?? null,
+        reopenDeliveryByUuid,
+        markDeliveryFailedByUuid: () => null,
+      }),
       // The resetContextPerTurn gate calls hasActiveDeliveryJob (→ getJobQueueRepo
       // .activeDeliveryMessageUuids) regardless of the delivery path. Return a
       // pending job when the test opts in, so the gate's BLOCKING branch (don't
-      // clear while a durable turn is pending) is exercised.
+      // clear while a durable turn is pending) is exercised. enqueue +
+      // getActiveDeliveryRole back the v2 deliverMessage chokepoint.
       getJobQueueRepo: () => ({
         activeDeliveryMessageUuids: () =>
           new Set<string>(opts.hasActiveDeliveryJob ? ['pending-job'] : []),
+        enqueue: jobQueueEnqueue,
+        getActiveDeliveryRole: () => null,
       }),
     },
     internalEventBus: {
@@ -106,7 +127,15 @@ function makeManager(opts: {
   const manager = new TaskAgentManager(config);
   return {
     manager,
-    session: { clearMock, ensureStartedMock, enqueueMock, getProcessingState, saveUserMessage },
+    session: {
+      clearMock,
+      ensureStartedMock,
+      enqueueMock,
+      getProcessingState,
+      saveUserMessage,
+      jobQueueEnqueue,
+      reopenDeliveryByUuid,
+    },
   };
 }
 
@@ -359,5 +388,68 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
     const locks = (manager as unknown as { sessionInjectLocks: Map<string, unknown> })
       .sessionInjectLocks;
     expect(locks.size).toBe(0);
+  });
+});
+
+describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => {
+  // The sibling describe opts into the legacy path to test the clear decision;
+  // here v2 runs default-on so the durable-delivery dedup guard is exercised.
+  // saveUserMessage mints a fresh row id each call, so a flush retry reusing the
+  // pending-row id must NOT insert a second sdk_messages row or re-drive a
+  // consumed turn — it checks the existing row first (mirrors the LTA +
+  // Space-agent injectors).
+  const previousFlag = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+  beforeAll(() => {
+    delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+  });
+  afterAll(() => {
+    if (previousFlag !== undefined) process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previousFlag;
+    else delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+  });
+
+  function liveSession(session: {
+    ensureStartedMock: ReturnType<typeof mock>;
+    clearMock: ReturnType<typeof mock>;
+    enqueueMock: ReturnType<typeof mock>;
+  }): AgentSession {
+    return {
+      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
+      getProcessingState: () => ({ status: 'idle' }),
+      ensureQueryStarted: session.ensureStartedMock,
+      clearConversationContext: session.clearMock,
+      messageQueue: { enqueueWithId: session.enqueueMock },
+    } as unknown as AgentSession;
+  }
+
+  it('first inject persists the row and enqueues a durable job', async () => {
+    const { manager, session } = makeManager({}); // no existing row
+    indexSession(manager, liveSession(session));
+
+    await manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
+
+    expect(session.saveUserMessage).toHaveBeenCalledTimes(1);
+    expect(session.jobQueueEnqueue).toHaveBeenCalled();
+  });
+
+  it('a retry finding an existing CONSUMED row does not re-persist or re-enqueue (no re-drive)', async () => {
+    const { manager, session } = makeManager({ deliveryContent: { sendStatus: 'consumed' } });
+    indexSession(manager, liveSession(session));
+
+    await manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
+
+    expect(session.saveUserMessage).not.toHaveBeenCalled();
+    expect(session.jobQueueEnqueue).not.toHaveBeenCalled();
+  });
+
+  it('a retry finding an existing FAILED row reopens it and re-enqueues without a duplicate row', async () => {
+    const { manager, session } = makeManager({ deliveryContent: { sendStatus: 'failed' } });
+    indexSession(manager, liveSession(session));
+
+    await manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
+
+    expect(session.reopenDeliveryByUuid).toHaveBeenCalledTimes(1);
+    // The row already exists (failed) — reuse it, don't insert a second.
+    expect(session.saveUserMessage).not.toHaveBeenCalled();
+    expect(session.jobQueueEnqueue).toHaveBeenCalled();
   });
 });

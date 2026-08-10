@@ -2032,12 +2032,21 @@ export class AgentSession
         this.db.getSDKMessageRepo().markDeliveryFailedByUuid(this.session.id, messageUuid);
         throw err;
       }
-      if (role === 'turn') {
-        // A new chat turn supersedes any armed rate-limit cooldown: cancel the
-        // watchdog so its timer doesn't replay the previous prompt instead of
-        // letting this turn run. The legacy inline path did this at the top of
-        // startQueryAndEnqueue; the v2 chat path bypasses it, so do it here.
+      // A new chat message supersedes an armed rate-limit recovery episode. For a
+      // `turn` this always holds (fresh user input). For a `steer` it must ALSO
+      // hold while the session is in rate_limit_cooldown: the prior durable turn
+      // still occupies the active-turn slot there, so the replacement is
+      // classified as a steer and would park while the watchdog's timer replays
+      // the stale prompt instead of letting the user's replacement take over.
+      // (Mirrors the legacy inline path's unconditional cancel at the top of
+      // startQueryAndEnqueue.) Gate the steer case on the cooldown state so a
+      // normal steer into a LIVE turn does NOT bump the generation — that would
+      // desync the rate-limit episode from the active turn's turn-end waiter tag
+      // (see driveDeliveryTurn) and strand it on a later 429. (Codex P1.)
+      if (role === 'turn' || this.stateManager.getState().status === 'rate_limit_cooldown') {
         this.rateLimitWatchdog.cancel();
+      }
+      if (role === 'turn') {
         try {
           // Preserve a legacy-owned live turn: role arbitration can return turn
           // when no durable turn row exists even though the session is processing.
