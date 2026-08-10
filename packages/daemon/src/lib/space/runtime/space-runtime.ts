@@ -355,6 +355,17 @@ interface WorkflowSubscriptionTarget {
    *              / `subscribe_pr_events`), e.g. a coder subscribing to its own PR.
    */
   subscriptionKind?: 'static' | 'dynamic';
+  /**
+   * Set on a `static` subscription whose topic was resolved from a `topicFrom`
+   * template against the run's primary link (vs. a literal `topic` interest
+   * registered verbatim). Used to:
+   * - clean up the prior resolution when the primary link changes (a replaced
+   *   PR must not leave the superseded topic in the trie), and
+   * - exempt these declarative interests from the per-slot cap so a node that
+   *   filled its dynamic slots before the link existed can still materialize its
+   *   own PR subscription.
+   */
+  topicFromDerived?: boolean;
   sessionId?: string;
 }
 
@@ -1153,6 +1164,22 @@ export class SpaceRuntime {
         // resolve. resolveNodeAgents is guarded the same way elsewhere.
         continue;
       }
+      // Drop this node's prior `topicFrom`-derived static subs before
+      // re-resolving. A replaced PR link must not leave the superseded topic in
+      // the trie (the node would keep receiving the old PR's events and, after
+      // enough replacements, exhaust the slot cap). Literal static `topic`
+      // interests and dynamic subs are untouched. (During rehydrate this is
+      // already handled by registerRunInterests' bulk static removal; doing it
+      // here too keeps the record-trigger path correct and the helper
+      // self-contained.)
+      this.topicTrie.remove(
+        (target) =>
+          isWorkflowSubscriptionTarget(target) &&
+          target.workflowRunId === workflowRunId &&
+          target.nodeId === node.id &&
+          target.subscriptionKind === 'static' &&
+          target.topicFromDerived === true
+      );
       for (const agentEntry of agents) {
         for (const interest of agentEntry.eventInterests ?? []) {
           // Static `topic` interests are registered verbatim by the caller.
@@ -1167,7 +1194,10 @@ export class SpaceRuntime {
             node.id,
             agentEntry.name,
             resolved,
-            { subscriptionKind: 'static' }
+            // Tag the inserted sub as topicFrom-derived so a later link change
+            // can find and remove it (the cleanup above) and the per-slot cap
+            // exempts it from the agent's dynamic budget.
+            { subscriptionKind: 'static', topicFromDerived: true }
           );
           if (!result.success) {
             log.warn(
@@ -1201,6 +1231,13 @@ export class SpaceRuntime {
   materializeTopicFromInterestsForNode(workflowRunId: string, nodeId: string): void {
     const run = this.config.workflowRunRepo.getRun(workflowRunId);
     if (!run) return;
+    // Skip terminal runs: cancel/archive/done already cleared the run's interests
+    // (clearRunInterests), and an in-flight save_artifact completing after teardown
+    // must not re-add a derived static sub that would fan later events out to a
+    // terminal target (failed on delivery) and persist as a leaked trie entry.
+    // Mirrors the eligibility check used during rehydrate (a blocked run is NOT
+    // terminal — it still receives events when unblocked).
+    if (run.status === 'cancelled' || isWorkflowRunSucceeded(run.status)) return;
     const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
     if (!workflow) return;
     const node = workflow.nodes.find((n) => n.id === nodeId);
@@ -1215,6 +1252,11 @@ export class SpaceRuntime {
       this.config.taskRepo.listByWorkflowRun(workflowRunId)
     );
     if (!task) return;
+    // The canonical task may be cancelled/archived/done even while the run row
+    // lingers — same terminal guard as the run check above.
+    if (task.status === 'cancelled' || task.status === 'archived' || task.status === 'done') {
+      return;
+    }
     this.materializeTopicFromInterestsForNodes(workflowRunId, task.id, [node]);
     // Replay retained `published` events. Unlike template-declared static
     // interests (rebuilt during rehydrate BEFORE the runtime accepts events),
@@ -1249,7 +1291,7 @@ export class SpaceRuntime {
     nodeId: string,
     agentName: string,
     topic: string,
-    options: { subscriptionKind?: 'static' | 'dynamic' } = {}
+    options: { subscriptionKind?: 'static' | 'dynamic'; topicFromDerived?: boolean } = {}
   ): { success: boolean; error?: string } {
     const trimmed = topic?.trim();
     if (!trimmed) return { success: false, error: 'Topic pattern is required.' };
@@ -1274,19 +1316,30 @@ export class SpaceRuntime {
         target.topic?.toLowerCase() === normalized
     );
     // The per-slot cap protects against agents registering excessive
-    // user/static/dynamic interests on a single slot.
-    const existingInterests = this.topicTrie.count(
-      (target) =>
-        isWorkflowSubscriptionTarget(target) &&
-        target.workflowRunId === workflowRunId &&
-        target.nodeId === nodeId &&
-        target.agentName === agentName
-    );
-    if (existingInterests >= MAX_AGENT_SLOT_EVENT_INTERESTS) {
-      throw new Error(
-        `Agent slot ${workflowRunId}/${nodeId}/${agentName} cannot register more than ` +
-          `${MAX_AGENT_SLOT_EVENT_INTERESTS} event interests`
+    // user/dynamic interests on a single slot. A `topicFrom`-derived static
+    // subscription is declarative (workflow-authored, validation-bounded at
+    // import) and is registered mid-run after the primary link is recorded, so
+    // it is exempt: a node that filled its slots with dynamic subscriptions
+    // before the PR link existed must still be able to materialize its own
+    // declarative PR subscription (the cap throw is caught upstream and would
+    // otherwise leave it silently unmaterialized). The count excludes any
+    // existing topicFrom-derived subs so dynamic gets the full budget, and the
+    // throw is skipped entirely for a topicFrom-derived registration.
+    if (!options.topicFromDerived) {
+      const existingInterests = this.topicTrie.count(
+        (target) =>
+          isWorkflowSubscriptionTarget(target) &&
+          target.workflowRunId === workflowRunId &&
+          target.nodeId === nodeId &&
+          target.agentName === agentName &&
+          !target.topicFromDerived
       );
+      if (existingInterests >= MAX_AGENT_SLOT_EVENT_INTERESTS) {
+        throw new Error(
+          `Agent slot ${workflowRunId}/${nodeId}/${agentName} cannot register more than ` +
+            `${MAX_AGENT_SLOT_EVENT_INTERESTS} event interests`
+        );
+      }
     }
     this.topicTrie.insert(trimmed, {
       workflowRunId,
@@ -1295,6 +1348,7 @@ export class SpaceRuntime {
       agentName,
       topic: trimmed,
       subscriptionKind,
+      ...(options.topicFromDerived ? { topicFromDerived: true } : {}),
     });
     // An event can arrive in the brief interval between an external resource
     // being created and the actor registering its dynamic interest. Unmatched

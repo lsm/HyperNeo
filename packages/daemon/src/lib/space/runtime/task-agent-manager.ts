@@ -5514,6 +5514,24 @@ export class TaskAgentManager {
       gateDataRepo: this.config.gateDataRepo,
       onGateDataChanged: async (runId, gateId) => {
         const activated = await nodeAgentChannelRouter.onGateDataChanged(runId, gateId);
+        // A gated send_message may have established (or updated) the run's
+        // primary link — either directly (a `pr_url`/`prUrl` field committed to
+        // gate data) or via a `pr_ready` hook that stamped hook state during the
+        // send. resolvePrimaryLinkUrl treats both as sources, so re-materialize
+        // the authoring node's topicFrom interests just like save_artifact does.
+        // No-op unless this node declares a topicFrom interest; the runtime is
+        // best-effort, terminal-run guarded, and never throws here.
+        try {
+          this.config.spaceRuntimeService.materializeTopicFromInterestsForNode(
+            runId,
+            workflowNodeId
+          );
+        } catch (err) {
+          log.warn(
+            `onGateDataChanged: failed to materialize topicFrom interests for gate ` +
+              `${gateId} in run ${runId}/${workflowNodeId}: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
         return activated;
       },
       gateRetryScheduler: this.config.spaceRuntimeService.getGateRetryScheduler(),

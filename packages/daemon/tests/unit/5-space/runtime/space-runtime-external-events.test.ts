@@ -6679,6 +6679,112 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(reviewEvent.id)?.state).toBe('delivered');
     expect(eventStore.getById(checkEvent.id)?.state).toBe('delivered');
   });
+
+  test('removes the superseded topic when the PR link is replaced', async () => {
+    const workflow = createTopicFromWorkflow();
+    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    markCoderLive(run.id, 'session-link-change');
+
+    // First PR link → resolves to pull_request/42.*.
+    recordPrLinkArtifact(run.id, 'code', PR_URL);
+    runtime.materializeTopicFromInterestsForNode(run.id, 'code');
+
+    // The PR is replaced (closed + reopened as a new number) → pull_request/99.*.
+    recordPrLinkArtifact(run.id, 'code', 'https://github.com/lsm/neokai/pull/99');
+    runtime.materializeTopicFromInterestsForNode(run.id, 'code');
+
+    const staleEvent = makeEvent();
+    const freshEvent = makeEvent({
+      id: `evt-fresh-${Math.random().toString(36).slice(2)}`,
+      topic: 'github/lsm/neokai/pull_request/99.review_submitted',
+      summary: 'PR review submitted (new PR)',
+      dedupeKey: `dedupe-fresh-${Math.random().toString(36).slice(2)}`,
+    });
+    await eventService.publish(staleEvent);
+    await eventService.publish(freshEvent);
+
+    // The superseded (42) topic was removed; only the current (99) PR's events
+    // deliver, and the slot is not leaked to the old topic.
+    expect(injected).toHaveLength(1);
+    expect(JSON.parse(injected[0]!.message).eventId).toBe(freshEvent.id);
+    expect(eventStore.getById(staleEvent.id)?.state).toBe('published');
+    expect(eventStore.getById(freshEvent.id)?.state).toBe('delivered');
+  });
+
+  test('materializes a topicFrom interest even when dynamic slots are full', async () => {
+    const workflow = createTopicFromWorkflow();
+    const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    const task = tasks[0]!;
+    markCoderLive(run.id, 'session-capacity');
+
+    // Exhaust every per-slot interest with dynamic subscriptions BEFORE the link
+    // exists. The declarative topicFrom interest occupies no slot yet.
+    for (let index = 0; index < 10; index += 1) {
+      runtime.registerSubscription(
+        run.id,
+        task.id,
+        'code',
+        'coder',
+        `github/other/repo/issues/${index}.opened`
+      );
+    }
+
+    // Recording the PR link must still materialize the declarative PR sub — the
+    // cap exempts topicFrom-derived interests from the agent's dynamic budget.
+    recordPrLinkArtifact(run.id, 'code', PR_URL);
+    expect(() => runtime.materializeTopicFromInterestsForNode(run.id, 'code')).not.toThrow();
+
+    const event = makeEvent();
+    await eventService.publish(event);
+
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-capacity');
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
+  });
+
+  test('does not re-add a topicFrom sub for a cancelled run', async () => {
+    const workflow = createTopicFromWorkflow();
+    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    markCoderLive(run.id, 'session-terminal');
+
+    // Teardown: cancel the run and clear its interests (as cancelWorkflowRun does).
+    workflowRunRepo.updateRun(run.id, { status: 'cancelled' });
+    runtime.clearRunInterests(run.id);
+
+    // An in-flight save_artifact completes after teardown and records the link.
+    recordPrLinkArtifact(run.id, 'code', PR_URL);
+    runtime.materializeTopicFromInterestsForNode(run.id, 'code');
+
+    const event = makeEvent();
+    await eventService.publish(event);
+
+    // No sub is re-added to the terminal target — the event stays available for
+    // a legitimate late subscriber rather than fanning out and failing.
+    expect(injected).toHaveLength(0);
+    expect(eventStore.getById(event.id)?.state).toBe('published');
+  });
+
+  test('materializes a topicFrom interest from a primary link established via gate data', async () => {
+    // resolvePrimaryLinkUrl treats gate data (pr_url/prUrl) as a primary-link
+    // source, not just link artifacts. A custom workflow that supplies pr_url via
+    // a gated send_message must materialize its topicFrom interest without a
+    // separate link artifact — the onGateDataChanged trigger calls the same
+    // materialize path.
+    const workflow = createTopicFromWorkflow();
+    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    markCoderLive(run.id, 'session-gate-data');
+
+    const gateDataRepo = new GateDataRepository(db);
+    gateDataRepo.set(run.id, 'pr-gate', { prUrl: PR_URL });
+    runtime.materializeTopicFromInterestsForNode(run.id, 'code');
+
+    const event = makeEvent();
+    await eventService.publish(event);
+
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-gate-data');
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
+  });
 });
 
 describe('SpaceRuntime queue-health snapshot', () => {
