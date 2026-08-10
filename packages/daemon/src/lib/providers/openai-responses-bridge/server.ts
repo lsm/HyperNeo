@@ -770,7 +770,9 @@ function parseOpenAIError(status: number, text: string): string {
 function isJsonErrorBody(text: string): boolean {
   const parsed = parseJsonObject(text);
   if (!parsed) return false;
-  return parsed.error !== undefined || parsed.detail !== undefined;
+  // `!= null` (not `!== undefined`): a success body may carry `"error": null`,
+  // which must NOT be treated as an error.
+  return parsed.error != null || parsed.detail != null;
 }
 
 /** Count occurrences of each distinct value in an array, keyed by its string form. */
@@ -1204,13 +1206,18 @@ async function streamResponsesToAnthropic({
               const content = (item as Record<string, unknown>).content;
               if (Array.isArray(content)) {
                 for (const block of content) {
-                  if (
-                    block &&
-                    typeof block === 'object' &&
-                    (block as Record<string, unknown>).type === 'output_text'
-                  ) {
-                    const text = (block as Record<string, unknown>).text;
+                  if (!block || typeof block !== 'object') continue;
+                  const blockRecord = block as Record<string, unknown>;
+                  // output_text → text; refusal → text (a refusal is the
+                  // assistant's text response). Symmetric to the streamed
+                  // refusal.delta handling, so a refusal delivered only in the
+                  // completed output array isn't mistaken for an empty stream.
+                  if (blockRecord.type === 'output_text') {
+                    const text = blockRecord.text;
                     if (typeof text === 'string') emitTextContent(text);
+                  } else if (blockRecord.type === 'refusal') {
+                    const refusal = blockRecord.refusal;
+                    if (typeof refusal === 'string') emitTextContent(refusal);
                   }
                 }
               }

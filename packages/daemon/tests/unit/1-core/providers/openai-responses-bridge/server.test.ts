@@ -1765,6 +1765,49 @@ describe('openai-responses-bridge server', () => {
     }
   );
 
+  it.skipIf(!isBun)('honors a refusal delivered only in response.completed.output', async () => {
+    server = createOpenAIResponsesBridgeServer({
+      auth: { source: 'api_key', apiKey: 'sk-test' },
+      models,
+      fetchImpl: async () =>
+        sse([
+          {
+            event: 'response.completed',
+            data: {
+              type: 'response.completed',
+              response: {
+                usage: { input_tokens: 2, output_tokens: 1 },
+                output: [
+                  {
+                    type: 'message',
+                    content: [{ type: 'refusal', refusal: 'I cannot help with that.' }],
+                  },
+                ],
+              },
+            },
+          },
+        ]),
+    });
+
+    const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gpt-5.3-codex',
+        max_tokens: 128,
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+    });
+
+    const events = await readSSEEvents(resp.body);
+    expect(resp.status).toBe(200);
+    // A refusal in the completed output is surfaced as text (not retried as
+    // an overload — symmetric to streamed refusal.delta and output_text).
+    expect(textDeltaEvents(events).join('')).toBe('I cannot help with that.');
+    expect(events.find((event) => event.event === 'error')).toBeUndefined();
+    expect(messageDeltaEvent(events)).toMatchObject({ delta: { stop_reason: 'end_turn' } });
+  });
+
   it.skipIf(!isBun)(
     'surfaces a non-transient 200 JSON error as terminal (not retried as overload)',
     async () => {
@@ -1796,6 +1839,43 @@ describe('openai-responses-bridge server', () => {
       expect(resp.status).toBe(400);
       expect(body.error.type).toBe('invalid_request_error');
       expect(body.error.message).toContain('bad request body');
+    }
+  );
+
+  it.skipIf(!isBun)(
+    'does not treat a 200 JSON body with error:null as a terminal error',
+    async () => {
+      // A success body may carry `"error": null` — that is NOT an error body.
+      // It flows through to the streamer (which finds no SSE events and surfaces
+      // a retryable overloaded_error), rather than being misclassified as a
+      // terminal 400.
+      server = createOpenAIResponsesBridgeServer({
+        auth: { source: 'api_key', apiKey: 'sk-test' },
+        models,
+        fetchImpl: async () =>
+          new Response(JSON.stringify({ result: 'ok', error: null }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+      });
+
+      const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-5.3-codex',
+          max_tokens: 128,
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+      });
+
+      const events = await readSSEEvents(resp.body);
+      // NOT a terminal 400 — the error:null body is treated as a non-error
+      // stream and surfaces via the empty-stream guard.
+      expect(resp.status).toBe(200);
+      expect(events.find((event) => event.event === 'error')?.data).toMatchObject({
+        error: { type: 'overloaded_error' },
+      });
     }
   );
 
@@ -2917,6 +2997,52 @@ describe('openai-responses-bridge server', () => {
 
     await readSSEEvents(anthropicStream);
     expect(reasoningCalls).toEqual([[{ type: 'reasoning', encrypted_content: 'ENC_123' }]]);
+  });
+
+  it('treats an encrypted-reasoning-only stream as non-productive (retried, no cache)', async () => {
+    // Encrypted reasoning isn't displayable, so a turn whose only output is a
+    // reasoning item (no streamed text/thinking/tool block) has zero content
+    // blocks. It must be retried as overloaded (not a silent empty end_turn) and
+    // must NOT cache its reasoning (the prior turn's cache is preserved for the
+    // retry).
+    const reasoningCalls: unknown[][] = [];
+    const openAIStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder();
+        controller.enqueue(
+          encoder.encode(
+            `event: response.completed\ndata: ${JSON.stringify({
+              type: 'response.completed',
+              response: {
+                usage: { input_tokens: 1, output_tokens: 0 },
+                output: [{ type: 'reasoning', encrypted_content: 'ENC_ONLY' }],
+              },
+            })}\n\n`
+          )
+        );
+        controller.close();
+      },
+    });
+    const anthropicStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        void _openAIResponsesBridgeServerTesting.streamResponsesToAnthropic({
+          openAIResponse: new Response(openAIStream, {
+            headers: { 'Content-Type': 'text/event-stream' },
+          }),
+          controller,
+          model: 'gpt-5.3-codex',
+          estimatedInputTokens: 1,
+          onReasoningItems: (items) => reasoningCalls.push(items),
+        });
+      },
+    });
+
+    const events = await readSSEEvents(anthropicStream);
+    expect(events.find((event) => event.event === 'error')?.data).toMatchObject({
+      error: { type: 'overloaded_error' },
+    });
+    expect(messageDeltaEvent(events)).toBeUndefined();
+    expect(reasoningCalls).toEqual([]);
   });
 
   it.skipIf(!isBun)(
