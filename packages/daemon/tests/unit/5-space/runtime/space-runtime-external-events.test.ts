@@ -6665,6 +6665,74 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
   });
 
+  test('delivers a published event to a new target even when already routed to another', async () => {
+    // watch (static topic, NO live session) is target A; code (topicFrom) is
+    // target B. The event arrives, is routed to watch as a pending delivery
+    // (watcher inactive → queued), and stays `published`. The coder then records
+    // its PR link; the record-trigger replay must deliver the retained event to
+    // the coder too — not skip it because watch already has a delivery row (the
+    // case redispatchRetainedExternalEvents alone misses, since it only replays
+    // no-delivery events).
+    const workflow = workflowManager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: `Workflow ${Math.random()}`,
+      description: '',
+      nodes: [
+        {
+          id: 'code',
+          name: 'Code',
+          agents: [
+            {
+              agentId: AGENT_ID,
+              name: 'coder',
+              eventInterests: [
+                { topicFrom: { source: 'primaryLink', pattern: TOPIC_FROM_PATTERN } },
+              ],
+            },
+          ],
+        },
+        {
+          id: 'watch',
+          name: 'Watch',
+          agents: [
+            {
+              agentId: `${AGENT_ID}-watcher`,
+              name: 'watcher',
+              eventInterests: [{ topic: 'github/lsm/neokai/pull_request/*' }],
+            },
+          ],
+        },
+      ],
+      transitions: [],
+      startNodeId: 'code',
+      rules: [],
+      tags: [],
+    });
+    const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    const task = tasks[0]!;
+    // Register static interests: watch's topic is live; coder's topicFrom is
+    // inert (no link yet). watch has no live session, so its delivery will queue.
+    runtime.registerRunInterests(run.id, task.id, workflow.nodes);
+    markCoderLive(run.id, 'session-coder-routed');
+
+    const event = makeEvent();
+    await eventService.publish(event);
+    // Routed to watch (pending), retained published; coder not subscribed yet.
+    expect(eventStore.getById(event.id)?.state).toBe('published');
+
+    recordPrLinkArtifact(run.id, 'code', PR_URL);
+    runtime.materializeRunTopicFromInterests(run.id);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // The coder (new target) receives the retained event. The source event stays
+    // `published` because watch's delivery is still non-terminal (watcher never
+    // activates), so assert the coder's own delivery row, not the event state.
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-coder-routed');
+    const coderDelivery = eventStore.listDeliveries(event.id).find((d) => d.agentName === 'coder');
+    expect(coderDelivery?.state).toBe('delivered');
+  });
+
   test('replays a retained event that arrived before the PR link was recorded', async () => {
     const workflow = createTopicFromWorkflow();
     const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');

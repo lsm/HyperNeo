@@ -686,6 +686,30 @@ export class ExternalEventStore {
     return rows.map(rowToRecord);
   }
 
+  /**
+   * List published source events that already have at least one delivery row.
+   * These were routed to some target while retained `published` (a delivery to
+   * target A is non-terminal, so the event stays published). Used to replay a
+   * newly-materialized subscription (e.g. a topicFrom interest registered
+   * mid-run) against such events so the new target still receives them, while
+   * the no-delivery replay (listPublishedEventsWithoutDeliveries) handles the
+   * pure-gap case. Per-target delivery dedup (deliveryKey + terminal/in-flight
+   * guards) ensures only targets without an existing delivery are dispatched.
+   */
+  listPublishedEventsWithDeliveries(): ExternalEventRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT e.* FROM space_external_events e
+				 WHERE e.state = 'published'
+				   AND EXISTS (
+				     SELECT 1 FROM space_external_event_deliveries d WHERE d.event_id = e.id
+				   )
+				 ORDER BY e.updated_at, e.id`
+      )
+      .all() as ExternalEventRow[];
+    return rows.map(rowToRecord);
+  }
+
   /** List retryable pending delivery rows, optionally scoped to a workflow run. */
   listPendingDeliveries(workflowRunId?: string): ExternalEventDeliveryRecord[] {
     const rows = workflowRunId

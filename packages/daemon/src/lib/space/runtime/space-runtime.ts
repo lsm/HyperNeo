@@ -1272,9 +1272,12 @@ export class SpaceRuntime {
     // `pull_request/{number}.*`. registerSubscription's own replay only covers
     // `dynamic` subs, and topicFrom must stay `static` (the rehydrate path
     // registers static; mixing kinds would double-deliver), so replay explicitly
-    // here. Idempotent and bounded by the published-event retention TTL.
+    // here. Two passes cover both gap shapes: events with no delivery yet, and
+    // events already routed to other targets (a new target must still receive
+    // them). Idempotent and bounded by the published-event retention TTL.
     // Rehydrate is untouched: it rebuilds the full trie before events flow.
     this.redispatchRetainedExternalEvents();
+    this.redispatchPublishedEventsToNewTargets();
   }
 
   private registerRunInterestsFromWorkflow(run: SpaceWorkflowRun, workflow: SpaceWorkflow): void {
@@ -1310,6 +1313,7 @@ export class SpaceRuntime {
     }
     const normalized = trimmed.toLowerCase();
     const subscriptionKind = options.subscriptionKind ?? 'dynamic';
+    const isTopicFromDerived = options.topicFromDerived === true;
     this.topicTrie.remove(
       (target) =>
         isWorkflowSubscriptionTarget(target) &&
@@ -1318,7 +1322,13 @@ export class SpaceRuntime {
         target.nodeId === nodeId &&
         target.agentName === agentName &&
         target.subscriptionKind === subscriptionKind &&
-        target.topic?.toLowerCase() === normalized
+        target.topic?.toLowerCase() === normalized &&
+        // Match the origin tag so a literal static topic and a topicFrom template
+        // that resolve to the same topic stay distinct: a derived insert only
+        // replaces a prior derived entry (not a literal one), so a later
+        // link-change cleanup (which removes only derived entries) can't strip a
+        // literal interest.
+        (target.topicFromDerived === true) === isTopicFromDerived
     );
     // The per-slot cap protects against agents registering excessive
     // user/dynamic interests on a single slot. A `topicFrom`-derived static
@@ -5692,6 +5702,70 @@ export class SpaceRuntime {
     if (!store) return;
     for (const eventRecord of store.listPublishedEventsWithoutDeliveries()) {
       void this.handleExternalEvent(this.externalEventPayloadFromRecord(eventRecord.event));
+    }
+  }
+
+  /**
+   * Replay currently-published events that already have delivery rows to OTHER
+   * targets, so a freshly-materialized subscription (e.g. a topicFrom interest
+   * registered mid-run by the record trigger) receives any that arrived before
+   * it existed but were already routed (queued/pending) elsewhere — the case
+   * {@link redispatchRetainedExternalEvents} misses (it only replays no-delivery
+   * events).
+   *
+   * Per-target safe: a target that already has a delivery row (any state) is
+   * skipped, so only targets without one — i.e. subscriptions added since the
+   * event was published — are dispatched. This never re-disturbs an existing
+   * target (no double-delivery) and skips the blocked-run hook/gate reeval (it
+   * already ran when the event was first handled). Fire-and-forget per event,
+   * like the retained-event replay.
+   */
+  private redispatchPublishedEventsToNewTargets(): void {
+    const store = this.config.externalEventStore;
+    if (!store) return;
+    if (this.externalEventHandlingDepth > 0) {
+      // Defer to the post-handling flush (same re-entrancy guard as the retained
+      // replay) so we don't re-handle an in-flight event before its deliveries
+      // settle.
+      if (!this.isStopped) this.retainedEventRedispatchPending = true;
+      return;
+    }
+    for (const eventRecord of store.listPublishedEventsWithDeliveries()) {
+      void this.deliverPublishedEventToNewTargets(
+        this.externalEventPayloadFromRecord(eventRecord.event)
+      );
+    }
+  }
+
+  private async deliverPublishedEventToNewTargets(
+    payload: ExternalEventPublishedPayload
+  ): Promise<void> {
+    const store = this.config.externalEventStore;
+    if (!store) return;
+    const matches = this.lookupSubscriptionTargets(payload.topic).filter(
+      (target): target is WorkflowSubscriptionTarget =>
+        isWorkflowSubscriptionTarget(target) &&
+        this.isWorkflowTargetOwnedBySpace(target, payload.spaceId)
+    );
+    for (const match of matches) {
+      const target = this.resolveSubscriptionTarget(match);
+      const deliveryKey = this.buildDeliveryKey(target, payload);
+      // Skip targets already routed (delivered/queued/failed in any state) —
+      // only dispatch to subscriptions materialized since the event was
+      // published. registerExpectedDelivery is INSERT OR IGNORE, so a target
+      // that gained a delivery between the getDelivery check and here is a
+      // benign no-op for the dispatch path's own terminal/in-flight guards.
+      if (store.getDelivery(payload.eventId, deliveryKey)) continue;
+      try {
+        store.registerExpectedDelivery(payload.eventId, deliveryKey, target);
+      } catch (err) {
+        log.warn(
+          `SpaceRuntime: failed to register replay delivery for ${payload.eventId} to ` +
+            `${target.workflowRunId}/${target.nodeId}/${target.agentName}: ${formatCommandError(err)}`
+        );
+        continue;
+      }
+      await this.deliverExternalEventToWorkflowTarget(target, payload, deliveryKey);
     }
   }
 
