@@ -251,7 +251,7 @@ const ackCdp = (id: string) => cdp.send('Page.screencastFrameAck', { sessionId: 
 cdp.on('Page.screencastFrame', ({ data, metadata, sessionId }) => {
   const s = streams.get(key)!;
   if (s.newest) ackCdp(s.newest.cdpSessionId);            // supersede: ack + drop the queued frame
-  s.newest = { frame: { jpeg: data, metadata, frameId: randomUUID(), pageId, epoch }, cdpSessionId: sessionId };
+  s.newest = { frame: { jpeg: data, metadata, frameId: randomUUID(), pageId, epoch, seq: nextSeq() }, cdpSessionId: sessionId };
   if (!s.inflight) dispatch(s);
 });
 
@@ -269,8 +269,8 @@ function dispatch(s: Stream) {
 
 // Registered ONCE at startup; request scope is the RAW session id (see rules):
 hub.handle('browser.frameAck', ({ frameId }, ctx) => {
-  const s = streams.get(`${ctx.sessionId}:${activePageId(ctx.sessionId)}`); if (!s?.inflight) return;
-  if (s.inflight.frameId !== frameId) return;             // stale ACK for an already-resolved frame
+  const s = streamByFrameId(ctx.sessionId, frameId);      // search ALL the session's page streams
+  if (!s?.inflight || s.inflight.frameId !== frameId) return;  // not found, or stale/resolved
   clearTimeout(s.inflight.timer); ackCdp(s.inflight.cdpSessionId); s.inflight = null;
   if (s.newest) dispatch(s);
 });
@@ -321,6 +321,19 @@ request method. These invariants are the binding contract for the loop above:
 - **Multiple subscribers:** if more than one pane can subscribe to a session
   (e.g. desktop + browser tab), require an ACK from each, or document a
   single-subscriber-per-session assumption.
+- **Route ACKs by frameId across all page streams.** The ACK'd frame may belong
+  to a page that is no longer active (it was in flight during a tab switch), so
+  look the owning stream up by `frameId` across the session's pages — selecting
+  the active page would reject a valid ACK and leak its CDP slot until timeout.
+- **Monotonic frame sequence.** Each frame carries a monotonic `seq`; the pane
+  discards any decode/draw completion whose `seq` is older than the latest frame
+  it displayed, so a slow decode of an older frame cannot overwrite a newer one
+  within the same epoch (MessageHub does not serialize async event handlers, so
+  the epoch check alone cannot catch this).
+- **Reset held input state on interrupt.** On pane disconnect, blur, teardown, or
+  epoch change, release every held modifier and mouse button and clear the
+  per-client pressed-state set — otherwise a gesture interrupted between down and
+  up leaves Playwright (and the next action) with a stuck Ctrl/Shift/button.
 
 ### Data flow: human drives (or takes over)
 
@@ -549,6 +562,12 @@ Round-4 (transport invariants and distribution):
 - **Screencast loop invariants** — single service-level ACK handler routed by session + frameId; timers cancelled on resolve; teardown acks both inflight and newest; late subscribers get an activation snapshot; pane guards its channel; requests use the raw session id, events use the `session:<id>` channel string.
 - **Whole-gesture modifiers** — held across the full pointer gesture, not per mouse event.
 - **Chromium in CLI distributions** — bundle/first-run strategy extended to standalone CLI artifacts, not just the desktop release.
+
+Round-5 (P2 robustness):
+
+- **ACK routing by frameId** — across all the session's page streams, not the active page (handles in-flight frames during tab switches).
+- **Monotonic frame sequence** — pane discards stale decodes so a slow older frame can't overwrite a newer one within an epoch.
+- **Input-state reset on interrupt** — held modifiers/buttons released on disconnect/blur/teardown/epoch change.
 
 Still open:
 
