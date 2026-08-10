@@ -3134,6 +3134,27 @@ describe('seedBuiltInWorkflows()', () => {
   );
 
   test.skipIf(!isBun)(
+    'review-approval hook residual race: a post-push +1 satisfies a recorded wait even if it reviewed an earlier head',
+    async () => {
+      // Documented limitation: a +1 is not commit-bound. Once a wait is recorded
+      // for head B, a +1 whose created_at follows B's push satisfies the hook —
+      // whether Codex reviewed B or computed it for an earlier head A and posted
+      // it late. The head-push anchor cannot tell these apart (the window is wider
+      // than dev's handoff anchor, which is the cost of fixing #900). This test
+      // pins that behavior so the residual is explicit; closing it fully would
+      // require COMMENT_OK-only approvals. The first handoff is still safe (see
+      // the FIRST-handoff test) — only a recorded-wait retry has this residual.
+      const result = await runReviewApprovalHook({
+        pushTime: '2026-08-10T03:00:00Z', // head B pushed at 03:00
+        reactionTime: '2026-08-10T03:30:00Z', // +1 at 03:30 post-dates push_B
+        // default hookLocalState = recorded wait for head B
+      });
+      expect(result.result.type).toBe('allow');
+      expect(result.result.data).toMatchObject({ codex_approved: true });
+    }
+  );
+
+  test.skipIf(!isBun)(
     'review-approval hook falls back to the workflow-run start when the push event is unavailable',
     async () => {
       // If the events API returns no PushEvent for HEAD (expired / paginated

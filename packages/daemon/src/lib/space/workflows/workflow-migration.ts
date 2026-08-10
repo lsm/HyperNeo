@@ -57,20 +57,27 @@ function buildApprovalsScript(timeoutSeconds: number = CODEX_REVIEW_BOT_TIMEOUT_
     'if [ "$PR_HOST" != "github.com" ] && [ "$PR_HOST" != "$ALLOWED_HOST" ]; then echo "PR host ${PR_HOST} is not allowed for GitHub lookups" >&2; exit 1; fi',
     // Codex-approval freshness is anchored to the server-recorded PUSH time of
     // the current HEAD — not the reviewer's handoff and not the (forgeable)
-    // commit committer date. A +1 created after GitHub received the push provably
-    // saw this code, AND a compromised coder cannot back-date a new head
-    // (GIT_COMMITTER_DATE) to satisfy a prior +1 from an older head. The push
-    // time is the PushEvent to the PR's head ref (payload.ref == refs/heads/<head
-    // ref>) whose head/commits include HEAD_OID — filtering by ref means a push
-    // of the same SHA to another branch cannot advance the baseline. If that
-    // lookup fails we fall back to the non-forgeable (but coarse) workflow-run
-    // start; without a baseline no reaction counts as fresh (a SHA comment
-    // naming HEAD_OID still passes via COMMENT_OK). A reaction can satisfy the
-    // hook only after a wait is recorded for THIS head (codex_wait_head_oid ==
-    // HEAD_OID): a +1 is not head-bound, so the first handoff cannot be approved
-    // by a +1 that may linger from a prior head — only COMMENT_OK may. ms are
-    // stripped so a lexicographic comparison against GitHub's second-precision
-    // created_at is exact.
+    // commit committer date. A +1 created after the push post-dates this code,
+    // so a compromised coder cannot back-date a new head (the PushEvent time is
+    // server-recorded, immune to GIT_COMMITTER_DATE) to satisfy a prior +1. This
+    // fixes #900 (a valid +1 posted before the handoff is no longer discarded).
+    // NOTE the residual: a +1 is not commit-bound, so one computed for an earlier
+    // head and posted after this push is indistinguishable from a +1 for this
+    // head — on a recorded-wait retry it can still satisfy the hook. That race
+    // is inherent to accepting pre-handoff +1s (i.e. to fixing #900); closing it
+    // fully would require COMMENT_OK-only approvals. The first handoff is safe:
+    // a reaction needs a wait recorded for THIS head (codex_wait_head_oid ==
+    // HEAD_OID), so a lingering +1 cannot approve an unreviewed head immediately
+    // — only a SHA comment (COMMENT_OK) may. The push time is the PushEvent to
+    // the PR's head ref (payload.ref == refs/heads/<head ref>) whose head/commits
+    // include HEAD_OID — filtering by ref means a push of the same SHA to another
+    // branch cannot advance the baseline. If that lookup fails we fall back to
+    // the non-forgeable (but coarse) workflow-run start; without a baseline no
+    // reaction counts as fresh. (Fork-PR heads resolve no push baseline —
+    // PushEvents live in the fork and this lookup hits the base repo — so they
+    // fall to the workflow-start/fail-closed path; same-repo workflows are
+    // unaffected.) ms are stripped so a lexicographic comparison against GitHub's
+    // second-precision created_at is exact.
     'PUSH_EVENTS=$(gh api --hostname "$PR_HOST" --paginate --slurp "repos/${OWNER}/${REPO}/events?per_page=100" 2>/dev/null || true)',
     'HEAD_BASELINE=$(jq -r --arg head "$HEAD_OID" --arg ref "$HEAD_REF" \'[.[][] | select(.type == "PushEvent") | select(.payload.ref == ("refs/heads/" + $ref)) | select((.payload.head // "") == $head or any((.payload.commits // [])[]; (.sha // "") == $head))] | .[0].created_at // empty\' <<< "$PUSH_EVENTS" 2>/dev/null || true)',
     'HEAD_BASELINE="${HEAD_BASELINE:-${HYPERNEO_WORKFLOW_START_ISO:-}}"',
@@ -146,20 +153,27 @@ function buildReviewApprovalScript(
     'if [ "$PR_HOST" != "github.com" ] && [ "$PR_HOST" != "$ALLOWED_HOST" ]; then echo "PR host ${PR_HOST} is not allowed for GitHub lookups" >&2; exit 1; fi',
     // Codex-approval freshness is anchored to the server-recorded PUSH time of
     // the current HEAD — not the reviewer's handoff and not the (forgeable)
-    // commit committer date. A +1 created after GitHub received the push provably
-    // saw this code, AND a compromised coder cannot back-date a new head
-    // (GIT_COMMITTER_DATE) to satisfy a prior +1 from an older head. The push
-    // time is the PushEvent to the PR's head ref (payload.ref == refs/heads/<head
-    // ref>) whose head/commits include HEAD_OID — filtering by ref means a push
-    // of the same SHA to another branch cannot advance the baseline. If that
-    // lookup fails we fall back to the non-forgeable (but coarse) workflow-run
-    // start; without a baseline no reaction counts as fresh (a SHA comment
-    // naming HEAD_OID still passes via COMMENT_OK). A reaction can satisfy the
-    // hook only after a wait is recorded for THIS head (codex_wait_head_oid ==
-    // HEAD_OID): a +1 is not head-bound, so the first handoff cannot be approved
-    // by a +1 that may linger from a prior head — only COMMENT_OK may. ms are
-    // stripped so a lexicographic comparison against GitHub's second-precision
-    // created_at is exact.
+    // commit committer date. A +1 created after the push post-dates this code,
+    // so a compromised coder cannot back-date a new head (the PushEvent time is
+    // server-recorded, immune to GIT_COMMITTER_DATE) to satisfy a prior +1. This
+    // fixes #900 (a valid +1 posted before the handoff is no longer discarded).
+    // NOTE the residual: a +1 is not commit-bound, so one computed for an earlier
+    // head and posted after this push is indistinguishable from a +1 for this
+    // head — on a recorded-wait retry it can still satisfy the hook. That race
+    // is inherent to accepting pre-handoff +1s (i.e. to fixing #900); closing it
+    // fully would require COMMENT_OK-only approvals. The first handoff is safe:
+    // a reaction needs a wait recorded for THIS head (codex_wait_head_oid ==
+    // HEAD_OID), so a lingering +1 cannot approve an unreviewed head immediately
+    // — only a SHA comment (COMMENT_OK) may. The push time is the PushEvent to
+    // the PR's head ref (payload.ref == refs/heads/<head ref>) whose head/commits
+    // include HEAD_OID — filtering by ref means a push of the same SHA to another
+    // branch cannot advance the baseline. If that lookup fails we fall back to
+    // the non-forgeable (but coarse) workflow-run start; without a baseline no
+    // reaction counts as fresh. (Fork-PR heads resolve no push baseline —
+    // PushEvents live in the fork and this lookup hits the base repo — so they
+    // fall to the workflow-start/fail-closed path; same-repo workflows are
+    // unaffected.) ms are stripped so a lexicographic comparison against GitHub's
+    // second-precision created_at is exact.
     'PUSH_EVENTS=$(gh api --hostname "$PR_HOST" --paginate --slurp "repos/${OWNER}/${REPO}/events?per_page=100" 2>/dev/null || true)',
     'HEAD_BASELINE=$(jq -r --arg head "$HEAD_OID" --arg ref "$HEAD_REF" \'[.[][] | select(.type == "PushEvent") | select(.payload.ref == ("refs/heads/" + $ref)) | select((.payload.head // "") == $head or any((.payload.commits // [])[]; (.sha // "") == $head))] | .[0].created_at // empty\' <<< "$PUSH_EVENTS" 2>/dev/null || true)',
     'HEAD_BASELINE="${HEAD_BASELINE:-${HYPERNEO_WORKFLOW_START_ISO:-}}"',
