@@ -712,6 +712,17 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
   const retainedGateIds = new Set(
     channels.flatMap((channel) => ('gateId' in channel && channel.gateId ? [channel.gateId] : []))
   );
+  // Also retain gates referenced by handoff transitions — a gate shared between
+  // a migrating channel and a transition must not be dropped when the channel's
+  // gateId is removed, or the transition's gateId dangles and fails validation.
+  // Guard the shape: this runs before validateTransitions, so transitions may
+  // be a non-array or contain non-object elements from untyped RPC JSON.
+  for (const node of workflow.nodes ?? []) {
+    if (!Array.isArray(node.transitions)) continue;
+    for (const t of node.transitions) {
+      if (t && typeof t === 'object' && t.gateId) retainedGateIds.add(t.gateId);
+    }
+  }
   const gates = (workflow.gates ?? [])
     .filter((gate) => !migratedGateIds.has(gate.id) || retainedGateIds.has(gate.id))
     .map((gate) => markDeprecatedGate(gate));

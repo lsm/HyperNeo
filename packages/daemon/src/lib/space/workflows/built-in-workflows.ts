@@ -1838,7 +1838,9 @@ export function mergeNodeStructuralFieldsFromTemplate(
                 ...t,
                 target: isNodeTarget
                   ? remapTemplateChannelRef(t.target, templateNodes, existingNodes)
-                  : t.target,
+                  : t.target === '*'
+                    ? '*'
+                    : remapTransitionSlotTarget(t.target, templateNodes, existingNodes),
               };
             })
           : node.transitions,
@@ -2489,6 +2491,36 @@ function remapTemplateChannel(
     from: remapRef(channel.from),
     to: Array.isArray(channel.to) ? channel.to.map(remapRef) : remapRef(channel.to),
   };
+}
+
+/**
+ * Remap a handoff transition's SLOT target from the template graph to the
+ * installed graph, mirroring `remapTemplateHookAgentSlots`: find the template
+ * node containing the slot, the corresponding installed node (handling node
+ * renames via `remapTemplateChannelRef`), then keep the slot name if it still
+ * exists, else map by position within the node. Falls back to the original
+ * target when no mapping is possible (the manager then flags a true deletion).
+ */
+function remapTransitionSlotTarget(
+  target: string,
+  templateNodes: WorkflowNode[],
+  existingNodes: WorkflowNode[]
+): string {
+  const templateNode = templateNodes.find((n) => n.agents.some((a) => a.name === target));
+  if (!templateNode) return target;
+  const installedNodeName = remapTemplateChannelRef(
+    templateNode.name,
+    templateNodes,
+    existingNodes
+  );
+  const installedNode =
+    existingNodes.find((n) => n.name === installedNodeName) ??
+    existingNodes.find((n) => n.id === templateNode.id);
+  if (!installedNode) return target;
+  if (installedNode.agents.some((a) => a.name === target)) return target;
+  const slotIndex = templateNode.agents.findIndex((a) => a.name === target);
+  const installedSlotName = slotIndex >= 0 ? installedNode.agents[slotIndex]?.name : undefined;
+  return installedSlotName ?? target;
 }
 
 function removeLegacyPrReadyGateChannels(

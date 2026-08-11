@@ -1588,6 +1588,27 @@ describe('SpaceWorkflowManager', () => {
       expect(result.nodes[0].transitions?.[0]).toMatchObject({ gateId: 'g1', hookId: 'h1' });
     });
 
+    it('rejects a gate missing required id/resetOnCycle (untyped RPC JSON)', () => {
+      // validateGate must reject a gate with a missing/non-boolean resetOnCycle
+      // or an empty id, so a malformed gate is never persisted (and the stricter
+      // export schema does not reject the application's own export later).
+      const baseFields = [
+        { name: 'ok', type: 'boolean', writers: [], check: { op: '==', value: true } },
+      ];
+      expect(() =>
+        manager.createWorkflow({
+          ...twoNodeParams([]),
+          gates: [{ id: 'g1', fields: baseFields } as never],
+        })
+      ).toThrow('"resetOnCycle" must be a boolean');
+      expect(() =>
+        manager.createWorkflow({
+          ...twoNodeParams([]),
+          gates: [{ id: '  ', resetOnCycle: false, fields: baseFields } as never],
+        })
+      ).toThrow('"id" must be a non-empty string');
+    });
+
     it('rejects more than MAX_NODE_HANDOFF_TRANSITIONS transitions on a node', () => {
       // 33 transitions — exceeds the cap (32). The array-length check runs before
       // per-transition uniqueness, so duplicate targets here don't mask the cap.

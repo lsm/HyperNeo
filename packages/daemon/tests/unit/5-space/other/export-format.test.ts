@@ -2516,6 +2516,27 @@ describe('validateExportedWorkflow — handoff transitions', () => {
     if (!result.ok) expect(result.error).toContain('ambiguous');
   });
 
+  test('rejects a bundle with duplicate gate ids', () => {
+    const result = validateExportedWorkflow({
+      version: 3,
+      type: 'workflow',
+      name: 'W',
+      nodes: [{ name: 'A', agents: [{ agentRef: 'coder', name: 'coder' }] }],
+      startNode: 'A',
+      tags: [],
+      gates: [
+        {
+          id: 'g1',
+          resetOnCycle: false,
+          fields: [{ name: 'ok', type: 'boolean', writers: [], check: { op: '==', value: true } }],
+        },
+        { id: 'g1', resetOnCycle: false, fields: [{ name: 'x', type: 'boolean', writers: [] }] },
+      ],
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('duplicate gate id "g1"');
+  });
+
   test('rejects a duplicate transition id within a node', () => {
     const result = validateExportedWorkflow(
       wfWithTransitions([

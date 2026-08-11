@@ -726,8 +726,15 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
   // channel `gateId` (left dangling because channels predate gate export),
   // transition refs are checked now that gates are part of the v3 bundle.
   const transitionGateIds = new Set<string>();
-  for (const gate of result.data.gates ?? []) {
-    if (gate?.id) transitionGateIds.add(gate.id);
+  const seenGateIds = new Set<string>();
+  for (let gi = 0; gi < (result.data.gates ?? []).length; gi++) {
+    const gate = result.data.gates![gi];
+    if (!gate?.id) continue;
+    if (seenGateIds.has(gate.id)) {
+      return { ok: false, error: `invalid: gates[${gi}]: duplicate gate id "${gate.id}"` };
+    }
+    seenGateIds.add(gate.id);
+    transitionGateIds.add(gate.id);
   }
   const transitionHookIds = new Set<string>();
   for (const hook of result.data.hooks ?? []) {

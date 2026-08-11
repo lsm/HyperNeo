@@ -920,6 +920,38 @@ describe('handoff transition preservation', () => {
     );
     expect(params.nodes![0].transitions).toBeUndefined();
   });
+
+  it('drops handoff transitions whose referenced hook or gate was removed', () => {
+    // A node deletion prunes removed-node hooks/gates from state; a carried
+    // transition still referencing them must be dropped, not emitted with a
+    // dangling hookId/gateId that validateTransitions rejects.
+    const params = visualStateToUpdateParams(
+      makeHandoffState({
+        nodes: [
+          {
+            step: {
+              localId: 'l1',
+              id: 's1',
+              name: 'Coder',
+              agentId: 'a1',
+              handoffTransitions: [
+                { id: 'stale-hook', target: 'Review', hookId: 'gone-hook' },
+                { id: 'stale-gate', target: 'Review', gateId: 'gone-gate' },
+                { id: 'ok', target: 'Review' },
+              ],
+            },
+            position: { x: 0, y: 0 },
+          },
+          {
+            step: { localId: 'l2', id: 's2', name: 'Review', agentId: 'a2' },
+            position: { x: 0, y: 0 },
+          },
+        ],
+        // state.gates has 'g1' only; 'gone-gate' is absent. hooks is empty.
+      })
+    );
+    expect(params.nodes![0].transitions).toEqual([{ id: 'ok', target: 'Review' }]);
+  });
 });
 
 // ---------------------------------------------------------------------------

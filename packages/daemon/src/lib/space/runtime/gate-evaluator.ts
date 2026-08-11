@@ -348,6 +348,16 @@ export function validateGate(gate: unknown): string[] {
 
   const g = gate as Record<string, unknown>;
 
+  // Required identity/state fields. Untyped RPC JSON could omit these or send
+  // wrong types; reject at save so a malformed gate is never persisted (and so
+  // the stricter export schema doesn't reject the application's own export).
+  if (typeof g.id !== 'string' || g.id.trim() === '') {
+    errors.push('gate: "id" must be a non-empty string');
+  }
+  if (typeof g.resetOnCycle !== 'boolean') {
+    errors.push('gate: "resetOnCycle" must be a boolean');
+  }
+
   // Validate optional fields — sub-validators handle null/undefined gracefully
   errors.push(...validateGateColor(g.color));
   errors.push(...validateGateLabel(g.label));
