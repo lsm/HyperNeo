@@ -480,7 +480,10 @@ jobs:
         uses: coverallsapp/github-action@v2
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          file: coverage/lcov.info
+          # test-daemon.sh runs each shard from its package dir (packages/daemon
+          # or packages/shared) with --coverage.reportsDirectory=coverage, so the
+          # report lands at packages/<pkg>/coverage/lcov.info — not the repo root.
+          file: packages/${{ matrix.shard == 'shared' && 'shared' || 'daemon' }}/coverage/lcov.info
           flag-name: daemon-${{ matrix.shard }}
           parallel: true
           fail-on-error: false

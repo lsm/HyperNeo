@@ -131,16 +131,14 @@ echo "daemon unit: $unit_disk file(s) on disk, $unit_covered covered"
 # include would orphan src test files with no other signal.
 WEB_SRC="$REPO_ROOT/packages/web/src"
 WEB_CFG="$REPO_ROOT/packages/web/vitest.config.ts"
-# The web suite is a single `bunx vitest run` job. Verify its `include` glob
-# still covers the full src test set — rooted at src/** AND spanning {test,spec}
-# — so a narrowed include (e.g. src/**/*.unit.test.ts, which still contains
-# src/**) cannot silently drop files while this guard reports full coverage.
-include_line=$(grep -E "include:[[:space:]]*\[" "$WEB_CFG" | head -n1)
-if [ -z "$include_line" ] \
-	|| ! printf '%s' "$include_line" | grep -q 'src/\*\*' \
-	|| ! printf '%s' "$include_line" | grep -q '{test,spec}'; then
-	err "packages/web/vitest.config.ts 'include' no longer covers src/**/*.{test,spec} — web tests may be orphaned"
-	echo "     → keep the include rooted at src/** spanning {test,spec}, or update this validator" >&2
+# The web suite is a single `bunx vitest run` job. Require its `include` to be
+# the full src/**/*.{test,spec}.{ts,tsx} glob, so ANY narrowing (dropping .tsx,
+# inserting .unit., restricting the suffix, …) is caught rather than silently
+# dropping files while this guard reports full coverage. A substring/fragment
+# check is not enough — only the exact glob is.
+if ! grep -qF 'src/**/*.{test,spec}.{ts,tsx}' "$WEB_CFG"; then
+	err "packages/web/vitest.config.ts include is not the full src/**/*.{test,spec}.{ts,tsx} glob — web tests may be orphaned"
+	echo "     → restore the full include, or update this validator" >&2
 fi
 
 # Web test files outside the src/** include are not run by web CI. Each must be
@@ -215,12 +213,10 @@ FEATURES_FILES=(
 	message-persistence.test.ts
 )
 
-PROVIDERS_FILES=(
-	anthropic-to-copilot-bridge-provider.test.ts
-	# CI shard disabled (requires OPENAI_API_KEY) — kept here so the validator
-	# does not flag it as an uncovered file on disk.
-	anthropic-to-codex-bridge-provider.test.ts
-)
+# providers/* online tests are intentionally disabled (codex bridge needs
+# OPENAI_API_KEY, copilot has a credential issue — matrix entries commented out
+# in main.yml), so the directory is in EXEMPT_DIRS below rather than checked
+# here.
 
 # Real-key cross-provider tests must be present in real-api-tests.yml.
 CROSS_PROVIDER_FILES=(
@@ -254,9 +250,14 @@ check_workflow_references() {
 
 	for f in "${expected[@]}"; do
 		local test_path="tests/online/$module_name/$f"
-		if ! grep -qF "$test_path" "$workflow"; then
-			err "$test_path is not referenced in $workflow"
-			echo "     → add it to the appropriate CI matrix in $workflow" >&2
+		# ACTIVE (non-commented) references only — a commented-out matrix entry
+		# or a header comment must not satisfy this check, or a disabled shard
+		# would still pass while its tests disappear from CI.
+		local active
+		active=$(grep -hF "$test_path" "$workflow" 2>/dev/null | grep -cvE '^[[:space:]]*#')
+		if [ "${active:-0}" -eq 0 ]; then
+			err "$test_path has no active reference in $workflow"
+			echo "     → add it to the active CI matrix in $workflow" >&2
 		fi
 	done
 }
@@ -302,7 +303,6 @@ check_split_module() {
 check_split_module "rpc" "$MAIN_WORKFLOW" "${RPC_FILES[@]}"
 check_split_module "room" "$MAIN_WORKFLOW" "${ROOM_FILES[@]:-}"
 check_split_module "features" "$MAIN_WORKFLOW" "${FEATURES_FILES[@]}"
-check_split_module "providers" "$MAIN_WORKFLOW" "${PROVIDERS_FILES[@]}"
 check_split_module "cross-provider" "$REAL_API_WORKFLOW" "${CROSS_PROVIDER_FILES[@]}"
 check_split_module "rewind" "$MAIN_WORKFLOW" "${REWIND_FILES[@]}"
 check_split_module "space" "$MAIN_WORKFLOW" "${SPACE_FILES[@]}"
