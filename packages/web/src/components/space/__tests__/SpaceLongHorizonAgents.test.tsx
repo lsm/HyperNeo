@@ -11,7 +11,6 @@ const {
   mockConfigDataLoaded,
   mockEnsureConfigData,
   mockListLongHorizonAgentReminderCounts,
-  mockCreateLongHorizonAgentTemplate,
   mockNavigateToSpaceSession,
 } = vi.hoisted(() => {
   function makeSignal<T>(initial: T) {
@@ -24,7 +23,6 @@ const {
     mockConfigDataLoaded: makeSignal(true),
     mockEnsureConfigData: vi.fn().mockResolvedValue(undefined),
     mockListLongHorizonAgentReminderCounts: vi.fn().mockResolvedValue({}),
-    mockCreateLongHorizonAgentTemplate: vi.fn().mockResolvedValue({}),
     mockNavigateToSpaceSession: vi.fn(),
   };
 });
@@ -38,7 +36,6 @@ vi.mock('../../../lib/space-store', () => ({
       configDataLoaded: mockConfigDataLoaded,
       ensureConfigData: mockEnsureConfigData,
       listLongHorizonAgentReminderCounts: mockListLongHorizonAgentReminderCounts,
-      createLongHorizonAgentTemplate: mockCreateLongHorizonAgentTemplate,
     };
   },
 }));
@@ -114,7 +111,6 @@ describe('SpaceLongHorizonAgents', () => {
     mockConfigDataLoaded.value = true;
     mockEnsureConfigData.mockClear();
     mockListLongHorizonAgentReminderCounts.mockClear();
-    mockCreateLongHorizonAgentTemplate.mockClear();
     mockNavigateToSpaceSession.mockClear();
   });
 

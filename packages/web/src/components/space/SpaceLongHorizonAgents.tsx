@@ -292,39 +292,13 @@ function AgentEditor({ template, agent, existingHandles, onSave, onCancel }: Age
 
 // ── Template editor ──────────────────────────────────────────────────────────
 
-function TemplateEditor({ onSave, onCancel }: { onSave: () => void; onCancel: () => void }) {
+function TemplateEditor({ onCancel }: { onCancel: () => void }) {
   const [displayName, setDisplayName] = useState('');
   const [key, setKey] = useState('');
   const [handle, setHandle] = useState('');
   const [description, setDescription] = useState('');
   const [instructions, setInstructions] = useState('');
   const [autonomyLevel, setAutonomyLevel] = useState(2);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleSave = async () => {
-    if (!displayName.trim() || !key.trim() || !handle.trim()) {
-      setError('Name, key, and default handle are required');
-      return;
-    }
-    setSaving(true);
-    setError(null);
-    try {
-      await spaceStore.createLongHorizonAgentTemplate({
-        key: key.trim(),
-        handle: handle.trim(),
-        displayName: displayName.trim(),
-        description: description.trim(),
-        instructions: instructions.trim(),
-        suggestedAutonomyLevel: autonomyLevel,
-      });
-      onSave();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create template');
-    } finally {
-      setSaving(false);
-    }
-  };
 
   const fieldClass =
     'w-full rounded-xl border border-white/12 bg-dark-850/90 px-4 py-3 text-sm text-gray-50 placeholder-gray-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-colors focus:border-amber-200/45 focus:outline-none focus:ring-2 focus:ring-amber-200/10';
@@ -420,19 +394,22 @@ function TemplateEditor({ onSave, onCancel }: { onSave: () => void; onCancel: ()
             </div>
             <p class="mt-1.5 text-xs text-gray-400">{AUTONOMY_LABELS[autonomyLevel]}</p>
           </div>
-          {error && <p class="text-sm text-red-400">{error}</p>}
+          <div class="rounded-xl border border-amber-300/20 bg-amber-300/[0.07] px-4 py-3 text-sm text-amber-100/80">
+            Custom template persistence is coming soon. These fields are available for preview, but
+            cannot be saved yet.
+          </div>
         </div>
         <div class="flex justify-end gap-3 border-t border-white/10 bg-black/10 px-5 py-4 sm:px-7">
           <Button variant="ghost" size="md" onClick={onCancel} class="rounded-xl px-5">
-            Cancel
+            Close
           </Button>
           <Button
             size="md"
-            onClick={handleSave}
-            disabled={saving}
-            class="rounded-xl bg-amber-300 px-6 font-semibold text-dark-950 hover:bg-amber-200"
+            disabled
+            title="Custom template persistence is not available yet"
+            class="rounded-xl bg-amber-300 px-6 font-semibold text-dark-950"
           >
-            {saving ? 'Creating…' : 'Create template'}
+            Create template
           </Button>
         </div>
       </div>
@@ -887,12 +864,7 @@ export function SpaceLongHorizonAgents({
         />
       )}
 
-      {showTemplateEditor && (
-        <TemplateEditor
-          onSave={() => setShowTemplateEditor(false)}
-          onCancel={() => setShowTemplateEditor(false)}
-        />
-      )}
+      {showTemplateEditor && <TemplateEditor onCancel={() => setShowTemplateEditor(false)} />}
 
       {deletingAgent && (
         <ConfirmModal
