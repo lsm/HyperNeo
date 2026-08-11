@@ -97,7 +97,8 @@ export class InterruptHandler {
         // rows are left (the user intentionally queued them for next turn) and
         // `submitted` rows are settled by the ACP runner. (Codex review, #861.)
         const cancelled = new Set(messageUuids);
-        for (const msg of this.ctx.db.getMessagesByStatus(session.id, 'enqueued')) {
+        const enqueued = this.ctx.db.getMessagesByStatus?.(session.id, 'enqueued') ?? [];
+        for (const msg of enqueued) {
           const uuid = (msg as { uuid?: string }).uuid;
           if (uuid && !cancelled.has(uuid)) {
             sdkRepo?.markDeliveryFailedByUuid(session.id, uuid);

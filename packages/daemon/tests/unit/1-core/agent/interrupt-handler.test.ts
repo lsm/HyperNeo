@@ -237,6 +237,31 @@ describe('InterruptHandler', () => {
       expect(markFailedSpy).toHaveBeenCalledWith('test-session-id', 'pre-claim-uuid');
     });
 
+    it('terminalizes enqueued orphan rows (no active job) so a Stop is not undone by the post-interrupt idle reconcile (#861)', async () => {
+      // An enqueued user row with NO active durable job isn't returned by
+      // cancelForSessionWithMessages. Without terminalizing it here, the idle
+      // reconcileStrandedDeliveries would re-enqueue it — restarting a prompt
+      // the user just stopped.
+      cancelForSessionSpy = mock(() => ['active-uuid']);
+      const orphan = { uuid: 'orphan-uuid' };
+      const getMessagesByStatusSpy = mock((_sid: string, status: string) =>
+        status === 'enqueued' ? [orphan] : []
+      );
+      mockDb = {
+        getJobQueueRepo: mock(() => ({ cancelForSessionWithMessages: cancelForSessionSpy })),
+        getSDKMessageRepo: mock(() => ({ markDeliveryFailedByUuid: markFailedSpy })),
+        getMessagesByStatus: getMessagesByStatusSpy,
+      } as unknown as InterruptHandlerContext['db'];
+      handler = createHandler({ db: mockDb });
+
+      await handler.handleInterrupt();
+
+      // The active-job UUID is terminalized…
+      expect(markFailedSpy).toHaveBeenCalledWith('test-session-id', 'active-uuid');
+      // …and so is the enqueued orphan (not in the cancelled set).
+      expect(markFailedSpy).toHaveBeenCalledWith('test-session-id', 'orphan-uuid');
+    });
+
     it('should handle SDK interrupt() failure gracefully', async () => {
       sdkInterruptSpy.mockRejectedValue(new Error('Interrupt failed'));
       handler = createHandler();
