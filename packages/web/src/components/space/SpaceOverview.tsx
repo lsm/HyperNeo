@@ -422,14 +422,6 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
     [tasks]
   );
 
-  // Awaiting-approval count: tasks paused at a `submit_for_approval`
-  // (`task_completion`) checkpoint. Predicate matches the SpaceTasks filter
-  // chip exactly so the two surfaces agree.
-  const awaitingApprovalCount = useMemo(
-    () => tasks.filter((t) => t.pendingCheckpointType === 'task_completion').length,
-    [tasks]
-  );
-
   if (loading) {
     return (
       <div class="flex h-full items-center justify-center">
@@ -452,10 +444,6 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
   const handleTaskClick =
     onSelectTask ?? ((taskId: string) => navigateToSpaceTask(routeSpaceId, taskId));
 
-  const handleAwaitingApprovalClick = () => {
-    navigateToSpaceTasks(routeSpaceId, 'action');
-  };
-
   return (
     <div
       class="flex-1 min-h-0 w-full overflow-y-auto px-4 py-4 sm:px-8 sm:py-6"
@@ -464,34 +452,19 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
       <div class="mx-auto min-h-[calc(100%+1px)] max-w-6xl space-y-6">
         <SpaceCreateTaskDialog isOpen={showCreateTask} onClose={() => setShowCreateTask(false)} />
 
-        <div class="space-y-3">
-          {/* Runtime state with pause/resume/stop/start controls */}
-          {runtimeState && (
-            <RuntimeControlBar
-              state={runtimeState}
-              actionLoading={actionLoading}
-              onPause={() => void handlePause()}
-              onResume={() => void handleResume()}
-              onStop={() => setShowStopConfirm(true)}
-              onStart={() => void handleStart()}
-            />
-          )}
+        {/* Runtime state stays visible without delaying the operational summary. */}
+        {runtimeState && (
+          <RuntimeControlBar
+            state={runtimeState}
+            actionLoading={actionLoading}
+            onPause={() => void handlePause()}
+            onResume={() => void handleResume()}
+            onStop={() => setShowStopConfirm(true)}
+            onStart={() => void handleStart()}
+          />
+        )}
 
-          {/* Operational controls share a row when the content column allows it. */}
-          <div class="grid gap-3 lg:grid-cols-2">
-            <AutonomyLevelBar
-              level={space.autonomyLevel ?? 1}
-              workflows={workflows}
-              onChange={(l) => void handleAutonomyChange(l)}
-            />
-            <ConcurrencyBar
-              limit={space.maxConcurrentTasks ?? MIN_SPACE_CONCURRENT_TASKS}
-              onChange={(n) => void handleConcurrencyChange(n)}
-            />
-          </div>
-        </div>
-
-        {/* Stats strip */}
+        {/* Task state is the primary first-screen summary. */}
         <div class="grid grid-cols-3 gap-3">
           <StatCard
             label="Active"
@@ -513,38 +486,18 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
           />
         </div>
 
-        {/* Awaiting-approval summary — surfaces tasks paused at a
-				`submit_for_approval` checkpoint as a single click-through. Hidden when
-				the count is zero so it doesn't add visual noise to happy-path
-				dashboards. */}
-        {awaitingApprovalCount > 0 && (
-          <button
-            type="button"
-            onClick={handleAwaitingApprovalClick}
-            data-testid="awaiting-approval-summary"
-            class={cn(
-              'w-full flex items-center justify-between rounded-xl border border-amber-500/30 px-5 py-3 text-left transition-colors hover:border-amber-400/40 hover:bg-amber-300/[0.1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60',
-              GLASS_SURFACE,
-              'bg-amber-300/[0.07]'
-            )}
-          >
-            <div class="flex items-center gap-3">
-              <span class="text-lg" aria-hidden="true">
-                ⏸
-              </span>
-              <div>
-                <p class="text-sm font-semibold text-amber-200">
-                  {awaitingApprovalCount} {awaitingApprovalCount === 1 ? 'task' : 'tasks'} awaiting
-                  your approval
-                </p>
-                <p class="text-xs text-amber-300/70">Paused awaiting approval — click to review</p>
-              </div>
-            </div>
-            <span class="text-amber-400/80 text-sm" aria-hidden="true">
-              &rarr;
-            </span>
-          </button>
-        )}
+        {/* Configuration remains accessible but secondary to current state. */}
+        <div class="grid gap-3 lg:grid-cols-2">
+          <AutonomyLevelBar
+            level={space.autonomyLevel ?? 1}
+            workflows={workflows}
+            onChange={(l) => void handleAutonomyChange(l)}
+          />
+          <ConcurrencyBar
+            limit={space.maxConcurrentTasks ?? MIN_SPACE_CONCURRENT_TASKS}
+            onChange={(n) => void handleConcurrencyChange(n)}
+          />
+        </div>
 
         <div class="grid items-stretch gap-4 xl:grid-cols-2">
           {/* Recent Tasks */}
