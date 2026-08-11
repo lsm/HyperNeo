@@ -8,6 +8,7 @@
 
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
+import { ErrorCode, MessageHubHandlerError } from '@hyperneo/shared';
 import { setupLiveQueryHandlers } from '../../../../src/lib/rpc-handlers/live-query-handlers';
 import { LiveQueryEngine } from '../../../../src/storage/live-query';
 import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';
@@ -39,7 +40,7 @@ interface SentMessage {
   };
 }
 
-function createMockSetup() {
+function createMockSetup(opts: { subscriptionCap?: number } = {}) {
   const handlers = new Map<string, RequestHandler>();
   let disconnectHandler: ((clientId: string) => void) | null = null;
   const sentMessages: SentMessage[] = [];
@@ -47,6 +48,11 @@ function createMockSetup() {
     | { ok: true }
     | { ok: false; reason: 'send_failed' | 'message_too_large' } = { ok: true };
   let routerEnabled = true;
+
+  // Functional per-client subscription counter mirroring MessageHubRouter, so
+  // the over-cap refusal path can be exercised (default: no limit).
+  const subscriptionCap = opts.subscriptionCap ?? Number.POSITIVE_INFINITY;
+  const subscriptionCounts = new Map<string, number>();
 
   const mockRouter = {
     sendToClient: mock((clientId: string, message: unknown) => {
@@ -57,6 +63,23 @@ function createMockSetup() {
       sentMessages.push({ clientId, message: message as SentMessage['message'] });
       return sendToClientResult;
     }),
+    checkSubscriptionCapacity: mock((clientId: string) => {
+      const current = subscriptionCounts.get(clientId) ?? 0;
+      if (current >= subscriptionCap) {
+        return { ok: false, reason: 'too_many_subscriptions', limit: subscriptionCap, current };
+      }
+      return { ok: true };
+    }),
+    addClientSubscription: mock((clientId: string) => {
+      subscriptionCounts.set(clientId, (subscriptionCounts.get(clientId) ?? 0) + 1);
+    }),
+    releaseClientSubscription: mock((clientId: string) => {
+      const current = subscriptionCounts.get(clientId);
+      if (current === undefined) return;
+      if (current <= 1) subscriptionCounts.delete(clientId);
+      else subscriptionCounts.set(clientId, current - 1);
+    }),
+    getClientSubscriptionCount: mock((clientId: string) => subscriptionCounts.get(clientId) ?? 0),
   };
 
   const hub = {
@@ -574,5 +597,116 @@ describe('setupLiveQueryHandlers', () => {
       expect(v).toBeGreaterThanOrEqual(prevVersion);
       prevVersion = v;
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Ingress fan-out guardrail: per-client subscription cap (task #899 / #2414).
+// An unbounded-subscribe page must fail fast with a structured
+// TOO_MANY_SUBSCRIPTIONS error instead of silently accumulating handlers.
+// ---------------------------------------------------------------------------
+describe('setupLiveQueryHandlers: per-client subscription cap', () => {
+  let db: BunDatabase;
+  let reactiveDb: ReactiveDatabase;
+  let engine: LiveQueryEngine;
+  let setup: ReturnType<typeof createMockSetup>;
+
+  beforeEach(() => {
+    db = createDb();
+    reactiveDb = createReactiveDatabase({ getDatabase: () => db } as never);
+    engine = new LiveQueryEngine(db, reactiveDb);
+    setup = createMockSetup({ subscriptionCap: 2 });
+    setupLiveQueryHandlers(setup.hub, engine, db);
+    insertMcpServer(db, 'mcp-1', 'alpha');
+  });
+
+  afterEach(() => {
+    engine.dispose();
+    db.close();
+  });
+
+  test('refuses the over-cap subscribe with a structured TOO_MANY_SUBSCRIPTIONS error', async () => {
+    await setup.callHandler('liveQuery.subscribe', {
+      queryName: 'mcpServers.global',
+      params: [],
+      subscriptionId: 'sub-1',
+    });
+    await setup.callHandler('liveQuery.subscribe', {
+      queryName: 'mcpServers.global',
+      params: [],
+      subscriptionId: 'sub-2',
+    });
+
+    // The third subscribe is refused — fail fast at the boundary, before any
+    // snapshot/handler work, mirroring the #2423 MESSAGE_TOO_LARGE pattern.
+    const err = await setup
+      .callHandler('liveQuery.subscribe', {
+        queryName: 'mcpServers.global',
+        params: [],
+        subscriptionId: 'sub-3',
+      })
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(MessageHubHandlerError);
+    expect((err as MessageHubHandlerError).code).toBe(ErrorCode.TOO_MANY_SUBSCRIPTIONS);
+  });
+
+  test('prior subscriptions remain intact after an over-cap refusal (graceful, no teardown)', async () => {
+    await setup.callHandler('liveQuery.subscribe', {
+      queryName: 'mcpServers.global',
+      params: [],
+      subscriptionId: 'sub-1',
+    });
+    await setup.callHandler('liveQuery.subscribe', {
+      queryName: 'mcpServers.global',
+      params: [],
+      subscriptionId: 'sub-2',
+    });
+
+    // Refuse sub-3; this must not evict sub-1 or sub-2.
+    await expect(
+      setup.callHandler('liveQuery.subscribe', {
+        queryName: 'mcpServers.global',
+        params: [],
+        subscriptionId: 'sub-3',
+      })
+    ).rejects.toThrow();
+
+    expect(setup.mockRouter.getClientSubscriptionCount('client-1')).toBe(2);
+
+    // The surviving subscriptions still receive deltas.
+    setup.sentMessages.length = 0;
+    insertMcpServer(db, 'mcp-2', 'beta');
+    reactiveDb.notifyChange('app_mcp_servers');
+    await new Promise((r) => setTimeout(r, 10));
+
+    const deltas = setup.sentMessages.filter((m) => m.message.method === 'liveQuery.delta');
+    expect(deltas.length).toBe(2);
+  });
+
+  test('unsubscribe frees a slot so a new subscribe succeeds again', async () => {
+    await setup.callHandler('liveQuery.subscribe', {
+      queryName: 'mcpServers.global',
+      params: [],
+      subscriptionId: 'sub-1',
+    });
+    await setup.callHandler('liveQuery.subscribe', {
+      queryName: 'mcpServers.global',
+      params: [],
+      subscriptionId: 'sub-2',
+    });
+    expect(setup.mockRouter.getClientSubscriptionCount('client-1')).toBe(2);
+
+    await setup.callHandler('liveQuery.unsubscribe', { subscriptionId: 'sub-1' });
+    expect(setup.mockRouter.getClientSubscriptionCount('client-1')).toBe(1);
+
+    // A new subscribe reclaims the freed slot.
+    const result = await setup.callHandler('liveQuery.subscribe', {
+      queryName: 'mcpServers.global',
+      params: [],
+      subscriptionId: 'sub-3',
+    });
+    expect(result).toEqual({ ok: true });
+    expect(setup.mockRouter.getClientSubscriptionCount('client-1')).toBe(2);
   });
 });
