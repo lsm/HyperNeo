@@ -79,8 +79,8 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Validate online test matrix coverage
-        run: bash scripts/validate-online-test-matrix.sh
+      - name: Validate test matrix coverage (unit + web + online)
+        run: bash scripts/validate-test-matrix.sh
 
       - name: Validate daemon shard configuration
         run: |
@@ -190,7 +190,7 @@ jobs:
           #
           # Modules with directory-level test_path auto-discover new test files.
           # Split modules (rpc-*, room-*, features-*) use explicit file lists.
-          # Run `bash scripts/validate-online-test-matrix.sh` to verify all files are covered.
+          # Run `bash scripts/validate-test-matrix.sh` to verify all files are covered.
           - module: agent-sdk
             test_path: tests/online/agent/agent-session-sdk.test.ts
             mock_sdk: true

@@ -4,7 +4,7 @@
  * Unit tests for ACP protocol client lifecycle and request handling.
  */
 
-import { describe, expect, test, mock, beforeEach, afterAll } from 'bun:test';
+import { describe, expect, test, mock, beforeEach } from 'bun:test';
 import type {
   AcpJsonRpcNotification,
   AcpJsonRpcRequest,
@@ -63,20 +63,16 @@ class MockAcpTransport {
   }
 }
 
-const originalAcpTransport = require('../../../../src/lib/acp/acp-transport');
-
+// Vitest isolates each test file in its own module registry, so the mock below
+// is scoped to this file automatically — no afterAll restore is needed (the
+// sibling acp-integration.test.ts uses the same pattern). Bun:test's
+// mock.module would otherwise persist across files in one process.
 mock.module('../../../../src/lib/acp/acp-transport', () => ({
   AcpTransport: MockAcpTransport,
 }));
 
 // Import after mock
 const { AcpClient } = await import('../../../../src/lib/acp/acp-client');
-
-afterAll(() => {
-  // Restore the real module so other test files (e.g. integration) get the
-  // genuine AcpTransport implementation.
-  mock.module('../../../../src/lib/acp/acp-transport', () => originalAcpTransport);
-});
 
 describe('AcpClient', () => {
   beforeEach(() => {
