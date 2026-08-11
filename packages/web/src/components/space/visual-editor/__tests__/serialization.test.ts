@@ -874,6 +874,52 @@ describe('handoff transition preservation', () => {
     );
     expect(params.nodes![0].transitions).toBeUndefined();
   });
+
+  it('drops a handoff transition whose target becomes ambiguous after a rename', () => {
+    // Two nodes now expose a slot named 'shared' (a rename collision), so a
+    // carried transition targeting 'shared' no longer resolves to one
+    // destination. Drop it instead of letting validateTransitions reject the save.
+    const params = visualStateToUpdateParams(
+      makeHandoffState({
+        nodes: [
+          {
+            step: {
+              localId: 'l1',
+              id: 's1',
+              name: 'Coder',
+              agentId: 'a1',
+              handoffTransitions: [{ id: 't', target: 'shared' }],
+            },
+            position: { x: 0, y: 0 },
+          },
+          {
+            step: {
+              localId: 'l2',
+              id: 's2',
+              name: 'Review',
+              agentId: '',
+              agents: [
+                { agentId: 'a2', name: 'shared' },
+                { agentId: 'a3', name: 'other' },
+              ],
+            },
+            position: { x: 0, y: 0 },
+          },
+          {
+            step: {
+              localId: 'l3',
+              id: 's3',
+              name: 'QA',
+              agentId: '',
+              agents: [{ agentId: 'a4', name: 'shared' }],
+            },
+            position: { x: 0, y: 0 },
+          },
+        ],
+      })
+    );
+    expect(params.nodes![0].transitions).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------

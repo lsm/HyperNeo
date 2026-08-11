@@ -244,6 +244,12 @@ export function buildWorkflowCreateParams(
   for (const node of exported.nodes) {
     nodeNameToId.set(node.name, generateUUID());
   }
+  // Gate ids that survive validation. A transition referencing a dropped gate
+  // (e.g. a legacy empty gate in a hand-crafted bundle) must have its gateId
+  // stripped here, or createWorkflow rejects it as a dangling reference.
+  const validGateIds = new Set(
+    (exported.gates ?? []).filter((g) => gatePassesValidation(g)).map((g) => g.id)
+  );
 
   // Build WorkflowNodeInput list — resolve agentRef names → UUIDs
   const nodes: WorkflowNodeInput[] = exported.nodes.map((exportedNode) => {
@@ -309,7 +315,13 @@ export function buildWorkflowCreateParams(
       codexTimeoutSeconds: exportedNode.codexTimeoutSeconds,
     };
     if (exportedNode.transitions && exportedNode.transitions.length > 0) {
-      node.transitions = exportedNode.transitions;
+      // Strip gateIds whose gate was dropped above so createWorkflow does not
+      // reject a dangling reference.
+      node.transitions = exportedNode.transitions.map((t) =>
+        t.gateId !== undefined && !validGateIds.has(t.gateId)
+          ? { ...t, gateId: undefined }
+          : { ...t }
+      );
     }
 
     return node;

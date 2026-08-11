@@ -342,16 +342,22 @@ function buildWorkflowFields(state: VisualEditorState): {
     keyToPersistedId.set(entry.node.step.localId, entry.persistedId);
   }
 
-  // Names a handoff transition may legally target in the CURRENT graph: every
-  // node name + every agent-slot name + the broadcast wildcard. The editor does
-  // not expose handoff transitions for editing, so a rename or delete can leave a
-  // carried transition pointing at a stale target — drop those so an unrelated
-  // visual-editor save is not rejected by validateTransitions.
-  const validHandoffTargetNames = new Set<string>(['*']);
+  // Distinct destinations a handoff target name can address in the CURRENT
+  // graph (node-name destinations and slot-name destinations counted separately,
+  // mirroring the daemon). The editor does not expose handoff transitions for
+  // editing, so a rename/delete can leave a carried transition pointing at a
+  // stale OR newly-ambiguous target — drop those so an unrelated visual-editor
+  // save is not rejected by validateTransitions.
+  const handoffTargetDestinations = new Map<string, Set<string>>();
+  const countDestination = (name: string, key: string) => {
+    if (!name) return;
+    const set = handoffTargetDestinations.get(name) ?? new Set<string>();
+    set.add(key);
+    handoffTargetDestinations.set(name, set);
+  };
   for (const n of state.nodes) {
-    validHandoffTargetNames.add(n.step.name);
-    for (const a of n.step.agents ?? []) validHandoffTargetNames.add(a.name);
-    if (n.step.agentId) validHandoffTargetNames.add(n.step.name);
+    countDestination(n.step.name, `node:${n.step.localId}`);
+    for (const a of n.step.agents ?? []) countDestination(a.name, `slot:${n.step.localId}`);
   }
   // Gates referenced by carried handoff transitions must be retained alongside
   // channel-referenced gates, or their gateId becomes unknown on save.
@@ -412,13 +418,16 @@ function buildWorkflowFields(state: VisualEditorState): {
         ? { codexTimeoutSeconds: node.step.codexTimeoutSeconds }
         : {}),
       // Re-emit carried handoff transitions (mapped back to the backend field),
-      // dropping any whose target no longer resolves to a current node/slot
-      // (the editor does not expose them to correct a rename/delete). Collect
-      // referenced gates so they are retained below.
+      // dropping any whose target no longer resolves to exactly one destination
+      // — a renamed/deleted target (zero destinations) OR a renamed-slot
+      // collision (more than one) — so the save is not rejected by
+      // validateTransitions. Collect referenced gates so they are retained below.
       ...(() => {
-        const valid = (node.step.handoffTransitions ?? []).filter((t) =>
-          validHandoffTargetNames.has(t.target)
-        );
+        const valid = (node.step.handoffTransitions ?? []).filter((t) => {
+          if (t.target === '*') return true;
+          const dests = handoffTargetDestinations.get(t.target);
+          return dests !== undefined && dests.size === 1;
+        });
         for (const t of valid) if (t.gateId) handoffGateIds.add(t.gateId);
         return valid.length > 0 ? { transitions: valid } : {};
       })(),

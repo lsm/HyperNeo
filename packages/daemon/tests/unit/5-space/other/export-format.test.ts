@@ -2362,6 +2362,13 @@ describe('exportWorkflow — disabled', () => {
 describe('exportWorkflow — handoff transitions', () => {
   test('exports node transitions and omits them when absent', () => {
     const workflow = makeWorkflow({
+      gates: [
+        {
+          id: 'g1',
+          resetOnCycle: false,
+          fields: [{ name: 'ok', type: 'boolean', writers: [], check: { op: '==', value: true } }],
+        },
+      ],
       nodes: [
         {
           id: 'node-uuid-1',
@@ -2388,6 +2395,32 @@ describe('exportWorkflow — handoff transitions', () => {
     ]);
     // A node without transitions omits the field entirely.
     expect(exported.nodes[1].transitions).toBeUndefined();
+  });
+
+  test('strips a transition gateId whose gate was filtered out (legacy empty gate)', () => {
+    // A legacy empty gate is dropped at export; a transition referencing it must
+    // have its gateId stripped at the same boundary, or validateExportedWorkflow
+    // rejects the export for a dangling reference.
+    const workflow = makeWorkflow({
+      gates: [{ id: 'g-empty', resetOnCycle: false } as never],
+      nodes: [
+        {
+          id: 'node-uuid-1',
+          name: 'Code step',
+          agents: [{ agentId: 'agent-uuid-1', name: 'coder' }],
+          transitions: [{ id: 'to-review', target: 'Review step', gateId: 'g-empty' }],
+        },
+        {
+          id: 'node-uuid-2',
+          name: 'Review step',
+          agents: [{ agentId: 'agent-uuid-3', name: 'reviewer' }],
+        },
+      ],
+    });
+    const exported = exportWorkflow(workflow, []);
+    expect(exported.gates).toBeUndefined();
+    expect(exported.nodes[0].transitions).toEqual([{ id: 'to-review', target: 'Review step' }]);
+    expect(validateExportedWorkflow(exported).ok).toBe(true);
   });
 
   test('round-trips transitions through export → validate', () => {

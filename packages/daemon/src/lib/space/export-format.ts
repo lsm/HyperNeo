@@ -237,21 +237,27 @@ const workflowHookSchema = z.object({
 
 /**
  * Zod schema for an exported workflow handoff transition.
- * Mirrors the runtime `HandoffTransition` shape (the runtime and exported
- * shapes already agree on name-based addressing, so there is nothing to strip).
- * `gateId` is carried as-is — gates are not part of the export bundle, so it
- * may reference a gate absent on re-import, exactly like channel `gateId`.
+ * Mirrors the runtime `HandoffTransition` shape.
  *
- * `.trim()` on id/target/gateId/hookId mirrors `eventInterestTopicFromSchema`
- * — whitespace-only values would slip past a bare `.min(1)` only to fail later
- * at createWorkflow. String length caps bound unbounded import input.
+ * `target`/`gateId`/`hookId` are REFERENCES to other entities (node/slot names,
+ * gate ids, hook ids). They are validated non-mutating (reject whitespace-only
+ * via refine, but preserve the exact value) so they match the referenced
+ * entity's id verbatim — a `.trim()` here would desynchronize a reference from a
+ * whitespace-carrying hook/gate id that the manager persisted and accepted.
+ * String length caps bound unbounded import input.
  */
+const nonEmptyRef = (maxLen: number) =>
+  z
+    .string()
+    .max(maxLen)
+    .refine((v) => v.trim().length > 0, { message: 'must be a non-empty string' });
+
 const exportedHandoffTransitionSchema = z.object({
-  id: z.string().trim().min(1).max(100),
+  id: nonEmptyRef(100),
   label: z.string().max(200).optional(),
-  target: z.string().trim().min(1).max(100),
-  gateId: z.string().trim().min(1).max(100).optional(),
-  hookId: z.string().trim().min(1).max(100).optional(),
+  target: nonEmptyRef(100),
+  gateId: nonEmptyRef(100).optional(),
+  hookId: nonEmptyRef(100).optional(),
   maxCycles: z.number().int().positive().optional(),
 });
 
@@ -463,6 +469,13 @@ export function exportWorkflow(
   // Support both `nodes` (new) and `steps` (legacy, during migration) for backward compat
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const nodes = workflow.nodes ?? (workflow as any).steps ?? [];
+  // Gates that survive validation (legacy empty gates are dropped below). A
+  // handoff transition referencing a dropped gate must have its gateId stripped
+  // at the same boundary, or validateExportedWorkflow rejects the export for a
+  // dangling reference.
+  const exportableGateIds = new Set(
+    (workflow.gates ?? []).filter((g) => gatePassesValidation(g)).map((g) => g.id)
+  );
   // Build a map from node UUID → node name
   const nodeIdToName = new Map<string, string>();
   for (const node of nodes) {
@@ -511,7 +524,9 @@ export function exportWorkflow(
       exported.transitions = node.transitions.map((t) => {
         const out: ExportedHandoffTransition = { id: t.id, target: t.target };
         if (t.label !== undefined) out.label = t.label;
-        if (t.gateId !== undefined) out.gateId = t.gateId;
+        // Drop the gateId if its gate was filtered out (e.g. a legacy empty
+        // gate) so the export does not carry a dangling reference.
+        if (t.gateId !== undefined && exportableGateIds.has(t.gateId)) out.gateId = t.gateId;
         if (t.hookId !== undefined) out.hookId = t.hookId;
         if (t.maxCycles !== undefined) out.maxCycles = t.maxCycles;
         return out;
