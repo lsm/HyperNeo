@@ -156,6 +156,7 @@ function createMockWorkflowManager(
     ),
     updateWorkflow: mock(() => ({ ...workflow!, name: 'Updated' })),
     deleteWorkflow: mock(() => true),
+    hasNonArchivedRuns: mock(() => false),
   } as unknown as SpaceWorkflowManager;
 }
 
@@ -1461,13 +1462,11 @@ describe('space-workflow-handlers', () => {
       setupWithGroup([older, newer], agents);
 
       (workflowManager.updateWorkflow as ReturnType<typeof mock>).mockReturnValue(newer);
-      (workflowManager.deleteWorkflow as ReturnType<typeof mock>).mockImplementation(
-        (id: string) => {
-          if (id === 'wf-older') {
-            throw new WorkflowDeletionBlockedError('blocked: non-archived run', id);
-          }
-          return true;
-        }
+      // The older duplicate is blocked: it has an executable run. The pre-check
+      // (hasNonArchivedRuns) fires before any cleanup, so the duplicate is left
+      // untouched — neither deleteByWorkflowId nor deleteWorkflow runs for it.
+      (workflowManager.hasNonArchivedRuns as ReturnType<typeof mock>).mockImplementation(
+        (id: string) => id === 'wf-older'
       );
 
       const result = (await call('spaceWorkflow.resyncDuplicates', {
@@ -1478,6 +1477,9 @@ describe('space-workflow-handlers', () => {
       // The blocked duplicate was kept (not deleted), the kept row was resynced.
       expect(result.deletedIds).toEqual([]);
       expect(result.skippedDueToNonArchivedRuns).toEqual(['wf-older']);
+      // Neither the workflow row nor its runs were touched.
+      expect(workflowManager.deleteWorkflow).not.toHaveBeenCalledWith('wf-older');
+      expect(workflowRunRepo.deleteByWorkflowId).not.toHaveBeenCalledWith('wf-older');
       // No spaceWorkflow.deleted emitted for a workflow that was never deleted.
       expect(internalEventBus.publish).not.toHaveBeenCalledWith(
         'spaceWorkflow.deleted',

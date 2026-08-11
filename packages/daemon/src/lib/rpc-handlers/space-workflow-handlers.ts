@@ -29,7 +29,6 @@ import type {
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager';
-import { WorkflowDeletionBlockedError } from '../space/managers/space-workflow-manager';
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
 import {
   getBuiltInWorkflows,
@@ -978,40 +977,38 @@ export function setupSpaceWorkflowHandlers(
     // not ON DELETE CASCADE (migration 60 dropped it). Without this the tombstoned
     // rows would orphan and show up in no UI but still consume disk.
     //
-    // Deletion-safe (RFC §4 #3): deleteByWorkflowId removes ONLY tombstoned runs
-    // (all tasks archived); a duplicate with a non-archived (executable) run is
-    // protected — deleteWorkflow then throws WorkflowDeletionBlockedError and the
-    // duplicate is KEPT (skipped) instead of stranded. A resync never deletes an
-    // in-flight or reopenable run; the user archives its task and re-resyncs.
+    // Deletion-safe (RFC §4 #3): check hasNonArchivedRuns BEFORE cleanup so a
+    // skipped duplicate is left untouched. deleteByWorkflowId is itself guarded
+    // (it only removes tombstoned runs), but running it first would still strip a
+    // mixed-status duplicate's archived runs — and FK-cascade their tasks — before
+    // the guard fires, mangling a workflow we then report as "kept." The pre-check
+    // and the cleanup/delete below are synchronous with no await between them, so
+    // no interleaving; a duplicate with any executable run is kept whole.
     const deletedIds: string[] = [];
     const skippedDueToNonArchivedRuns: string[] = [];
     for (const wf of toDelete) {
-      // Only tombstoned runs are removed; executable runs are left in place.
+      if (workflowManager.hasNonArchivedRuns(wf.id)) {
+        skippedDueToNonArchivedRuns.push(wf.id);
+        log.warn(
+          `[resync] Kept duplicate workflow "${wf.name}" (${wf.id}): ` +
+            `it has executable run(s) (in progress or not archived) — archive the task(s) and re-resync`
+        );
+        continue;
+      }
+      // Only tombstoned runs remain; safe to clean up and delete.
       workflowRunRepo.deleteByWorkflowId(wf.id);
-      try {
-        const ok = workflowManager.deleteWorkflow(wf.id);
-        if (ok) {
-          deletedIds.push(wf.id);
-          await internalEventBus
-            .publish('spaceWorkflow.deleted', {
-              sessionId: 'global',
-              spaceId: params.spaceId,
-              workflowId: wf.id,
-            })
-            .catch((err) => {
-              log.warn('Failed to emit spaceWorkflow.deleted:', err);
-            });
-        }
-      } catch (err) {
-        if (err instanceof WorkflowDeletionBlockedError) {
-          skippedDueToNonArchivedRuns.push(wf.id);
-          log.warn(
-            `[resync] Kept duplicate workflow "${wf.name}" (${wf.id}): ` +
-              `it has executable run(s) (in progress or not archived) — archive the task(s) and re-resync`
-          );
-          continue;
-        }
-        throw err;
+      const ok = workflowManager.deleteWorkflow(wf.id);
+      if (ok) {
+        deletedIds.push(wf.id);
+        await internalEventBus
+          .publish('spaceWorkflow.deleted', {
+            sessionId: 'global',
+            spaceId: params.spaceId,
+            workflowId: wf.id,
+          })
+          .catch((err) => {
+            log.warn('Failed to emit spaceWorkflow.deleted:', err);
+          });
       }
     }
 
