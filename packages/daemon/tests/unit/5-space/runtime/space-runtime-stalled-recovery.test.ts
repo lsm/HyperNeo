@@ -2441,4 +2441,158 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       expect(notifications.filter((n) => n.kind === 'workflow_run_blocked').length).toBe(2);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // Stale / missing custom-agent reference on a downstream node
+  // -------------------------------------------------------------------------
+  //
+  // node_executions.agent_id is `FOREIGN KEY … REFERENCES space_agents(id) ON
+  // DELETE SET NULL`. Deleting an agent nulls EXISTING execution rows, but a
+  // pinned workflow definition still references the old agent id, so activating
+  // the downstream node would INSERT a row whose agent_id violates the FK — and
+  // INSERT OR IGNORE does NOT suppress that. Recovery must block the run with an
+  // actionable diagnostic instead of leaking the raw SQLite exception.
+  describe('stale custom-agent reference on a downstream node', () => {
+    const STALE_AGENT = 'agent-stale-downstream';
+
+    function seedStaleRun(nodeAId: string, nodeBId: string, workflowId: string) {
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId,
+        title: 'Stale downstream agent',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+      const task = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Stale downstream agent',
+        description: '',
+        workflowRunId: run.id,
+        workflowNodeId: nodeAId,
+        status: 'in_progress',
+      });
+      seedExec(run.id, nodeAId, 'Coding', 'idle');
+      return { run, task };
+    }
+
+    test('downstream node referencing a deleted custom agent → run blocked with actionable diagnostic', async () => {
+      seedAgentRow(db, STALE_AGENT, SPACE_ID);
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Coding', agentId: AGENT },
+        { id: STEP_B, name: 'Review', agentId: STALE_AGENT },
+      ]);
+      // Delete the agent the downstream node pins AFTER the workflow is created.
+      db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(STALE_AGENT);
+      const { run, task } = seedStaleRun(STEP_A, STEP_B, workflow.id);
+
+      await makeRuntime({
+        pendingMessageRepo: new PendingAgentMessageRepository(db),
+      }).recoverStalledRuns();
+
+      // Run + canonical task blocked with the actionable diagnostic.
+      const blockedRun = workflowRunRepo.getRun(run.id)!;
+      const blockedTask = taskRepo.getTask(task.id)!;
+      expect(blockedRun.status).toBe('blocked');
+      expect(blockedTask.status).toBe('blocked');
+      expect(blockedTask.blockReason).toBe('workflow_invalid');
+      expect(blockedTask.result).toContain(run.id);
+      expect(blockedTask.result).toContain('Review');
+      expect(blockedTask.result).toContain(STALE_AGENT);
+      // A clean diagnostic, never the raw SQLite foreign-key error.
+      expect(blockedTask.result).not.toMatch(/FOREIGN KEY/i);
+      // No downstream execution was created for the stale slot.
+      expect(findExec(run.id, STEP_B)).toBeUndefined();
+      expect(notifications).toContainEqual(
+        expect.objectContaining({ kind: 'workflow_run_blocked' })
+      );
+      expect(notifications).toContainEqual(expect.objectContaining({ kind: 'task_blocked' }));
+    });
+
+    test('a stale-agent run is blocked while an unrelated valid run in the same space still recovers', async () => {
+      const GOOD_AGENT = 'agent-good-sibling';
+      seedAgentRow(db, STALE_AGENT, SPACE_ID);
+      seedAgentRow(db, GOOD_AGENT, SPACE_ID);
+
+      // Stale run: downstream references a deleted agent → must block.
+      const staleWf = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: 'stale-a', name: 'Coding', agentId: GOOD_AGENT },
+        { id: 'stale-b', name: 'Review', agentId: STALE_AGENT },
+      ]);
+      db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(STALE_AGENT);
+      const staleCtx = seedStaleRun('stale-a', 'stale-b', staleWf.id);
+
+      // Valid run: downstream references an existing agent → must recover.
+      const goodWf = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: 'good-a', name: 'Plan', agentId: GOOD_AGENT },
+        { id: 'good-b', name: 'Verify', agentId: GOOD_AGENT },
+      ]);
+      const goodRun = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: goodWf.id,
+        title: 'Valid sibling run',
+      });
+      workflowRunRepo.transitionStatus(goodRun.id, 'in_progress');
+      taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Valid sibling run',
+        description: '',
+        workflowRunId: goodRun.id,
+        workflowNodeId: 'good-a',
+        status: 'in_progress',
+      });
+      seedExec(goodRun.id, 'good-a', 'Plan', 'idle');
+
+      await makeRuntime({
+        pendingMessageRepo: new PendingAgentMessageRepository(db),
+      }).recoverStalledRuns();
+
+      // The malformed run is blocked; the valid sibling run still recovered.
+      expect(workflowRunRepo.getRun(staleCtx.run.id)?.status).toBe('blocked');
+      expect(findExec(staleCtx.run.id, 'stale-b')).toBeUndefined();
+      expect(workflowRunRepo.getRun(goodRun.id)?.status).toBe('in_progress');
+      expect(findExec(goodRun.id, 'good-b').status).toBe('pending');
+    });
+
+    test('a stale-agent-blocked run is not retried across repeated recovery passes (no retry forever)', async () => {
+      seedAgentRow(db, STALE_AGENT, SPACE_ID);
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Coding', agentId: AGENT },
+        { id: STEP_B, name: 'Review', agentId: STALE_AGENT },
+      ]);
+      db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(STALE_AGENT);
+      const { run } = seedStaleRun(STEP_A, STEP_B, workflow.id);
+
+      const rt = makeRuntime({ pendingMessageRepo: new PendingAgentMessageRepository(db) });
+      await rt.recoverStalledRuns();
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+
+      // Simulate a fresh daemon restart (the in-process idempotency guard resets
+      // each boot) and re-run recovery. The now-blocked run is no longer
+      // "active" (getActiveRuns is in_progress only), so it is never retried.
+      (rt as unknown as { recoveryDone: boolean }).recoveryDone = false;
+      await rt.recoverStalledRuns();
+
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+      expect(findExec(run.id, STEP_B)).toBeUndefined();
+    });
+
+    test('worker slot with a present custom agent alongside is still recovered when the agent exists', async () => {
+      // Regression guard: the new validation must not over-block valid runs.
+      // A normal two-node run whose downstream agent exists recovers as before.
+      seedAgentRow(db, STALE_AGENT, SPACE_ID);
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Coding', agentId: AGENT },
+        { id: STEP_B, name: 'Review', agentId: STALE_AGENT },
+      ]);
+      const { run } = seedStaleRun(STEP_A, STEP_B, workflow.id);
+      // Agent NOT deleted — recovery should activate the downstream node.
+
+      await makeRuntime({
+        pendingMessageRepo: new PendingAgentMessageRepository(db),
+      }).recoverStalledRuns();
+
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+      expect(findExec(run.id, STEP_B).status).toBe('pending');
+      expect(findExec(run.id, STEP_B).agentId).toBe(STALE_AGENT);
+    });
+  });
 });

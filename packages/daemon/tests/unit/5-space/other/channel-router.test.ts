@@ -46,7 +46,10 @@ import {
   ActivationError,
   ChannelGateBlockedError,
 } from '../../../../src/lib/space/runtime/channel-router.ts';
-import { PermanentSpawnError } from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
+import {
+  MissingWorkflowAgentError,
+  PermanentSpawnError,
+} from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
 import type { Gate, SpaceWorkflow, WorkflowChannel } from '@hyperneo/shared';
 import { computeGateDefaults } from '@hyperneo/shared';
 import { registerGateFeature } from '../../../../src/lib/space/runtime/gate-features.ts';
@@ -304,6 +307,40 @@ describe('ChannelRouter', () => {
       expect(tasks[0].status).toBe('open');
       expect(tasks[0].workflowRunId).toBe(run.id);
       // workflowNodeId, agentName, taskType, customAgentId removed in M71
+    });
+
+    test('throws an actionable MissingWorkflowAgentError (not a raw FK error) when a slot references a deleted agent', async () => {
+      const workflow = buildWorkflow(SPACE_ID, workflowManager, [
+        { id: NODE_A, name: 'Coding', agentId: AGENT_CODER },
+        { id: NODE_B, name: 'Review', agentId: AGENT_CUSTOM },
+      ]);
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Stale Agent Activation',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+      // Delete the custom agent AFTER the workflow definition pinned the reference,
+      // simulating a stale space_agents row referenced by a pinned run.
+      db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(AGENT_CUSTOM);
+
+      let caught: unknown;
+      try {
+        await router.activateNode(run.id, NODE_B);
+      } catch (err) {
+        caught = err;
+      }
+
+      // A clean, actionable diagnostic — never the raw SQLite foreign-key error.
+      expect(caught).toBeInstanceOf(MissingWorkflowAgentError);
+      const message = (caught as MissingWorkflowAgentError).message;
+      expect(message).toContain(run.id);
+      expect(message).toContain('Review');
+      expect(message).toContain(AGENT_CUSTOM);
+      expect(message).not.toMatch(/FOREIGN KEY/i);
+      // No execution row was created for the stale slot.
+      expect(new NodeExecutionRepository(db).listByNode(run.id, NODE_B)).toHaveLength(0);
     });
 
     test('creates one canonical task and one node_execution per agent for a multi-agent node', async () => {

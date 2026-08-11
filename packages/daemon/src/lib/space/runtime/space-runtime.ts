@@ -129,7 +129,14 @@ import type { SpaceActorRegistryAdapter } from '../actor-registry';
 import type { SpaceAgentInboxRepository } from '../../../storage/repositories/space-agent-inbox-repository';
 import { TopicTrie } from '../../external-events/topic-trie';
 import { WorkflowExecutor } from './workflow-executor';
-import { isPermanentSpawnError, isTransientSpawnError } from './workflow-node-execution-validation';
+import {
+  isMissingWorkflowAgentError,
+  isPermanentSpawnError,
+  isTransientSpawnError,
+  MissingWorkflowAgentError,
+  findMissingNodeAgentReferences,
+  formatMissingAgentReference,
+} from './workflow-node-execution-validation';
 import { selectWorkflow } from './workflow-selector';
 import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine';
 
@@ -1042,7 +1049,37 @@ export class SpaceRuntime {
     if (isReservedWorkflowAgentName(params.agentName)) {
       throw new Error(`Agent name "${params.agentName}" is reserved for a built-in agent`);
     }
+    this.assertAgentReferenceExists(params);
     return this.config.nodeExecutionRepo.createOrIgnore(params);
+  }
+
+  /**
+   * Validate that a configured custom-agent reference still exists before a
+   * node_execution is created. A non-null agentId pointing at a deleted
+   * space_agents row would otherwise make the INSERT raise
+   * SQLITE_CONSTRAINT_FOREIGNKEY (INSERT OR IGNORE does not suppress foreign-key
+   * failures). Null agentId (built-in/worker slots) is always valid and left
+   * untouched — we never silently null a reference the workflow genuinely
+   * requires.
+   *
+   * This is the shared chokepoint for every runtime node-activation path (run
+   * start, restart-recovery downstream activation, event/task recovery, queued
+   * handoff). The channel-router activation path performs the same check up
+   * front with the node name for a richer diagnostic.
+   */
+  private assertAgentReferenceExists(params: CreateNodeExecutionParams): void {
+    const agentId = params.agentId;
+    if (!agentId) return;
+    if (this.config.spaceAgentManager.getById(agentId)) return;
+    throw new MissingWorkflowAgentError(
+      formatMissingAgentReference({
+        runId: params.workflowRunId,
+        nodeLabel: params.workflowNodeId,
+        agentName: params.agentName,
+        agentId,
+      }),
+      { agentName: params.agentName, agentId }
+    );
   }
 
   registerRunInterests(
@@ -6165,7 +6202,21 @@ export class SpaceRuntime {
       return 'completion-pending';
     }
 
-    const activated = await this.activateRestartRecoveryDownstreamNodes(run, executions);
+    let activated: boolean;
+    try {
+      activated = await this.activateRestartRecoveryDownstreamNodes(run, executions);
+    } catch (err) {
+      // A downstream target references a deleted custom agent. Block THIS run
+      // with an actionable diagnostic instead of leaking a raw SQLite FK error
+      // (which would only be logged and leave the run in_progress, retrying on
+      // every restart). Isolated to this run — the caller's per-run loop still
+      // recovers other stalled runs.
+      if (isMissingWorkflowAgentError(err)) {
+        await this.blockRunForMissingAgent(run, err);
+        return 'blocked';
+      }
+      throw err;
+    }
     if (activated) return 'skipped';
 
     // Genuinely stalled with no completion signal — flag the run
@@ -6258,6 +6309,49 @@ export class SpaceRuntime {
     log.warn(`SpaceRuntime.recoverStalledRuns: blocked run ${run.id}: ${reason}`);
   }
 
+  /**
+   * Block a run whose workflow references a custom agent that no longer exists.
+   * Unlike {@link blockRunWithMissingWorkflow} (whole definition gone) we keep
+   * existing executions intact — the run is recoverable once the operator
+   * recreates the agent or repoints the workflow slot, so cancelling live
+   * executions would discard useful state. The run moves to `blocked` with a
+   * diagnostic carrying the run id, target node, agent name, and stale agent id.
+   */
+  private async blockRunForMissingAgent(
+    run: SpaceWorkflowRun,
+    err: MissingWorkflowAgentError
+  ): Promise<void> {
+    const reason = err.message;
+    await this.transitionRunStatusAndEmit(run.id, 'blocked');
+    const canonicalTask = this.pickCanonicalTaskForRun(
+      run,
+      this.config.taskRepo.listByWorkflowRun(run.id)
+    );
+    if (canonicalTask) {
+      await this.updateTaskAndEmit(run.spaceId, canonicalTask.id, {
+        status: 'blocked',
+        blockReason: 'workflow_invalid',
+        result: reason,
+        completedAt: null,
+      });
+      await this.safeNotify({
+        kind: 'task_blocked',
+        spaceId: run.spaceId,
+        taskId: canonicalTask.id,
+        reason,
+        timestamp: new Date().toISOString(),
+      });
+    }
+    await this.safeNotify({
+      kind: 'workflow_run_blocked',
+      spaceId: run.spaceId,
+      runId: run.id,
+      reason,
+      timestamp: new Date().toISOString(),
+    });
+    log.warn(`SpaceRuntime.recoverStalledRuns: blocked run ${run.id}: ${reason}`);
+  }
+
   private async activateRestartRecoveryDownstreamNodes(
     run: SpaceWorkflowRun,
     executions: NodeExecution[]
@@ -6300,6 +6394,38 @@ export class SpaceRuntime {
         });
       }
     }
+
+    // Pre-validate configured custom-agent references on every target node we
+    // are about to activate, BEFORE creating any execution. A target whose slot
+    // references a deleted space_agents row would otherwise make the
+    // createNodeExecutionOrIgnore below raise SQLITE_CONSTRAINT_FOREIGNKEY mid-
+    // loop (leaving a half-activated run and a raw SQLite exception). Validating
+    // up front lets recoverSingleRun block this single run with an actionable
+    // diagnostic while other stalled runs still recover. Built-in/worker slots
+    // (agentId=null) are preserved — only non-null references are checked.
+    for (const transition of stalledTransitions) {
+      for (const targetName of transition.targetNames) {
+        const targetNode = nodeByName.get(targetName);
+        if (!targetNode) continue;
+        const missing = findMissingNodeAgentReferences(
+          targetNode,
+          (id) => this.config.spaceAgentManager.getById(id) !== null
+        );
+        if (missing.length > 0) {
+          const first = missing[0];
+          throw new MissingWorkflowAgentError(
+            formatMissingAgentReference({
+              runId: run.id,
+              nodeLabel: targetNode.name,
+              agentName: first.agentName,
+              agentId: first.agentId,
+            }),
+            first
+          );
+        }
+      }
+    }
+
     const createdOrReset: string[] = [];
     const blockedGateReasons: string[] = [];
 
