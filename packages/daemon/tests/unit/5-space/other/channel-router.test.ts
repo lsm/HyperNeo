@@ -3456,6 +3456,90 @@ describe('ChannelRouter', () => {
       expect(fired).toBe(true);
     });
 
+    test('onCyclicGateReset: fires on the normal cyclic path (incremented===true) with no throw', async () => {
+      // Complement to the cap-failure tests above. The normal path — a successful
+      // cycle increment (incremented===true) — is what fires in production when a
+      // resetOnCycle gate clears a pr_url on a real revision cycle. The callback
+      // must fire here too (and the delivery must complete, not throw). Together
+      // with the cap-failure tests this pins the callback to BOTH branches, so a
+      // future refactor that gates the notify on `incremented` (or its negation)
+      // is caught.
+      const gate: Gate = {
+        id: 'review-votes-gate',
+        fields: [
+          {
+            name: 'votes',
+            type: 'map',
+            writers: ['reviewer'],
+            check: { op: 'count', match: 'approved', min: 2 },
+          },
+        ],
+        resetOnCycle: true,
+      };
+      const channels: WorkflowChannel[] = [
+        { id: 'ch-fwd', from: 'Coder Node', to: 'Planner Node', gateId: 'review-votes-gate' },
+        { id: 'ch-bwd', from: 'Planner Node', to: 'Coder Node', maxCycles: 5 }, // index 1 (cyclic)
+      ];
+      const workflow = buildWorkflowWithGates(
+        SPACE_ID,
+        workflowManager,
+        [
+          { id: NODE_A, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+          {
+            id: NODE_B,
+            name: 'Planner Node',
+            agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+          },
+        ],
+        channels,
+        [gate]
+      );
+
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Normal-Path Callback Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+      gateDataRepo.set(run.id, 'review-votes-gate', {
+        votes: { alice: 'approved', bob: 'approved' },
+      });
+
+      // No stub: let the cycle increment for real (count 0 → 1, under the cap).
+      let firedFor: string | null = null;
+      const nodeExecutionRepo = new NodeExecutionRepository(db);
+      const routerWithCallback = new ChannelRouter({
+        taskRepo,
+        workflowRunRepo,
+        workflowManager,
+        agentManager,
+        gateDataRepo,
+        channelCycleRepo,
+        db,
+        nodeExecutionRepo,
+        onCyclicGateReset: (runId) => {
+          firedFor = runId;
+        },
+      });
+
+      // Normal path: the delivery completes (no throw).
+      const result = await routerWithCallback.deliverMessage(
+        run.id,
+        'planner',
+        'coder',
+        'normal cycle'
+      );
+      expect(result.toRole).toBe('coder');
+
+      // The callback fired...
+      expect(firedFor).toBe(run.id);
+      // ...the resetOnCycle gate was reset to defaults...
+      const afterReset = gateDataRepo.get(run.id, 'review-votes-gate');
+      expect(afterReset!.data).toMatchObject({ votes: {} });
+      // ...and the cycle counter advanced (the real increment, not the cap).
+      expect(channelCycleRepo.get(run.id, 1)!.count).toBe(1);
+    });
+
     // -----------------------------------------------------------------------
     // Incremental writes — correct accumulation pattern for vote-counting
     // -----------------------------------------------------------------------

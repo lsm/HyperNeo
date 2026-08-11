@@ -705,31 +705,40 @@ export class ExternalEventStore {
    * guards) ensures only targets without an existing delivery are dispatched.
    *
    * Pass `spaceId` to scope the scan to one space (the per-run materialization
-   * trigger knows its space); omit it for a global flush.
+   * trigger knows its space); omit it for a global flush. Pass `createdAfterMs`
+   * to skip rows older than a TTL cutoff at the SQL layer (the new-target replay
+   * re-checks expiry in JS regardless, but this keeps expired-but-not-terminalized
+   * rows out of the result set so the scoped index scan doesn't fetch them).
    */
-  listPublishedEventsWithDeliveries(spaceId?: string): ExternalEventRecord[] {
+  listPublishedEventsWithDeliveries(
+    spaceId?: string,
+    createdAfterMs?: number
+  ): ExternalEventRecord[] {
+    const cutoff = typeof createdAfterMs === 'number' ? createdAfterMs : null;
     const rows = spaceId
       ? (this.db
           .prepare(
             `SELECT e.* FROM space_external_events e
  				 WHERE e.state = 'published'
  				   AND e.space_id = ?
+ 				   ${cutoff !== null ? 'AND e.created_at > ?' : ''}
  				   AND EXISTS (
  				     SELECT 1 FROM space_external_event_deliveries d WHERE d.event_id = e.id
  				   )
  				 ORDER BY e.updated_at, e.id`
           )
-          .all(spaceId) as ExternalEventRow[])
+          .all(...(cutoff !== null ? [spaceId, cutoff] : [spaceId])) as ExternalEventRow[])
       : (this.db
           .prepare(
             `SELECT e.* FROM space_external_events e
  				 WHERE e.state = 'published'
+ 				   ${cutoff !== null ? 'AND e.created_at > ?' : ''}
  				   AND EXISTS (
  				     SELECT 1 FROM space_external_event_deliveries d WHERE d.event_id = e.id
  				   )
  				 ORDER BY e.updated_at, e.id`
           )
-          .all() as ExternalEventRow[]);
+          .all(...(cutoff !== null ? [cutoff] : [])) as ExternalEventRow[]);
     return rows.map(rowToRecord);
   }
 

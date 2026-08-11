@@ -7293,12 +7293,19 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     // Restart on the same instance: rehydrated=true, so start() drains the
     // deferred run before retained-event replay. The 99 sub is created and the
-    // retained 99 event is delivered. The rehydrated start path is async (awaits
-    // a space scan), so poll for delivery.
+    // retained 99 event is delivered. The rehydrated start path runs in an async
+    // IIFE (awaits a space scan); anchor the wait to its reconciliationDone flag
+    // — that assignment is immediately followed by the synchronous drain +
+    // retained replay — then settle the fire-and-forget delivery. Generous
+    // ceiling for CI load on the async space scan.
     runtime.start();
-    for (let i = 0; i < 50; i += 1) {
+    const restarted = runtime as unknown as { reconciliationDone: boolean };
+    for (let i = 0; i < 200 && !restarted.reconciliationDone; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    for (let i = 0; i < 100; i += 1) {
       if (eventStore.getById(freshEvent.id)?.state === 'delivered') break;
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await new Promise((resolve) => setTimeout(resolve, 10));
     }
     await runtime.stop();
 

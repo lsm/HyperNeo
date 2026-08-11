@@ -6096,7 +6096,11 @@ export class SpaceRuntime {
     // retained replay's void handleExternalEvent increments depth, which would
     // spuriously re-arm the deferred flag and loop on an unmatched retained
     // event).
-    for (const eventRecord of store.listPublishedEventsWithDeliveries(spaceId)) {
+    // Pass a TTL cutoff so expired-but-not-terminalized rows are skipped by the
+    // scoped index scan rather than fetched and re-checked in JS (the per-event
+    // expiry guard in deliverPublishedEventToNewTargets still applies).
+    const createdAfterMs = Date.now() - EXTERNAL_EVENT_QUEUE_TTL_MS;
+    for (const eventRecord of store.listPublishedEventsWithDeliveries(spaceId, createdAfterMs)) {
       void this.deliverPublishedEventToNewTargets(
         this.externalEventPayloadFromRecord(eventRecord.event)
       );
