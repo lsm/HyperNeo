@@ -1003,24 +1003,24 @@ export class SpaceWorkflowManager {
     const hookIds = new Set(hooks.map((h) => h.id));
     // Valid target names: every node name + every agent slot name (matches
     // channel addressing). The broadcast wildcard is always valid. A name is
-    // AMBIGUOUS when it routes to more than one node (two nodes share a slot
-    // name, or a slot name collides with a node name) — the contract requires a
-    // named handoff to select exactly one destination, so count distinct nodes
-    // per name and reject ambiguous targets below.
-    const targetNameNodeIds = new Map<string, Set<string>>();
-    const addTargetName = (name: string, nodeId: string) => {
-      const set = targetNameNodeIds.get(name) ?? new Set<string>();
-      set.add(nodeId);
-      targetNameNodeIds.set(name, set);
+    // AMBIGUOUS when a name can address more than one destination — two nodes
+    // share a name, a slot name appears in multiple nodes, OR a node name
+    // collides with a slot name (even within the same node). Count distinct
+    // addressable destinations per name (a node-name destination and a slot-name
+    // destination are distinct), and reject names addressing more than one.
+    const targetNameDestinations = new Map<string, Set<string>>();
+    const addDestination = (name: string, destinationKey: string) => {
+      const set = targetNameDestinations.get(name) ?? new Set<string>();
+      set.add(destinationKey);
+      targetNameDestinations.set(name, set);
     };
     for (const node of nodes) {
       // node.id is optional on WorkflowNodeInput; names are unique within a
-      // workflow, so fall back to the name when id is absent (count is by
-      // distinct node, and a missing id only arises on unsaved create payloads).
+      // workflow, so fall back to the name when id is absent.
       const nodeId = node.id ?? node.name;
-      addTargetName(node.name, nodeId);
+      addDestination(node.name, `node:${nodeId}`);
       for (const agent of node.agents ?? []) {
-        if (agent.name) addTargetName(agent.name, nodeId);
+        if (agent.name) addDestination(agent.name, `slot:${nodeId}`);
       }
     }
 
@@ -1077,15 +1077,15 @@ export class SpaceWorkflowManager {
           throw new WorkflowValidationError(`${loc}: 'target' must be at most 100 characters`);
         }
         if (t.target !== HANDOFF_TARGET_WILDCARD) {
-          const matchingNodes = targetNameNodeIds.get(t.target);
-          if (!matchingNodes || matchingNodes.size === 0) {
+          const destinations = targetNameDestinations.get(t.target);
+          if (!destinations || destinations.size === 0) {
             throw new WorkflowValidationError(
               `${loc}: target "${t.target}" does not reference a known node name or agent slot name`
             );
           }
-          if (matchingNodes.size > 1) {
+          if (destinations.size > 1) {
             throw new WorkflowValidationError(
-              `${loc}: target "${t.target}" is ambiguous — matches ${matchingNodes.size} nodes; ` +
+              `${loc}: target "${t.target}" is ambiguous — matches ${destinations.size} destinations; ` +
                 'use a name unique to one node or slot'
             );
           }

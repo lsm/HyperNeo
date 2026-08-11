@@ -7282,6 +7282,27 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     expect(mergedCoding.transitions?.[0].target).toBe('Reviewer');
   });
 
+  test('mergeNodeStructuralFieldsFromTemplate preserves agent-slot targets verbatim', () => {
+    // A slot-name target (e.g. a reviewer slot) must NOT be remapped to its
+    // enclosing node name — that would change the destination for a multi-agent
+    // node. Only node-name targets are remapped; slot targets and '*' are kept.
+    const codingTemplate = CODING_WITH_QA_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
+    const reviewTemplate = CODING_WITH_QA_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
+    const reviewerSlotName = reviewTemplate.agents[0]?.name ?? 'Reviewer';
+    const declared: HandoffTransition[] = [{ id: 'to-slot', target: reviewerSlotName }];
+    const templateWithTransitions = CODING_WITH_QA_WORKFLOW.nodes.map((n) =>
+      n.name === 'Coding' ? { ...n, transitions: declared } : n
+    );
+
+    const merged = mergeNodeStructuralFieldsFromTemplate(
+      CODING_WITH_QA_WORKFLOW.nodes.map((n) => ({ ...n })),
+      templateWithTransitions,
+      () => 'agent-coder'
+    );
+    const mergedCoding = merged.find((n) => n.id === codingTemplate.id)!;
+    expect(mergedCoding.transitions?.[0].target).toBe(reviewerSlotName);
+  });
+
   test('migrateWorkflowGateProgressionToHooks post-pass is idempotent on plan-approval hooks', () => {
     // Regression: a naive `/-lt (\d+) /` regex matched the FIRST `-lt N` in
     // the script source. buildApprovalsScript emits TWO:

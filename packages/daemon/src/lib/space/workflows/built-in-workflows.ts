@@ -1823,22 +1823,24 @@ export function mergeNodeStructuralFieldsFromTemplate(
       // restamp and revert the Codex hook to the global default window.
       codexTimeoutSeconds: templateNode?.codexTimeoutSeconds ?? node.codexTimeoutSeconds,
       // Declared handoff transitions: overwrite from the template ONLY when it
-      // explicitly declares them, otherwise PRESERVE the node's existing value.
-      // Built-in templates do not declare transitions today, so a "clear when
-      // template-silent" rule (like the postApproval one above) would wipe any
-      // operator-/RPC-installed transitions on every daemon restart. Mirrors the
-      // codexTimeoutSeconds preserve-when-template-silent pattern directly above.
-      // When the template DOES declare them, remap each target from the template
-      // graph to the installed graph (a user may have renamed a node/slot) — the
-      // same remap channels/hooks apply, so re-stamp validation does not abort on
-      // a stale template target name. gateId/hookId are ids, not node refs, so
-      // they are carried verbatim.
+      // explicitly declares them, otherwise PRESERVE the node's existing value
+      // (mirrors the codexTimeoutSeconds preserve-when-template-silent rule).
+      // When the template declares them, remap only NODE-name targets to the
+      // installed graph (a renamed node); SLOT-name targets and '*' are carried
+      // verbatim — remapTemplateChannelRef would convert a slot target to its
+      // enclosing node name and silently change the destination for multi-agent
+      // nodes. gateId/hookId are ids, not node refs, so they are carried verbatim.
       transitions:
         templateNode?.transitions && templateNode.transitions.length > 0
-          ? templateNode.transitions.map((t) => ({
-              ...t,
-              target: remapTemplateChannelRef(t.target, templateNodes, existingNodes),
-            }))
+          ? templateNode.transitions.map((t) => {
+              const isNodeTarget = templateNodes.some((n) => n.name === t.target);
+              return {
+                ...t,
+                target: isNodeTarget
+                  ? remapTemplateChannelRef(t.target, templateNodes, existingNodes)
+                  : t.target,
+              };
+            })
           : node.transitions,
       agents: node.agents.map((agent) => {
         const key = `${node.name}::${agent.name}`;
