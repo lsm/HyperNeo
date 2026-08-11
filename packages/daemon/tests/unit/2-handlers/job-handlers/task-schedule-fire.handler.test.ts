@@ -435,6 +435,42 @@ describe('handleTaskScheduleFire', () => {
     expect(created!.payload).toMatchObject({ taskId: result.taskId, action: 'created' });
   });
 
+  it('publishes goal check_in + task_triggered after a goal schedule fire commits', async () => {
+    // The goal emits must fire post-commit (claimScheduledTask no longer emits
+    // inline), so a rolled-back claim can't publish for un-persisted state.
+    const goal = goalRepo.create({ spaceId, title: 'Check-in goal', type: 'recurring' });
+    const scheduleId = createCronSchedule(goal.id);
+    scheduleRepo.updatePendingJobId(scheduleId, 'job-1');
+    const { emitter, published } = recordingEmitter();
+    // goalService must carry the emitter so emitScheduledCheckInLifecycle publishes.
+    const goalServiceWithEmitter = new SpaceGoalService({
+      goalRepo,
+      taskRepo,
+      spaceRepo,
+      scheduleService: new ScheduleService({
+        db: db as never,
+        scheduleRepo,
+        jobQueue,
+        spaceRepo,
+      }),
+      db: db as never,
+      lifecycleEventEmitter: emitter,
+    });
+
+    const result = await handleTaskScheduleFire(makeJob({ payload: { scheduleId } }), {
+      ...makeDeps(undefined, emitter),
+      goalService: goalServiceWithEmitter,
+    });
+
+    expect(result.skipped).toBe(false);
+    expect(result.taskId).not.toBeNull();
+    const topics = published.map((e) => e.topic);
+    expect(topics).toContain('space/goal.check_in');
+    expect(topics).toContain('space/goal.task_triggered');
+    const checkIn = published.find((e) => e.topic === 'space/goal.check_in')!;
+    expect(checkIn.payload).toMatchObject({ goalId: goal.id, taskId: result.taskId });
+  });
+
   it('skips when schedule is missing', async () => {
     const job = makeJob({ payload: { scheduleId: 'nonexistent' } });
     const result = await handleTaskScheduleFire(job, makeDeps());

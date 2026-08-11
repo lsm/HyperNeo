@@ -223,6 +223,10 @@ export async function handleTaskScheduleFire(
   // retry to spawn a duplicate task.
   let taskId: string | null = null;
   let nextRunAt: number | null = null;
+  // Goal id captured inside the transaction so the check-in lifecycle events
+  // can be published AFTER the transaction commits (claimScheduledTask no longer
+  // emits inline, to avoid publishing for a claim that rolls back).
+  let claimedGoalId: string | null = null;
 
   try {
     const result = db.transaction(() => {
@@ -298,6 +302,7 @@ export async function handleTaskScheduleFire(
         if (!claimed.claimed) {
           throw new Error(`Goal ${schedule.goalId} already has an active task`);
         }
+        if (claimed.goal) claimedGoalId = claimed.goal.id;
       }
 
       return { taskId: task.id, nextRunAt: computedNextRunAt, skipped: false as const };
@@ -330,6 +335,14 @@ export async function handleTaskScheduleFire(
           .catch(() => {
             // Swallow — event emission is best-effort.
           });
+      }
+      // Publish the scheduled check-in lifecycle events (space/goal.check_in +
+      // space/goal.task_triggered) AFTER the fire transaction commits —
+      // claimScheduledTask no longer emits inline so a rolled-back claim can't
+      // publish events for a goal/task that never persisted.
+      if (claimedGoalId && goalService && taskId) {
+        const claimedGoal = goalService.getGoal(claimedGoalId);
+        if (claimedGoal) goalService.emitScheduledCheckInLifecycle(claimedGoal, taskId);
       }
     }
     if (eventHub) {

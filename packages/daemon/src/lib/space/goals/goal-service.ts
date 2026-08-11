@@ -355,16 +355,24 @@ export class SpaceGoalService {
     }
     const claimed = this.deps.goalRepo.claimActiveTask(goal.id, taskId);
     const updated = this.deps.goalRepo.getById(goal.id);
-    // A scheduled check-in fires through this path: publish space/goal.check_in
-    // (the scheduled-fire signal) AND space/goal.task_triggered (the uniform
-    // "goal spawned a task" signal that immediate triggers also emit) so
-    // subscribers keyed on either topic wake. Only emit on a successful claim.
-    if (claimed && updated) {
-      const emitter = this.deps.lifecycleEventEmitter;
-      emitter?.emitGoalCheckIn(updated, taskId);
-      emitter?.emitGoalTaskTriggered(updated, taskId);
-    }
+    // NOTE: the lifecycle emits (space/goal.check_in + space/goal.task_triggered)
+    // are intentionally NOT fired here. claimScheduledTask is invoked inside the
+    // caller's db.transaction (task-schedule-fire.handler), and firing here would
+    // publish events for a claim that could still roll back. The caller publishes
+    // them after its transaction commits, using the returned goal.
     return { goal: updated, claimed };
+  }
+
+  /**
+   * Publish the lifecycle events for a scheduled check-in. Public so the
+   * schedule-fire handler can call it AFTER its transaction commits — calling
+   * it inside the transaction would risk publishing for a rolled-back claim.
+   */
+  emitScheduledCheckInLifecycle(goal: SpaceGoal, taskId: string): void {
+    const emitter = this.deps.lifecycleEventEmitter;
+    if (!emitter) return;
+    emitter.emitGoalCheckIn(goal, taskId);
+    emitter.emitGoalTaskTriggered(goal, taskId);
   }
 
   updateScheduledCheckIn(
