@@ -3016,8 +3016,8 @@ export interface ExportedWorkflowNode {
  * Space-specific fields (`id`, `spaceId`, `createdAt`, `updatedAt`) are stripped.
  */
 export interface ExportedSpaceWorkerAgent {
-  /** Format version (1 or 2; v2 adds optional `topicFrom` on eventInterests). */
-  version: 1 | 2;
+  /** Format version (1, 2, or 3; v2 adds optional `topicFrom` on eventInterests; v3 adds node handoff transitions and workflow gates). */
+  version: 1 | 2 | 3;
   /** Discriminator for the exported entity type */
   type: 'agent';
   /** Human-readable name */
@@ -3060,8 +3060,8 @@ export interface ExportedSpaceWorkerAgent {
  * Channel IDs are stripped; `from`/`to` use node/agent names.
  */
 export interface ExportedSpaceWorkflow {
-  /** Format version (1 or 2; v2 adds optional `topicFrom` on eventInterests). */
-  version: 1 | 2;
+  /** Format version (1, 2, or 3; v2 adds optional `topicFrom` on eventInterests; v3 adds node handoff transitions and workflow gates). */
+  version: 1 | 2 | 3;
   /** Discriminator for the exported entity type */
   type: 'workflow';
   /** Human-readable name */
@@ -3089,6 +3089,12 @@ export interface ExportedSpaceWorkflow {
   /** Workflow hooks in portable form. Node references use node/agent slot names. */
   hooks?: WorkflowHook[];
   /**
+   * Workflow gates (v3). Exported verbatim so channel and handoff-transition
+   * `gateId` references survive the round-trip — gate `id`s are semantic
+   * identifiers, not space-specific UUIDs. Absent on v1/v2 bundles.
+   */
+  gates?: Gate[];
+  /**
    * Minimum autonomy level (1-5) required for end-node agents to self-close
    * the task via `approve_task`. Below this threshold, `approve_task` becomes
    * a no-op and the agent must use `submit_for_approval` to request human
@@ -3109,8 +3115,8 @@ export interface ExportedSpaceWorkflow {
  * The bundle is the top-level unit of the export/import file format.
  */
 export interface SpaceExportBundle {
-  /** Format version (1 or 2; v2 adds optional `topicFrom` on eventInterests). */
-  version: 1 | 2;
+  /** Format version (1, 2, or 3; v2 adds optional `topicFrom` on eventInterests; v3 adds node handoff transitions and workflow gates). */
+  version: 1 | 2 | 3;
   /** Discriminator for the top-level type */
   type: 'bundle';
   /** Human-readable bundle name */

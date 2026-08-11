@@ -1755,6 +1755,7 @@ export function mergeNodeStructuralFieldsFromTemplate(
   existingNodes: WorkflowNode[],
   templateNodes: Pick<
     WorkflowNode,
+    | 'id'
     | 'name'
     | 'agents'
     | 'postApproval'
@@ -1827,9 +1828,17 @@ export function mergeNodeStructuralFieldsFromTemplate(
       // template-silent" rule (like the postApproval one above) would wipe any
       // operator-/RPC-installed transitions on every daemon restart. Mirrors the
       // codexTimeoutSeconds preserve-when-template-silent pattern directly above.
+      // When the template DOES declare them, remap each target from the template
+      // graph to the installed graph (a user may have renamed a node/slot) — the
+      // same remap channels/hooks apply, so re-stamp validation does not abort on
+      // a stale template target name. gateId/hookId are ids, not node refs, so
+      // they are carried verbatim.
       transitions:
         templateNode?.transitions && templateNode.transitions.length > 0
-          ? templateNode.transitions
+          ? templateNode.transitions.map((t) => ({
+              ...t,
+              target: remapTemplateChannelRef(t.target, templateNodes, existingNodes),
+            }))
           : node.transitions,
       agents: node.agents.map((agent) => {
         const key = `${node.name}::${agent.name}`;
@@ -3333,6 +3342,12 @@ export function seedBuiltInWorkflows(
         })),
         ...(s.postApproval ? { postApproval: { ...s.postApproval } } : {}),
         ...(s.requireCodexApproval ? { requireCodexApproval: true } : {}),
+        // Carry declared handoff transitions so a fresh install matches a
+        // re-stamped space when a template declares them. Targets reference
+        // node/agent names, which are unchanged on fresh install.
+        ...(s.transitions && s.transitions.length > 0
+          ? { transitions: s.transitions.map((t) => ({ ...t })) }
+          : {}),
       }));
 
       const startNodeId = nodeIdMap.get(template.startNodeId);

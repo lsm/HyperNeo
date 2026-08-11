@@ -112,7 +112,7 @@ describe('exportAgent', () => {
     const agent = makeAgent();
     const exported = exportAgent(agent);
 
-    expect(exported.version).toBe(2);
+    expect(exported.version).toBe(3);
     expect(exported.type).toBe('agent');
     expect(exported.name).toBe('My Coder');
     // role field was removed from SpaceWorkerAgent in M71
@@ -277,7 +277,7 @@ describe('exportWorkflow', () => {
 
   test('has version 1 and type workflow', () => {
     const exported = exportWorkflow(makeWorkflow(), []);
-    expect(exported.version).toBe(2);
+    expect(exported.version).toBe(3);
     expect(exported.type).toBe('workflow');
   });
 });
@@ -295,7 +295,7 @@ describe('exportBundle', () => {
       exportedFrom: '/workspace/foo',
     });
 
-    expect(bundle.version).toBe(2);
+    expect(bundle.version).toBe(3);
     expect(bundle.type).toBe('bundle');
     expect(bundle.name).toBe('My Bundle');
     expect(bundle.description).toBe('A test bundle');
@@ -331,7 +331,7 @@ describe('validateExportedAgent', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.name).toBe('My Coder');
-      expect(result.value.version).toBe(2);
+      expect(result.value.version).toBe(3);
     }
   });
 
@@ -387,8 +387,8 @@ describe('validateExportedAgent', () => {
     }
   });
 
-  test('rejects version > 2 with "requires newer version" message', () => {
-    const data = { version: 3, type: 'agent', name: 'Bot', role: 'general' };
+  test('rejects version > 3 with "requires newer version" message', () => {
+    const data = { version: 4, type: 'agent', name: 'Bot', role: 'general' };
     const result = validateExportedAgent(data);
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -447,7 +447,7 @@ describe('validateExportedWorkflow', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.name).toBe('CI Workflow');
-      expect(result.value.version).toBe(2);
+      expect(result.value.version).toBe(3);
       expect(result.value.startNode).toBe('Code step');
     }
   });
@@ -544,9 +544,9 @@ describe('validateExportedWorkflow', () => {
     }
   });
 
-  test('rejects version > 1 with "requires newer version"', () => {
+  test('rejects version > 3 with "requires newer version"', () => {
     const data = {
-      version: 3,
+      version: 4,
       type: 'workflow',
       name: 'Simple',
       nodes: [],
@@ -711,7 +711,7 @@ describe('validateExportBundle', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.name).toBe('Bundle');
-      expect(result.value.version).toBe(2);
+      expect(result.value.version).toBe(3);
       expect(result.value.agents).toHaveLength(3);
       expect(result.value.workflows).toHaveLength(1);
     }
@@ -738,12 +738,12 @@ describe('validateExportBundle', () => {
     expect(validateExportBundle([]).ok).toBe(false);
   });
 
-  test('rejects bundle whose nested agent has version > 2', () => {
+  test('rejects bundle whose nested agent has version > 3', () => {
     const bundle = exportBundle([makeAgent()], [], 'B') as Record<string, unknown>;
     // Override the nested agent's version to simulate an unsupported agent
-    // embedded in a current (v2) bundle.
+    // embedded in a current (v3) bundle.
     const agents = bundle.agents as Array<Record<string, unknown>>;
-    agents[0] = { ...agents[0], version: 3 };
+    agents[0] = { ...agents[0], version: 4 };
     const result = validateExportBundle(bundle);
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -752,10 +752,10 @@ describe('validateExportBundle', () => {
     }
   });
 
-  test('rejects bundle whose nested workflow has version > 2', () => {
+  test('rejects bundle whose nested workflow has version > 3', () => {
     const bundle = exportBundle([], [makeWorkflow()], 'B') as Record<string, unknown>;
     const workflows = bundle.workflows as Array<Record<string, unknown>>;
-    workflows[0] = { ...workflows[0], version: 3 };
+    workflows[0] = { ...workflows[0], version: 4 };
     const result = validateExportBundle(bundle);
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -883,11 +883,11 @@ describe('round-trip: export → JSON → validate', () => {
 
     // Workflow round-trip.
     const exported = exportWorkflow(workflow, agents);
-    expect(exported.version).toBe(2);
+    expect(exported.version).toBe(3);
     const result = validateExportedWorkflow(JSON.parse(JSON.stringify(exported)) as unknown);
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value.version).toBe(2);
+      expect(result.value.version).toBe(3);
       expect(result.value.nodes[0].agents[0].eventInterests?.[0]?.topicFrom).toEqual({
         source: 'primaryLink',
         pattern: 'github/{owner}/{repo}/pull_request/{number}.*',
@@ -899,7 +899,7 @@ describe('round-trip: export → JSON → validate', () => {
     const bundleResult = validateExportBundle(JSON.parse(JSON.stringify(bundle)) as unknown);
     expect(bundleResult.ok).toBe(true);
     if (bundleResult.ok) {
-      expect(bundleResult.value.version).toBe(2);
+      expect(bundleResult.value.version).toBe(3);
       expect(
         bundleResult.value.workflows[0].nodes[0].agents[0].eventInterests?.[0]?.topicFrom
       ).toBeDefined();
@@ -2429,7 +2429,7 @@ describe('validateExportedWorkflow — handoff transitions', () => {
     hooks?: Array<Record<string, unknown>>
   ) {
     return {
-      version: 2,
+      version: 3,
       type: 'workflow',
       name: 'W',
       nodes: [
@@ -2504,5 +2504,95 @@ describe('validateExportedWorkflow — handoff transitions', () => {
     }));
     const result = validateExportedWorkflow(wfWithTransitions(tooMany));
     expect(result.ok).toBe(false);
+  });
+});
+
+describe('export format — v3 version gating (transitions + gates)', () => {
+  function v2WorkflowWithTransitions() {
+    return {
+      version: 2,
+      type: 'workflow',
+      name: 'W',
+      nodes: [
+        {
+          name: 'Code',
+          agents: [{ agentRef: 'coder', name: 'coder' }],
+          transitions: [{ id: 't', target: 'Review' }],
+        },
+        { name: 'Review', agents: [{ agentRef: 'reviewer', name: 'reviewer' }] },
+      ],
+      startNode: 'Code',
+      tags: [],
+    };
+  }
+
+  test('rejects a v2 workflow carrying transitions', () => {
+    const result = validateExportedWorkflow(v2WorkflowWithTransitions());
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('require version 3');
+  });
+
+  test('rejects a v2 workflow carrying gates', () => {
+    const data = {
+      version: 2,
+      type: 'workflow',
+      name: 'W',
+      nodes: [{ name: 'Code', agents: [{ agentRef: 'coder', name: 'coder' }] }],
+      startNode: 'Code',
+      tags: [],
+      gates: [{ id: 'g1', resetOnCycle: false }],
+    };
+    const result = validateExportedWorkflow(data);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('require version 3');
+  });
+
+  test('exportWorkflow emits gates and a v3 version', () => {
+    const workflow = makeWorkflow({
+      gates: [{ id: 'g1', resetOnCycle: false }],
+    });
+    const exported = exportWorkflow(workflow, []);
+    expect(exported.version).toBe(3);
+    expect(exported.gates).toEqual([{ id: 'g1', resetOnCycle: false }]);
+  });
+
+  test('a gated transition round-trips when its gate is exported', () => {
+    // The core of the gates-in-export fix: a transition referencing gateId 'g1'
+    // re-validates because the gate 'g1' is present in the exported bundle.
+    const workflow = makeWorkflow({
+      gates: [
+        {
+          id: 'g1',
+          resetOnCycle: false,
+          fields: [{ name: 'ok', type: 'boolean', writers: [], check: { op: '==', value: true } }],
+        },
+      ],
+      nodes: [
+        {
+          id: 'node-uuid-1',
+          name: 'Code step',
+          agents: [{ agentId: 'agent-uuid-1', name: 'coder' }],
+          transitions: [{ id: 'to-review', target: 'Review step', gateId: 'g1' }],
+        },
+        {
+          id: 'node-uuid-2',
+          name: 'Review step',
+          agents: [{ agentId: 'agent-uuid-3', name: 'reviewer' }],
+        },
+        {
+          id: 'node-uuid-3',
+          name: 'Plan step',
+          agents: [{ agentId: 'agent-uuid-2', name: 'planner' }],
+        },
+      ],
+    });
+    const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
+    const exported = exportWorkflow(workflow, agents);
+    const result = validateExportedWorkflow(exported);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.gates?.[0].id).toBe('g1');
+      expect(result.value.nodes[0].transitions?.[0].gateId).toBe('g1');
+    }
   });
 });

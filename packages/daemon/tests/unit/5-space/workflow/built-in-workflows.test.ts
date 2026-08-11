@@ -7256,6 +7256,32 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     expect(merged[0].transitions).toEqual(installed);
   });
 
+  test('mergeNodeStructuralFieldsFromTemplate remaps transition targets to the installed graph', () => {
+    // When the template declares a transition and the user renamed the target
+    // node in the installed space (same node id, different name), the template
+    // target name must be remapped to the installed name — otherwise the
+    // subsequent updateWorkflow validation sees the template name as unknown and
+    // aborts the entire re-stamp on every startup. Mirrors the channel/hook remap.
+    const codingTemplate = CODING_WITH_QA_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
+    const reviewTemplate = CODING_WITH_QA_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
+    const declared: HandoffTransition[] = [{ id: 'to-review', target: 'Review' }];
+    const templateWithTransitions = CODING_WITH_QA_WORKFLOW.nodes.map((n) =>
+      n.name === 'Coding' ? { ...n, transitions: declared } : n
+    );
+    // Installed space renamed 'Review' → 'Reviewer' (same node id).
+    const installed: WorkflowNode[] = CODING_WITH_QA_WORKFLOW.nodes.map((n) =>
+      n.id === reviewTemplate.id ? { ...n, name: 'Reviewer' } : { ...n }
+    );
+
+    const merged = mergeNodeStructuralFieldsFromTemplate(
+      installed,
+      templateWithTransitions,
+      () => 'agent-coder'
+    );
+    const mergedCoding = merged.find((n) => n.id === codingTemplate.id)!;
+    expect(mergedCoding.transitions?.[0].target).toBe('Reviewer');
+  });
+
   test('migrateWorkflowGateProgressionToHooks post-pass is idempotent on plan-approval hooks', () => {
     // Regression: a naive `/-lt (\d+) /` regex matched the FIRST `-lt N` in
     // the script source. buildApprovalsScript emits TWO:

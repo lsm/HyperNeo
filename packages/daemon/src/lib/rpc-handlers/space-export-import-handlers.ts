@@ -329,6 +329,9 @@ export function buildWorkflowCreateParams(
   if (exported.description !== undefined) params.description = exported.description;
   if (exported.channels && exported.channels.length > 0) params.channels = exported.channels;
   if (exported.hooks && exported.hooks.length > 0) params.hooks = exported.hooks;
+  // Restore gates so channel/handoff-transition `gateId` references resolve at
+  // createWorkflow (a gated transition can only import when its gate does).
+  if (exported.gates && exported.gates.length > 0) params.gates = exported.gates;
   if (exported.disabled !== undefined) params.disabled = exported.disabled;
   // Only preserve the exported handle when it is unique in the target space
   // and not already used by another workflow in the same import batch.
@@ -403,6 +406,10 @@ function validateWorkflowForPreview(
   for (const hook of exported.hooks ?? []) {
     if (hook?.id) transitionHookIds.add(hook.id);
   }
+  const transitionGateIds = new Set<string>();
+  for (const gate of exported.gates ?? []) {
+    if (gate?.id) transitionGateIds.add(gate.id);
+  }
   const transitionTargetNames = new Set<string>(['*']);
   for (const n of exported.nodes) {
     transitionTargetNames.add(n.name);
@@ -421,6 +428,9 @@ function validateWorkflowForPreview(
       }
       if (t.hookId !== undefined && !transitionHookIds.has(t.hookId)) {
         errors.push(`${loc}.hookId "${t.hookId}" does not reference a known hook`);
+      }
+      if (t.gateId !== undefined && !transitionGateIds.has(t.gateId)) {
+        errors.push(`${loc}.gateId "${t.gateId}" does not reference a known gate`);
       }
     }
   }
