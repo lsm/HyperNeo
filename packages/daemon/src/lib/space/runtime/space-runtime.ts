@@ -5363,7 +5363,17 @@ export class SpaceRuntime {
     };
     this.executorMeta.set(run.id, meta);
     this.executors.set(run.id, this.buildExecutor(workflow, run, space.id, space.workspacePath));
-    this.registerRunInterestsFromWorkflow(run, workflow);
+    // Guarded like the static-rebuild loop: a malformed workflow definition
+    // (invalid eventInterests glob, or a slot over MAX_AGENT_SLOT_EVENT_INTERESTS)
+    // would otherwise throw out of registerRunInterests, propagate through the
+    // ungated activeRuns loop, and abort rehydrate for every space.
+    try {
+      this.registerRunInterestsFromWorkflow(run, workflow);
+    } catch (err) {
+      log.warn(
+        `SpaceRuntime: failed to rebuild static interests for run ${run.id} during executor registration: ${formatCommandError(err)}`
+      );
+    }
     return true;
   }
 

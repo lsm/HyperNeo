@@ -40,7 +40,11 @@ export function createWorkflowEventSubscriptionTables(db: BunDatabase): void {
 			updated_at INTEGER NOT NULL,
 			UNIQUE(workflow_run_id, task_id, node_id, agent_name, topic_normalized, subscription_kind),
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
-			FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
+			FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE,
+			-- A hard-deleted task (SpaceTaskManager/GoalService deleteTask, which
+			-- skips clearTaskInterests) would otherwise orphan its row, which
+			-- rehydrate then re-inserts forever. Cascade like the other two FKs.
+			FOREIGN KEY (task_id) REFERENCES space_tasks(id) ON DELETE CASCADE
 		)
 	`);
   // Per-space rebuild on rehydrate (mirrors long-horizon subscription lookup).

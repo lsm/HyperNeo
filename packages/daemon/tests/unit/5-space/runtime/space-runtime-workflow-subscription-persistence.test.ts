@@ -607,4 +607,27 @@ describe('SpaceRuntime workflow subscription persistence', () => {
     expect(() => runtime.registerRunInterests(runId, taskId, workflow.nodes)).not.toThrow();
     expect(trieOf(runtime).lookupSubscriptionTargets('github/owner/repo/issues/7')).toHaveLength(1);
   });
+
+  test('hard-deleting a task cascade-removes its subscription row (no durable phantom)', async () => {
+    // SpaceTaskManager/GoalService deleteTask hard-deletes a task without
+    // clearTaskInterests. The task_id FK cascade drops the row so rehydrate
+    // can't re-insert a phantom targeting a deleted task.
+    const topic = 'github/owner/repo/pull_request/42.*';
+    const { runId, taskId } = createRun();
+
+    const runtime1 = makeRuntime();
+    runtime1.registerSubscription(runId, taskId, 'code', 'coder', topic);
+    expect(subscriptionRepo.listBySpace(SPACE_ID)).toHaveLength(1);
+
+    taskRepo.deleteTask(taskId);
+
+    expect(subscriptionRepo.listBySpace(SPACE_ID)).toHaveLength(0);
+
+    const runtime2 = makeRuntime();
+    await runtime2.rehydrateExecutors();
+
+    // No row to rebuild → no phantom target a dead task.
+    expect(trieOf(runtime2).lookupSubscriptionTargets(topic)).toHaveLength(0);
+    expect(subscriptionRepo.listBySpace(SPACE_ID)).toHaveLength(0);
+  });
 });
