@@ -58,11 +58,17 @@ function hyperneoEnv(name: string): string | undefined {
 /**
  * Parse a positive-integer env override, returning `fallback` for missing or
  * invalid input so guardrails fail closed (default) instead of going unset.
+ *
+ * Validates the COMPLETE value rather than just a numeric prefix: bare
+ * `parseInt` would accept `"1000000oops"` (→ 1000000, silently disabling a
+ * guardrail) and `"1e3"` (→ 1, breaking clients after one subscribe).
  */
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
-  if (raw === undefined || raw === '') return fallback;
+  if (raw === undefined) return fallback;
+  // Require a pure digit string (no prefix, no exponent, no decimals, no sign).
+  if (!/^[0-9]+$/.test(raw.trim())) return fallback;
   const parsed = parseInt(raw, 10);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+  return parsed > 0 ? parsed : fallback;
 }
 
 export function getConfig(overrides?: ConfigOverrides): Config {

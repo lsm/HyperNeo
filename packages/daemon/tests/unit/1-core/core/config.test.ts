@@ -81,6 +81,18 @@ describe('getConfig', () => {
 
     process.env.HYPERNEO_MAX_SUBSCRIPTIONS_PER_CLIENT = '-5';
     expect(getConfig().maxSubscriptionsPerClient).toBe(128);
+
+    // Partial parses must NOT be accepted: a numeric prefix or scientific
+    // notation would otherwise misconfigure the cap (1000000 disables it; 1e3
+    // breaks clients after one subscribe).
+    process.env.HYPERNEO_MAX_SUBSCRIPTIONS_PER_CLIENT = '1000000oops';
+    expect(getConfig().maxSubscriptionsPerClient).toBe(128);
+
+    process.env.HYPERNEO_MAX_SUBSCRIPTIONS_PER_CLIENT = '1e3';
+    expect(getConfig().maxSubscriptionsPerClient).toBe(128);
+
+    process.env.HYPERNEO_MAX_SUBSCRIPTIONS_PER_CLIENT = '12.5';
+    expect(getConfig().maxSubscriptionsPerClient).toBe(128);
   });
 
   test('HYPERNEO_PORT sets the port', () => {
