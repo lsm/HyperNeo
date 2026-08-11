@@ -10,14 +10,37 @@
  *
  * See docs/features/message-delivery-v2.md for the full design.
  *
- * Flag-gated (HYPERNEO_MESSAGE_DELIVERY_V2); ordinary chat is routed first
- * (§12 step 1). Space injectors + diagnostics re-pointing + decommissioning of
- * the phase-1 reconciliation machinery follow in steps 2–4.
+ * Default-on (opt out with `HYPERNEO_MESSAGE_DELIVERY_V2=0`). Ordinary chat,
+ * the Space / long-term-agent / task-agent injectors, and the manual-flush /
+ * turn-end-replay / promote kickoff paths all route through `deliverMessage`;
+ * `reclaimStale` + the session-level orphan reconciler cover crash recovery.
+ * (Phase 3, task #861.)
  */
 
 import type { MessageContent } from '@hyperneo/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import { MESSAGE_DELIVERY } from '../job-queue-constants';
+
+/**
+ * On an SDK-message handling error, publish the terminal idle (draining the
+ * delivery waiters) ONLY when the throwing message ends the turn — the final
+ * `result`. A non-terminal message (e.g. an assistant message whose
+ * `sdk.message` subscriber rejected) leaves the live query still consuming;
+ * draining mid-turn would complete the durable job and release the active-turn
+ * slot while output is still being produced, letting a later prompt admit as
+ * another turn against the same query. The query's own `finally` publishes the
+ * terminal idle when the generator closes. Shared by the Claude and ACP runners'
+ * handleSDKMessage catch blocks. (Codex P1.)
+ */
+export async function drainDeliveryWaitersOnTerminalSDKMessage(
+  stateManager: { setIdle(): Promise<void> },
+  message: SDKMessage
+): Promise<void> {
+  if (message.type === 'result') {
+    await stateManager.setIdle();
+  }
+}
 
 /** Which slot a delivery occupies relative to its session's active turn. */
 export type MessageDeliveryRole = 'turn' | 'steer';
@@ -44,15 +67,14 @@ export type MessageDeliveryPayload = {
 };
 
 /**
- * The env-var gate for the v2 path. While off, ordinary chat keeps using the
- * `message.persisted → startQueryAndEnqueue` flow untouched. Steps 2–4 migrate
- * the remaining origins and then decommission the old path.
+ * The env-var gate for the v2 path. Default ON — durable delivery owns dispatch
+ * for ordinary chat and the Space/long-term-agent injectors. Set
+ * `HYPERNEO_MESSAGE_DELIVERY_V2=0` (or `=false`) to roll back to the legacy
+ * `message.persisted → startQueryAndEnqueue` inline flow.
  */
 export function isMessageDeliveryV2Enabled(): boolean {
-  return (
-    process.env.HYPERNEO_MESSAGE_DELIVERY_V2 === '1' ||
-    process.env.HYPERNEO_MESSAGE_DELIVERY_V2 === 'true'
-  );
+  const v = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+  return v !== '0' && v !== 'false';
 }
 
 /**
@@ -156,6 +178,74 @@ export function deliverMessage(
 export { MESSAGE_DELIVERY };
 
 /**
+ * Minimal db view the orphan reconciler needs: the persisted nonterminal user
+ * messages for a session. Kept as an interface so the reconciler is unit-testable
+ * with a real SDKMessageRepository or a stub. See {@link reconcileStrandedDeliveries}.
+ */
+export interface StrandedDeliveryDb {
+  getMessagesByStatus(sessionId: string, status: 'enqueued'): Array<{ uuid?: string }>;
+}
+
+/**
+ * Orphan reconciler core (task #861 item 4) — recover the one case `job_queue`
+ * cannot see by itself: a persisted user message stuck `enqueued` with NO active
+ * `message_delivery` job (the confirmed #856 "stranded pending in an idle
+ * session" shape). Re-enqueues the SAME canonical UUID via {@link deliverMessage}
+ * — never inserts a second user message or a duplicate payload; the handler
+ * reloads content from storage. Idempotent + safe under concurrent ticks/workers:
+ * it only acts on messages with no active job, and `deliverMessage` dedups via
+ * `getActiveDeliveryRole`. The whole pass runs under the per-session lock
+ * ({@link withSessionLock}) so two concurrent reconciles (e.g. the idle callback
+ * racing the 60s timer) serialize: the first enqueues, the second sees the
+ * active job and skips — never a duplicate turn+steer pair for one message.
+ * Returns the count re-enqueued.
+ *
+ * This is the pure cross-check; {@link AgentSession.reconcileStrandedDeliveries}
+ * wraps it with a processing-state guard + logging + v2 flag check.
+ */
+export async function reconcileStrandedDeliveries(args: {
+  sessionId: string;
+  db: StrandedDeliveryDb;
+  jobQueue: JobQueueRepository;
+  /**
+   * Optional state manager — when present, a re-enqueued TURN sets the queued
+   * marker (setQueuedIfIdle) so the session reports busy until the processor
+   * claims the recovered job; without it, a concurrent `deliveryMode:'defer'`
+   * send would be mis-converted to immediate (a steer into the recovered turn).
+   * Omit in unit tests that don't exercise the queued marker. (Codex review.)
+   */
+  stateManager?: {
+    setQueuedIfIdle(messageId: string): Promise<boolean>;
+  };
+}): Promise<number> {
+  if (!isMessageDeliveryV2Enabled()) return 0;
+  return withSessionLock(args.sessionId, async () => {
+    const active = args.jobQueue.activeDeliveryMessageUuids(args.sessionId);
+    const enqueued = args.db.getMessagesByStatus(args.sessionId, 'enqueued');
+    const stranded: string[] = [];
+    for (const msg of enqueued) {
+      const uuid = msg.uuid;
+      if (typeof uuid === 'string' && uuid.length > 0 && !active.has(uuid)) {
+        stranded.push(uuid);
+      }
+    }
+    for (const uuid of stranded) {
+      const role = deliverMessage(args.jobQueue, args.sessionId, uuid, { origin: 'recovery' });
+      // Set the queued marker inside this lock (no nested lock) when this
+      // re-enqueue wins the turn role — same contract as deliverAndMarkQueued.
+      if (role === 'turn' && args.stateManager) {
+        try {
+          await args.stateManager.setQueuedIfIdle(uuid);
+        } catch {
+          // Non-fatal — the durable job is enqueued; the handler will drive it.
+        }
+      }
+    }
+    return stranded.length;
+  });
+}
+
+/**
  * Narrow an unknown payload to a {@link MessageDeliveryPayload}. The handler
  * validates its own job's payload shape before acting.
  */
@@ -254,6 +344,140 @@ export interface MessageDeliverySession {
 }
 
 /**
+ * Per-(session, messageUuid) consumption waiters. The long-horizon injector
+ * awaits its durable job's SDK consumption (onSent) before confirming the
+ * source record — restoring the legacy "delivered = consumed" semantic that the
+ * v2 fire-and-forget enqueue regressed. The bridge signals here from
+ * {@link MessageDeliverySession.driveDeliveryTurn}/{@link feedDeliverySteer}
+ * when the SDK admits the message. Keyed by BOTH session + UUID so a multi-
+ * target delivery (the same MessageRecord/id to several agents) can't let one
+ * session's consumption signal resolve another session's waiter. (Codex P1.)
+ */
+const deliveryConsumptionWaiters = new Map<string, Set<() => void>>();
+
+const consumptionKey = (sessionId: string, messageUuid: string) => `${sessionId}\0${messageUuid}`;
+
+/**
+ * Register a wait for the durable job's SDK consumption. The `promise` resolves
+ * when {@link signalDeliveryConsumed} fires for this session + UUID (or never,
+ * if the job never reaches the SDK — bound the wait with a timeout and call
+ * `cancel()` to avoid leaking the entry).
+ */
+export function waitForDeliveryConsumption(
+  sessionId: string,
+  messageUuid: string
+): {
+  promise: Promise<void>;
+  cancel: () => void;
+} {
+  const key = consumptionKey(sessionId, messageUuid);
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  let waiters = deliveryConsumptionWaiters.get(key);
+  if (!waiters) {
+    waiters = new Set();
+    deliveryConsumptionWaiters.set(key, waiters);
+  }
+  waiters.add(resolve);
+  return {
+    promise,
+    cancel: () => {
+      const set = deliveryConsumptionWaiters.get(key);
+      if (set) {
+        set.delete(resolve);
+        if (set.size === 0) deliveryConsumptionWaiters.delete(key);
+      }
+    },
+  };
+}
+
+/**
+ * Signal that the durable job for `messageUuid` was consumed by the SDK (onSent)
+ * in `sessionId`. Resolves all waiters for that (session, UUID) and clears the
+ * entry. No-op if none are waiting (e.g. consumption before any caller
+ * registered, or a delivery with no long-horizon source awaiting). Session-
+ * scoped so a multi-target delivery can't cross-resolve. (Codex P1.)
+ */
+export function signalDeliveryConsumed(sessionId: string, messageUuid: string): void {
+  const waiters = deliveryConsumptionWaiters.get(consumptionKey(sessionId, messageUuid));
+  if (!waiters) return;
+  deliveryConsumptionWaiters.delete(consumptionKey(sessionId, messageUuid));
+  for (const resolve of waiters) resolve();
+}
+
+/**
+ * ACP's consume boundary is *acceptance* (markMessageAccepted), which can lag
+ * submission by minutes while the ACP process runs. The default 30s
+ * queue-admission consume-wait would terminalize a fresh ACP delivery as failed
+ * mid-run (→ a direct caller retries with a new UUID → the work runs twice), so
+ * ACP-targeted awaitDeliveryConsumption callers pass this acceptance-sized
+ * timeout. (Codex review, P1.)
+ */
+export const ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS = 12 * 60 * 1000;
+
+/** Acceptance-sized consume timeout for ACP sessions; undefined → default. */
+export function deliveryConsumptionTimeoutMs(provider?: string): number | undefined {
+  return provider === 'acp' ? ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS : undefined;
+}
+
+/**
+ * Await a durable delivery job's SDK consumption (onSent) after enqueueing it,
+ * restoring the legacy "delivered = consumed" semantic. `deliver` performs the
+ * enqueue (e.g. {@link deliverAndMarkQueued}); the await races the consumption
+ * signal against a timeout (HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS, default
+ * 30s, matching the legacy MessageQueue timeout) and rejects on timeout so a
+ * caller doesn't acknowledge a delivery that may yet dead-letter.
+ *
+ * `timeoutMs` overrides the default — needed for ACP targets, whose consume
+ * boundary is *acceptance* (signalDeliveryConsumed fires from
+ * `markMessageAccepted`, not onSent), and an ACP request can run for minutes
+ * before accepting. The 30s queue-admission default would fire while the ACP
+ * process is still executing → a fresh row is terminalized failed → a direct
+ * caller retries with a new UUID and the work runs twice. Callers that may
+ * target an ACP session pass an acceptance-sized timeout. (Codex review, P1.)
+ *
+ * `terminalizeOnTimeout` is invoked on timeout (or if `deliver` throws) ONLY for
+ * paths that created a FRESH job this call (no prior row). It terminalizes the
+ * persisted row so the durable job isn't later consumed alongside a retry that
+ * mints a fresh UUID (direct send_message paths carry no stable id) — preventing
+ * a duplicate. OMIT it for existing-row paths (stable id, e.g. the inbox flush)
+ * so the job can self-heal via a retry that re-registers the wait. (Codex P1.)
+ */
+export async function awaitDeliveryConsumption(args: {
+  sessionId: string;
+  messageUuid: string;
+  deliver: () => Promise<void>;
+  terminalizeOnTimeout?: () => void;
+  /** Override the default 30s consume-wait timeout (e.g. ACP acceptance). */
+  timeoutMs?: number;
+}): Promise<void> {
+  const consumed = waitForDeliveryConsumption(args.sessionId, args.messageUuid);
+  let consumptionTimeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await args.deliver();
+    const consumptionTimeoutMs =
+      args.timeoutMs ?? (Number(process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS) || 30_000);
+    await Promise.race([
+      consumed.promise,
+      new Promise<void>((_, reject) => {
+        consumptionTimeout = setTimeout(
+          () => reject(new Error('delivery not consumed within timeout')),
+          consumptionTimeoutMs
+        );
+      }),
+    ]);
+  } catch (err) {
+    args.terminalizeOnTimeout?.();
+    throw err;
+  } finally {
+    if (consumptionTimeout) clearTimeout(consumptionTimeout);
+    consumed.cancel();
+  }
+}
+
+/**
  * In-process per-session mutex. Guards ONLY the brief turn start/stop + steer
  * state-check windows — NOT the long turn await. The feed itself is
  * concurrent-safe (§8). Holding this lock across a full SDK turn would block
@@ -277,4 +501,54 @@ export async function withSessionLock<T>(sessionId: string, fn: () => Promise<T>
     release();
     if (sessionLocks.get(sessionId) === next) sessionLocks.delete(sessionId);
   }
+}
+
+/**
+ * Enqueue a durable delivery job and, when it inserts as a turn, mark the
+ * session queued — as ONE per-session critical section (under
+ * {@link withSessionLock}). Role arbitration and queued ownership must be atomic
+ * so a concurrently-injected steer can never win the queued marker that belongs
+ * to the turn. Used by the migrated Space (`spaceAgentInjector`,
+ * `injectMessageIntoSession`) and long-term-agent injectors; the caller persists
+ * the user message BEFORE calling this (the handler reloads content by UUID).
+ * (`AgentSession.deliverChatMessage` inlines the same deliver + mark-queued
+ * sequence rather than calling this — it needs the role for its cooldown
+ * supersession, so it doesn't fit the shared shape.)
+ *
+ * `stateManager` is optional: when absent (e.g. a long-term-agent session view
+ * that doesn't expose it) the queued marker is skipped instead of crashing; on a
+ * real AgentSession it is present and the marker is set. `onEnqueueFailure`
+ * (if provided) terminalizes the persisted row when `deliverMessage` throws.
+ */
+export async function deliverAndMarkQueued(args: {
+  jobQueue: JobQueueRepository;
+  stateManager?: {
+    setQueuedIfIdle(messageId: string): Promise<boolean>;
+    getState(): { status: string };
+  };
+  sessionId: string;
+  messageUuid: string;
+  origin: MessageDeliveryOrigin;
+  onEnqueueFailure?: () => void;
+}): Promise<void> {
+  await withSessionLock(args.sessionId, async () => {
+    let role: MessageDeliveryRole;
+    try {
+      role = deliverMessage(args.jobQueue, args.sessionId, args.messageUuid, {
+        origin: args.origin,
+        parentToolUseId: null,
+      });
+    } catch (err) {
+      args.onEnqueueFailure?.();
+      throw err;
+    }
+    if (role === 'turn' && args.stateManager) {
+      try {
+        await args.stateManager.setQueuedIfIdle(args.messageUuid);
+      } catch {
+        // Non-fatal — the durable job is already enqueued; the handler will
+        // drive the turn. Mirrors deliverChatMessage's warn-and-continue.
+      }
+    }
+  });
 }

@@ -477,6 +477,23 @@ export class JobQueueRepository {
     return defaults;
   }
 
+  /**
+   * Count `processing` rows in a lane whose lease (`started_at`) is past the
+   * stale-reclamation threshold — i.e. reclaimable (their handler stopped
+   * heartbeating). Used by the messageDelivery.diagnostics RPC to distinguish
+   * genuinely-stale deliveries from healthy in-flight turns (which `countByStatus`
+   * groups together). Indexed by `idx_job_queue_status`. (task #861, review.)
+   */
+  countStaleProcessing(queue: string, staleBeforeMs: number): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS c FROM job_queue
+           WHERE queue = ? AND status = 'processing' AND started_at IS NOT NULL AND started_at < ?`
+      )
+      .get(queue, staleBeforeMs) as { c: number } | undefined;
+    return row?.c ?? 0;
+  }
+
   cleanup(beforeMs: number): number {
     // 'failed' is included defensively: the processor never writes it (retries go back to
     // 'pending' and exhausted retries become 'dead'), but the type contract allows it and

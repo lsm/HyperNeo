@@ -39,6 +39,7 @@ import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositor
 import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository';
 import type { SpaceAgentInboxRepository } from '../../../storage/repositories/space-agent-inbox-repository';
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
+import { SpaceWorkflowEventSubscriptionRepository } from '../../../storage/repositories/space-workflow-event-subscription-repository';
 import { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { WorkflowArtifactProfile } from './artifact-profile';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
@@ -49,6 +50,12 @@ import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-l
 import type { TaskAgentManager } from './task-agent-manager';
 import type { SessionManager } from '../../session-manager';
 import type { AgentSession } from '../../agent/agent-session';
+import {
+  awaitDeliveryConsumption,
+  deliverAndMarkQueued,
+  deliveryConsumptionTimeoutMs,
+  isMessageDeliveryV2Enabled,
+} from '../../agent/message-delivery';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
 import { SpaceRuntime } from './space-runtime';
 import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine';
@@ -116,6 +123,11 @@ export interface SpaceRuntimeServiceConfig {
   taskRepo: SpaceTaskRepository;
   /** Node execution repository for workflow-internal execution state */
   nodeExecutionRepo?: NodeExecutionRepository;
+  /**
+   * Durable workflow-run event subscription store. Source of truth for the
+   * runtime's in-memory topic trie. Auto-created from `db` when not supplied.
+   */
+  workflowEventSubscriptionRepo?: SpaceWorkflowEventSubscriptionRepository;
   reactiveDb?: ReactiveDatabase;
   /**
    * Optional Task Agent Manager to wire into the underlying SpaceRuntime.
@@ -237,6 +249,7 @@ export class SpaceRuntimeService {
   private taskAgentManager: TaskAgentManager | null = null;
   /** Resolved nodeExecutionRepo — created from db if not provided in config. */
   private readonly nodeExecutionRepo: NodeExecutionRepository;
+  private readonly workflowEventSubscriptionRepo: SpaceWorkflowEventSubscriptionRepository;
   private readonly actorRegistry: SpaceActorRegistryAdapter | null;
   /** Audit log repository for MCP write operations. */
   private readonly auditLogRepo: McpAuditLogRepository;
@@ -286,6 +299,13 @@ export class SpaceRuntimeService {
     // Ensure nodeExecutionRepo is available — create from db if not provided.
     this.nodeExecutionRepo =
       this.config.nodeExecutionRepo ?? new NodeExecutionRepository(this.config.db);
+    // Durable workflow event subscription store — single shared instance for
+    // the runtime's topic trie to rebuild from on rehydrate. Created here (and
+    // passed into the runtime) so the service and runtime share one repo; the
+    // runtime has its own auto-create fallback only for standalone construction.
+    this.workflowEventSubscriptionRepo =
+      this.config.workflowEventSubscriptionRepo ??
+      new SpaceWorkflowEventSubscriptionRepository(this.config.db);
     this.actorRegistry = config.actorRegistryRepos
       ? new SpaceActorRegistryAdapter(config.actorRegistryRepos)
       : null;
@@ -300,6 +320,7 @@ export class SpaceRuntimeService {
     this.runtime = new SpaceRuntime({
       ...config,
       nodeExecutionRepo: this.nodeExecutionRepo,
+      workflowEventSubscriptionRepo: this.workflowEventSubscriptionRepo,
       queueHealthMetrics: this.queueHealthMetrics,
       selectWorkflowWithLlm: config.selectWorkflowWithLlm ?? selectWorkflowWithLlmDefault,
       internalEventBus: config.internalEventBus,
@@ -470,7 +491,15 @@ export class SpaceRuntimeService {
   ): Promise<string | null> {
     const session = await this.ensureLongTermAgentSession(actor);
     if (!session) return null;
-    await this.injectLongTermAgentMessage(session, message.body);
+    // Pass the message's stable identifier so a consumption-timeout retry
+    // (injectLongTermAgentMessage rejects but the durable job keeps running)
+    // reuses the same UUID — the idempotent persist + getActiveDeliveryRole guard
+    // then prevent a second durable job + duplicated agent actions. (Codex P1.)
+    await this.injectLongTermAgentMessage(
+      session,
+      message.body,
+      message.idempotencyKey ?? message.messageId
+    );
     return session.getSessionData().id;
   }
 
@@ -565,6 +594,11 @@ export class SpaceRuntimeService {
       getSessionData(): Session;
       ensureQueryStarted(): Promise<void>;
       messageQueue: { enqueueWithId: (id: string, message: string) => Promise<void> };
+      /** Present on real AgentSessions; marked optional so test mocks need not stub it. */
+      stateManager?: {
+        setQueuedIfIdle(messageId: string): Promise<boolean>;
+        getState(): { status: string };
+      };
     },
     message: string,
     messageId?: string
@@ -582,9 +616,76 @@ export class SpaceRuntimeService {
         content: [{ type: 'text' as const, text: message }],
       },
     };
-    await session.ensureQueryStarted();
-    this.config.reactiveDb?.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
-    await session.messageQueue.enqueueWithId(id, message);
+    const reactiveDb = this.config.reactiveDb?.db;
+    if (!reactiveDb) {
+      // reactiveDb is optional on the config but always present in production
+      // wiring. Under v2 the handler reloads content by UUID, so without it the
+      // message can be neither persisted nor delivered — fail loudly rather than
+      // silently dropping it.
+      throw new Error(
+        `injectLongTermAgentMessage: reactiveDb unavailable; cannot deliver to ${sessionId}`
+      );
+    }
+    if (isMessageDeliveryV2Enabled()) {
+      // Idempotent persist: external-event delivery / inbox flush can be retried
+      // with the same idempotency key after a crash between job insertion and
+      // source bookkeeping. sdk_uuid is indexed but not unique, so an
+      // unconditional save would insert a duplicate row that lingers forever.
+      // Distinguish prior outcomes: a `consumed` row genuinely ran (don't
+      // re-drive); a `failed` row means a prior attempt's enqueue threw and
+      // terminalized it — reopen it so this retry can deliver; an `enqueued`
+      // row just needs its job (re-)enqueued.
+      const sdkMessageRepo = reactiveDb.getSDKMessageRepo();
+      const existing = sdkMessageRepo.getDeliveryContent(sessionId, id);
+      const fresh = !existing;
+      if (!existing) {
+        reactiveDb.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+      } else if (existing.sendStatus === 'consumed') {
+        return id; // genuinely delivered on a prior attempt — don't re-drive
+      } else if (existing.sendStatus === 'failed') {
+        // Prior enqueue threw and terminalized the row; the handler skips
+        // `failed`, so reopen it before re-enqueueing.
+        sdkMessageRepo.reopenDeliveryByUuid(sessionId, id);
+      }
+      // else (enqueued/deferred/submitted): row exists; just (re-)enqueue —
+      // deliverMessage dedups the active job via getActiveDeliveryRole. Enqueue
+      // + mark queued as one per-session critical section (deliverAndMarkQueued).
+      // The save→enqueue window here is small (same async call) and any
+      // saved-but-not-enqueued row is recovered by the session-level orphan
+      // reconciler (task #861 item 4); the transactional outbox is applied at
+      // the ordinary-chat chokepoint where the gap is dominant.
+      //
+      // Await SDK consumption (onSent) before returning — callers
+      // (flushLongTermAgentInbox / deliverLongHorizonExternalEvent) thus confirm
+      // the source record only after genuine consumption, not bare enqueue. On
+      // timeout, terminalize ONLY a fresh row (the inbox flush carries a stable
+      // id, so its retry reopens + self-heals; terminalizing would kill a legit
+      // in-flight job). (Codex P1.)
+      await awaitDeliveryConsumption({
+        sessionId,
+        messageUuid: id,
+        // ACP's consume boundary is acceptance (minutes) — size the wait so a
+        // fresh ACP delivery isn't terminalized mid-run. (Codex P1.)
+        timeoutMs: deliveryConsumptionTimeoutMs(session.getSessionData?.().config?.provider),
+        deliver: () =>
+          deliverAndMarkQueued({
+            jobQueue: reactiveDb.getJobQueueRepo(),
+            stateManager: session.stateManager,
+            sessionId,
+            messageUuid: id,
+            origin: 'long_term_agent',
+            onEnqueueFailure: () => sdkMessageRepo.markDeliveryFailedByUuid(sessionId, id),
+          }),
+        ...(fresh
+          ? { terminalizeOnTimeout: () => sdkMessageRepo.markDeliveryFailedByUuid(sessionId, id) }
+          : {}),
+      });
+    } else {
+      // Legacy inline path (HYPERNEO_MESSAGE_DELIVERY_V2=0 opt-out).
+      await session.ensureQueryStarted();
+      reactiveDb.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+      await session.messageQueue.enqueueWithId(id, message);
+    }
     return id;
   }
 
@@ -2187,7 +2288,7 @@ export class SpaceRuntimeService {
     const sessionManager = this.config.sessionManager;
     if (!sessionManager) return;
     const session = await sessionManager.getSessionAsync(longTermAgentSessionId(spaceId, agentId));
-    if (!session || session.getSessionData().config.provider === undefined) return;
+    if (!session || session.getSessionData?.().config?.provider === undefined) return;
     await session.updateConfig({ provider: undefined });
   }
 
@@ -2349,7 +2450,7 @@ export class SpaceRuntimeService {
   private allWorkflowGatesOpen(runId: string): boolean {
     const run = this.config.workflowRunRepo.getRun(runId);
     if (!run) return false;
-    const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+    const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
     const gates = workflow?.gates ?? [];
     if (gates.length === 0) return true;
     return gates.every(
@@ -2392,7 +2493,7 @@ export class SpaceRuntimeService {
     const { runId, event } = payload;
     const run = this.config.workflowRunRepo.getRun(runId);
     if (!run || run.status !== 'blocked') return false;
-    const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+    const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
     if (!workflow) return false;
 
     let anyOpened = false;

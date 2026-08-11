@@ -97,7 +97,11 @@ describe('MessagePersistence', () => {
     );
   });
 
-  it('persists idle immediate as enqueued and waits for queue insertion', async () => {
+  // v2 is the default: dispatch is deferred to the durable message_delivery
+  // handler (the `message.persisted` subscriber routes to deliverChatMessage).
+  // persist must persist the row and publish the event, but must NOT drive the
+  // query inline.
+  it('persists idle immediate as enqueued and defers dispatch to the durable handler', async () => {
     await persistence.persist({
       sessionId: 'test-session-id',
       messageId: 'msg-1',
@@ -111,7 +115,7 @@ describe('MessagePersistence', () => {
       undefined
     );
     expect(messageHubEventSpy).not.toHaveBeenCalled();
-    expect(mockAgentSession.startQueryAndEnqueue).toHaveBeenCalledWith('msg-1', 'hello idle');
+    expect(mockAgentSession.startQueryAndEnqueue).not.toHaveBeenCalled();
     expect(internalEventBusPublishSpy).toHaveBeenCalledWith('messages.statusChanged', {
       sessionId: 'test-session-id',
       messageIds: ['db-msg-1'],
@@ -124,12 +128,12 @@ describe('MessagePersistence', () => {
         messageId: 'msg-1',
         sendStatus: 'enqueued',
         deliveryMode: 'immediate',
-        skipQueryStart: true,
+        skipQueryStart: false,
       })
     );
   });
 
-  it('persists busy immediate as enqueued and does not immediately echo', async () => {
+  it('persists busy immediate as enqueued and defers dispatch', async () => {
     processingStateSpy.mockReturnValue({ status: 'processing' });
 
     await persistence.persist({
@@ -144,15 +148,14 @@ describe('MessagePersistence', () => {
       'enqueued',
       undefined
     );
-    expect(messageHubEventSpy).not.toHaveBeenCalled();
-    expect(mockAgentSession.startQueryAndEnqueue).toHaveBeenCalledWith('msg-2', 'hello busy');
+    expect(mockAgentSession.startQueryAndEnqueue).not.toHaveBeenCalled();
     expect(internalEventBusPublishSpy).toHaveBeenCalledWith(
       'message.persisted',
       expect.objectContaining({
         messageId: 'msg-2',
         sendStatus: 'enqueued',
         deliveryMode: 'immediate',
-        skipQueryStart: true,
+        skipQueryStart: false,
       })
     );
   });
@@ -180,7 +183,7 @@ describe('MessagePersistence', () => {
     expect(mockAgentSession.startQueryAndEnqueue).not.toHaveBeenCalled();
   });
 
-  it('falls back idle defer to enqueued immediate and dispatches', async () => {
+  it('falls back idle defer to enqueued immediate and defers dispatch', async () => {
     processingStateSpy.mockReturnValue({ status: 'idle' });
 
     await persistence.persist({
@@ -196,17 +199,14 @@ describe('MessagePersistence', () => {
       'enqueued',
       undefined
     );
-    expect(mockAgentSession.startQueryAndEnqueue).toHaveBeenCalledWith(
-      'msg-4',
-      'next turn while idle'
-    );
+    expect(mockAgentSession.startQueryAndEnqueue).not.toHaveBeenCalled();
     expect(internalEventBusPublishSpy).toHaveBeenCalledWith(
       'message.persisted',
       expect.objectContaining({
         messageId: 'msg-4',
         sendStatus: 'enqueued',
         deliveryMode: 'immediate',
-        skipQueryStart: true,
+        skipQueryStart: false,
       })
     );
   });
@@ -227,46 +227,51 @@ describe('MessagePersistence', () => {
     expect(mockAgentSession.startQueryAndEnqueue).not.toHaveBeenCalled();
   });
 
-  it('publishes v2 persisted before queued ownership is assigned by turn insertion', async () => {
+  // Opt-out rollback path: HYPERNEO_MESSAGE_DELIVERY_V2=0 restores the legacy
+  // inline dispatch (startQueryAndEnqueue) so a regression can be rolled back
+  // without a redeploy.
+  it('opt-out (HYPERNEO_MESSAGE_DELIVERY_V2=0) dispatches inline via startQueryAndEnqueue', async () => {
     const previous = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
-    process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '1';
+    process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '0';
 
     try {
       await persistence.persist({
         sessionId: 'test-session-id',
-        messageId: 'msg-v2',
-        content: 'durable turn',
+        messageId: 'msg-legacy',
+        content: 'inline dispatch',
       });
     } finally {
       if (previous === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
       else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previous;
     }
 
-    expect(mockAgentSession.stateManager.setQueuedIfIdle).not.toHaveBeenCalled();
-    expect(mockAgentSession.startQueryAndEnqueue).not.toHaveBeenCalled();
-    expect(mockInternalEventBus.publish).toHaveBeenCalledWith(
+    expect(mockAgentSession.startQueryAndEnqueue).toHaveBeenCalledWith(
+      'msg-legacy',
+      'inline dispatch'
+    );
+    expect(internalEventBusPublishSpy).toHaveBeenCalledWith(
       'message.persisted',
-      expect.objectContaining({ messageId: 'msg-v2' })
+      expect.objectContaining({
+        messageId: 'msg-legacy',
+        sendStatus: 'enqueued',
+        deliveryMode: 'immediate',
+        skipQueryStart: true,
+      })
     );
   });
 
-  it('does not downgrade a busy v2 session from processing to queued', async () => {
-    const previous = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
-    process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '1';
+  it('does not downgrade a busy session from processing to queued', async () => {
     processingStateSpy.mockReturnValue({ status: 'processing' });
 
-    try {
-      await persistence.persist({
-        sessionId: 'test-session-id',
-        messageId: 'msg-v2-steer',
-        content: 'durable steer',
-      });
-    } finally {
-      if (previous === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
-      else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previous;
-    }
+    await persistence.persist({
+      sessionId: 'test-session-id',
+      messageId: 'msg-busy',
+      content: 'durable steer',
+    });
 
+    // persist defers to the durable handler; it must not touch queued state itself.
     expect(mockAgentSession.stateManager.setQueuedIfIdle).not.toHaveBeenCalled();
+    expect(mockAgentSession.startQueryAndEnqueue).not.toHaveBeenCalled();
   });
 });
 

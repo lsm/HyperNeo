@@ -14,6 +14,7 @@
 import type { Database as BunDatabase } from '../../../src/storage/sqlite-compat';
 import { createEvolutionTables } from '../../../src/storage/schema/evolution';
 import { createLongHorizonAgentTables } from '../../../src/storage/schema/long-horizon-agents';
+import { createWorkflowEventSubscriptionTables } from '../../../src/storage/schema/workflow-event-subscriptions';
 
 export function createSpaceTables(db: BunDatabase): void {
   db.exec('PRAGMA foreign_keys = ON');
@@ -503,6 +504,7 @@ export function createSpaceTables(db: BunDatabase): void {
 
   createEvolutionTables(db);
   createLongHorizonAgentTables(db);
+  createWorkflowEventSubscriptionTables(db);
 
   // Minimal `sessions` table — used by tests that need to seed
   // `session_context.taskId` so the SDKMessageRepository can derive the

@@ -18,6 +18,7 @@
 
 import type { UUID } from 'crypto';
 import type { QueryLike } from './query-like';
+import { signalDeliveryConsumed } from './message-delivery';
 import type { ContextInfo, MessageHub, Session } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
@@ -490,7 +491,26 @@ export class SDKMessageHandler {
     // ACP acceptance is the provider-specific consume boundary. Reuse the same
     // projection path as a normal SDK yield so status, timestamp, transcript
     // delta, and server-side events stay consistent.
-    this.handleMessageYielded(messageId, Date.now());
+    try {
+      this.handleMessageYielded(messageId, Date.now());
+    } catch {
+      // The consumed-status transition commits BEFORE the fallible post-commit
+      // search-index work; a throw there must NOT prevent the delivery-waiter
+      // signal below — else LTA/task-agent callers time out despite a durably
+      // consumed prompt + a fresh caller retries the work twice. (Codex review.)
+    }
+    // Signal delivery waiters (LTA / task-agent consumption-await) ONLY when the
+    // acceptance actually took — the row is now `consumed`. If a racing
+    // interrupt/error already flipped it `failed` (markACPDeliveryFailed),
+    // handleMessageYielded is a no-op and we must NOT signal.
+    const consumed = this.ctx.db.getMessageByStatusAndUuid(
+      this.ctx.session.id,
+      'consumed',
+      messageId
+    );
+    if (consumed) {
+      signalDeliveryConsumed(this.ctx.session.id, messageId);
+    }
   }
 
   /**

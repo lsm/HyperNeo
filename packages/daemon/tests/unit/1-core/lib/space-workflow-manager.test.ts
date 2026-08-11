@@ -10,6 +10,12 @@ import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
 import { createSpaceAgentSchema, insertSpace } from '../../helpers/space-agent-schema';
+import { SpaceWorkflowDefinitionVersionRepository } from '../../../../src/storage/repositories/space-workflow-definition-version-repository';
+import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
+import {
+  computeDefinitionVersion,
+  stableVersionTimestamp,
+} from '../../../../src/lib/space/workflows/definition-version';
 
 describe('SpaceWorkflowManager', () => {
   let db: Database;
@@ -1145,6 +1151,339 @@ describe('SpaceWorkflowManager', () => {
       });
       expect(updated).not.toBeNull();
       expect(updated!.gates![0].features).toEqual({ codex_review_bot: true });
+    });
+  });
+
+  describe('getWorkflowForRun (Phase 1 read cutover)', () => {
+    const VERSIONS_DDL = `
+      CREATE TABLE space_workflow_definition_versions (
+        workflow_id TEXT NOT NULL,
+        version_hash TEXT NOT NULL,
+        space_id TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        source TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (workflow_id, version_hash),
+        FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+      )`;
+    let versionRepo: SpaceWorkflowDefinitionVersionRepository;
+    let runRepo: SpaceWorkflowRunRepository;
+    const RUNS_DDL = `
+      CREATE TABLE space_workflow_runs (
+        id TEXT PRIMARY KEY,
+        space_id TEXT NOT NULL,
+        workflow_id TEXT NOT NULL,
+        definition_version TEXT,
+        title TEXT NOT NULL,
+        description TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        failure_reason TEXT,
+        created_at INTEGER NOT NULL,
+        started_at INTEGER,
+        updated_at INTEGER NOT NULL,
+        completed_at INTEGER
+      )`;
+    const TASKS_DDL = `
+      CREATE TABLE space_tasks (
+        id TEXT PRIMARY KEY,
+        space_id TEXT NOT NULL,
+        task_number INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        workflow_run_id TEXT,
+        archived_at INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )`;
+
+    beforeEach(() => {
+      db.exec(VERSIONS_DDL);
+      db.exec(RUNS_DDL);
+      db.exec(TASKS_DDL);
+      versionRepo = new SpaceWorkflowDefinitionVersionRepository(db as any);
+      runRepo = new SpaceWorkflowRunRepository(db as any);
+    });
+
+    /** Append a version row for the current head and return its hash. */
+    function pinHead(workflowId: string): string {
+      const raw = repo.getWorkflow(workflowId)!;
+      const { versionHash, payload } = computeDefinitionVersion(raw);
+      versionRepo.appendVersion({
+        workflowId,
+        spaceId: 'space-1',
+        versionHash,
+        payload,
+        source: 'run_create',
+        createdAt: Date.now(),
+      });
+      return versionHash;
+    }
+
+    it('falls back to the live head when the run has no pin', () => {
+      const wf = manager.createWorkflow({
+        spaceId: 'space-1',
+        name: 'W',
+        nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+        completionAutonomyLevel: 3,
+      });
+      const resolved = manager.getWorkflowForRun({ workflowId: wf.id, definitionVersion: null });
+      expect(resolved).toEqual(manager.getWorkflow(wf.id));
+    });
+
+    it('resolves a pinned run through its immutable version, ignoring later head edits', () => {
+      const wf = manager.createWorkflow({
+        spaceId: 'space-1',
+        name: 'Original',
+        nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+        completionAutonomyLevel: 3,
+      });
+      const pin = pinHead(wf.id);
+
+      // Edit the mutable head AFTER the run was pinned.
+      manager.updateWorkflow(wf.id, { name: 'Edited' });
+
+      const resolved = manager.getWorkflowForRun({ workflowId: wf.id, definitionVersion: pin });
+      expect(resolved!.name).toBe('Original'); // pinned version wins
+      expect(manager.getWorkflow(wf.id)!.name).toBe('Edited'); // head moved on
+    });
+
+    it('falls back to the live head when the pinned version row is absent', () => {
+      const wf = manager.createWorkflow({
+        spaceId: 'space-1',
+        name: 'W',
+        nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+        completionAutonomyLevel: 3,
+      });
+      const resolved = manager.getWorkflowForRun({
+        workflowId: wf.id,
+        definitionVersion: 'version-row-that-does-not-exist',
+      });
+      expect(resolved).toEqual(manager.getWorkflow(wf.id));
+    });
+
+    it('rehydrates a pinned version through sanitize, behaviorally equal to the live path', () => {
+      const wf = manager.createWorkflow({
+        spaceId: 'space-1',
+        name: 'W',
+        nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+        completionAutonomyLevel: 4,
+      });
+      const pin = pinHead(wf.id);
+      const resolved = manager.getWorkflowForRun({ workflowId: wf.id, definitionVersion: pin })!;
+      const live = manager.getWorkflow(wf.id)!;
+
+      // Behavioral fields match. layout/templateHash are absent on the pinned view
+      // (non-behavioral, stripped from the version payload) and timestamps are stable
+      // (the version row's created_at) rather than the head's volatile values.
+      expect(resolved.nodes).toEqual(live.nodes);
+      expect(resolved.channels ?? []).toEqual(live.channels ?? []);
+      expect(resolved.gates ?? []).toEqual(live.gates ?? []);
+      expect(resolved.completionAutonomyLevel).toBe(live.completionAutonomyLevel);
+      expect(resolved.startNodeId).toBe(live.startNodeId);
+      // updatedAt is derived from the immutable version hash, so the gate-open cache
+      // fingerprint is version-stable for the run's lifetime and does not churn on head edits.
+      expect(resolved.updatedAt).toBe(stableVersionTimestamp(pin));
+    });
+
+    it('falls back to the live head when the pinned payload cannot be parsed', () => {
+      const wf = manager.createWorkflow({
+        spaceId: 'space-1',
+        name: 'W',
+        nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+        completionAutonomyLevel: 3,
+      });
+      // A damaged version row: hash present, payload corrupt.
+      versionRepo.appendVersion({
+        workflowId: wf.id,
+        spaceId: 'space-1',
+        versionHash: 'corrupt-payload',
+        payload: '{not valid json',
+        source: 'run_create',
+        createdAt: Date.now(),
+      });
+      const resolved = manager.getWorkflowForRun({
+        workflowId: wf.id,
+        definitionVersion: 'corrupt-payload',
+      });
+      // Parse failure must not break the run — it resolves to the live head.
+      expect(resolved).toEqual(manager.getWorkflow(wf.id));
+    });
+
+    it('falls back to the live head when the pinned payload has an invalid shape', () => {
+      const wf = manager.createWorkflow({
+        spaceId: 'space-1',
+        name: 'W',
+        nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+        completionAutonomyLevel: 3,
+      });
+      // Valid JSON but no .nodes array — would crash sanitizePostApprovalForLoad if unchecked.
+      versionRepo.appendVersion({
+        workflowId: wf.id,
+        spaceId: 'space-1',
+        versionHash: 'corrupt-shape',
+        payload: '{}',
+        source: 'run_create',
+        createdAt: Date.now(),
+      });
+      const resolved = manager.getWorkflowForRun({
+        workflowId: wf.id,
+        definitionVersion: 'corrupt-shape',
+      });
+      expect(resolved).toEqual(manager.getWorkflow(wf.id));
+    });
+
+    it('falls back to the live head when the payload hash does not match the version hash', () => {
+      const wf = manager.createWorkflow({
+        spaceId: 'space-1',
+        name: 'W',
+        nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+        completionAutonomyLevel: 3,
+      });
+      // Valid shape but the versionHash doesn't match the payload's SHA-256.
+      const raw = repo.getWorkflow(wf.id)!;
+      const { payload } = computeDefinitionVersion(raw);
+      versionRepo.appendVersion({
+        workflowId: wf.id,
+        spaceId: 'space-1',
+        versionHash: 'wrong-hash',
+        payload,
+        source: 'run_create',
+        createdAt: Date.now(),
+      });
+      const resolved = manager.getWorkflowForRun({
+        workflowId: wf.id,
+        definitionVersion: 'wrong-hash',
+      });
+      expect(resolved).toEqual(manager.getWorkflow(wf.id));
+    });
+
+    it('backfill pins a legacy run to its head, and the pin resolves behaviorally equal to the head', () => {
+      const wf = manager.createWorkflow({
+        spaceId: 'space-1',
+        name: 'Backfill Target',
+        nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+        completionAutonomyLevel: 3,
+      });
+      // Legacy run with no creation-time pin.
+      const run = runRepo.createRun({ spaceId: 'space-1', workflowId: wf.id, title: 'Legacy' });
+      // Backfill only considers runs with a non-archived canonical task.
+      const now = Date.now();
+      db.prepare(
+        `INSERT INTO space_tasks (id, space_id, task_number, title, status, workflow_run_id, created_at, updated_at)
+         VALUES (?, 'space-1', ?, 'Legacy', 'open', ?, ?, ?)`
+      ).run(`task-${run.id}`, run.id, run.id, now, now);
+      expect(run.definitionVersion).toBeNull();
+
+      // Startup backfill: pin to the current head (the raw repo read, as wired in rpc-handlers).
+      const count = runRepo.backfillDefinitionPins((id) => repo.getWorkflow(id));
+      expect(count).toBe(1);
+
+      const pinned = runRepo.getRun(run.id)!;
+      expect(pinned.definitionVersion).not.toBeNull();
+      // The pin equals the head's version (content-neutral cutover).
+      expect(pinned.definitionVersion).toBe(
+        computeDefinitionVersion(repo.getWorkflow(wf.id)!).versionHash
+      );
+
+      // Resolving through the pin is behaviorally equal to reading the live head.
+      const resolved = manager.getWorkflowForRun(pinned)!;
+      const head = manager.getWorkflow(wf.id)!;
+      expect(resolved.nodes).toEqual(head.nodes);
+      expect(resolved.name).toBe(head.name);
+      expect(resolved.completionAutonomyLevel).toBe(head.completionAutonomyLevel);
+      // updatedAt is version-derived, so the gate-open cache fingerprint is version-stable.
+      expect(resolved.updatedAt).toBe(stableVersionTimestamp(pinned.definitionVersion!));
+    });
+
+    it('rehydrated updatedAt tracks the live head, independent of a reused version row', () => {
+      // PR-review #11/cutover: appendVersion is INSERT OR IGNORE, so a reused hash keeps its
+      // original created_at. The rehydrated updatedAt must depend only on the version hash,
+      // not the row's created_at, so initial and recovered reads fingerprint identically.
+      const wf = manager.createWorkflow({
+        spaceId: 'space-1',
+        name: 'W',
+        nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+        completionAutonomyLevel: 3,
+      });
+      const raw = repo.getWorkflow(wf.id)!;
+      const { versionHash, payload } = computeDefinitionVersion(raw);
+      // Append the version row with an ARBITRARY created_at (simulating a pre-cutover /
+      // reused row whose created_at is not the current head's updatedAt).
+      versionRepo.appendVersion({
+        workflowId: wf.id,
+        spaceId: 'space-1',
+        versionHash,
+        payload,
+        source: 'create',
+        createdAt: 1,
+      });
+      const resolved = manager.getWorkflowForRun({
+        workflowId: wf.id,
+        definitionVersion: versionHash,
+      })!;
+      // updatedAt depends only on the version hash — NOT the stale row created_at (1).
+      expect(resolved.updatedAt).toBe(stableVersionTimestamp(versionHash));
+      expect(resolved.updatedAt).not.toBe(1);
+      // Equal across resolves (initial == recovery).
+      const resolvedAgain = manager.getWorkflowForRun({
+        workflowId: wf.id,
+        definitionVersion: versionHash,
+      })!;
+      expect(resolvedAgain.updatedAt).toBe(resolved.updatedAt);
+    });
+
+    it('still resolves (version-derived updatedAt) when the head is deleted', () => {
+      // A deleted-definition orphan: the run still resolves its pinned payload, with the
+      // version-hash-derived updatedAt (stable per version — no head required).
+      const wf = manager.createWorkflow({
+        spaceId: 'space-1',
+        name: 'W',
+        nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+        completionAutonomyLevel: 3,
+      });
+      const pin = pinHead(wf.id);
+      // Delete the head row (orphan the run's pinned version).
+      db.prepare(`DELETE FROM space_workflows WHERE id = ?`).run(wf.id);
+
+      const resolved = manager.getWorkflowForRun({ workflowId: wf.id, definitionVersion: pin });
+      expect(resolved).not.toBeNull();
+      expect(resolved!.updatedAt).toBe(stableVersionTimestamp(pin));
+    });
+
+    it('two runs of one workflow pinned to different versions resolve distinctly', () => {
+      // PR-review #4: the property the actor-registry version-keyed cache enforces — two
+      // runs of the same workflow, pinned to different versions, must resolve to their own
+      // pinned content, not a shared head.
+      const wf = manager.createWorkflow({
+        spaceId: 'space-1',
+        name: 'V1',
+        nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
+        completionAutonomyLevel: 3,
+      });
+      const runA = runRepo.createPinnedRun({
+        spaceId: 'space-1',
+        workflowId: wf.id,
+        title: 'A',
+        rawWorkflow: repo.getWorkflow(wf.id)!,
+      });
+      // Edit the head → V2, then pin a second run to it.
+      manager.updateWorkflow(wf.id, { name: 'V2' });
+      const runB = runRepo.createPinnedRun({
+        spaceId: 'space-1',
+        workflowId: wf.id,
+        title: 'B',
+        rawWorkflow: repo.getWorkflow(wf.id)!,
+      });
+
+      expect(runA.definitionVersion).not.toBe(runB.definitionVersion);
+      const resolvedA = manager.getWorkflowForRun(runA)!;
+      const resolvedB = manager.getWorkflowForRun(runB)!;
+      // Distinct pinned CONTENT — the property the actor-registry version-keyed cache
+      // preserves. Different version hashes also yield different version-derived gate
+      // fingerprints (updatedAt), so each run's gate-open cache is self-consistent.
+      expect(resolvedA.name).toBe('V1');
+      expect(resolvedB.name).toBe('V2');
+      expect(resolvedA.updatedAt).not.toBe(resolvedB.updatedAt);
     });
   });
 });

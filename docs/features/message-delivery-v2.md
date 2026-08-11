@@ -1,8 +1,42 @@
 # Message Delivery v2 — Durable Delivery on `job_queue`
 
-- **Status:** Proposed — supersedes the incremental approach in [`message-delivery-lifecycle.md`](./message-delivery-lifecycle.md) (task #859 phase 2)
+- **Status:** **Default-on** (opt out with `HYPERNEO_MESSAGE_DELIVERY_V2=0`). Supersedes the incremental approach in [`message-delivery-lifecycle.md`](./message-delivery-lifecycle.md) (task #859 phase 2).
 - **Date:** 2026-08-08
 - **Owners:** Marc Liu; design input from Reviewer pass (rounds 1–28)
+
+---
+
+## Default-on & rollback
+
+Message-delivery v2 is the **default** dispatch path. Every primary kickoff —
+ordinary chat (`message.persisted` → `AgentSession.deliverChatMessage`) and the
+Space / long-term-agent / task-agent injectors — routes through the
+`deliverMessage` chokepoint so each user message becomes one durable
+`message_delivery` job_queue row with atomic single-owner claim, lease
+heartbeat, `reclaimStale` crash recovery, and `(session, UUID)`-scoped
+consumption acknowledgment.
+
+**Roll back without a redeploy** by setting, before daemon start:
+
+```
+HYPERNEO_MESSAGE_DELIVERY_V2=0     # or =false
+```
+
+With the flag off, `isMessageDeliveryV2Enabled()` (read at runtime in
+`packages/daemon/src/lib/agent/message-delivery.ts`) returns false and every
+entry point falls back to the legacy inline path it owned before v2:
+
+- Ordinary chat: `message.persisted` → `startQueryAndEnqueue` (inline
+  `ensureQueryStarted` + `enqueueWithId`) instead of `deliverChatMessage`.
+- Space / long-term-agent / task-agent injectors: `ensureQueryStarted` +
+  `enqueueWithId` instead of `deliverAndMarkQueued`.
+
+The legacy deferred-message replay, UI promote-deferred, and rate-limit
+auto-retry kickoffs stay on the inline path under both modes (they are the
+explicit follow-up migration; `recoverOrphanedConsumedMessages` is retained as
+their crash backstop and carries a `durableOwned` guard so it never fights v2-
+owned messages). The flag is read at runtime (no persisted-config skew), so an
+operator can flip it and restart to recover without a code change.
 
 ---
 
@@ -350,3 +384,73 @@ the delivery path must handle.
   per-session lock immediately before feeding — closing both the archive TOCTOU
   and the removePending TOCTOU as one pattern. An invalid feed returns `aborted`
   (complete, do not feed).
+
+---
+
+## 16. Phase 3 hardening (task #861) — recovery, outbox, exactly-once quality
+
+Delivery semantics stay **at-least-once**. Phase 3 closes the remaining
+correctness and observability gaps, not by rewriting the reclaim/re-feed model
+but by hardening it.
+
+- **Transactional outbox (item 2):** ordinary chat now saves the user message
+  AND enqueues its `message_delivery` job in one `db.transaction`
+  (`persistAndEnqueueDelivery`, `lib/agent/message-delivery-outbox.ts`). A crash
+  between save and enqueue can no longer strand a saved-but-not-enqueued row —
+  the gap is eliminated by construction. `saveUserMessage` is split into a
+  composable `saveUserMessageCore` (the tx body) + `runPostSaveSideEffects`.
+- **Synchronous consumed-flip (item 12):** the bridge flips `send_status →
+  'consumed'` synchronously the moment the SDK acknowledges consumption (onSent),
+  before any further await (`markDeliveryConsumedByUuid`). The at-least-once
+  duplicate window [SDK yield, persisted consumed-flip] shrinks to sub-ms, so
+  `reclaimStale` almost always observes `'consumed'` and the status-aware reload
+  skips the re-feed.
+- **Migrated kickoff paths (items 3 + 14):** the legacy inline kickoffs
+  (`handleQueryTrigger`, `sendEnqueuedMessagesOnTurnEnd`, the
+  `session.messages.promotePending` RPC) route through `deliverMessage` instead
+  of `ensureQueryStarted` + `enqueueWithId`, so a manual-flush / turn-end-replay
+  / promoted "next turn" message flows through the durable owner with the full
+  at-least-once + synchronous-consumed-flip guarantees. The dormant
+  `query.sendEnqueuedOnTurnEnd` event (declared but never published) is removed.
+  `executeRateLimitAutoRetry` stays on `startQueryAndEnqueue`: it is in-band
+  recovery within an active durable turn (the job stays `processing`; coordinated
+  via `suppressDeliveryWaiters`), so `deliverMessage` would no-op there.
+- **Orphan reconciler (item 4):** `reconcileStrandedDeliveries`
+  (`lib/agent/message-delivery.ts` + the `AgentSession` wrapper) recovers the one
+  case `job_queue` cannot see by itself — a persisted user message stuck
+  `enqueued` with no active `message_delivery` job (the #856 stranded-pending
+  shape). It re-enqueues the SAME canonical UUID (never a second user row;
+  content is reloaded from storage), is idempotent + safe under concurrent
+  ticks/workers, and runs on each idle transition, on a periodic unref'd 60s
+  timer, and as a startup pass. It also settles stale `submitted` rows →
+  `failed` (orphaned ACP) so they surface.
+- **Decommission (item 7):** `recoverOrphanedConsumedMessages` is deleted
+  (`message-recovery-handler.ts` + its test + the `AgentSession` call). Its
+  consumed-orphan responsibility moved to the durable owner (`reclaimStale`
+  re-drives `consumed` via `alreadyConsumed`); its submitted-orphan
+  responsibility moved to the reconciler. The legacy-owned-turn guards and the
+  now-dead `hasActiveTurnDelivery` repo method are removed — with every kickoff
+  path on `deliverMessage`, every v2 turn is a durable turn job and the unique
+  index is the sole role arbiter.
+- **Lease + reclaim (item 5):** a slow-but-alive turn (long MCP startup / model
+  startup / provider request) is never falsely reclaimed — the handler
+  heartbeats `started_at` (`touchStartedAt`, every 60s) throughout the turn
+  await, well inside the 5-min stale window; `reclaimStale` only reclaims jobs
+  whose handler stopped heartbeating (a crash). The status-aware reload then
+  prevents a duplicate feed on re-drive. Covered by a regression test.
+- **Backoff / cancel / terminal (item 8):** bounded exponential backoff + max
+  attempts + terminal failure come from the lane (`fail()` → `2^retryCount·1s` →
+  `dead` → `onDead` → `send_status='failed'`). User-cancelled messages are not
+  retried — interrupt cancels the session's delivery jobs and terminalizes the
+  rows (`InterruptHandler.handleInterrupt`), so the reconciler never re-enqueues
+  them. Archived sessions are rejected outright by the handler's
+  `isSessionArchived` guard.
+- **Operational diagnostics (items 6 + 13):** the `messageDelivery.diagnostics`
+  RPC is a thin `job_queue` query (status counts: pending = unclaimed,
+  processing = stale, dead = failed) paired with the exactly-once observability
+  snapshot (`DeliveryMetrics`): feed-count-per-UUID (ground-truth duplicate
+  detector — any UUID handed to the SDK >1 time is a real breach, since the SDK
+  does not dedup), reclaim-outcome breakdown (`alreadyConsumed`/`alreadySubmitted`
+  skips = duplicates prevented; `stillEnqueued` = re-drive; `noContent`), and
+  residual-window latency P50/P99. Because at-least-once accepts duplicates,
+  these metrics are how we know when the accepted failure actually happens.

@@ -24,6 +24,25 @@ export class ProcessingStateManager {
   private isCompacting = false;
   private logger: Logger;
   private onIdleCallback?: () => Promise<void>;
+  /**
+   * Resolvers awaiting the next terminal idle transition (the message-delivery
+   * bridge awaiting a turn's end), keyed by arm id so a caller can cancel its
+   * own waiter (failure/park paths) without leaking or accumulating across
+   * reclaims. Each carries an optional episode-generation tag so a narrowly-
+   * scoped release (a superseded rate-limit retry) only resolves waiters from
+   * that episode — not a newer turn's waiter armed after the generation bumped.
+   * Drained in {@link setIdle} (terminal) / {@link releaseIdleWaiters}.
+   */
+  private idleWaiters: Map<number, { resolve: () => void; gen?: number }> = new Map();
+  private nextIdleWaiterId = 0;
+  /**
+   * True while the deferred-restart `onIdleCallback` is running. A reentrant
+   * `setIdle` from the callback's own stop/start must NOT re-fire the callback
+   * (double restart) NOR drain the waiters (the outer call owns the drain,
+   * deferred until the restart completes so durable turn ownership survives the
+   * restart). (Codex P1.)
+   */
+  private idleCallbackInFlight = false;
 
   constructor(
     private sessionId: string,
@@ -39,6 +58,48 @@ export class ProcessingStateManager {
    */
   setOnIdleCallback(callback: () => Promise<void>): void {
     this.onIdleCallback = callback;
+  }
+
+  /**
+   * Arm a wait for the next TERMINAL idle transition. The message-delivery
+   * bridge (`driveDeliveryTurn`) awaits `promise` to complete a durable job at
+   * turn-end — awaiting `queryPromise` instead is wrong in streaming-input mode
+   * (it resolves only on query-CLOSE, never at turn-end, so the job would hang).
+   * Returns a handle: call `cancel()` from failure/park paths so the waiter is
+   * removed (not left to accumulate across reclaims); the `promise` resolves on
+   * the next non-suppressed {@link setIdle} or never (if cancelled, it is
+   * abandoned — nobody awaits it). Arm BEFORE the turn starts so a fast turn's
+   * idle cannot be missed.
+   */
+  waitForIdleTransition(episodeGen?: number): { promise: Promise<void>; cancel: () => void } {
+    let resolve!: () => void;
+    const promise = new Promise<void>((r) => {
+      resolve = r;
+    });
+    const id = this.nextIdleWaiterId++;
+    this.idleWaiters.set(id, { resolve, gen: episodeGen });
+    return {
+      promise,
+      cancel: () => {
+        this.idleWaiters.delete(id);
+      },
+    };
+  }
+
+  /**
+   * Resolve + clear idle waiters. Used when a rate-limit retry is superseded
+   * (the durable turn it would have re-driven is abandoned): resolves the waiter
+   * — rather than cancelling it — so an awaiting driveDeliveryTurn completes its
+   * job instead of hanging `processing`. Pass an `episodeGen` to resolve ONLY
+   * waiters armed under that episode (a retry must not release a newer turn's
+   * waiter armed after the generation bumped); omit it to resolve all.
+   */
+  releaseIdleWaiters(episodeGen?: number): void {
+    const matching = [...this.idleWaiters.entries()].filter(
+      ([, w]) => episodeGen === undefined || w.gen === episodeGen
+    );
+    for (const [id] of matching) this.idleWaiters.delete(id);
+    for (const [, w] of matching) w.resolve();
   }
 
   /**
@@ -113,18 +174,47 @@ export class ProcessingStateManager {
   }
 
   /**
-   * Set state to idle
+   * Set state to idle. Pass `{ suppressDeliveryWaiters: true }` on a
+   * NON-terminal idle — one that is immediately followed by a query re-start
+   * (e.g. QueryRunner's startup-timeout / message-not-found / transient-
+   * connection auto-retries call setIdle before recursing into runQuery).
+   * Resolving the delivery waiters on such a retry idle would let
+   * driveDeliveryTurn complete the durable job while the same prompt is still
+   * being retried, freeing the active-turn slot for a competing turn.
    */
-  async setIdle(): Promise<void> {
-    await this.setState({ status: 'idle' });
-
-    // Execute idle callback if set (e.g., for deferred restarts)
-    if (this.onIdleCallback) {
-      try {
-        await this.onIdleCallback();
-      } catch (error) {
-        this.logger.error('Error in onIdle callback:', error);
-        // Don't re-throw - callback errors shouldn't break state transitions
+  async setIdle(opts?: { suppressDeliveryWaiters?: boolean }): Promise<void> {
+    // If a deferred-restart callback is in flight (a reentrant idle from its
+    // stop/start), suppress the drain too — the outer call owns it, deferred
+    // until the restart completes so durable turn ownership survives the restart.
+    const suppressDrain = opts?.suppressDeliveryWaiters || this.idleCallbackInFlight;
+    // setState persists the idle state BEFORE publishing it, so drain the
+    // turn-end waiters in a finally — the state IS idle even if the event
+    // publication throws, and a waiting delivery job must not hang on a
+    // publish failure. Only on a TERMINAL idle (suppress on retry mid-points).
+    try {
+      await this.setState({ status: 'idle' });
+      // Run the deferred-restart callback BEFORE releasing durable turn
+      // ownership (draining the waiters). Resolving the waiters first would let
+      // driveDeliveryTurn complete + free the active-turn slot while the callback
+      // is still stopping/starting the query, so a message arriving in that
+      // window could start a new turn concurrent with the restart. The reentrant
+      // guard prevents a double restart from the callback's own idle transition.
+      if (this.onIdleCallback && !this.idleCallbackInFlight) {
+        this.idleCallbackInFlight = true;
+        try {
+          await this.onIdleCallback();
+        } catch (error) {
+          this.logger.error('Error in onIdle callback:', error);
+          // Don't re-throw - callback errors shouldn't break state transitions
+        } finally {
+          this.idleCallbackInFlight = false;
+        }
+      }
+    } finally {
+      if (!suppressDrain) {
+        const waiters = [...this.idleWaiters.values()];
+        this.idleWaiters.clear();
+        for (const w of waiters) w.resolve();
       }
     }
   }

@@ -42,6 +42,7 @@ import type {
 import { resolveNodeAgents, isChannelCyclic, computeGateDefaults } from '@hyperneo/shared';
 import type { NodeExecution } from '@hyperneo/shared';
 import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator';
+import { gateDefinitionHash } from '../workflows/definition-version';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
@@ -531,7 +532,7 @@ export class ChannelRouter {
     }
 
     // ── 3. Resolve the workflow and node ───────────────────────────────────
-    const workflow = this.config.workflowManager.getWorkflow(run.workflowId);
+    const workflow = this.config.workflowManager.getWorkflowForRun(run);
     if (!workflow) {
       throw new ActivationError(`Workflow not found: ${run.workflowId}`);
     }
@@ -656,7 +657,7 @@ export class ChannelRouter {
       this.evictRunCache(runId);
     }
 
-    const workflow = this.config.workflowManager.getWorkflow(run.workflowId);
+    const workflow = this.config.workflowManager.getWorkflowForRun(run);
     if (!workflow) throw new ActivationError(`Workflow not found: ${run.workflowId}`);
 
     const match = this.findMatchingWorkflowChannel(workflow, fromRole, toTarget);
@@ -832,7 +833,7 @@ export class ChannelRouter {
       this.evictRunCache(runId);
     }
 
-    const workflow = this.config.workflowManager.getWorkflow(run.workflowId);
+    const workflow = this.config.workflowManager.getWorkflowForRun(run);
     if (!workflow) {
       throw new ActivationError(`Workflow not found: ${run.workflowId}`);
     }
@@ -1034,9 +1035,10 @@ export class ChannelRouter {
     // Without this, an unrelated gate that was already open before the run
     // blocked would falsely report gateOpened=true during re-evaluation and
     // trigger the resume chain in multi-gate workflows.
-    const workflowForSnapshot = this.config.workflowManager.getWorkflow(run.workflowId);
-    const wasOpenBefore =
-      workflowForSnapshot && this.isGateCachedOpen(runId, gateId, workflowForSnapshot);
+    // Resolve the pinned definition once; reused for the open-cache snapshot below and the
+    // channel lookup after the tombstone/terminal early-returns.
+    const workflow = this.config.workflowManager.getWorkflowForRun(run);
+    const wasOpenBefore = workflow && this.isGateCachedOpen(runId, gateId, workflow);
 
     // Archived tasks and terminal runs are tombstones for passive gate refresh.
     // Only explicit activation paths opt into terminal reopen.
@@ -1054,7 +1056,6 @@ export class ChannelRouter {
       this.evictRunCache(runId);
     }
 
-    const workflow = this.config.workflowManager.getWorkflow(run.workflowId);
     if (!workflow) return [];
 
     if (!this.config.gateDataRepo) return [];
@@ -1312,20 +1313,9 @@ export class ChannelRouter {
     const gateDef = (workflow.gates ?? []).find((g) => g.id === gateId);
     if (!gateDef) return workflow.updatedAt;
 
-    // Create a simple hash from the gate definition JSON
-    // This is a fast, non-cryptographic hash suitable for cache invalidation
-    const gateJson = JSON.stringify(gateDef);
-    let hash = 0;
-    for (let i = 0; i < gateJson.length; i++) {
-      hash = (hash << 5) - hash + gateJson.charCodeAt(i);
-      hash = hash & hash; // Convert to 32-bit integer
-    }
-
-    // Combine timestamp and hash using addition instead of bitwise shift
-    // to avoid 32-bit truncation (JavaScript bitwise ops are 32-bit).
-    // This creates a unique fingerprint that changes when either the workflow
-    // is updated OR the gate definition is edited.
-    return workflow.updatedAt + hash;
+    // Combine timestamp and the gate-definition hash (shared with the cutover re-key via
+    // `gateDefinitionHash`, so a re-keyed pinned-run entry matches what this computes).
+    return workflow.updatedAt + gateDefinitionHash(gateDef);
   }
 
   /** Build the cache key for a `(runId, gateId)` pair. */
@@ -1665,7 +1655,7 @@ export class ChannelRouter {
   private getActiveTasksForNode(runId: string, nodeId: string): SpaceTask[] {
     const run = this.config.workflowRunRepo.getRun(runId);
     if (!run) return [];
-    const workflow = this.config.workflowManager.getWorkflow(run.workflowId);
+    const workflow = this.config.workflowManager.getWorkflowForRun(run);
     const node =
       workflow?.nodes.find((n) => n.id === nodeId) ??
       workflow?.nodes.find((n) => n.name === nodeId);

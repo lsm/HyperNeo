@@ -97,6 +97,10 @@ describe('EventSubscriptionSetup', () => {
       queryModeHandler: mockQueryModeHandler,
       resetQuery: mock(async () => ({ success: true })),
       startQueryAndEnqueue: mock(async () => {}),
+      // AgentSession provides this in production (v2 default-on). Including it
+      // here exercises the real message.persisted branch instead of silently
+      // falling through to startQueryAndEnqueue merely because the mock omitted it.
+      deliverChatMessage: mock(async () => {}),
     };
 
     setup = new EventSubscriptionSetup(mockContext);
@@ -112,14 +116,14 @@ describe('EventSubscriptionSetup', () => {
     it('should register all event subscriptions', () => {
       setup.setup();
 
-      // Should register 6 event handlers
-      expect(onSpy).toHaveBeenCalledTimes(6);
+      // Should register 5 event handlers (query.sendEnqueuedOnTurnEnd was
+      // removed — it was never published; task #861 item 14).
+      expect(onSpy).toHaveBeenCalledTimes(5);
       expect(registeredCallbacks.has('model.switchRequest')).toBe(true);
       expect(registeredCallbacks.has('agent.interruptRequest')).toBe(true);
       expect(registeredCallbacks.has('agent.resetRequest')).toBe(true);
       expect(registeredCallbacks.has('message.persisted')).toBe(true);
       expect(registeredCallbacks.has('query.trigger')).toBe(true);
-      expect(registeredCallbacks.has('query.sendEnqueuedOnTurnEnd')).toBe(true);
     });
 
     it('should pass sessionId to subscription options', () => {
@@ -259,6 +263,69 @@ describe('EventSubscriptionSetup', () => {
         expect(row.sendStatus).toBe('failed');
         raw.close();
       });
+
+      it('handleInterrupt({preserveDeliveryJobs:true}) keeps requeued delivery jobs for restart (Codex P1)', async () => {
+        // Daemon shutdown requeues in-flight message_delivery rows for the next
+        // boot BEFORE stopping sessions; the shutdown stop path
+        // (stopSessionPreserveDb) must NOT then cancel them. handleInterrupt with
+        // preserveDeliveryJobs skips the durable-job cancel while still aborting
+        // the in-flight query. (The default user-interrupt path cancels — see
+        // the test above.)
+        const raw = new BunDatabase(':memory:');
+        createTables(raw);
+        const jobQueueRepo = new JobQueueRepository(raw);
+        const sdkRepo = new SDKMessageRepository(raw);
+        const sessionId = 'test-session-id';
+        const messageUuid = '22222222-3333-4444-5555-666666666666';
+
+        raw
+          .prepare(
+            `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid)
+             VALUES (?, ?, 'user', ?, ?, 'enqueued', ?)`
+          )
+          .run(
+            'db-msg-2',
+            sessionId,
+            JSON.stringify({ uuid: messageUuid }),
+            new Date().toISOString(),
+            messageUuid
+          );
+        deliverMessage(jobQueueRepo, sessionId, messageUuid, { origin: 'space_inject' });
+        expect((raw.prepare(`SELECT COUNT(*) AS n FROM job_queue`).get() as { n: number }).n).toBe(
+          1
+        );
+
+        const realInterruptHandler = new InterruptHandler({
+          session: mockContext.session,
+          messageHub: { event: () => {} } as never,
+          messageQueue: { size: () => 0, clear: () => {}, stop: () => {} } as never,
+          stateManager: {
+            getState: () => ({ status: 'processing', phase: 'streaming' }),
+            setInterrupted: async () => {},
+            setIdle: async () => {},
+          } as never,
+          logger: { warn: () => {}, error: () => {}, info: () => {}, debug: () => {} } as never,
+          db: {
+            getJobQueueRepo: () => jobQueueRepo,
+            getSDKMessageRepo: () => sdkRepo,
+          } as never,
+          queryObject: null,
+          queryPromise: null,
+          queryAbortController: null,
+        });
+
+        await realInterruptHandler.handleInterrupt({ preserveDeliveryJobs: true });
+
+        // The job + its enqueued SDK row survive — preserved for restart reclaim.
+        expect((raw.prepare(`SELECT COUNT(*) AS n FROM job_queue`).get() as { n: number }).n).toBe(
+          1
+        );
+        const row = raw
+          .prepare(`SELECT send_status AS sendStatus FROM sdk_messages WHERE id = 'db-msg-2'`)
+          .get() as { sendStatus: string };
+        expect(row.sendStatus).toBe('enqueued');
+        raw.close();
+      });
     });
 
     describe('agent.resetRequest handler', () => {
@@ -311,7 +378,11 @@ describe('EventSubscriptionSetup', () => {
     });
 
     describe('message.persisted handler', () => {
-      it('should call startQueryAndEnqueue with messageId and content', async () => {
+      it('v2 default routes through deliverChatMessage, not startQueryAndEnqueue', async () => {
+        // With v2 default-on and deliverChatMessage wired (production state), an
+        // ordinary persisted message enqueues a durable job_queue row instead of
+        // driving the query inline. Asserting startQueryAndEnqueue here would only
+        // pass because the mock omitted deliverChatMessage — masking the real path.
         setup.setup();
 
         const callback = registeredCallbacks.get('message.persisted')!;
@@ -321,8 +392,29 @@ describe('EventSubscriptionSetup', () => {
           messageContent: 'Hello',
         });
 
-        // Note: User messages in the DB serve as rewind points - no separate checkpoint tracking needed
+        expect(mockContext.deliverChatMessage).toHaveBeenCalledWith('msg-123');
+        expect(mockContext.startQueryAndEnqueue).not.toHaveBeenCalled();
+      });
+
+      it('opt-out (HYPERNEO_MESSAGE_DELIVERY_V2=0) falls back to startQueryAndEnqueue', async () => {
+        const previous = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+        process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '0';
+        try {
+          setup.setup();
+
+          const callback = registeredCallbacks.get('message.persisted')!;
+          await callback({
+            sessionId: 'test-session-id',
+            messageId: 'msg-123',
+            messageContent: 'Hello',
+          });
+        } finally {
+          if (previous === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+          else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previous;
+        }
+
         expect(mockContext.startQueryAndEnqueue).toHaveBeenCalledWith('msg-123', 'Hello');
+        expect(mockContext.deliverChatMessage).not.toHaveBeenCalled();
       });
 
       it('should skip query start when persistence already delivered synchronously', async () => {
@@ -337,6 +429,7 @@ describe('EventSubscriptionSetup', () => {
         });
 
         expect(mockContext.startQueryAndEnqueue).not.toHaveBeenCalled();
+        expect(mockContext.deliverChatMessage).not.toHaveBeenCalled();
       });
     });
 
@@ -350,17 +443,6 @@ describe('EventSubscriptionSetup', () => {
         expect(mockQueryModeHandler.handleQueryTrigger).toHaveBeenCalled();
       });
     });
-
-    describe('query.sendEnqueuedOnTurnEnd handler', () => {
-      it('should call queryModeHandler.sendEnqueuedMessagesOnTurnEnd', async () => {
-        setup.setup();
-
-        const callback = registeredCallbacks.get('query.sendEnqueuedOnTurnEnd')!;
-        await callback({ sessionId: 'test-session-id' });
-
-        expect(mockQueryModeHandler.sendEnqueuedMessagesOnTurnEnd).toHaveBeenCalled();
-      });
-    });
   });
 
   describe('cleanup', () => {
@@ -368,8 +450,8 @@ describe('EventSubscriptionSetup', () => {
       setup.setup();
       setup.cleanup();
 
-      // 6 subscriptions = 6 unsubscribe calls
-      expect(unsubscribeSpy).toHaveBeenCalledTimes(6);
+      // 5 subscriptions = 5 unsubscribe calls
+      expect(unsubscribeSpy).toHaveBeenCalledTimes(5);
     });
 
     it('should clear unsubscribers array', () => {
@@ -378,7 +460,7 @@ describe('EventSubscriptionSetup', () => {
 
       // Second cleanup should not call unsubscribe again
       setup.cleanup();
-      expect(unsubscribeSpy).toHaveBeenCalledTimes(6); // Still 6, not 12
+      expect(unsubscribeSpy).toHaveBeenCalledTimes(5); // Still 5, not 10
     });
 
     it('should handle unsubscribe errors gracefully', () => {

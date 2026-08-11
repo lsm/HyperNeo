@@ -6,7 +6,7 @@
 // ─── Message delivery (v2) ────────────────────────────────────────────────────
 // Durable delivery ownership: one job_queue row per user message (turn or steer).
 // The message-delivery.handler drives the SDK turn / feeds the live transport;
-// see docs/features/message-delivery-v2.md. Flag-gated (HYPERNEO_MESSAGE_DELIVERY_V2).
+// see docs/features/message-delivery-v2.md. Default-on (HYPERNEO_MESSAGE_DELIVERY_V2=0 to opt out).
 export const MESSAGE_DELIVERY = 'message_delivery';
 
 export const SESSION_TITLE_GENERATION = 'session.title_generation';

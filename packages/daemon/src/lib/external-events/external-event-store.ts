@@ -560,6 +560,14 @@ export class ExternalEventStore {
       clauses.push('e.source = ?');
       params.push(filters.source);
     }
+    if (filters.workflowRunId) {
+      clauses.push('d.workflow_run_id = ?');
+      params.push(filters.workflowRunId);
+    }
+    if (filters.nodeId) {
+      clauses.push('d.node_id = ?');
+      params.push(filters.nodeId);
+    }
 
     params.push(Math.min(filters.limit ?? 100, 500), filters.offset ?? 0);
     const rows = this.db

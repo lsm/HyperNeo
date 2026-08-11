@@ -58,8 +58,16 @@ export class InterruptHandler {
   /**
    * Handle interrupt request
    * Uses official SDK interrupt() method
+   *
+   * Pass `{ preserveDeliveryJobs: true }` on a stop path that is about to
+   * RESTART (daemon graceful shutdown): the caller has already requeued in-flight
+   * message_delivery rows for the next boot, so the default cancel-everything
+   * behavior here would delete the very handoff that requeue preserved. The
+   * query abort + SDK interrupt still run (the in-flight turn must unwind so
+   * cleanup doesn't block); only the durable-job cancellation is skipped.
+   * (Codex P1.)
    */
-  async handleInterrupt(): Promise<void> {
+  async handleInterrupt(opts?: { preserveDeliveryJobs?: boolean }): Promise<void> {
     const { session, messageHub, messageQueue, stateManager, logger } = this.ctx;
 
     // Durable-delivery cancel FIRST (message-delivery v2): revoke EVERY active
@@ -69,16 +77,35 @@ export class InterruptHandler {
     // handler, space paths via the AgentSession wrapper). Without it a pending
     // turn/steer job survives the user's interrupt and is claimed afterwards.
     // Legacy path: no message_delivery jobs exist → no-op. Consumed rows are
-    // untouched (they WERE delivered). See Codex (#3743968030, #3744105273).
-    await withSessionLock(session.id, async () => {
-      const messageUuids =
-        this.ctx.db.getJobQueueRepo?.()?.cancelForSessionWithMessages(session.id) ?? [];
-      if (messageUuids.length === 0) return;
-      const sdkRepo = this.ctx.db.getSDKMessageRepo?.();
-      for (const messageUuid of messageUuids) {
-        sdkRepo?.markDeliveryFailedByUuid(session.id, messageUuid);
-      }
-    });
+    // untouched (they WERE delivered). SKIPPED on a restart-bound shutdown stop
+    // (see opts.preserveDeliveryJobs). See Codex (#3743968030, #3744105273).
+    if (!opts?.preserveDeliveryJobs) {
+      await withSessionLock(session.id, async () => {
+        const messageUuids =
+          this.ctx.db.getJobQueueRepo?.()?.cancelForSessionWithMessages(session.id) ?? [];
+        const sdkRepo = this.ctx.db.getSDKMessageRepo?.();
+        for (const messageUuid of messageUuids) {
+          sdkRepo?.markDeliveryFailedByUuid(session.id, messageUuid);
+        }
+        // Also terminalize enqueued user ORPHANS — rows with no active durable
+        // job (the #856 stranded-pending shape). cancelForSessionWithMessages
+        // only returns UUIDs that HAD an active job, so an enqueued row that
+        // never got one (or whose job already completed) isn't terminalized
+        // above. Without this, the post-interrupt idle transition's
+        // reconcileStrandedDeliveries would re-enqueue it, restarting a prompt
+        // the user just stopped with the rest of the queued input. `deferred`
+        // rows are left (the user intentionally queued them for next turn) and
+        // `submitted` rows are settled by the ACP runner. (Codex review, #861.)
+        const cancelled = new Set(messageUuids);
+        const enqueued = this.ctx.db.getMessagesByStatus?.(session.id, 'enqueued') ?? [];
+        for (const msg of enqueued) {
+          const uuid = (msg as { uuid?: string }).uuid;
+          if (uuid && !cancelled.has(uuid)) {
+            sdkRepo?.markDeliveryFailedByUuid(session.id, uuid);
+          }
+        }
+      });
+    }
 
     const currentState = stateManager.getState();
 

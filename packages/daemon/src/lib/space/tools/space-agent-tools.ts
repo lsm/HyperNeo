@@ -2793,7 +2793,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
       const allExecutions = nodeExecutionRepo.listByWorkflowRun(task.workflowRunId);
       const run = workflowRunRepo.getRun(task.workflowRunId);
-      const workflow = run ? (workflowManager.getWorkflow(run.workflowId) ?? null) : null;
+      const workflow = run ? (workflowManager.getWorkflowForRun(run) ?? null) : null;
       const workflowNodeNameById = new Map(
         (workflow?.nodes ?? []).map((node) => [node.id, node.name] as const)
       );
@@ -3280,7 +3280,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       // space.autonomyLevel >= gate.requiredLevel (default 5).
       // Human approval via spaceWorkflowRun.approveGate RPC is not subject to this check.
       if (args.approved && getSpaceAutonomyLevel) {
-        const workflow = workflowManager.getWorkflow(run.workflowId);
+        const workflow = workflowManager.getWorkflowForRun(run);
         const gateDef = (workflow?.gates ?? []).find((g) => g.id === args.gate_id);
         const approvedField = (gateDef?.fields ?? []).find((f) => f.name === 'approved');
         const writers = approvedField?.writers ?? [];
@@ -3471,7 +3471,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       if (task.workflowRunId) {
         const run = workflowRunRepo.getRun(task.workflowRunId);
         if (run?.workflowId) {
-          const workflow = workflowManager.getWorkflow(run.workflowId);
+          const workflow = workflowManager.getWorkflowForRun(run);
           if (workflow?.completionAutonomyLevel !== undefined) {
             completionAutonomyLevel = workflow.completionAutonomyLevel;
           }

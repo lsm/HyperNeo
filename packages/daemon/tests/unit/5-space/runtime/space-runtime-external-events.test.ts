@@ -4047,7 +4047,10 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     const rehydratedDelivery = eventStore.listDeliveries(event.id)[0]!;
     expect(rehydratedDelivery.state).toBe('failed');
-    expect(rehydratedDelivery.failureReason).toBe('target_task_terminal');
+    // The done task's subscription row is reconciled (purged) during rehydrate,
+    // so the requeued pending delivery finds no subscriber and terminalizes
+    // with subscription_no_longer_active rather than hanging.
+    expect(rehydratedDelivery.failureReason).toBe('subscription_no_longer_active');
     expect(eventStore.listPendingDeliveries()).not.toContainEqual(rehydratedDelivery);
     expect(eventStore.getById(event.id)?.state).toBe('failed');
   });
@@ -4063,10 +4066,12 @@ describe('SpaceRuntime external event subscriptions', () => {
     const event = makeEvent();
     await eventService.publish(event);
 
-    const delivery = eventStore.listDeliveries(event.id)[0]!;
-    expect(delivery.state).toBe('failed');
-    expect(delivery.failureReason).toBe('target_task_terminal');
-    expect(eventStore.getById(event.id)?.state).toBe('failed');
+    // The cancelled run's subscription row is purged during the rehydrate that
+    // executeTick triggers (cancelled-RUN teardown), so the event has no
+    // subscriber and no delivery is created — matching production, where
+    // cancelWorkflowRun's clearRunInterests would already have dropped the row.
+    expect(eventStore.listDeliveries(event.id)).toHaveLength(0);
+    expect(eventStore.getById(event.id)?.state).not.toBe('delivered');
   });
 
   test('refreshes active run interests when subscriptions are rebuilt', async () => {
@@ -5367,6 +5372,11 @@ describe('SpaceRuntime external event subscriptions', () => {
     });
 
     await runtime.rehydrateExecutors();
+    // Subscriptions are now durable: a restart rehydrates them from the table
+    // (see space-runtime-workflow-subscription-persistence.test.ts), so
+    // restarting alone no longer drops the interest. Explicitly unregister to
+    // exercise the removed-subscription path the rest of this test asserts on.
+    runtime.unregisterSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC);
     runtime.flushPendingNodeQueue({
       workflowRunId: run.id,
       taskId: task.id,

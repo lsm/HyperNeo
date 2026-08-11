@@ -126,11 +126,11 @@ export class EventSubscriptionSetup {
       'message.persisted',
       async (data) => {
         if (data.skipQueryStart) return;
-        // Message-delivery v2: route ordinary chat through the durable job_queue
-        // chokepoint (role decided atomically by the index) instead of driving
-        // the query inline. Flag-gated; Space injectors still call
-        // startQueryAndEnqueue directly (migrated in step 2). See
-        // docs/features/message-delivery-v2.md §12.
+        // Message-delivery v2 (default-on): route ordinary chat through the
+        // durable job_queue chokepoint (role decided atomically by the index)
+        // instead of driving the query inline. Space / long-term-agent injectors
+        // route through the same durable path via deliverAndMarkQueued. See
+        // docs/features/message-delivery-v2.md.
         if (isMessageDeliveryV2Enabled() && this.ctx.deliverChatMessage) {
           await this.ctx.deliverChatMessage(data.messageId);
           return;
@@ -156,15 +156,12 @@ export class EventSubscriptionSetup {
     );
     this.unsubscribers.push(unsubQueryTrigger);
 
-    // Send enqueued messages on turn end (auto-defer mode)
-    const unsubSendEnqueuedOnTurnEnd = internalEventBus.subscribe(
-      'query.sendEnqueuedOnTurnEnd',
-      async () => {
-        await queryModeHandler.sendEnqueuedMessagesOnTurnEnd();
-      },
-      { sessionId, subscriberName: 'EventSubscriptionSetup.querySendEnqueuedOnTurnEnd' }
-    );
-    this.unsubscribers.push(unsubSendEnqueuedOnTurnEnd);
+    // Note: `query.sendEnqueuedOnTurnEnd` was never published anywhere in the
+    // codebase (dormant since it was declared) — the turn-end / (re)hydration
+    // replay of enqueued messages runs through replayPendingMessagesForImmediateMode
+    // (sendEnqueuedMessagesOnTurnEnd), and under durable delivery the handler +
+    // reclaimStale own driving enqueued rows. The dead subscription was removed
+    // (task #861 item 14).
   }
 
   /**

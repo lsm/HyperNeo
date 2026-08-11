@@ -240,6 +240,54 @@ family from `space/tools/space-agent-tools.ts`.
   `github-event-extension.ts`; they are separate responsibility families and can
   be extracted in their own increments.
 
+## Increment 6
+
+**`external-events/github/github-pr-head-ref.ts`** — extracted the GitHub
+pull-request head-ref identity family from `github-event-extension.ts`.
+
+- **Family:** resolving the identity of a pull request's head ref — six pure
+  helpers. `gitHubRepoPath` (the URL-encoded `owner/repo` segment), two
+  `/pulls` row decoders (`pullRequestNumberFrom`, `headShaFromPullRequest`),
+  `headRepoFromPullRequest` (resolves the head-fork repo path, falling back to
+  the watched repo at every missing/malformed step), and the inverse
+  `headRefKey` / `parseHeadRefKey` pair (the durable `repoPath@headSha`
+  identity key used to dedupe / compare heads across polls). Closed internal
+  dependency boundary: only `headRepoFromPullRequest` reaches to
+  `gitHubRepoPath`; the rest are independent leaves. The one external edge is a
+  sideways type dependency on `GitHubWatchedRepo` from `github-repository`.
+- **Why it scored highest:**
+  - *Cohesion:* all six share one concern — identifying a PR's head ref — and
+    are consumed together in a single contiguous block of the `/pulls` polling
+    handler (resolve head SHA + repo + number, then compose/compare head-ref
+    keys) and again in the per-head check-run loop (`parseHeadRefKey`).
+  - *Churn / conflict:* isolates a stable pure decoder/transform family out of
+    `github-event-extension.ts` (4601 → 4564 lines; ~31 commits/yr — the
+    largest external-events production module), leaving the class as the
+    imperative shell that polls.
+  - *Coverage:* none of the six had **any** direct unit tests (each was
+    referenced only at its own definition site); characterization tests now pin
+    every branch — including `headRepoFromPullRequest`'s full watched-repo
+    fallback ladder (non-row → no head → no `head.repo` → missing/empty owner
+    login or repo name) and its URL-encoding of the resolved fork owner/name,
+    and `parseHeadRefKey`'s separator edge cases (no `@`, leading `@` at index
+    0, trailing `@`, last-`@`-wins for an embedded `@`, and the documented
+    non-round-trip when a SHA itself contains `@`).
+  - *Regression risk:* low — pure deterministic functions; the consumer suites
+    (`github-event-extension` + health + rate-limit, 284 tests) pass unchanged.
+- **Narrow surface:** all six functions are exported (each has an external
+  caller in the extension); the leaf has no module-private members.
+- **Dependency direction:** the new leaf lives in `external-events/github/`
+  alongside `github-repository.ts` (the `GitHubWatchedRepo` type it depends on).
+  `github-event-extension.ts` already imported downward from
+  `./github-repository`, so no new direction was introduced;
+  `github-repository` does not import back, so there is no cycle.
+- **Deferred:** the remaining PR-row state decoders (`pullRequestUpdatedAt`,
+  `isPullRequestOpen`, which read `updated_at` / `state`) and the
+  head-sha-by-commit matcher family (`pullHeadSha`, `pickPrNumbersByHeadSha`,
+  `addPullRequestNumberByHeadSha`, `removePullRequestNumberByHeadSha`) are
+  separate responsibility families and remain in `github-event-extension.ts`,
+  candidates for their own increments.
+
 ## Increment log
 
 | # | Module extracted | From | PR | Outcome |
@@ -248,4 +296,5 @@ family from `space/tools/space-agent-tools.ts`.
 | 2 | `external-events/github-subscription-pattern.ts` | `space/runtime/space-runtime.ts` + `rpc-handlers/space-long-horizon-agent-handlers.ts` | #2393 | Pure GitHub topic-grammar leaf extracted; verbatim duplicate across two files consolidated behind a 2-function surface; characterization tests added for every branch. |
 | 3 | `external-events/long-horizon-subscription-pattern.ts` | `space/runtime/space-runtime.ts` + `rpc-handlers/space-long-horizon-agent-handlers.ts` | #2403 | Pure long-horizon topic composer extracted; verbatim duplicate across two files consolidated behind a 1-function surface; characterization tests added for every branch. |
 | 4 | `space/agent-handle.ts` | `space/tools/space-agent-tools.ts` + `space/tools/node-agent-tools.ts` | #2418 | Pure agent handle/name-token normalization family extracted; verbatim `normalizeAgentNameToken` duplicate across two tool files consolidated behind a 3-function surface; characterization tests added for every branch. |
-| 5 | `external-events/github/github-check-run-fields.ts` | `external-events/github/github-event-extension.ts` | _(this PR)_ | Pure GitHub `check_run` row field decoders extracted behind a 6-function surface; characterization tests added for every branch (previously no direct unit coverage). |
+| 5 | `external-events/github/github-check-run-fields.ts` | `external-events/github/github-event-extension.ts` | #2430 | Pure GitHub `check_run` row field decoders extracted behind a 6-function surface; characterization tests added for every branch (previously no direct unit coverage). |
+| 6 | `external-events/github/github-pr-head-ref.ts` | `external-events/github/github-event-extension.ts` | _(this PR)_ | Pure GitHub PR head-ref identity family (repo path, PR number, head SHA/repo, head-ref key compose/parse) extracted behind a 6-function surface; characterization tests added for every branch (previously no direct unit coverage). |

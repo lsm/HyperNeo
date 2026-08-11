@@ -147,6 +147,63 @@ export const GetExternalEventSchema = z.object({
 export type GetExternalEventInput = z.infer<typeof GetExternalEventSchema>;
 
 // ---------------------------------------------------------------------------
+// list_deliveries
+// ---------------------------------------------------------------------------
+
+/**
+ * Schema for `list_deliveries` input.
+ *
+ * Read-only diagnostic tool that lists recent per-subscription external-event
+ * deliveries (`space_external_event_deliveries`) joined to their source events
+ * (`space_external_events`), so an agent can investigate why an event was or
+ * was not delivered without raw SQL. Always scoped to the current space;
+ * defaults to the current workflow run.
+ *
+ * `db_query` cannot reach these tables because they are space-scoped (by
+ * `space_id`), not session-scoped — this tool is the intentional surface for
+ * that delivery state.
+ *
+ * Delivery `state` is one of `pending` (registered, not yet delivered / retryable),
+ * `delivered` (terminal), or `failed` (terminal). The joined `event.state` in
+ * each row also surfaces the source-level lifecycle, including `ignored`
+ * (no matching subscriptions — such events have no delivery rows of their own).
+ */
+export const ListDeliveriesSchema = z.object({
+  workflowRunId: z
+    .string()
+    .min(1)
+    .describe(
+      'Filter to a single workflow run (the delivery `workflow_run_id`). ' +
+        'Defaults to this workflow run. Pass an explicit value to inspect another run in the same Space.'
+    )
+    .optional(),
+  nodeId: z
+    .string()
+    .min(1)
+    .describe('Filter to deliveries targeting a single workflow node (`node_id`).')
+    .optional(),
+  state: z
+    .enum(['pending', 'delivered', 'failed'])
+    .describe('Filter by delivery state: pending / delivered / failed.')
+    .optional(),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(200)
+    .describe('Maximum deliveries to return (1-200, default 50)')
+    .optional(),
+  offset: z
+    .number()
+    .int()
+    .min(0)
+    .describe('Number of deliveries to skip for pagination (default 0)')
+    .optional(),
+});
+
+export type ListDeliveriesInput = z.infer<typeof ListDeliveriesSchema>;
+
+// ---------------------------------------------------------------------------
 // save_artifact
 // ---------------------------------------------------------------------------
 
@@ -521,6 +578,7 @@ export const NODE_AGENT_TOOL_SCHEMAS = {
   unsubscribe_external_event: UnsubscribeExternalEventSchema,
   subscribe_pr_events: SubscribePrEventsSchema,
   get_external_event: GetExternalEventSchema,
+  list_deliveries: ListDeliveriesSchema,
   restore_node_agent: RestoreNodeAgentSchema,
   list_tasks: ListTasksSchema,
   get_task: GetTaskSchema,

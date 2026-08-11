@@ -21,6 +21,7 @@ import { getProviderRegistry } from '../providers/factory';
 import { getProviderService, getUserConfiguredAnthropicEnv } from '../provider-service';
 import { AcpProvider } from '../providers/acp-provider';
 import { TRANSIENT_CONNECTION_ERROR_SUBSTRINGS } from '../agent/transient-error-patterns';
+import { drainDeliveryWaitersOnTerminalSDKMessage } from '../agent/message-delivery';
 import {
   refreshQueryEnvFromProcess,
   type QueryRunnerContext,
@@ -735,7 +736,13 @@ export class AcpQueryRunner {
 
               if (!this.ctx.isCleaningUp()) {
                 const processingState = stateManager.getState();
-                await stateManager.setIdle();
+                // Mirrors the non-ACP runner: only publish the terminal idle
+                // (draining delivery waiters) when the throwing message ends the
+                // turn (the final `result`).
+                await drainDeliveryWaitersOnTerminalSDKMessage(
+                  stateManager,
+                  acpMessage as SDKMessage
+                );
 
                 await errorManager.handleError(
                   session.id,
@@ -875,7 +882,7 @@ export class AcpQueryRunner {
           ? 'Auto-retrying ACP query after startup timeout (1 retry).'
           : 'Auto-retrying ACP query after transient connection error (1 retry).'
       );
-      await stateManager.setIdle();
+      await stateManager.setIdle({ suppressDeliveryWaiters: true });
 
       if (isStartupTimeout && createdAcpSessionDuringRun && !receivedAcpMessageDuringRun) {
         this.persistAcpSessionId(undefined);

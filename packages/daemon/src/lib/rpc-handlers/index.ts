@@ -62,6 +62,7 @@ import { SpaceTaskRepository } from '../../storage/repositories/space-task-repos
 import { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
 import { GateDataRepository } from '../../storage/repositories/gate-data-repository';
 import { GateOpenStateRepository } from '../../storage/repositories/gate-open-state-repository';
+import { rekeyPinnedGateOpenCaches } from '../../lib/space/workflows/gate-cache-rekey';
 import { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository';
 import { WorkflowRunArtifactCacheRepository } from '../../storage/repositories/workflow-run-artifact-cache-repository';
 import { WorkflowHookStateRepository } from '../../storage/repositories/workflow-hook-state-repository';
@@ -75,7 +76,12 @@ import {
   SPACE_WORKFLOW_RUN_SYNC_GATE_ARTIFACTS,
   SPACE_WORKFLOW_RUN_SYNC_COMMITS,
   SPACE_WORKFLOW_RUN_SYNC_FILE_DIFF,
+  MESSAGE_DELIVERY,
 } from '../job-queue-constants';
+import {
+  deliveryMetrics,
+  type MessageDeliveryDiagnostics,
+} from '../agent/message-delivery-metrics';
 import { ChannelCycleRepository } from '../../storage/repositories/channel-cycle-repository';
 import { PendingAgentMessageRepository } from '../../storage/repositories/pending-agent-message-repository';
 import { SpaceAgentInboxRepository } from '../../storage/repositories/space-agent-inbox-repository';
@@ -86,6 +92,12 @@ import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
 import { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
 import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository';
 import { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository';
+import {
+  awaitDeliveryConsumption,
+  deliverAndMarkQueued,
+  deliveryConsumptionTimeoutMs,
+  isMessageDeliveryV2Enabled,
+} from '../agent/message-delivery';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import type { JobQueueProcessor } from '../../storage/job-queue-processor';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';
@@ -548,6 +560,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   // (RFC §4 Phase 1 rollout backfill) so a later edit can't erase the rollout-time
   // definition. Idempotent — a no-op on subsequent boots once every head is captured.
   spaceWorkflowRepo.backfillExistingDefinitionVersions();
+  // Pin every pre-existing run to its current definition head (RFC §4 Phase 1 read-cutover
+  // backfill) so resolving a run through its pinned version is content-neutral at cutover:
+  // each run's pin equals what it executes today. Idempotent; runs whose head was deleted
+  // stay unpinned and resolve via the read-cutover fallback to the live read.
+  spaceWorkflowRunRepo.backfillDefinitionPins((id) => spaceWorkflowRepo.getWorkflow(id));
   const spaceAgentRepo = new SpaceAgentRepository(deps.db.getDatabase());
   const longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(deps.db.getDatabase());
   const agentLookup: SpaceAgentLookup = {
@@ -558,6 +575,14 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     },
   };
   const spaceWorkflowManager = new SpaceWorkflowManager(spaceWorkflowRepo, agentLookup);
+  // Phase-1 read-cutover gate-open cache sweep: re-key persisted gate-open entries for pinned
+  // runs to the version-stable fingerprint basis (preserving backfilled in-flight runs' caches
+  // across the cutover). Idempotent + every boot → crash-safe. See gate-cache-rekey.ts.
+  rekeyPinnedGateOpenCaches({
+    gateOpenStateRepo,
+    runRepo: spaceWorkflowRunRepo,
+    manager: spaceWorkflowManager,
+  });
 
   const spaceTaskManagerFactory: SpaceTaskManagerFactory = (spaceId: string) => {
     return new SpaceTaskManager(
@@ -646,7 +671,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     resolvePrReadyHookIds: (runId: string) => {
       const run = spaceWorkflowRunRepo.getRun(runId);
       if (!run?.workflowId) return undefined;
-      const wf = spaceWorkflowManager.getWorkflow(run.workflowId);
+      // Run-scoped: resolve PR-ready hook IDs from the run's pinned definition so a live
+      // hook edit can't change which hook output is trusted for PR-identity resolution.
+      const wf = spaceWorkflowManager.getWorkflowForRun(run);
       // Return undefined ONLY when the workflow can't be resolved (legacy
       // fallback). When the workflow resolves — even with no pr_ready hooks —
       // return an (empty) Set so the resolver uses exact-match (fail closed)
@@ -847,6 +874,36 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     return spaceRuntimeService.getQueueHealthSnapshot();
   });
 
+  // Message-delivery diagnostics (task #861 item 6 + item 13) — a thin
+  // job_queue query (counts by status = unclaimed/stale/failed) paired with the
+  // exactly-once observability snapshot (feed-count-per-UUID duplicate detector,
+  // reclaim-skip breakdown, residual-window latency). Read-only.
+  deps.messageHub.onRequest(
+    'messageDelivery.diagnostics',
+    async (): Promise<MessageDeliveryDiagnostics> => {
+      const counts = deps.jobQueue.countByStatus(MESSAGE_DELIVERY);
+      // Split `processing` into genuinely-stale (lease past the reclaimStale
+      // threshold — reclaimable) vs active (healthy in-flight turn). Without this,
+      // every live model turn reads as "stale" for its whole runtime. Same cutoff
+      // as JobQueueProcessor.reclaimStale (5 min default). (Codex review.)
+      const staleThresholdMs = 5 * 60 * 1000;
+      const staleProcessing = deps.jobQueue.countStaleProcessing(
+        MESSAGE_DELIVERY,
+        Date.now() - staleThresholdMs
+      );
+      return {
+        lane: MESSAGE_DELIVERY,
+        statusCounts: counts,
+        // unclaimed = pending; stale = processing past the lease window
+        // (reclaimStale will sweep these); activeProcessing = healthy in-flight;
+        // failed = dead (exhausted retries → onDead → message 'failed').
+        staleProcessing,
+        activeProcessing: Math.max(0, counts.processing - staleProcessing),
+        metrics: deliveryMetrics.snapshot(),
+      };
+    }
+  );
+
   // Space Worktree Manager — one worktree per task, shared by all node agents.
   const spaceWorktreeManager = new SpaceWorktreeManager(deps.db.getDatabase());
 
@@ -857,7 +914,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   const spaceAgentInjector = async (
     spaceId: string,
     message: string,
-    replyToSessionId?: string | null
+    replyToSessionId?: string | null,
+    explicitMessageId?: string
   ): Promise<void> => {
     let sessionId = replyToSessionId || `space:chat:${spaceId}`;
     let session = await sessionManagerRef.getSessionAsync(sessionId);
@@ -871,7 +929,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     if (!session) {
       throw new Error(`Session not found for Space Agent reply routing: ${sessionId}`);
     }
-    const messageId = generateUUID();
+    // An explicit id (the pending-row id from flushPendingMessagesForSpaceAgent)
+    // dedups a crash-retry: deliverAndMarkQueued/getActiveDeliveryRole keys on it.
+    const messageId = explicitMessageId ?? generateUUID();
     const sdkUserMessage: SDKUserMessage & { isSynthetic: boolean } = {
       type: 'user' as const,
       uuid: messageId as UUID,
@@ -883,9 +943,56 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         content: [{ type: 'text' as const, text: message }],
       },
     };
-    await session.ensureQueryStarted();
-    deps.reactiveDb.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
-    await session.messageQueue.enqueueWithId(messageId, message);
+    if (isMessageDeliveryV2Enabled()) {
+      // Idempotent persist (mirrors the LTA injector): when retried with a
+      // stable id (the pending-row id from flushPendingMessagesForSpaceAgent),
+      // don't insert a duplicate sdk_messages row or re-drive a terminal one.
+      const sdkMessageRepo = deps.reactiveDb.db.getSDKMessageRepo();
+      const existing = sdkMessageRepo.getDeliveryContent(sessionId, messageId);
+      const fresh = !existing;
+      if (!existing) {
+        deps.reactiveDb.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+      } else if (existing.sendStatus === 'consumed') {
+        return; // genuinely delivered on a prior attempt — don't re-drive
+      } else if (existing.sendStatus === 'failed') {
+        sdkMessageRepo.reopenDeliveryByUuid(sessionId, messageId);
+      }
+      // Await SDK consumption (onSent) before returning — a direct send_message
+      // handoff has no retained source row to retry, so it must not record
+      // delivered after a bare enqueue that may yet dead-letter. On timeout,
+      // terminalize ONLY a fresh row: direct send_message carries no stable id,
+      // so a retry mints a fresh UUID — terminalizing the timed-out fresh job
+      // stops it being consumed alongside the retry (duplicate). The flush path
+      // carries a stable id (existing row), so it omits the terminalize. (Codex P1.)
+      await awaitDeliveryConsumption({
+        sessionId,
+        messageUuid: messageId,
+        // ACP's consume boundary is acceptance (minutes), not queue admission —
+        // size the wait to it so a fresh ACP delivery isn't terminalized failed
+        // mid-run (which a direct retry would then execute twice). (Codex P1.)
+        timeoutMs: deliveryConsumptionTimeoutMs(session.getSessionData?.().config?.provider),
+        deliver: () =>
+          deliverAndMarkQueued({
+            jobQueue: deps.reactiveDb.db.getJobQueueRepo(),
+            stateManager: session.stateManager,
+            sessionId,
+            messageUuid: messageId,
+            origin: 'space_agent',
+            onEnqueueFailure: () => sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId),
+          }),
+        ...(fresh
+          ? {
+              terminalizeOnTimeout: () =>
+                sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId),
+            }
+          : {}),
+      });
+    } else {
+      // Legacy inline path (HYPERNEO_MESSAGE_DELIVERY_V2=0 opt-out).
+      await session.ensureQueryStarted();
+      deps.reactiveDb.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+      await session.messageQueue.enqueueWithId(messageId, message);
+    }
   };
 
   // Task Agent Manager — manages Task Agent session lifecycle and message injection.

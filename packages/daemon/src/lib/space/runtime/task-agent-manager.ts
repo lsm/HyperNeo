@@ -56,6 +56,12 @@ import type { UUID } from 'crypto';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { AgentSessionInit } from '../../../lib/agent/agent-session';
 import { AgentSession } from '../../../lib/agent/agent-session';
+import {
+  awaitDeliveryConsumption,
+  deliverAndMarkQueued,
+  deliveryConsumptionTimeoutMs,
+  isMessageDeliveryV2Enabled,
+} from '../../../lib/agent/message-delivery';
 import { validateImageSizes } from '../../session/message-persistence';
 import type { Database } from '../../../storage/database';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
@@ -323,7 +329,9 @@ export interface TaskAgentManagerConfig {
   spaceAgentInjector?: (
     spaceId: string,
     message: string,
-    replyToSessionId?: string | null
+    replyToSessionId?: string | null,
+    /** Pending-row id (crash-retry dedup key); forwarded as the delivery UUID. */
+    explicitMessageId?: string
   ) => Promise<void>;
   /**
    * Schedule service — shared business logic for managing task schedules.
@@ -1712,7 +1720,15 @@ export class TaskAgentManager {
             })
         : `[Message from human]: ${row.message}`;
       try {
-        await this.injectSubSessionMessage(sessionId, message, isSyntheticMessage);
+        await this.injectSubSessionMessage(
+          sessionId,
+          message,
+          isSyntheticMessage,
+          undefined,
+          undefined,
+          undefined,
+          row.id
+        );
         repo.markDelivered(row.id, sessionId);
         this.emitPendingDelivered(row.id, sessionId, row);
       } catch (err) {
@@ -1825,7 +1841,7 @@ export class TaskAgentManager {
         const replyTo =
           extractReplyToSessionId(message) ??
           (registry && row.taskId ? registry.get(row.taskId) : null);
-        await inject(spaceId, message, replyTo);
+        await inject(spaceId, message, replyTo, row.id);
         repo.markDelivered(row.id, spaceChatSessionId);
         this.emitPendingDelivered(row.id, spaceChatSessionId, row);
       } catch (err) {
@@ -1882,7 +1898,8 @@ export class TaskAgentManager {
      * — must pass 'system' so they do NOT trigger a `resetContextPerTurn`
      * clear (the contract: only task inputs clear).
      */
-    inputKindOverride?: MessageInputKind
+    inputKindOverride?: MessageInputKind,
+    messageId?: string
   ): Promise<string> {
     const inputKind: MessageInputKind =
       inputKindOverride ?? (isSyntheticMessage ? 'task' : 'human');
@@ -1893,7 +1910,8 @@ export class TaskAgentManager {
       isSyntheticMessage,
       images,
       deliveryMode,
-      inputKind
+      inputKind,
+      messageId
     );
   }
 
@@ -1916,7 +1934,8 @@ export class TaskAgentManager {
     isSyntheticMessage = true,
     images?: MessageImage[],
     deliveryMode: 'immediate' | 'defer' = 'immediate',
-    inputKind: MessageInputKind = 'task'
+    inputKind: MessageInputKind = 'task',
+    messageId?: string
   ): Promise<string> {
     // Reject inject for a cancelled/archived task or cancelled run — the session
     // may still be in memory (idle, not evicted on cancel) but must not be
@@ -1953,7 +1972,8 @@ export class TaskAgentManager {
           origin,
           isSyntheticMessage,
           images,
-          inputKind
+          inputKind,
+          messageId
         );
       }
 
@@ -1968,7 +1988,8 @@ export class TaskAgentManager {
             origin,
             isSyntheticMessage,
             images,
-            inputKind
+            inputKind,
+            messageId
           );
         }
       }
@@ -1983,7 +2004,8 @@ export class TaskAgentManager {
           origin,
           isSyntheticMessage,
           images,
-          inputKind
+          inputKind,
+          messageId
         );
       }
       throw new Error(`Sub-session not found: ${subSessionId}`);
@@ -2110,7 +2132,7 @@ export class TaskAgentManager {
     if (!task?.workflowRunId) return false;
     const run = this.config.workflowRunRepo.getRun(task.workflowRunId);
     if (!run?.workflowId) return false;
-    const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+    const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
     if (!workflow) return false;
     const node = workflow.nodes.find((n) => n.id === workflowNodeId);
     if (!node) return false;
@@ -2141,7 +2163,7 @@ export class TaskAgentManager {
     if (!task?.workflowRunId) return [];
     const run = this.config.workflowRunRepo.getRun(task.workflowRunId);
     if (!run?.workflowId) return [];
-    const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+    const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
     if (!workflow) return [];
     const names = new Set<string>();
     for (const node of workflow.nodes) {
@@ -2242,7 +2264,7 @@ export class TaskAgentManager {
     if (!task?.workflowRunId) return undefined;
     const run = this.config.workflowRunRepo.getRun(task.workflowRunId);
     if (!run?.workflowId) return undefined;
-    const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+    const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
     return resolvePostApprovalTargetAgentName(workflow);
   }
 
@@ -2260,7 +2282,7 @@ export class TaskAgentManager {
     if (!task?.workflowRunId) return undefined;
     const run = this.config.workflowRunRepo.getRun(task.workflowRunId);
     if (!run?.workflowId) return undefined;
-    const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+    const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
     return resolvePostApprovalRouteNodeId(workflow);
   }
 
@@ -2545,7 +2567,7 @@ export class TaskAgentManager {
     const workspacePath = this.getTaskWorktreePath(taskId) ?? space.workspacePath;
 
     const workflow = workflowRun?.workflowId
-      ? this.config.spaceWorkflowManager.getWorkflow(workflowRun.workflowId)
+      ? this.config.spaceWorkflowManager.getWorkflowForRun(workflowRun)
       : null;
 
     // Resolve the persisted slot from provenance so the slot's current config
@@ -2761,7 +2783,7 @@ export class TaskAgentManager {
       if (task?.workflowRunId) {
         const run = this.config.workflowRunRepo.getRun(task.workflowRunId);
         if (run?.workflowId) {
-          const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+          const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
           const node = workflow?.nodes.find((candidate) => candidate.id === options.workflowNodeId);
           const slots = node ? resolveNodeAgents(node) : [];
           if (!slots.some((slot) => slot.name === agentName)) return [];
@@ -2775,7 +2797,7 @@ export class TaskAgentManager {
     const task = this.config.taskRepo.getTask(taskId);
     const run = this.config.workflowRunRepo.getRun(workflowRunId);
     const workflow = run?.workflowId
-      ? this.config.spaceWorkflowManager.getWorkflow(run.workflowId)
+      ? this.config.spaceWorkflowManager.getWorkflowForRun(run)
       : null;
     const space = task ? await this.config.spaceManager.getSpace(task.spaceId) : null;
     if (!task || !run || !workflow || !space) return [];
@@ -2818,7 +2840,7 @@ export class TaskAgentManager {
       if (!task?.workflowRunId) return false;
       const run = this.config.workflowRunRepo.getRun(task.workflowRunId);
       if (!run?.workflowId) return false;
-      const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+      const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
       if (!workflow) return false;
       const spaceManager = this.config.spaceManager;
       const space = await spaceManager.getSpace(task.spaceId);
@@ -3416,10 +3438,16 @@ export class TaskAgentManager {
     // 1. Stop sub-sessions (interrupt + cleanup, no DB delete).
     // stopSessionPreserveDb unsubscribes listeners and drops completion
     // callbacks for each session ID as part of its teardown.
+    // preserveDeliveryJobs: shutdown requeues in-flight message_delivery rows
+    // for the next boot (app.ts) BEFORE this runs — cancelling them here would
+    // delete the durable handoff we just preserved. The query still aborts so
+    // cleanup doesn't block; only the durable-job cancel is skipped.
     const nodeMap = this.subSessions.get(taskId);
     if (nodeMap) {
       for (const [subSessionId, session] of nodeMap) {
-        await this.stopSessionPreserveDb(subSessionId, session);
+        await this.stopSessionPreserveDb(subSessionId, session, {
+          preserveDeliveryJobs: true,
+        });
         this.agentSessionIndex.delete(subSessionId);
       }
       this.subSessions.delete(taskId);
@@ -3912,7 +3940,7 @@ export class TaskAgentManager {
   private workflowNodeNameForRun(workflowRunId: string, workflowNodeId: string): string | null {
     const run = this.config.workflowRunRepo.getRun(workflowRunId);
     if (!run?.workflowId) return null;
-    const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+    const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
     return workflow?.nodes.find((node) => node.id === workflowNodeId)?.name ?? null;
   }
 
@@ -3927,7 +3955,7 @@ export class TaskAgentManager {
     if (!execution?.workflowRunId || !execution.workflowNodeId) return false;
     const run = this.config.workflowRunRepo.getRun(execution.workflowRunId);
     if (!run?.workflowId) return false;
-    const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+    const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
     const node = workflow?.nodes.find((candidate) => candidate.id === execution.workflowNodeId);
     if (!node) return false;
     // resolveNodeAgents throws on a node with an empty agents array (e.g. a
@@ -4112,7 +4140,7 @@ export class TaskAgentManager {
     if (!task || task.status === 'done' || task.status === 'cancelled') return false;
     const run = this.config.workflowRunRepo.getRun(workflowRunId);
     if (!run || run.status === 'done' || run.status === 'cancelled') return false;
-    const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+    const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
     const hookStateRepo = new WorkflowHookStateRepository(this.config.db.getDatabase());
     for (const hook of workflow?.hooks ?? []) {
       const state = hookStateRepo.get(workflowRunId, hook.id)?.localState;
@@ -4239,7 +4267,7 @@ export class TaskAgentManager {
       return null;
     }
     const workflow = workflowRun?.workflowId
-      ? this.config.spaceWorkflowManager.getWorkflow(workflowRun.workflowId)
+      ? this.config.spaceWorkflowManager.getWorkflowForRun(workflowRun)
       : null;
     const workflowRunId = execution.workflowRunId;
 
@@ -4521,17 +4549,25 @@ export class TaskAgentManager {
   // -------------------------------------------------------------------------
 
   /**
-   * Inject a message (optionally with image attachments) into an AgentSession.
-   *
-   * Mirrors the multi-modal content shape produced by `buildMessageContent`
-   * in `MessagePersistence.persist` (the regular non-space chat path): when
-   * `images` is non-empty the SDK message content becomes a multi-modal
-   * block array (images first, then text) and is passed through to
-   * `MessageQueue.enqueueWithId`, which already accepts
-   * `string | MessageContent[]`. Image base64 sizes are validated against
-   * the same Anthropic API limit as the non-space path via
-   * `validateImageSizes` so users get the same early "resize image" error
-   * instead of a downstream API failure.
+   * True if any message_delivery job (turn or steer) is pending or processing
+   * for the session. Used to gate resetContextPerTurn so a `/clear` does not race
+   * a v2 turn whose job is enqueued but not yet claimed — the session's live
+   * processing state lags the durable job state under v2. Read-only indexed SELECT.
+   */
+  private hasActiveDeliveryJob(sessionId: string): boolean {
+    return this.config.db.getJobQueueRepo().activeDeliveryMessageUuids(sessionId).size > 0;
+  }
+
+  /**
+   * Inject a handoff/user message into a sub-session under v2 durable delivery.
+   * Idempotent on the message UUID (hoisted before the deferred save AND the
+   * resetContextPerTurn clear): a flush retry reusing the pending-row id reuses
+   * the existing `sdk_messages` row instead of inserting a duplicate, and an
+   * already-consumed row short-circuits (no `/clear`, no re-drive). Defers when
+   * the target is busy / rate-limited / parent-limited (marking the row
+   * `deferred` for QueryModeHandler replay); otherwise enqueues a durable
+   * `message_delivery` job via {@link deliverAndMarkQueued}. Returns the row id
+   * (the stable message UUID when a row already exists).
    */
   private async injectMessageIntoSession(
     session: AgentSession,
@@ -4540,7 +4576,8 @@ export class TaskAgentManager {
     origin?: MessageOrigin,
     isSyntheticMessage = true,
     images?: MessageImage[],
-    inputKind: MessageInputKind = 'task'
+    inputKind: MessageInputKind = 'task',
+    explicitMessageId?: string
   ): Promise<string> {
     const sessionId = session.session.id;
     const state = session.getProcessingState();
@@ -4560,7 +4597,9 @@ export class TaskAgentManager {
       state.status === 'interrupted' ||
       state.status === 'rate_limit_cooldown';
 
-    const messageId = generateUUID();
+    // An explicit id (the pending-message row id from flushPendingMessagesForTarget)
+    // makes a crash-retry dedup: deliverMessage/getActiveDeliveryRole keys on it.
+    const messageId = explicitMessageId ?? generateUUID();
     const hasImages = !!images && images.length > 0;
     // Validate base64 size up-front so users get the same early "resize image"
     // error returned by the live-session persistence path instead of a late,
@@ -4594,6 +4633,28 @@ export class TaskAgentManager {
       },
     };
 
+    // Idempotent persist guard (v2), hoisted BEFORE the deferred save AND the
+    // resetContextPerTurn clear. A flush retry / concurrent flush reuses the
+    // pending-row id, but saveUserMessage mints a fresh row id each call.
+    // Without this guard up front, (a) the deferred branch inserts a SECOND
+    // deferred row with the same non-unique sdk_uuid — QueryModeHandler replays
+    // every deferred row, so the handoff delivers multiple times; and (b) a
+    // crash after the delivery job completed but before markDelivered retries
+    // the same id, reaches resetContextPerTurn's /clear, and rotates away the
+    // context holding the just-delivered handoff. `consumed` ⇒ already
+    // delivered — return without clearing/re-saving/re-driving; `failed` ⇒ a
+    // prior enqueue threw and terminalized it — reopen. (Codex P1.)
+    const v2Enabled = isMessageDeliveryV2Enabled();
+    const existing = v2Enabled
+      ? this.config.db.getSDKMessageRepo().getDeliveryContent(sessionId, messageId)
+      : null;
+    if (existing?.sendStatus === 'consumed') {
+      return messageId; // genuinely delivered on a prior attempt — no clear, no re-drive
+    }
+    if (existing?.sendStatus === 'failed') {
+      this.config.db.getSDKMessageRepo().reopenDeliveryByUuid(sessionId, messageId);
+    }
+
     // defer + busy → persist as deferred for replay after current turn completes.
     // A session in rate_limit_cooldown is paused on a rate/usage cap — ALWAYS
     // defer incoming messages (even `immediate` delivery from an external event
@@ -4609,7 +4670,19 @@ export class TaskAgentManager {
     const parentTask = parentTaskId ? this.config.taskRepo.getTask(parentTaskId) : null;
     const parentLimited = parentTask ? isRateOrUsageLimited(parentTask.status) : false;
     if ((deliveryMode === 'defer' && isBusy) || inRateLimitCooldown || parentLimited) {
-      const dbId = this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'deferred', origin);
+      // An existing row that isn't already `deferred` (e.g. a `failed` row just
+      // reopened to `enqueued`) must be flipped to `deferred` here, or
+      // QueryModeHandler's replay — which selects only `send_status='deferred'` —
+      // never picks it up and the handoff is lost on an idle parent-limited
+      // session. (Codex P1.)
+      if (v2Enabled && existing && existing.sendStatus !== 'deferred') {
+        this.config.db.getSDKMessageRepo().markDeliveryDeferredByUuid(sessionId, messageId);
+      }
+      // Reuse the existing row if present (idempotent); only insert on the first
+      // attempt — a duplicate deferred row would replay the handoff multiple times.
+      const dbId = existing
+        ? messageId
+        : this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'deferred', origin);
       return dbId;
     }
 
@@ -4618,16 +4691,19 @@ export class TaskAgentManager {
     // is processed. Only task inputs clear — human input and system recovery are
     // classified at the inject entry points and never reach here as 'task'. Skip
     // when there is no prior context (the slot's first turn — a fresh session has
-    // no sdkSessionId yet) or when the session is mid-turn (busy), so the clear
-    // cannot race with queued input and never wastes a no-op clear. `/clear` is
-    // an SDK command, so the gate is sdkSessionId: an ACP (codex) slot with the
-    // flag set clears nothing until ACP grows an equivalent.
+    // no sdkSessionId yet), when the session is mid-turn (busy), OR when a
+    // durable delivery job is already pending/processing for the session (the v2
+    // turn will drive shortly; a clear now would race it), so the clear cannot
+    // race with queued input and never wastes a no-op clear. `/clear` is an SDK
+    // command, so the gate is sdkSessionId: an ACP (codex) slot with the flag set
+    // clears nothing until ACP grows an equivalent.
     const hasPriorContext = !!session.session.sdkSessionId;
     const shouldClearContext =
       inputKind === 'task' &&
       !isBusy &&
       hasPriorContext &&
-      this.slotResetsContextForSession(sessionId);
+      this.slotResetsContextForSession(sessionId) &&
+      !this.hasActiveDeliveryJob(sessionId);
     if (shouldClearContext) {
       try {
         await session.clearConversationContext();
@@ -4639,6 +4715,49 @@ export class TaskAgentManager {
       }
     }
 
+    if (v2Enabled) {
+      // The idempotent lookup + consumed/failed handling ran hoisted above; here
+      // only the (re-)enqueue + queued marker remain. Reuse the existing row if
+      // present, else insert `enqueued`. deliverAndMarkQueued holds withSessionLock
+      // so a concurrent steer can't steal the turn's queued marker; the handler
+      // then owns ensureQueryStarted and feeding the live transport.
+      const dbId = existing
+        ? messageId
+        : this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued', origin);
+      const sdkMessageRepo = this.config.db.getSDKMessageRepo();
+      // Await SDK consumption (onSent) before returning — a direct handoff (the
+      // live send_message path) has no retained source row to retry, so it must
+      // not report delivered after a bare enqueue that may yet dead-letter. On
+      // timeout, terminalize ONLY a fresh row: direct send_message carries no
+      // stable id, so a retry mints a fresh UUID — terminalizing the timed-out
+      // fresh job stops it being consumed alongside the retry (duplicate). The
+      // flush path carries a stable id (existing row), so it omits the
+      // terminalize and self-heals via retry. (Codex P1.)
+      await awaitDeliveryConsumption({
+        sessionId,
+        messageUuid: messageId,
+        // ACP's consume boundary is acceptance (minutes) — size the wait so a
+        // fresh ACP delivery isn't terminalized mid-run. (Codex P1.)
+        timeoutMs: deliveryConsumptionTimeoutMs(session.getSessionData?.().config?.provider),
+        deliver: () =>
+          deliverAndMarkQueued({
+            jobQueue: this.config.db.getJobQueueRepo(),
+            stateManager: session.stateManager,
+            sessionId,
+            messageUuid: messageId,
+            origin: 'space_inject',
+            onEnqueueFailure: () => sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId),
+          }),
+        ...(!existing
+          ? {
+              terminalizeOnTimeout: () =>
+                sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId),
+            }
+          : {}),
+      });
+      return dbId;
+    }
+    // Legacy inline path (HYPERNEO_MESSAGE_DELIVERY_V2=0 opt-out).
     await session.ensureQueryStarted();
     const dbId = this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued', origin);
     // When images are present, enqueue the multi-modal content array so the SDK
@@ -4667,7 +4786,7 @@ export class TaskAgentManager {
   private async stopSessionPreserveDb(
     sessionId: string,
     session: AgentSession,
-    options: { strict?: boolean } = {}
+    options: { strict?: boolean; preserveDeliveryJobs?: boolean } = {}
   ): Promise<void> {
     const unsub = this.sessionListeners.get(sessionId);
     if (!options.strict && unsub) {
@@ -4680,7 +4799,13 @@ export class TaskAgentManager {
 
     let stopError: unknown;
     try {
-      await session.handleInterrupt();
+      // preserveDeliveryJobs: on a restart-bound shutdown stop, do NOT cancel
+      // the session's message_delivery jobs — app.ts already requeued them for
+      // the next boot, and handleInterrupt's default cancel would delete the
+      // durable handoff we just preserved. (Codex P1.)
+      await session.handleInterrupt(
+        options.preserveDeliveryJobs ? { preserveDeliveryJobs: true } : undefined
+      );
     } catch (err) {
       stopError = err;
       log.warn(`TaskAgentManager: failed to interrupt session ${sessionId}:`, err);
@@ -5038,7 +5163,7 @@ export class TaskAgentManager {
     const workflowNodeId = workflowNodeIdHint ?? execution?.workflowNodeId ?? '';
     const run = this.config.workflowRunRepo.getRun(workflowRunId);
     const workflow = run?.workflowId
-      ? (this.config.spaceWorkflowManager.getWorkflow(run.workflowId) ?? null)
+      ? (this.config.spaceWorkflowManager.getWorkflowForRun(run) ?? null)
       : null;
     const channels = workflow?.channels ?? [];
     const channelResolver = new ChannelResolver(channels);
