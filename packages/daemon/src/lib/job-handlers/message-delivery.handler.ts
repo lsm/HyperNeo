@@ -47,7 +47,7 @@ import {
   type DeliveryLoadResult,
   type MessageDeliverySession,
 } from '../agent/message-delivery';
-import { deliveryMetrics } from '../agent/message-delivery-metrics';
+import { deliveryMetrics, type DeliveryMetrics } from '../agent/message-delivery-metrics';
 import { Logger } from '../logger';
 
 export interface MessageDeliveryHandlerDeps {
@@ -65,6 +65,12 @@ export interface MessageDeliveryHandlerDeps {
   isSessionArchived?(sessionId: string): boolean;
   /** Terminalize a still-enqueued prompt when lifecycle rejection completes its job. */
   markDeliveryFailed?(sessionId: string, messageUuid: string): void;
+  /**
+   * Exactly-once observability sink (task #861 item 13). Optional — defaults to
+   * the process-wide singleton so production wiring is unchanged, but a test can
+   * inject a fresh {@link DeliveryMetrics} to assert the reclaim-skip counters.
+   */
+  metrics?: DeliveryMetrics;
 }
 
 /**
@@ -80,6 +86,8 @@ const LEASE_HEARTBEAT_MS = 60_000;
  */
 export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): JobHandler {
   const log = new Logger('message-delivery.handler');
+  // Inject for tests; the singleton in production.
+  const metrics: DeliveryMetrics = deps.metrics ?? deliveryMetrics;
 
   return async (job: Job): Promise<Record<string, unknown>> => {
     const payload = asMessageDeliveryPayload(job.payload);
@@ -119,7 +127,7 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
     if (loaded === null) {
       // Content gone (rewound/deleted) — nothing to deliver.
       log.warn(`message_delivery: content for ${payload.messageUuid} not found; completing.`);
-      deliveryMetrics.recordReclaimSkip('noContent');
+      metrics.recordReclaimSkip('noContent');
       await session.settleSkippedDelivery?.(payload.messageUuid);
       return { outcome: 'no_content' };
     }
@@ -132,8 +140,8 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
     // that feeds) is NOT recorded here — it is counted in `feedsObserved` — so
     // ordinary traffic cannot dilute the skip signal. deferred/failed are
     // user/terminal states, not reclaim re-drives.
-    if (sendStatus === 'consumed') deliveryMetrics.recordReclaimSkip('alreadyConsumed');
-    else if (sendStatus === 'submitted') deliveryMetrics.recordReclaimSkip('alreadySubmitted');
+    if (sendStatus === 'consumed') metrics.recordReclaimSkip('alreadyConsumed');
+    else if (sendStatus === 'submitted') metrics.recordReclaimSkip('alreadySubmitted');
 
     // Only deliver messages still pending. `consumed`/`deferred`/`failed` are
     // NOT re-fed (see the module doc + §8). `deferred`/`failed` skip outright;

@@ -49,6 +49,22 @@ export interface DeliveryMetricsSnapshot {
   residualWindowSamples: number;
 }
 
+/**
+ * The `messageDelivery.diagnostics` RPC payload — a thin job_queue snapshot
+ * paired with the exactly-once metrics. Named (not anonymous) so the contract
+ * is explicit; lives in daemon (no web consumer yet — promote to `packages/
+ * shared` if a client adopts it). (task #861, review P2.)
+ */
+export interface MessageDeliveryDiagnostics {
+  lane: string;
+  statusCounts: Record<string, number>;
+  /** processing rows past the reclaimStale lease window (reclaimable). */
+  staleProcessing: number;
+  /** processing rows within the lease window (healthy in-flight turns). */
+  activeProcessing: number;
+  metrics: DeliveryMetricsSnapshot;
+}
+
 const RESIDUAL_WINDOW_SAMPLE_CAP = 1000;
 const DUPLICATE_UUID_CAP = 100;
 /** Bounded LRU window of recently-fed UUIDs for duplicate detection. */

@@ -29,6 +29,7 @@ import {
   type FeedSteerOutcome,
 } from '../../../../src/lib/agent/message-delivery';
 import { createMessageDeliveryHandler } from '../../../../src/lib/job-handlers/message-delivery.handler';
+import { DeliveryMetrics } from '../../../../src/lib/agent/message-delivery-metrics';
 import { JobQueueProcessor } from '../../../../src/storage/job-queue-processor';
 import type { Job } from '../../../../src/storage/repositories/job-queue-repository';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
@@ -544,6 +545,39 @@ describe('handler — status-aware delivery (§8)', () => {
     expect(result).toEqual({ outcome: 'completed' });
     expect(session.driveCalls).toBe(1);
     expect(session.lastAlreadyConsumed).toBe(true); // ← the guard: no re-feed
+  });
+
+  it('records reclaim-skip counters via the injected metrics sink (review P2.2a)', async () => {
+    // The handler accepts an injectable DeliveryMetrics so a test can assert the
+    // reclaim-skip wiring (alreadyConsumed / alreadySubmitted / noContent) at the
+    // handler level, not just the singleton.
+    const session = new MockSession();
+    const metrics = new DeliveryMetrics();
+    const job = turnJob(repo, 'msg-consumed-m');
+    const handler = createMessageDeliveryHandler({
+      jobQueue: repo,
+      getSession: () => session,
+      getMessageContent: () => ({ content: 'hello', sendStatus: 'consumed' }),
+      metrics,
+    });
+    await handler(job);
+    expect(metrics.snapshot().reclaimSkips.alreadyConsumed).toBe(1);
+    expect(metrics.snapshot().feedsObserved).toBe(0); // consumed → no feed, not counted here
+  });
+
+  it('a submitted row re-claimed records alreadySubmitted + skips (review P2.2a)', async () => {
+    const session = new MockSession();
+    const metrics = new DeliveryMetrics();
+    const job = turnJob(repo, 'msg-submitted-m');
+    const handler = createMessageDeliveryHandler({
+      jobQueue: repo,
+      getSession: () => session,
+      getMessageContent: () => ({ content: 'hello', sendStatus: 'submitted' }),
+      metrics,
+    });
+    const result = await handler(job);
+    expect(result).toMatchObject({ outcome: 'skipped', sendStatus: 'submitted' });
+    expect(metrics.snapshot().reclaimSkips.alreadySubmitted).toBe(1);
   });
 
   it('deferred message is skipped, not force-fed into the turn (#2597)', async () => {

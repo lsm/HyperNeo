@@ -582,7 +582,11 @@ export class AgentSession
     // runtime MCP servers, the current prompt, and continuation maps BEFORE any
     // pending input starts a query; the flag flips when the owner calls the
     // post-provisioning replay path, so the timer won't re-enqueue a stranded
-    // row against a half-provisioned session. (Codex review.)
+    // row against a half-provisioned session. Generic/manual/immediate sessions
+    // (autoReplayPendingMessages !== false) are provisioned at construction —
+    // their runtime is ready immediately, and manual-mode sessions never call
+    // the replay path, so they'd otherwise never enable the timer. (Codex review.)
+    this.reconcilerProvisioned = this.runtimeOptions.autoReplayPendingMessages ?? true;
     this.reconcileTimer = setInterval(() => {
       if (!this.reconcilerProvisioned) return;
       void this.reconcileStrandedDeliveries().catch((error) => {
