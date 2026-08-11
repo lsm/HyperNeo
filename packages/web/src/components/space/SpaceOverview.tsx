@@ -115,7 +115,7 @@ function RuntimeControlBar({
   return (
     <div
       class={cn(
-        'flex items-center justify-between rounded-xl border px-5 py-4 transition-colors',
+        'flex items-center justify-between rounded-xl border px-4 py-3 transition-colors sm:px-5',
         GLASS_SURFACE,
         style.border
       )}
@@ -143,14 +143,14 @@ function RuntimeControlBar({
             <button
               onClick={onPause}
               disabled={actionLoading}
-              class="px-4 py-2 text-sm font-medium text-yellow-300 bg-yellow-900/30 hover:bg-yellow-900/50 border border-yellow-700/40 rounded-lg transition-colors disabled:opacity-40"
+              class="px-3 py-1.5 text-xs font-medium text-yellow-300 bg-yellow-900/30 hover:bg-yellow-900/50 border border-yellow-700/40 rounded-lg transition-colors disabled:opacity-40"
             >
               Pause
             </button>
             <button
               onClick={onStop}
               disabled={actionLoading}
-              class="px-4 py-2 text-sm font-medium text-red-300 bg-red-900/20 hover:bg-red-900/40 border border-red-700/40 rounded-lg transition-colors disabled:opacity-40"
+              class="px-3 py-1.5 text-xs font-medium text-red-300 bg-red-900/20 hover:bg-red-900/40 border border-red-700/40 rounded-lg transition-colors disabled:opacity-40"
             >
               Stop
             </button>
@@ -161,14 +161,14 @@ function RuntimeControlBar({
             <button
               onClick={onResume}
               disabled={actionLoading}
-              class="px-4 py-2 text-sm font-medium text-green-300 bg-green-900/30 hover:bg-green-900/50 border border-green-700/40 rounded-lg transition-colors disabled:opacity-40"
+              class="px-3 py-1.5 text-xs font-medium text-green-300 bg-green-900/30 hover:bg-green-900/50 border border-green-700/40 rounded-lg transition-colors disabled:opacity-40"
             >
               Resume
             </button>
             <button
               onClick={onStop}
               disabled={actionLoading}
-              class="px-4 py-2 text-sm font-medium text-red-300 bg-red-900/20 hover:bg-red-900/40 border border-red-700/40 rounded-lg transition-colors disabled:opacity-40"
+              class="px-3 py-1.5 text-xs font-medium text-red-300 bg-red-900/20 hover:bg-red-900/40 border border-red-700/40 rounded-lg transition-colors disabled:opacity-40"
             >
               Stop
             </button>
@@ -178,7 +178,7 @@ function RuntimeControlBar({
           <button
             onClick={onStart}
             disabled={actionLoading}
-            class="px-4 py-2 text-sm font-medium text-green-300 bg-green-900/30 hover:bg-green-900/50 border border-green-700/40 rounded-lg transition-colors disabled:opacity-40"
+            class="px-3 py-1.5 text-xs font-medium text-green-300 bg-green-900/30 hover:bg-green-900/50 border border-green-700/40 rounded-lg transition-colors disabled:opacity-40"
           >
             Start
           </button>
@@ -200,8 +200,8 @@ function AutonomyLevelBar({
   onChange: (level: SpaceAutonomyLevel) => void;
 }) {
   return (
-    <div class={cn('rounded-xl border px-5 py-4', GLASS_SURFACE)}>
-      <div class="flex items-center justify-between mb-2.5">
+    <div class={cn('min-h-[5.25rem] rounded-xl border px-4 py-3.5', GLASS_SURFACE)}>
+      <div class="mb-2 flex items-center justify-between">
         <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Autonomy</span>
         <span class="text-xs text-gray-400">{AUTONOMY_LABELS[level]}</span>
       </div>
@@ -227,7 +227,7 @@ function AutonomyLevelBar({
           />
         ))}
       </div>
-      <AutonomyWorkflowSummary level={level} workflows={workflows} compact class="mt-2.5" />
+      <AutonomyWorkflowSummary level={level} workflows={workflows} compact class="mt-2" />
     </div>
   );
 }
@@ -236,8 +236,8 @@ function AutonomyLevelBar({
 
 function ConcurrencyBar({ limit, onChange }: { limit: number; onChange: (n: number) => void }) {
   return (
-    <div class={cn('rounded-xl border px-5 py-4', GLASS_SURFACE)}>
-      <div class="flex items-center justify-between mb-2.5">
+    <div class={cn('min-h-[5.25rem] rounded-xl border px-4 py-3.5', GLASS_SURFACE)}>
+      <div class="mb-2 flex items-center justify-between">
         <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">
           Concurrency
         </span>
@@ -463,30 +463,32 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
       <div class="mx-auto min-h-[calc(100%+1px)] max-w-6xl space-y-6">
         <SpaceCreateTaskDialog isOpen={showCreateTask} onClose={() => setShowCreateTask(false)} />
 
-        {/* Runtime state with pause/resume/stop/start controls */}
-        {runtimeState && (
-          <RuntimeControlBar
-            state={runtimeState}
-            actionLoading={actionLoading}
-            onPause={() => void handlePause()}
-            onResume={() => void handleResume()}
-            onStop={() => setShowStopConfirm(true)}
-            onStart={() => void handleStart()}
-          />
-        )}
+        <div class="space-y-3">
+          {/* Runtime state with pause/resume/stop/start controls */}
+          {runtimeState && (
+            <RuntimeControlBar
+              state={runtimeState}
+              actionLoading={actionLoading}
+              onPause={() => void handlePause()}
+              onResume={() => void handleResume()}
+              onStop={() => setShowStopConfirm(true)}
+              onStart={() => void handleStart()}
+            />
+          )}
 
-        {/* Autonomy level */}
-        <AutonomyLevelBar
-          level={space.autonomyLevel ?? 1}
-          workflows={workflows}
-          onChange={(l) => void handleAutonomyChange(l)}
-        />
-
-        {/* Concurrency limit */}
-        <ConcurrencyBar
-          limit={space.maxConcurrentTasks ?? MIN_SPACE_CONCURRENT_TASKS}
-          onChange={(n) => void handleConcurrencyChange(n)}
-        />
+          {/* Operational controls share a row when the content column allows it. */}
+          <div class="grid gap-3 lg:grid-cols-2">
+            <AutonomyLevelBar
+              level={space.autonomyLevel ?? 1}
+              workflows={workflows}
+              onChange={(l) => void handleAutonomyChange(l)}
+            />
+            <ConcurrencyBar
+              limit={space.maxConcurrentTasks ?? MIN_SPACE_CONCURRENT_TASKS}
+              onChange={(n) => void handleConcurrencyChange(n)}
+            />
+          </div>
+        </div>
 
         {/* Stats strip */}
         <div class="grid grid-cols-3 gap-3">
