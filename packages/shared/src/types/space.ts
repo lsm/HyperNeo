@@ -2303,6 +2303,113 @@ export interface WorkflowChannel {
 }
 
 /**
+ * The broadcast wildcard for a handoff {@link WorkflowTransition.target} (and
+ * for {@link HandoffOperation.target}). A transition whose `target` is `'*'`
+ * hands off to every other node in the workflow; a sender reaches it by calling
+ * `handoff({ target: '*' })`. It is a literal target, not a catch-all — a
+ * `'*'` transition does not match a sender-supplied named target.
+ */
+export const HANDOFF_TARGET_WILDCARD = '*' as const;
+
+/**
+ * A declarative outbound handoff transition from a workflow node.
+ *
+ * A transition names ONE legal handoff target reachable from the node that
+ * declares it. A first-class `handoff({ target, summary, data? })` issued by an
+ * agent in that node must resolve to exactly one of its declared transitions —
+ * see {@link resolveHandoffTransition}. A `target` that resolves to no
+ * transition is rejected by the contract; it is never silently delivered as a
+ * plain message.
+ *
+ * Relationship to {@link WorkflowChannel}: channels are messaging topology
+ * (any agent-to-agent message). Transitions are control-flow handoffs — a
+ * successful handoff completes the sender's current execution round, and the
+ * target's context/reset policy is owned by the workflow and the target slot
+ * (e.g. {@link WorkflowNodeAgent.resetContextPerTurn}), never by the sender.
+ * The two coexist: a workflow may declare channels for peer discussion and
+ * transitions for round-completing handoffs independently.
+ *
+ * `gateId` / `hookId` bind a transition to the SAME authorization primitives
+ * that channels use. When `gateId` is set, the gate's writable fields are the
+ * legal `data` keys for the handoff and the gate must pass for it to complete.
+ * When `hookId` is set, the hook's validator must pass.
+ *
+ * Runtime transition EXECUTION is not implemented in this contract phase — this
+ * type is declarative, validated, and round-tripped through export/import only.
+ */
+export interface WorkflowTransition {
+  /**
+   * Unique identifier for this transition within its node. Required so a
+   * transition has a stable identity for diagnostics and export round-trips.
+   */
+  id: string;
+  /** Optional human-readable label for display in the visual editor. */
+  label?: string;
+  /**
+   * Handoff target: a node name, an agent slot name, or
+   * {@link HANDOFF_TARGET_WILDCARD} (`'*'`) for broadcast. Must resolve to a
+   * declared node/agent at validation time. Targets must be unique within a
+   * node so a `handoff({ target })` resolves unambiguously (at most one
+   * transition per concrete name, at most one `'*'`).
+   */
+  target: string;
+  /**
+   * Optional gate that authorizes this transition. When set, the gate's
+   * writable fields are the legal keys for the handoff's `data`, and the gate
+   * must pass before the handoff completes. References a gate in
+   * `SpaceWorkflow.gates`.
+   */
+  gateId?: string;
+  /**
+   * Optional hook whose validator must pass for this transition (e.g.
+   * `pr_ready`). References a hook in `SpaceWorkflow.hooks`.
+   */
+  hookId?: string;
+  /**
+   * For cyclic transitions (target is an earlier node, closing a loop), the
+   * maximum number of times this transition may be taken in a single workflow
+   * run before it is blocked. Cyclicity is inferred from graph topology at
+   * runtime, not stored. Mirrors {@link WorkflowChannel.maxCycles}. Must be a
+   * positive integer when present.
+   */
+  maxCycles?: number;
+}
+
+/**
+ * The minimal sender-facing shape of a first-class handoff operation:
+ *
+ *   handoff({ target, summary, data? })
+ *
+ * This is the contract an agent invokes; it is distinct from a generic
+ * `send_message`. Semantics formalized by this contract (runtime execution is
+ * a separate phase — not implemented here):
+ *
+ * - **target** MUST resolve to a declared outbound {@link WorkflowTransition}
+ *   on the sender's node. A target that resolves to no transition is rejected,
+ *   not silently delivered as a plain message.
+ * - **summary** is a NON-AUTHORITATIVE sender note. It is NOT the target's task
+ *   description or input — the target's task/context is owned by the workflow
+ *   and the target slot. Recipients may read it as context but must not treat
+ *   it as an instruction channel, and the sender must not use it to direct the
+ *   target's work or reset policy.
+ * - **data** supplies the workflow-declared fields for the resolved transition
+ *   (the writable fields of its `gateId`, or the template fields of its
+ *   `hookId`). Keys outside the declared shape are rejected.
+ * - A successful handoff COMPLETES the sender's current execution round; the
+ *   sender does not continue after issuing one.
+ * - Target context/reset policy (e.g. {@link WorkflowNodeAgent.resetContextPerTurn})
+ *   is owned by the workflow and the target slot, NEVER by the sender.
+ */
+export interface HandoffOperation {
+  /** Resolves to a declared outbound {@link WorkflowTransition}. */
+  target: string;
+  /** Non-authoritative sender note. Not the target's task/input. */
+  summary: string;
+  /** Supplies the transition's workflow-declared hook/gate fields. */
+  data?: Record<string, unknown>;
+}
+
+/**
  * A single node in the workflow graph.
  * Nodes run one or more agents (in parallel when multiple are specified).
  * Nodes are connected by WorkflowChannels.
@@ -2356,6 +2463,15 @@ export interface WorkflowNode {
    * 600s default timed out before the bot posted its +1.
    */
   codexTimeoutSeconds?: number;
+  /**
+   * Declared outbound handoff transitions from this node. A first-class
+   * `handoff({ target, summary, data? })` issued by an agent in this node must
+   * resolve to exactly one of these. Omitting it (or an empty array) means the
+   * node declares no first-class handoffs — its agents may still communicate
+   * over channels, but no round-completing handoff is available. See
+   * {@link WorkflowTransition} and {@link HandoffOperation}.
+   */
+  transitions?: WorkflowTransition[];
 }
 
 /**
@@ -2386,6 +2502,8 @@ export interface WorkflowNodeInput {
    * `requireCodexApproval` is true. See {@link WorkflowNode.codexTimeoutSeconds}.
    */
   codexTimeoutSeconds?: number;
+  /** Declared outbound handoff transitions. See {@link WorkflowNode.transitions}. */
+  transitions?: WorkflowTransition[];
 }
 
 /**
@@ -2836,6 +2954,23 @@ export interface ExportedWorkflowNodeAgent {
 }
 
 /**
+ * A declarative outbound handoff transition in the portable export format.
+ * Mirrors {@link WorkflowTransition}. Uses node/agent names (already portable
+ * in the export) for `target`; `gateId`/`hookId` are opaque references carried
+ * as-is (gates are not exported, so `gateId` may dangle on re-import exactly as
+ * `ExportedWorkflowChannel.gateId` does today; `hookId` is checked against the
+ * exported `hooks` list on import).
+ */
+export interface ExportedWorkflowTransition {
+  id: string;
+  label?: string;
+  target: string;
+  gateId?: string;
+  hookId?: string;
+  maxCycles?: number;
+}
+
+/**
  * A single workflow node (graph node) in the exported format.
  *
  * Differences from `WorkflowNode`:
@@ -2869,6 +3004,11 @@ export interface ExportedWorkflowNode {
    * `requireCodexApproval` is true. See {@link WorkflowNode.codexTimeoutSeconds}.
    */
   codexTimeoutSeconds?: number;
+  /**
+   * Declared outbound handoff transitions for this node.
+   * Mirrors {@link WorkflowNode.transitions}. Preserved through round-trip.
+   */
+  transitions?: ExportedWorkflowTransition[];
 }
 
 /**

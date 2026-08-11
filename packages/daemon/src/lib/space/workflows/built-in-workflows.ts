@@ -1761,6 +1761,7 @@ export function mergeNodeStructuralFieldsFromTemplate(
     | 'requireCodexApproval'
     | 'codexPollIntervalMs'
     | 'codexTimeoutSeconds'
+    | 'transitions'
   >[],
   resolveAgentId: (name: string) => string | undefined
 ): WorkflowNode[] {
@@ -1820,6 +1821,18 @@ export function mergeNodeStructuralFieldsFromTemplate(
       // would silently delete any non-default timeout on a seeded node during
       // restamp and revert the Codex hook to the global default window.
       codexTimeoutSeconds: templateNode?.codexTimeoutSeconds ?? node.codexTimeoutSeconds,
+      // Declared handoff transitions are template-owned structural config (like
+      // postApproval): overwrite from the template on restamp so a template
+      // change to a node's outbound handoffs reaches seeded spaces. When the
+      // template node is absent (renamed away), preserve the existing node's
+      // transitions. Only arrays with length > 0 are carried — an empty/absent
+      // template value clears the field, matching postApproval semantics.
+      transitions:
+        templateNode && templateNode.transitions && templateNode.transitions.length > 0
+          ? templateNode.transitions
+          : templateNode
+            ? undefined
+            : node.transitions,
       agents: node.agents.map((agent) => {
         const key = `${node.name}::${agent.name}`;
         const templateAgent = templateAgentsByKey.get(key);

@@ -279,6 +279,15 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
     ? `${workflow.postApproval.targetAgent}|${workflow.postApproval.instructions ?? ''}|${workflow.postApproval.requirePrMerge ? '1' : '0'}`
     : '';
 
+  // Serialize node-level handoff transitions (the first-class handoff contract)
+  // so a change to a node's declared outbound transitions is detected as drift
+  // and re-stamped into installed spaces via mergeNodeStructuralFieldsFromTemplate.
+  // Only emitted when a node declares at least one transition.
+  const nodeTransitions = workflow.nodes
+    .filter((n) => n.transitions && n.transitions.length > 0)
+    .map((n) => `${n.name}|${JSON.stringify(n.transitions)}`)
+    .sort();
+
   return {
     description: workflow.description ?? '',
     instructions: workflow.instructions ?? '',
@@ -303,6 +312,7 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
     nodeCodexPollIntervals,
     nodeCodexTimeouts,
     legacyPostApproval,
+    ...(nodeTransitions.length > 0 ? { nodeTransitions } : {}),
   };
 }
 

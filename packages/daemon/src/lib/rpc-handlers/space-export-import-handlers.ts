@@ -303,6 +303,9 @@ export function buildWorkflowCreateParams(
       codexPollIntervalMs: exportedNode.codexPollIntervalMs,
       codexTimeoutSeconds: exportedNode.codexTimeoutSeconds,
     };
+    if (exportedNode.transitions && exportedNode.transitions.length > 0) {
+      node.transitions = exportedNode.transitions;
+    }
 
     return node;
   });
@@ -387,6 +390,37 @@ function validateWorkflowForPreview(
       const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
       if (toList.length === 0) {
         errors.push(`${loc}: 'to' must not be empty`);
+      }
+    }
+  }
+
+  // ── 3. Handoff transition validation ──────────────────────────────────────
+  // Structural/uniqueness rules are enforced by validateExportedWorkflow's Zod
+  // schema; here we surface referential-integrity issues that depend on the
+  // bundle's node/agent/hook name sets so the import preview can warn about
+  // dangling transition targets and hook refs before createWorkflow runs.
+  const transitionHookIds = new Set<string>();
+  for (const hook of exported.hooks ?? []) {
+    if (hook?.id) transitionHookIds.add(hook.id);
+  }
+  const transitionTargetNames = new Set<string>(['*']);
+  for (const n of exported.nodes) {
+    transitionTargetNames.add(n.name);
+    for (const a of n.agents ?? []) transitionTargetNames.add(a.name);
+  }
+  for (const node of exported.nodes) {
+    const transitions = node.transitions;
+    if (!transitions || transitions.length === 0) continue;
+    for (let ti = 0; ti < transitions.length; ti++) {
+      const t = transitions[ti];
+      const loc = `node "${node.name}".transitions[${ti}]`;
+      if (!transitionTargetNames.has(t.target)) {
+        errors.push(
+          `${loc}.target "${t.target}" does not reference a known node name or agent slot name`
+        );
+      }
+      if (t.hookId !== undefined && !transitionHookIds.has(t.hookId)) {
+        errors.push(`${loc}.hookId "${t.hookId}" does not reference a known hook`);
       }
     }
   }

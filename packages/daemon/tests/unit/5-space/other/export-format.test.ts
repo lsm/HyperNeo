@@ -2353,3 +2353,139 @@ describe('exportWorkflow — disabled', () => {
     expect(exported.disabled).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Handoff transitions (first-class handoff contract)
+// ---------------------------------------------------------------------------
+
+describe('exportWorkflow — handoff transitions', () => {
+  test('exports node transitions and omits them when absent', () => {
+    const workflow = makeWorkflow({
+      nodes: [
+        {
+          id: 'node-uuid-1',
+          name: 'Code step',
+          agents: [{ agentId: 'agent-uuid-1', name: 'coder' }],
+          transitions: [
+            { id: 'to-review', target: 'Review step', gateId: 'g1', maxCycles: 3 },
+            { id: 'broadcast', target: '*' },
+          ],
+        },
+        {
+          id: 'node-uuid-2',
+          name: 'Review step',
+          agents: [{ agentId: 'agent-uuid-3', name: 'reviewer' }],
+        },
+      ],
+    });
+    const agents = [makeAgent(), makeReviewerAgent()];
+    const exported = exportWorkflow(workflow, agents);
+
+    expect(exported.nodes[0].transitions).toEqual([
+      { id: 'to-review', target: 'Review step', gateId: 'g1', maxCycles: 3 },
+      { id: 'broadcast', target: '*' },
+    ]);
+    // A node without transitions omits the field entirely.
+    expect(exported.nodes[1].transitions).toBeUndefined();
+  });
+
+  test('round-trips transitions through export → validate', () => {
+    const workflow = makeWorkflow({
+      nodes: [
+        {
+          id: 'node-uuid-1',
+          name: 'Code step',
+          agents: [{ agentId: 'agent-uuid-1', name: 'coder' }],
+          transitions: [{ id: 'to-review', target: 'Review step', label: 'hand off' }],
+        },
+        {
+          id: 'node-uuid-2',
+          name: 'Review step',
+          agents: [{ agentId: 'agent-uuid-3', name: 'reviewer' }],
+        },
+        {
+          id: 'node-uuid-3',
+          name: 'Plan step',
+          agents: [{ agentId: 'agent-uuid-2', name: 'planner' }],
+        },
+      ],
+    });
+    const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
+    const exported = exportWorkflow(workflow, agents);
+    const result = validateExportedWorkflow(exported);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.nodes[0].transitions).toEqual([
+        { id: 'to-review', target: 'Review step', label: 'hand off' },
+      ]);
+    }
+  });
+});
+
+describe('validateExportedWorkflow — handoff transitions', () => {
+  function wfWithTransitions(
+    transitions: Array<Record<string, unknown>>,
+    hooks?: Array<Record<string, unknown>>
+  ) {
+    return {
+      version: 2,
+      type: 'workflow',
+      name: 'W',
+      nodes: [
+        { name: 'Code', agents: [{ agentRef: 'coder', name: 'coder' }], transitions },
+        { name: 'Review', agents: [{ agentRef: 'reviewer', name: 'reviewer' }] },
+      ],
+      startNode: 'Code',
+      tags: [],
+      ...(hooks ? { hooks } : {}),
+    };
+  }
+
+  test('accepts valid transitions including broadcast and agent-slot targets', () => {
+    const result = validateExportedWorkflow(
+      wfWithTransitions([
+        { id: 'a', target: 'Review' },
+        { id: 'b', target: 'reviewer' },
+        { id: 'c', target: '*' },
+      ])
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  test('rejects a transition target that references no known node/agent', () => {
+    const result = validateExportedWorkflow(wfWithTransitions([{ id: 'a', target: 'Ghost' }]));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('does not reference a known node name');
+  });
+
+  test('rejects a duplicate transition id within a node', () => {
+    const result = validateExportedWorkflow(
+      wfWithTransitions([
+        { id: 'dup', target: 'Review' },
+        { id: 'dup', target: 'reviewer' },
+      ])
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('duplicate transition id "dup"');
+  });
+
+  test('rejects a duplicate transition target within a node', () => {
+    const result = validateExportedWorkflow(
+      wfWithTransitions([
+        { id: 'a', target: 'Review' },
+        { id: 'b', target: 'Review' },
+      ])
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('duplicate transition target "Review"');
+  });
+
+  test('rejects a hookId that references no known hook', () => {
+    const result = validateExportedWorkflow(
+      wfWithTransitions([{ id: 'a', target: 'Review', hookId: 'ghost' }])
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(result.error).toContain('hookId "ghost" does not reference a known hook');
+  });
+});

@@ -1168,3 +1168,45 @@ describe('workflowsMatchFingerprint', () => {
     ).toEqual([`Coder|coder|${JSON.stringify([interest])}`]);
   });
 });
+
+describe('buildWorkflowFingerprint — handoff transitions', () => {
+  it('includes node transitions so a change is detected as drift', () => {
+    const transitions = [{ id: 'to-reviewer', target: 'Reviewer' }];
+    const withTransitions = makeWorkflow({
+      nodes: [
+        {
+          id: 'n1',
+          name: 'Coder',
+          agents: [{ agentId: 'agent-uuid-1', name: 'Coder' }],
+          transitions,
+        },
+        { id: 'n2', name: 'Reviewer', agents: [{ agentId: 'agent-uuid-2', name: 'Reviewer' }] },
+      ],
+    });
+    expect(
+      (buildWorkflowFingerprint(withTransitions) as Record<string, unknown>).nodeTransitions
+    ).toEqual([`Coder|${JSON.stringify(transitions)}`]);
+  });
+
+  it('omits nodeTransitions when no node declares transitions', () => {
+    expect(
+      (buildWorkflowFingerprint(makeWorkflow()) as Record<string, unknown>).nodeTransitions
+    ).toBeUndefined();
+  });
+
+  it('produces a different hash when transitions differ', () => {
+    const base = makeWorkflow();
+    const withTransitions = makeWorkflow({
+      nodes: [
+        {
+          id: 'n1',
+          name: 'Coder',
+          agents: [{ agentId: 'agent-uuid-1', name: 'Coder' }],
+          transitions: [{ id: 'to-reviewer', target: 'Reviewer' }],
+        },
+        { id: 'n2', name: 'Reviewer', agents: [{ agentId: 'agent-uuid-2', name: 'Reviewer' }] },
+      ],
+    });
+    expect(computeWorkflowHash(base)).not.toBe(computeWorkflowHash(withTransitions));
+  });
+});

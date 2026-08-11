@@ -29,6 +29,7 @@ import type {
   ExportedWorkflowChannel,
   ExportedWorkflowNode,
   ExportedWorkflowNodeAgent,
+  ExportedWorkflowTransition,
   SpaceExportBundle,
 } from '@hyperneo/shared';
 import { validateSlug } from './slug';
@@ -220,6 +221,22 @@ const workflowHookSchema = z.object({
   humanOnly: z.boolean().optional(),
 });
 
+/**
+ * Zod schema for an exported workflow handoff transition.
+ * Mirrors the runtime `WorkflowTransition` shape (the runtime and exported
+ * shapes already agree on name-based addressing, so there is nothing to strip).
+ * `gateId` is carried as-is — gates are not part of the export bundle, so it
+ * may reference a gate absent on re-import, exactly like channel `gateId`.
+ */
+const exportedWorkflowTransitionSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().optional(),
+  target: z.string().min(1),
+  gateId: z.string().optional(),
+  hookId: z.string().optional(),
+  maxCycles: z.number().int().positive().optional(),
+});
+
 const exportedWorkflowNodeSchema = z.object({
   agents: z.array(exportedWorkflowNodeAgentSchema).min(1),
   name: z.string().min(1),
@@ -233,6 +250,8 @@ const exportedWorkflowNodeSchema = z.object({
   requireCodexApproval: z.boolean().optional(),
   codexPollIntervalMs: z.number().int().positive().optional(),
   codexTimeoutSeconds: z.number().int().positive().optional(),
+  /** Declared outbound handoff transitions (first-class handoff contract). */
+  transitions: z.array(exportedWorkflowTransitionSchema).optional(),
 });
 
 /**
@@ -443,6 +462,16 @@ export function exportWorkflow(
       exported.codexPollIntervalMs = node.codexPollIntervalMs;
     if (node.codexTimeoutSeconds !== undefined)
       exported.codexTimeoutSeconds = node.codexTimeoutSeconds;
+    if (node.transitions && node.transitions.length > 0) {
+      exported.transitions = node.transitions.map((t) => {
+        const out: ExportedWorkflowTransition = { id: t.id, target: t.target };
+        if (t.label !== undefined) out.label = t.label;
+        if (t.gateId !== undefined) out.gateId = t.gateId;
+        if (t.hookId !== undefined) out.hookId = t.hookId;
+        if (t.maxCycles !== undefined) out.maxCycles = t.maxCycles;
+        return out;
+      });
+    }
 
     return exported;
   });
@@ -614,6 +643,58 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
             error: `invalid: ${loc}.to[${ti}] "${toList[ti]}" does not reference a known agent slot name or node name`,
           };
         }
+      }
+    }
+  }
+
+  // Handoff transitions: each declared transition's `target` must reference a
+  // known node/agent name or the '*' wildcard; transition ids and targets must
+  // be unique within a node (so handoff({ target }) resolves unambiguously);
+  // and `hookId` must reference a known exported hook. `gateId` is carried
+  // unchecked because gates are not part of the export bundle (mirrors channel
+  // gateId handling above).
+  const transitionHookIds = new Set<string>();
+  for (const hook of result.data.hooks ?? []) {
+    if (hook?.id) transitionHookIds.add(hook.id);
+  }
+  for (let n = 0; n < result.data.nodes.length; n++) {
+    const node = result.data.nodes[n];
+    const transitions = node.transitions;
+    if (!transitions || transitions.length === 0) continue;
+
+    const validTargetNames = new Set<string>(['*']);
+    for (const other of result.data.nodes) {
+      validTargetNames.add(other.name);
+      for (const a of other.agents ?? []) validTargetNames.add(a.name);
+    }
+
+    const seenIds = new Set<string>();
+    const seenTargets = new Set<string>();
+    for (let ti = 0; ti < transitions.length; ti++) {
+      const t = transitions[ti];
+      const loc = `nodes[${n}].transitions[${ti}]`;
+      if (seenIds.has(t.id)) {
+        return { ok: false, error: `invalid: ${loc}: duplicate transition id "${t.id}"` };
+      }
+      seenIds.add(t.id);
+      if (!validTargetNames.has(t.target)) {
+        return {
+          ok: false,
+          error: `invalid: ${loc}.target "${t.target}" does not reference a known node name or agent slot name`,
+        };
+      }
+      if (seenTargets.has(t.target)) {
+        return {
+          ok: false,
+          error: `invalid: ${loc}: duplicate transition target "${t.target}" within node "${node.name}"`,
+        };
+      }
+      seenTargets.add(t.target);
+      if (t.hookId !== undefined && !transitionHookIds.has(t.hookId)) {
+        return {
+          ok: false,
+          error: `invalid: ${loc}.hookId "${t.hookId}" does not reference a known hook`,
+        };
       }
     }
   }

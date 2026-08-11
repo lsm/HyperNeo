@@ -23,6 +23,7 @@ import type {
   WorkflowNodeInput,
   WorkflowNodeAgent,
   WorkflowChannel,
+  WorkflowTransition,
   Gate,
   WorkflowHook,
   CreateSpaceWorkflowParams,
@@ -95,6 +96,8 @@ interface NodeConfigJson {
   codexPollIntervalMs?: number;
   /** Custom timeout (seconds) for the codex review bot reaction check. */
   codexTimeoutSeconds?: number;
+  /** Declared outbound handoff transitions from this node. See WorkflowTransition. */
+  transitions?: WorkflowTransition[];
   /**
    * Forward-compat: rows persisted before PR 5/5 of the
    * task-agent-as-post-approval-executor refactor may carry a legacy
@@ -161,6 +164,7 @@ function rowToNode(row: NodeRow, ctx?: NodeMigrationContext): WorkflowNode {
     ...(cfg.requireCodexApproval ? { requireCodexApproval: true } : {}),
     ...(cfg.codexPollIntervalMs ? { codexPollIntervalMs: cfg.codexPollIntervalMs } : {}),
     ...(cfg.codexTimeoutSeconds ? { codexTimeoutSeconds: cfg.codexTimeoutSeconds } : {}),
+    ...(cfg.transitions && cfg.transitions.length > 0 ? { transitions: cfg.transitions } : {}),
   };
 }
 
@@ -581,6 +585,9 @@ export class SpaceWorkflowRepository {
         ...(node.requireCodexApproval ? { requireCodexApproval: true } : {}),
         ...(node.codexPollIntervalMs ? { codexPollIntervalMs: node.codexPollIntervalMs } : {}),
         ...(node.codexTimeoutSeconds ? { codexTimeoutSeconds: node.codexTimeoutSeconds } : {}),
+        ...(node.transitions && node.transitions.length > 0
+          ? { transitions: node.transitions }
+          : {}),
       };
       const result = updateNode.run(JSON.stringify(cfg), now, workflowId, node.id);
       if (result.changes === 0) {
@@ -866,6 +873,9 @@ export class SpaceWorkflowRepository {
     }
     if (input.codexTimeoutSeconds) {
       nodeCfg.codexTimeoutSeconds = input.codexTimeoutSeconds;
+    }
+    if (input.transitions && input.transitions.length > 0) {
+      nodeCfg.transitions = input.transitions;
     }
 
     return nodeCfg;

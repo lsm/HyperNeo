@@ -1486,4 +1486,114 @@ describe('SpaceWorkflowManager', () => {
       expect(resolvedA.updatedAt).not.toBe(resolvedB.updatedAt);
     });
   });
+
+  describe('handoff transition validation', () => {
+    function twoNodeParams(
+      transitions: import('@hyperneo/shared').WorkflowTransition[]
+    ): import('@hyperneo/shared').CreateSpaceWorkflowParams {
+      return {
+        spaceId: 'space-1',
+        name: 'Handoff Workflow',
+        nodes: [
+          {
+            id: 'node-1',
+            name: 'Coder',
+            agents: [{ agentId: 'agent-1', name: 'coder' }],
+            transitions,
+          },
+          {
+            id: 'node-2',
+            name: 'Review',
+            agents: [{ agentId: 'agent-1', name: 'reviewer' }],
+          },
+        ],
+        completionAutonomyLevel: 3,
+      };
+    }
+
+    it('accepts valid transitions and persists them through create', () => {
+      const transitions = [
+        { id: 'to-review', target: 'Review', label: 'hand off for review' },
+        { id: 'to-reviewer', target: 'reviewer' },
+        { id: 'broadcast', target: '*' },
+      ];
+      const result = manager.createWorkflow(twoNodeParams(transitions));
+      expect(result.nodes[0].transitions).toEqual(transitions);
+    });
+
+    it('rejects an empty transition id', () => {
+      expect(() => manager.createWorkflow(twoNodeParams([{ id: '  ', target: 'Review' }]))).toThrow(
+        "'id' must be a non-empty string"
+      );
+    });
+
+    it('rejects a duplicate transition id within a node', () => {
+      expect(() =>
+        manager.createWorkflow(
+          twoNodeParams([
+            { id: 'dup', target: 'Review' },
+            { id: 'dup', target: 'reviewer' },
+          ])
+        )
+      ).toThrow('duplicate transition id "dup"');
+    });
+
+    it('rejects a target that is not a known node/agent name', () => {
+      expect(() => manager.createWorkflow(twoNodeParams([{ id: 't', target: 'Ghost' }]))).toThrow(
+        'does not reference a known node name or agent slot name'
+      );
+    });
+
+    it('rejects a duplicate transition target within a node (ambiguous resolution)', () => {
+      expect(() =>
+        manager.createWorkflow(
+          twoNodeParams([
+            { id: 'a', target: 'Review' },
+            { id: 'b', target: 'Review' },
+          ])
+        )
+      ).toThrow('duplicate transition target "Review"');
+    });
+
+    it('rejects a gateId that does not reference a known gate', () => {
+      expect(() =>
+        manager.createWorkflow(twoNodeParams([{ id: 't', target: 'Review', gateId: 'ghost' }]))
+      ).toThrow('gateId "ghost" does not reference a known gate');
+    });
+
+    it('rejects a hookId that does not reference a known hook', () => {
+      expect(() =>
+        manager.createWorkflow(twoNodeParams([{ id: 't', target: 'Review', hookId: 'ghost' }]))
+      ).toThrow('hookId "ghost" does not reference a known hook');
+    });
+
+    it('rejects a non-positive maxCycles', () => {
+      expect(() =>
+        manager.createWorkflow(twoNodeParams([{ id: 't', target: 'Review', maxCycles: 0 }]))
+      ).toThrow("'maxCycles' must be a positive integer");
+    });
+
+    it('rejects an empty target', () => {
+      expect(() => manager.createWorkflow(twoNodeParams([{ id: 't', target: '  ' }]))).toThrow(
+        "'target' must be a non-empty string"
+      );
+    });
+
+    it('validates transitions on update too', () => {
+      const wf = manager.createWorkflow(twoNodeParams([]));
+      expect(() =>
+        manager.updateWorkflow(wf.id, {
+          nodes: [
+            {
+              id: 'node-1',
+              name: 'Coder',
+              agents: [{ agentId: 'agent-1', name: 'coder' }],
+              transitions: [{ id: 't', target: 'Ghost' }],
+            },
+            { id: 'node-2', name: 'Review', agents: [{ agentId: 'agent-1', name: 'reviewer' }] },
+          ],
+        })
+      ).toThrow('does not reference a known node name or agent slot name');
+    });
+  });
 });

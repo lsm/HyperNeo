@@ -19,8 +19,10 @@ import type {
   CreateSpaceWorkflowParams,
   UpdateSpaceWorkflowParams,
   WorkflowChannel,
+  WorkflowHook,
   Gate,
 } from '@hyperneo/shared';
+import { HANDOFF_TARGET_WILDCARD } from '@hyperneo/shared';
 import { validateWorkflowHooks } from '../workflow-hook-validation';
 import { generateUUID } from '@hyperneo/shared';
 import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository';
@@ -155,6 +157,8 @@ export class SpaceWorkflowManager {
     }
 
     this.validateHooks(params.hooks ?? [], nodes);
+
+    this.validateTransitions(nodes, params.gates ?? [], params.hooks ?? []);
 
     this.validateCodexApprovalAgainstScriptedGates(
       nodes,
@@ -435,6 +439,7 @@ export class SpaceWorkflowManager {
               requireCodexApproval: n.requireCodexApproval,
               codexPollIntervalMs: n.codexPollIntervalMs,
               codexTimeoutSeconds: n.codexTimeoutSeconds,
+              transitions: n.transitions,
             })
           )
         : existing.nodes.map(
@@ -446,6 +451,7 @@ export class SpaceWorkflowManager {
               requireCodexApproval: n.requireCodexApproval,
               codexPollIntervalMs: n.codexPollIntervalMs,
               codexTimeoutSeconds: n.codexTimeoutSeconds,
+              transitions: n.transitions,
             })
           );
 
@@ -524,6 +530,7 @@ export class SpaceWorkflowManager {
       effectiveChannels,
       effectiveGates
     );
+    this.validateTransitions(effectiveNodes, effectiveGates, effectiveHooks);
 
     // Validate node-level postApproval plus the legacy workflow-level route
     // against the effective node set so a rename submitted in the same update
@@ -965,6 +972,111 @@ export class SpaceWorkflowManager {
       } else {
         if (!ch.to || !(ch.to as string).trim()) {
           throw new WorkflowValidationError(`${loc}: 'to' must be a non-empty agent name string`);
+        }
+      }
+    }
+  }
+
+  /**
+   * Validate declared outbound handoff transitions on every node.
+   *
+   * Enforces the workflow handoff CONTRACT (see WorkflowTransition /
+   * HandoffOperation):
+   * - `id` is a non-empty string, unique within its node.
+   * - `target` is a known node name, agent slot name, or the broadcast wildcard
+   *   `'*'`. A handoff target must resolve to a declared node/agent.
+   * - `target` is unique within the node (at most one transition per concrete
+   *   name, at most one `'*'`) so `handoff({ target })` resolves unambiguously.
+   * - `gateId`, when set, references a known gate id.
+   * - `hookId`, when set, references a known hook id.
+   * - `maxCycles`, when set, is a positive integer.
+   *
+   * Runtime transition EXECUTION is out of scope here; this only enforces the
+   * declarative shape and referential integrity.
+   */
+  private validateTransitions(
+    nodes: WorkflowNodeInput[],
+    gates: Gate[],
+    hooks: WorkflowHook[]
+  ): void {
+    const gateIds = new Set(gates.map((g) => g.id));
+    const hookIds = new Set(hooks.map((h) => h.id));
+    // Valid target names: every node name + every agent slot name (matches
+    // channel addressing). The broadcast wildcard is always valid.
+    const targetNames = new Set<string>([HANDOFF_TARGET_WILDCARD]);
+    for (const node of nodes) {
+      targetNames.add(node.name);
+      for (const agent of node.agents ?? []) {
+        if (agent.name) targetNames.add(agent.name);
+      }
+    }
+
+    for (let ni = 0; ni < nodes.length; ni++) {
+      const node = nodes[ni];
+      const transitions = node.transitions;
+      if (!transitions || transitions.length === 0) continue;
+
+      const seenIds = new Set<string>();
+      const seenTargets = new Set<string>();
+      for (let ti = 0; ti < transitions.length; ti++) {
+        const t = transitions[ti];
+        const loc = `node[${ni}] "${node.name}".transitions[${ti}]`;
+
+        if (!t.id || !t.id.trim()) {
+          throw new WorkflowValidationError(`${loc}: 'id' must be a non-empty string`);
+        }
+        if (seenIds.has(t.id)) {
+          throw new WorkflowValidationError(
+            `${loc}: duplicate transition id "${t.id}" within node "${node.name}"`
+          );
+        }
+        seenIds.add(t.id);
+
+        if (!t.target || !t.target.trim()) {
+          throw new WorkflowValidationError(`${loc}: 'target' must be a non-empty string`);
+        }
+        if (!targetNames.has(t.target)) {
+          throw new WorkflowValidationError(
+            `${loc}: target "${t.target}" does not reference a known node name or agent slot name`
+          );
+        }
+        if (seenTargets.has(t.target)) {
+          throw new WorkflowValidationError(
+            `${loc}: duplicate transition target "${t.target}" within node "${node.name}" — ` +
+              'a handoff target must resolve to a single declared transition'
+          );
+        }
+        seenTargets.add(t.target);
+
+        if (t.gateId !== undefined) {
+          if (!t.gateId.trim()) {
+            throw new WorkflowValidationError(`${loc}: 'gateId' must be a non-empty string`);
+          }
+          if (!gateIds.has(t.gateId)) {
+            throw new WorkflowValidationError(
+              `${loc}: gateId "${t.gateId}" does not reference a known gate`
+            );
+          }
+        }
+
+        if (t.hookId !== undefined) {
+          if (!t.hookId.trim()) {
+            throw new WorkflowValidationError(`${loc}: 'hookId' must be a non-empty string`);
+          }
+          if (!hookIds.has(t.hookId)) {
+            throw new WorkflowValidationError(
+              `${loc}: hookId "${t.hookId}" does not reference a known hook`
+            );
+          }
+        }
+
+        if (t.maxCycles !== undefined) {
+          if (typeof t.maxCycles !== 'number' || !Number.isFinite(t.maxCycles)) {
+            throw new WorkflowValidationError(`${loc}: 'maxCycles' must be a finite number`);
+          }
+          if (t.maxCycles <= 0 || !Number.isInteger(t.maxCycles)) {
+            throw new WorkflowValidationError(`${loc}: 'maxCycles' must be a positive integer`);
+          }
         }
       }
     }
