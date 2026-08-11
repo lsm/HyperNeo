@@ -1337,9 +1337,15 @@ export class SpaceRuntime {
   }
 
   private registerRunInterestsFromWorkflow(run: SpaceWorkflowRun, workflow: SpaceWorkflow): void {
+    // Prefer the run's FROZEN workflow (executorMeta) over the passed (current)
+    // definition. A workflow edited mid-run while a run is paused/resumed must
+    // not rebuild interests from the edited definition — the frozen executor's
+    // nodes are what belong to this run. The passed `workflow` is the fallback
+    // when the executor isn't tracked yet.
+    const frozen = this.resolveFrozenWorkflowForRun(run) ?? workflow;
     const task = this.pickCanonicalTaskForRun(run, this.config.taskRepo.listByWorkflowRun(run.id));
     if (!task) return;
-    this.registerRunInterests(run.id, task.id, workflow.nodes);
+    this.registerRunInterests(run.id, task.id, frozen.nodes);
   }
 
   /**
