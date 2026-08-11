@@ -47,6 +47,7 @@ import {
   type DeliveryLoadResult,
   type MessageDeliverySession,
 } from '../agent/message-delivery';
+import { deliveryMetrics } from '../agent/message-delivery-metrics';
 import { Logger } from '../logger';
 
 export interface MessageDeliveryHandlerDeps {
@@ -118,10 +119,19 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
     if (loaded === null) {
       // Content gone (rewound/deleted) — nothing to deliver.
       log.warn(`message_delivery: content for ${payload.messageUuid} not found; completing.`);
+      deliveryMetrics.recordReclaimOutcome('noContent');
       await session.settleSkippedDelivery?.(payload.messageUuid);
       return { outcome: 'no_content' };
     }
     const { content, sendStatus } = loaded;
+
+    // Reclaim-outcome telemetry (task #861 item 13b): alreadyConsumed /
+    // alreadySubmitted skips are duplicates PREVENTED (leading indicator); a
+    // spike means crashes-during-turn are rising. deferred/failed are
+    // user/terminal states, not reclaim re-drives, so they aren't recorded here.
+    if (sendStatus === 'consumed') deliveryMetrics.recordReclaimOutcome('alreadyConsumed');
+    else if (sendStatus === 'submitted') deliveryMetrics.recordReclaimOutcome('alreadySubmitted');
+    else if (sendStatus === 'enqueued') deliveryMetrics.recordReclaimOutcome('stillEnqueued');
 
     // Only deliver messages still pending. `consumed`/`deferred`/`failed` are
     // NOT re-fed (see the module doc + §8). `deferred`/`failed` skip outright;

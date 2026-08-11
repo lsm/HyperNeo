@@ -75,7 +75,9 @@ import {
   SPACE_WORKFLOW_RUN_SYNC_GATE_ARTIFACTS,
   SPACE_WORKFLOW_RUN_SYNC_COMMITS,
   SPACE_WORKFLOW_RUN_SYNC_FILE_DIFF,
+  MESSAGE_DELIVERY,
 } from '../job-queue-constants';
+import { deliveryMetrics } from '../agent/message-delivery-metrics';
 import { ChannelCycleRepository } from '../../storage/repositories/channel-cycle-repository';
 import { PendingAgentMessageRepository } from '../../storage/repositories/pending-agent-message-repository';
 import { SpaceAgentInboxRepository } from '../../storage/repositories/space-agent-inbox-repository';
@@ -850,6 +852,21 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   // Returns cumulative counters + live gauges; read-only, no side effects.
   deps.messageHub.onRequest('space.externalEvents.queueHealth', async () => {
     return spaceRuntimeService.getQueueHealthSnapshot();
+  });
+
+  // Message-delivery diagnostics (task #861 item 6 + item 13) — a thin
+  // job_queue query (counts by status = unclaimed/stale/failed) paired with the
+  // exactly-once observability snapshot (feed-count-per-UUID duplicate detector,
+  // reclaim-outcome breakdown, residual-window latency). Read-only.
+  deps.messageHub.onRequest('messageDelivery.diagnostics', async () => {
+    const counts = deps.jobQueue.countByStatus(MESSAGE_DELIVERY);
+    return {
+      lane: MESSAGE_DELIVERY,
+      // unclaimed = pending; stale = processing (reclaimStale sweeps these);
+      // failed = dead (exhausted retries → onDead → message 'failed').
+      statusCounts: counts,
+      metrics: deliveryMetrics.snapshot(),
+    };
   });
 
   // Space Worktree Manager — one worktree per task, shared by all node agents.

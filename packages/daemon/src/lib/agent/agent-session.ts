@@ -231,6 +231,7 @@ import {
   type DriveTurnOutcome,
   type FeedSteerOutcome,
 } from './message-delivery';
+import { deliveryMetrics } from './message-delivery-metrics';
 import { ProcessingStateManager } from './processing-state-manager';
 import { ContextTracker } from './context-tracker';
 import { SDKMessageHandler, type SDKMessageHandlerContext } from './sdk-message-handler';
@@ -1947,6 +1948,9 @@ export class AgentSession
         acknowledgment = this.messageQueue.admitWithId(messageUuid, content, false, {
           durable: true,
         });
+        // Exactly-once observability (task #861 item 13a): ground-truth feed
+        // counter — a UUID incremented >1 is a real duplicate handoff to the SDK.
+        deliveryMetrics.recordFeed(messageUuid);
       }
       return { kind: 'driving' as const, queryPromise, turnEnd, acknowledgment };
     });
@@ -1969,6 +1973,10 @@ export class AgentSession
     // turnEnd wins and the job completes promptly when the SDK finishes the turn.
     try {
       await started.acknowledgment;
+      // The SDK-consume signal fired (onSent). Capture the instant for the
+      // residual-window metric (item 13c): time from consume signal to the
+      // persisted consumed-flip below — the at-least-once exposure surface.
+      const consumeSignalMs = Date.now();
       // The kickoff was admitted by the SDK (onSent) — the message is consumed.
       // Flip send_status → 'consumed' SYNCHRONOUSLY, before any further await,
       // to shrink the at-least-once duplicate window [SDK yield, persisted
@@ -1977,6 +1985,7 @@ export class AgentSession
       // skips the re-feed (drives with alreadyConsumed). Idempotent: a no-op if
       // the history-echo path already flipped it.
       this.markDeliveryConsumed(messageUuid);
+      deliveryMetrics.recordResidualWindow(Date.now() - consumeSignalMs);
       // Signal long-horizon delivery waiters (injectLongTermAgentMessage) so they
       // confirm the source record only after genuine consumption, not bare
       // enqueue (which can still dead-letter). No-op when no waiter is armed.
@@ -2017,12 +2026,13 @@ export class AgentSession
       // excluded by this same lock. 'queued' → parked owner, so park this steer.
       if (status === 'processing') {
         if (!this.messageDeliveryValid(messageUuid)) return { kind: 'aborted' as const };
-        return {
-          kind: 'feed' as const,
-          acknowledgment: this.messageQueue.admitWithId(messageUuid, content, false, {
-            durable: true,
-          }),
-        };
+        const acknowledgment = this.messageQueue.admitWithId(messageUuid, content, false, {
+          durable: true,
+        });
+        // Exactly-once observability (item 13a): ground-truth feed counter — a
+        // UUID incremented >1 is a real duplicate handoff to the SDK.
+        deliveryMetrics.recordFeed(messageUuid);
+        return { kind: 'feed' as const, acknowledgment };
       }
       if (status === 'queued') return { kind: 'park' as const };
       return { kind: 'promote' as const };
