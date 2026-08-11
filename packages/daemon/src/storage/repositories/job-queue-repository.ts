@@ -366,29 +366,6 @@ export class JobQueueRepository {
     return out;
   }
 
-  /**
-   * True if the session has a pending/processing message_delivery TURN job.
-   * Used to detect a "legacy-owned" turn: while v2 is default-on, QueryModeHandler
-   * still replays deferred/enqueued rows directly through MessageQueue, so a
-   * session can be `processing` a live SDK turn with NO active v2 turn row. A new
-   * v2 injection there would otherwise be classified as a fresh turn (the index
-   * sees no v2 turn) and race the legacy turn. Read-only indexed SELECT. (Codex P1.)
-   */
-  hasActiveTurnDelivery(sessionId: string): boolean {
-    const row = this.db
-      .prepare(
-        `SELECT 1 AS one
-           FROM job_queue
-          WHERE queue = 'message_delivery'
-            AND json_extract(payload, '$.sessionId') = ?
-            AND json_extract(payload, '$.role') = 'turn'
-            AND status IN ('pending', 'processing')
-          LIMIT 1`
-      )
-      .get(sessionId) as { one: number } | null;
-    return row != null;
-  }
-
   complete(
     jobId: string,
     result?: Record<string, unknown>,

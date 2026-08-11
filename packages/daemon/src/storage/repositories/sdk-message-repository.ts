@@ -1459,11 +1459,9 @@ export class SDKMessageRepository {
     // #2338: BEFORE the flip, capture the user-anchor rows that are NOT yet
     // anchored (still deferred/enqueued/submitted). Only these need a fresh turn when
     // they become consumed/failed. Rows already consumed/failed are already
-    // anchored and must keep their turn — recoverOrphanedConsumedMessages
-    // flips already-consumed rows to 'failed', and re-bumping those would
-    // scatter them to new turns and break grouping on multi-session tasks.
-    // Capturing pre-update (filtered by prior send_status) is what excludes
-    // them.
+    // anchored and must keep their turn — re-bumping those would scatter them
+    // to new turns and break grouping on multi-session tasks. Capturing
+    // pre-update (filtered by prior send_status) is what excludes them.
     const pending =
       newStatus === 'consumed' || newStatus === 'failed'
         ? (this.db

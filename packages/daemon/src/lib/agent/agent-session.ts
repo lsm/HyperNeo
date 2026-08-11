@@ -54,7 +54,6 @@
  * - EventSubscriptionSetup: InternalEventBus<DaemonInternalEventMap> event wiring
  * - QueryModeHandler: Manual/auto-queue mode
  * - SlashCommandManager: Slash command caching
- * - MessageRecoveryHandler: Orphaned message recovery
  *
  * ## SDK Mode
  *
@@ -261,13 +260,12 @@ import {
 } from './event-subscription-setup';
 import { QueryModeHandler, type QueryModeHandlerContext } from './query-mode-handler';
 import { SlashCommandManager, type SlashCommandManagerContext } from './slash-command-manager';
-import { MessageRecoveryHandler } from './message-recovery-handler';
 import { RewindHandler, type RewindHandlerContext, type RewindPoint } from './rewind-handler';
 import { SessionConfigHandler, type SessionConfigHandlerContext } from './session-config-handler';
 import { RateLimitWatchdog } from './rate-limit-watchdog';
 import { resolveFallbackChain } from './fallback-recovery';
 import { getProviderRegistry } from '../providers/factory.js';
-import { isSDKResultSuccess } from '@hyperneo/shared/sdk/type-guards';
+import { isSDKResultSuccess, isSDKUserMessage } from '@hyperneo/shared/sdk/type-guards';
 import { resolveModelAlias } from '../model-service';
 
 /**
@@ -543,16 +541,21 @@ export class AgentSession
     }
     this.stateManager.restoreFromDatabase();
 
-    // Recover orphaned messages
-    const recoveryHandler = new MessageRecoveryHandler(session, db, this.logger);
-    recoveryHandler.recoverOrphanedConsumedMessages();
-
     // Setup event subscriptions (moved callbacks into EventSubscriptionSetup)
     this.eventSubscriptionSetup.setup();
 
     if (this.runtimeOptions.autoReplayPendingMessages ?? true) {
       this.scheduleInitialPendingMessageReplay();
     }
+
+    // Orphan reconciler startup pass (task #861 item 4/7): settle stranded
+    // deliveries now that state is restored — re-enqueue stuck 'enqueued' rows
+    // and surface stale 'submitted' rows as failed. Idempotent; the idle +
+    // periodic hooks keep it correct thereafter. Replaces the deleted
+    // recoverOrphanedConsumedMessages.
+    void this.reconcileStrandedDeliveries().catch((error) => {
+      this.logger.warn('Startup reconcileStrandedDeliveries failed:', error);
+    });
 
     // Periodic orphan reconciliation (task #861 item 4): a backstop beyond the
     // idle + startup hooks, for a message that strands without an idle
@@ -2078,16 +2081,8 @@ export class AgentSession
       // steer can never steal it by publishing message.persisted first.
       let role: 'turn' | 'steer';
       try {
-        // Legacy-owned turn guard (see deliverAndMarkQueued): a session can be
-        // `processing` a legacy-replayed turn with no active v2 turn row; force a
-        // steer so this chat parks behind it instead of racing it. The deferred
-        // legacy-replay migration removes the need for this guard. (Codex P1.)
-        const legacyOwnedTurn =
-          this.stateManager.getState().status === 'processing' &&
-          !this.db.getJobQueueRepo().hasActiveTurnDelivery(this.session.id);
         role = deliverMessage(this.db.getJobQueueRepo(), this.session.id, messageUuid, {
           origin: 'chat',
-          ...(legacyOwnedTurn ? { role: 'steer' as const } : {}),
         });
       } catch (err) {
         // The user row was already saved `enqueued` by MessagePersistence. If job
@@ -2113,8 +2108,6 @@ export class AgentSession
       }
       if (role === 'turn') {
         try {
-          // Preserve a legacy-owned live turn: role arbitration can return turn
-          // when no durable turn row exists even though the session is processing.
           // DB-first publication failure is non-fatal after durable insertion —
           // rejecting here would invite a client retry while this job still runs.
           await this.stateManager.setQueuedIfIdle(messageUuid);
@@ -2175,6 +2168,12 @@ export class AgentSession
    * reconcile while a turn is driving — the handler owns those messages) and
    * logging. Runs on each idle transition and on a periodic unref'd timer; the
    * pure core is idempotent so concurrent ticks/workers are safe.
+   *
+   * Also settles stale `submitted` rows (orphaned ACP messages whose subprocess
+   * died) by flipping them to `failed` so they surface instead of staying
+   * hidden — the responsibility of the now-deleted
+   * `recoverOrphanedConsumedMessages` (task #861 item 7). The handler skips
+   * `submitted`, so without this they would strand invisibly on restart.
    */
   async reconcileStrandedDeliveries(): Promise<number> {
     if (!isMessageDeliveryV2Enabled()) return 0;
@@ -2187,15 +2186,37 @@ export class AgentSession
     const status = this.stateManager.getState().status;
     if (status === 'processing' || status === 'queued') return 0;
 
-    const count = reconcileStrandedDeliveriesCore({
+    const active = jobQueue.activeDeliveryMessageUuids(this.session.id);
+    // 1) Re-enqueue stranded 'enqueued' messages (the #856 shape).
+    const reEnqueued = reconcileStrandedDeliveriesCore({
       sessionId: this.session.id,
       db: this.db,
       jobQueue,
     });
-    if (count > 0) {
-      this.logger.info(`reconcileStrandedDeliveries: re-enqueued ${count} stranded message(s).`);
+    // 2) Settle stale 'submitted' rows (orphaned ACP) → failed so they surface.
+    let settled = 0;
+    const sdkRepo = this.db.getSDKMessageRepo();
+    for (const msg of this.db.getMessagesByStatus(this.session.id, 'submitted')) {
+      if (!isSDKUserMessage(msg) || !msg.uuid) continue;
+      if (active.has(msg.uuid)) continue; // still has a durable job — leave it
+      const dbId = sdkRepo.markDeliveryFailedByUuid(this.session.id, msg.uuid);
+      if (dbId) {
+        settled++;
+        void this.internalEventBus
+          .publish('messages.statusChanged', {
+            sessionId: this.session.id,
+            messageIds: [dbId],
+            status: 'failed',
+          })
+          .catch(() => {});
+      }
     }
-    return count;
+    if (reEnqueued > 0 || settled > 0) {
+      this.logger.info(
+        `reconcileStrandedDeliveries: re-enqueued ${reEnqueued}, settled ${settled} stale submitted.`
+      );
+    }
+    return reEnqueued + settled;
   }
 
   trackAgentProcess(proc: TrackedAgentProcess): void {

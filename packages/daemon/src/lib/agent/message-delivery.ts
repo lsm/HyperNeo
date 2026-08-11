@@ -10,10 +10,11 @@
  *
  * See docs/features/message-delivery-v2.md for the full design.
  *
- * Default-on (opt out with `HYPERNEO_MESSAGE_DELIVERY_V2=0`). Ordinary chat and
- * the Space / long-term-agent injectors all route through `deliverMessage`; the
- * legacy deferred-replay and rate-limit-retry kickoffs remain on the inline path
- * (backstopped by `recoverOrphanedConsumedMessages`) pending a follow-up.
+ * Default-on (opt out with `HYPERNEO_MESSAGE_DELIVERY_V2=0`). Ordinary chat,
+ * the Space / long-term-agent / task-agent injectors, and the manual-flush /
+ * turn-end-replay / promote kickoff paths all route through `deliverMessage`;
+ * `reclaimStale` + the session-level orphan reconciler cover crash recovery.
+ * (Phase 3, task #861.)
  */
 
 import type { MessageContent } from '@hyperneo/shared';
@@ -483,22 +484,9 @@ export async function deliverAndMarkQueued(args: {
   await withSessionLock(args.sessionId, async () => {
     let role: MessageDeliveryRole;
     try {
-      // Legacy-owned turn guard: while v2 is default-on, QueryModeHandler still
-      // replays deferred/enqueued rows directly through MessageQueue, so a
-      // session can be `processing` a live SDK turn with NO active v2 turn row.
-      // The index would classify this injection as a fresh turn (it sees no v2
-      // turn), racing the legacy turn + letting its idle prematurely resolve the
-      // new waiter. Force a `steer` so the new message parks behind the legacy
-      // turn and promotes only once that turn ends. The deferred legacy-replay
-      // migration removes the need for this guard. (Codex P1.)
-      const legacyOwnedTurn =
-        !!args.stateManager &&
-        args.stateManager.getState().status === 'processing' &&
-        !args.jobQueue.hasActiveTurnDelivery(args.sessionId);
       role = deliverMessage(args.jobQueue, args.sessionId, args.messageUuid, {
         origin: args.origin,
         parentToolUseId: null,
-        ...(legacyOwnedTurn ? { role: 'steer' as const } : {}),
       });
     } catch (err) {
       args.onEnqueueFailure?.();

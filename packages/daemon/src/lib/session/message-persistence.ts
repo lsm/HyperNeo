@@ -265,13 +265,6 @@ export class MessagePersistence {
             .catch(() => {});
           throw new Error(`Session ${sessionId} is archived`);
         }
-        // Legacy-owned turn guard (see deliverAndMarkQueued): a session can be
-        // `processing` a legacy-replayed turn with no active v2 turn row, which
-        // the unique index cannot see. Force a `steer` so this chat parks behind
-        // the legacy turn instead of racing it. Removed once the legacy kickoff
-        // paths are migrated onto deliverMessage (task #861 item 7).
-        const legacyOwnedTurn =
-          processingState.status === 'processing' && !jobQueueRepo.hasActiveTurnDelivery(sessionId);
         dbMessageId = persistAndEnqueueDelivery({
           db: this.db.getDatabase(),
           sdkMessageRepo: this.db.getSDKMessageRepo(),
@@ -281,7 +274,6 @@ export class MessagePersistence {
           sendStatus,
           origin,
           delivery: { origin: 'chat' },
-          forceSteer: legacyOwnedTurn,
         }).dbMessageId;
       } else {
         dbMessageId = this.db.saveUserMessage(sessionId, sdkUserMessage, sendStatus, origin);

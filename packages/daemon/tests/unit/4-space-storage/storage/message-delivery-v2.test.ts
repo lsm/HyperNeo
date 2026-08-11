@@ -169,31 +169,11 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
     });
   });
 
-  describe('deliverAndMarkQueued — legacy-owned turn guard (default-on coexistence)', () => {
-    it('forces a steer when the session is processing a legacy turn with no active v2 turn row (Codex P1)', async () => {
-      // v2 is default-on but QueryModeHandler still replays deferred/enqueued rows
-      // directly through MessageQueue, so a session can be `processing` a live SDK
-      // turn with NO active v2 turn row. The index would classify this injection
-      // as a fresh turn (racing the legacy turn); the guard forces a steer so it
-      // parks behind the legacy turn and promotes only once that turn ends.
-      const { repo } = setupRepo();
-      expect(repo.hasActiveTurnDelivery(SESSION)).toBe(false); // sanity: fresh repo, no v2 turn
-      await deliverAndMarkQueued({
-        jobQueue: repo,
-        stateManager: {
-          getState: () => ({ status: 'processing' }),
-          setQueuedIfIdle: async () => false,
-        },
-        sessionId: SESSION,
-        messageUuid: 'msg-legacy',
-        origin: 'chat',
-      });
-      const jobs = jobsFor(repo, SESSION);
-      expect(jobs).toHaveLength(1);
-      expect((jobs[0].payload as { role: string }).role).toBe('steer');
-    });
-
-    it('classifies as a turn when the session is idle (no legacy turn)', async () => {
+  describe('deliverAndMarkQueued — role arbitration', () => {
+    it('classifies as a turn when no active turn exists (idle session)', async () => {
+      // The legacy-owned-turn guard was removed (task #861 item 7): under v2
+      // every turn is a durable turn job, so a 'processing' session always has
+      // an active v2 turn row and the index is the sole role arbiter.
       const { repo } = setupRepo();
       await deliverAndMarkQueued({
         jobQueue: repo,
