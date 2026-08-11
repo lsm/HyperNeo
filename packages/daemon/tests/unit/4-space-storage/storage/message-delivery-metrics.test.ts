@@ -13,52 +13,58 @@ describe('DeliveryMetrics (task #861 item 13)', () => {
   });
 
   describe('feed-count-per-UUID (ground-truth duplicate detector)', () => {
-    it('counts distinct UUIDs handed off and starts each at one feed', () => {
+    it('counts every SDK handoff in feedsObserved (plain counter)', () => {
       metrics.recordFeed('a');
       metrics.recordFeed('b');
+      metrics.recordFeed('a'); // re-feed within window → duplicate
       const snap = metrics.snapshot();
-      expect(snap.feedsObserved).toBe(2);
-      expect(snap.duplicateFeedCount).toBe(0);
+      expect(snap.feedsObserved).toBe(3);
     });
 
-    it('flags a UUID fed more than once as a real exactly-once breach', () => {
+    it('flags a UUID fed more than once within the window as a real breach', () => {
       metrics.recordFeed('dup');
       metrics.recordFeed('dup');
       metrics.recordFeed('solo');
       const snap = metrics.snapshot();
       expect(snap.duplicateFeedCount).toBe(1);
       expect(snap.duplicateUuids).toContain('dup');
-      expect(snap.feedsObserved).toBe(2); // distinct UUIDs
     });
 
     it('does not flag a UUID fed once', () => {
       metrics.recordFeed('once');
       expect(metrics.snapshot().duplicateFeedCount).toBe(0);
     });
+
+    it('does not double-count a UUID fed 3+ times in duplicateUuids', () => {
+      metrics.recordFeed('x');
+      metrics.recordFeed('x');
+      metrics.recordFeed('x');
+      const snap = metrics.snapshot();
+      expect(snap.duplicateFeedCount).toBe(1);
+      expect(snap.feedsObserved).toBe(3);
+    });
   });
 
-  describe('reclaim-outcome breakdown (duplicates prevented)', () => {
-    it('counts each outcome kind independently', () => {
-      metrics.recordReclaimOutcome('alreadyConsumed');
-      metrics.recordReclaimOutcome('alreadyConsumed');
-      metrics.recordReclaimOutcome('alreadySubmitted');
-      metrics.recordReclaimOutcome('stillEnqueued');
-      metrics.recordReclaimOutcome('noContent');
-      const { reclaimOutcomes } = metrics.snapshot();
-      expect(reclaimOutcomes).toEqual({
+  describe('reclaim-skip outcomes (duplicates prevented)', () => {
+    it('counts each skip outcome independently', () => {
+      metrics.recordReclaimSkip('alreadyConsumed');
+      metrics.recordReclaimSkip('alreadyConsumed');
+      metrics.recordReclaimSkip('alreadySubmitted');
+      metrics.recordReclaimSkip('noContent');
+      const { reclaimSkips } = metrics.snapshot();
+      expect(reclaimSkips).toEqual({
         alreadyConsumed: 2,
         alreadySubmitted: 1,
-        stillEnqueued: 1,
         noContent: 1,
       });
     });
 
     it('alreadyConsumed + alreadySubmitted are the duplicates-prevented leading indicator', () => {
-      metrics.recordReclaimOutcome('alreadyConsumed');
-      metrics.recordReclaimOutcome('alreadySubmitted');
-      const { reclaimOutcomes } = metrics.snapshot();
+      metrics.recordReclaimSkip('alreadyConsumed');
+      metrics.recordReclaimSkip('alreadySubmitted');
+      const { reclaimSkips } = metrics.snapshot();
       // Non-zero prevented counts mean the synchronous consumed-flip + skip are working.
-      expect(reclaimOutcomes.alreadyConsumed + reclaimOutcomes.alreadySubmitted).toBeGreaterThan(0);
+      expect(reclaimSkips.alreadyConsumed + reclaimSkips.alreadySubmitted).toBeGreaterThan(0);
     });
   });
 
@@ -90,6 +96,25 @@ describe('DeliveryMetrics (task #861 item 13)', () => {
     it('caps the sample window (bounded memory over a long-running daemon)', () => {
       for (let i = 0; i < 5000; i++) metrics.recordResidualWindow(i);
       expect(metrics.snapshot().residualWindowSamples).toBeLessThanOrEqual(1000);
+    });
+  });
+
+  describe('bounded memory (review: bound the per-message feed history)', () => {
+    it('caps the recent-feed window so memory does not grow with total message volume', () => {
+      for (let i = 0; i < 10_000; i++) metrics.recordFeed(`uuid-${i}`);
+      // feedsObserved tracks the true total; the internal recent-window is bounded.
+      const snap = metrics.snapshot();
+      expect(snap.feedsObserved).toBe(10_000);
+      expect(snap.duplicateFeedCount).toBe(0); // all distinct, none re-fed
+    });
+
+    it('still detects a duplicate whose first feed is within the recent window', () => {
+      for (let i = 0; i < 900; i++) metrics.recordFeed(`uuid-${i}`); // fill window below cap
+      metrics.recordFeed('reclaim-me');
+      for (let i = 900; i < 1200; i++) metrics.recordFeed(`uuid-${i}`); // push but keep reclaim-me in window
+      metrics.recordFeed('reclaim-me'); // re-feed within window → duplicate
+      const snap = metrics.snapshot();
+      expect(snap.duplicateUuids).toContain('reclaim-me');
     });
   });
 });

@@ -931,6 +931,12 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // definition-version pinning, M182 for the message-delivery-v2 active-turn
   // index, and M183 for the sdk_messages.send_status widen.)
   run(migrationMarkerKey(184), () => runMigration184(db));
+
+  // Migration 185: Partial expression index idx_message_delivery_session_active
+  // for the activeDeliveryMessageUuids / hasActiveDeliveryJobs lookup (the
+  // "which sessions own an active durable job" hot path). Mirrored in
+  // createIndexes() for fresh DBs. (task #861, review P2.)
+  run(migrationMarkerKey(185), () => runMigration185(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -12206,4 +12212,22 @@ export function runMigration181(db: BunDatabase): void {
  */
 export function runMigration184(db: BunDatabase): void {
   runMigration184External(db);
+}
+
+/**
+ * Migration 185: Partial expression index `idx_message_delivery_session_active`
+ * on the job_queue `message_delivery` lane — covers the activeDeliveryMessageUuids
+ * / hasActiveDeliveryJobs lookup (run on each idle transition + a 60s timer +
+ * startup + turn-end). Without it the query scans the whole lane doing
+ * json_extract per row; this index turns it into a seek by sessionId.
+ * Idempotent (`CREATE INDEX IF NOT EXISTS`); no-op on tables that pre-date the
+ * lane. (task #861, review P2.) Mirrored in createIndexes() for fresh DBs.
+ */
+export function runMigration185(db: BunDatabase): void {
+  if (!tableExists(db, 'job_queue')) return;
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_message_delivery_session_active
+      ON job_queue (json_extract(payload, '$.sessionId'))
+      WHERE queue = 'message_delivery' AND status IN ('pending', 'processing')
+  `);
 }

@@ -1973,19 +1973,19 @@ export class AgentSession
     // turnEnd wins and the job completes promptly when the SDK finishes the turn.
     try {
       await started.acknowledgment;
-      // The SDK-consume signal fired (onSent). Capture the instant for the
-      // residual-window metric (item 13c): time from consume signal to the
-      // persisted consumed-flip below — the at-least-once exposure surface.
-      const consumeSignalMs = Date.now();
-      // The kickoff was admitted by the SDK (onSent) — the message is consumed.
-      // Flip send_status → 'consumed' SYNCHRONOUSLY, before any further await,
-      // to shrink the at-least-once duplicate window [SDK yield, persisted
-      // consumed-flip] to sub-millisecond (task #861 item 12). reclaimStale then
-      // almost always observes 'consumed' and the handler's status-aware reload
-      // skips the re-feed (drives with alreadyConsumed). Idempotent: a no-op if
-      // the history-echo path already flipped it.
-      this.markDeliveryConsumed(messageUuid);
-      deliveryMetrics.recordResidualWindow(Date.now() - consumeSignalMs);
+      // For the Claude SDK, onSent is the consume signal — flip send_status →
+      // 'consumed' SYNCHRONOUSLY (item 12) so reclaimStale almost always sees
+      // 'consumed' and skips the re-feed. ACP is EXCLUDED: its onSent fires at
+      // submission (enqueued→submitted via markMessageSubmitted), and the real
+      // consume boundary is acceptance (markMessageAccepted → consumed). Flipping
+      // here for ACP would mark a not-yet-accepted prompt consumed, so a failed
+      // acceptance could no longer be terminalized by markACPDeliveryFailed
+      // (which only flips enqueued/deferred/submitted → failed). (Codex review.)
+      if (this.session.config.provider !== 'acp') {
+        const consumeSignalMs = Date.now();
+        this.markDeliveryConsumed(messageUuid);
+        deliveryMetrics.recordResidualWindow(Date.now() - consumeSignalMs);
+      }
       // Signal long-horizon delivery waiters (injectLongTermAgentMessage) so they
       // confirm the source record only after genuine consumption, not bare
       // enqueue (which can still dead-letter). No-op when no waiter is armed.
@@ -2050,9 +2050,12 @@ export class AgentSession
     // Admission happened atomically under the lock; only the provider
     // acknowledgment is awaited here.
     await action.acknowledgment;
-    // The steer was consumed by the live turn (onSent) — flip send_status →
-    // 'consumed' synchronously (task #861 item 12) before signaling waiters.
-    this.markDeliveryConsumed(messageUuid);
+    // Claude SDK: the steer's onSent is the consume signal — flip synchronously
+    // (item 12). ACP is excluded (consume boundary is acceptance, not onSent);
+    // see driveDeliveryTurn for the full rationale.
+    if (this.session.config.provider !== 'acp') {
+      this.markDeliveryConsumed(messageUuid);
+    }
     // The steer was consumed by the live turn (onSent) — signal long-horizon
     // delivery waiters awaiting consumption. No-op when none are armed. (Codex P1.)
     signalDeliveryConsumed(this.session.id, messageUuid);
@@ -2190,15 +2193,21 @@ export class AgentSession
     const jobQueue = this.db.getJobQueueRepo?.();
     if (!jobQueue) return 0;
     // Don't reconcile while a turn is actively driving — the handler owns those
-    // messages, and re-enqueuing mid-turn could create a competing steer. The
-    // idle/periodic callers run when the session is idle; this guard is an
-    // extra defense for any future caller.
+    // messages, and re-enqueuing mid-turn could create a competing steer. Also
+    // skip `queued` (a parked owner) and `waiting_for_input` (a restored
+    // AskUserQuestion awaiting an answer — driving a stranded row there would
+    // start a query and overwrite the pending-question state). The idle/periodic
+    // callers run when the session is otherwise idle.
     const status = this.stateManager.getState().status;
-    if (status === 'processing' || status === 'queued') return 0;
+    if (status === 'processing' || status === 'queued' || status === 'waiting_for_input') {
+      return 0;
+    }
 
     const active = jobQueue.activeDeliveryMessageUuids(this.session.id);
-    // 1) Re-enqueue stranded 'enqueued' messages (the #856 shape).
-    const reEnqueued = reconcileStrandedDeliveriesCore({
+    // 1) Re-enqueue stranded 'enqueued' messages (the #856 shape). The core
+    // pass serializes under the per-session lock (withSessionLock) so concurrent
+    // idle/periodic reconciles cannot double-enqueue one message.
+    const reEnqueued = await reconcileStrandedDeliveriesCore({
       sessionId: this.session.id,
       db: this.db,
       jobQueue,

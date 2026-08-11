@@ -194,30 +194,36 @@ export interface StrandedDeliveryDb {
  * — never inserts a second user message or a duplicate payload; the handler
  * reloads content from storage. Idempotent + safe under concurrent ticks/workers:
  * it only acts on messages with no active job, and `deliverMessage` dedups via
- * `getActiveDeliveryRole`, so racing ticks no-op. Returns the count re-enqueued.
+ * `getActiveDeliveryRole`. The whole pass runs under the per-session lock
+ * ({@link withSessionLock}) so two concurrent reconciles (e.g. the idle callback
+ * racing the 60s timer) serialize: the first enqueues, the second sees the
+ * active job and skips — never a duplicate turn+steer pair for one message.
+ * Returns the count re-enqueued.
  *
  * This is the pure cross-check; {@link AgentSession.reconcileStrandedDeliveries}
  * wraps it with a processing-state guard + logging + v2 flag check.
  */
-export function reconcileStrandedDeliveries(args: {
+export async function reconcileStrandedDeliveries(args: {
   sessionId: string;
   db: StrandedDeliveryDb;
   jobQueue: JobQueueRepository;
-}): number {
+}): Promise<number> {
   if (!isMessageDeliveryV2Enabled()) return 0;
-  const active = args.jobQueue.activeDeliveryMessageUuids(args.sessionId);
-  const enqueued = args.db.getMessagesByStatus(args.sessionId, 'enqueued');
-  const stranded: string[] = [];
-  for (const msg of enqueued) {
-    const uuid = msg.uuid;
-    if (typeof uuid === 'string' && uuid.length > 0 && !active.has(uuid)) {
-      stranded.push(uuid);
+  return withSessionLock(args.sessionId, async () => {
+    const active = args.jobQueue.activeDeliveryMessageUuids(args.sessionId);
+    const enqueued = args.db.getMessagesByStatus(args.sessionId, 'enqueued');
+    const stranded: string[] = [];
+    for (const msg of enqueued) {
+      const uuid = msg.uuid;
+      if (typeof uuid === 'string' && uuid.length > 0 && !active.has(uuid)) {
+        stranded.push(uuid);
+      }
     }
-  }
-  for (const uuid of stranded) {
-    deliverMessage(args.jobQueue, args.sessionId, uuid, { origin: 'recovery' });
-  }
-  return stranded.length;
+    for (const uuid of stranded) {
+      deliverMessage(args.jobQueue, args.sessionId, uuid, { origin: 'recovery' });
+    }
+    return stranded.length;
+  });
 }
 
 /**

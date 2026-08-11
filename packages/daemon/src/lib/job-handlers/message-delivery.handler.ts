@@ -119,19 +119,21 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
     if (loaded === null) {
       // Content gone (rewound/deleted) — nothing to deliver.
       log.warn(`message_delivery: content for ${payload.messageUuid} not found; completing.`);
-      deliveryMetrics.recordReclaimOutcome('noContent');
+      deliveryMetrics.recordReclaimSkip('noContent');
       await session.settleSkippedDelivery?.(payload.messageUuid);
       return { outcome: 'no_content' };
     }
     const { content, sendStatus } = loaded;
 
-    // Reclaim-outcome telemetry (task #861 item 13b): alreadyConsumed /
-    // alreadySubmitted skips are duplicates PREVENTED (leading indicator); a
-    // spike means crashes-during-turn are rising. deferred/failed are
-    // user/terminal states, not reclaim re-drives, so they aren't recorded here.
-    if (sendStatus === 'consumed') deliveryMetrics.recordReclaimOutcome('alreadyConsumed');
-    else if (sendStatus === 'submitted') deliveryMetrics.recordReclaimOutcome('alreadySubmitted');
-    else if (sendStatus === 'enqueued') deliveryMetrics.recordReclaimOutcome('stillEnqueued');
+    // Reclaim-skip telemetry (task #861 item 13b): alreadyConsumed (a consumed
+    // message re-claimed → reclaimStale skipped the re-feed) and alreadySubmitted
+    // are duplicates PREVENTED (leading indicator); a spike means
+    // crashes-during-turn are rising. The fresh-feed path (an `enqueued` row
+    // that feeds) is NOT recorded here — it is counted in `feedsObserved` — so
+    // ordinary traffic cannot dilute the skip signal. deferred/failed are
+    // user/terminal states, not reclaim re-drives.
+    if (sendStatus === 'consumed') deliveryMetrics.recordReclaimSkip('alreadyConsumed');
+    else if (sendStatus === 'submitted') deliveryMetrics.recordReclaimSkip('alreadySubmitted');
 
     // Only deliver messages still pending. `consumed`/`deferred`/`failed` are
     // NOT re-fed (see the module doc + §8). `deferred`/`failed` skip outright;

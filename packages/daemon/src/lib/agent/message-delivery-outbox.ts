@@ -23,7 +23,7 @@
  * rolls back only the offending statement — the save and the eventual steer
  * insert still commit together.
  *
- * See docs/features/message-delivery-v2.md §7 + task #861 item 2.
+ * See docs/features/message-delivery-v2.md §7 + §16 (task #861 item 2).
  */
 
 import type { MessageOrigin } from '@hyperneo/shared';
@@ -51,16 +51,6 @@ export interface PersistAndEnqueueDeliveryArgs {
   sendStatus: SendStatus;
   origin?: MessageOrigin;
   delivery: { origin: MessageDeliveryOrigin; parentToolUseId?: string | null };
-  /**
-   * Force the durable job to insert as `steer` regardless of the index. Used
-   * while legacy kickoff paths still drive turns outside the durable owner: a
-   * session can be `processing` a legacy turn with NO active v2 turn row, which
-   * the unique index cannot see — so the index would classify this as a fresh
-   * turn and race the legacy turn. Once the legacy paths are migrated onto
-   * `deliverMessage` (task #861 item 3/14) this flag is dead and removed
-   * (item 7).
-   */
-  forceSteer?: boolean;
 }
 
 export interface PersistAndEnqueueDeliveryResult {
@@ -90,7 +80,6 @@ export function persistAndEnqueueDelivery(
     throw new Error('persistAndEnqueueDelivery: message has no uuid; cannot enqueue delivery');
   }
   const { db, sdkMessageRepo, jobQueue, sessionId, message, sendStatus, origin } = args;
-  const forceSteer = args.forceSteer === true;
   const basePayload = {
     sessionId,
     messageUuid,
@@ -101,60 +90,45 @@ export function persistAndEnqueueDelivery(
 
   const result = db.transaction(() => {
     const core = sdkMessageRepo.saveUserMessageCore(sessionId, message, sendStatus, origin);
-    const role = enqueueDeliveryRole(jobQueue, basePayload, forceSteer);
+    // Atomic role arbitration by the uq_message_delivery_active_turn index:
+    // insert turn; on UNIQUE (an active turn already owns the session) insert
+    // steer. Both run inside this transaction; ABORT rolls back only the
+    // offending statement, so the save + eventual steer still commit together.
+    let role: MessageDeliveryRole;
+    try {
+      jobQueue.enqueue({
+        queue: MESSAGE_DELIVERY,
+        payload: basePayload,
+        maxRetries: DELIVERY_MAX_RETRIES,
+      });
+      role = 'turn';
+    } catch (err) {
+      if (!isUniqueConstraintError(err)) throw err;
+      jobQueue.enqueue({
+        queue: MESSAGE_DELIVERY,
+        payload: { ...basePayload, role: 'steer' },
+        maxRetries: DELIVERY_MAX_RETRIES,
+      });
+      role = 'steer';
+    }
     return { core, role };
   })();
 
-  // Post-commit side effects (live-query notify + FTS) — outside the outbox tx,
-  // matching saveUserMessage's own tail.
-  sdkMessageRepo.runPostSaveSideEffects(
-    sessionId,
-    result.core.id,
-    message,
-    result.core.countsTowardsBadge
-  );
-  return { dbMessageId: result.core.id, role: result.role };
-}
-
-/**
- * The atomic role-arbitrated enqueue, factored so the outbox and a future
- * "reopen-then-enqueue" path share one implementation. Insert `turn`; on a
- * UNIQUE violation from `uq_message_delivery_active_turn` insert `steer`. With
- * `forceSteer`, skip straight to the steer insert (the legacy-owned-turn guard).
- * Runs in the caller's transaction.
- */
-export function enqueueDeliveryRole(
-  jobQueue: JobQueueRepository,
-  basePayload: {
-    sessionId: string;
-    messageUuid: string;
-    origin: MessageDeliveryOrigin;
-    parentToolUseId?: string | null;
-  },
-  forceSteer: boolean
-): MessageDeliveryRole {
-  if (forceSteer) {
-    jobQueue.enqueue({
-      queue: MESSAGE_DELIVERY,
-      payload: { ...basePayload, role: 'steer' },
-      maxRetries: DELIVERY_MAX_RETRIES,
-    });
-    return 'steer';
-  }
+  // Post-commit side effects (live-query notify + FTS) — OUTSIDE the outbox tx
+  // and best-effort: the outbox transaction has already committed both the user
+  // row and the active delivery job, so a throw here (e.g. a fallible FTS
+  // update) MUST NOT propagate. Propagating would reject the send request while
+  // the durable job still runs, and a client retry with a fresh UUID would then
+  // deliver the prompt twice. (Codex review.)
   try {
-    jobQueue.enqueue({
-      queue: MESSAGE_DELIVERY,
-      payload: { ...basePayload, role: 'turn' },
-      maxRetries: DELIVERY_MAX_RETRIES,
-    });
-    return 'turn';
-  } catch (err) {
-    if (!isUniqueConstraintError(err)) throw err;
-    jobQueue.enqueue({
-      queue: MESSAGE_DELIVERY,
-      payload: { ...basePayload, role: 'steer' },
-      maxRetries: DELIVERY_MAX_RETRIES,
-    });
-    return 'steer';
+    sdkMessageRepo.runPostSaveSideEffects(
+      sessionId,
+      result.core.id,
+      message,
+      result.core.countsTowardsBadge
+    );
+  } catch {
+    // best-effort — committed state is authoritative.
   }
+  return { dbMessageId: result.core.id, role: result.role };
 }

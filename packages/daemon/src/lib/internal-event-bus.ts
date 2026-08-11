@@ -645,7 +645,6 @@ interface AgentControlEvents {
     skipQueryStart?: boolean;
   };
   'query.trigger': { sessionId: string };
-  'query.sendEnqueuedOnTurnEnd': { sessionId: string };
   'context.updated': { sessionId: string; contextInfo: import('@hyperneo/shared').ContextInfo };
 }
 
