@@ -140,6 +140,7 @@ export class SpaceWorkflowManager {
     this.validateEndNodeId(endNodeId, nodes);
 
     this.validateNoDuplicateHookIds(params.hooks ?? []);
+    this.normalizeGateDefaults(params.gates);
     params = migrateWorkflowGateProgressionToHooks({
       ...params,
       nodes: nodes as SpaceWorkflow['nodes'],
@@ -498,6 +499,7 @@ export class SpaceWorkflowManager {
     }
 
     this.validateNoDuplicateHookIds(params.hooks ?? []);
+    this.normalizeGateDefaults(params.gates);
     const migrated = migrateWorkflowGateProgressionToHooks({
       channels: params.channels === undefined ? existing.channels : (params.channels ?? undefined),
       gates: params.gates === undefined ? existing.gates : (params.gates ?? undefined),
@@ -1152,6 +1154,21 @@ export class SpaceWorkflowManager {
           }
         }
       }
+    }
+  }
+
+  /**
+   * Default each gate's `resetOnCycle` to `false` when omitted, in place.
+   * Runs at the create/update boundary BEFORE gate→hook migration and
+   * `validateGate`, so a gate constructed without `resetOnCycle` (common in
+   * fixtures and untyped RPC) is persisted with a boolean instead of being
+   * rejected — while a present non-boolean (e.g. a string) is still rejected
+   * by `validateGate`. Mirrors the historical DB default.
+   */
+  private normalizeGateDefaults(gates: Gate[] | null | undefined): void {
+    if (!gates) return;
+    for (const gate of gates) {
+      if (gate.resetOnCycle === undefined) gate.resetOnCycle = false;
     }
   }
 

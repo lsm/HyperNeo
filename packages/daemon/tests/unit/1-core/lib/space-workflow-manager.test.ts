@@ -1588,22 +1588,35 @@ describe('SpaceWorkflowManager', () => {
       expect(result.nodes[0].transitions?.[0]).toMatchObject({ gateId: 'g1', hookId: 'h1' });
     });
 
-    it('rejects a gate missing required id/resetOnCycle (untyped RPC JSON)', () => {
-      // validateGate must reject a gate with a missing/non-boolean resetOnCycle
-      // or an empty id, so a malformed gate is never persisted (and the stricter
-      // export schema does not reject the application's own export later).
+    it('defaults a missing resetOnCycle, rejects a non-boolean type, and rejects an empty id', () => {
+      // A missing resetOnCycle is defaulted to false at the boundary (matches
+      // the historical DB default); a present non-boolean is rejected; an empty
+      // id is rejected. So a malformed gate is never persisted.
       const baseFields = [
         { name: 'ok', type: 'boolean', writers: [], check: { op: '==', value: true } },
       ];
+      // Missing resetOnCycle → defaulted to false, accepted.
+      const defaulted = manager.createWorkflow({
+        ...twoNodeParams([]),
+        name: 'Gate Default',
+        gates: [{ id: 'g1', fields: baseFields } as never],
+      });
+      expect(defaulted.gates![0].resetOnCycle).toBe(false);
+      // Non-boolean resetOnCycle → rejected.
       expect(() =>
         manager.createWorkflow({
           ...twoNodeParams([]),
-          gates: [{ id: 'g1', fields: baseFields } as never],
+          name: 'Gate Bad Type',
+          gates: [
+            { id: 'g2', resetOnCycle: 'no' as unknown as boolean, fields: baseFields } as never,
+          ],
         })
       ).toThrow('"resetOnCycle" must be a boolean');
+      // Empty id → rejected.
       expect(() =>
         manager.createWorkflow({
           ...twoNodeParams([]),
+          name: 'Gate Bad Id',
           gates: [{ id: '  ', resetOnCycle: false, fields: baseFields } as never],
         })
       ).toThrow('"id" must be a non-empty string');

@@ -1825,11 +1825,11 @@ export function mergeNodeStructuralFieldsFromTemplate(
       // Declared handoff transitions: overwrite from the template ONLY when it
       // explicitly declares them, otherwise PRESERVE the node's existing value
       // (mirrors the codexTimeoutSeconds preserve-when-template-silent rule).
-      // When the template declares them, remap only NODE-name targets to the
-      // installed graph (a renamed node); SLOT-name targets and '*' are carried
-      // verbatim — remapTemplateChannelRef would convert a slot target to its
-      // enclosing node name and silently change the destination for multi-agent
-      // nodes. gateId/hookId are ids, not node refs, so they are carried verbatim.
+      // When the template declares them, remap targets to the installed graph:
+      // NODE-name targets via remapTemplateChannelRef (a renamed node), SLOT-name
+      // targets via remapTransitionSlotTarget (a renamed slot, by position); only
+      // '*' is carried verbatim. gateId/hookId are ids, not node refs, so they
+      // are carried verbatim.
       transitions:
         templateNode?.transitions && templateNode.transitions.length > 0
           ? templateNode.transitions.map((t) => {
