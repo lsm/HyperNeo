@@ -1549,11 +1549,15 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         // Capture whether the row about to be overwritten carried a legacy
         // pr_url/prUrl BEFORE the upsert replaces it — a re-upsert that omits the
         // field clears the durable link, and the record trigger must still
-        // invalidate the cached primary link. Scoped to this artifact's shape so
-        // the hot path (frequent note/metric/decision saves) doesn't load+map
-        // the run's full artifact set (cost grows with run age).
+        // invalidate the cached primary link. Scoped to this artifact's shape AND
+        // node: the upsert's uniqueness key includes node_id, so only the row this
+        // upsert can replace should control previousCarriedPrUrl — without the
+        // node filter, a sibling node's same-shape+key artifact could supply a
+        // legacy pr_url and falsely report this save as link-bearing. The shape
+        // filter keeps the hot path (frequent note/metric/decision saves) from
+        // loading the run's full artifact set.
         const previousCarriedPrUrl = artifactRepo
-          .listByRun(workflowRunId, { artifactType: shape })
+          .listByRun(workflowRunId, { artifactType: shape, nodeId: workflowNodeId })
           .some(
             (a) =>
               a.artifactKey === artifactKey &&

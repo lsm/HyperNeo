@@ -991,6 +991,16 @@ export class SpaceRuntime {
    */
   private readonly deferredMaterializationRuns = new Set<string>();
   /**
+   * Fire-and-forget replay tasks (retained-event redispatch + new-target
+   * delivery) currently in flight. These await external work (the blocked-run
+   * hook, delivery resolution) that can outlive the synchronous dispatch.
+   * `stop()` drains this set (after the tick drain) so a replay task that
+   * started just before shutdown finishes its awaited DB work before the caller
+   * closes the database — the in-task `isStopped` check prevents further
+   * delivery, but cannot prevent the in-flight hook's own database writes.
+   */
+  private readonly replayTasksInFlight = new Set<Promise<void>>();
+  /**
    * Sync cache of paused/stopped space ids, maintained via the space
    * pause/resume registers and seeded on rehydrate. Lets the delivery hot path
    * defer (not inject) events for paused spaces without an async lookup —
@@ -1377,16 +1387,20 @@ export class SpaceRuntime {
 
   /**
    * Resolve the workflow definition FROZEN for a run (the one captured in its
-   * executor meta at start), falling back to the current persisted definition
-   * when the executor isn't tracked (before registration / after teardown).
-   * Materialization must use the frozen definition so a mid-run workflow edit
-   * can't subscribe newly-added slots that don't belong to the run, or skip the
-   * cleanup loop for removed nodes (leaving their old derived topics active).
+   * executor meta at start), falling back to the run's PINNED definition
+   * (`getWorkflowForRun`) when the executor isn't tracked. `cleanupTerminalExecutors`
+   * deletes executorMeta for done runs, which are now reachable in the supported
+   * post-approval phase — falling back to the *current* persisted definition
+   * (`getWorkflow(workflowId)`) would let a mid-run workflow edit add slots that
+   * never belonged to the run or drop its original derived interests. The pinned
+   * lookup resolves through the run's recorded definition version, so the
+   * fallback matches the executor-captured one.
    */
   private resolveFrozenWorkflowForRun(run: SpaceWorkflowRun): SpaceWorkflow | null {
     return (
       this.executorMeta.get(run.id)?.workflow ??
-      this.config.spaceWorkflowManager.getWorkflow(run.workflowId)
+      this.config.spaceWorkflowManager.getWorkflowForRun(run) ??
+      null
     );
   }
 
@@ -1412,6 +1426,21 @@ export class SpaceRuntime {
     // spaces' published events.
     const run = this.config.workflowRunRepo.getRun(workflowRunId);
     this.redispatchPublishedEventsToNewTargets(run?.spaceId);
+  }
+
+  /**
+   * Track a fire-and-forget replay task so {@link stop} can drain it before the
+   * caller closes the database. The promise removes itself from the set on
+   * settlement; rejections are swallowed (the replay paths already log their
+   * own failures) so one failing task can't reject the drain.
+   */
+  private trackReplayTask(task: Promise<void>): void {
+    const tracked = task.then(
+      () => this.replayTasksInFlight.delete(task),
+      () => this.replayTasksInFlight.delete(task)
+    );
+    void tracked;
+    this.replayTasksInFlight.add(task);
   }
 
   /**
@@ -5210,6 +5239,32 @@ export class SpaceRuntime {
         check();
       });
     }
+    // Drain fire-and-forget replay tasks (retained-event redispatch + new-target
+    // delivery) so a task that started just before shutdown — and may be awaiting
+    // the blocked-run hook or a delivery resolution — finishes its DB work before
+    // the caller closes the database. The in-task isStopped check prevents
+    // further delivery, but cannot prevent the in-flight hook's own writes.
+    // Bounded: tasks resolve their deliveries/short-circuit on isStopped, and
+    // the retained replay is re-entrancy-guarded.
+    if (this.replayTasksInFlight.size > 0) {
+      const MAX_REPLAY_DRAIN_MS = 5_000;
+      const drainStart = Date.now();
+      await new Promise<void>((resolve) => {
+        const check = () => {
+          if (this.replayTasksInFlight.size === 0) {
+            resolve();
+          } else if (Date.now() - drainStart > MAX_REPLAY_DRAIN_MS) {
+            log.warn(
+              `SpaceRuntime: timed out draining ${this.replayTasksInFlight.size} replay task(s) after ${MAX_REPLAY_DRAIN_MS}ms — proceeding with shutdown`
+            );
+            resolve();
+          } else {
+            setTimeout(check, 10);
+          }
+        };
+        check();
+      });
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -5695,6 +5750,14 @@ export class SpaceRuntime {
     const recoveredWorkflow = this.config.spaceWorkflowManager.getWorkflowForRun(recovered.run);
     if (recoveredWorkflow) {
       this.registerRunInterestsFromWorkflow(recovered.run, recoveredWorkflow);
+      // The rebuild above re-materializes the recovered task's topicFrom sub
+      // (its static interests were cleared by clearRunInterestsPreservingDynamic
+      // on cancel). Replay retained/routed events so an event that landed during
+      // cancellation — published with no delivery, or a delivery only for another
+      // target — reaches the recovered task before TTL expiry. Idempotent and
+      // TTL-bounded; a no-op when nothing was retained or the workflow has no
+      // topicFrom interest.
+      this.replayRetainedEventsForMaterialization(recovered.run.id);
     }
     for (const sessionId of liveSessionIds) {
       // If the live session is paused in a rate/usage-limit cooldown, break it
@@ -6064,7 +6127,9 @@ export class SpaceRuntime {
     const store = this.config.externalEventStore;
     if (!store) return;
     for (const eventRecord of store.listPublishedEventsWithoutDeliveries()) {
-      void this.handleExternalEvent(this.externalEventPayloadFromRecord(eventRecord.event));
+      this.trackReplayTask(
+        this.handleExternalEvent(this.externalEventPayloadFromRecord(eventRecord.event))
+      );
     }
   }
 
@@ -6101,8 +6166,10 @@ export class SpaceRuntime {
     // expiry guard in deliverPublishedEventToNewTargets still applies).
     const createdAfterMs = Date.now() - EXTERNAL_EVENT_QUEUE_TTL_MS;
     for (const eventRecord of store.listPublishedEventsWithDeliveries(spaceId, createdAfterMs)) {
-      void this.deliverPublishedEventToNewTargets(
-        this.externalEventPayloadFromRecord(eventRecord.event)
+      this.trackReplayTask(
+        this.deliverPublishedEventToNewTargets(
+          this.externalEventPayloadFromRecord(eventRecord.event)
+        )
       );
     }
   }
