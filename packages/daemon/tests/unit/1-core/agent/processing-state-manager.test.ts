@@ -153,6 +153,37 @@ describe('ProcessingStateManager', () => {
       expect(events).toEqual(['onEnd', 'waiter-resolved']);
     });
 
+    test('waiter onEnd (marker) fires BEFORE the awaited idle side effects (P2)', async () => {
+      // The durable marker must be persisted synchronously at the START of
+      // setIdle — before the session.updated publish and the deferred-restart
+      // callback — so a crash after the idle-state DB write can't lose it.
+      // The waiter promise (job completion) stays deferred until the finally.
+      const events: string[] = [];
+      let resolveCallback!: () => void;
+      manager.setOnIdleCallback(
+        () =>
+          new Promise<void>((r) => {
+            resolveCallback = r;
+          })
+      );
+      const waiter = manager.waitForIdleTransition(undefined, () => events.push('onEnd'));
+      void waiter.promise.then(() => events.push('waiter-resolved'));
+      const setIdlePromise = manager.setIdle();
+      // onEnd fires synchronously (before setIdle's first await); the waiter
+      // does NOT resolve until the finally (after the deferred callback).
+      expect(events).toEqual(['onEnd']);
+      expect(events).not.toContain('waiter-resolved');
+      // Flush microtasks so setState's publish resolves and onIdleCallback is
+      // invoked (now awaiting our resolver) — still before the finally drain.
+      await new Promise((r) => setTimeout(r, 0));
+      expect(typeof resolveCallback).toBe('function');
+      expect(events).not.toContain('waiter-resolved');
+      resolveCallback();
+      await setIdlePromise;
+      await waiter.promise;
+      expect(events).toEqual(['onEnd', 'waiter-resolved']);
+    });
+
     test('waiter onEnd fires on a direct releaseIdleWaiters (restart/reset failure path)', async () => {
       // Direct releaseIdleWaiters (query-lifecycle restart/reset failures,
       // ask-user-question answer-reinjection) must still record the turn-end

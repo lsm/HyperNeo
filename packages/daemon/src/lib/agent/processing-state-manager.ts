@@ -33,8 +33,16 @@ export class ProcessingStateManager {
    * that episode — not a newer turn's waiter armed after the generation bumped.
    * Drained in {@link setIdle} (terminal) / {@link releaseIdleWaiters}.
    */
-  private idleWaiters: Map<number, { resolve: () => void; gen?: number; endOnce: () => void }> =
-    new Map();
+  private idleWaiters: Map<
+    number,
+    {
+      resolve: () => void;
+      gen?: number;
+      fireEnd: () => void;
+      resolveOnce: () => void;
+      endOnce: () => void;
+    }
+  > = new Map();
   private nextIdleWaiterId = 0;
   /**
    * True while the deferred-restart `onIdleCallback` is running. A reentrant
@@ -89,15 +97,31 @@ export class ProcessingStateManager {
       resolve = r;
     });
     const id = this.nextIdleWaiterId++;
-    let ended = false;
-    const endOnce = (): void => {
-      if (ended) return;
-      ended = true;
-      this.idleWaiters.delete(id);
+    let onEndFired = false;
+    let resolved = false;
+    // fireEnd persists the durable turn-completion state (the delivery_turn_end
+    // marker) WITHOUT resolving the waiter; resolveOnce releases the awaiting
+    // delivery job. Splitting the two lets setIdle write the marker
+    // synchronously before the awaited idle side effects while deferring waiter
+    // resolution to the finally. endOnce = fireEnd + resolve (releaseIdleWaiters,
+    // cancel). Each is independently idempotent so a waiter can be released by
+    // exactly one path without double-firing the marker or double-resolving.
+    const fireEnd = (): void => {
+      if (onEndFired) return;
+      onEndFired = true;
       onEnd?.();
+    };
+    const resolveOnce = (): void => {
+      if (resolved) return;
+      resolved = true;
+      this.idleWaiters.delete(id);
       resolve();
     };
-    this.idleWaiters.set(id, { resolve, gen: episodeGen, endOnce });
+    const endOnce = (): void => {
+      fireEnd();
+      resolveOnce();
+    };
+    this.idleWaiters.set(id, { resolve, gen: episodeGen, fireEnd, resolveOnce, endOnce });
     return {
       promise,
       cancel: () => {
@@ -206,6 +230,16 @@ export class ProcessingStateManager {
     // stop/start), suppress the drain too — the outer call owns it, deferred
     // until the restart completes so durable turn ownership survives the restart.
     const suppressDrain = opts?.suppressDeliveryWaiters || this.idleCallbackInFlight;
+    // Persist the waiter-owned turn-completion markers SYNCHRONOUSLY, BEFORE any
+    // await (the idle DB persist + session.updated publish, the deferred-restart
+    // callback). A crash after the idle-state DB write but during those awaited
+    // side effects would otherwise leave a result-less consumed turn without a
+    // marker and re-drive it on recovery. Waiter RESOLUTION stays deferred to the
+    // finally so the awaiting delivery job still observes the fully-processed
+    // turn-end. See Codex (PR #2463, P2).
+    if (!suppressDrain) {
+      for (const w of this.idleWaiters.values()) w.fireEnd();
+    }
     // setState persists the idle state BEFORE publishing it, so drain the
     // turn-end waiters in a finally — the state IS idle even if the event
     // publication throws, and a waiting delivery job must not hang on a
@@ -231,15 +265,12 @@ export class ProcessingStateManager {
       }
     } finally {
       if (!suppressDrain) {
-        // Release the delivery waiters. Each waiter's `endOnce` fires the
-        // bridge's durable turn-completion callback (keyed by the kickoff UUID)
-        // BEFORE its promise resolves — see `waitForIdleTransition`'s `onEnd`.
-        // The `onBeforeIdleWaiterDrain` hook (deriving the owner from mutable
-        // processing state) is superseded by the waiter-owned callback and
-        // removed.
+        // Release the delivery waiters. The markers were already persisted above
+        // (fireEnd, before the awaits); resolveOnce releases the awaiting jobs
+        // WITHOUT re-firing the marker callback. See waitForIdleTransition.
         const waiters = [...this.idleWaiters.values()];
         this.idleWaiters.clear();
-        for (const w of waiters) w.endOnce();
+        for (const w of waiters) w.resolveOnce();
       }
     }
   }

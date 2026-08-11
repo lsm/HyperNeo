@@ -1505,6 +1505,17 @@ export class SDKMessageRepository {
         const consumedSeqStmt = this.db.prepare(
           'UPDATE sdk_messages SET consumed_seq = ?, timestamp = ? WHERE id = ?'
         );
+        // Compute the boundary ONCE (index-based, sub-ms — see the perf fix), then
+        // increment per consumed row so the watermark stays monotonic regardless
+        // of how many pending rows this call flips. Not recomputed per row.
+        const boundary =
+          newStatus === 'consumed'
+            ? Math.max(
+                (maxRowidStmt.get() as { m: number }).m,
+                (maxConsumedSeqStmt.get() as { m: number }).m
+              )
+            : 0;
+        let nextSeq = boundary;
         for (const row of pending) {
           if (row.task_id && row.is_renderable === 1) {
             const max = (maxStmt.get(row.task_id) as { m: number | null } | undefined)?.m ?? 0;
@@ -1519,9 +1530,8 @@ export class SDKMessageRepository {
           // Only a CONSUMED flip carries the consumption boundary (failed rows
           // were never consumed — no consumed_seq).
           if (newStatus === 'consumed') {
-            const maxRowid = (maxRowidStmt.get() as { m: number }).m;
-            const maxConsumedSeq = (maxConsumedSeqStmt.get() as { m: number }).m;
-            consumedSeqStmt.run(Math.max(maxRowid, maxConsumedSeq) + 1, now, row.id);
+            nextSeq++;
+            consumedSeqStmt.run(nextSeq, now, row.id);
           }
         }
       }
@@ -1909,8 +1919,9 @@ export class SDKMessageRepository {
           WHERE r.session_id = ?
             AND r.message_type = 'result'
             AND r.is_terminal = 1
+            AND r.parent_tool_use_id IS NULL
             AND r.rowid >= (
-              SELECT COALESCE(m.consumed_seq, m.rowid) FROM sdk_messages m
+              SELECT m.consumed_seq FROM sdk_messages m
                WHERE m.session_id = ? AND m.sdk_uuid = ? LIMIT 1
             )
           LIMIT 1`

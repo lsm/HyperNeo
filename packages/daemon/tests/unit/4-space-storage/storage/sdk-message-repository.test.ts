@@ -1689,9 +1689,22 @@ describe('SDKMessageRepository', () => {
         sendStatus?: string;
       }
     ): void {
+      // A consumed user row gets a consumption watermark so hasTerminalResultAfter
+      // (which treats NULL consumed_seq as "unknown/live") sees it as consumed.
+      const effectiveStatus = opts.sendStatus ?? (type === 'user' ? 'consumed' : null);
+      const consumedSeq =
+        type === 'user' && effectiveStatus === 'consumed'
+          ? (
+              db
+                .prepare(
+                  `SELECT COALESCE(MAX(consumed_seq), MAX(rowid), 0) + 1 AS m FROM sdk_messages`
+                )
+                .get() as { m: number }
+            ).m
+          : null;
       db.prepare(
-        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid, consumed_seq)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         crypto.randomUUID(),
         sessionId,
@@ -1699,9 +1712,10 @@ describe('SDKMessageRepository', () => {
         opts.subtype ?? null,
         '{}',
         opts.timestamp,
-        opts.sendStatus ?? (type === 'user' ? 'consumed' : null),
+        effectiveStatus,
         opts.terminal ? 1 : 0,
-        opts.uuid ?? null
+        opts.uuid ?? null,
+        consumedSeq
       );
     }
 
@@ -1716,6 +1730,74 @@ describe('SDKMessageRepository', () => {
         subtype: 'error_during_execution',
       });
       expect(repository.hasTerminalResultAfter('session-1', 'msg-uuid')).toBe(true);
+    });
+
+    it('ignores NESTED subagent results when detecting turn completion (P1)', () => {
+      // A subagent result carries a non-null parent_tool_use_id. If the daemon
+      // crashes after the subagent finishes but before the outer turn ends, that
+      // nested result must NOT be accepted as proof the whole delivery turn
+      // terminated — recovery would wrongly complete the owning job.
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid, consumed_seq, parent_tool_use_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        crypto.randomUUID(),
+        'session-1',
+        'user',
+        null,
+        '{}',
+        '2026-08-11T15:25:00.000Z',
+        'consumed',
+        0,
+        'outer-msg',
+        1,
+        null
+      );
+      // A nested result (subagent) persisted after consumption.
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid, consumed_seq, parent_tool_use_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        crypto.randomUUID(),
+        'session-1',
+        'result',
+        'subagent_result',
+        '{}',
+        '2026-08-11T15:26:00.000Z',
+        null,
+        1,
+        null,
+        null,
+        'tool-use-123' // nested under a subagent tool_use
+      );
+      expect(repository.hasTerminalResultAfter('session-1', 'outer-msg')).toBe(false);
+    });
+
+    it('treats a missing consumption watermark (migrated row) as unknown/live, not completed (P1)', () => {
+      // On an upgrade, in-flight consumed rows have NULL consumed_seq. Falling
+      // back to insertion rowid could match the PREVIOUS turn's result and
+      // wrongly complete the job. NULL must mean "unknown" → don't complete.
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid, consumed_seq)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        crypto.randomUUID(),
+        'session-1',
+        'user',
+        null,
+        '{}',
+        '2026-08-11T15:20:00.000Z',
+        'consumed',
+        0,
+        'migrated-msg',
+        null // migrated before the column existed
+      );
+      // A terminal result after it, but its consumption boundary is unknown.
+      insertMessage('session-1', 'result', {
+        timestamp: '2026-08-11T15:21:00.000Z',
+        terminal: true,
+      });
+      expect(repository.hasTerminalResultAfter('session-1', 'migrated-msg')).toBe(false);
     });
 
     it('is true when a terminal result shares the consumption millisecond but inserts after (P2 tiebreak)', () => {
