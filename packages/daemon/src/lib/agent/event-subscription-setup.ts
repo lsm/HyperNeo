@@ -156,15 +156,12 @@ export class EventSubscriptionSetup {
     );
     this.unsubscribers.push(unsubQueryTrigger);
 
-    // Send enqueued messages on turn end (auto-defer mode)
-    const unsubSendEnqueuedOnTurnEnd = internalEventBus.subscribe(
-      'query.sendEnqueuedOnTurnEnd',
-      async () => {
-        await queryModeHandler.sendEnqueuedMessagesOnTurnEnd();
-      },
-      { sessionId, subscriberName: 'EventSubscriptionSetup.querySendEnqueuedOnTurnEnd' }
-    );
-    this.unsubscribers.push(unsubSendEnqueuedOnTurnEnd);
+    // Note: `query.sendEnqueuedOnTurnEnd` was never published anywhere in the
+    // codebase (dormant since it was declared) — the turn-end / (re)hydration
+    // replay of enqueued messages runs through replayPendingMessagesForImmediateMode
+    // (sendEnqueuedMessagesOnTurnEnd), and under durable delivery the handler +
+    // reclaimStale own driving enqueued rows. The dead subscription was removed
+    // (task #861 item 14).
   }
 
   /**

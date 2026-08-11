@@ -55,9 +55,28 @@ export interface MessageHubRouterOptions {
   debug?: boolean;
   /** Maximum UTF-8 bytes allowed for one outbound wire message. */
   maxMessageSize?: number;
+  /**
+   * Maximum concurrent real-time subscriptions (e.g. live queries) a single
+   * client may hold. Enforced router-side as an ingress fan-out guardrail: a
+   * client that tries to subscribe beyond the cap is refused with a structured
+   * `TOO_MANY_SUBSCRIPTIONS` error instead of silently accumulating handlers
+   * and stalling (see task #899 / incident #2414).
+   *
+   * Tuned below observed fan-out (790 subscribes on one task page) so real
+   * regressions trip loudly in dev, while leaving headroom for a busy tab.
+   * @default 128
+   */
+  maxSubscriptionsPerClient?: number;
 }
 
 export const DEFAULT_MAX_OUTBOUND_MESSAGE_SIZE = 40 * 1024 * 1024;
+
+/**
+ * Default per-client subscription cap. ~6x below the 790-subscribe task-page
+ * fan-out that motivated this guardrail (#2414), with headroom for a tab that
+ * loads many sessions. Override via {@link MessageHubRouterOptions.maxSubscriptionsPerClient}.
+ */
+export const DEFAULT_MAX_SUBSCRIPTIONS_PER_CLIENT = 128;
 
 export type SendToClientResult =
   | { ok: true }
@@ -65,6 +84,19 @@ export type SendToClientResult =
       ok: false;
       reason: 'unavailable' | 'serialization_failed' | 'message_too_large' | 'send_failed';
     };
+
+/**
+ * Result of a per-client subscription capacity check.
+ *
+ * `checkSubscriptionCapacity` is read-only: it never mutates the counter, so a
+ * caller that decides not to track the subscription does not need to release.
+ * Callers must pair a passing check with {@link MessageHubRouter.addClientSubscription}
+ * once the subscription is actually tracked, and {@link MessageHubRouter.releaseClientSubscription}
+ * when it is disposed.
+ */
+export type SubscriptionCapacityResult =
+  | { ok: true }
+  | { ok: false; reason: 'too_many_subscriptions'; limit: number; current: number };
 
 /**
  * Client information
@@ -98,14 +130,25 @@ export class MessageHubRouter {
   private clients: Map<string, ClientInfo> = new Map(); // Now keyed by clientId
   private channelManager: ChannelManager = new ChannelManager();
 
+  /**
+   * Per-client active subscription counts (ingress fan-out guardrail).
+   * Mirrors the daemon's live-query handle map; maintained by callers via
+   * {@link addClientSubscription} / {@link releaseClientSubscription} and reset on
+   * disconnect via {@link unregisterConnection}.
+   */
+  private clientSubscriptionCounts: Map<string, number> = new Map();
+
   private logger: RouterLogger;
   private debug: boolean;
   private readonly maxMessageSize: number;
+  private readonly maxSubscriptionsPerClient: number;
 
   constructor(options: MessageHubRouterOptions = {}) {
     this.logger = options.logger || console;
     this.debug = options.debug || false;
     this.maxMessageSize = options.maxMessageSize ?? DEFAULT_MAX_OUTBOUND_MESSAGE_SIZE;
+    this.maxSubscriptionsPerClient =
+      options.maxSubscriptionsPerClient ?? DEFAULT_MAX_SUBSCRIPTIONS_PER_CLIENT;
   }
 
   private byteLength(value: string): number {
@@ -207,6 +250,10 @@ export class MessageHubRouter {
 
     // Clean up channel membership
     this.channelManager.removeClient(clientId);
+
+    // Reset the subscription counter: the daemon disposes the client's handles
+    // on disconnect, so any per-handle release that was missed is reconciled here.
+    this.clientSubscriptionCounts.delete(clientId);
 
     this.clients.delete(clientId);
     this.log(`Client unregistered: ${info.clientId}`);
@@ -350,6 +397,66 @@ export class MessageHubRouter {
    */
   getClientIds(): string[] {
     return Array.from(this.clients.keys());
+  }
+
+  // -------------------------------------------------------------------------
+  // Per-client subscription guardrail (ingress fan-out cap)
+  // See task #899 / incident #2414: without this, opening a high-fan-out page
+  // silently accumulated one handler per subscription and stalled the client.
+  // -------------------------------------------------------------------------
+
+  /**
+   * Read-only capacity check. Returns `{ ok: false }` when the client is at the
+   * cap, so the caller can refuse the subscribe with a structured
+   * `TOO_MANY_SUBSCRIPTIONS` error BEFORE doing any work (no snapshot side
+   * effects, no teardown of existing subscriptions). Does NOT mutate state.
+   */
+  checkSubscriptionCapacity(clientId: string): SubscriptionCapacityResult {
+    const current = this.clientSubscriptionCounts.get(clientId) ?? 0;
+    if (current >= this.maxSubscriptionsPerClient) {
+      this.logger.warn(
+        `[MessageHubRouter] Subscription cap exceeded for client ${clientId}: ` +
+          `${current}/${this.maxSubscriptionsPerClient} active; refusing further subscribes`
+      );
+      return {
+        ok: false,
+        reason: 'too_many_subscriptions',
+        limit: this.maxSubscriptionsPerClient,
+        current,
+      };
+    }
+    return { ok: true };
+  }
+
+  /**
+   * Record one active subscription for a client. Call exactly once when the
+   * subscription is actually tracked (after a passing {@link checkSubscriptionCapacity}).
+   */
+  addClientSubscription(clientId: string): void {
+    const next = (this.clientSubscriptionCounts.get(clientId) ?? 0) + 1;
+    this.clientSubscriptionCounts.set(clientId, next);
+  }
+
+  /**
+   * Release one subscription slot for a client. Floors at zero so a stray
+   * release (e.g. a handle disposed before it was tracked) cannot drive the
+   * count negative and silently widen the cap.
+   */
+  releaseClientSubscription(clientId: string): void {
+    const current = this.clientSubscriptionCounts.get(clientId);
+    if (current === undefined) return;
+    if (current <= 1) {
+      this.clientSubscriptionCounts.delete(clientId);
+    } else {
+      this.clientSubscriptionCounts.set(clientId, current - 1);
+    }
+  }
+
+  /**
+   * Current active subscription count for a client (0 if none tracked).
+   */
+  getClientSubscriptionCount(clientId: string): number {
+    return this.clientSubscriptionCounts.get(clientId) ?? 0;
   }
 
   /**

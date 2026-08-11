@@ -126,6 +126,11 @@ function createMockHub() {
         });
         return { ok: true } as const;
       }),
+      // Ingress fan-out guardrail stubs (task #899): no cap in this suite.
+      checkSubscriptionCapacity: mock(() => ({ ok: true })),
+      addClientSubscription: mock(() => {}),
+      releaseClientSubscription: mock(() => {}),
+      getClientSubscriptionCount: mock(() => 0),
     })),
     onClientDisconnect: mock(() => () => {}),
   } as unknown as MessageHub;

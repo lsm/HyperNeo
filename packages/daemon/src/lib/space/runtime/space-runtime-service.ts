@@ -39,6 +39,7 @@ import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositor
 import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository';
 import type { SpaceAgentInboxRepository } from '../../../storage/repositories/space-agent-inbox-repository';
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
+import { SpaceWorkflowEventSubscriptionRepository } from '../../../storage/repositories/space-workflow-event-subscription-repository';
 import { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { WorkflowArtifactProfile } from './artifact-profile';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
@@ -52,6 +53,7 @@ import type { AgentSession } from '../../agent/agent-session';
 import {
   awaitDeliveryConsumption,
   deliverAndMarkQueued,
+  deliveryConsumptionTimeoutMs,
   isMessageDeliveryV2Enabled,
 } from '../../agent/message-delivery';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
@@ -121,6 +123,11 @@ export interface SpaceRuntimeServiceConfig {
   taskRepo: SpaceTaskRepository;
   /** Node execution repository for workflow-internal execution state */
   nodeExecutionRepo?: NodeExecutionRepository;
+  /**
+   * Durable workflow-run event subscription store. Source of truth for the
+   * runtime's in-memory topic trie. Auto-created from `db` when not supplied.
+   */
+  workflowEventSubscriptionRepo?: SpaceWorkflowEventSubscriptionRepository;
   reactiveDb?: ReactiveDatabase;
   /**
    * Optional Task Agent Manager to wire into the underlying SpaceRuntime.
@@ -242,6 +249,7 @@ export class SpaceRuntimeService {
   private taskAgentManager: TaskAgentManager | null = null;
   /** Resolved nodeExecutionRepo — created from db if not provided in config. */
   private readonly nodeExecutionRepo: NodeExecutionRepository;
+  private readonly workflowEventSubscriptionRepo: SpaceWorkflowEventSubscriptionRepository;
   private readonly actorRegistry: SpaceActorRegistryAdapter | null;
   /** Audit log repository for MCP write operations. */
   private readonly auditLogRepo: McpAuditLogRepository;
@@ -291,6 +299,13 @@ export class SpaceRuntimeService {
     // Ensure nodeExecutionRepo is available — create from db if not provided.
     this.nodeExecutionRepo =
       this.config.nodeExecutionRepo ?? new NodeExecutionRepository(this.config.db);
+    // Durable workflow event subscription store — single shared instance for
+    // the runtime's topic trie to rebuild from on rehydrate. Created here (and
+    // passed into the runtime) so the service and runtime share one repo; the
+    // runtime has its own auto-create fallback only for standalone construction.
+    this.workflowEventSubscriptionRepo =
+      this.config.workflowEventSubscriptionRepo ??
+      new SpaceWorkflowEventSubscriptionRepository(this.config.db);
     this.actorRegistry = config.actorRegistryRepos
       ? new SpaceActorRegistryAdapter(config.actorRegistryRepos)
       : null;
@@ -305,6 +320,7 @@ export class SpaceRuntimeService {
     this.runtime = new SpaceRuntime({
       ...config,
       nodeExecutionRepo: this.nodeExecutionRepo,
+      workflowEventSubscriptionRepo: this.workflowEventSubscriptionRepo,
       queueHealthMetrics: this.queueHealthMetrics,
       selectWorkflowWithLlm: config.selectWorkflowWithLlm ?? selectWorkflowWithLlmDefault,
       internalEventBus: config.internalEventBus,
@@ -634,6 +650,10 @@ export class SpaceRuntimeService {
       // else (enqueued/deferred/submitted): row exists; just (re-)enqueue —
       // deliverMessage dedups the active job via getActiveDeliveryRole. Enqueue
       // + mark queued as one per-session critical section (deliverAndMarkQueued).
+      // The save→enqueue window here is small (same async call) and any
+      // saved-but-not-enqueued row is recovered by the session-level orphan
+      // reconciler (task #861 item 4); the transactional outbox is applied at
+      // the ordinary-chat chokepoint where the gap is dominant.
       //
       // Await SDK consumption (onSent) before returning — callers
       // (flushLongTermAgentInbox / deliverLongHorizonExternalEvent) thus confirm
@@ -644,6 +664,9 @@ export class SpaceRuntimeService {
       await awaitDeliveryConsumption({
         sessionId,
         messageUuid: id,
+        // ACP's consume boundary is acceptance (minutes) — size the wait so a
+        // fresh ACP delivery isn't terminalized mid-run. (Codex P1.)
+        timeoutMs: deliveryConsumptionTimeoutMs(session.getSessionData?.().config?.provider),
         deliver: () =>
           deliverAndMarkQueued({
             jobQueue: reactiveDb.getJobQueueRepo(),
@@ -2220,7 +2243,7 @@ export class SpaceRuntimeService {
     const sessionManager = this.config.sessionManager;
     if (!sessionManager) return;
     const session = await sessionManager.getSessionAsync(longTermAgentSessionId(spaceId, agentId));
-    if (!session || session.getSessionData().config.provider === undefined) return;
+    if (!session || session.getSessionData?.().config?.provider === undefined) return;
     await session.updateConfig({ provider: undefined });
   }
 

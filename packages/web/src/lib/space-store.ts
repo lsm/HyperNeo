@@ -1212,10 +1212,11 @@ class SpaceStore {
         'spaceLongHorizonAgent.listBuiltInTemplates',
         { spaceId }
       );
+      if (this.spaceId.value !== spaceId) return;
       this.longHorizonAgentTemplates.value = result?.templates ?? [];
     } catch (err) {
       logger.error('Failed to fetch long-horizon agent templates:', err);
-      this.longHorizonAgentTemplates.value = [];
+      if (this.spaceId.value === spaceId) this.longHorizonAgentTemplates.value = [];
     }
   }
 

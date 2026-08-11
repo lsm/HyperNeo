@@ -46,7 +46,10 @@ import {
   ActivationError,
   ChannelGateBlockedError,
 } from '../../../../src/lib/space/runtime/channel-router.ts';
-import { PermanentSpawnError } from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
+import {
+  MissingWorkflowAgentError,
+  PermanentSpawnError,
+} from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
 import type { Gate, SpaceWorkflow, WorkflowChannel } from '@hyperneo/shared';
 import { computeGateDefaults } from '@hyperneo/shared';
 import { registerGateFeature } from '../../../../src/lib/space/runtime/gate-features.ts';
@@ -304,6 +307,71 @@ describe('ChannelRouter', () => {
       expect(tasks[0].status).toBe('open');
       expect(tasks[0].workflowRunId).toBe(run.id);
       // workflowNodeId, agentName, taskType, customAgentId removed in M71
+    });
+
+    test('throws an actionable MissingWorkflowAgentError (not a raw FK error) when a slot references a deleted agent', async () => {
+      const workflow = buildWorkflow(SPACE_ID, workflowManager, [
+        { id: NODE_A, name: 'Coding', agentId: AGENT_CODER },
+        { id: NODE_B, name: 'Review', agentId: AGENT_CUSTOM },
+      ]);
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Stale Agent Activation',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+      // Delete the custom agent AFTER the workflow definition pinned the reference,
+      // simulating a stale space_agents row referenced by a pinned run.
+      db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(AGENT_CUSTOM);
+
+      let caught: unknown;
+      try {
+        await router.activateNode(run.id, NODE_B);
+      } catch (err) {
+        caught = err;
+      }
+
+      // A clean, actionable diagnostic — never the raw SQLite foreign-key error.
+      expect(caught).toBeInstanceOf(MissingWorkflowAgentError);
+      const message = (caught as MissingWorkflowAgentError).message;
+      expect(message).toContain(run.id);
+      expect(message).toContain('Review');
+      expect(message).toContain(AGENT_CUSTOM);
+      expect(message).not.toMatch(/FOREIGN KEY/i);
+      // No execution row was created for the stale slot.
+      expect(new NodeExecutionRepository(db).listByNode(run.id, NODE_B)).toHaveLength(0);
+    });
+
+    test('slot-targeted activation succeeds even when a sibling slot references a deleted agent', async () => {
+      const workflow = buildWorkflow(SPACE_ID, workflowManager, [
+        {
+          id: NODE_A,
+          name: 'Review Team',
+          agents: [
+            { agentId: AGENT_CODER, name: 'coder-slot' },
+            { agentId: AGENT_CUSTOM, name: 'custom-slot' },
+          ],
+        },
+        { id: NODE_B, name: 'End', agentId: AGENT_PLANNER },
+      ]);
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Slot Targeted',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+      // The sibling custom agent is stale, but it is NOT the slot being targeted.
+      db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(AGENT_CUSTOM);
+
+      // Activating only coder-slot must succeed despite the stale sibling slot.
+      await router.activateNode(run.id, NODE_A, { targetAgentName: 'coder-slot' });
+
+      const execs = new NodeExecutionRepository(db).listByNode(run.id, NODE_A);
+      expect(execs.map((e) => e.agentName)).toContain('coder-slot');
+      // The untargeted (stale) sibling was not created, and no error leaked.
+      expect(execs.map((e) => e.agentName)).not.toContain('custom-slot');
     });
 
     test('creates one canonical task and one node_execution per agent for a multi-agent node', async () => {

@@ -118,6 +118,70 @@ describe('SpaceLongHorizonAgents', () => {
     cleanup();
   });
 
+  it('renders the Glass Workspace summary, configured cards, and template hierarchy', () => {
+    mockLongHorizonAgents.value = [makeLongHorizonAgent()];
+    mockTemplates.value = [
+      {
+        key: 'qa',
+        handle: 'qa',
+        displayName: 'QA Engineer',
+        description: 'Validates product quality.',
+        instructions: 'Test the product.',
+        suggestedAutonomyLevel: 2,
+      },
+    ];
+
+    const { getByTestId, getByRole, getByText } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" />
+    );
+
+    expect(getByTestId('space-agents-introduction')).toBeTruthy();
+    expect(getByTestId('configured-agent-count').textContent).toBe('1');
+    expect(getByTestId('agent-template-count').textContent).toBe('1');
+    expect(getByRole('region', { name: 'Configured agents' })).toBeTruthy();
+    expect(getByRole('heading', { name: 'Templates · 1' })).toBeTruthy();
+    expect(getByText('Research Long Horizon')).toBeTruthy();
+    expect(getByText('QA Engineer')).toBeTruthy();
+  });
+
+  it('opens a dedicated template editor from New Template', () => {
+    mockTemplates.value = [
+      {
+        key: 'qa',
+        handle: 'qa',
+        displayName: 'QA Engineer',
+        description: 'Validates product quality.',
+        instructions: 'Test the product.',
+        suggestedAutonomyLevel: 2,
+      },
+    ];
+    const { getByRole, getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    expect(getByRole('heading', { name: 'Templates · 1' })).toBeTruthy();
+    fireEvent.click(getByRole('button', { name: 'New Template' }));
+
+    expect(getByText('New template')).toBeTruthy();
+    expect(getByRole('button', { name: 'Create template' })).toBeTruthy();
+    expect(getByRole('button', { name: 'Close template editor' })).toBeTruthy();
+  });
+
+  it('opens the existing editor from the prominent custom agent action', () => {
+    const { getByRole } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: '+ Custom agent' }));
+
+    expect(getByRole('region', { name: 'Configured agents' })).toBeTruthy();
+    expect(getByRole('button', { name: 'Create agent' })).toBeTruthy();
+    expect(getByRole('button', { name: 'Close agent editor' })).toBeTruthy();
+  });
+
+  it('renders a readable empty configured-agent state', () => {
+    const { getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    expect(getByText('No configured agents yet')).toBeTruthy();
+    expect(getByText('Add a custom agent or choose a template below.')).toBeTruthy();
+  });
+
   it('prefers configured SpaceWorkerAgent details when handles overlap', () => {
     mockLongHorizonAgents.value = [makeLongHorizonAgent()];
     mockSpaceAgents.value = [makeSpaceAgent()];

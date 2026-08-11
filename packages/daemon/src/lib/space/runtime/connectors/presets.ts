@@ -200,23 +200,34 @@ const REVIEW_POSTED_PASS: Predicate = {
 };
 
 /**
- * Resolve op params for the review-posted gate: `prUrl` (from action data /
- * hook-local state) plus the `sinceIso` workflow-start window. The window comes
- * from `hookLocalState.workflowStartIso` (set by the gate evaluator when it
+ * Resolve op params for the review-posted gate. `prUrl` is read from action
+ * data / hook-local state (snake_case `pr_url` preferred, camelCase `prUrl`
+ * accepted — the Reviewer's prompt may pass either form; `review_url`/
+ * `reviewUrl` — a review permalink — accepted as a fallback since `gh pr view`
+ * resolves the PR from either, matching the legacy REVIEW_POSTED bash). When no
+ * PR identity is supplied anywhere, the resolver falls back to `ctx.frozenPrUrl`
+ * — the run's authoritative reviewed PR stamped by the pr_ready hook — so a
+ * reviewer who omits data.pr_url (the prompt guidance was lost in the gate→hook
+ * migration) no longer false-blocks the Review→Coding feedback handoff.
+ * frozenPrUrl is engine-only, so binding to it is safe; fail-closed when
+ * genuinely absent.
+ *
+ * The `sinceIso` workflow-start window comes from
+ * `hookLocalState.workflowStartIso` (set by the gate evaluator when it
  * dispatches a built-in validator) or, on the hook path, from
  * `workflowRunCreatedAt`. This is coding knowledge (the `pr_url` field + the
  * workflow-start anchor) and lives in the L4 preset, not the L3 validator.
- *
- * `pr_url` is preferred but `review_url` (a review permalink) is accepted as a
- * fallback — `gh pr view` resolves the PR from either, matching the legacy
- * REVIEW_POSTED bash (`PR_URL=$(jq -r '.pr_url // .review_url // empty' ...)`).
  */
 function reviewPostedPrUrl(params: Record<string, unknown> | undefined): string | undefined {
   const data = params?.data;
   if (data && typeof data === 'object' && !Array.isArray(data)) {
     const d = data as Record<string, unknown>;
+    // snake_case first (preferred), then camelCase — the Reviewer's prompt may
+    // pass either form.
     if (typeof d.pr_url === 'string') return d.pr_url;
+    if (typeof d.prUrl === 'string') return d.prUrl;
     if (typeof d.review_url === 'string') return d.review_url;
+    if (typeof d.reviewUrl === 'string') return d.reviewUrl;
   }
   return undefined;
 }
@@ -225,7 +236,9 @@ function reviewPostedPrUrlFromState(
   state: Record<string, unknown> | undefined
 ): string | undefined {
   if (typeof state?.pr_url === 'string') return state.pr_url;
+  if (typeof state?.prUrl === 'string') return state.prUrl;
   if (typeof state?.review_url === 'string') return state.review_url;
+  if (typeof state?.reviewUrl === 'string') return state.reviewUrl;
   return undefined;
 }
 
@@ -233,7 +246,8 @@ function reviewPostedParamResolver(ctx: HookExecutorContext): Record<string, unk
   const prUrl =
     reviewPostedPrUrl(ctx.params) ??
     (ctx.rawParams ? reviewPostedPrUrl(ctx.rawParams) : undefined) ??
-    reviewPostedPrUrlFromState(ctx.hookLocalState);
+    reviewPostedPrUrlFromState(ctx.hookLocalState) ??
+    (typeof ctx.frozenPrUrl === 'string' ? ctx.frozenPrUrl : undefined);
   let sinceIso: string | undefined;
   if (typeof ctx.hookLocalState?.workflowStartIso === 'string') {
     sinceIso = ctx.hookLocalState.workflowStartIso;

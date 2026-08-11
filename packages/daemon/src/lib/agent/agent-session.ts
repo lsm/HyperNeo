@@ -54,7 +54,6 @@
  * - EventSubscriptionSetup: InternalEventBus<DaemonInternalEventMap> event wiring
  * - QueryModeHandler: Manual/auto-queue mode
  * - SlashCommandManager: Slash command caching
- * - MessageRecoveryHandler: Orphaned message recovery
  *
  * ## SDK Mode
  *
@@ -99,6 +98,13 @@ import { SettingsManager } from '../settings-manager';
 import { DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@hyperneo/shared';
 
 export const RECENTLY_EXITED_ROOT_PID_RETENTION_MS = 15 * 60 * 1000;
+
+/**
+ * How often the periodic orphan-reconciliation sweep runs (task #861 item 4).
+ * A backstop beyond the idle + startup hooks; the reconciler is idempotent so a
+ * slow cadence is fine. Aligned with the job-queue stale-reclamation window.
+ */
+const SESSION_RECONCILE_INTERVAL_MS = 60_000;
 
 /**
  * AgentSessionInit - Configuration for creating a new AgentSession
@@ -218,11 +224,14 @@ import { MessageQueue } from './message-queue';
 import {
   MESSAGE_DELIVERY_PARK_MS,
   deliverMessage,
+  isMessageDeliveryV2Enabled,
+  reconcileStrandedDeliveries as reconcileStrandedDeliveriesCore,
   signalDeliveryConsumed,
   withSessionLock,
   type DriveTurnOutcome,
   type FeedSteerOutcome,
 } from './message-delivery';
+import { deliveryMetrics } from './message-delivery-metrics';
 import { ProcessingStateManager } from './processing-state-manager';
 import { ContextTracker } from './context-tracker';
 import { SDKMessageHandler, type SDKMessageHandlerContext } from './sdk-message-handler';
@@ -252,13 +261,12 @@ import {
 } from './event-subscription-setup';
 import { QueryModeHandler, type QueryModeHandlerContext } from './query-mode-handler';
 import { SlashCommandManager, type SlashCommandManagerContext } from './slash-command-manager';
-import { MessageRecoveryHandler } from './message-recovery-handler';
 import { RewindHandler, type RewindHandlerContext, type RewindPoint } from './rewind-handler';
 import { SessionConfigHandler, type SessionConfigHandlerContext } from './session-config-handler';
 import { RateLimitWatchdog } from './rate-limit-watchdog';
 import { resolveFallbackChain } from './fallback-recovery';
 import { getProviderRegistry } from '../providers/factory.js';
-import { isSDKResultSuccess } from '@hyperneo/shared/sdk/type-guards';
+import { isSDKResultSuccess, isSDKUserMessage } from '@hyperneo/shared/sdk/type-guards';
 import { resolveModelAlias } from '../model-service';
 
 /**
@@ -329,6 +337,12 @@ export class AgentSession
   // Session state
   private _isCleaningUp = false;
   private pendingResumeSessionAt: string | undefined;
+  // Periodic orphan-reconciliation timer (task #861 item 4). unref'd; cleared in cleanup().
+  private reconcileTimer: ReturnType<typeof setInterval> | null = null;
+  // True once the owner's post-provisioning replay path has run — gates the
+  // periodic reconciler so it won't drive pending input before runtime MCP /
+  // prompt / continuation maps are attached. (task #861, Codex review.)
+  private reconcilerProvisioned = false;
   pendingRestartReason: 'settings.local.json' | null = null;
   private initialPendingReplayScheduled = false;
 
@@ -519,6 +533,18 @@ export class AgentSession
     // Set state manager callback - delegates to lifecycleManager
     this.stateManager.setOnIdleCallback(async () => {
       await this.lifecycleManager.executeDeferredRestartIfPending();
+      // Orphan reconciler (task #861 item 4): on each idle transition, recover
+      // any user message stranded in a nonterminal send_status with no active
+      // durable job (the #856 shape). Fire-and-forget (NOT awaited): an idle
+      // transition can fire WHILE the caller holds withSessionLock (e.g.
+      // revokePendingDelivery → clearQueuedIfOwnedBy → setIdle), and the
+      // reconciler's core reacquires that non-reentrant lock — awaiting it here
+      // would deadlock (the RPC never returns, the lock never releases).
+      // Fire-and-forget lets the callback return, the lock holder release, and
+      // the reconciler then acquire the now-free lock. (Codex review, P1.)
+      void this.reconcileStrandedDeliveries().catch((error) => {
+        this.logger.warn('Idle reconcileStrandedDeliveries failed:', error);
+      });
     });
 
     // Restore persisted state
@@ -527,15 +553,48 @@ export class AgentSession
     }
     this.stateManager.restoreFromDatabase();
 
-    // Recover orphaned messages
-    const recoveryHandler = new MessageRecoveryHandler(session, db, this.logger);
-    recoveryHandler.recoverOrphanedConsumedMessages();
-
     // Setup event subscriptions (moved callbacks into EventSubscriptionSetup)
     this.eventSubscriptionSetup.setup();
 
     if (this.runtimeOptions.autoReplayPendingMessages ?? true) {
       this.scheduleInitialPendingMessageReplay();
+      // Orphan reconciler startup pass (task #861 item 4/7): settle stranded
+      // deliveries now that state is restored — re-enqueue stuck 'enqueued'
+      // rows and surface stale 'submitted' rows as failed. Gated on the SAME
+      // autoReplayPendingMessages flag as pending replay: restored Space /
+      // task-agent sessions pass false so current prompts, runtime MCP servers,
+      // and tool-continuation maps are provisioned before any pending input
+      // starts a query — reconciling then would race that provisioning. Those
+      // owners call replayPendingMessagesForImmediateMode (which routes through
+      // the durable owner) after provisioning; the idle + periodic hooks cover
+      // the rest. (Codex review.)
+      void this.reconcileStrandedDeliveries().catch((error) => {
+        this.logger.warn('Startup reconcileStrandedDeliveries failed:', error);
+      });
+    }
+
+    // Periodic orphan reconciliation (task #861 item 4): a backstop beyond the
+    // idle + startup hooks, for a message that strands without an idle
+    // transition (e.g. a job cancelled mid-flight leaving an enqueued row).
+    // unref'd so it never keeps the daemon alive on shutdown. Idempotent. The
+    // callback is gated on `reconcilerProvisioned` — restored Space/task-agent
+    // sessions pass autoReplayPendingMessages=false so the owner can attach
+    // runtime MCP servers, the current prompt, and continuation maps BEFORE any
+    // pending input starts a query; the flag flips when the owner calls the
+    // post-provisioning replay path, so the timer won't re-enqueue a stranded
+    // row against a half-provisioned session. Generic/manual/immediate sessions
+    // (autoReplayPendingMessages !== false) are provisioned at construction —
+    // their runtime is ready immediately, and manual-mode sessions never call
+    // the replay path, so they'd otherwise never enable the timer. (Codex review.)
+    this.reconcilerProvisioned = this.runtimeOptions.autoReplayPendingMessages ?? true;
+    this.reconcileTimer = setInterval(() => {
+      if (!this.reconcilerProvisioned) return;
+      void this.reconcileStrandedDeliveries().catch((error) => {
+        this.logger.warn('Periodic reconcileStrandedDeliveries failed:', error);
+      });
+    }, SESSION_RECONCILE_INTERVAL_MS);
+    if (typeof this.reconcileTimer.unref === 'function') {
+      this.reconcileTimer.unref();
     }
   }
 
@@ -811,6 +870,13 @@ export class AgentSession
    * sessions where no owner-specific provisioning is required.
    */
   async replayPendingMessagesForImmediateMode(): Promise<void> {
+    // The owner's post-provisioning readiness signal (Space/task-agent owners
+    // call this AFTER attaching runtime MCP servers / prompt / continuation
+    // maps). Flip the reconciler-provisioned flag HERE (before the manual /
+    // waiting_for_input early-returns) so the periodic orphan reconciler can
+    // safely run — it won't drive a stranded row against a half-provisioned
+    // session. (task #861, Codex review.)
+    this.reconcilerProvisioned = true;
     if (this.session.config.queryMode === 'manual') return;
     const restoredState = this.stateManager.getState();
     if (restoredState.status === 'waiting_for_input') return;
@@ -1936,13 +2002,34 @@ export class AgentSession
     // in streaming-input mode queryPromise never resolves at turn-end, so
     // turnEnd wins and the job completes promptly when the SDK finishes the turn.
     try {
-      await started.acknowledgment;
-      // The kickoff was admitted by the SDK (onSent) — the message is consumed.
-      // Signal long-horizon delivery waiters (injectLongTermAgentMessage) so they
-      // confirm the source record only after genuine consumption, not bare
-      // enqueue (which can still dead-letter). No-op when no waiter is armed.
-      // (Codex P1.)
-      signalDeliveryConsumed(this.session.id, messageUuid);
+      // An alreadyConsumed reclaim skips the feed (admitWithId not called), so
+      // `started.acknowledgment` is null — `await null` resolves immediately.
+      // The feed + consumed-flip + waiter signal must fire ONLY for a genuine
+      // handoff; a consumed-reclaim that re-drives from history must NOT be
+      // counted as a fresh feed (it would falsely inflate feedsObserved + read
+      // as a ground-truth duplicate, and record a residual sample for a handoff
+      // that never occurred). (Codex review.)
+      if (started.acknowledgment) {
+        await started.acknowledgment;
+        // onSent fired → the prompt reached the SDK / subprocess (the ACTUAL
+        // handoff). Record the feed here, not at admission: admitWithId only
+        // places the row in the in-memory queue, so a provider-startup stall,
+        // queue interrupt, or admission timeout before the generator yields is
+        // NOT a handoff and must not be counted as one. (Codex review.)
+        deliveryMetrics.recordFeed(messageUuid);
+        // For the Claude SDK, onSent is the consume signal — flip send_status →
+        // 'consumed' SYNCHRONOUSLY (item 12) so reclaimStale almost always sees
+        // 'consumed' and skips the re-feed, and signal delivery waiters (LTA /
+        // task-agent confirm their source only after genuine consumption). ACP
+        // is EXCLUDED: its onSent fires at submission; the real consume boundary
+        // is acceptance (markMessageAccepted). (Codex.)
+        if (this.session.config.provider !== 'acp') {
+          const consumeSignalMs = Date.now();
+          this.markDeliveryConsumed(messageUuid);
+          deliveryMetrics.recordResidualWindow(Date.now() - consumeSignalMs);
+          signalDeliveryConsumed(this.session.id, messageUuid);
+        }
+      }
       await Promise.race([started.turnEnd.promise, started.queryPromise.catch(() => {})]);
     } finally {
       // Cancel the waiter if it didn't win the race (e.g. queryPromise resolved
@@ -1978,12 +2065,10 @@ export class AgentSession
       // excluded by this same lock. 'queued' → parked owner, so park this steer.
       if (status === 'processing') {
         if (!this.messageDeliveryValid(messageUuid)) return { kind: 'aborted' as const };
-        return {
-          kind: 'feed' as const,
-          acknowledgment: this.messageQueue.admitWithId(messageUuid, content, false, {
-            durable: true,
-          }),
-        };
+        const acknowledgment = this.messageQueue.admitWithId(messageUuid, content, false, {
+          durable: true,
+        });
+        return { kind: 'feed' as const, acknowledgment };
       }
       if (status === 'queued') return { kind: 'park' as const };
       return { kind: 'promote' as const };
@@ -2001,9 +2086,16 @@ export class AgentSession
     // Admission happened atomically under the lock; only the provider
     // acknowledgment is awaited here.
     await action.acknowledgment;
-    // The steer was consumed by the live turn (onSent) — signal long-horizon
-    // delivery waiters awaiting consumption. No-op when none are armed. (Codex P1.)
-    signalDeliveryConsumed(this.session.id, messageUuid);
+    // onSent fired → the steer reached the SDK (actual handoff). Record here,
+    // not at admission (see driveDeliveryTurn).
+    deliveryMetrics.recordFeed(messageUuid);
+    // Claude SDK: onSent is the consume signal — flip synchronously (item 12)
+    // and signal delivery waiters. ACP is excluded (consume boundary is
+    // acceptance, not onSent); see driveDeliveryTurn for the full rationale.
+    if (this.session.config.provider !== 'acp') {
+      this.markDeliveryConsumed(messageUuid);
+      signalDeliveryConsumed(this.session.id, messageUuid);
+    }
     return { outcome: 'consumed' };
   }
 
@@ -2039,16 +2131,8 @@ export class AgentSession
       // steer can never steal it by publishing message.persisted first.
       let role: 'turn' | 'steer';
       try {
-        // Legacy-owned turn guard (see deliverAndMarkQueued): a session can be
-        // `processing` a legacy-replayed turn with no active v2 turn row; force a
-        // steer so this chat parks behind it instead of racing it. The deferred
-        // legacy-replay migration removes the need for this guard. (Codex P1.)
-        const legacyOwnedTurn =
-          this.stateManager.getState().status === 'processing' &&
-          !this.db.getJobQueueRepo().hasActiveTurnDelivery(this.session.id);
         role = deliverMessage(this.db.getJobQueueRepo(), this.session.id, messageUuid, {
           origin: 'chat',
-          ...(legacyOwnedTurn ? { role: 'steer' as const } : {}),
         });
       } catch (err) {
         // The user row was already saved `enqueued` by MessagePersistence. If job
@@ -2074,8 +2158,6 @@ export class AgentSession
       }
       if (role === 'turn') {
         try {
-          // Preserve a legacy-owned live turn: role arbitration can return turn
-          // when no durable turn row exists even though the session is processing.
           // DB-first publication failure is non-fatal after durable insertion —
           // rejecting here would invite a client retry while this job still runs.
           await this.stateManager.setQueuedIfIdle(messageUuid);
@@ -2100,6 +2182,106 @@ export class AgentSession
       loaded !== null &&
       (loaded.sendStatus === 'enqueued' || (alreadyConsumed && loaded.sendStatus === 'consumed'))
     );
+  }
+
+  /**
+   * Flip a delivery row to `consumed` at the earliest SDK-consume signal
+   * (onSent) and broadcast the status change. At-least-once quality hardening
+   * (task #861 item 12): shrinking the [SDK yield, persisted consumed-flip]
+   * window means reclaimStale almost always observes `consumed` and skips the
+   * re-feed. Idempotent — a no-op (no broadcast) if the row is already
+   * consumed/terminal, so the later history-echo path (which would also flip)
+   * is unaffected. Fire-and-forget the publish: a rejecting statusChanged
+   * subscriber must not surface as an unhandled rejection here.
+   */
+  private markDeliveryConsumed(messageUuid: string): void {
+    const dbId = this.db
+      .getSDKMessageRepo()
+      .markDeliveryConsumedByUuid(this.session.id, messageUuid);
+    if (dbId) {
+      void this.internalEventBus
+        .publish('messages.statusChanged', {
+          sessionId: this.session.id,
+          messageIds: [dbId],
+          status: 'consumed',
+        })
+        .catch(() => {});
+    }
+  }
+
+  /**
+   * Orphan reconciler (task #861 item 4) — recover the one case `job_queue`
+   * cannot see by itself: a persisted user message stuck `enqueued` with NO
+   * active `message_delivery` job (the confirmed #856 "stranded pending in an
+   * idle session" shape). Delegates to the pure cross-check
+   * {@link reconcileStrandedDeliveries}, adding a processing-state guard (never
+   * reconcile while a turn is driving — the handler owns those messages) and
+   * logging. Runs on each idle transition and on a periodic unref'd timer; the
+   * pure core is idempotent so concurrent ticks/workers are safe.
+   *
+   * Also settles stale `submitted` rows (orphaned ACP messages whose subprocess
+   * died) by flipping them to `failed` so they surface instead of staying
+   * hidden — the responsibility of the now-deleted
+   * `recoverOrphanedConsumedMessages` (task #861 item 7). The handler skips
+   * `submitted`, so without this they would strand invisibly on restart.
+   */
+  async reconcileStrandedDeliveries(): Promise<number> {
+    if (!isMessageDeliveryV2Enabled()) return 0;
+    const jobQueue = this.db.getJobQueueRepo?.();
+    if (!jobQueue) return 0;
+    // Don't reconcile while a turn is actively driving — the handler owns those
+    // messages, and re-enqueuing mid-turn could create a competing steer. Also
+    // skip `queued` (a parked owner) and `waiting_for_input` (a restored
+    // AskUserQuestion awaiting an answer — driving a stranded row there would
+    // start a query and overwrite the pending-question state). The idle/periodic
+    // callers run when the session is otherwise idle.
+    const status = this.stateManager.getState().status;
+    if (status === 'processing' || status === 'queued' || status === 'waiting_for_input') {
+      return 0;
+    }
+
+    // 1) Re-enqueue stranded 'enqueued' messages (the #856 shape). The core
+    // pass serializes under the per-session lock (withSessionLock) so concurrent
+    // idle/periodic reconciles cannot double-enqueue one message.
+    const reEnqueued = await reconcileStrandedDeliveriesCore({
+      sessionId: this.session.id,
+      db: this.db,
+      jobQueue,
+      stateManager: this.stateManager,
+    });
+    // 2) Settle stale 'submitted' rows (orphaned ACP) → failed so they surface.
+    // Run under the per-session lock and re-query active ownership AT THE POINT
+    // OF MUTATION: a racing retry (deliverAndMarkQueued) can enqueue a job for a
+    // still-submitted UUID after an earlier snapshot; the fresh in-lock query
+    // sees it and skips, so we never flip a row whose job just (re)activated
+    // (which would make the handler skip it and block a later acceptance).
+    // (Codex review.)
+    let settled = 0;
+    const sdkRepo = this.db.getSDKMessageRepo();
+    await withSessionLock(this.session.id, async () => {
+      const activeNow = jobQueue.activeDeliveryMessageUuids(this.session.id);
+      for (const msg of this.db.getMessagesByStatus(this.session.id, 'submitted')) {
+        if (!isSDKUserMessage(msg) || !msg.uuid) continue;
+        if (activeNow.has(msg.uuid)) continue; // still has a durable job — leave it
+        const dbId = sdkRepo.markDeliveryFailedByUuid(this.session.id, msg.uuid);
+        if (dbId) {
+          settled++;
+          void this.internalEventBus
+            .publish('messages.statusChanged', {
+              sessionId: this.session.id,
+              messageIds: [dbId],
+              status: 'failed',
+            })
+            .catch(() => {});
+        }
+      }
+    });
+    if (reEnqueued > 0 || settled > 0) {
+      this.logger.info(
+        `reconcileStrandedDeliveries: re-enqueued ${reEnqueued}, settled ${settled} stale submitted.`
+      );
+    }
+    return reEnqueued + settled;
   }
 
   trackAgentProcess(proc: TrackedAgentProcess): void {
@@ -2288,6 +2470,10 @@ export class AgentSession
   // ============================================================================
 
   async cleanup(): Promise<void> {
+    if (this.reconcileTimer) {
+      clearInterval(this.reconcileTimer);
+      this.reconcileTimer = null;
+    }
     this.rateLimitWatchdog.destroy();
     await this.lifecycleManager.cleanup();
   }
