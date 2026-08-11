@@ -2208,14 +2208,33 @@ export class AgentSession
   }
 
   /**
-   * True when a `consumed` message's turn already produced a terminal result
-   * after its consumption (normal completion, error, or interrupt) — i.e. there
-   * is nothing left to resume. The boundary is the consumption timestamp (see
-   * `hasTerminalResultAfter`); checked inside the per-session lock so it is
-   * coordinated with the turn-start/waiter registration (Codex P2).
+   * True when a `consumed` message's turn already ended — i.e. there is nothing
+   * left to resume. Recognized two ways: a terminal SDK `result` row after its
+   * consumption (boundary = consumption timestamp, see `hasTerminalResultAfter`),
+   * OR a durable delivery-turn completion marker for a result-less terminal path
+   * (query error / interrupt; see `hasDeliveryTurnEnd`). Checked inside the
+   * per-session lock so it is coordinated with the turn-start/waiter
+   * registration (Codex P2).
    */
   private hasTurnTerminated(messageUuid: string): boolean {
-    return this.db.getSDKMessageRepo().hasTerminalResultAfter(this.session.id, messageUuid);
+    const repo = this.db.getSDKMessageRepo();
+    return (
+      repo.hasTerminalResultAfter(this.session.id, messageUuid) ||
+      repo.hasDeliveryTurnEnd(this.session.id, messageUuid)
+    );
+  }
+
+  /**
+   * Persist a durable delivery-turn completion marker for a consumed message
+   * whose turn ended via a result-less terminal path. Called by the delivery
+   * handler when a driven turn completes while its job is still `processing`
+   * (gated there so a graceful-shutdown requeue — where resume is desired —
+   * does not mark it). See `MessageDeliverySession.recordDeliveryTurnEnd`.
+   */
+  recordDeliveryTurnEnd(messageUuid: string): void {
+    this.db
+      .getSDKMessageRepo()
+      .recordDeliveryTurnEnd(this.session.id, messageUuid, new Date().toISOString());
   }
 
   /**

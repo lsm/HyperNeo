@@ -348,6 +348,14 @@ export interface MessageDeliverySession {
   ): Promise<FeedSteerOutcome>;
   /** Clear queued state only if this skipped message still owns it. */
   settleSkippedDelivery?(messageUuid: string): Promise<void>;
+  /**
+   * Persist a durable delivery-turn completion marker for `messageUuid` (the
+   * consumed message whose turn ended). The handler calls this when a driven
+   * turn completes while its job is still `processing`, so a result-less
+   * terminal path (query error / interrupt) is durably recognized as ended on a
+   * later stale re-claim instead of being re-driven. See Codex (PR #2463, P2).
+   */
+  recordDeliveryTurnEnd?(messageUuid: string): void;
 }
 
 /**

@@ -761,6 +761,24 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
+  // Durable delivery-turn completion markers (message-delivery v2). Written when
+  // a delivery-driven turn ends via a result-less terminal path (query error,
+  // interrupt) that persists no SDK `result` row, so a stale re-claim can
+  // recognize the consumed turn ended instead of re-driving it into an
+  // indefinitely-waiting query. See message-delivery-v2.md + Codex (PR #2463).
+  db.exec(`
+      CREATE TABLE IF NOT EXISTS delivery_turn_end (
+        session_id TEXT NOT NULL,
+        message_uuid TEXT NOT NULL,
+        ended_at TEXT NOT NULL,
+        PRIMARY KEY (session_id, message_uuid)
+      )
+    `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_delivery_turn_end_session
+      ON delivery_turn_end(session_id)
+  `);
+
   // Workspace history — persists recently-used workspace paths
   db.exec(`
       CREATE TABLE IF NOT EXISTS workspace_history (

@@ -950,6 +950,14 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // createIndexes() for fresh DBs. (task #861, review P2.) Renumbered 185→186:
   // dev shipped M185 for workflow-event-subscriptions.
   run(migrationMarkerKey(186), () => runMigration186(db));
+
+  // Migration 187: delivery_turn_end — durable delivery-turn completion markers
+  // for result-less terminal paths (query error / interrupt that persist no SDK
+  // `result` row). A stale re-claim consults this so it completes an
+  // already-ended consumed turn instead of re-driving it into an
+  // indefinitely-waiting query. Mirrored in the fresh-DB schema (index.ts).
+  // See Codex (PR #2463, P2 result-less terminal paths).
+  run(migrationMarkerKey(187), () => runMigration187(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -12247,5 +12255,31 @@ export function runMigration186(db: BunDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_message_delivery_session_active
       ON job_queue (json_extract(payload, '$.sessionId'))
       WHERE queue = 'message_delivery' AND status IN ('pending', 'processing')
+  `);
+}
+
+/**
+ * Migration 187: durable delivery-turn completion markers.
+ *
+ * The `delivery_turn_end` table records when a delivery-driven turn ended via a
+ * result-less terminal path (query-level error, interrupt) that persists no SDK
+ * `result` row. The delivery bridge (`hasTurnTerminated`) ORs a lookup here
+ * against the SDK-result-row check, so a stale re-claim of a `consumed` turn
+ * recognizes it already ended and completes instead of re-driving it into an
+ * indefinitely-waiting query. Idempotent (`CREATE TABLE IF NOT EXISTS`); no-op
+ * on tables that pre-date the lane.
+ */
+export function runMigration187(db: BunDatabase): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS delivery_turn_end (
+      session_id TEXT NOT NULL,
+      message_uuid TEXT NOT NULL,
+      ended_at TEXT NOT NULL,
+      PRIMARY KEY (session_id, message_uuid)
+    )
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_delivery_turn_end_session
+      ON delivery_turn_end(session_id)
   `);
 }

@@ -87,6 +87,12 @@ describe('SDKMessageRepository', () => {
 				PRIMARY KEY (source_message_id, target_uuid, kind),
 				FOREIGN KEY (source_message_id) REFERENCES sdk_messages(id) ON DELETE CASCADE
 			);
+			CREATE TABLE delivery_turn_end (
+				session_id TEXT NOT NULL,
+				message_uuid TEXT NOT NULL,
+				ended_at TEXT NOT NULL,
+				PRIMARY KEY (session_id, message_uuid)
+			);
 			CREATE INDEX idx_sdk_messages_session ON sdk_messages(session_id);
 			CREATE INDEX idx_sdk_messages_timestamp ON sdk_messages(timestamp);
 			CREATE INDEX idx_sdk_messages_task_id ON sdk_messages(task_id);
@@ -1709,6 +1715,31 @@ describe('SDKMessageRepository', () => {
       expect(repository.hasTerminalResultAfter('session-1', 'msg-uuid')).toBe(true);
     });
 
+    it('is true when a terminal result shares the consumption millisecond but inserts after (P2 tiebreak)', () => {
+      // An immediate error/interrupt can persist its terminal result in the SAME
+      // millisecond as the consumed timestamp. The strict `>` on timestamps would
+      // miss it (equal strings); the rowid tiebreak (result inserts after the
+      // message's row) must still detect the turn ended.
+      insertMessage('session-1', 'user', {
+        uuid: 'tie-msg',
+        timestamp: '2026-08-11T15:25:00.000Z',
+        sendStatus: 'enqueued',
+      });
+      const flipped = repository.markDeliveryConsumedByUuid('session-1', 'tie-msg');
+      expect(flipped).not.toBeNull();
+      // Reuse the exact consumed timestamp so the two rows tie on the millisecond.
+      const consumedTs = (
+        db.prepare(`SELECT timestamp FROM sdk_messages WHERE id = ?`).get(flipped) as {
+          timestamp: string;
+        }
+      ).timestamp;
+      insertMessage('session-1', 'result', {
+        timestamp: consumedTs,
+        terminal: true,
+      });
+      expect(repository.hasTerminalResultAfter('session-1', 'tie-msg')).toBe(true);
+    });
+
     it('is false when no terminal result exists after the message', () => {
       insertMessage('session-1', 'user', {
         uuid: 'msg-uuid',
@@ -1784,6 +1815,69 @@ describe('SDKMessageRepository', () => {
         terminal: true,
       });
       expect(repository.hasTerminalResultAfter('session-1', 'no-such-uuid')).toBe(false);
+    });
+
+    it('refresh: the search index reflects the consumption timestamp, not the queued time (P2)', () => {
+      // `updateMessageStatus` upserts the search row AFTER aligning the row to
+      // T_consumed (same transaction), so message_search must order this
+      // non-task message by its consumption moment, not when it was queued.
+      createSearchIndex();
+      const sdkMessage = createUserMessage('searchable body text', 'search-msg');
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        crypto.randomUUID(),
+        'session-1',
+        'user',
+        null,
+        JSON.stringify(sdkMessage),
+        '2020-01-01T00:00:00.000Z', // old queued time
+        'enqueued',
+        0,
+        'search-msg'
+      );
+      const before = Date.now();
+      const flipped = repository.markDeliveryConsumedByUuid('session-1', 'search-msg');
+      expect(flipped).not.toBeNull();
+      const after = Date.now();
+      const searchRow = db
+        .prepare(
+          `SELECT timestamp FROM message_search_content
+            WHERE kind = 'message'
+              AND source_id = (
+                SELECT id FROM sdk_messages
+                 WHERE session_id = 'session-1' AND sdk_uuid = 'search-msg' LIMIT 1
+              )`
+        )
+        .get() as { timestamp: number } | undefined;
+      expect(searchRow).toBeDefined();
+      // T_consumed (~now), not the 2020 queued time.
+      expect(searchRow!.timestamp).toBeGreaterThanOrEqual(before);
+      expect(searchRow!.timestamp).toBeLessThanOrEqual(after);
+    });
+
+    describe('delivery_turn_end markers (result-less terminal paths, P2)', () => {
+      it('recordDeliveryTurnEnd then hasDeliveryTurnEnd round-trips', () => {
+        expect(repository.hasDeliveryTurnEnd('session-1', 'm1')).toBe(false);
+        repository.recordDeliveryTurnEnd('session-1', 'm1', '2026-08-11T16:00:00.000Z');
+        expect(repository.hasDeliveryTurnEnd('session-1', 'm1')).toBe(true);
+        // Scoped by session + message.
+        expect(repository.hasDeliveryTurnEnd('session-1', 'm2')).toBe(false);
+        expect(repository.hasDeliveryTurnEnd('session-2', 'm1')).toBe(false);
+      });
+
+      it('recordDeliveryTurnEnd is idempotent (INSERT OR REPLACE by (session, message))', () => {
+        repository.recordDeliveryTurnEnd('session-1', 'm1', 't1');
+        repository.recordDeliveryTurnEnd('session-1', 'm1', 't2');
+        const rows = db
+          .prepare(
+            `SELECT ended_at FROM delivery_turn_end WHERE session_id='session-1' AND message_uuid='m1'`
+          )
+          .all();
+        expect(rows).toHaveLength(1);
+        expect(rows[0].ended_at).toBe('t2');
+      });
     });
   });
 

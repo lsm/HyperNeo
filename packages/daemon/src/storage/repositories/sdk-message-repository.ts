@@ -1421,6 +1421,15 @@ export class SDKMessageRepository {
     // anchored and must keep their turn — re-bumping those would scatter them
     // to new turns and break grouping on multi-session tasks. Capturing
     // pre-update (filtered by prior send_status) is what excludes them.
+    //
+    // Task rows get a fresh turn index AND a timestamp aligned to the
+    // consume/fail moment. Non-task rows (ordinary sessions) get the timestamp
+    // aligned too (turn index stays NULL) — a message queued while another turn
+    // ran and later promoted otherwise keeps its original queued timestamp,
+    // which predates the previous turn's terminal result and would corrupt the
+    // delivery re-claim boundary (`hasTerminalResultAfter`). Persisting the
+    // timestamp in THIS transaction (not a separate autocommit) makes the
+    // consumed-flip + T_consumed atomic across a crash. See Codex (PR #2463).
     const pending =
       newStatus === 'consumed' || newStatus === 'failed'
         ? (this.db
@@ -1429,11 +1438,10 @@ export class SDKMessageRepository {
                 WHERE id IN (${placeholders})
                   AND message_type = 'user'
                   AND is_renderable = 1
-                  AND task_id IS NOT NULL
                   AND send_status IN ('deferred', 'enqueued', 'submitted')
                 ORDER BY rowid ASC`
             )
-            .all(...messageIds) as Array<{ id: string; task_id: string }>)
+            .all(...messageIds) as Array<{ id: string; task_id: string | null }>)
         : [];
     // A send_status transition can flip a user row's badge visibility
     // (deferred/enqueued/submitted -> consumed/failed), so capture the affected sessions
@@ -1473,9 +1481,17 @@ export class SDKMessageRepository {
         const updStmt = this.db.prepare(
           'UPDATE sdk_messages SET conversation_turn_index = ?, timestamp = ? WHERE id = ?'
         );
+        const timeStmt = this.db.prepare('UPDATE sdk_messages SET timestamp = ? WHERE id = ?');
         for (const row of pending) {
-          const max = (maxStmt.get(row.task_id) as { m: number | null } | undefined)?.m ?? 0;
-          updStmt.run(max + 1, now, row.id);
+          if (row.task_id) {
+            const max = (maxStmt.get(row.task_id) as { m: number | null } | undefined)?.m ?? 0;
+            updStmt.run(max + 1, now, row.id);
+          } else {
+            // Non-task row: align the timestamp to the consume/fail moment; the
+            // turn index stays NULL. Same transaction as the status flip, so the
+            // boundary survives a crash. See the `pending` capture comment.
+            timeStmt.run(now, row.id);
+          }
         }
       }
 
@@ -1849,23 +1865,58 @@ export class SDKMessageRepository {
    * The boundary is the message's CONSUMPTION timestamp (T_consumed, aligned by
    * `markDeliveryConsumedByUuid`), not its original persistence time — a message
    * queued while another turn ran and later promoted would otherwise match the
-   * previous turn's terminal result. See Codex (PR #2463, P1).
+   * previous turn's terminal result. Ordering breaks timestamp ties by `rowid`
+   * (a result inserted in the same millisecond as consumption still sorts after
+   * it), so an immediate error/interrupt that lands in the same ms as the
+   * consumed-flip is not mistaken for a still-live turn. See Codex (PR #2463).
    */
   hasTerminalResultAfter(sessionId: string, uuid: string): boolean {
     const row = this.db
       .prepare(
         `SELECT 1
-           FROM sdk_messages
-          WHERE session_id = ?
-            AND message_type = 'result'
-            AND is_terminal = 1
-            AND timestamp > (
-              SELECT timestamp FROM sdk_messages
-               WHERE session_id = ? AND sdk_uuid = ? LIMIT 1
+           FROM sdk_messages r
+          WHERE r.session_id = ?
+            AND r.message_type = 'result'
+            AND r.is_terminal = 1
+            AND (r.timestamp, r.rowid) > (
+              SELECT m.timestamp, m.rowid FROM sdk_messages m
+               WHERE m.session_id = ? AND m.sdk_uuid = ? LIMIT 1
             )
           LIMIT 1`
       )
       .get(sessionId, sessionId, uuid) as { 1: number } | undefined | null;
+    return row != null;
+  }
+
+  /**
+   * Persist a durable delivery-turn completion marker for a consumed message
+   * whose turn ended via a RESULT-LESS terminal path (query-level error,
+   * interrupt) that persisted no SDK `result` row. `hasDeliveryTurnEnd` lets a
+   * stale re-claim recognize the turn already ended instead of re-driving it
+   * into an indefinitely-waiting query. Written by the delivery handler when a
+   * driven turn completes while its job is still `processing` (gated so a
+   * graceful-shutdown requeue — where resume is desired — does not mark it).
+   * See Codex (PR #2463, P2 result-less terminal paths).
+   */
+  recordDeliveryTurnEnd(sessionId: string, messageUuid: string, endedAt: string): void {
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO delivery_turn_end (session_id, message_uuid, ended_at)
+         VALUES (?, ?, ?)`
+      )
+      .run(sessionId, messageUuid, endedAt);
+  }
+
+  /**
+   * True when a durable delivery-turn completion marker exists for `messageUuid`
+   * in this session — i.e. a result-less terminal path recorded that the turn
+   * ended. Complements {@link hasTerminalResultAfter}; the delivery re-claim
+   * treats either as "the consumed turn ended".
+   */
+  hasDeliveryTurnEnd(sessionId: string, messageUuid: string): boolean {
+    const row = this.db
+      .prepare(`SELECT 1 FROM delivery_turn_end WHERE session_id = ? AND message_uuid = ? LIMIT 1`)
+      .get(sessionId, messageUuid) as { 1: number } | undefined | null;
     return row != null;
   }
 
@@ -1914,14 +1965,16 @@ export class SDKMessageRepository {
    * visible-counter bookkeeping for the transition.
    *
    * The row timestamp is aligned to the consumption moment (T_consumed) for ALL
-   * rows, not just task rows: `updateMessageStatus` only re-timestamps pending
-   * rows with a non-null `task_id`, so a message queued while another turn ran
-   * and later promoted keeps its ORIGINAL persistence timestamp — which can
-   * predate the previous turn's terminal result. Delivery re-claims
+   * rows, not just task rows, INSIDE the same transaction as the status flip —
+   * a message queued while another turn ran and later promoted otherwise keeps
+   * its ORIGINAL persistence timestamp (which can predate the previous turn's
+   * terminal result), and a crash between flip and a separate timestamp write
+   * would leave the boundary wrong. Delivery re-claims
    * (`hasTerminalResultAfter`) use the row timestamp as the "what turn is this
-   * message part of" boundary, so an unaligned timestamp would match the
-   * previous turn's result and wrongly complete the reclaimed job. See Codex
-   * (PR #2463, P1).
+   * message part of" boundary, so the atomic alignment is required for
+   * correctness. The `updateMessageStatus` search-index upsert also reflects
+   * T_consumed, so message search orders the row by consumption, not queue time.
+   * See Codex (PR #2463, P1 + P2 search-index).
    */
   markDeliveryConsumedByUuid(sessionId: string, uuid: string): string | null {
     const row = this.db
@@ -1934,12 +1987,6 @@ export class SDKMessageRepository {
       .get(sessionId, uuid) as { id: string } | undefined;
     if (!row) return null;
     this.updateMessageStatus([row.id], 'consumed');
-    // T_consumed — the boundary for delivery re-claims (see above). Keep this a
-    // plain timestamp UPDATE (no search-index upsert; updateMessageStatus just
-    // upserted this row).
-    this.db
-      .prepare(`UPDATE sdk_messages SET timestamp = ? WHERE id = ?`)
-      .run(new Date().toISOString(), row.id);
     return row.id;
   }
 
