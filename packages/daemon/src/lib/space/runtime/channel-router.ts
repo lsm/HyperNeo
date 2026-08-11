@@ -1799,6 +1799,11 @@ export class ChannelRouter {
         return this.config.channelCycleRepo!.incrementCycleCount(runId, channelIndex, maxCycles);
       });
       const incremented = transaction();
+      // The reset is committed (inside the transaction above). Fire the callback
+      // BEFORE the cap-failure throw so the runtime invalidates its cached link /
+      // re-materializes even when the increment fails — otherwise a reset that
+      // cleared the sole pr_url leaves the superseded PR's sub active.
+      this.notifyCyclicGateReset(runId, cyclicGates.length > 0);
       if (!incremented) {
         throw new ActivationError(
           `Cyclic channel (index ${channelIndex}) reached the maximum cycle count (${maxCycles}) during delivery.`
@@ -1815,25 +1820,29 @@ export class ChannelRouter {
         channelIndex,
         maxCycles
       );
+      this.notifyCyclicGateReset(runId, cyclicGates.length > 0);
       if (!incremented) {
         throw new ActivationError(
           `Cyclic channel (index ${channelIndex}) reached the maximum cycle count (${maxCycles}) during delivery.`
         );
       }
     }
-    // The reset above cleared gate data to defaults, which can remove a pr_url
-    // that was the run's sole primary-link source. Notify the runtime so it
-    // invalidates its cached link and re-materializes (cleaning up the
-    // superseded PR's topicFrom subscription). Fire-and-forget; only when gates
-    // were actually reset.
-    if (cyclicGates.length > 0) {
-      try {
-        this.config.onCyclicGateReset?.(runId);
-      } catch (err) {
-        log.warn(
-          `onCyclicGateReset failed for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
-        );
-      }
+  }
+
+  /**
+   * Fire {@link ChannelRouterConfig.onCyclicGateReset} after a cyclic reset has
+   * committed gate data (even on the cap-failure path, where the reset is
+   * already durable). Guarded by `gatesWereReset` (no-op when no gates were
+   * reset) and wrapped so a callback failure can't break the delivery.
+   */
+  private notifyCyclicGateReset(runId: string, gatesWereReset: boolean): void {
+    if (!gatesWereReset) return;
+    try {
+      this.config.onCyclicGateReset?.(runId);
+    } catch (err) {
+      log.warn(
+        `onCyclicGateReset failed for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
+      );
     }
   }
 

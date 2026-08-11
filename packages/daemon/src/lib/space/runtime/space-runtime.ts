@@ -5814,6 +5814,16 @@ export class SpaceRuntime {
     // DeliveriesDelivered terminalize the source event once they settle —
     // matching every other site that handles events with delivery rows.
     if (this.isPublishedExternalEventExpired(payload)) {
+      // Skip this target, but check whether the event can be terminalized now:
+      // if all its OTHER deliveries are already terminal, this skip is the last
+      // hold-open and the event would otherwise linger in `published` past TTL.
+      try {
+        store.markEventFailedIfAllDeliveriesTerminal(payload.eventId);
+      } catch (err) {
+        log.warn(
+          `SpaceRuntime: markEventFailedIfAllDeliveriesTerminal for ${payload.eventId} failed: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
       return;
     }
     const matches = this.lookupSubscriptionTargets(payload.topic).filter(
@@ -9328,12 +9338,10 @@ export class SpaceRuntime {
   }
 
   /**
-   * Finds a completion summary from terminal node executions in a succeeded run.
-   *
-   * Strategy:
-   * 1. Find terminal node IDs — workflow nodes with no outbound channel.
-   * 2. Scan node_executions for those nodes.
-   * 3. Return the first non-empty execution result.
+   * Resolve the canonical primary-link URL for a run via the domain artifact
+   * profile (coding: the PR URL). Cached per run ({@link primaryLinkByUrl});
+   * generic infra does not know which `link` is the PR, so without a profile
+   * there is no primary link to resolve.
    */
 
   private resolvePrUrlForRun(runId: string): string {

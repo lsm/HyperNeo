@@ -954,6 +954,39 @@ describe('node-agent-tools: save_artifact', () => {
     expect(calls).toEqual([{ workflowRunId: ctx.workflowRunId, linkBearing: false }]);
   });
 
+  test('save_artifact reports linkBearing=true when a re-upsert removes a legacy pr_url', async () => {
+    // A non-link artifact (decision) carrying a legacy pr_url, re-upserted
+    // under the same key with data that omits pr_url, must still report
+    // linkBearing=true (previousCarriedPrUrl) so the runtime invalidates its
+    // cached link — the durable source was removed even though the new payload
+    // doesn't carry it.
+    const calls: Array<{ workflowRunId: string; linkBearing: boolean }> = [];
+    const handlers = createNodeAgentToolHandlers(
+      makeConfig(ctx, {
+        onArtifactRecorded: (workflowRunId, linkBearing) =>
+          calls.push({ workflowRunId, linkBearing }),
+      })
+    );
+    // First save: decision with pr_url.
+    await handlers.save_artifact({
+      shape: 'decision',
+      kind: 'review',
+      data: { pr_url: 'https://github.com/acme/app/pull/42', recommendation: 'approved' },
+    });
+    // Second save: SAME key (decision kind:review), NO pr_url → removes it.
+    await handlers.save_artifact({
+      shape: 'decision',
+      kind: 'review',
+      data: { recommendation: 'changes_requested' },
+    });
+
+    // The first save carries pr_url (linkBearing=true); the second doesn't, but
+    // the OVERWRITTEN row did → previousCarriedPrUrl → linkBearing=true.
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.linkBearing).toBe(true);
+    expect(calls[1]!.linkBearing).toBe(true);
+  });
+
   test('save_artifact does not fire onArtifactRecorded when the write fails validation', async () => {
     const calls: Array<{ workflowRunId: string; linkBearing: boolean }> = [];
     const handlers = createNodeAgentToolHandlers(

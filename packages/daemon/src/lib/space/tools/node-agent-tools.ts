@@ -1541,13 +1541,13 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         // Capture whether the row about to be overwritten carried a legacy
         // pr_url/prUrl BEFORE the upsert replaces it — a re-upsert that omits the
         // field clears the durable link, and the record trigger must still
-        // invalidate the cached primary link. listByRun is an indexed per-run
-        // read (bounded).
+        // invalidate the cached primary link. Scoped to this artifact's shape so
+        // the hot path (frequent note/metric/decision saves) doesn't load+map
+        // the run's full artifact set (cost grows with run age).
         const previousCarriedPrUrl = artifactRepo
-          .listByRun(workflowRunId)
+          .listByRun(workflowRunId, { artifactType: shape })
           .some(
             (a) =>
-              a.artifactType === shape &&
               a.artifactKey === artifactKey &&
               ('prUrl' in (a.data ?? {}) || 'pr_url' in (a.data ?? {}))
           );
