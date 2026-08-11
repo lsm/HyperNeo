@@ -2343,7 +2343,7 @@ export interface HandoffTransition {
    * transition has a stable identity for diagnostics and export round-trips.
    */
   id: string;
-  /** Optional human-readable label for display in the visual editor. */
+  /** Optional human-readable label. Reserved for future UI use; not currently rendered by the visual editor. */
   label?: string;
   /**
    * Handoff target: a node name, an agent slot name, or
@@ -2948,10 +2948,10 @@ export interface ExportedWorkflowNodeAgent {
 /**
  * A declarative outbound handoff transition in the portable export format.
  * Mirrors {@link HandoffTransition}. Uses node/agent names (already portable
- * in the export) for `target`; `gateId`/`hookId` are opaque references carried
- * as-is (gates are not exported, so `gateId` may dangle on re-import exactly as
- * `ExportedWorkflowChannel.gateId` does today; `hookId` is checked against the
- * exported `hooks` list on import).
+ * in the export) for `target`. `gateId`/`hookId` are checked against the
+ * exported `gates`/`hooks` lists on import; a `gateId` whose gate was filtered
+ * out (e.g. a legacy empty gate) is stripped at the export/import boundary so
+ * no dangling reference survives.
  */
 export interface ExportedHandoffTransition {
   id: string;
