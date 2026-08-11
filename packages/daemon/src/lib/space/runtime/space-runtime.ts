@@ -447,6 +447,13 @@ interface SubscriptionListResult {
   workflowRunId: string;
   /** nodeId filter applied, or null when the whole run is returned. */
   nodeId: string | null;
+  /**
+   * Whether the run's workflow definition resolved. When false, `declared` is
+   * empty NOT because nothing is declared but because the definition could not
+   * be loaded (e.g. a deleted/stale definition) — so the caller does not
+   * misread an unavailable durable layer as "node declares no subscriptions."
+   */
+  definitionResolved: boolean;
   declared: SubscriptionDeclaredInterest[];
   persisted: SubscriptionPersistedRow[];
   active: SubscriptionActiveEntry[];
@@ -465,9 +472,18 @@ interface SubscriptionListResult {
   };
 }
 
-// Normalized reconciliation key: slot (node + agent) + lowercased topic.
-function subscriptionReconcileKey(nodeId: string, agentName: string, topic: string): string {
-  return `${nodeId}|${agentName.toLowerCase()}|${topic.toLowerCase()}`;
+// Normalized reconciliation key: slot (node + agent) + lowercased topic, plus
+// an optional taskId. Static declaration has no task (interests are slot-level
+// in the workflow definition), so static keys omit it; dynamic rows/targets
+// both carry taskId and include it so two tasks sharing a slot+topic can't
+// cross-match (which would mask the persisted↔active drift this tool surfaces).
+function subscriptionReconcileKey(
+  nodeId: string,
+  agentName: string,
+  topic: string,
+  taskId?: string
+): string {
+  return `${nodeId}|${agentName.toLowerCase()}|${topic.toLowerCase()}${taskId ? `|${taskId}` : ''}`;
 }
 
 interface PendingExternalEvent {
@@ -1502,13 +1518,19 @@ export class SpaceRuntime {
         source: 'orphan' as const,
       }));
 
-    // Reconcile durable ↔ trie via normalized slot+topic keys.
+    // Reconcile durable ↔ trie via normalized keys. Static keys are task-
+    // independent (declared interests are slot-level); dynamic keys include the
+    // taskId so two tasks sharing a slot+topic can't cross-match.
     const activeStaticKeys = new Set<string>();
     const activeDynamicKeys = new Set<string>();
     for (const entry of active) {
-      const key = subscriptionReconcileKey(entry.nodeId, entry.agentName, entry.topic);
-      if (entry.subscriptionKind === 'static') activeStaticKeys.add(key);
-      else activeDynamicKeys.add(key);
+      if (entry.subscriptionKind === 'static') {
+        activeStaticKeys.add(subscriptionReconcileKey(entry.nodeId, entry.agentName, entry.topic));
+      } else {
+        activeDynamicKeys.add(
+          subscriptionReconcileKey(entry.nodeId, entry.agentName, entry.topic, entry.taskId)
+        );
+      }
     }
     const declaredKeys = new Set<string>();
     for (const d of declared) {
@@ -1519,15 +1541,18 @@ export class SpaceRuntime {
     }
     const persistedKeys = new Set<string>();
     for (const p of persisted) {
-      const key = subscriptionReconcileKey(p.nodeId, p.agentName, p.topic);
+      const key = subscriptionReconcileKey(p.nodeId, p.agentName, p.topic, p.taskId);
       persistedKeys.add(key);
       p.active = activeDynamicKeys.has(key);
     }
     let orphanActive = 0;
     for (const entry of active) {
-      const key = subscriptionReconcileKey(entry.nodeId, entry.agentName, entry.topic);
       const backed =
-        entry.subscriptionKind === 'static' ? declaredKeys.has(key) : persistedKeys.has(key);
+        entry.subscriptionKind === 'static'
+          ? declaredKeys.has(subscriptionReconcileKey(entry.nodeId, entry.agentName, entry.topic))
+          : persistedKeys.has(
+              subscriptionReconcileKey(entry.nodeId, entry.agentName, entry.topic, entry.taskId)
+            );
       entry.source = backed
         ? entry.subscriptionKind === 'static'
           ? 'declared'
@@ -1541,6 +1566,7 @@ export class SpaceRuntime {
       result: {
         workflowRunId,
         nodeId: nodeFilter,
+        definitionResolved: workflow !== null,
         declared,
         persisted,
         active,

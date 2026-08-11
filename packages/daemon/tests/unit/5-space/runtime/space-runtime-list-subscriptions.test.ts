@@ -178,6 +178,7 @@ describe('SpaceRuntime.listSubscriptions', () => {
     const { result } = res;
 
     // Layer 1 — declared static interest from the definition, now active.
+    expect(result.definitionResolved).toBe(true);
     expect(result.declared).toHaveLength(1);
     expect(result.declared[0]).toMatchObject({
       nodeId: 'code',
@@ -477,7 +478,9 @@ describe('SpaceRuntime.listSubscriptions', () => {
 
   test('a run whose workflow definition no longer resolves reports declared empty without crashing', () => {
     // Simulate getWorkflowForRun → null (e.g. a stale/removed definition) by
-    // stubbing the workflow manager. Persisted + active still reconcile.
+    // stubbing the workflow manager. Persisted + active still reconcile, and the
+    // empty `declared` layer is flagged as unavailable (definitionResolved:false)
+    // so it is not misread as "the node declares no subscriptions."
     const runtime = makeRuntime({
       spaceWorkflowManager: { getWorkflowForRun: () => null } as unknown as typeof workflowManager,
     });
@@ -487,8 +490,48 @@ describe('SpaceRuntime.listSubscriptions', () => {
     const res = runtime.listSubscriptions(runId, SPACE_ID);
     expect(res.success).toBe(true);
     if (!res.success) return;
+    expect(res.result.definitionResolved).toBe(false);
     expect(res.result.declared).toEqual([]);
     expect(res.result.persisted).toHaveLength(1);
     expect(res.result.persisted[0].active).toBe(true);
+  });
+
+  test('dynamic reconciliation is scoped by taskId — sibling tasks do not cross-match', () => {
+    // A run with two tasks sharing node + agent + topic. The persisted table and
+    // the trie both key on taskId, so the reconcile key must too — otherwise an
+    // active trie entry for task A would mark task B's persisted row active,
+    // masking the persisted/active drift this tool exists to expose.
+    const runtime = makeRuntime();
+    const { runId, taskId: taskA } = createRun();
+    const taskB = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      workflowRunId: runId,
+      title: 'B',
+      description: '',
+      status: 'in_progress',
+    }).id;
+    const topic = 'github/owner/repo/pull_request/42.*';
+    // Task A: registered (write-through → trie + table). Task B: persisted only.
+    runtime.registerSubscription(runId, taskA, 'code', 'coder', topic);
+    subscriptionRepo.upsert({
+      spaceId: SPACE_ID,
+      workflowRunId: runId,
+      taskId: taskB,
+      nodeId: 'code',
+      agentName: 'coder',
+      topic,
+      subscriptionKind: 'dynamic',
+    });
+
+    const res = runtime.listSubscriptions(runId, SPACE_ID);
+    expect(res.success).toBe(true);
+    if (!res.success) return;
+    const byTask = new Map(res.result.persisted.map((p) => [p.taskId, p]));
+    expect(byTask.get(taskA)?.active).toBe(true); // has a matching trie entry
+    expect(byTask.get(taskB)?.active).toBe(false); // no trie entry for task B
+    expect(res.result.mismatches.persistedNotActive).toBe(1);
+    // Task A's active entry is backed; task B has no active entry at all.
+    expect(res.result.active).toHaveLength(1);
+    expect(res.result.active[0].source).toBe('persisted');
   });
 });
