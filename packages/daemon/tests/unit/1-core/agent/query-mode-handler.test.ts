@@ -4,7 +4,7 @@
  * Tests for query mode operations (Manual/Auto-queue).
  */
 
-import { describe, expect, it, beforeEach, mock } from 'bun:test';
+import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 import {
   QueryModeHandler,
   type QueryModeHandlerContext,
@@ -14,6 +14,8 @@ import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Database } from '../../../../src/storage/database';
+import { Database as DatabaseImpl } from '../../../../src/storage/sqlite-compat';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { Logger } from '../../../../src/lib/logger';
 
@@ -31,8 +33,14 @@ describe('QueryModeHandler', () => {
   let emitSpy: ReturnType<typeof mock>;
   let enqueueWithIdSpy: ReturnType<typeof mock>;
   let ensureQueryStartedSpy: ReturnType<typeof mock>;
+  let v2Previous: string | undefined;
 
   beforeEach(() => {
+    // The legacy inline replay path is preserved as the HYPERNEO_MESSAGE_DELIVERY_V2=0
+    // opt-out. These existing assertions cover THAT branch; the v2-default durable
+    // path has its own describe block below.
+    v2Previous = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+    process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '0';
     mockSession = {
       id: 'test-session-id',
       title: 'Test Session',
@@ -89,6 +97,11 @@ describe('QueryModeHandler', () => {
     } as unknown as Logger;
 
     ensureQueryStartedSpy = mock(async () => {});
+  });
+
+  afterEach(() => {
+    if (v2Previous === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+    else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = v2Previous;
   });
 
   function createContext(): QueryModeHandlerContext {
@@ -444,6 +457,101 @@ describe('QueryModeHandler', () => {
         'Current turn (enqueued)',
       ]);
       expect(enqueueWithIdSpy.mock.calls[1]).toEqual(['uuid-deferred-1', 'Next turn (deferred)']);
+    });
+  });
+
+  // Durable delivery (v2 default): the legacy kickoff paths route through the
+  // `deliverMessage` chokepoint instead of the inline ensureQueryStarted +
+  // enqueueWithId. The handler then owns driving the turn / feeding steers.
+  describe('durable delivery (v2 default) — task #861 item 3', () => {
+    let jobQueue: JobQueueRepository;
+    let jobsDb: Database;
+
+    beforeEach(() => {
+      // v2 default-on for this block.
+      process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '1';
+      // A real in-memory job_queue so deliverMessage's enqueue + role arbitration
+      // (uq_message_delivery_active_turn) execute against the real index.
+      jobsDb = new DatabaseImpl(':memory:');
+      jobsDb.exec(`
+        CREATE TABLE job_queue (
+          id TEXT PRIMARY KEY,
+          queue TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending',
+          payload TEXT NOT NULL DEFAULT '{}',
+          result TEXT, error TEXT,
+          priority INTEGER NOT NULL DEFAULT 0,
+          max_retries INTEGER NOT NULL DEFAULT 3,
+          retry_count INTEGER NOT NULL DEFAULT 0,
+          run_at INTEGER NOT NULL,
+          created_at INTEGER NOT NULL,
+          started_at INTEGER, completed_at INTEGER
+        );
+        CREATE UNIQUE INDEX uq_message_delivery_active_turn
+          ON job_queue (queue, json_extract(payload, '$.sessionId'))
+          WHERE queue = 'message_delivery'
+            AND json_extract(payload, '$.role') = 'turn'
+            AND status IN ('pending', 'processing');
+      `);
+      jobQueue = new JobQueueRepository(jobsDb as never);
+      mockDb = {
+        getMessagesByStatus: getMessagesByStatusSpy,
+        updateMessageStatus: updateMessageStatusSpy,
+        getJobQueueRepo: () => jobQueue,
+      } as unknown as Database;
+    });
+
+    afterEach(() => {
+      jobsDb.close();
+    });
+
+    function deliveryUuids(): Array<{ uuid: string; role: string }> {
+      return jobsDb
+        .prepare(
+          `SELECT json_extract(payload, '$.messageUuid') AS uuid,
+                  json_extract(payload, '$.role') AS role
+             FROM job_queue WHERE queue = 'message_delivery'
+            ORDER BY created_at ASC`
+        )
+        .all() as Array<{ uuid: string; role: string }>;
+    }
+
+    it('handleQueryTrigger enqueues a durable job per deferred message (first turn, rest steer)', async () => {
+      getMessagesByStatusSpy.mockReturnValue([
+        { dbId: 'db-1', uuid: 'uuid-1', type: 'user', message: { role: 'user', content: 'one' } },
+        { dbId: 'db-2', uuid: 'uuid-2', type: 'user', message: { role: 'user', content: 'two' } },
+        { dbId: 'db-3', uuid: 'uuid-3', type: 'user', message: { role: 'user', content: 'three' } },
+      ] as unknown as SDKMessage[]);
+
+      handler = new QueryModeHandler(createContext());
+      const result = await handler.handleQueryTrigger();
+
+      expect(result).toEqual({ success: true, messageCount: 3 });
+      // Status flip to enqueued still fires (so the handler drives, not skips).
+      expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-1', 'db-2', 'db-3'], 'enqueued');
+      // One durable job per UUID; first is the turn, the rest steer into it.
+      const jobs = deliveryUuids();
+      expect(jobs.map((j) => j.uuid).sort()).toEqual(['uuid-1', 'uuid-2', 'uuid-3']);
+      expect(jobs.filter((j) => j.role === 'turn')).toHaveLength(1);
+      expect(jobs.filter((j) => j.role === 'steer')).toHaveLength(2);
+      // The inline transport path is NOT used under v2.
+      expect(ensureQueryStartedSpy).not.toHaveBeenCalled();
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+    });
+
+    it('sendEnqueuedMessagesOnTurnEnd enqueues a durable job per enqueued message', async () => {
+      getMessagesByStatusSpy.mockReturnValue([
+        { dbId: 'db-1', uuid: 'uuid-1', type: 'user', message: { role: 'user', content: 'q' } },
+      ] as unknown as SDKMessage[]);
+
+      handler = new QueryModeHandler(createContext());
+      await handler.sendEnqueuedMessagesOnTurnEnd();
+
+      const jobs = deliveryUuids();
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0].uuid).toBe('uuid-1');
+      expect(jobs[0].role).toBe('turn');
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
     });
   });
 });

@@ -16,6 +16,7 @@ import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
+import { waitForDeliveryConsumption } from '../../../../src/lib/agent/message-delivery';
 import type { Database } from '../../../../src/storage/database';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { ContextTracker } from '../../../../src/lib/agent/context-tracker';
@@ -2558,6 +2559,28 @@ describe('SDKMessageHandler', () => {
 
       // Should have tripped again
       expect(lifecycleStopSpy).toHaveBeenCalled();
+    });
+  });
+
+  // markMessageAccepted signals delivery waiters ONLY when the ACP acceptance
+  // actually took (the row is consumed). A racing interrupt/error that already
+  // flipped the row `failed` must NOT confirm an LTA/task-agent source.
+  // (task #861, review P2.2b — the race-win branch.)
+  describe('markMessageAccepted (ACP signal guard)', () => {
+    it('does NOT signal delivery waiters when the row is failed (acceptance did not take)', async () => {
+      // Row is absent/failed → getMessageByStatusAndUuid returns null for every
+      // status, so handleMessageYielded is a no-op and the consumed check fails.
+      getMessageByStatusAndUuidSpy.mockImplementation(() => null);
+      const waiter = waitForDeliveryConsumption(mockSession.id, 'msg-failed');
+      handler.markMessageAccepted('msg-failed');
+      // signalDeliveryConsumed would resolve the waiter synchronously; race it
+      // against a short timeout — the guard must suppress the signal.
+      const winner = await Promise.race([
+        waiter.promise.then(() => 'signaled' as const),
+        new Promise<'timeout'>((r) => setTimeout(() => r('timeout'), 50)),
+      ]);
+      expect(winner).toBe('timeout');
+      waiter.cancel();
     });
   });
 });

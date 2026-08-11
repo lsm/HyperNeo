@@ -1070,47 +1070,6 @@ export class SDKMessageRepository {
     return rows.map((r) => JSON.parse(r.sdk_message as string) as SDKMessage);
   }
 
-  getLatestSystemInitTimestamp(sessionId: string): number {
-    const row = this.db
-      .prepare(
-        `SELECT timestamp FROM sdk_messages
-         WHERE session_id = ?
-           AND message_type = 'system'
-           AND message_subtype = 'init'
-         ORDER BY timestamp DESC
-         LIMIT 1`
-      )
-      .get(sessionId) as { timestamp: string } | undefined;
-    return row ? new Date(row.timestamp).getTime() : 0;
-  }
-
-  getConsumedUserMessagesAfterLatestInit(
-    sessionId: string
-  ): Array<SDKMessage & { dbId: string; timestamp: number }> {
-    const stmt = this.db.prepare(
-      `SELECT id, sdk_message, timestamp FROM sdk_messages
-       WHERE session_id = ?
-         AND send_status = 'consumed'
-         AND message_type = 'user'
-         AND timestamp > COALESCE((
-           SELECT timestamp FROM sdk_messages
-           WHERE session_id = ?
-             AND message_type = 'system'
-             AND message_subtype = 'init'
-           ORDER BY timestamp DESC
-           LIMIT 1
-         ), '')
-       ORDER BY timestamp ASC`
-    );
-    const rows = stmt.all(sessionId, sessionId) as Array<{
-      id: string;
-      sdk_message: string;
-      timestamp: string;
-    }>;
-
-    return rows.map((row) => this.inflatePersistedMessage(row));
-  }
-
   /**
    * Get the most recently persisted top-level SDK message for a session.
    *
@@ -1267,6 +1226,33 @@ export class SDKMessageRepository {
     sendStatus: SendStatus = 'consumed',
     origin?: MessageOrigin
   ): string {
+    const core = this.db.transaction(() =>
+      this.saveUserMessageCore(sessionId, message, sendStatus, origin)
+    )();
+    this.runPostSaveSideEffects(sessionId, core.id, message, core.countsTowardsBadge);
+    return core.id;
+  }
+
+  /**
+   * The transactional body of {@link saveUserMessage} — INSERT + conversation-
+   * turn index + replacement edges + visible-badge bump — with NO transaction
+   * wrapper of its own and NO post-commit side effects (live-query notify / FTS
+   * index). It composes inside an OUTER transaction so the durable-delivery
+   * outbox can save the user message AND enqueue its `job_queue` delivery row
+   * atomically: a crash between the two writes can no longer strand a
+   * saved-but-not-enqueued message. Callers MUST run the returned flags through
+   * {@link runPostSaveSideEffects} once the surrounding transaction commits.
+   * See task #861 item 2 (transactional outbox).
+   *
+   * Returns the new row id and whether the row counts toward the visible-badge
+   * (so the caller can fire {@link runPostSaveSideEffects}).
+   */
+  saveUserMessageCore(
+    sessionId: string,
+    message: SDKMessage,
+    sendStatus: SendStatus = 'consumed',
+    origin?: MessageOrigin
+  ): { id: string; countsTowardsBadge: boolean } {
     const id = generateUUID();
     const messageType = message.type;
     const messageSubtype = 'subtype' in message ? (message.subtype as string) : null;
@@ -1294,39 +1280,53 @@ export class SDKMessageRepository {
 
     const stmt = this.db.prepare(
       `INSERT INTO sdk_messages (
-					id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin,
-					is_renderable, is_terminal, parent_tool_use_id, task_id, conversation_turn_index,
-					sdk_uuid, replacement_metadata_normalized
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
+				id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin,
+				is_renderable, is_terminal, parent_tool_use_id, task_id, conversation_turn_index,
+				sdk_uuid, replacement_metadata_normalized
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
     );
 
-    this.db.transaction(() => {
-      const conversationTurnIndex = this.resolveConversationTurnIndex(
-        taskId,
-        sessionId,
-        isConversationAnchor
-      );
-      const values = [
-        id,
-        sessionId,
-        messageType,
-        messageSubtype,
-        JSON.stringify(message),
-        timestamp,
-        sendStatus,
-        origin ?? null,
-        isRenderable,
-        isTerminal,
-        parentToolUseId,
-        taskId,
-      ];
-      stmt.run(...values, conversationTurnIndex, extractSdkUuid(message));
-      this.saveReplacementEdges(id, sessionId, taskId, message);
-      if (countsTowardsBadge) this.bumpVisibleMessageCount(sessionId, 1);
-    })();
+    const conversationTurnIndex = this.resolveConversationTurnIndex(
+      taskId,
+      sessionId,
+      isConversationAnchor
+    );
+    const values = [
+      id,
+      sessionId,
+      messageType,
+      messageSubtype,
+      JSON.stringify(message),
+      timestamp,
+      sendStatus,
+      origin ?? null,
+      isRenderable,
+      isTerminal,
+      parentToolUseId,
+      taskId,
+    ];
+    stmt.run(...values, conversationTurnIndex, extractSdkUuid(message));
+    this.saveReplacementEdges(id, sessionId, taskId, message);
+    if (countsTowardsBadge) this.bumpVisibleMessageCount(sessionId, 1);
+    return { id, countsTowardsBadge };
+  }
+
+  /**
+   * Post-commit side effects of {@link saveUserMessage} /
+   * {@link saveUserMessageCore}: notify the live-query layer of a visible-badge
+   * change and refresh the FTS search index. Runs OUTSIDE the save transaction
+   * — the FTS work is best-effort and a throw here must not strand the
+   * badge/turn bookkeeping already committed. Mirrors the original
+   * {@link saveUserMessage} tail. See task #861 item 2.
+   */
+  runPostSaveSideEffects(
+    sessionId: string,
+    id: string,
+    message: SDKMessage,
+    countsTowardsBadge: boolean
+  ): void {
     if (countsTowardsBadge) this.notifySessionsChanged(sessionId);
     this.upsertMessageSearchRow(id);
-    return id;
   }
 
   /**
@@ -1418,11 +1418,9 @@ export class SDKMessageRepository {
     // #2338: BEFORE the flip, capture the user-anchor rows that are NOT yet
     // anchored (still deferred/enqueued/submitted). Only these need a fresh turn when
     // they become consumed/failed. Rows already consumed/failed are already
-    // anchored and must keep their turn — recoverOrphanedConsumedMessages
-    // flips already-consumed rows to 'failed', and re-bumping those would
-    // scatter them to new turns and break grouping on multi-session tasks.
-    // Capturing pre-update (filtered by prior send_status) is what excludes
-    // them.
+    // anchored and must keep their turn — re-bumping those would scatter them
+    // to new turns and break grouping on multi-session tasks. Capturing
+    // pre-update (filtered by prior send_status) is what excludes them.
     const pending =
       newStatus === 'consumed' || newStatus === 'failed'
         ? (this.db
@@ -1862,6 +1860,38 @@ export class SDKMessageRepository {
     // updateMessageStatus handles the turn-assignment + visible-counter
     // bookkeeping for the consumed/failed transition.
     this.updateMessageStatus([row.id], 'failed');
+    return row.id;
+  }
+
+  /**
+   * Flip a pending delivery row to `consumed` at the earliest SDK-consume
+   * signal (the onSent/started-acknowledgment, before the turn runs) — the
+   * at-least-once quality hardening (task #861 item 12). Delivery is
+   * at-least-once: a crash in the window [SDK yield, persisted consumed-flip]
+   * can still cause a duplicate re-feed, so this shrinks that window to
+   * sub-millisecond by flipping synchronously the moment the SDK acknowledges
+   * consumption. `reclaimStale` then almost always observes `consumed` and the
+   * handler's status-aware reload skips the re-feed (drives with
+   * `alreadyConsumed`).
+   *
+   * Only flips rows still pending delivery (`enqueued`/`submitted`) — a
+   * `consumed` row already ran (idempotent no-op, returns null), and
+   * `deferred`/`failed` are not consume candidates. Returns the flipped db id
+   * (so the caller publishes `messages.statusChanged`), else null.
+   * `updateMessageStatus` performs the turn-assignment + timestamp alignment +
+   * visible-counter bookkeeping for the transition.
+   */
+  markDeliveryConsumedByUuid(sessionId: string, uuid: string): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT id FROM sdk_messages
+           WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
+             AND send_status IN ('enqueued', 'submitted')
+           ORDER BY timestamp ASC LIMIT 1`
+      )
+      .get(sessionId, uuid) as { id: string } | undefined;
+    if (!row) return null;
+    this.updateMessageStatus([row.id], 'consumed');
     return row.id;
   }
 

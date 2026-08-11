@@ -461,7 +461,7 @@ describe('SpaceIsland — overlay inerts the base chat (task #873)', () => {
 
 describe('SpaceIsland — route-driven views', () => {
   it('renders the overview view without the legacy top tab bar', async () => {
-    const { getByTestId, queryByTestId } = render(
+    const { getByTestId, getByText, queryByTestId } = render(
       <SpaceIsland spaceId="space-1" viewMode="overview" />
     );
     // Wait for lazy SpaceOverview to load through Suspense
@@ -471,9 +471,13 @@ describe('SpaceIsland — route-driven views', () => {
       },
       { timeout: LAZY_LOAD_TIMEOUT }
     );
-    // Outer wrapper
+    // Outer wrapper and Overview-only workspace treatment
     expect(getByTestId('space-overview-view')).toBeTruthy();
+    expect(getByTestId('space-overview-view').getAttribute('data-overview-surface')).toBe(
+      'glass-workspace'
+    );
     expect(getByTestId('space-dashboard').getAttribute('data-space-id')).toBe('space-1');
+    expect(getByText('Space operations and recent activity')).toBeTruthy();
     // Legacy tab bar is removed from overview
     expect(queryByTestId('space-tab-bar')).toBeNull();
   });
@@ -487,7 +491,9 @@ describe('SpaceIsland — route-driven views', () => {
       },
       { timeout: LAZY_LOAD_TIMEOUT }
     );
-    expect(getByTestId('space-configure-view')).toBeTruthy();
+    const configureView = getByTestId('space-configure-view');
+    expect(configureView).toBeTruthy();
+    expect(configureView.hasAttribute('data-overview-surface')).toBe(false);
   });
 });
 
@@ -861,6 +867,14 @@ describe('SpaceIsland — sessions view', () => {
 });
 
 describe('SpaceIsland — agents view', () => {
+  it('renders the Agents-only Glass Workspace hero surface', async () => {
+    const { findByTestId, getByRole } = render(<SpaceIsland spaceId="space-1" viewMode="agents" />);
+
+    const agentsView = await findByTestId('space-agents-view');
+    expect(agentsView.getAttribute('data-agents-surface')).toBe('glass-workspace');
+    expect(getByRole('heading', { name: 'Agents' })).toBeTruthy();
+  });
+
   it('passes the selected agent handle to the agents page', async () => {
     mockCurrentSpaceAgentHandleSignal.value = 'reviewer';
     mockAgents.value = [

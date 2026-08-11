@@ -944,9 +944,17 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   //   createTables().
   run(migrationMarkerKey(185), () => runMigration185(db));
 
-  // Migration 186: Widen space_goal_events.event_type CHECK to include
-  // 'automation_noop' for self_nag low-evidence no-op notes (#919).
+  // Migration 186: Partial expression index idx_message_delivery_session_active
+  // for the activeDeliveryMessageUuids / hasActiveDeliveryJobs lookup (the
+  // "which sessions own an active durable job" hot path). Mirrored in
+  // createIndexes() for fresh DBs. (task #861, review P2.) Renumbered 185→186:
+  // dev shipped M185 for workflow-event-subscriptions.
   run(migrationMarkerKey(186), () => runMigration186(db));
+
+  // Migration 187: Widen space_goal_events.event_type CHECK to include
+  // 'automation_noop' for self_nag low-evidence no-op notes (#919). Renumbered
+  // 186→187: dev shipped M186 for the message-delivery active-session index.
+  run(migrationMarkerKey(187), () => runMigration187(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -8054,7 +8062,7 @@ export function runMigration183(db: BunDatabase): void {
 }
 
 /**
- * Migration 186: Widen `space_goal_events.event_type` CHECK to include
+ * Migration 187: Widen `space_goal_events.event_type` CHECK to include
  * 'automation_noop'.
  *
  * Background: the self_nag goal-automation retrospective (#919) now records a
@@ -8067,7 +8075,7 @@ export function runMigration183(db: BunDatabase): void {
  * Idempotent: a no-op when the table is absent or the CHECK already permits
  * 'automation_noop'.
  */
-export function runMigration186(db: BunDatabase): void {
+export function runMigration187(db: BunDatabase): void {
   if (!tableExists(db, 'space_goal_events')) return;
   const tableSql = tableCreateSql(db, 'space_goal_events');
   if (!tableSql || tableSql.includes("'automation_noop'")) return;
@@ -8079,7 +8087,7 @@ export function runMigration186(db: BunDatabase): void {
   const widenedSql = tableSql
     .replace(
       /CREATE TABLE(?: IF NOT EXISTS)?\s+["'`[]?space_goal_events["'`\]]?/i,
-      'CREATE TABLE space_goal_events_m186_new'
+      'CREATE TABLE space_goal_events_m187_new'
     )
     .replace(
       /CHECK\s*\(event_type IN \('created', 'updated', 'status_changed', 'task_triggered', 'task_queued', 'task_terminal', 'schedule_updated'\)\)/,
@@ -8104,10 +8112,10 @@ export function runMigration186(db: BunDatabase): void {
   try {
     db.exec(widenedSql);
     db.exec(
-      `INSERT INTO space_goal_events_m186_new (${quoted}) SELECT ${quoted} FROM space_goal_events`
+      `INSERT INTO space_goal_events_m187_new (${quoted}) SELECT ${quoted} FROM space_goal_events`
     );
     db.exec('DROP TABLE space_goal_events');
-    db.exec('ALTER TABLE space_goal_events_m186_new RENAME TO space_goal_events');
+    db.exec('ALTER TABLE space_goal_events_m187_new RENAME TO space_goal_events');
     for (const object of objects) db.exec(object.sql);
     db.exec('COMMIT');
   } catch (error) {
@@ -12291,4 +12299,23 @@ export function runMigration184(db: BunDatabase): void {
 
 export function runMigration185(db: BunDatabase): void {
   runMigration185External(db);
+}
+
+/**
+ * Migration 186: Partial expression index `idx_message_delivery_session_active`
+ * on the job_queue `message_delivery` lane — covers the activeDeliveryMessageUuids
+ * / hasActiveDeliveryJobs lookup (run on each idle transition + a 60s timer +
+ * startup + turn-end). Without it the query scans the whole lane doing
+ * json_extract per row; this index turns it into a seek by sessionId.
+ * Idempotent (`CREATE INDEX IF NOT EXISTS`); no-op on tables that pre-date the
+ * lane. (task #861, review P2.) Mirrored in createIndexes() for fresh DBs.
+ * Renumbered 185→186: dev shipped M185 for workflow-event-subscriptions.
+ */
+export function runMigration186(db: BunDatabase): void {
+  if (!tableExists(db, 'job_queue')) return;
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_message_delivery_session_active
+      ON job_queue (json_extract(payload, '$.sessionId'))
+      WHERE queue = 'message_delivery' AND status IN ('pending', 'processing')
+  `);
 }

@@ -135,7 +135,7 @@ export { runMigration170 } from './migrations';
 // knip-ignore-next-line
 export { runMigration174 } from './migrations';
 // knip-ignore-next-line
-export { runMigration186 } from './migrations';
+export { runMigration187 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults
@@ -1086,6 +1086,16 @@ function createIndexes(db: BunDatabase): void {
       WHERE queue = 'message_delivery'
         AND json_extract(payload, '$.role') = 'turn'
         AND status IN ('pending', 'processing')
+  `);
+  // Covering index for activeDeliveryMessageUuids / hasActiveDeliveryJobs — the
+  // "which sessions own an active durable job" lookup, run on each idle
+  // transition + a 60s timer + startup + turn-end. Without it the query scans
+  // the whole message_delivery lane doing json_extract per row; this partial
+  // expression index turns it into a seek by sessionId. (task #861, review P2.)
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_message_delivery_session_active
+      ON job_queue (json_extract(payload, '$.sessionId'))
+      WHERE queue = 'message_delivery' AND status IN ('pending', 'processing')
   `);
   // Workspace history index — supports ORDER BY last_used_at DESC in list()
   db.exec(

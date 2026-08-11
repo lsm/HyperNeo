@@ -69,7 +69,10 @@ import type {
 } from '../../internal-event-bus';
 import { Logger } from '../../logger';
 import {
+  MissingWorkflowAgentError,
   PermanentSpawnError,
+  findMissingNodeAgentReferences,
+  formatMissingAgentReference,
   validateExecutionAgainstWorkflow,
 } from './workflow-node-execution-validation';
 
@@ -540,6 +543,35 @@ export class ChannelRouter {
       throw new ActivationError(
         `Cannot resolve agents for node "${nodeId}": ${err instanceof Error ? err.message : String(err)}`,
         err
+      );
+    }
+
+    // Validate configured custom-agent references BEFORE creating any execution.
+    // A slot whose agentId points at a deleted space_agents row would otherwise
+    // make the createOrIgnore below raise SQLITE_CONSTRAINT_FOREIGNKEY (INSERT
+    // OR IGNORE does not suppress foreign-key failures). Built-in/worker slots
+    // that validly use agentId=null are preserved — only non-null references are
+    // checked, and a missing required agent is surfaced as an actionable error
+    // rather than silently nulled. For slot-targeted activation
+    // (`ensureWorkflowNodeActivationForAgent`), restrict the check to the
+    // requested slot so a stale SIBLING slot does not prevent bringing the valid
+    // target slot online.
+    const targetAgentName = options?.targetAgentName;
+    const missingAgent = findMissingNodeAgentReferences(
+      node,
+      (id) => this.config.agentManager.getById(id) !== null,
+      targetAgentName ? { slotNames: new Set([targetAgentName]) } : undefined
+    );
+    if (missingAgent.length > 0) {
+      const first = missingAgent[0];
+      throw new MissingWorkflowAgentError(
+        formatMissingAgentReference({
+          runId,
+          nodeLabel: node.name,
+          agentName: first.agentName,
+          agentId: first.agentId,
+        }),
+        first
       );
     }
 

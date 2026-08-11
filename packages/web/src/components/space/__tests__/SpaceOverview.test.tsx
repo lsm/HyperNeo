@@ -142,11 +142,27 @@ describe('SpaceOverview', () => {
       makeTask('t4', 'done'),
     ];
 
-    const { getByText } = render(<SpaceOverview spaceId="space-1" />);
+    const { getByRole } = render(<SpaceOverview spaceId="space-1" />);
     // Stats strip: Active (open + in_progress = 2), Review (blocked = 1), Done (done = 1)
-    expect(getByText('Active')).toBeTruthy();
-    expect(getByText('Review')).toBeTruthy();
-    expect(getByText('Done')).toBeTruthy();
+    expect(getByRole('button', { name: 'Active tasks: 2' })).toBeTruthy();
+    expect(getByRole('button', { name: 'Review tasks: 1' })).toBeTruthy();
+    expect(getByRole('button', { name: 'Done tasks: 1' })).toBeTruthy();
+  });
+
+  it('renders glass controls and flat activity surfaces', () => {
+    mockSpace.value = makeSpace();
+    mockRuntimeState.value = 'running';
+    mockTasks.value = [makeTask('t1', 'open')];
+    mockSessions.value = [
+      { id: 'session-1', title: 'Session one', status: 'active', lastActiveAt: Date.now() },
+    ];
+
+    const { getByTestId, getByText } = render(<SpaceOverview spaceId="space-1" />);
+
+    expect(getByTestId('space-overview-dashboard')).toBeTruthy();
+    expect(getByTestId('overview-recent-tasks')).toBeTruthy();
+    expect(getByTestId('overview-recent-sessions')).toBeTruthy();
+    expect(getByText('Running').closest('.backdrop-blur-xl')).toBeTruthy();
   });
 
   it('renders recent tasks sorted by updatedAt', () => {
@@ -230,9 +246,10 @@ describe('SpaceOverview', () => {
       makeTask(`t${i + 1}`, 'in_progress', { updatedAt: now - i * 60_000 })
     );
 
-    const { container } = render(<SpaceOverview spaceId="space-1" />);
-    // Each task renders as a button inside the activity list
-    const activityButtons = container.querySelectorAll('.divide-y button');
+    const { getByTestId } = render(<SpaceOverview spaceId="space-1" />);
+    const activityButtons = getByTestId('overview-recent-tasks').querySelectorAll(
+      ':scope > div:last-child > button'
+    );
     expect(activityButtons.length).toBe(5);
   });
 
@@ -433,28 +450,28 @@ describe('SpaceOverview', () => {
     });
 
     it('clicking Active stat card navigates to tasks with active tab', () => {
-      const { getByText } = render(<SpaceOverview spaceId="space-1" />);
-      fireEvent.click(getByText('Active').closest('button')!);
+      const { getByRole } = render(<SpaceOverview spaceId="space-1" />);
+      fireEvent.click(getByRole('button', { name: 'Active tasks: 2' }));
       expect(navigateToSpaceTasksMock).toHaveBeenCalledWith('space-1', 'active');
     });
 
     it('uses the route space id for stat card navigation', () => {
-      const { getByText } = render(
+      const { getByRole } = render(
         <SpaceOverview spaceId="space-1" navigationSpaceId="space-slug" />
       );
-      fireEvent.click(getByText('Active').closest('button')!);
+      fireEvent.click(getByRole('button', { name: 'Active tasks: 2' }));
       expect(navigateToSpaceTasksMock).toHaveBeenCalledWith('space-slug', 'active');
     });
 
     it('clicking Review stat card navigates to tasks with action tab', () => {
-      const { getByText } = render(<SpaceOverview spaceId="space-1" />);
-      fireEvent.click(getByText('Review').closest('button')!);
+      const { getByRole } = render(<SpaceOverview spaceId="space-1" />);
+      fireEvent.click(getByRole('button', { name: 'Review tasks: 1' }));
       expect(navigateToSpaceTasksMock).toHaveBeenCalledWith('space-1', 'action');
     });
 
     it('clicking Done stat card navigates to tasks with completed tab', () => {
-      const { getByText } = render(<SpaceOverview spaceId="space-1" />);
-      fireEvent.click(getByText('Done').closest('button')!);
+      const { getByRole } = render(<SpaceOverview spaceId="space-1" />);
+      fireEvent.click(getByRole('button', { name: 'Done tasks: 2' }));
       expect(navigateToSpaceTasksMock).toHaveBeenCalledWith('space-1', 'completed');
     });
 
@@ -469,80 +486,14 @@ describe('SpaceOverview', () => {
     });
 
     it('stat cards have cursor-pointer class', () => {
-      const { getByText } = render(<SpaceOverview spaceId="space-1" />);
-      expect(getByText('Active').closest('button')!.className).toContain('cursor-pointer');
-      expect(getByText('Review').closest('button')!.className).toContain('cursor-pointer');
-      expect(getByText('Done').closest('button')!.className).toContain('cursor-pointer');
-    });
-  });
-
-  describe('Awaiting Approval Summary', () => {
-    beforeEach(() => {
-      navigateToSpaceTasksMock.mockClear();
-    });
-
-    it('is hidden when no tasks are paused at a submit_for_approval checkpoint', () => {
-      mockSpace.value = makeSpace();
-      mockTasks.value = [makeTask('t1', 'in_progress')];
-      const { queryByTestId } = render(<SpaceOverview spaceId="space-1" />);
-      expect(queryByTestId('awaiting-approval-summary')).toBeNull();
-    });
-
-    it('renders count when tasks are paused at submit_for_approval checkpoints', () => {
-      mockSpace.value = makeSpace();
-      mockTasks.value = [
-        makeTask('t1', 'review', {
-          pendingCheckpointType: 'task_completion',
-        }),
-        makeTask('t2', 'review', {
-          pendingCheckpointType: 'task_completion',
-        }),
-        // Gate-paused task should not contribute to the count
-        makeTask('t3', 'review', {
-          pendingCheckpointType: 'gate',
-        }),
-      ];
-      const { getByTestId } = render(<SpaceOverview spaceId="space-1" />);
-      const summary = getByTestId('awaiting-approval-summary');
-      expect(summary.textContent).toContain('2');
-      expect(summary.textContent).toContain('awaiting your approval');
-    });
-
-    it('uses singular "task" when count is 1', () => {
-      mockSpace.value = makeSpace();
-      mockTasks.value = [
-        makeTask('t1', 'review', {
-          pendingCheckpointType: 'task_completion',
-        }),
-      ];
-      const { getByTestId } = render(<SpaceOverview spaceId="space-1" />);
-      expect(getByTestId('awaiting-approval-summary').textContent).toContain('1 task');
-    });
-
-    it('clicking the summary navigates to the tasks Action tab', () => {
-      mockSpace.value = makeSpace();
-      mockTasks.value = [
-        makeTask('t1', 'review', {
-          pendingCheckpointType: 'task_completion',
-        }),
-      ];
-      const { getByTestId } = render(<SpaceOverview spaceId="space-1" />);
-      fireEvent.click(getByTestId('awaiting-approval-summary'));
-      expect(navigateToSpaceTasksMock).toHaveBeenCalledWith('space-1', 'action');
-    });
-
-    it('uses the route space id for awaiting-approval navigation', () => {
-      mockSpace.value = makeSpace();
-      mockTasks.value = [
-        makeTask('t1', 'review', {
-          pendingCheckpointType: 'task_completion',
-        }),
-      ];
-      const { getByTestId } = render(
-        <SpaceOverview spaceId="space-1" navigationSpaceId="space-slug" />
+      const { getByRole } = render(<SpaceOverview spaceId="space-1" />);
+      expect(getByRole('button', { name: 'Active tasks: 2' }).className).toContain(
+        'cursor-pointer'
       );
-      fireEvent.click(getByTestId('awaiting-approval-summary'));
-      expect(navigateToSpaceTasksMock).toHaveBeenCalledWith('space-slug', 'action');
+      expect(getByRole('button', { name: 'Review tasks: 1' }).className).toContain(
+        'cursor-pointer'
+      );
+      expect(getByRole('button', { name: 'Done tasks: 2' }).className).toContain('cursor-pointer');
     });
   });
 
