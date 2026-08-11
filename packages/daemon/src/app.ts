@@ -511,6 +511,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const router = new MessageHubRouter({
       logger: console,
       debug: config.nodeEnv === 'development',
+      // Ingress fan-out guardrail (task #899): per-client subscription cap,
+      // env-overridable via HYPERNEO_MAX_SUBSCRIPTIONS_PER_CLIENT (default 128).
+      maxSubscriptionsPerClient: config.maxSubscriptionsPerClient,
     });
 
     // 2. Initialize MessageHub (protocol layer)

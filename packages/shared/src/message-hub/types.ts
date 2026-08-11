@@ -209,12 +209,6 @@ export interface MessageHubOptions {
   cacheTTL?: number;
 
   /**
-   * Maximum subscriptions per client (router-side)
-   * @default 1000
-   */
-  maxSubscriptionsPerClient?: number;
-
-  /**
    * Maximum event handler nesting depth (prevents infinite recursion)
    * @default 10
    */

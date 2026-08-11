@@ -825,6 +825,103 @@ describe('review_posted preset (Review→Coding feedback gate)', () => {
     );
   });
 
+  test('frozenPrUrl fallback: allows when the agent omits data.pr_url entirely', async () => {
+    // The gate→hook migration dropped the prompt guidance telling the reviewer
+    // to pass data.pr_url on the Review→Coding handoff. The resolver must fall
+    // back to the run's frozen reviewed PR (stamped by the pr_ready hook) so the
+    // hook no longer false-blocks every feedback send. This alone unblocks the
+    // path even when the agent supplies nothing.
+    const validate = createReviewPostedValidator(
+      reviewSpawn(
+        {
+          url: PR_URL,
+          author: { login: 'someone-else' },
+          reviews: [{ submittedAt: AFTER, state: 'CHANGES_REQUESTED' }],
+          comments: [],
+        },
+        'lsm'
+      )
+    );
+    const result = await validate({
+      workspacePath: '/tmp',
+      runId: 'run-1',
+      hookId: 'review-posted-hook',
+      methodName: 'send_message',
+      // No pr_url / review_url anywhere — the reviewer omitted data.pr_url.
+      params: { target: 'Coding', message: 'fix the P2 finding', data: {} },
+      nodeId: 'review-node',
+      nodeName: 'Review',
+      sessionId: 'sess-1',
+      taskId: 'task-1',
+      hookLocalState: { workflowStartIso: '2026-05-01T00:00:00Z' },
+      frozenPrUrl: PR_URL,
+      currentArtifacts: [],
+      permittedExternalLookups: ['github'],
+    });
+    expect(result.type).toBe('allow');
+    expect((result as { data?: Record<string, unknown> }).data?.pr_url).toBe(PR_URL);
+  });
+
+  test('frozenPrUrl absent + omitted data.pr_url → block (fail-closed)', async () => {
+    // Companion to the frozenPrUrl fallback above: when the run has NOT frozen a
+    // reviewed PR yet (no pr_ready handoff) and the reviewer omits data.pr_url,
+    // the resolver must NOT invent a PR identity — the op fails closed and the
+    // hook blocks. Pins the fallback's last-resort nature to this PR rather than
+    // relying on the unrelated 'missing pr_url → block' coverage.
+    const validate = createReviewPostedValidator(reviewSpawn({ url: PR_URL }, 'lsm'));
+    const result = await validate({
+      workspacePath: '/tmp',
+      runId: 'run-1',
+      hookId: 'review-posted-hook',
+      methodName: 'send_message',
+      params: { target: 'Coding', message: 'fix the P2 finding', data: {} },
+      nodeId: 'review-node',
+      nodeName: 'Review',
+      sessionId: 'sess-1',
+      taskId: 'task-1',
+      hookLocalState: { workflowStartIso: '2026-05-01T00:00:00Z' },
+      // frozenPrUrl intentionally absent — the run's first handoff has not
+      // frozen a reviewed PR yet.
+      currentArtifacts: [],
+      permittedExternalLookups: ['github'],
+    });
+    expect(result.type).toBe('block');
+    expect((result as { reason: string }).reason).toContain('prUrl is required');
+  });
+
+  test('camelCase data.prUrl: allows when the agent passes prUrl (not pr_url)', async () => {
+    // The resolver accepts camelCase prUrl in addition to snake_case pr_url —
+    // the Reviewer's prompt may pass either form, so a reviewer that passes
+    // data.prUrl does not false-block.
+    const validate = createReviewPostedValidator(
+      reviewSpawn(
+        {
+          url: PR_URL,
+          author: { login: 'someone-else' },
+          reviews: [{ submittedAt: AFTER, state: 'CHANGES_REQUESTED' }],
+          comments: [],
+        },
+        'lsm'
+      )
+    );
+    const result = await validate({
+      workspacePath: '/tmp',
+      runId: 'run-1',
+      hookId: 'review-posted-hook',
+      methodName: 'send_message',
+      params: { target: 'Coding', message: 'fix the P2 finding', data: { prUrl: PR_URL } },
+      rawParams: { target: 'Coding', message: 'fix the P2 finding', data: { prUrl: PR_URL } },
+      nodeId: 'review-node',
+      nodeName: 'Review',
+      sessionId: 'sess-1',
+      taskId: 'task-1',
+      hookLocalState: { workflowStartIso: '2026-05-01T00:00:00Z' },
+      currentArtifacts: [],
+      permittedExternalLookups: ['github'],
+    });
+    expect(result.type).toBe('allow');
+  });
+
   test('rate-limited gh (pr view) → retryable_block', async () => {
     const validate = createReviewPostedValidator(
       mockSpawn([
