@@ -32,7 +32,6 @@ const REVIEW_POSTED_GATE = 'review-posted-gate';
 const LEGACY_PR_READY_GATE_IDS = new Set([
   'code-ready-gate',
   'research-ready-gate',
-  'plan-pr-gate',
   'code-pr-gate',
 ]);
 

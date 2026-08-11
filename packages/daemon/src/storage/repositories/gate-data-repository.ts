@@ -139,8 +139,7 @@ export class GateDataRepository {
    * Top-level keys in `partial` shallow-overwrite existing keys, *except*
    * for keys listed in `mapFields` — for those, if both the existing value
    * and the new value are plain (non-array) objects, their entries are
-   * shallow-merged so per-writer entries (e.g. each reviewer's lens entry
-   * in `plan-approval-gate.approvals`) accumulate instead of clobbering
+   * shallow-merged so per-writer entries accumulate instead of clobbering
    * each other.
    *
    * The whole read-merge-write sequence runs inside a SQLite transaction

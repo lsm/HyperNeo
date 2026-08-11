@@ -1091,23 +1091,19 @@ describe('VisualWorkflowEditor', () => {
       expect(container.querySelectorAll('[data-edge-id]').length).toBe(0);
     });
 
-    it('shows Plan & Decompose Workflow template and creates 3 workflow nodes', () => {
+    it('shows Coding with QA Workflow template and creates 3 workflow nodes', () => {
       const { getByTestId, getAllByTestId, container } = render(
         <VisualWorkflowEditor {...makeProps()} />
       );
       fireEvent.click(getByTestId('template-picker-button'));
       const options = getAllByTestId('template-option');
-      const pdOption = options.find(
-        (el) => el.getAttribute('data-template-label') === 'Plan & Decompose Workflow'
+      const qaOption = options.find(
+        (el) => el.getAttribute('data-template-label') === 'Coding with QA Workflow'
       );
-      expect(pdOption).toBeTruthy();
-      fireEvent.click(pdOption!);
+      expect(qaOption).toBeTruthy();
+      fireEvent.click(qaOption!);
 
       expect(getAllByTestId(/^workflow-node-/).length).toBe(3);
-      // Two visual edges: one bidirectional Planning↔Plan Review (gated forward
-      // + ungated feedback merge into a single edge) and one one-way
-      // Plan Review→Task Dispatcher.
-      expect(container.querySelectorAll('[data-channel-edge="true"]').length).toBe(2);
       expect(getByTestId('native-workflow-canvas-panel')).toBeTruthy();
     });
 
@@ -1117,10 +1113,10 @@ describe('VisualWorkflowEditor', () => {
       );
       fireEvent.click(getByTestId('template-picker-button'));
       const options = getAllByTestId('template-option');
-      const pdOption = options.find(
-        (el) => el.getAttribute('data-template-label') === 'Plan & Decompose Workflow'
+      const qaOption = options.find(
+        (el) => el.getAttribute('data-template-label') === 'Coding with QA Workflow'
       );
-      fireEvent.click(pdOption!);
+      fireEvent.click(qaOption!);
 
       expect(queryByTestId('channel-relation-config-panel')).toBeNull();
       const firstChannelHitbox = container.querySelector(
@@ -1269,15 +1265,15 @@ describe('VisualWorkflowEditor', () => {
       );
       fireEvent.click(getByTestId('template-picker-button'));
       const options = getAllByTestId('template-option');
-      const pdOption = options.find(
-        (el) => el.getAttribute('data-template-label') === 'Plan & Decompose Workflow'
+      const qaOption = options.find(
+        (el) => el.getAttribute('data-template-label') === 'Coding with QA Workflow'
       );
-      fireEvent.click(pdOption!);
+      fireEvent.click(qaOption!);
 
-      const planReviewNode = getAllByTestId('step-name').find((el) =>
-        el.textContent?.includes('Plan Review')
+      const reviewNode = getAllByTestId('step-name').find((el) =>
+        el.textContent?.includes('Review')
       );
-      fireEvent.click(planReviewNode!.closest('[data-testid^="workflow-node-"]')!);
+      fireEvent.click(reviewNode!.closest('[data-testid^="workflow-node-"]')!);
       expect(getByTestId('node-config-panel')).toBeTruthy();
 
       const linkButtons = queryAllByTestId('node-channel-link-button');

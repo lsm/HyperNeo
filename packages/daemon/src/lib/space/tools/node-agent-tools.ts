@@ -984,12 +984,12 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
               }
 
               if (Object.keys(authorizedData).length > 0) {
-                // Deep-merge map-type fields atomically: each reviewer in a
-                // vote-counting gate (e.g. plan-approval-gate `approvals: map`)
-                // writes a partial map keyed by their lens/identity. A naive
-                // shallow merge would replace the whole map with the latest
-                // writer's entry, losing prior votes. Doing the read-merge-write
-                // in JS would also race with `incrementAndResetCyclicChannel`
+                // Deep-merge map-type fields atomically: each writer in a
+                // vote-counting gate writes a partial map keyed by their
+                // identity. A naive shallow merge would replace the whole map
+                // with the latest writer's entry, losing prior votes. Doing the
+                // read-merge-write in JS would also race with
+                // `incrementAndResetCyclicChannel`
                 // (which clears the gate on revision feedback) — if a stale
                 // snapshot was read before the reset and written back after,
                 // cleared votes would resurrect. Push the deep-merge into the

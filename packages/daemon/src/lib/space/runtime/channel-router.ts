@@ -913,8 +913,7 @@ export class ChannelRouter {
     // Evaluate the channel's gate first when one exists. If the gate is
     // closed, throw without creating any pending node_executions for the
     // target — otherwise the tick loop would spawn agent sessions for
-    // gates that have not yet opened (e.g. Task Dispatcher activating
-    // before all 4 reviewers approve in plan-approval-gate).
+    // gates that have not yet opened.
     //
     // Cache optimization: once a gate has evaluated to `open: true`, skip
     // re-evaluation on subsequent messages. Exception: cyclic channels

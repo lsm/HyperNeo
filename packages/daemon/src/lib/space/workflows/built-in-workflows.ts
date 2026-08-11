@@ -100,13 +100,11 @@ const builtInSeederLog = new Logger('seed-built-in-workflows');
 const LEGACY_PR_READY_GATE_IDS = new Set([
   'code-ready-gate',
   'research-ready-gate',
-  'plan-pr-gate',
   'code-pr-gate',
 ]);
 const LEGACY_PR_READY_TEMPLATE_ROUTES = new Set([
   'code-ready-gate:Coding:Review',
   'research-ready-gate:Research:Review',
-  'plan-pr-gate:Planning:Plan Review',
   'code-pr-gate:Coding:Review',
 ]);
 
@@ -136,11 +134,6 @@ const RETIRED_CODER_NO_MERGE_GUARD: DeclarativeToolGuard = {
 // ---------------------------------------------------------------------------
 // Template node ID constants (used as stable IDs for workflow nodes and startNodeId)
 // ---------------------------------------------------------------------------
-
-// Plan & Decompose node IDs
-const PD_PLANNING_NODE = 'tpl-pd-planning';
-const PD_PLAN_REVIEW_NODE = 'tpl-pd-plan-review';
-const PD_TASK_DISPATCHER_NODE = 'tpl-pd-task-dispatcher';
 
 /**
  * Review-posted gate.
@@ -184,24 +177,6 @@ function reviewerFeedbackProcedure(upstreamNodeName: string): string {
   );
 }
 
-const PD_PLANNING_PROMPT =
-  'You are the Planning node in a Plan & Decompose Workflow. Your role is to turn the user goal ' +
-  'into a concrete, decomposable plan that a Task Dispatcher can fan out into standalone tasks.\n\n' +
-  'Your plan must include:\n' +
-  '- Goal summary: what is being built, migrated, or delivered, in one paragraph\n' +
-  '- Work items: a numbered list of actionable items — each a unit small enough for one task, ' +
-  'with a clear title, 2-4 sentence description, and suggested priority (low/normal/high/urgent)\n' +
-  '- Dependencies: between work items (item B depends on item A)\n' +
-  '- Out of scope: what is intentionally not included\n' +
-  '- Open questions: anything that needs clarification before tasks are dispatched\n\n' +
-  'Write the plan to `plan.md` at the repo root, commit it, and open/update a PR targeting the ' +
-  'default branch. After the PR is open and mergeable, hand off to Plan Review by calling ' +
-  '`send_message(target="Plan Review", message="<short summary>", data: { pr_url: "<plan PR url>" })`. ' +
-  'The hook validates the PR is open and mergeable before Plan Review activates. Without this explicit ' +
-  '`pr_url` the send is blocked. Always re-supply ' +
-  '`data: { pr_url }` on every send to Plan Review — the hook runs on every send, so the ' +
-  'URL must be reasserted after every revision.';
-
 const CODEX_REACTION_APPROVAL_GUIDANCE =
   'After posting your approval review, verify the Codex review bot reaction status ' +
   'before closing or handing off. Use the run-scoped GraphQL reaction lookup ' +
@@ -226,79 +201,6 @@ const CODEX_REACTION_APPROVAL_GUIDANCE =
   '`+1` after the timeout window elapses, proceed only with a warning recorded in your ' +
   'result artifact. Do not close the task before the Codex bot has `+1` unless that ' +
   'timeout window has elapsed.';
-
-const PD_PLAN_REVIEW_PROMPT =
-  'You are one of four independent Plan Reviewers. Review the plan PR through your lens before ' +
-  'tasks are dispatched. Use the Reviewer System Contract for review quality and severity.\n\n' +
-  'Plan Review is not the end node: do not call approve_task or submit_for_approval. Your terminal ' +
-  'action is sending your `approvals` vote in the Task Dispatcher handoff data. Vote approved only for zero P0-P3 ' +
-  'lens findings; otherwise vote rejected and send actionable feedback to Planning.\n\n' +
-  CODEX_REACTION_APPROVAL_GUIDANCE +
-  '\n\n' +
-  'Procedure: read the PR diff with `gh pr diff` / `gh pr view`, post a visible PR review comment, then ' +
-  'send_message(target="Task Dispatcher", message: "<short summary>", data: { approvals: { "<your lens>": "approved" }, ' +
-  'pr_url: "<plan PR url>" }). Early approvals normally get a hook-blocked response; ' +
-  'the hook records each vote until all four approvals are present. On rejection, send ' +
-  '`{ "<your lens>": "rejected" }` to Planning with required changes.';
-
-const PD_TASK_DISPATCHER_PROMPT =
-  'You are the Task Dispatcher in a Plan & Decompose Workflow. You are the end node. ' +
-  'All four Plan Reviewers have approved the plan — your job is to fan the plan out into ' +
-  'standalone follow-up tasks using the `create_standalone_task` MCP tool. Each task ' +
-  'description must include stacked PR instructions so the downstream coder knows exactly ' +
-  'which base branch to target, forming a reviewable PR chain across the plan.\n\n' +
-  'Follow the terminal-action tool contract. approve_task/submit_for_approval are final ' +
-  'actions; use only after every downstream task is created and every returned task ID is ' +
-  'recorded in a result artifact. If dispatch is incomplete, send feedback to Planning and stop.\n\n' +
-  'Steps:\n' +
-  '1. Read the approved plan from the plan PR (`gh pr diff` or `gh pr view --json files`). ' +
-  'Identify each actionable work item in order and record its title, description, priority, ' +
-  'and acceptance criteria.\n' +
-  '2. Generate a stack prefix from the plan title: a short kebab-case slug derived from the ' +
-  'key words, e.g. "Migrate auth to JWT tokens" → "migrate-auth-jwt", "Add file upload ' +
-  'support" → "add-file-upload". All branches in the stack share this prefix so they are ' +
-  'grouped: `plan/<prefix>/<item-slug>`.\n' +
-  '3. Create standalone tasks in BOTTOM-UP order (item 1 first, then item 2, etc.) by ' +
-  'calling `create_standalone_task({ title, description, priority, depends_on })` for each. ' +
-  'ALWAYS pass `depends_on` as a structured array of prerequisite task IDs so the runtime can ' +
-  'enforce ordering, block dependents until prerequisites are done, and cascade-cancel on ' +
-  'failure. Do NOT rely on prose-only dependency hints — they are informational, not enforced.\n\n' +
-  '   - BOTTOM task (item 1): `depends_on: []` (no prerequisites).\n' +
-  '   - MIDDLE / TOP tasks (item N > 1): `depends_on: [<task_id of item N-1>]`.\n\n' +
-  'The `description` must contain the original plan item content PLUS a ' +
-  '"## Stacked PR Instructions" section appended at the end.\n\n' +
-  '   For the BOTTOM task (item 1 — PR base is `dev`):\n' +
-  '   ```\n' +
-  '   ## Stacked PR Instructions\n' +
-  '   This task is the bottom of a stacked PR chain. When creating your PR:\n' +
-  '   - Branch name: plan/<stack-prefix>/<item-1-slug>\n' +
-  '   - Base branch: dev\n' +
-  '   - PR body must include: "Part of stack: <plan title>. PR 1 of N (bottom)."\n' +
-  '   ```\n\n' +
-  "   For MIDDLE and TOP tasks (item N where N > 1 — PR base is the previous item's branch):\n" +
-  '   ```\n' +
-  '   ## Stacked PR Instructions\n' +
-  '   This task is part of a stacked PR chain. When creating your PR:\n' +
-  '   - Branch name: plan/<stack-prefix>/<item-N-slug>\n' +
-  '   - Base branch: plan/<stack-prefix>/<item-(N-1)-slug>\n' +
-  '   - PR body must include: "Part of stack: <plan title>. PR N of [total]."\n' +
-  '   - IMPORTANT: The task below you in the stack (task #<prev-task-id>) must have an ' +
-  'open or merged PR on branch plan/<stack-prefix>/<item-(N-1)-slug> before you create ' +
-  'yours. Verify with: `gh pr list --head plan/<stack-prefix>/<item-(N-1)-slug>`\n' +
-  '   - This task depends on task #<prev-task-id>. Start implementation only after ' +
-  "that task's branch exists.\n" +
-  '   ```\n\n' +
-  '4. Collect the returned task IDs. Build a stack map: ' +
-  '{ prefix, items: [{ title, task_id, branch, base_branch, position }] }.\n' +
-  '5. Call `save_artifact({ shape: "decision", summary: "Created N tasks from plan: <short list>", ' +
-  'data: { recommendation: "dispatched", created_task_ids: [<ids>], stack_prefix: "<prefix>", ' +
-  'stack_branches: ["plan/<prefix>/<item-1-slug>", "plan/<prefix>/<item-2-slug>", ...] } })` to record the dispatch outcome.\n' +
-  '6. Call `approve_task()` as your final action. If autonomy blocks self-close, call ' +
-  '`submit_for_approval({ reason: "..." })` instead.\n\n' +
-  'CRITICAL: Do NOT create branches, make commits, push to git, or open PRs yourself — ' +
-  "that is the downstream coder's job. Do NOT implement the work items yourself. " +
-  'Do NOT create fewer tasks than the plan requires. ' +
-  'If the plan is empty or ambiguous, send feedback to Planning before closing the task.';
 
 const REVIEW_THREAD_RESOLUTION_GUIDANCE =
   'After pushing fixes for review feedback, resolve ALL open GitHub review conversation ' +
@@ -965,230 +867,6 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 };
 
 /**
- * Plan & Decompose Workflow
- *
- * Three-node graph: Planner → 4-Reviewer Plan Review → Task Dispatcher.
- * Useful for multi-task goals ("build X feature", "migrate Y system") that
- * should be broken into smaller standalone tasks before any coding starts.
- *
- * Main progression:
- *   Planning → Plan Review (send_message hook validates plan PR is open/mergeable)
- *   Plan Review → Task Dispatcher (plan-approval-gate: all 4 reviewers approve)
- *
- * Cyclic feedback:
- *   Plan Review → Planning (revision requests, maxCycles: 5)
- *
- * Task Dispatcher (end node) creates follow-up tasks via `create_standalone_task`
- * and calls `save_artifact({ shape: 'decision', data: { created_task_ids } })`
- * before `approve_task()` closes the run.
- */
-export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
-  id: '',
-  spaceId: '',
-  name: 'Plan & Decompose Workflow',
-  handle: 'plan-decompose-workflow',
-  description:
-    'Planning-only workflow that ends by creating follow-up tasks rather than writing code. ' +
-    'A Planner drafts a plan PR, four Reviewers review it through different lenses ' +
-    '(architecture, security, correctness, UX), and a Task Dispatcher fans the approved plan ' +
-    'out into standalone tasks via create_standalone_task. Each task description includes ' +
-    'stacked PR instructions — branch name, base branch, and dependency ordering — so ' +
-    'downstream coders automatically produce a reviewable PR chain (each PR targets the ' +
-    'branch of the item below it, bottom-up from dev). Use for multi-task goals that ' +
-    'should be broken down before any coding starts.',
-  nodes: [
-    {
-      id: PD_PLANNING_NODE,
-      name: 'Planning',
-      agents: [
-        {
-          agentId: 'Planner',
-          name: 'planner',
-          customPrompt: {
-            value:
-              PD_PLANNING_PROMPT +
-              '\n\n' +
-              'Expected inputs: A high-level goal from the workflow trigger.\n' +
-              'Expected outputs: `plan.md` committed to a PR branch, with an open mergeable PR.\n\n' +
-              'Steps:\n' +
-              '1. Analyze the goal and explore the relevant codebase\n' +
-              '2. Decompose the goal into concrete, small-enough work items\n' +
-              '3. Write `plan.md` — one section per work item with title, description, priority\n' +
-              '4. Commit and open/update a PR against the default branch\n' +
-              '5. Hand off to Plan Review by calling ' +
-              '`send_message(target="Plan Review", message="<short summary>", ' +
-              'data: { pr_url: "<plan PR url>" })`. The hook validates the PR is open and ' +
-              'mergeable before Plan Review activates. Skipping this call or an unready PR ' +
-              'blocks the send.\n' +
-              '6. Wait for Plan Review feedback. If re-activated, address each reviewer ' +
-              'comment, update `plan.md`, push to the same PR branch, then repeat step 5 ' +
-              '(re-supply `data: { pr_url }` — the hook runs on every send).',
-          },
-        },
-      ],
-    },
-    {
-      id: PD_PLAN_REVIEW_NODE,
-      name: 'Plan Review',
-      requireCodexApproval: true,
-      agents: [
-        {
-          agentId: 'Reviewer',
-          name: 'architecture-reviewer',
-          customPrompt: {
-            value:
-              PD_PLAN_REVIEW_PROMPT +
-              '\n\n' +
-              'Your lens: **Architecture**. Focus on module boundaries, coupling between work ' +
-              'items, long-term maintainability, and whether the decomposition will hold up as ' +
-              'the system grows. Flag items that smuggle unrelated concerns together or create ' +
-              'hidden cross-cutting dependencies.\n\n' +
-              'When voting, your lens key is `"architecture"` — send ' +
-              '`data: { approvals: { architecture: "approved" }, pr_url: "<plan PR url>" }` ' +
-              'to Task Dispatcher when approving. Send rejected votes with findings to Planning.',
-          },
-        },
-        {
-          agentId: 'Reviewer',
-          name: 'security-reviewer',
-          customPrompt: {
-            value:
-              PD_PLAN_REVIEW_PROMPT +
-              '\n\n' +
-              'Your lens: **Security**. Focus on the threat model, input validation, ' +
-              'authentication/authorization, secrets handling, and supply-chain risk for any ' +
-              'new dependencies. Flag items that expose user data, bypass existing auth checks, ' +
-              'or rely on untrusted input without validation.\n\n' +
-              'When voting, your lens key is `"security"` — send ' +
-              '`data: { approvals: { security: "approved" }, pr_url: "<plan PR url>" }` ' +
-              'to Task Dispatcher when approving. Send rejected votes with findings to Planning.',
-          },
-        },
-        {
-          agentId: 'Reviewer',
-          name: 'correctness-reviewer',
-          customPrompt: {
-            value:
-              PD_PLAN_REVIEW_PROMPT +
-              '\n\n' +
-              'Your lens: **Correctness**. Focus on edge cases, error handling, data ' +
-              'consistency across failures, idempotency, and race conditions. Flag items ' +
-              'whose acceptance criteria are vague, whose failure modes are unclear, or ' +
-              'whose tests would not catch the obvious regressions.\n\n' +
-              'When voting, your lens key is `"correctness"` — send ' +
-              '`data: { approvals: { correctness: "approved" }, pr_url: "<plan PR url>" }` ' +
-              'to Task Dispatcher when approving. Send rejected votes with findings to Planning.',
-          },
-        },
-        {
-          agentId: 'Reviewer',
-          name: 'ux-reviewer',
-          customPrompt: {
-            value:
-              PD_PLAN_REVIEW_PROMPT +
-              '\n\n' +
-              'Your lens: **UX**. Focus on user-visible behavior, API ergonomics, ' +
-              'documentation, error messages, and upgrade/migration experience for ' +
-              'existing users. Flag items that change public interfaces without describing ' +
-              'what users will see or how docs will be updated.\n\n' +
-              'When voting, your lens key is `"ux"` — send ' +
-              '`data: { approvals: { ux: "approved" }, pr_url: "<plan PR url>" }` ' +
-              'to Task Dispatcher when approving. Send rejected votes with findings to Planning.',
-          },
-        },
-      ],
-    },
-    {
-      id: PD_TASK_DISPATCHER_NODE,
-      name: 'Task Dispatcher',
-      agents: [
-        {
-          agentId: 'General',
-          name: 'task-dispatcher',
-          customPrompt: {
-            value:
-              PD_TASK_DISPATCHER_PROMPT +
-              '\n\n' +
-              'Expected inputs: An approved plan PR (all 4 reviewers sent approved votes).\n' +
-              'Expected outputs: One standalone task per actionable work item in the plan, ' +
-              'then save_artifact({ shape: "decision", summary: "Dispatched N tasks", data: { recommendation: "dispatched", created_task_ids: [...] } }).\n\n' +
-              'Tool contract:\n' +
-              "- `create_standalone_task` is available from the space's MCP server and " +
-              'creates a task owned by the same space as this workflow.',
-          },
-        },
-      ],
-    },
-  ],
-  startNodeId: PD_PLANNING_NODE,
-  endNodeId: PD_TASK_DISPATCHER_NODE,
-  tags: ['planning', 'decomposition'],
-  createdAt: 0,
-  updatedAt: 0,
-  // Plan & Decompose ends by creating follow-up tasks (no merges, no
-  // destructive actions) but does alter the task graph — match the default
-  // Coding Workflow tier.
-  completionAutonomyLevel: 3,
-  hooks: [
-    {
-      id: 'plan-pr-ready',
-      enabled: true,
-      label: 'PR Ready',
-      sourceNode: 'Planning',
-      targetNode: 'Plan Review',
-      method: 'send_message',
-      classification: 'validation',
-      order: 0,
-      validator: { kind: 'built_in', id: 'pr_ready' },
-      authorizedCallers: [{ sourceNode: 'Planning', agentSlots: ['planner'] }],
-    },
-  ],
-  gates: [
-    {
-      id: 'plan-approval-gate',
-      label: 'Plan Approvals',
-      description:
-        'All four Plan Reviewers must approve the plan before Task Dispatcher activates. ' +
-        'Each reviewer writes to the `approvals` map with their lens name as the key ' +
-        '(architecture, security, correctness, ux) and the string `"approved"` as the ' +
-        "value. The auto-gate-write deep-merges map fields, so each reviewer's entry " +
-        'accumulates without overwriting earlier votes. Gate passes when ≥ 4 entries ' +
-        'have value `"approved"`. Note: `resetOnCycle: true` means all approvals are ' +
-        'cleared when Plan Review→Planning revision feedback fires — fresh votes are ' +
-        'collected after each plan revision because the plan diff has changed.',
-      fields: [
-        {
-          name: 'approvals',
-          type: 'map',
-          writers: ['Plan Review'],
-          check: { op: 'count', match: 'approved', min: 4 },
-        },
-      ],
-      resetOnCycle: true,
-    },
-  ],
-  channels: [
-    {
-      from: 'Planning',
-      to: 'Plan Review',
-      label: 'Planning → Plan Review',
-    },
-    {
-      from: 'Plan Review',
-      to: 'Task Dispatcher',
-      gateId: 'plan-approval-gate',
-      label: 'Plan Review → Task Dispatcher',
-    },
-    {
-      from: 'Plan Review',
-      to: 'Planning',
-      maxCycles: 5,
-      label: 'Plan Review → Planning (revision requested)',
-    },
-  ],
-};
-
-/**
  * Coding with QA Workflow
  *
  * Three-node workflow for backend+frontend tasks that need explicit code review
@@ -1688,10 +1366,6 @@ export function getBuiltInWorkflows(): SpaceWorkflow[] {
   // `default`-tagged workflow, so the stable Coding template is the default for
   // newly created AND upgraded spaces.
   //
-  // PLAN_AND_DECOMPOSE_WORKFLOW is tagged `planning` / `decomposition` (NOT
-  // `default`) so the LLM picks it explicitly for multi-task goals that should
-  // be broken down before coding starts.
-  //
   // Note: this ordering only affects *newly created* spaces — seedBuiltInWorkflows
   // adds missing templates to existing spaces rather than reordering them, so
   // upgraded spaces keep their historical created_at order (and rely on the
@@ -1699,7 +1373,6 @@ export function getBuiltInWorkflows(): SpaceWorkflow[] {
   const workflows = [
     CODING_WORKFLOW,
     CODING_WITH_QA_WORKFLOW,
-    PLAN_AND_DECOMPOSE_WORKFLOW,
     RESEARCH_WORKFLOW,
     REVIEW_ONLY_WORKFLOW,
   ];
@@ -2177,11 +1850,11 @@ const RETIRED_HARDCODED_FULLSTACK_CODING_STEP_PROMPT =
   '`save_artifact` alone will not open `code-pr-gate`\n';
 
 // Retired shared Codex approval guidance (pre codex-bot-rename + 2h timeout
-// fix). Used by patchKnownBuiltInPromptDrift to recognize persisted Plan
-// Review and Fullstack Review agent prompts that still cite `codex[bot]` and
-// the old "10 minutes" timeout, and swap them to the current guidance during
-// restamp. Without this, existing seeded spaces keep telling reviewers the
-// window is 10 minutes while the migrated gate/hook now blocks for 2 hours.
+// fix). Used by patchKnownBuiltInPromptDrift to recognize persisted Fullstack
+// Review agent prompts that still cite `codex[bot]` and the old "10 minutes"
+// timeout, and swap them to the current guidance during restamp. Without this,
+// existing seeded spaces keep telling reviewers the window is 10 minutes while
+// the migrated gate/hook now blocks for 2 hours.
 const RETIRED_CODEX_REACTION_APPROVAL_GUIDANCE =
   'After posting your approval review, verify codex[bot] reaction status before ' +
   'closing or handing off. Use `gh api repos/{owner}/{repo}/issues/{number}/reactions` ' +
@@ -2225,18 +1898,6 @@ const SHAPE_PR_LINK_REVIEW_ONLY =
   'save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } }) to record the PR';
 const RETIRED_TYPE_RESULT_PR_LINK_REVIEW_ONLY =
   'save_artifact({ type: "result", data: { pr_url: "<url>" } }) to save a result artifact';
-const SHAPE_DECISION_DISPATCHER_STACK =
-  'save_artifact({ shape: "decision", summary: "Created N tasks from plan: <short list>", ' +
-  'data: { recommendation: "dispatched", created_task_ids: [<ids>], stack_prefix: "<prefix>", ' +
-  'stack_branches: ["plan/<prefix>/<item-1-slug>", "plan/<prefix>/<item-2-slug>", ...] } })` to record the dispatch outcome';
-const RETIRED_TYPE_RESULT_DISPATCHER_STACK =
-  'save_artifact({ type: "result", append: true, summary: "Created N tasks from plan: <short list>", ' +
-  'created_task_ids: [<ids>], stack_prefix: "<prefix>", ' +
-  'stack_branches: ["plan/<prefix>/<item-1-slug>", "plan/<prefix>/<item-2-slug>", ...] })` to record the dispatch audit entry';
-const SHAPE_DECISION_DISPATCHER_SHORT =
-  'save_artifact({ shape: "decision", summary: "Dispatched N tasks", data: { recommendation: "dispatched", created_task_ids: [...] } })';
-const RETIRED_TYPE_RESULT_DISPATCHER_SHORT =
-  'save_artifact({ type: "result", append: true, created_task_ids: [...] })';
 const SHAPE_NOTE_QA_FAILED =
   '`save_artifact({ shape: "note", kind: "qa", key: "cycle-<N>", summary: "QA failed (cycle <N>): ..." })` to record the audit entry — a note, never a terminal decision, and keyed per cycle (<N> = this QA round, 1-based) so each failure cycle keeps its own repro evidence instead of overwriting the last. Do ';
 const RETIRED_TYPE_RESULT_QA_FAILED =
@@ -2364,16 +2025,6 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
   // Handoff-only swap for the pre-fix variant (covers the rare case where
   // guidance was already patched but handoff was not).
   [[CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_PRE_FIX_FULLSTACK_REVIEW_HANDOFF_PROMPT]],
-  // Plan Review procedure: the reviewer briefly used the authed `get_pr_diff`
-  // tool (now removed — the reviewer has bash again). Existing seeded spaces
-  // that carried the get_pr_diff line converge back to the gh-based procedure
-  // during restamp.
-  [
-    [
-      'Procedure: read the PR diff with `gh pr diff` / `gh pr view`, post a visible PR review comment, then ',
-      'Procedure: read the PR diff with the `get_pr_diff` tool, post a visible PR review comment, then ',
-    ],
-  ],
   // Post-approval redesign: the re-approval paragraph was APPENDED to the
   // Reviewer end-node prompts (Coding + Research) and the Fullstack QA end-node
   // prompt. Existing template-linked workflows retain the pre-redesign prompt
@@ -2396,8 +2047,6 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
     [SHAPE_PR_LINK, RETIRED_TYPE_RESULT_PR_LINK],
   ],
   [[SHAPE_PR_LINK_REVIEW_ONLY, RETIRED_TYPE_RESULT_PR_LINK_REVIEW_ONLY]],
-  [[SHAPE_DECISION_DISPATCHER_STACK, RETIRED_TYPE_RESULT_DISPATCHER_STACK]],
-  [[SHAPE_DECISION_DISPATCHER_SHORT, RETIRED_TYPE_RESULT_DISPATCHER_SHORT]],
   [[SHAPE_NOTE_QA_FAILED, RETIRED_TYPE_RESULT_QA_FAILED]],
   [[SHAPE_QA_ALL_GREEN, RETIRED_TYPE_RESULT_QA_ALL_GREEN]],
 ] as const;

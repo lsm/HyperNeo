@@ -215,16 +215,15 @@ test.describe('Space Creation UX', () => {
     // Navigate to the Workflows tab
     await page.getByTestId('space-configure-tab-workflows').click();
 
-    // Verify all built-in workflows are visible. The five canonical seeded
+    // Verify all built-in workflows are visible. The four canonical seeded
     // templates: the stable coder-owned Coding and Coding with QA, plus the
-    // three non-coding templates. The former merger variants
+    // two non-coding templates. The former merger variants
     // (Coding with Merger, Coding with QA Merger) were removed.
     const BUILT_IN_WORKFLOWS = [
       'Coding',
       'Coding with QA',
       'Research Workflow',
       'Review-Only Workflow',
-      'Plan & Decompose Workflow',
     ];
     for (const workflowName of BUILT_IN_WORKFLOWS) {
       await expect(page.locator('text=' + workflowName).first()).toBeVisible({ timeout: 5000 });

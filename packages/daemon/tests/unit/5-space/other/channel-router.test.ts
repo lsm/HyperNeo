@@ -3533,9 +3533,8 @@ describe('ChannelRouter', () => {
     // -----------------------------------------------------------------------
 
     test('review-votes-gate: QA blocked until all 3 reviewers approve (min: 3)', async () => {
-      // Parallel vote-counting gate pattern (also used by the Plan & Decompose
-      // plan-approval-gate with min:4): each reviewer writes independently, and
-      // the downstream node only activates once the vote count reaches the min.
+      // Parallel vote-counting gate pattern: each reviewer writes independently,
+      // and the downstream node only activates once the vote count reaches the min.
       const gate: Gate = {
         id: 'review-votes-gate',
         fields: [

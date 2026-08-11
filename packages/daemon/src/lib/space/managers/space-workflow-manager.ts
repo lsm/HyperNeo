@@ -44,7 +44,6 @@ import {
   CODING_WORKFLOW,
   CODING_WITH_QA_WORKFLOW,
   LEGACY_CODING_TEMPLATE_IDENTITIES,
-  PLAN_AND_DECOMPOSE_WORKFLOW,
   RESEARCH_WORKFLOW,
   REVIEW_ONLY_WORKFLOW,
 } from '../workflows/built-in-workflows';
@@ -60,13 +59,9 @@ const RESERVED_WORKFLOW_AGENT_NAMES = new Set(['space-agent', 'task-agent']);
 // hook-based topology instead of being left with a stale gated channel + a
 // duplicated open route.
 const BUILT_IN_TEMPLATE_GATES = new Map(
-  [
-    CODING_WORKFLOW,
-    CODING_WITH_QA_WORKFLOW,
-    PLAN_AND_DECOMPOSE_WORKFLOW,
-    RESEARCH_WORKFLOW,
-    REVIEW_ONLY_WORKFLOW,
-  ].map((workflow) => [workflow.name, workflow.gates ?? []])
+  [CODING_WORKFLOW, CODING_WITH_QA_WORKFLOW, RESEARCH_WORKFLOW, REVIEW_ONLY_WORKFLOW].map(
+    (workflow) => [workflow.name, workflow.gates ?? []]
+  )
 );
 for (const identity of LEGACY_CODING_TEMPLATE_IDENTITIES) {
   const canonical = [CODING_WORKFLOW, CODING_WITH_QA_WORKFLOW].find(

@@ -16,7 +16,7 @@ const MIGRATION_DOCS_URL = 'docs/features/space-workflows.md#workflow-hooks';
 
 /**
  * Human label for a codex reaction timeout (seconds), embedded in the block
- * reason text of migrated plan/review approval hooks. Uses "N-hour" when the
+ * reason text of a migrated review-approval hook. Uses "N-hour" when the
  * value divides evenly into hours, otherwise "N-minute" (rounded up) so a
  * custom per-node override (e.g. 300s) reads as "5-minute", not "0.1-hour".
  */
@@ -24,105 +24,6 @@ function formatCodexTimeoutLabel(seconds: number): string {
   if (seconds >= 3600 && seconds % 3600 === 0) return `${seconds / 3600}-hour`;
   return `${Math.max(1, Math.round(seconds / 60))}-minute`;
 }
-
-/**
- * Builds the plan-approval hook script with a Codex reaction timeout window
- * of `timeoutSeconds` (default 7200 / env-overridable via
- * `HYPERNEO_CODEX_REVIEW_BOT_TIMEOUT_SECONDS`). Per-node `codexTimeoutSeconds`
- * overrides are honored at migration time by passing the resolved value here.
- */
-function buildApprovalsScript(timeoutSeconds: number = CODEX_REVIEW_BOT_TIMEOUT_SECONDS): string {
-  const label = formatCodexTimeoutLabel(timeoutSeconds);
-  return [
-    'STATE=$(jq -c \'.approvals // {}\' <<< "${HYPERNEO_HOOK_LOCAL_STATE_JSON:-{}}" 2>/dev/null || echo {})',
-    'WAIT_STARTED=$(jq -r \'.codex_wait_started_at // empty\' <<< "${HYPERNEO_HOOK_LOCAL_STATE_JSON:-{}}" 2>/dev/null || true)',
-    'WAIT_HEAD=$(jq -r \'.codex_wait_head_oid // empty\' <<< "${HYPERNEO_HOOK_LOCAL_STATE_JSON:-{}}" 2>/dev/null || true)',
-    'INCOMING=$(jq -c \'(.data.approvals // .approvals // {})\' <<< "${HYPERNEO_PARAMS_JSON:-{}}" 2>/dev/null || echo {})',
-    'MERGED=$(jq -c -n --argjson a "$STATE" --argjson b "$INCOMING" \'$a * $b\')',
-    'COUNT=$(jq \'to_entries | map(select(.value == "approved" or .value == true)) | length\' <<< "$MERGED")',
-    'if [ "$COUNT" -lt 4 ]; then jq -n --argjson approvals "$MERGED" --argjson count "$COUNT" \'{"type":"block","reason":"Plan dispatch requires four approved plan-review votes","data":{"approvals":$approvals,"approval_count":$count}}\'; exit 0; fi',
-    'PR_URL=$(jq -r \'(.data.pr_url // .pr_url // empty)\' <<< "${HYPERNEO_PARAMS_JSON:-{}}" 2>/dev/null || true)',
-    'if [ -z "$PR_URL" ]; then echo "Plan approval requires pr_url for Codex validation" >&2; exit 1; fi',
-    'if ! PR_JSON=$(gh pr view "$PR_URL" --json number,headRefOid,url,headRefName,headRepositoryOwner,headRepository 2>/dev/null); then echo "Failed to fetch plan PR for Codex validation" >&2; exit 1; fi',
-    'PR_NUMBER=$(jq -r \'.number\' <<< "$PR_JSON")',
-    'HEAD_OID=$(jq -r \'.headRefOid // empty\' <<< "$PR_JSON")',
-    'if [ -z "$HEAD_OID" ]; then echo "Could not resolve current PR head for Codex validation" >&2; exit 1; fi',
-    'HEAD_REF=$(jq -r \'.headRefName // empty\' <<< "$PR_JSON")',
-    // For cross-repository PRs, pushes to the PR branch land in the HEAD (fork)
-    // repository, not the base — extract its owner/name here; the events query
-    // below uses them, falling back to the base owner/repo (parsed after this).
-    'HEAD_REPO_OWNER=$(jq -r \'.headRepositoryOwner.login // empty\' <<< "$PR_JSON")',
-    'HEAD_REPO_NAME=$(jq -r \'.headRepository.name // empty\' <<< "$PR_JSON")',
-    'PR_API_URL=$(jq -r \'.url // empty\' <<< "$PR_JSON")',
-    'PR_HOST=$(sed -E "s#https://([^/]+)/.*#\\1#" <<< "$PR_API_URL")',
-    'OWNER=$(sed -E "s#https://[^/]+/([^/]+)/([^/]+)/pull/[0-9]+.*#\\1#" <<< "$PR_API_URL")',
-    'REPO=$(sed -E "s#https://[^/]+/([^/]+)/([^/]+)/pull/[0-9]+.*#\\2#" <<< "$PR_API_URL")',
-    'if [ -z "$PR_HOST" ] || [ -z "$OWNER" ] || [ -z "$REPO" ] || [ "$OWNER" = "$PR_API_URL" ]; then echo "Failed to resolve repository from PR URL" >&2; exit 1; fi',
-    'ALLOWED_HOST="${GH_HOST:-github.com}"',
-    'if [ "$PR_HOST" != "github.com" ] && [ "$PR_HOST" != "$ALLOWED_HOST" ]; then echo "PR host ${PR_HOST} is not allowed for GitHub lookups" >&2; exit 1; fi',
-    // Codex-approval freshness is anchored to the server-recorded PUSH time of
-    // the current HEAD — not the reviewer's handoff and not the (forgeable)
-    // commit committer date. A +1 created after the push post-dates this code,
-    // so a compromised coder cannot back-date a new head (the PushEvent time is
-    // server-recorded, immune to GIT_COMMITTER_DATE) to satisfy a prior +1. This
-    // fixes #900 (a valid +1 posted before the handoff is no longer discarded).
-    // NOTE the residual: a +1 is not commit-bound, so one computed for an earlier
-    // head and posted after this push is indistinguishable from a +1 for this
-    // head — on a recorded-wait retry it can still satisfy the hook. That race
-    // is inherent to accepting pre-handoff +1s (i.e. to fixing #900); closing it
-    // fully would require COMMENT_OK-only approvals. The first handoff is safe:
-    // a reaction needs a wait recorded for THIS head (codex_wait_head_oid ==
-    // HEAD_OID), so a lingering +1 cannot approve an unreviewed head immediately
-    // — only a SHA comment (COMMENT_OK) may. The push time is the PushEvent to
-    // the PR's head ref (payload.ref == refs/heads/<head ref>) whose head/commits
-    // include HEAD_OID — filtering by ref means a push of the same SHA to another
-    // branch cannot advance the baseline. Push events are read from the HEAD
-    // repository (headRepositoryOwner/headRepository) so public/same-org
-    // cross-repository PRs resolve a baseline (pushes land in the fork, not the
-    // base); private forks the token can't read still 404 → workflow-start
-    // fallback. If that lookup fails we fall back to the non-forgeable (but
-    // coarse) workflow-run start; without a baseline no reaction counts as fresh.
-    // ms are stripped so a lexicographic comparison against GitHub's
-    // second-precision created_at is exact.
-    'EVENTS_OWNER="${HEAD_REPO_OWNER:-$OWNER}"',
-    'EVENTS_REPO="${HEAD_REPO_NAME:-$REPO}"',
-    'PUSH_EVENTS=$(gh api --hostname "$PR_HOST" --paginate --slurp "repos/${EVENTS_OWNER}/${EVENTS_REPO}/events?per_page=100" 2>/dev/null || true)',
-    'HEAD_BASELINE=$(jq -r --arg head "$HEAD_OID" --arg ref "$HEAD_REF" \'[.[][] | select(.type == "PushEvent") | select(.payload.ref == ("refs/heads/" + $ref)) | select((.payload.head // "") == $head or any((.payload.commits // [])[]; (.sha // "") == $head))] | .[0].created_at // empty\' <<< "$PUSH_EVENTS" 2>/dev/null || true)',
-    'HEAD_BASELINE="${HEAD_BASELINE:-${HYPERNEO_WORKFLOW_START_ISO:-}}"',
-    'if [ -n "$HEAD_BASELINE" ] && [[ "$HEAD_BASELINE" =~ \\.[0-9]+Z$ ]]; then HEAD_BASELINE="${HEAD_BASELINE%.*}Z"; fi',
-    'COMMENTS=$(gh api --hostname "$PR_HOST" --paginate --slurp "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/comments?per_page=100") || { echo "Failed to fetch Codex comments" >&2; exit 1; }',
-    'REACTIONS=$(gh api --hostname "$PR_HOST" --paginate --slurp "repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/reactions?per_page=100") || { echo "Failed to fetch Codex reactions" >&2; exit 1; }',
-    'COMMENT_OK=$(jq --arg head "$HEAD_OID" \'[.[][] | select(((.user.login // "") | test("codex"; "i")) and ((.user.login // "") | endswith("[bot]")) and ((.body // "") | contains($head)))] | length\' <<< "$COMMENTS")',
-    'REACTION_OK=$(jq \'[.[][] | select(((.user.login // "") | test("codex"; "i")) and ((.user.login // "") | endswith("[bot]")) and .content == "+1")] | length\' <<< "$REACTIONS")',
-    'FRESH_REACTION_OK=$(jq --arg since "$HEAD_BASELINE" \'[.[][] | select(((.user.login // "") | test("codex"; "i")) and ((.user.login // "") | endswith("[bot]")) and .content == "+1" and (((.created_at // "") | sub("[.][0-9]+Z$"; "Z")) >= $since))] | length\' <<< "$REACTIONS")',
-    // Fail-closed: without a freshness baseline we cannot prove a reaction is
-    // for the current head, so treat none as fresh (a SHA comment still may).
-    'if [ -z "$HEAD_BASELINE" ]; then FRESH_REACTION_OK=0; fi',
-    'if [ "$COMMENT_OK" != "0" ] || { [ -n "$WAIT_STARTED" ] && [ "$WAIT_HEAD" = "$HEAD_OID" ] && [ "$FRESH_REACTION_OK" != "0" ]; }; then jq -n --argjson approvals "$MERGED" --argjson reaction_count "$REACTION_OK" --argjson fresh_reaction_count "$FRESH_REACTION_OK" \'{"type":"allow","data":{"approvals":$approvals,"codex_approved":true,"codex_reaction_count":$reaction_count,"codex_fresh_reaction_count":$fresh_reaction_count}}\'; exit 0; fi',
-    'NOW_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)',
-    `if [ -z "$WAIT_STARTED" ] || [ "$WAIT_HEAD" != "$HEAD_OID" ]; then jq -n --argjson approvals "$MERGED" --arg started "$NOW_ISO" --arg head "$HEAD_OID" '{"type":"block","reason":"Plan approval requires fresh Codex bot approval for current head or ${label} timeout from approval handoff","data":{"approvals":$approvals,"approval_count":4,"codex_wait_started_at":$started,"codex_wait_head_oid":$head}}'; exit 0; fi`,
-    'WAIT_STARTED_PARSE=${WAIT_STARTED%%.*}; WAIT_STARTED_PARSE=${WAIT_STARTED_PARSE%Z}Z',
-    'START_EPOCH=$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$WAIT_STARTED_PARSE" +%s 2>/dev/null || date -u -d "$WAIT_STARTED" +%s 2>/dev/null || echo 0)',
-    'NOW_EPOCH=$(date -u +%s)',
-    `if [ $((NOW_EPOCH - START_EPOCH)) -lt ${timeoutSeconds} ]; then jq -n --argjson approvals "$MERGED" --arg started "$WAIT_STARTED" --arg head "$HEAD_OID" '{"type":"block","reason":"Plan approval requires fresh Codex bot approval for current head or ${label} timeout from approval handoff","data":{"approvals":$approvals,"approval_count":4,"codex_wait_started_at":$started,"codex_wait_head_oid":$head}}'; exit 0; fi`,
-    'jq -n --argjson approvals "$MERGED" \'{"type":"allow","data":{"approvals":$approvals,"codex_approved":false,"codex_timed_out":true,"codex_warning":"No current-head Codex approval found before timeout"}}\'',
-  ].join('\n');
-}
-
-const APPROVALS_SCRIPT = buildApprovalsScript();
-
-const PLAN_APPROVAL_RESET_SCRIPT = [
-  'jq -n \'{"type":"record_state","stateForHook":{"__PLAN_APPROVAL_HOOK_ID__":{"approvals":null,"approval_count":0,"codex_wait_started_at":null,"codex_wait_head_oid":null}}}\'',
-].join('\n');
-
-const APPROVALS_WITHOUT_CODEX_SCRIPT = [
-  'STATE=$(jq -c \'.approvals // {}\' <<< "${HYPERNEO_HOOK_LOCAL_STATE_JSON:-{}}" 2>/dev/null || echo {})',
-  'INCOMING=$(jq -c \'(.data.approvals // .approvals // {})\' <<< "${HYPERNEO_PARAMS_JSON:-{}}" 2>/dev/null || echo {})',
-  'MERGED=$(jq -c -n --argjson a "$STATE" --argjson b "$INCOMING" \'$a * $b\')',
-  'COUNT=$(jq \'to_entries | map(select(.value == "approved" or .value == true)) | length\' <<< "$MERGED")',
-  'if [ "$COUNT" -lt 4 ]; then jq -n --argjson approvals "$MERGED" --argjson count "$COUNT" \'{"type":"block","reason":"Plan dispatch requires four approved plan-review votes","data":{"approvals":$approvals,"approval_count":$count}}\'; exit 0; fi',
-  'jq -n --argjson approvals "$MERGED" \'{"type":"allow","data":{"approvals":$approvals}}\'',
-].join('\n');
 
 const REVIEW_APPROVAL_WITHOUT_CODEX_SCRIPT = [
   'APPROVED=$(jq -r \'(.data.approved // .approved // false)\' <<< "${HYPERNEO_PARAMS_JSON:-{}}" 2>/dev/null || true)',
@@ -248,24 +149,6 @@ const KNOWN_GATE_PATTERNS: Record<string, Pattern> = {
     method: 'send_message',
     builtInId: 'review_posted',
   },
-  'plan-approval-gate': {
-    gateId: 'plan-approval-gate',
-    hookId: 'plan-approval',
-    routeSpecific: true,
-    label: 'Plan Approval',
-    method: 'send_message',
-    script: APPROVALS_SCRIPT,
-    githubLookup: true,
-  },
-  'plan-approval-feedback-reset': {
-    gateId: 'plan-approval-feedback-reset',
-    hookId: 'plan-approval-reset',
-    label: 'Plan Approval Reset',
-    method: 'send_message',
-    script: PLAN_APPROVAL_RESET_SCRIPT,
-    from: 'Plan Review',
-    to: 'Planning',
-  },
   'review-approval-gate': {
     gateId: 'review-approval-gate',
     hookId: 'review-approval',
@@ -374,8 +257,6 @@ function isBuiltInGateShape(gate: Gate | undefined, workflow: SpaceWorkflowLike)
         fields.some((field) => field.name === 'review_url') &&
         (!!gate.script || !!gate.validator)
       );
-    case 'plan-approval-gate':
-      return fields.length === 1 && fields[0]?.name === 'approvals' && !gate.script;
     case 'review-approval-gate':
       return fields.length === 1 && fields[0]?.name === 'approved' && !gate.script;
     default:
@@ -526,9 +407,6 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
   const hooksById = new Map((workflow.hooks ?? []).map((hook) => [hook.id, hook]));
   const gatesById = new Map((workflow.gates ?? []).map((gate) => [gate.id, gate]));
   const migratedGateIds = new Set<string>();
-  const planApprovalHookIds = new Set<string>();
-  const planApprovalSourceNodes = new Set<string>();
-  const planApprovalTargetNodes = new Set<string>();
 
   const channels = (workflow.channels ?? []).map((channel) => {
     if (!channel.gateId) return channel;
@@ -544,29 +422,23 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
     const gate = gatesById.get(channel.gateId);
     const sourceNode = workflow.nodes?.find((node) => node.name === fromNode);
     const codexRequired = sourceNode?.requireCodexApproval === true;
-    // Resolve the Codex reaction timeout for migrated plan/review approval
-    // hooks: honor a per-source-node `codexTimeoutSeconds` override, else the
-    // global env-overridable default. Without this, an operator who shortened
-    // the window via `HYPERNEO_CODEX_REVIEW_BOT_TIMEOUT_SECONDS` or per-node
-    // config would still wait the baked-in 2h on a migrated workflow.
+    // Resolve the Codex reaction timeout for a migrated review-approval hook:
+    // honor a per-source-node `codexTimeoutSeconds` override, else the global
+    // env-overridable default. Without this, an operator who shortened the
+    // window via `HYPERNEO_CODEX_REVIEW_BOT_TIMEOUT_SECONDS` or per-node config
+    // would still wait the baked-in 2h on a migrated workflow.
     const codexTimeoutSeconds =
       sourceNode?.codexTimeoutSeconds !== undefined
         ? resolveCodexTimeoutSeconds(sourceNode.codexTimeoutSeconds)
         : CODEX_REVIEW_BOT_TIMEOUT_SECONDS;
     const script =
-      pattern?.gateId === 'plan-approval-gate' && !codexRequired
-        ? APPROVALS_WITHOUT_CODEX_SCRIPT
-        : pattern?.gateId === 'review-approval-gate' && !codexRequired
-          ? REVIEW_APPROVAL_WITHOUT_CODEX_SCRIPT
-          : pattern?.gateId === 'plan-approval-gate' && codexRequired
-            ? codexTimeoutSeconds === CODEX_REVIEW_BOT_TIMEOUT_SECONDS
-              ? APPROVALS_SCRIPT
-              : buildApprovalsScript(codexTimeoutSeconds)
-            : pattern?.gateId === 'review-approval-gate' && codexRequired
-              ? codexTimeoutSeconds === CODEX_REVIEW_BOT_TIMEOUT_SECONDS
-                ? REVIEW_APPROVAL_SCRIPT
-                : buildReviewApprovalScript(codexTimeoutSeconds)
-              : pattern?.script;
+      pattern?.gateId === 'review-approval-gate' && !codexRequired
+        ? REVIEW_APPROVAL_WITHOUT_CODEX_SCRIPT
+        : pattern?.gateId === 'review-approval-gate' && codexRequired
+          ? codexTimeoutSeconds === CODEX_REVIEW_BOT_TIMEOUT_SECONDS
+            ? REVIEW_APPROVAL_SCRIPT
+            : buildReviewApprovalScript(codexTimeoutSeconds)
+          : pattern?.script;
     // A `builtInId` pattern (e.g. review-posted → `review_posted`) emits a
     // declarative validator hook and carries no bash script, so a missing
     // `script` is expected for those — only fail when a script pattern has none.
@@ -593,11 +465,6 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
     if (existingRouteHookId && !workflow.templateName) return channel;
     const hookId = existingRouteHookId ?? hook.id;
     if (!existingRouteHookId) hooksById.set(hook.id, hook);
-    if (pattern.gateId === 'plan-approval-gate') {
-      planApprovalHookIds.add(hookId);
-      planApprovalSourceNodes.add(hook.sourceNode);
-      if (hook.targetNode) planApprovalTargetNodes.add(hook.targetNode);
-    }
     migratedGateIds.add(channel.gateId);
     warnings.push({
       code: 'known_gate_migrated_to_hook',
@@ -610,55 +477,7 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
     return openChannel;
   });
 
-  const planFeedbackResetPattern = KNOWN_GATE_PATTERNS['plan-approval-feedback-reset'];
-  if (workflow.templateName && planFeedbackResetPattern && planApprovalHookIds.size > 0) {
-    const planFeedbackChannels = (workflow.channels ?? []).filter((channel) => {
-      if (typeof channel.to !== 'string') return false;
-      const sourceNode = resolveChannelNodeName(channel.from, workflow.nodes);
-      const targetNode = resolveChannelNodeName(channel.to, workflow.nodes);
-      if (!sourceNode || !targetNode) return false;
-      if (!planApprovalSourceNodes.has(sourceNode)) return false;
-      return !planApprovalTargetNodes.has(targetNode);
-    });
-    planFeedbackChannels.sort((a, b) => {
-      const aTarget = typeof a.to === 'string' ? resolveChannelNodeName(a.to, workflow.nodes) : '';
-      const bTarget = typeof b.to === 'string' ? resolveChannelNodeName(b.to, workflow.nodes) : '';
-      if (aTarget === 'Planning') return -1;
-      if (bTarget === 'Planning') return 1;
-      return 0;
-    });
-    for (const planFeedbackChannel of planFeedbackChannels) {
-      const stateForHook = Array.from(planApprovalHookIds)
-        .map(
-          (hookId) =>
-            `"${hookId}":{"approvals":null,"approval_count":0,"codex_wait_started_at":null,"codex_wait_head_oid":null}`
-        )
-        .join(',');
-      const hook = makeHook(
-        planFeedbackResetPattern,
-        planFeedbackChannel,
-        workflow.nodes,
-        PLAN_APPROVAL_RESET_SCRIPT.replace(
-          '"__PLAN_APPROVAL_HOOK_ID__":{"approvals":null,"approval_count":0,"codex_wait_started_at":null,"codex_wait_head_oid":null}',
-          stateForHook
-        )
-      );
-      const existing = hooksById.get(hook.id);
-      if (!existing) {
-        hooksById.set(hook.id, hook);
-      } else if (!existing.enabled || !equivalentGeneratedHook(existing, hook)) {
-        hooksById.set(
-          `${hook.id}:${hookIdComponent(hook.sourceNode)}:${hookIdComponent(hook.targetNode ?? '')}`,
-          {
-            ...hook,
-            id: `${hook.id}:${hookIdComponent(hook.sourceNode)}:${hookIdComponent(hook.targetNode ?? '')}`,
-          }
-        );
-      }
-    }
-  }
-
-  // Post-pass: refresh already-migrated plan/review approval hooks whenever
+  // Post-pass: refresh already-migrated review approval hooks whenever
   // their source drifts from the current builder output. Once a channel is
   // migrated its gateId is stripped, so the main migration loop above can no
   // longer reach it; without this pass, a change to codexTimeoutSeconds OR to
@@ -669,23 +488,21 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
   //
   // Scope guard: the regex is anchored to the timeout comparison
   // `((NOW_EPOCH - START_EPOCH)) -lt N`, which is emitted ONLY by
-  // buildApprovalsScript / buildReviewApprovalScript. This uniquely
-  // identifies a generated codex script rather than any `-lt N` in the
-  // source — buildApprovalsScript also emits `if [ "$COUNT" -lt 4 ]` for the
-  // approval-vote count, and a naive `/-lt (\d+) /` would match that and
-  // silently clobber a custom hook that happens to use `-lt N` for an
-  // unrelated shell comparison. Custom hooks (no anchored marker) never reach
-  // the full-source equality check below, so user-authored logic is never
-  // rewritten. Note: a hand-edit to a GENERATED codex hook (one that still
-  // carries the anchored marker) IS reverted to the builder output on the next
-  // load — by design, so deployed generated hooks track current logic; operators
-  // wanting a persistent custom check must use a hook without the marker.
+  // buildReviewApprovalScript. This uniquely identifies a generated codex
+  // script rather than any `-lt N` in the source — a naive `/-lt (\d+) /`
+  // would match any shell comparison and silently clobber a custom hook that
+  // happens to use `-lt N` for unrelated logic. Custom hooks (no anchored
+  // marker) never reach the full-source equality check below, so user-authored
+  // logic is never rewritten. Note: a hand-edit to a GENERATED codex hook (one
+  // that still carries the anchored marker) IS reverted to the builder output
+  // on the next load — by design, so deployed generated hooks track current
+  // logic; operators wanting a persistent custom check must use a hook without
+  // the marker.
   const TIMEOUT_CMP_RE = /\(\(NOW_EPOCH - START_EPOCH\)\) -lt (\d+) /;
   for (const hook of hooksById.values()) {
     if (hook.validator.kind !== 'script') continue;
-    const isPlan = hook.id.startsWith('plan-approval:') || hook.id === 'plan-approval';
     const isReview = hook.id.startsWith('review-approval:') || hook.id === 'review-approval';
-    if (!isPlan && !isReview) continue;
+    if (!isReview) continue;
     const sourceNode = workflow.nodes?.find((node) => node.name === hook.sourceNode);
     if (!sourceNode?.requireCodexApproval) continue;
     if (!TIMEOUT_CMP_RE.test(hook.validator.source)) continue; // not a generated codex script
@@ -696,9 +513,7 @@ export function migrateWorkflowGateProgressionToHooks<T extends SpaceWorkflowLik
       sourceNode.codexTimeoutSeconds === undefined
         ? CODEX_REVIEW_BOT_TIMEOUT_SECONDS
         : resolveCodexTimeoutSeconds(sourceNode.codexTimeoutSeconds);
-    const rebuiltScript = isPlan
-      ? buildApprovalsScript(expectedTimeout)
-      : buildReviewApprovalScript(expectedTimeout);
+    const rebuiltScript = buildReviewApprovalScript(expectedTimeout);
     // Up to date (same timeout AND same builder logic) → leave as-is. Any drift
     // — a changed timeout or a builder-logic update — rebuilds. The builders are
     // pure functions of the timeout, so this is idempotent across passes.

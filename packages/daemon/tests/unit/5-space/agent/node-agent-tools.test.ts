@@ -1981,7 +1981,7 @@ describe('node-agent-tools: send_message (gate-write)', () => {
   });
 
   test('map-type field deep-merges entries from multiple writers (vote-counting)', async () => {
-    // Simulates plan-approval-gate: multiple reviewers each write a partial
+    // Simulates a vote-counting gate: multiple reviewers each write a partial
     // `approvals` map keyed by their lens. A shallow merge would replace the
     // whole map with the latest writer's entry, losing prior votes. Deep
     // merge of map-type fields must preserve all entries.

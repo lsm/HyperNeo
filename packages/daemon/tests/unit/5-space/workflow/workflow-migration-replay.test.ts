@@ -14,17 +14,16 @@
  *      persisted user-authored objects cannot be silently edited in place.
  *
  * Origin: a Codex P2 review found that a naive `/-lt (\d+) /` timeout regex
- * matched the plan-approval script's `[ "$COUNT" -lt 4 ]` vote-count check
- * first, so plan-approval hooks were rebuilt on every migration call. The
- * naive regex also has a destructive form: a custom `plan-approval:`/
- * `review-approval:`-prefixed hook whose script contains an unrelated
- * `-lt N` gets silently clobbered with the generated Codex script. The
- * custom-hook fixtures pin the destructive form directly (a rebuild to a
- * byte-identical script is invisible to `toEqual`, so replay checks alone
- * cannot). This suite pins that regression plus the neighboring semantics
- * called out in the task: plan/review approval hooks, custom timeout values,
- * approval-count expressions, duplicate hook IDs, channel address formats,
- * interpreter changes, timeoutMs equivalence, and multi-channel reset hooks.
+ * matched the review-approval script's comparison first, so review-approval
+ * hooks were rebuilt on every migration call. The naive regex also has a
+ * destructive form: a custom `review-approval:`-prefixed hook whose script
+ * contains an unrelated `-lt N` gets silently clobbered with the generated
+ * Codex script. The custom-hook fixtures pin the destructive form directly (a
+ * rebuild to a byte-identical script is invisible to `toEqual`, so replay
+ * checks alone cannot). This suite pins that regression plus the neighboring
+ * semantics: review approval hooks, custom timeout values, approval-count
+ * expressions, duplicate hook IDs, channel address formats, interpreter
+ * changes, and timeoutMs equivalence.
  */
 
 import { describe, expect, test } from 'bun:test';
@@ -33,7 +32,6 @@ import {
   CODING_WORKFLOW,
   CODING_WITH_QA_WORKFLOW,
   getBuiltInWorkflows,
-  PLAN_AND_DECOMPOSE_WORKFLOW,
   RESEARCH_WORKFLOW,
   REVIEW_ONLY_WORKFLOW,
 } from '../../../../src/lib/space/workflows/built-in-workflows.ts';
@@ -125,43 +123,37 @@ function hookBetween(
   );
 }
 
-const PLAN_TEMPLATE_PROPS = {
-  templateName: PLAN_AND_DECOMPOSE_WORKFLOW.name,
-  templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
-};
-
 const QA_TEMPLATE_PROPS = {
   templateName: CODING_WITH_QA_WORKFLOW.name,
   templateGates: CODING_WITH_QA_WORKFLOW.gates ?? [],
 };
 
 /**
- * The generated Plan Review → Task Dispatcher approval hook, taken from the
- * migrated built-in template. Used as the baseline for equivalence fixtures
- * (interpreter / timeoutMs variants).
+ * The generated Review → QA approval hook, taken from the migrated built-in
+ * template. Used as the baseline for equivalence fixtures (interpreter /
+ * timeoutMs variants).
  */
-function generatedPlanApprovalHook(): WorkflowHook {
+function generatedReviewApprovalHook(): WorkflowHook {
   const migratedTemplate = getBuiltInWorkflows().find(
-    (workflow) => workflow.name === PLAN_AND_DECOMPOSE_WORKFLOW.name
+    (workflow) => workflow.name === CODING_WITH_QA_WORKFLOW.name
   )!;
   const hook = migratedTemplate.hooks!.find(
-    (candidate) =>
-      candidate.sourceNode === 'Plan Review' && candidate.targetNode === 'Task Dispatcher'
+    (candidate) => candidate.sourceNode === 'Review' && candidate.targetNode === 'QA'
   );
-  if (!hook) throw new Error('expected generated plan approval hook on migrated template');
+  if (!hook) throw new Error('expected generated review approval hook on migrated template');
   return hook;
 }
 
 function makeUserScriptHook(overrides: Partial<WorkflowHook> & { id: string }): WorkflowHook {
   return {
     enabled: true,
-    sourceNode: 'Plan Review',
-    targetNode: 'Task Dispatcher',
+    sourceNode: 'Review',
+    targetNode: 'QA',
     method: 'send_message',
     classification: 'validation',
     order: 0,
     validator: { kind: 'script', interpreter: 'bash', source: 'jq -n \'{"type":"allow"}\'' },
-    authorizedCallers: [{ sourceNode: 'Plan Review' }],
+    authorizedCallers: [{ sourceNode: 'Review' }],
     ...overrides,
   };
 }
@@ -171,66 +163,6 @@ function makeUserScriptHook(overrides: Partial<WorkflowHook> & { id: string }): 
 // ---------------------------------------------------------------------------
 
 const FIXTURES: ReplayFixture[] = [
-  {
-    name: 'built-in plan approval hook (codex) migrates and replays identically',
-    build: () => ({
-      ...PLAN_AND_DECOMPOSE_WORKFLOW,
-      ...PLAN_TEMPLATE_PROPS,
-    }),
-    verify: ({ workflow, warnings }) => {
-      const hook = hookBetween(workflow, 'Plan Review', 'Task Dispatcher');
-      expect(hook).toBeDefined();
-      expect(hook!.id).toStartWith('plan-approval:');
-      const source = scriptSource(hook);
-      // Approval-count expression and timeout comparison coexist in the same
-      // script — the anchored post-pass regex must only ever match the latter.
-      expect(source).toContain('if [ "$COUNT" -lt 4 ]');
-      expect(source).toContain(`((NOW_EPOCH - START_EPOCH)) -lt ${DEFAULT_TIMEOUT} `);
-      expect(source).toContain(`${DEFAULT_TIMEOUT_LABEL} timeout`);
-      expect(source).toContain('gh pr view');
-      expect(scriptTimeoutMs(hook)).toBe(30_000);
-      expect(scriptInterpreter(hook)).toBe('bash');
-      expect(scriptExternalLookups(hook)).toEqual(['github']);
-
-      const channel = workflow.channels?.find(
-        (candidate) => candidate.from === 'Plan Review' && candidate.to === 'Task Dispatcher'
-      );
-      expect(channel?.gateId).toBeUndefined();
-      // All gates migrated away — the array is dropped entirely.
-      expect(workflow.gates).toBeUndefined();
-      expect(warnings.map((warning) => warning.code)).toEqual(['known_gate_migrated_to_hook']);
-
-      const resetHook = workflow.hooks?.find((candidate) => candidate.id === 'plan-approval-reset');
-      expect(resetHook?.targetNode).toBe('Planning');
-      expect(scriptSource(resetHook)).toContain(hook!.id);
-    },
-  },
-  {
-    name: 'built-in plan approval hook without codex keeps the approval-count script',
-    build: () => ({
-      ...PLAN_AND_DECOMPOSE_WORKFLOW,
-      nodes: PLAN_AND_DECOMPOSE_WORKFLOW.nodes.map((node) =>
-        node.name === 'Plan Review' ? { ...node, requireCodexApproval: false } : node
-      ),
-      ...PLAN_TEMPLATE_PROPS,
-    }),
-    verify: ({ workflow }) => {
-      const hook = hookBetween(workflow, 'Plan Review', 'Task Dispatcher');
-      expect(hook).toBeDefined();
-      const source = scriptSource(hook);
-      expect(source).toContain('if [ "$COUNT" -lt 4 ]');
-      expect(source).toContain('Plan dispatch requires four approved plan-review votes');
-      expect(source).not.toContain('gh pr view');
-      expect(source).not.toContain('Codex');
-      // externalLookups is declared on the gate pattern (not inferred from
-      // script identity), so the without-codex variant keeps it too.
-      expect(scriptExternalLookups(hook)).toEqual(['github']);
-
-      const resetHook = workflow.hooks?.find((candidate) => candidate.id === 'plan-approval-reset');
-      expect(resetHook?.targetNode).toBe('Planning');
-      expect(scriptSource(resetHook)).toContain(hook!.id);
-    },
-  },
   {
     name: 'built-in review approval hook (codex) migrates and replays identically',
     build: () => ({
@@ -312,14 +244,14 @@ const FIXTURES: ReplayFixture[] = [
   {
     name: 'custom per-node codex timeout (hours) is baked into the migrated hook',
     build: () => ({
-      ...PLAN_AND_DECOMPOSE_WORKFLOW,
-      nodes: PLAN_AND_DECOMPOSE_WORKFLOW.nodes.map((node) =>
-        node.name === 'Plan Review' ? { ...node, codexTimeoutSeconds: 3600 } : node
+      ...CODING_WITH_QA_WORKFLOW,
+      nodes: CODING_WITH_QA_WORKFLOW.nodes.map((node) =>
+        node.name === 'Review' ? { ...node, codexTimeoutSeconds: 3600 } : node
       ),
-      ...PLAN_TEMPLATE_PROPS,
+      ...QA_TEMPLATE_PROPS,
     }),
     verify: ({ workflow }) => {
-      const hook = hookBetween(workflow, 'Plan Review', 'Task Dispatcher');
+      const hook = hookBetween(workflow, 'Review', 'QA');
       const source = scriptSource(hook);
       expect(source).toContain('((NOW_EPOCH - START_EPOCH)) -lt 3600 ');
       expect(source).not.toContain('-lt 7200 ');
@@ -329,7 +261,7 @@ const FIXTURES: ReplayFixture[] = [
   {
     name: 'duplicate hook ids in input collapse deterministically (last wins)',
     build: () => ({
-      ...PLAN_AND_DECOMPOSE_WORKFLOW,
+      ...CODING_WITH_QA_WORKFLOW,
       hooks: [
         makeUserScriptHook({
           id: 'duplicate-hook',
@@ -348,15 +280,14 @@ const FIXTURES: ReplayFixture[] = [
           },
         }),
       ],
-      ...PLAN_TEMPLATE_PROPS,
+      ...QA_TEMPLATE_PROPS,
     }),
     verify: ({ workflow }) => {
       const duplicates = workflow.hooks?.filter((hook) => hook.id === 'duplicate-hook');
       expect(duplicates).toHaveLength(1);
       expect(scriptSource(duplicates?.[0])).toBe('echo second');
       // Migration still runs alongside the corrupt input.
-      expect(workflow.hooks?.some((hook) => hook.id.startsWith('plan-approval:'))).toBe(true);
-      expect(workflow.hooks?.some((hook) => hook.id === 'plan-approval-reset')).toBe(true);
+      expect(workflow.hooks?.some((hook) => hook.id.startsWith('review-approval:'))).toBe(true);
     },
   },
   {
@@ -369,37 +300,37 @@ const FIXTURES: ReplayFixture[] = [
           {
             name: 'approved',
             type: 'boolean',
-            writers: ['Plan Review'],
+            writers: ['Review'],
             check: { op: '==', value: true },
           },
         ],
       };
       return {
-        ...PLAN_AND_DECOMPOSE_WORKFLOW,
-        gates: [...(PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? []), fanOutGate],
+        ...CODING_WITH_QA_WORKFLOW,
+        gates: [...(CODING_WITH_QA_WORKFLOW.gates ?? []), fanOutGate],
         channels: [
-          { from: 'Planning', to: 'Plan Review', label: 'Planning → Plan Review' },
+          { from: 'Coding', to: 'Review', label: 'Coding → Review' },
           {
-            from: 'Plan Review',
+            from: 'Review',
             to: '*',
-            gateId: 'plan-approval-gate',
-            label: 'Plan Review → * (broadcast)',
-          },
-          {
-            from: 'Plan Review',
-            to: 'Planning',
-            maxCycles: 5,
-            label: 'Plan Review → Planning (revision requested)',
-          },
-          {
-            from: 'Plan Review',
-            to: ['Planning', 'Task Dispatcher'],
             gateId: 'review-approval-gate',
-            label: 'Plan Review → fan-out',
+            label: 'Review → * (broadcast)',
+          },
+          {
+            from: 'Review',
+            to: 'Coding',
+            maxCycles: 6,
+            label: 'Review → Coding (feedback)',
+          },
+          {
+            from: 'Review',
+            to: ['Coding', 'QA'],
+            gateId: 'review-approval-gate',
+            label: 'Review → fan-out',
           },
         ],
-        templateName: PLAN_AND_DECOMPOSE_WORKFLOW.name,
-        templateGates: [...(PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? []), fanOutGate],
+        templateName: CODING_WITH_QA_WORKFLOW.name,
+        templateGates: [...(CODING_WITH_QA_WORKFLOW.gates ?? []), fanOutGate],
       };
     },
     verify: ({ workflow, warnings }) => {
@@ -407,36 +338,31 @@ const FIXTURES: ReplayFixture[] = [
       // migration here is the channel address format ('*' broadcast and
       // array fan-out) — both must stay gated and hook-free.
       const broadcast = workflow.channels?.find((channel) => channel.to === '*');
-      expect(broadcast?.gateId).toBe('plan-approval-gate');
+      expect(broadcast?.gateId).toBe('review-approval-gate');
       const fanOut = workflow.channels?.find((channel) => Array.isArray(channel.to));
       expect(fanOut?.gateId).toBe('review-approval-gate');
 
-      expect(workflow.hooks?.some((hook) => hook.id.startsWith('plan-approval:'))).toBe(false);
       expect(workflow.hooks?.some((hook) => hook.id.startsWith('review-approval:'))).toBe(false);
-      expect(workflow.hooks?.some((hook) => hook.id.startsWith('plan-approval-reset'))).toBe(false);
-
       expect(warnings.map((warning) => warning.code)).toEqual([
         'legacy_custom_gate_deprecated',
         'legacy_custom_gate_deprecated',
       ]);
-      for (const gateId of ['plan-approval-gate', 'review-approval-gate']) {
-        expect(
-          workflow.gates?.find((gate) => gate.id === gateId)?.legacyGateMetadata
-        ).toMatchObject({ deprecated: true });
-      }
+      expect(
+        workflow.gates?.find((gate) => gate.id === 'review-approval-gate')?.legacyGateMetadata
+      ).toMatchObject({ deprecated: true });
     },
     replayWarningCodes: ['legacy_custom_gate_deprecated', 'legacy_custom_gate_deprecated'],
   },
   {
     name: 'interpreter change on a generated-shape hook is preserved and not reused',
     build: () => {
-      const generated = generatedPlanApprovalHook();
+      const generated = generatedReviewApprovalHook();
       return {
-        ...PLAN_AND_DECOMPOSE_WORKFLOW,
+        ...CODING_WITH_QA_WORKFLOW,
         hooks: [
           {
             ...generated,
-            id: 'plan-approval-legacy-interpreter',
+            id: 'review-approval-legacy-interpreter',
             validator:
               generated.validator.kind === 'script'
                 ? {
@@ -448,18 +374,20 @@ const FIXTURES: ReplayFixture[] = [
                 : generated.validator,
           },
         ],
-        ...PLAN_TEMPLATE_PROPS,
+        ...QA_TEMPLATE_PROPS,
       };
     },
     verify: ({ workflow }) => {
-      const legacy = workflow.hooks?.find((hook) => hook.id === 'plan-approval-legacy-interpreter');
+      const legacy = workflow.hooks?.find(
+        (hook) => hook.id === 'review-approval-legacy-interpreter'
+      );
       expect(legacy).toBeDefined();
       // User-authored semantics preserved verbatim — same source, untouched.
       expect(scriptInterpreter(legacy)).toBe('sh');
-      expect(scriptSource(legacy)).toBe(scriptSource(generatedPlanApprovalHook()));
+      expect(scriptSource(legacy)).toBe(scriptSource(generatedReviewApprovalHook()));
       // Interpreter participates in equivalence: a fresh generated hook is
       // installed alongside rather than reusing the legacy variant.
-      const generated = workflow.hooks?.find((hook) => hook.id.startsWith('plan-approval:'));
+      const generated = workflow.hooks?.find((hook) => hook.id.startsWith('review-approval:'));
       expect(generated).toBeDefined();
       expect(scriptInterpreter(generated)).toBe('bash');
     },
@@ -467,72 +395,33 @@ const FIXTURES: ReplayFixture[] = [
   {
     name: 'timeoutMs participates in generated-hook equivalence',
     build: () => {
-      const generated = generatedPlanApprovalHook();
+      const generated = generatedReviewApprovalHook();
       return {
-        ...PLAN_AND_DECOMPOSE_WORKFLOW,
+        ...CODING_WITH_QA_WORKFLOW,
         hooks: [
           {
             ...generated,
-            id: 'plan-approval-custom-timeout-ms',
+            id: 'review-approval-custom-timeout-ms',
             validator:
               generated.validator.kind === 'script'
                 ? { ...generated.validator, timeoutMs: 60_000 }
                 : generated.validator,
           },
         ],
-        ...PLAN_TEMPLATE_PROPS,
+        ...QA_TEMPLATE_PROPS,
       };
     },
     verify: ({ workflow }) => {
-      const custom = workflow.hooks?.find((hook) => hook.id === 'plan-approval-custom-timeout-ms');
+      const custom = workflow.hooks?.find(
+        (hook) => hook.id === 'review-approval-custom-timeout-ms'
+      );
       expect(custom).toBeDefined();
       expect(scriptTimeoutMs(custom)).toBe(60_000);
       // A hook that differs only in timeoutMs is NOT the generated
       // equivalent — migration installs a fresh 30s hook alongside it.
-      const generated = workflow.hooks?.find((hook) => hook.id.startsWith('plan-approval:'));
+      const generated = workflow.hooks?.find((hook) => hook.id.startsWith('review-approval:'));
       expect(generated).toBeDefined();
       expect(scriptTimeoutMs(generated)).toBe(30_000);
-    },
-  },
-  {
-    name: 'custom plan-approval:-prefixed hook with unrelated -lt N is never clobbered',
-    build: () => ({
-      ...PLAN_AND_DECOMPOSE_WORKFLOW,
-      hooks: [
-        makeUserScriptHook({
-          id: 'plan-approval:custom-audit-trail',
-          validator: {
-            kind: 'script',
-            interpreter: 'bash',
-            source: [
-              'RETRIES=$(jq -r \'.retryCount // 0\' <<< "${HYPERNEO_HOOK_LOCAL_STATE_JSON:-{}}")',
-              'if [ "$RETRIES" -lt 3 ]; then jq -n \'{"type":"allow"}\'; else echo "audit cap reached" >&2; exit 1; fi',
-            ].join('\n'),
-            timeoutMs: 45_000,
-          },
-        }),
-      ],
-      ...PLAN_TEMPLATE_PROPS,
-    }),
-    verify: ({ workflow }) => {
-      // The EFFECTIVE pin for the Codex P2 regex regression: the post-pass
-      // rebuild guard must match ONLY the anchored timeout comparison
-      // `((NOW_EPOCH - START_EPOCH)) -lt N`. Under a naive `/-lt (\d+) /`
-      // this hook's unrelated `-lt 3` is misread as a baked timeout
-      // (3 !== default) and the hook is silently clobbered with the
-      // generated Codex script. (A byte-identical generated-hook rebuild is
-      // invisible to toEqual, so the replay fixtures alone cannot catch it.)
-      const custom = workflow.hooks?.find((hook) => hook.id === 'plan-approval:custom-audit-trail');
-      expect(custom).toBeDefined();
-      expect(scriptSource(custom)).toContain('-lt 3');
-      expect(scriptSource(custom)).not.toContain('gh pr view');
-      expect(scriptTimeoutMs(custom)).toBe(45_000);
-      // The generated hook still installs alongside on the same route.
-      expect(
-        workflow.hooks?.some(
-          (hook) => hook.id.startsWith('plan-approval:') && hook.id !== custom!.id
-        )
-      ).toBe(true);
     },
   },
   {
@@ -559,8 +448,13 @@ const FIXTURES: ReplayFixture[] = [
       ...QA_TEMPLATE_PROPS,
     }),
     verify: ({ workflow }) => {
-      // Review-side twin of the plan-approval pin above — the post-pass
-      // treats `review-approval:`-prefixed ids the same way.
+      // The EFFECTIVE pin for the Codex P2 regex regression: the post-pass
+      // rebuild guard must match ONLY the anchored timeout comparison
+      // `((NOW_EPOCH - START_EPOCH)) -lt N`. Under a naive `/-lt (\d+) /`
+      // this hook's unrelated `-lt 5` is misread as a baked timeout
+      // (5 !== default) and the hook is silently clobbered with the
+      // generated Codex script. (A byte-identical generated-hook rebuild is
+      // invisible to toEqual, so the replay fixtures alone cannot catch it.)
       const custom = workflow.hooks?.find(
         (hook) => hook.id === 'review-approval:custom-audit-trail'
       );
@@ -575,65 +469,32 @@ const FIXTURES: ReplayFixture[] = [
     },
   },
   {
-    name: 'multi-channel reset hooks install on every feedback route without duplication',
-    build: () => ({
-      ...PLAN_AND_DECOMPOSE_WORKFLOW,
-      nodes: [
-        ...PLAN_AND_DECOMPOSE_WORKFLOW.nodes,
-        {
-          id: 'replay-escalation-node',
-          name: 'Escalation',
-          agents: [{ agentId: 'Reviewer', name: 'escalation' }],
-        },
-      ],
-      channels: [
-        ...(PLAN_AND_DECOMPOSE_WORKFLOW.channels ?? []),
-        { from: 'Plan Review', to: 'Escalation', label: 'Plan Review → Escalation' },
-      ],
-      ...PLAN_TEMPLATE_PROPS,
-    }),
-    verify: ({ workflow }) => {
-      const approvalHook = hookBetween(workflow, 'Plan Review', 'Task Dispatcher');
-      expect(approvalHook).toBeDefined();
-      const resetHooks =
-        workflow.hooks?.filter((hook) => hook.id.startsWith('plan-approval-reset')) ?? [];
-      expect(resetHooks).toHaveLength(2);
-      expect(resetHooks.map((hook) => hook.targetNode).sort()).toEqual(['Escalation', 'Planning']);
-      // Reset hooks are collision-free: the second route gets a
-      // disambiguated id, and both reference the approval hook they reset.
-      expect(new Set(resetHooks.map((hook) => hook.id)).size).toBe(2);
-      for (const resetHook of resetHooks) {
-        expect(scriptSource(resetHook)).toContain(approvalHook!.id);
-      }
-    },
-  },
-  {
     name: 'custom workflow keeps legacy gates and user-authored hooks verbatim',
     build: () => ({
       nodes: [
-        { id: 'custom-plan-node', name: 'Plan', agents: [{ name: 'planner' }] },
         { id: 'custom-build-node', name: 'Build', agents: [{ name: 'builder' }] },
+        { id: 'custom-qa-node', name: 'QA', agents: [{ name: 'qa' }] },
       ],
       gates: [
         {
-          id: 'plan-approval-gate',
+          id: 'custom-approval-gate',
           label: 'Approvals',
           fields: [
             {
-              name: 'approvals',
-              type: 'map',
-              writers: ['Plan'],
-              check: { op: 'count', match: 'approved', min: 4 },
+              name: 'approved',
+              type: 'boolean',
+              writers: ['Build'],
+              check: { op: '==', value: true },
             },
           ],
         },
       ],
-      channels: [{ from: 'Plan', to: 'Build', gateId: 'plan-approval-gate' }],
+      channels: [{ from: 'Build', to: 'QA', gateId: 'custom-approval-gate' }],
       hooks: [
         makeUserScriptHook({
           id: 'user-authored-hook',
-          sourceNode: 'Plan',
-          targetNode: 'Build',
+          sourceNode: 'Build',
+          targetNode: 'QA',
           validator: {
             kind: 'script',
             interpreter: 'bash',
@@ -643,7 +504,7 @@ const FIXTURES: ReplayFixture[] = [
             ].join('\n'),
             timeoutMs: 12_345,
           },
-          authorizedCallers: [{ sourceNode: 'Plan' }],
+          authorizedCallers: [{ sourceNode: 'Build' }],
         }),
       ],
     }),
@@ -652,7 +513,7 @@ const FIXTURES: ReplayFixture[] = [
       // built-in shape exactly. The custom workflow's semantics are
       // preserved as-is.
       expect(warnings.map((warning) => warning.code)).toEqual(['legacy_custom_gate_deprecated']);
-      expect(workflow.channels?.[0]?.gateId).toBe('plan-approval-gate');
+      expect(workflow.channels?.[0]?.gateId).toBe('custom-approval-gate');
       expect(workflow.gates?.[0]?.legacyGateMetadata).toMatchObject({ deprecated: true });
 
       expect(workflow.hooks).toHaveLength(1);
@@ -676,7 +537,6 @@ describe('workflow hook migration replay suite', () => {
       CODING_WITH_QA_WORKFLOW,
       RESEARCH_WORKFLOW,
       REVIEW_ONLY_WORKFLOW,
-      PLAN_AND_DECOMPOSE_WORKFLOW,
     ]) {
       const first = migrateWorkflowGateProgressionToHooks({
         ...template,
@@ -724,30 +584,6 @@ describe('workflow hook migration replay suite', () => {
     );
     expect(replay.workflow).toEqual(rebuilt);
     expect(replay.warnings).toEqual([]);
-  });
-
-  test('plan-approval hook replay converges across multiple rounds', () => {
-    // NOTE: this is a convergence check, NOT the Codex P2 regex pin. A
-    // naive `/-lt (\d+) /` timeout regex would read `-lt 4` from the
-    // vote-count check and rebuild the hook on every call — but to a
-    // byte-identical script at the default timeout, which toEqual cannot
-    // see. The effective pins are the `plan-approval:`/`review-approval:`-
-    // prefixed custom-hook fixtures above, which ARE clobbered under the
-    // naive regex. What THIS test pins: replaying a migrated plan-approval
-    // hook (whose script carries BOTH the `-lt 4` vote count and the `-lt
-    // N` timeout comparison) is a stable no-op across repeated rounds.
-    const base: MigrationInput = {
-      ...PLAN_AND_DECOMPOSE_WORKFLOW,
-      ...PLAN_TEMPLATE_PROPS,
-    };
-    const first = migrateWorkflowGateProgressionToHooks(base).workflow;
-    const firstHook = hookBetween(first, 'Plan Review', 'Task Dispatcher');
-    expect(scriptSource(firstHook)).toContain('if [ "$COUNT" -lt 4 ]');
-
-    for (let round = 0; round < 3; round++) {
-      const replayed = migrateWorkflowGateProgressionToHooks({ ...first }).workflow;
-      expect(replayed).toEqual(first);
-    }
   });
 });
 
