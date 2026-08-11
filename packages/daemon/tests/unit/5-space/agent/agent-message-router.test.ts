@@ -1228,6 +1228,52 @@ describe('AgentMessageRouter: persist workflowNodeId on queued @worker targets',
     expect(pending).toHaveLength(1);
     expect(pending[0].workflowNodeId).toBe('review-node-id');
   });
+
+  test('a node named like an inherited Object.prototype key still resolves to its id', async () => {
+    // "constructor"/"toString"/etc. are on Object.prototype, so an `in`-based id
+    // lookup would falsely treat the name as an existing node id and pin the row
+    // to a nonexistent workflowNodeId. The resolver must use own properties only.
+    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+      makeChannel('coder', 'constructor'),
+    ]);
+    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+    ctx.nodeExecutionRepo.createOrIgnore({
+      workflowRunId,
+      workflowNodeId: 'ctor-node-id',
+      agentName: 'ctor-agent',
+      status: 'pending',
+    });
+
+    const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
+    const router = new AgentMessageRouter({
+      nodeExecutionRepo: ctx.nodeExecutionRepo,
+      workflowRunId,
+      workflowChannels: [makeChannel('coder', 'constructor')],
+      messageInjector: async () => {},
+      pendingMessageRepo,
+      spaceId: ctx.spaceId,
+      taskId: null,
+      workflowNodeNameById: { 'ctor-node-id': 'constructor' },
+    });
+
+    const result = await router.deliverMessage({
+      fromAgentName: 'coder',
+      fromSessionId: ctx.coderSessionId,
+      target: '@worker:constructor/ctor-agent',
+      message: 'please review',
+    });
+
+    expect(result.queued).toBeDefined();
+    expect(result.queued).toHaveLength(1);
+    expect(result.queued![0].agentName).toBe('constructor/ctor-agent');
+    const pending = pendingMessageRepo.listPendingForTarget(
+      workflowRunId,
+      'constructor/ctor-agent'
+    );
+    expect(pending).toHaveLength(1);
+    // The real node id — NOT the inherited-key name "constructor".
+    expect(pending[0].workflowNodeId).toBe('ctor-node-id');
+  });
 });
 
 describe('AgentMessageRouter: broadcast * with mixed active/inactive targets', () => {

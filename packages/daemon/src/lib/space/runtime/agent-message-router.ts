@@ -254,9 +254,12 @@ export class AgentMessageRouter {
     // unambiguous; ids are authoritative when the ref is already an id.
     const resolveWorkflowNodeId = (nodeRef: string): string | undefined => {
       if (!workflowNodeNameById) return undefined;
-      if (nodeRef in workflowNodeNameById) return nodeRef;
+      // Object.entries yields own enumerable properties only — never inherited
+      // ones. The `in` operator would walk the prototype chain and misfire for a
+      // node named "constructor"/"toString"/etc., pinning the row to the name
+      // instead of the id and blocking recovery.
       for (const [nodeId, name] of Object.entries(workflowNodeNameById)) {
-        if (name === nodeRef) return nodeId;
+        if (nodeId === nodeRef || name === nodeRef) return nodeId;
       }
       return undefined;
     };
