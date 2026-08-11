@@ -1689,17 +1689,16 @@ describe('SDKMessageRepository', () => {
         sendStatus?: string;
       }
     ): void {
-      // A consumed user row gets a consumption watermark so hasTerminalResultAfter
-      // (which treats NULL consumed_seq as "unknown/live") sees it as consumed.
+      // A consumed user row gets a consumption watermark = MAX(rowid)+1 at
+      // insert (mirrors markDeliveryConsumedByUuid), so hasTerminalResultAfter
+      // (NULL consumed_seq = "unknown/live") sees it as consumed.
       const effectiveStatus = opts.sendStatus ?? (type === 'user' ? 'consumed' : null);
       const consumedSeq =
         type === 'user' && effectiveStatus === 'consumed'
           ? (
-              db
-                .prepare(
-                  `SELECT COALESCE(MAX(consumed_seq), MAX(rowid), 0) + 1 AS m FROM sdk_messages`
-                )
-                .get() as { m: number }
+              db.prepare(`SELECT COALESCE(MAX(rowid), 0) + 1 AS m FROM sdk_messages`).get() as {
+                m: number;
+              }
             ).m
           : null;
       db.prepare(
@@ -1951,6 +1950,49 @@ describe('SDKMessageRepository', () => {
       expect(repository.hasTerminalResultAfter('session-1', 'promoted-msg')).toBe(true);
     });
 
+    it('keeps watermarks in rowid space — multiple consumes without inserts do not outrun a later turn result (P2)', () => {
+      // If consumed_seq were allowed to exceed MAX(rowid) (e.g. MAX(consumed_seq)+1),
+      // consuming several steers with no intervening inserts would push the
+      // watermark above the rowid of a LATER turn's own terminal result, so that
+      // result (rowid below the watermark) is missed and recovery re-drives the
+      // ended turn. The watermark is MAX(rowid)+1, so it never outruns future rowids.
+      const seed = db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid, is_renderable)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      );
+      seed.run(
+        crypto.randomUUID(),
+        's',
+        'user',
+        '{}',
+        '2026-08-11T15:00:00.000Z',
+        'enqueued',
+        'm1',
+        1
+      );
+      seed.run(
+        crypto.randomUUID(),
+        's',
+        'user',
+        '{}',
+        '2026-08-11T15:00:00.000Z',
+        'enqueued',
+        'm2',
+        1
+      );
+      // Consume both WITHOUT any intervening insert.
+      repository.markDeliveryConsumedByUuid('s', 'm1');
+      repository.markDeliveryConsumedByUuid('s', 'm2');
+      // A terminal result inserted AFTER both consumptions must be detected for
+      // both (its rowid exceeds MAX(rowid)+1 at each consume time).
+      seed.run(crypto.randomUUID(), 's', 'result', '{}', '2026-08-11T15:05:00.000Z', null, null, 1);
+      db.prepare(
+        `UPDATE sdk_messages SET is_terminal = 1, message_type = 'result' WHERE sdk_uuid IS NULL AND message_type = 'result'`
+      ).run();
+      expect(repository.hasTerminalResultAfter('s', 'm1')).toBe(true);
+      expect(repository.hasTerminalResultAfter('s', 'm2')).toBe(true);
+    });
+
     it('is true after consumption when the SAME turn later ends (its own result)', () => {
       insertMessage('session-1', 'user', {
         uuid: 'own-turn-msg',
@@ -2046,6 +2088,28 @@ describe('SDKMessageRepository', () => {
           .all();
         expect(rows).toHaveLength(1);
         expect(rows[0].ended_at).toBe('t2');
+      });
+
+      it('rewind (deleteMessagesAtAndAfter) clears markers for rewound UUIDs (P2)', () => {
+        // A long-horizon inbox retry can re-persist the same UUID after a rewind;
+        // a stale marker must not survive to mark the new turn as already ended.
+        repository.recordDeliveryTurnEnd('session-1', 'rewound-uuid', 't1');
+        expect(repository.hasDeliveryTurnEnd('session-1', 'rewound-uuid')).toBe(true);
+        // Seed a message at the rewind boundary so deleteMessagesAtAndAfter has a row.
+        db.prepare(
+          `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
+        ).run(
+          crypto.randomUUID(),
+          'session-1',
+          'user',
+          '{}',
+          '2026-08-11T16:00:00.000Z',
+          'consumed',
+          'rewound-uuid'
+        );
+        repository.deleteMessagesAtAndAfter('session-1', Date.parse('2026-08-11T16:00:00.000Z'));
+        expect(repository.hasDeliveryTurnEnd('session-1', 'rewound-uuid')).toBe(false);
       });
     });
   });

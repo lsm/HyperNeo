@@ -1485,37 +1485,23 @@ export class SDKMessageRepository {
         const updStmt = this.db.prepare(
           'UPDATE sdk_messages SET conversation_turn_index = ?, timestamp = ? WHERE id = ?'
         );
-        // consumed_seq is a CONSUMPTION WATERMARK set to a value strictly after
-        // every row persisted so far (MAX(rowid, consumed_seq) + 1). A message
-        // queued in turn A and consumed (promoted) as turn B keeps its original
-        // rowid, so the delivery re-claim boundary (`hasTerminalResultAfter`)
-        // must compare `result.rowid >= message.consumed_seq` — not the message's
-        // old rowid — to avoid matching turn A's same-millisecond result. Assigned
-        // in this transaction (atomic with the flip). See Codex (PR #2463, P2).
-        // MAX(rowid) is O(1) via the rowid index; MAX(consumed_seq) is an index
-        // scan (idx_sdk_messages_consumed_seq) — both avoid a full-table pass on
-        // the hot consume path.
+        // consumed_seq is a CONSUMPTION WATERMARK = MAX(rowid) + 1 at consume
+        // time — one past the last row inserted BEFORE this consumption. A
+        // message queued in turn A and consumed (promoted) as turn B keeps its
+        // original rowid (below A's result), so the delivery re-claim boundary
+        // (`hasTerminalResultAfter`) compares `result.rowid >= consumed_seq`:
+        // A's result (rowid ≤ MAX) is excluded, B's own later result (rowid >
+        // MAX) is matched. Bounded to MAX(rowid)+1 (not MAX(consumed_seq)) so
+        // prior synthetic watermarks can't outrun a later turn's result rowid.
+        // MAX(rowid) is O(1) via the rowid index. See Codex (PR #2463, P2).
         const maxRowidStmt = this.db.prepare(
-          `SELECT COALESCE(MAX(rowid), 0) AS m FROM sdk_messages`
-        );
-        const maxConsumedSeqStmt = this.db.prepare(
-          `SELECT COALESCE(MAX(consumed_seq), 0) AS m FROM sdk_messages WHERE consumed_seq IS NOT NULL`
+          `SELECT COALESCE(MAX(rowid), 0) + 1 AS m FROM sdk_messages`
         );
         const timeStmt = this.db.prepare('UPDATE sdk_messages SET timestamp = ? WHERE id = ?');
         const consumedSeqStmt = this.db.prepare(
           'UPDATE sdk_messages SET consumed_seq = ?, timestamp = ? WHERE id = ?'
         );
-        // Compute the boundary ONCE (index-based, sub-ms — see the perf fix), then
-        // increment per consumed row so the watermark stays monotonic regardless
-        // of how many pending rows this call flips. Not recomputed per row.
-        const boundary =
-          newStatus === 'consumed'
-            ? Math.max(
-                (maxRowidStmt.get() as { m: number }).m,
-                (maxConsumedSeqStmt.get() as { m: number }).m
-              )
-            : 0;
-        let nextSeq = boundary;
+        const consumedSeq = newStatus === 'consumed' ? (maxRowidStmt.get() as { m: number }).m : 0;
         for (const row of pending) {
           if (row.task_id && row.is_renderable === 1) {
             const max = (maxStmt.get(row.task_id) as { m: number | null } | undefined)?.m ?? 0;
@@ -1528,10 +1514,11 @@ export class SDKMessageRepository {
             timeStmt.run(now, row.id);
           }
           // Only a CONSUMED flip carries the consumption boundary (failed rows
-          // were never consumed — no consumed_seq).
+          // were never consumed — no consumed_seq). Same value for every row in
+          // this batch (MAX(rowid)+1 at consume time); a later terminal result
+          // always has a higher rowid.
           if (newStatus === 'consumed') {
-            nextSeq++;
-            consumedSeqStmt.run(nextSeq, now, row.id);
+            consumedSeqStmt.run(consumedSeq, now, row.id);
           }
         }
       }
@@ -1677,16 +1664,22 @@ export class SDKMessageRepository {
   deleteMessagesAfter(sessionId: string, afterTimestamp: number): number {
     const isoTimestamp = new Date(afterTimestamp).toISOString();
     const rows = this.db
-      .prepare(`SELECT id FROM sdk_messages WHERE session_id = ? AND timestamp > ?`)
-      .all(sessionId, isoTimestamp) as Array<{ id: string }>;
+      .prepare(`SELECT id, sdk_uuid FROM sdk_messages WHERE session_id = ? AND timestamp > ?`)
+      .all(sessionId, isoTimestamp) as Array<{ id: string; sdk_uuid: string | null }>;
     const stmt = this.db.prepare(`DELETE FROM sdk_messages WHERE session_id = ? AND timestamp > ?`);
-    // Wrap DELETE + counter recompute in one transaction (FTS cleanup below is
-    // best-effort, outside the tx) so an FTS throw can't leave the counter stale.
+    // Wrap DELETE + counter recompute + turn-end marker cleanup in one
+    // transaction (FTS cleanup below is best-effort, outside the tx) so an FTS
+    // throw can't leave the counter stale. Markers for rewound UUIDs must go so
+    // a re-persisted UUID (e.g. a long-horizon inbox retry) isn't skipped as
+    // "already ended" by a stale marker. See Codex (PR #2463, P2).
     let deleted = 0;
     let badgeChanged = false;
     this.db.transaction(() => {
       deleted = stmt.run(sessionId, isoTimestamp).changes;
       badgeChanged = this.recomputeVisibleMessageCount(sessionId);
+      for (const { sdk_uuid } of rows) {
+        if (sdk_uuid) this.clearDeliveryTurnEnd(sessionId, sdk_uuid);
+      }
     })();
     if (badgeChanged) this.notifySessionsChanged(sessionId);
     for (const row of rows) this.deleteMessageSearchRow(row.id);
@@ -1706,18 +1699,22 @@ export class SDKMessageRepository {
   deleteMessagesAtAndAfter(sessionId: string, atTimestamp: number): number {
     const isoTimestamp = new Date(atTimestamp).toISOString();
     const rows = this.db
-      .prepare(`SELECT id FROM sdk_messages WHERE session_id = ? AND timestamp >= ?`)
-      .all(sessionId, isoTimestamp) as Array<{ id: string }>;
+      .prepare(`SELECT id, sdk_uuid FROM sdk_messages WHERE session_id = ? AND timestamp >= ?`)
+      .all(sessionId, isoTimestamp) as Array<{ id: string; sdk_uuid: string | null }>;
     const stmt = this.db.prepare(
       `DELETE FROM sdk_messages WHERE session_id = ? AND timestamp >= ?`
     );
-    // Wrap DELETE + counter recompute in one transaction (FTS cleanup below is
-    // best-effort, outside the tx) so an FTS throw can't leave the counter stale.
+    // Wrap DELETE + counter recompute + turn-end marker cleanup in one
+    // transaction (FTS cleanup below is best-effort, outside the tx) so an FTS
+    // throw can't leave the counter stale. See deleteMessagesAfter / Codex (#2463).
     let deleted = 0;
     let badgeChanged = false;
     this.db.transaction(() => {
       deleted = stmt.run(sessionId, isoTimestamp).changes;
       badgeChanged = this.recomputeVisibleMessageCount(sessionId);
+      for (const { sdk_uuid } of rows) {
+        if (sdk_uuid) this.clearDeliveryTurnEnd(sessionId, sdk_uuid);
+      }
     })();
     if (badgeChanged) this.notifySessionsChanged(sessionId);
     for (const row of rows) this.deleteMessageSearchRow(row.id);
@@ -1960,6 +1957,22 @@ export class SDKMessageRepository {
       .prepare(`SELECT 1 FROM delivery_turn_end WHERE session_id = ? AND message_uuid = ? LIMIT 1`)
       .get(sessionId, messageUuid) as { 1: number } | undefined | null;
     return row != null;
+  }
+
+  /**
+   * Delete a durable delivery-turn completion marker for `messageUuid`. Called
+   * on rewind (`deleteMessagesAfter` / `deleteMessagesAtAndAfter`): delivery
+   * paths such as long-horizon inbox retries intentionally reuse stable message
+   * UUIDs, so a stale marker for a rewound UUID must not survive to mark a
+   * re-persisted message's new turn as already ended. No-op when the
+   * delivery_turn_end table is absent (legacy/partial test schemas). See Codex
+   * (PR #2463, P2).
+   */
+  clearDeliveryTurnEnd(sessionId: string, messageUuid: string): void {
+    if (!this.tableExists('delivery_turn_end')) return;
+    this.db
+      .prepare(`DELETE FROM delivery_turn_end WHERE session_id = ? AND message_uuid = ?`)
+      .run(sessionId, messageUuid);
   }
 
   /**
