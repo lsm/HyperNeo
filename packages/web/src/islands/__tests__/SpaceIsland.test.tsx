@@ -471,8 +471,11 @@ describe('SpaceIsland — route-driven views', () => {
       },
       { timeout: LAZY_LOAD_TIMEOUT }
     );
-    // Outer wrapper
+    // Outer wrapper and Overview-only workspace treatment
     expect(getByTestId('space-overview-view')).toBeTruthy();
+    expect(getByTestId('space-overview-view').getAttribute('data-overview-surface')).toBe(
+      'glass-workspace'
+    );
     expect(getByTestId('space-dashboard').getAttribute('data-space-id')).toBe('space-1');
     // Legacy tab bar is removed from overview
     expect(queryByTestId('space-tab-bar')).toBeNull();
@@ -487,7 +490,9 @@ describe('SpaceIsland — route-driven views', () => {
       },
       { timeout: LAZY_LOAD_TIMEOUT }
     );
-    expect(getByTestId('space-configure-view')).toBeTruthy();
+    const configureView = getByTestId('space-configure-view');
+    expect(configureView).toBeTruthy();
+    expect(configureView.hasAttribute('data-overview-surface')).toBe(false);
   });
 });
 

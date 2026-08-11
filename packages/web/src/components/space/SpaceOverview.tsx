@@ -23,8 +23,6 @@ import {
   navigateToSpaceTasks,
 } from '../../lib/router';
 import { createSession } from '../../lib/api-helpers';
-import { useSessionRename } from '../../hooks/useSessionRename';
-import { RenameIcon } from '../icons/RenameIcon';
 import { cn, getRelativeTime } from '../../lib/utils';
 import { toast } from '../../lib/toast';
 import { AUTONOMY_LABELS } from '../../lib/space-constants';
@@ -32,6 +30,11 @@ import { isActionRequired } from '../../lib/task-filters';
 import { SpaceCreateTaskDialog } from './SpaceCreateTaskDialog';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { AutonomyWorkflowSummary } from './AutonomyWorkflowSummary';
+
+const GLASS_SURFACE =
+  'border-white/15 bg-white/[0.07] shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_16px_40px_rgba(0,0,0,0.18)] backdrop-blur-xl';
+const FLAT_SURFACE =
+  'border-white/10 bg-dark-900/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_12px_32px_rgba(0,0,0,0.2)]';
 
 // ─── Stat Card ───────────────────────────────────────────────────────────────
 
@@ -50,10 +53,13 @@ function StatCard({
     <button
       type="button"
       onClick={onClick}
+      aria-label={`${label} tasks: ${count}`}
       class={cn(
-        'flex flex-col items-center gap-1 rounded-xl border px-5 py-4 transition-all',
-        'bg-dark-850/80 hover:bg-dark-800',
-        onClick ? 'cursor-pointer' : 'cursor-default',
+        'flex flex-col items-center gap-1 rounded-xl border px-5 py-4 transition-all duration-200',
+        GLASS_SURFACE,
+        onClick
+          ? 'cursor-pointer hover:-translate-y-0.5 hover:border-white/25 hover:bg-white/[0.1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70'
+          : 'cursor-default',
         color
       )}
     >
@@ -110,7 +116,7 @@ function RuntimeControlBar({
     <div
       class={cn(
         'flex items-center justify-between rounded-xl border px-5 py-4 transition-colors',
-        style.bg,
+        GLASS_SURFACE,
         style.border
       )}
     >
@@ -194,7 +200,7 @@ function AutonomyLevelBar({
   onChange: (level: SpaceAutonomyLevel) => void;
 }) {
   return (
-    <div class="rounded-xl border border-dark-700 bg-dark-850/80 px-5 py-4">
+    <div class={cn('rounded-xl border px-5 py-4', GLASS_SURFACE)}>
       <div class="flex items-center justify-between mb-2.5">
         <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Autonomy</span>
         <span class="text-xs text-gray-400">{AUTONOMY_LABELS[level]}</span>
@@ -230,7 +236,7 @@ function AutonomyLevelBar({
 
 function ConcurrencyBar({ limit, onChange }: { limit: number; onChange: (n: number) => void }) {
   return (
-    <div class="rounded-xl border border-dark-700 bg-dark-850/80 px-5 py-4">
+    <div class={cn('rounded-xl border px-5 py-4', GLASS_SURFACE)}>
       <div class="flex items-center justify-between mb-2.5">
         <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">
           Concurrency
@@ -256,36 +262,44 @@ function ConcurrencyBar({ limit, onChange }: { limit: number; onChange: (n: numb
 // ─── Recent Tasks ─────────────────────────────────────────────────────────
 
 const STATUS_COLORS: Record<string, string> = {
-  in_progress: 'text-blue-400',
-  open: 'text-gray-400',
-  blocked: 'text-amber-400',
-  review: 'text-purple-400',
-  done: 'text-green-400',
-  cancelled: 'text-gray-400',
-  archived: 'text-gray-400',
+  in_progress: 'bg-blue-400',
+  open: 'bg-gray-400',
+  blocked: 'bg-amber-400',
+  review: 'bg-purple-400',
+  done: 'bg-green-400',
+  cancelled: 'bg-gray-500',
+  archived: 'bg-gray-500',
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  in_progress: 'In progress',
+  open: 'Open',
+  blocked: 'Blocked',
+  review: 'Review',
+  done: 'Done',
+  cancelled: 'Cancelled',
+  archived: 'Archived',
 };
 
 function RecentTaskItem({ task, onClick }: { task: SpaceTask; onClick?: () => void }) {
-  const statusColor = STATUS_COLORS[task.status] ?? 'text-gray-400';
-
   return (
     <button
       type="button"
       onClick={onClick}
-      class="w-full flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-dark-800/60 transition-colors text-left group"
+      class="flex w-full items-center gap-2.5 px-4 py-3 text-left transition-colors hover:bg-white/[0.055] focus-visible:bg-white/[0.055] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400/60"
     >
-      <div class={cn('w-2 h-2 rounded-full flex-shrink-0', statusColor.replace('text-', 'bg-'))} />
-      <div class="flex-1 min-w-0">
-        <div class="flex items-center gap-2 min-w-0">
-          <span class="text-sm text-gray-200 group-hover:text-gray-100 truncate block">
-            {task.title}
-          </span>
-          <span class="inline-flex items-center text-xs font-mono font-medium text-gray-400 bg-dark-700 border border-dark-600 px-1.5 py-0.5 rounded flex-shrink-0">
-            #{task.taskNumber}
-          </span>
-        </div>
-      </div>
-      <span class="text-xs text-gray-400 flex-shrink-0 tabular-nums">
+      <span
+        class={cn(
+          'h-1.5 w-1.5 flex-none rounded-full',
+          STATUS_COLORS[task.status] ?? 'bg-gray-400'
+        )}
+        title={STATUS_LABELS[task.status] ?? task.status}
+      />
+      <span class="min-w-0 flex-1 truncate text-sm font-medium text-gray-100">{task.title}</span>
+      <span class="flex-none rounded bg-white/[0.055] px-1.5 py-0.5 font-mono text-[11px] font-medium text-gray-400 ring-1 ring-inset ring-white/10">
+        #{task.taskNumber}
+      </span>
+      <span class="flex-none text-xs tabular-nums text-gray-400">
         {getRelativeTime(task.updatedAt)}
       </span>
     </button>
@@ -442,8 +456,11 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
   };
 
   return (
-    <div class="flex-1 min-h-0 w-full px-4 py-4 sm:px-8 sm:py-6 overflow-y-auto">
-      <div class="min-h-[calc(100%+1px)] space-y-6">
+    <div
+      class="flex-1 min-h-0 w-full overflow-y-auto px-4 py-4 sm:px-8 sm:py-6"
+      data-testid="space-overview-dashboard"
+    >
+      <div class="mx-auto min-h-[calc(100%+1px)] max-w-6xl space-y-6">
         <SpaceCreateTaskDialog isOpen={showCreateTask} onClose={() => setShowCreateTask(false)} />
 
         {/* Runtime state with pause/resume/stop/start controls */}
@@ -502,7 +519,11 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
             type="button"
             onClick={handleAwaitingApprovalClick}
             data-testid="awaiting-approval-summary"
-            class="w-full flex items-center justify-between rounded-xl border border-amber-800/40 bg-amber-900/20 px-5 py-3 text-left transition-colors hover:bg-amber-900/30"
+            class={cn(
+              'w-full flex items-center justify-between rounded-xl border border-amber-500/30 px-5 py-3 text-left transition-colors hover:border-amber-400/40 hover:bg-amber-300/[0.1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60',
+              GLASS_SURFACE,
+              'bg-amber-300/[0.07]'
+            )}
           >
             <div class="flex items-center gap-3">
               <span class="text-lg" aria-hidden="true">
@@ -522,77 +543,93 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
           </button>
         )}
 
-        {/* Recent Tasks */}
-        <div>
-          <div class="flex items-center justify-between mb-2 px-1">
-            <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">
-              Recent Tasks
-            </h3>
-            <button
-              type="button"
-              onClick={() => setShowCreateTask(true)}
-              class="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-500"
-            >
-              Create Task
-            </button>
-          </div>
-          {recentTasks.length === 0 ? (
-            <div class="flex flex-col items-center justify-center py-12 text-center">
-              <svg
-                class="w-10 h-10 text-gray-400 mb-3"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width={1.5}
-                  d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
-                />
-              </svg>
-              <p class="text-sm text-gray-400">No tasks yet</p>
-              <p class="text-xs text-gray-400 mt-1">Create a task to get started</p>
-            </div>
-          ) : (
-            <div class="rounded-xl border border-dark-700 bg-dark-900/50 divide-y divide-dark-700/50 overflow-hidden">
-              {recentTasks.map((task) => (
-                <RecentTaskItem
-                  key={task.id}
-                  task={task}
-                  onClick={() => handleTaskClick(task.id)}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Recent Sessions */}
-        {recentSessions.length > 0 && (
-          <div>
-            <div class="flex items-center justify-between mb-2 px-1">
-              <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                Recent Sessions
-              </h3>
+        <div class="grid items-start gap-6 xl:grid-cols-2">
+          {/* Recent Tasks */}
+          <section
+            class={cn(
+              'overflow-hidden rounded-2xl border',
+              FLAT_SURFACE,
+              recentSessions.length === 0 && 'xl:col-span-2'
+            )}
+            data-testid="overview-recent-tasks"
+          >
+            <div class="flex items-center justify-between border-b border-white/10 px-4 py-3.5 sm:px-5">
+              <div>
+                <h3 class="text-sm font-semibold text-gray-100">Recent Tasks</h3>
+                <p class="mt-0.5 text-xs text-gray-400">Latest work across this Space</p>
+              </div>
               <button
                 type="button"
-                onClick={() => void handleNewSession()}
-                class="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-500"
+                onClick={() => setShowCreateTask(true)}
+                class="flex items-center gap-1.5 rounded-lg border border-blue-400/30 bg-blue-500/15 px-3 py-1.5 text-xs font-semibold text-blue-100 transition-colors hover:border-blue-300/50 hover:bg-blue-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70"
               >
-                New Session
+                <span aria-hidden="true">+</span>
+                Create Task
               </button>
             </div>
-            <div class="rounded-xl border border-dark-700 bg-dark-900/50 divide-y divide-dark-700/50 overflow-hidden">
-              {recentSessions.map((session) => (
-                <RecentSessionRow
-                  key={session.id}
-                  session={session}
-                  onOpen={() => navigateToSpaceSession(routeSpaceId, session.id)}
-                />
-              ))}
-            </div>
-          </div>
-        )}
+            {recentTasks.length === 0 ? (
+              <div class="flex flex-col items-center justify-center px-4 py-10 text-center">
+                <svg
+                  class="mb-3 h-9 w-9 text-gray-500"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width={1.5}
+                    d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
+                  />
+                </svg>
+                <p class="text-sm font-medium text-gray-200">No tasks yet</p>
+                <p class="mt-1 text-xs text-gray-400">Create a task to get started</p>
+              </div>
+            ) : (
+              <div class="divide-y divide-white/[0.08]">
+                {recentTasks.map((task) => (
+                  <RecentTaskItem
+                    key={task.id}
+                    task={task}
+                    onClick={() => handleTaskClick(task.id)}
+                  />
+                ))}
+              </div>
+            )}
+          </section>
+
+          {/* Recent Sessions */}
+          {recentSessions.length > 0 && (
+            <section
+              class={cn('overflow-hidden rounded-2xl border', FLAT_SURFACE)}
+              data-testid="overview-recent-sessions"
+            >
+              <div class="flex items-center justify-between border-b border-white/10 px-4 py-3.5 sm:px-5">
+                <div>
+                  <h3 class="text-sm font-semibold text-gray-100">Recent Sessions</h3>
+                  <p class="mt-0.5 text-xs text-gray-400">Continue recent conversations</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void handleNewSession()}
+                  class="flex items-center gap-1.5 rounded-lg border border-indigo-400/30 bg-indigo-500/15 px-3 py-1.5 text-xs font-semibold text-indigo-100 transition-colors hover:border-indigo-300/50 hover:bg-indigo-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70"
+                >
+                  <span aria-hidden="true">+</span>
+                  New Session
+                </button>
+              </div>
+              <div class="divide-y divide-white/[0.08]">
+                {recentSessions.map((session) => (
+                  <RecentSessionRow
+                    key={session.id}
+                    session={session}
+                    onOpen={() => navigateToSpaceSession(routeSpaceId, session.id)}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+        </div>
 
         {/* Stop Confirmation */}
         <ConfirmModal
@@ -609,69 +646,25 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
   );
 }
 
-/**
- * Recent-session row on the Space overview. Supports inline rename (hover pencil
- * or double-click the title) alongside click-to-open.
- */
 function RecentSessionRow({
   session,
   onOpen,
 }: {
-  session: { id: string; title: string; lastActiveAt: number };
+  session: { title: string; lastActiveAt: number };
   onOpen: () => void;
 }) {
-  const { isEditing, startEditing, inputProps } = useSessionRename(session.id, session.title);
-
-  if (isEditing) {
-    return (
-      <input
-        type="text"
-        data-testid="space-session-rename-input"
-        {...inputProps}
-        class="w-full mx-4 my-1 px-2 py-2 text-sm bg-white/10 rounded-lg text-gray-100 outline-none ring-1 ring-blue-500/60"
-      />
-    );
-  }
-
-  const handleKeyDown = (e: KeyboardEvent) => {
-    // Only activate when the row itself is focused, so Enter on the nested
-    // rename button doesn't also open the session.
-    if (e.currentTarget === e.target && (e.key === 'Enter' || e.key === ' ')) {
-      e.preventDefault();
-      onOpen();
-    }
-  };
-
   return (
-    <div
-      class="group/row relative w-full flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-dark-800/60 transition-colors text-left cursor-pointer"
-      role="button"
-      tabIndex={0}
+    <button
+      type="button"
+      class="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-white/[0.055] focus-visible:bg-white/[0.055] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-400/60"
       onClick={onOpen}
-      onKeyDown={handleKeyDown}
     >
-      <div class="w-2 h-2 rounded-full flex-shrink-0 bg-indigo-400" />
-      <div class="flex-1 min-w-0">
-        <span class="text-sm text-gray-200 truncate block">
-          {session.title || 'Untitled Session'}
-        </span>
-      </div>
-      <span class="text-xs text-gray-400 flex-shrink-0 tabular-nums">
+      <span class="min-w-0 flex-1 truncate text-sm font-medium text-gray-100">
+        {session.title || 'Untitled Session'}
+      </span>
+      <span class="flex-none text-xs tabular-nums text-gray-400">
         {getRelativeTime(session.lastActiveAt)}
       </span>
-      <button
-        type="button"
-        data-testid="space-session-rename"
-        onClick={(event) => {
-          event.stopPropagation();
-          startEditing();
-        }}
-        title="Rename session"
-        aria-label={`Rename ${session.title || 'session'}`}
-        class="opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 p-1 rounded text-gray-500 transition-colors hover:text-gray-100 hover:bg-white/10"
-      >
-        <RenameIcon className="w-3.5 h-3.5" />
-      </button>
-    </div>
+    </button>
   );
 }
