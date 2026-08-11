@@ -1098,6 +1098,18 @@ export class SpaceRuntime {
   private registerRunInterestsFromWorkflow(run: SpaceWorkflowRun, workflow: SpaceWorkflow): void {
     const task = this.pickCanonicalTaskForRun(run, this.config.taskRepo.listByWorkflowRun(run.id));
     if (!task) return;
+    // Skip static re-materialization when the canonical task is terminal or
+    // retryably cancelled: its static interests were cleared by the task
+    // lifecycle (clearTaskInterests on done/archived,
+    // clearTaskInterestsPreservingDynamic on cancelled), and re-adding them
+    // would undo that — a matching event would terminalize as
+    // target_task_terminal instead of waiting for the task to resume (retry) or
+    // fan out to a dead target. (Not gated on RUN status: a done run whose task
+    // is review/approved still needs its static interests for the post-approval
+    // phase.)
+    if (task.status === 'cancelled' || task.status === 'done' || task.status === 'archived') {
+      return;
+    }
     this.registerRunInterests(run.id, task.id, workflow.nodes);
   }
 

@@ -608,6 +608,31 @@ describe('SpaceRuntime workflow subscription persistence', () => {
     expect(trieOf(runtime).lookupSubscriptionTargets('github/owner/repo/issues/7')).toHaveLength(1);
   });
 
+  test('registerRunInterestsFromWorkflow skips static rebuild for a cancelled canonical task', () => {
+    // A retryably-cancelled canonical task had its static interests cleared by
+    // clearTaskInterestsPreservingDynamic; re-materializing them (e.g. via
+    // ensureExecutorRegistered on restart) would undo that, so a pre-retry
+    // event terminalizes as target_task_terminal instead of waiting for resume.
+    const runtime = makeRuntime();
+    const { workflow, runId, taskId } = createRun({
+      eventInterests: [{ topic: 'github/owner/repo/issues/*' }],
+    });
+    taskRepo.updateTask(taskId, { status: 'cancelled' });
+    const run = workflowRunRepo.getRun(runId);
+    expect(run).toBeTruthy();
+
+    (
+      runtime as unknown as {
+        registerRunInterestsFromWorkflow(
+          run: { id: string; title: string },
+          workflow: SpaceWorkflow
+        ): void;
+      }
+    ).registerRunInterestsFromWorkflow(run!, workflow);
+
+    expect(trieOf(runtime).lookupSubscriptionTargets('github/owner/repo/issues/7')).toHaveLength(0);
+  });
+
   test('hard-deleting a task cascade-removes its subscription row (no durable phantom)', async () => {
     // SpaceTaskManager/GoalService deleteTask hard-deletes a task without
     // clearTaskInterests. The task_id FK cascade drops the row so rehydrate
