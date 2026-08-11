@@ -34,7 +34,7 @@ import { AutonomyWorkflowSummary } from './AutonomyWorkflowSummary';
 const GLASS_SURFACE =
   'border-white/15 bg-white/[0.07] shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_16px_40px_rgba(0,0,0,0.18)] backdrop-blur-xl';
 const FLAT_SURFACE =
-  'border-white/10 bg-dark-900/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_12px_32px_rgba(0,0,0,0.2)]';
+  'border-white/15 bg-dark-900/95 shadow-[inset_0_1px_0_rgba(255,255,255,0.07),0_18px_44px_rgba(0,0,0,0.26)]';
 
 // ─── Stat Card ───────────────────────────────────────────────────────────────
 
@@ -545,27 +545,26 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
           </button>
         )}
 
-        <div class="grid items-start gap-6 xl:grid-cols-2">
+        <div class="grid items-stretch gap-4 xl:grid-cols-2">
           {/* Recent Tasks */}
           <section
             class={cn(
-              'overflow-hidden rounded-2xl border',
+              'h-full overflow-hidden rounded-2xl border',
               FLAT_SURFACE,
               recentSessions.length === 0 && 'xl:col-span-2'
             )}
             data-testid="overview-recent-tasks"
           >
-            <div class="flex items-center justify-between border-b border-white/10 px-4 py-3.5 sm:px-5">
+            <div class="flex items-center justify-between border-b border-white/15 bg-white/[0.025] px-4 py-3.5 sm:px-5">
               <div>
-                <h3 class="text-sm font-semibold text-gray-100">Recent Tasks</h3>
-                <p class="mt-0.5 text-xs text-gray-400">Latest work across this Space</p>
+                <h3 class="text-base font-semibold tracking-tight text-gray-50">Recent Tasks</h3>
+                <p class="mt-0.5 text-[11px] text-gray-500">Latest work across this Space</p>
               </div>
               <button
                 type="button"
                 onClick={() => setShowCreateTask(true)}
-                class="flex items-center gap-1.5 rounded-lg border border-blue-400/30 bg-blue-500/15 px-3 py-1.5 text-xs font-semibold text-blue-100 transition-colors hover:border-blue-300/50 hover:bg-blue-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70"
+                class="rounded-md px-2 py-1 text-xs font-medium text-blue-300 transition-colors hover:bg-blue-400/10 hover:text-blue-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70"
               >
-                <span aria-hidden="true">+</span>
                 Create Task
               </button>
             </div>
@@ -603,20 +602,21 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
           {/* Recent Sessions */}
           {recentSessions.length > 0 && (
             <section
-              class={cn('overflow-hidden rounded-2xl border', FLAT_SURFACE)}
+              class={cn('h-full overflow-hidden rounded-2xl border', FLAT_SURFACE)}
               data-testid="overview-recent-sessions"
             >
-              <div class="flex items-center justify-between border-b border-white/10 px-4 py-3.5 sm:px-5">
+              <div class="flex items-center justify-between border-b border-white/15 bg-white/[0.025] px-4 py-3.5 sm:px-5">
                 <div>
-                  <h3 class="text-sm font-semibold text-gray-100">Recent Sessions</h3>
-                  <p class="mt-0.5 text-xs text-gray-400">Continue recent conversations</p>
+                  <h3 class="text-base font-semibold tracking-tight text-gray-50">
+                    Recent Sessions
+                  </h3>
+                  <p class="mt-0.5 text-[11px] text-gray-500">Continue recent conversations</p>
                 </div>
                 <button
                   type="button"
                   onClick={() => void handleNewSession()}
-                  class="flex items-center gap-1.5 rounded-lg border border-indigo-400/30 bg-indigo-500/15 px-3 py-1.5 text-xs font-semibold text-indigo-100 transition-colors hover:border-indigo-300/50 hover:bg-indigo-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70"
+                  class="rounded-md px-2 py-1 text-xs font-medium text-indigo-300 transition-colors hover:bg-indigo-400/10 hover:text-indigo-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70"
                 >
-                  <span aria-hidden="true">+</span>
                   New Session
                 </button>
               </div>
