@@ -5615,7 +5615,7 @@ export class TaskAgentManager {
             'system'
           );
         },
-        onHookStateUpdated: (hookId, hookState) => {
+        onHookStateUpdated: (hookId, hookState, patchLocalState) => {
           this.config.internalEventBus
             ?.publish('space.hookState.updated', {
               sessionId: 'global',
@@ -5636,13 +5636,18 @@ export class TaskAgentManager {
           // interest stays inert until an unrelated artifact/gate update or
           // restart. Best-effort; the runtime is terminal-run guarded and the
           // cheap topicFrom guard skips non-topicFrom workflows.
-          const local = hookState.localState ?? {};
-          // Fire whenever either key is PRESENT (incl. an empty string): a hook
-          // returning record_state with pr_url:'' clears the primary link, and the
-          // derived-sub cleanup in the materializer must still run or the
-          // superseded PR's subscription leaks. Checking presence (not non-empty)
-          // covers both establish- and clear-link writes.
-          const touchesPrimaryLink = 'prUrl' in local || 'pr_url' in local;
+          //
+          // Check the PATCH (this write), not the full merged local state: a hook
+          // whose state already holds a stale pr_url (PR A) after a newer artifact
+          // or gate made PR B primary must not report an unrelated record_state as
+          // link-bearing — the write advances the hook record's updatedAt (ranked
+          // as freshness by resolvePrimaryLinkUrl), which would rematerialize back
+          // to PR A and miss PR B. Fire whenever either key is PRESENT in the
+          // patch (incl. an empty string): a hook returning record_state with
+          // pr_url:'' clears the primary link, and the derived-sub cleanup in the
+          // materializer must still run or the superseded PR's subscription leaks.
+          const patch = patchLocalState ?? {};
+          const touchesPrimaryLink = 'prUrl' in patch || 'pr_url' in patch;
           if (touchesPrimaryLink) {
             try {
               this.config.spaceRuntimeService.invalidatePrimaryLinkForRun(workflowRunId);

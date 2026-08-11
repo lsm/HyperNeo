@@ -22,6 +22,7 @@ import type {
   WorkflowHookResult,
   SpaceWorkflow,
   WorkflowRunStatus,
+  WorkflowHookStateSnapshot,
 } from '@hyperneo/shared';
 import type { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import type { WorkflowHookStateRepository } from '../../../../src/storage/repositories/workflow-hook-state-repository';
@@ -225,6 +226,11 @@ function makeEngine(
     getTaskStatus?: (taskId: string) => string | undefined;
     getSourceNodeExecutionStatus?: (meta: HookActionMeta) => string | undefined;
     notifySourceSession?: (sessionId: string, message: string) => Promise<void>;
+    onHookStateUpdated?: (
+      hookId: string,
+      hookState: WorkflowHookStateSnapshot,
+      patchLocalState?: Record<string, unknown>
+    ) => void;
   } = {}
 ): {
   engine: WorkflowHookEngine;
@@ -245,6 +251,7 @@ function makeEngine(
     getTaskStatus: options.getTaskStatus,
     getSourceNodeExecutionStatus: options.getSourceNodeExecutionStatus,
     notifySourceSession: options.notifySourceSession,
+    onHookStateUpdated: options.onHookStateUpdated,
   });
   return { engine, mockExecutor, hookStateRepo };
 }
@@ -276,6 +283,33 @@ describe('WorkflowHookEngine', () => {
       true
     );
     expect(attempts).toBe(2);
+  });
+
+  test('onHookStateUpdated receives the merged-state patch, not the full local state', () => {
+    // R15-5: the trigger must decide link-bearing from the PATCH (the keys this
+    // write merged), not the full local state — otherwise a hook still holding a
+    // stale pr_url reports an unrelated record_state as link-bearing. Verify the
+    // engine threads patchLocalState (the persistStateUpdate `state` arg) through
+    // to the callback on every update.
+    const calls: Array<{ hookId: string; patch: Record<string, unknown> }> = [];
+    const { engine } = makeEngine([makeHook({ id: 'hook-1' })], {
+      onHookStateUpdated: (hookId, _snapshot, patchLocalState) => {
+        calls.push({ hookId, patch: patchLocalState ?? {} });
+      },
+    });
+
+    // First write establishes pr_url — the patch carries it.
+    expect(
+      engine.persistStateUpdate('hook-1', { pr_url: 'https://github.com/lsm/neokai/pull/42' })
+    ).toBe(true);
+    // Second write is an UNRELATED field. The merged local state still carries
+    // the stale pr_url from the first write, but THIS write's patch does not.
+    expect(engine.persistStateUpdate('hook-1', { note: 'unrelated update' })).toBe(true);
+
+    expect(calls).toHaveLength(2);
+    expect('pr_url' in calls[0]!.patch).toBe(true);
+    expect('pr_url' in calls[1]!.patch).toBe(false);
+    expect(calls[1]!.patch).toEqual({ note: 'unrelated update' });
   });
 
   test('allow: no hooks registered → allow silently', async () => {

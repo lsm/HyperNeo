@@ -113,7 +113,11 @@ export interface WorkflowHookEngineConfig {
   getTaskStatus?: (taskId: string) => string | undefined;
   getSourceNodeExecutionStatus?: (meta: HookActionMeta) => string | undefined;
   notifySourceSession?: (sessionId: string, message: string) => Promise<void>;
-  onHookStateUpdated?: (hookId: string, hookState: WorkflowHookStateSnapshot) => void;
+  onHookStateUpdated?: (
+    hookId: string,
+    hookState: WorkflowHookStateSnapshot,
+    patchLocalState?: Record<string, unknown>
+  ) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -338,7 +342,7 @@ export class WorkflowHookEngine {
           lastResult,
         });
         if (result) {
-          this.config.onHookStateUpdated?.(hookId, result);
+          this.config.onHookStateUpdated?.(hookId, result, state);
           return true;
         }
       } catch {
