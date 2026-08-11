@@ -1017,6 +1017,76 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect(mapped[0].severity).toBe('error');
     });
 
+    test('spaceTaskMessages.byTask maps user-message send_status to the delivery lifecycle + retrying', () => {
+      const workflowRunId = 'wr-stm-delivery';
+      const sessionIdValue = 'session-stm-delivery';
+      const taskId = insertSpaceTask({
+        id: 'task-stm-delivery',
+        workflowRunId,
+        status: 'in_progress',
+      });
+      sessionTaskIds.set(sessionIdValue, taskId);
+      const userPayload = (uuid: string) => ({
+        type: 'user',
+        uuid,
+        message: { role: 'user', content: [{ type: 'text', text: 'handoff' }] },
+      });
+      // One user message per send_status; stamp sdk_uuid so the retry EXISTS can match.
+      const cases: Array<{ id: string; uuid: string; sendStatus: string; expected: string }> = [
+        {
+          id: 'stm-consumed',
+          uuid: 'u-stm-consumed',
+          sendStatus: 'consumed',
+          expected: 'delivered',
+        },
+        { id: 'stm-deferred', uuid: 'u-stm-deferred', sendStatus: 'deferred', expected: 'queued' },
+        { id: 'stm-enqueued', uuid: 'u-stm-enqueued', sendStatus: 'enqueued', expected: 'queued' },
+        {
+          id: 'stm-submitted',
+          uuid: 'u-stm-submitted',
+          sendStatus: 'submitted',
+          expected: 'processing',
+        },
+        { id: 'stm-failed', uuid: 'u-stm-failed', sendStatus: 'failed', expected: 'failed' },
+        { id: 'stm-retry', uuid: 'u-stm-retry', sendStatus: 'enqueued', expected: 'retrying' },
+      ];
+      for (const c of cases) {
+        insertSdkMessageAt(
+          c.id,
+          sessionIdValue,
+          now + 1000,
+          'user',
+          c.sendStatus,
+          'human',
+          null,
+          userPayload(c.uuid)
+        );
+        db.prepare(`UPDATE sdk_messages SET sdk_uuid = ? WHERE id = ?`).run(c.uuid, c.id);
+      }
+      // An active message_delivery job with retry_count > 0 → the retry row reads "retrying".
+      db.prepare(
+        `INSERT INTO job_queue (id, queue, status, payload, retry_count, max_retries, run_at, created_at)
+         VALUES (?, 'message_delivery', 'pending', ?, 1, 8, ?, ?)`
+      ).run(
+        'job-stm-retry',
+        JSON.stringify({
+          sessionId: sessionIdValue,
+          messageUuid: 'u-stm-retry',
+          role: 'turn',
+          origin: 'space_inject',
+        }),
+        now,
+        now
+      );
+
+      const byId = new Map(queryMessages(taskId).map((r) => [r.id as string, r]));
+      for (const c of cases) {
+        expect((byId.get(c.id) as Record<string, unknown> | undefined)?.deliveryState).toBe(
+          c.expected
+        );
+      }
+    });
+
     test('actorMessages.byTask does not fan out SDK rows across node execution history', () => {
       const workflowRunId = 'wr-actor-sdk';
       const nodeSessionId = 'node-agent-actor-sdk';
@@ -2576,6 +2646,64 @@ describe('NAMED_QUERY_REGISTRY', () => {
 
         expect(rows).toHaveLength(1);
         expect(rows[0].origin).toBe('system');
+      });
+
+      test('maps user-message send_status to the delivery lifecycle + retrying (compact feed)', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+        const userPayload = (uuid: string) => ({
+          type: 'user',
+          uuid,
+          message: { role: 'user', content: 'handoff' },
+        });
+        const cases: Array<{ id: string; uuid: string; sendStatus: string; expected: string }> = [
+          {
+            id: 'c-delivered',
+            uuid: 'u-c-delivered',
+            sendStatus: 'consumed',
+            expected: 'delivered',
+          },
+          { id: 'c-queued', uuid: 'u-c-queued', sendStatus: 'enqueued', expected: 'queued' },
+          {
+            id: 'c-processing',
+            uuid: 'u-c-processing',
+            sendStatus: 'submitted',
+            expected: 'processing',
+          },
+          { id: 'c-failed', uuid: 'u-c-failed', sendStatus: 'failed', expected: 'failed' },
+          { id: 'c-retry', uuid: 'u-c-retry', sendStatus: 'enqueued', expected: 'retrying' },
+        ];
+        for (const c of cases) {
+          insertSdkMessageAt(c.id, sessionId, now + 1000, userPayload(c.uuid), 'user');
+          // The compact helper hardcodes send_status='consumed' + no sdk_uuid;
+          // stamp both so the mapping + retry EXISTS behave like production.
+          db.prepare(`UPDATE sdk_messages SET send_status = ?, sdk_uuid = ? WHERE id = ?`).run(
+            c.sendStatus,
+            c.uuid,
+            c.id
+          );
+        }
+        db.prepare(
+          `INSERT INTO job_queue (id, queue, status, payload, retry_count, max_retries, run_at, created_at)
+           VALUES (?, 'message_delivery', 'pending', ?, 1, 8, ?, ?)`
+        ).run(
+          'job-c-retry',
+          JSON.stringify({
+            sessionId,
+            messageUuid: 'u-c-retry',
+            role: 'turn',
+            origin: 'space_inject',
+          }),
+          now,
+          now
+        );
+
+        const byId = new Map(queryCompact(taskId).map((r) => [r.id as string, r]));
+        for (const c of cases) {
+          expect((byId.get(c.id) as Record<string, unknown> | undefined)?.deliveryState).toBe(
+            c.expected
+          );
+        }
       });
 
       test('keeps anchor + last-assistant summary + result per conversation turn', () => {

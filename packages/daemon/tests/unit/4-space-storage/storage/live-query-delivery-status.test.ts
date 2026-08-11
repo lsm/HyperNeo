@@ -42,6 +42,37 @@ function makeUserMessage(uuid: string, content: string): SDKMessage {
   } as SDKMessage;
 }
 
+/** Insert a message_delivery job_queue row (task #862 retry-signal tests). */
+function insertDeliveryJob(
+  db: BunDatabase,
+  args: {
+    id: string;
+    sessionId: string;
+    messageUuid: string;
+    status?: 'pending' | 'processing' | 'completed' | 'failed' | 'dead';
+    retryCount?: number;
+    role?: 'turn' | 'steer';
+  }
+): void {
+  db.prepare(
+    `INSERT INTO job_queue
+       (id, queue, status, payload, retry_count, max_retries, run_at, created_at)
+     VALUES (?, 'message_delivery', ?, ?, ?, 8, ?, ?)`
+  ).run(
+    args.id,
+    args.status ?? 'pending',
+    JSON.stringify({
+      sessionId: args.sessionId,
+      messageUuid: args.messageUuid,
+      role: args.role ?? 'turn',
+      origin: 'chat',
+    }),
+    args.retryCount ?? 0,
+    Date.now(),
+    Date.now()
+  );
+}
+
 describe('messages.bySession delivery-status reactive pipeline', () => {
   let dbPath: string;
   let db: Database;
@@ -165,5 +196,43 @@ describe('messages.bySession delivery-status reactive pipeline', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].id).toBe(rowId);
     expect(rows[0].sendStatus).toBe('consumed');
+  });
+
+  test('a job_queue retry transition re-evaluates the feed (job_queue is a feed dependency)', async () => {
+    // The "retrying" state comes from an EXISTS vs job_queue. The query's table
+    // extraction must register job_queue as a dependency so a job transition
+    // (notified by messageDeliveryProcessor → reactiveDb.notifyChange('job_queue'))
+    // re-evaluates messages.bySession and emits a delta on the matching message.
+    const rowId = reactiveDb.db.saveUserMessage(
+      sessionId,
+      makeUserMessage('u-job', 'retry me'),
+      'enqueued'
+    );
+
+    const diffs: QueryDiff<MessageRow>[] = [];
+    engine.subscribe<MessageRow>(SQL, [sessionId, 100], (diff) => diffs.push(diff));
+    await flush();
+    expect(diffs[0].type).toBe('snapshot');
+    expect(diffs[0].rows![0].deliveryRetry).toBe(0);
+
+    // A reclaim re-drove the message — active job, retry_count > 0.
+    insertDeliveryJob(bunDb, {
+      id: 'job-retry',
+      sessionId,
+      messageUuid: 'u-job',
+      status: 'pending',
+      retryCount: 1,
+    });
+    // Simulate messageDeliveryProcessor.setChangeNotifier → notifyChange('job_queue').
+    reactiveDb.notifyChange('job_queue');
+    await flush();
+
+    const retryDelta = diffs[1];
+    expect(retryDelta.type).toBe('delta');
+    expect(retryDelta.updated?.length).toBe(1);
+    expect(retryDelta.updated?.[0].id).toBe(rowId);
+    expect(retryDelta.updated?.[0].deliveryRetry).toBe(1);
+    // The same row was updated, not duplicated.
+    expect(retryDelta.added ?? []).toHaveLength(0);
   });
 });

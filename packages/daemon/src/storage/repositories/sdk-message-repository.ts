@@ -8,7 +8,7 @@
  */
 
 import type { Database as BunDatabase } from '../sqlite-compat';
-import { generateUUID } from '@hyperneo/shared';
+import { generateUUID, sendStatusToDeliveryStatus } from '@hyperneo/shared';
 import type {
   MessageContent,
   MessageOrigin,
@@ -845,8 +845,16 @@ export class SDKMessageRepository {
         // DB origin wins; undefined explicitly clears any SDK-level origin object.
         origin: r.origin != null ? (r.origin as MessageOrigin) : undefined,
       };
-      if (r.send_status === 'failed') {
-        extra.sendStatus = 'failed';
+      // Task #862: emit the same delivery lifecycle the LiveQuery feed exposes,
+      // so the `messages` RPC / initial-load / pagination / export payloads match
+      // the feed's wire shape. This path has no job_queue join, so the "retrying"
+      // state is not detectable here (the feed covers it); user rows reaching this
+      // path are virtually always settled (consumed/failed) anyway.
+      if (sdkMessage.type === 'user') {
+        const deliveryStatus = sendStatusToDeliveryStatus(
+          r.send_status as string | null | undefined
+        );
+        if (deliveryStatus) extra.deliveryStatus = deliveryStatus;
       }
       messages.push({ ...sdkMessage, ...extra } as SDKMessage & { timestamp: number });
       if (messages.length >= limit) break;

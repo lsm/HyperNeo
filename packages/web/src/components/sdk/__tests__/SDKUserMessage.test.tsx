@@ -523,6 +523,26 @@ describe('SDKUserMessage', () => {
       expect(container.textContent).toContain('sending');
     });
 
+    it('should show "retrying" badge with stalled-delivery copy when deliveryStatus is retrying', async () => {
+      const message = {
+        ...createTextMessage('Hello world'),
+        deliveryStatus: 'retrying' as const,
+      };
+
+      const { container } = render(<SDKUserMessage message={message} />);
+
+      const badge = container.querySelector('[data-testid="user-delivery-state"]');
+      expect(badge).toBeTruthy();
+      expect(badge?.textContent).toContain('retrying');
+
+      // The stalled-delivery hint lives in the badge's hover tooltip. mouseenter
+      // is non-bubbling, so fire it on the Tooltip wrapper (the badge's parent).
+      fireEvent.mouseEnter(badge!.parentElement!);
+      await waitFor(() => {
+        expect(container.textContent).toContain('Delivery stalled — retrying');
+      });
+    });
+
     it('should NOT show a badge when deliveryStatus is delivered (avoid noise)', () => {
       const message = {
         ...createTextMessage('Hello world'),
