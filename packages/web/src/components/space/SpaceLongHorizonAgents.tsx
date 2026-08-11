@@ -29,8 +29,21 @@ const AUTONOMY_LABELS: Record<number, string> = {
   5: 'Unrestricted',
 };
 
+const FLAT_SURFACE =
+  'border-white/15 bg-dark-900/95 shadow-[inset_0_1px_0_rgba(255,255,255,0.07),0_18px_44px_rgba(0,0,0,0.24)]';
+
 function isCoordinator(agent: SpaceLongHorizonAgent): boolean {
   return agent.handle === 'coordinator';
+}
+
+function agentInitials(name: string): string {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join('')
+    .toUpperCase();
 }
 
 type SelectedAgentDetail =
@@ -141,20 +154,26 @@ function AgentEditor({ template, agent, existingHandles, onSave, onCancel }: Age
   };
 
   return (
-    <div class="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 p-4">
-      <div class="w-full max-w-lg rounded-xl border border-white/10 bg-dark-900 shadow-2xl">
-        <div class="flex items-center justify-between px-4 py-3 border-b border-white/10">
-          <p class="text-sm font-semibold text-gray-100">
-            {isEdit
-              ? `Edit ${agent?.displayName}`
-              : `New agent${template ? ` · ${template.displayName}` : ''}`}
-          </p>
+    <div class="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-0 backdrop-blur-sm sm:items-center sm:p-5">
+      <div class="relative isolate max-h-[calc(100dvh-1rem)] w-full max-w-2xl overflow-hidden rounded-t-3xl border border-white/15 bg-dark-900/95 shadow-[inset_0_1px_0_rgba(255,255,255,0.1),0_28px_90px_rgba(0,0,0,0.55)] before:pointer-events-none before:absolute before:inset-0 before:-z-10 before:bg-[radial-gradient(circle_at_4%_0%,rgba(145,77,108,0.22),transparent_34%),radial-gradient(circle_at_100%_6%,rgba(42,94,125,0.18),transparent_38%)] sm:rounded-3xl">
+        <div class="flex items-start justify-between border-b border-white/10 px-5 py-5 sm:px-7">
+          <div>
+            <p class="text-xl font-semibold tracking-tight text-gray-50">
+              {isEdit
+                ? `Edit ${agent?.displayName}`
+                : `New agent${template ? ` · ${template.displayName}` : ''}`}
+            </p>
+            <p class="mt-1 text-sm text-gray-400">
+              Define the role, autonomy, and model for this space.
+            </p>
+          </div>
           <button
             type="button"
             onClick={onCancel}
-            class="rounded p-1 text-gray-400 hover:text-gray-300 hover:bg-white/5"
+            aria-label="Close agent editor"
+            class="rounded-xl border border-transparent p-2 text-gray-400 transition-colors hover:border-white/10 hover:bg-white/[0.06] hover:text-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/60"
           >
-            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path
                 stroke-linecap="round"
                 stroke-linejoin="round"
@@ -164,52 +183,52 @@ function AgentEditor({ template, agent, existingHandles, onSave, onCancel }: Age
             </svg>
           </button>
         </div>
-        <div class="p-4 space-y-3">
+        <div class="max-h-[calc(100dvh-11rem)] space-y-5 overflow-y-auto px-5 py-5 scrollbar-dark sm:px-7 sm:py-6">
           <div class="grid grid-cols-2 gap-3">
             <div>
-              <label class="block text-xs font-medium text-gray-400 mb-1">Name</label>
+              <label class="mb-2 block text-sm font-medium text-gray-300">Name</label>
               <input
                 type="text"
                 value={displayName}
                 onInput={(e) => setDisplayName((e.target as HTMLInputElement).value)}
-                class="w-full rounded-lg border border-white/10 bg-white/[0.04] px-3 py-1.5 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500/50 focus:outline-none"
+                class="w-full rounded-xl border border-white/12 bg-dark-850/90 px-4 py-3 text-sm text-gray-50 placeholder-gray-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-colors focus:border-amber-200/45 focus:outline-none focus:ring-2 focus:ring-amber-200/10"
                 placeholder="e.g. Release Manager"
               />
             </div>
             <div>
-              <label class="block text-xs font-medium text-gray-400 mb-1">Handle</label>
+              <label class="mb-2 block text-sm font-medium text-gray-300">Handle</label>
               <input
                 type="text"
                 value={handle}
                 disabled={isEdit}
                 onInput={(e) => setHandle((e.target as HTMLInputElement).value)}
-                class="w-full rounded-lg border border-white/10 bg-white/[0.04] px-3 py-1.5 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500/50 focus:outline-none disabled:opacity-50"
+                class="w-full rounded-xl border border-white/12 bg-dark-850/90 px-4 py-3 text-sm text-gray-50 placeholder-gray-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-colors focus:border-amber-200/45 focus:outline-none focus:ring-2 focus:ring-amber-200/10 disabled:opacity-50"
                 placeholder="e.g. release-manager"
               />
             </div>
           </div>
           <div>
-            <label class="block text-xs font-medium text-gray-400 mb-1">Instructions</label>
+            <label class="mb-2 block text-sm font-medium text-gray-300">Instructions</label>
             <textarea
               value={instructions}
               onInput={(e) => setInstructions((e.target as HTMLTextAreaElement).value)}
               rows={5}
-              class="w-full rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500/50 focus:outline-none resize-none"
+              class="w-full resize-none rounded-2xl border border-white/12 bg-dark-850/90 px-4 py-3 text-sm leading-relaxed text-gray-50 placeholder-gray-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-colors focus:border-amber-200/45 focus:outline-none focus:ring-2 focus:ring-amber-200/10"
               placeholder="What should this agent do?"
             />
           </div>
           <div>
-            <label class="block text-xs font-medium text-gray-400 mb-1">Autonomy level</label>
+            <label class="mb-2 block text-sm font-medium text-gray-300">Autonomy level</label>
             <div class="flex gap-1.5">
               {[1, 2, 3, 4, 5].map((level) => (
                 <button
                   key={level}
                   type="button"
                   onClick={() => setAutonomyLevel(autonomyLevel === level ? null : level)}
-                  class={`flex-1 rounded py-1 text-xs font-medium transition-colors ${
+                  class={`flex-1 rounded-xl border py-2.5 text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/60 ${
                     autonomyLevel === level
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-white/5 text-gray-400 hover:bg-white/10 hover:text-gray-300'
+                      ? 'border-amber-200/40 bg-amber-300 text-dark-950 shadow-[0_8px_20px_rgba(251,191,36,0.14)]'
+                      : 'border-white/8 bg-dark-850/85 text-gray-400 hover:border-white/15 hover:bg-dark-800 hover:text-gray-200'
                   }`}
                 >
                   {level}
@@ -222,7 +241,7 @@ function AgentEditor({ template, agent, existingHandles, onSave, onCancel }: Age
           </div>
           <div class="grid grid-cols-2 gap-3">
             <div>
-              <label class="block text-xs font-medium text-gray-400 mb-1">Model</label>
+              <label class="mb-2 block text-sm font-medium text-gray-300">Model</label>
               <WorkflowModelSelect
                 value={model || undefined}
                 provider={modelProvider}
@@ -231,17 +250,17 @@ function AgentEditor({ template, agent, existingHandles, onSave, onCancel }: Age
                   setModelProvider(selection?.provider);
                 }}
                 testId="lh-agent-model-select"
-                className="w-full text-xs bg-white/[0.04] border border-white/10 rounded-lg px-2 py-1.5 text-gray-100 focus:outline-none focus:border-blue-500/50"
+                className="w-full rounded-xl border border-white/12 bg-dark-850/90 px-3 py-2.5 text-sm text-gray-100 focus:border-amber-200/45 focus:outline-none focus:ring-2 focus:ring-amber-200/10"
               />
             </div>
             <div>
-              <label class="block text-xs font-medium text-gray-400 mb-1">Thinking</label>
+              <label class="mb-2 block text-sm font-medium text-gray-300">Thinking</label>
               <select
                 value={thinkingLevel}
                 onChange={(e) =>
                   setThinkingLevel((e.target as HTMLSelectElement).value as '' | ThinkingLevel)
                 }
-                class="w-full text-xs bg-white/[0.04] border border-white/10 rounded-lg px-2 py-1.5 text-gray-100 focus:outline-none focus:border-blue-500/50"
+                class="w-full rounded-xl border border-white/12 bg-dark-850/90 px-3 py-2.5 text-sm text-gray-100 focus:border-amber-200/45 focus:outline-none focus:ring-2 focus:ring-amber-200/10"
               >
                 {THINKING_LEVEL_OPTIONS.map((opt) => (
                   <option key={opt.value} value={opt.value}>
@@ -253,12 +272,144 @@ function AgentEditor({ template, agent, existingHandles, onSave, onCancel }: Age
           </div>
           {error && <p class="text-xs text-red-400">{error}</p>}
         </div>
-        <div class="flex justify-end gap-2 px-4 py-3 border-t border-white/10">
-          <Button variant="ghost" size="sm" onClick={onCancel}>
+        <div class="flex justify-end gap-3 border-t border-white/10 bg-black/10 px-5 py-4 sm:px-7">
+          <Button variant="ghost" size="md" onClick={onCancel} class="rounded-xl px-5">
             Cancel
           </Button>
-          <Button size="sm" onClick={handleSave} disabled={saving}>
-            {saving ? 'Saving…' : isEdit ? 'Save' : 'Create'}
+          <Button
+            size="md"
+            onClick={handleSave}
+            disabled={saving}
+            class="rounded-xl bg-amber-300 px-6 font-semibold text-dark-950 shadow-[0_10px_28px_rgba(251,191,36,0.16)] hover:bg-amber-200"
+          >
+            {saving ? 'Saving…' : isEdit ? 'Save changes' : 'Create agent'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Template editor ──────────────────────────────────────────────────────────
+
+function TemplateEditor({ onCancel }: { onCancel: () => void }) {
+  const [displayName, setDisplayName] = useState('');
+  const [key, setKey] = useState('');
+  const [handle, setHandle] = useState('');
+  const [description, setDescription] = useState('');
+  const [instructions, setInstructions] = useState('');
+  const [autonomyLevel, setAutonomyLevel] = useState(2);
+
+  const fieldClass =
+    'w-full rounded-xl border border-white/12 bg-dark-850/90 px-4 py-3 text-sm text-gray-50 placeholder-gray-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-colors focus:border-amber-200/45 focus:outline-none focus:ring-2 focus:ring-amber-200/10';
+
+  return (
+    <div class="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-0 backdrop-blur-sm sm:items-center sm:p-5">
+      <div class="relative isolate max-h-[calc(100dvh-1rem)] w-full max-w-2xl overflow-hidden rounded-t-3xl border border-white/15 bg-dark-900/95 shadow-[inset_0_1px_0_rgba(255,255,255,0.1),0_28px_90px_rgba(0,0,0,0.55)] before:pointer-events-none before:absolute before:inset-0 before:-z-10 before:bg-[radial-gradient(circle_at_4%_0%,rgba(145,77,108,0.22),transparent_34%),radial-gradient(circle_at_100%_6%,rgba(42,94,125,0.18),transparent_38%)] sm:rounded-3xl">
+        <div class="flex items-start justify-between border-b border-white/10 px-5 py-5 sm:px-7">
+          <div>
+            <p class="text-xl font-semibold tracking-tight text-gray-50">New template</p>
+            <p class="mt-1 text-sm text-gray-400">
+              Create a reusable role preset for agents in this space.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onCancel}
+            aria-label="Close template editor"
+            class="rounded-xl border border-transparent p-2 text-gray-400 transition-colors hover:border-white/10 hover:bg-white/[0.06] hover:text-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/60"
+          >
+            <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width={2}
+                d="M6 18L18 6M6 6l12 12"
+              />
+            </svg>
+          </button>
+        </div>
+        <div class="max-h-[calc(100dvh-11rem)] space-y-5 overflow-y-auto px-5 py-5 scrollbar-dark sm:px-7 sm:py-6">
+          <div class="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label class="mb-2 block text-sm font-medium text-gray-300">Name</label>
+              <input
+                value={displayName}
+                onInput={(e) => setDisplayName((e.target as HTMLInputElement).value)}
+                class={fieldClass}
+                placeholder="e.g. Release Readiness"
+              />
+            </div>
+            <div>
+              <label class="mb-2 block text-sm font-medium text-gray-300">Template key</label>
+              <input
+                value={key}
+                onInput={(e) => setKey((e.target as HTMLInputElement).value)}
+                class={fieldClass}
+                placeholder="e.g. release-readiness.custom"
+              />
+            </div>
+          </div>
+          <div>
+            <label class="mb-2 block text-sm font-medium text-gray-300">Default agent handle</label>
+            <input
+              value={handle}
+              onInput={(e) => setHandle((e.target as HTMLInputElement).value)}
+              class={fieldClass}
+              placeholder="e.g. release-readiness"
+            />
+          </div>
+          <div>
+            <label class="mb-2 block text-sm font-medium text-gray-300">Description</label>
+            <input
+              value={description}
+              onInput={(e) => setDescription((e.target as HTMLInputElement).value)}
+              class={fieldClass}
+              placeholder="A concise summary shown on the template card"
+            />
+          </div>
+          <div>
+            <label class="mb-2 block text-sm font-medium text-gray-300">Instructions</label>
+            <textarea
+              value={instructions}
+              onInput={(e) => setInstructions((e.target as HTMLTextAreaElement).value)}
+              rows={5}
+              class={`${fieldClass} resize-none leading-relaxed`}
+              placeholder="What should agents created from this template do?"
+            />
+          </div>
+          <div>
+            <label class="mb-2 block text-sm font-medium text-gray-300">Suggested autonomy</label>
+            <div class="flex gap-1.5">
+              {[1, 2, 3, 4, 5].map((level) => (
+                <button
+                  key={level}
+                  type="button"
+                  onClick={() => setAutonomyLevel(level)}
+                  class={`flex-1 rounded-xl border py-2.5 text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/60 ${autonomyLevel === level ? 'border-amber-200/40 bg-amber-300 text-dark-950' : 'border-white/8 bg-dark-850/85 text-gray-400 hover:border-white/15 hover:text-gray-200'}`}
+                >
+                  {level}
+                </button>
+              ))}
+            </div>
+            <p class="mt-1.5 text-xs text-gray-400">{AUTONOMY_LABELS[autonomyLevel]}</p>
+          </div>
+          <div class="rounded-xl border border-amber-300/20 bg-amber-300/[0.07] px-4 py-3 text-sm text-amber-100/80">
+            Custom template persistence is coming soon. These fields are available for preview, but
+            cannot be saved yet.
+          </div>
+        </div>
+        <div class="flex justify-end gap-3 border-t border-white/10 bg-black/10 px-5 py-4 sm:px-7">
+          <Button variant="ghost" size="md" onClick={onCancel} class="rounded-xl px-5">
+            Close
+          </Button>
+          <Button
+            size="md"
+            disabled
+            title="Custom template persistence is not available yet"
+            class="rounded-xl bg-amber-300 px-6 font-semibold text-dark-950"
+          >
+            Create template
           </Button>
         </div>
       </div>
@@ -308,49 +459,47 @@ function AgentCard({
             }
           : undefined
       }
-      class={`group flex flex-col rounded-lg border px-3 py-3 transition-colors ${
-        coordinator
-          ? 'border-purple-400/30 bg-purple-500/10 hover:bg-purple-500/15'
-          : 'border-white/10 bg-white/[0.07] hover:bg-white/[0.10]'
-      } ${sessionId ? 'cursor-pointer' : ''}`}
+      class={`group flex min-h-32 flex-col rounded-xl border border-white/10 bg-dark-850/90 px-4 py-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-all hover:-translate-y-0.5 hover:border-white/20 hover:bg-dark-800/95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60 ${sessionId ? 'cursor-pointer' : ''}`}
     >
-      <div class="flex items-start justify-between gap-2">
-        <div class="min-w-0 flex-1">
-          <div class="flex items-center gap-2 flex-wrap">
-            <span class="text-sm font-medium text-gray-100 truncate">{agent.displayName}</span>
-            {coordinator && (
-              <span class="flex-shrink-0 rounded bg-purple-500/15 px-1.5 py-0.5 text-xs font-medium text-purple-200">
-                Coordinator
+      <div class="flex items-start justify-between gap-3">
+        <div class="flex min-w-0 flex-1 items-start gap-3">
+          <span class="grid h-10 w-10 flex-none place-items-center rounded-xl border border-white/15 bg-white/[0.06] text-xs font-semibold italic text-blue-200">
+            {agentInitials(agent.displayName)}
+          </span>
+          <div class="min-w-0 flex-1">
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="truncate text-base font-semibold tracking-tight text-gray-50">
+                {agent.displayName}
               </span>
-            )}
-          </div>
-          <div class="mt-1 flex items-center gap-2 text-xs text-gray-400">
-            <span
-              class={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${statusColors[agent.status] ?? 'bg-gray-600'}`}
-            />
-            <span>{agent.status}</span>
-            {agent.autonomyLevel && (
-              <>
-                <span>·</span>
-                <span>
-                  L{agent.autonomyLevel} {AUTONOMY_LABELS[agent.autonomyLevel]}
+              {coordinator && (
+                <span class="flex-shrink-0 rounded-full border border-purple-400/20 bg-purple-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-purple-200">
+                  Coordinator
                 </span>
-              </>
-            )}
-            {reminderCount > 0 && (
-              <>
-                <span>·</span>
-                <span>
-                  {reminderCount} reminder{reminderCount !== 1 ? 's' : ''}
-                </span>
-              </>
-            )}
+              )}
+            </div>
+            <div class="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-gray-400">
+              <span
+                class={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${statusColors[agent.status] ?? 'bg-gray-600'}`}
+              />
+              <span>{agent.status}</span>
+              {agent.autonomyLevel && (
+                <>
+                  <span>·</span>
+                  <span>
+                    L{agent.autonomyLevel} {AUTONOMY_LABELS[agent.autonomyLevel]}
+                  </span>
+                </>
+              )}
+              {reminderCount > 0 && (
+                <>
+                  <span>·</span>
+                  <span>
+                    {reminderCount} reminder{reminderCount !== 1 ? 's' : ''}
+                  </span>
+                </>
+              )}
+            </div>
           </div>
-          {agent.instructions && (
-            <p class="mt-1.5 text-xs text-gray-400 line-clamp-2 leading-relaxed">
-              {agent.instructions}
-            </p>
-          )}
         </div>
         <div class="flex flex-shrink-0 items-center gap-0.5 opacity-60 transition-opacity group-hover:opacity-100">
           <button
@@ -359,8 +508,9 @@ function AgentCard({
               e.stopPropagation();
               onEdit();
             }}
-            class="rounded-md p-1.5 text-gray-400 transition-colors hover:bg-white/5 hover:text-gray-300"
+            class="rounded-md p-1.5 text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60"
             title="Edit"
+            aria-label={`Edit ${agent.displayName}`}
           >
             <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path
@@ -378,8 +528,9 @@ function AgentCard({
                 e.stopPropagation();
                 onDelete();
               }}
-              class="rounded-md p-1.5 text-gray-400 transition-colors hover:bg-white/5 hover:text-red-400"
+              class="rounded-md p-1.5 text-gray-500 transition-colors hover:bg-white/5 hover:text-red-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60"
               title="Delete"
+              aria-label={`Delete ${agent.displayName}`}
             >
               <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path
@@ -393,6 +544,9 @@ function AgentCard({
           )}
         </div>
       </div>
+      {agent.instructions && (
+        <p class="mt-4 line-clamp-2 text-sm leading-relaxed text-gray-300">{agent.instructions}</p>
+      )}
     </div>
   );
 }
@@ -412,10 +566,12 @@ function TemplateCard({
     <button
       type="button"
       onClick={onClick}
-      class="text-left rounded-lg border border-blue-800/40 bg-blue-950/40 px-3 py-2.5 transition-colors hover:border-blue-700/60 hover:bg-blue-900/50"
+      class="group min-h-28 rounded-xl border border-white/10 bg-dark-850/85 px-4 py-4 text-left shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-all hover:-translate-y-0.5 hover:border-blue-400/30 hover:bg-dark-800/95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60"
     >
       <div class="flex items-center justify-between gap-2">
-        <span class="text-xs font-medium text-gray-200">{template.displayName}</span>
+        <span class="text-sm font-semibold tracking-tight text-gray-100">
+          {template.displayName}
+        </span>
         {addedCount > 0 ? (
           <span class="flex-shrink-0 rounded bg-white/5 px-1.5 py-0.5 text-xs text-gray-400">
             ×{addedCount}
@@ -436,7 +592,7 @@ function TemplateCard({
           </svg>
         )}
       </div>
-      <p class="mt-0.5 text-xs text-gray-400 line-clamp-2 leading-relaxed">
+      <p class="mt-1.5 line-clamp-2 text-sm leading-relaxed text-gray-300">
         {template.description}
       </p>
     </button>
@@ -471,6 +627,7 @@ export function SpaceLongHorizonAgents({
   );
   const [editingAgent, setEditingAgent] = useState<SpaceLongHorizonAgent | null>(null);
   const [showEditor, setShowEditor] = useState(false);
+  const [showTemplateEditor, setShowTemplateEditor] = useState(false);
   const [deletingAgent, setDeletingAgent] = useState<SpaceLongHorizonAgent | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -536,10 +693,14 @@ export function SpaceLongHorizonAgents({
       : null;
   const existingHandles = new Set(agents.map((a) => a.handle));
 
-  // Count how many active instances exist per template handle
-  const templateHandleCounts = new Map<string, number>();
-  for (const a of agents.filter((a) => a.status !== 'archived')) {
-    templateHandleCounts.set(a.handle, (templateHandleCounts.get(a.handle) ?? 0) + 1);
+  // Count active instances by stable template provenance, not mutable agent handles.
+  const templateInstanceCounts = new Map<string, number>();
+  for (const agent of agents.filter((agent) => agent.status !== 'archived')) {
+    if (!agent.templateKey) continue;
+    templateInstanceCounts.set(
+      agent.templateKey,
+      (templateInstanceCounts.get(agent.templateKey) ?? 0) + 1
+    );
   }
 
   if (loading) {
@@ -552,10 +713,30 @@ export function SpaceLongHorizonAgents({
 
   return (
     <div class="h-full overflow-y-auto scrollbar-dark">
-      <div class="max-w-3xl mx-auto px-4 py-4 space-y-6">
+      <div class="mx-auto max-w-5xl space-y-7 px-4 py-4 sm:px-8 sm:py-6">
+        <section
+          class="flex items-center justify-between gap-4"
+          data-testid="space-agents-introduction"
+        >
+          <p class="text-base font-medium text-gray-200">
+            Configured · <span data-testid="configured-agent-count">{sortedAgents.length}</span>
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedTemplate(null);
+              setEditingAgent(null);
+              setShowEditor(true);
+            }}
+            class="self-start rounded-xl bg-amber-300 px-4 py-2.5 text-sm font-semibold text-dark-950 shadow-[0_10px_28px_rgba(251,191,36,0.16)] transition-colors hover:bg-amber-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/70 sm:self-auto"
+          >
+            + Custom agent
+          </button>
+        </section>
+
         {selectedHandle && (
           <section
-            class="rounded-xl border border-blue-500/30 bg-blue-500/10 p-4"
+            class={`rounded-2xl border border-blue-400/25 border-l-blue-300/60 p-5 ${FLAT_SURFACE}`}
             data-testid="space-agent-detail"
           >
             {selectedAgent ? (
@@ -605,16 +786,16 @@ export function SpaceLongHorizonAgents({
         )}
 
         {/* Configured agents */}
-        <section class="rounded-xl border border-white/8 bg-white/[0.03] p-4">
-          <p class="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">
-            Configured · {sortedAgents.length}
-          </p>
+        <section aria-label="Configured agents">
           {sortedAgents.length === 0 ? (
-            <p class="text-xs text-gray-400 py-4">
-              No agents yet — add one from the templates below.
-            </p>
+            <div class={`rounded-2xl border px-5 py-8 text-center ${FLAT_SURFACE}`}>
+              <p class="text-sm font-medium text-gray-200">No configured agents yet</p>
+              <p class="mt-1 text-xs text-gray-400">
+                Add a custom agent or choose a template below.
+              </p>
+            </div>
           ) : (
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
               {sortedAgents.map((agent) => (
                 <AgentCard
                   key={agent.id}
@@ -638,27 +819,30 @@ export function SpaceLongHorizonAgents({
         </section>
 
         {/* Templates */}
-        <section class="rounded-xl border border-blue-900/30 bg-blue-950/20 p-4">
-          <div class="flex items-center justify-between mb-3">
-            <p class="text-xs font-semibold uppercase tracking-wider text-blue-300/70">Templates</p>
+        <section>
+          <div class="mb-3 flex items-end justify-between gap-3">
+            <div>
+              <h3 class="text-lg font-semibold tracking-tight text-gray-50">
+                Templates · <span data-testid="agent-template-count">{templates.length}</span>
+              </h3>
+              <p class="mt-0.5 text-xs text-gray-500">
+                Add a focused role with preconfigured instructions.
+              </p>
+            </div>
             <button
               type="button"
-              onClick={() => {
-                setSelectedTemplate(null);
-                setEditingAgent(null);
-                setShowEditor(true);
-              }}
-              class="text-xs text-blue-300/70 hover:text-blue-200 transition-colors"
+              onClick={() => setShowTemplateEditor(true)}
+              class="text-xs font-medium text-blue-300/85 underline-offset-4 transition-colors hover:text-blue-200 hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70"
             >
-              + Custom
+              New Template
             </button>
           </div>
-          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {templates.map((t) => (
               <TemplateCard
                 key={t.key}
                 template={t}
-                addedCount={templateHandleCounts.get(t.handle) ?? 0}
+                addedCount={templateInstanceCounts.get(t.key) ?? 0}
                 onClick={() => {
                   setSelectedTemplate(t);
                   setEditingAgent(null);
@@ -679,6 +863,8 @@ export function SpaceLongHorizonAgents({
           onCancel={handleEditorCancel}
         />
       )}
+
+      {showTemplateEditor && <TemplateEditor onCancel={() => setShowTemplateEditor(false)} />}
 
       {deletingAgent && (
         <ConfirmModal

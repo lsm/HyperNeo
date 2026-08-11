@@ -542,6 +542,14 @@ function buildHookValidatedHandoffLines(
   workflow: SpaceWorkflow,
   currentNode: WorkflowNode
 ): string[] {
+  // Built-in send_message validators that gate a handoff on the run's PR
+  // identity, which the agent must carry as data.pr_url (the hook resolves it
+  // from there). pr_ready gates the coder→reviewer handoff; review_posted gates
+  // the Review→Coding feedback handoff. Both need the same prompt guidance —
+  // before this set covered review_posted, the gate→hook migration silently
+  // deleted the guidance for the Review→Coding channel (it has no gateId), so
+  // the reviewer never learned to pass data.pr_url and the hook false-blocked.
+  const PR_URL_HANDOFF_HOOK_VALIDATORS = new Set(['pr_ready', 'review_posted']);
   const outboundHookValidatedChannels = (workflow.channels ?? []).filter(
     (channel) =>
       !channel.gateId &&
@@ -553,7 +561,7 @@ function buildHookValidatedHandoffLines(
           hook.sourceNode === currentNode.name &&
           hook.targetNode === channel.to &&
           hook.validator?.kind === 'built_in' &&
-          hook.validator.id === 'pr_ready'
+          PR_URL_HANDOFF_HOOK_VALIDATORS.has(hook.validator.id)
       )
   );
 

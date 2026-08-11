@@ -18,6 +18,8 @@ import type {
 } from '@hyperneo/shared';
 import {
   createEventMessage,
+  ErrorCode,
+  MessageHubHandlerError,
   parseJson,
   parseJsonOptional,
   sendStatusToDeliveryStatus,
@@ -3940,6 +3942,10 @@ export function setupLiveQueryHandlers(
       throw new Error('liveQuery.subscribe requires a WebSocket connection (clientId absent)');
     }
 
+    // Router reference for the per-client subscription guardrail below and the
+    // handle tracking at the success path. See task #899 / incident #2414.
+    const router = messageHub.getRouter();
+
     // 2. Resolve query from registry
     const namedQuery = activeRegistry.get(queryName);
     if (!namedQuery) {
@@ -4058,12 +4064,34 @@ export function setupLiveQueryHandlers(
 
     // 6. Handle subscriptionId collision — dispose existing handle silently
     const existing = clientSubs.get(subscriptionId);
+    const isReplacement = !!existing;
     if (existing) {
       log.debug(
         `liveQuery.subscribe: replacing subscription ${subscriptionId} for client ${clientId}`
       );
       existing.dispose();
       clientSubs.delete(subscriptionId);
+      // The replaced handle held a subscription slot; the new subscribe
+      // re-acquires one at the success path below, so release the old here to
+      // keep the router counter in sync with the live handle count.
+      router?.releaseClientSubscription(clientId);
+    }
+
+    // 6b. Ingress fan-out guardrail: refuse a NEW subscription when the client
+    // is at the per-client cap. This runs AFTER collision handling so a
+    // replacement (same subscriptionId) is allowed even at the cap — it does
+    // not increase fan-out (e.g. GlobalStore reuses stable subscriptionIds on
+    // refresh) — and BEFORE the LiveQueryEngine subscribe so refusal has no
+    // snapshot side effects and tears down nothing. Mirrors the structured
+    // MESSAGE_TOO_LARGE refusal pattern (#2423). See task #899 / incident #2414.
+    if (router && !isReplacement) {
+      const capacity = router.checkSubscriptionCapacity(clientId);
+      if (!capacity.ok) {
+        throw new MessageHubHandlerError(
+          `liveQuery.subscribe: subscription cap reached for client (${capacity.current}/${capacity.limit}); subscribe to fewer queries or close other views`,
+          ErrorCode.TOO_MANY_SUBSCRIPTIONS
+        );
+      }
     }
 
     // 7. Subscribe to LiveQueryEngine
@@ -4152,6 +4180,8 @@ export function setupLiveQueryHandlers(
             const subs = subscriptions.get(clientId);
             subs?.delete(subscriptionId);
             if (subs?.size === 0) subscriptions.delete(clientId);
+            // Tracked handle disposed mid-flight — release its slot.
+            router.releaseClientSubscription(clientId);
           }
           return;
         }
@@ -4173,6 +4203,8 @@ export function setupLiveQueryHandlers(
               subs.delete(subscriptionId);
               if (subs.size === 0) subscriptions.delete(clientId);
             }
+            // Tracked handle disposed mid-flight — release its slot.
+            router.releaseClientSubscription(clientId);
           }
         }
       },
@@ -4197,6 +4229,7 @@ export function setupLiveQueryHandlers(
     }
 
     // 8. Track the handle
+    router?.addClientSubscription(clientId);
     clientSubs.set(subscriptionId, handle);
     log.debug(
       `liveQuery.subscribe: registered subscription ${subscriptionId} for client ${clientId}, query=${queryName}`
@@ -4223,6 +4256,8 @@ export function setupLiveQueryHandlers(
       handle.dispose();
       clientSubs!.delete(subscriptionId);
       if (clientSubs!.size === 0) subscriptions.delete(clientId);
+      // Release the slot the now-disposed handle held.
+      messageHub.getRouter()?.releaseClientSubscription(clientId);
       log.debug(
         `liveQuery.unsubscribe: disposed subscription ${subscriptionId} for client ${clientId}`
       );
