@@ -2050,7 +2050,12 @@ describe('SpaceRuntime', () => {
         ];
         const seen = new Set<string>();
         for (const target of targets) {
-          for (const row of repo.listPendingForTarget(runId, target)) {
+          // Scope by the execution's node id, like real flushPendingMessagesForTarget,
+          // so two nodes producing the same compound don't cross-drain each other's rows.
+          const rows = execution?.workflowNodeId
+            ? repo.listPendingForTarget(runId, target, execution.workflowNodeId)
+            : repo.listPendingForTarget(runId, target);
+          for (const row of rows) {
             if (seen.has(row.id)) continue;
             seen.add(row.id);
             repo.markDelivered(row.id, sessionId);
@@ -2238,6 +2243,80 @@ describe('SpaceRuntime', () => {
       expect(reviewerExec.status).toBe('in_progress');
       expect(reviewerExec.agentSessionId).toBe(`session:${reviewerExec.id}`);
       expect(pendingRepo.listAllForRun(run.id)[0].status).toBe('delivered');
+    });
+
+    test('disambiguates two nodes whose compounds collide, via the pinned workflowNodeId', async () => {
+      // Node "Pair" with slot "Review/reviewer" and node "Pair/Review" with slot
+      // "reviewer" both stringify to the compound "Pair/Review/reviewer". The
+      // router persists the resolved workflowNodeId on each queued row, so the
+      // resolver pins the exact node instead of returning the first by workflow
+      // order and misdelivering. Both rows must reach their own node.
+      const workflow = workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: `Ambiguous compound ${Date.now()}-${Math.random()}`,
+        description: 'Colliding compound targets disambiguated by workflowNodeId',
+        nodes: [
+          {
+            id: 'pair-node',
+            name: 'Pair',
+            agents: [{ name: 'Review/reviewer', agentId: AGENT_CODER }],
+          },
+          {
+            id: 'pair-review-node',
+            name: 'Pair/Review',
+            agents: [{ name: 'reviewer', agentId: AGENT_GENERAL }],
+          },
+        ],
+        transitions: [],
+        channels: [],
+        startNodeId: 'pair-node',
+        endNodeId: 'pair-review-node',
+        rules: [],
+        completionAutonomyLevel: 3,
+      });
+      const { run, tasks } = await runtime.startWorkflowRun(
+        SPACE_ID,
+        workflow.id,
+        'Ambiguous handoff'
+      );
+      const task = tasks[0];
+      taskRepo.updateTask(task.id, { status: 'in_progress' });
+      nodeExecutionRepo.update(nodeExecutionRepo.listByWorkflowRun(run.id)[0]!.id, {
+        status: 'idle',
+        agentSessionId: null,
+      });
+
+      const pendingRepo = new PendingAgentMessageRepository(db);
+      // Two rows with the SAME compound string, each pinned to a different node
+      // (mirrors what the router now emits via resolveWorkflowNodeId).
+      for (const nodeId of ['pair-node', 'pair-review-node']) {
+        pendingRepo.enqueue({
+          workflowRunId: run.id,
+          spaceId: SPACE_ID,
+          taskId: task.id,
+          sourceAgentName: 'coder',
+          targetKind: 'node_agent',
+          targetAgentName: 'Pair/Review/reviewer',
+          workflowNodeId: nodeId,
+          message: `for ${nodeId}`,
+          ttlMs: 60_000,
+          maxAttempts: 3,
+        });
+      }
+      const tam = makeRepairTam({ flush: makeCompoundAwareFlush(workflow) });
+      await buildRepairRuntime(tam, pendingRepo).executeTick();
+
+      // Each node spawned its own slot; neither row leaked to the other node.
+      const execs = nodeExecutionRepo.listByWorkflowRun(run.id);
+      const pairExec = execs.find((e) => e.workflowNodeId === 'pair-node');
+      const pairReviewExec = execs.find((e) => e.workflowNodeId === 'pair-review-node');
+      expect(pairExec?.agentName).toBe('Review/reviewer');
+      expect(pairExec?.status).toBe('in_progress');
+      expect(pairReviewExec?.agentName).toBe('reviewer');
+      expect(pairReviewExec?.status).toBe('in_progress');
+      const rows = pendingRepo.listAllForRun(run.id);
+      expect(rows).toHaveLength(2);
+      expect(rows.every((r) => r.status === 'delivered')).toBe(true);
     });
 
     test('non-compound "reviewer" slot name still resolves (backward compat)', async () => {

@@ -244,6 +244,22 @@ export class AgentMessageRouter {
     }
     const hasNodeNameMap = workflowNodeNameById && Object.keys(workflowNodeNameById).length > 0;
     const scopedAgentName = (nodeName: string, agentName: string) => `${nodeName}/${agentName}`;
+    // Resolve a worker target's node ref — a node id (actor-registry worker
+    // handle) or a node name (messaging-adapter worker handle) — to the canonical
+    // workflow node id. Persisting it on the queued row lets the handoff resolver
+    // pin the exact node instead of parsing the concatenated "node/agent" string,
+    // which is ambiguous when either component contains "/" (e.g. node "Pair" slot
+    // "Review/reviewer" vs node "Pair/Review" slot "reviewer" both stringify to
+    // "Pair/Review/reviewer"). Node names are unique, so the name->id lookup is
+    // unambiguous; ids are authoritative when the ref is already an id.
+    const resolveWorkflowNodeId = (nodeRef: string): string | undefined => {
+      if (!workflowNodeNameById) return undefined;
+      if (nodeRef in workflowNodeNameById) return nodeRef;
+      for (const [nodeId, name] of Object.entries(workflowNodeNameById)) {
+        if (name === nodeRef) return nodeId;
+      }
+      return undefined;
+    };
     const allExecutions = nodeExecutionRepo.listByWorkflowRun(workflowRunId);
     let peers: Array<{
       sessionId: string;
@@ -504,6 +520,7 @@ export class AgentMessageRouter {
             nodeId: fromAgentName,
           });
           const queueTargetName = hasNodeNameMap ? scopedAgentName(nodeName, agentName) : agentName;
+          const queueWorkflowNodeId = hasNodeNameMap ? resolveWorkflowNodeId(nodeName) : undefined;
           const { record, deduped } = pendingMessageRepo.enqueue({
             workflowRunId,
             spaceId,
@@ -511,6 +528,7 @@ export class AgentMessageRouter {
             sourceAgentName: fromAgentName,
             targetKind: 'node_agent',
             targetAgentName: queueTargetName,
+            workflowNodeId: queueWorkflowNodeId,
             message: rawMessage,
             idempotencyKey: JSON.stringify([fromSessionId, target, rawMessage]),
             ttlMs: 60_000,

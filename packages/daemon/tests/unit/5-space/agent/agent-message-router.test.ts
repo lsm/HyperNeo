@@ -1129,6 +1129,107 @@ describe('AgentMessageRouter: queue message for declared-but-inactive target', (
   });
 });
 
+describe('AgentMessageRouter: persist workflowNodeId on queued @worker targets', () => {
+  let ctx: TestCtx;
+
+  beforeEach(() => {
+    ctx = makeCtx();
+  });
+
+  afterEach(() => {
+    ctx.db.close();
+  });
+
+  test('scoped compound row carries the resolved node id (node-name worker handle)', async () => {
+    // @worker targets scope the queued row with a compound "<node>/<agent>" so two
+    // nodes reusing a slot name don't cross-drain. The router also persists the
+    // resolved workflowNodeId so the handoff resolver pins the exact node instead
+    // of parsing the concatenated string (ambiguous when a component has "/").
+    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+      makeChannel('coder', 'Review'),
+    ]);
+    // Coder has an active session; reviewer is declared but inactive → queues.
+    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+    ctx.nodeExecutionRepo.createOrIgnore({
+      workflowRunId,
+      workflowNodeId: 'review-node-id',
+      agentName: 'reviewer',
+      status: 'pending',
+    });
+
+    const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
+    const router = new AgentMessageRouter({
+      nodeExecutionRepo: ctx.nodeExecutionRepo,
+      workflowRunId,
+      workflowChannels: [makeChannel('coder', 'Review')],
+      messageInjector: async () => {},
+      pendingMessageRepo,
+      spaceId: ctx.spaceId,
+      taskId: null,
+      workflowNodeNameById: { 'review-node-id': 'Review' },
+    });
+
+    const result = await router.deliverMessage({
+      fromAgentName: 'coder',
+      fromSessionId: ctx.coderSessionId,
+      target: '@worker:Review/reviewer',
+      message: 'please review',
+    });
+
+    expect(result.queued).toBeDefined();
+    expect(result.queued).toHaveLength(1);
+    expect(result.queued![0].agentName).toBe('Review/reviewer');
+    const pending = pendingMessageRepo.listPendingForTarget(workflowRunId, 'Review/reviewer');
+    expect(pending).toHaveLength(1);
+    // Pinned to the canonical node id — not left null for the resolver to guess.
+    expect(pending[0].workflowNodeId).toBe('review-node-id');
+  });
+
+  test('scoped compound row carries the resolved node id (node-id worker handle)', async () => {
+    // actor-registry worker handles encode the node id directly; the router
+    // recognizes an id ref and persists it unchanged.
+    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+      makeChannel('coder', 'review-node-id'),
+    ]);
+    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+    ctx.nodeExecutionRepo.createOrIgnore({
+      workflowRunId,
+      workflowNodeId: 'review-node-id',
+      agentName: 'reviewer',
+      status: 'pending',
+    });
+
+    const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
+    const router = new AgentMessageRouter({
+      nodeExecutionRepo: ctx.nodeExecutionRepo,
+      workflowRunId,
+      workflowChannels: [makeChannel('coder', 'review-node-id')],
+      messageInjector: async () => {},
+      pendingMessageRepo,
+      spaceId: ctx.spaceId,
+      taskId: null,
+      workflowNodeNameById: { 'review-node-id': 'Review' },
+    });
+
+    const result = await router.deliverMessage({
+      fromAgentName: 'coder',
+      fromSessionId: ctx.coderSessionId,
+      target: '@worker:review-node-id/reviewer',
+      message: 'please review',
+    });
+
+    expect(result.queued).toBeDefined();
+    expect(result.queued).toHaveLength(1);
+    expect(result.queued![0].agentName).toBe('review-node-id/reviewer');
+    const pending = pendingMessageRepo.listPendingForTarget(
+      workflowRunId,
+      'review-node-id/reviewer'
+    );
+    expect(pending).toHaveLength(1);
+    expect(pending[0].workflowNodeId).toBe('review-node-id');
+  });
+});
+
 describe('AgentMessageRouter: broadcast * with mixed active/inactive targets', () => {
   // Tests gap: broadcast with pendingMessageRepo where some targets have sessions
   // (deliver) and others are declared-but-inactive (queue).
