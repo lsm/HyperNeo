@@ -1178,10 +1178,12 @@ describe('AgentMessageRouter: persist workflowNodeId on queued @worker targets',
 
     expect(result.queued).toBeDefined();
     expect(result.queued).toHaveLength(1);
+    // The compound is reported to the caller; the row stores the BARE agent name
+    // pinned to the canonical node id, so the resolver never parses the string.
     expect(result.queued![0].agentName).toBe('Review/reviewer');
-    const pending = pendingMessageRepo.listPendingForTarget(workflowRunId, 'Review/reviewer');
+    const pending = pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer');
     expect(pending).toHaveLength(1);
-    // Pinned to the canonical node id — not left null for the resolver to guess.
+    expect(pending[0].targetAgentName).toBe('reviewer');
     expect(pending[0].workflowNodeId).toBe('review-node-id');
   });
 
@@ -1221,11 +1223,9 @@ describe('AgentMessageRouter: persist workflowNodeId on queued @worker targets',
     expect(result.queued).toBeDefined();
     expect(result.queued).toHaveLength(1);
     expect(result.queued![0].agentName).toBe('review-node-id/reviewer');
-    const pending = pendingMessageRepo.listPendingForTarget(
-      workflowRunId,
-      'review-node-id/reviewer'
-    );
+    const pending = pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer');
     expect(pending).toHaveLength(1);
+    expect(pending[0].targetAgentName).toBe('reviewer');
     expect(pending[0].workflowNodeId).toBe('review-node-id');
   });
 
@@ -1266,13 +1266,54 @@ describe('AgentMessageRouter: persist workflowNodeId on queued @worker targets',
     expect(result.queued).toBeDefined();
     expect(result.queued).toHaveLength(1);
     expect(result.queued![0].agentName).toBe('constructor/ctor-agent');
-    const pending = pendingMessageRepo.listPendingForTarget(
-      workflowRunId,
-      'constructor/ctor-agent'
-    );
+    const pending = pendingMessageRepo.listPendingForTarget(workflowRunId, 'ctor-agent');
     expect(pending).toHaveLength(1);
+    expect(pending[0].targetAgentName).toBe('ctor-agent');
     // The real node id — NOT the inherited-key name "constructor".
     expect(pending[0].workflowNodeId).toBe('ctor-node-id');
+  });
+
+  test('a node id that collides with another node name resolves to the id (ids authoritative)', async () => {
+    // Node id "x" is named "Review"; a different node has caller-supplied id
+    // "Review". An @worker address using the id "Review" must pin to that id,
+    // not to node "x" (whose name matches first in insertion order).
+    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+      makeChannel('coder', 'Review'),
+    ]);
+    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+    ctx.nodeExecutionRepo.createOrIgnore({
+      workflowRunId,
+      workflowNodeId: 'Review',
+      agentName: 'other-agent',
+      status: 'pending',
+    });
+
+    const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
+    const router = new AgentMessageRouter({
+      nodeExecutionRepo: ctx.nodeExecutionRepo,
+      workflowRunId,
+      workflowChannels: [makeChannel('coder', 'Review')],
+      messageInjector: async () => {},
+      pendingMessageRepo,
+      spaceId: ctx.spaceId,
+      taskId: null,
+      // node id "x" has name "Review"; node id "Review" has name "other".
+      workflowNodeNameById: { x: 'Review', Review: 'other' },
+    });
+
+    const result = await router.deliverMessage({
+      fromAgentName: 'coder',
+      fromSessionId: ctx.coderSessionId,
+      target: '@worker:Review/other-agent',
+      message: 'please review',
+    });
+
+    expect(result.queued).toBeDefined();
+    expect(result.queued).toHaveLength(1);
+    const pending = pendingMessageRepo.listPendingForTarget(workflowRunId, 'other-agent');
+    expect(pending).toHaveLength(1);
+    // Pinned to the id "Review" (the second node), NOT node "x" whose name is "Review".
+    expect(pending[0].workflowNodeId).toBe('Review');
   });
 });
 
@@ -1687,11 +1728,13 @@ describe('AgentMessageRouter: generic address targets', () => {
 
     expect(result.success).toBe(false);
     expect(result.queued).toHaveLength(1);
+    // onMessageQueued still receives the compound form (activation callback).
     expect(queuedAgents).toEqual(['Review/reviewer']);
-    expect(pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer')).toHaveLength(0);
-    expect(pendingMessageRepo.listPendingForTarget(workflowRunId, 'Review/reviewer')).toHaveLength(
-      1
-    );
+    // The row stores the bare agent name pinned to the node id.
+    const pending = pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer');
+    expect(pending).toHaveLength(1);
+    expect(pending[0].targetAgentName).toBe('reviewer');
+    expect(pending[0].workflowNodeId).toBe('node-review');
   });
 
   test('keeps queued @worker targets scoped by node name when agent names repeat', async () => {
@@ -1733,10 +1776,12 @@ describe('AgentMessageRouter: generic address targets', () => {
     });
 
     expect(result.success).toBe(false);
-    expect(pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer')).toHaveLength(0);
-    expect(
-      pendingMessageRepo.listPendingForTarget(workflowRunId, 'Review A/reviewer')
-    ).toHaveLength(1);
+    // Scoped by workflowNodeId: the row pins to Review A's node id, so it won't
+    // drain to Review B even though both reuse the 'reviewer' slot.
+    const pending = pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer');
+    expect(pending).toHaveLength(1);
+    expect(pending[0].targetAgentName).toBe('reviewer');
+    expect(pending[0].workflowNodeId).toBe('node-review-a');
   });
 
   test('preserves earlier generic deliveries when a later @session target is unauthorized', async () => {

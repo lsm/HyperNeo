@@ -254,14 +254,14 @@ export class AgentMessageRouter {
     // unambiguous; ids are authoritative when the ref is already an id.
     const resolveWorkflowNodeId = (nodeRef: string): string | undefined => {
       if (!workflowNodeNameById) return undefined;
+      const entries = Object.entries(workflowNodeNameById);
       // Object.entries yields own enumerable properties only — never inherited
-      // ones. The `in` operator would walk the prototype chain and misfire for a
-      // node named "constructor"/"toString"/etc., pinning the row to the name
-      // instead of the id and blocking recovery.
-      for (const [nodeId, name] of Object.entries(workflowNodeNameById)) {
-        if (nodeId === nodeRef || name === nodeRef) return nodeId;
-      }
-      return undefined;
+      // ones, so a node named "constructor"/"toString"/etc. can't fool the id
+      // lookup the way the `in` operator would. IDs are authoritative: a
+      // caller-supplied node id may collide with another node's name, so check
+      // all own IDs first, then fall back to a name lookup.
+      if (entries.some(([nodeId]) => nodeId === nodeRef)) return nodeRef;
+      return entries.find(([, name]) => name === nodeRef)?.[0];
     };
     const allExecutions = nodeExecutionRepo.listByWorkflowRun(workflowRunId);
     let peers: Array<{
@@ -522,15 +522,22 @@ export class AgentMessageRouter {
             taskNumber,
             nodeId: fromAgentName,
           });
-          const queueTargetName = hasNodeNameMap ? scopedAgentName(nodeName, agentName) : agentName;
           const queueWorkflowNodeId = hasNodeNameMap ? resolveWorkflowNodeId(nodeName) : undefined;
+          // queueTargetName (compound) is reported to the caller and the
+          // onMessageQueued activation callback — keep it stable. But persist the
+          // BARE agent name on the row when the node is pinned: the
+          // (workflowNodeId, agent) pair is unambiguous and spares the resolver
+          // from parsing the "node/agent" string, which cannot tell two slots
+          // apart within one node when the node's id extends its name with "/".
+          const queueTargetName = hasNodeNameMap ? scopedAgentName(nodeName, agentName) : agentName;
+          const storedTargetName = queueWorkflowNodeId ? agentName : queueTargetName;
           const { record, deduped } = pendingMessageRepo.enqueue({
             workflowRunId,
             spaceId,
             taskId: taskId ?? null,
             sourceAgentName: fromAgentName,
             targetKind: 'node_agent',
-            targetAgentName: queueTargetName,
+            targetAgentName: storedTargetName,
             workflowNodeId: queueWorkflowNodeId,
             message: rawMessage,
             idempotencyKey: JSON.stringify([fromSessionId, target, rawMessage]),

@@ -2319,6 +2319,43 @@ describe('SpaceRuntime', () => {
       expect(rows.every((r) => r.status === 'delivered')).toBe(true);
     });
 
+    test('resolves a bare slot name pinned by workflowNodeId (router emission form)', async () => {
+      // The router now persists the BARE agent name + resolved workflowNodeId on
+      // @worker rows (no compound). Verify the sweep resolves that form end-to-end.
+      const workflow = makeCompoundHandoffWorkflow();
+      const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Bare pinned');
+      const task = tasks[0];
+      taskRepo.updateTask(task.id, { status: 'in_progress' });
+      nodeExecutionRepo.update(nodeExecutionRepo.listByWorkflowRun(run.id)[0]!.id, {
+        status: 'idle',
+        agentSessionId: null,
+      });
+
+      const pendingRepo = new PendingAgentMessageRepository(db);
+      pendingRepo.enqueue({
+        workflowRunId: run.id,
+        spaceId: SPACE_ID,
+        taskId: task.id,
+        sourceAgentName: 'coder',
+        targetKind: 'node_agent',
+        targetAgentName: 'reviewer',
+        workflowNodeId: 'review-node',
+        message: 'please review',
+        ttlMs: 60_000,
+        maxAttempts: 3,
+      });
+      const tam = makeRepairTam({ flush: makeCompoundAwareFlush(workflow) });
+      await buildRepairRuntime(tam, pendingRepo).executeTick();
+
+      const reviewerExec = nodeExecutionRepo
+        .listByWorkflowRun(run.id)
+        .find((e) => e.workflowNodeId === 'review-node')!;
+      expect(reviewerExec.agentName).toBe('reviewer');
+      expect(reviewerExec.status).toBe('in_progress');
+      expect(reviewerExec.agentSessionId).toBe(`session:${reviewerExec.id}`);
+      expect(pendingRepo.listAllForRun(run.id)[0].status).toBe('delivered');
+    });
+
     test('non-compound "reviewer" slot name still resolves (backward compat)', async () => {
       const workflow = makeCompoundHandoffWorkflow();
       const { run, tasks } = await runtime.startWorkflowRun(
