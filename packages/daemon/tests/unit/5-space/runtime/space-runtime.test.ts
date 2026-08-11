@@ -2041,7 +2041,13 @@ describe('SpaceRuntime', () => {
         const repo = new PendingAgentMessageRepository(db);
         const execution = nodeExecutionRepo.getByAgentSessionId(sessionId);
         const nodeName = execution ? nodeNameById.get(execution.workflowNodeId) : undefined;
-        const targets = [agentName, ...(nodeName ? [`${nodeName}/${agentName}`] : [])];
+        // Mirror real flushPendingMessagesForTarget: bare agent, "<name>/<agent>",
+        // and "<id>/<agent>" (worker handles encode either form).
+        const targets = [
+          agentName,
+          ...(nodeName ? [`${nodeName}/${agentName}`] : []),
+          ...(execution?.workflowNodeId ? [`${execution.workflowNodeId}/${agentName}`] : []),
+        ];
         const seen = new Set<string>();
         for (const target of targets) {
           for (const row of repo.listPendingForTarget(runId, target)) {
@@ -2130,6 +2136,107 @@ describe('SpaceRuntime', () => {
       expect(coderExec.agentName).toBe('coder');
       expect(coderExec.status).toBe('in_progress');
       expect(coderExec.agentSessionId).toBe(`session:${coderExec.id}`);
+      expect(pendingRepo.listAllForRun(run.id)[0].status).toBe('delivered');
+    });
+
+    test('resolves a compound "<nodeId>/agentName" target (actor-registry worker handles)', async () => {
+      // Worker handles from the actor registry encode the node ID, not the name
+      // (actor-registry.ts workerHandle -> @worker:<run>/<nodeId>/<agent>), so a
+      // queued row can be keyed "<nodeId>/<agent>". The resolver must match the
+      // id form and the drain must flush it — otherwise the row stays pending,
+      // expires, and blocks the run even though the right session spawned.
+      const workflow = makeCompoundHandoffWorkflow();
+      const { run, tasks } = await runtime.startWorkflowRun(
+        SPACE_ID,
+        workflow.id,
+        'Node-id handoff'
+      );
+      const task = tasks[0];
+      taskRepo.updateTask(task.id, { status: 'in_progress' });
+      nodeExecutionRepo.update(nodeExecutionRepo.listByWorkflowRun(run.id)[0]!.id, {
+        status: 'idle',
+        agentSessionId: null,
+      });
+
+      const pendingRepo = new PendingAgentMessageRepository(db);
+      pendingRepo.enqueue({
+        workflowRunId: run.id,
+        spaceId: SPACE_ID,
+        taskId: task.id,
+        sourceAgentName: 'coder',
+        targetKind: 'node_agent',
+        targetAgentName: 'review-node/reviewer',
+        message: 'please review',
+        ttlMs: 60_000,
+        maxAttempts: 3,
+      });
+      const tam = makeRepairTam({ flush: makeCompoundAwareFlush(workflow) });
+      await buildRepairRuntime(tam, pendingRepo).executeTick();
+
+      const reviewerExec = nodeExecutionRepo
+        .listByWorkflowRun(run.id)
+        .find((execution) => execution.workflowNodeId === 'review-node')!;
+      expect(reviewerExec).toBeTruthy();
+      expect(reviewerExec.agentName).toBe('reviewer');
+      expect(reviewerExec.status).toBe('in_progress');
+      expect(reviewerExec.agentSessionId).toBe(`session:${reviewerExec.id}`);
+      expect(pendingRepo.listAllForRun(run.id)[0].status).toBe('delivered');
+    });
+
+    test('resolves a compound target whose node name contains "/"', async () => {
+      // Workflow validation does not forbid "/" in node names. A compound like
+      // "Pair/Review/reviewer" must match the "Pair/Review" node's reviewer
+      // slot — splitting on the first "/" would truncate the node name to "Pair"
+      // and miss it, blocking the run.
+      const workflow = workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: `Slash-name handoff ${Date.now()}-${Math.random()}`,
+        description: 'Compound target with a slash in the node name',
+        nodes: [
+          { id: 'coding-node', name: 'Coding', agents: [{ name: 'coder', agentId: AGENT_CODER }] },
+          {
+            id: 'slash-review-node',
+            name: 'Pair/Review',
+            agents: [{ name: 'reviewer', agentId: AGENT_GENERAL }],
+          },
+        ],
+        transitions: [],
+        channels: [],
+        startNodeId: 'coding-node',
+        endNodeId: 'slash-review-node',
+        rules: [],
+        completionAutonomyLevel: 3,
+      });
+      const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Slash handoff');
+      const task = tasks[0];
+      taskRepo.updateTask(task.id, { status: 'in_progress' });
+      nodeExecutionRepo.update(nodeExecutionRepo.listByWorkflowRun(run.id)[0]!.id, {
+        status: 'idle',
+        agentSessionId: null,
+      });
+
+      const pendingRepo = new PendingAgentMessageRepository(db);
+      pendingRepo.enqueue({
+        workflowRunId: run.id,
+        spaceId: SPACE_ID,
+        taskId: task.id,
+        sourceAgentName: 'coder',
+        targetKind: 'node_agent',
+        targetAgentName: 'Pair/Review/reviewer',
+        message: 'please review',
+        ttlMs: 60_000,
+        maxAttempts: 3,
+      });
+      const tam = makeRepairTam({ flush: makeCompoundAwareFlush(workflow) });
+      await buildRepairRuntime(tam, pendingRepo).executeTick();
+
+      const reviewerExec = nodeExecutionRepo
+        .listByWorkflowRun(run.id)
+        .find((execution) => execution.workflowNodeId === 'slash-review-node')!;
+      expect(reviewerExec).toBeTruthy();
+      expect(reviewerExec.agentName).toBe('reviewer');
+      expect(reviewerExec.status).toBe('in_progress');
+      expect(reviewerExec.agentSessionId).toBe(`session:${reviewerExec.id}`);
       expect(pendingRepo.listAllForRun(run.id)[0].status).toBe('delivered');
     });
 

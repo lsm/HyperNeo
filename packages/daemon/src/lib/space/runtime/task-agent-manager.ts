@@ -1679,9 +1679,14 @@ export class TaskAgentManager {
     // be delivered to the merger.
     const drainWorkflowNodeId = execution?.workflowNodeId ?? null;
     const executionless = !execution;
+    // Worker handles encode either the node name or the node id (messaging-adapter
+    // vs actor-registry), so a queued row may be keyed "<name>/<agent>" or
+    // "<id>/<agent>". Drain both compound forms plus the bare agent name so every
+    // queued shape for this node is delivered once the session activates.
     const queueTargetNames = [
       targetAgentName,
       ...(workflowNodeName ? [`${workflowNodeName}/${targetAgentName}`] : []),
+      ...(drainWorkflowNodeId ? [`${drainWorkflowNodeId}/${targetAgentName}`] : []),
     ];
     const seenIds = new Set<string>();
     const pending = queueTargetNames

@@ -8301,40 +8301,39 @@ export class SpaceRuntime {
     targetAgentName: string,
     workflowNodeId?: string
   ): { nodeId: string; agentName: string; agentId: string | null } | null {
-    // Message-delivery v2 emits compound "nodeName/agentName" handoff targets
-    // (e.g. "Review/reviewer"): agent-message-router.ts enqueues them via
-    // `scopedAgentName`, and task-agent-manager.ts constructs the same form when
-    // draining, so two nodes reusing a slot name don't cross-receive. Parse the
-    // compound form into a node identifier and a slot identifier before
-    // matching; plain slot names and node names (no "/") keep the legacy behavior.
-    const slashIdx = targetAgentName.indexOf('/');
-    const isCompound = slashIdx >= 0;
-    const nodePart = isCompound ? targetAgentName.slice(0, slashIdx) : targetAgentName;
-    const slotPart = isCompound ? targetAgentName.slice(slashIdx + 1) : undefined;
-
+    // Message-delivery v2 emits compound "<nodeId-or-name>/<agent>" handoff
+    // targets: agent-message-router.ts enqueues them via `scopedAgentName`, and
+    // task-agent-manager.ts constructs the same form when draining, so two nodes
+    // reusing a slot name don't cross-receive. Worker handles encode either the
+    // node name or the node id (messaging-adapter vs actor-registry), and
+    // workflow validation does not forbid "/" in node/agent names, so resolve by
+    // prefixing each node identifier ("<name>/" | "<id>/") and comparing exactly
+    // — never split on the first "/", which would truncate a name containing "/".
     for (const node of workflow.nodes) {
       // Node-scoped resolution: only consider the pinned node so two nodes
       // reusing a slot name don't both resolve to the first one.
       if (workflowNodeId && node.id !== workflowNodeId) continue;
       const slots = resolveNodeAgents(node);
-      const nodeNameMatch = node.name === nodePart || node.id === nodePart;
 
-      if (isCompound) {
-        // Compound "nodeName/agentName" is a precise address: the node must
-        // match by name/id AND the named slot must exist. A non-matching slot
-        // (typo, stale workflow def, wrong node) must NOT silently fall back to
-        // another slot — leave it unresolved so the sweep surfaces it as an
-        // undeclared target instead of misdelivering (e.g. "Review/reveiwer"
-        // must fail, not deliver to the reviewer slot).
-        if (!nodeNameMatch) continue;
-        const direct = slots.find((slot) => slot.name === slotPart);
+      // Compound "<nodeId-or-name>/<agent>": a precise address. The node must
+      // match by name or id AND the named slot must exist — a non-matching slot
+      // (typo, stale def, wrong node) returns no match instead of falling back
+      // to another slot and misdelivering (e.g. "Review/reveiwer" must fail).
+      let nodeFormMatched = false;
+      for (const nodeForm of [node.name, node.id]) {
+        const prefix = `${nodeForm}/`;
+        if (!targetAgentName.startsWith(prefix)) continue;
+        nodeFormMatched = true;
+        const direct = slots.find((slot) => slot.name === targetAgentName.slice(prefix.length));
         if (direct)
           return { nodeId: node.id, agentName: direct.name, agentId: direct.agentId ?? null };
-        continue;
       }
+      if (nodeFormMatched) continue;
 
+      // Legacy non-compound behavior for bare slot names and node names.
+      const nodeNameMatch = node.name === targetAgentName || node.id === targetAgentName;
       const direct = slots.find(
-        (slot) => slot.name === nodePart || (nodeNameMatch && slot.name === node.name)
+        (slot) => slot.name === targetAgentName || (nodeNameMatch && slot.name === node.name)
       );
       if (direct)
         return { nodeId: node.id, agentName: direct.name, agentId: direct.agentId ?? null };
@@ -8342,7 +8341,7 @@ export class SpaceRuntime {
         return { nodeId: node.id, agentName: slots[0].name, agentId: slots[0].agentId ?? null };
       }
       if (nodeNameMatch) {
-        return { nodeId: node.id, agentName: nodePart, agentId: null };
+        return { nodeId: node.id, agentName: targetAgentName, agentId: null };
       }
     }
     return null;
