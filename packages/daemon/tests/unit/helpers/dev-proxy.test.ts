@@ -105,18 +105,15 @@ describe('Dev Proxy Helper', () => {
     // devproxy enforces a single-instance constraint so a second start attempt
     // on any port will fail when the binary is already in use.
     // Conditional runner: execute when a fresh devproxy can start, skip
-    // otherwise. Normalizes bun:test's `(name, fn, { timeout })` form to
-    // Vitest 4's `(name, timeout, fn)`. The bun:test shim only reorders the
-    // proxied `it`, NOT `it.skip`, so a bare ternary makes `it.skip(name, fn,
-    // { timeout })` throw under Vitest 4 whenever devproxy is absent (CI) and
-    // every case here is skipped.
+    // otherwise. A bare ternary (`it : it.skip`) breaks under Vitest 4: the
+    // bun:test shim only reorders (name, fn, {timeout}) -> (name, {timeout}, fn)
+    // when args[1] is a function and args[2] is an object, so `it.skip(name, fn,
+    // {timeout})` throws whenever devproxy is absent (CI). Call the Vitest 4 form
+    // (name, fn, timeout) directly — a number in the 3rd slot, which the shim
+    // passes through untouched and Vitest parses as the per-test timeout.
     const itif = (name: string, fn: () => Promise<unknown>, opts?: { timeout?: number }): void => {
       if (DEV_PROXY_FREE_TO_START) {
-        if (opts?.timeout) {
-          it(name, opts.timeout, fn);
-        } else {
-          it(name, fn);
-        }
+        it(name, fn, opts?.timeout);
       } else {
         it.skip(name, fn);
       }
@@ -221,18 +218,15 @@ describe('Dev Proxy Helper', () => {
 
   describe('Global Dev Proxy', () => {
     // Conditional runner: execute when a fresh devproxy can start, skip
-    // otherwise. Normalizes bun:test's `(name, fn, { timeout })` form to
-    // Vitest 4's `(name, timeout, fn)`. The bun:test shim only reorders the
-    // proxied `it`, NOT `it.skip`, so a bare ternary makes `it.skip(name, fn,
-    // { timeout })` throw under Vitest 4 whenever devproxy is absent (CI) and
-    // every case here is skipped.
+    // otherwise. A bare ternary (`it : it.skip`) breaks under Vitest 4: the
+    // bun:test shim only reorders (name, fn, {timeout}) -> (name, {timeout}, fn)
+    // when args[1] is a function and args[2] is an object, so `it.skip(name, fn,
+    // {timeout})` throws whenever devproxy is absent (CI). Call the Vitest 4 form
+    // (name, fn, timeout) directly — a number in the 3rd slot, which the shim
+    // passes through untouched and Vitest parses as the per-test timeout.
     const itif = (name: string, fn: () => Promise<unknown>, opts?: { timeout?: number }): void => {
       if (DEV_PROXY_FREE_TO_START) {
-        if (opts?.timeout) {
-          it(name, opts.timeout, fn);
-        } else {
-          it(name, fn);
-        }
+        it(name, fn, opts?.timeout);
       } else {
         it.skip(name, fn);
       }

@@ -118,9 +118,16 @@ echo "daemon unit: $unit_disk file(s) on disk, $unit_covered covered"
 # include would orphan src test files with no other signal.
 WEB_SRC="$REPO_ROOT/packages/web/src"
 WEB_CFG="$REPO_ROOT/packages/web/vitest.config.ts"
-if ! grep -qE "include:[[:space:]]*\[[^]]*src/\*\*" "$WEB_CFG"; then
-	err "packages/web/vitest.config.ts `include` no longer covers src/** — web tests may be orphaned"
-	echo "     → keep the include glob rooted at src/ or update this validator" >&2
+# The web suite is a single `bunx vitest run` job. Verify its `include` glob
+# still covers the full src test set — rooted at src/** AND spanning {test,spec}
+# — so a narrowed include (e.g. src/**/*.unit.test.ts, which still contains
+# src/**) cannot silently drop files while this guard reports full coverage.
+include_line=$(grep -E "include:[[:space:]]*\[" "$WEB_CFG" | head -n1)
+if [ -z "$include_line" ] \
+	|| ! printf '%s' "$include_line" | grep -q 'src/\*\*' \
+	|| ! printf '%s' "$include_line" | grep -q '{test,spec}'; then
+	err "packages/web/vitest.config.ts 'include' no longer covers src/**/*.{test,spec} — web tests may be orphaned"
+	echo "     → keep the include rooted at src/** spanning {test,spec}, or update this validator" >&2
 fi
 
 web_count=0
@@ -271,18 +278,32 @@ check_split_module "cross-provider" "$REAL_API_WORKFLOW" "${CROSS_PROVIDER_FILES
 check_split_module "rewind" "$MAIN_WORKFLOW" "${REWIND_FILES[@]}"
 check_split_module "space" "$MAIN_WORKFLOW" "${SPACE_FILES[@]}"
 
-# New module directories must be added to a CI matrix (auto-discover shards).
-KNOWN_DIRS="agent components convo coordinator cross-provider features git glm lifecycle mcp providers rewind rpc sandbox sdk space websocket"
-EXEMPT_DIRS="benchmark"
+# A module directory is "covered" iff some ACTIVE (non-commented) workflow line
+# references tests/online/<dir>; otherwise it must be listed in EXEMPT_DIRS
+# (intentionally disabled). Deriving coverage from active references — instead
+# of a static KNOWN_DIRS allow-list — catches a directory whose CI shard was
+# removed or commented out (e.g. glm/providers below), which an allow-list would
+# silently keep reporting as covered.
+#
+# Each EXEMPT_DIRS entry is a directory intentionally NOT run by CI, documented
+# so the exemption is explicit rather than hidden in an allow-list:
+#   benchmark : manual-only (describe.skip by default)
+#   glm       : disabled — GLM online tests are flaky (commented out in main.yml)
+#   providers : disabled — codex bridge needs OPENAI_API_KEY, copilot has a
+#               credential issue (commented out in main.yml)
+#   sandbox   : disabled — not wired to a CI matrix shard
+EXEMPT_DIRS="benchmark glm providers sandbox"
 for dir in "$ONLINE_DIR"/*/; do
 	[ -d "$dir" ] || continue
 	dirname=$(basename "$dir")
 	if [[ " $EXEMPT_DIRS " == *" $dirname "* ]]; then
 		continue
 	fi
-	if [[ " $KNOWN_DIRS " != *" $dirname "* ]]; then
-		err "new online module directory '$dirname' is not in the CI matrix"
-		echo "     → add it to the test-daemon-online matrix in $MAIN_WORKFLOW" >&2
+	refs=$(grep -hE "tests/online/$dirname\b" "$MAIN_WORKFLOW" "$REAL_API_WORKFLOW" 2>/dev/null \
+		| grep -cvE '^[[:space:]]*#')
+	if [ "${refs:-0}" -eq 0 ]; then
+		err "online module directory '$dirname' has no active CI reference"
+		echo "     → add it to a matrix in $MAIN_WORKFLOW (or to EXEMPT_DIRS if intentionally disabled)" >&2
 	fi
 done
 
@@ -297,3 +318,4 @@ fi
 
 echo ""
 echo "All test files are covered by the CI matrices (unit + web + online)."
+echo "Exempt (intentionally disabled) online dirs: ${EXEMPT_DIRS}"
