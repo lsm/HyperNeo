@@ -143,7 +143,7 @@ Critical absences are part of the contract:
 
 `completionAutonomyLevel: 2` matches the risk of producing internal evidence, lessons, proposals, and draft/accepted follow-up work. Creating an execution task from a proposal remains separately visible and auditable.
 
-Level 1 must not perform those durable mutations and then merely submit the already-mutated result for approval. Enforce a shared `requireLearningMutationAutonomy` check in the mutation handlers used by this workflow—episode accept/dismiss, lesson activation/dismissal, proposal acceptance/dismissal, proposal-validation finalization, and goal rollup. The check permits draft evidence, metric snapshots, draft episode/proposal creation, and **pending** proposal-validation creation needed to prepare a review bundle, but requires Space autonomy level 2 before changing review dispositions, finalizing a validation verdict, or changing goal state. At level 1, the Learner persists each complete expected/measured/proposed-verdict triple as a validation with `status: 'pending'`, saves a decision artifact whose `pending_validation_ids` and recommendation reference those rows, leaves all generated lessons/proposals in candidate/proposed state, and calls `submit_for_approval`. The `submit_for_approval` terminal handler—not a separate Learner-callable mutation—atomically validates that artifact and creates a cycle-level `learning_review_bundle` row keyed by `(taskId, revision)` with `status: 'pending'`, containing the recommended episode, lesson, proposal, validation, and rollup dispositions—even when there are no proposal validations. The task stores the current revision; retry of the same submission is idempotent. The authorized human review action atomically applies the current bundle or rejects it with an audit reason. Rejection marks that revision `rejected`, increments the task's bundle revision, and returns the task to `in_progress`; a corrected resubmission creates the new pending revision while preserving prior attempts. Only the current revision may be applied, and ordinary task approval cannot close the run or advance its cursor until it is `applied`. Thus the gate covers every level-1 cycle rather than depending on a nonempty `pending_validation_ids` list. Rejecting the checkpoint therefore leaves no accepted lesson, accepted proposal, final validation verdict, or goal rollup to undo. As with task materialization, tool visibility is optional UX and handler enforcement is the authorization boundary.
+Level 1 must not perform those durable mutations and then merely submit the already-mutated result for approval. Enforce a shared `requireLearningMutationAutonomy` check in the mutation handlers used by this workflow—episode accept/dismiss, lesson activation/dismissal, proposal acceptance/dismissal, proposal-validation finalization, and goal rollup. The check permits draft evidence, metric snapshots, draft episode/proposal creation, and **pending** proposal-validation creation needed to prepare a review bundle, but requires Space autonomy level 2 before changing review dispositions, finalizing a validation verdict, or changing goal state. At level 1, the Learner persists each complete expected/measured/proposed-verdict triple as a validation with `status: 'pending'`, saves a decision artifact whose `pending_validation_ids` and recommendation reference those rows, leaves all generated lessons/proposals in candidate/proposed state, and calls `submit_for_approval`. The `submit_for_approval` terminal handler—not a separate Learner-callable mutation—atomically validates that the artifact contains an exhaustive disposition for every episode, candidate lesson, proposed task, pending validation, and the complete proposed rollup payload, then copies that immutable recommendation into a cycle-level `learning_review_bundle` row keyed by `(taskId, revision)` with `status: 'pending'`—even when there are no proposal validations. It rejects missing, duplicate, unknown, or unaccounted-for object IDs rather than inferring recommendations from mutable Forge state. The task stores the current revision; retry of the same submission is idempotent. The authorized human review action atomically applies the current bundle or rejects it with an audit reason. Rejection marks that revision `rejected`, increments the task's bundle revision, and returns the task to `in_progress`; a corrected resubmission creates the new pending revision while preserving prior attempts. Only the current revision may be applied, and ordinary task approval cannot close the run or advance its cursor until it is `applied`. Thus the gate covers every level-1 cycle rather than depending on a nonempty `pending_validation_ids` list. Rejecting the checkpoint therefore leaves no accepted lesson, accepted proposal, final validation verdict, or goal rollup to undo. As with task materialization, tool visibility is optional UX and handler enforcement is the authorization boundary.
 
 ### Terminal artifact
 
@@ -163,10 +163,17 @@ save_artifact({
     episode_id: '<episode-id|null>',
     trigger_kind: '<completed_task_threshold|self_nag|external_event|manual>',
     evidence_ids: ['...'],
-    accepted_lesson_ids: ['...'],
-    proposal_ids: ['...'],
-    validated_proposal_ids: ['...'],
-    pending_validation_ids: ['...'],
+    episode_disposition: '<accept|dismiss|none>',
+    lesson_dispositions: [{ lesson_id: '...', action: '<activate|dismiss|retain>' }],
+    proposal_dispositions: [{ proposal_id: '...', action: '<accept|dismiss|retain>' }],
+    validation_dispositions: [{ validation_id: '...', action: '<finalize|reject|retain>' }],
+    rollup: {
+      action: '<apply|skip>',
+      summary: '<...>',
+      progress: '<number|null>',
+      metrics: { '<key>': '<value>' },
+      next_steps: ['...'],
+    },
     metric_snapshot_ids: ['...'],
     created_task_ids: ['...'],
     unresolved: ['...'],
@@ -183,7 +190,7 @@ save_artifact({
 Retain the existing policy and trigger recognition:
 
 - threshold: `GoalAutomationService.onTaskCompleted`;
-- schedule: `onSelfNag` plus existing schedule reconciliation;
+- schedule: `onSelfNag` plus existing schedule reconciliation, with each occurrence first written to a durable trigger outbox;
 - external: `onExternalEventPublished` with cursor-based deduplication.
 
 Change only the queued job's terminal action. `handleGoalAutomationExecute` should stop calling `episodeService.createFromEvidence` and stop creating a generic review task. Instead it creates one learning task with:
@@ -194,9 +201,13 @@ Change only the queued job's terminal action. `handleGoalAutomationExecute` shou
 - structured metadata or a stable description containing all merged trigger contexts, cursor boundary, external event IDs when present, and candidate evidence IDs;
 - a deterministic automation-cycle lineage key scoped to `(goalId, evolutionScopeId)` so retries and concurrent trigger kinds do not create duplicate tasks.
 
-The task is the durable unit of work. Goal automation must serialize cycles at the goal/scope level, not separately by trigger kind: atomically acquire one active-cycle lease for `(goalId, evolutionScopeId)`, merge completed-task, self-nag, and external-event contexts into that cycle's durable pending-trigger set, and release the lease only when no task, review bundle, reserved continuation, or pending continuation outbox remains.
+The task is the durable unit of work. Goal automation must serialize cycles at the goal/scope level, not separately by trigger kind. In one transaction, acquire the active-cycle lease for `(goalId, evolutionScopeId)`, merge trigger contexts into its durable pending set, claim evidence, and reserve the initial task ID plus a task-creation outbox row. The dispatcher materializes that reserved task idempotently. A startup/periodic reconciler repairs every leased cycle with a reservation but no task/outbox delivery; triggers coalesced during the gap cannot strand the scope. Release the lease only when no task, review bundle, reserved task, or pending outbox remains.
 
-Use one canonical evidence cursor per `(goalId, evolutionScopeId)` for episode selection. Trigger-kind cursors remain only source-delivery dedup markers (for example, the last external event received); they never determine the Forge evidence window. On accepting an external-event publication, atomically create/idempotently resolve its Forge evidence **before** advancing the source-dedup marker or merging its trigger context, and order that evidence by an append-time Forge sequence rather than backdated `externalEvent.ingestedAt`. Store the external event ID as the uniqueness key and its ingestion time as metadata only. A delayed job therefore references evidence already positioned after the canonical boundary; legacy late evidence detected at or behind the boundary goes into the durable pending-trigger queue as an explicit claimed evidence ID and is processed without moving the cursor backward. When acquiring the lease, atomically read the global processed boundary, merge all pending trigger contexts, and claim the next contiguous evidence prefix. Terminal handling advances only this global cursor through the committed prefix. This prevents an older self-nag cursor from replaying evidence already processed for an external event and prevents a newer source cursor from skipping evidence unseen by another source. The Learner selects the claimed evidence (bounded by `maxEvidencePerEpisode`) and runs the judge.
+For self-nag, the schedule-fire transaction must insert a unique occurrence into the trigger outbox **before/with** `updateAfterFireIfPending`; delivery merges that occurrence into the goal/scope lease idempotently. Advancing the cron schedule is therefore not acknowledgement of trigger delivery, and reconciliation retries undelivered occurrences after crashes or enqueue failures.
+
+Use one canonical evidence cursor per `(goalId, evolutionScopeId)` for episode selection. Before enabling the new dispatcher, migrate existing evidence deterministically to append sequences ordered by `(created_at, id)`. For each scope, derive the safely processed prefix from evidence already linked to terminal accepted/dismissed episodes plus the intersection of legacy trigger cursor ranges; seed the canonical cursor only through that contiguous prefix. Persist every later evidence interval indicated by any legacy cursor but not proven processed as explicit pending ranges/IDs, so migration neither replays committed episodes nor skips divergent legacy windows. Run this migration and invariant check transactionally before automation resumes.
+
+Trigger-kind cursors remain only source-delivery dedup markers (for example, the last external event received); they never determine the Forge evidence window. On accepting an external-event publication, atomically create/idempotently resolve its Forge evidence **before** advancing the source-dedup marker or merging its trigger context, and order that evidence by an append-time Forge sequence rather than backdated `externalEvent.ingestedAt`. Store the external event ID as the uniqueness key and its ingestion time as metadata only. A delayed job therefore references evidence already positioned after the canonical boundary; legacy late evidence detected at or behind the boundary goes into the durable pending-trigger queue as an explicit claimed evidence ID and is processed without moving the cursor backward. When acquiring the lease, atomically read the global processed boundary, merge all pending trigger contexts, and claim the next contiguous evidence prefix. Terminal handling advances only this global cursor through the committed prefix. This prevents an older self-nag cursor from replaying evidence already processed for an external event and prevents a newer source cursor from skipping evidence unseen by another source. The Learner selects the claimed evidence (bounded by `maxEvidencePerEpisode`) and runs the judge.
 
 Learning-workflow task completion is terminal evidence but must be marked `nonTriggeringForGoalAutomation` (or filtered by `preferredWorkflow.handle === 'learning-workflow'`) before `GoalAutomationService.onTaskCompleted`. It may remain visible in the Forge timeline, but it neither increments `completedTaskThreshold` nor recursively schedules another learning cycle.
 
@@ -356,6 +367,8 @@ interface ProposalValidation {
   measured: string;
   verdict: ProposalVerdict;
   status: ProposalValidationStatus;
+  bundleRevision: number;
+  supersedesValidationId: string | null;
   replacementProposalId: string | null;
   replacementTaskId: string | null;
   lessonId: string | null;
@@ -364,7 +377,7 @@ interface ProposalValidation {
 }
 ```
 
-Uniqueness should be `(proposal_id, validating_episode_id)`. Exactly one of `replacementProposalId` or `replacementTaskId` may be set for a superseded verdict; both are null otherwise. Add create/list/finalize/reject service operations and include validations in `list_forge_review_bundle` and the judge prompt. Creation at level 1 stores `pending`; finalization/rejection is the autonomy-gated disposition. Keep `episode.outcomeSummary`, findings, and metric snapshots as the outcome evidence; this record is the missing explicit expected↔measured↔verdict link.
+Uniqueness should be `(proposal_id, validating_episode_id, bundle_revision)`. A rejected validation is immutable; corrected resubmission creates the next revision with `supersedesValidationId` pointing to it, preserving the audit chain. Only one pending/final validation may be current for a proposal/episode, and a bundle may reference validations from its own revision only. Exactly one of `replacementProposalId` or `replacementTaskId` may be set for a superseded verdict; both are null otherwise. Add create/list/finalize/reject service operations and include validations in `list_forge_review_bundle` and the judge prompt. Creation at level 1 stores `pending`; finalization/rejection is the autonomy-gated disposition. Keep `episode.outcomeSummary`, findings, and metric snapshots as the outcome evidence; this record is the missing explicit expected↔measured↔verdict link.
 
 ## PR-agnostic completion
 
