@@ -489,11 +489,11 @@ describe('SDKUserMessage', () => {
     });
   });
 
-  describe('Send Status', () => {
-    it('should show "not delivered" badge when sendStatus is failed', () => {
+  describe('Delivery Status', () => {
+    it('should show "not delivered" badge when deliveryStatus is failed', () => {
       const message = {
         ...createTextMessage('Hello world'),
-        sendStatus: 'failed',
+        deliveryStatus: 'failed' as const,
       };
 
       const { container } = render(<SDKUserMessage message={message} />);
@@ -501,12 +501,47 @@ describe('SDKUserMessage', () => {
       expect(container.textContent).toContain('not delivered');
     });
 
-    it('should not show "not delivered" badge when sendStatus is absent', () => {
+    it('should show "queued" badge when deliveryStatus is queued', () => {
+      const message = {
+        ...createTextMessage('Hello world'),
+        deliveryStatus: 'queued' as const,
+      };
+
+      const { container } = render(<SDKUserMessage message={message} />);
+
+      expect(container.textContent).toContain('queued');
+    });
+
+    it('should show "sending" badge when deliveryStatus is processing', () => {
+      const message = {
+        ...createTextMessage('Hello world'),
+        deliveryStatus: 'processing' as const,
+      };
+
+      const { container } = render(<SDKUserMessage message={message} />);
+
+      expect(container.textContent).toContain('sending');
+    });
+
+    it('should NOT show a badge when deliveryStatus is delivered (avoid noise)', () => {
+      const message = {
+        ...createTextMessage('Hello world'),
+        deliveryStatus: 'delivered' as const,
+      };
+
+      const { container } = render(<SDKUserMessage message={message} />);
+
+      expect(container.textContent).not.toContain('delivered');
+      expect(container.textContent).not.toContain('not delivered');
+    });
+
+    it('should not show a badge when deliveryStatus is absent', () => {
       const message = createTextMessage('Hello world');
 
       const { container } = render(<SDKUserMessage message={message} />);
 
       expect(container.textContent).not.toContain('not delivered');
+      expect(container.textContent).not.toContain('queued');
     });
   });
 

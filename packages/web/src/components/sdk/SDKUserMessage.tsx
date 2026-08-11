@@ -5,11 +5,13 @@
  */
 
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
+import type { MessageDeliveryStatus } from '@hyperneo/shared';
 import { useEffect, useState } from 'preact/hooks';
 import { toast } from '../../lib/toast.ts';
 import { borderRadius, messageColors, messageSpacing } from '../../lib/design-tokens.ts';
 import { cn, copyToClipboard } from '../../lib/utils.ts';
 import { Dropdown } from '../ui/Dropdown.tsx';
+import { DeliveryStateBadge } from '../ui/DeliveryStateBadge.tsx';
 import { IconButton } from '../ui/IconButton.tsx';
 import { Spinner } from '../ui/Spinner.tsx';
 import { Tooltip } from '../ui/Tooltip.tsx';
@@ -70,8 +72,43 @@ function renderMessageText(
   );
 }
 
-type UserMessage = Extract<SDKMessage, { type: 'user' }> & { sendStatus?: string };
+type UserMessage = Extract<SDKMessage, { type: 'user' }> & {
+  /** User-facing delivery lifecycle from sdk_messages.send_status (task #862). */
+  deliveryStatus?: MessageDeliveryStatus;
+};
 type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
+
+/**
+ * Per-status copy for the user-message delivery badge (task #862). "delivered"
+ * is intentionally NOT rendered here (the caller hides it) to avoid noisy
+ * indicators on normal fast delivery.
+ */
+const DELIVERY_BADGE_COPY: Record<
+  Exclude<MessageDeliveryStatus, 'delivered'>,
+  { label: string; tooltip: string }
+> = {
+  queued: { label: 'queued', tooltip: 'Waiting to be delivered' },
+  processing: { label: 'sending', tooltip: 'Sending to the active turn' },
+  retrying: { label: 'retrying', tooltip: 'Delivery stalled — retrying' },
+  failed: {
+    label: 'not delivered',
+    tooltip: 'Message was not delivered — the server crashed before Claude responded',
+  },
+};
+
+function UserMessageDeliveryBadge({
+  status,
+}: {
+  status: Exclude<MessageDeliveryStatus, 'delivered'>;
+}) {
+  const copy = DELIVERY_BADGE_COPY[status];
+  if (!copy) return null;
+  return (
+    <Tooltip content={copy.tooltip} position="left">
+      <DeliveryStateBadge state={status} label={copy.label} test-id="user-delivery-state" />
+    </Tooltip>
+  );
+}
 
 interface Props {
   message: UserMessage;
@@ -351,13 +388,8 @@ export function SDKUserMessage({
         </Tooltip>
       )}
 
-      {message.sendStatus === 'failed' && (
-        <Tooltip
-          content="Message was not delivered — the server crashed before Claude responded"
-          position="left"
-        >
-          <span class="text-xs px-2 py-0.5 bg-red-500/20 text-red-400 rounded">not delivered</span>
-        </Tooltip>
+      {message.deliveryStatus && message.deliveryStatus !== 'delivered' && (
+        <UserMessageDeliveryBadge status={message.deliveryStatus} />
       )}
 
       {/* Rewind button - only for non-replay user messages with valid UUID */}

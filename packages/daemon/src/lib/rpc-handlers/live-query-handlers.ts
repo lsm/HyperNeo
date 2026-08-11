@@ -16,7 +16,12 @@ import type {
   LiveQueryUnsubscribeResponse,
   MessageHub,
 } from '@hyperneo/shared';
-import { createEventMessage, parseJson, parseJsonOptional } from '@hyperneo/shared';
+import {
+  createEventMessage,
+  parseJson,
+  parseJsonOptional,
+  sendStatusToDeliveryStatus,
+} from '@hyperneo/shared';
 import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
 import type { LiveQueryEngine, LiveQueryHandle, QueryDiff } from '../../storage/live-query';
 import type { TableChangeScope } from '../../storage/reactive-database';
@@ -203,7 +208,10 @@ function mapSpaceTaskMessageRow(row: Record<string, unknown>): Record<string, un
   const turnUserMessageId =
     typeof row.turnUserMessageId === 'string' ? row.turnUserMessageId : null;
   const origin = typeof row.origin === 'string' ? row.origin : null;
-  const deliveryState = messageType === 'user' && row.deliveryState === 'failed' ? 'failed' : null;
+  // Task #862: pass through the full user-message delivery lifecycle
+  // (queued / processing / retrying / delivered / failed) computed SQL-side.
+  const deliveryState =
+    messageType === 'user' && typeof row.deliveryState === 'string' ? row.deliveryState : null;
   // Optional backward-compat field from older compact-query variants.
   // Current compact SQL no longer emits this, but keep tolerant parsing so
   // historical rows/tests and alternate query variants remain safe.
@@ -1944,7 +1952,24 @@ sdk_rows_raw AS (
     sm.message_type AS messageType,
     sm.sdk_message AS content,
     sm.origin AS origin,
-    CASE WHEN sm.message_type = 'user' AND sm.send_status = 'failed' THEN 'failed' WHEN sm.message_type = 'user' THEN 'delivered' ELSE NULL END AS deliveryState,
+    CASE
+      WHEN sm.message_type != 'user' THEN NULL
+      WHEN COALESCE(sm.send_status, 'consumed') = 'failed' THEN 'failed'
+      WHEN COALESCE(sm.send_status, 'consumed') = 'consumed' THEN 'delivered'
+      WHEN COALESCE(sm.send_status, 'consumed') IN ('deferred', 'enqueued', 'submitted')
+           AND EXISTS (
+             SELECT 1
+             FROM job_queue jq
+             WHERE jq.queue = 'message_delivery'
+               AND jq.status IN ('pending', 'processing')
+               AND json_extract(jq.payload, '$.sessionId') = sm.session_id
+               AND json_extract(jq.payload, '$.messageUuid') = sm.sdk_uuid
+               AND jq.retry_count > 0
+           )
+      THEN 'retrying'
+      WHEN COALESCE(sm.send_status, 'consumed') = 'submitted' THEN 'processing'
+      ELSE 'queued'
+    END AS deliveryState,
     CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt,
     sm.parent_tool_use_id AS parentToolUseId,
     sm.is_renderable AS isRenderable,
@@ -1963,8 +1988,7 @@ sdk_rows_raw AS (
    AND sne.rn = 1
   LEFT JOIN space_agents sa
     ON sa.id = COALESCE(sne.agent_id, json_extract(s_kind.metadata, '$.promptProvenance.agentId'))
-  WHERE (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
-    AND (
+  WHERE (
       sm.message_type != 'system'
       OR sm.message_subtype_norm != 'informational'
       OR NOT json_valid(sm.sdk_message)
@@ -2240,7 +2264,24 @@ sdk_rows AS (
     sm.message_type AS messageType,
     sm.sdk_message AS content,
     sm.origin AS origin,
-    CASE WHEN sm.message_type = 'user' AND sm.send_status = 'failed' THEN 'failed' WHEN sm.message_type = 'user' THEN 'delivered' ELSE NULL END AS deliveryState,
+    CASE
+      WHEN sm.message_type != 'user' THEN NULL
+      WHEN COALESCE(sm.send_status, 'consumed') = 'failed' THEN 'failed'
+      WHEN COALESCE(sm.send_status, 'consumed') = 'consumed' THEN 'delivered'
+      WHEN COALESCE(sm.send_status, 'consumed') IN ('deferred', 'enqueued', 'submitted')
+           AND EXISTS (
+             SELECT 1
+             FROM job_queue jq
+             WHERE jq.queue = 'message_delivery'
+               AND jq.status IN ('pending', 'processing')
+               AND json_extract(jq.payload, '$.sessionId') = sm.session_id
+               AND json_extract(jq.payload, '$.messageUuid') = sm.sdk_uuid
+               AND jq.retry_count > 0
+           )
+      THEN 'retrying'
+      WHEN COALESCE(sm.send_status, 'consumed') = 'submitted' THEN 'processing'
+      ELSE 'queued'
+    END AS deliveryState,
     CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt,
     sm.parent_tool_use_id AS parentToolUseId,
     sm.is_renderable AS isRenderable,
@@ -2257,7 +2298,6 @@ sdk_rows AS (
    AND sne.rn = 1
   LEFT JOIN space_agents sa ON sa.id = sne.agent_id
   WHERE sm.conversation_turn_index >= rt.minTurn
-    AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
     AND (
       sm.message_type != 'system'
       OR sm.message_subtype_norm != 'informational'
@@ -3251,11 +3291,30 @@ WITH top_level AS (
     timestamp,
     send_status,
     origin,
-    rowid
+    rowid,
+    -- Active-delivery retry signal for the "retrying" UI state (task #862):
+    -- true when a pending/processing message_delivery job for this session
+    -- references the row's canonical uuid AND has already been retried
+    -- (retry_count > 0). Scoped to this session's active jobs (few) via the
+    -- partial index idx_message_delivery_session_active; one bounded lookup.
+    EXISTS (
+      SELECT 1
+      FROM job_queue jq
+      WHERE jq.queue = 'message_delivery'
+        AND jq.status IN ('pending', 'processing')
+        AND json_extract(jq.payload, '$.sessionId') = ?1
+        AND json_extract(jq.payload, '$.messageUuid') = sdk_messages.sdk_uuid
+        AND jq.retry_count > 0
+    ) AS deliveryRetry
   FROM sdk_messages
   WHERE session_id = ?1
     AND parent_tool_use_id IS NULL
-    AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
+    -- Task #862: surface ALL user-message delivery states (deferred / enqueued
+    -- / submitted / consumed / failed) so the UI can badge queued / processing
+    -- / retrying explicitly instead of inferring from system/init. Daemon-side
+    -- reads (SDKMessageRepository.getSDKMessages) keep the consumed/failed
+    -- visibility filter, so prompt context / rewind are unaffected; only the
+    -- web transcript feed widens.
     AND message_subtype_norm NOT IN (${EXCLUDED_FROM_PAGINATION_SQL_LIST})
     AND (
       message_type != 'system'
@@ -3315,12 +3374,20 @@ subagent AS (
     sm.timestamp AS timestamp,
     sm.send_status AS send_status,
     sm.origin AS origin,
-    sm.rowid AS rowid
+    sm.rowid AS rowid,
+    EXISTS (
+      SELECT 1
+      FROM job_queue jq
+      WHERE jq.queue = 'message_delivery'
+        AND jq.status IN ('pending', 'processing')
+        AND json_extract(jq.payload, '$.sessionId') = ?1
+        AND json_extract(jq.payload, '$.messageUuid') = sm.sdk_uuid
+        AND jq.retry_count > 0
+    ) AS deliveryRetry
   FROM sdk_messages sm
   WHERE sm.session_id = ?1
     AND sm.parent_tool_use_id IN (SELECT id FROM tool_use_ids)
     AND sm.message_subtype_norm != 'thinking_tokens'
-    AND (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
 )
 SELECT
   id,
@@ -3328,7 +3395,8 @@ SELECT
   CAST((julianday(timestamp) - 2440587.5) * 86400000 AS INTEGER)    AS timestamp,
   send_status                                                       AS sendStatus,
   origin                                                            AS origin,
-  rowid                                                             AS rowid
+  rowid                                                             AS rowid,
+  deliveryRetry                                                     AS deliveryRetry
 FROM top_level
 UNION ALL
 SELECT
@@ -3337,7 +3405,8 @@ SELECT
   CAST((julianday(timestamp) - 2440587.5) * 86400000 AS INTEGER)    AS timestamp,
   send_status                                                       AS sendStatus,
   origin                                                            AS origin,
-  rowid                                                             AS rowid
+  rowid                                                             AS rowid,
+  deliveryRetry                                                     AS deliveryRetry
 FROM subagent
 ORDER BY timestamp ASC, rowid ASC
 `.trim();
@@ -3351,9 +3420,10 @@ ORDER BY timestamp ASC, rowid ASC
  *     preserved so any SDK-level `origin?: SDKMessageOrigin` object gets
  *     stripped in favour of the app's `MessageOrigin` string.
  *   - Attach `timestamp` (epoch ms, computed SQL-side).
- *   - Attach `sendStatus` only when the DB column equals `'failed'`, so the UI
- *     can render the retry affordance without carrying 'consumed' through the
- *     message stream.
+ *   - Attach `deliveryStatus` (task #862) for user messages — the user-facing
+ *     delivery lifecycle (queued / processing / retrying / delivered / failed),
+ *     mapped from `send_status` + the active-job retry signal via the shared
+ *     `sendStatusToDeliveryStatus`. Non-user rows get no delivery state.
  *   - Attach `id` so client-side LiveQuery diffing is stable even when the
  *     SDK message lacks a `uuid`.
  */
@@ -3378,8 +3448,12 @@ function mapMessageRow(row: Record<string, unknown>): Record<string, unknown> {
     rowid: typeof row.rowid === 'number' ? row.rowid : Number(row.rowid ?? 0),
     origin: row.origin != null ? row.origin : undefined,
   };
-  if (row.sendStatus === 'failed') {
-    extras.sendStatus = 'failed';
+  // Only user messages carry a delivery lifecycle. SQLite EXISTS returns 0/1.
+  if (parsed.type === 'user') {
+    const deliveryStatus = sendStatusToDeliveryStatus(row.sendStatus as string | null, {
+      retrying: Number(row.deliveryRetry ?? 0) > 0,
+    });
+    if (deliveryStatus) extras.deliveryStatus = deliveryStatus;
   }
 
   return { ...parsed, ...extras };

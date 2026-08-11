@@ -219,7 +219,7 @@ describe('messages.bySession — SQL behavior', () => {
     expect(rows[0].uuid).toBe('u1');
   });
 
-  test('excludes user messages with send_status deferred or enqueued', () => {
+  test('surfaces every user-message delivery state (queued/processing/delivered/failed)', () => {
     insertSdkMessage(db, {
       id: 'm-consumed',
       sessionId: 's1',
@@ -245,18 +245,32 @@ describe('messages.bySession — SQL behavior', () => {
       sendStatus: 'enqueued',
     });
     insertSdkMessage(db, {
+      id: 'm-submitted',
+      sessionId: 's1',
+      messageType: 'user',
+      sdkMessage: { type: 'user', uuid: 'u5', message: { content: 'submitted' } },
+      timestamp: '2024-01-01 00:00:04',
+      sendStatus: 'submitted',
+    });
+    insertSdkMessage(db, {
       id: 'm-failed',
       sessionId: 's1',
       messageType: 'user',
       sdkMessage: { type: 'user', uuid: 'u4', message: { content: 'failed' } },
-      timestamp: '2024-01-01 00:00:04',
+      timestamp: '2024-01-01 00:00:05',
       sendStatus: 'failed',
     });
 
     const rows = query(db, 's1', 100);
-    const uuids = rows.map((r) => r.uuid as string).sort();
-    // consumed and failed are kept; deferred and enqueued are dropped.
-    expect(uuids).toEqual(['u1', 'u4']);
+    const byUuid = new Map(rows.map((r) => [r.uuid as string, r]));
+    // Task #862: all user rows are now visible (no longer filtered to
+    // consumed/failed) and each carries its mapped delivery lifecycle.
+    expect([...byUuid.keys()].sort()).toEqual(['u1', 'u2', 'u3', 'u4', 'u5']);
+    expect(byUuid.get('u1')!.deliveryStatus).toBe('delivered');
+    expect(byUuid.get('u2')!.deliveryStatus).toBe('queued');
+    expect(byUuid.get('u3')!.deliveryStatus).toBe('queued');
+    expect(byUuid.get('u5')!.deliveryStatus).toBe('processing');
+    expect(byUuid.get('u4')!.deliveryStatus).toBe('failed');
   });
 
   test('orders by timestamp ASC, id ASC', () => {
@@ -1011,7 +1025,7 @@ describe('messages.bySession — mapRow', () => {
     expect(row.origin).toBeUndefined();
   });
 
-  test('attaches sendStatus only when DB column is "failed"', () => {
+  test('attaches deliveryStatus for user messages mapped from send_status', () => {
     insertSdkMessage(db, {
       id: 'm-ok',
       sessionId: 's1',
@@ -1032,7 +1046,9 @@ describe('messages.bySession — mapRow', () => {
     const rows = query(db, 's1', 10);
     const okRow = rows.find((r) => r.uuid === 'u-ok')!;
     const failRow = rows.find((r) => r.uuid === 'u-fail')!;
-    expect('sendStatus' in okRow).toBe(false);
-    expect(failRow.sendStatus).toBe('failed');
+    // Task #862: consumed → delivered, failed → failed. Non-user rows would
+    // carry no deliveryStatus; user rows always carry their mapped state.
+    expect(okRow.deliveryStatus).toBe('delivered');
+    expect(failRow.deliveryStatus).toBe('failed');
   });
 });
