@@ -157,12 +157,13 @@ export async function handleGoalAutomationExecute(
   }
 
   // self_nag: skip no-op episodes on thin, process-level evidence. When the
-  // preflight is low-confidence AND the selection carries no substantive
-  // task/artifact/metric signal (only status notes / empty traces), record a
-  // lightweight no-op note on the goal and advance the cursor without spending
-  // an episode-judge call or creating a review task. Genuine evidence still
-  // produces an episode. Honors the goal guardrail: "if evidence is
-  // insufficient, finish without inventing work." (#919)
+  // preflight is low-confidence AND every selected evidence row is a manual note
+  // (status notes / empty traces — no task, artifact, metric, or friction-trace
+  // signal), record a lightweight no-op note on the goal and advance the cursor
+  // without spending an episode-judge call or creating a review task. Any
+  // non-manual evidence still produces an episode, even at a low preflight.
+  // Honors the goal guardrail: "if evidence is insufficient, finish without
+  // inventing work." (#919)
   if (payload.triggerKind === 'self_nag' && deps.episodeService.preflightEvidence) {
     const preflight = deps.episodeService.preflightEvidence({
       scopeId: scope.id,
@@ -486,14 +487,18 @@ function advanceCursor(
 
 /**
  * A self_nag tick is a no-op worth skipping when the evidence-quality preflight
- * is low-confidence AND the selection carries no substantive task/artifact/
- * metric signal — i.e. it is purely process-level (manual notes / empty traces).
- * Genuine evidence still produces an episode even when the level is low.
+ * is low-confidence AND the selection is purely process-level — every evidence
+ * row is a manual note. The check is selection-based (not the scope-wide
+ * metricSnapshot count, which can stay non-zero from a stale/unrelated metric),
+ * so an old metric can't keep thin ticks producing no-op episodes. Any
+ * non-manual evidence — task results, friction traces like permission_block or
+ * slow_tool_call that resolve to task context, workflow artifacts, or metrics
+ * actually in the batch — keeps its retrospective even at a low preflight.
  */
 function shouldSkipSelfNagNoOp(preflight: EvidenceQualityPreflight): boolean {
   if (preflight.level !== 'low') return false;
   const { counts } = preflight;
-  return counts.taskResults === 0 && counts.workflowArtifacts === 0 && counts.metricSnapshots === 0;
+  return counts.total > 0 && counts.manualNotes === counts.total;
 }
 
 function recordSelfNagNoOpNote(

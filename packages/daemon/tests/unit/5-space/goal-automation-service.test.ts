@@ -2806,14 +2806,17 @@ describe('handleGoalAutomationExecute', () => {
           preflightEvidence: () =>
             makePreflight({
               level: 'low',
-              score: 8,
+              score: 23,
               requiresConfirmation: true,
+              // A stale scope-wide metric keeps counts.metricSnapshots at 1 even
+              // though the selection is a single manual note — the skip must still
+              // fire (the gate is selection-based, not scope-wide).
               counts: {
                 total: 1,
                 manualNotes: 1,
                 taskResults: 0,
                 workflowArtifacts: 0,
-                metricSnapshots: 0,
+                metricSnapshots: 1,
                 outcomes: 1,
               },
             }),
@@ -2842,21 +2845,21 @@ describe('handleGoalAutomationExecute', () => {
     expect(events[0]?.note).toContain('Self-nag retrospective skipped');
   });
 
-  it('still produces an episode when a low preflight carries substantive task evidence', async () => {
+  it('still produces an episode for non-manual friction traces even at a low preflight', async () => {
     const goal = goalRepo.create({ spaceId, title: 'Low but substantive', type: 'recurring' });
     const scope = evolutionRepo.createScope({
       spaceId,
       spaceGoalId: goal.id,
       kind: 'mission',
       name: 'Low but substantive',
-      objective: 'Low preflight, real task evidence',
+      objective: 'Low preflight, real friction trace',
       policy: { automation: { selfNagCronExpression: '0 * * * *' } },
     });
     evolutionRepo.createEvidence({
       scopeId: scope.id,
-      kind: 'manual_note',
+      kind: 'slow_tool_call',
       sourceId: null,
-      summary: 'Note',
+      summary: 'Slow tool call trace',
       createdAt: 30,
     });
 
@@ -2886,7 +2889,10 @@ describe('handleGoalAutomationExecute', () => {
             proposals: [],
             lessons: [],
           }),
-          // Low confidence, but task evidence is substantive -> do not skip.
+          // Low confidence with a friction trace (slow_tool_call) that resolves
+          // to task context but is NOT a task_result kind — counts.taskResults,
+          // workflowArtifacts, and metricSnapshots are all 0, yet the selection
+          // is non-manual, so the gate must preserve the retrospective.
           preflightEvidence: () =>
             makePreflight({
               level: 'low',
@@ -2895,7 +2901,7 @@ describe('handleGoalAutomationExecute', () => {
               counts: {
                 total: 1,
                 manualNotes: 0,
-                taskResults: 1,
+                taskResults: 0,
                 workflowArtifacts: 0,
                 metricSnapshots: 0,
                 outcomes: 0,
