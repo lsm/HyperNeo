@@ -1,4 +1,4 @@
-import type { NodeExecution, SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
+import type { NodeExecution, SpaceTask, SpaceWorkflow, WorkflowNode } from '@hyperneo/shared';
 import { isRateOrUsageLimited, resolveNodeAgents } from '@hyperneo/shared';
 
 export type ExecutionWorkflowValidationResult =
@@ -35,6 +35,117 @@ export class TransientSpawnError extends Error {
 
 export function isTransientSpawnError(err: unknown): err is TransientSpawnError {
   return err instanceof TransientSpawnError;
+}
+
+// ============================================================================
+// Stale / missing custom-agent reference validation
+// ============================================================================
+//
+// `node_executions.agent_id` carries `FOREIGN KEY … REFERENCES space_agents(id)
+// ON DELETE SET NULL`. That ON DELETE SET NULL only rewrites EXISTING rows when
+// an agent is deleted; INSERTing a new row whose `agent_id` points at a deleted
+// agent still raises `SQLITE_CONSTRAINT_FOREIGNKEY` (and `INSERT OR IGNORE` does
+// NOT suppress foreign-key failures). Workflow definitions persist agent ids, so
+// a run pinned to a definition that references a since-deleted custom agent would
+// otherwise leak that raw SQLite error every time a downstream node is activated.
+//
+// The helpers below let the shared node-activation paths (channel activation and
+// restart recovery) validate configured agent references up front and surface an
+// actionable error instead. Built-in/worker slots that validly use `agentId =
+// null` are intentionally preserved — only non-null references are checked, and a
+// missing required agent is never silently nulled.
+
+/**
+ * A configured workflow-node agent slot whose `agentId` no longer resolves to a
+ * `space_agents` row.
+ */
+export interface MissingNodeAgentReference {
+  agentName: string;
+  agentId: string;
+}
+
+/**
+ * Returns the configured agent slots on `node` whose `agentId` no longer exists
+ * (according to `agentExists`). Slots with `agentId === null` (built-in/worker
+ * agents that carry no FK reference) are always valid and never reported.
+ *
+ * Returns an empty array when every slot resolves, including when the node has
+ * only null-agentId slots. A `resolveNodeAgents` failure (e.g. a node with no
+ * agents) is deliberately swallowed here — that malformation is reported by
+ * {@link validateExecutionAgainstWorkflow} / the activation callers, and a
+ * second error from this helper would mask the actionable one.
+ *
+ * Pass `options.slotNames` to restrict the check to a subset of slots — used by
+ * slot-targeted activation (`targetAgentName`) so a stale *sibling* slot does
+ * not block activating a valid target slot.
+ */
+export function findMissingNodeAgentReferences(
+  node: WorkflowNode,
+  agentExists: (agentId: string) => boolean,
+  options?: { slotNames?: ReadonlySet<string> }
+): MissingNodeAgentReference[] {
+  let agents: ReturnType<typeof resolveNodeAgents>;
+  try {
+    agents = resolveNodeAgents(node);
+  } catch {
+    return [];
+  }
+  const slotFilter = options?.slotNames;
+  const missing: MissingNodeAgentReference[] = [];
+  for (const agent of agents) {
+    if (slotFilter && !slotFilter.has(agent.name)) continue;
+    if (agent.agentId && !agentExists(agent.agentId)) {
+      missing.push({ agentName: agent.name, agentId: agent.agentId });
+    }
+  }
+  return missing;
+}
+
+/**
+ * Permanent spawn failure caused by a workflow slot referencing a custom agent
+ * that no longer exists in the Space. Extends {@link PermanentSpawnError} so the
+ * existing spawn-error handling treats it as terminal (no retry storm). Carries
+ * the offending reference so callers can build a targeted diagnostic.
+ */
+export class MissingWorkflowAgentError extends PermanentSpawnError {
+  readonly reference: MissingNodeAgentReference;
+
+  constructor(message: string, reference: MissingNodeAgentReference) {
+    super(message);
+    this.name = 'MissingWorkflowAgentError';
+    this.reference = reference;
+  }
+}
+
+export function isMissingWorkflowAgentError(err: unknown): err is MissingWorkflowAgentError {
+  return err instanceof MissingWorkflowAgentError;
+}
+
+/**
+ * Build the actionable diagnostic for a stale agent reference. Includes the run
+ * id, target node, agent name, and stale agent id so an operator can locate and
+ * repair the broken reference without grepping logs for a raw SQLite exception.
+ *
+ * The remedy reflects pinned-run semantics: a run resolves the workflow
+ * definition that was pinned at its creation, so editing the mutable workflow
+ * head or recreating the agent (which gets a new id) does not repair this run.
+ * The supported path is to create a new run from a corrected workflow.
+ */
+export function formatMissingAgentReference(params: {
+  runId: string;
+  /** Node name when available, otherwise the node id. */
+  nodeLabel: string;
+  agentName: string;
+  agentId: string;
+}): string {
+  return (
+    `Workflow run "${params.runId}" cannot activate node "${params.nodeLabel}": ` +
+    `agent slot "${params.agentName}" references agent "${params.agentId}", ` +
+    `which no longer exists in this Space. This run resolves a workflow ` +
+    `definition pinned at creation time, so editing the workflow or recreating ` +
+    `the agent (a new id) will not repair it; create a new run from a corrected ` +
+    `workflow.`
+  );
 }
 
 export function validateExecutionAgainstWorkflow(
