@@ -7008,6 +7008,33 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(event.id)?.state).toBe('published');
   });
 
+  test('materializes a topicFrom sub for a done run whose task is in post-approval review', async () => {
+    // R15-7: a succeeded (done) run whose canonical task is in review/approved is
+    // still in the active post-approval phase — a record-triggered materialization
+    // (e.g. a post-approval agent replacing the primary link) must NOT be rejected
+    // by the run-status gate. Terminal tasks (done/cancelled/archived) are still
+    // rejected by the task-status gate. Mirrors the rehydrate path's eligibility
+    // for done runs with review/approved tasks.
+    const workflow = createTopicFromWorkflow();
+    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    markCoderLive(run.id, 'session-post-approval');
+
+    // Run reaches done, but its canonical task stays in review (post-approval).
+    workflowRunRepo.updateRun(run.id, { status: 'done', completedAt: Date.now() });
+    const task = taskRepo.listByWorkflowRun(run.id)[0]!;
+    taskRepo.updateTask(task.id, { status: 'review' });
+
+    recordPrLinkArtifact(run.id, 'code', PR_URL);
+    expect(runtime.materializeRunTopicFromInterests(run.id)).toBe(true);
+
+    const event = makeEvent();
+    await eventService.publish(event);
+
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-post-approval');
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
+  });
+
   test('materializes a topicFrom interest from a primary link established via gate data', async () => {
     // resolvePrimaryLinkUrl treats gate data (pr_url/prUrl) as a primary-link
     // source, not just link artifacts. A custom workflow that supplies pr_url via

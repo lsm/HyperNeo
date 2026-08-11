@@ -1303,13 +1303,16 @@ export class SpaceRuntime {
     }
     const run = this.config.workflowRunRepo.getRun(workflowRunId);
     if (!run) return false;
-    // Skip terminal runs: cancel/done already cleared the run's interests
-    // (clearRunInterests), and an in-flight save_artifact/gate-write completing
-    // after teardown must not re-add a derived static sub that would fan later
-    // events out to a terminal target (failed on delivery) and persist as a
-    // leaked trie entry. Mirrors the eligibility check used during rehydrate (a
-    // blocked run is NOT terminal — it still receives events when unblocked).
-    if (run.status === 'cancelled' || isWorkflowRunSucceeded(run.status)) return false;
+    // A cancelled run is torn down (clearRunInterests already dropped its
+    // interests), and an in-flight save_artifact/gate-write completing after
+    // teardown must not re-add a derived static sub that would fan later events
+    // out to a dead target. A succeeded (done) run is NOT rejected here: a
+    // post-approval run can be `done` while its canonical task remains in
+    // review/approved — still an active phase that must receive events. The
+    // task-status gate below rejects terminal tasks (done/cancelled/archived),
+    // mirroring registerRunInterestsFromWorkflow. (A blocked run is NOT terminal
+    // — it still receives events when unblocked.)
+    if (run.status === 'cancelled') return false;
     const workflow = this.resolveFrozenWorkflowForRun(run);
     if (!workflow) return false;
     // Cheap guard: nothing to do unless SOME node declares a topicFrom interest.
