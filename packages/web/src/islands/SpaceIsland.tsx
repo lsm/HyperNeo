@@ -586,8 +586,9 @@ export default function SpaceIsland({
     <>
       {overlay}
       <div
-        class="flex-1 flex flex-col overflow-hidden bg-app-content"
+        class="relative isolate flex-1 flex flex-col overflow-hidden bg-app-content before:pointer-events-none before:absolute before:inset-0 before:-z-10 before:bg-[radial-gradient(circle_at_8%_4%,rgba(146,81,109,0.18),transparent_30%),radial-gradient(circle_at_92%_8%,rgba(40,90,120,0.2),transparent_34%),radial-gradient(circle_at_74%_100%,rgba(67,61,139,0.14),transparent_38%)]"
         data-testid="space-overview-view"
+        data-overview-surface="glass-workspace"
         {...baseLayerProps}
       >
         <SpacePageHeader pageTitle="Overview" />
