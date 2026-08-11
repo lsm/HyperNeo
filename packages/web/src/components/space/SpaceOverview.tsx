@@ -262,13 +262,13 @@ function ConcurrencyBar({ limit, onChange }: { limit: number; onChange: (n: numb
 // ─── Recent Tasks ─────────────────────────────────────────────────────────
 
 const STATUS_COLORS: Record<string, string> = {
-  in_progress: 'bg-blue-400',
-  open: 'bg-gray-400',
-  blocked: 'bg-amber-400',
-  review: 'bg-purple-400',
-  done: 'bg-green-400',
-  cancelled: 'bg-gray-500',
-  archived: 'bg-gray-500',
+  in_progress: 'bg-blue-400/80 ring-blue-300/20',
+  open: 'bg-gray-400/65 ring-gray-300/15',
+  blocked: 'bg-amber-400/80 ring-amber-300/20',
+  review: 'bg-purple-400/80 ring-purple-300/20',
+  done: 'bg-green-400/75 ring-green-300/20',
+  cancelled: 'bg-gray-500/60 ring-gray-400/15',
+  archived: 'bg-gray-500/60 ring-gray-400/15',
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -290,13 +290,14 @@ function RecentTaskItem({ task, onClick }: { task: SpaceTask; onClick?: () => vo
     >
       <span
         class={cn(
-          'h-1.5 w-1.5 flex-none rounded-full',
-          STATUS_COLORS[task.status] ?? 'bg-gray-400'
+          'h-1.5 w-1.5 flex-none rounded-full ring-2',
+          STATUS_COLORS[task.status] ?? STATUS_COLORS.open
         )}
-        title={STATUS_LABELS[task.status] ?? task.status}
+        aria-hidden="true"
       />
+      <span class="sr-only">{STATUS_LABELS[task.status] ?? task.status}: </span>
       <span class="min-w-0 flex-1 truncate text-sm font-medium text-gray-100">{task.title}</span>
-      <span class="flex-none rounded bg-white/[0.055] px-1.5 py-0.5 font-mono text-[11px] font-medium text-gray-400 ring-1 ring-inset ring-white/10">
+      <span class="flex-none font-mono text-[11px] font-medium text-gray-500">
         #{task.taskNumber}
       </span>
       <span class="flex-none text-xs tabular-nums text-gray-400">
@@ -563,7 +564,7 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
               <button
                 type="button"
                 onClick={() => setShowCreateTask(true)}
-                class="rounded-md px-2 py-1 text-xs font-medium text-blue-300 transition-colors hover:bg-blue-400/10 hover:text-blue-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70"
+                class="text-xs font-medium text-blue-300/85 underline-offset-4 transition-colors hover:text-blue-200 hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70"
               >
                 Create Task
               </button>
@@ -615,7 +616,7 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
                 <button
                   type="button"
                   onClick={() => void handleNewSession()}
-                  class="rounded-md px-2 py-1 text-xs font-medium text-indigo-300 transition-colors hover:bg-indigo-400/10 hover:text-indigo-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70"
+                  class="text-xs font-medium text-indigo-300/85 underline-offset-4 transition-colors hover:text-indigo-200 hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70"
                 >
                   New Session
                 </button>

@@ -586,7 +586,7 @@ export default function SpaceIsland({
     <>
       {overlay}
       <div
-        class="relative isolate flex-1 flex flex-col overflow-hidden bg-app-content before:pointer-events-none before:absolute before:inset-0 before:-z-10 before:bg-[radial-gradient(circle_at_8%_4%,rgba(146,81,109,0.18),transparent_30%),radial-gradient(circle_at_92%_8%,rgba(40,90,120,0.2),transparent_34%),radial-gradient(circle_at_74%_100%,rgba(67,61,139,0.14),transparent_38%)]"
+        class="relative isolate flex-1 flex flex-col overflow-hidden bg-app-content before:pointer-events-none before:absolute before:inset-0 before:-z-10 before:bg-[radial-gradient(circle_at_6%_0%,rgba(137,74,102,0.16),transparent_32%),radial-gradient(circle_at_96%_10%,rgba(43,83,108,0.14),transparent_38%),radial-gradient(circle_at_58%_112%,rgba(70,60,145,0.2),transparent_48%)] after:pointer-events-none after:absolute after:inset-0 after:-z-10 after:bg-[linear-gradient(180deg,rgba(12,15,22,0.04),rgba(8,11,18,0.24))]"
         data-testid="space-overview-view"
         data-overview-surface="glass-workspace"
         {...baseLayerProps}
