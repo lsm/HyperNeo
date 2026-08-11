@@ -1128,17 +1128,24 @@ export class SpaceRuntime {
     }
     const normalized = trimmed.toLowerCase();
     const subscriptionKind = options.subscriptionKind ?? 'dynamic';
-    // Resolve the run + task before mutating anything. A stale worker whose run
-    // is gone, or whose task is terminal/detached, would yield an undeliverable
-    // target — delivery rejects it (target_task_terminal / invalid_target_ownership)
-    // and task-lifecycle cleanup has already fired — so reject up front rather
-    // than persisting a row that fans out to a known-invalid target.
+    // Resolve the run before mutating anything. A stale worker whose run is gone
+    // would yield an undeliverable, non-durable target — reject up front.
     const run = this.config.workflowRunRepo.getRun(workflowRunId);
     if (!run) {
       return { success: false, error: `Workflow run not found: ${workflowRunId}` };
     }
-    const taskError = this.validateSubscriptionTargetTask(run, taskId);
-    if (taskError) return { success: false, error: taskError };
+    // The task-lifecycle gate applies to DYNAMIC (agent-driven) registrations
+    // only: a stale worker subscribing after its task is terminal/detached would
+    // persist a row that fans out to a known-invalid target. STATIC interests are
+    // runtime-driven re-materialization (registerRunInterests), and a run can be
+    // rehydratable (in_progress/blocked) with a retryably-CANCELLED canonical
+    // task — rejecting there would make registerRunInterests throw and abort the
+    // whole rehydrate pass, so static skips this check (run-level eligibility
+    // already gates the static-rebuild loop).
+    if (subscriptionKind === 'dynamic') {
+      const taskError = this.validateSubscriptionTargetTask(run, taskId);
+      if (taskError) return { success: false, error: taskError };
+    }
     // Capture the entry this registration displaces (idempotent re-registration
     // of the same slot+topic+kind) so the trie can be restored if a later step
     // fails — otherwise the dedup-remove below drops the pre-existing entry
@@ -1241,11 +1248,11 @@ export class SpaceRuntime {
 
   /**
    * Verify `taskId` belongs to `run` and is in a lifecycle that can still
-   * deliver events. Used by `registerSubscription` to reject stale workers
-   * whose task is already terminal (done/archived/cancelled) or detached from
-   * the run — delivery would reject such targets and task-lifecycle cleanup has
-   * already fired, so persisting them would only fan events out to known-
-   * invalid targets. Returns an error string, or null when the task is eligible.
+   * deliver events. Applied to DYNAMIC (agent-driven) registrations only — a
+   * stale worker subscribing after its task is terminal (done/archived/cancelled)
+   * or detached from the run would persist a row that fans events out to a
+   * known-invalid target (delivery rejects it; task-lifecycle cleanup already
+   * fired). Returns an error string, or null when the task is eligible.
    */
   private validateSubscriptionTargetTask(run: SpaceWorkflowRun, taskId: string): string | null {
     const task = this.config.taskRepo.getTask(taskId);
@@ -5716,14 +5723,14 @@ export class SpaceRuntime {
    * (`isRunInterestRebuildEligible` excludes done runs) and drop those review
    * interests, so this method clears/re-inserts `dynamic` entries only.
    *
-   * Terminal reconciliation: rows are purged rather than restored when the run
-   * itself is `cancelled` (cancelWorkflowRun's `clearRunInterests` may not have
-   * fired) OR its canonical task is `done`/`archived` (`clearTaskInterests` may
-   * not have fired) — both close the crash window between the status commit and
-   * the lifecycle subscriber. Cancelled-TASK rows on a retryable non-cancelled
-   * run are preserved (the lifecycle keeps them via
-   * `clearTaskInterestsPreservingDynamic`), as are rows on succeeded runs whose
-   * task is `review`/`approved` (the post-approval phase).
+   * Terminal reconciliation: each row is purged rather than restored when its
+   * run is `cancelled` (cancelWorkflowRun's `clearRunInterests` may not have
+   * fired) OR its OWN task is `done`/`archived` (`clearTaskInterests` may not
+   * have fired) — checked per-row so a terminal NONCANONICAL task's row is
+   * caught even when the run's canonical task is still active. Cancelled-TASK
+   * rows on a retryable non-cancelled run are preserved (the lifecycle keeps
+   * them via `clearTaskInterestsPreservingDynamic`), as are rows on succeeded
+   * runs whose task is `review`/`approved` (the post-approval phase).
    *
    * `runs`/`tasksByRun` are the caller's already-fetched run + task lists for
    * the space (one batched `listByWorkflowRunIdsIncludingArchived` per space,
@@ -5737,19 +5744,18 @@ export class SpaceRuntime {
     tasksByRun: Map<string, SpaceTask[]>
   ): void {
     const runById = new Map(runs.map((run) => [run.id, run]));
-    // Crash-window reconciliation: cancelled runs (full-run teardown) and runs
-    // whose canonical task is terminal (done/archived) should already have had
-    // their rows cleared by the lifecycle subscriber; purge any that survived.
-    // A cancelled TASK on a non-cancelled run is deliberately kept (retry).
-    const purgeRunIds = new Set<string>();
-    for (const run of runs) {
-      if (run.status === 'cancelled') {
-        purgeRunIds.add(run.id);
-        continue;
-      }
-      const task = this.pickCanonicalTaskForRun(run, tasksByRun.get(run.id) ?? []);
-      if (task && (task.status === 'done' || task.status === 'archived')) {
-        purgeRunIds.add(run.id);
+    const cancelledRunIds = new Set(
+      runs.filter((run) => run.status === 'cancelled').map((run) => run.id)
+    );
+    // Index every task by id so each row can be reconciled against its OWN task
+    // (not just the run's canonical one — a run can briefly hold a terminal
+    // noncanonical duplicate whose row must still be purged).
+    const terminalTaskIds = new Set<string>();
+    for (const runTasks of tasksByRun.values()) {
+      for (const task of runTasks) {
+        if (task.status === 'done' || task.status === 'archived') {
+          terminalTaskIds.add(task.id);
+        }
       }
     }
     // Clear only the dynamic trie entries owned by this space so the rebuild is
@@ -5762,9 +5768,23 @@ export class SpaceRuntime {
         runById.has(target.workflowRunId) &&
         target.subscriptionKind === 'dynamic'
     );
+    // Track already-purged runs/tasks so the delete fires once each even when a
+    // run/task has multiple subscription rows.
+    const purgedRuns = new Set<string>();
+    const purgedTasks = new Set<string>();
     for (const sub of this.workflowEventSubscriptionRepo.listBySpace(spaceId)) {
-      if (purgeRunIds.has(sub.workflowRunId)) {
-        this.workflowEventSubscriptionRepo.deleteByRun(sub.workflowRunId);
+      if (cancelledRunIds.has(sub.workflowRunId)) {
+        if (!purgedRuns.has(sub.workflowRunId)) {
+          this.workflowEventSubscriptionRepo.deleteByRun(sub.workflowRunId);
+          purgedRuns.add(sub.workflowRunId);
+        }
+        continue;
+      }
+      if (terminalTaskIds.has(sub.taskId)) {
+        if (!purgedTasks.has(sub.taskId)) {
+          this.workflowEventSubscriptionRepo.deleteByTask(sub.taskId);
+          purgedTasks.add(sub.taskId);
+        }
         continue;
       }
       try {

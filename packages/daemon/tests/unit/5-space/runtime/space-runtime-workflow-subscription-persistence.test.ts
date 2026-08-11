@@ -562,4 +562,49 @@ describe('SpaceRuntime workflow subscription persistence', () => {
     expect(trieOf(runtime2).lookupSubscriptionTargets(topic)).toHaveLength(0);
     expect(subscriptionRepo.listBySpace(SPACE_ID)).toHaveLength(0);
   });
+
+  test('rehydrate purges a row whose own (noncanonical) task is terminal, even with an active canonical task', async () => {
+    // A run can briefly hold a noncanonical duplicate task. If that task goes
+    // `done` in the crash window (clearTaskInterests didn't fire), its row must
+    // be purged even though the run's canonical task is still active — so the
+    // purge reconciles each row against its OWN task, not the canonical one.
+    const topic = 'github/owner/repo/pull_request/42.*';
+    const { runId } = createRun();
+    // A second, noncanonical task on the same run (different title → not canonical).
+    const dupTask = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      workflowRunId: runId,
+      title: 'Noncanonical',
+      description: '',
+      status: 'in_progress',
+    });
+
+    const runtime1 = makeRuntime();
+    runtime1.registerSubscription(runId, dupTask.id, 'code', 'coder', topic);
+    expect(subscriptionRepo.listBySpace(SPACE_ID)).toHaveLength(1);
+
+    // The noncanonical task goes terminal in the crash window.
+    taskRepo.updateTask(dupTask.id, { status: 'done', completedAt: Date.now() });
+
+    const runtime2 = makeRuntime();
+    await runtime2.rehydrateExecutors();
+
+    expect(trieOf(runtime2).lookupSubscriptionTargets(topic)).toHaveLength(0);
+    expect(subscriptionRepo.listBySpace(SPACE_ID)).toHaveLength(0);
+  });
+
+  test('registerRunInterests does not throw for a cancelled canonical task (static skips the task gate)', () => {
+    // Static interests are runtime-driven re-materialization. A rehydratable run
+    // can have a retryably-cancelled canonical task; rejecting it would make
+    // registerRunInterests throw and abort the whole rehydrate pass. The task
+    // gate applies to dynamic (agent) registrations only.
+    const runtime = makeRuntime();
+    const { workflow, runId, taskId } = createRun({
+      eventInterests: [{ topic: 'github/owner/repo/issues/*' }],
+    });
+    taskRepo.updateTask(taskId, { status: 'cancelled' });
+
+    expect(() => runtime.registerRunInterests(runId, taskId, workflow.nodes)).not.toThrow();
+    expect(trieOf(runtime).lookupSubscriptionTargets('github/owner/repo/issues/7')).toHaveLength(1);
+  });
 });
