@@ -58,8 +58,16 @@ export class InterruptHandler {
   /**
    * Handle interrupt request
    * Uses official SDK interrupt() method
+   *
+   * Pass `{ preserveDeliveryJobs: true }` on a stop path that is about to
+   * RESTART (daemon graceful shutdown): the caller has already requeued in-flight
+   * message_delivery rows for the next boot, so the default cancel-everything
+   * behavior here would delete the very handoff that requeue preserved. The
+   * query abort + SDK interrupt still run (the in-flight turn must unwind so
+   * cleanup doesn't block); only the durable-job cancellation is skipped.
+   * (Codex P1.)
    */
-  async handleInterrupt(): Promise<void> {
+  async handleInterrupt(opts?: { preserveDeliveryJobs?: boolean }): Promise<void> {
     const { session, messageHub, messageQueue, stateManager, logger } = this.ctx;
 
     // Durable-delivery cancel FIRST (message-delivery v2): revoke EVERY active
@@ -69,16 +77,19 @@ export class InterruptHandler {
     // handler, space paths via the AgentSession wrapper). Without it a pending
     // turn/steer job survives the user's interrupt and is claimed afterwards.
     // Legacy path: no message_delivery jobs exist → no-op. Consumed rows are
-    // untouched (they WERE delivered). See Codex (#3743968030, #3744105273).
-    await withSessionLock(session.id, async () => {
-      const messageUuids =
-        this.ctx.db.getJobQueueRepo?.()?.cancelForSessionWithMessages(session.id) ?? [];
-      if (messageUuids.length === 0) return;
-      const sdkRepo = this.ctx.db.getSDKMessageRepo?.();
-      for (const messageUuid of messageUuids) {
-        sdkRepo?.markDeliveryFailedByUuid(session.id, messageUuid);
-      }
-    });
+    // untouched (they WERE delivered). SKIPPED on a restart-bound shutdown stop
+    // (see opts.preserveDeliveryJobs). See Codex (#3743968030, #3744105273).
+    if (!opts?.preserveDeliveryJobs) {
+      await withSessionLock(session.id, async () => {
+        const messageUuids =
+          this.ctx.db.getJobQueueRepo?.()?.cancelForSessionWithMessages(session.id) ?? [];
+        if (messageUuids.length === 0) return;
+        const sdkRepo = this.ctx.db.getSDKMessageRepo?.();
+        for (const messageUuid of messageUuids) {
+          sdkRepo?.markDeliveryFailedByUuid(session.id, messageUuid);
+        }
+      });
+    }
 
     const currentState = stateManager.getState();
 

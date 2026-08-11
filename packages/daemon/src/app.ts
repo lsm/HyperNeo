@@ -85,6 +85,7 @@ import {
   TASK_SCHEDULE_FIRE,
 } from './lib/job-queue-constants';
 import { createMessageDeliveryHandler } from './lib/job-handlers/message-delivery.handler';
+import { settleMessageDeliveryDeadLetter } from './lib/job-handlers/message-delivery-dead-letter';
 import { asMessageDeliveryPayload } from './lib/agent/message-delivery';
 import { handleTaskScheduleFire } from './lib/job-handlers/task-schedule-fire.handler';
 import {
@@ -982,7 +983,16 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       MESSAGE_DELIVERY,
       createMessageDeliveryHandler({
         jobQueue,
-        getSession: (sessionId: string) => sessionManager?.getSession(sessionId) ?? null,
+        // Resolve task-agent sub-sessions through TaskAgentManager FIRST: the
+        // provisioned session carries the node-agent MCP server + callbacks that
+        // a generic SessionManager-cached AgentSession lacks, so QueryRunner
+        // would reject startup on its MCP invariant. If the sub-session isn't
+        // rehydrated yet (restart race), fall back to SessionManager — the job
+        // fails on the generic session and retries once rehydration provisions it.
+        getSession: (sessionId: string) =>
+          taskAgentManager?.getSubSession(sessionId) ??
+          sessionManager?.getSession(sessionId) ??
+          null,
         // Status-aware loader: content + send_status. The handler branches on
         // status (consumed = already delivered, don't re-feed; deferred = user
         // deferred; failed = terminal) — see message-delivery.handler + #2592/#2597.
@@ -1012,26 +1022,26 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           if (!payload) return;
           const sdkRepo = reactiveDb?.db.getSDKMessageRepo();
           if (!sdkRepo) return;
-          const flipped = sdkRepo.markDeliveryFailedByUuid(payload.sessionId, payload.messageUuid);
-          if (flipped) {
-            internalEventBus
-              .publish('messages.statusChanged', {
-                sessionId: payload.sessionId,
-                messageIds: [flipped],
+          const session = sessionManager?.getSession(payload.sessionId);
+          // Settlement (mark failed → broadcast → session.error for space_inject
+          // → release queued marker) is extracted + unit-tested; the ordering
+          // (session.error before the settlement idle) is load-bearing. See
+          // message-delivery-dead-letter.ts. (Codex P1.)
+          void settleMessageDeliveryDeadLetter(payload, {
+            markDeliveryFailedByUuid: (sid, uuid) => sdkRepo.markDeliveryFailedByUuid(sid, uuid),
+            publishStatusChanged: (sid, messageIds) =>
+              internalEventBus.publish('messages.statusChanged', {
+                sessionId: sid,
+                messageIds,
                 status: 'failed',
-              })
-              .catch(() => {
-                /* dead-letter publish is best-effort */
-              });
-          }
-          // Release a pre-claim queued marker still owned by this terminal turn.
-          // Conditional settlement preserves any newer turn's ownership.
-          sessionManager
-            ?.getSession(payload.sessionId)
-            ?.settleSkippedDelivery(payload.messageUuid)
-            .catch(() => {
-              /* dead-letter state settlement is best-effort */
-            });
+              }),
+            publishSessionError: (sid, error) =>
+              internalEventBus.publish('session.error', { sessionId: sid, error }),
+            settleSkippedDelivery: (uuid) =>
+              session?.settleSkippedDelivery(uuid) ?? Promise.resolve(),
+          }).catch(() => {
+            /* dead-letter state settlement is best-effort */
+          });
         },
       }
     );

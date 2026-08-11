@@ -375,6 +375,12 @@ export class QueryLifecycleManager {
    */
   async restart(): Promise<void> {
     const { session, internalEventBus, messageHandler } = this.ctx;
+    // True once the old query is stopped AND the suppressed idle is reached. A
+    // failure before this point leaves the original SDK query still running, so
+    // releasing the waiter would free the active-turn slot mid-turn; only
+    // release if we suppressed the drain (old query stopped) but then failed to
+    // establish a replacement. (Codex P1.)
+    let reachedSuppressedIdle = false;
 
     try {
       // Clear error state and circuit breaker before stopping.
@@ -391,7 +397,8 @@ export class QueryLifecycleManager {
       // the old queryPromise, the old query's finally block may run AFTER the
       // new query increments the generation — triggering the stale-query guard
       // and skipping setIdle(). This explicit call guarantees clean state.
-      await this.ctx.stateManager.setIdle();
+      await this.ctx.stateManager.setIdle({ suppressDeliveryWaiters: true });
+      reachedSuppressedIdle = true;
 
       // Validate and repair SDK session file before restarting.
       // Includes cross-path migration when effective CWD changed since session init.
@@ -425,6 +432,16 @@ export class QueryLifecycleManager {
 
       await this.ctx.startStreamingQuery();
     } catch (error) {
+      // restart failed BEFORE a replacement query was established (validation,
+      // cache clear, or startStreamingQuery threw). Only release the suppressed
+      // waiter if the old query was already stopped (reachedSuppressedIdle) — a
+      // failure before stop() (e.g. a session.errorClear subscriber rejecting at
+      // the publish above) leaves the original SDK query running, and releasing
+      // would complete the delivery job + free the active-turn slot mid-turn.
+      // (Codex P1.)
+      if (reachedSuppressedIdle) {
+        this.ctx.stateManager.releaseIdleWaiters();
+      }
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       throw new Error(`Query restart failed: ${errorMessage}`);
     }
@@ -465,6 +482,12 @@ export class QueryLifecycleManager {
       return { success: true };
     }
 
+    // True once the old query is stopped AND the suppressed idle is reached (a
+    // restartAfter reset). A failure after this leaves the durable turn waiter
+    // pending (the suppress deferred its drain to the restart) — release it in
+    // the catch so it doesn't hang `processing`. (Codex P1.)
+    let reachedSuppressedIdle = false;
+
     try {
       // Pre-stop: Preserve cost tracking
       const lastSdkCost = session.metadata?.lastSdkCost || 0;
@@ -491,9 +514,16 @@ export class QueryLifecycleManager {
         catchQueryErrors: true,
       });
 
-      // Post-stop: Reset state
+      // Post-stop: Reset state. Suppress the delivery-waiter drain ONLY when a
+      // restart follows (this is a retry mid-point — the query is re-started
+      // below). When restartAfter is false the reset is TERMINAL (no
+      // startStreamingQuery): the turn that was driving a durable job is
+      // abandoned, so its turn-end waiter MUST drain here or driveDeliveryTurn
+      // hangs forever (the job keeps heartbeating `processing`, blocking the
+      // active-turn slot). (Codex P1.)
       this.ctx.firstMessageReceived = false;
-      await stateManager.setIdle();
+      await stateManager.setIdle({ suppressDeliveryWaiters: restartAfter });
+      reachedSuppressedIdle = true;
 
       // Clear models cache to ensure fresh model info is fetched from DB
       // This is critical for model switch to pick up the new model
@@ -537,6 +567,13 @@ export class QueryLifecycleManager {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error('Query reset failed:', error);
+      // A restartAfter reset suppressed the waiter drain (the restart owns it);
+      // if the replacement startup then failed, release the waiter so the
+      // durable turn doesn't hang `processing` and block the active-turn slot.
+      // (Mirrors restart()'s failure path. Codex P1.)
+      if (restartAfter && reachedSuppressedIdle) {
+        this.ctx.stateManager.releaseIdleWaiters();
+      }
       return { success: false, error: errorMessage };
     }
   }

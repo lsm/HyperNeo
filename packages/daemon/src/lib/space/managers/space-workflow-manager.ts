@@ -219,6 +219,52 @@ export class SpaceWorkflowManager {
   }
 
   /**
+   * Resolve the definition an in-flight run executes (RFC §4 Phase 1 read cutover).
+   *
+   * A pinned run reads the IMMUTABLE version it was created with — not the mutable
+   * `space_workflows` head — so a later edit to the definition cannot change what an
+   * in-flight run executes. The pinned payload is the raw persisted definition captured at
+   * run creation; we rehydrate it through the SAME sanitization (`sanitizePostApprovalForLoad`)
+   * the live path applies, so "this run reads version V" is well-defined regardless of read
+   * site (manager or raw repo) — the sanitize-at-rehydrate model (see `definition-version.ts`).
+   *
+   * Stable timestamps: the pinned payload strips `createdAt`/`updatedAt` (volatile). The
+   * rehydrated `updatedAt` is derived from the immutable version hash
+   * (`stableVersionTimestamp`), so the gate-open cache fingerprint is version-stable — it
+   * does not churn on unrelated head edits, and is identical on first activation and
+   * recovery (independent of when the version row was appended; INSERT OR IGNORE can leave a
+   * reused hash's `created_at` stale). The startup backfill RE-KEYS a backfilled run's
+   * existing persisted gate-open entries to this basis, so the cache survives the cutover
+   * without re-evaluating gates. (`createdAt` is the row's append time, not a staleness
+   * signal.)
+   *
+   * Fallback: a null pin (legacy run pre-backfill, or an archived orphan whose version row
+   * is absent) — or any rehydration failure — resolves to the live head, preserving exact
+   * pre-cutover behavior. This is why the cutover is content-neutral: every pre-existing
+   * run is backfilled to a pin equal to its current head, so resolving through the pin
+   * changes nothing at cutover time; only a later edit diverges, which is the invariant.
+   *
+   * Known boundary (RFC §4 #2): built-in gate SCRIPTS and `templateGates` are injected at
+   * sanitize time from `BUILT_IN_TEMPLATE_GATES` — a compile-time static map, not a runtime
+   * registry — so they are stable within a daemon version but are NOT captured in the pinned
+   * payload. The invariant therefore holds for user-authored content (nodes, channels,
+   * gates-as-data, agents, post-approval) and for built-in gates within a version, but does
+   * NOT hold for built-in gates across a daemon upgrade. RFC §4 #2 calls this out as
+   * unresolved; capturing built-in gate scripts in the pinned payload is tracked Phase-1 work.
+   */
+  getWorkflowForRun(run: {
+    workflowId: string;
+    definitionVersion: string | null;
+  }): SpaceWorkflow | null {
+    // Delegate pin-resolution to the repository (raw rehydration + stable timestamps +
+    // head fallback — see SpaceWorkflowRepository.getWorkflowForRun), then apply the same
+    // load-time sanitization the live path uses (sanitize-at-rehydrate). One pin-resolution
+    // implementation shared by the sanitized (manager) and raw (repo) callers.
+    const raw = this.repo.getWorkflowForRun(run);
+    return raw ? this.sanitizePostApprovalForLoad(raw) : null;
+  }
+
+  /**
    * Get a workflow by its handle within a specific space.
    */
   getWorkflowByHandle(spaceId: string, handle: string): SpaceWorkflow | null {

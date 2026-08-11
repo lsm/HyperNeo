@@ -142,7 +142,7 @@ function makeManager(db: BunDatabase): TaskAgentManager {
     sessionManager: { registerSession: () => {} },
     internalEventBus: new InternalEventBus<DaemonInternalEventMap>(),
     spaceManager: { getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }) },
-    spaceWorkflowManager: { getWorkflow: () => null },
+    spaceWorkflowManager: { getWorkflow: () => null, getWorkflowForRun: () => null },
     nodeExecutionRepo: { listByWorkflowRun: () => [], listByNode: () => [], update: () => null },
   } as unknown as TaskAgentManagerConfig);
 }
@@ -261,7 +261,7 @@ describe('TaskAgentManager post-approval worker identity resolution', () => {
       internalEventBus: new InternalEventBus<DaemonInternalEventMap>(),
       spaceManager: { getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }) },
       workflowRunRepo: { getRun: () => ({ id: RUN_ID, workflowId: 'wf-1' }) },
-      spaceWorkflowManager: { getWorkflow: () => workflow },
+      spaceWorkflowManager: { getWorkflow: () => workflow, getWorkflowForRun: () => workflow },
       nodeExecutionRepo: { listByWorkflowRun: () => [], listByNode: () => [], update: () => null },
     } as unknown as TaskAgentManagerConfig);
     insertTask(db2, { postApprovalSessionId: 'legacy-worker' });

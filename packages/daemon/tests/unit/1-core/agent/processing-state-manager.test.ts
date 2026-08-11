@@ -153,6 +153,160 @@ describe('ProcessingStateManager', () => {
     });
   });
 
+  describe('waitForIdleTransition', () => {
+    test('resolves on the next plain setIdle (terminal turn-end)', async () => {
+      let resolved = false;
+      void manager.waitForIdleTransition().promise.then(() => {
+        resolved = true;
+      });
+      expect(resolved).toBe(false);
+      await manager.setIdle();
+      expect(resolved).toBe(true);
+    });
+
+    test('does NOT resolve on a suppressed (retry mid-point) setIdle, then does on a terminal one', async () => {
+      // The contract every retry-path setIdle site depends on: a retry
+      // mid-point (QueryRunner startup/message-not-found/transient, rate-limit,
+      // ACP, AskUserQuestion restart) suppresses the drain so the durable
+      // delivery job isn't completed while the prompt is still being retried.
+      let resolved = false;
+      void manager.waitForIdleTransition().promise.then(() => {
+        resolved = true;
+      });
+      await manager.setIdle({ suppressDeliveryWaiters: true });
+      expect(resolved).toBe(false);
+      await manager.setIdle();
+      expect(resolved).toBe(true);
+    });
+
+    test('cancel() removes the waiter so it never resolves (failure/park path)', async () => {
+      // driveDeliveryTurn cancels its turn-end waiter on the blocked (park) and
+      // query-didn't-start paths so waiters don't accumulate across reclaims.
+      let resolved = false;
+      const handle = manager.waitForIdleTransition();
+      void handle.promise.then(() => {
+        resolved = true;
+      });
+      handle.cancel();
+      await manager.setIdle(); // a terminal idle must NOT resolve a cancelled waiter
+      expect(resolved).toBe(false);
+    });
+
+    test('drains waiters even when idle-state publication throws', async () => {
+      // Resilient drain (setIdle try/finally): the state is persisted before
+      // publish, so a publish failure must still release a waiting turn.
+      const failingBus = {
+        publish: mock(async () => {
+          throw new Error('publish failed');
+        }),
+        publishAsync: mock(async () => {}),
+        subscribe: mock(() => () => {}),
+      } as unknown as InternalEventBus<any>;
+      const failingManager = new ProcessingStateManager(sessionId, failingBus, createMockDb());
+      let resolved = false;
+      void failingManager.waitForIdleTransition().promise.then(() => {
+        resolved = true;
+      });
+      await expect(failingManager.setIdle()).rejects.toThrow('publish failed');
+      expect(resolved).toBe(true);
+    });
+
+    test('releaseIdleWaiters(gen) resolves only the matching episode, not a newer turn', async () => {
+      // The race this guards: a superseded rate-limit retry (episode gen 0)
+      // releases its turn-end waiter so its abandoned job doesn't hang — but a
+      // NEWER turn (gen 1, armed after a cancel/reset bumped the generation) must
+      // NOT have its waiter resolved, or its durable job completes prematurely and
+      // frees the active-turn slot for a competing turn. driveDeliveryTurn tags
+      // each waiter with the rate-limit generation at arm time; the superseded
+      // retry releases only its own gen.
+      let oldResolved = false;
+      let newResolved = false;
+      void manager.waitForIdleTransition(0).promise.then(() => {
+        oldResolved = true;
+      });
+      void manager.waitForIdleTransition(1).promise.then(() => {
+        newResolved = true;
+      });
+
+      manager.releaseIdleWaiters(0); // superseded gen-0 retry releases its own
+      // releaseIdleWaiters is synchronous; flush the resolution microtask before
+      // asserting (the .then handlers run on the next microtask tick).
+      await Promise.resolve();
+
+      expect(oldResolved).toBe(true);
+      expect(newResolved).toBe(false);
+
+      // The newer turn's waiter still resolves on a real terminal idle.
+      await manager.setIdle();
+      expect(newResolved).toBe(true);
+    });
+
+    test('releaseIdleWaiters() with no generation resolves all waiters (unscoped fallback)', async () => {
+      // Omitting the generation (a release site that has no episode context)
+      // resolves every armed waiter — preserving the original drain-all behavior
+      // for callers that don't track a generation.
+      let aResolved = false;
+      let bResolved = false;
+      void manager.waitForIdleTransition(0).promise.then(() => {
+        aResolved = true;
+      });
+      void manager.waitForIdleTransition(5).promise.then(() => {
+        bResolved = true;
+      });
+
+      manager.releaseIdleWaiters();
+      await Promise.resolve();
+
+      expect(aResolved).toBe(true);
+      expect(bResolved).toBe(true);
+    });
+  });
+
+  describe('onIdleCallback ordering (deferred restart)', () => {
+    test('fires the callback BEFORE draining delivery waiters (ownership held through the restart)', async () => {
+      // A deferred restart (settings change) runs as the onIdleCallback. It must
+      // run BEFORE the waiters drain, or driveDeliveryTurn completes + frees the
+      // active-turn slot while the restart is still stopping/starting the query
+      // — a message arriving then starts a new turn concurrent with the restart.
+      let waiterResolvedAtCallback = true;
+      let waiterResolved = false;
+      void manager.waitForIdleTransition().promise.then(() => {
+        waiterResolved = true;
+      });
+      manager.setOnIdleCallback(async () => {
+        // At callback time the waiter must still be pending — drain is deferred.
+        waiterResolvedAtCallback = waiterResolved;
+      });
+
+      await manager.setIdle();
+      await Promise.resolve();
+
+      expect(waiterResolvedAtCallback).toBe(false); // NOT drained during the callback
+      expect(waiterResolved).toBe(true); // drained after the callback completed
+    });
+
+    test('a reentrant setIdle during the callback does not re-fire it or drain early', async () => {
+      // The callback's restart drives its own idle (reentrant setIdle). The guard
+      // must prevent a double restart AND keep the drain deferred to the outer
+      // call (a reentrant drain would defeat the ordering above).
+      let fires = 0;
+      let outerResolved = false;
+      void manager.waitForIdleTransition().promise.then(() => {
+        outerResolved = true;
+      });
+      manager.setOnIdleCallback(async () => {
+        fires += 1;
+        await manager.setIdle(); // reentrant idle from the restart's stop/start
+      });
+
+      await manager.setIdle();
+      await Promise.resolve();
+
+      expect(fires).toBe(1); // reentrant idle did NOT re-fire the callback
+      expect(outerResolved).toBe(true); // outer call drained after the callback
+    });
+  });
+
   describe('setQueued', () => {
     test('transitions to queued state', async () => {
       await manager.setQueued('msg-123');
