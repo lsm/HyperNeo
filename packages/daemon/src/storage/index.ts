@@ -268,16 +268,6 @@ export class Database {
     return this.sdkMessageRepo.getMessagesByStatus(sessionId, status);
   }
 
-  getConsumedUserMessagesAfterLatestInit(
-    sessionId: string
-  ): Array<SDKMessage & { dbId: string; timestamp: number }> {
-    return this.sdkMessageRepo.getConsumedUserMessagesAfterLatestInit(sessionId);
-  }
-
-  getLatestSystemInitTimestamp(sessionId: string): number {
-    return this.sdkMessageRepo.getLatestSystemInitTimestamp(sessionId);
-  }
-
   getMessageByStatusAndUuid(
     sessionId: string,
     status: SendStatus,

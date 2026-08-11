@@ -58,6 +58,23 @@ export class MessageHubResponseError extends Error {
 }
 
 /**
+ * Error a request handler can throw to produce a STRUCTURED error response
+ * carrying a specific {@link ErrorCode}. Without this, the hub maps every
+ * handler throw to `HANDLER_ERROR`; wrapping the cause here lets the original
+ * code (e.g. `TOO_MANY_SUBSCRIPTIONS`) reach the client so it can react
+ * precisely — mirroring the structured `MESSAGE_TOO_LARGE` refusal pattern.
+ */
+export class MessageHubHandlerError extends Error {
+  constructor(
+    message: string,
+    public readonly code?: string
+  ) {
+    super(message);
+    this.name = 'MessageHubHandlerError';
+  }
+}
+
+/**
  * MessageHub class
  * Core implementation of unified messaging system
  *
@@ -569,11 +586,18 @@ export class MessageHub {
       resultMsg._transportName = message._transportName;
       await this.sendResponseToClient(resultMsg, clientId);
     } catch (error) {
+      // Preserve a structured code thrown via MessageHubHandlerError so callers
+      // can fail fast with a precise ErrorCode (e.g. TOO_MANY_SUBSCRIPTIONS);
+      // plain throws still map to HANDLER_ERROR as before.
+      const code =
+        error instanceof MessageHubHandlerError && error.code
+          ? error.code
+          : ErrorCode.HANDLER_ERROR;
       const errorMsg = createErrorResponseMessage({
         method: message.method,
         error: {
           message: error instanceof Error ? error.message : String(error),
-          code: ErrorCode.HANDLER_ERROR,
+          code,
         },
         sessionId: message.sessionId,
         requestId: message.id,

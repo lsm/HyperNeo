@@ -233,4 +233,38 @@ describe('Stale job reclamation on restart (eager reclaim)', () => {
     expect(processedTypes).toContain('stale');
     expect(processedTypes).toContain('new');
   });
+
+  // Task #861 item 5 — a slow-but-alive turn (long MCP startup / provider
+  // request) must NOT be falsely reclaimed. The message-delivery handler
+  // heartbeats `started_at` (touchStartedAt) throughout the turn await; a job
+  // whose lease was refreshed inside the stale window is NOT reclaimed, while
+  // one whose handler stopped heartbeating (crash) IS.
+  it('does NOT reclaim a processing job whose lease was heartbeated inside the window (item 5)', () => {
+    const alive = repo.enqueue({ queue: 'message_delivery', payload: {}, runAt: 0 });
+    const dead = repo.enqueue({ queue: 'message_delivery', payload: {}, runAt: 0 });
+    // Claim both → processing.
+    repo.dequeue('message_delivery', 2);
+    expect(repo.getJob(alive.id)?.status).toBe('processing');
+    expect(repo.getJob(dead.id)?.status).toBe('processing');
+
+    const staleThresholdMs = 5_000;
+    // Backdate both past the window as if their handlers died long ago.
+    const longAgo = Date.now() - (staleThresholdMs + 5_000);
+    db.prepare(`UPDATE job_queue SET started_at = ? WHERE id IN (?, ?)`).run(
+      longAgo,
+      alive.id,
+      dead.id
+    );
+
+    // The alive job's handler is STILL running and heartbeats (refreshes
+    // started_at to now); the dead one's is not.
+    expect(repo.touchStartedAt(alive.id)).toBe(true);
+
+    // reclaimStale (as the processor runs eagerly on start + every 60s) only
+    // reclaims jobs still past the window — the heartbeated one stays processing.
+    const reclaimed = repo.reclaimStale(Date.now() - staleThresholdMs);
+    expect(reclaimed).toBe(1);
+    expect(repo.getJob(alive.id)?.status).toBe('processing'); // alive — NOT reclaimed
+    expect(repo.getJob(dead.id)?.status).toBe('pending'); // dead — reclaimed, re-drives
+  });
 });

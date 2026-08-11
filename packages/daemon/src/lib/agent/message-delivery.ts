@@ -10,10 +10,11 @@
  *
  * See docs/features/message-delivery-v2.md for the full design.
  *
- * Default-on (opt out with `HYPERNEO_MESSAGE_DELIVERY_V2=0`). Ordinary chat and
- * the Space / long-term-agent injectors all route through `deliverMessage`; the
- * legacy deferred-replay and rate-limit-retry kickoffs remain on the inline path
- * (backstopped by `recoverOrphanedConsumedMessages`) pending a follow-up.
+ * Default-on (opt out with `HYPERNEO_MESSAGE_DELIVERY_V2=0`). Ordinary chat,
+ * the Space / long-term-agent / task-agent injectors, and the manual-flush /
+ * turn-end-replay / promote kickoff paths all route through `deliverMessage`;
+ * `reclaimStale` + the session-level orphan reconciler cover crash recovery.
+ * (Phase 3, task #861.)
  */
 
 import type { MessageContent } from '@hyperneo/shared';
@@ -175,6 +176,74 @@ export function deliverMessage(
 
 /** Re-export so callers can reference the lane without importing constants. */
 export { MESSAGE_DELIVERY };
+
+/**
+ * Minimal db view the orphan reconciler needs: the persisted nonterminal user
+ * messages for a session. Kept as an interface so the reconciler is unit-testable
+ * with a real SDKMessageRepository or a stub. See {@link reconcileStrandedDeliveries}.
+ */
+export interface StrandedDeliveryDb {
+  getMessagesByStatus(sessionId: string, status: 'enqueued'): Array<{ uuid?: string }>;
+}
+
+/**
+ * Orphan reconciler core (task #861 item 4) — recover the one case `job_queue`
+ * cannot see by itself: a persisted user message stuck `enqueued` with NO active
+ * `message_delivery` job (the confirmed #856 "stranded pending in an idle
+ * session" shape). Re-enqueues the SAME canonical UUID via {@link deliverMessage}
+ * — never inserts a second user message or a duplicate payload; the handler
+ * reloads content from storage. Idempotent + safe under concurrent ticks/workers:
+ * it only acts on messages with no active job, and `deliverMessage` dedups via
+ * `getActiveDeliveryRole`. The whole pass runs under the per-session lock
+ * ({@link withSessionLock}) so two concurrent reconciles (e.g. the idle callback
+ * racing the 60s timer) serialize: the first enqueues, the second sees the
+ * active job and skips — never a duplicate turn+steer pair for one message.
+ * Returns the count re-enqueued.
+ *
+ * This is the pure cross-check; {@link AgentSession.reconcileStrandedDeliveries}
+ * wraps it with a processing-state guard + logging + v2 flag check.
+ */
+export async function reconcileStrandedDeliveries(args: {
+  sessionId: string;
+  db: StrandedDeliveryDb;
+  jobQueue: JobQueueRepository;
+  /**
+   * Optional state manager — when present, a re-enqueued TURN sets the queued
+   * marker (setQueuedIfIdle) so the session reports busy until the processor
+   * claims the recovered job; without it, a concurrent `deliveryMode:'defer'`
+   * send would be mis-converted to immediate (a steer into the recovered turn).
+   * Omit in unit tests that don't exercise the queued marker. (Codex review.)
+   */
+  stateManager?: {
+    setQueuedIfIdle(messageId: string): Promise<boolean>;
+  };
+}): Promise<number> {
+  if (!isMessageDeliveryV2Enabled()) return 0;
+  return withSessionLock(args.sessionId, async () => {
+    const active = args.jobQueue.activeDeliveryMessageUuids(args.sessionId);
+    const enqueued = args.db.getMessagesByStatus(args.sessionId, 'enqueued');
+    const stranded: string[] = [];
+    for (const msg of enqueued) {
+      const uuid = msg.uuid;
+      if (typeof uuid === 'string' && uuid.length > 0 && !active.has(uuid)) {
+        stranded.push(uuid);
+      }
+    }
+    for (const uuid of stranded) {
+      const role = deliverMessage(args.jobQueue, args.sessionId, uuid, { origin: 'recovery' });
+      // Set the queued marker inside this lock (no nested lock) when this
+      // re-enqueue wins the turn role — same contract as deliverAndMarkQueued.
+      if (role === 'turn' && args.stateManager) {
+        try {
+          await args.stateManager.setQueuedIfIdle(uuid);
+        } catch {
+          // Non-fatal — the durable job is enqueued; the handler will drive it.
+        }
+      }
+    }
+    return stranded.length;
+  });
+}
 
 /**
  * Narrow an unknown payload to a {@link MessageDeliveryPayload}. The handler
@@ -339,12 +408,35 @@ export function signalDeliveryConsumed(sessionId: string, messageUuid: string): 
 }
 
 /**
+ * ACP's consume boundary is *acceptance* (markMessageAccepted), which can lag
+ * submission by minutes while the ACP process runs. The default 30s
+ * queue-admission consume-wait would terminalize a fresh ACP delivery as failed
+ * mid-run (→ a direct caller retries with a new UUID → the work runs twice), so
+ * ACP-targeted awaitDeliveryConsumption callers pass this acceptance-sized
+ * timeout. (Codex review, P1.)
+ */
+export const ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS = 12 * 60 * 1000;
+
+/** Acceptance-sized consume timeout for ACP sessions; undefined → default. */
+export function deliveryConsumptionTimeoutMs(provider?: string): number | undefined {
+  return provider === 'acp' ? ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS : undefined;
+}
+
+/**
  * Await a durable delivery job's SDK consumption (onSent) after enqueueing it,
  * restoring the legacy "delivered = consumed" semantic. `deliver` performs the
  * enqueue (e.g. {@link deliverAndMarkQueued}); the await races the consumption
  * signal against a timeout (HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS, default
  * 30s, matching the legacy MessageQueue timeout) and rejects on timeout so a
  * caller doesn't acknowledge a delivery that may yet dead-letter.
+ *
+ * `timeoutMs` overrides the default — needed for ACP targets, whose consume
+ * boundary is *acceptance* (signalDeliveryConsumed fires from
+ * `markMessageAccepted`, not onSent), and an ACP request can run for minutes
+ * before accepting. The 30s queue-admission default would fire while the ACP
+ * process is still executing → a fresh row is terminalized failed → a direct
+ * caller retries with a new UUID and the work runs twice. Callers that may
+ * target an ACP session pass an acceptance-sized timeout. (Codex review, P1.)
  *
  * `terminalizeOnTimeout` is invoked on timeout (or if `deliver` throws) ONLY for
  * paths that created a FRESH job this call (no prior row). It terminalizes the
@@ -358,13 +450,15 @@ export async function awaitDeliveryConsumption(args: {
   messageUuid: string;
   deliver: () => Promise<void>;
   terminalizeOnTimeout?: () => void;
+  /** Override the default 30s consume-wait timeout (e.g. ACP acceptance). */
+  timeoutMs?: number;
 }): Promise<void> {
   const consumed = waitForDeliveryConsumption(args.sessionId, args.messageUuid);
   let consumptionTimeout: ReturnType<typeof setTimeout> | undefined;
   try {
     await args.deliver();
     const consumptionTimeoutMs =
-      Number(process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS) || 30_000;
+      args.timeoutMs ?? (Number(process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS) || 30_000);
     await Promise.race([
       consumed.promise,
       new Promise<void>((_, reject) => {
@@ -440,22 +534,9 @@ export async function deliverAndMarkQueued(args: {
   await withSessionLock(args.sessionId, async () => {
     let role: MessageDeliveryRole;
     try {
-      // Legacy-owned turn guard: while v2 is default-on, QueryModeHandler still
-      // replays deferred/enqueued rows directly through MessageQueue, so a
-      // session can be `processing` a live SDK turn with NO active v2 turn row.
-      // The index would classify this injection as a fresh turn (it sees no v2
-      // turn), racing the legacy turn + letting its idle prematurely resolve the
-      // new waiter. Force a `steer` so the new message parks behind the legacy
-      // turn and promotes only once that turn ends. The deferred legacy-replay
-      // migration removes the need for this guard. (Codex P1.)
-      const legacyOwnedTurn =
-        !!args.stateManager &&
-        args.stateManager.getState().status === 'processing' &&
-        !args.jobQueue.hasActiveTurnDelivery(args.sessionId);
       role = deliverMessage(args.jobQueue, args.sessionId, args.messageUuid, {
         origin: args.origin,
         parentToolUseId: null,
-        ...(legacyOwnedTurn ? { role: 'steer' as const } : {}),
       });
     } catch (err) {
       args.onEnqueueFailure?.();

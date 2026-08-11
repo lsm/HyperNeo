@@ -76,7 +76,12 @@ import {
   SPACE_WORKFLOW_RUN_SYNC_GATE_ARTIFACTS,
   SPACE_WORKFLOW_RUN_SYNC_COMMITS,
   SPACE_WORKFLOW_RUN_SYNC_FILE_DIFF,
+  MESSAGE_DELIVERY,
 } from '../job-queue-constants';
+import {
+  deliveryMetrics,
+  type MessageDeliveryDiagnostics,
+} from '../agent/message-delivery-metrics';
 import { ChannelCycleRepository } from '../../storage/repositories/channel-cycle-repository';
 import { PendingAgentMessageRepository } from '../../storage/repositories/pending-agent-message-repository';
 import { SpaceAgentInboxRepository } from '../../storage/repositories/space-agent-inbox-repository';
@@ -90,6 +95,7 @@ import { SpaceLongHorizonAgentRepository } from '../../storage/repositories/spac
 import {
   awaitDeliveryConsumption,
   deliverAndMarkQueued,
+  deliveryConsumptionTimeoutMs,
   isMessageDeliveryV2Enabled,
 } from '../agent/message-delivery';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
@@ -868,6 +874,36 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     return spaceRuntimeService.getQueueHealthSnapshot();
   });
 
+  // Message-delivery diagnostics (task #861 item 6 + item 13) — a thin
+  // job_queue query (counts by status = unclaimed/stale/failed) paired with the
+  // exactly-once observability snapshot (feed-count-per-UUID duplicate detector,
+  // reclaim-skip breakdown, residual-window latency). Read-only.
+  deps.messageHub.onRequest(
+    'messageDelivery.diagnostics',
+    async (): Promise<MessageDeliveryDiagnostics> => {
+      const counts = deps.jobQueue.countByStatus(MESSAGE_DELIVERY);
+      // Split `processing` into genuinely-stale (lease past the reclaimStale
+      // threshold — reclaimable) vs active (healthy in-flight turn). Without this,
+      // every live model turn reads as "stale" for its whole runtime. Same cutoff
+      // as JobQueueProcessor.reclaimStale (5 min default). (Codex review.)
+      const staleThresholdMs = 5 * 60 * 1000;
+      const staleProcessing = deps.jobQueue.countStaleProcessing(
+        MESSAGE_DELIVERY,
+        Date.now() - staleThresholdMs
+      );
+      return {
+        lane: MESSAGE_DELIVERY,
+        statusCounts: counts,
+        // unclaimed = pending; stale = processing past the lease window
+        // (reclaimStale will sweep these); activeProcessing = healthy in-flight;
+        // failed = dead (exhausted retries → onDead → message 'failed').
+        staleProcessing,
+        activeProcessing: Math.max(0, counts.processing - staleProcessing),
+        metrics: deliveryMetrics.snapshot(),
+      };
+    }
+  );
+
   // Space Worktree Manager — one worktree per task, shared by all node agents.
   const spaceWorktreeManager = new SpaceWorktreeManager(deps.db.getDatabase());
 
@@ -931,6 +967,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       await awaitDeliveryConsumption({
         sessionId,
         messageUuid: messageId,
+        // ACP's consume boundary is acceptance (minutes), not queue admission —
+        // size the wait to it so a fresh ACP delivery isn't terminalized failed
+        // mid-run (which a direct retry would then execute twice). (Codex P1.)
+        timeoutMs: deliveryConsumptionTimeoutMs(session.getSessionData?.().config?.provider),
         deliver: () =>
           deliverAndMarkQueued({
             jobQueue: deps.reactiveDb.db.getJobQueueRepo(),
