@@ -343,6 +343,37 @@ describe('ChannelRouter', () => {
       expect(new NodeExecutionRepository(db).listByNode(run.id, NODE_B)).toHaveLength(0);
     });
 
+    test('slot-targeted activation succeeds even when a sibling slot references a deleted agent', async () => {
+      const workflow = buildWorkflow(SPACE_ID, workflowManager, [
+        {
+          id: NODE_A,
+          name: 'Review Team',
+          agents: [
+            { agentId: AGENT_CODER, name: 'coder-slot' },
+            { agentId: AGENT_CUSTOM, name: 'custom-slot' },
+          ],
+        },
+        { id: NODE_B, name: 'End', agentId: AGENT_PLANNER },
+      ]);
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Slot Targeted',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+      // The sibling custom agent is stale, but it is NOT the slot being targeted.
+      db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(AGENT_CUSTOM);
+
+      // Activating only coder-slot must succeed despite the stale sibling slot.
+      await router.activateNode(run.id, NODE_A, { targetAgentName: 'coder-slot' });
+
+      const execs = new NodeExecutionRepository(db).listByNode(run.id, NODE_A);
+      expect(execs.map((e) => e.agentName)).toContain('coder-slot');
+      // The untargeted (stale) sibling was not created, and no error leaked.
+      expect(execs.map((e) => e.agentName)).not.toContain('custom-slot');
+    });
+
     test('creates one canonical task and one node_execution per agent for a multi-agent node', async () => {
       const workflow = buildWorkflow(SPACE_ID, workflowManager, [
         {

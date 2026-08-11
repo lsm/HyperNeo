@@ -6395,37 +6395,6 @@ export class SpaceRuntime {
       }
     }
 
-    // Pre-validate configured custom-agent references on every target node we
-    // are about to activate, BEFORE creating any execution. A target whose slot
-    // references a deleted space_agents row would otherwise make the
-    // createNodeExecutionOrIgnore below raise SQLITE_CONSTRAINT_FOREIGNKEY mid-
-    // loop (leaving a half-activated run and a raw SQLite exception). Validating
-    // up front lets recoverSingleRun block this single run with an actionable
-    // diagnostic while other stalled runs still recover. Built-in/worker slots
-    // (agentId=null) are preserved — only non-null references are checked.
-    for (const transition of stalledTransitions) {
-      for (const targetName of transition.targetNames) {
-        const targetNode = nodeByName.get(targetName);
-        if (!targetNode) continue;
-        const missing = findMissingNodeAgentReferences(
-          targetNode,
-          (id) => this.config.spaceAgentManager.getById(id) !== null
-        );
-        if (missing.length > 0) {
-          const first = missing[0];
-          throw new MissingWorkflowAgentError(
-            formatMissingAgentReference({
-              runId: run.id,
-              nodeLabel: targetNode.name,
-              agentName: first.agentName,
-              agentId: first.agentId,
-            }),
-            first
-          );
-        }
-      }
-    }
-
     const createdOrReset: string[] = [];
     const blockedGateReasons: string[] = [];
 
@@ -6463,6 +6432,29 @@ export class SpaceRuntime {
             gateResult.reason ?? `Gate ${channel.gateId ?? 'unknown'} blocked channel ${channel.id}`
           );
           continue;
+        }
+
+        // Validate this target's configured agent references now that the channel
+        // is confirmed reachable (cycle cap and gate both open), but BEFORE
+        // creating any execution for it. A stale reference blocks the run via
+        // recoverSingleRun's handler; an UNREACHABLE target (closed gate / capped
+        // cycle) was skipped above and must not block recovery of other branches.
+        // Built-in/worker slots (agentId=null) are preserved.
+        const missing = findMissingNodeAgentReferences(
+          targetNode,
+          (id) => this.config.spaceAgentManager.getById(id) !== null
+        );
+        if (missing.length > 0) {
+          const first = missing[0];
+          throw new MissingWorkflowAgentError(
+            formatMissingAgentReference({
+              runId: run.id,
+              nodeLabel: targetNode.name,
+              agentName: first.agentName,
+              agentId: first.agentId,
+            }),
+            first
+          );
         }
 
         let activatedForTarget = false;

@@ -552,10 +552,15 @@ export class ChannelRouter {
     // OR IGNORE does not suppress foreign-key failures). Built-in/worker slots
     // that validly use agentId=null are preserved — only non-null references are
     // checked, and a missing required agent is surfaced as an actionable error
-    // rather than silently nulled.
+    // rather than silently nulled. For slot-targeted activation
+    // (`ensureWorkflowNodeActivationForAgent`), restrict the check to the
+    // requested slot so a stale SIBLING slot does not prevent bringing the valid
+    // target slot online.
+    const targetAgentName = options?.targetAgentName;
     const missingAgent = findMissingNodeAgentReferences(
       node,
-      (id) => this.config.agentManager.getById(id) !== null
+      (id) => this.config.agentManager.getById(id) !== null,
+      targetAgentName ? { slotNames: new Set([targetAgentName]) } : undefined
     );
     if (missingAgent.length > 0) {
       const first = missingAgent[0];

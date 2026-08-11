@@ -74,10 +74,15 @@ export interface MissingNodeAgentReference {
  * agents) is deliberately swallowed here — that malformation is reported by
  * {@link validateExecutionAgainstWorkflow} / the activation callers, and a
  * second error from this helper would mask the actionable one.
+ *
+ * Pass `options.slotNames` to restrict the check to a subset of slots — used by
+ * slot-targeted activation (`targetAgentName`) so a stale *sibling* slot does
+ * not block activating a valid target slot.
  */
 export function findMissingNodeAgentReferences(
   node: WorkflowNode,
-  agentExists: (agentId: string) => boolean
+  agentExists: (agentId: string) => boolean,
+  options?: { slotNames?: ReadonlySet<string> }
 ): MissingNodeAgentReference[] {
   let agents: ReturnType<typeof resolveNodeAgents>;
   try {
@@ -85,8 +90,10 @@ export function findMissingNodeAgentReferences(
   } catch {
     return [];
   }
+  const slotFilter = options?.slotNames;
   const missing: MissingNodeAgentReference[] = [];
   for (const agent of agents) {
+    if (slotFilter && !slotFilter.has(agent.name)) continue;
     if (agent.agentId && !agentExists(agent.agentId)) {
       missing.push({ agentName: agent.name, agentId: agent.agentId });
     }
@@ -118,6 +125,11 @@ export function isMissingWorkflowAgentError(err: unknown): err is MissingWorkflo
  * Build the actionable diagnostic for a stale agent reference. Includes the run
  * id, target node, agent name, and stale agent id so an operator can locate and
  * repair the broken reference without grepping logs for a raw SQLite exception.
+ *
+ * The remedy reflects pinned-run semantics: a run resolves the workflow
+ * definition that was pinned at its creation, so editing the mutable workflow
+ * head or recreating the agent (which gets a new id) does not repair this run.
+ * The supported path is to create a new run from a corrected workflow.
  */
 export function formatMissingAgentReference(params: {
   runId: string;
@@ -129,8 +141,10 @@ export function formatMissingAgentReference(params: {
   return (
     `Workflow run "${params.runId}" cannot activate node "${params.nodeLabel}": ` +
     `agent slot "${params.agentName}" references agent "${params.agentId}", ` +
-    `which no longer exists in this Space. Recreate the agent or update the ` +
-    `workflow definition to reference a valid agent before continuing.`
+    `which no longer exists in this Space. This run resolves a workflow ` +
+    `definition pinned at creation time, so editing the workflow or recreating ` +
+    `the agent (a new id) will not repair it; create a new run from a corrected ` +
+    `workflow.`
   );
 }
 

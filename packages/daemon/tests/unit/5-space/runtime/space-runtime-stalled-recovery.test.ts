@@ -2594,5 +2594,66 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       expect(findExec(run.id, STEP_B).status).toBe('pending');
       expect(findExec(run.id, STEP_B).agentId).toBe(STALE_AGENT);
     });
+
+    test('a stale agent behind a closed gate does not block recovery of an open branch', async () => {
+      // Source node has two outgoing channels: one open to a valid target, one
+      // gated (closed) to a target whose agent was deleted. Recovery must
+      // activate the open branch and NOT block the run over the unreachable,
+      // stale-agent target — the gate check runs before the agent check.
+      const VALID_AGENT = 'agent-valid-open-branch';
+      seedAgentRow(db, STALE_AGENT, SPACE_ID);
+      seedAgentRow(db, VALID_AGENT, SPACE_ID);
+      const workflow = buildLinearWorkflow(
+        SPACE_ID,
+        workflowManager,
+        [
+          { id: 'src', name: 'Coding', agentId: AGENT },
+          { id: 'open-target', name: 'OpenTarget', agentId: VALID_AGENT },
+          { id: 'gated-target', name: 'GatedTarget', agentId: STALE_AGENT },
+        ],
+        {
+          channels: [
+            { id: 'to-open', from: 'Coding', to: 'OpenTarget' },
+            { id: 'to-gated', from: 'Coding', to: 'GatedTarget', gateId: 'closed-gate' },
+          ],
+          gates: [
+            {
+              id: 'closed-gate',
+              resetOnCycle: false,
+              fields: [
+                { name: 'pr_url', type: 'string', writers: [], check: { op: 'exists' as const } },
+              ],
+            },
+          ],
+        }
+      );
+      // Delete the agent on the gated branch AFTER the workflow pinned it.
+      db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(STALE_AGENT);
+
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Stale behind closed gate',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+      taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Stale behind closed gate',
+        description: '',
+        workflowRunId: run.id,
+        workflowNodeId: 'src',
+        status: 'in_progress',
+      });
+      seedExec(run.id, 'src', 'Coding', 'idle');
+
+      await makeRuntime({
+        pendingMessageRepo: new PendingAgentMessageRepository(db),
+      }).recoverStalledRuns();
+
+      // Open branch recovered; gated (stale) branch never created; run NOT blocked.
+      expect(findExec(run.id, 'open-target').status).toBe('pending');
+      expect(findExec(run.id, 'gated-target')).toBeUndefined();
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+    });
   });
 });
