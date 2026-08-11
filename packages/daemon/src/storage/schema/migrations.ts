@@ -16,6 +16,7 @@ import { runMigration170 as runMigration170External } from './m170-backfill-miss
 import { runMigration171 } from './m171-backfill-post-approval-review-channels';
 import { runMigration172 as runMigration172External } from './m172-backfill-orphaned-preset-agents';
 import { runMigration184 as runMigration184External } from './m184-backfill-reviewer-bash-tools';
+import { runMigration185 as runMigration185External } from './m185-workflow-event-subscriptions';
 import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug';
 import {
   deriveArtifactKey,
@@ -932,9 +933,20 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // index, and M183 for the sdk_messages.send_status widen.)
   run(migrationMarkerKey(184), () => runMigration184(db));
 
-  // Migration 185: Widen space_goal_events.event_type CHECK to include
-  // 'automation_noop' for self_nag low-evidence no-op notes (#919).
+  // Migration 185: Persist workflow-run event subscriptions (PR 5 of the
+  //   external-event subscription refactor). Creates
+  //   `space_workflow_event_subscriptions` as the durable source of truth for
+  //   agent-registered `dynamic` subscriptions (static template interests are
+  //   re-materialized from the workflow definition, so they are not persisted),
+  //   so the in-memory TopicTrie's dynamic entries can be rebuilt from this
+  //   table on rehydrate instead of dropping ad-hoc dynamic subscriptions on
+  //   daemon restart. Idempotent; new databases get the same table from
+  //   createTables().
   run(migrationMarkerKey(185), () => runMigration185(db));
+
+  // Migration 186: Widen space_goal_events.event_type CHECK to include
+  // 'automation_noop' for self_nag low-evidence no-op notes (#919).
+  run(migrationMarkerKey(186), () => runMigration186(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -8042,7 +8054,7 @@ export function runMigration183(db: BunDatabase): void {
 }
 
 /**
- * Migration 185: Widen `space_goal_events.event_type` CHECK to include
+ * Migration 186: Widen `space_goal_events.event_type` CHECK to include
  * 'automation_noop'.
  *
  * Background: the self_nag goal-automation retrospective (#919) now records a
@@ -8055,7 +8067,7 @@ export function runMigration183(db: BunDatabase): void {
  * Idempotent: a no-op when the table is absent or the CHECK already permits
  * 'automation_noop'.
  */
-export function runMigration185(db: BunDatabase): void {
+export function runMigration186(db: BunDatabase): void {
   if (!tableExists(db, 'space_goal_events')) return;
   const tableSql = tableCreateSql(db, 'space_goal_events');
   if (!tableSql || tableSql.includes("'automation_noop'")) return;
@@ -8067,7 +8079,7 @@ export function runMigration185(db: BunDatabase): void {
   const widenedSql = tableSql
     .replace(
       /CREATE TABLE(?: IF NOT EXISTS)?\s+["'`[]?space_goal_events["'`\]]?/i,
-      'CREATE TABLE space_goal_events_m185_new'
+      'CREATE TABLE space_goal_events_m186_new'
     )
     .replace(
       /CHECK\s*\(event_type IN \('created', 'updated', 'status_changed', 'task_triggered', 'task_queued', 'task_terminal', 'schedule_updated'\)\)/,
@@ -8092,10 +8104,10 @@ export function runMigration185(db: BunDatabase): void {
   try {
     db.exec(widenedSql);
     db.exec(
-      `INSERT INTO space_goal_events_m185_new (${quoted}) SELECT ${quoted} FROM space_goal_events`
+      `INSERT INTO space_goal_events_m186_new (${quoted}) SELECT ${quoted} FROM space_goal_events`
     );
     db.exec('DROP TABLE space_goal_events');
-    db.exec('ALTER TABLE space_goal_events_m185_new RENAME TO space_goal_events');
+    db.exec('ALTER TABLE space_goal_events_m186_new RENAME TO space_goal_events');
     for (const object of objects) db.exec(object.sql);
     db.exec('COMMIT');
   } catch (error) {
@@ -12275,4 +12287,8 @@ export function runMigration181(db: BunDatabase): void {
  */
 export function runMigration184(db: BunDatabase): void {
   runMigration184External(db);
+}
+
+export function runMigration185(db: BunDatabase): void {
+  runMigration185External(db);
 }

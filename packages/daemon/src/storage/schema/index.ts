@@ -10,6 +10,7 @@
 import type { Database as BunDatabase } from '../sqlite-compat';
 import { createEvolutionTables } from './evolution';
 import { createLongHorizonAgentTables } from './long-horizon-agents';
+import { createWorkflowEventSubscriptionTables } from './workflow-event-subscriptions';
 import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/shared';
 
 // Re-export migrations
@@ -134,7 +135,7 @@ export { runMigration170 } from './migrations';
 // knip-ignore-next-line
 export { runMigration174 } from './migrations';
 // knip-ignore-next-line
-export { runMigration185 } from './migrations';
+export { runMigration186 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults
@@ -809,6 +810,7 @@ export function createTables(db: BunDatabase): void {
   createAgentMemoryTables(db);
   createEvolutionTables(db);
   createLongHorizonAgentTables(db);
+  createWorkflowEventSubscriptionTables(db);
 
   // Create indexes
   createIndexes(db);

@@ -1,18 +1,18 @@
 /**
- * Migration 185 Tests — widen space_goal_events.event_type CHECK to include
+ * Migration 186 Tests — widen space_goal_events.event_type CHECK to include
  * 'automation_noop'.
  *
  * The self_nag goal-automation retrospective (#919) records a lightweight no-op
  * note on the goal when the evidence-quality preflight flags thin, process-level
  * evidence. That note uses a dedicated 'automation_noop' event type. SQLite
- * cannot ALTER a CHECK constraint, so M185 rebuilds the table (same pattern as
+ * cannot ALTER a CHECK constraint, so M186 rebuilds the table (same pattern as
  * M183). These tests cover the widen, data/index preservation, idempotency, and
  * a safe no-op when the table is absent.
  */
 
 import { describe, expect, test } from 'bun:test';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
-import { runMigration185 } from '../../../../../src/storage/schema/index.ts';
+import { runMigration186 } from '../../../../../src/storage/schema/index.ts';
 
 function createOldGoalEventsTables(db: BunDatabase): void {
   db.exec(`
@@ -50,7 +50,7 @@ function insertEvent(
   ).run(id, 'space-1', 'goal-1', eventType, 'system', note, createdAt);
 }
 
-describe('runMigration185', () => {
+describe('runMigration186', () => {
   test('widens event_type CHECK to allow automation_noop and preserves data + indexes', () => {
     const db = new BunDatabase(':memory:');
     createOldGoalEventsTables(db);
@@ -59,7 +59,7 @@ describe('runMigration185', () => {
     // Before migration: automation_noop is rejected by the CHECK.
     expect(() => insertEvent(db, 'event-bad', 'automation_noop', null, 101)).toThrow();
 
-    runMigration185(db);
+    runMigration186(db);
 
     // After migration: automation_noop is accepted.
     insertEvent(db, 'event-2', 'automation_noop', 'no-op note', 102);
@@ -86,9 +86,9 @@ describe('runMigration185', () => {
   test('is idempotent when the CHECK already permits automation_noop', () => {
     const db = new BunDatabase(':memory:');
     createOldGoalEventsTables(db);
-    runMigration185(db);
+    runMigration186(db);
     // Running again must not throw or drop data.
-    runMigration185(db);
+    runMigration186(db);
     insertEvent(db, 'event-1', 'automation_noop', 'note', 100);
     const count = db.prepare(`SELECT COUNT(*) AS c FROM space_goal_events`).get() as { c: number };
     expect(count.c).toBe(1);
@@ -97,7 +97,7 @@ describe('runMigration185', () => {
 
   test('is a safe no-op when space_goal_events does not exist', () => {
     const db = new BunDatabase(':memory:');
-    expect(() => runMigration185(db)).not.toThrow();
+    expect(() => runMigration186(db)).not.toThrow();
     db.close();
   });
 });
