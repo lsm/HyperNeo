@@ -251,6 +251,7 @@ export class MessagePersistence {
       const jobQueueRepo = this.db.getJobQueueRepo?.();
       const useOutbox = shouldDispatchToQuery && useV2Delivery && !!jobQueueRepo;
       let dbMessageId: string;
+      let outboxRole: 'turn' | 'steer' | undefined;
       if (useOutbox) {
         if (this.db.getSession?.(sessionId)?.status === 'archived') {
           // Archived before we save: persist as a visible `failed` row and stop
@@ -265,7 +266,7 @@ export class MessagePersistence {
             .catch(() => {});
           throw new Error(`Session ${sessionId} is archived`);
         }
-        dbMessageId = persistAndEnqueueDelivery({
+        const outbox = persistAndEnqueueDelivery({
           db: this.db.getDatabase(),
           sdkMessageRepo: this.db.getSDKMessageRepo(),
           jobQueue: jobQueueRepo,
@@ -274,7 +275,19 @@ export class MessagePersistence {
           sendStatus,
           origin,
           delivery: { origin: 'chat' },
-        }).dbMessageId;
+        });
+        dbMessageId = outbox.dbMessageId;
+        outboxRole = outbox.role;
+        // Establish queued ownership IMMEDIATELY after the atomic insert when it
+        // won the turn role — BEFORE the awaited messages.statusChanged /
+        // message.persisted publications. Otherwise the session reads idle until
+        // deliverChatMessage runs (inside the awaited publish), so a concurrent
+        // deliveryMode:'defer' send is mis-converted to immediate (a steer into
+        // this turn). setQueuedIfIdle is idempotent; deliverChatMessage's later
+        // call is a harmless no-op. (Codex review.)
+        if (outboxRole === 'turn') {
+          await agentSession.stateManager.setQueuedIfIdle(messageId).catch(() => {});
+        }
       } else {
         dbMessageId = this.db.saveUserMessage(sessionId, sdkUserMessage, sendStatus, origin);
       }

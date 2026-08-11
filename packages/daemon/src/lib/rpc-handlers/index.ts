@@ -95,6 +95,7 @@ import { SpaceLongHorizonAgentRepository } from '../../storage/repositories/spac
 import {
   awaitDeliveryConsumption,
   deliverAndMarkQueued,
+  deliveryConsumptionTimeoutMs,
   isMessageDeliveryV2Enabled,
 } from '../agent/message-delivery';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
@@ -966,6 +967,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       await awaitDeliveryConsumption({
         sessionId,
         messageUuid: messageId,
+        // ACP's consume boundary is acceptance (minutes), not queue admission —
+        // size the wait to it so a fresh ACP delivery isn't terminalized failed
+        // mid-run (which a direct retry would then execute twice). (Codex P1.)
+        timeoutMs: deliveryConsumptionTimeoutMs(session.getSessionData().config.provider),
         deliver: () =>
           deliverAndMarkQueued({
             jobQueue: deps.reactiveDb.db.getJobQueueRepo(),

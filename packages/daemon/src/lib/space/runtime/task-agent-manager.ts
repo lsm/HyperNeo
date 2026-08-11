@@ -59,6 +59,7 @@ import { AgentSession } from '../../../lib/agent/agent-session';
 import {
   awaitDeliveryConsumption,
   deliverAndMarkQueued,
+  deliveryConsumptionTimeoutMs,
   isMessageDeliveryV2Enabled,
 } from '../../../lib/agent/message-delivery';
 import { validateImageSizes } from '../../session/message-persistence';
@@ -4732,6 +4733,9 @@ export class TaskAgentManager {
       await awaitDeliveryConsumption({
         sessionId,
         messageUuid: messageId,
+        // ACP's consume boundary is acceptance (minutes) — size the wait so a
+        // fresh ACP delivery isn't terminalized mid-run. (Codex P1.)
+        timeoutMs: deliveryConsumptionTimeoutMs(session.getSessionData().config.provider),
         deliver: () =>
           deliverAndMarkQueued({
             jobQueue: this.config.db.getJobQueueRepo(),

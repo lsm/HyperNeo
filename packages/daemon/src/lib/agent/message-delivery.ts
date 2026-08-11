@@ -408,12 +408,35 @@ export function signalDeliveryConsumed(sessionId: string, messageUuid: string): 
 }
 
 /**
+ * ACP's consume boundary is *acceptance* (markMessageAccepted), which can lag
+ * submission by minutes while the ACP process runs. The default 30s
+ * queue-admission consume-wait would terminalize a fresh ACP delivery as failed
+ * mid-run (→ a direct caller retries with a new UUID → the work runs twice), so
+ * ACP-targeted awaitDeliveryConsumption callers pass this acceptance-sized
+ * timeout. (Codex review, P1.)
+ */
+export const ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS = 10 * 60 * 1000;
+
+/** Acceptance-sized consume timeout for ACP sessions; undefined → default. */
+export function deliveryConsumptionTimeoutMs(provider?: string): number | undefined {
+  return provider === 'acp' ? ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS : undefined;
+}
+
+/**
  * Await a durable delivery job's SDK consumption (onSent) after enqueueing it,
  * restoring the legacy "delivered = consumed" semantic. `deliver` performs the
  * enqueue (e.g. {@link deliverAndMarkQueued}); the await races the consumption
  * signal against a timeout (HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS, default
  * 30s, matching the legacy MessageQueue timeout) and rejects on timeout so a
  * caller doesn't acknowledge a delivery that may yet dead-letter.
+ *
+ * `timeoutMs` overrides the default — needed for ACP targets, whose consume
+ * boundary is *acceptance* (signalDeliveryConsumed fires from
+ * `markMessageAccepted`, not onSent), and an ACP request can run for minutes
+ * before accepting. The 30s queue-admission default would fire while the ACP
+ * process is still executing → a fresh row is terminalized failed → a direct
+ * caller retries with a new UUID and the work runs twice. Callers that may
+ * target an ACP session pass an acceptance-sized timeout. (Codex review, P1.)
  *
  * `terminalizeOnTimeout` is invoked on timeout (or if `deliver` throws) ONLY for
  * paths that created a FRESH job this call (no prior row). It terminalizes the
@@ -427,13 +450,15 @@ export async function awaitDeliveryConsumption(args: {
   messageUuid: string;
   deliver: () => Promise<void>;
   terminalizeOnTimeout?: () => void;
+  /** Override the default 30s consume-wait timeout (e.g. ACP acceptance). */
+  timeoutMs?: number;
 }): Promise<void> {
   const consumed = waitForDeliveryConsumption(args.sessionId, args.messageUuid);
   let consumptionTimeout: ReturnType<typeof setTimeout> | undefined;
   try {
     await args.deliver();
     const consumptionTimeoutMs =
-      Number(process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS) || 30_000;
+      args.timeoutMs ?? (Number(process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS) || 30_000);
     await Promise.race([
       consumed.promise,
       new Promise<void>((_, reject) => {

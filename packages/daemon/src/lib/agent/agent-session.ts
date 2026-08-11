@@ -2002,28 +2002,33 @@ export class AgentSession
     // in streaming-input mode queryPromise never resolves at turn-end, so
     // turnEnd wins and the job completes promptly when the SDK finishes the turn.
     try {
-      await started.acknowledgment;
-      // onSent fired → the prompt reached the SDK / subprocess (the ACTUAL
-      // handoff). Record the feed here, not at admission: admitWithId only
-      // places the row in the in-memory queue, so a provider-startup stall,
-      // queue interrupt, or admission timeout before the generator yields is
-      // NOT a handoff and must not be counted as one (else a later legit retry
-      // reads as a ground-truth duplicate). (Codex review.)
-      deliveryMetrics.recordFeed(messageUuid);
-      // For the Claude SDK, onSent is the consume signal — flip send_status →
-      // 'consumed' SYNCHRONOUSLY (item 12) so reclaimStale almost always sees
-      // 'consumed' and skips the re-feed, and signal delivery waiters (LTA /
-      // task-agent confirm their source only after genuine consumption). ACP is
-      // EXCLUDED on both: its onSent fires at submission (enqueued→submitted),
-      // and the real consume boundary is acceptance (markMessageAccepted →
-      // consumed + signalDeliveryConsumed). Flipping/signaling here for ACP
-      // would confirm an LTA source before acceptance; if the adapter then
-      // rejects, the source is already acknowledged and won't retry. (Codex.)
-      if (this.session.config.provider !== 'acp') {
-        const consumeSignalMs = Date.now();
-        this.markDeliveryConsumed(messageUuid);
-        deliveryMetrics.recordResidualWindow(Date.now() - consumeSignalMs);
-        signalDeliveryConsumed(this.session.id, messageUuid);
+      // An alreadyConsumed reclaim skips the feed (admitWithId not called), so
+      // `started.acknowledgment` is null — `await null` resolves immediately.
+      // The feed + consumed-flip + waiter signal must fire ONLY for a genuine
+      // handoff; a consumed-reclaim that re-drives from history must NOT be
+      // counted as a fresh feed (it would falsely inflate feedsObserved + read
+      // as a ground-truth duplicate, and record a residual sample for a handoff
+      // that never occurred). (Codex review.)
+      if (started.acknowledgment) {
+        await started.acknowledgment;
+        // onSent fired → the prompt reached the SDK / subprocess (the ACTUAL
+        // handoff). Record the feed here, not at admission: admitWithId only
+        // places the row in the in-memory queue, so a provider-startup stall,
+        // queue interrupt, or admission timeout before the generator yields is
+        // NOT a handoff and must not be counted as one. (Codex review.)
+        deliveryMetrics.recordFeed(messageUuid);
+        // For the Claude SDK, onSent is the consume signal — flip send_status →
+        // 'consumed' SYNCHRONOUSLY (item 12) so reclaimStale almost always sees
+        // 'consumed' and skips the re-feed, and signal delivery waiters (LTA /
+        // task-agent confirm their source only after genuine consumption). ACP
+        // is EXCLUDED: its onSent fires at submission; the real consume boundary
+        // is acceptance (markMessageAccepted). (Codex.)
+        if (this.session.config.provider !== 'acp') {
+          const consumeSignalMs = Date.now();
+          this.markDeliveryConsumed(messageUuid);
+          deliveryMetrics.recordResidualWindow(Date.now() - consumeSignalMs);
+          signalDeliveryConsumed(this.session.id, messageUuid);
+        }
       }
       await Promise.race([started.turnEnd.promise, started.queryPromise.catch(() => {})]);
     } finally {

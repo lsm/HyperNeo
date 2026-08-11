@@ -53,6 +53,7 @@ import type { AgentSession } from '../../agent/agent-session';
 import {
   awaitDeliveryConsumption,
   deliverAndMarkQueued,
+  deliveryConsumptionTimeoutMs,
   isMessageDeliveryV2Enabled,
 } from '../../agent/message-delivery';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
@@ -663,6 +664,9 @@ export class SpaceRuntimeService {
       await awaitDeliveryConsumption({
         sessionId,
         messageUuid: id,
+        // ACP's consume boundary is acceptance (minutes) — size the wait so a
+        // fresh ACP delivery isn't terminalized mid-run. (Codex P1.)
+        timeoutMs: deliveryConsumptionTimeoutMs(session.getSessionData().config.provider),
         deliver: () =>
           deliverAndMarkQueued({
             jobQueue: reactiveDb.getJobQueueRepo(),
