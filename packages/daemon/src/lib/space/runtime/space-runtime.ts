@@ -400,7 +400,7 @@ function isLongHorizonSubscriptionTarget(
  * ships, so they report `active: false` and are excluded from the mismatch
  * count (they are known-not-active by design, not drift).
  */
-export interface SubscriptionDeclaredInterest {
+interface SubscriptionDeclaredInterest {
   nodeId: string;
   nodeName: string;
   agentName: string;
@@ -415,7 +415,7 @@ export interface SubscriptionDeclaredInterest {
  * (durable). `active` is a live cross-check: true iff a `dynamic` trie entry
  * exists for this slot + topic.
  */
-export interface SubscriptionPersistedRow {
+interface SubscriptionPersistedRow {
   nodeId: string;
   agentName: string;
   taskId: string;
@@ -430,9 +430,11 @@ export interface SubscriptionPersistedRow {
  * answer on its own. `source` reconciles it against durable state:
  * `'declared'` (a workflow-definition interest backs this static entry),
  * `'persisted'` (a table row backs this dynamic entry), or `'orphan'` (in the
- * trie with no durable backing — indicates drift that should not happen).
+ * trie with no durable backing — indicates drift, e.g. a stale trie entry left
+ * by a partial rehydrate or a mid-run definition-version change; benign in the
+ * upgrade window, worth investigating if it persists in steady state).
  */
-export interface SubscriptionActiveEntry {
+interface SubscriptionActiveEntry {
   nodeId: string;
   agentName: string;
   taskId: string;
@@ -441,7 +443,7 @@ export interface SubscriptionActiveEntry {
   source: 'declared' | 'persisted' | 'orphan';
 }
 
-export interface SubscriptionListResult {
+interface SubscriptionListResult {
   workflowRunId: string;
   /** nodeId filter applied, or null when the whole run is returned. */
   nodeId: string | null;
@@ -450,7 +452,11 @@ export interface SubscriptionListResult {
   active: SubscriptionActiveEntry[];
   /** Reconciliation counts derived from the three layers. */
   mismatches: {
-    /** Declared concrete-topic interests with no matching active static entry. */
+    /**
+     * Declared concrete-topic interests with no matching active static entry.
+     * Suppressed for terminal-task runs (see listSubscriptions): their static
+     * interests are intentionally cleared by the task lifecycle.
+     */
     declaredNotActive: number;
     /** Persisted rows with no matching active dynamic entry. */
     persistedNotActive: number;
@@ -1395,6 +1401,13 @@ export class SpaceRuntime {
    * PR-event interest" from durable data alone.
    *
    * `spaceId` guards cross-space access: a run in another space is rejected.
+   *
+   * `declaredNotActive` only fires when a static entry *should* be live — i.e.
+   * the run's canonical task is non-terminal. For a terminal task
+   * (`done`/`archived`/`cancelled`) `registerRunInterestsFromWorkflow`
+   * deliberately clears static interests, so their `active: false` is expected
+   * lifecycle cleanup, not drift (the count is suppressed there to keep the
+   * headline signal honest for the common "investigate a finished run" case).
    */
   listSubscriptions(
     workflowRunId: string,
@@ -1410,6 +1423,19 @@ export class SpaceRuntime {
     }
     const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run) ?? null;
     const nodeFilter = nodeId ?? null;
+    // Whether static interests should currently be materialized in the trie.
+    // Mirrors registerRunInterestsFromWorkflow, which skips static re-materialization
+    // when the canonical task is absent or terminal (its interests were cleared by the
+    // task lifecycle). When false, declared `active: false` is expected, not drift.
+    const canonicalTask = this.pickCanonicalTaskForRun(
+      run,
+      this.config.taskRepo.listByWorkflowRun(run.id)
+    );
+    const staticMaterializable =
+      !!canonicalTask &&
+      canonicalTask.status !== 'done' &&
+      canonicalTask.status !== 'archived' &&
+      canonicalTask.status !== 'cancelled';
 
     // Layer 1 — declared static interests, re-derived from the definition.
     const declared: SubscriptionDeclaredInterest[] = [];
@@ -1455,13 +1481,18 @@ export class SpaceRuntime {
       }));
 
     // Layer 3 — active in-memory trie entries (workflow targets for this run).
+    // values() walks the whole per-space trie, so this is O(total subscriptions
+    // in the space); acceptable for an occasionally-invoked diagnostic. A
+    // run-indexed trie structure can be added later if this is ever called in a
+    // loop or spaces grow large.
     const active: SubscriptionActiveEntry[] = this.topicTrie
       .values()
       .filter(
         (target): target is WorkflowSubscriptionTarget =>
-          isWorkflowSubscriptionTarget(target) && target.workflowRunId === workflowRunId
+          isWorkflowSubscriptionTarget(target) &&
+          target.workflowRunId === workflowRunId &&
+          (!nodeFilter || target.nodeId === nodeFilter)
       )
-      .filter((target) => !nodeFilter || target.nodeId === nodeFilter)
       .map((target) => ({
         nodeId: target.nodeId,
         agentName: target.agentName,
@@ -1514,7 +1545,11 @@ export class SpaceRuntime {
         persisted,
         active,
         mismatches: {
-          declaredNotActive: declared.filter((d) => d.topic !== null && !d.active).length,
+          // Only count as drift when a static entry should be live; for terminal
+          // tasks static interests are intentionally cleared (see above).
+          declaredNotActive: staticMaterializable
+            ? declared.filter((d) => d.topic !== null && !d.active).length
+            : 0,
           persistedNotActive: persisted.filter((p) => !p.active).length,
           orphanActive,
         },

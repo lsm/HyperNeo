@@ -377,4 +377,118 @@ describe('SpaceRuntime.listSubscriptions', () => {
     if (res.success) return;
     expect(res.error).toContain('not found');
   });
+
+  // -------------------------------------------------------------------------
+  // Edge cases & review-feedback coverage
+  // -------------------------------------------------------------------------
+
+  test('P1: a terminal-task run does not report cleared static interests as drift', () => {
+    // registerRunInterestsFromWorkflow skips static re-materialization for a
+    // terminal canonical task (its static interests are cleared by the task
+    // lifecycle). listSubscriptions must NOT count those as declaredNotActive —
+    // their active:false is expected cleanup, not drift.
+    const runtime = makeRuntime();
+    const { workflow, runId, taskId } = createRun({
+      coderInterests: [{ topic: 'github/owner/repo/issues/*' }],
+    });
+    runtime.registerRunInterests(runId, taskId, workflow.nodes);
+
+    // Baseline: active run → declared interest is live, no drift.
+    let res = runtime.listSubscriptions(runId, SPACE_ID);
+    expect(res.success).toBe(true);
+    if (!res.success) return;
+    expect(res.result.declared[0].active).toBe(true);
+    expect(res.result.mismatches.declaredNotActive).toBe(0);
+
+    // Task completes → lifecycle clears its interests from the trie.
+    taskRepo.updateTask(taskId, { status: 'done' });
+    runtime.clearTaskInterests(taskId);
+
+    res = runtime.listSubscriptions(runId, SPACE_ID);
+    expect(res.success).toBe(true);
+    if (!res.success) return;
+    // Declared is still re-derived from the definition (the run DID declare it),
+    // but it is no longer in the trie. Crucially, the mismatch count stays 0.
+    expect(res.result.declared).toHaveLength(1);
+    expect(res.result.declared[0].active).toBe(false);
+    expect(res.result.mismatches.declaredNotActive).toBe(0);
+  });
+
+  test('multiple static interests on the same slot do not collapse', () => {
+    const runtime = makeRuntime();
+    const { workflow, runId, taskId } = createRun({
+      coderInterests: [
+        { topic: 'github/owner/repo/issues/*' },
+        { topic: 'github/owner/repo/pull_request/*.*' },
+      ],
+    });
+    runtime.registerRunInterests(runId, taskId, workflow.nodes);
+
+    const res = runtime.listSubscriptions(runId, SPACE_ID);
+    expect(res.success).toBe(true);
+    if (!res.success) return;
+    expect(res.result.declared).toHaveLength(2);
+    expect(res.result.declared.every((d) => d.active)).toBe(true);
+    expect(res.result.mismatches.declaredNotActive).toBe(0);
+  });
+
+  test('reconciliation is case-insensitive across declared and the trie', () => {
+    const runtime = makeRuntime();
+    const { runId, taskId } = createRun();
+    // Register a dynamic subscription with one casing; the reconcile key
+    // lowercases both sides, so the persisted↔active match must hold.
+    runtime.registerSubscription(
+      runId,
+      taskId,
+      'code',
+      'coder',
+      'GitHub/Owner/Repo/Pull_Request/1.*'
+    );
+
+    const res = runtime.listSubscriptions(runId, SPACE_ID);
+    expect(res.success).toBe(true);
+    if (!res.success) return;
+    expect(res.result.persisted[0].active).toBe(true);
+    expect(res.result.active[0].source).toBe('persisted');
+    expect(res.result.mismatches).toEqual({
+      declaredNotActive: 0,
+      persistedNotActive: 0,
+      orphanActive: 0,
+    });
+  });
+
+  test('idempotent registerRunInterests re-registration does not double-count active', () => {
+    const runtime = makeRuntime();
+    const { workflow, runId, taskId } = createRun({
+      coderInterests: [{ topic: 'github/owner/repo/issues/*' }],
+    });
+    runtime.registerRunInterests(runId, taskId, workflow.nodes);
+    // registerRunInterests clears-and-reinserts static interests for the run;
+    // re-calling it must not leave duplicate trie entries.
+    runtime.registerRunInterests(runId, taskId, workflow.nodes);
+
+    const res = runtime.listSubscriptions(runId, SPACE_ID);
+    expect(res.success).toBe(true);
+    if (!res.success) return;
+    expect(res.result.active.filter((a) => a.subscriptionKind === 'static')).toHaveLength(1);
+    expect(res.result.declared).toHaveLength(1);
+    expect(res.result.declared[0].active).toBe(true);
+  });
+
+  test('a run whose workflow definition no longer resolves reports declared empty without crashing', () => {
+    // Simulate getWorkflowForRun → null (e.g. a stale/removed definition) by
+    // stubbing the workflow manager. Persisted + active still reconcile.
+    const runtime = makeRuntime({
+      spaceWorkflowManager: { getWorkflowForRun: () => null } as unknown as typeof workflowManager,
+    });
+    const { runId, taskId } = createRun();
+    runtime.registerSubscription(runId, taskId, 'code', 'coder', 'github/owner/repo/issues/*');
+
+    const res = runtime.listSubscriptions(runId, SPACE_ID);
+    expect(res.success).toBe(true);
+    if (!res.success) return;
+    expect(res.result.declared).toEqual([]);
+    expect(res.result.persisted).toHaveLength(1);
+    expect(res.result.persisted[0].active).toBe(true);
+  });
 });

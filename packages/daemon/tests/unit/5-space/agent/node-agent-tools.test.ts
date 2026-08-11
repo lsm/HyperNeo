@@ -3140,6 +3140,53 @@ describe('node-agent-tools: list_subscriptions', () => {
     expect(data.error).toContain('not available');
   });
 
+  test('a realistic result envelope survives the jsonResult round-trip', async () => {
+    // End-to-end pass-through: the structured {success, result:{declared, persisted,
+    // active, mismatches}} envelope the callback returns is what the agent receives.
+    const handlers = createNodeAgentToolHandlers(
+      makeConfig(ctx, {
+        onListSubscriptions: async () => ({
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                success: true,
+                result: {
+                  workflowRunId: ctx.workflowRunId,
+                  nodeId: null,
+                  declared: [
+                    {
+                      nodeId: 'code',
+                      agentName: 'coder',
+                      topic: 'github/o/r/issues/*',
+                      active: true,
+                    },
+                  ],
+                  persisted: [],
+                  active: [],
+                  mismatches: { declaredNotActive: 0, persistedNotActive: 0, orphanActive: 0 },
+                },
+              }),
+            },
+          ],
+        }),
+      })
+    );
+
+    const result = await handlers.list_subscriptions({});
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.success).toBe(true);
+    expect(data.result.workflowRunId).toBe(ctx.workflowRunId);
+    expect(data.result.declared).toHaveLength(1);
+    expect(data.result.declared[0]).toMatchObject({ topic: 'github/o/r/issues/*', active: true });
+    expect(data.result.mismatches).toEqual({
+      declaredNotActive: 0,
+      persistedNotActive: 0,
+      orphanActive: 0,
+    });
+  });
+
   test('createNodeAgentMcpServer registers list_subscriptions only when the callback is wired', () => {
     const withoutCallback = createNodeAgentMcpServer(makeConfig(ctx));
     const withoutRegistered = Object.keys(

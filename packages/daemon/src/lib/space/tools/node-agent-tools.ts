@@ -2153,11 +2153,11 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
           tool(
             'list_subscriptions',
             "Read-only diagnostic: snapshot this workflow run's external-event subscriptions across three layers — " +
-              'declared (workflow definition, durable), persisted (the dynamic subscription table, durable), and ' +
-              'active (in-memory trie, a live cross-check only). Use this to confirm whether a node is actually ' +
-              'wired to receive a class of events, and to surface declared-vs-active drift. The durable layers ' +
-              'are the source of truth; the trie is never the answer. Defaults to this workflow run; pass ' +
-              '`nodeId` to scope to one node.',
+              'declared (static interests in the workflow definition, durable), persisted (the dynamic subscription ' +
+              'table, durable), and active (in-memory trie, a live cross-check only). Use this to confirm whether ' +
+              'a node is actually wired to receive a class of events, and to surface declared-vs-active drift. ' +
+              'The durable layers are the source of truth; the trie is never the answer. Defaults to this ' +
+              'workflow run; pass `nodeId` to scope to one node.',
             ListSubscriptionsSchema.shape,
             (args) => handlers.list_subscriptions(args)
           ),
