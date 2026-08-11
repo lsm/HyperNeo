@@ -1547,9 +1547,15 @@ export class SpaceRuntime {
     }
     let orphanActive = 0;
     for (const entry of active) {
+      // A static entry is "backed" only while the canonical task is non-terminal:
+      // on a done/archived/cancelled task the lifecycle clears static interests,
+      // so any surviving static entry is stale cleanup (counted as orphan) rather
+      // than a legitimate declared interest. Without this, a terminal task with a
+      // leftover static entry reads zero across every mismatch count.
       const backed =
         entry.subscriptionKind === 'static'
-          ? declaredKeys.has(subscriptionReconcileKey(entry.nodeId, entry.agentName, entry.topic))
+          ? staticMaterializable &&
+            declaredKeys.has(subscriptionReconcileKey(entry.nodeId, entry.agentName, entry.topic))
           : persistedKeys.has(
               subscriptionReconcileKey(entry.nodeId, entry.agentName, entry.topic, entry.taskId)
             );

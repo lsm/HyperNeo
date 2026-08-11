@@ -415,6 +415,29 @@ describe('SpaceRuntime.listSubscriptions', () => {
     expect(res.result.mismatches.declaredNotActive).toBe(0);
   });
 
+  test('a terminal task with a leftover static trie entry surfaces it as orphan', () => {
+    // Inverse of the P1 case: if the lifecycle cleanup misses a static entry on
+    // a terminal task, that stale entry must NOT be hidden — declaredNotActive
+    // stays suppressed (terminal), but the surviving entry is reclassified as
+    // orphan and counted so the drift is still visible.
+    const runtime = makeRuntime();
+    const { workflow, runId, taskId } = createRun({
+      coderInterests: [{ topic: 'github/owner/repo/issues/*' }],
+    });
+    runtime.registerRunInterests(runId, taskId, workflow.nodes);
+    // Mark terminal WITHOUT clearing the trie (simulates a failed/partial cleanup).
+    taskRepo.updateTask(taskId, { status: 'done' });
+
+    const res = runtime.listSubscriptions(runId, SPACE_ID);
+    expect(res.success).toBe(true);
+    if (!res.success) return;
+    expect(res.result.mismatches.declaredNotActive).toBe(0); // terminal → suppressed
+    expect(res.result.active).toHaveLength(1);
+    expect(res.result.active[0].subscriptionKind).toBe('static');
+    expect(res.result.active[0].source).toBe('orphan');
+    expect(res.result.mismatches.orphanActive).toBe(1);
+  });
+
   test('multiple static interests on the same slot do not collapse', () => {
     const runtime = makeRuntime();
     const { workflow, runId, taskId } = createRun({
