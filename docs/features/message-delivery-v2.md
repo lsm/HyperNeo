@@ -537,3 +537,24 @@ re-deliveries), so they do not duplicate `reconcileStrandedDeliveries`:
 
 Per the task's "remove only demonstrably redundant workarounds; retain
 Space-specific orchestration semantics," these are retained.
+
+### Reactivity scoping (review hardening)
+
+The retry signal makes `job_queue` a dependency of every transcript/task feed.
+To avoid every unrelated job (schedules, cleanup, polling, workflow) re-running
+all open feeds, the change notifiers are scoped:
+
+- `messageDeliveryProcessor.setChangeNotifier` notifies `job_queue` SESSION-scoped
+  (derived from the delivery job payload's `sessionId`), so only that session's
+  feed re-evaluates — the retry-signal reactivity stays correct.
+- The generic `JobQueueProcessor` (non-delivery lanes) passes the scope through
+  when a job payload carries `sessionId`/`taskId`; the app-level generic notifier
+  is a no-op for `job_queue` since no feed depends on it outside `message_delivery`.
+
+### Turn anchoring (full feed)
+
+The full `spaceTaskMessages.byTask` feed emits pending (deferred/enqueued/
+submitted) rows for their delivery badge, but only SETTLED (consumed/failed)
+user rows become `turnUserMessageId` sentinels — `saveUserMessageCore` withholds
+a conversation anchor until the row settles, and subsequent assistant rows must
+not inherit a pending prompt's id as their turn.

@@ -1087,6 +1087,56 @@ describe('NAMED_QUERY_REGISTRY', () => {
       }
     });
 
+    test('a pending user row does not become the turnId for subsequent assistant rows (full feed)', () => {
+      // Task #862 (review P2): the widened full feed emits a pending prompt, but
+      // it must NOT anchor a conversation turn — saveUserMessageCore withholds
+      // the anchor until consumed/failed. Subsequent assistant rows must keep
+      // inheriting the last SETTLED user row's id as turnUserMessageId.
+      const workflowRunId = 'wr-stm-sentinel';
+      const sessionIdValue = 'session-stm-sentinel';
+      const taskId = insertSpaceTask({
+        id: 'task-stm-sentinel',
+        workflowRunId,
+        status: 'in_progress',
+      });
+      sessionTaskIds.set(sessionIdValue, taskId);
+      const userPayload = (uuid: string) => ({
+        type: 'user',
+        uuid,
+        message: { role: 'user', content: 'x' },
+      });
+      // Settled anchor establishes the turn.
+      insertSdkMessageAt(
+        'anchor',
+        sessionIdValue,
+        now + 1000,
+        'user',
+        'consumed',
+        'human',
+        null,
+        userPayload('u-anchor')
+      );
+      // Pending prompt — emitted for its badge but not a turn sentinel.
+      insertSdkMessageAt(
+        'pending',
+        sessionIdValue,
+        now + 2000,
+        'user',
+        'enqueued',
+        'human',
+        null,
+        userPayload('u-pending')
+      );
+      // Assistant row produced after the pending prompt.
+      insertSdkMessageAt('assist', sessionIdValue, now + 3000, 'assistant', 'consumed', 'system');
+
+      const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask')!;
+      const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+      const assistRow = rows.find((r) => r.id === 'assist');
+      expect(assistRow).toBeTruthy();
+      expect(assistRow!.turnUserMessageId).toBe('anchor');
+    });
+
     test('actorMessages.byTask does not fan out SDK rows across node execution history', () => {
       const workflowRunId = 'wr-actor-sdk';
       const nodeSessionId = 'node-agent-actor-sdk';
