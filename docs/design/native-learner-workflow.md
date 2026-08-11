@@ -38,7 +38,7 @@ Add this preset to `seed-agents.ts`:
 | Handle | `learner` |
 | Family | Worker (`SpaceWorkerAgent`) |
 | Description | Operates goal-linked Forge learning cycles: evidence → episode → validated lessons and proposals. |
-| Tool profile | Inherit runtime defaults (`[]`) |
+| Tool profile | Learner-specific capability profile, enforced through filtered MCP servers |
 | Default model/thinking | Inherit the Space defaults; no Learner-specific provider contract |
 
 This is deliberately a **worker**, not a long-horizon agent:
@@ -51,7 +51,9 @@ A long-horizon `Product Quality Manager`, Coordinator, or future domain owner ma
 
 ### Tool surface
 
-The Learner needs the normal node terminal tools plus a **curated subset of the existing Space tools**. Initial implementation may inherit defaults, but capability-based provisioning should converge on this explicit list:
+The Learner needs the normal node terminal tools plus a **curated subset of the existing Space tools**. This is an enforced v1 capability boundary, not prompt guidance. An empty worker `toolProfile` is insufficient because `deriveWorkerDisallowedTools` only filters deniable built-ins and an empty profile leaves all Space MCP operations available (`packages/daemon/src/lib/space/agents/tool-policy.ts:22-31`).
+
+Add a Learner-specific MCP provisioning path in `TaskAgentManager`: construct filtered `space-agent` and `node-agent` servers whose registered tool names are limited to the allowlist below, and attach the ordinary agent-memory server. The workflow agent must not receive the unfiltered Space server in parallel. Unknown/new Space tools therefore remain denied until deliberately added to this profile.
 
 **Read/observe**
 
@@ -81,7 +83,7 @@ The Learner needs the normal node terminal tools plus a **curated subset of the 
 - `submit_for_approval` otherwise
 - `send_message` only for escalation, not a normal second-node handoff
 
-Do not grant scope creation/relinking or agent-assignment tools in the first version. A learning run may report `missing_scope` or request an owner decision, but it must not silently change the steering topology.
+The filtered servers must omit scope creation/relinking, agent-assignment, generic task creation, and every other Space mutation not listed above. A learning run may report `missing_scope` or request an owner decision, but it cannot silently change the steering topology. Prompt instructions remain defense in depth, not the authorization mechanism.
 
 ### Memory namespace
 
@@ -150,6 +152,7 @@ save_artifact({
   key: `episode:<episode-id>`,
   summary: '<one-sentence cycle outcome>',
   data: {
+    recommendation: '<accepted|dismissed|no_op>',
     goal_id: '<goal-id>',
     scope_id: '<scope-id>',
     episode_id: '<episode-id>',
@@ -165,7 +168,7 @@ save_artifact({
 });
 ```
 
-The artifact summarizes the cycle for workflow observability; Forge rows remain canonical.
+`data.recommendation` is required by the generic `decision` artifact validator. It records the terminal episode disposition (`accepted` or `dismissed`), or `no_op` when no episode is created. The artifact summarizes the cycle for workflow observability; Forge rows remain canonical.
 
 ## Trigger wiring
 
@@ -189,9 +192,11 @@ The task is the durable unit of work. The Learner selects the final episode evid
 
 ### Cursor semantics
 
-Do **not** advance the automation cursor when the task is merely created. Advance it only after the learning workflow reaches `done`, using the evidence actually committed to the accepted/dismissed episode. Otherwise a failed or human-rejected learning run would permanently consume evidence.
+Do **not** advance the automation cursor when the task is merely created. Advance it only after the learning workflow reaches `done`. The cursor remains a contiguous processed-prefix boundary: a completed cycle may advance it only through the greatest evidence position for which every preceding item is either included in that episode or explicitly recorded as examined and deferred to a durable next-cycle queue. It must never jump directly to the greatest selected evidence ID, because forcing trigger evidence beyond `maxEvidencePerEpisode` could otherwise strand the skipped prefix. A dismissed episode still counts as examined; a failed or human-rejected run does not advance the cursor.
 
-While a cycle for the same `(goal, scope, triggerKind, triggerKey)` is `open`, `in_progress`, `review`, or `approved`, coalesce subsequent trigger notifications into that task or leave them for the next cursor window. Preserve the existing completed-task active-lock/requeue behavior until the durable task key replaces the process-local lock.
+The trigger evidence must therefore be selected together with prefix evidence up to the cap. If the trigger lies beyond the cap, persist it on the task as priority evidence for a subsequent cycle rather than appending it across a gap. The implementation may instead introduce a gap-aware cursor with explicit pending ranges, but a scalar cursor is valid only with this prefix-extension rule.
+
+While a cycle for the same `(goal, scope, triggerKind, triggerKey)` is `open`, `in_progress`, `review`, `approved`, `blocked`, `rate_limited`, or `usage_limited`, coalesce subsequent trigger notifications into that task or persist them for the next cursor window. The deterministic automation-cycle key must treat all of those non-terminal states as active, so daemon restart and trigger retry cannot create a parallel cycle. Preserve the existing completed-task active-lock/requeue behavior until this durable-key check replaces the process-local lock.
 
 ### Manual runs
 
@@ -207,7 +212,7 @@ The workflow prompt must instruct the agent to execute this procedure, not merel
 2. Resolve `scopeId` from the task and verify it belongs to the goal.
 3. Read scope policy, metric definitions, timeline, evidence after the supplied cursor, prior metric snapshots, candidate/active lessons, and open/created proposals.
 4. Recall only scope-relevant Learner memory.
-5. Select a coherent evidence cluster, capped by `maxEvidencePerEpisode`; include the trigger evidence even when it falls beyond the initial cap.
+5. Select a coherent evidence cluster, capped by `maxEvidencePerEpisode`, while preserving a contiguous cursor prefix. Prioritize trigger evidence within that prefix; if it lies beyond the cap, durably defer it to the next cycle rather than skipping intervening evidence.
 6. If there is no new evidence, record a no-op decision artifact and complete without creating an empty episode.
 
 ### 2. Observe and measure
@@ -242,7 +247,9 @@ Every proposal must include:
 
 A proposal without both fields remains `proposed` and cannot be accepted or materialized into a task.
 
-Use a one-high-confidence-proposal-per-cycle default to limit self-generated work. Additional candidates may remain proposed for later review. `create_task_from_forge_proposal` is allowed only when policy/autonomy permits it and there is no duplicate active task.
+Use a one-high-confidence-proposal-per-cycle default to limit self-generated work. Additional candidates may remain proposed for later review. Proposal acceptance and task materialization are distinct authorities: level 2 may accept a proposal, but `create_task_from_forge_proposal` requires both Space autonomy level 3 or higher **and** `scope.policy.automation.createTasksFromAcceptedProposals === true`, plus the existing no-duplicate/idempotency checks.
+
+Enforce this in the `create_task_from_forge_proposal` MCP handler (or a shared evolution scope-policy service called by it), before `episodeService.createTaskFromProposal`. The check must read the proposal's scope and current Space autonomy; callers using any workflow receive the same policy. Return a structured authorization error when either condition is absent. Hiding the tool from the Learner profile when scope opt-in is false is useful UX but is not the security boundary.
 
 ### 5. Validate earlier proposals
 
@@ -270,7 +277,7 @@ Each completed validation produces or updates a lesson:
 
 ### 6. Roll up and finish
 
-1. Apply a concise goal rollup from the accepted episode: summary, metric deltas, progress only when evidence supports it, and next steps.
+1. If the episode is accepted, apply a concise goal rollup: summary, metric deltas, progress only when evidence supports it, and next steps. If it is dismissed, do **not** call `apply_forge_rollup`—the service rejects dismissed episodes. Preserve the dismissal reason in the episode and terminal artifact, leave goal state unchanged, and advance the cursor only under the contiguous-prefix rule above.
 2. Write only non-Forge operational heuristics to `learner/<scope-id>/...` memory.
 3. Save the terminal learning-cycle artifact.
 4. Call `approve_task` as the final action; if autonomy blocks it, call `submit_for_approval` instead.
@@ -336,19 +343,18 @@ A later generic workflow completion schema may formalize artifact expectations, 
 
 ## Implementation slices
 
-1. **Preset + workflow:** seed `Learner`; add `LEARNING_WORKFLOW`; export it; include it in built-in template hashing/restamping and tests.
-2. **Automation dispatch:** resolve the built-in workflow ID, create idempotent pinned learning tasks, move cursor advancement to successful terminal handling, and remove direct episode/review-task creation.
-3. **Learner prompt + tool policy:** implement the procedure and logical memory namespace; ensure regular node sessions can reach the required existing Forge tools.
+1. **Preset + workflow:** seed `Learner`; add `LEARNING_WORKFLOW`; export it; include it in built-in template hashing/restamping and tests. Add a migration following the existing preset-agent backfill pattern (for example m170/m172): insert the Learner preset into every existing Space idempotently **before** workflow restamping runs. This ordering is required because `seedBuiltInWorkflows` resolves template agent names and otherwise skips or throws when `Learner` is absent. Space-creation seeding alone does not update existing Spaces.
+2. **Automation dispatch:** resolve the built-in workflow ID, create idempotent pinned learning tasks, advance a contiguous cursor prefix only from successful terminal handling, coalesce every non-terminal/paused state, and remove direct episode/review-task creation.
+3. **Learner prompt + tool policy:** implement the procedure and logical memory namespace; provision filtered Space/node MCP servers with the explicit allowlist, and add the handler-level autonomy plus scope-policy gate for proposal materialization.
 4. **Validation model:** migrate proposal expectation/verification fields and add proposal-validation repository/service/MCP operations; feed validations to episode judging.
-5. **Tests:** trigger-to-pinned-task tests for all three trigger kinds; single-node no-route completion at autonomy 2; level-1 submit-for-approval; retry/cursor idempotency; proposal acceptance guard; effective/ineffective/superseded lesson linkage; no PR artifact/hook dependency.
+5. **Tests:** migration of an existing Space before workflow restamping; trigger-to-pinned-task tests for all three trigger kinds; single-node no-route completion at autonomy 2; level-1 submit-for-approval; cursor gap preservation when trigger evidence lies beyond the cap; retry/idempotency and coalescing in blocked/rate-limited/usage-limited states; tool allowlist denial; proposal materialization autonomy/scope-policy guards; accepted rollup and dismissed no-rollup paths; effective/ineffective/superseded lesson linkage; no PR artifact/hook dependency.
 
 ## Open owner decisions
 
-1. **Automatic task materialization:** Should autonomy level 2 allow the Learner to call `create_task_from_forge_proposal`, or should that require level 3/a scope policy opt-in? Recommendation: level 2 may accept proposals, but task materialization requires an explicit scope-policy opt-in such as `automation.createTasksFromAcceptedProposals`.
-2. **One proposal per cycle:** Recommendation: default maximum one newly accepted/materialized proposal, configurable in scope policy; unlimited candidate proposals may remain `proposed`.
-3. **Memory isolation timing:** Is the logical `learner/<scope-id>/` namespace sufficient for N1, or must repository-enforced agent ownership land first? Recommendation: ship logical namespacing with an explicit non-security warning; make enforced namespaces a separate migration.
-4. **Superseded lessons:** Recommendation: do not force every superseded validation into a lesson; only create one when the replacement yields a reusable rule.
-5. **Automation migration:** Existing pending automation review tasks should finish on their pinned/current workflow; only newly queued cycles use `learning-workflow`. Do not rewrite active tasks in place.
+1. **One proposal per cycle:** Recommendation: default maximum one newly accepted/materialized proposal, configurable in scope policy; unlimited candidate proposals may remain `proposed`.
+2. **Memory isolation timing:** Is the logical `learner/<scope-id>/` namespace sufficient for N1, or must repository-enforced agent ownership land first? Recommendation: ship logical namespacing with an explicit non-security warning; make enforced namespaces a separate migration.
+3. **Superseded lessons:** Recommendation: do not force every superseded validation into a lesson; only create one when the replacement yields a reusable rule.
+4. **Automation migration:** Existing pending automation review tasks should finish on their pinned/current workflow; only newly queued cycles use `learning-workflow`. Do not rewrite active tasks in place.
 
 ## Conclusion
 
