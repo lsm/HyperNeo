@@ -32,6 +32,7 @@ import {
   markRefreshAttemptedFor,
 } from '../model-service.js';
 import { getProviderRegistry } from '../providers/registry.js';
+import { deliverAndMarkQueued, isMessageDeliveryV2Enabled } from '../agent/message-delivery';
 import {
   archiveSDKSessionFiles,
   deleteSDKSessionFiles,
@@ -1289,7 +1290,23 @@ export function setupSessionHandlers(
       status: 'enqueued',
     });
 
-    await agentSession.startQueryAndEnqueue(message.uuid, replayContent);
+    if (isMessageDeliveryV2Enabled()) {
+      // Durable: route the promoted message through the durable owner via the
+      // queued-marker wrapper — the handler drives it as a turn/steer with the
+      // full at-least-once + synchronous-consumed-flip guarantees, and the
+      // queued marker is set for a turn so a concurrent `deliveryMode:'defer'`
+      // send isn't mis-converted to immediate (a steer) while this job waits to
+      // be claimed. (Codex review.) Idempotent via getActiveDeliveryRole.
+      await deliverAndMarkQueued({
+        jobQueue: db.getJobQueueRepo(),
+        stateManager: agentSession.stateManager,
+        sessionId: targetSessionId,
+        messageUuid: message.uuid,
+        origin: 'chat',
+      });
+    } else {
+      await agentSession.startQueryAndEnqueue(message.uuid, replayContent);
+    }
 
     return {
       promoted: true,

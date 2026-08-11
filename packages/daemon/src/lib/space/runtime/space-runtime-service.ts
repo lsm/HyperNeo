@@ -53,6 +53,7 @@ import type { AgentSession } from '../../agent/agent-session';
 import {
   awaitDeliveryConsumption,
   deliverAndMarkQueued,
+  deliveryConsumptionTimeoutMs,
   isMessageDeliveryV2Enabled,
 } from '../../agent/message-delivery';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
@@ -649,6 +650,10 @@ export class SpaceRuntimeService {
       // else (enqueued/deferred/submitted): row exists; just (re-)enqueue —
       // deliverMessage dedups the active job via getActiveDeliveryRole. Enqueue
       // + mark queued as one per-session critical section (deliverAndMarkQueued).
+      // The save→enqueue window here is small (same async call) and any
+      // saved-but-not-enqueued row is recovered by the session-level orphan
+      // reconciler (task #861 item 4); the transactional outbox is applied at
+      // the ordinary-chat chokepoint where the gap is dominant.
       //
       // Await SDK consumption (onSent) before returning — callers
       // (flushLongTermAgentInbox / deliverLongHorizonExternalEvent) thus confirm
@@ -659,6 +664,9 @@ export class SpaceRuntimeService {
       await awaitDeliveryConsumption({
         sessionId,
         messageUuid: id,
+        // ACP's consume boundary is acceptance (minutes) — size the wait so a
+        // fresh ACP delivery isn't terminalized mid-run. (Codex P1.)
+        timeoutMs: deliveryConsumptionTimeoutMs(session.getSessionData?.().config?.provider),
         deliver: () =>
           deliverAndMarkQueued({
             jobQueue: reactiveDb.getJobQueueRepo(),
@@ -2235,7 +2243,7 @@ export class SpaceRuntimeService {
     const sessionManager = this.config.sessionManager;
     if (!sessionManager) return;
     const session = await sessionManager.getSessionAsync(longTermAgentSessionId(spaceId, agentId));
-    if (!session || session.getSessionData().config.provider === undefined) return;
+    if (!session || session.getSessionData?.().config?.provider === undefined) return;
     await session.updateConfig({ provider: undefined });
   }
 
