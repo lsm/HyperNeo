@@ -5827,7 +5827,31 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     expect(parsed.success).toBe(true);
     expect(parsed.task.status).toBe('done');
     expect(parsed.task.result).toBe('Diagnostic: no regression found in CI shard 4.');
+    // setTaskStatus does not stamp approval metadata on in_progress→done; the
+    // handler stamps it via a follow-up update so the terminal task records its
+    // agent-completion (audit parity with the review→done path).
+    expect(parsed.task.approvalSource).toBe('agent');
+    expect(ctx.taskRepo.getTask(taskId)?.approvalSource).toBe('agent');
+    expect(ctx.taskRepo.getTask(taskId)?.approvedAt).not.toBeNull();
     expect(ctx.taskRepo.getTask(taskId)?.status).toBe('done');
+  });
+
+  test('completes a workflow-backed task whose run has no PR (real no-PR resolution)', async () => {
+    // A workflow-backed task with no primary-link artifact: getApprovedPrUrlForRun
+    // returns '' organically (no spyOn), so the no-PR guard is exercised for real.
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const task = createWorkflowTask(5, { status: 'in_progress' });
+
+    const result = await makeHandlers(ctx).complete_validation_task({
+      task_id: task.id,
+      validation_outcome: 'Reviewed Forge scope; no PR involved.',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.task.status).toBe('done');
+    expect(parsed.task.result).toBe('Reviewed Forge scope; no PR involved.');
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('done');
   });
 
   test('rejects when space autonomy is below workflow completionAutonomyLevel', async () => {
@@ -5860,6 +5884,39 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     expect(parsed.success).toBe(true);
     expect(parsed.task.status).toBe('done');
     expect(parsed.task.result).toBe('Validation passed; no code change required.');
+  });
+
+  test('rejects via the agent autonomy ceiling when a long-horizon agent is capped below the space level', async () => {
+    // Space level 5 would permit completion, but the calling long-horizon agent
+    // is capped at level 3 → the agent ceiling binds (3 < 5) and the distinct
+    // ceiling error message + audit reason fire.
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const caller = ctx.longHorizonAgentRepo.create({
+      spaceId: ctx.spaceId,
+      handle: 'capped-forge-agent',
+      displayName: 'Capped Forge Agent',
+      autonomyLevel: 3,
+    });
+    const task = createWorkflowTask(5);
+    const auditRepo = new McpAuditLogRepository(ctx.db);
+
+    const result = await makeHandlers(ctx, {
+      myAgentId: caller.id,
+      auditLogRepo: auditRepo,
+    }).complete_validation_task({
+      task_id: task.id,
+      validation_outcome: 'validated',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('agent autonomy ceiling 3');
+    expect(parsed.error).toContain('space 5');
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
+
+    // The ceiling block writes an attributable audit entry.
+    const entries = auditRepo.listByTask(task.id);
+    expect(entries.some((e) => e.toolName === 'complete_validation_task')).toBe(true);
   });
 
   test('rejects a task whose workflow run already has a PR', async () => {

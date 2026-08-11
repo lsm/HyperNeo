@@ -3446,24 +3446,36 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
      * expects a PR; this tool is the escape hatch for tasks that legitimately
      * produce none (#485 built the path; this exposes it to agents).
      *
+     * Audience: the Space leader (coordinator) and long-horizon/member sessions
+     * — the agents that hold `space-agent-tools`. Workflow node agents (coder,
+     * reviewer, QA) get `node-agent-tools`, not this tool, so its completion
+     * surface is intentionally separate from the PR-oriented node path.
+     *
      * It complements, rather than duplicates, the other completion tools:
      *   - `approve_task` closes a task already in `review` (PR-oriented).
      *   - `approve_pending_completion` is the human-approval review→approved path.
      *   - Neither is reachable for a no-code task that never produced a PR.
      *
-     * Guards (mirroring `approve_task`):
+     * Guards (order is load-bearing — autonomy runs before any task-state
+     * reveal, mirroring `approve_task`):
      *   - Task must belong to this space.
-     *   - Task must be `review` or `in_progress` (the non-terminal statuses from
-     *     which a no-code task is eligible to close).
-     *   - Task must NOT have a PR: if its workflow run has a primary link
-     *     (`runtime.getApprovedPrUrlForRun`), it is PR-bound and must use the
-     *     normal approve/merge path — this tool never bypasses PR review.
      *   - Autonomy-gated to the workflow's `completionAutonomyLevel` (default 5)
-     *     — the same capability-vs-autonomy framing as `approve_task`.
+     *     — the same capability-vs-autonomy framing as `approve_task`. The gate
+     *     runs BEFORE the status/no-PR checks so a task's status or PR URL is
+     *     never surfaced to a caller below the threshold.
+     *   - Task must be `review` or `in_progress`. `in_progress` is intentionally
+     *     eligible (Forge review tasks complete while still in_progress); the
+     *     autonomy gate is the control.
+     *   - No-PR: a workflow-backed task whose run has a primary link (PR) is
+     *     PR-bound and must use the normal approve/merge path. A task with no
+     *     workflow run (standalone — the common Forge self_nag/review shape) is
+     *     no-PR by definition and eligible.
      *
      * The validation outcome is captured as `task.result`; `approvalSource` is
-     * stamped `'agent'` (effective on review→done; recorded in the audit log
-     * regardless of the source status).
+     * stamped `'agent'` on every path — for `review → done` `setTaskStatus`
+     * stamps it; for `in_progress → done` this handler stamps it via a follow-up
+     * update (setTaskStatus only stamps approval metadata on review→done /
+     * →approved / approved→done).
      */
     async complete_validation_task(args: {
       task_id: string;
@@ -3489,32 +3501,12 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         });
       }
 
-      // Eligibility: only `review` and `in_progress` may close via the
-      // validation-only path. `open` has produced no work to validate; terminal
-      // statuses are already closed.
-      if (task.status !== 'review' && task.status !== 'in_progress') {
-        return jsonResult({
-          success: false,
-          error: `Task is in '${task.status}' status. complete_validation_task only applies to tasks in 'review' or 'in_progress' that complete without a PR.`,
-        });
-      }
-
-      // No-PR guard: if the task's workflow run has a primary link (PR), the
-      // task is PR-bound and must close through the normal approve/merge path.
-      // This tool is exclusively the no-PR path — it must never bypass PR review.
-      if (task.workflowRunId) {
-        const prUrl = runtime.getApprovedPrUrlForRun(task.workflowRunId);
-        if (prUrl) {
-          return jsonResult({
-            success: false,
-            error: `Task ${args.task_id} has a PR (${prUrl}); validation-only completion is for no-PR tasks. Use approve_task (if in review) or the normal PR merge path instead.`,
-          });
-        }
-      }
-
-      // Autonomy gate — mirrors `approve_task`. Resolve the workflow's
-      // completionAutonomyLevel (default 5) and reject when effective autonomy
-      // (min(space, agent-ceiling)) is below it.
+      // Autonomy gate FIRST — mirrors `approve_task`'s ordering. Resolve the
+      // workflow's completionAutonomyLevel (default 5) and reject when effective
+      // autonomy (min(space, agent-ceiling)) is below it. Running this before the
+      // status/no-PR checks avoids leaking a task's status or PR URL to a caller
+      // below the threshold. Both the agent-ceiling and space-level blocks log
+      // an audit entry so every rejection is attributable.
       const space = config.spaceManager ? await config.spaceManager.getSpace(spaceId) : null;
       const spaceLevel =
         space?.autonomyLevel ?? (getSpaceAutonomyLevel ? await getSpaceAutonomyLevel(spaceId) : 1);
@@ -3532,31 +3524,52 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
 
       if (currentLevel < completionAutonomyLevel) {
-        if (isAgentCeilingBinding(spaceLevel, agentLevel)) {
-          logAudit(
-            'complete_validation_task',
-            {
-              blocked: true,
-              reason: 'agent_autonomy_ceiling',
-              agentLevel,
-              spaceLevel,
-              required: completionAutonomyLevel,
-            },
-            args.task_id
-          );
-          return jsonResult({
-            success: false,
-            error: `complete_validation_task not permitted: agent autonomy ceiling ${agentLevel} (space ${spaceLevel}) < workflow completionAutonomyLevel ${completionAutonomyLevel}. Request human approval.`,
-          });
-        }
+        const ceilingBinding = isAgentCeilingBinding(spaceLevel, agentLevel);
+        logAudit(
+          'complete_validation_task',
+          {
+            blocked: true,
+            reason: ceilingBinding ? 'agent_autonomy_ceiling' : 'space_autonomy',
+            agentLevel,
+            spaceLevel,
+            required: completionAutonomyLevel,
+          },
+          args.task_id
+        );
         return jsonResult({
           success: false,
-          error: `complete_validation_task not permitted: space autonomy level ${spaceLevel} < workflow completionAutonomyLevel ${completionAutonomyLevel}. Request human approval.`,
+          error: ceilingBinding
+            ? `complete_validation_task not permitted: agent autonomy ceiling ${agentLevel} (space ${spaceLevel}) < workflow completionAutonomyLevel ${completionAutonomyLevel}. Request human approval.`
+            : `complete_validation_task not permitted: space autonomy level ${spaceLevel} < workflow completionAutonomyLevel ${completionAutonomyLevel}. Request human approval.`,
         });
       }
 
+      // Eligibility: only `review` and `in_progress` may close via the
+      // validation-only path. `open` has produced no work to validate; terminal
+      // statuses are already closed.
+      if (task.status !== 'review' && task.status !== 'in_progress') {
+        return jsonResult({
+          success: false,
+          error: `Task is in '${task.status}' status. complete_validation_task only applies to tasks in 'review' or 'in_progress' that complete without a PR.`,
+        });
+      }
+
+      // No-PR guard: a workflow-backed task whose run has a primary link (PR) is
+      // PR-bound and must close through the normal approve/merge path. A task
+      // with no workflow run (standalone) is no-PR by definition and eligible —
+      // this is the common Forge self_nag/review shape.
+      if (task.workflowRunId) {
+        const prUrl = runtime.getApprovedPrUrlForRun(task.workflowRunId);
+        if (prUrl) {
+          return jsonResult({
+            success: false,
+            error: `Task ${args.task_id} has a PR (${prUrl}); validation-only completion is for no-PR tasks. Use approve_task (if in review) or the normal PR merge path instead.`,
+          });
+        }
+      }
+
       try {
-        const updated = await taskManager.setTaskStatus(args.task_id, 'done', {
+        let updated = await taskManager.setTaskStatus(args.task_id, 'done', {
           result: outcome,
           approvalSource: 'agent',
           approvalReason: args.reason,
@@ -3564,6 +3577,19 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
           },
         });
+
+        // setTaskStatus only stamps approvalSource/approvalReason/approvedAt on
+        // review→done / →approved / approved→done. For an in_progress→done
+        // validation completion, stamp them explicitly so the terminal task
+        // always records that it was agent-completed (audit parity with the
+        // review→done path that approve_task takes).
+        if (task.status === 'in_progress') {
+          updated = await taskManager.updateTask(args.task_id, {
+            approvalSource: 'agent',
+            approvalReason: args.reason ?? null,
+            approvedAt: Date.now(),
+          });
+        }
 
         // Best-effort goal terminal handling — must not block completion.
         try {
