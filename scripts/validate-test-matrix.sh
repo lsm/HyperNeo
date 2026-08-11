@@ -90,6 +90,19 @@ for shard in "${SHARDS[@]}"; do
 	done < <(shard_paths "$shard")
 done
 
+# Every SHARDS entry must also appear in the ACTIVE CI unit matrix. A shard that
+# runs locally via test-daemon.sh but is absent from CI would make this guard
+# falsely report its files as covered (this is how `shared` — 25 files under
+# packages/shared/tests — was silently skipped before being added to the matrix).
+unit_matrix=$(grep -E "^[[:space:]]*shard:[[:space:]]*\[" "$REPO_ROOT/.github/workflows/main.yml" \
+	| head -n1 | sed -E 's/.*\[//; s/\].*//' | tr ',' '\n' | tr -d ' ')
+for shard in "${SHARDS[@]}"; do
+	if ! printf '%s\n' "$unit_matrix" | grep -qxF "$shard"; then
+		err "daemon unit shard '$shard' is declared in test-daemon.sh SHARDS but missing from the CI unit matrix"
+		echo "     → add it to the test-daemon-shared-unit matrix in .github/workflows/main.yml (or drop it from SHARDS)" >&2
+	fi
+done
+
 # Assert every unit/shared test file on disk is covered by exactly one shard.
 unit_disk=$(
 	find "$UNIT_ROOT" "$SHARED_ROOT" -type f \( -name '*.test.ts' -o -name '*_test.ts' \) |
@@ -130,17 +143,33 @@ if [ -z "$include_line" ] \
 	echo "     → keep the include rooted at src/** spanning {test,spec}, or update this validator" >&2
 fi
 
+# Web test files outside the src/** include are not run by web CI. Each must be
+# under src/ or listed in WEB_EXEMPT (with a reason), or it is flagged — none is
+# silently ignored.
+WEB_EXEMPT=(
+	# pre-existing orphan: imports `bun:test` (web Vitest has no bun:test shim)
+	# and sits outside src/. Migration tracked separately.
+	"packages/web/tests/file-utils.test.ts"
+)
 web_count=0
 while IFS= read -r f; do
 	web_count=$((web_count + 1))
 	rel="${f#"$REPO_ROOT"/}"
 	case "$rel" in
-	packages/web/src/*) ;;  # covered by the src/** glob
-	*) err "web test file outside the src/ include root (not run by web CI): $rel" ;;
+	packages/web/src/*) ;;  # covered by the src/** include glob
+	*)
+		exempt=0
+		for e in "${WEB_EXEMPT[@]}"; do [ "$rel" = "$e" ] && exempt=1 && break; done
+		if [ "$exempt" -ne 1 ]; then
+			err "web test file outside the src/ include root (not run by web CI): $rel"
+			echo "     → move it under src/, or add it to WEB_EXEMPT with a reason" >&2
+		fi
+		;;
 	esac
-done < <(find "$WEB_SRC" -type f \( -name '*.test.ts' -o -name '*.test.tsx' \
-	-o -name '*.spec.ts' -o -name '*.spec.tsx' \) | sort)
-echo "web: $web_count test file(s) under src/"
+done < <(find "$REPO_ROOT/packages/web" -type d \( -name node_modules -o -name dist \) -prune -o \
+	-type f \( -name '*.test.ts' -o -name '*.test.tsx' \
+	-o -name '*.spec.ts' -o -name '*.spec.tsx' \) -print | sort)
+echo "web: $web_count test file(s) in packages/web/ (${#WEB_EXEMPT[@]} exempt outside src/)"
 
 # ===========================================================================
 # 3. DAEMON ONLINE TESTS  (CI matrices: main.yml + real-api-tests.yml)
@@ -293,18 +322,36 @@ check_split_module "space" "$MAIN_WORKFLOW" "${SPACE_FILES[@]}"
 #               credential issue (commented out in main.yml)
 #   sandbox   : disabled — not wired to a CI matrix shard
 EXEMPT_DIRS="benchmark glm providers sandbox"
+# Split modules are checked file-by-file above via check_split_module (explicit
+# file lists); skip them here so a directory isn't double-judged.
+SPLIT_DIRS="rpc room features providers cross-provider rewind space"
 for dir in "$ONLINE_DIR"/*/; do
 	[ -d "$dir" ] || continue
 	dirname=$(basename "$dir")
-	if [[ " $EXEMPT_DIRS " == *" $dirname "* ]]; then
+	if [[ " $EXEMPT_DIRS " == *" $dirname "* ]] || [[ " $SPLIT_DIRS " == *" $dirname "* ]]; then
 		continue
 	fi
-	refs=$(grep -hE "tests/online/$dirname\b" "$MAIN_WORKFLOW" "$REAL_API_WORKFLOW" 2>/dev/null \
+	# A directory-level reference (test_path: tests/online/<dir>) covers every
+	# file under it. Match tests/online/<dir> NOT followed by a character that
+	# could extend the dir name ('/', alnum, '-', '_'), so a reference to
+	# tests/online/rpc-foo is not mistaken for tests/online/rpc, and a file-level
+	# path like tests/online/agent/<file> is not mistaken for the whole dir.
+	dir_refs=$(grep -hE "tests/online/$dirname([^/[:alnum:]_-]|$)" "$MAIN_WORKFLOW" "$REAL_API_WORKFLOW" 2>/dev/null \
 		| grep -cvE '^[[:space:]]*#')
-	if [ "${refs:-0}" -eq 0 ]; then
-		err "online module directory '$dirname' has no active CI reference"
-		echo "     → add it to a matrix in $MAIN_WORKFLOW (or to EXEMPT_DIRS if intentionally disabled)" >&2
+	if [ "${dir_refs:-0}" -gt 0 ]; then
+		continue
 	fi
+	# No directory-level reference: each file needs its own active reference,
+	# so a single-file module (e.g. agent) can't hide an uncovered sibling.
+	while IFS= read -r f; do
+		fname=$(basename "$f")
+		file_refs=$(grep -hF "tests/online/$dirname/$fname" "$MAIN_WORKFLOW" "$REAL_API_WORKFLOW" 2>/dev/null \
+			| grep -cvE '^[[:space:]]*#')
+		if [ "${file_refs:-0}" -eq 0 ]; then
+			err "online test not covered by any active CI shard: tests/online/$dirname/$fname"
+			echo "     → add it to a matrix in $MAIN_WORKFLOW (or to EXEMPT_DIRS if the module is disabled)" >&2
+		fi
+	done < <(find "$dir" -name "*.test.ts" -type f | sort)
 done
 
 # ===========================================================================
