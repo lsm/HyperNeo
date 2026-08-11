@@ -210,6 +210,16 @@ export class EvolutionEpisodeService {
     return { episode, lessons, proposals, preflight: input.preflight };
   }
 
+  /**
+   * Score the evidence-quality preflight for a selection without running the
+   * episode judge. Callers (e.g. goal-automation) use this to decide whether a
+   * retrospective is worth a judge call at all. Computes the same preflight
+   * {@link createFromEvidence} would, so the two never disagree.
+   */
+  preflightEvidence(params: CreateEpisodeFromEvidenceParams): EvidenceQualityPreflight {
+    return this.buildEpisodeInput(params).preflight;
+  }
+
   buildEpisodeInput(params: CreateEpisodeFromEvidenceParams): EpisodeJudgePromptInput {
     const scope = this.requireScope(params.scopeId);
     const requestedIds = new Set(params.evidenceIds);

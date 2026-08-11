@@ -456,7 +456,8 @@ export type SpaceGoalEventType =
   | 'task_triggered'
   | 'task_queued'
   | 'task_terminal'
-  | 'schedule_updated';
+  | 'schedule_updated'
+  | 'automation_noop';
 
 export type SpaceGoalEventSource =
   | 'rpc'

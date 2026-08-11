@@ -931,6 +931,10 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // definition-version pinning, M182 for the message-delivery-v2 active-turn
   // index, and M183 for the sdk_messages.send_status widen.)
   run(migrationMarkerKey(184), () => runMigration184(db));
+
+  // Migration 185: Widen space_goal_events.event_type CHECK to include
+  // 'automation_noop' for self_nag low-evidence no-op notes (#919).
+  run(migrationMarkerKey(185), () => runMigration185(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -8027,6 +8031,71 @@ export function runMigration183(db: BunDatabase): void {
     db.exec(`INSERT INTO sdk_messages_m182_new (${quoted}) SELECT ${quoted} FROM sdk_messages`);
     db.exec('DROP TABLE sdk_messages');
     db.exec('ALTER TABLE sdk_messages_m182_new RENAME TO sdk_messages');
+    for (const object of objects) db.exec(object.sql);
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  } finally {
+    db.exec(`PRAGMA foreign_keys = ${foreignKeys === 0 ? 'OFF' : 'ON'}`);
+  }
+}
+
+/**
+ * Migration 185: Widen `space_goal_events.event_type` CHECK to include
+ * 'automation_noop'.
+ *
+ * Background: the self_nag goal-automation retrospective (#919) now records a
+ * lightweight no-op note on the goal when the evidence-quality preflight flags
+ * thin, process-level evidence, instead of spending an episode-judge call. That
+ * note uses a dedicated 'automation_noop' event type so the goal timeline can
+ * distinguish it from genuine state changes. SQLite cannot ALTER a CHECK
+ * constraint directly, so we recreate the table (same pattern as M183).
+ *
+ * Idempotent: a no-op when the table is absent or the CHECK already permits
+ * 'automation_noop'.
+ */
+export function runMigration185(db: BunDatabase): void {
+  if (!tableExists(db, 'space_goal_events')) return;
+  const tableSql = tableCreateSql(db, 'space_goal_events');
+  if (!tableSql || tableSql.includes("'automation_noop'")) return;
+
+  const objects = db
+    .prepare(`SELECT type, name, sql FROM sqlite_master
+      WHERE tbl_name = 'space_goal_events' AND type IN ('index', 'trigger') AND sql IS NOT NULL`)
+    .all() as Array<{ type: string; name: string; sql: string }>;
+  const widenedSql = tableSql
+    .replace(
+      /CREATE TABLE(?: IF NOT EXISTS)?\s+["'`[]?space_goal_events["'`\]]?/i,
+      'CREATE TABLE space_goal_events_m185_new'
+    )
+    .replace(
+      /CHECK\s*\(event_type IN \('created', 'updated', 'status_changed', 'task_triggered', 'task_queued', 'task_terminal', 'schedule_updated'\)\)/,
+      "CHECK(event_type IN ('created', 'updated', 'status_changed', 'task_triggered', 'task_queued', 'task_terminal', 'schedule_updated', 'automation_noop'))"
+    );
+  if (widenedSql === tableSql) return;
+
+  const columns = db.prepare(`PRAGMA table_xinfo('space_goal_events')`).all() as Array<{
+    name: string;
+    hidden: number;
+  }>;
+  const storedColumns = columns
+    .filter((column) => column.hidden === 0)
+    .map((column) => column.name);
+  const quoted = storedColumns.map((name) => `"${name.replaceAll('"', '""')}"`).join(', ');
+  const foreignKeys = (
+    db.prepare(`PRAGMA foreign_keys`).get() as { foreign_keys: number } | undefined
+  )?.foreign_keys;
+
+  db.exec('PRAGMA foreign_keys = OFF');
+  db.exec('BEGIN');
+  try {
+    db.exec(widenedSql);
+    db.exec(
+      `INSERT INTO space_goal_events_m185_new (${quoted}) SELECT ${quoted} FROM space_goal_events`
+    );
+    db.exec('DROP TABLE space_goal_events');
+    db.exec('ALTER TABLE space_goal_events_m185_new RENAME TO space_goal_events');
     for (const object of objects) db.exec(object.sql);
     db.exec('COMMIT');
   } catch (error) {

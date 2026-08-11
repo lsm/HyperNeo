@@ -133,6 +133,8 @@ export { runMigration166 } from './migrations';
 export { runMigration170 } from './migrations';
 // knip-ignore-next-line
 export { runMigration174 } from './migrations';
+// knip-ignore-next-line
+export { runMigration185 } from './migrations';
 
 /**
  * Create all database tables and initialize defaults
@@ -457,7 +459,7 @@ export function createTables(db: BunDatabase): void {
 	        space_id TEXT NOT NULL,
 	        goal_id TEXT NOT NULL,
 	        event_type TEXT NOT NULL
-	          CHECK(event_type IN ('created', 'updated', 'status_changed', 'task_triggered', 'task_queued', 'task_terminal', 'schedule_updated')),
+	          CHECK(event_type IN ('created', 'updated', 'status_changed', 'task_triggered', 'task_queued', 'task_terminal', 'schedule_updated', 'automation_noop')),
 	        source TEXT NOT NULL
 	          CHECK(source IN ('rpc', 'space_agent_tool', 'workflow_node_agent', 'scheduler', 'system')),
 	        source_task_id TEXT,

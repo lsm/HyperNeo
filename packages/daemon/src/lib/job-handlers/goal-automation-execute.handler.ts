@@ -1,8 +1,15 @@
 import type { Database as BunDatabase } from '../../storage/sqlite-compat';
-import type { EvidenceRef, GoalForgeAutomationTriggerKind, SpaceTask } from '@hyperneo/shared';
+import type {
+  EvidenceQualityPreflight,
+  EvidenceRef,
+  GoalForgeAutomationTriggerKind,
+  SpaceGoal,
+  SpaceTask,
+} from '@hyperneo/shared';
 import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';
 import type { GoalAutomationCursorRepository } from '../../storage/repositories/goal-automation-cursor-repository';
+import type { SpaceGoalEventRepository } from '../../storage/repositories/space-goal-event-repository';
 import type { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
 import type { EvolutionEpisodeService } from '../space/evolution-episode-service';
@@ -54,7 +61,18 @@ export interface GoalAutomationExecuteDeps {
   taskRepo: SpaceTaskRepository;
   evolutionRepo: EvolutionRepository;
   cursorRepo: GoalAutomationCursorRepository;
-  episodeService: Pick<EvolutionEpisodeService, 'createFromEvidence'>;
+  episodeService: Pick<EvolutionEpisodeService, 'createFromEvidence'> & {
+    /**
+     * Optional evidence-quality preflight. When wired, self_nag ticks skip the
+     * episode judge + review task on thin, process-level evidence and record a
+     * no-op note on the goal instead. Production always wires this.
+     */
+    preflightEvidence?: (params: {
+      scopeId: string;
+      evidenceIds: string[];
+    }) => EvidenceQualityPreflight;
+  };
+  goalEventRepo?: Pick<SpaceGoalEventRepository, 'create'>;
   taskCreatedEventHub?: {
     publish: (event: string, data: Record<string, unknown>) => Promise<unknown>;
   };
@@ -75,7 +93,8 @@ export interface GoalAutomationExecuteResult extends Record<string, unknown> {
     | 'no_evidence'
     | 'below_threshold'
     | 'active_review'
-    | 'disabled';
+    | 'disabled'
+    | 'low_evidence_noop';
   requeued?: boolean;
 }
 
@@ -137,6 +156,37 @@ export async function handleGoalAutomationExecute(
     activeAutomationLocks.add(lock);
   }
 
+  // self_nag: skip no-op episodes on thin, process-level evidence. When the
+  // preflight is low-confidence AND the selection carries no substantive
+  // task/artifact/metric signal (only status notes / empty traces), record a
+  // lightweight no-op note on the goal and advance the cursor without spending
+  // an episode-judge call or creating a review task. Genuine evidence still
+  // produces an episode. Honors the goal guardrail: "if evidence is
+  // insufficient, finish without inventing work." (#919)
+  if (payload.triggerKind === 'self_nag' && deps.episodeService.preflightEvidence) {
+    const preflight = deps.episodeService.preflightEvidence({
+      scopeId: scope.id,
+      evidenceIds: evidence.map((item) => item.id),
+    });
+    if (shouldSkipSelfNagNoOp(preflight)) {
+      runWriteTransaction(deps, () => {
+        recordSelfNagNoOpNote(deps, goal, preflight);
+        advanceCursor(deps, payload, evidence, goal.spaceId, null, {
+          skipReason: 'low_evidence_noop',
+        });
+      });
+      return {
+        goalId: goal.id,
+        scopeId: scope.id,
+        episodeId: null,
+        reviewTaskId: null,
+        evidenceCount: evidence.length,
+        skipped: true,
+        skipReason: 'low_evidence_noop',
+      };
+    }
+  }
+
   try {
     let episodeEvidence = evidence;
     if (triggerEvidence && payload.triggerKind === 'completed_task_threshold') {
@@ -159,8 +209,9 @@ export async function handleGoalAutomationExecute(
         deps,
         payload,
         cursorEvidence,
-        existingAutomation.reviewTask,
-        existingAutomation.episodeId
+        existingAutomation.reviewTask.spaceId,
+        existingAutomation.episodeId,
+        { reviewTaskId: existingAutomation.reviewTask.id }
       );
       return {
         goalId: goal.id,
@@ -186,7 +237,9 @@ export async function handleGoalAutomationExecute(
         episodeEvidence,
         payload
       );
-      advanceCursor(deps, payload, cursorEvidence, reviewTask, episodeResult.episode.id);
+      advanceCursor(deps, payload, cursorEvidence, reviewTask.spaceId, episodeResult.episode.id, {
+        reviewTaskId: reviewTask.id,
+      });
       return reviewTask;
     });
     const reviewTask = writeResult;
@@ -400,8 +453,9 @@ function advanceCursor(
   deps: GoalAutomationExecuteDeps,
   payload: GoalAutomationExecutePayload,
   evidence: EvidenceRef[],
-  reviewTask: SpaceTask,
-  episodeId: string
+  spaceId: string,
+  episodeId: string | null,
+  context: { reviewTaskId?: string | null; skipReason?: string } = {}
 ): void {
   const taskIds = new Set(evidence.flatMap((item) => (item.sourceId ? [item.sourceId] : [])));
   const tasks = Array.from(taskIds).flatMap((taskId) => {
@@ -410,7 +464,7 @@ function advanceCursor(
   });
   const evidenceCursor = maxEvidenceCursor(evidence);
   deps.cursorRepo.upsert({
-    spaceId: reviewTask.spaceId,
+    spaceId,
     goalId: payload.goalId,
     scopeId: payload.scopeId,
     triggerKind: payload.triggerKind,
@@ -423,9 +477,42 @@ function advanceCursor(
     lastFiredAt: Date.now(),
     metadata: {
       reason: payload.reason,
-      reviewTaskId: reviewTask.id,
+      reviewTaskId: context.reviewTaskId ?? null,
       evidenceIds: evidence.map((item) => item.id),
+      ...(context.skipReason ? { skipReason: context.skipReason } : {}),
     },
+  });
+}
+
+/**
+ * A self_nag tick is a no-op worth skipping when the evidence-quality preflight
+ * is low-confidence AND the selection carries no substantive task/artifact/
+ * metric signal — i.e. it is purely process-level (manual notes / empty traces).
+ * Genuine evidence still produces an episode even when the level is low.
+ */
+function shouldSkipSelfNagNoOp(preflight: EvidenceQualityPreflight): boolean {
+  if (preflight.level !== 'low') return false;
+  const { counts } = preflight;
+  return counts.taskResults === 0 && counts.workflowArtifacts === 0 && counts.metricSnapshots === 0;
+}
+
+function recordSelfNagNoOpNote(
+  deps: GoalAutomationExecuteDeps,
+  goal: SpaceGoal,
+  preflight: EvidenceQualityPreflight
+): void {
+  if (!deps.goalEventRepo) return;
+  deps.goalEventRepo.create({
+    spaceId: goal.spaceId,
+    goalId: goal.id,
+    eventType: 'automation_noop',
+    source: 'scheduler',
+    sourceTaskId: null,
+    sourceSessionId: null,
+    previousState: null,
+    newState: null,
+    diff: null,
+    note: `Self-nag retrospective skipped: evidence-quality preflight is low (score ${preflight.score}/${preflight.maxScore}) with no substantive task, artifact, or metric evidence. No episode or review task generated.`,
   });
 }
 

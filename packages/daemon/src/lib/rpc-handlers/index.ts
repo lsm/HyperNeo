@@ -701,6 +701,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       evolutionRepo: deps.db.evolution,
       cursorRepo: deps.db.goalAutomationCursors,
       episodeService: evolutionEpisodeService,
+      goalEventRepo: spaceGoalEventRepo,
       jobQueue: deps.jobQueue,
       taskCreatedEventHub: {
         publish: (event, data) => deps.internalEventBus.publish(event as never, data as never),

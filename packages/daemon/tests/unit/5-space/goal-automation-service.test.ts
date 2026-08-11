@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import type { EvidenceQualityPreflight } from '@hyperneo/shared';
 import { Database } from '../../../src/storage/sqlite-compat';
 import type { Job } from '../../../src/storage/repositories/job-queue-repository';
 import { GOAL_AUTOMATION_EXECUTE } from '../../../src/lib/job-queue-constants';
@@ -12,6 +13,7 @@ import { EvolutionRepository } from '../../../src/storage/repositories/evolution
 import { GateOpenStateRepository } from '../../../src/storage/repositories/gate-open-state-repository';
 import { GoalAutomationCursorRepository } from '../../../src/storage/repositories/goal-automation-cursor-repository';
 import { JobQueueRepository } from '../../../src/storage/repositories/job-queue-repository';
+import { SpaceGoalEventRepository } from '../../../src/storage/repositories/space-goal-event-repository';
 import { SpaceGoalRepository } from '../../../src/storage/repositories/space-goal-repository';
 import { SpaceRepository } from '../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository';
@@ -62,6 +64,36 @@ function createJobQueueTable(db: Database): void {
 			completed_at INTEGER
 		)
 	`);
+}
+
+/** Build an EvidenceQualityPreflight for handler tests (episodeService is mocked). */
+function makePreflight(
+  overrides: Partial<EvidenceQualityPreflight> = {}
+): EvidenceQualityPreflight {
+  return {
+    level: 'high',
+    score: 80,
+    maxScore: 100,
+    canGenerate: true,
+    requiresConfirmation: false,
+    reasons: [],
+    warnings: [],
+    counts: {
+      total: 1,
+      manualNotes: 0,
+      taskResults: 1,
+      workflowArtifacts: 0,
+      metricSnapshots: 0,
+      outcomes: 1,
+    },
+    artifactDiagnostics: {
+      status: 'selected',
+      availableKinds: [],
+      omittedCount: 0,
+      recommendations: [],
+    },
+    ...overrides,
+  };
 }
 
 describe('GoalAutomationService', () => {
@@ -2712,6 +2744,7 @@ describe('handleGoalAutomationExecute', () => {
           proposals: [],
           lessons: [],
         }),
+        preflightEvidence: () => makePreflight(),
       },
     };
     const payload = {
@@ -2728,6 +2761,155 @@ describe('handleGoalAutomationExecute', () => {
 
     expect(evolutionRepo.listEpisodes(scope.id)).toHaveLength(2);
     expect(taskRepo.listBySpace(spaceId, true)).toHaveLength(2);
+  });
+
+  it('skips episode and review task for low-evidence self_nag ticks and records a no-op note', async () => {
+    const goal = goalRepo.create({ spaceId, title: 'Thin self nag', type: 'recurring' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Thin self nag',
+      objective: 'Process-level evidence only',
+      policy: { automation: { selfNagCronExpression: '0 * * * *' } },
+    });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'manual_note',
+      sourceId: null,
+      summary: 'Status note: task done, no result',
+      createdAt: 30,
+    });
+    const goalEventRepo = new SpaceGoalEventRepository(db as never);
+    let episodeCreated = false;
+
+    const result = await handleGoalAutomationExecute(
+      createAutomationJob({
+        goalId: goal.id,
+        scopeId: scope.id,
+        triggerKind: 'self_nag',
+        triggerKey: 'schedule-thin',
+        reason: 'self_nag',
+        scheduleId: 'schedule-thin',
+      }),
+      {
+        goalRepo,
+        taskRepo,
+        evolutionRepo,
+        cursorRepo,
+        goalEventRepo,
+        episodeService: {
+          createFromEvidence: async () => {
+            episodeCreated = true;
+            throw new Error('should not create episode for low-evidence self_nag');
+          },
+          preflightEvidence: () =>
+            makePreflight({
+              level: 'low',
+              score: 8,
+              requiresConfirmation: true,
+              counts: {
+                total: 1,
+                manualNotes: 1,
+                taskResults: 0,
+                workflowArtifacts: 0,
+                metricSnapshots: 0,
+                outcomes: 1,
+              },
+            }),
+        },
+      }
+    );
+
+    expect(result).toMatchObject({
+      skipped: true,
+      skipReason: 'low_evidence_noop',
+      episodeId: null,
+      reviewTaskId: null,
+      evidenceCount: 1,
+    });
+    expect(episodeCreated).toBe(false);
+    expect(evolutionRepo.listEpisodes(scope.id)).toHaveLength(0);
+    expect(taskRepo.listBySpace(spaceId, true)).toHaveLength(0);
+    // Cursor advances so the next tick is not stuck on the same thin evidence.
+    const cursor = cursorRepo.get(goal.id, scope.id, 'self_nag', 'schedule-thin');
+    expect(cursor).toMatchObject({ lastEpisodeId: null });
+    expect(cursor?.metadata).toMatchObject({ skipReason: 'low_evidence_noop' });
+    // A lightweight no-op note is recorded on the goal.
+    const events = goalEventRepo.listByGoal(goal.id);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ eventType: 'automation_noop', source: 'scheduler' });
+    expect(events[0]?.note).toContain('Self-nag retrospective skipped');
+  });
+
+  it('still produces an episode when a low preflight carries substantive task evidence', async () => {
+    const goal = goalRepo.create({ spaceId, title: 'Low but substantive', type: 'recurring' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Low but substantive',
+      objective: 'Low preflight, real task evidence',
+      policy: { automation: { selfNagCronExpression: '0 * * * *' } },
+    });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'manual_note',
+      sourceId: null,
+      summary: 'Note',
+      createdAt: 30,
+    });
+
+    const result = await handleGoalAutomationExecute(
+      createAutomationJob({
+        goalId: goal.id,
+        scopeId: scope.id,
+        triggerKind: 'self_nag',
+        triggerKey: 'schedule-substantive',
+        reason: 'self_nag',
+        scheduleId: 'schedule-substantive',
+      }),
+      {
+        goalRepo,
+        taskRepo,
+        evolutionRepo,
+        cursorRepo,
+        episodeService: {
+          createFromEvidence: async ({ evidenceIds }) => ({
+            episode: evolutionRepo.createEpisode({
+              scopeId: scope.id,
+              title: 'Substantive retrospective',
+              evidenceIds,
+              outcomeSummary: 'Substantive outcome',
+              findings: [],
+            }),
+            proposals: [],
+            lessons: [],
+          }),
+          // Low confidence, but task evidence is substantive -> do not skip.
+          preflightEvidence: () =>
+            makePreflight({
+              level: 'low',
+              score: 40,
+              requiresConfirmation: true,
+              counts: {
+                total: 1,
+                manualNotes: 0,
+                taskResults: 1,
+                workflowArtifacts: 0,
+                metricSnapshots: 0,
+                outcomes: 0,
+              },
+            }),
+        },
+      }
+    );
+
+    expect(result.skipped).toBe(false);
+    expect(result.episodeId).toBeString();
+    expect(result.reviewTaskId).toBeString();
+    expect(evolutionRepo.listEpisodes(scope.id)).toHaveLength(1);
+    expect(taskRepo.listBySpace(spaceId, true)).toHaveLength(1);
   });
 
   it('captures external event evidence before generating the episode', async () => {
@@ -3258,6 +3440,7 @@ describe('handleGoalAutomationExecute', () => {
           proposals: [],
           lessons: [],
         }),
+        preflightEvidence: () => makePreflight(),
       },
       taskCreatedEventHub: { publish: async () => {} },
     };
