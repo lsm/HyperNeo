@@ -1211,7 +1211,12 @@ export class SpaceRuntimeService {
           log.warn(`stopActiveWork: failed to cleanup reactivated task ${task.id}:`, err);
         });
       }
-      taskRepo.updateTask(task.id, { status: 'cancelled' });
+      const cancelled = taskRepo.updateTask(task.id, { status: 'cancelled' });
+      // Publish the lifecycle event for the shutdown cancellation so subscribers
+      // on space/task.cancelled / space/task.* wake (mirrors the initial-snapshot
+      // path above; this rescan writes taskRepo directly).
+      if (cancelled)
+        this.config.lifecycleEventEmitter?.emitTaskStatusChanged(cancelled, task.status);
     }
     // Publish space.task.updated for each cancelled task so the task-owned
     // subscription cleanup (clearRunInterests) fires — the direct repo update

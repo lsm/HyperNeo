@@ -904,7 +904,15 @@ export class TaskAgentManager {
     const task = this.config.taskRepo.getTask(taskId);
     if (!task) return;
     if (!isRateOrUsageLimited(task.status)) return;
+    const previousStatus = task.status;
     this.config.taskRepo.updateTask(taskId, { status: 'in_progress', restrictions: null });
+    // Publish the lifecycle transition (rate/usage_limited → in_progress) so
+    // agents subscribed to space/task.in_progress / space/task.* wake when work
+    // auto-resumes after a cooldown. This path writes taskRepo directly.
+    this.config.lifecycleEventEmitter?.emitTaskStatusChanged(
+      this.config.taskRepo.getTask(taskId) ?? task,
+      previousStatus
+    );
     this.emitTaskUpdatedEvent(taskId);
   }
 
