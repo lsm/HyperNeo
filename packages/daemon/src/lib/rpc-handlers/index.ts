@@ -86,6 +86,11 @@ import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
 import { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
 import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository';
 import { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository';
+import {
+  awaitDeliveryConsumption,
+  deliverAndMarkQueued,
+  isMessageDeliveryV2Enabled,
+} from '../agent/message-delivery';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import type { JobQueueProcessor } from '../../storage/job-queue-processor';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';
@@ -857,7 +862,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   const spaceAgentInjector = async (
     spaceId: string,
     message: string,
-    replyToSessionId?: string | null
+    replyToSessionId?: string | null,
+    explicitMessageId?: string
   ): Promise<void> => {
     let sessionId = replyToSessionId || `space:chat:${spaceId}`;
     let session = await sessionManagerRef.getSessionAsync(sessionId);
@@ -871,7 +877,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     if (!session) {
       throw new Error(`Session not found for Space Agent reply routing: ${sessionId}`);
     }
-    const messageId = generateUUID();
+    // An explicit id (the pending-row id from flushPendingMessagesForSpaceAgent)
+    // dedups a crash-retry: deliverAndMarkQueued/getActiveDeliveryRole keys on it.
+    const messageId = explicitMessageId ?? generateUUID();
     const sdkUserMessage: SDKUserMessage & { isSynthetic: boolean } = {
       type: 'user' as const,
       uuid: messageId as UUID,
@@ -883,9 +891,52 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         content: [{ type: 'text' as const, text: message }],
       },
     };
-    await session.ensureQueryStarted();
-    deps.reactiveDb.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
-    await session.messageQueue.enqueueWithId(messageId, message);
+    if (isMessageDeliveryV2Enabled()) {
+      // Idempotent persist (mirrors the LTA injector): when retried with a
+      // stable id (the pending-row id from flushPendingMessagesForSpaceAgent),
+      // don't insert a duplicate sdk_messages row or re-drive a terminal one.
+      const sdkMessageRepo = deps.reactiveDb.db.getSDKMessageRepo();
+      const existing = sdkMessageRepo.getDeliveryContent(sessionId, messageId);
+      const fresh = !existing;
+      if (!existing) {
+        deps.reactiveDb.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+      } else if (existing.sendStatus === 'consumed') {
+        return; // genuinely delivered on a prior attempt — don't re-drive
+      } else if (existing.sendStatus === 'failed') {
+        sdkMessageRepo.reopenDeliveryByUuid(sessionId, messageId);
+      }
+      // Await SDK consumption (onSent) before returning — a direct send_message
+      // handoff has no retained source row to retry, so it must not record
+      // delivered after a bare enqueue that may yet dead-letter. On timeout,
+      // terminalize ONLY a fresh row: direct send_message carries no stable id,
+      // so a retry mints a fresh UUID — terminalizing the timed-out fresh job
+      // stops it being consumed alongside the retry (duplicate). The flush path
+      // carries a stable id (existing row), so it omits the terminalize. (Codex P1.)
+      await awaitDeliveryConsumption({
+        sessionId,
+        messageUuid: messageId,
+        deliver: () =>
+          deliverAndMarkQueued({
+            jobQueue: deps.reactiveDb.db.getJobQueueRepo(),
+            stateManager: session.stateManager,
+            sessionId,
+            messageUuid: messageId,
+            origin: 'space_agent',
+            onEnqueueFailure: () => sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId),
+          }),
+        ...(fresh
+          ? {
+              terminalizeOnTimeout: () =>
+                sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId),
+            }
+          : {}),
+      });
+    } else {
+      // Legacy inline path (HYPERNEO_MESSAGE_DELIVERY_V2=0 opt-out).
+      await session.ensureQueryStarted();
+      deps.reactiveDb.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+      await session.messageQueue.enqueueWithId(messageId, message);
+    }
   };
 
   // Task Agent Manager — manages Task Agent session lifecycle and message injection.

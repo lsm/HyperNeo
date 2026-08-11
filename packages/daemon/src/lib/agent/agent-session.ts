@@ -218,6 +218,7 @@ import { MessageQueue } from './message-queue';
 import {
   MESSAGE_DELIVERY_PARK_MS,
   deliverMessage,
+  signalDeliveryConsumed,
   withSessionLock,
   type DriveTurnOutcome,
   type FeedSteerOutcome,
@@ -893,7 +894,7 @@ export class AgentSession
   // Interrupt and Reset
   // ============================================================================
 
-  async handleInterrupt(): Promise<void> {
+  async handleInterrupt(opts?: { preserveDeliveryJobs?: boolean }): Promise<void> {
     // Cancel any rate-limit recovery so an in-flight fallback switch / armed
     // cooldown timer can't switch the model or replay the stale message after
     // the user explicitly stopped the turn.
@@ -902,8 +903,9 @@ export class AgentSession
     // The durable-delivery cancel lives in InterruptHandler.handleInterrupt —
     // the single chokepoint every interrupt path reaches (client.interrupt RPC
     // → agent.interruptRequest subscriber → the raw handler, and the space
-    // paths via this wrapper). See Codex (#3744105273).
-    await this.interruptHandler.handleInterrupt();
+    // paths via this wrapper). See Codex (#3744105273). `preserveDeliveryJobs`
+    // is forwarded for restart-bound shutdown stops.
+    await this.interruptHandler.handleInterrupt(opts);
   }
 
   async resetQuery(options?: {
@@ -1137,8 +1139,12 @@ export class AgentSession
     );
 
     try {
-      // Ensure the session is idle before starting a new query
-      await this.stateManager.setIdle();
+      // Ensure the session is idle before starting a new query. Suppress the
+      // delivery-waiter drain: this idle is a retry mid-point (the query is
+      // re-started below via startQueryAndEnqueue), not a terminal turn-end —
+      // draining here would complete the durable job while the prompt is still
+      // being retried, freeing the active-turn slot for a competing turn.
+      await this.stateManager.setIdle({ suppressDeliveryWaiters: true });
 
       // A cancel/reset/interrupt during the setIdle await (or the preceding
       // switch teardown) bumps the episode generation. Don't re-enqueue the stale
@@ -1150,6 +1156,11 @@ export class AgentSession
         this.rateLimitWatchdog.isSuperseded(episodeGeneration)
       ) {
         this.logger.info('Rate limit auto-retry aborted before re-enqueue (episode superseded).');
+        // The durable turn this retry would have re-driven is abandoned — release
+        // its turn-end waiter so the job doesn't hang `processing`. Scope the
+        // release to this episode's generation so a NEWER turn's waiter (armed
+        // after the cancel/reset bumped the generation) is left untouched.
+        this.stateManager.releaseIdleWaiters(episodeGeneration);
         return false;
       }
 
@@ -1165,7 +1176,14 @@ export class AgentSession
       return true;
     } catch (error) {
       this.logger.error('Rate limit auto-retry failed:', error);
-      await this.stateManager.setIdle();
+      // Suppress the drain: returning false makes the watchdog schedule another
+      // startup attempt for this same episode, so the old prompt is still slated
+      // for replay — draining here would complete the durable job and free the
+      // active-turn slot while the retry continues, letting a new message admit
+      // as a competing turn. The waiter is released when the episode is actually
+      // abandoned (supersession → releaseIdleWaiters(gen) above) or superseded by
+      // a successful retry (terminal idle). (Codex P1.)
+      await this.stateManager.setIdle({ suppressDeliveryWaiters: true });
       return false;
     }
   }
@@ -1859,6 +1877,24 @@ export class AgentSession
       if (!queryPromise) {
         throw new Error('message_delivery: query did not start; cannot drive turn');
       }
+      // Arm the turn-end wait AFTER ensureQueryStarted: ensureQueryStarted awaits
+      // a preceding interrupt's completion, and that interrupt's terminal
+      // setIdle() fires BEFORE the await resolves — arming earlier would let it
+      // resolve this turn's waiter for a turn that hasn't started yet. Don't
+      // short-circuit on a current isIdle(): a reclaimed consumed turn is
+      // restored as idle and the streaming query doesn't leave idle until input
+      // is observed, so treating that pre-input idle as terminal would complete
+      // the durable job while history replay is still running.
+      // Tag the waiter with the current rate-limit episode generation so a
+      // narrowly-scoped release (a superseded rate-limit retry calling
+      // releaseIdleWaiters(episodeGeneration)) resolves only this turn's waiter
+      // — not a newer turn's waiter armed after a cancel()/reset() bumped the
+      // generation. The generation here equals the one scheduleRetry later
+      // captures as episodeGeneration (its own supersession guard keeps the
+      // generation stable at this value through the 429'd turn's life).
+      const turnEnd = this.stateManager.waitForIdleTransition(
+        this.rateLimitWatchdog.getGeneration()
+      );
       // Feed the kickoff (resolves on onSent = the SDK consumed it) UNLESS a
       // prior attempt already did (alreadyConsumed = reclaim after a crash): the
       // SDK resume-from-history already holds a consumed kickoff, so re-feeding
@@ -1873,13 +1909,14 @@ export class AgentSession
         // Without this recheck both attempts would admit the same kickoff. See
         // Codex (#3744971818).
         if (claimGuard && !claimGuard()) {
+          turnEnd.cancel();
           return { kind: 'aborted' as const };
         }
         acknowledgment = this.messageQueue.admitWithId(messageUuid, content, false, {
           durable: true,
         });
       }
-      return { kind: 'driving' as const, queryPromise, acknowledgment };
+      return { kind: 'driving' as const, queryPromise, turnEnd, acknowledgment };
     });
     if (started.kind === 'blocked') {
       // Mirror the legacy startQueryAndEnqueue path: report the session as
@@ -1894,8 +1931,24 @@ export class AgentSession
     }
     // Long awaits OUTSIDE the lock — ownership mutations and mid-turn steers can
     // proceed while the provider acknowledges the kickoff and runs the turn.
-    await started.acknowledgment;
-    await started.queryPromise.catch(() => {});
+    // Complete at TURN-END (the idle transition). queryPromise is raced only as
+    // a safety net for a query that closes without an idle (e.g. a hard crash);
+    // in streaming-input mode queryPromise never resolves at turn-end, so
+    // turnEnd wins and the job completes promptly when the SDK finishes the turn.
+    try {
+      await started.acknowledgment;
+      // The kickoff was admitted by the SDK (onSent) — the message is consumed.
+      // Signal long-horizon delivery waiters (injectLongTermAgentMessage) so they
+      // confirm the source record only after genuine consumption, not bare
+      // enqueue (which can still dead-letter). No-op when no waiter is armed.
+      // (Codex P1.)
+      signalDeliveryConsumed(this.session.id, messageUuid);
+      await Promise.race([started.turnEnd.promise, started.queryPromise.catch(() => {})]);
+    } finally {
+      // Cancel the waiter if it didn't win the race (e.g. queryPromise resolved
+      // on query-close, or acknowledgment rejected) so it isn't left in the map.
+      started.turnEnd.cancel();
+    }
     return { outcome: 'completed' };
   }
 
@@ -1948,6 +2001,9 @@ export class AgentSession
     // Admission happened atomically under the lock; only the provider
     // acknowledgment is awaited here.
     await action.acknowledgment;
+    // The steer was consumed by the live turn (onSent) — signal long-horizon
+    // delivery waiters awaiting consumption. No-op when none are armed. (Codex P1.)
+    signalDeliveryConsumed(this.session.id, messageUuid);
     return { outcome: 'consumed' };
   }
 
@@ -1955,8 +2011,8 @@ export class AgentSession
    * Ordinary-chat entry for message-delivery v2: enqueue a durable delivery job
    * (role decided atomically by the job_queue index) instead of driving the
    * query inline. The message_delivery handler then drives/feeds the turn.
-   * Flag-gated; the `message.persisted` subscriber calls this only when
-   * HYPERNEO_MESSAGE_DELIVERY_V2 is set.
+   * Default-on (HYPERNEO_MESSAGE_DELIVERY_V2); the `message.persisted`
+   * subscriber calls this unless the flag is explicitly disabled (=0).
    */
   async settleSkippedDelivery(messageUuid: string): Promise<void> {
     await withSessionLock(this.session.id, () =>
@@ -1983,8 +2039,16 @@ export class AgentSession
       // steer can never steal it by publishing message.persisted first.
       let role: 'turn' | 'steer';
       try {
+        // Legacy-owned turn guard (see deliverAndMarkQueued): a session can be
+        // `processing` a legacy-replayed turn with no active v2 turn row; force a
+        // steer so this chat parks behind it instead of racing it. The deferred
+        // legacy-replay migration removes the need for this guard. (Codex P1.)
+        const legacyOwnedTurn =
+          this.stateManager.getState().status === 'processing' &&
+          !this.db.getJobQueueRepo().hasActiveTurnDelivery(this.session.id);
         role = deliverMessage(this.db.getJobQueueRepo(), this.session.id, messageUuid, {
           origin: 'chat',
+          ...(legacyOwnedTurn ? { role: 'steer' as const } : {}),
         });
       } catch (err) {
         // The user row was already saved `enqueued` by MessagePersistence. If job
@@ -1993,6 +2057,20 @@ export class AgentSession
         // could still run the orphaned original. Terminalize before propagating.
         this.db.getSDKMessageRepo().markDeliveryFailedByUuid(this.session.id, messageUuid);
         throw err;
+      }
+      // A new chat message supersedes an armed rate-limit recovery episode. For a
+      // `turn` this always holds (fresh user input). For a `steer` it must ALSO
+      // hold while the session is in rate_limit_cooldown: the prior durable turn
+      // still occupies the active-turn slot there, so the replacement is
+      // classified as a steer and would park while the watchdog's timer replays
+      // the stale prompt instead of letting the user's replacement take over.
+      // (Mirrors the legacy inline path's unconditional cancel at the top of
+      // startQueryAndEnqueue.) Gate the steer case on the cooldown state so a
+      // normal steer into a LIVE turn does NOT bump the generation — that would
+      // desync the rate-limit episode from the active turn's turn-end waiter tag
+      // (see driveDeliveryTurn) and strand it on a later 429. (Codex P1.)
+      if (role === 'turn' || this.stateManager.getState().status === 'rate_limit_cooldown') {
+        this.rateLimitWatchdog.cancel();
       }
       if (role === 'turn') {
         try {

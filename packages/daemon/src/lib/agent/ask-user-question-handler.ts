@@ -453,8 +453,19 @@ export class AskUserQuestionHandler {
 
     // Drop waiting_for_input state — the question is resolved from the user's
     // perspective. Going to idle (rather than processing) lets the SDK
-    // query restart cleanly via ensureQueryStarted().
-    await stateManager.setIdle();
+    // query restart cleanly via ensureQueryStarted(). Suppress the delivery-
+    // waiter drain: this idle is a retry mid-point (the query restarts below to
+    // inject the tool result), not a terminal turn-end. If the suppressed idle
+    // rejects (e.g. a session.updated subscriber fails during publish), release
+    // the waiter before propagating — this sits outside the reinjection try
+    // below, so without the release the durable turn would hang `processing`.
+    // (Codex P1.)
+    try {
+      await stateManager.setIdle({ suppressDeliveryWaiters: true });
+    } catch (idleError) {
+      stateManager.releaseIdleWaiters();
+      throw idleError;
+    }
 
     // Build the tool_result content text. For `allow`, serialize the answers
     // as JSON so the agent can parse them. For `deny`, use the cancellation
@@ -471,12 +482,22 @@ export class AskUserQuestionHandler {
 
     const mode: 'submitted' | 'cancelled' = result.behavior === 'allow' ? 'submitted' : 'cancelled';
 
-    await internalEventBus.publish('question.injected_as_tool_result', {
-      sessionId: session.id,
-      toolUseId,
-      mode,
-      viaCanUseTool: false,
-    });
+    // This publish sits between the suppressed idle above and the reinjection
+    // try below; a rejecting subscriber would stop execution before the
+    // reinjection catch's terminal idle, leaving the durable turn waiter
+    // pending (the question is already resolved, so nothing retries it). Wrap it
+    // in the same release-on-failure cleanup. (Codex P1.)
+    try {
+      await internalEventBus.publish('question.injected_as_tool_result', {
+        sessionId: session.id,
+        toolUseId,
+        mode,
+        viaCanUseTool: false,
+      });
+    } catch (publishError) {
+      stateManager.releaseIdleWaiters();
+      throw publishError;
+    }
 
     // Best-effort: start the SDK query and enqueue the tool_result. If the
     // agent session has no ensureQueryStarted (e.g. a unit-test context),
@@ -515,6 +536,16 @@ export class AskUserQuestionHandler {
         `AskUserQuestion ${toolUseId}: failed to inject tool_result after restart`,
         error
       );
+      // The answer reinjection failed, so this turn can't continue: end it
+      // (terminal setIdle) to release the durable-delivery turn waiter —
+      // otherwise driveDeliveryTurn's job hangs `processing` waiting for an
+      // idle that will never come. Best-effort; don't let a publish failure
+      // mask the original error.
+      try {
+        await stateManager.setIdle();
+      } catch {
+        /* non-fatal — the turn is abandoned either way */
+      }
       // Leave the queued answer in place — a future canUseTool fire can
       // still consume it. Do not rethrow; the user's RPC already
       // succeeded from their perspective (the question is marked

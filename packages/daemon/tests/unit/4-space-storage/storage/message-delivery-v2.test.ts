@@ -11,14 +11,19 @@
  * See docs/features/message-delivery-v2.md §13.
  */
 
-import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, mock } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { runMigration182 } from '../../../../src/storage/schema/migrations';
 import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants';
 import {
+  awaitDeliveryConsumption,
+  deliverAndMarkQueued,
   deliverMessage,
+  drainDeliveryWaitersOnTerminalSDKMessage,
   isUniqueConstraintError,
+  signalDeliveryConsumed,
+  waitForDeliveryConsumption,
   type MessageDeliverySession,
   type DriveTurnOutcome,
   type FeedSteerOutcome,
@@ -26,6 +31,7 @@ import {
 import { createMessageDeliveryHandler } from '../../../../src/lib/job-handlers/message-delivery.handler';
 import { JobQueueProcessor } from '../../../../src/storage/job-queue-processor';
 import type { Job } from '../../../../src/storage/repositories/job-queue-repository';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
 
 const SESSION = 'sess-conformance';
 
@@ -125,12 +131,82 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
       expect(turns).toHaveLength(2);
     });
 
+    it('is idempotent per UUID — a second deliverMessage for the same UUID is a no-op', () => {
+      // The reset path can persist + deliver the same UUID twice (the replacement
+      // session is created before the old one is cleaned up). Without the
+      // getActiveDeliveryRole guard, the second call would insert a steer for the
+      // UUID the first inserted as a turn → the prompt reaches the SDK twice.
+      const role1 = deliverMessage(repo, SESSION, 'dup', { origin: 'chat' });
+      const role2 = deliverMessage(repo, SESSION, 'dup', { origin: 'chat' });
+      expect(role1).toBe('turn');
+      expect(role2).toBe('turn'); // returns the existing role, no second insert
+      const dup = jobsFor(repo, SESSION).filter(
+        (j) => (j.payload as { messageUuid: string }).messageUuid === 'dup'
+      );
+      expect(dup).toHaveLength(1);
+    });
+
+    it('idempotency returns the existing steer role, not a fresh insert', () => {
+      deliverMessage(repo, SESSION, 'turn', { origin: 'chat' });
+      // 'steer-uuid' becomes a steer because a turn is active.
+      const role1 = deliverMessage(repo, SESSION, 'steer-uuid', { origin: 'chat' });
+      expect(role1).toBe('steer');
+      // A second call for the same steer UUID must return 'steer', not insert again.
+      const role2 = deliverMessage(repo, SESSION, 'steer-uuid', { origin: 'chat' });
+      expect(role2).toBe('steer');
+      const steers = jobsFor(repo, SESSION).filter(
+        (j) => (j.payload as { messageUuid: string }).messageUuid === 'steer-uuid'
+      );
+      expect(steers).toHaveLength(1);
+    });
+
     it('isUniqueConstraintError detects SQLite UNIQUE failures', () => {
       expect(isUniqueConstraintError(new Error('UNIQUE constraint failed: job_queue.queue'))).toBe(
         true
       );
       expect(isUniqueConstraintError(new Error('some other error'))).toBe(false);
       expect(isUniqueConstraintError('not an error')).toBe(false);
+    });
+  });
+
+  describe('deliverAndMarkQueued — legacy-owned turn guard (default-on coexistence)', () => {
+    it('forces a steer when the session is processing a legacy turn with no active v2 turn row (Codex P1)', async () => {
+      // v2 is default-on but QueryModeHandler still replays deferred/enqueued rows
+      // directly through MessageQueue, so a session can be `processing` a live SDK
+      // turn with NO active v2 turn row. The index would classify this injection
+      // as a fresh turn (racing the legacy turn); the guard forces a steer so it
+      // parks behind the legacy turn and promotes only once that turn ends.
+      const { repo } = setupRepo();
+      expect(repo.hasActiveTurnDelivery(SESSION)).toBe(false); // sanity: fresh repo, no v2 turn
+      await deliverAndMarkQueued({
+        jobQueue: repo,
+        stateManager: {
+          getState: () => ({ status: 'processing' }),
+          setQueuedIfIdle: async () => false,
+        },
+        sessionId: SESSION,
+        messageUuid: 'msg-legacy',
+        origin: 'chat',
+      });
+      const jobs = jobsFor(repo, SESSION);
+      expect(jobs).toHaveLength(1);
+      expect((jobs[0].payload as { role: string }).role).toBe('steer');
+    });
+
+    it('classifies as a turn when the session is idle (no legacy turn)', async () => {
+      const { repo } = setupRepo();
+      await deliverAndMarkQueued({
+        jobQueue: repo,
+        stateManager: {
+          getState: () => ({ status: 'idle' }),
+          setQueuedIfIdle: async () => false,
+        },
+        sessionId: SESSION,
+        messageUuid: 'msg-idle',
+        origin: 'chat',
+      });
+      const jobs = jobsFor(repo, SESSION);
+      expect((jobs[0].payload as { role: string }).role).toBe('turn');
     });
   });
 
@@ -723,5 +799,145 @@ describe('processor — exempt pass + onDead (#2587/#2595)', () => {
     expect(dead).toHaveLength(1);
     expect(dead[0].status).toBe('dead');
     await processor.stop();
+  });
+});
+
+describe('delivery consumption signal (long-horizon delivered = consumed)', () => {
+  it('waitForDeliveryConsumption resolves when signalDeliveryConsumed fires for the UUID', async () => {
+    let resolved = false;
+    const handle = waitForDeliveryConsumption('sess', 'consume-1');
+    void handle.promise.then(() => {
+      resolved = true;
+    });
+    expect(resolved).toBe(false);
+    signalDeliveryConsumed('sess', 'consume-1');
+    await Promise.resolve(); // flush the resolution microtask
+    expect(resolved).toBe(true);
+  });
+
+  it('cancel() removes the waiter so a later signal does not resolve it', async () => {
+    let resolved = false;
+    const handle = waitForDeliveryConsumption('sess', 'consume-2');
+    void handle.promise.then(() => {
+      resolved = true;
+    });
+    handle.cancel();
+    signalDeliveryConsumed('sess', 'consume-2'); // no waiter left — must not resolve
+    await Promise.resolve();
+    expect(resolved).toBe(false);
+  });
+
+  it('signalDeliveryConsumed is a no-op when no waiter is armed (e.g. consumption before any caller registers)', () => {
+    expect(() => signalDeliveryConsumed('sess', 'consume-orphan')).not.toThrow();
+  });
+
+  it('multiple waiters for the same UUID all resolve on one signal', async () => {
+    let a = false;
+    let b = false;
+    void waitForDeliveryConsumption('sess', 'consume-3').promise.then(() => {
+      a = true;
+    });
+    void waitForDeliveryConsumption('sess', 'consume-3').promise.then(() => {
+      b = true;
+    });
+    signalDeliveryConsumed('sess', 'consume-3');
+    await Promise.resolve();
+    expect(a).toBe(true);
+    expect(b).toBe(true);
+  });
+
+  it('a waiter for (sess-A, uuid-X) stays PENDING when sess-B signals the same UUID (cross-session scoping)', async () => {
+    // Guards the r23 scoping fix: the registry is keyed by (session, UUID), not
+    // UUID alone, so a multi-target delivery fanning the same MessageRecord out
+    // to several agents can't let one session's consumption signal resolve
+    // another session's waiter.
+    let aResolved = false;
+    let bResolved = false;
+    void waitForDeliveryConsumption('sess-A', 'shared-uuid').promise.then(() => {
+      aResolved = true;
+    });
+    void waitForDeliveryConsumption('sess-B', 'shared-uuid').promise.then(() => {
+      bResolved = true;
+    });
+
+    signalDeliveryConsumed('sess-B', 'shared-uuid'); // only sess-B's waiter resolves
+    await Promise.resolve();
+
+    expect(bResolved).toBe(true);
+    expect(aResolved).toBe(false); // sess-A's waiter is untouched
+
+    // sess-A's waiter still resolves on ITS OWN signal.
+    signalDeliveryConsumed('sess-A', 'shared-uuid');
+    await Promise.resolve();
+    expect(aResolved).toBe(true);
+  });
+});
+
+describe('drainDeliveryWaitersOnTerminalSDKMessage (handleSDKMessage-catch gating)', () => {
+  // Covers both runners' handleSDKMessage catch blocks (Claude query-runner +
+  // ACP acp-query-runner), which both route through this helper. A non-terminal
+  // message throw must NOT free the active-turn slot mid-turn; only the final
+  // `result` does. (Codex P1.)
+
+  it('calls setIdle (drains) when the throwing message is the final result', async () => {
+    const setIdle = mock(async () => {});
+    await drainDeliveryWaitersOnTerminalSDKMessage({ setIdle }, { type: 'result' } as SDKMessage);
+    expect(setIdle).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT call setIdle for a non-terminal (assistant) message throw', async () => {
+    const setIdle = mock(async () => {});
+    await drainDeliveryWaitersOnTerminalSDKMessage({ setIdle }, {
+      type: 'assistant',
+    } as SDKMessage);
+    expect(setIdle).not.toHaveBeenCalled();
+  });
+
+  it('does NOT call setIdle for a stream_event / non-result message', async () => {
+    const setIdle = mock(async () => {});
+    await drainDeliveryWaitersOnTerminalSDKMessage({ setIdle }, {
+      type: 'stream_event',
+    } as SDKMessage);
+    expect(setIdle).not.toHaveBeenCalled();
+  });
+});
+
+describe('awaitDeliveryConsumption — terminalize a fresh job on timeout (no-stable-id dedup)', () => {
+  const prev = process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS;
+  beforeAll(() => {
+    process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = '20';
+  });
+  afterAll(() => {
+    if (prev === undefined) delete process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS;
+    else process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = prev;
+  });
+
+  it('calls terminalizeOnTimeout + rejects when consumption is not signalled (fresh job)', async () => {
+    const deliver = mock(async () => {});
+    const terminalize = mock(() => {});
+    await expect(
+      awaitDeliveryConsumption({
+        sessionId: 'sess',
+        messageUuid: 'fresh-timeout',
+        deliver,
+        terminalizeOnTimeout: terminalize,
+      })
+    ).rejects.toThrow('not consumed within timeout');
+    expect(deliver).toHaveBeenCalledTimes(1);
+    expect(terminalize).toHaveBeenCalledTimes(1); // terminalized so a retry won't duplicate
+  });
+
+  it('does NOT call terminalizeOnTimeout when consumption is signalled in time', async () => {
+    const deliver = mock(async () => {
+      signalDeliveryConsumed('sess', 'fresh-consumed');
+    });
+    const terminalize = mock(() => {});
+    await awaitDeliveryConsumption({
+      sessionId: 'sess',
+      messageUuid: 'fresh-consumed',
+      deliver,
+      terminalizeOnTimeout: terminalize,
+    });
+    expect(terminalize).not.toHaveBeenCalled();
   });
 });

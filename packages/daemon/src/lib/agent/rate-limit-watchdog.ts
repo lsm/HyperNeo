@@ -727,6 +727,17 @@ export class RateLimitWatchdog {
     return generation !== this.generation;
   }
 
+  /**
+   * The current episode generation. Callers arm a wait tagged with this value
+   * so a later, narrowly-scoped release (e.g. {@link
+   * ProcessingStateManager.releaseIdleWaiters}) only resolves waiters from the
+   * same episode — not a newer turn's waiter armed after a cancel()/reset()
+   * bumped the generation.
+   */
+  getGeneration(): number {
+    return this.generation;
+  }
+
   private cancelCooldownTimer(): void {
     if (this.cooldownTimer !== null) {
       clearTimeout(this.cooldownTimer);

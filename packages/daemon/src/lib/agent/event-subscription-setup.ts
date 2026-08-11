@@ -126,11 +126,11 @@ export class EventSubscriptionSetup {
       'message.persisted',
       async (data) => {
         if (data.skipQueryStart) return;
-        // Message-delivery v2: route ordinary chat through the durable job_queue
-        // chokepoint (role decided atomically by the index) instead of driving
-        // the query inline. Flag-gated; Space injectors still call
-        // startQueryAndEnqueue directly (migrated in step 2). See
-        // docs/features/message-delivery-v2.md §12.
+        // Message-delivery v2 (default-on): route ordinary chat through the
+        // durable job_queue chokepoint (role decided atomically by the index)
+        // instead of driving the query inline. Space / long-term-agent injectors
+        // route through the same durable path via deliverAndMarkQueued. See
+        // docs/features/message-delivery-v2.md.
         if (isMessageDeliveryV2Enabled() && this.ctx.deliverChatMessage) {
           await this.ctx.deliverChatMessage(data.messageId);
           return;

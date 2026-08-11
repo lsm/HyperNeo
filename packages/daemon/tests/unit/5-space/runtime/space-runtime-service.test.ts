@@ -10,7 +10,17 @@
  * - setTaskAgentManager(): wires TaskAgentManager into the underlying SpaceRuntime
  */
 
-import { describe, test, expect, beforeEach, afterEach, mock, type Mock } from 'bun:test';
+import {
+  describe,
+  test,
+  expect,
+  beforeEach,
+  afterEach,
+  beforeAll,
+  afterAll,
+  mock,
+  type Mock,
+} from 'bun:test';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
@@ -30,6 +40,7 @@ import type { SpaceTaskRepository } from '../../../../src/storage/repositories/s
 import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import type { SessionManager } from '../../../../src/lib/session-manager.ts';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
+import { signalDeliveryConsumed } from '../../../../src/lib/agent/message-delivery';
 import type { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import type {
   McpServerConfig,
@@ -137,6 +148,22 @@ function buildLongHorizonAgent(
 describe('SpaceRuntimeService', () => {
   let spaceManager: SpaceManager;
   let service: SpaceRuntimeService;
+
+  // v2 long-horizon delivery awaits the durable job's SDK consumption before
+  // confirming the source record. These tests don't drive a real SDK turn, so
+  // the wait would hit its timeout; shorten it so the suite stays fast. The
+  // dedicated consumption test signals explicitly and ignores this.
+  const previousConsumptionTimeout = process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS;
+  beforeAll(() => {
+    process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = '50';
+  });
+  afterAll(() => {
+    if (previousConsumptionTimeout === undefined) {
+      delete process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS;
+    } else {
+      process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = previousConsumptionTimeout;
+    }
+  });
 
   beforeEach(() => {
     spaceManager = createMockSpaceManager(mockSpace);
@@ -554,6 +581,45 @@ describe('SpaceRuntimeService', () => {
       };
     }
 
+    /**
+     * A reactiveDb whose db façade records durable delivery: a saveUserMessage
+     * spy + an inert jobQueue repo. injectLongTermAgentMessage now persists the
+     * message via saveUserMessage then enqueues a message_delivery job via
+     * deliverMessage (v2), so long-horizon delivery tests assert on
+     * saveUserMessage (the durable persist) instead of the removed inline
+     * session.messageQueue.enqueueWithId feed.
+     */
+    function buildDurableDeliveryReactiveDb(): {
+      reactiveDb: SpaceRuntimeServiceConfig['reactiveDb'];
+      saveUserMessage: ReturnType<typeof mock>;
+    } {
+      const saveUserMessage = mock(() => 'db-msg');
+      const reactiveDb = {
+        db: {
+          saveUserMessage,
+          getSDKMessageRepo: () => ({
+            getDeliveryContent: () => null, // first attempt — no existing row
+            markDeliveryFailedByUuid: () => null,
+            reopenDeliveryByUuid: () => null,
+          }),
+          getJobQueueRepo: () => ({
+            getActiveDeliveryRole: () => null,
+            // Test simplification: signal SDK consumption at enqueue time so
+            // injectLongTermAgentMessage's consumption-await resolves and the
+            // delivery is acknowledged. (Production signals from the bridge on
+            // the SDK's onSent; these tests don't drive a real turn.) The
+            // dedicated timeout test uses a repo that does NOT signal.
+            enqueue: (args: { payload?: { sessionId?: string; messageUuid?: string } }) => {
+              const uuid = args?.payload?.messageUuid;
+              if (uuid) signalDeliveryConsumed(args!.payload!.sessionId!, uuid);
+              return { id: 'job-1' };
+            },
+          }),
+        },
+      } as unknown as SpaceRuntimeServiceConfig['reactiveDb'];
+      return { reactiveDb, saveUserMessage };
+    }
+
     test('attaches MCP server and system prompt to the space:chat session (merge, not replace)', async () => {
       const session = makeSession();
       const sessionManager = makeSessionManager(session);
@@ -818,8 +884,10 @@ describe('SpaceRuntimeService', () => {
         })),
         update: mock(() => {}),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
+      const { reactiveDb, saveUserMessage } = buildDurableDeliveryReactiveDb();
       const svc = new SpaceRuntimeService({
         ...buildConfigWithSession(sessionManager, createMockSpaceManager(mockSpace)),
+        reactiveDb,
         longHorizonAgentRepo,
         spaceAgentInboxRepo:
           inboxRepo as unknown as SpaceRuntimeServiceConfig['spaceAgentInboxRepo'],
@@ -845,9 +913,14 @@ describe('SpaceRuntimeService', () => {
 
       expect(deliveredSessionId).toBe(sessionId);
       expect(inboxRepo.enqueue).not.toHaveBeenCalled();
-      expect(createdSession.messageQueue.enqueueWithId).toHaveBeenCalledWith(
-        expect.stringMatching(/^msg_/),
-        'hello'
+      // injectLongTermAgentMessage persists durably + enqueues a message_delivery
+      // job (v2); assert the durable persist instead of the removed inline feed.
+      // The delivery now reuses the message record's stable id ('message-1') so a
+      // consumption-timeout retry doesn't mint a second durable job. (Codex P1.)
+      expect(saveUserMessage).toHaveBeenCalledWith(
+        sessionId,
+        expect.objectContaining({ uuid: 'message-1', type: 'user' }),
+        'enqueued'
       );
     });
 
@@ -879,8 +952,10 @@ describe('SpaceRuntimeService', () => {
         })),
         listBySpaceId: mock(() => []),
       } as unknown as SpaceAgentManager;
+      const { reactiveDb } = buildDurableDeliveryReactiveDb();
       const svc = new SpaceRuntimeService({
         ...buildConfigWithSession(sessionManager, spaceManager),
+        reactiveDb,
         spaceAgentManager,
         spaceAgentInboxRepo: {} as SpaceRuntimeServiceConfig['spaceAgentInboxRepo'],
       });
@@ -948,8 +1023,10 @@ describe('SpaceRuntimeService', () => {
         })),
         update: mock(() => {}),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
+      const { reactiveDb, saveUserMessage } = buildDurableDeliveryReactiveDb();
       const svc = new SpaceRuntimeService({
         ...buildConfigWithSession(sessionManager, createMockSpaceManager(mockSpace)),
+        reactiveDb,
         longHorizonAgentRepo,
       });
 
@@ -986,9 +1063,10 @@ describe('SpaceRuntimeService', () => {
           }),
         })
       );
-      expect(createdSession.messageQueue.enqueueWithId).toHaveBeenCalledWith(
-        'delivery-1',
-        'event payload'
+      expect(saveUserMessage).toHaveBeenCalledWith(
+        sessionId,
+        expect.objectContaining({ uuid: 'delivery-1', type: 'user' }),
+        'enqueued'
       );
     });
 
@@ -1032,8 +1110,10 @@ describe('SpaceRuntimeService', () => {
         })),
         update: mock(() => {}),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
+      const { reactiveDb } = buildDurableDeliveryReactiveDb();
       const svc = new SpaceRuntimeService({
         ...buildConfigWithSession(sessionManager, createMockSpaceManager(mockSpace)),
+        reactiveDb,
         longHorizonAgentRepo,
       });
 
@@ -1109,8 +1189,10 @@ describe('SpaceRuntimeService', () => {
         })),
         update: mock(() => {}),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
+      const { reactiveDb, saveUserMessage } = buildDurableDeliveryReactiveDb();
       const svc = new SpaceRuntimeService({
         ...buildConfigWithSession(sessionManager, createMockSpaceManager(mockSpace)),
+        reactiveDb,
         longHorizonAgentRepo,
       });
 
@@ -1158,10 +1240,353 @@ describe('SpaceRuntimeService', () => {
       };
       expect(updateCall.systemPrompt.append).toContain('Use updated tools.');
       expect(updateCall.systemPrompt.append).toContain(LONG_HORIZON_SCHEDULING_GUARDRAIL);
-      expect(existingSession.messageQueue.enqueueWithId).toHaveBeenCalledWith(
-        'delivery-1',
-        'event payload'
+      expect(saveUserMessage).toHaveBeenCalledWith(
+        sessionId,
+        expect.objectContaining({ uuid: 'delivery-1', type: 'user' }),
+        'enqueued'
       );
+    });
+
+    test('long-horizon delivery terminalizes the persisted row if durable enqueue throws', async () => {
+      const sessionId = longTermAgentSessionId(mockSpace.id, 'lh-agent-1');
+      const createdSession = {
+        ...makeSession(),
+        getSessionData: mock(() => ({ id: sessionId, metadata: {}, config: {} })),
+        ensureQueryStarted: mock(async () => {}),
+        messageQueue: { enqueueWithId: mock(async () => {}) },
+      } as unknown as AgentSession;
+      const sessionManager = makeSessionManager(null);
+      (
+        sessionManager.createSession as Mock<typeof sessionManager.createSession>
+      ).mockImplementation(async () => sessionId);
+      (sessionManager.getSessionAsync as Mock<typeof sessionManager.getSessionAsync>)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(createdSession);
+      const longHorizonAgentRepo = {
+        getById: mock(() => ({
+          id: 'lh-agent-1',
+          spaceId: mockSpace.id,
+          handle: 'mcp-agent',
+          displayName: 'MCP Agent',
+          templateKey: null,
+          status: 'active',
+          sessionId: null,
+          instructions: 'Do work.',
+          autonomyLevel: null,
+          model: null,
+          thinkingLevel: null,
+          provider: null,
+          settingSources: null,
+          toolPermissions: {},
+          createdAt: NOW,
+          updatedAt: NOW,
+        })),
+        update: mock(() => {}),
+      } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
+
+      // A reactiveDb whose durable-enqueue throws, simulating a transient SQLite
+      // failure at the persist→deliver boundary (the window P1 guards).
+      const markDeliveryFailedByUuid = mock(() => null);
+      const reactiveDb = {
+        db: {
+          saveUserMessage: mock(() => 'db-msg'),
+          getSDKMessageRepo: () => ({
+            getDeliveryContent: () => null, // first attempt
+            markDeliveryFailedByUuid,
+            reopenDeliveryByUuid: () => null,
+          }),
+          getJobQueueRepo: () => ({
+            getActiveDeliveryRole: () => null,
+            enqueue: () => {
+              throw new Error('sqlite locked');
+            },
+          }),
+        },
+      } as unknown as SpaceRuntimeServiceConfig['reactiveDb'];
+
+      const svc = new SpaceRuntimeService({
+        ...buildConfigWithSession(sessionManager, createMockSpaceManager(mockSpace)),
+        reactiveDb,
+        longHorizonAgentRepo,
+      });
+
+      // The throw propagates out of deliverLongHorizonExternalEvent (no internal
+      // catch wraps injectLongTermAgentMessage).
+      await expect(
+        (
+          svc as unknown as {
+            deliverLongHorizonExternalEvent(args: {
+              spaceId: string;
+              agentId: string;
+              message: string;
+              idempotencyKey: string;
+            }): Promise<{ delivered: boolean }>;
+          }
+        ).deliverLongHorizonExternalEvent({
+          spaceId: mockSpace.id,
+          agentId: 'lh-agent-1',
+          message: 'event payload',
+          idempotencyKey: 'delivery-1',
+        })
+      ).rejects.toThrow('sqlite locked');
+
+      // The row was saved 'enqueued' before the throw; the catch must terminalize
+      // it so it is not stranded ownerless and replayed as an orphan on restart.
+      expect(markDeliveryFailedByUuid).toHaveBeenCalledWith(sessionId, 'delivery-1');
+    });
+
+    test('long-horizon crash-retry does not re-save or re-drive a terminal message', async () => {
+      const sessionId = longTermAgentSessionId(mockSpace.id, 'lh-agent-1');
+      const createdSession = {
+        ...makeSession(),
+        getSessionData: mock(() => ({ id: sessionId, metadata: {}, config: {} })),
+        ensureQueryStarted: mock(async () => {}),
+        messageQueue: { enqueueWithId: mock(async () => {}) },
+      } as unknown as AgentSession;
+      const sessionManager = makeSessionManager(null);
+      (
+        sessionManager.createSession as Mock<typeof sessionManager.createSession>
+      ).mockImplementation(async () => sessionId);
+      (sessionManager.getSessionAsync as Mock<typeof sessionManager.getSessionAsync>)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(createdSession);
+      const longHorizonAgentRepo = {
+        getById: mock(() => ({
+          id: 'lh-agent-1',
+          spaceId: mockSpace.id,
+          handle: 'mcp-agent',
+          displayName: 'MCP Agent',
+          templateKey: null,
+          status: 'active',
+          sessionId: null,
+          instructions: 'Do work.',
+          autonomyLevel: null,
+          model: null,
+          thinkingLevel: null,
+          provider: null,
+          settingSources: null,
+          toolPermissions: {},
+          createdAt: NOW,
+          updatedAt: NOW,
+        })),
+        update: mock(() => {}),
+      } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
+
+      // The message already reached a terminal status (consumed) on a prior
+      // attempt. A crash-retry with the same idempotency key must NOT insert a
+      // duplicate sdk_messages row or re-enqueue a job that re-drives it.
+      const saveUserMessage = mock(() => 'db-msg');
+      const enqueue = mock(() => ({ id: 'job-1' }));
+      const reopenDeliveryByUuid = mock(() => null);
+      const reactiveDb = {
+        db: {
+          saveUserMessage,
+          getSDKMessageRepo: () => ({
+            getDeliveryContent: () => ({ content: 'event payload', sendStatus: 'consumed' }),
+            markDeliveryFailedByUuid: () => null,
+            reopenDeliveryByUuid,
+          }),
+          getJobQueueRepo: () => ({ getActiveDeliveryRole: () => null, enqueue }),
+        },
+      } as unknown as SpaceRuntimeServiceConfig['reactiveDb'];
+
+      const svc = new SpaceRuntimeService({
+        ...buildConfigWithSession(sessionManager, createMockSpaceManager(mockSpace)),
+        reactiveDb,
+        longHorizonAgentRepo,
+      });
+
+      const result = await (
+        svc as unknown as {
+          deliverLongHorizonExternalEvent(args: {
+            spaceId: string;
+            agentId: string;
+            message: string;
+            idempotencyKey: string;
+          }): Promise<{ delivered: boolean }>;
+        }
+      ).deliverLongHorizonExternalEvent({
+        spaceId: mockSpace.id,
+        agentId: 'lh-agent-1',
+        message: 'event payload',
+        idempotencyKey: 'delivery-1',
+      });
+
+      expect(result).toEqual({ delivered: true });
+      expect(saveUserMessage).not.toHaveBeenCalled(); // no duplicate row
+      expect(enqueue).not.toHaveBeenCalled(); // no re-drive
+      expect(reopenDeliveryByUuid).not.toHaveBeenCalled(); // consumed ≠ retryable
+    });
+
+    test('long-horizon crash-retry reopens a failed row and re-enqueues it', async () => {
+      const sessionId = longTermAgentSessionId(mockSpace.id, 'lh-agent-1');
+      const createdSession = {
+        ...makeSession(),
+        getSessionData: mock(() => ({ id: sessionId, metadata: {}, config: {} })),
+        ensureQueryStarted: mock(async () => {}),
+        messageQueue: { enqueueWithId: mock(async () => {}) },
+      } as unknown as AgentSession;
+      const sessionManager = makeSessionManager(null);
+      (
+        sessionManager.createSession as Mock<typeof sessionManager.createSession>
+      ).mockImplementation(async () => sessionId);
+      (sessionManager.getSessionAsync as Mock<typeof sessionManager.getSessionAsync>)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(createdSession);
+      const longHorizonAgentRepo = {
+        getById: mock(() => ({
+          id: 'lh-agent-1',
+          spaceId: mockSpace.id,
+          handle: 'mcp-agent',
+          displayName: 'MCP Agent',
+          templateKey: null,
+          status: 'active',
+          sessionId: null,
+          instructions: 'Do work.',
+          autonomyLevel: null,
+          model: null,
+          thinkingLevel: null,
+          provider: null,
+          settingSources: null,
+          toolPermissions: {},
+          createdAt: NOW,
+          updatedAt: NOW,
+        })),
+        update: mock(() => {}),
+      } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
+
+      // A prior attempt's durable enqueue threw and terminalized this row
+      // (send_status='failed'). The handler skips `failed` rows, so the retry
+      // must reopen it (→ enqueued) and re-enqueue the job — not treat `failed`
+      // as success and silently drop the delivery.
+      const saveUserMessage = mock(() => 'db-msg');
+      // Signal consumption at enqueue so the consumption-await resolves (test
+      // simplification — see buildDurableDeliveryReactiveDb).
+      const enqueue = mock((args: { payload?: { sessionId?: string; messageUuid?: string } }) => {
+        const uuid = args?.payload?.messageUuid;
+        if (uuid) signalDeliveryConsumed(args!.payload!.sessionId!, uuid);
+        return { id: 'job-1' };
+      });
+      const reopenDeliveryByUuid = mock(() => 'db-id');
+      const reactiveDb = {
+        db: {
+          saveUserMessage,
+          getSDKMessageRepo: () => ({
+            getDeliveryContent: () => ({ content: 'event payload', sendStatus: 'failed' }),
+            markDeliveryFailedByUuid: () => null,
+            reopenDeliveryByUuid,
+          }),
+          getJobQueueRepo: () => ({ getActiveDeliveryRole: () => null, enqueue }),
+        },
+      } as unknown as SpaceRuntimeServiceConfig['reactiveDb'];
+
+      const svc = new SpaceRuntimeService({
+        ...buildConfigWithSession(sessionManager, createMockSpaceManager(mockSpace)),
+        reactiveDb,
+        longHorizonAgentRepo,
+      });
+
+      const result = await (
+        svc as unknown as {
+          deliverLongHorizonExternalEvent(args: {
+            spaceId: string;
+            agentId: string;
+            message: string;
+            idempotencyKey: string;
+          }): Promise<{ delivered: boolean }>;
+        }
+      ).deliverLongHorizonExternalEvent({
+        spaceId: mockSpace.id,
+        agentId: 'lh-agent-1',
+        message: 'event payload',
+        idempotencyKey: 'delivery-1',
+      });
+
+      expect(result).toEqual({ delivered: true });
+      expect(saveUserMessage).not.toHaveBeenCalled(); // row already exists — no dup
+      expect(reopenDeliveryByUuid).toHaveBeenCalledWith(sessionId, 'delivery-1'); // un-failed
+      expect(enqueue).toHaveBeenCalled(); // re-driven
+    });
+
+    test('long-horizon delivery not consumed within the timeout rejects — no premature delivered (Codex P1)', async () => {
+      // If the durable job stays parked/retrying past the consumption timeout,
+      // the delivery must NOT be acknowledged (the job may yet dead-letter).
+      // injectLongTermAgentMessage rejects; deliverLongHorizonExternalEvent
+      // propagates so the caller retries the source record.
+      const sessionId = longTermAgentSessionId(mockSpace.id, 'lh-agent-1');
+      const createdSession = {
+        ...makeSession(),
+        getSessionData: mock(() => ({ id: sessionId, metadata: {}, config: {} })),
+        ensureQueryStarted: mock(async () => {}),
+        messageQueue: { enqueueWithId: mock(async () => {}) },
+      } as unknown as AgentSession;
+      const sessionManager = makeSessionManager(null);
+      (
+        sessionManager.createSession as Mock<typeof sessionManager.createSession>
+      ).mockImplementation(async () => sessionId);
+      (sessionManager.getSessionAsync as Mock<typeof sessionManager.getSessionAsync>)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(createdSession);
+      const longHorizonAgentRepo = {
+        getById: mock(() => ({
+          id: 'lh-agent-1',
+          spaceId: mockSpace.id,
+          handle: 'mcp-agent',
+          displayName: 'MCP Agent',
+          templateKey: null,
+          status: 'active',
+          sessionId: null,
+          instructions: 'Do work.',
+          autonomyLevel: null,
+          model: null,
+          thinkingLevel: null,
+          provider: null,
+          settingSources: null,
+          toolPermissions: {},
+          createdAt: NOW,
+          updatedAt: NOW,
+        })),
+        update: mock(() => {}),
+      } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
+      // enqueue succeeds but does NOT signal consumption (no real SDK turn) →
+      // the consumption-await hits its (shortened) timeout and rejects.
+      const reactiveDb = {
+        db: {
+          saveUserMessage: mock(() => 'db-msg'),
+          getSDKMessageRepo: () => ({
+            getDeliveryContent: () => null,
+            markDeliveryFailedByUuid: () => null,
+            reopenDeliveryByUuid: () => null,
+          }),
+          getJobQueueRepo: () => ({
+            getActiveDeliveryRole: () => null,
+            enqueue: () => ({ id: 'job-1' }),
+          }),
+        },
+      } as unknown as SpaceRuntimeServiceConfig['reactiveDb'];
+      const svc = new SpaceRuntimeService({
+        ...buildConfigWithSession(sessionManager, createMockSpaceManager(mockSpace)),
+        reactiveDb,
+        longHorizonAgentRepo,
+      });
+
+      await expect(
+        (
+          svc as unknown as {
+            deliverLongHorizonExternalEvent(args: {
+              spaceId: string;
+              agentId: string;
+              message: string;
+              idempotencyKey: string;
+            }): Promise<{ delivered: boolean }>;
+          }
+        ).deliverLongHorizonExternalEvent({
+          spaceId: mockSpace.id,
+          agentId: 'lh-agent-1',
+          message: 'event payload',
+          idempotencyKey: 'delivery-timeout',
+        })
+      ).rejects.toThrow('not consumed within timeout');
     });
 
     test('session.reset re-provisions reset long-term Space agents before query replay', async () => {

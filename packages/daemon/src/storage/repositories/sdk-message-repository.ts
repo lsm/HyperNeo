@@ -1865,6 +1865,57 @@ export class SDKMessageRepository {
     return row.id;
   }
 
+  /**
+   * Flip a previously-`failed` delivery row back to `enqueued` so a retry can
+   * re-drive it — the counterpart of {@link markDeliveryFailedByUuid} for the
+   * crash-retry path. A prior attempt whose durable enqueue threw terminalized
+   * the row; the caller (e.g. long-horizon external-event delivery) is now
+   * retrying with the same idempotency key, and the message-delivery handler
+   * skips `failed` rows, so the row must be reopened before a new job is
+   * enqueued. Only reopens `failed` rows — a `consumed` row already ran its
+   * turn (must not be re-driven). Returns the flipped db id, else null.
+   */
+  reopenDeliveryByUuid(sessionId: string, uuid: string): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT id FROM sdk_messages
+           WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
+             AND send_status = 'failed'
+           ORDER BY timestamp ASC LIMIT 1`
+      )
+      .get(sessionId, uuid) as { id: string } | undefined;
+    if (!row) return null;
+    // updateMessageStatus([id], 'enqueued') only flips the status (the
+    // turn-assignment/counter logic fires solely on consumed/failed).
+    this.updateMessageStatus([row.id], 'enqueued');
+    return row.id;
+  }
+
+  /**
+   * Flip a pending delivery row to `deferred` by UUID. Used when a retry reaches
+   * the deferred branch (target busy / rate-limited / parent-limited) holding an
+   * existing `enqueued` row (e.g. a `failed` row just reopened). Without this the
+   * row stays `enqueued` and QueryModeHandler's deferred replay — which selects
+   * only `send_status='deferred'` — never picks it up, so the handoff is lost on
+   * an idle parent-limited session. Only flips `enqueued` rows — NOT `submitted`
+   * (ACP): a submitted prompt already reached the subprocess, and deferring it
+   * would leave SDKMessageHandler unable to match its acceptance, so the row
+   * replays later and the handoff executes twice. (Codex P1.)
+   */
+  markDeliveryDeferredByUuid(sessionId: string, uuid: string): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT id FROM sdk_messages
+           WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
+             AND send_status = 'enqueued'
+           ORDER BY timestamp ASC LIMIT 1`
+      )
+      .get(sessionId, uuid) as { id: string } | undefined;
+    if (!row) return null;
+    this.updateMessageStatus([row.id], 'deferred');
+    return row.id;
+  }
+
   private parseUserMessageRow(
     row: { sdk_message: string; timestamp: string },
     uuid: string

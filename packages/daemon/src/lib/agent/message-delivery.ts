@@ -10,14 +10,36 @@
  *
  * See docs/features/message-delivery-v2.md for the full design.
  *
- * Flag-gated (HYPERNEO_MESSAGE_DELIVERY_V2); ordinary chat is routed first
- * (§12 step 1). Space injectors + diagnostics re-pointing + decommissioning of
- * the phase-1 reconciliation machinery follow in steps 2–4.
+ * Default-on (opt out with `HYPERNEO_MESSAGE_DELIVERY_V2=0`). Ordinary chat and
+ * the Space / long-term-agent injectors all route through `deliverMessage`; the
+ * legacy deferred-replay and rate-limit-retry kickoffs remain on the inline path
+ * (backstopped by `recoverOrphanedConsumedMessages`) pending a follow-up.
  */
 
 import type { MessageContent } from '@hyperneo/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import { MESSAGE_DELIVERY } from '../job-queue-constants';
+
+/**
+ * On an SDK-message handling error, publish the terminal idle (draining the
+ * delivery waiters) ONLY when the throwing message ends the turn — the final
+ * `result`. A non-terminal message (e.g. an assistant message whose
+ * `sdk.message` subscriber rejected) leaves the live query still consuming;
+ * draining mid-turn would complete the durable job and release the active-turn
+ * slot while output is still being produced, letting a later prompt admit as
+ * another turn against the same query. The query's own `finally` publishes the
+ * terminal idle when the generator closes. Shared by the Claude and ACP runners'
+ * handleSDKMessage catch blocks. (Codex P1.)
+ */
+export async function drainDeliveryWaitersOnTerminalSDKMessage(
+  stateManager: { setIdle(): Promise<void> },
+  message: SDKMessage
+): Promise<void> {
+  if (message.type === 'result') {
+    await stateManager.setIdle();
+  }
+}
 
 /** Which slot a delivery occupies relative to its session's active turn. */
 export type MessageDeliveryRole = 'turn' | 'steer';
@@ -44,15 +66,14 @@ export type MessageDeliveryPayload = {
 };
 
 /**
- * The env-var gate for the v2 path. While off, ordinary chat keeps using the
- * `message.persisted → startQueryAndEnqueue` flow untouched. Steps 2–4 migrate
- * the remaining origins and then decommission the old path.
+ * The env-var gate for the v2 path. Default ON — durable delivery owns dispatch
+ * for ordinary chat and the Space/long-term-agent injectors. Set
+ * `HYPERNEO_MESSAGE_DELIVERY_V2=0` (or `=false`) to roll back to the legacy
+ * `message.persisted → startQueryAndEnqueue` inline flow.
  */
 export function isMessageDeliveryV2Enabled(): boolean {
-  return (
-    process.env.HYPERNEO_MESSAGE_DELIVERY_V2 === '1' ||
-    process.env.HYPERNEO_MESSAGE_DELIVERY_V2 === 'true'
-  );
+  const v = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+  return v !== '0' && v !== 'false';
 }
 
 /**
@@ -254,6 +275,115 @@ export interface MessageDeliverySession {
 }
 
 /**
+ * Per-(session, messageUuid) consumption waiters. The long-horizon injector
+ * awaits its durable job's SDK consumption (onSent) before confirming the
+ * source record — restoring the legacy "delivered = consumed" semantic that the
+ * v2 fire-and-forget enqueue regressed. The bridge signals here from
+ * {@link MessageDeliverySession.driveDeliveryTurn}/{@link feedDeliverySteer}
+ * when the SDK admits the message. Keyed by BOTH session + UUID so a multi-
+ * target delivery (the same MessageRecord/id to several agents) can't let one
+ * session's consumption signal resolve another session's waiter. (Codex P1.)
+ */
+const deliveryConsumptionWaiters = new Map<string, Set<() => void>>();
+
+const consumptionKey = (sessionId: string, messageUuid: string) => `${sessionId}\0${messageUuid}`;
+
+/**
+ * Register a wait for the durable job's SDK consumption. The `promise` resolves
+ * when {@link signalDeliveryConsumed} fires for this session + UUID (or never,
+ * if the job never reaches the SDK — bound the wait with a timeout and call
+ * `cancel()` to avoid leaking the entry).
+ */
+export function waitForDeliveryConsumption(
+  sessionId: string,
+  messageUuid: string
+): {
+  promise: Promise<void>;
+  cancel: () => void;
+} {
+  const key = consumptionKey(sessionId, messageUuid);
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  let waiters = deliveryConsumptionWaiters.get(key);
+  if (!waiters) {
+    waiters = new Set();
+    deliveryConsumptionWaiters.set(key, waiters);
+  }
+  waiters.add(resolve);
+  return {
+    promise,
+    cancel: () => {
+      const set = deliveryConsumptionWaiters.get(key);
+      if (set) {
+        set.delete(resolve);
+        if (set.size === 0) deliveryConsumptionWaiters.delete(key);
+      }
+    },
+  };
+}
+
+/**
+ * Signal that the durable job for `messageUuid` was consumed by the SDK (onSent)
+ * in `sessionId`. Resolves all waiters for that (session, UUID) and clears the
+ * entry. No-op if none are waiting (e.g. consumption before any caller
+ * registered, or a delivery with no long-horizon source awaiting). Session-
+ * scoped so a multi-target delivery can't cross-resolve. (Codex P1.)
+ */
+export function signalDeliveryConsumed(sessionId: string, messageUuid: string): void {
+  const waiters = deliveryConsumptionWaiters.get(consumptionKey(sessionId, messageUuid));
+  if (!waiters) return;
+  deliveryConsumptionWaiters.delete(consumptionKey(sessionId, messageUuid));
+  for (const resolve of waiters) resolve();
+}
+
+/**
+ * Await a durable delivery job's SDK consumption (onSent) after enqueueing it,
+ * restoring the legacy "delivered = consumed" semantic. `deliver` performs the
+ * enqueue (e.g. {@link deliverAndMarkQueued}); the await races the consumption
+ * signal against a timeout (HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS, default
+ * 30s, matching the legacy MessageQueue timeout) and rejects on timeout so a
+ * caller doesn't acknowledge a delivery that may yet dead-letter.
+ *
+ * `terminalizeOnTimeout` is invoked on timeout (or if `deliver` throws) ONLY for
+ * paths that created a FRESH job this call (no prior row). It terminalizes the
+ * persisted row so the durable job isn't later consumed alongside a retry that
+ * mints a fresh UUID (direct send_message paths carry no stable id) — preventing
+ * a duplicate. OMIT it for existing-row paths (stable id, e.g. the inbox flush)
+ * so the job can self-heal via a retry that re-registers the wait. (Codex P1.)
+ */
+export async function awaitDeliveryConsumption(args: {
+  sessionId: string;
+  messageUuid: string;
+  deliver: () => Promise<void>;
+  terminalizeOnTimeout?: () => void;
+}): Promise<void> {
+  const consumed = waitForDeliveryConsumption(args.sessionId, args.messageUuid);
+  let consumptionTimeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await args.deliver();
+    const consumptionTimeoutMs =
+      Number(process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS) || 30_000;
+    await Promise.race([
+      consumed.promise,
+      new Promise<void>((_, reject) => {
+        consumptionTimeout = setTimeout(
+          () => reject(new Error('delivery not consumed within timeout')),
+          consumptionTimeoutMs
+        );
+      }),
+    ]);
+  } catch (err) {
+    args.terminalizeOnTimeout?.();
+    throw err;
+  } finally {
+    if (consumptionTimeout) clearTimeout(consumptionTimeout);
+    consumed.cancel();
+  }
+}
+
+/**
  * In-process per-session mutex. Guards ONLY the brief turn start/stop + steer
  * state-check windows — NOT the long turn await. The feed itself is
  * concurrent-safe (§8). Holding this lock across a full SDK turn would block
@@ -277,4 +407,67 @@ export async function withSessionLock<T>(sessionId: string, fn: () => Promise<T>
     release();
     if (sessionLocks.get(sessionId) === next) sessionLocks.delete(sessionId);
   }
+}
+
+/**
+ * Enqueue a durable delivery job and, when it inserts as a turn, mark the
+ * session queued — as ONE per-session critical section (under
+ * {@link withSessionLock}). Role arbitration and queued ownership must be atomic
+ * so a concurrently-injected steer can never win the queued marker that belongs
+ * to the turn. Used by the migrated Space (`spaceAgentInjector`,
+ * `injectMessageIntoSession`) and long-term-agent injectors; the caller persists
+ * the user message BEFORE calling this (the handler reloads content by UUID).
+ * (`AgentSession.deliverChatMessage` inlines the same deliver + mark-queued
+ * sequence rather than calling this — it needs the role for its cooldown
+ * supersession, so it doesn't fit the shared shape.)
+ *
+ * `stateManager` is optional: when absent (e.g. a long-term-agent session view
+ * that doesn't expose it) the queued marker is skipped instead of crashing; on a
+ * real AgentSession it is present and the marker is set. `onEnqueueFailure`
+ * (if provided) terminalizes the persisted row when `deliverMessage` throws.
+ */
+export async function deliverAndMarkQueued(args: {
+  jobQueue: JobQueueRepository;
+  stateManager?: {
+    setQueuedIfIdle(messageId: string): Promise<boolean>;
+    getState(): { status: string };
+  };
+  sessionId: string;
+  messageUuid: string;
+  origin: MessageDeliveryOrigin;
+  onEnqueueFailure?: () => void;
+}): Promise<void> {
+  await withSessionLock(args.sessionId, async () => {
+    let role: MessageDeliveryRole;
+    try {
+      // Legacy-owned turn guard: while v2 is default-on, QueryModeHandler still
+      // replays deferred/enqueued rows directly through MessageQueue, so a
+      // session can be `processing` a live SDK turn with NO active v2 turn row.
+      // The index would classify this injection as a fresh turn (it sees no v2
+      // turn), racing the legacy turn + letting its idle prematurely resolve the
+      // new waiter. Force a `steer` so the new message parks behind the legacy
+      // turn and promotes only once that turn ends. The deferred legacy-replay
+      // migration removes the need for this guard. (Codex P1.)
+      const legacyOwnedTurn =
+        !!args.stateManager &&
+        args.stateManager.getState().status === 'processing' &&
+        !args.jobQueue.hasActiveTurnDelivery(args.sessionId);
+      role = deliverMessage(args.jobQueue, args.sessionId, args.messageUuid, {
+        origin: args.origin,
+        parentToolUseId: null,
+        ...(legacyOwnedTurn ? { role: 'steer' as const } : {}),
+      });
+    } catch (err) {
+      args.onEnqueueFailure?.();
+      throw err;
+    }
+    if (role === 'turn' && args.stateManager) {
+      try {
+        await args.stateManager.setQueuedIfIdle(args.messageUuid);
+      } catch {
+        // Non-fatal — the durable job is already enqueued; the handler will
+        // drive the turn. Mirrors deliverChatMessage's warn-and-continue.
+      }
+    }
+  });
 }

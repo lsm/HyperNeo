@@ -16,6 +16,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { MessageContent, MessageHub, Session } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { drainDeliveryWaitersOnTerminalSDKMessage } from './message-delivery';
 import type { UUID } from 'crypto';
 import { Database } from '../../storage/database';
 import { ErrorCategory, ErrorManager } from '../error-manager';
@@ -870,7 +871,9 @@ export class QueryRunner {
           // state persistence to avoid cascading "closed database" errors.
           if (!this.ctx.isCleaningUp()) {
             const processingState = stateManager.getState();
-            await stateManager.setIdle();
+            // Only publish the terminal idle (draining the delivery waiters) when
+            // the throwing message actually ends the turn — the final `result`.
+            await drainDeliveryWaitersOnTerminalSDKMessage(stateManager, message as SDKMessage);
 
             await errorManager.handleError(
               session.id,
@@ -990,7 +993,7 @@ export class QueryRunner {
       // Skip messageQueue.clear() so the user's pending message is preserved for the retry.
       if (isStartupTimeout && retryAttempt === 0 && !this.ctx.isCleaningUp()) {
         logger.warn('Auto-retrying query after startup timeout (1 retry).');
-        await stateManager.setIdle();
+        await stateManager.setIdle({ suppressDeliveryWaiters: true });
 
         // Close the current queryObject BEFORE retrying to prevent the
         // "Already connected to a transport" crash. The finally{} block has not
@@ -1029,7 +1032,7 @@ export class QueryRunner {
         // with the same 'No message found' error.
         this.ctx.consumePendingResumeSessionAt?.();
         logger.warn('Auto-retrying query without one-shot resumeSessionAt.');
-        await stateManager.setIdle();
+        await stateManager.setIdle({ suppressDeliveryWaiters: true });
 
         if (this.ctx.queryObject) {
           try {
@@ -1062,7 +1065,7 @@ export class QueryRunner {
         !this.ctx.isCleaningUp()
       ) {
         logger.warn('Auto-retrying query after transient connection error (1 retry).');
-        await stateManager.setIdle();
+        await stateManager.setIdle({ suppressDeliveryWaiters: true });
 
         // Re-enqueue the last consumed user message so the retry has input to
         // process.  Without this, the message was already shifted out of

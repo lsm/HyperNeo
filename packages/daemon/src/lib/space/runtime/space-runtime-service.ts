@@ -49,6 +49,11 @@ import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-l
 import type { TaskAgentManager } from './task-agent-manager';
 import type { SessionManager } from '../../session-manager';
 import type { AgentSession } from '../../agent/agent-session';
+import {
+  awaitDeliveryConsumption,
+  deliverAndMarkQueued,
+  isMessageDeliveryV2Enabled,
+} from '../../agent/message-delivery';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
 import { SpaceRuntime } from './space-runtime';
 import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine';
@@ -470,7 +475,15 @@ export class SpaceRuntimeService {
   ): Promise<string | null> {
     const session = await this.ensureLongTermAgentSession(actor);
     if (!session) return null;
-    await this.injectLongTermAgentMessage(session, message.body);
+    // Pass the message's stable identifier so a consumption-timeout retry
+    // (injectLongTermAgentMessage rejects but the durable job keeps running)
+    // reuses the same UUID — the idempotent persist + getActiveDeliveryRole guard
+    // then prevent a second durable job + duplicated agent actions. (Codex P1.)
+    await this.injectLongTermAgentMessage(
+      session,
+      message.body,
+      message.idempotencyKey ?? message.messageId
+    );
     return session.getSessionData().id;
   }
 
@@ -565,6 +578,11 @@ export class SpaceRuntimeService {
       getSessionData(): Session;
       ensureQueryStarted(): Promise<void>;
       messageQueue: { enqueueWithId: (id: string, message: string) => Promise<void> };
+      /** Present on real AgentSessions; marked optional so test mocks need not stub it. */
+      stateManager?: {
+        setQueuedIfIdle(messageId: string): Promise<boolean>;
+        getState(): { status: string };
+      };
     },
     message: string,
     messageId?: string
@@ -582,9 +600,69 @@ export class SpaceRuntimeService {
         content: [{ type: 'text' as const, text: message }],
       },
     };
-    await session.ensureQueryStarted();
-    this.config.reactiveDb?.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
-    await session.messageQueue.enqueueWithId(id, message);
+    const reactiveDb = this.config.reactiveDb?.db;
+    if (!reactiveDb) {
+      // reactiveDb is optional on the config but always present in production
+      // wiring. Under v2 the handler reloads content by UUID, so without it the
+      // message can be neither persisted nor delivered — fail loudly rather than
+      // silently dropping it.
+      throw new Error(
+        `injectLongTermAgentMessage: reactiveDb unavailable; cannot deliver to ${sessionId}`
+      );
+    }
+    if (isMessageDeliveryV2Enabled()) {
+      // Idempotent persist: external-event delivery / inbox flush can be retried
+      // with the same idempotency key after a crash between job insertion and
+      // source bookkeeping. sdk_uuid is indexed but not unique, so an
+      // unconditional save would insert a duplicate row that lingers forever.
+      // Distinguish prior outcomes: a `consumed` row genuinely ran (don't
+      // re-drive); a `failed` row means a prior attempt's enqueue threw and
+      // terminalized it — reopen it so this retry can deliver; an `enqueued`
+      // row just needs its job (re-)enqueued.
+      const sdkMessageRepo = reactiveDb.getSDKMessageRepo();
+      const existing = sdkMessageRepo.getDeliveryContent(sessionId, id);
+      const fresh = !existing;
+      if (!existing) {
+        reactiveDb.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+      } else if (existing.sendStatus === 'consumed') {
+        return id; // genuinely delivered on a prior attempt — don't re-drive
+      } else if (existing.sendStatus === 'failed') {
+        // Prior enqueue threw and terminalized the row; the handler skips
+        // `failed`, so reopen it before re-enqueueing.
+        sdkMessageRepo.reopenDeliveryByUuid(sessionId, id);
+      }
+      // else (enqueued/deferred/submitted): row exists; just (re-)enqueue —
+      // deliverMessage dedups the active job via getActiveDeliveryRole. Enqueue
+      // + mark queued as one per-session critical section (deliverAndMarkQueued).
+      //
+      // Await SDK consumption (onSent) before returning — callers
+      // (flushLongTermAgentInbox / deliverLongHorizonExternalEvent) thus confirm
+      // the source record only after genuine consumption, not bare enqueue. On
+      // timeout, terminalize ONLY a fresh row (the inbox flush carries a stable
+      // id, so its retry reopens + self-heals; terminalizing would kill a legit
+      // in-flight job). (Codex P1.)
+      await awaitDeliveryConsumption({
+        sessionId,
+        messageUuid: id,
+        deliver: () =>
+          deliverAndMarkQueued({
+            jobQueue: reactiveDb.getJobQueueRepo(),
+            stateManager: session.stateManager,
+            sessionId,
+            messageUuid: id,
+            origin: 'long_term_agent',
+            onEnqueueFailure: () => sdkMessageRepo.markDeliveryFailedByUuid(sessionId, id),
+          }),
+        ...(fresh
+          ? { terminalizeOnTimeout: () => sdkMessageRepo.markDeliveryFailedByUuid(sessionId, id) }
+          : {}),
+      });
+    } else {
+      // Legacy inline path (HYPERNEO_MESSAGE_DELIVERY_V2=0 opt-out).
+      await session.ensureQueryStarted();
+      reactiveDb.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+      await session.messageQueue.enqueueWithId(id, message);
+    }
     return id;
   }
 
