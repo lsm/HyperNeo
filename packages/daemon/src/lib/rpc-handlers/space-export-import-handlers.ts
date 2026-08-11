@@ -446,21 +446,36 @@ function validateWorkflowForPreview(
   for (const gate of exported.gates ?? []) {
     if (gate?.id) transitionGateIds.add(gate.id);
   }
-  const transitionTargetNames = new Set<string>(['*']);
-  for (const n of exported.nodes) {
-    transitionTargetNames.add(n.name);
-    for (const a of n.agents ?? []) transitionTargetNames.add(a.name);
-  }
+  // Count distinct destinations per target name (node-name vs slot-name, as in
+  // the manager) so an ambiguous target is surfaced here too.
+  const transitionTargetDestinations = new Map<string, Set<string>>();
+  const countTargetDest = (name: string | undefined, key: string) => {
+    if (!name) return;
+    const set = transitionTargetDestinations.get(name) ?? new Set<string>();
+    set.add(key);
+    transitionTargetDestinations.set(name, set);
+  };
+  exported.nodes.forEach((n, idx) => {
+    countTargetDest(n.name, `node:${idx}`);
+    for (const a of n.agents ?? []) countTargetDest(a.name, `slot:${idx}`);
+  });
   for (const node of exported.nodes) {
     const transitions = node.transitions;
     if (!transitions || transitions.length === 0) continue;
     for (let ti = 0; ti < transitions.length; ti++) {
       const t = transitions[ti];
       const loc = `node "${node.name}".transitions[${ti}]`;
-      if (!transitionTargetNames.has(t.target)) {
-        errors.push(
-          `${loc}.target "${t.target}" does not reference a known node name or agent slot name`
-        );
+      if (t.target !== '*') {
+        const dests = transitionTargetDestinations.get(t.target);
+        if (!dests || dests.size === 0) {
+          errors.push(
+            `${loc}.target "${t.target}" does not reference a known node name or agent slot name`
+          );
+        } else if (dests.size > 1) {
+          errors.push(
+            `${loc}.target "${t.target}" is ambiguous — matches ${dests.size} destinations`
+          );
+        }
       }
       if (t.hookId !== undefined && !transitionHookIds.has(t.hookId)) {
         errors.push(`${loc}.hookId "${t.hookId}" does not reference a known hook`);

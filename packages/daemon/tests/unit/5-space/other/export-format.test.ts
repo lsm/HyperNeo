@@ -2492,6 +2492,28 @@ describe('validateExportedWorkflow — handoff transitions', () => {
     if (!result.ok) expect(result.error).toContain('does not reference a known node name');
   });
 
+  test('rejects an ambiguous target whose name matches multiple destinations', () => {
+    // Two nodes share the slot name 'shared'; a transition targeting 'shared'
+    // must be rejected at bundle validation, not only when execute rolls back.
+    const result = validateExportedWorkflow({
+      version: 3,
+      type: 'workflow',
+      name: 'W',
+      nodes: [
+        {
+          name: 'A',
+          agents: [{ agentRef: 'coder', name: 'shared' }],
+          transitions: [{ id: 't', target: 'shared' }],
+        },
+        { name: 'B', agents: [{ agentRef: 'coder', name: 'shared' }] },
+      ],
+      startNode: 'A',
+      tags: [],
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('ambiguous');
+  });
+
   test('rejects a duplicate transition id within a node', () => {
     const result = validateExportedWorkflow(
       wfWithTransitions([

@@ -735,11 +735,21 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
     const transitions = node.transitions;
     if (!transitions || transitions.length === 0) continue;
 
-    const validTargetNames = new Set<string>(['*']);
-    for (const other of result.data.nodes) {
-      validTargetNames.add(other.name);
-      for (const a of other.agents ?? []) validTargetNames.add(a.name);
-    }
+    // Count distinct destinations per name (node-name destinations and
+    // slot-name destinations separately, mirroring the manager) so an ambiguous
+    // target — a name matching more than one node/slot — is rejected here, not
+    // only to roll back at createWorkflow during execute.
+    const targetDestinations = new Map<string, Set<string>>();
+    const countDest = (name: string | undefined, key: string) => {
+      if (!name) return;
+      const set = targetDestinations.get(name) ?? new Set<string>();
+      set.add(key);
+      targetDestinations.set(name, set);
+    };
+    result.data.nodes.forEach((other, idx) => {
+      countDest(other.name, `node:${idx}`);
+      for (const a of other.agents ?? []) countDest(a.name, `slot:${idx}`);
+    });
 
     const seenIds = new Set<string>();
     const seenTargets = new Set<string>();
@@ -750,11 +760,20 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
         return { ok: false, error: `invalid: ${loc}: duplicate transition id "${t.id}"` };
       }
       seenIds.add(t.id);
-      if (!validTargetNames.has(t.target)) {
-        return {
-          ok: false,
-          error: `invalid: ${loc}.target "${t.target}" does not reference a known node name or agent slot name`,
-        };
+      if (t.target !== '*') {
+        const dests = targetDestinations.get(t.target);
+        if (!dests || dests.size === 0) {
+          return {
+            ok: false,
+            error: `invalid: ${loc}.target "${t.target}" does not reference a known node name or agent slot name`,
+          };
+        }
+        if (dests.size > 1) {
+          return {
+            ok: false,
+            error: `invalid: ${loc}.target "${t.target}" is ambiguous — matches ${dests.size} destinations`,
+          };
+        }
       }
       if (seenTargets.has(t.target)) {
         return {
