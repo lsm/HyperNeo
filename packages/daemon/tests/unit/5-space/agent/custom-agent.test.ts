@@ -718,6 +718,68 @@ describe('buildCustomAgentTaskMessage', () => {
     expect(message).toContain('`save_artifact` alone does not deliver this gated handoff');
   });
 
+  it('injects Review→Coding handoff with data.pr_url for a review_posted hook (no gateId)', () => {
+    // After the gate→hook migration the Review→Coding channel has gateId: null
+    // and a `review_posted` send_message hook (not a gate). buildGatedHandoffLines
+    // skips it (no gateId), so buildHookValidatedHandoffLines must cover
+    // review_posted — otherwise the reviewer gets no guidance on what data to
+    // pass, omits data.pr_url, and the hook false-blocks every feedback send.
+    const workflow = makeWorkflow({
+      nodes: [
+        {
+          id: 'review-node',
+          name: 'Review',
+          agents: [{ agentId: 'agent-1', name: 'reviewer' }],
+        },
+        {
+          id: 'coding-node',
+          name: 'Coding',
+          agents: [{ agentId: 'agent-1', name: 'coder' }],
+        },
+      ],
+      startNodeId: 'review-node',
+      channels: [
+        {
+          id: 'ch-review-to-coding',
+          from: 'Review',
+          to: 'Coding',
+          label: 'Review → Coding',
+          // no gateId — the migrated hook form
+        },
+      ],
+      gates: [],
+      hooks: [
+        {
+          id: 'review-posted-hook',
+          enabled: true,
+          label: 'Review Posted',
+          sourceNode: 'Review',
+          targetNode: 'Coding',
+          method: 'send_message',
+          classification: 'validation',
+          order: 0,
+          validator: { kind: 'built_in', id: 'review_posted' },
+          authorizedCallers: [{ sourceNode: 'Review', agentSlots: ['reviewer'] }],
+        },
+      ],
+    });
+
+    const message = buildCustomAgentTaskMessage(
+      makeConfig({
+        workflow,
+        workflowRun: makeWorkflowRun({ workflowId: workflow.id }),
+        nodeId: 'review-node',
+        agentSlotName: 'reviewer',
+      })
+    );
+
+    expect(message).toContain('- Outbound gated handoffs:');
+    expect(message).toContain(
+      'Coding (Review → Coding): call `send_message(target="Coding", message="<short summary>", data: { "pr_url": "<pr_url>" })`'
+    );
+    expect(message).toContain('`save_artifact` alone does not deliver this gated handoff');
+  });
+
   it('emits scalar send_message examples for multicast gated channels', () => {
     const workflow = makeWorkflow({
       channels: [
