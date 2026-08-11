@@ -49,6 +49,26 @@ UNIT_ROOT="$REPO_ROOT/packages/daemon/tests/unit"
 # include — and thus off CI — while this guard reports full coverage.
 SHARED_ROOT="$REPO_ROOT/packages/shared"
 
+# Unit runner configs (daemon + shared) determine which shard paths Vitest
+# actually runs — Vitest applies include/exclude even to explicit paths. Mirror
+# the online/web config guards so narrowing a unit config can't filter shard
+# paths while this guard stays green.
+for _cfg in "$REPO_ROOT/packages/daemon/vitest.config.ts" "$REPO_ROOT/packages/shared/vitest.config.ts"; do
+	_cfg_pkg=$(basename "$(dirname "$_cfg")")
+	if ! grep -qF "include: ['tests/**/*.test.ts', 'tests/**/*_test.ts']" "$_cfg"; then
+		err "$_cfg_pkg/vitest.config.ts include is not ['tests/**/*.test.ts', 'tests/**/*_test.ts'] — unit shard paths could be filtered out"
+		echo "     → keep the include broad, or update this validator" >&2
+	fi
+	# exclude must not drop a unit/shared test root (tests/unit/ or src/). The
+	# daemon config legitimately excludes tests/online/** (online has its own
+	# config), so that specific path is allowed.
+	_cfg_exclude=$(grep -E "^[[:space:]]*exclude:" "$_cfg" | head -n1)
+	if printf '%s' "$_cfg_exclude" | grep -qE 'tests/unit/|src/'; then
+		err "$_cfg_pkg/vitest.config.ts exclude references a unit/shared test path (tests/unit/ or src/) — tests could be skipped"
+		echo "     → remove the test-path exclusion" >&2
+	fi
+done
+
 COVERED_TMP="$(mktemp)"
 trap 'rm -f "$COVERED_TMP"' EXIT
 
@@ -209,10 +229,13 @@ if ! grep -qF "include: ['tests/online/**/*.test.ts']" "$ONLINE_CFG"; then
 	err "packages/daemon/vitest.online.config.ts include is not tests/online/**/*.test.ts — online matrix paths could be filtered out"
 	echo "     → keep the include broad, or update this validator" >&2
 fi
-online_exclude=$(grep -E "^[[:space:]]*exclude:" "$ONLINE_CFG" | head -n1)
-if printf '%s' "$online_exclude" | grep -q 'tests/online/'; then
-	err "packages/daemon/vitest.online.config.ts exclude references tests/online/ — online tests would be skipped"
-	echo "     → remove the tests/online/ path from exclude" >&2
+# Require the exact exclude — a substring check for "tests/online/" misses a
+# broad glob (e.g. tests/** or **/legacy/**) that would silently exclude online
+# tests. node_modules/dist/tests/unit/** is the expected set (tests/unit/** keeps
+# the online config from picking up unit suites).
+if ! grep -qF "exclude: ['node_modules', 'dist', 'tests/unit/**']" "$ONLINE_CFG"; then
+	err "packages/daemon/vitest.online.config.ts exclude is not ['node_modules','dist','tests/unit/**'] — a broad/changed glob could exclude online tests"
+	echo "     → keep the exclude to node_modules/dist/tests/unit/**, or update this validator" >&2
 fi
 
 RPC_FILES=(
@@ -321,9 +344,11 @@ check_split_module() {
 		expected_list="$expected_list$f"$'\n'
 	done
 	while IFS= read -r file; do
-		local name
-		name=$(basename "$file")
-		if ! grep -qxF "$name" <<< "$expected_list"; then
+		# Compare the module-RELATIVE path (not basename): a nested file whose
+		# basename collides with a root-level entry (e.g. rpc/nested/x.test.ts
+		# vs rpc/x.test.ts) must not be treated as the root file.
+		local rel="${file#"$dir"/}"
+		if ! grep -qxF "$rel" <<< "$expected_list"; then
 			err "$file is not in any CI matrix shard for '$module_name'"
 			echo "     → add it to the appropriate matrix in $workflow" >&2
 		fi
@@ -378,6 +403,13 @@ for dir in "$ONLINE_DIR"/*/; do
 	# path like tests/online/agent/<file> is not mistaken for the whole dir.
 	dir_refs=$(grep -hE "tests/online/$dirname([^/[:alnum:]_-]|$)" "$MAIN_WORKFLOW" "$REAL_API_WORKFLOW" 2>/dev/null \
 		| grep -cvE '^[[:space:]]*#')
+	if [ "${dir_refs:-0}" -gt 1 ]; then
+		# Exactly-one-shard contract: a directory referenced by two matrix rows
+		# (or both workflows) runs every file under it twice — wasted CI and, for
+		# real-provider shards, paid calls.
+		err "online module directory '$dirname' has $dir_refs active directory-level references — duplicate shard ownership"
+		echo "     → list it in exactly one matrix row" >&2
+	fi
 	if [ "${dir_refs:-0}" -gt 0 ]; then
 		continue
 	fi
