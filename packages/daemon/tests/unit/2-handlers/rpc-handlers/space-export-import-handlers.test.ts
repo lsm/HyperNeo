@@ -145,6 +145,7 @@ function createSchema(db: Database): void {
 		CREATE TABLE space_workflow_runs (
 			id TEXT PRIMARY KEY,
 			workflow_id TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'pending',
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
 		)

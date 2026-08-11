@@ -364,39 +364,38 @@ export class SpaceWorkflowRunRepository {
   }
 
   /**
-   * Delete every TOMBSTONED run that belongs to a given workflow — i.e. runs
-   * whose tasks are all archived (the non-reopenable tombstone, RFC §3.1/§4 #3).
+   * Delete every TOMBSTONED run that belongs to a given workflow.
    *
    * Needed because migration 60 rebuilt `space_workflow_runs` without an
    * `ON DELETE CASCADE` FK on `workflow_id`, so callers that remove a workflow
    * must explicitly clean up its runs to avoid orphans.
    *
-   * Deletion-safe (RFC §4 #3): runs with any non-archived task are PROTECTED —
-   * they may still execute (a `done`/`cancelled` run reopens). Only runs with no
-   * non-archived task are deleted. Callers that need to know whether live runs
-   * block full cleanup should check `SpaceWorkflowRepository.hasNonArchivedRuns`
-   * first; this method silently leaves protected runs in place as defense in
-   * depth (it never strands an executable run regardless of caller).
+   * Deletion-safe (RFC §4 #3): only TERMINAL runs (`done`/`cancelled`) with no
+   * non-archived task are deleted — i.e. true tombstones. Everything else is
+   * protected and left in place:
+   *   - non-terminal runs (`pending`/`in_progress`/`blocked`) — always
+   *     protected, covering the `startWorkflowRun` window where the run exists
+   *     before its task is attached (see `hasNonArchivedRuns`);
+   *   - terminal runs with a non-archived task — `done`/`cancelled` reopen, so
+   *     only `SpaceTask.archivedAt` is a non-reopenable tombstone.
+   * Callers that need to know whether executable runs block full cleanup should
+   * check `SpaceWorkflowRepository.hasNonArchivedRuns` first; this method
+   * silently leaves protected runs in place as defense in depth.
    *
-   * @returns The number of rows deleted (never includes protected runs).
+   * @returns The number of run rows deleted. NOTE: under FK enforcement this
+   *          count may include cascade effects (e.g. `space_tasks.workflow_run_id
+   *          ON DELETE SET NULL`), so it is an upper bound, not a precise run
+   *          count. No caller relies on the exact value.
    */
   deleteByWorkflowId(workflowId: string): number {
-    // Delete every run of this workflow EXCEPT those that still have a
-    // non-archived task (RFC §4 #3 — such a run is executable: done/cancelled
-    // reopen, so only an archived task is a non-reopenable tombstone). Compute
-    // the protected run-id set first and delete by `NOT IN`, rather than a
-    // correlated `NOT EXISTS` against the target table: SQLite does not
-    // reliably correlate a DELETE's WHERE-subquery against the row being
-    // deleted, so the correlation form over-deletes. The `workflow_run_id IS
-    // NOT NULL` guard keeps `NOT IN` NULL-safe (a NULL in the set would
-    // otherwise suppress every deletion).
     const result = this.db
       .prepare(
         `DELETE FROM space_workflow_runs
          WHERE workflow_id = ?
-           AND id NOT IN (
-             SELECT t.workflow_run_id FROM space_tasks t
-             WHERE t.archived_at IS NULL AND t.workflow_run_id IS NOT NULL
+           AND status IN ('done', 'cancelled')
+           AND NOT EXISTS (
+             SELECT 1 FROM space_tasks t
+             WHERE t.workflow_run_id = space_workflow_runs.id AND t.archived_at IS NULL
            )`
       )
       .run(workflowId);

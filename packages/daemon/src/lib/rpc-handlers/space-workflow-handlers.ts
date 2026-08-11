@@ -984,7 +984,7 @@ export function setupSpaceWorkflowHandlers(
     // duplicate is KEPT (skipped) instead of stranded. A resync never deletes an
     // in-flight or reopenable run; the user archives its task and re-resyncs.
     const deletedIds: string[] = [];
-    const skippedDueToActiveRuns: string[] = [];
+    const skippedDueToNonArchivedRuns: string[] = [];
     for (const wf of toDelete) {
       // Only tombstoned runs are removed; executable runs are left in place.
       workflowRunRepo.deleteByWorkflowId(wf.id);
@@ -1004,10 +1004,10 @@ export function setupSpaceWorkflowHandlers(
         }
       } catch (err) {
         if (err instanceof WorkflowDeletionBlockedError) {
-          skippedDueToActiveRuns.push(wf.id);
+          skippedDueToNonArchivedRuns.push(wf.id);
           log.warn(
             `[resync] Kept duplicate workflow "${wf.name}" (${wf.id}): ` +
-              `it has run(s) whose task is not archived — archive the task(s) and re-resync`
+              `it has executable run(s) (in progress or not archived) — archive the task(s) and re-resync`
           );
           continue;
         }
@@ -1025,6 +1025,6 @@ export function setupSpaceWorkflowHandlers(
         log.warn('Failed to emit spaceWorkflow.updated:', err);
       });
 
-    return { workflow: updated, keptWorkflowId: kept.id, deletedIds, skippedDueToActiveRuns };
+    return { workflow: updated, keptWorkflowId: kept.id, deletedIds, skippedDueToNonArchivedRuns };
   });
 }

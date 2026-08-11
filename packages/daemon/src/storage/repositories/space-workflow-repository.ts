@@ -658,23 +658,35 @@ export class SpaceWorkflowRepository {
   // Delete
   // -------------------------------------------------------------------------
 
+  /**
+   * Delete a workflow definition row. NO deletion-safety guard: this does not
+   * check for executable runs, so calling it directly can orphan in-flight runs
+   * (there is no `workflow_id` FK on `space_workflow_runs`). Production callers
+   * MUST go through `SpaceWorkflowManager.deleteWorkflow`, which refuses when
+   * `hasNonArchivedRuns` is true. Direct repo use is reserved for internal
+   * fixtures that intentionally simulate a legacy orphan (e.g. recovery tests).
+   */
   deleteWorkflow(id: string): boolean {
     const result = this.db.prepare(`DELETE FROM space_workflows WHERE id = ?`).run(id);
     return result.changes > 0;
   }
 
   /**
-   * Does this workflow have at least one run whose canonical task is NOT archived?
+   * Does this workflow have at least one EXECUTABLE run that must not be orphaned?
    *
-   * This is the RFC §4 #3 deletion-safety predicate. A run with a non-archived
-   * task is still executable — `done`/`cancelled` REOPEN (`workflow-run-status-
-   * machine.ts`), and only `SpaceTask.archivedAt` is the non-reopenable
-   * tombstone — so deleting the workflow (or its runs) while such a run exists
-   * orphans/strands it. The predicate is therefore archive-based, NOT
-   * status-based: it protects reopenable `done`/`cancelled` runs, not just
-   * currently-active statuses. Mirrors the `listPinnableRuns` predicate in the
-   * run repository (EXISTS a non-archived task) so the deletion guard and the
-   * pinning backfill agree on what "still executable" means.
+   * RFC §4 #3 deletion-safety predicate. A run is protected (deletion must be
+   * refused) when it is still executable, which is EITHER:
+   *   - non-terminal (`pending`/`in_progress`/`blocked`) — covers the
+   *     `startWorkflowRun` window where the run row is inserted and promoted to
+   *     `in_progress` BEFORE its canonical task is attached (`space-runtime.ts`
+   *     inserts the run, `await`s the run-created event, then creates the task);
+   *     during that `await` a concurrent delete/resync/import must not strand it.
+   *     A non-terminal run is protected regardless of its task state.
+   *   - OR terminal (`done`/`cancelled`) with a non-archived task — `done`/
+   *     `cancelled` REOPEN (`workflow-run-status-machine.ts`), and only
+   *     `SpaceTask.archivedAt` is the non-reopenable tombstone.
+   * Only a terminal run whose task is archived (or absent) is a true tombstone
+   * and safe to delete over.
    */
   hasNonArchivedRuns(workflowId: string): boolean {
     // Minimal-schema safe-guard: some test fixtures and partial schemas create
@@ -694,9 +706,12 @@ export class SpaceWorkflowRepository {
       .prepare(
         `SELECT 1 FROM space_workflow_runs r
          WHERE r.workflow_id = ?
-           AND EXISTS (
-             SELECT 1 FROM space_tasks t
-             WHERE t.workflow_run_id = r.id AND t.archived_at IS NULL
+           AND (
+             r.status IN ('pending', 'in_progress', 'blocked')
+             OR EXISTS (
+               SELECT 1 FROM space_tasks t
+               WHERE t.workflow_run_id = r.id AND t.archived_at IS NULL
+             )
            )
          LIMIT 1`
       )

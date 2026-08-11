@@ -590,14 +590,27 @@ export function WorkflowList({
       toast.error('Connection lost.');
       throw new Error('Not connected');
     }
-    const result = await hub.request<{ deletedIds: string[] }>('spaceWorkflow.resyncDuplicates', {
+    const result = await hub.request<{
+      deletedIds: string[];
+      skippedDueToNonArchivedRuns?: string[];
+    }>('spaceWorkflow.resyncDuplicates', {
       spaceId,
       templateName,
     });
     const removed = result.deletedIds.length;
-    toast.success(
-      `Resynced "${templateName}"${removed > 0 ? ` — removed ${removed} older ${removed === 1 ? 'duplicate' : 'duplicates'}` : ''}`
-    );
+    const skipped = result.skippedDueToNonArchivedRuns?.length ?? 0;
+    if (skipped > 0) {
+      // A duplicate was kept because it still has an executable run — tell the
+      // user it's a partial result and what to do next, instead of implying all
+      // duplicates were resynced.
+      toast.warning(
+        `Resynced "${templateName}"${removed > 0 ? ` — removed ${removed} older ${removed === 1 ? 'duplicate' : 'duplicates'}` : ''}; kept ${skipped} ${skipped === 1 ? 'duplicate' : 'duplicates'} with an active run — archive its task(s) and re-sync`
+      );
+    } else {
+      toast.success(
+        `Resynced "${templateName}"${removed > 0 ? ` — removed ${removed} older ${removed === 1 ? 'duplicate' : 'duplicates'}` : ''}`
+      );
+    }
   }
 
   // ─── Import/Export helpers ──────────────────────────────────────────────

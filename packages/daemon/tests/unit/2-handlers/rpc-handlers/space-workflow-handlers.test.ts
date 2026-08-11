@@ -598,6 +598,23 @@ describe('space-workflow-handlers', () => {
         'Workflow not found: wf-1'
       );
     });
+
+    it('propagates WorkflowDeletionBlockedError and does NOT emit deleted (RFC §4 #3)', async () => {
+      // The primary failure mode for a workflow with an executable run: the
+      // manager throws, the handler surfaces it, and no spaceWorkflow.deleted
+      // event fires (the workflow is kept, not removed).
+      (workflowManager.deleteWorkflow as ReturnType<typeof mock>).mockImplementation(() => {
+        throw new WorkflowDeletionBlockedError('blocked: executable run', 'wf-1');
+      });
+
+      await expect(call('spaceWorkflow.delete', { id: 'wf-1' })).rejects.toThrow(
+        /executable|not archived/
+      );
+      expect(internalEventBus.publish).not.toHaveBeenCalledWith(
+        'spaceWorkflow.deleted',
+        expect.anything()
+      );
+    });
   });
 
   // ─── spaceWorkflow.setDefault (removed from design) ───────────────────────
@@ -1456,11 +1473,11 @@ describe('space-workflow-handlers', () => {
       const result = (await call('spaceWorkflow.resyncDuplicates', {
         spaceId: 'space-1',
         templateName: template.name,
-      })) as { deletedIds: string[]; skippedDueToActiveRuns: string[] };
+      })) as { deletedIds: string[]; skippedDueToNonArchivedRuns: string[] };
 
       // The blocked duplicate was kept (not deleted), the kept row was resynced.
       expect(result.deletedIds).toEqual([]);
-      expect(result.skippedDueToActiveRuns).toEqual(['wf-older']);
+      expect(result.skippedDueToNonArchivedRuns).toEqual(['wf-older']);
       // No spaceWorkflow.deleted emitted for a workflow that was never deleted.
       expect(internalEventBus.publish).not.toHaveBeenCalledWith(
         'spaceWorkflow.deleted',

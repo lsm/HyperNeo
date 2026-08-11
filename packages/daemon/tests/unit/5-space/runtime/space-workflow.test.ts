@@ -841,14 +841,17 @@ describe('SpaceWorkflowManager', () => {
   // archived task is a tombstone), so deleting the definition would orphan its
   // pinned version and strand it.
   // -------------------------------------------------------------------------
-  function seedRunWithTask(workflowId: string, opts: { archived?: boolean } = {}): string {
+  function seedRunWithTask(
+    workflowId: string,
+    opts: { archived?: boolean; status?: string } = {}
+  ): string {
     const now = Date.now();
     const runId = `run-${Math.random().toString(36).slice(2)}`;
     db.prepare(
       `INSERT INTO space_workflow_runs
          (id, space_id, workflow_id, definition_version, title, status, created_at, updated_at)
-       VALUES (?, 'space-1', ?, NULL, 'R', 'in_progress', ?, ?)`
-    ).run(runId, workflowId, now, now);
+       VALUES (?, 'space-1', ?, NULL, 'R', ?, ?, ?)`
+    ).run(runId, workflowId, opts.status ?? 'in_progress', now, now);
     db.prepare(
       `INSERT INTO space_tasks
          (id, space_id, task_number, title, status, workflow_run_id, archived_at, created_at, updated_at)
@@ -870,14 +873,34 @@ describe('SpaceWorkflowManager', () => {
     expect(manager.getWorkflow(wf.id)).not.toBeNull();
   });
 
-  test('deleteWorkflow succeeds once the blocking run task is archived', () => {
+  test('deleteWorkflow throws for a non-terminal run with no task yet (startup window)', () => {
+    // startWorkflowRun inserts the run before attaching its task; during that
+    // gap the run is executable and must block deletion.
+    const wf = manager.createWorkflow({
+      spaceId: 'space-1',
+      name: 'Starting',
+      nodes: [coderNode],
+      completionAutonomyLevel: 3,
+    });
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO space_workflow_runs
+         (id, space_id, workflow_id, definition_version, title, status, created_at, updated_at)
+       VALUES (?, 'space-1', ?, NULL, 'R', 'in_progress', ?, ?)`
+    ).run(`run-${wf.id}`, wf.id, now, now); // no task seeded
+    expect(() => manager.deleteWorkflow(wf.id)).toThrow(WorkflowDeletionBlockedError);
+    expect(manager.getWorkflow(wf.id)).not.toBeNull();
+  });
+
+  test('deleteWorkflow succeeds once the executable run is a tombstone', () => {
     const wf = manager.createWorkflow({
       spaceId: 'space-1',
       name: 'Archivable',
       nodes: [coderNode],
       completionAutonomyLevel: 3,
     });
-    seedRunWithTask(wf.id, { archived: true }); // tombstoned → safe to delete
+    // Terminal status + archived task = non-reopenable tombstone → safe to delete.
+    seedRunWithTask(wf.id, { archived: true, status: 'cancelled' });
     expect(manager.deleteWorkflow(wf.id)).toBe(true);
     expect(manager.getWorkflow(wf.id)).toBeNull();
   });

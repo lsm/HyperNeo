@@ -474,8 +474,9 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(workflowRepo.hasNonArchivedRuns(WORKFLOW_ID)).toBe(false);
     });
 
-    it('hasNonArchivedRuns is false when the run task is archived (tombstone)', () => {
+    it('hasNonArchivedRuns is false for a terminal run whose task is archived (tombstone)', () => {
       const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'R' });
+      repo.updateStatusUnchecked(run.id, 'cancelled'); // terminal
       seedTaskForRun(run.id, spaceId, { archived: true });
       expect(workflowRepo.hasNonArchivedRuns(WORKFLOW_ID)).toBe(false);
     });
@@ -487,28 +488,45 @@ describe('SpaceWorkflowRunRepository', () => {
     });
 
     it('hasNonArchivedRuns protects a reopenable done/cancelled run (task not archived)', () => {
-      // The key invariant: a finished run is NOT a tombstone — done/cancelled
-      // reopen — so it must block deletion as long as its task is not archived.
+      // A finished run is NOT a tombstone — done/cancelled reopen — so it must
+      // block deletion as long as its task is not archived.
       const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'R' });
       repo.updateStatusUnchecked(run.id, 'done');
       seedTaskForRun(run.id, spaceId); // not archived → still reopenable/executable
       expect(workflowRepo.hasNonArchivedRuns(WORKFLOW_ID)).toBe(true);
     });
 
+    it('hasNonArchivedRuns protects a non-terminal run with NO task yet (startup window)', () => {
+      // startWorkflowRun inserts the run and promotes it to in_progress BEFORE
+      // attaching its canonical task; during that gap the run has no task, yet
+      // it must not be orphaned by a concurrent delete/resync/import.
+      const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'R' });
+      // status defaults to 'pending' (non-terminal); no task seeded.
+      expect(workflowRepo.hasNonArchivedRuns(WORKFLOW_ID)).toBe(true);
+    });
+
     it('deleteByWorkflowId removes only tombstoned runs and protects executable ones', () => {
-      const archivedRun = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'archived' });
-      seedTaskForRun(archivedRun.id, spaceId, { archived: true });
+      const tombstoned = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'tomb' });
+      repo.updateStatusUnchecked(tombstoned.id, 'cancelled'); // terminal
+      seedTaskForRun(tombstoned.id, spaceId, { archived: true });
 
       const liveRun = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'live' });
-      seedTaskForRun(liveRun.id, spaceId); // not archived
+      seedTaskForRun(liveRun.id, spaceId); // not archived (and non-terminal)
 
       // Assert the invariant by which runs survive, not the returned count:
-      // Bun's changes() includes FK cascade effects (space_tasks ... ON DELETE
-      // SET NULL on the archived run's task), so the count over-reports relative
-      // to run rows deleted. No caller uses the count.
+      // under FK enforcement changes() includes cascade effects (space_tasks
+      // ... ON DELETE SET NULL on the tombstoned run's task), so the count
+      // over-reports relative to run rows deleted. No caller uses the count.
       repo.deleteByWorkflowId(WORKFLOW_ID);
-      expect(repo.getRun(archivedRun.id)).toBeNull(); // tombstoned → removed
+      expect(repo.getRun(tombstoned.id)).toBeNull(); // tombstone → removed
       expect(repo.getRun(liveRun.id)).not.toBeNull(); // executable → protected
+    });
+
+    it('deleteByWorkflowId protects a non-terminal run that has no task yet (startup window)', () => {
+      const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'starting' });
+      // non-terminal, no task — must survive run-cleanup during the attach gap.
+      repo.deleteByWorkflowId(WORKFLOW_ID);
+      expect(repo.getRun(run.id)).not.toBeNull();
     });
 
     it('deleteByWorkflowId is a no-op when every run is still executable', () => {
