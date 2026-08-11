@@ -12,9 +12,9 @@
  * - Rule `appliesTo` node UUIDs → node names (stable across re-import)
  *
  * Version policy:
- * - Accept: version 1 or 2 (v2 adds optional `topicFrom` on eventInterests as
- *   an alternative to a static `topic`; a v1-only client rejects v2 bundles via
- *   the version path rather than as schema-malformed).
+ * - Accept: version 1, 2, or 3 (v2 adds optional `topicFrom` on eventInterests;
+ *   v3 adds node handoff transitions and workflow gates). Older clients reject
+ *   newer bundles via the version path rather than as schema-malformed.
  * - Reject with "requires newer version": version > CURRENT_EXPORT_VERSION
  * - Reject as invalid: version missing, null, < 1, or non-integer
  */
@@ -617,8 +617,8 @@ export function exportBundle(
  * Validate an unknown value as an ExportedSpaceWorkerAgent.
  *
  * Version handling:
- * - version === 1 → accepted
- * - version > 1 → error: "requires newer version: ..."
+ * - version 1, 2, or 3 → accepted
+ * - version > CURRENT_EXPORT_VERSION → error: "requires newer version: ..."
  * - version < 1 or missing/non-integer → error: "invalid: ..."
  */
 export function validateExportedAgent(data: unknown): ValidationResult<ExportedSpaceWorkerAgent> {

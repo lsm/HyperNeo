@@ -1683,6 +1683,35 @@ describe('SpaceWorkflowManager', () => {
       ).toThrow("'label' must be a string");
     });
 
+    it('rejects non-string id/target/gateId/hookId without throwing a TypeError', () => {
+      // Untyped RPC JSON could send numbers; field reads (.trim/.length) must
+      // yield a clean WorkflowValidationError, not an uncaught TypeError.
+      expect(() =>
+        manager.createWorkflow(twoNodeParams([{ id: 42 as unknown as string, target: 'Review' }]))
+      ).toThrow("'id' must be a string");
+      expect(() =>
+        manager.createWorkflow(twoNodeParams([{ id: 't', target: 42 as unknown as string }]))
+      ).toThrow("'target' must be a string");
+      expect(() =>
+        manager.createWorkflow(
+          twoNodeParams([{ id: 't', target: 'Review', gateId: 7 as unknown as string }])
+        )
+      ).toThrow("'gateId' must be a string");
+      expect(() =>
+        manager.createWorkflow(
+          twoNodeParams([{ id: 't', target: 'Review', hookId: 7 as unknown as string }])
+        )
+      ).toThrow("'hookId' must be a string");
+    });
+
+    it('rejects a non-object transition element (untyped RPC JSON)', () => {
+      expect(() =>
+        manager.createWorkflow(
+          twoNodeParams([null as unknown as import('@hyperneo/shared').HandoffTransition])
+        )
+      ).toThrow('transition must be an object');
+    });
+
     it('rejects a non-array transitions payload (untyped RPC JSON)', () => {
       // A plain object `{}` is truthy with no .length; without this guard it
       // would slip through validation and be silently dropped by the repository.

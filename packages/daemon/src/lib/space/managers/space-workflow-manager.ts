@@ -1049,7 +1049,15 @@ export class SpaceWorkflowManager {
         const t = transitions[ti];
         const loc = `node[${ni}] "${node.name}".transitions[${ti}]`;
 
-        if (!t.id || !t.id.trim()) {
+        // RPC JSON is untyped — a non-object element (e.g. null) would throw a
+        // TypeError on the field reads below; reject it cleanly first.
+        if (!t || typeof t !== 'object') {
+          throw new WorkflowValidationError(`${loc}: transition must be an object`);
+        }
+        if (typeof t.id !== 'string') {
+          throw new WorkflowValidationError(`${loc}: 'id' must be a string`);
+        }
+        if (!t.id.trim()) {
           throw new WorkflowValidationError(`${loc}: 'id' must be a non-empty string`);
         }
         if (t.id.length > 100) {
@@ -1070,7 +1078,10 @@ export class SpaceWorkflowManager {
         }
         seenIds.add(t.id);
 
-        if (!t.target || !t.target.trim()) {
+        if (typeof t.target !== 'string') {
+          throw new WorkflowValidationError(`${loc}: 'target' must be a string`);
+        }
+        if (!t.target.trim()) {
           throw new WorkflowValidationError(`${loc}: 'target' must be a non-empty string`);
         }
         if (t.target.length > 100) {
@@ -1099,6 +1110,9 @@ export class SpaceWorkflowManager {
         seenTargets.add(t.target);
 
         if (t.gateId !== undefined) {
+          if (typeof t.gateId !== 'string') {
+            throw new WorkflowValidationError(`${loc}: 'gateId' must be a string`);
+          }
           if (!t.gateId.trim()) {
             throw new WorkflowValidationError(`${loc}: 'gateId' must be a non-empty string`);
           }
@@ -1113,6 +1127,9 @@ export class SpaceWorkflowManager {
         }
 
         if (t.hookId !== undefined) {
+          if (typeof t.hookId !== 'string') {
+            throw new WorkflowValidationError(`${loc}: 'hookId' must be a string`);
+          }
           if (!t.hookId.trim()) {
             throw new WorkflowValidationError(`${loc}: 'hookId' must be a non-empty string`);
           }
