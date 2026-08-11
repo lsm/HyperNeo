@@ -14,7 +14,9 @@ const DELIVERY_STATE_CLASSES: Record<DeliveryBadgeState, string> = {
   // MessageDeliveryStatus
   queued: 'border-amber-500/40 bg-amber-500/10 text-amber-200',
   processing: 'border-sky-500/40 bg-sky-500/10 text-sky-200',
-  retrying: 'border-amber-500/40 bg-amber-500/10 text-amber-200',
+  // Retrying is more urgent than a plain queue — amber is reserved for queued,
+  // so retrying reads as amber-on-orange to stand out.
+  retrying: 'border-orange-500/50 bg-orange-500/15 text-orange-200',
   delivered: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200',
   failed: 'border-red-500/45 bg-red-500/10 text-red-200',
   // ActorMessageDeliveryState (additional)

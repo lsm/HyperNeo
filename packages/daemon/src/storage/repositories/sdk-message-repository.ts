@@ -11,6 +11,7 @@ import type { Database as BunDatabase } from '../sqlite-compat';
 import { generateUUID, sendStatusToDeliveryStatus } from '@hyperneo/shared';
 import type {
   MessageContent,
+  MessageDeliveryStatus,
   MessageOrigin,
   HyperNeoActionMessage,
   ChatMessage,
@@ -659,7 +660,7 @@ export class SDKMessageRepository {
     sinceRowid?: number
   ): {
     messages: Array<
-      ChatMessage & { timestamp: number; origin?: MessageOrigin; sendStatus?: string }
+      ChatMessage & { timestamp: number; origin?: MessageOrigin; deliveryStatus?: MessageDeliveryStatus }
     >;
     hasMore: boolean;
   } {
@@ -744,7 +745,7 @@ export class SDKMessageRepository {
     sinceRowid?: number
   ): {
     messages: Array<
-      ChatMessage & { timestamp: number; origin?: MessageOrigin; sendStatus?: string }
+      ChatMessage & { timestamp: number; origin?: MessageOrigin; deliveryStatus?: MessageDeliveryStatus }
     >;
     hasMore: boolean;
   } {
@@ -927,7 +928,11 @@ export class SDKMessageRepository {
     // tracking message provenance in HyperNeo). The runtime values are always correct.
     return {
       messages: [...topLevelMessages, ...subagentMessages] as Array<
-        SDKMessage & { timestamp: number; origin?: MessageOrigin; sendStatus?: string }
+        SDKMessage & {
+          timestamp: number;
+          origin?: MessageOrigin;
+          deliveryStatus?: MessageDeliveryStatus;
+        }
       >,
       hasMore,
     };

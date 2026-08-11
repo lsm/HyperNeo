@@ -558,3 +558,13 @@ submitted) rows for their delivery badge, but only SETTLED (consumed/failed)
 user rows become `turnUserMessageId` sentinels — `saveUserMessageCore` withholds
 a conversation anchor until the row settles, and subsequent assistant rows must
 not inherit a pending prompt's id as their turn.
+
+### Interrupt / revoke reactivity
+
+`handleInterrupt` (cancel-everything path) and `revokePendingDelivery` both
+write through the raw db — cancelling `job_queue` rows and flipping `sdk_messages`
+statuses — and both now `notifyChange('sdk_messages' | 'job_queue')` session-scoped
+after the lock closes, so the widened delivery feeds drop the queued/retrying
+badge immediately instead of staying stuck until an unrelated write or reconnect.
+`message_delivery` jobs' payloads carry `sessionId`, which the processor derives
+into the change scope.

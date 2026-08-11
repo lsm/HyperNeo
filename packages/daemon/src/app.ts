@@ -378,9 +378,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     // message_delivery job). The generic processor handles every non-delivery
     // lane (schedules, cleanup, polling, workflow) — notifying `job_queue` there
     // would re-run all open transcript queries on every unrelated job, so it is
-    // a no-op. The message_delivery processor notifies session-scoped so only
-    // that session's feed re-evaluates.
+    // a no-op.
+    //
+    // INVARIANT: no non-delivery live query subscribes to `job_queue` today. If
+    // one ever does, give the generic notifier a session/task scope (the
+    // processor already threads it from job payloads) instead of making it a
+    // no-op, so unrelated lanes don't re-run open feeds.
     jobProcessor.setChangeNotifier(() => {});
+    // The message_delivery processor notifies session-scoped so only that
+    // session's feed re-evaluates on a delivery job transition.
     messageDeliveryProcessor.setChangeNotifier((table, scope) => {
       reactiveDb.notifyChange(table, scope);
     });
