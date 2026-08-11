@@ -565,6 +565,44 @@ describe('SDKUserMessage', () => {
     });
   });
 
+  describe('Rewind gating', () => {
+    const renderWithRewind = (deliveryStatus?: string) =>
+      render(
+        <SDKUserMessage
+          message={{
+            ...createTextMessage('Hello world'),
+            ...(deliveryStatus ? { deliveryStatus } : {}),
+          }}
+          onRewind={() => {}}
+          sessionId="s1"
+        />
+      );
+
+    it('shows the rewind button for terminal delivered messages', () => {
+      const { container } = renderWithRewind('delivered');
+      expect(container.querySelector('[title="Rewind to here"]')).toBeTruthy();
+    });
+
+    it('shows the rewind button for terminal failed messages', () => {
+      const { container } = renderWithRewind('failed');
+      expect(container.querySelector('[title="Rewind to here"]')).toBeTruthy();
+    });
+
+    it('shows the rewind button when deliveryStatus is absent (legacy settled row)', () => {
+      const { container } = renderWithRewind();
+      expect(container.querySelector('[title="Rewind to here"]')).toBeTruthy();
+    });
+
+    it.each([
+      'queued',
+      'processing',
+      'retrying',
+    ])('hides the rewind button for nonterminal %s delivery', (status) => {
+      const { container } = renderWithRewind(status);
+      expect(container.querySelector('[title="Rewind to here"]')).toBeFalsy();
+    });
+  });
+
   describe('Styling', () => {
     it('should be right-aligned (user messages)', () => {
       const message = createTextMessage('Hello');

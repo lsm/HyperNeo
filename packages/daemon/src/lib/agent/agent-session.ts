@@ -947,6 +947,14 @@ export class AgentSession
       this.db.getJobQueueRepo().cancelDelivery(this.session.id, result.uuid);
       const removedFromMemory = this.messageQueue.remove(result.uuid);
       await this.stateManager.clearQueuedIfOwnedBy(result.uuid);
+      // Task #862 (review P2): both `deferEnqueuedUserMessage` (enqueued →
+      // deferred) and `cancelDelivery` (deletes the active job) write through
+      // the raw db with no notify, so the widened feed would keep showing
+      // "retrying" (deliveryRetry stays 1) after Move to Next. Notify both
+      // tables so `sdk_messages` (the new deferred status) and `job_queue` (the
+      // gone active job) re-evaluate.
+      this.db.notifyChange?.('sdk_messages', { sessionId: this.session.id });
+      this.db.notifyChange?.('job_queue', { sessionId: this.session.id });
       return {
         changed: true as const,
         dbId: result.dbId,

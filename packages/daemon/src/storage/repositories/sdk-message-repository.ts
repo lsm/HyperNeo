@@ -1333,6 +1333,14 @@ export class SDKMessageRepository {
     message: SDKMessage,
     countsTowardsBadge: boolean
   ): void {
+    // Task #862 (review P1): the outbox commits the user row via
+    // `saveUserMessageCore` (raw db, bypassing the reactive proxy) and the badge
+    // notify only fires when the row counts toward the badge — an `enqueued`
+    // row does not. Always notify `sdk_messages` so the widened
+    // `messages.bySession` feed is re-evaluated on the initial commit and the
+    // queued/processing row is surfaced immediately (not after a later status
+    // mutation happens to notify).
+    this.reactiveDb?.notifyChange('sdk_messages', { sessionId });
     if (countsTowardsBadge) this.notifySessionsChanged(sessionId);
     this.upsertMessageSearchRow(id);
   }

@@ -110,6 +110,12 @@ function UserMessageDeliveryBadge({
   );
 }
 
+/** True when a user message's delivery is terminal (settled) and rewind-safe. */
+function isDeliveryTerminal(status: MessageDeliveryStatus | undefined): boolean {
+  if (!status) return true; // legacy row without delivery metadata — treat as settled
+  return status === 'delivered' || status === 'failed';
+}
+
 interface Props {
   message: UserMessage;
   onEdit?: () => void;
@@ -397,6 +403,10 @@ export function SDKUserMessage({
         onRewind &&
         sessionId &&
         message.uuid &&
+        // Task #862 (review P1): only allow rewind on terminal (settled)
+        // deliveries — a queued/processing/retrying row's active message_delivery
+        // job would otherwise keep executing after the rewind deletes it.
+        isDeliveryTerminal(message.deliveryStatus) &&
         (rewindingMessageUuid === message.uuid ? (
           <Spinner size="sm" color="border-amber-500" />
         ) : (

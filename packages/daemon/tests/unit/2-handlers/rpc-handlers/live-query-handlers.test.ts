@@ -2648,6 +2648,55 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(rows[0].origin).toBe('system');
       });
 
+      test('includes a queued prompt to a dormant session even when its turn is older than the recent-turn cutoff', () => {
+        // Task #862 (review P2): a message queued to a session whose last turn
+        // index is older than the compact feed's recent-turn window would be
+        // dropped entirely (conversation_turn_index < rt.minTurn). The OR clause
+        // must include active nonterminal user rows independently of the cutoff.
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        // Session A: a settled anchor establishes turn 1, then a queued prompt
+        // inherits the session's turn (1) because nonterminal rows are not anchors.
+        insertSdkMessageAt(
+          'a-anchor',
+          sessionId,
+          now + 1000,
+          { type: 'user', uuid: 'u-a-anchor', message: { role: 'user', content: 'go' } },
+          'user'
+        );
+        insertSdkMessageAt(
+          'a-queued',
+          sessionId,
+          now + 2000,
+          { type: 'user', uuid: 'u-a-queued', message: { role: 'user', content: 'queued' } },
+          'user'
+        );
+        db.prepare(
+          `UPDATE sdk_messages SET send_status = 'enqueued', sdk_uuid = 'u-a-queued' WHERE id = 'a-queued'`
+        ).run();
+
+        // Session B (node agent on the same task) pushes the task-wide turn count
+        // past the 100-turn recent window, so rt.minTurn > 1.
+        const sessionB = 'sess-dormant-b';
+        insertSession(sessionB, 'worker', '{"status":"processing"}');
+        sessionTaskIds.set(sessionB, taskId);
+        for (let i = 0; i < 100; i += 1) {
+          insertSdkMessageAt(
+            `b-anchor-${i}`,
+            sessionB,
+            now + 3000 + i,
+            { type: 'user', uuid: `u-b-${i}`, message: { role: 'user', content: `b${i}` } },
+            'user'
+          );
+        }
+
+        const rows = queryCompact(taskId);
+        const queued = rows.find((r) => r.id === 'a-queued');
+        expect(queued).toBeTruthy();
+        expect((queued as Record<string, unknown>).deliveryState).toBe('queued');
+      });
+
       test('maps user-message send_status to the delivery lifecycle + retrying (compact feed)', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
@@ -3446,6 +3495,68 @@ describe('NAMED_QUERY_REGISTRY', () => {
         // No closed-turn (turn 1) entries leak through.
         const previews = entries.map((e) => String(e.preview ?? e.text ?? ''));
         expect(previews).not.toContain('closed-text');
+      });
+
+      test('keeps an in-turn prompt in the active roster but excludes a deferred one', async () => {
+        // Task #862 (review P2): a deferred prompt is explicitly waiting for the
+        // next turn — it must stay in the main thread but NOT appear in the live
+        // active-turn roster as input "inside" the active turn. An enqueued
+        // (in-turn) prompt should still appear.
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        // Active turn 1 (no result yet).
+        insertSdkMessageAt(
+          'u1',
+          sessionId,
+          now + 1000,
+          { type: 'user', uuid: 'u1', message: { role: 'user', content: 'go' } },
+          'user'
+        );
+        // Enqueued → in the active turn, belongs in the roster.
+        insertSdkMessageAt(
+          'u-enq',
+          sessionId,
+          now + 2000,
+          { type: 'user', uuid: 'u-enq', message: { role: 'user', content: 'enq' } },
+          'user'
+        );
+        db.prepare(
+          `UPDATE sdk_messages SET send_status = 'enqueued', sdk_uuid = 'u-enq' WHERE id = 'u-enq'`
+        ).run();
+        // Deferred → waiting for the next turn, must be excluded from the roster.
+        insertSdkMessageAt(
+          'u-def',
+          sessionId,
+          now + 3000,
+          { type: 'user', uuid: 'u-def', message: { role: 'user', content: 'def' } },
+          'user'
+        );
+        db.prepare(
+          `UPDATE sdk_messages SET send_status = 'deferred', sdk_uuid = 'u-def' WHERE id = 'u-def'`
+        ).run();
+        // A non-terminal agent row makes turn 1 the active roster turn.
+        insertSdkMessageAt(
+          'a1',
+          sessionId,
+          now + 4000,
+          {
+            type: 'assistant',
+            uuid: 'a1',
+            message: { content: [{ type: 'text', text: 'working' }] },
+          },
+          'assistant'
+        );
+
+        const rows = (await runEntries(taskId)) as Array<{
+          blockType: string;
+          uuid: string;
+        }>;
+        const userUuids = rows
+          .filter((r) => r.blockType === '__user_message' || r.blockType === '__user_replay')
+          .map((r) => r.uuid);
+        expect(userUuids).toContain('u-enq');
+        expect(userUuids).not.toContain('u-def');
       });
 
       test('emits no summary when the latest turn is closed', async () => {

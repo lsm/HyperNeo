@@ -2299,7 +2299,18 @@ sdk_rows AS (
    AND sne.session_id = sm.session_id
    AND sne.rn = 1
   LEFT JOIN space_agents sa ON sa.id = sne.agent_id
-  WHERE sm.conversation_turn_index >= rt.minTurn
+  WHERE (
+    sm.conversation_turn_index >= rt.minTurn
+    OR (
+      -- Task #862 (review P2): include active nonterminal user rows
+      -- (deferred/enqueued/submitted) independently of the recent-turn cutoff.
+      -- A message queued to a dormant agent whose last turn index is old would
+      -- otherwise be dropped from the compact feed until it settles, defeating
+      -- the delivery-state UI for exactly the long multi-agent case it exists for.
+      sm.message_type = 'user'
+      AND COALESCE(sm.send_status, 'consumed') NOT IN ('consumed', 'failed')
+    )
+  )
     AND (
       sm.message_type != 'system'
       OR sm.message_subtype_norm != 'informational'
@@ -2708,6 +2719,10 @@ user_entries AS (
   FROM active_rows ar
   JOIN sdk_messages base ON base.id = ar.id
   WHERE ar.messageType = 'user'
+    -- Task #862 (review P2): a deferred prompt is explicitly waiting for the
+    -- next turn -- keep it in the main thread, but don't show it in the live
+    -- active-turn roster as input "inside" the active turn.
+    AND COALESCE(base.send_status, 'consumed') != 'deferred'
     AND json_valid(ar.content)
     -- Skip user rows whose content is exclusively tool_result blocks (or
     -- mixes tool_result with empty/whitespace-only text blocks). Such rows

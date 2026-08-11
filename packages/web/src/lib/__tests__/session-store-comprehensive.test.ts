@@ -524,6 +524,56 @@ describe('SessionStore - Comprehensive Coverage', () => {
       expect(sessionStore.sdkMessages.value.some((m) => m.uuid === 'msg-added')).toBe(true);
     });
 
+    it('re-sorts updated rows when a delivery-status update moves their timestamp', async () => {
+      const hub = installLiveQueryHub();
+      await sessionStore.select('session-1');
+      const subId = hub.subscriptionId!;
+
+      // Snapshot in (timestamp, rowid) order: A then B.
+      hub.fire('liveQuery.snapshot', {
+        subscriptionId: subId,
+        rows: [
+          {
+            id: 'row-a',
+            uuid: 'u-a',
+            type: 'user',
+            timestamp: 100,
+            rowid: 1,
+            content: 'A',
+          },
+          {
+            id: 'row-b',
+            uuid: 'u-b',
+            type: 'user',
+            timestamp: 200,
+            rowid: 2,
+            content: 'B',
+          },
+        ],
+      });
+
+      // A delivery-status update moves A's timestamp past B (queued → consumed
+      // re-timestamps the row). The store must re-sort by (timestamp, rowid).
+      hub.fire('liveQuery.delta', {
+        subscriptionId: subId,
+        added: [],
+        updated: [
+          {
+            id: 'row-a',
+            uuid: 'u-a',
+            type: 'user',
+            timestamp: 300,
+            rowid: 1,
+            content: 'A',
+          },
+        ],
+        removed: [],
+      });
+
+      const order = sessionStore.sdkMessages.value.map((m) => (m as { uuid?: string }).uuid);
+      expect(order).toEqual(['u-b', 'u-a']);
+    });
+
     it('ignores snapshot/delta events for a different subscriptionId', async () => {
       const hub = installLiveQueryHub();
       await sessionStore.select('session-1');
