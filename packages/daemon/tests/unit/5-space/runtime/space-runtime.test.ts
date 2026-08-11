@@ -2029,7 +2029,12 @@ describe('SpaceRuntime', () => {
 
     // The real flushPendingMessagesForTarget drains both the bare slot name and
     // the compound "nodeName/agentName" form; mirror that so compound queue rows
-    // are marked delivered in these tests.
+    // are marked delivered in these tests. This is a deliberate simplification
+    // of the real drain: it omits the workflowNodeId scoping, the
+    // targetKind === 'node_agent' filter, and the executionless guard. That's
+    // fine here because the compound rows enqueued below carry a null
+    // workflowNodeId and targetKind 'node_agent', so scoped/unscoped queries
+    // both find them and there are no executionless (merger) sessions in play.
     function makeCompoundAwareFlush(workflow: SpaceWorkflow) {
       const nodeNameById = new Map(workflow.nodes.map((node) => [node.id, node.name]));
       return async (runId: string, agentName: string, sessionId: string) => {
@@ -2206,6 +2211,77 @@ describe('SpaceRuntime', () => {
       expect(reviewerExec).toBeTruthy();
       expect(reviewerExec.agentName).toBe('reviewer');
       expect(reviewerExec.status).toBe('in_progress');
+    });
+
+    test('a compound target with an unknown slot does not silently fall back to another slot', async () => {
+      // Compound "nodeName/agentName" is a precise address: a slot name that
+      // doesn't exist on the matched node must NOT fall back to slots[0]. The
+      // resolver returns null and the sweep surfaces it as an undeclared target.
+      // Pins the failure behavior this fix restores and guards against typos
+      // like "Review/reveiwer" misdelivering to the reviewer slot.
+      const workflow = makeCompoundHandoffWorkflow();
+      const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Bad slot');
+      const task = tasks[0];
+      taskRepo.updateTask(task.id, { status: 'in_progress' });
+      nodeExecutionRepo.update(nodeExecutionRepo.listByWorkflowRun(run.id)[0]!.id, {
+        status: 'idle',
+        agentSessionId: null,
+      });
+
+      const pendingRepo = new PendingAgentMessageRepository(db);
+      pendingRepo.enqueue({
+        workflowRunId: run.id,
+        spaceId: SPACE_ID,
+        taskId: task.id,
+        sourceAgentName: 'coder',
+        targetKind: 'node_agent',
+        targetAgentName: 'Review/typo-slot',
+        message: 'please review',
+        ttlMs: 60_000,
+        maxAttempts: 1,
+      });
+      const tam = makeRepairTam();
+      await buildRepairRuntime(tam, pendingRepo).executeTick();
+
+      // No execution created or spawned for the Review node, and the row failed
+      // with the undeclared-target error instead of misdelivering to the slot.
+      expect(tam._spawnedExecutionIds).toHaveLength(0);
+      const row = pendingRepo.listAllForRun(run.id)[0];
+      expect(row.status).toBe('failed');
+      expect(row.lastError).toContain('is not declared in workflow');
+      expect(workflowRunRepo.getRun(run.id)!.status).toBe('blocked');
+    });
+
+    test('a compound target with an unknown node does not resolve', async () => {
+      const workflow = makeCompoundHandoffWorkflow();
+      const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Bad node');
+      const task = tasks[0];
+      taskRepo.updateTask(task.id, { status: 'in_progress' });
+      nodeExecutionRepo.update(nodeExecutionRepo.listByWorkflowRun(run.id)[0]!.id, {
+        status: 'idle',
+        agentSessionId: null,
+      });
+
+      const pendingRepo = new PendingAgentMessageRepository(db);
+      pendingRepo.enqueue({
+        workflowRunId: run.id,
+        spaceId: SPACE_ID,
+        taskId: task.id,
+        sourceAgentName: 'coder',
+        targetKind: 'node_agent',
+        targetAgentName: 'UnknownNode/reviewer',
+        message: 'please review',
+        ttlMs: 60_000,
+        maxAttempts: 1,
+      });
+      const tam = makeRepairTam();
+      await buildRepairRuntime(tam, pendingRepo).executeTick();
+
+      expect(tam._spawnedExecutionIds).toHaveLength(0);
+      const row = pendingRepo.listAllForRun(run.id)[0];
+      expect(row.status).toBe('failed');
+      expect(row.lastError).toContain('is not declared in workflow');
+      expect(workflowRunRepo.getRun(run.id)!.status).toBe('blocked');
     });
 
     test('skips repair while target execution is waiting for rebind recovery', async () => {

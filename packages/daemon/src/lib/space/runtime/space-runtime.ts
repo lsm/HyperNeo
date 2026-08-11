@@ -8279,6 +8279,13 @@ export class SpaceRuntime {
       if (nodeExecution) return nodeExecution;
     }
 
+    // Legacy fallback for targets the resolver could not map to a declared
+    // node/slot (e.g. a bare slot/node name no longer in the workflow). The raw
+    // comparison is intentional for compound targets: a valid compound is
+    // resolved above, and an invalid one has no matching execution, so comparing
+    // the full "node/agent" string returns undefined and lets the caller surface
+    // it as undeclared. Stripping the prefix here would over-match — e.g.
+    // "WrongNode/reviewer" would bind to another node's reviewer execution.
     return this.config.nodeExecutionRepo
       .listByWorkflowRun(runId)
       .filter(
@@ -8294,12 +8301,12 @@ export class SpaceRuntime {
     targetAgentName: string,
     workflowNodeId?: string
   ): { nodeId: string; agentName: string; agentId: string | null } | null {
-    // The message-delivery v2 router (agent-message-router.ts `scopedAgentName`)
-    // and task-agent-manager.ts scope queued node-agent handoff rows with a
-    // compound "nodeName/agentName" target (e.g. "Review/reviewer") so two nodes
-    // reusing a slot name don't both drain the same row. Parse the compound form
-    // into a node identifier and a slot identifier before matching; plain slot
-    // names and node names (no "/") keep the legacy behavior.
+    // Message-delivery v2 emits compound "nodeName/agentName" handoff targets
+    // (e.g. "Review/reviewer"): agent-message-router.ts enqueues them via
+    // `scopedAgentName`, and task-agent-manager.ts constructs the same form when
+    // draining, so two nodes reusing a slot name don't cross-receive. Parse the
+    // compound form into a node identifier and a slot identifier before
+    // matching; plain slot names and node names (no "/") keep the legacy behavior.
     const slashIdx = targetAgentName.indexOf('/');
     const isCompound = slashIdx >= 0;
     const nodePart = isCompound ? targetAgentName.slice(0, slashIdx) : targetAgentName;
@@ -8313,16 +8320,17 @@ export class SpaceRuntime {
       const nodeNameMatch = node.name === nodePart || node.id === nodePart;
 
       if (isCompound) {
-        // Compound "nodeName/agentName": the node must match by name/id, and the
-        // slot by name. Fall back to the first slot if the node matched but the
-        // named slot is absent (mirrors the non-compound node-name path).
+        // Compound "nodeName/agentName" is a precise address: the node must
+        // match by name/id AND the named slot must exist. A non-matching slot
+        // (typo, stale workflow def, wrong node) must NOT silently fall back to
+        // another slot — leave it unresolved so the sweep surfaces it as an
+        // undeclared target instead of misdelivering (e.g. "Review/reveiwer"
+        // must fail, not deliver to the reviewer slot).
         if (!nodeNameMatch) continue;
         const direct = slots.find((slot) => slot.name === slotPart);
         if (direct)
           return { nodeId: node.id, agentName: direct.name, agentId: direct.agentId ?? null };
-        if (slots[0])
-          return { nodeId: node.id, agentName: slots[0].name, agentId: slots[0].agentId ?? null };
-        return { nodeId: node.id, agentName: slotPart!, agentId: null };
+        continue;
       }
 
       const direct = slots.find(
