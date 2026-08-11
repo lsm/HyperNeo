@@ -1938,6 +1938,13 @@ export class AgentSession
     try {
       await started.acknowledgment;
       // The kickoff was admitted by the SDK (onSent) — the message is consumed.
+      // Flip send_status → 'consumed' SYNCHRONOUSLY, before any further await,
+      // to shrink the at-least-once duplicate window [SDK yield, persisted
+      // consumed-flip] to sub-millisecond (task #861 item 12). reclaimStale then
+      // almost always observes 'consumed' and the handler's status-aware reload
+      // skips the re-feed (drives with alreadyConsumed). Idempotent: a no-op if
+      // the history-echo path already flipped it.
+      this.markDeliveryConsumed(messageUuid);
       // Signal long-horizon delivery waiters (injectLongTermAgentMessage) so they
       // confirm the source record only after genuine consumption, not bare
       // enqueue (which can still dead-letter). No-op when no waiter is armed.
@@ -2001,6 +2008,9 @@ export class AgentSession
     // Admission happened atomically under the lock; only the provider
     // acknowledgment is awaited here.
     await action.acknowledgment;
+    // The steer was consumed by the live turn (onSent) — flip send_status →
+    // 'consumed' synchronously (task #861 item 12) before signaling waiters.
+    this.markDeliveryConsumed(messageUuid);
     // The steer was consumed by the live turn (onSent) — signal long-horizon
     // delivery waiters awaiting consumption. No-op when none are armed. (Codex P1.)
     signalDeliveryConsumed(this.session.id, messageUuid);
@@ -2100,6 +2110,31 @@ export class AgentSession
       loaded !== null &&
       (loaded.sendStatus === 'enqueued' || (alreadyConsumed && loaded.sendStatus === 'consumed'))
     );
+  }
+
+  /**
+   * Flip a delivery row to `consumed` at the earliest SDK-consume signal
+   * (onSent) and broadcast the status change. At-least-once quality hardening
+   * (task #861 item 12): shrinking the [SDK yield, persisted consumed-flip]
+   * window means reclaimStale almost always observes `consumed` and skips the
+   * re-feed. Idempotent — a no-op (no broadcast) if the row is already
+   * consumed/terminal, so the later history-echo path (which would also flip)
+   * is unaffected. Fire-and-forget the publish: a rejecting statusChanged
+   * subscriber must not surface as an unhandled rejection here.
+   */
+  private markDeliveryConsumed(messageUuid: string): void {
+    const dbId = this.db
+      .getSDKMessageRepo()
+      .markDeliveryConsumedByUuid(this.session.id, messageUuid);
+    if (dbId) {
+      void this.internalEventBus
+        .publish('messages.statusChanged', {
+          sessionId: this.session.id,
+          messageIds: [dbId],
+          status: 'consumed',
+        })
+        .catch(() => {});
+    }
   }
 
   trackAgentProcess(proc: TrackedAgentProcess): void {

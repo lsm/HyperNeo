@@ -1907,6 +1907,38 @@ export class SDKMessageRepository {
   }
 
   /**
+   * Flip a pending delivery row to `consumed` at the earliest SDK-consume
+   * signal (the onSent/started-acknowledgment, before the turn runs) — the
+   * at-least-once quality hardening (task #861 item 12). Delivery is
+   * at-least-once: a crash in the window [SDK yield, persisted consumed-flip]
+   * can still cause a duplicate re-feed, so this shrinks that window to
+   * sub-millisecond by flipping synchronously the moment the SDK acknowledges
+   * consumption. `reclaimStale` then almost always observes `consumed` and the
+   * handler's status-aware reload skips the re-feed (drives with
+   * `alreadyConsumed`).
+   *
+   * Only flips rows still pending delivery (`enqueued`/`submitted`) — a
+   * `consumed` row already ran (idempotent no-op, returns null), and
+   * `deferred`/`failed` are not consume candidates. Returns the flipped db id
+   * (so the caller publishes `messages.statusChanged`), else null.
+   * `updateMessageStatus` performs the turn-assignment + timestamp alignment +
+   * visible-counter bookkeeping for the transition.
+   */
+  markDeliveryConsumedByUuid(sessionId: string, uuid: string): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT id FROM sdk_messages
+           WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
+             AND send_status IN ('enqueued', 'submitted')
+           ORDER BY timestamp ASC LIMIT 1`
+      )
+      .get(sessionId, uuid) as { id: string } | undefined;
+    if (!row) return null;
+    this.updateMessageStatus([row.id], 'consumed');
+    return row.id;
+  }
+
+  /**
    * Flip a previously-`failed` delivery row back to `enqueued` so a retry can
    * re-drive it — the counterpart of {@link markDeliveryFailedByUuid} for the
    * crash-retry path. A prior attempt whose durable enqueue threw terminalized

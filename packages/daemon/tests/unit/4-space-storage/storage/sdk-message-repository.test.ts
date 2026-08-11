@@ -1649,6 +1649,48 @@ describe('SDKMessageRepository', () => {
     });
   });
 
+  describe('markDeliveryConsumedByUuid (task #861 item 12 — synchronous consumed-flip)', () => {
+    it('flips an enqueued row to consumed and returns its db id', () => {
+      const id = repository.saveUserMessage(
+        'session-1',
+        createUserMessage('consume me', 'uuid-consume'),
+        'enqueued'
+      );
+
+      const flipped = repository.markDeliveryConsumedByUuid('session-1', 'uuid-consume');
+
+      expect(flipped).toBe(id);
+      expect(repository.getMessagesByStatus('session-1', 'enqueued').length).toBe(0);
+      expect(repository.getMessagesByStatus('session-1', 'consumed').length).toBe(1);
+    });
+
+    it('is idempotent: a second call returns null (already consumed, no double-flip)', () => {
+      repository.saveUserMessage(
+        'session-1',
+        createUserMessage('once only', 'uuid-once'),
+        'enqueued'
+      );
+
+      expect(repository.markDeliveryConsumedByUuid('session-1', 'uuid-once')).not.toBeNull();
+      // Already consumed — no-op, returns null so the caller skips the broadcast.
+      expect(repository.markDeliveryConsumedByUuid('session-1', 'uuid-once')).toBeNull();
+    });
+
+    it('does not flip a deferred row (not a consume candidate)', () => {
+      repository.saveUserMessage(
+        'session-1',
+        createUserMessage('still deferred', 'uuid-def'),
+        'deferred'
+      );
+      expect(repository.markDeliveryConsumedByUuid('session-1', 'uuid-def')).toBeNull();
+      expect(repository.getMessagesByStatus('session-1', 'deferred').length).toBe(1);
+    });
+
+    it('returns null when the uuid is unknown', () => {
+      expect(repository.markDeliveryConsumedByUuid('session-1', 'no-such-uuid')).toBeNull();
+    });
+  });
+
   describe('deletePendingUserMessage', () => {
     it('should delete a deferred user message', () => {
       const id = repository.saveUserMessage(
