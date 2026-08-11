@@ -970,7 +970,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         // ACP's consume boundary is acceptance (minutes), not queue admission —
         // size the wait to it so a fresh ACP delivery isn't terminalized failed
         // mid-run (which a direct retry would then execute twice). (Codex P1.)
-        timeoutMs: deliveryConsumptionTimeoutMs(session.getSessionData().config.provider),
+        timeoutMs: deliveryConsumptionTimeoutMs(session.getSessionData?.().config?.provider),
         deliver: () =>
           deliverAndMarkQueued({
             jobQueue: deps.reactiveDb.db.getJobQueueRepo(),

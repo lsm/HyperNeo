@@ -666,7 +666,7 @@ export class SpaceRuntimeService {
         messageUuid: id,
         // ACP's consume boundary is acceptance (minutes) — size the wait so a
         // fresh ACP delivery isn't terminalized mid-run. (Codex P1.)
-        timeoutMs: deliveryConsumptionTimeoutMs(session.getSessionData().config.provider),
+        timeoutMs: deliveryConsumptionTimeoutMs(session.getSessionData?.().config?.provider),
         deliver: () =>
           deliverAndMarkQueued({
             jobQueue: reactiveDb.getJobQueueRepo(),
@@ -2243,7 +2243,7 @@ export class SpaceRuntimeService {
     const sessionManager = this.config.sessionManager;
     if (!sessionManager) return;
     const session = await sessionManager.getSessionAsync(longTermAgentSessionId(spaceId, agentId));
-    if (!session || session.getSessionData().config.provider === undefined) return;
+    if (!session || session.getSessionData?.().config?.provider === undefined) return;
     await session.updateConfig({ provider: undefined });
   }
 
