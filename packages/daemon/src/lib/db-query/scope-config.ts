@@ -565,6 +565,9 @@ const EXCLUDED_TABLE_NAMES: string[] = [
   'space_long_horizon_agent_forge_scopes',
   'space_long_horizon_agent_reminders',
   'space_long_horizon_agent_event_subscriptions',
+  // Workflow-run event subscription routing — internal pub/sub trie source of
+  // truth, not useful for ad-hoc agent queries.
+  'space_workflow_event_subscriptions',
   // Space agent management tables — agent goal/scope assignments and reminders;
   // internal MCP tool state, not useful for ad-hoc agent queries.
   'space_agent_goal_assignments',

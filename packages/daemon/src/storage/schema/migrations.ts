@@ -16,6 +16,7 @@ import { runMigration170 as runMigration170External } from './m170-backfill-miss
 import { runMigration171 } from './m171-backfill-post-approval-review-channels';
 import { runMigration172 as runMigration172External } from './m172-backfill-orphaned-preset-agents';
 import { runMigration184 as runMigration184External } from './m184-backfill-reviewer-bash-tools';
+import { runMigration185 as runMigration185External } from './m185-workflow-event-subscriptions';
 import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug';
 import {
   deriveArtifactKey,
@@ -899,9 +900,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   // Migration 180: Create `space_workflow_definition_versions` — the append-only history
   // of immutable workflow-definition snapshots (RFC §4 Phase 1). Each row is a full,
-  // self-contained definition payload identified by a SHA-256 `version_hash`. Shadow mode:
-  // this PR creates the table and begins populating it on definition writes; no run read
-  // resolves through it yet (the Phase-1 read cutover lands in a later PR). No FK to
+  // self-contained definition payload identified by a SHA-256 `version_hash`. The Phase-1
+  // read cutover resolves pinned runs through these rows (`getWorkflowForRun`); a startup
+  // backfill captures every existing head. No FK to
   // space_workflows(id): pinned versions must survive deletion of the mutable head
   // (orphan/tombstone policy). New databases get the table from createTables(); this
   // brings existing databases to parity.
@@ -932,11 +933,23 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // index, and M183 for the sdk_messages.send_status widen.)
   run(migrationMarkerKey(184), () => runMigration184(db));
 
-  // Migration 185: Partial expression index idx_message_delivery_session_active
+  // Migration 185: Persist workflow-run event subscriptions (PR 5 of the
+  //   external-event subscription refactor). Creates
+  //   `space_workflow_event_subscriptions` as the durable source of truth for
+  //   agent-registered `dynamic` subscriptions (static template interests are
+  //   re-materialized from the workflow definition, so they are not persisted),
+  //   so the in-memory TopicTrie's dynamic entries can be rebuilt from this
+  //   table on rehydrate instead of dropping ad-hoc dynamic subscriptions on
+  //   daemon restart. Idempotent; new databases get the same table from
+  //   createTables().
+  run(migrationMarkerKey(185), () => runMigration185(db));
+
+  // Migration 186: Partial expression index idx_message_delivery_session_active
   // for the activeDeliveryMessageUuids / hasActiveDeliveryJobs lookup (the
   // "which sessions own an active durable job" hot path). Mirrored in
-  // createIndexes() for fresh DBs. (task #861, review P2.)
-  run(migrationMarkerKey(185), () => runMigration185(db));
+  // createIndexes() for fresh DBs. (task #861, review P2.) Renumbered 185→186:
+  // dev shipped M185 for workflow-event-subscriptions.
+  run(migrationMarkerKey(186), () => runMigration186(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -2778,9 +2791,9 @@ function runMigration29(db: BunDatabase): void {
   // space_workflow_definition_versions
   //
   // Append-only history of immutable workflow-definition snapshots (RFC §4 Phase 1).
-  // Shadow mode: populated on definition writes; no run read resolves through it yet.
-  // No FK to space_workflows(id) — pinned versions must survive deletion of the mutable
-  // head (orphan/tombstone policy).
+  // Populated on definition writes; the Phase-1 read cutover resolves pinned runs through
+  // these rows. No FK to space_workflows(id) — pinned versions must survive deletion of
+  // the mutable head (orphan/tombstone policy).
   // -------------------------------------------------------------------------
   db.exec(`
 		CREATE TABLE IF NOT EXISTS space_workflow_definition_versions (
@@ -12107,9 +12120,9 @@ export function runMigration178(db: BunDatabase): void {
  * of immutable workflow-definition snapshots (RFC §4 Phase 1).
  *
  * Each row is a full, self-contained definition payload identified by a SHA-256
- * `version_hash` (see `computeDefinitionVersion`). Shadow mode: populated on definition
- * writes; no run read resolves through it yet. There is intentionally NO FK to
- * `space_workflows(id)` — pinned versions must survive deletion of the mutable head
+ * `version_hash` (see `computeDefinitionVersion`). Populated on definition writes; the
+ * Phase-1 read cutover resolves pinned runs through these rows. There is intentionally NO
+ * FK to `space_workflows(id)` — pinned versions must survive deletion of the mutable head
  * (orphan/tombstone policy); a cascade would erase the rows a pinned run depends on.
  */
 export function runMigration180(db: BunDatabase): void {
@@ -12214,16 +12227,21 @@ export function runMigration184(db: BunDatabase): void {
   runMigration184External(db);
 }
 
+export function runMigration185(db: BunDatabase): void {
+  runMigration185External(db);
+}
+
 /**
- * Migration 185: Partial expression index `idx_message_delivery_session_active`
+ * Migration 186: Partial expression index `idx_message_delivery_session_active`
  * on the job_queue `message_delivery` lane — covers the activeDeliveryMessageUuids
  * / hasActiveDeliveryJobs lookup (run on each idle transition + a 60s timer +
  * startup + turn-end). Without it the query scans the whole lane doing
  * json_extract per row; this index turns it into a seek by sessionId.
  * Idempotent (`CREATE INDEX IF NOT EXISTS`); no-op on tables that pre-date the
  * lane. (task #861, review P2.) Mirrored in createIndexes() for fresh DBs.
+ * Renumbered 185→186: dev shipped M185 for workflow-event-subscriptions.
  */
-export function runMigration185(db: BunDatabase): void {
+export function runMigration186(db: BunDatabase): void {
   if (!tableExists(db, 'job_queue')) return;
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_message_delivery_session_active

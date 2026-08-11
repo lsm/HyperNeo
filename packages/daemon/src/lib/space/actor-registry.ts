@@ -59,12 +59,16 @@ export class SpaceActorRegistryAdapter {
       this.add(actors, actor);
     }
 
-    const workflowById = new Map<string, SpaceWorkflow>();
+    // Cache resolved (pinned) definitions per (workflowId, version). Runs of the same
+    // workflow can be pinned to different versions after an edit, so keying by workflowId
+    // alone would conflate them; runs that share a version still dedup here. Resolved lazily
+    // only for runs that have pending node-agent messages — the per-run execution loop below
+    // does not need the workflow, so deferring keeps actor lookup near per-workflow cost
+    // instead of scaling with the full versioned run history.
+    const workflowByKey = new Map<string, SpaceWorkflow>();
+    const definitionKey = (wfId: string, version: string | null): string =>
+      `${wfId}:${version ?? 'head'}`;
     for (const run of this.repos.workflowRunRepo.listBySpace(spaceId)) {
-      const workflow =
-        workflowById.get(run.workflowId) ?? this.repos.workflowRepo.getWorkflow(run.workflowId);
-      if (workflow) workflowById.set(workflow.id, workflow);
-
       for (const execution of this.repos.nodeExecutionRepo.listByWorkflowRun(run.id)) {
         this.add(actors, workerActorFromExecution(spaceId, execution));
       }
@@ -73,10 +77,12 @@ export class SpaceActorRegistryAdapter {
     for (const row of this.repos.pendingMessageRepo?.listPendingForSpace(spaceId) ?? []) {
       if (row.targetKind !== 'node_agent') continue;
       const run = this.repos.workflowRunRepo.getRun(row.workflowRunId);
-      const workflow = run
-        ? (workflowById.get(run.workflowId) ?? this.repos.workflowRepo.getWorkflow(run.workflowId))
-        : null;
-      if (workflow) workflowById.set(workflow.id, workflow);
+      let workflow: SpaceWorkflow | null = null;
+      if (run) {
+        const key = definitionKey(run.workflowId, run.definitionVersion);
+        workflow = workflowByKey.get(key) ?? this.repos.workflowRepo.getWorkflowForRun(run);
+        if (workflow) workflowByKey.set(key, workflow);
+      }
       for (const worker of pendingWorkerActors(
         spaceId,
         row.workflowRunId,

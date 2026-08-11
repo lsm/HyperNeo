@@ -21,6 +21,14 @@ import {
   isNonFailureConclusion,
 } from './github-check-run-fields';
 import {
+  gitHubRepoPath,
+  headRefKey,
+  headRepoFromPullRequest,
+  headShaFromPullRequest,
+  parseHeadRefKey,
+  pullRequestNumberFrom,
+} from './github-pr-head-ref';
+import {
   normalizeGitHubCheckRun,
   normalizeGitHubDeployment,
   normalizeGitHubDeploymentStatus,
@@ -4337,10 +4345,6 @@ function validateGitHubTokenFormat(token: string): void {
   }
 }
 
-function gitHubRepoPath(owner: string, repo: string): string {
-  return `${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
-}
-
 /** Reads `head.sha` from a `/pulls` row (the commit the PR HEAD points at). */
 function pullHeadSha(entry: Record<string, unknown>): string {
   const head = entry.head;
@@ -4440,12 +4444,6 @@ function mergeRateLimitInfo(
   return next;
 }
 
-function pullRequestNumberFrom(row: unknown): number {
-  if (!row || typeof row !== 'object') return 0;
-  const number = (row as { number?: unknown }).number;
-  return typeof number === 'number' ? number : 0;
-}
-
 function pullRequestUpdatedAt(row: unknown): number {
   if (!row || typeof row !== 'object') return 0;
   return parseGitHubTimestamp((row as { updated_at?: unknown }).updated_at);
@@ -4463,41 +4461,6 @@ function rowsFromPollingPayload(payload: unknown, endpointKey: string): unknown[
     return Array.isArray(checkRuns) ? checkRuns : [];
   }
   return Array.isArray(payload) ? payload : [];
-}
-
-function headShaFromPullRequest(row: unknown): string {
-  if (!row || typeof row !== 'object') return '';
-  const head = (row as { head?: unknown }).head;
-  if (!head || typeof head !== 'object') return '';
-  const sha = (head as { sha?: unknown }).sha;
-  return typeof sha === 'string' ? sha : '';
-}
-
-function headRepoFromPullRequest(row: unknown, watched: GitHubWatchedRepo): string {
-  if (!row || typeof row !== 'object') return gitHubRepoPath(watched.owner, watched.repo);
-  const head = (row as { head?: unknown }).head;
-  if (!head || typeof head !== 'object') return gitHubRepoPath(watched.owner, watched.repo);
-  const repo = (head as { repo?: unknown }).repo;
-  if (!repo || typeof repo !== 'object') return gitHubRepoPath(watched.owner, watched.repo);
-  const owner = (repo as { owner?: unknown }).owner;
-  const ownerLogin = owner && typeof owner === 'object' ? (owner as { login?: unknown }).login : '';
-  const repoName = (repo as { name?: unknown }).name;
-  if (typeof ownerLogin === 'string' && typeof repoName === 'string' && ownerLogin && repoName) {
-    return gitHubRepoPath(ownerLogin, repoName);
-  }
-  return gitHubRepoPath(watched.owner, watched.repo);
-}
-
-function headRefKey(repoPath: string, headSha: string): string {
-  return `${repoPath}@${headSha}`;
-}
-
-function parseHeadRefKey(key: string): { repoPath: string; headSha: string } {
-  const separator = key.lastIndexOf('@');
-  return {
-    repoPath: separator > 0 ? key.slice(0, separator) : '',
-    headSha: separator > 0 ? key.slice(separator + 1) : key,
-  };
 }
 
 function addPullRequestNumberByHeadSha(

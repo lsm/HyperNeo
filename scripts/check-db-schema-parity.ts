@@ -85,6 +85,7 @@ export const HELPER_SCHEMA_TABLES = [
   'space_long_horizon_agents',
   'space_tasks',
   'space_workflow_definition_versions',
+  'space_workflow_event_subscriptions',
   'space_workflow_nodes',
   'space_workflow_runs',
   'space_workflows',

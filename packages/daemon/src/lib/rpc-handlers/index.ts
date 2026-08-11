@@ -62,6 +62,7 @@ import { SpaceTaskRepository } from '../../storage/repositories/space-task-repos
 import { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
 import { GateDataRepository } from '../../storage/repositories/gate-data-repository';
 import { GateOpenStateRepository } from '../../storage/repositories/gate-open-state-repository';
+import { rekeyPinnedGateOpenCaches } from '../../lib/space/workflows/gate-cache-rekey';
 import { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository';
 import { WorkflowRunArtifactCacheRepository } from '../../storage/repositories/workflow-run-artifact-cache-repository';
 import { WorkflowHookStateRepository } from '../../storage/repositories/workflow-hook-state-repository';
@@ -555,6 +556,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   // (RFC §4 Phase 1 rollout backfill) so a later edit can't erase the rollout-time
   // definition. Idempotent — a no-op on subsequent boots once every head is captured.
   spaceWorkflowRepo.backfillExistingDefinitionVersions();
+  // Pin every pre-existing run to its current definition head (RFC §4 Phase 1 read-cutover
+  // backfill) so resolving a run through its pinned version is content-neutral at cutover:
+  // each run's pin equals what it executes today. Idempotent; runs whose head was deleted
+  // stay unpinned and resolve via the read-cutover fallback to the live read.
+  spaceWorkflowRunRepo.backfillDefinitionPins((id) => spaceWorkflowRepo.getWorkflow(id));
   const spaceAgentRepo = new SpaceAgentRepository(deps.db.getDatabase());
   const longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(deps.db.getDatabase());
   const agentLookup: SpaceAgentLookup = {
@@ -565,6 +571,14 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     },
   };
   const spaceWorkflowManager = new SpaceWorkflowManager(spaceWorkflowRepo, agentLookup);
+  // Phase-1 read-cutover gate-open cache sweep: re-key persisted gate-open entries for pinned
+  // runs to the version-stable fingerprint basis (preserving backfilled in-flight runs' caches
+  // across the cutover). Idempotent + every boot → crash-safe. See gate-cache-rekey.ts.
+  rekeyPinnedGateOpenCaches({
+    gateOpenStateRepo,
+    runRepo: spaceWorkflowRunRepo,
+    manager: spaceWorkflowManager,
+  });
 
   const spaceTaskManagerFactory: SpaceTaskManagerFactory = (spaceId: string) => {
     return new SpaceTaskManager(
@@ -653,7 +667,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     resolvePrReadyHookIds: (runId: string) => {
       const run = spaceWorkflowRunRepo.getRun(runId);
       if (!run?.workflowId) return undefined;
-      const wf = spaceWorkflowManager.getWorkflow(run.workflowId);
+      // Run-scoped: resolve PR-ready hook IDs from the run's pinned definition so a live
+      // hook edit can't change which hook output is trusted for PR-identity resolution.
+      const wf = spaceWorkflowManager.getWorkflowForRun(run);
       // Return undefined ONLY when the workflow can't be resolved (legacy
       // fallback). When the workflow resolves — even with no pr_ready hooks —
       // return an (empty) Set so the resolver uses exact-match (fail closed)
