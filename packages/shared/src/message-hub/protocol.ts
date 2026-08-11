@@ -240,6 +240,9 @@ export enum ErrorCode {
   NOT_CONNECTED = 'NOT_CONNECTED',
   MESSAGE_TOO_LARGE = 'MESSAGE_TOO_LARGE',
 
+  // Ingress fan-out guardrail: per-client subscription limit exceeded
+  TOO_MANY_SUBSCRIPTIONS = 'TOO_MANY_SUBSCRIPTIONS',
+
   // General errors
   INTERNAL_ERROR = 'INTERNAL_ERROR',
   UNAUTHORIZED = 'UNAUTHORIZED',
