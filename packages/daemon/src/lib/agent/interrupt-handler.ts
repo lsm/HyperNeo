@@ -83,10 +83,25 @@ export class InterruptHandler {
       await withSessionLock(session.id, async () => {
         const messageUuids =
           this.ctx.db.getJobQueueRepo?.()?.cancelForSessionWithMessages(session.id) ?? [];
-        if (messageUuids.length === 0) return;
         const sdkRepo = this.ctx.db.getSDKMessageRepo?.();
         for (const messageUuid of messageUuids) {
           sdkRepo?.markDeliveryFailedByUuid(session.id, messageUuid);
+        }
+        // Also terminalize enqueued user ORPHANS — rows with no active durable
+        // job (the #856 stranded-pending shape). cancelForSessionWithMessages
+        // only returns UUIDs that HAD an active job, so an enqueued row that
+        // never got one (or whose job already completed) isn't terminalized
+        // above. Without this, the post-interrupt idle transition's
+        // reconcileStrandedDeliveries would re-enqueue it, restarting a prompt
+        // the user just stopped with the rest of the queued input. `deferred`
+        // rows are left (the user intentionally queued them for next turn) and
+        // `submitted` rows are settled by the ACP runner. (Codex review, #861.)
+        const cancelled = new Set(messageUuids);
+        for (const msg of this.ctx.db.getMessagesByStatus(session.id, 'enqueued')) {
+          const uuid = (msg as { uuid?: string }).uuid;
+          if (uuid && !cancelled.has(uuid)) {
+            sdkRepo?.markDeliveryFailedByUuid(session.id, uuid);
+          }
         }
       });
     }

@@ -492,12 +492,20 @@ export class SDKMessageHandler {
     // projection path as a normal SDK yield so status, timestamp, transcript
     // delta, and server-side events stay consistent.
     this.handleMessageYielded(messageId, Date.now());
-    // ACP's onSent fires at submission; the durable bridge therefore gates its
-    // markDeliveryConsumed + signalDeliveryConsumed on non-ACP. Signal the
-    // delivery waiters (LTA / task-agent consumption-await) HERE, at the real
-    // acceptance boundary, so a source record is confirmed only once ACP has
-    // accepted the prompt. (Codex review, task #861.)
-    signalDeliveryConsumed(this.ctx.session.id, messageId);
+    // Signal delivery waiters (LTA / task-agent consumption-await) ONLY when the
+    // acceptance actually took — the row is now `consumed`. If a racing
+    // interrupt/error already flipped it `failed` (markACPDeliveryFailed),
+    // handleMessageYielded is a no-op and we must NOT signal: confirming the
+    // source then would remove it despite the persisted delivery staying failed.
+    // (Codex review, task #861.)
+    const consumed = this.ctx.db.getMessageByStatusAndUuid(
+      this.ctx.session.id,
+      'consumed',
+      messageId
+    );
+    if (consumed) {
+      signalDeliveryConsumed(this.ctx.session.id, messageId);
+    }
   }
 
   /**
