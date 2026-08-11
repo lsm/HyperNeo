@@ -202,14 +202,15 @@ const REVIEW_POSTED_PASS: Predicate = {
 /**
  * Resolve op params for the review-posted gate. `prUrl` is read from action
  * data / hook-local state (snake_case `pr_url` preferred, camelCase `prUrl`
- * accepted for parity with the pr_ready validator; `review_url`/`reviewUrl` — a
- * review permalink — accepted as a fallback since `gh pr view` resolves the PR
- * from either, matching the legacy REVIEW_POSTED bash). When no PR identity is
- * supplied anywhere, the resolver falls back to `ctx.frozenPrUrl` — the run's
- * authoritative reviewed PR stamped by the pr_ready hook — so a reviewer who
- * omits data.pr_url (the prompt guidance was lost in the gate→hook migration)
- * no longer false-blocks the Review→Coding feedback handoff. frozenPrUrl is
- * engine-only, so binding to it is safe; fail-closed when genuinely absent.
+ * accepted — the Reviewer's prompt may pass either form; `review_url`/
+ * `reviewUrl` — a review permalink — accepted as a fallback since `gh pr view`
+ * resolves the PR from either, matching the legacy REVIEW_POSTED bash). When no
+ * PR identity is supplied anywhere, the resolver falls back to `ctx.frozenPrUrl`
+ * — the run's authoritative reviewed PR stamped by the pr_ready hook — so a
+ * reviewer who omits data.pr_url (the prompt guidance was lost in the gate→hook
+ * migration) no longer false-blocks the Review→Coding feedback handoff.
+ * frozenPrUrl is engine-only, so binding to it is safe; fail-closed when
+ * genuinely absent.
  *
  * The `sinceIso` workflow-start window comes from
  * `hookLocalState.workflowStartIso` (set by the gate evaluator when it
@@ -221,8 +222,8 @@ function reviewPostedPrUrl(params: Record<string, unknown> | undefined): string 
   const data = params?.data;
   if (data && typeof data === 'object' && !Array.isArray(data)) {
     const d = data as Record<string, unknown>;
-    // snake_case first (preferred), then camelCase for parity with the pr_ready
-    // validator — the Reviewer's prompt may pass either form.
+    // snake_case first (preferred), then camelCase — the Reviewer's prompt may
+    // pass either form.
     if (typeof d.pr_url === 'string') return d.pr_url;
     if (typeof d.prUrl === 'string') return d.prUrl;
     if (typeof d.review_url === 'string') return d.review_url;

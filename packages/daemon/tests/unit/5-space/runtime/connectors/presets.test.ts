@@ -862,10 +862,37 @@ describe('review_posted preset (Review→Coding feedback gate)', () => {
     expect((result as { data?: Record<string, unknown> }).data?.pr_url).toBe(PR_URL);
   });
 
+  test('frozenPrUrl absent + omitted data.pr_url → block (fail-closed)', async () => {
+    // Companion to the frozenPrUrl fallback above: when the run has NOT frozen a
+    // reviewed PR yet (no pr_ready handoff) and the reviewer omits data.pr_url,
+    // the resolver must NOT invent a PR identity — the op fails closed and the
+    // hook blocks. Pins the fallback's last-resort nature to this PR rather than
+    // relying on the unrelated 'missing pr_url → block' coverage.
+    const validate = createReviewPostedValidator(reviewSpawn({ url: PR_URL }, 'lsm'));
+    const result = await validate({
+      workspacePath: '/tmp',
+      runId: 'run-1',
+      hookId: 'review-posted-hook',
+      methodName: 'send_message',
+      params: { target: 'Coding', message: 'fix the P2 finding', data: {} },
+      nodeId: 'review-node',
+      nodeName: 'Review',
+      sessionId: 'sess-1',
+      taskId: 'task-1',
+      hookLocalState: { workflowStartIso: '2026-05-01T00:00:00Z' },
+      // frozenPrUrl intentionally absent — the run's first handoff has not
+      // frozen a reviewed PR yet.
+      currentArtifacts: [],
+      permittedExternalLookups: ['github'],
+    });
+    expect(result.type).toBe('block');
+    expect((result as { reason: string }).reason).toContain('prUrl is required');
+  });
+
   test('camelCase data.prUrl: allows when the agent passes prUrl (not pr_url)', async () => {
-    // Parity with the pr_ready validator: the resolver accepts camelCase prUrl
-    // in addition to snake_case pr_url, so a reviewer that passes data.prUrl
-    // does not false-block.
+    // The resolver accepts camelCase prUrl in addition to snake_case pr_url —
+    // the Reviewer's prompt may pass either form, so a reviewer that passes
+    // data.prUrl does not false-block.
     const validate = createReviewPostedValidator(
       reviewSpawn(
         {
