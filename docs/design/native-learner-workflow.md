@@ -62,6 +62,7 @@ Add a Learner-specific MCP provisioning path in `TaskAgentManager`: construct fi
 - `resolve_forge_scope`, `get_forge_scope`, `get_forge_timeline`
 - `list_forge_evidence`, `list_forge_metric_snapshots`
 - `list_forge_review_bundle`, `list_forge_lessons`, `list_forge_proposals`
+- `list_forge_proposal_validations`
 - `memory.search`, `memory.read`
 
 **Forge mutation**
@@ -72,6 +73,7 @@ Add a Learner-specific MCP provisioning path in `TaskAgentManager`: construct fi
 - `create_forge_episode`, `update_forge_episode`
 - `update_forge_lesson`
 - `create_forge_task_proposal`, `update_forge_task_proposal`
+- `create_forge_proposal_validation`
 - `create_task_from_forge_proposal`
 - `apply_forge_rollup`
 - `memory.write`, `memory.delete`
@@ -139,7 +141,9 @@ Critical absences are part of the contract:
 - no peer channel or reviewer node;
 - no PR-specific artifact requirement.
 
-`completionAutonomyLevel: 2` matches the risk of producing internal evidence, lessons, proposals, and draft/accepted follow-up work. Creating an execution task from a proposal remains separately visible and auditable. Level 1 Spaces still receive human sign-off through `submit_for_approval`.
+`completionAutonomyLevel: 2` matches the risk of producing internal evidence, lessons, proposals, and draft/accepted follow-up work. Creating an execution task from a proposal remains separately visible and auditable.
+
+Level 1 must not perform those durable mutations and then merely submit the already-mutated result for approval. Enforce a shared `requireLearningMutationAutonomy` check in the mutation handlers used by this workflow—episode accept/dismiss, lesson activation/dismissal, proposal acceptance/dismissal, proposal-validation creation, and goal rollup. The check permits draft evidence, metric snapshots, and draft episode/proposal creation needed to prepare a review bundle, but requires Space autonomy level 2 before changing review dispositions or goal state. At level 1, the Learner saves a decision artifact with `recommendation` describing the proposed disposition, leaves all generated rows in draft/proposed state, and calls `submit_for_approval`. The human reviewer may apply the recommended dispositions explicitly through an authorized UI/service action or approve completion while leaving them draft; the worker does not replay gated mutations merely because the task entered review. Rejecting the checkpoint therefore leaves no accepted lesson, accepted proposal, validation verdict, or goal rollup to undo. As with task materialization, tool visibility is optional UX and handler enforcement is the authorization boundary.
 
 ### Terminal artifact
 
@@ -194,7 +198,7 @@ The task is the durable unit of work. The Learner selects the final episode evid
 
 Do **not** advance the automation cursor when the task is merely created. Advance it only after the learning workflow reaches `done`. The cursor remains a contiguous processed-prefix boundary: a completed cycle may advance it only through the greatest evidence position for which every preceding item is either included in that episode or explicitly recorded as examined and deferred to a durable next-cycle queue. It must never jump directly to the greatest selected evidence ID, because forcing trigger evidence beyond `maxEvidencePerEpisode` could otherwise strand the skipped prefix. A dismissed episode still counts as examined; a failed or human-rejected run does not advance the cursor.
 
-The trigger evidence must therefore be selected together with prefix evidence up to the cap. If the trigger lies beyond the cap, persist it on the task as priority evidence for a subsequent cycle rather than appending it across a gap. The implementation may instead introduce a gap-aware cursor with explicit pending ranges, but a scalar cursor is valid only with this prefix-extension rule.
+The trigger evidence must therefore be selected together with prefix evidence up to the cap. If the trigger lies beyond the cap, persist it on a durable next-cycle queue as priority evidence rather than appending it across a gap. Terminal cursor handling must atomically enqueue a continuation learning task whenever that queue remains nonempty, carrying the advanced cursor boundary and deferred trigger context. This continuation uses the same deterministic lineage key plus a monotonically increasing cycle sequence, and is created only after the prior task reaches `done`; it does not depend on another external event, threshold notification, or self-nag tick. Continue chaining bounded prefix cycles until the deferred trigger is consumed and the queue is empty. The implementation may instead introduce a gap-aware cursor with explicit pending ranges, but a scalar cursor is valid only with this prefix-extension-and-continuation rule.
 
 While a cycle for the same `(goal, scope, triggerKind, triggerKey)` is `open`, `in_progress`, `review`, `approved`, `blocked`, `rate_limited`, or `usage_limited`, coalesce subsequent trigger notifications into that task or persist them for the next cursor window. The deterministic automation-cycle key must treat all of those non-terminal states as active, so daemon restart and trigger retry cannot create a parallel cycle. Preserve the existing completed-task active-lock/requeue behavior until this durable-key check replaces the process-local lock.
 
@@ -277,7 +281,7 @@ Each completed validation produces or updates a lesson:
 
 ### 6. Roll up and finish
 
-1. If the episode is accepted, apply a concise goal rollup: summary, metric deltas, progress only when evidence supports it, and next steps. If it is dismissed, do **not** call `apply_forge_rollup`—the service rejects dismissed episodes. Preserve the dismissal reason in the episode and terminal artifact, leave goal state unchanged, and advance the cursor only under the contiguous-prefix rule above.
+1. Apply a concise goal rollup only when the episode is accepted **and** the goal type is `recurring`: summary, metric deltas, progress only when evidence supports it, and next steps. The current rollup service rejects dismissed episodes and every non-recurring goal. For an accepted `one_shot` or `measurable` goal, preserve the learning result in Forge and the terminal artifact but leave goal state unchanged; any later support for those goal types belongs in the goal service rather than this workflow. For a dismissed episode, preserve the dismissal reason and likewise leave goal state unchanged. In every path, advance the cursor only under the contiguous-prefix rule above.
 2. Write only non-Forge operational heuristics to `learner/<scope-id>/...` memory.
 3. Save the terminal learning-cycle artifact.
 4. Call `approve_task` as the final action; if autonomy blocks it, call `submit_for_approval` instead.
@@ -290,18 +294,18 @@ The current `TaskProposal` type has title, description, reason, priority, status
 
 ```ts
 interface TaskProposal {
-  expectedOutcome: string;
+  expectedOutcome: string | null;
   verificationMethod: {
     metricKeys: string[];
     source: string;
     comparison: 'before_after' | 'threshold' | 'event' | 'test';
     threshold: string;
     window?: string;
-  };
+  } | null;
 }
 ```
 
-These are required for new proposals. Legacy rows may deserialize as null/unknown and must be completed before acceptance or task creation.
+Draft/proposed and legacy rows may carry `null`; do not invent backfill values. The proposal service must validate both fields as non-null and structurally complete on the transition to `accepted`, and the task-materialization handler must repeat that invariant check before creating a task. Consumers must narrow the nullable state before accessing verification fields. This models incomplete judge output honestly while making completeness mandatory at the two authorization boundaries.
 
 ### Proposal validation record
 
@@ -344,10 +348,10 @@ A later generic workflow completion schema may formalize artifact expectations, 
 ## Implementation slices
 
 1. **Preset + workflow:** seed `Learner`; add `LEARNING_WORKFLOW`; export it; include it in built-in template hashing/restamping and tests. Add a migration following the existing preset-agent backfill pattern (for example m170/m172): insert the Learner preset into every existing Space idempotently **before** workflow restamping runs. This ordering is required because `seedBuiltInWorkflows` resolves template agent names and otherwise skips or throws when `Learner` is absent. Space-creation seeding alone does not update existing Spaces.
-2. **Automation dispatch:** resolve the built-in workflow ID, create idempotent pinned learning tasks, advance a contiguous cursor prefix only from successful terminal handling, coalesce every non-terminal/paused state, and remove direct episode/review-task creation.
-3. **Learner prompt + tool policy:** implement the procedure and logical memory namespace; provision filtered Space/node MCP servers with the explicit allowlist, and add the handler-level autonomy plus scope-policy gate for proposal materialization.
-4. **Validation model:** migrate proposal expectation/verification fields and add proposal-validation repository/service/MCP operations; feed validations to episode judging.
-5. **Tests:** migration of an existing Space before workflow restamping; trigger-to-pinned-task tests for all three trigger kinds; single-node no-route completion at autonomy 2; level-1 submit-for-approval; cursor gap preservation when trigger evidence lies beyond the cap; retry/idempotency and coalescing in blocked/rate-limited/usage-limited states; tool allowlist denial; proposal materialization autonomy/scope-policy guards; accepted rollup and dismissed no-rollup paths; effective/ineffective/superseded lesson linkage; no PR artifact/hook dependency.
+2. **Automation dispatch:** resolve the built-in workflow ID, create idempotent pinned learning tasks, advance a contiguous cursor prefix only from successful terminal handling, atomically enqueue continuations while deferred evidence remains, coalesce every non-terminal/paused state, and remove direct episode/review-task creation.
+3. **Learner prompt + tool policy:** implement the procedure and logical memory namespace; provision filtered Space/node MCP servers with the explicit allowlist, enforce level 2 in durable learning-disposition/rollup handlers, and add the level-3 plus scope-policy gate for proposal materialization.
+4. **Validation model:** migrate nullable proposal expectation/verification fields and add proposal-validation repository/service/MCP operations; enforce completeness on proposal acceptance and materialization, expose validation create/list in the Learner allowlist, and feed validations to episode judging.
+5. **Tests:** migration of an existing Space before workflow restamping; trigger-to-pinned-task tests for all three trigger kinds; single-node no-route completion at autonomy 2; level-1 submit-for-approval with no accepted/dismissed dispositions, validation verdicts, or rollup persisted; cursor gap preservation and automatic continuation when trigger evidence lies beyond the cap; retry/idempotency and coalescing in blocked/rate-limited/usage-limited states; tool allowlist denial plus validation-tool availability; nullable legacy/draft proposal handling and completeness guards; proposal materialization autonomy/scope-policy guards; accepted recurring rollup, accepted non-recurring no-rollup, and dismissed no-rollup paths; effective/ineffective/superseded lesson linkage; no PR artifact/hook dependency.
 
 ## Open owner decisions
 
