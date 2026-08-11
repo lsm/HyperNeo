@@ -54,6 +54,7 @@ import {
   deliverAndMarkQueued,
   isMessageDeliveryV2Enabled,
 } from '../../agent/message-delivery';
+import { persistAndEnqueueDelivery } from '../../agent/message-delivery-outbox';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
 import { SpaceRuntime } from './space-runtime';
 import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine';
@@ -620,12 +621,28 @@ export class SpaceRuntimeService {
       // terminalized it — reopen it so this retry can deliver; an `enqueued`
       // row just needs its job (re-)enqueued.
       const sdkMessageRepo = reactiveDb.getSDKMessageRepo();
+      const jobQueue = reactiveDb.getJobQueueRepo();
       const existing = sdkMessageRepo.getDeliveryContent(sessionId, id);
       const fresh = !existing;
-      if (!existing) {
-        reactiveDb.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
-      } else if (existing.sendStatus === 'consumed') {
+      if (existing?.sendStatus === 'consumed') {
         return id; // genuinely delivered on a prior attempt — don't re-drive
+      }
+      if (fresh) {
+        // Transactional outbox (task #861 item 2): save + enqueue atomically so
+        // a crash between them cannot strand a saved-but-not-enqueued row.
+        const legacyOwnedTurn =
+          session.stateManager?.getState().status === 'processing' &&
+          !jobQueue.hasActiveTurnDelivery(sessionId);
+        persistAndEnqueueDelivery({
+          db: reactiveDb.getDatabase(),
+          sdkMessageRepo,
+          jobQueue,
+          sessionId,
+          message: sdkUserMessage,
+          sendStatus: 'enqueued',
+          delivery: { origin: 'long_term_agent' },
+          forceSteer: legacyOwnedTurn,
+        });
       } else if (existing.sendStatus === 'failed') {
         // Prior enqueue threw and terminalized the row; the handler skips
         // `failed`, so reopen it before re-enqueueing.
@@ -646,7 +663,7 @@ export class SpaceRuntimeService {
         messageUuid: id,
         deliver: () =>
           deliverAndMarkQueued({
-            jobQueue: reactiveDb.getJobQueueRepo(),
+            jobQueue,
             stateManager: session.stateManager,
             sessionId,
             messageUuid: id,

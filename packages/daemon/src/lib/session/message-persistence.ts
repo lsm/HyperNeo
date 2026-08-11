@@ -26,6 +26,7 @@ import type { Database } from '../../storage/database';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import { buildReferenceContext, prependContextToMessage } from '../agent/reference-context-builder';
 import { isMessageDeliveryV2Enabled } from '../agent/message-delivery';
+import { persistAndEnqueueDelivery } from '../agent/message-delivery-outbox';
 import { expandBuiltInCommand } from '../built-in-commands';
 import { Logger } from '../logger';
 import type { SessionCache } from './session-cache';
@@ -236,7 +237,55 @@ export class MessagePersistence {
           ? 'deferred'
           : 'enqueued';
 
-      const dbMessageId = this.db.saveUserMessage(sessionId, sdkUserMessage, sendStatus, origin);
+      const useV2Delivery = isMessageDeliveryV2Enabled();
+      // Transactional outbox (task #861 item 2): when dispatching under v2,
+      // persist the user message AND enqueue its durable delivery job in ONE
+      // transaction so a crash between save and enqueue cannot strand a
+      // saved-but-not-enqueued prompt. The `message.persisted` subscriber's
+      // deliverChatMessage then no-ops the enqueue (idempotent via
+      // getActiveDeliveryRole) and only sets the queued marker / cancels a
+      // rate-limit episode — the atomic save+enqueue here is what removes the
+      // crash window. The durable repos are always wired on the real Database
+      // facade; the `getJobQueueRepo` presence gate only falls back to the bare
+      // save for partial unit-test mocks.
+      const jobQueueRepo = this.db.getJobQueueRepo?.();
+      const useOutbox = shouldDispatchToQuery && useV2Delivery && !!jobQueueRepo;
+      let dbMessageId: string;
+      if (useOutbox) {
+        if (this.db.getSession?.(sessionId)?.status === 'archived') {
+          // Archived before we save: persist as a visible `failed` row and stop
+          // — never enqueue a job that would drive a torn-down session.
+          dbMessageId = this.db.saveUserMessage(sessionId, sdkUserMessage, 'failed', origin);
+          await this.internalEventBus
+            .publish('messages.statusChanged', {
+              sessionId,
+              messageIds: [dbMessageId],
+              status: 'failed',
+            })
+            .catch(() => {});
+          throw new Error(`Session ${sessionId} is archived`);
+        }
+        // Legacy-owned turn guard (see deliverAndMarkQueued): a session can be
+        // `processing` a legacy-replayed turn with no active v2 turn row, which
+        // the unique index cannot see. Force a `steer` so this chat parks behind
+        // the legacy turn instead of racing it. Removed once the legacy kickoff
+        // paths are migrated onto deliverMessage (task #861 item 7).
+        const legacyOwnedTurn =
+          processingState.status === 'processing' && !jobQueueRepo.hasActiveTurnDelivery(sessionId);
+        dbMessageId = persistAndEnqueueDelivery({
+          db: this.db.getDatabase(),
+          sdkMessageRepo: this.db.getSDKMessageRepo(),
+          jobQueue: jobQueueRepo,
+          sessionId,
+          message: sdkUserMessage,
+          sendStatus,
+          origin,
+          delivery: { origin: 'chat' },
+          forceSteer: legacyOwnedTurn,
+        }).dbMessageId;
+      } else {
+        dbMessageId = this.db.saveUserMessage(sessionId, sdkUserMessage, sendStatus, origin);
+      }
 
       // Revalidate AFTER saving: archive can begin after the early admission
       // check while cache/reference work awaits. Its point-in-time cancellation
@@ -289,7 +338,6 @@ export class MessagePersistence {
       // and the handler drives the turn. Skipping the inline start here is what
       // makes the v2 flag actually take effect (P0: otherwise skipQueryStart:true
       // made the subscriber return before the v2 check, so the flag did nothing).
-      const useV2Delivery = isMessageDeliveryV2Enabled();
       if (shouldDispatchToQuery && !useV2Delivery) {
         await agentSession.startQueryAndEnqueue(messageId, messageContent);
       }
