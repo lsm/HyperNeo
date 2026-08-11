@@ -6,7 +6,8 @@
 
 import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
 import { WebSocketServerTransport } from '../../../../src/lib/websocket-server-transport';
-import type { MessageHubRouter, ClientConnection, HubMessage } from '@hyperneo/shared';
+import { MessageHubRouter } from '@hyperneo/shared';
+import type { ClientConnection, HubMessage } from '@hyperneo/shared';
 
 describe('WebSocketServerTransport', () => {
   let transport: WebSocketServerTransport;
@@ -139,6 +140,36 @@ describe('WebSocketServerTransport', () => {
       transport.unregisterClient(clientId);
 
       expect(connectionHandler).toHaveBeenCalledWith('disconnected', undefined);
+    });
+
+    it('reconciles the real router subscription counter on disconnect (task #899)', async () => {
+      // End-to-end: the daemon live-query disconnect handler only disposes
+      // handles; it relies on the transport calling router.unregisterConnection
+      // to reset the per-client subscription counter. Prove that coupling holds
+      // against a real MessageHubRouter.
+      const realRouter = new MessageHubRouter();
+      const realTransport = new WebSocketServerTransport({
+        router: realRouter,
+        name: 'real-router-transport',
+        staleTimeout: 5000,
+        staleCheckInterval: 1000,
+      });
+      try {
+        const mockWs = createMockWebSocket();
+        const clientId = realTransport.registerClient(mockWs, 'test-session-123');
+
+        // Simulate a client holding several live-query subscriptions.
+        realRouter.addClientSubscription(clientId);
+        realRouter.addClientSubscription(clientId);
+        expect(realRouter.getClientSubscriptionCount(clientId)).toBe(2);
+
+        realTransport.unregisterClient(clientId);
+
+        // Counter reconciled to zero — no leaked slots after disconnect.
+        expect(realRouter.getClientSubscriptionCount(clientId)).toBe(0);
+      } finally {
+        await realTransport.close();
+      }
     });
   });
 

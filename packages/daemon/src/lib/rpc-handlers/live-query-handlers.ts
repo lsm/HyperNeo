@@ -3872,21 +3872,9 @@ export function setupLiveQueryHandlers(
       throw new Error('liveQuery.subscribe requires a WebSocket connection (clientId absent)');
     }
 
-    // 1b. Ingress fan-out guardrail: refuse BEFORE any work (no snapshot side
-    // effects, no teardown of existing subscriptions) when the client is at the
-    // per-client subscription cap.  Mirrors the structured MESSAGE_TOO_LARGE
-    // refusal pattern (#2423) so the client can react to the precise code.
-    // See task #899 / incident #2414.
+    // Router reference for the per-client subscription guardrail below and the
+    // handle tracking at the success path. See task #899 / incident #2414.
     const router = messageHub.getRouter();
-    if (router) {
-      const capacity = router.checkSubscriptionCapacity(clientId);
-      if (!capacity.ok) {
-        throw new MessageHubHandlerError(
-          `liveQuery.subscribe: subscription cap reached for client (${capacity.current}/${capacity.limit}); subscribe to fewer queries or close other views`,
-          ErrorCode.TOO_MANY_SUBSCRIPTIONS
-        );
-      }
-    }
 
     // 2. Resolve query from registry
     const namedQuery = activeRegistry.get(queryName);
@@ -4006,6 +3994,7 @@ export function setupLiveQueryHandlers(
 
     // 6. Handle subscriptionId collision — dispose existing handle silently
     const existing = clientSubs.get(subscriptionId);
+    const isReplacement = !!existing;
     if (existing) {
       log.debug(
         `liveQuery.subscribe: replacing subscription ${subscriptionId} for client ${clientId}`
@@ -4016,6 +4005,23 @@ export function setupLiveQueryHandlers(
       // re-acquires one at the success path below, so release the old here to
       // keep the router counter in sync with the live handle count.
       router?.releaseClientSubscription(clientId);
+    }
+
+    // 6b. Ingress fan-out guardrail: refuse a NEW subscription when the client
+    // is at the per-client cap. This runs AFTER collision handling so a
+    // replacement (same subscriptionId) is allowed even at the cap — it does
+    // not increase fan-out (e.g. GlobalStore reuses stable subscriptionIds on
+    // refresh) — and BEFORE the LiveQueryEngine subscribe so refusal has no
+    // snapshot side effects and tears down nothing. Mirrors the structured
+    // MESSAGE_TOO_LARGE refusal pattern (#2423). See task #899 / incident #2414.
+    if (router && !isReplacement) {
+      const capacity = router.checkSubscriptionCapacity(clientId);
+      if (!capacity.ok) {
+        throw new MessageHubHandlerError(
+          `liveQuery.subscribe: subscription cap reached for client (${capacity.current}/${capacity.limit}); subscribe to fewer queries or close other views`,
+          ErrorCode.TOO_MANY_SUBSCRIPTIONS
+        );
+      }
     }
 
     // 7. Subscribe to LiveQueryEngine

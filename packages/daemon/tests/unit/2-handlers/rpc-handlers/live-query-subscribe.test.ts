@@ -709,4 +709,93 @@ describe('setupLiveQueryHandlers: per-client subscription cap', () => {
     expect(result).toEqual({ ok: true });
     expect(setup.mockRouter.getClientSubscriptionCount('client-1')).toBe(2);
   });
+
+  test('replacement of an existing subscriptionId is allowed at the cap (no fan-out increase)', async () => {
+    // Fill to the cap.
+    await setup.callHandler('liveQuery.subscribe', {
+      queryName: 'mcpServers.global',
+      params: [],
+      subscriptionId: 'sub-1',
+    });
+    await setup.callHandler('liveQuery.subscribe', {
+      queryName: 'mcpServers.global',
+      params: [],
+      subscriptionId: 'sub-2',
+    });
+    expect(setup.mockRouter.getClientSubscriptionCount('client-1')).toBe(2);
+
+    // Re-subscribing an existing id is a replacement (net-zero fan-out) and must
+    // succeed even at the cap — e.g. GlobalStore reuses stable subscriptionIds
+    // on refresh. The old slot is released, the new one acquired.
+    const replaced = await setup.callHandler('liveQuery.subscribe', {
+      queryName: 'mcpServers.global',
+      params: [],
+      subscriptionId: 'sub-1',
+    });
+    expect(replaced).toEqual({ ok: true });
+    expect(setup.mockRouter.getClientSubscriptionCount('client-1')).toBe(2);
+
+    // A genuinely-new id is still refused at the cap.
+    const err = await setup
+      .callHandler('liveQuery.subscribe', {
+        queryName: 'mcpServers.global',
+        params: [],
+        subscriptionId: 'sub-new',
+      })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MessageHubHandlerError);
+    expect((err as MessageHubHandlerError).code).toBe(ErrorCode.TOO_MANY_SUBSCRIPTIONS);
+    expect(setup.mockRouter.getClientSubscriptionCount('client-1')).toBe(2);
+  });
+
+  test('a snapshot-delivery failure aborts without consuming a subscription slot', async () => {
+    // Force the synchronous snapshot delivery to fail (e.g. client vanished).
+    setup.setDetailedSendResult({ ok: false, reason: 'send_failed' });
+
+    const result = await setup.callHandler('liveQuery.subscribe', {
+      queryName: 'mcpServers.global',
+      params: [],
+      subscriptionId: 'sub-1',
+    });
+
+    // The handler returns ok (not a protocol error from the client's view) but
+    // must NOT have tracked the subscription — the slot is freed for reuse.
+    expect(result).toEqual({ ok: true });
+    expect(setup.mockRouter.getClientSubscriptionCount('client-1')).toBe(0);
+  });
+
+  test('a delta message_too_large failure releases the tracked slot (async release path)', async () => {
+    // Snapshot succeeds so the subscription is tracked (count = 1).
+    await setup.callHandler('liveQuery.subscribe', {
+      queryName: 'mcpServers.global',
+      params: [],
+      subscriptionId: 'sub-1',
+    });
+    expect(setup.mockRouter.getClientSubscriptionCount('client-1')).toBe(1);
+
+    // Make the next delivery (the delta) too large, then mutate to fire a delta.
+    setup.setDetailedSendResult({ ok: false, reason: 'message_too_large' });
+    insertMcpServer(db, 'mcp-2', 'beta');
+    reactiveDb.notifyChange('app_mcp_servers');
+    await new Promise((r) => setTimeout(r, 10));
+
+    // The failed delta disposes the tracked handle and releases its slot.
+    expect(setup.mockRouter.getClientSubscriptionCount('client-1')).toBe(0);
+  });
+
+  test('a delta send_failed failure releases the tracked slot (async release path)', async () => {
+    await setup.callHandler('liveQuery.subscribe', {
+      queryName: 'mcpServers.global',
+      params: [],
+      subscriptionId: 'sub-1',
+    });
+    expect(setup.mockRouter.getClientSubscriptionCount('client-1')).toBe(1);
+
+    setup.setDetailedSendResult({ ok: false, reason: 'send_failed' });
+    insertMcpServer(db, 'mcp-3', 'gamma');
+    reactiveDb.notifyChange('app_mcp_servers');
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(setup.mockRouter.getClientSubscriptionCount('client-1')).toBe(0);
+  });
 });
