@@ -2041,17 +2041,11 @@ describe('SpaceRuntime', () => {
         const repo = new PendingAgentMessageRepository(db);
         const execution = nodeExecutionRepo.getByAgentSessionId(sessionId);
         const nodeName = execution ? nodeNameById.get(execution.workflowNodeId) : undefined;
-        // Mirror real flushPendingMessagesForTarget: bare agent, "<name>/<agent>",
-        // and "<id>/<agent>" (worker handles encode either form).
-        const targets = [
-          agentName,
-          ...(nodeName ? [`${nodeName}/${agentName}`] : []),
-          ...(execution?.workflowNodeId ? [`${execution.workflowNodeId}/${agentName}`] : []),
-        ];
+        // Mirror real flushPendingMessagesForTarget: bare agent + "<name>/<agent>".
+        // (No "<id>/<agent>" alias — see flushPendingMessagesForTarget.)
+        const targets = [agentName, ...(nodeName ? [`${nodeName}/${agentName}`] : [])];
         const seen = new Set<string>();
         for (const target of targets) {
-          // Scope by the execution's node id, like real flushPendingMessagesForTarget,
-          // so two nodes producing the same compound don't cross-drain each other's rows.
           const rows = execution?.workflowNodeId
             ? repo.listPendingForTarget(runId, target, execution.workflowNodeId)
             : repo.listPendingForTarget(runId, target);
@@ -2144,18 +2138,31 @@ describe('SpaceRuntime', () => {
       expect(pendingRepo.listAllForRun(run.id)[0].status).toBe('delivered');
     });
 
-    test('resolves a compound "<nodeId>/agentName" target (actor-registry worker handles)', async () => {
-      // Worker handles from the actor registry encode the node ID, not the name
-      // (actor-registry.ts workerHandle -> @worker:<run>/<nodeId>/<agent>), so a
-      // queued row can be keyed "<nodeId>/<agent>". The resolver must match the
-      // id form and the drain must flush it — otherwise the row stays pending,
-      // expires, and blocks the run even though the right session spawned.
-      const workflow = makeCompoundHandoffWorkflow();
-      const { run, tasks } = await runtime.startWorkflowRun(
-        SPACE_ID,
-        workflow.id,
-        'Node-id handoff'
-      );
+    test('resolves a pinned bare slot name that contains "/" (restart-recovery form)', async () => {
+      // Pinned rows (workflowNodeId set) carry the BARE slot name — including
+      // enqueueRestartRecoveryMessage and the router's new emission. A slot whose
+      // name contains "/" (e.g. "Review/reviewer") must match exactly, not be
+      // stripped to "reviewer" by the compound prefix-match.
+      const workflow = workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: `Slash slot ${Date.now()}-${Math.random()}`,
+        description: 'Pinned bare slot name containing "/"',
+        nodes: [
+          { id: 'coding-node', name: 'Coding', agents: [{ name: 'coder', agentId: AGENT_CODER }] },
+          {
+            id: 'review-node',
+            name: 'Review',
+            agents: [{ name: 'Review/reviewer', agentId: AGENT_GENERAL }],
+          },
+        ],
+        transitions: [],
+        channels: [],
+        startNodeId: 'coding-node',
+        endNodeId: 'review-node',
+        rules: [],
+        completionAutonomyLevel: 3,
+      });
+      const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Slash slot');
       const task = tasks[0];
       taskRepo.updateTask(task.id, { status: 'in_progress' });
       nodeExecutionRepo.update(nodeExecutionRepo.listByWorkflowRun(run.id)[0]!.id, {
@@ -2170,7 +2177,8 @@ describe('SpaceRuntime', () => {
         taskId: task.id,
         sourceAgentName: 'coder',
         targetKind: 'node_agent',
-        targetAgentName: 'review-node/reviewer',
+        targetAgentName: 'Review/reviewer',
+        workflowNodeId: 'review-node',
         message: 'please review',
         ttlMs: 60_000,
         maxAttempts: 3,
@@ -2182,9 +2190,8 @@ describe('SpaceRuntime', () => {
         .listByWorkflowRun(run.id)
         .find((execution) => execution.workflowNodeId === 'review-node')!;
       expect(reviewerExec).toBeTruthy();
-      expect(reviewerExec.agentName).toBe('reviewer');
+      expect(reviewerExec.agentName).toBe('Review/reviewer');
       expect(reviewerExec.status).toBe('in_progress');
-      expect(reviewerExec.agentSessionId).toBe(`session:${reviewerExec.id}`);
       expect(pendingRepo.listAllForRun(run.id)[0].status).toBe('delivered');
     });
 
@@ -2245,40 +2252,27 @@ describe('SpaceRuntime', () => {
       expect(pendingRepo.listAllForRun(run.id)[0].status).toBe('delivered');
     });
 
-    test('disambiguates two nodes whose compounds collide, via the pinned workflowNodeId', async () => {
-      // Node "Pair" with slot "Review/reviewer" and node "Pair/Review" with slot
-      // "reviewer" both stringify to the compound "Pair/Review/reviewer". The
-      // router persists the resolved workflowNodeId on each queued row, so the
-      // resolver pins the exact node instead of returning the first by workflow
-      // order and misdelivering. Both rows must reach their own node.
+    test('disambiguates two nodes sharing a slot name, via the pinned workflowNodeId', async () => {
+      // Two nodes both declare a 'reviewer' slot. The router and restart-recovery
+      // emit BARE 'reviewer' + each node's workflowNodeId, so the resolver pins
+      // the exact node instead of guessing from the slot name — each row reaches
+      // its own node and neither leaks to the other.
       const workflow = workflowManager.createWorkflow({
         spaceId: SPACE_ID,
-        name: `Ambiguous compound ${Date.now()}-${Math.random()}`,
-        description: 'Colliding compound targets disambiguated by workflowNodeId',
+        name: `Same-slot ${Date.now()}-${Math.random()}`,
+        description: 'Two nodes sharing a slot name, disambiguated by workflowNodeId',
         nodes: [
-          {
-            id: 'pair-node',
-            name: 'Pair',
-            agents: [{ name: 'Review/reviewer', agentId: AGENT_CODER }],
-          },
-          {
-            id: 'pair-review-node',
-            name: 'Pair/Review',
-            agents: [{ name: 'reviewer', agentId: AGENT_GENERAL }],
-          },
+          { id: 'rev-a', name: 'Review A', agents: [{ name: 'reviewer', agentId: AGENT_CODER }] },
+          { id: 'rev-b', name: 'Review B', agents: [{ name: 'reviewer', agentId: AGENT_GENERAL }] },
         ],
         transitions: [],
         channels: [],
-        startNodeId: 'pair-node',
-        endNodeId: 'pair-review-node',
+        startNodeId: 'rev-a',
+        endNodeId: 'rev-b',
         rules: [],
         completionAutonomyLevel: 3,
       });
-      const { run, tasks } = await runtime.startWorkflowRun(
-        SPACE_ID,
-        workflow.id,
-        'Ambiguous handoff'
-      );
+      const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Same-slot');
       const task = tasks[0];
       taskRepo.updateTask(task.id, { status: 'in_progress' });
       nodeExecutionRepo.update(nodeExecutionRepo.listByWorkflowRun(run.id)[0]!.id, {
@@ -2287,16 +2281,15 @@ describe('SpaceRuntime', () => {
       });
 
       const pendingRepo = new PendingAgentMessageRepository(db);
-      // Two rows with the SAME compound string, each pinned to a different node
-      // (mirrors what the router now emits via resolveWorkflowNodeId).
-      for (const nodeId of ['pair-node', 'pair-review-node']) {
+      // Two rows with the SAME bare slot name, each pinned to a different node.
+      for (const nodeId of ['rev-a', 'rev-b']) {
         pendingRepo.enqueue({
           workflowRunId: run.id,
           spaceId: SPACE_ID,
           taskId: task.id,
           sourceAgentName: 'coder',
           targetKind: 'node_agent',
-          targetAgentName: 'Pair/Review/reviewer',
+          targetAgentName: 'reviewer',
           workflowNodeId: nodeId,
           message: `for ${nodeId}`,
           ttlMs: 60_000,
@@ -2306,14 +2299,14 @@ describe('SpaceRuntime', () => {
       const tam = makeRepairTam({ flush: makeCompoundAwareFlush(workflow) });
       await buildRepairRuntime(tam, pendingRepo).executeTick();
 
-      // Each node spawned its own slot; neither row leaked to the other node.
+      // Each node spawned its own reviewer; neither row leaked to the other node.
       const execs = nodeExecutionRepo.listByWorkflowRun(run.id);
-      const pairExec = execs.find((e) => e.workflowNodeId === 'pair-node');
-      const pairReviewExec = execs.find((e) => e.workflowNodeId === 'pair-review-node');
-      expect(pairExec?.agentName).toBe('Review/reviewer');
-      expect(pairExec?.status).toBe('in_progress');
-      expect(pairReviewExec?.agentName).toBe('reviewer');
-      expect(pairReviewExec?.status).toBe('in_progress');
+      const revA = execs.find((e) => e.workflowNodeId === 'rev-a');
+      const revB = execs.find((e) => e.workflowNodeId === 'rev-b');
+      expect(revA?.agentName).toBe('reviewer');
+      expect(revA?.status).toBe('in_progress');
+      expect(revB?.agentName).toBe('reviewer');
+      expect(revB?.status).toBe('in_progress');
       const rows = pendingRepo.listAllForRun(run.id);
       expect(rows).toHaveLength(2);
       expect(rows.every((r) => r.status === 'delivered')).toBe(true);

@@ -1679,14 +1679,15 @@ export class TaskAgentManager {
     // be delivered to the merger.
     const drainWorkflowNodeId = execution?.workflowNodeId ?? null;
     const executionless = !execution;
-    // Worker handles encode either the node name or the node id (messaging-adapter
-    // vs actor-registry), so a queued row may be keyed "<name>/<agent>" or
-    // "<id>/<agent>". Drain both compound forms plus the bare agent name so every
-    // queued shape for this node is delivered once the session activates.
+    // Drain the bare agent name (new bare+workflowNodeId rows and legacy bare
+    // null-node rows) plus the legacy "<nodeName>/<agent>" compound form. The
+    // "<nodeId>/<agent>" alias is intentionally NOT drained here: the router now
+    // emits bare+workflowNodeId (so node-id compounds are no longer produced),
+    // and matching that alias against null-node rows misdelivered messages whose
+    // bare slot name happened to equal "<nodeId>/<agent>".
     const queueTargetNames = [
       targetAgentName,
       ...(workflowNodeName ? [`${workflowNodeName}/${targetAgentName}`] : []),
-      ...(drainWorkflowNodeId ? [`${drainWorkflowNodeId}/${targetAgentName}`] : []),
     ];
     const seenIds = new Set<string>();
     const pending = queueTargetNames

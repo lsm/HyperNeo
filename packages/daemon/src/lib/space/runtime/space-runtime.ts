@@ -8301,24 +8301,35 @@ export class SpaceRuntime {
     targetAgentName: string,
     workflowNodeId?: string
   ): { nodeId: string; agentName: string; agentId: string | null } | null {
-    // Message-delivery v2 emits compound "<nodeId-or-name>/<agent>" handoff
-    // targets: agent-message-router.ts enqueues them via `scopedAgentName`, and
-    // task-agent-manager.ts constructs the same form when draining, so two nodes
-    // reusing a slot name don't cross-receive. Worker handles encode either the
-    // node name or the node id (messaging-adapter vs actor-registry), and
-    // workflow validation does not forbid "/" in node/agent names, so resolve by
-    // prefixing each node identifier ("<name>/" | "<id>/") and comparing exactly
-    // — never split on the first "/", which would truncate a name containing "/".
+    // Queued handoff rows are addressed two ways:
+    //  - PINNED (workflowNodeId set): the router and enqueueRestartRecoveryMessage
+    //    store the BARE agent slot name + the node id. Slot names may contain "/",
+    //    so match the exact name and never interpret it as a compound.
+    //  - UNPINNED (legacy, workflowNodeId absent): the router stored a compound
+    //    "<nodeId-or-name>/<agent>" so two nodes reusing a slot name don't
+    //    cross-receive. Worker handles encode either the node name or id, and
+    //    node/agent names may contain "/", so match by prefixing each node
+    //    identifier and comparing exactly — never split on the first "/".
     for (const node of workflow.nodes) {
       // Node-scoped resolution: only consider the pinned node so two nodes
       // reusing a slot name don't both resolve to the first one.
       if (workflowNodeId && node.id !== workflowNodeId) continue;
       const slots = resolveNodeAgents(node);
 
-      // Compound "<nodeId-or-name>/<agent>": a precise address. The node must
-      // match by name or id AND the named slot must exist — a non-matching slot
-      // (typo, stale def, wrong node) returns no match instead of falling back
-      // to another slot and misdelivering (e.g. "Review/reveiwer" must fail).
+      if (workflowNodeId) {
+        // Pinned row: bare slot name. Match exactly (a slot named
+        // "<node>/reviewer" must not be stripped to "reviewer"). No compound
+        // parsing, no slots[0] fallback — the row is for this node specifically.
+        const direct = slots.find((slot) => slot.name === targetAgentName);
+        if (direct)
+          return { nodeId: node.id, agentName: direct.name, agentId: direct.agentId ?? null };
+        continue;
+      }
+
+      // Unpinned compound "<nodeId-or-name>/<agent>": a precise address. The node
+      // must match by name or id AND the named slot must exist — a non-matching
+      // slot (typo, stale def, wrong node) returns no match instead of falling
+      // back to another slot and misdelivering (e.g. "Review/reveiwer" must fail).
       let nodeFormMatched = false;
       for (const nodeForm of [node.name, node.id]) {
         const prefix = `${nodeForm}/`;
