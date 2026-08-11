@@ -454,3 +454,86 @@ but by hardening it.
   skips = duplicates prevented; `stillEnqueued` = re-drive; `noContent`), and
   residual-window latency P50/P99. Because at-least-once accepts duplicates,
   these metrics are how we know when the accepted failure actually happens.
+
+## 17. Phase 4 — delivery state in the UI (task #862)
+
+Phase 3 made delivery ownership durable and recoverable but kept the lifecycle
+hidden: a user message was invisible in the transcript until it reached
+`consumed` (or `failed`), so users inferred "stuck" state from system/init
+messages. Phase 4 surfaces the lifecycle explicitly and retires nothing the
+generic reconciler does not already cover.
+
+### Delivery status model
+
+A shared `MessageDeliveryStatus` (`queued | processing | retrying | delivered |
+failed`) is mapped from `send_status` (+ the active `message_delivery` job's
+`retry_count` for `retrying`) by `sendStatusToDeliveryStatus` in
+`packages/shared`. The mapping:
+
+| `send_status` | active job `retry_count > 0`? | `MessageDeliveryStatus` |
+|---------------|-------------------------------|-------------------------|
+| `deferred`    | no / yes                      | `queued` / `retrying`   |
+| `enqueued`    | no / yes                      | `queued` / `retrying`   |
+| `submitted`   | no / yes                      | `processing` / `retrying` |
+| `consumed`    | —                             | `delivered`             |
+| `failed`      | —                             | `failed`                |
+
+### Feed changes
+
+`messages.bySession` and `spaceTaskMessages.byTask(.compact)` now:
+
+- **Widen visibility** so `deferred`/`enqueued`/`submitted` user rows appear
+  (previously filtered to `consumed`/`failed`). Daemon-side reads
+  (`SDKMessageRepository.getSDKMessages`) keep the old filter, so prompt context
+  and rewind see only settled rows — only the web transcript feed widens.
+- **Emit `deliveryStatus`** (ordinary chat) / the full lifecycle (Space threads,
+  expanded from `delivered`/`failed`) via the shared mapper.
+- **Surface retrying** through a session-scoped `EXISTS` against the active
+  `message_delivery` job (`retry_count > 0`), bounded by
+  `idx_message_delivery_session_active`.
+
+The widened feed also gives a natural **optimistic echo with no web-side
+optimistic insert**: the persisted `enqueued` row appears within milliseconds of
+send via the reactive-DB flush, then transitions in place by its stable row id.
+A `send_status` UPDATE emits an `updated` delta on the SAME row — never a
+duplicate `added` — so retry / state changes update the one visible message
+(covered end-to-end by `live-query-delivery-status.test.ts`).
+
+### UI
+
+`SDKUserMessage` renders a `DeliveryStateBadge` for `queued` / `processing` /
+`retrying` / `failed`; `delivered` hides the badge to avoid noisy indicators on
+normal fast delivery. `DeliveryStateBadge` is generalized to cover both
+`MessageDeliveryStatus` and `ActorMessageDeliveryState` so the chat and Space
+thread surfaces share one visual language.
+
+### Steer-consumed propagation (item 11)
+
+A steer's SDK-consumed signal is `onSent`. `feedDeliverySteer` already flips
+`send_status → consumed` synchronously at `onSent` (phase 3, item 12) and
+publishes `messages.statusChanged`; the reactive DB detects the column change
+and the widened feed now shows the steer row transitioning `queued → processing
+→ delivered` rather than appearing only after consumption. No additional emit
+is needed — the certain/consumed state is terminal for delivery under the
+at-least-once model. (ACP's consume boundary is acceptance, handled by
+`markMessageAccepted`, unchanged.)
+
+### Wake / recovery audit (items 6 + 7)
+
+Audited the Space runtime for wake/retry logic now potentially redundant given
+the generic reconciler. Conclusion: **no demonstrably redundant mechanism
+remains** — the agent-level duplicate (`recoverOrphanedConsumedMessages`) was
+already decommissioned in phase 3. The surviving Space recovery paths each own
+a distinct failure mode and inject *system*-origin messages (not stranded-user
+re-deliveries), so they do not duplicate `reconcileStrandedDeliveries`:
+
+- non-terminal-idle **nudge** / runtime **nag** / terminal-error **continue** —
+  an agent that went idle or errored mid-work (no stranded user message to
+  re-deliver; the reconciler has nothing to act on);
+- **restart-notice** — post-restart rehydration;
+- **external-event digest requeue** (`requeuePersistedPendingDeliveries`) — the
+  separate external-event delivery store, not the `message_delivery` lane;
+- `/compact` injection.
+
+Per the task's "remove only demonstrably redundant workarounds; retain
+Space-specific orchestration semantics," these are retained.
