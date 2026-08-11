@@ -13,20 +13,19 @@
 import { lazy, Suspense } from 'preact/compat';
 import { useCallback, useEffect, useState } from 'preact/hooks';
 import { AgentOverlayChat } from '../components/space/AgentOverlayChat';
-import { TaskAuxiliaryPanel } from '../components/space/TaskAuxiliaryPanel';
 import { SpaceCreateTaskDialog } from '../components/space/SpaceCreateTaskDialog';
 import { SpacePageHeader } from '../components/space/SpacePageHeader';
+import { TaskAuxiliaryPanel } from '../components/space/TaskAuxiliaryPanel';
 import { createSession } from '../lib/api-helpers';
-import { parseLongHorizonAgentSessionId } from '../lib/space-agent-session';
-import { sessionStore } from '../lib/session-store';
 import {
   closeOverlayHistory,
-  navigateToSpace,
   navigateBack,
+  navigateToSpace,
   navigateToSpaceSession,
   navigateToSpaceTask,
   pushOverlayHistory,
 } from '../lib/router';
+import { sessionStore } from '../lib/session-store';
 import type { SpaceViewMode } from '../lib/signals';
 import {
   currentSpaceAgentHandleSignal,
@@ -41,6 +40,7 @@ import {
   spaceOverlaySessionIdSignal,
   spaceOverlayTaskContextSignal,
 } from '../lib/signals';
+import { parseLongHorizonAgentSessionId } from '../lib/space-agent-session';
 import { spaceStore } from '../lib/space-store';
 import { toast } from '../lib/toast';
 import ChatContainer from './ChatContainer';
@@ -435,11 +435,12 @@ export default function SpaceIsland({
     return (
       <>
         <div
-          class="flex-1 flex flex-col overflow-hidden bg-app-content"
+          class="relative isolate flex-1 flex flex-col overflow-hidden bg-app-content before:pointer-events-none before:absolute before:inset-0 before:-z-10 before:bg-[radial-gradient(circle_at_8%_0%,rgba(142,79,100,0.22),transparent_34%),radial-gradient(circle_at_95%_10%,rgba(42,91,119,0.18),transparent_39%),radial-gradient(circle_at_54%_112%,rgba(77,68,151,0.22),transparent_49%)] after:pointer-events-none after:absolute after:inset-0 after:-z-10 after:bg-[linear-gradient(180deg,rgba(12,15,22,0.02),rgba(8,11,18,0.22))]"
           data-testid="space-goals-view"
+          data-goals-surface="glass-workspace"
           {...baseLayerProps}
         >
-          <SpacePageHeader pageTitle="Goals" />
+          <SpacePageHeader pageTitle="Goals" appearance="hero" />
           <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
             <Suspense fallback={lazyFallback}>
               <SpaceGoals spaceId={spaceId} navigationSpaceId={navigationSpaceId} />

@@ -43,8 +43,8 @@ vi.mock('../../../lib/utils', () => ({
 
 import { currentSpaceGoalIdSignal, rightPanelTargetSignal } from '../../../lib/signals';
 import { spaceStore } from '../../../lib/space-store';
-import { SpaceGoals } from '../SpaceGoals';
 import { SpaceGoalDialog } from '../SpaceGoalDialog';
+import { SpaceGoals } from '../SpaceGoals';
 
 const mutableSpaceStore = spaceStore as unknown as {
   goals: Signal<SpaceGoal[]>;
@@ -220,6 +220,8 @@ describe('SpaceGoals', () => {
     expect(screen.getByText('Metrics: open_bugs: 3')).toBeTruthy();
     expect(screen.getByText('Builds are green')).toBeTruthy();
     expect(screen.getByText('Recurring')).toBeTruthy();
+    expect(screen.getByTestId('space-goals-introduction')).toBeTruthy();
+    expect(screen.getByTestId('space-goal-count').textContent).toBe('1');
     await waitFor(() => expect(currentSpaceGoalIdSignal.value).toBe(goal.id));
     expect(mockListGoals).toHaveBeenCalledWith({ includeArchived: false });
   });
@@ -268,12 +270,29 @@ describe('SpaceGoals', () => {
     await waitFor(() => expect(currentSpaceGoalIdSignal.value).toBe('goal-1'));
     fireEvent.click(screen.getByRole('button', { name: /Second goal/ }));
     expect(currentSpaceGoalIdSignal.value).toBe('goal-2');
+    expect(rightPanelTargetSignal.value).toEqual({
+      type: 'goal',
+      spaceId: 'space-1',
+      goalId: 'goal-2',
+    });
 
     rightPanelTargetSignal.value = { type: 'goal', spaceId: 'space-1', goalId: 'goal-2' };
     unmount();
 
     expect(currentSpaceGoalIdSignal.value).toBeNull();
     expect(rightPanelTargetSignal.value).toBeNull();
+  });
+
+  it('reloads goals when archived objectives are shown', async () => {
+    mockGoals.value = [makeGoal()];
+
+    render(<SpaceGoals spaceId="space-1" />);
+
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Show archived' }));
+
+    await waitFor(() => {
+      expect(mockListGoals).toHaveBeenCalledWith({ includeArchived: true });
+    });
   });
 
   it('creates a goal from the dialog payload', async () => {

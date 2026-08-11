@@ -8,16 +8,17 @@
  * - content priority for session/task routes
  */
 
-import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
-import { render, fireEvent, cleanup, waitFor } from '@testing-library/preact';
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Default waitFor timeout of 1000ms is too tight for lazy-loaded routes under
 // full-suite load (CI parallel workers, Vite transform pipeline). Bumping to
 // 5s for all lazy-module assertions eliminates flakiness without slowing the
 // happy path, since waitFor returns as soon as the assertion passes.
 const LAZY_LOAD_TIMEOUT = 5000;
+
+import type { Space, SpaceWorkerAgent, SpaceWorkflow } from '@hyperneo/shared';
 import { signal } from '@preact/signals';
-import type { SpaceWorkflow, SpaceWorkerAgent, Space } from '@hyperneo/shared';
 
 let mockLoading = signal(false);
 let mockError = signal<string | null>(null);
@@ -650,7 +651,7 @@ describe('SpaceIsland — content priority chain', () => {
 
 describe('SpaceIsland — goals view', () => {
   it('passes the route space id to goals page navigation', async () => {
-    const { getByTestId } = render(
+    const { getByRole, getByTestId } = render(
       <SpaceIsland spaceId="space-1" routeSpaceId="space-slug" viewMode="goals" />
     );
 
@@ -662,6 +663,10 @@ describe('SpaceIsland — goals view', () => {
     );
     expect(getByTestId('space-goals').getAttribute('data-space-id')).toBe('space-1');
     expect(getByTestId('space-goals').getAttribute('data-navigation-space-id')).toBe('space-slug');
+    expect(getByTestId('space-goals-view').getAttribute('data-goals-surface')).toBe(
+      'glass-workspace'
+    );
+    expect(getByRole('heading', { name: 'Goals' })).toBeTruthy();
   });
 });
 
