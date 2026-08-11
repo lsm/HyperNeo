@@ -2777,7 +2777,7 @@ describe('handleGoalAutomationExecute', () => {
       scopeId: scope.id,
       kind: 'manual_note',
       sourceId: null,
-      summary: 'Status note: task done, no result',
+      summary: 'Status note: no new signal this tick',
       createdAt: 30,
     });
     const goalEventRepo = new SpaceGoalEventRepository(db as never);
@@ -2803,21 +2803,20 @@ describe('handleGoalAutomationExecute', () => {
             episodeCreated = true;
             throw new Error('should not create episode for low-evidence self_nag');
           },
+          // Low confidence, no concrete outcomes, all-manual selection -> skip.
+          // (counts.metricSnapshots stays 0; the gate no longer consults it.)
           preflightEvidence: () =>
             makePreflight({
               level: 'low',
-              score: 23,
+              score: 0,
               requiresConfirmation: true,
-              // A stale scope-wide metric keeps counts.metricSnapshots at 1 even
-              // though the selection is a single manual note — the skip must still
-              // fire (the gate is selection-based, not scope-wide).
               counts: {
                 total: 1,
                 manualNotes: 1,
                 taskResults: 0,
                 workflowArtifacts: 0,
-                metricSnapshots: 1,
-                outcomes: 1,
+                metricSnapshots: 0,
+                outcomes: 0,
               },
             }),
         },
@@ -2916,6 +2915,151 @@ describe('handleGoalAutomationExecute', () => {
     expect(result.reviewTaskId).toBeString();
     expect(evolutionRepo.listEpisodes(scope.id)).toHaveLength(1);
     expect(taskRepo.listBySpace(spaceId, true)).toHaveLength(1);
+  });
+
+  it('still produces an episode for a substantive manual note with concrete outcomes', async () => {
+    const goal = goalRepo.create({ spaceId, title: 'Substantive note', type: 'recurring' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Substantive note',
+      objective: 'Manual note with real outcomes',
+      policy: { automation: { selfNagCronExpression: '0 * * * *' } },
+    });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'manual_note',
+      sourceId: null,
+      summary: 'PR #42 merged, CI green',
+      createdAt: 30,
+    });
+
+    const result = await handleGoalAutomationExecute(
+      createAutomationJob({
+        goalId: goal.id,
+        scopeId: scope.id,
+        triggerKind: 'self_nag',
+        triggerKey: 'schedule-note-outcomes',
+        reason: 'self_nag',
+        scheduleId: 'schedule-note-outcomes',
+      }),
+      {
+        goalRepo,
+        taskRepo,
+        evolutionRepo,
+        cursorRepo,
+        episodeService: {
+          createFromEvidence: async ({ evidenceIds }) => ({
+            episode: evolutionRepo.createEpisode({
+              scopeId: scope.id,
+              title: 'Substantive note retrospective',
+              evidenceIds,
+              outcomeSummary: 'Substantive note outcome',
+              findings: [],
+            }),
+            proposals: [],
+            lessons: [],
+          }),
+          // Manual-only selection, but the note carries concrete PR/CI/merge
+          // outcome signal -> not thin, so the retrospective is preserved.
+          preflightEvidence: () =>
+            makePreflight({
+              level: 'low',
+              score: 24,
+              requiresConfirmation: true,
+              counts: {
+                total: 1,
+                manualNotes: 1,
+                taskResults: 0,
+                workflowArtifacts: 0,
+                metricSnapshots: 0,
+                outcomes: 3,
+              },
+            }),
+        },
+      }
+    );
+
+    expect(result.skipped).toBe(false);
+    expect(result.episodeId).toBeString();
+    expect(evolutionRepo.listEpisodes(scope.id)).toHaveLength(1);
+  });
+
+  it('skips an empty auto-generated session trace diagnostic with no outcomes', async () => {
+    const goal = goalRepo.create({ spaceId, title: 'Empty trace', type: 'recurring' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Empty trace',
+      objective: 'No-friction session diagnostic',
+      policy: { automation: { selfNagCronExpression: '0 * * * *' } },
+    });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'session',
+      sourceId: null,
+      summary: 'Conversation trace: no friction detected',
+      metadata: { status: 'no_friction' },
+      createdAt: 30,
+    });
+    const goalEventRepo = new SpaceGoalEventRepository(db as never);
+    let episodeCreated = false;
+
+    const result = await handleGoalAutomationExecute(
+      createAutomationJob({
+        goalId: goal.id,
+        scopeId: scope.id,
+        triggerKind: 'self_nag',
+        triggerKey: 'schedule-empty-trace',
+        reason: 'self_nag',
+        scheduleId: 'schedule-empty-trace',
+      }),
+      {
+        goalRepo,
+        taskRepo,
+        evolutionRepo,
+        cursorRepo,
+        goalEventRepo,
+        episodeService: {
+          createFromEvidence: async () => {
+            episodeCreated = true;
+            throw new Error('should not create episode for an empty trace diagnostic');
+          },
+          // A session diagnostic with no outcomes and no task context is thin
+          // even though it is not a manual note -> skip.
+          preflightEvidence: () =>
+            makePreflight({
+              level: 'low',
+              score: 0,
+              requiresConfirmation: true,
+              counts: {
+                total: 1,
+                manualNotes: 0,
+                taskResults: 0,
+                workflowArtifacts: 0,
+                metricSnapshots: 0,
+                outcomes: 0,
+              },
+            }),
+        },
+      }
+    );
+
+    expect(result).toMatchObject({
+      skipped: true,
+      skipReason: 'low_evidence_noop',
+      episodeId: null,
+      reviewTaskId: null,
+    });
+    expect(episodeCreated).toBe(false);
+    expect(evolutionRepo.listEpisodes(scope.id)).toHaveLength(0);
+    const cursor = cursorRepo.get(goal.id, scope.id, 'self_nag', 'schedule-empty-trace');
+    expect(cursor?.metadata).toMatchObject({ skipReason: 'low_evidence_noop' });
+    expect(goalEventRepo.listByGoal(goal.id)[0]).toMatchObject({
+      eventType: 'automation_noop',
+    });
   });
 
   it('captures external event evidence before generating the episode', async () => {

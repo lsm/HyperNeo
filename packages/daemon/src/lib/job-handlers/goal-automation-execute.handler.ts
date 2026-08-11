@@ -157,11 +157,13 @@ export async function handleGoalAutomationExecute(
   }
 
   // self_nag: skip no-op episodes on thin, process-level evidence. When the
-  // preflight is low-confidence AND every selected evidence row is a manual note
-  // (status notes / empty traces — no task, artifact, metric, or friction-trace
-  // signal), record a lightweight no-op note on the goal and advance the cursor
-  // without spending an episode-judge call or creating a review task. Any
-  // non-manual evidence still produces an episode, even at a low preflight.
+  // preflight is low-confidence AND the selection carries no substantive signal
+  // (no concrete outcomes such as PR/CI/merge/error, and every row is a kind
+  // that can be empty or purely process-level — a manual note or an auto-generated
+  // session diagnostic), record a lightweight no-op note on the goal and advance
+  // the cursor without spending an episode-judge call or creating a review task.
+  // Substantive manual notes (with real outcomes) and any task result, friction
+  // trace, artifact, error, or in-batch metric still produces an episode.
   // Honors the goal guardrail: "if evidence is insufficient, finish without
   // inventing work." (#919)
   if (payload.triggerKind === 'self_nag' && deps.episodeService.preflightEvidence) {
@@ -169,7 +171,7 @@ export async function handleGoalAutomationExecute(
       scopeId: scope.id,
       evidenceIds: evidence.map((item) => item.id),
     });
-    if (shouldSkipSelfNagNoOp(preflight)) {
+    if (shouldSkipSelfNagNoOp(preflight, evidence)) {
       runWriteTransaction(deps, () => {
         recordSelfNagNoOpNote(deps, goal, preflight);
         advanceCursor(deps, payload, evidence, goal.spaceId, null, {
@@ -486,19 +488,29 @@ function advanceCursor(
 }
 
 /**
- * A self_nag tick is a no-op worth skipping when the evidence-quality preflight
- * is low-confidence AND the selection is purely process-level — every evidence
- * row is a manual note. The check is selection-based (not the scope-wide
- * metricSnapshot count, which can stay non-zero from a stale/unrelated metric),
- * so an old metric can't keep thin ticks producing no-op episodes. Any
- * non-manual evidence — task results, friction traces like permission_block or
- * slow_tool_call that resolve to task context, workflow artifacts, or metrics
- * actually in the batch — keeps its retrospective even at a low preflight.
+ * Evidence kinds that can be empty or purely process-level: free-form manual
+ * notes and auto-generated session trace diagnostics (e.g. a `no_friction`
+ * marker). Every other kind is structural/task-linked captured activity.
  */
-function shouldSkipSelfNagNoOp(preflight: EvidenceQualityPreflight): boolean {
+const THIN_EVIDENCE_KINDS = new Set<EvidenceRef['kind']>(['manual_note', 'session']);
+
+/**
+ * A self_nag tick is a no-op worth skipping when the preflight is low-confidence
+ * AND the selection carries no substantive signal. Substantive means either a
+ * concrete outcome (PR/CI/merge/error/completion/... — recognized by the scorer
+ * in any row's text or metadata, so a detailed manual note still counts) or any
+ * structural/task-linked evidence kind (task results, friction traces like
+ * slow_tool_call/permission_block that resolve to task context, workflow
+ * artifacts, errors, in-batch metrics). Only a batch with no outcomes where
+ * every row is a thin kind (manual note or empty session diagnostic) is skipped.
+ */
+function shouldSkipSelfNagNoOp(
+  preflight: EvidenceQualityPreflight,
+  evidence: EvidenceRef[]
+): boolean {
   if (preflight.level !== 'low') return false;
-  const { counts } = preflight;
-  return counts.total > 0 && counts.manualNotes === counts.total;
+  if (preflight.counts.outcomes > 0) return false;
+  return evidence.length > 0 && evidence.every((item) => THIN_EVIDENCE_KINDS.has(item.kind));
 }
 
 function recordSelfNagNoOpNote(
