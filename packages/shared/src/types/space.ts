@@ -2130,8 +2130,32 @@ export interface EventInterest {
    *
    * The topic pattern IS the filter — the format encodes source identity,
    * scope (e.g. owner/repo for GitHub), resource, and entity/action.
+   *
+   * Exactly one of `topic` and {@link EventInterest.topicFrom} must be set.
    */
-  topic: string;
+  topic?: string;
+
+  /**
+   * Resolve the subscription topic dynamically at subscription time from a
+   * workflow run's durable state, rather than from a static literal.
+   *
+   * The `pattern` is a template whose placeholders are filled by the resolver
+   * for the given `source`. For `'primaryLink'` the placeholders are
+   * `{owner}`, `{repo}`, and `{number}` (the segments of the GitHub event topic
+   * taxonomy), derived from the run's primary link (e.g. its PR URL) — example:
+   * `'github/{owner}/{repo}/pull_request/{number}.*'`.
+   *
+   * This lets a static workflow definition subscribe to "this run's own PR"
+   * without baking a PR number into the template. Design intent (the topic-trie
+   * invariant): `topicFrom` is resolved to a concrete `topic` before any
+   * subscription is registered, so the trie never stores templates. The
+   * resolver itself (`resolveTopicFromInterest`) ships here, but wiring it into
+   * registration is a follow-up PR — in this PR `topicFrom` is validated but
+   * inert at registration time (see `SpaceRuntime.registerRunInterests`).
+   *
+   * Exactly one of {@link EventInterest.topic} and `topicFrom` must be set.
+   */
+  topicFrom?: { source: 'primaryLink'; pattern: string };
 
   /**
    * Optional label for diagnostics. Not used in matching logic.
@@ -2189,9 +2213,11 @@ export interface WorkflowNodeAgent {
   extraMcpServers?: Record<string, McpServerConfig>;
   /**
    * Static external event subscriptions for this workflow agent slot.
-   * Dynamic runtime subscriptions are managed through node-agent MCP tools.
+   * Each interest carries either a static `topic` glob or a `topicFrom` template
+   * resolved at subscription time. Dynamic runtime subscriptions are managed
+   * through node-agent MCP tools.
    */
-  eventInterests?: Array<{ topic: string; label?: string }>;
+  eventInterests?: EventInterest[];
   /**
    * Optional per-slot timeout (milliseconds) used by the runtime to decide
    * when an agent that is still alive but apparently stuck should be
@@ -2850,8 +2876,8 @@ export interface ExportedWorkflowNode {
  * Space-specific fields (`id`, `spaceId`, `createdAt`, `updatedAt`) are stripped.
  */
 export interface ExportedSpaceWorkerAgent {
-  /** Format version — always 1 for this revision */
-  version: 1;
+  /** Format version (1 or 2; v2 adds optional `topicFrom` on eventInterests). */
+  version: 1 | 2;
   /** Discriminator for the exported entity type */
   type: 'agent';
   /** Human-readable name */
@@ -2894,8 +2920,8 @@ export interface ExportedSpaceWorkerAgent {
  * Channel IDs are stripped; `from`/`to` use node/agent names.
  */
 export interface ExportedSpaceWorkflow {
-  /** Format version — always 1 for this revision */
-  version: 1;
+  /** Format version (1 or 2; v2 adds optional `topicFrom` on eventInterests). */
+  version: 1 | 2;
   /** Discriminator for the exported entity type */
   type: 'workflow';
   /** Human-readable name */
@@ -2943,8 +2969,8 @@ export interface ExportedSpaceWorkflow {
  * The bundle is the top-level unit of the export/import file format.
  */
 export interface SpaceExportBundle {
-  /** Format version — always 1 for this revision */
-  version: 1;
+  /** Format version (1 or 2; v2 adds optional `topicFrom` on eventInterests). */
+  version: 1 | 2;
   /** Discriminator for the top-level type */
   type: 'bundle';
   /** Human-readable bundle name */

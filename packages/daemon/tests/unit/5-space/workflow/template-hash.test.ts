@@ -1132,4 +1132,39 @@ describe('workflowsMatchFingerprint', () => {
       `Merger|Merger|${JSON.stringify([guard])}`,
     ]);
   });
+
+  it('returns false when an agent slot eventInterests set changes (task #907)', () => {
+    // Declaring a static event interest on an implementer slot (e.g. the
+    // primaryLink PR-event interest) must change the fingerprint so existing
+    // seeded spaces are detected as drifted and re-stamped — otherwise the
+    // interest would never reach installed flows.
+    const interest = {
+      topicFrom: {
+        source: 'primaryLink',
+        pattern: 'github/{owner}/{repo}/pull_request/{number}.*',
+      },
+      label: 'My PR events',
+    };
+    const wf1 = makeWorkflow({
+      nodes: [{ id: 'n1', name: 'Coder', agents: [{ agentId: 'a1', name: 'coder' }] }],
+    });
+    const wf2 = makeWorkflow({
+      nodes: [
+        {
+          id: 'n1',
+          name: 'Coder',
+          agents: [{ agentId: 'a1', name: 'coder', eventInterests: [interest] }],
+        },
+      ],
+    });
+    expect(workflowsMatchFingerprint(wf1, wf2)).toBe(false);
+    expect(computeWorkflowHash(wf1)).not.toBe(computeWorkflowHash(wf2));
+    // A workflow whose slots have no eventInterests omits the key entirely.
+    expect(
+      (buildWorkflowFingerprint(wf1) as Record<string, unknown>).nodeAgentEventInterests
+    ).toBeUndefined();
+    expect(
+      (buildWorkflowFingerprint(wf2) as Record<string, unknown>).nodeAgentEventInterests
+    ).toEqual([`Coder|coder|${JSON.stringify([interest])}`]);
+  });
 });

@@ -5,6 +5,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import type { EventInterest } from '@hyperneo/shared';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
@@ -210,6 +211,231 @@ describe('SpaceWorkflowManager', () => {
           ],
         })
       ).toThrow('Multi-segment "**" wildcard is not supported');
+    });
+  });
+
+  describe('dynamic topicFrom event interest validation', () => {
+    it('accepts a valid topicFrom interest on create', () => {
+      const result = manager.createWorkflow({
+        spaceId: 'space-1',
+        name: 'Dynamic Topic Workflow',
+        nodes: [
+          {
+            id: 'node-1',
+            name: 'Step One',
+            agents: [
+              {
+                agentId: 'agent-1',
+                name: 'coder',
+                eventInterests: [
+                  {
+                    topicFrom: {
+                      source: 'primaryLink',
+                      pattern: 'github/{owner}/{repo}/pull_request/{number}.*',
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        completionAutonomyLevel: 3,
+      });
+      expect(result.nodes[0].agents[0].eventInterests).toEqual([
+        {
+          topicFrom: {
+            source: 'primaryLink',
+            pattern: 'github/{owner}/{repo}/pull_request/{number}.*',
+          },
+        },
+      ]);
+    });
+
+    it('rejects an interest with both topic and topicFrom set', () => {
+      expect(() =>
+        manager.createWorkflow({
+          spaceId: 'space-1',
+          name: 'Both Set Workflow',
+          nodes: [
+            {
+              id: 'node-1',
+              name: 'Step One',
+              agents: [
+                {
+                  agentId: 'agent-1',
+                  name: 'coder',
+                  eventInterests: [
+                    {
+                      topic: 'github/lsm/neokai/pull_request/42.*',
+                      topicFrom: {
+                        source: 'primaryLink',
+                        pattern: 'github/{owner}/{repo}/pull_request/{number}.*',
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          completionAutonomyLevel: 3,
+        })
+      ).toThrow('exactly one of "topic" or "topicFrom" must be set');
+    });
+
+    it('rejects an interest with neither topic nor topicFrom set', () => {
+      expect(() =>
+        manager.createWorkflow({
+          spaceId: 'space-1',
+          name: 'Neither Set Workflow',
+          nodes: [
+            {
+              id: 'node-1',
+              name: 'Step One',
+              agents: [
+                {
+                  agentId: 'agent-1',
+                  name: 'coder',
+                  eventInterests: [{ label: 'no topic' }],
+                },
+              ],
+            },
+          ],
+          completionAutonomyLevel: 3,
+        })
+      ).toThrow('exactly one of "topic" or "topicFrom" must be set');
+    });
+
+    it('rejects a topicFrom with an empty/whitespace pattern', () => {
+      expect(() =>
+        manager.createWorkflow({
+          spaceId: 'space-1',
+          name: 'Empty Pattern Workflow',
+          nodes: [
+            {
+              id: 'node-1',
+              name: 'Step One',
+              agents: [
+                {
+                  agentId: 'agent-1',
+                  name: 'coder',
+                  eventInterests: [{ topicFrom: { source: 'primaryLink', pattern: '   ' } }],
+                },
+              ],
+            },
+          ],
+          completionAutonomyLevel: 3,
+        })
+      ).toThrow('topicFrom.pattern: must be a non-empty string');
+    });
+
+    it('rejects a topicFrom pattern with surrounding whitespace', () => {
+      // The Zod import path trims the pattern; the manager must keep direct
+      // creation consistent so a stored pattern always resolves to a usable
+      // glob (surrounding spaces would survive resolution and fail the trie).
+      expect(() =>
+        manager.createWorkflow({
+          spaceId: 'space-1',
+          name: 'Padded Pattern Workflow',
+          nodes: [
+            {
+              id: 'node-1',
+              name: 'Step One',
+              agents: [
+                {
+                  agentId: 'agent-1',
+                  name: 'coder',
+                  eventInterests: [
+                    {
+                      topicFrom: {
+                        source: 'primaryLink',
+                        pattern: ' github/{owner}/{repo}/pull_request/{number}.* ',
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          completionAutonomyLevel: 3,
+        })
+      ).toThrow('no surrounding whitespace');
+    });
+
+    it('rejects a topicFrom with an unknown source', () => {
+      expect(() =>
+        manager.createWorkflow({
+          spaceId: 'space-1',
+          name: 'Unknown Source Workflow',
+          nodes: [
+            {
+              id: 'node-1',
+              name: 'Step One',
+              agents: [
+                {
+                  agentId: 'agent-1',
+                  name: 'coder',
+                  eventInterests: [
+                    {
+                      topicFrom: {
+                        source: 'taskField',
+                        pattern: 'github/{owner}/{repo}/pull_request/{number}.*',
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          completionAutonomyLevel: 3,
+        })
+      ).toThrow('topicFrom.source: unknown source "taskField"');
+    });
+
+    it('rejects a malformed topic value paired with topicFrom (presence before type)', () => {
+      // `{ topic: 123, topicFrom: {...} }`: topic is present (even though not a
+      // string), so both branches are "set" → exactly-one-of must fire, rather
+      // than the malformed topic silently falling through to the topicFrom path.
+      const bothSet = [
+        {
+          topic: 123,
+          topicFrom: {
+            source: 'primaryLink',
+            pattern: 'github/{owner}/{repo}/pull_request/{number}.*',
+          },
+        },
+      ] as unknown as EventInterest[];
+      expect(() =>
+        manager.createWorkflow({
+          spaceId: 'space-1',
+          name: 'Malformed Topic Workflow',
+          nodes: [
+            {
+              id: 'node-1',
+              name: 'Step One',
+              agents: [{ agentId: 'agent-1', name: 'coder', eventInterests: bothSet }],
+            },
+          ],
+          completionAutonomyLevel: 3,
+        })
+      ).toThrow('exactly one of "topic" or "topicFrom" must be set');
+    });
+
+    it('rejects a non-string topic value when topicFrom is absent', () => {
+      const badTopic = [{ topic: 123 }] as unknown as EventInterest[];
+      expect(() =>
+        manager.createWorkflow({
+          spaceId: 'space-1',
+          name: 'NonString Topic Workflow',
+          nodes: [
+            {
+              id: 'node-1',
+              name: 'Step One',
+              agents: [{ agentId: 'agent-1', name: 'coder', eventInterests: badTopic }],
+            },
+          ],
+          completionAutonomyLevel: 3,
+        })
+      ).toThrow('node[0].agents[0].eventInterests[0].topic: must be a string');
     });
   });
 

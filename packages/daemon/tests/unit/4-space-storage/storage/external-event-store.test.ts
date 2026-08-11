@@ -289,6 +289,90 @@ describe('registerExpectedDelivery', () => {
     expect(reviewer[0]!.eventId).toBe('evt-b');
   });
 
+  test('listDeliveryLog filters by workflowRunId and nodeId (the run/node join)', () => {
+    store.store(EVENT_A);
+    store.store(EVENT_B);
+    // Two deliveries in run-1 (different nodes), one in run-2.
+    store.registerExpectedDelivery('evt-a', 'dk-run1-coder', {
+      workflowRunId: 'run-1',
+      taskId: 'task-1',
+      nodeId: 'node-coder',
+      agentName: 'coder',
+    });
+    store.registerExpectedDelivery('evt-a', 'dk-run1-reviewer', {
+      workflowRunId: 'run-1',
+      taskId: 'task-1',
+      nodeId: 'node-reviewer',
+      agentName: 'reviewer',
+    });
+    store.registerExpectedDelivery('evt-b', 'dk-run2', {
+      workflowRunId: 'run-2',
+      taskId: 'task-2',
+      nodeId: 'node-coder',
+      agentName: 'coder',
+    });
+
+    // Filter by run alone — both run-1 deliveries, newest-updated first.
+    const run1 = store.listDeliveryLog({ spaceId: SPACE_ID, workflowRunId: 'run-1' });
+    expect(run1).toHaveLength(2);
+    expect(new Set(run1.map((d) => d.deliveryKey))).toEqual(
+      new Set(['dk-run1-coder', 'dk-run1-reviewer'])
+    );
+
+    // Filter by run + node — narrows to one row.
+    const run1Coder = store.listDeliveryLog({
+      spaceId: SPACE_ID,
+      workflowRunId: 'run-1',
+      nodeId: 'node-coder',
+    });
+    expect(run1Coder).toHaveLength(1);
+    expect(run1Coder[0]!.deliveryKey).toBe('dk-run1-coder');
+    // The join still surfaces the source-event essence.
+    expect(run1Coder[0]!.event.topic).toBe(EVENT_A.topic);
+
+    // nodeId filter is applied within the space across runs.
+    const coderAll = store.listDeliveryLog({ spaceId: SPACE_ID, nodeId: 'node-coder' });
+    expect(coderAll).toHaveLength(2);
+
+    // run-2 is isolated from run-1.
+    const run2 = store.listDeliveryLog({ spaceId: SPACE_ID, workflowRunId: 'run-2' });
+    expect(run2).toHaveLength(1);
+    expect(run2[0]!.deliveryKey).toBe('dk-run2');
+  });
+
+  test('listDeliveryLog combines workflowRunId + state filters', () => {
+    store.store(EVENT_A);
+    store.registerExpectedDelivery('evt-a', 'dk-pending', {
+      workflowRunId: 'run-1',
+      taskId: 'task-1',
+      nodeId: 'node-1',
+      agentName: 'coder',
+    });
+    store.registerExpectedDelivery('evt-a', 'dk-delivered', {
+      workflowRunId: 'run-1',
+      taskId: 'task-1',
+      nodeId: 'node-2',
+      agentName: 'reviewer',
+    });
+    store.markDeliveryDelivered('evt-a', 'dk-delivered');
+
+    const pending = store.listDeliveryLog({
+      spaceId: SPACE_ID,
+      workflowRunId: 'run-1',
+      status: 'pending',
+    });
+    expect(pending).toHaveLength(1);
+    expect(pending[0]!.deliveryKey).toBe('dk-pending');
+
+    const delivered = store.listDeliveryLog({
+      spaceId: SPACE_ID,
+      workflowRunId: 'run-1',
+      status: 'delivered',
+    });
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]!.deliveryKey).toBe('dk-delivered');
+  });
+
   test('is idempotent for duplicate registration', () => {
     store.store(EVENT_A);
     const target = {

@@ -1068,6 +1068,12 @@ export class SpaceRuntime {
     for (const node of nodes) {
       for (const agentEntry of resolveNodeAgents(node)) {
         for (const interest of agentEntry.eventInterests ?? []) {
+          // Only static `topic` interests are registered here. A `topicFrom`
+          // interest is resolved into a concrete topic against the run's primary
+          // link at subscription time (see `resolveTopicFromInterest`); that
+          // resolution is wired in a later PR, so `topicFrom` interests are
+          // intentionally inert here and must not enter the trie yet.
+          if (typeof interest.topic !== 'string') continue;
           const result = this.registerSubscription(
             workflowRunId,
             taskId,

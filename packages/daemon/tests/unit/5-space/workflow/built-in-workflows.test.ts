@@ -210,6 +210,33 @@ describe('stable coding workflow templates', () => {
     assertCoderOwnsMerge(CODING_WITH_QA_WORKFLOW);
   });
 
+  test('coder slots declare the primaryLink PR-event interest (task #907)', () => {
+    // The implementer slot subscribes to its own run's PR events (review
+    // comments, CI failures, reactions) via a topicFrom interest resolved from
+    // the run's primary link — pure pub/sub, no smart routing. Only the coder
+    // (implementer) carries it; the reviewer/QA slots do not.
+    const expected = {
+      topicFrom: {
+        source: 'primaryLink',
+        pattern: 'github/{owner}/{repo}/pull_request/{number}.*',
+      },
+      label: 'My PR events',
+    };
+    for (const wf of [STABLE_CODING_WORKFLOW, CODING_WITH_QA_WORKFLOW]) {
+      const coder = wf.nodes
+        .find((n) => n.name === 'Coding')!
+        .agents.find((a) => a.name === 'coder')!;
+      expect(coder.eventInterests).toEqual([expected]);
+      // Non-implementer slots in the same workflow carry no static interest.
+      for (const node of wf.nodes) {
+        for (const agent of node.agents) {
+          if (agent.name === 'coder') continue;
+          expect(agent.eventInterests).toBeUndefined();
+        }
+      }
+    }
+  });
+
   test('stable Coding Review is the end node and calls approve_task', () => {
     // In the 2-node Coding workflow, Review IS the end node, so its prompt
     // instructs the end-node-only approve_task/submit_for_approval.
@@ -593,6 +620,28 @@ describe('RESEARCH_WORKFLOW template', () => {
   test('first node uses Research agent', () => {
     expect(RESEARCH_WORKFLOW.nodes[0].agents[0]?.name).toBe('research');
     expect(RESEARCH_WORKFLOW.nodes[0].name).toBe('Research');
+  });
+
+  test('research slot declares the primaryLink PR-event interest (task #907)', () => {
+    // The research implementer subscribes to its own run's PR events via a
+    // topicFrom interest resolved from the run's primary link — same pub/sub
+    // contract as the coder slots. Only the research slot carries it.
+    const research = RESEARCH_WORKFLOW.nodes
+      .find((n) => n.name === 'Research')!
+      .agents.find((a) => a.name === 'research')!;
+    expect(research.eventInterests).toEqual([
+      {
+        topicFrom: {
+          source: 'primaryLink',
+          pattern: 'github/{owner}/{repo}/pull_request/{number}.*',
+        },
+        label: 'My PR events',
+      },
+    ]);
+    const reviewer = RESEARCH_WORKFLOW.nodes
+      .find((n) => n.name === 'Review')!
+      .agents.find((a) => a.name === 'reviewer')!;
+    expect(reviewer.eventInterests).toBeUndefined();
   });
 
   test('second node uses Reviewer agent', () => {
@@ -2391,6 +2440,78 @@ describe('seedBuiltInWorkflows()', () => {
     expect(reviewer.resetContextPerTurn).toBe(true);
   });
 
+  test('mergeNodeStructuralFieldsFromTemplate propagates template eventInterests to seeded slots (task #907)', () => {
+    // Existing space seeded before the interest existed: coder slot has none.
+    const existingNodes = CODING_WORKFLOW.nodes.map((node) =>
+      node.name === 'Coding'
+        ? { ...node, agents: node.agents.map((a) => ({ ...a, eventInterests: undefined })) }
+        : node
+    );
+    const result = mergeNodeStructuralFieldsFromTemplate(
+      existingNodes,
+      CODING_WORKFLOW.nodes,
+      resolveAgentId
+    );
+    const coder = result
+      .find((node) => node.name === 'Coding')!
+      .agents.find((a) => a.name === 'coder')!;
+    expect(coder.eventInterests).toEqual(CODING_WORKFLOW.nodes[0].agents[0]!.eventInterests);
+    // The reviewer slot is not template-managed for interests, so it stays absent.
+    const outReviewer = result
+      .find((node) => node.name === 'Review')!
+      .agents.find((a) => a.name === 'reviewer')!;
+    expect(outReviewer.eventInterests).toBeUndefined();
+  });
+
+  test('mergeNodeStructuralFieldsFromTemplate overwrites a divergent slot eventInterests from the template', () => {
+    // A slot that drifted (or carries a stale interest) is reset to the
+    // template's interests — structural sync, not user config.
+    const drifted = [{ topic: 'github/acme/widgets/pull_request/999.*', label: 'stale' }];
+    const existingNodes = CODING_WORKFLOW.nodes.map((node) =>
+      node.name === 'Coding'
+        ? { ...node, agents: node.agents.map((a) => ({ ...a, eventInterests: drifted })) }
+        : node
+    );
+    const result = mergeNodeStructuralFieldsFromTemplate(
+      existingNodes,
+      CODING_WORKFLOW.nodes,
+      resolveAgentId
+    );
+    const coder = result
+      .find((node) => node.name === 'Coding')!
+      .agents.find((a) => a.name === 'coder')!;
+    expect(coder.eventInterests).toEqual(CODING_WORKFLOW.nodes[0].agents[0]!.eventInterests);
+    expect(coder.eventInterests).not.toEqual(drifted);
+  });
+
+  test('mergeNodeStructuralFieldsFromTemplate preserves slot eventInterests the template leaves undefined', () => {
+    // Built-in templates manage only the implementer slots; an unmanaged slot
+    // that carries its own interests must NOT be cleared by restamp. Use a
+    // custom node whose template counterpart omits eventInterests entirely.
+    const customInterest = [{ topic: 'github/acme/widgets/pull_request/*.*', label: 'custom' }];
+    const existingNodes: WorkflowNode[] = [
+      {
+        id: 'n1',
+        name: 'Coding',
+        agents: [{ agentId: 'a1', name: 'coder', eventInterests: customInterest }],
+      },
+    ];
+    // Template has no eventInterests on this slot (undefined).
+    const templateNodes = [
+      {
+        id: 'n1',
+        name: 'Coding',
+        agents: [{ agentId: 'Coder', name: 'coder' }],
+      },
+    ];
+    const result = mergeNodeStructuralFieldsFromTemplate(
+      existingNodes,
+      templateNodes,
+      resolveAgentId
+    );
+    expect(result[0]!.agents[0]!.eventInterests).toEqual(customInterest);
+  });
+
   test.skip('re-stamp preserves migrated codex gate when source node is unflagged', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const workflow = manager
@@ -3730,6 +3851,43 @@ describe('seedBuiltInWorkflows()', () => {
     expect(afterRows).toEqual(expect.arrayContaining(savedRows));
     expect(after.layout).toEqual(layout);
     expect(afterCodingAgent.toolGuards).toEqual(CODING_WORKFLOW.nodes[0].agents[0]!.toolGuards);
+  });
+
+  test('re-stamp propagates the primaryLink eventInterests to existing seeded spaces (task #907)', () => {
+    // Simulate a space seeded before the interest existed: seed, then strip the
+    // coder slot's eventInterests and force a stale hash so restamp re-runs.
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+    manager.updateWorkflow(coding.id, {
+      nodes: coding.nodes.map((node) =>
+        node.name === 'Coding'
+          ? {
+              ...node,
+              agents: node.agents.map((agent) => ({ ...agent, eventInterests: undefined })),
+            }
+          : node
+      ),
+    });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'pre-event-interest-hash',
+      coding.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(CODING_WORKFLOW.name);
+
+    const after = manager.getWorkflow(coding.id)!;
+    const coder = after.nodes
+      .find((n) => n.name === 'Coding')!
+      .agents.find((a) => a.name === 'coder')!;
+    // The interest landed on the previously-empty coder slot via the structural merge.
+    expect(coder.eventInterests).toEqual(CODING_WORKFLOW.nodes[0].agents[0]!.eventInterests);
+    // The row converged to the template, so its hash is stamped up to date —
+    // no perpetual re-stamp loop on every restart. Compare against the migrated
+    // template (getBuiltInWorkflows applies gate→hook migration), as the raw
+    // CODING_WORKFLOW constant predates that migration.
+    const migratedTemplate = getBuiltInWorkflows().find((w) => w.name === CODING_WORKFLOW.name)!;
+    expect(after.templateHash).toBe(computeWorkflowHash(migratedTemplate));
   });
 
   test('seeds Coding with QA layout for actual generated node IDs', () => {

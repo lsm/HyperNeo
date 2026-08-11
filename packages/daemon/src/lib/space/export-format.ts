@@ -12,8 +12,10 @@
  * - Rule `appliesTo` node UUIDs → node names (stable across re-import)
  *
  * Version policy:
- * - Accept: version === 1
- * - Reject with "requires newer version": version > 1 (or version >= 2)
+ * - Accept: version 1 or 2 (v2 adds optional `topicFrom` on eventInterests as
+ *   an alternative to a static `topic`; a v1-only client rejects v2 bundles via
+ *   the version path rather than as schema-malformed).
+ * - Reject with "requires newer version": version > CURRENT_EXPORT_VERSION
  * - Reject as invalid: version missing, null, < 1, or non-integer
  */
 
@@ -81,15 +83,35 @@ const declarativeToolGuardSchema = z.object({
 
 export const MAX_AGENT_SLOT_EVENT_INTERESTS = 10;
 
-const eventInterestSchema = z.object({
-  topic: z
-    .string()
-    .min(1)
-    .refine((topic) => validateGlobPattern(topic).valid, {
-      message: 'topic must be a valid external-event glob pattern',
-    }),
-  label: z.string().optional(),
+const eventInterestTopicFromSchema = z.object({
+  source: z.literal('primaryLink'),
+  // `.trim().min(1)` mirrors the manager validator (whitespace-only is not a
+  // usable pattern); a bare `.min(1)` would let whitespace slip through import
+  // only to fail later at createWorkflow.
+  pattern: z.string().trim().min(1),
 });
+
+const eventInterestSchema = z
+  .object({
+    topic: z
+      .string()
+      .min(1)
+      .refine((topic) => validateGlobPattern(topic).valid, {
+        message: 'topic must be a valid external-event glob pattern',
+      })
+      .optional(),
+    /**
+     * Dynamic topic template. Exactly one of `topic` / `topicFrom` is required —
+     * enforced by the refine below. The `pattern` carries placeholders resolved
+     * at subscription time (see `resolveTopicFromInterest`), so it is NOT
+     * validated as a glob here.
+     */
+    topicFrom: eventInterestTopicFromSchema.optional(),
+    label: z.string().optional(),
+  })
+  .refine((data) => (data.topic !== undefined) !== (data.topicFrom !== undefined), {
+    message: 'exactly one of "topic" or "topicFrom" must be set',
+  });
 
 const thinkingLevelSchema = z.preprocess(
   (val) => (val === 'auto' ? 'off' : val),
@@ -213,14 +235,35 @@ const exportedWorkflowNodeSchema = z.object({
   codexTimeoutSeconds: z.number().int().positive().optional(),
 });
 
+/**
+ * Export format versions this client can read and write.
+ *
+ * - v1: original format.
+ * - v2: adds optional `topicFrom` on `eventInterests` (a dynamic alternative to
+ *   a static `topic`). v2 is the first version that may emit topicFrom-only
+ *   interests; v1-only clients reject v2 bundles with "requires newer version"
+ *   instead of a confusing schema-malformed error.
+ */
+export const CURRENT_EXPORT_VERSION = 2 as const;
+const SUPPORTED_EXPORT_VERSIONS: ReadonlySet<number> = new Set<number>([1, 2]);
+export type ExportVersion = 1 | 2;
+
+/**
+ * Coerce an already-`checkVersion`-validated value to the supported version
+ * union. Precondition: `checkVersion(version)` returned null.
+ */
+function asSupportedVersion(version: unknown): ExportVersion {
+  return version as ExportVersion;
+}
+
 /** Validates the version field; returns an error string or null. */
 function checkVersion(version: unknown): string | null {
   if (version === null || version === undefined) return 'invalid: version is required';
   if (typeof version !== 'number') return 'invalid: version must be a number';
   if (!Number.isInteger(version) || version < 1)
     return 'invalid: version must be a positive integer';
-  if (version > 1)
-    return `requires newer version: this client supports version 1 but received version ${version}`;
+  if (!SUPPORTED_EXPORT_VERSIONS.has(version))
+    return `requires newer version: this client supports up to version ${CURRENT_EXPORT_VERSION} but received version ${version}`;
   return null;
 }
 
@@ -319,7 +362,7 @@ export function normalizeOverride(
  */
 export function exportAgent(agent: SpaceWorkerAgent): ExportedSpaceWorkerAgent {
   const exported: ExportedSpaceWorkerAgent = {
-    version: 1,
+    version: CURRENT_EXPORT_VERSION,
     type: 'agent',
     name: agent.name,
   };
@@ -412,7 +455,7 @@ export function exportWorkflow(
     : undefined;
 
   const result: ExportedSpaceWorkflow = {
-    version: 1,
+    version: CURRENT_EXPORT_VERSION,
     type: 'workflow',
     name: workflow.name,
     nodes: exportedNodes,
@@ -456,7 +499,7 @@ export function exportBundle(
   const exportedAgents = agents.map(exportAgent);
   const exportedWorkflows = workflows.map((wf) => exportWorkflow(wf, agents));
   const bundle: SpaceExportBundle = {
-    version: 1,
+    version: CURRENT_EXPORT_VERSION,
     type: 'bundle',
     name,
     agents: exportedAgents,
@@ -486,12 +529,13 @@ export function validateExportedAgent(data: unknown): ValidationResult<ExportedS
   }
   const versionError = checkVersion((data as Record<string, unknown>).version);
   if (versionError) return { ok: false, error: versionError };
+  const version = asSupportedVersion((data as Record<string, unknown>).version);
 
   const result = exportedAgentBaseSchema.safeParse(data);
   if (!result.success) {
     return { ok: false, error: `invalid: ${result.error.issues.map((i) => i.message).join('; ')}` };
   }
-  return { ok: true, value: { version: 1, ...result.data } };
+  return { ok: true, value: { version, ...result.data } };
 }
 
 /**
@@ -505,6 +549,7 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
   }
   const versionError = checkVersion((data as Record<string, unknown>).version);
   if (versionError) return { ok: false, error: versionError };
+  const version = asSupportedVersion((data as Record<string, unknown>).version);
 
   const result = exportedWorkflowBaseSchema.safeParse(data);
   if (!result.success) {
@@ -573,11 +618,33 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
     }
   }
 
+  // topicFrom is a version-2 feature. A version-1 workflow must not carry it,
+  // or the version compatibility gate is meaningless: a v1-only client would
+  // reject the bundle as malformed rather than via the version path.
+  if (version === 1) {
+    for (let n = 0; n < result.data.nodes.length; n++) {
+      const agents = result.data.nodes[n].agents;
+      for (let a = 0; a < agents.length; a++) {
+        const interests = agents[a].eventInterests ?? [];
+        for (let k = 0; k < interests.length; k++) {
+          if ((interests[k] as { topicFrom?: unknown }).topicFrom !== undefined) {
+            return {
+              ok: false,
+              error:
+                `invalid: nodes[${n}].agents[${a}].eventInterests[${k}] uses topicFrom, ` +
+                'which requires version 2 (this workflow declares version 1)',
+            };
+          }
+        }
+      }
+    }
+  }
+
   // Zod's `z.number().min(1).max(5)` widens to `number`; at runtime the schema
   // guarantees 1-5, so we assert to the nominal SpaceAutonomyLevel union.
   return {
     ok: true,
-    value: { version: 1, ...result.data } as ExportedSpaceWorkflow,
+    value: { version, ...result.data } as ExportedSpaceWorkflow,
   };
 }
 
@@ -595,6 +662,7 @@ export function validateExportBundle(data: unknown): ValidationResult<SpaceExpor
   }
   const versionError = checkVersion((data as Record<string, unknown>).version);
   if (versionError) return { ok: false, error: versionError };
+  const version = asSupportedVersion((data as Record<string, unknown>).version);
 
   const result = exportBundleBaseSchema.safeParse(data);
   if (!result.success) {
@@ -610,6 +678,17 @@ export function validateExportBundle(data: unknown): ValidationResult<SpaceExpor
     if (!agentResult.ok) {
       return { ok: false, error: `agents[${i}]: ${agentResult.error}` };
     }
+    // Nested items are re-stamped to the bundle's root version on output, so a
+    // nested item claiming a newer (but still supported) version than the root
+    // would silently downgrade — and smuggle a newer-only feature like topicFrom
+    // into a v1 bundle. (Unsupported versions are already rejected above.)
+    const nestedAgentVersion = (rawAgents[i] as Record<string, unknown>).version;
+    if (typeof nestedAgentVersion === 'number' && nestedAgentVersion > version) {
+      return {
+        ok: false,
+        error: `agents[${i}]: version ${nestedAgentVersion} exceeds bundle version ${version}`,
+      };
+    }
   }
   const rawWorkflows = Array.isArray(raw.workflows) ? raw.workflows : [];
   const bundleHandles = new Set<string>();
@@ -617,6 +696,13 @@ export function validateExportBundle(data: unknown): ValidationResult<SpaceExpor
     const wfResult = validateExportedWorkflow(rawWorkflows[i]);
     if (!wfResult.ok) {
       return { ok: false, error: `workflows[${i}]: ${wfResult.error}` };
+    }
+    const nestedWfVersion = (rawWorkflows[i] as Record<string, unknown>).version;
+    if (typeof nestedWfVersion === 'number' && nestedWfVersion > version) {
+      return {
+        ok: false,
+        error: `workflows[${i}]: version ${nestedWfVersion} exceeds bundle version ${version}`,
+      };
     }
     // Reject duplicate handles within the same bundle — silently rewriting the second
     // handle would make round-trip identity order-dependent.
@@ -636,16 +722,14 @@ export function validateExportBundle(data: unknown): ValidationResult<SpaceExpor
   return {
     ok: true,
     value: {
-      version: 1,
+      version,
       type: 'bundle',
       name: result.data.name,
       ...(result.data.description !== undefined ? { description: result.data.description } : {}),
-      agents: result.data.agents.map((a) => ({ version: 1 as const, ...a })),
+      agents: result.data.agents.map((a) => ({ version, ...a })),
       // Zod widens `completionAutonomyLevel` to `number`; the schema enforces 1-5
       // at runtime, so casting to ExportedSpaceWorkflow is safe here.
-      workflows: result.data.workflows.map(
-        (w) => ({ version: 1 as const, ...w }) as ExportedSpaceWorkflow
-      ),
+      workflows: result.data.workflows.map((w) => ({ version, ...w }) as ExportedSpaceWorkflow),
       exportedAt: result.data.exportedAt,
       ...(result.data.exportedFrom !== undefined ? { exportedFrom: result.data.exportedFrom } : {}),
     },

@@ -7,7 +7,7 @@ import { downloadBundle } from '../export-import-utils.ts';
 import type { SpaceExportBundle } from '@hyperneo/shared';
 
 const makeBundle = (overrides: Partial<SpaceExportBundle> = {}): SpaceExportBundle => ({
-  version: 1,
+  version: 2,
   type: 'bundle',
   name: 'Test Bundle',
   agents: [],
@@ -85,7 +85,7 @@ describe('downloadBundle', () => {
   it('creates a valid JSON blob', () => {
     const bundle = makeBundle({
       name: 'Test',
-      agents: [{ version: 1, type: 'agent', name: 'A', tools: [] }],
+      agents: [{ version: 2, type: 'agent', name: 'A', tools: [] }],
       workflows: [],
     });
     downloadBundle(bundle, 'space', 'agents');
