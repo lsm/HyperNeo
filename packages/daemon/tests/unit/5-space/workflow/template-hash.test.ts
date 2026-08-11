@@ -1270,4 +1270,23 @@ describe('buildWorkflowFingerprint — handoff transitions', () => {
     });
     expect(computeWorkflowHash(base)).not.toBe(computeWorkflowHash(withTransitions));
   });
+
+  it('detects single-field transition drift (e.g. gateId change)', () => {
+    const node = (transitions: import('@hyperneo/shared').HandoffTransition[]) => [
+      {
+        id: 'n1',
+        name: 'Coder',
+        agents: [{ agentId: 'agent-uuid-1', name: 'Coder' }],
+        transitions,
+      },
+      { id: 'n2', name: 'Reviewer', agents: [{ agentId: 'agent-uuid-2', name: 'Reviewer' }] },
+    ];
+    const withoutGate = makeWorkflow({
+      nodes: node([{ id: 'to-reviewer', target: 'Reviewer' }]),
+    });
+    const withGate = makeWorkflow({
+      nodes: node([{ id: 'to-reviewer', target: 'Reviewer', gateId: 'g1' }]),
+    });
+    expect(computeWorkflowHash(withoutGate)).not.toBe(computeWorkflowHash(withGate));
+  });
 });

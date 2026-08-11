@@ -2411,14 +2411,6 @@ export interface HandoffOperation {
 
 /**
  * A single node in the workflow graph.
- * Nodes run one or more agents (in parallel when multiple are specified).
- * Nodes are connected by WorkflowChannels.
- *
- * All agents are specified via `agents: WorkflowNodeAgent[]` — there is no
- * single-agent `agentId` shorthand. `agents` must be non-empty.
- */
-/**
- * A single node in the workflow graph.
  * Nodes are the unit of workflow topology — they group one or more agents that
  * execute in parallel. Nodes are connected by WorkflowChannels.
  *

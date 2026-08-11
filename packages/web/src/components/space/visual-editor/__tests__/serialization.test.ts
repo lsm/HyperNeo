@@ -845,6 +845,35 @@ describe('handoff transition preservation', () => {
     );
     expect(params.nodes![0].transitions).toEqual([{ id: 'ok', target: 'Review' }]);
   });
+
+  it('drops a handoff transition when its target node is renamed', () => {
+    // The editor carries transitions opaquely and does not track node renames,
+    // so a renamed target no longer resolves and the transition is dropped on
+    // save (rather than rejecting the save). Exposing/remapping transitions is
+    // future UI work.
+    const params = visualStateToUpdateParams(
+      makeHandoffState({
+        nodes: [
+          {
+            step: {
+              localId: 'l1',
+              id: 's1',
+              name: 'Coder',
+              agentId: 'a1',
+              handoffTransitions: [{ id: 't', target: 'Review', gateId: 'g1' }],
+            },
+            position: { x: 0, y: 0 },
+          },
+          {
+            // Target node renamed Review -> Reviewer
+            step: { localId: 'l2', id: 's2', name: 'Reviewer', agentId: 'a2' },
+            position: { x: 0, y: 0 },
+          },
+        ],
+      })
+    );
+    expect(params.nodes![0].transitions).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------

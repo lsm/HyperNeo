@@ -1683,6 +1683,29 @@ describe('SpaceWorkflowManager', () => {
       ).toThrow("'label' must be a string");
     });
 
+    it('rejects a non-array transitions payload (untyped RPC JSON)', () => {
+      // A plain object `{}` is truthy with no .length; without this guard it
+      // would slip through validation and be silently dropped by the repository.
+      const params: import('@hyperneo/shared').CreateSpaceWorkflowParams = {
+        spaceId: 'space-1',
+        name: 'Bad',
+        nodes: [
+          {
+            id: 'node-1',
+            name: 'Coder',
+            agents: [{ agentId: 'agent-1', name: 'coder' }],
+            transitions: {
+              id: 't',
+              target: 'Review',
+            } as unknown as import('@hyperneo/shared').HandoffTransition[],
+          },
+          { id: 'node-2', name: 'Review', agents: [{ agentId: 'agent-1', name: 'reviewer' }] },
+        ],
+        completionAutonomyLevel: 3,
+      };
+      expect(() => manager.createWorkflow(params)).toThrow('transitions must be an array');
+    });
+
     it('rejects an ambiguous target whose name matches multiple nodes', () => {
       // Two nodes share the agent-slot name 'shared-slot', so a handoff targeting
       // that name cannot select a single destination.

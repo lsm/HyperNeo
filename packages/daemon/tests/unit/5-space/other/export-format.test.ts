@@ -2548,12 +2548,26 @@ describe('export format — v3 version gating (transitions + gates)', () => {
   });
 
   test('exportWorkflow emits gates and a v3 version', () => {
-    const workflow = makeWorkflow({
-      gates: [{ id: 'g1', resetOnCycle: false }],
-    });
+    const gate = {
+      id: 'g1',
+      resetOnCycle: false,
+      fields: [{ name: 'ok', type: 'boolean', writers: [], check: { op: '==', value: true } }],
+    };
+    const workflow = makeWorkflow({ gates: [gate] });
     const exported = exportWorkflow(workflow, []);
     expect(exported.version).toBe(3);
-    expect(exported.gates).toEqual([{ id: 'g1', resetOnCycle: false }]);
+    expect(exported.gates).toEqual([gate]);
+  });
+
+  test('exportWorkflow drops legacy empty gates that cannot round-trip', () => {
+    // An empty gate (no fields/script/validator/features) passes the permissive
+    // export schema but would fail validateGate at createWorkflow on re-import.
+    // Filter it at export so the bundle re-imports instead of rolling back.
+    const workflow = makeWorkflow({
+      gates: [{ id: 'empty', resetOnCycle: false } as never],
+    });
+    const exported = exportWorkflow(workflow, []);
+    expect(exported.gates).toBeUndefined();
   });
 
   test('a gated transition round-trips when its gate is exported', () => {

@@ -59,7 +59,12 @@ import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager';
 import type { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository';
 import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
-import { exportBundle, validateExportBundle, normalizeOverride } from '../space/export-format';
+import {
+  exportBundle,
+  gatePassesValidation,
+  validateExportBundle,
+  normalizeOverride,
+} from '../space/export-format';
 import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from '../space/slug';
 import { Logger } from '../logger';
 
@@ -331,7 +336,14 @@ export function buildWorkflowCreateParams(
   if (exported.hooks && exported.hooks.length > 0) params.hooks = exported.hooks;
   // Restore gates so channel/handoff-transition `gateId` references resolve at
   // createWorkflow (a gated transition can only import when its gate does).
-  if (exported.gates && exported.gates.length > 0) params.gates = exported.gates;
+  // Silently drop gates that fail current validation (e.g. legacy empty gates)
+  // so the import does not roll back createWorkflow for one bad gate. This
+  // `warnings` array is treated as BLOCKING agent-ref errors by execute, so a
+  // gate-drop is not pushed here; validateWorkflowForPreview surfaces it instead.
+  if (exported.gates && exported.gates.length > 0) {
+    const valid = exported.gates.filter((g) => gatePassesValidation(g));
+    if (valid.length > 0) params.gates = valid;
+  }
   if (exported.disabled !== undefined) params.disabled = exported.disabled;
   // Only preserve the exported handle when it is unique in the target space
   // and not already used by another workflow in the same import batch.
@@ -379,6 +391,18 @@ function validateWorkflowForPreview(
           `node "${node.name}" references unknown agent "${a.agentRef}" — not found in bundle or target space`
         );
       }
+    }
+  }
+
+  // ── 2a. Gate validity (non-blocking) ──────────────────────────────────────
+  // A legacy empty gate (no fields/script/validator/features) passes the export
+  // schema but would fail validateGate at createWorkflow. Surface it in preview
+  // (execute silently drops it so the bundle still imports).
+  for (const gate of exported.gates ?? []) {
+    if (!gatePassesValidation(gate)) {
+      errors.push(
+        `gate "${(gate as { id?: string }).id ?? '?'}" is malformed/empty and will be skipped on import`
+      );
     }
   }
 

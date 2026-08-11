@@ -1027,7 +1027,16 @@ export class SpaceWorkflowManager {
     for (let ni = 0; ni < nodes.length; ni++) {
       const node = nodes[ni];
       const transitions = node.transitions;
-      if (!transitions || transitions.length === 0) continue;
+      if (transitions === undefined) continue;
+      // RPC JSON is untyped — a non-array (e.g. `{}`) is truthy with no .length
+      // and would otherwise slip past the guards below and be silently dropped by
+      // the repository. Fail loudly instead.
+      if (!Array.isArray(transitions)) {
+        throw new WorkflowValidationError(
+          `node[${ni}] "${node.name}": transitions must be an array`
+        );
+      }
+      if (transitions.length === 0) continue;
 
       const seenIds = new Set<string>();
       const seenTargets = new Set<string>();

@@ -34,6 +34,19 @@ import type {
   SpaceExportBundle,
 } from '@hyperneo/shared';
 import { validateSlug } from './slug';
+import { validateGate } from './runtime/gate-evaluator';
+
+/**
+ * Whether a gate would pass current `validateGate` rules. Gates that fail
+ * (e.g. a legacy empty gate with no fields/script/validator/features, persisted
+ * before the rule existed) cannot round-trip through export/import — they pass
+ * the permissive export schema and preview but roll back createWorkflow. Used
+ * to filter such gates out of exports and hand-crafted import bundles at the
+ * boundary.
+ */
+export function gatePassesValidation(gate: unknown): boolean {
+  return validateGate(gate).length === 0;
+}
 
 // ============================================================================
 // Zod schemas
@@ -547,8 +560,12 @@ export function exportWorkflow(
   }
   // Export gates verbatim so channel/transition `gateId` references survive the
   // round-trip (a gated handoff can only re-import when its gate re-imports).
+  // Drop gates that would not pass current validation — e.g. a legacy empty
+  // gate (`fields: []`, no script/validator/features) persisted before the rule
+  // existed — so the bundle re-imports instead of rolling back at createWorkflow.
   if (workflow.gates && workflow.gates.length > 0) {
-    result.gates = workflow.gates;
+    const exportable = workflow.gates.filter((g) => gatePassesValidation(g));
+    if (exportable.length > 0) result.gates = exportable;
   }
   return result;
 }
