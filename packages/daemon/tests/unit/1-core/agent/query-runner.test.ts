@@ -45,6 +45,7 @@ describe('QueryRunner', () => {
   let getStateSpy: ReturnType<typeof mock>;
   let setIdleSpy: ReturnType<typeof mock>;
   let setProcessingSpy: ReturnType<typeof mock>;
+  let markIdleWaitersEndedSpy: ReturnType<typeof mock>;
   let handleErrorSpy: ReturnType<typeof mock>;
   let publishSpy: ReturnType<typeof mock>;
   let saveSDKMessageSpy: ReturnType<typeof mock>;
@@ -159,10 +160,12 @@ describe('QueryRunner', () => {
     getStateSpy = mock(() => ({ status: 'idle' }));
     setIdleSpy = mock(async () => {});
     setProcessingSpy = mock(async () => {});
+    markIdleWaitersEndedSpy = mock(() => {});
     mockStateManager = {
       getState: getStateSpy,
       setIdle: setIdleSpy,
       setProcessing: setProcessingSpy,
+      markIdleWaitersEnded: markIdleWaitersEndedSpy,
     } as unknown as ProcessingStateManager;
 
     // ErrorManager spies
@@ -2362,6 +2365,32 @@ describe('QueryRunner', () => {
 
       // Only 1 call — the retry was cancelled because the queue was stopped.
       expect(buildSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('should persist turn termination before awaiting terminal error publication', async () => {
+      buildSpy.mockRejectedValue(new Error('terminal query failure'));
+      let resolveError!: () => void;
+      handleErrorSpy.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveError = resolve;
+          })
+      );
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.start();
+
+      for (let attempt = 0; attempt < 20 && handleErrorSpy.mock.calls.length === 0; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      expect(handleErrorSpy).toHaveBeenCalledTimes(1);
+      expect(markIdleWaitersEndedSpy).toHaveBeenCalledTimes(1);
+      expect(setIdleSpy).not.toHaveBeenCalled();
+
+      resolveError();
+      await ctx.queryPromise?.catch(() => {});
+      expect(setIdleSpy.mock.calls.length).toBeGreaterThan(0);
     });
 
     it('should clear _lastConsumedUserMessage on terminal error to prevent stale replay', async () => {

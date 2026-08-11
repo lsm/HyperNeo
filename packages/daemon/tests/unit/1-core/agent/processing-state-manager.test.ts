@@ -215,6 +215,20 @@ describe('ProcessingStateManager', () => {
       expect(manager.isTerminalIdleInFlight()).toBe(false);
     });
 
+    test('markIdleWaitersEnded fires onEnd without resolving until setIdle', async () => {
+      const events: string[] = [];
+      const waiter = manager.waitForIdleTransition(undefined, () => events.push('onEnd'));
+      void waiter.promise.then(() => events.push('waiter-resolved'));
+
+      manager.markIdleWaitersEnded();
+      await Promise.resolve();
+      expect(events).toEqual(['onEnd']);
+
+      await manager.setIdle();
+      await waiter.promise;
+      expect(events).toEqual(['onEnd', 'waiter-resolved']);
+    });
+
     test('waiter onEnd fires on a direct releaseIdleWaiters (restart/reset failure path)', async () => {
       // Direct releaseIdleWaiters (query-lifecycle restart/reset failures,
       // ask-user-question answer-reinjection) must still record the turn-end

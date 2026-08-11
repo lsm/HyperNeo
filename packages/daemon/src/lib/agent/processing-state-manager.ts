@@ -154,6 +154,15 @@ export class ProcessingStateManager {
   }
 
   /**
+   * Persist turn-end markers without releasing the delivery jobs. Terminal query
+   * exceptions call this before awaited error publication; setIdle later performs
+   * the normal idempotent marker + waiter drain.
+   */
+  markIdleWaitersEnded(): void {
+    for (const waiter of this.idleWaiters.values()) waiter.fireEnd();
+  }
+
+  /**
    * Restore processing state from database
    * Called on session initialization to recover state after restart
    */
