@@ -25,16 +25,6 @@ export class ProcessingStateManager {
   private logger: Logger;
   private onIdleCallback?: () => Promise<void>;
   /**
-   * Fired on a TERMINAL idle, immediately BEFORE the delivery waiters are
-   * drained — the last chance to durably persist turn-completion state that the
-   * awaiting delivery job must see before `await turn` resolves. Used to write
-   * the `delivery_turn_end` marker for result-less terminal paths (query error /
-   * interrupt) so a stale re-claim completes an already-ended consumed turn
-   * instead of re-driving it. Receives the terminal messageId captured BEFORE
-   * `setState` clears it. See Codex (PR #2463, P2).
-   */
-  private onBeforeIdleWaiterDrain?: (terminalMessageId: string | undefined) => void | Promise<void>;
-  /**
    * Resolvers awaiting the next terminal idle transition (the message-delivery
    * bridge awaiting a turn's end), keyed by arm id so a caller can cancel its
    * own waiter (failure/park paths) without leaking or accumulating across
@@ -43,7 +33,8 @@ export class ProcessingStateManager {
    * that episode — not a newer turn's waiter armed after the generation bumped.
    * Drained in {@link setIdle} (terminal) / {@link releaseIdleWaiters}.
    */
-  private idleWaiters: Map<number, { resolve: () => void; gen?: number }> = new Map();
+  private idleWaiters: Map<number, { resolve: () => void; gen?: number; endOnce: () => void }> =
+    new Map();
   private nextIdleWaiterId = 0;
   /**
    * True while the deferred-restart `onIdleCallback` is running. A reentrant
@@ -71,18 +62,6 @@ export class ProcessingStateManager {
   }
 
   /**
-   * Set a callback fired on each TERMINAL idle immediately before the delivery
-   * waiters are drained. The callback may await (e.g. a durable DB write); the
-   * waiter resolution is deferred until it completes so a delivery job awaiting
-   * turn-end observes the persisted state. See the field doc.
-   */
-  setOnBeforeIdleWaiterDrain(
-    callback: (terminalMessageId: string | undefined) => void | Promise<void>
-  ): void {
-    this.onBeforeIdleWaiterDrain = callback;
-  }
-
-  /**
    * Arm a wait for the next TERMINAL idle transition. The message-delivery
    * bridge (`driveDeliveryTurn`) awaits `promise` to complete a durable job at
    * turn-end — awaiting `queryPromise` instead is wrong in streaming-input mode
@@ -92,18 +71,37 @@ export class ProcessingStateManager {
    * the next non-suppressed {@link setIdle} or never (if cancelled, it is
    * abandoned — nobody awaits it). Arm BEFORE the turn starts so a fast turn's
    * idle cannot be missed.
+   *
+   * `onEnd` fires when the waiter is released by ANY path (terminal idle drain,
+   * {@link releaseIdleWaiters}, or `cancel()`). The message-delivery bridge uses
+   * it to durably persist turn-completion state keyed by the kickoff UUID it
+   * knows — the durable turn owner — rather than deriving it from mutable
+   * processing state that steers / `waiting_for_input` can overwrite. Fired on
+   * cancel too so a query-close / rejected-acknowledgment abandon still records
+   * the turn ended. See Codex (PR #2463, P2).
    */
-  waitForIdleTransition(episodeGen?: number): { promise: Promise<void>; cancel: () => void } {
+  waitForIdleTransition(
+    episodeGen?: number,
+    onEnd?: () => void
+  ): { promise: Promise<void>; cancel: () => void } {
     let resolve!: () => void;
     const promise = new Promise<void>((r) => {
       resolve = r;
     });
     const id = this.nextIdleWaiterId++;
-    this.idleWaiters.set(id, { resolve, gen: episodeGen });
+    let ended = false;
+    const endOnce = (): void => {
+      if (ended) return;
+      ended = true;
+      this.idleWaiters.delete(id);
+      onEnd?.();
+      resolve();
+    };
+    this.idleWaiters.set(id, { resolve, gen: episodeGen, endOnce });
     return {
       promise,
       cancel: () => {
-        this.idleWaiters.delete(id);
+        endOnce();
       },
     };
   }
@@ -120,8 +118,7 @@ export class ProcessingStateManager {
     const matching = [...this.idleWaiters.entries()].filter(
       ([, w]) => episodeGen === undefined || w.gen === episodeGen
     );
-    for (const [id] of matching) this.idleWaiters.delete(id);
-    for (const [, w] of matching) w.resolve();
+    for (const [, w] of matching) w.endOnce();
   }
 
   /**
@@ -209,14 +206,6 @@ export class ProcessingStateManager {
     // stop/start), suppress the drain too — the outer call owns it, deferred
     // until the restart completes so durable turn ownership survives the restart.
     const suppressDrain = opts?.suppressDeliveryWaiters || this.idleCallbackInFlight;
-    // Capture the terminal messageId BEFORE setState replaces the state (it
-    // clears messageId); the before-drain hook needs it to identify the delivery
-    // turn that just ended. Only `queued`/`processing` carry a messageId. See
-    // Codex (PR #2463, P2).
-    const terminalMessageId =
-      this.processingState.status === 'queued' || this.processingState.status === 'processing'
-        ? this.processingState.messageId
-        : undefined;
     // setState persists the idle state BEFORE publishing it, so drain the
     // turn-end waiters in a finally — the state IS idle even if the event
     // publication throws, and a waiting delivery job must not hang on a
@@ -242,22 +231,15 @@ export class ProcessingStateManager {
       }
     } finally {
       if (!suppressDrain) {
-        // Persist turn-completion state BEFORE releasing the delivery waiters:
-        // the awaiting delivery job (`await turn`) resolves on this drain, so
-        // any durable marker it must observe has to be written here first.
-        // A crash between the terminal idle and a later write (the handler's
-        // post-await) would otherwise leave a result-less consumed turn without
-        // a marker and re-drive it on recovery. See Codex (PR #2463, P2).
-        if (this.onBeforeIdleWaiterDrain) {
-          try {
-            await this.onBeforeIdleWaiterDrain(terminalMessageId);
-          } catch (error) {
-            this.logger.error('Error in onBeforeIdleWaiterDrain:', error);
-          }
-        }
+        // Release the delivery waiters. Each waiter's `endOnce` fires the
+        // bridge's durable turn-completion callback (keyed by the kickoff UUID)
+        // BEFORE its promise resolves — see `waitForIdleTransition`'s `onEnd`.
+        // The `onBeforeIdleWaiterDrain` hook (deriving the owner from mutable
+        // processing state) is superseded by the waiter-owned callback and
+        // removed.
         const waiters = [...this.idleWaiters.values()];
         this.idleWaiters.clear();
-        for (const w of waiters) w.resolve();
+        for (const w of waiters) w.endOnce();
       }
     }
   }

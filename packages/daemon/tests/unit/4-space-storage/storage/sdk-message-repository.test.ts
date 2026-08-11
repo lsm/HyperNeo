@@ -73,6 +73,7 @@ describe('SDKMessageRepository', () => {
 				is_renderable INTEGER NOT NULL DEFAULT 1,
 				is_terminal INTEGER NOT NULL DEFAULT 0,
 				conversation_turn_index INTEGER,
+				consumed_seq INTEGER,
 				parent_tool_use_id TEXT,
 				task_id TEXT,
 				sdk_uuid TEXT,
@@ -317,7 +318,8 @@ describe('SDKMessageRepository', () => {
             is_renderable INTEGER NOT NULL DEFAULT 1,
             is_terminal INTEGER NOT NULL DEFAULT 0,
             parent_tool_use_id TEXT,
-            task_id TEXT
+            task_id TEXT,
+            consumed_seq INTEGER
           )
         `);
         const legacyRepository = new SDKMessageRepository(legacyDb as any);
@@ -1339,6 +1341,7 @@ describe('SDKMessageRepository', () => {
           parent_tool_use_id TEXT,
           task_id TEXT,
           conversation_turn_index INTEGER,
+          consumed_seq INTEGER,
           sdk_uuid TEXT,
           replacement_metadata_normalized INTEGER NOT NULL DEFAULT 0
         );
@@ -1483,7 +1486,7 @@ describe('SDKMessageRepository', () => {
           message_subtype TEXT, sdk_message TEXT NOT NULL, timestamp TEXT NOT NULL,
           send_status TEXT, origin TEXT, is_renderable INTEGER NOT NULL DEFAULT 1,
           is_terminal INTEGER NOT NULL DEFAULT 0, parent_tool_use_id TEXT, task_id TEXT,
-          conversation_turn_index INTEGER,
+          conversation_turn_index INTEGER, consumed_seq INTEGER,
           sdk_uuid TEXT, replacement_metadata_normalized INTEGER NOT NULL DEFAULT 0
         );
         CREATE TABLE sdk_message_replacements (
@@ -1818,6 +1821,52 @@ describe('SDKMessageRepository', () => {
       expect(Date.parse(ts)).toBeGreaterThan(Date.parse('2026-08-11T15:22:00.000Z'));
       // The 15:21 prior result is now before consumption → the turn is NOT ended.
       expect(repository.hasTerminalResultAfter('session-1', 'nr-msg')).toBe(false);
+    });
+
+    it('orders by the CONSUMPTION watermark, not the message rowid — a prior-turn result sharing the ms is excluded (P2)', () => {
+      // A message queued during turn A and consumed as turn B keeps its ORIGINAL
+      // rowid (insertion order). If A's result lands in the same millisecond as
+      // B's consumption, a rowid tiebreak would sort A's result AFTER the
+      // message's consumption and wrongly complete B's job. The consumption
+      // watermark (consumed_seq = MAX(rowid)+1) must exclude A's result.
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid, is_renderable)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        crypto.randomUUID(),
+        'session-1',
+        'user',
+        null,
+        '{}',
+        '2026-08-11T15:20:00.000Z', // queued during turn A
+        'enqueued',
+        0,
+        'promoted-msg',
+        1
+      );
+      // Turn A's result, persisted AFTER the message was queued but in the same
+      // millisecond as B's consumption below.
+      insertMessage('session-1', 'result', {
+        timestamp: '2026-08-11T15:30:00.000Z',
+        terminal: true,
+      });
+      const flipped = repository.markDeliveryConsumedByUuid('session-1', 'promoted-msg');
+      expect(flipped).not.toBeNull();
+      const seq = (
+        db.prepare(`SELECT consumed_seq FROM sdk_messages WHERE id = ?`).get(flipped) as {
+          consumed_seq: number;
+        }
+      ).consumed_seq;
+      expect(seq).toBeGreaterThan(0);
+      // A's result (rowid < consumed_seq) is NOT after the consumption → false.
+      expect(repository.hasTerminalResultAfter('session-1', 'promoted-msg')).toBe(false);
+      // Turn B's own terminal result (persisted after consumption, rowid >= seq)
+      // IS detected.
+      insertMessage('session-1', 'result', {
+        timestamp: '2026-08-11T15:31:00.000Z',
+        terminal: true,
+      });
+      expect(repository.hasTerminalResultAfter('session-1', 'promoted-msg')).toBe(true);
     });
 
     it('is true after consumption when the SAME turn later ends (its own result)', () => {

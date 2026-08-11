@@ -1485,7 +1485,25 @@ export class SDKMessageRepository {
         const updStmt = this.db.prepare(
           'UPDATE sdk_messages SET conversation_turn_index = ?, timestamp = ? WHERE id = ?'
         );
+        // consumed_seq is a CONSUMPTION WATERMARK set to a value strictly after
+        // every row persisted so far (MAX(rowid, consumed_seq) + 1). A message
+        // queued in turn A and consumed (promoted) as turn B keeps its original
+        // rowid, so the delivery re-claim boundary (`hasTerminalResultAfter`)
+        // must compare `result.rowid >= message.consumed_seq` — not the message's
+        // old rowid — to avoid matching turn A's same-millisecond result. Assigned
+        // in this transaction (atomic with the flip). See Codex (PR #2463, P2).
+        const maxBoundaryStmt = this.db.prepare(
+          `SELECT MAX(v) AS m FROM (
+             SELECT rowid AS v FROM sdk_messages
+             UNION ALL
+             SELECT COALESCE(consumed_seq, 0) AS v FROM sdk_messages
+           )`
+        );
         const timeStmt = this.db.prepare('UPDATE sdk_messages SET timestamp = ? WHERE id = ?');
+        const consumedSeqStmt = this.db.prepare(
+          'UPDATE sdk_messages SET consumed_seq = ?, timestamp = ? WHERE id = ?'
+        );
+        let consumedSeq = (maxBoundaryStmt.get() as { m: number | null }).m ?? 0;
         for (const row of pending) {
           if (row.task_id && row.is_renderable === 1) {
             const max = (maxStmt.get(row.task_id) as { m: number | null } | undefined)?.m ?? 0;
@@ -1496,6 +1514,13 @@ export class SDKMessageRepository {
             // renderable task anchors). Same transaction as the status flip, so
             // the delivery boundary survives a crash. See the `pending` capture.
             timeStmt.run(now, row.id);
+          }
+          // Only a CONSUMED flip carries the consumption boundary (failed rows
+          // were never consumed — no consumed_seq).
+          if (newStatus === 'consumed') {
+            consumedSeq = (maxBoundaryStmt.get() as { m: number | null }).m ?? 0;
+            consumedSeq++;
+            consumedSeqStmt.run(consumedSeq, now, row.id);
           }
         }
       }
@@ -1883,8 +1908,8 @@ export class SDKMessageRepository {
           WHERE r.session_id = ?
             AND r.message_type = 'result'
             AND r.is_terminal = 1
-            AND (r.timestamp, r.rowid) > (
-              SELECT m.timestamp, m.rowid FROM sdk_messages m
+            AND r.rowid >= (
+              SELECT COALESCE(m.consumed_seq, m.rowid) FROM sdk_messages m
                WHERE m.session_id = ? AND m.sdk_uuid = ? LIMIT 1
             )
           LIMIT 1`

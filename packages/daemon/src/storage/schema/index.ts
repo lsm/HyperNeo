@@ -228,6 +228,13 @@ export function createTables(db: BunDatabase): void {
         parent_tool_use_id TEXT,
         task_id TEXT,
         sdk_uuid TEXT,
+        -- Monotonic consumption sequence (#2463 P2): assigned at consumption
+        -- (markDeliveryConsumedByUuid / updateMessageStatus consumed-flip). Rows
+        -- retain their original rowid, which only reflects INSERTION order — a
+        -- message queued in turn A and consumed in turn B keeps an old rowid, so
+        -- the delivery re-claim boundary (hasTerminalResultAfter) must order by
+        -- this consumption sequence, not rowid, to avoid matching turn A's result.
+        consumed_seq INTEGER,
         replacement_metadata_normalized INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
       )

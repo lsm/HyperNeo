@@ -547,26 +547,6 @@ export class AgentSession
       });
     });
 
-    // Persist a durable delivery-turn completion marker on the TERMINAL idle,
-    // BEFORE the delivery waiters drain — so a result-less terminal path (query
-    // error / interrupt that persists no SDK `result` row) is durably
-    // recognized as ended on a later stale re-claim instead of being re-driven.
-    // Gated on a delivery job still `processing` at idle: a graceful-shutdown
-    // requeue has already flipped it to `pending` (resume desired on next boot),
-    // and an interrupt already cancelled the job, so neither writes a marker.
-    // See Codex (PR #2463, P2).
-    this.stateManager.setOnBeforeIdleWaiterDrain(async (terminalMessageId) => {
-      if (!terminalMessageId) return;
-      try {
-        const jobQueue = this.db.getJobQueueRepo?.();
-        if (!jobQueue) return;
-        if (!jobQueue.isProcessingDelivery(this.session.id, terminalMessageId)) return;
-        this.recordDeliveryTurnEnd(terminalMessageId);
-      } catch (error) {
-        this.logger.warn('Failed to record delivery turn-end marker at idle:', error);
-      }
-    });
-
     // Restore persisted state
     if (session.metadata?.lastContextInfo) {
       this.contextTracker.restoreFromMetadata(session.metadata.lastContextInfo);
@@ -1997,7 +1977,28 @@ export class AgentSession
       // captures as episodeGeneration (its own supersession guard keeps the
       // generation stable at this value through the 429'd turn's life).
       const turnEnd = this.stateManager.waitForIdleTransition(
-        this.rateLimitWatchdog.getGeneration()
+        this.rateLimitWatchdog.getGeneration(),
+        // Waiter-owned turn-end marker: fire on ANY release path (terminal idle
+        // drain, direct releaseIdleWaiters from restart/reset/answer-reinjection
+        // failures, or this waiter's cancel) — the kickoff UUID is the durable
+        // turn owner, so it isn't corrupted by a steer overwriting the
+        // processing messageId or waiting_for_input dropping it. Gated on the
+        // message having been CONSUMED and the job still being `processing`
+        // (a graceful-shutdown requeue, or a pre-consumption transient idle,
+        // records nothing). See Codex (PR #2463, P2).
+        () => {
+          try {
+            const repo = this.db.getSDKMessageRepo();
+            const jobQueue = this.db.getJobQueueRepo?.();
+            if (!repo || !jobQueue) return;
+            if (!jobQueue.isProcessingDelivery(this.session.id, messageUuid)) return;
+            const loaded = repo.getDeliveryContent(this.session.id, messageUuid);
+            if (!loaded || loaded.sendStatus !== 'consumed') return;
+            this.recordDeliveryTurnEnd(messageUuid);
+          } catch (error) {
+            this.logger.warn('Failed to record delivery turn-end marker at turn end:', error);
+          }
+        }
       );
       // Feed the kickoff (resolves on onSent = the SDK consumed it) UNLESS a
       // prior attempt already did (alreadyConsumed = reclaim after a crash): the

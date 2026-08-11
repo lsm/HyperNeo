@@ -958,6 +958,14 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // indefinitely-waiting query. Mirrored in the fresh-DB schema (index.ts).
   // See Codex (PR #2463, P2 result-less terminal paths).
   run(migrationMarkerKey(187), () => runMigration187(db));
+
+  // Migration 188: sdk_messages.consumed_seq — a monotonic consumption sequence
+  // assigned at the consumed-flip, so the delivery re-claim boundary
+  // (`hasTerminalResultAfter`) can order a consumed message before a terminal
+  // result that lands in the same millisecond even when the message's original
+  // `rowid` predates it. Mirrored in the fresh-DB schema (index.ts).
+  // See Codex (PR #2463, P2).
+  run(migrationMarkerKey(188), () => runMigration188(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -12282,4 +12290,22 @@ export function runMigration187(db: BunDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_delivery_turn_end_session
       ON delivery_turn_end(session_id)
   `);
+}
+
+/**
+ * Migration 188: sdk_messages.consumed_seq — a monotonic consumption sequence.
+ *
+ * `rowid` reflects INSERTION order only. A message queued during turn A and
+ * consumed (promoted) as turn B keeps its original rowid, so a terminal result
+ * of A persisted in the same millisecond as B's consumption would sort AFTER the
+ * message by rowid, corrupting the delivery re-claim boundary. Assigning a
+ * monotonic sequence at the consumed-flip lets `hasTerminalResultAfter` order by
+ * (consumed_seq) instead of (timestamp, rowid). `ALTER TABLE ADD COLUMN` (no
+ * table rebuild; rows already consumed are backfilled as NULL — the query treats
+ * NULL as "no consumption recorded", i.e. an un-consumed message).
+ */
+export function runMigration188(db: BunDatabase): void {
+  if (!tableExists(db, 'sdk_messages')) return;
+  if (tableHasColumn(db, 'sdk_messages', 'consumed_seq')) return;
+  db.exec(`ALTER TABLE sdk_messages ADD COLUMN consumed_seq INTEGER`);
 }
