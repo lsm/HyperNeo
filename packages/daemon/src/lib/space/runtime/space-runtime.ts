@@ -388,6 +388,82 @@ function isLongHorizonSubscriptionTarget(
   return target.kind === 'long_horizon_agent';
 }
 
+// ---------------------------------------------------------------------------
+// listSubscriptions — read-only diagnostic result (Task #908)
+// ---------------------------------------------------------------------------
+
+/**
+ * A declared static event interest, re-derived from the workflow definition
+ * (durable). `topic` and `topicFrom` are mutually exclusive. `active` is a live
+ * cross-check against the in-memory trie: true iff a `static` trie entry exists
+ * for this slot + topic. `topicFrom` interests are inert until their resolver
+ * ships, so they report `active: false` and are excluded from the mismatch
+ * count (they are known-not-active by design, not drift).
+ */
+export interface SubscriptionDeclaredInterest {
+  nodeId: string;
+  nodeName: string;
+  agentName: string;
+  topic: string | null;
+  topicFrom: { source: 'primaryLink'; pattern: string } | null;
+  label: string | null;
+  active: boolean;
+}
+
+/**
+ * A persisted dynamic subscription row from `space_workflow_event_subscriptions`
+ * (durable). `active` is a live cross-check: true iff a `dynamic` trie entry
+ * exists for this slot + topic.
+ */
+export interface SubscriptionPersistedRow {
+  nodeId: string;
+  agentName: string;
+  taskId: string;
+  topic: string;
+  createdAt: number;
+  updatedAt: number;
+  active: boolean;
+}
+
+/**
+ * An active in-memory trie entry — the live cross-check layer, NEVER the
+ * answer on its own. `source` reconciles it against durable state:
+ * `'declared'` (a workflow-definition interest backs this static entry),
+ * `'persisted'` (a table row backs this dynamic entry), or `'orphan'` (in the
+ * trie with no durable backing — indicates drift that should not happen).
+ */
+export interface SubscriptionActiveEntry {
+  nodeId: string;
+  agentName: string;
+  taskId: string;
+  topic: string;
+  subscriptionKind: 'static' | 'dynamic';
+  source: 'declared' | 'persisted' | 'orphan';
+}
+
+export interface SubscriptionListResult {
+  workflowRunId: string;
+  /** nodeId filter applied, or null when the whole run is returned. */
+  nodeId: string | null;
+  declared: SubscriptionDeclaredInterest[];
+  persisted: SubscriptionPersistedRow[];
+  active: SubscriptionActiveEntry[];
+  /** Reconciliation counts derived from the three layers. */
+  mismatches: {
+    /** Declared concrete-topic interests with no matching active static entry. */
+    declaredNotActive: number;
+    /** Persisted rows with no matching active dynamic entry. */
+    persistedNotActive: number;
+    /** Active entries with no durable backing (static w/o declared, dynamic w/o persisted). */
+    orphanActive: number;
+  };
+}
+
+// Normalized reconciliation key: slot (node + agent) + lowercased topic.
+function subscriptionReconcileKey(nodeId: string, agentName: string, topic: string): string {
+  return `${nodeId}|${agentName.toLowerCase()}|${topic.toLowerCase()}`;
+}
+
 interface PendingExternalEvent {
   event: ExternalEventPublishedPayload;
   deliveryKey: string;
@@ -1302,6 +1378,148 @@ export class SpaceRuntime {
           target.subscriptionKind === subscriptionKind &&
           (target.topic ?? '').toLowerCase() === normalizedTopic
       );
+  }
+
+  /**
+   * Read-only diagnostic snapshot of a run's external-event subscriptions across
+   * three layers (Task #908):
+   *   1. `declared`  — static interests from the workflow definition (durable).
+   *   2. `persisted` — dynamic rows from `space_workflow_event_subscriptions` (durable).
+   *   3. `active`    — in-memory trie entries (live cross-check ONLY).
+   *
+   * The durable layers (1 + 2) are the source of truth; the trie (3) is never
+   * the answer, only a sanity check — each active entry is reconciled against
+   * durable state so declared-vs-active drift surfaces as `source: 'orphan'`,
+   * and durable rows missing from the trie surface via `active: false` plus the
+   * `mismatches` counts. For task #896 this returns "Coding node has no declared
+   * PR-event interest" from durable data alone.
+   *
+   * `spaceId` guards cross-space access: a run in another space is rejected.
+   */
+  listSubscriptions(
+    workflowRunId: string,
+    spaceId: string,
+    nodeId?: string
+  ): { success: true; result: SubscriptionListResult } | { success: false; error: string } {
+    const run = this.config.workflowRunRepo.getRun(workflowRunId);
+    if (!run) {
+      return { success: false, error: `Workflow run not found: ${workflowRunId}` };
+    }
+    if (run.spaceId !== spaceId) {
+      return { success: false, error: `Workflow run ${workflowRunId} is not in this space.` };
+    }
+    const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run) ?? null;
+    const nodeFilter = nodeId ?? null;
+
+    // Layer 1 — declared static interests, re-derived from the definition.
+    const declared: SubscriptionDeclaredInterest[] = [];
+    if (workflow) {
+      for (const node of workflow.nodes) {
+        if (nodeFilter && node.id !== nodeFilter) continue;
+        let agents: ReturnType<typeof resolveNodeAgents>;
+        try {
+          agents = resolveNodeAgents(node);
+        } catch {
+          continue; // malformed node — nothing to declare.
+        }
+        for (const agent of agents) {
+          for (const interest of agent.eventInterests ?? []) {
+            const topic = typeof interest.topic === 'string' ? interest.topic : null;
+            declared.push({
+              nodeId: node.id,
+              nodeName: node.name,
+              agentName: agent.name,
+              topic,
+              topicFrom: interest.topicFrom ?? null,
+              label: interest.label ?? null,
+              // topicFrom interests are inert (no resolver yet) → never active.
+              active: false,
+            });
+          }
+        }
+      }
+    }
+
+    // Layer 2 — persisted dynamic rows.
+    const persisted: SubscriptionPersistedRow[] = this.workflowEventSubscriptionRepo
+      .listByRun(workflowRunId)
+      .filter((row) => !nodeFilter || row.nodeId === nodeFilter)
+      .map((row) => ({
+        nodeId: row.nodeId,
+        agentName: row.agentName,
+        taskId: row.taskId,
+        topic: row.topic,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+        active: false,
+      }));
+
+    // Layer 3 — active in-memory trie entries (workflow targets for this run).
+    const active: SubscriptionActiveEntry[] = this.topicTrie
+      .values()
+      .filter(
+        (target): target is WorkflowSubscriptionTarget =>
+          isWorkflowSubscriptionTarget(target) && target.workflowRunId === workflowRunId
+      )
+      .filter((target) => !nodeFilter || target.nodeId === nodeFilter)
+      .map((target) => ({
+        nodeId: target.nodeId,
+        agentName: target.agentName,
+        taskId: target.taskId,
+        topic: target.topic ?? '',
+        subscriptionKind: target.subscriptionKind ?? 'dynamic',
+        source: 'orphan' as const,
+      }));
+
+    // Reconcile durable ↔ trie via normalized slot+topic keys.
+    const activeStaticKeys = new Set<string>();
+    const activeDynamicKeys = new Set<string>();
+    for (const entry of active) {
+      const key = subscriptionReconcileKey(entry.nodeId, entry.agentName, entry.topic);
+      if (entry.subscriptionKind === 'static') activeStaticKeys.add(key);
+      else activeDynamicKeys.add(key);
+    }
+    const declaredKeys = new Set<string>();
+    for (const d of declared) {
+      if (d.topic === null) continue; // topicFrom is not reconcilable yet.
+      const key = subscriptionReconcileKey(d.nodeId, d.agentName, d.topic);
+      declaredKeys.add(key);
+      d.active = activeStaticKeys.has(key);
+    }
+    const persistedKeys = new Set<string>();
+    for (const p of persisted) {
+      const key = subscriptionReconcileKey(p.nodeId, p.agentName, p.topic);
+      persistedKeys.add(key);
+      p.active = activeDynamicKeys.has(key);
+    }
+    let orphanActive = 0;
+    for (const entry of active) {
+      const key = subscriptionReconcileKey(entry.nodeId, entry.agentName, entry.topic);
+      const backed =
+        entry.subscriptionKind === 'static' ? declaredKeys.has(key) : persistedKeys.has(key);
+      entry.source = backed
+        ? entry.subscriptionKind === 'static'
+          ? 'declared'
+          : 'persisted'
+        : 'orphan';
+      if (!backed) orphanActive += 1;
+    }
+
+    return {
+      success: true,
+      result: {
+        workflowRunId,
+        nodeId: nodeFilter,
+        declared,
+        persisted,
+        active,
+        mismatches: {
+          declaredNotActive: declared.filter((d) => d.topic !== null && !d.active).length,
+          persistedNotActive: persisted.filter((p) => !p.active).length,
+          orphanActive,
+        },
+      },
+    };
   }
 
   refreshLongHorizonSubscription(

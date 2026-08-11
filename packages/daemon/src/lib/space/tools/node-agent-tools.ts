@@ -87,6 +87,7 @@ import {
   SubscribePrEventsSchema,
   GetExternalEventSchema,
   ListDeliveriesSchema,
+  ListSubscriptionsSchema,
 } from './node-agent-tool-schemas';
 import type {
   ListPeersInput,
@@ -109,6 +110,7 @@ import type {
   SubscribePrEventsInput,
   GetExternalEventInput,
   ListDeliveriesInput,
+  ListSubscriptionsInput,
 } from './node-agent-tool-schemas';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceTask } from '@hyperneo/shared';
@@ -380,6 +382,12 @@ export interface NodeAgentToolsConfig {
   onSubscribeExternalEvent?: (args: SubscribeExternalEventInput) => Promise<ToolResult>;
   /** Optional callback for dynamic external-event unsubscription requests. */
   onUnsubscribeExternalEvent?: (args: UnsubscribeExternalEventInput) => Promise<ToolResult>;
+  /**
+   * Optional callback for the read-only `list_subscriptions` diagnostic. Returns
+   * the declared / persisted / active subscription layers for a run. Read-only —
+   * never mutates subscription state.
+   */
+  onListSubscriptions?: (args: ListSubscriptionsInput) => Promise<ToolResult>;
   /**
    * Optional callback for \`publish_task\`. When provided, node agents can
    * publish draft tasks (transition draft → open) without the broader
@@ -1756,6 +1764,28 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       return jsonResult({ success: true, deliveries });
     },
 
+    /**
+     * Read-only diagnostic: snapshot a workflow run's external-event
+     * subscriptions across three layers — declared (workflow definition),
+     * persisted (PR 5 table), and active (in-memory trie, cross-check only) —
+     * so an agent can confirm whether a node is actually wired to receive a
+     * class of events from durable state alone. Durable layers are the source of
+     * truth; the trie is a sanity check, with declared-vs-active drift surfaced
+     * via per-entry `source`/`active` flags and a `mismatches` summary.
+     */
+    async list_subscriptions(args: ListSubscriptionsInput): Promise<ToolResult> {
+      if (!config.onListSubscriptions) {
+        return jsonResult({
+          success: false,
+          error: 'Subscription diagnostics are not available.',
+        });
+      }
+      return config.onListSubscriptions({
+        workflowRunId: args.workflowRunId,
+        nodeId: args.nodeId,
+      });
+    },
+
     async approve_task(args: ApproveTaskInput): Promise<ToolResult> {
       if (!config.onApproveTask) {
         return jsonResult({
@@ -2115,6 +2145,21 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
               'Events are delivered to this node-agent session as messages. The coder node typically calls this.',
             SubscribePrEventsSchema.shape,
             (args) => handlers.subscribe_pr_events(args)
+          ),
+        ]
+      : []),
+    ...(config.onListSubscriptions
+      ? [
+          tool(
+            'list_subscriptions',
+            "Read-only diagnostic: snapshot this workflow run's external-event subscriptions across three layers — " +
+              'declared (workflow definition, durable), persisted (the dynamic subscription table, durable), and ' +
+              'active (in-memory trie, a live cross-check only). Use this to confirm whether a node is actually ' +
+              'wired to receive a class of events, and to surface declared-vs-active drift. The durable layers ' +
+              'are the source of truth; the trie is never the answer. Defaults to this workflow run; pass ' +
+              '`nodeId` to scope to one node.',
+            ListSubscriptionsSchema.shape,
+            (args) => handlers.list_subscriptions(args)
           ),
         ]
       : []),

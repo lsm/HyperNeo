@@ -5474,6 +5474,19 @@ export class TaskAgentManager {
       );
       return jsonResult(result);
     };
+    const onListSubscriptions = async (args: { workflowRunId?: string; nodeId?: string }) => {
+      try {
+        const result = this.config.spaceRuntimeService.listSubscriptions(
+          args.workflowRunId ?? workflowRunId,
+          spaceId,
+          args.nodeId
+        );
+        return jsonResult(result);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return jsonResult({ success: false, error: message });
+      }
+    };
     const onCreateStandaloneTask = async (args: {
       title: string;
       description: string;
@@ -5657,6 +5670,7 @@ export class TaskAgentManager {
       onArchiveTask,
       onSubscribeExternalEvent,
       onUnsubscribeExternalEvent,
+      onListSubscriptions,
       artifactRepo: this.config.artifactRepo,
       artifactProfile: this.config.artifactProfile,
       taskRepo: this.config.taskRepo,
