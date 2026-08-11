@@ -547,6 +547,95 @@ describe('handler — status-aware delivery (§8)', () => {
     expect(session.lastAlreadyConsumed).toBe(true); // ← the guard: no re-feed
   });
 
+  it('a consumed turn whose turn already terminated is completed, not re-driven', async () => {
+    // The zombie-reclaim shape: the message was consumed but its turn produced a
+    // terminal result AFTER it (error/interrupt). Re-driving would start a fresh
+    // query that waits for input forever, holding the active-turn slot.
+    const session = new MockSession();
+    const metrics = new DeliveryMetrics();
+    const job = turnJob(repo, 'msg-terminated');
+    const handler = createMessageDeliveryHandler({
+      jobQueue: repo,
+      getSession: () => session,
+      getMessageContent: () => ({ content: 'hello', sendStatus: 'consumed' }),
+      hasTerminalResultAfter: () => true,
+      metrics,
+    });
+    const result = await handler(job);
+    expect(result).toEqual({ outcome: 'completed', skipped: 'turn_terminated' });
+    expect(session.driveCalls).toBe(0); // no re-drive → slot freed
+    expect(session.settleCalls).toEqual(['msg-terminated']);
+    // Observable: the zombie self-heal is counted as a reclaim skip so the
+    // diagnostics RPC can flag a rising turn_terminated rate.
+    expect(metrics.snapshot().reclaimSkips.turn_terminated).toBe(1);
+  });
+
+  it('end-to-end: stale reclaimed consumed-turn with terminal result unblocks a parked steer', async () => {
+    // The exact stuck-session shape: a turn was delivered + consumed, its job
+    // went stale (processing past the reclaim window), and a new message arrived
+    // while the zombie still held the active-turn slot → inserted as a steer.
+    // Recovery: reclaimStale → the re-claimed turn completes (turn_terminated) →
+    // the freed slot lets the parked steer promote into a real turn and drive.
+    const session = new MockSession();
+    session.feedResult = { outcome: 'promote' }; // steer sees no active turn once freed
+    const statuses: Record<string, string> = { 'zombie-turn': 'consumed' };
+    const handler = createMessageDeliveryHandler({
+      jobQueue: repo,
+      getSession: () => session,
+      getMessageContent: (_s, uuid) => ({
+        content: 'hi',
+        sendStatus: statuses[uuid] ?? 'enqueued',
+      }),
+      // Only the zombie's turn produced a terminal result after it.
+      hasTerminalResultAfter: (_s, uuid) => uuid === 'zombie-turn',
+    });
+
+    // 1) A turn was delivered + consumed, but its job went stale.
+    deliverMessage(repo, SESSION, 'zombie-turn', { origin: 'chat' }); // role turn
+    const [zombie] = repo.dequeue(MESSAGE_DELIVERY, 1); // claimed → processing
+    db.prepare(`UPDATE job_queue SET started_at = ? WHERE id = ?`).run(
+      Date.now() - 10 * 60 * 1000,
+      zombie.id
+    );
+
+    // 2) A new message arrives while the zombie still occupies the slot → steer.
+    deliverMessage(repo, SESSION, 'new-msg', { origin: 'chat' });
+    const steerRow = repo
+      .listJobs({ queue: MESSAGE_DELIVERY, limit: 50 })
+      .find((j) => (j.payload as { messageUuid: string }).messageUuid === 'new-msg');
+    expect((steerRow?.payload as { role: string }).role).toBe('steer');
+
+    // 3) reclaimStale resets the zombie to pending (the durable redelivery seam).
+    expect(repo.reclaimStale(Date.now() - 5 * 60 * 1000)).toBe(1);
+
+    // 4) Re-claim + handle the zombie: turn_terminated → completed, no re-drive.
+    const [reclaimed] = repo.dequeue(MESSAGE_DELIVERY, 1);
+    expect((reclaimed.payload as { role: string }).role).toBe('turn');
+    const zombieResult = await handler(reclaimed);
+    expect(zombieResult).toEqual({ outcome: 'completed', skipped: 'turn_terminated' });
+    expect(session.driveCalls).toBe(0);
+    expect(session.settleCalls).toContain('zombie-turn');
+    repo.complete(reclaimed.id, { ok: true }); // what the processor does on return → slot freed
+
+    // 5) The parked steer is now unblocked: sees no active turn → promotes in place.
+    const [steer] = repo.dequeue(MESSAGE_DELIVERY, 1);
+    expect((steer.payload as { role: string }).role).toBe('steer');
+    const steerResult = await handler(steer);
+    expect(steerResult).toMatchObject({ outcome: 'superseded', promoted: 'turn' });
+    expect(repo.getJob(steer.id)?.status).toBe('pending');
+    expect((repo.getJob(steer.id)?.payload as { role: string }).role).toBe('turn');
+    // The zombie no longer owns the active-turn slot; the promoted message does.
+    const active = repo.activeDeliveryMessageUuids(SESSION);
+    expect(active.has('zombie-turn')).toBe(false);
+    expect(active.has('new-msg')).toBe(true);
+
+    // 6) The promoted turn is claimable and drives normally — the message delivers.
+    const [promoted] = repo.dequeue(MESSAGE_DELIVERY, 1);
+    const promotedResult = await handler(promoted);
+    expect(promotedResult).toEqual({ outcome: 'completed' });
+    expect(session.driveCalls).toBe(1);
+  });
+
   it('records reclaim-skip counters via the injected metrics sink (review P2.2a)', async () => {
     // The handler accepts an injectable DeliveryMetrics so a test can assert the
     // reclaim-skip wiring (alreadyConsumed / alreadySubmitted / noContent) at the

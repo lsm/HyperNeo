@@ -1668,6 +1668,82 @@ describe('SDKMessageRepository', () => {
     });
   });
 
+  describe('hasTerminalResultAfter', () => {
+    function insertMessage(
+      sessionId: string,
+      type: string,
+      opts: { uuid?: string; timestamp: string; terminal?: boolean; subtype?: string }
+    ): void {
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        crypto.randomUUID(),
+        sessionId,
+        type,
+        opts.subtype ?? null,
+        '{}',
+        opts.timestamp,
+        type === 'user' ? 'consumed' : null,
+        opts.terminal ? 1 : 0,
+        opts.uuid ?? null
+      );
+    }
+
+    it('is true when a terminal result exists after the message', () => {
+      insertMessage('session-1', 'user', {
+        uuid: 'msg-uuid',
+        timestamp: '2026-08-11T15:25:00.000Z',
+      });
+      insertMessage('session-1', 'result', {
+        timestamp: '2026-08-11T15:25:53.000Z',
+        terminal: true,
+        subtype: 'error_during_execution',
+      });
+      expect(repository.hasTerminalResultAfter('session-1', 'msg-uuid')).toBe(true);
+    });
+
+    it('is false when no terminal result exists after the message', () => {
+      insertMessage('session-1', 'user', {
+        uuid: 'msg-uuid',
+        timestamp: '2026-08-11T15:25:00.000Z',
+      });
+      expect(repository.hasTerminalResultAfter('session-1', 'msg-uuid')).toBe(false);
+    });
+
+    it('is false when the only terminal result is before the message', () => {
+      insertMessage('session-1', 'result', {
+        timestamp: '2026-08-11T15:24:00.000Z',
+        terminal: true,
+      });
+      insertMessage('session-1', 'user', {
+        uuid: 'msg-uuid',
+        timestamp: '2026-08-11T15:25:00.000Z',
+      });
+      expect(repository.hasTerminalResultAfter('session-1', 'msg-uuid')).toBe(false);
+    });
+
+    it('is false when the terminal result belongs to another session', () => {
+      insertMessage('session-1', 'user', {
+        uuid: 'msg-uuid',
+        timestamp: '2026-08-11T15:25:00.000Z',
+      });
+      insertMessage('session-2', 'result', {
+        timestamp: '2026-08-11T15:25:53.000Z',
+        terminal: true,
+      });
+      expect(repository.hasTerminalResultAfter('session-1', 'msg-uuid')).toBe(false);
+    });
+
+    it('is false when the message uuid is unknown', () => {
+      insertMessage('session-1', 'result', {
+        timestamp: '2026-08-11T15:25:53.000Z',
+        terminal: true,
+      });
+      expect(repository.hasTerminalResultAfter('session-1', 'no-such-uuid')).toBe(false);
+    });
+  });
+
   describe('deletePendingUserMessage', () => {
     it('should delete a deferred user message', () => {
       const id = repository.saveUserMessage(

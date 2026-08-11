@@ -1838,6 +1838,33 @@ export class SDKMessageRepository {
   }
 
   /**
+   * True when the session's transcript has a TERMINAL `result` message after the
+   * message identified by `uuid` — i.e. the turn that consumed it has fully ended
+   * (normal completion, `error_during_execution`, or an interrupt). A re-claimed
+   * `consumed` delivery turn in this state has nothing to resume: re-driving it
+   * would start a fresh streaming query that waits for input forever, holding the
+   * active-turn slot and parking every subsequent message as a steer. See
+   * message-delivery-v2.md + the handler's turn_terminated skip.
+   */
+  hasTerminalResultAfter(sessionId: string, uuid: string): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT 1
+           FROM sdk_messages
+          WHERE session_id = ?
+            AND message_type = 'result'
+            AND is_terminal = 1
+            AND timestamp > (
+              SELECT timestamp FROM sdk_messages
+               WHERE session_id = ? AND sdk_uuid = ? LIMIT 1
+            )
+          LIMIT 1`
+      )
+      .get(sessionId, sessionId, uuid) as { 1: number } | undefined | null;
+    return row != null;
+  }
+
+  /**
    * Terminalize a user message as `failed` by UUID — the message-delivery v2
    * dead-letter path. Called from the processor's `onDead` hook when a delivery
    * job exhausts its retry budget; without this, the persisted row stays
