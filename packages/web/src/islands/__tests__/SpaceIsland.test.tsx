@@ -867,6 +867,14 @@ describe('SpaceIsland — sessions view', () => {
 });
 
 describe('SpaceIsland — agents view', () => {
+  it('renders the Agents-only Glass Workspace hero surface', async () => {
+    const { findByTestId, getByRole } = render(<SpaceIsland spaceId="space-1" viewMode="agents" />);
+
+    const agentsView = await findByTestId('space-agents-view');
+    expect(agentsView.getAttribute('data-agents-surface')).toBe('glass-workspace');
+    expect(getByRole('heading', { name: 'Agents' })).toBeTruthy();
+  });
+
   it('passes the selected agent handle to the agents page', async () => {
     mockCurrentSpaceAgentHandleSignal.value = 'reviewer';
     mockAgents.value = [

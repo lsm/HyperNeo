@@ -1208,11 +1208,25 @@ class SpaceStore {
     spaceId: string
   ): Promise<void> {
     try {
-      const result = await hub.request<{ templates: SpaceLongHorizonAgentTemplate[] }>(
+      const builtInResult = await hub.request<{ templates: SpaceLongHorizonAgentTemplate[] }>(
         'spaceLongHorizonAgent.listBuiltInTemplates',
         { spaceId }
       );
-      this.longHorizonAgentTemplates.value = result?.templates ?? [];
+      let customTemplates: SpaceLongHorizonAgentTemplate[] = [];
+      try {
+        const customResult = await hub.request<{ templates: SpaceLongHorizonAgentTemplate[] }>(
+          'spaceLongHorizonAgentTemplate.list',
+          { spaceId }
+        );
+        customTemplates = customResult?.templates ?? [];
+      } catch {
+        // Older daemons expose built-ins only. Keep those usable while the
+        // custom-template RPC rolls out independently.
+      }
+      this.longHorizonAgentTemplates.value = [
+        ...(builtInResult?.templates ?? []),
+        ...customTemplates,
+      ];
     } catch (err) {
       logger.error('Failed to fetch long-horizon agent templates:', err);
       this.longHorizonAgentTemplates.value = [];
@@ -2837,6 +2851,28 @@ class SpaceStore {
   // ========================================
   // Long-Horizon Agent Methods
   // ========================================
+
+  async createLongHorizonAgentTemplate(params: {
+    key: string;
+    handle: string;
+    displayName: string;
+    description: string;
+    instructions: string;
+    suggestedAutonomyLevel: number;
+  }): Promise<SpaceLongHorizonAgentTemplate> {
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+    const { template } = await hub.request<{ template: SpaceLongHorizonAgentTemplate }>(
+      'spaceLongHorizonAgentTemplate.create',
+      { spaceId, ...params }
+    );
+    if (this.spaceId.value === spaceId) {
+      this.longHorizonAgentTemplates.value = [...this.longHorizonAgentTemplates.value, template];
+    }
+    return template;
+  }
 
   async createLongHorizonAgent(params: {
     id?: string;

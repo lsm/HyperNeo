@@ -4,16 +4,23 @@ import { MobileMenuButton } from '../ui/MobileMenuButton';
 interface SpacePageHeaderProps {
   pageTitle: string;
   subtitle?: string;
+  appearance?: 'default' | 'hero';
   actions?: ComponentChildren;
 }
 
-export function SpacePageHeader({ pageTitle, subtitle, actions }: SpacePageHeaderProps) {
+export function SpacePageHeader({
+  pageTitle,
+  subtitle,
+  appearance = 'default',
+  actions,
+}: SpacePageHeaderProps) {
+  const prominent = subtitle || appearance === 'hero';
   return (
     <div
       data-tauri-drag-region
       class={
-        subtitle
-          ? 'relative z-10 flex min-h-[68px] flex-shrink-0 items-center bg-transparent px-4 py-3 sm:px-8'
+        prominent
+          ? `relative z-10 flex flex-shrink-0 items-center bg-transparent px-4 sm:px-8 ${appearance === 'hero' ? 'min-h-[84px] pt-5 pb-2' : 'min-h-[68px] py-3'}`
           : 'relative z-10 flex h-[52px] flex-shrink-0 items-center bg-app-content px-4'
       }
     >
@@ -22,8 +29,8 @@ export function SpacePageHeader({ pageTitle, subtitle, actions }: SpacePageHeade
         <div class="min-w-0 flex-1" data-tauri-drag-region>
           <h2
             class={
-              subtitle
-                ? 'truncate text-xl font-semibold tracking-tight text-gray-50'
+              prominent
+                ? `truncate font-semibold tracking-tight text-gray-50 ${appearance === 'hero' ? 'text-3xl' : 'text-xl'}`
                 : 'truncate text-sm font-semibold text-gray-100'
             }
             data-tauri-drag-region
