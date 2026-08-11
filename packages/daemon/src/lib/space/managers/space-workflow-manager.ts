@@ -1002,12 +1002,25 @@ export class SpaceWorkflowManager {
     const gateIds = new Set(gates.map((g) => g.id));
     const hookIds = new Set(hooks.map((h) => h.id));
     // Valid target names: every node name + every agent slot name (matches
-    // channel addressing). The broadcast wildcard is always valid.
-    const targetNames = new Set<string>([HANDOFF_TARGET_WILDCARD]);
+    // channel addressing). The broadcast wildcard is always valid. A name is
+    // AMBIGUOUS when it routes to more than one node (two nodes share a slot
+    // name, or a slot name collides with a node name) — the contract requires a
+    // named handoff to select exactly one destination, so count distinct nodes
+    // per name and reject ambiguous targets below.
+    const targetNameNodeIds = new Map<string, Set<string>>();
+    const addTargetName = (name: string, nodeId: string) => {
+      const set = targetNameNodeIds.get(name) ?? new Set<string>();
+      set.add(nodeId);
+      targetNameNodeIds.set(name, set);
+    };
     for (const node of nodes) {
-      targetNames.add(node.name);
+      // node.id is optional on WorkflowNodeInput; names are unique within a
+      // workflow, so fall back to the name when id is absent (count is by
+      // distinct node, and a missing id only arises on unsaved create payloads).
+      const nodeId = node.id ?? node.name;
+      addTargetName(node.name, nodeId);
       for (const agent of node.agents ?? []) {
-        if (agent.name) targetNames.add(agent.name);
+        if (agent.name) addTargetName(agent.name, nodeId);
       }
     }
 
@@ -1033,7 +1046,12 @@ export class SpaceWorkflowManager {
         if (t.id.length > 100) {
           throw new WorkflowValidationError(`${loc}: 'id' must be at most 100 characters`);
         }
-        if (t.label !== undefined && t.label.length > 200) {
+        // RPC JSON is untyped — reject a non-string label before the length
+        // check (a numeric label has no .length and would otherwise slip through).
+        if (t.label !== undefined && typeof t.label !== 'string') {
+          throw new WorkflowValidationError(`${loc}: 'label' must be a string`);
+        }
+        if (typeof t.label === 'string' && t.label.length > 200) {
           throw new WorkflowValidationError(`${loc}: 'label' must be at most 200 characters`);
         }
         if (seenIds.has(t.id)) {
@@ -1049,10 +1067,19 @@ export class SpaceWorkflowManager {
         if (t.target.length > 100) {
           throw new WorkflowValidationError(`${loc}: 'target' must be at most 100 characters`);
         }
-        if (!targetNames.has(t.target)) {
-          throw new WorkflowValidationError(
-            `${loc}: target "${t.target}" does not reference a known node name or agent slot name`
-          );
+        if (t.target !== HANDOFF_TARGET_WILDCARD) {
+          const matchingNodes = targetNameNodeIds.get(t.target);
+          if (!matchingNodes || matchingNodes.size === 0) {
+            throw new WorkflowValidationError(
+              `${loc}: target "${t.target}" does not reference a known node name or agent slot name`
+            );
+          }
+          if (matchingNodes.size > 1) {
+            throw new WorkflowValidationError(
+              `${loc}: target "${t.target}" is ambiguous — matches ${matchingNodes.size} nodes; ` +
+                'use a name unique to one node or slot'
+            );
+          }
         }
         if (seenTargets.has(t.target)) {
           throw new WorkflowValidationError(

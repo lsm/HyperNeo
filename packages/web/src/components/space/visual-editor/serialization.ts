@@ -342,6 +342,21 @@ function buildWorkflowFields(state: VisualEditorState): {
     keyToPersistedId.set(entry.node.step.localId, entry.persistedId);
   }
 
+  // Names a handoff transition may legally target in the CURRENT graph: every
+  // node name + every agent-slot name + the broadcast wildcard. The editor does
+  // not expose handoff transitions for editing, so a rename or delete can leave a
+  // carried transition pointing at a stale target — drop those so an unrelated
+  // visual-editor save is not rejected by validateTransitions.
+  const validHandoffTargetNames = new Set<string>(['*']);
+  for (const n of state.nodes) {
+    validHandoffTargetNames.add(n.step.name);
+    for (const a of n.step.agents ?? []) validHandoffTargetNames.add(a.name);
+    if (n.step.agentId) validHandoffTargetNames.add(n.step.name);
+  }
+  // Gates referenced by carried handoff transitions must be retained alongside
+  // channel-referenced gates, or their gateId becomes unknown on save.
+  const handoffGateIds = new Set<string>();
+
   const nodes = persistableNodes.map((node, i) => {
     const key = node.step.id ?? node.step.localId;
     const persistedId = nodeMap.get(key)!.persistedId;
@@ -396,10 +411,17 @@ function buildWorkflowFields(state: VisualEditorState): {
       ...(node.step.codexTimeoutSeconds
         ? { codexTimeoutSeconds: node.step.codexTimeoutSeconds }
         : {}),
-      // Re-emit carried handoff transitions (mapped back to the backend field).
-      ...(node.step.handoffTransitions && node.step.handoffTransitions.length > 0
-        ? { transitions: node.step.handoffTransitions }
-        : {}),
+      // Re-emit carried handoff transitions (mapped back to the backend field),
+      // dropping any whose target no longer resolves to a current node/slot
+      // (the editor does not expose them to correct a rename/delete). Collect
+      // referenced gates so they are retained below.
+      ...(() => {
+        const valid = (node.step.handoffTransitions ?? []).filter((t) =>
+          validHandoffTargetNames.has(t.target)
+        );
+        for (const t of valid) if (t.gateId) handoffGateIds.add(t.gateId);
+        return valid.length > 0 ? { transitions: valid } : {};
+      })(),
     };
   });
 
@@ -433,6 +455,8 @@ function buildWorkflowFields(state: VisualEditorState): {
   const referencedGateIds = new Set(
     state.channels.map((channel) => channel.gateId).filter((gateId): gateId is string => !!gateId)
   );
+  // Also retain gates referenced only by handoff transitions (not attached to a channel).
+  for (const gateId of handoffGateIds) referencedGateIds.add(gateId);
   const gates = state.gates.filter((gate) => referencedGateIds.has(gate.id));
   const hookNodeNames = buildHookNodeNameMap(persistableNodes);
   const hooks = state.hooks

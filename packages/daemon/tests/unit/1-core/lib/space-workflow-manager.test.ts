@@ -1674,5 +1674,37 @@ describe('SpaceWorkflowManager', () => {
         })
       ).toThrow('does not reference a known node name or agent slot name');
     });
+
+    it('rejects a non-string transition label (untyped RPC JSON)', () => {
+      expect(() =>
+        manager.createWorkflow(
+          twoNodeParams([{ id: 't', target: 'Review', label: 5 as unknown as string }])
+        )
+      ).toThrow("'label' must be a string");
+    });
+
+    it('rejects an ambiguous target whose name matches multiple nodes', () => {
+      // Two nodes share the agent-slot name 'shared-slot', so a handoff targeting
+      // that name cannot select a single destination.
+      const params: import('@hyperneo/shared').CreateSpaceWorkflowParams = {
+        spaceId: 'space-1',
+        name: 'Ambiguous',
+        nodes: [
+          {
+            id: 'node-1',
+            name: 'Coder',
+            agents: [{ agentId: 'agent-1', name: 'shared-slot' }],
+            transitions: [{ id: 't', target: 'shared-slot' }],
+          },
+          {
+            id: 'node-2',
+            name: 'Review',
+            agents: [{ agentId: 'agent-1', name: 'shared-slot' }],
+          },
+        ],
+        completionAutonomyLevel: 3,
+      };
+      expect(() => manager.createWorkflow(params)).toThrow('is ambiguous');
+    });
   });
 });

@@ -777,6 +777,77 @@ describe('visualStateToCreateParams', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Handoff transition preservation (carried opaquely through the editor)
+// ---------------------------------------------------------------------------
+
+describe('handoff transition preservation', () => {
+  function makeHandoffState(overrides: Partial<VisualEditorState> = {}): VisualEditorState {
+    return {
+      nodes: [
+        {
+          step: {
+            localId: 'l1',
+            id: 's1',
+            name: 'Coder',
+            agentId: 'a1',
+            handoffTransitions: [{ id: 't', target: 'Review', gateId: 'g1' }],
+          },
+          position: { x: 0, y: 0 },
+        },
+        {
+          step: { localId: 'l2', id: 's2', name: 'Review', agentId: 'a2' },
+          position: { x: 0, y: 0 },
+        },
+      ],
+      edges: [],
+      startNodeId: 's1',
+      tags: [],
+      channels: [],
+      gates: [{ id: 'g1', resetOnCycle: false }],
+      hooks: [],
+      ...overrides,
+    };
+  }
+
+  it('retains a gate referenced only by a handoff transition', () => {
+    // A gate not attached to any channel but referenced by a handoff transition
+    // must survive the save (otherwise validateTransitions rejects the gateId).
+    const params = visualStateToUpdateParams(makeHandoffState());
+    expect(params.gates).toEqual([{ id: 'g1', resetOnCycle: false }]);
+    expect(params.nodes![0].transitions).toEqual([{ id: 't', target: 'Review', gateId: 'g1' }]);
+  });
+
+  it('drops a handoff transition whose target no longer exists', () => {
+    // The editor does not expose handoff transitions to correct a rename/delete,
+    // so a stale target is dropped rather than failing the whole save.
+    const params = visualStateToUpdateParams(
+      makeHandoffState({
+        nodes: [
+          {
+            step: {
+              localId: 'l1',
+              id: 's1',
+              name: 'Coder',
+              agentId: 'a1',
+              handoffTransitions: [
+                { id: 'stale', target: 'Gone' },
+                { id: 'ok', target: 'Review' },
+              ],
+            },
+            position: { x: 0, y: 0 },
+          },
+          {
+            step: { localId: 'l2', id: 's2', name: 'Review', agentId: 'a2' },
+            position: { x: 0, y: 0 },
+          },
+        ],
+      })
+    );
+    expect(params.nodes![0].transitions).toEqual([{ id: 'ok', target: 'Review' }]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Round-trip: workflowToVisualState -> visualStateToUpdateParams
 // ---------------------------------------------------------------------------
 
