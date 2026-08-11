@@ -339,6 +339,10 @@ export class AgentSession
   private pendingResumeSessionAt: string | undefined;
   // Periodic orphan-reconciliation timer (task #861 item 4). unref'd; cleared in cleanup().
   private reconcileTimer: ReturnType<typeof setInterval> | null = null;
+  // True once the owner's post-provisioning replay path has run — gates the
+  // periodic reconciler so it won't drive pending input before runtime MCP /
+  // prompt / continuation maps are attached. (task #861, Codex review.)
+  private reconcilerProvisioned = false;
   pendingRestartReason: 'settings.local.json' | null = null;
   private initialPendingReplayScheduled = false;
 
@@ -531,9 +535,16 @@ export class AgentSession
       await this.lifecycleManager.executeDeferredRestartIfPending();
       // Orphan reconciler (task #861 item 4): on each idle transition, recover
       // any user message stranded in a nonterminal send_status with no active
-      // durable job (the #856 shape). Idempotent — a no-op when nothing is
-      // stranded.
-      await this.reconcileStrandedDeliveries();
+      // durable job (the #856 shape). Fire-and-forget (NOT awaited): an idle
+      // transition can fire WHILE the caller holds withSessionLock (e.g.
+      // revokePendingDelivery → clearQueuedIfOwnedBy → setIdle), and the
+      // reconciler's core reacquires that non-reentrant lock — awaiting it here
+      // would deadlock (the RPC never returns, the lock never releases).
+      // Fire-and-forget lets the callback return, the lock holder release, and
+      // the reconciler then acquire the now-free lock. (Codex review, P1.)
+      void this.reconcileStrandedDeliveries().catch((error) => {
+        this.logger.warn('Idle reconcileStrandedDeliveries failed:', error);
+      });
     });
 
     // Restore persisted state
@@ -565,8 +576,15 @@ export class AgentSession
     // Periodic orphan reconciliation (task #861 item 4): a backstop beyond the
     // idle + startup hooks, for a message that strands without an idle
     // transition (e.g. a job cancelled mid-flight leaving an enqueued row).
-    // unref'd so it never keeps the daemon alive on shutdown. Idempotent.
+    // unref'd so it never keeps the daemon alive on shutdown. Idempotent. The
+    // callback is gated on `reconcilerProvisioned` — restored Space/task-agent
+    // sessions pass autoReplayPendingMessages=false so the owner can attach
+    // runtime MCP servers, the current prompt, and continuation maps BEFORE any
+    // pending input starts a query; the flag flips when the owner calls the
+    // post-provisioning replay path, so the timer won't re-enqueue a stranded
+    // row against a half-provisioned session. (Codex review.)
     this.reconcileTimer = setInterval(() => {
+      if (!this.reconcilerProvisioned) return;
       void this.reconcileStrandedDeliveries().catch((error) => {
         this.logger.warn('Periodic reconcileStrandedDeliveries failed:', error);
       });
@@ -848,6 +866,13 @@ export class AgentSession
    * sessions where no owner-specific provisioning is required.
    */
   async replayPendingMessagesForImmediateMode(): Promise<void> {
+    // The owner's post-provisioning readiness signal (Space/task-agent owners
+    // call this AFTER attaching runtime MCP servers / prompt / continuation
+    // maps). Flip the reconciler-provisioned flag HERE (before the manual /
+    // waiting_for_input early-returns) so the periodic orphan reconciler can
+    // safely run — it won't drive a stranded row against a half-provisioned
+    // session. (task #861, Codex review.)
+    this.reconcilerProvisioned = true;
     if (this.session.config.queryMode === 'manual') return;
     const restoredState = this.stateManager.getState();
     if (restoredState.status === 'waiting_for_input') return;
@@ -2206,7 +2231,6 @@ export class AgentSession
       return 0;
     }
 
-    const active = jobQueue.activeDeliveryMessageUuids(this.session.id);
     // 1) Re-enqueue stranded 'enqueued' messages (the #856 shape). The core
     // pass serializes under the per-session lock (withSessionLock) so concurrent
     // idle/periodic reconciles cannot double-enqueue one message.
@@ -2216,23 +2240,32 @@ export class AgentSession
       jobQueue,
     });
     // 2) Settle stale 'submitted' rows (orphaned ACP) → failed so they surface.
+    // Run under the per-session lock and re-query active ownership AT THE POINT
+    // OF MUTATION: a racing retry (deliverAndMarkQueued) can enqueue a job for a
+    // still-submitted UUID after an earlier snapshot; the fresh in-lock query
+    // sees it and skips, so we never flip a row whose job just (re)activated
+    // (which would make the handler skip it and block a later acceptance).
+    // (Codex review.)
     let settled = 0;
     const sdkRepo = this.db.getSDKMessageRepo();
-    for (const msg of this.db.getMessagesByStatus(this.session.id, 'submitted')) {
-      if (!isSDKUserMessage(msg) || !msg.uuid) continue;
-      if (active.has(msg.uuid)) continue; // still has a durable job — leave it
-      const dbId = sdkRepo.markDeliveryFailedByUuid(this.session.id, msg.uuid);
-      if (dbId) {
-        settled++;
-        void this.internalEventBus
-          .publish('messages.statusChanged', {
-            sessionId: this.session.id,
-            messageIds: [dbId],
-            status: 'failed',
-          })
-          .catch(() => {});
+    await withSessionLock(this.session.id, async () => {
+      const activeNow = jobQueue.activeDeliveryMessageUuids(this.session.id);
+      for (const msg of this.db.getMessagesByStatus(this.session.id, 'submitted')) {
+        if (!isSDKUserMessage(msg) || !msg.uuid) continue;
+        if (activeNow.has(msg.uuid)) continue; // still has a durable job — leave it
+        const dbId = sdkRepo.markDeliveryFailedByUuid(this.session.id, msg.uuid);
+        if (dbId) {
+          settled++;
+          void this.internalEventBus
+            .publish('messages.statusChanged', {
+              sessionId: this.session.id,
+              messageIds: [dbId],
+              status: 'failed',
+            })
+            .catch(() => {});
+        }
       }
-    }
+    });
     if (reEnqueued > 0 || settled > 0) {
       this.logger.info(
         `reconcileStrandedDeliveries: re-enqueued ${reEnqueued}, settled ${settled} stale submitted.`
