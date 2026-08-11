@@ -105,10 +105,17 @@ export class QueryModeHandler {
           });
         }
       } else {
-        // Legacy inline path (HYPERNEO_MESSAGE_DELIVERY_V2=0 opt-out).
+        // Legacy inline path (HYPERNEO_MESSAGE_DELIVERY_V2=0 opt-out). Exclude
+        // UUIDs still owned by a durable job — a rollback to v2=0 after a v2 run
+        // leaves surviving message_delivery jobs (the processor is registered
+        // unconditionally), and replaying them here through MessageQueue would
+        // duplicate the feed. (Codex review, P1.)
+        const v2Owned =
+          db.getJobQueueRepo?.()?.activeDeliveryMessageUuids?.(session.id) ?? new Set<string>();
         await this.ctx.ensureQueryStarted();
         for (const msg of deferredMessages) {
           if (!isSDKUserMessage(msg)) continue;
+          if (v2Owned.has((msg.uuid ?? '') as string)) continue;
           const replayContent = this.toReplayContent(msg.message.content);
           if (replayContent) {
             await messageQueue.enqueueWithId(msg.uuid as string, replayContent);
@@ -157,10 +164,14 @@ export class QueryModeHandler {
           });
         }
       } else {
-        // Legacy inline path (HYPERNEO_MESSAGE_DELIVERY_V2=0 opt-out).
+        // Legacy inline path (HYPERNEO_MESSAGE_DELIVERY_V2=0 opt-out). Exclude
+        // UUIDs still owned by a durable job (see handleQueryTrigger). (Codex P1.)
+        const v2Owned =
+          db.getJobQueueRepo?.()?.activeDeliveryMessageUuids?.(session.id) ?? new Set<string>();
         await this.ctx.ensureQueryStarted();
         for (const msg of queuedMessages) {
           if (!isSDKUserMessage(msg)) continue;
+          if (v2Owned.has((msg.uuid ?? '') as string)) continue;
           const replayContent = this.toReplayContent(msg.message.content);
           if (replayContent) {
             await messageQueue.enqueueWithId(msg.uuid as string, replayContent);

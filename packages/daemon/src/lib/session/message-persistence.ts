@@ -298,14 +298,23 @@ export class MessagePersistence {
       // and stop before message.persisted can enqueue work against torn-down
       // resources. The failed row remains visible instead of hidden forever.
       if (this.db.getSession?.(sessionId)?.status === 'archived') {
-        this.db.updateMessageStatus([dbMessageId], 'failed');
-        await this.internalEventBus
-          .publish('messages.statusChanged', {
-            sessionId,
-            messageIds: [dbMessageId],
-            status: 'failed',
-          })
-          .catch(() => {});
+        // Use the conditional UUID flip (only enqueued/deferred/submitted →
+        // failed) — the outbox may have already committed a job + the processor
+        // consumed the row during the preceding await; flipping a consumed row
+        // to failed would be wrong (it WAS delivered). markDeliveryFailedByUuid
+        // returns the dbId only when it actually flipped. (Codex review.)
+        const flipped = this.db
+          .getSDKMessageRepo?.()
+          ?.markDeliveryFailedByUuid?.(sessionId, messageId);
+        if (flipped) {
+          await this.internalEventBus
+            .publish('messages.statusChanged', {
+              sessionId,
+              messageIds: [flipped],
+              status: 'failed',
+            })
+            .catch(() => {});
+        }
         throw new Error(`Session ${sessionId} is archived`);
       }
 
@@ -373,7 +382,13 @@ export class MessagePersistence {
             hasDraftToClear: session.metadata?.inputDraft === content.trim(),
             sendStatus,
             deliveryMode: effectiveDeliveryMode,
-            skipQueryStart: !useV2Delivery,
+            // The outbox already owns delivery (job enqueued + queued marker
+            // set). Tell the subscriber to skip deliverChatMessage — if the
+            // outbox job completed a fast turn before this publication, the
+            // subscriber's getActiveDeliveryRole wouldn't find it (completed
+            // jobs aren't active) and would insert a second turn job for the
+            // consumed UUID, starting an input-less query. (Codex review.)
+            skipQueryStart: !useV2Delivery || useOutbox,
           })
           .catch((err) =>
             this.logger.warn('[MessagePersistence] message.persisted publish failed:', err)

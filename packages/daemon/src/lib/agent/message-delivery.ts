@@ -415,7 +415,7 @@ export function signalDeliveryConsumed(sessionId: string, messageUuid: string): 
  * ACP-targeted awaitDeliveryConsumption callers pass this acceptance-sized
  * timeout. (Codex review, P1.)
  */
-export const ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS = 10 * 60 * 1000;
+export const ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS = 12 * 60 * 1000;
 
 /** Acceptance-sized consume timeout for ACP sessions; undefined → default. */
 export function deliveryConsumptionTimeoutMs(provider?: string): number | undefined {
