@@ -14,6 +14,7 @@ import { lazy, Suspense } from 'preact/compat';
 import { useCallback, useEffect, useState } from 'preact/hooks';
 import { AgentOverlayChat } from '../components/space/AgentOverlayChat';
 import { SpaceCreateTaskDialog } from '../components/space/SpaceCreateTaskDialog';
+import { GlassRouteShell } from '../components/space/glass-workspace';
 import { SpacePageHeader } from '../components/space/SpacePageHeader';
 import { TaskAuxiliaryPanel } from '../components/space/TaskAuxiliaryPanel';
 import { createSession } from '../lib/api-helpers';
@@ -434,19 +435,16 @@ export default function SpaceIsland({
   if (viewMode === 'goals' && space) {
     return (
       <>
-        <div
-          class="relative isolate flex-1 flex flex-col overflow-hidden bg-app-content before:pointer-events-none before:absolute before:inset-0 before:-z-10 before:bg-[radial-gradient(circle_at_8%_0%,rgba(142,79,100,0.22),transparent_34%),radial-gradient(circle_at_95%_10%,rgba(42,91,119,0.18),transparent_39%),radial-gradient(circle_at_54%_112%,rgba(77,68,151,0.22),transparent_49%)] after:pointer-events-none after:absolute after:inset-0 after:-z-10 after:bg-[linear-gradient(180deg,rgba(12,15,22,0.02),rgba(8,11,18,0.22))]"
-          data-testid="space-goals-view"
-          data-goals-surface="glass-workspace"
-          {...baseLayerProps}
+        <GlassRouteShell
+          pageTitle="Goals"
+          appearance="hero"
+          surfaceKey="goals"
+          testId="space-goals-view"
+          baseLayerProps={baseLayerProps}
+          fallback={lazyFallback}
         >
-          <SpacePageHeader pageTitle="Goals" appearance="hero" />
-          <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
-            <Suspense fallback={lazyFallback}>
-              <SpaceGoals spaceId={spaceId} navigationSpaceId={navigationSpaceId} />
-            </Suspense>
-          </div>
-        </div>
+          <SpaceGoals spaceId={spaceId} navigationSpaceId={navigationSpaceId} />
+        </GlassRouteShell>
         {overlay}
       </>
     );
@@ -522,23 +520,20 @@ export default function SpaceIsland({
   if (viewMode === 'agents' && space) {
     return (
       <>
-        <div
-          class="relative isolate flex-1 flex flex-col overflow-hidden bg-app-content before:pointer-events-none before:absolute before:inset-0 before:-z-10 before:bg-[radial-gradient(circle_at_7%_0%,rgba(145,77,108,0.25),transparent_34%),radial-gradient(circle_at_96%_8%,rgba(42,94,125,0.2),transparent_40%),radial-gradient(circle_at_60%_112%,rgba(73,70,160,0.24),transparent_50%)] after:pointer-events-none after:absolute after:inset-0 after:-z-10 after:bg-[linear-gradient(180deg,rgba(12,15,22,0.02),rgba(8,11,18,0.2))]"
-          data-testid="space-agents-view"
-          data-agents-surface="glass-workspace"
-          {...baseLayerProps}
+        <GlassRouteShell
+          pageTitle="Agents"
+          appearance="hero"
+          surfaceKey="agents"
+          testId="space-agents-view"
+          baseLayerProps={baseLayerProps}
+          fallback={lazyFallback}
         >
-          <SpacePageHeader pageTitle="Agents" appearance="hero" />
-          <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
-            <Suspense fallback={lazyFallback}>
-              <SpaceLongHorizonAgents
-                spaceId={spaceId}
-                navigationSpaceId={navigationSpaceId}
-                selectedHandle={selectedAgentHandle}
-              />
-            </Suspense>
-          </div>
-        </div>
+          <SpaceLongHorizonAgents
+            spaceId={spaceId}
+            navigationSpaceId={navigationSpaceId}
+            selectedHandle={selectedAgentHandle}
+          />
+        </GlassRouteShell>
         {overlay}
       </>
     );
@@ -547,18 +542,16 @@ export default function SpaceIsland({
   if (viewMode === 'memories' && space) {
     return (
       <>
-        <div
-          class="flex-1 flex flex-col overflow-hidden bg-app-content"
-          data-testid="space-memories-view"
-          {...baseLayerProps}
+        <GlassRouteShell
+          pageTitle="Memories"
+          appearance="hero"
+          surfaceKey="memories"
+          testId="space-memories-view"
+          baseLayerProps={baseLayerProps}
+          fallback={lazyFallback}
         >
-          <SpacePageHeader pageTitle="Memories" />
-          <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
-            <Suspense fallback={lazyFallback}>
-              <SpaceMemories spaceId={spaceId} />
-            </Suspense>
-          </div>
-        </div>
+          <SpaceMemories spaceId={spaceId} />
+        </GlassRouteShell>
         {overlay}
       </>
     );
@@ -587,23 +580,20 @@ export default function SpaceIsland({
   return (
     <>
       {overlay}
-      <div
-        class="relative isolate flex-1 flex flex-col overflow-hidden bg-app-content before:pointer-events-none before:absolute before:inset-0 before:-z-10 before:bg-[radial-gradient(circle_at_6%_0%,rgba(137,74,102,0.16),transparent_32%),radial-gradient(circle_at_96%_10%,rgba(43,83,108,0.14),transparent_38%),radial-gradient(circle_at_58%_112%,rgba(70,60,145,0.2),transparent_48%)] after:pointer-events-none after:absolute after:inset-0 after:-z-10 after:bg-[linear-gradient(180deg,rgba(12,15,22,0.04),rgba(8,11,18,0.24))]"
-        data-testid="space-overview-view"
-        data-overview-surface="glass-workspace"
-        {...baseLayerProps}
+      <GlassRouteShell
+        pageTitle="Overview"
+        subtitle="Space operations and recent activity"
+        surfaceKey="overview"
+        testId="space-overview-view"
+        baseLayerProps={baseLayerProps}
+        fallback={lazyFallback}
       >
-        <SpacePageHeader pageTitle="Overview" subtitle="Space operations and recent activity" />
-        <div class="flex-1 overflow-hidden flex flex-col min-w-0">
-          <Suspense fallback={lazyFallback}>
-            <SpaceOverview
-              spaceId={spaceId}
-              navigationSpaceId={navigationSpaceId}
-              onSelectTask={(taskId) => navigateToSpaceTask(navigationSpaceId, taskId)}
-            />
-          </Suspense>
-        </div>
-      </div>
+        <SpaceOverview
+          spaceId={spaceId}
+          navigationSpaceId={navigationSpaceId}
+          onSelectTask={(taskId) => navigateToSpaceTask(navigationSpaceId, taskId)}
+        />
+      </GlassRouteShell>
     </>
   );
 }

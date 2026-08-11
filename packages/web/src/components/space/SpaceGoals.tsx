@@ -7,6 +7,12 @@ import { currentSpaceGoalIdSignal, rightPanelTargetSignal } from '../../lib/sign
 import { spaceStore } from '../../lib/space-store';
 import { cn, getRelativeTime } from '../../lib/utils';
 import {
+  FLAT_SURFACE,
+  GLASS_CONTENT_CONTAINER_CLASS,
+  GLASS_PRIMARY_BUTTON_CLASS,
+  GLASS_SURFACE,
+} from './glass-workspace';
+import {
   formatGoalMetricSnapshot,
   getGoalActivityTask,
   getGoalLastActivityAt,
@@ -24,12 +30,6 @@ const TYPE_LABELS: Record<SpaceGoal['type'], string> = {
   measurable: 'Measurable',
   recurring: 'Recurring',
 };
-
-const GLASS_SURFACE =
-  'border-white/15 bg-white/[0.07] shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_16px_40px_rgba(0,0,0,0.18)] backdrop-blur-xl';
-
-const FLAT_SURFACE =
-  'border-white/15 bg-dark-900/95 shadow-[inset_0_1px_0_rgba(255,255,255,0.07),0_18px_44px_rgba(0,0,0,0.24)]';
 
 function formatDate(ts: number | null): string {
   if (!ts) return '—';
@@ -508,7 +508,7 @@ export function SpaceGoals({ spaceId, navigationSpaceId: _navigationSpaceId }: S
   return (
     <div class="flex h-full min-h-0 flex-col overflow-hidden">
       <div class="flex-1 overflow-y-auto">
-        <div class="mx-auto w-full max-w-6xl px-4 pb-10 pt-2 sm:px-8 sm:pt-4">
+        <div class={GLASS_CONTENT_CONTAINER_CLASS}>
           <section
             class={cn(
               'mb-5 flex flex-col gap-4 rounded-2xl border p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6',
@@ -520,7 +520,7 @@ export function SpaceGoals({ spaceId, navigationSpaceId: _navigationSpaceId }: S
             <div class="max-w-2xl">
               <div class="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-amber-200/80">
                 <span class="h-1.5 w-1.5 rounded-full bg-amber-300" />
-                Long-horizon outcomes
+                Tracked objectives
               </div>
               <h2 class="mt-2 text-lg font-semibold tracking-tight text-gray-50">
                 Active objectives ·{' '}
@@ -534,7 +534,7 @@ export function SpaceGoals({ spaceId, navigationSpaceId: _navigationSpaceId }: S
             <button
               type="button"
               onClick={() => setCreateOpen(true)}
-              class="inline-flex h-10 shrink-0 items-center justify-center rounded-xl bg-amber-300 px-4 text-sm font-semibold text-dark-950 shadow-[0_10px_24px_rgba(252,211,77,0.16)] transition hover:-translate-y-0.5 hover:bg-amber-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/70"
+              class={GLASS_PRIMARY_BUTTON_CLASS}
             >
               Create goal
             </button>

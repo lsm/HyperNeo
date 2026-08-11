@@ -310,6 +310,23 @@ vi.mock('../../lib/space-store', () => ({
   },
 }));
 
+vi.mock('../../lib/memory-store', () => ({
+  get memoryStore() {
+    return {
+      memories: signal([]),
+      loaded: signal(true),
+      error: signal(null),
+      query: signal(''),
+      hasMore: signal(false),
+      isLoadingMore: signal(false),
+      attach: vi.fn().mockResolvedValue(undefined),
+      detach: vi.fn(),
+      search: vi.fn().mockResolvedValue(undefined),
+      loadMore: vi.fn().mockResolvedValue(undefined),
+    };
+  },
+}));
+
 vi.mock('../../lib/router', () => ({
   navigateToSpace: vi.fn(),
   navigateToSpaceTask: mockNavigateToSpaceTask,
@@ -667,6 +684,25 @@ describe('SpaceIsland — goals view', () => {
       'glass-workspace'
     );
     expect(getByRole('heading', { name: 'Goals' })).toBeTruthy();
+  });
+});
+
+describe('SpaceIsland — memories view', () => {
+  it('renders the memories route with the glass-workspace surface', async () => {
+    const { getByRole, getByTestId } = render(
+      <SpaceIsland spaceId="space-1" viewMode="memories" />
+    );
+
+    await waitFor(
+      () => {
+        expect(getByTestId('space-memories-view')).toBeTruthy();
+      },
+      { timeout: LAZY_LOAD_TIMEOUT }
+    );
+    expect(getByTestId('space-memories-view').getAttribute('data-memories-surface')).toBe(
+      'glass-workspace'
+    );
+    expect(getByRole('heading', { name: 'Memories' })).toBeTruthy();
   });
 });
 
