@@ -12306,6 +12306,11 @@ export function runMigration187(db: BunDatabase): void {
  */
 export function runMigration188(db: BunDatabase): void {
   if (!tableExists(db, 'sdk_messages')) return;
-  if (tableHasColumn(db, 'sdk_messages', 'consumed_seq')) return;
-  db.exec(`ALTER TABLE sdk_messages ADD COLUMN consumed_seq INTEGER`);
+  if (!tableHasColumn(db, 'sdk_messages', 'consumed_seq')) {
+    db.exec(`ALTER TABLE sdk_messages ADD COLUMN consumed_seq INTEGER`);
+  }
+  // MAX(consumed_seq) on the consumed-flip hot path must be an index scan, not
+  // a full-table pass. Idempotent (IF NOT EXISTS). See Codex (PR #2463, P2).
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_consumed_seq
+      ON sdk_messages(consumed_seq)`);
 }

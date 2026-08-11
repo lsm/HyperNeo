@@ -992,6 +992,10 @@ function createIndexes(db: BunDatabase): void {
       ON sdk_messages(session_id, message_subtype_norm, parent_tool_use_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_send_status
       ON sdk_messages(session_id, send_status)`);
+  // Consumption watermark — MAX(consumed_seq) on the consumed-flip hot path
+  // must be an index scan, not a full-table pass. See Codex (PR #2463, P2).
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_consumed_seq
+      ON sdk_messages(consumed_seq)`);
   // Task-scoped feeds and activity views read directly from this column.
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_id
       ON sdk_messages(task_id, timestamp)`);

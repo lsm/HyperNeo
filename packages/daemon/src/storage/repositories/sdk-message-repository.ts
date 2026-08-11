@@ -1492,18 +1492,19 @@ export class SDKMessageRepository {
         // must compare `result.rowid >= message.consumed_seq` — not the message's
         // old rowid — to avoid matching turn A's same-millisecond result. Assigned
         // in this transaction (atomic with the flip). See Codex (PR #2463, P2).
-        const maxBoundaryStmt = this.db.prepare(
-          `SELECT MAX(v) AS m FROM (
-             SELECT rowid AS v FROM sdk_messages
-             UNION ALL
-             SELECT COALESCE(consumed_seq, 0) AS v FROM sdk_messages
-           )`
+        // MAX(rowid) is O(1) via the rowid index; MAX(consumed_seq) is an index
+        // scan (idx_sdk_messages_consumed_seq) — both avoid a full-table pass on
+        // the hot consume path.
+        const maxRowidStmt = this.db.prepare(
+          `SELECT COALESCE(MAX(rowid), 0) AS m FROM sdk_messages`
+        );
+        const maxConsumedSeqStmt = this.db.prepare(
+          `SELECT COALESCE(MAX(consumed_seq), 0) AS m FROM sdk_messages WHERE consumed_seq IS NOT NULL`
         );
         const timeStmt = this.db.prepare('UPDATE sdk_messages SET timestamp = ? WHERE id = ?');
         const consumedSeqStmt = this.db.prepare(
           'UPDATE sdk_messages SET consumed_seq = ?, timestamp = ? WHERE id = ?'
         );
-        let consumedSeq = (maxBoundaryStmt.get() as { m: number | null }).m ?? 0;
         for (const row of pending) {
           if (row.task_id && row.is_renderable === 1) {
             const max = (maxStmt.get(row.task_id) as { m: number | null } | undefined)?.m ?? 0;
@@ -1518,9 +1519,9 @@ export class SDKMessageRepository {
           // Only a CONSUMED flip carries the consumption boundary (failed rows
           // were never consumed — no consumed_seq).
           if (newStatus === 'consumed') {
-            consumedSeq = (maxBoundaryStmt.get() as { m: number | null }).m ?? 0;
-            consumedSeq++;
-            consumedSeqStmt.run(consumedSeq, now, row.id);
+            const maxRowid = (maxRowidStmt.get() as { m: number }).m;
+            const maxConsumedSeq = (maxConsumedSeqStmt.get() as { m: number }).m;
+            consumedSeqStmt.run(Math.max(maxRowid, maxConsumedSeq) + 1, now, row.id);
           }
         }
       }
