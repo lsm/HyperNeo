@@ -174,8 +174,7 @@ save_artifact({
     rollup: {
       action: '<apply|skip>',
       summary: '<...>',
-      progress: '<number|null>',
-      metrics: { '<key>': '<value>' },
+      metric_deltas: { '<key>': '<value>' },
       next_steps: ['...'],
     },
     metric_snapshot_ids: ['...'],
@@ -193,7 +192,7 @@ save_artifact({
 
 Retain the existing policy and trigger recognition:
 
-- threshold: `GoalAutomationService.onTaskCompleted`;
+- threshold: `GoalAutomationService.onTaskCompleted`, with each completed-task occurrence first written to a durable trigger outbox;
 - schedule: `onSelfNag` plus existing schedule reconciliation, with each occurrence first written to a durable trigger outbox;
 - external: `onExternalEventPublished` with cursor-based deduplication.
 
@@ -208,6 +207,8 @@ Change only the queued job's terminal action. `handleGoalAutomationExecute` shou
 The task is the durable unit of work. Goal automation must serialize cycles at the goal/scope level, not separately by trigger kind. In one transaction, acquire the active-cycle lease for `(goalId, evolutionScopeId)`, merge trigger contexts into its durable pending set, claim evidence, and reserve the initial task ID plus a task-creation outbox row. The dispatcher materializes that reserved task idempotently. A startup/periodic reconciler repairs every leased cycle with a reservation but no task/outbox delivery; triggers coalesced during the gap cannot strand the scope. Release the lease only when no task, review bundle, reserved task, or pending outbox remains.
 
 For self-nag, the schedule-fire transaction must insert a unique occurrence into the trigger outbox **before/with** `updateAfterFireIfPending`; delivery merges that occurrence into the goal/scope lease idempotently. Advancing the cron schedule is therefore not acknowledgement of trigger delivery, and reconciliation retries undelivered occurrences after crashes or enqueue failures.
+
+The same durability applies to completed-task thresholding. The terminal handlers currently invoke `GoalAutomationService.onTaskCompleted` synchronously and only log failures (`end-node-handlers.ts:203-211`, `post-approval-router.ts:376-383`, `space-task-handlers.ts:640-648`). Insert the completed-task occurrence into the trigger outbox **with** the task's `done` transition, and let the goal/scope dispatcher merge it into the lease idempotently rather than firing inline. A reconciler scans durable completed-task evidence whose threshold occurrence was never delivered and re-enqueues it, so a capture/queue failure after the task is already `done`—especially at threshold 1 with no later task—cannot permanently lose the learning cycle.
 
 Use one canonical evidence cursor per `(goalId, evolutionScopeId)` for episode selection. Before enabling the new dispatcher, migrate existing evidence deterministically to append sequences ordered by `(created_at, id)`. For each scope, derive the safely processed prefix from evidence already linked to terminal accepted/dismissed episodes plus the intersection of legacy trigger cursor ranges; seed the canonical cursor only through that contiguous prefix. Persist every later evidence interval indicated by any legacy cursor but not proven processed as explicit pending ranges/IDs, so migration neither replays committed episodes nor skips divergent legacy windows. Run this migration and invariant check transactionally before automation resumes.
 
@@ -244,7 +245,7 @@ The workflow prompt must instruct the agent to execute this procedure, not merel
 
 ### 2. Observe and measure
 
-1. Attach any missing task/workflow-run evidence that is referenced by the trigger.
+1. Attach any missing task/workflow-run evidence that is referenced by the trigger, then extend the frozen cycle claim to include exactly those newly created rows. Evidence attachment and claim extension must be a single server-authorized atomic step: the handler validates that each new evidence row derives from the current trigger context (referenced task/run/event) and rewrites the reserved evidence claim within the same transaction, so the subsequent `create_forge_episode` exact-match check cannot reject them as `evidence_claim_conflict`. Omitting the new rows is not allowed—the trigger's core evidence must be examined before its context can be marked covered.
 2. Capture a **before/after or current** metric snapshot when metric definitions have observable values.
 3. If a metric cannot be measured, record why in evidence rather than inventing a value.
 4. Identify earlier proposals whose created tasks or expected verification windows are now represented in the evidence.
@@ -306,7 +307,7 @@ If no suitable candidate lesson exists, call `create_forge_lesson` with the vali
 
 ### 6. Roll up and finish
 
-1. Apply a concise goal rollup only when the episode is accepted **and** the goal type is `recurring`: summary, metric deltas, progress only when evidence supports it, and next steps. The current rollup service rejects dismissed episodes and every non-recurring goal. For an accepted `one_shot` or `measurable` goal, preserve the learning result in Forge and the terminal artifact but leave goal state unchanged; any later support for those goal types belongs in the goal service rather than this workflow. For a dismissed episode, preserve the dismissal reason and likewise leave goal state unchanged. In every path, advance the cursor only under the contiguous-prefix rule above.
+1. Apply a concise goal rollup only when the episode is accepted **and** the goal type is `recurring`: summary, metric deltas, and next steps. The current rollup service rejects dismissed episodes and every non-recurring goal, and it strips `progress` before calling the goal service (`evolution-episode-service.ts:409-410`); `SpaceGoalService.updateGoal` independently deletes progress for recurring goals (`goal-service.ts:151-157`). Do **not** set `rollup.progress` until a dedicated recurring-progress mechanism exists in the goal service; record evidence-backed progress as a metric snapshot and in the terminal artifact's `rollup.metrics` instead, so the field is never silently dropped. For an accepted `one_shot` or `measurable` goal, preserve the learning result in Forge and the terminal artifact but leave goal state unchanged; any later support for those goal types belongs in the goal service rather than this workflow. For a dismissed episode, preserve the dismissal reason and likewise leave goal state unchanged. In every path, advance the cursor only under the contiguous-prefix rule above.
 2. Write only non-Forge operational heuristics to `learner/<scope-id>/...` memory.
 3. Save the terminal learning-cycle artifact.
 4. Call `approve_task` as the final action; if autonomy blocks it, call `submit_for_approval` instead.
@@ -334,6 +335,7 @@ interface TaskProposal {
     priority: TaskProposal['priority'];
     expectedOutcome: string;
     verificationMethod: NonNullable<TaskProposal['verificationMethod']>;
+    evidenceEpisodeIds: string[];
     acceptedAt: number;
   } | null;
 }
@@ -349,7 +351,7 @@ interface UpdateTaskProposalParams {
 }
 ```
 
-Extend the repository/service params and the `create_forge_task_proposal` and `update_forge_task_proposal` MCP schemas—not only the stored interface—so the Learner can fill incomplete judge output. Draft/proposed and legacy rows may carry `null`; do not invent backfill values. On transition to `accepted`, the proposal service validates both verification fields and atomically snapshots the entire causal contract: action (`title`, `description`, `reason`, `priority`) plus expected outcome and verification method. While status is `accepted` or `created`, it rejects edits to any snapshotted field. Validation reads its expectation from this immutable snapshot, and task materialization must use the snapshot's action verbatim; remove or reject materialization-time action overrides.
+Extend the repository/service params and the `create_forge_task_proposal` and `update_forge_task_proposal` MCP schemas—not only the stored interface—so the Learner can fill incomplete judge output. Draft/proposed and legacy rows may carry `null`; do not invent backfill values. On transition to `accepted`, the proposal service validates both verification fields and atomically snapshots the entire causal contract: action (`title`, `description`, `reason`, `priority`), expected outcome, verification method, **and the evidence episode links** (`evidenceEpisodeIds`). While status is `accepted` or `created`, it rejects edits to any snapshotted field, including evidence links, so provenance used by validation and materialization cannot be reassigned after the outcome is known. `UpdateTaskProposalParams.evidenceEpisodeIds` edits are rejected in those states. Validation reads its expectation from this immutable snapshot, and task materialization must use the snapshot's action and evidence links verbatim; remove or reject materialization-time action/evidence overrides.
 
 For legacy `accepted` proposals lacking a snapshot, add an audited repair transition `accepted → proposed` that clears no evidence links, records `repairReason: 'missing_acceptance_snapshot'`, and permits completing the fields before normal re-acceptance creates the snapshot. A migration identifies/marks these rows as `needsRepair`; it must not invent expectations or silently snapshot mutable legacy content. Already-created proposals remain historical and cannot be repaired/materialized again. The task-materialization handler rejects `needsRepair` and repeats the completeness/snapshot invariant. Consumers must narrow nullable state before accessing verification fields.
 
@@ -400,10 +402,12 @@ A later generic workflow completion schema may formalize artifact expectations, 
 ## Implementation slices
 
 1. **Preset + workflow:** seed `Learner`; add `LEARNING_WORKFLOW`; export it; include it in built-in template hashing/restamping and tests. Add a migration following the existing preset-agent backfill pattern (for example m170/m172): insert the Learner preset into every existing Space idempotently **before** workflow restamping runs. This ordering is required because `seedBuiltInWorkflows` resolves template agent names and otherwise skips or throws when `Learner` is absent. Space-creation seeding alone does not update existing Spaces.
+
+   Make the preset **collision-safe**. An existing Space may already contain a user-created agent named `Learner`; `SpaceAgentManager.create` rejects the backfill as a name collision, while `seedBuiltInWorkflows` resolves a template slot by the first case-insensitive name match and would bind `learning-workflow` to the unrelated custom agent. Give the preset a canonical identity distinct from display name—a stable preset `slug`/`presetId` (for example `learner`) that `SpaceAgentManager` treats as authoritative for built-ins, and require workflow template resolution to match that preset identity rather than an arbitrary agent name. Where a user `Learner` already exists, the migration backfills the preset under the canonical identity (optionally with a distinct display name) and never silently re-binds the workflow to the user's agent. The Learner-specific provisioning path likewise identifies sessions by preset identity, not display name, so automation always runs the secured prompt and filtered servers.
 2. **Automation dispatch:** resolve the workflow; serialize triggers through a goal/scope lease; use a canonical evidence cursor; persist external-event evidence at publication with append ordering; sequence/merge all trigger contexts and drain uncovered contexts through continuations; exclude learning-task self-triggers; transactionally commit terminal state/cursor/reservation/outbox; reconcile legacy terminal writes; isolate manual runs; remove direct episode/review-task creation.
 3. **Learner prompt + tool policy:** provision scope-bound filtered MCP servers and a filtered Learner memory server (prefix-enforced writes, no delete) instead of the ordinary agent-memory server, and make that choice survive the required-servers self-heal (drop `'agent-memory'` from the required list for Learner sessions, or make `reinjectAgentMemoryMcpServer` re-inject the filtered server); enforce level 2 in disposition/rollup handlers; make both terminal handlers validate the decision artifact; make `submit_for_approval` atomically create revisioned whole-cycle review bundles with reviewed-row snapshots; make initial episode creation enforce the server-reserved evidence claim; route level-1 bundle apply through a verified-operator surface that is excluded from `approve_pending_completion` and rejects stale rows; add level-3 plus scope-policy materialization gating.
 4. **Validation model:** add cycle-key-idempotent episodes; migrate nullable proposal fields and immutable full causal snapshots; extend mutation schemas; remove materialization overrides; add audited legacy repair; add pending/final/rejected validations with replacement links; feed validations to judging.
-5. **Tests:** existing-Space migration; cross-trigger serialization/canonical cursor; publication-time and legacy-late external evidence; uncovered merged-context continuation for every trigger kind; self-trigger exclusion; cycle-key retry and reserved-claim exact-match rejection on the first call; autonomous artifact enforcement; no-op identity; level-1 bundle creation, rejection/resubmission revisions, verified-operator-only apply, coordinator rejection, and stale-row rejection; continuation races/reconciliation; manual isolation; paused coalescing; cross-scope denial; filtered memory server (prefix/write/delete denial) surviving a rehydrate through `ensureNodeAgentAttached`; validation/lesson availability; legacy proposal repair/immutable snapshots/no overrides; autonomy gates; rollup paths; validation links; no PR dependency.
+5. **Tests:** existing-Space migration and Learner name-collision backfill under a canonical preset identity (workflow binds to the preset, not a user `Learner`); cross-trigger serialization/canonical cursor; publication-time and legacy-late external evidence; atomic trigger-evidence attachment with claim extension (no `evidence_claim_conflict`); uncovered merged-context continuation for every trigger kind; self-trigger exclusion; durable completed-task threshold outbox and recovery when inline fire fails (threshold 1); cycle-key retry and reserved-claim exact-match rejection on the first call; autonomous artifact enforcement; no-op identity; level-1 bundle creation, rejection/resubmission revisions, verified-operator-only apply, coordinator rejection, and stale-row rejection; continuation races/reconciliation; manual isolation; paused coalescing; cross-scope denial; filtered memory server (prefix/write/delete denial) surviving a rehydrate through `ensureNodeAgentAttached`; validation/lesson availability; legacy proposal repair/immutable snapshots (incl. evidence links)/no overrides; autonomy gates; accepted recurring rollup with progress recorded as metrics (no silent drop) plus non-recurring/dismissed no-rollup paths; validation links; no PR dependency.
 
 ## Open owner decisions
 
