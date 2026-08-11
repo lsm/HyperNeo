@@ -63,7 +63,7 @@ interface InsertSdkMessageArgs {
   sdkMessage: Record<string, unknown>;
   /** ISO timestamp (stored TEXT). Default is a fixed known value. */
   timestamp?: string;
-  sendStatus?: 'deferred' | 'enqueued' | 'consumed' | 'failed';
+  sendStatus?: 'deferred' | 'enqueued' | 'submitted' | 'consumed' | 'failed';
   origin?: 'human' | 'system' | null;
   taskId?: string | null;
 }
@@ -73,10 +73,11 @@ function insertSdkMessage(db: BunDatabase, args: InsertSdkMessageArgs): void {
     typeof args.sdkMessage.parent_tool_use_id === 'string'
       ? args.sdkMessage.parent_tool_use_id
       : null;
+  const sdkUuid = typeof args.sdkMessage.uuid === 'string' ? args.sdkMessage.uuid : null;
   db.prepare(
     `INSERT INTO sdk_messages
-		 (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin, parent_tool_use_id, task_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		 (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin, parent_tool_use_id, task_id, sdk_uuid)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     args.id,
     args.sessionId,
@@ -87,7 +88,39 @@ function insertSdkMessage(db: BunDatabase, args: InsertSdkMessageArgs): void {
     args.sendStatus ?? 'consumed',
     args.origin ?? null,
     parentToolUseId,
-    args.taskId ?? null
+    args.taskId ?? null,
+    sdkUuid
+  );
+}
+
+/** Insert a message_delivery job_queue row (task #862 retry-signal tests). */
+function insertDeliveryJob(
+  db: BunDatabase,
+  args: {
+    id: string;
+    sessionId: string;
+    messageUuid: string;
+    status?: 'pending' | 'processing' | 'completed' | 'failed' | 'dead';
+    retryCount?: number;
+    role?: 'turn' | 'steer';
+  }
+): void {
+  db.prepare(
+    `INSERT INTO job_queue
+       (id, queue, status, payload, retry_count, max_retries, run_at, created_at)
+     VALUES (?, 'message_delivery', ?, ?, ?, 8, ?, ?)`
+  ).run(
+    args.id,
+    args.status ?? 'pending',
+    JSON.stringify({
+      sessionId: args.sessionId,
+      messageUuid: args.messageUuid,
+      role: args.role ?? 'turn',
+      origin: 'chat',
+    }),
+    args.retryCount ?? 0,
+    Date.now(),
+    Date.now()
   );
 }
 
@@ -1050,5 +1083,71 @@ describe('messages.bySession — mapRow', () => {
     // carry no deliveryStatus; user rows always carry their mapped state.
     expect(okRow.deliveryStatus).toBe('delivered');
     expect(failRow.deliveryStatus).toBe('failed');
+  });
+
+  test('marks a non-terminal user message "retrying" when its delivery job has retry_count > 0', () => {
+    insertSdkMessage(db, {
+      id: 'm-enq',
+      sessionId: 's1',
+      messageType: 'user',
+      sdkMessage: { type: 'user', uuid: 'u-enq', message: { content: 'enqueued' } },
+      timestamp: '2024-01-01 00:00:01',
+      sendStatus: 'enqueued',
+    });
+    insertSdkMessage(db, {
+      id: 'm-sub',
+      sessionId: 's1',
+      messageType: 'user',
+      sdkMessage: { type: 'user', uuid: 'u-sub', message: { content: 'submitted' } },
+      timestamp: '2024-01-01 00:00:02',
+      sendStatus: 'submitted',
+    });
+
+    // No active retry jobs yet → plain queued / processing.
+    let byUuid = new Map(query(db, 's1', 10).map((r) => [r.uuid as string, r]));
+    expect(byUuid.get('u-enq')!.deliveryStatus).toBe('queued');
+    expect(byUuid.get('u-sub')!.deliveryStatus).toBe('processing');
+
+    // A reclaim re-drove both (active job, retry_count > 0) → retrying.
+    insertDeliveryJob(db, {
+      id: 'job-enq',
+      sessionId: 's1',
+      messageUuid: 'u-enq',
+      status: 'pending',
+      retryCount: 1,
+    });
+    insertDeliveryJob(db, {
+      id: 'job-sub',
+      sessionId: 's1',
+      messageUuid: 'u-sub',
+      status: 'processing',
+      retryCount: 2,
+      role: 'steer',
+    });
+
+    byUuid = new Map(query(db, 's1', 10).map((r) => [r.uuid as string, r]));
+    expect(byUuid.get('u-enq')!.deliveryStatus).toBe('retrying');
+    expect(byUuid.get('u-sub')!.deliveryStatus).toBe('retrying');
+  });
+
+  test('a delivery job with retry_count 0 does not mark the message retrying', () => {
+    insertSdkMessage(db, {
+      id: 'm-fresh',
+      sessionId: 's1',
+      messageType: 'user',
+      sdkMessage: { type: 'user', uuid: 'u-fresh', message: { content: 'fresh' } },
+      timestamp: '2024-01-01 00:00:01',
+      sendStatus: 'enqueued',
+    });
+    insertDeliveryJob(db, {
+      id: 'job-fresh',
+      sessionId: 's1',
+      messageUuid: 'u-fresh',
+      status: 'pending',
+      retryCount: 0,
+    });
+
+    const [row] = query(db, 's1', 10);
+    expect(row.deliveryStatus).toBe('queued');
   });
 });
