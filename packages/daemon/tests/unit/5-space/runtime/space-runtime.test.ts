@@ -1995,6 +1995,219 @@ describe('SpaceRuntime', () => {
       expect(nodeExecutionRepo.getById(helperExec.id)!.agentSessionId).toBe('session:helper-slot');
     });
 
+    // Compound "nodeName/agentName" handoff targets — regression coverage for
+    // the message-delivery v2 scoped queue rows emitted by agent-message-router
+    // (scopedAgentName) and task-agent-manager. The resolver must split the
+    // compound form and match node-by-name + slot-by-name; plain slot names and
+    // node names (no "/") keep resolving for backward compatibility. Without
+    // this, every Coding-workflow coder→reviewer handoff blocks the run.
+    function makeCompoundHandoffWorkflow() {
+      return workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: `Compound Handoff ${Date.now()}-${Math.random()}`,
+        description: 'Compound nodeName/agentName handoff resolution',
+        nodes: [
+          { id: 'coding-node', name: 'Coding', agents: [{ name: 'coder', agentId: AGENT_CODER }] },
+          {
+            id: 'review-node',
+            name: 'Review',
+            agents: [{ name: 'reviewer', agentId: AGENT_GENERAL }],
+          },
+          { id: 'qa-node', name: 'QA', agents: [{ name: 'qa', agentId: AGENT_PLANNER }] },
+        ],
+        transitions: [],
+        channels: [
+          { id: 'coding-to-review', from: 'Coding', to: 'Review' },
+          { id: 'review-to-qa', from: 'Review', to: 'QA' },
+        ],
+        startNodeId: 'coding-node',
+        endNodeId: 'qa-node',
+        rules: [],
+        completionAutonomyLevel: 3,
+      });
+    }
+
+    // The real flushPendingMessagesForTarget drains both the bare slot name and
+    // the compound "nodeName/agentName" form; mirror that so compound queue rows
+    // are marked delivered in these tests.
+    function makeCompoundAwareFlush(workflow: SpaceWorkflow) {
+      const nodeNameById = new Map(workflow.nodes.map((node) => [node.id, node.name]));
+      return async (runId: string, agentName: string, sessionId: string) => {
+        const repo = new PendingAgentMessageRepository(db);
+        const execution = nodeExecutionRepo.getByAgentSessionId(sessionId);
+        const nodeName = execution ? nodeNameById.get(execution.workflowNodeId) : undefined;
+        const targets = [agentName, ...(nodeName ? [`${nodeName}/${agentName}`] : [])];
+        const seen = new Set<string>();
+        for (const target of targets) {
+          for (const row of repo.listPendingForTarget(runId, target)) {
+            if (seen.has(row.id)) continue;
+            seen.add(row.id);
+            repo.markDelivered(row.id, sessionId);
+          }
+        }
+      };
+    }
+
+    test('resolves a compound "Review/reviewer" handoff target (coder→reviewer)', async () => {
+      const workflow = makeCompoundHandoffWorkflow();
+      const { run, tasks } = await runtime.startWorkflowRun(
+        SPACE_ID,
+        workflow.id,
+        'Compound handoff'
+      );
+      const task = tasks[0];
+      taskRepo.updateTask(task.id, { status: 'in_progress' });
+      // Idle the start node so the sweep focuses on the queued reviewer handoff.
+      nodeExecutionRepo.update(nodeExecutionRepo.listByWorkflowRun(run.id)[0]!.id, {
+        status: 'idle',
+        agentSessionId: null,
+      });
+
+      const pendingRepo = new PendingAgentMessageRepository(db);
+      pendingRepo.enqueue({
+        workflowRunId: run.id,
+        spaceId: SPACE_ID,
+        taskId: task.id,
+        sourceAgentName: 'coder',
+        targetKind: 'node_agent',
+        targetAgentName: 'Review/reviewer',
+        message: 'please review',
+        ttlMs: 60_000,
+        maxAttempts: 3,
+      });
+      const tam = makeRepairTam({ flush: makeCompoundAwareFlush(workflow) });
+      await buildRepairRuntime(tam, pendingRepo).executeTick();
+
+      const reviewerExec = nodeExecutionRepo
+        .listByWorkflowRun(run.id)
+        .find((execution) => execution.workflowNodeId === 'review-node')!;
+      expect(reviewerExec).toBeTruthy();
+      expect(reviewerExec.agentName).toBe('reviewer');
+      expect(reviewerExec.agentId).toBe(AGENT_GENERAL);
+      expect(reviewerExec.status).toBe('in_progress');
+      expect(reviewerExec.agentSessionId).toBe(`session:${reviewerExec.id}`);
+      expect(pendingRepo.listAllForRun(run.id)[0].status).toBe('delivered');
+    });
+
+    test('resolves a compound "Coding/coder" handoff target', async () => {
+      const workflow = makeCompoundHandoffWorkflow();
+      const { run, tasks } = await runtime.startWorkflowRun(
+        SPACE_ID,
+        workflow.id,
+        'Compound handoff'
+      );
+      const task = tasks[0];
+      taskRepo.updateTask(task.id, { status: 'in_progress' });
+      nodeExecutionRepo.update(nodeExecutionRepo.listByWorkflowRun(run.id)[0]!.id, {
+        status: 'pending',
+        agentSessionId: null,
+        completedAt: null,
+      });
+
+      const pendingRepo = new PendingAgentMessageRepository(db);
+      pendingRepo.enqueue({
+        workflowRunId: run.id,
+        spaceId: SPACE_ID,
+        taskId: task.id,
+        sourceAgentName: 'reviewer',
+        targetKind: 'node_agent',
+        targetAgentName: 'Coding/coder',
+        message: 'please revise',
+        ttlMs: 60_000,
+        maxAttempts: 3,
+      });
+      const tam = makeRepairTam({ flush: makeCompoundAwareFlush(workflow) });
+      await buildRepairRuntime(tam, pendingRepo).executeTick();
+
+      const coderExec = nodeExecutionRepo
+        .listByWorkflowRun(run.id)
+        .find((execution) => execution.workflowNodeId === 'coding-node')!;
+      expect(coderExec.agentName).toBe('coder');
+      expect(coderExec.status).toBe('in_progress');
+      expect(coderExec.agentSessionId).toBe(`session:${coderExec.id}`);
+      expect(pendingRepo.listAllForRun(run.id)[0].status).toBe('delivered');
+    });
+
+    test('non-compound "reviewer" slot name still resolves (backward compat)', async () => {
+      const workflow = makeCompoundHandoffWorkflow();
+      const { run, tasks } = await runtime.startWorkflowRun(
+        SPACE_ID,
+        workflow.id,
+        'Compound handoff'
+      );
+      const task = tasks[0];
+      taskRepo.updateTask(task.id, { status: 'in_progress' });
+      nodeExecutionRepo.update(nodeExecutionRepo.listByWorkflowRun(run.id)[0]!.id, {
+        status: 'idle',
+        agentSessionId: null,
+      });
+
+      const pendingRepo = new PendingAgentMessageRepository(db);
+      pendingRepo.enqueue({
+        workflowRunId: run.id,
+        spaceId: SPACE_ID,
+        taskId: task.id,
+        sourceAgentName: 'coder',
+        targetKind: 'node_agent',
+        targetAgentName: 'reviewer',
+        message: 'please review',
+        ttlMs: 60_000,
+        maxAttempts: 3,
+      });
+      // Default mock flush drains by the bare slot name, which matches here.
+      const tam = makeRepairTam();
+      await buildRepairRuntime(tam, pendingRepo).executeTick();
+
+      const reviewerExec = nodeExecutionRepo
+        .listByWorkflowRun(run.id)
+        .find((execution) => execution.workflowNodeId === 'review-node')!;
+      expect(reviewerExec).toBeTruthy();
+      expect(reviewerExec.agentName).toBe('reviewer');
+      expect(reviewerExec.status).toBe('in_progress');
+      expect(pendingRepo.listAllForRun(run.id)[0].status).toBe('delivered');
+    });
+
+    test('non-compound "Review" node name still resolves (backward compat)', async () => {
+      const workflow = makeCompoundHandoffWorkflow();
+      const { run, tasks } = await runtime.startWorkflowRun(
+        SPACE_ID,
+        workflow.id,
+        'Compound handoff'
+      );
+      const task = tasks[0];
+      taskRepo.updateTask(task.id, { status: 'in_progress' });
+      nodeExecutionRepo.update(nodeExecutionRepo.listByWorkflowRun(run.id)[0]!.id, {
+        status: 'idle',
+        agentSessionId: null,
+      });
+
+      const pendingRepo = new PendingAgentMessageRepository(db);
+      pendingRepo.enqueue({
+        workflowRunId: run.id,
+        spaceId: SPACE_ID,
+        taskId: task.id,
+        sourceAgentName: 'coder',
+        targetKind: 'node_agent',
+        targetAgentName: 'Review',
+        message: 'please review',
+        ttlMs: 60_000,
+        maxAttempts: 3,
+      });
+      const tam = makeRepairTam();
+      await buildRepairRuntime(tam, pendingRepo).executeTick();
+
+      // Bare node name resolves to the Review node's first (reviewer) slot and
+      // spawns it. (A bare node name is a legacy/defensive target — current
+      // routing emits slot names or compound forms — so we assert resolution,
+      // not delivery, which depends on a matching flush key.)
+      const reviewerExec = nodeExecutionRepo
+        .listByWorkflowRun(run.id)
+        .find((execution) => execution.workflowNodeId === 'review-node')!;
+      expect(reviewerExec).toBeTruthy();
+      expect(reviewerExec.agentName).toBe('reviewer');
+      expect(reviewerExec.status).toBe('in_progress');
+    });
+
     test('skips repair while target execution is waiting for rebind recovery', async () => {
       const { run, pendingRepo } = await setupQueuedHandoff();
       const targetExec = nodeExecutionRepo

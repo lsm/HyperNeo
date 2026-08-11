@@ -8294,14 +8294,39 @@ export class SpaceRuntime {
     targetAgentName: string,
     workflowNodeId?: string
   ): { nodeId: string; agentName: string; agentId: string | null } | null {
+    // The message-delivery v2 router (agent-message-router.ts `scopedAgentName`)
+    // and task-agent-manager.ts scope queued node-agent handoff rows with a
+    // compound "nodeName/agentName" target (e.g. "Review/reviewer") so two nodes
+    // reusing a slot name don't both drain the same row. Parse the compound form
+    // into a node identifier and a slot identifier before matching; plain slot
+    // names and node names (no "/") keep the legacy behavior.
+    const slashIdx = targetAgentName.indexOf('/');
+    const isCompound = slashIdx >= 0;
+    const nodePart = isCompound ? targetAgentName.slice(0, slashIdx) : targetAgentName;
+    const slotPart = isCompound ? targetAgentName.slice(slashIdx + 1) : undefined;
+
     for (const node of workflow.nodes) {
       // Node-scoped resolution: only consider the pinned node so two nodes
       // reusing a slot name don't both resolve to the first one.
       if (workflowNodeId && node.id !== workflowNodeId) continue;
       const slots = resolveNodeAgents(node);
-      const nodeNameMatch = node.name === targetAgentName || node.id === targetAgentName;
+      const nodeNameMatch = node.name === nodePart || node.id === nodePart;
+
+      if (isCompound) {
+        // Compound "nodeName/agentName": the node must match by name/id, and the
+        // slot by name. Fall back to the first slot if the node matched but the
+        // named slot is absent (mirrors the non-compound node-name path).
+        if (!nodeNameMatch) continue;
+        const direct = slots.find((slot) => slot.name === slotPart);
+        if (direct)
+          return { nodeId: node.id, agentName: direct.name, agentId: direct.agentId ?? null };
+        if (slots[0])
+          return { nodeId: node.id, agentName: slots[0].name, agentId: slots[0].agentId ?? null };
+        return { nodeId: node.id, agentName: slotPart!, agentId: null };
+      }
+
       const direct = slots.find(
-        (slot) => slot.name === targetAgentName || (nodeNameMatch && slot.name === node.name)
+        (slot) => slot.name === nodePart || (nodeNameMatch && slot.name === node.name)
       );
       if (direct)
         return { nodeId: node.id, agentName: direct.name, agentId: direct.agentId ?? null };
@@ -8309,7 +8334,7 @@ export class SpaceRuntime {
         return { nodeId: node.id, agentName: slots[0].name, agentId: slots[0].agentId ?? null };
       }
       if (nodeNameMatch) {
-        return { nodeId: node.id, agentName: targetAgentName, agentId: null };
+        return { nodeId: node.id, agentName: nodePart, agentId: null };
       }
     }
     return null;
