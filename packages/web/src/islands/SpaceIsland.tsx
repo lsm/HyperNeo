@@ -453,18 +453,16 @@ export default function SpaceIsland({
   if (viewMode === 'forge' && space) {
     return (
       <>
-        <div
-          class="flex-1 flex flex-col overflow-hidden bg-app-content"
-          data-testid="space-forge-view"
-          {...baseLayerProps}
+        <GlassRouteShell
+          pageTitle="Evolve"
+          appearance="hero"
+          surfaceKey="forge"
+          testId="space-forge-view"
+          baseLayerProps={baseLayerProps}
+          fallback={lazyFallback}
         >
-          <SpacePageHeader pageTitle="Evolve" />
-          <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
-            <Suspense fallback={lazyFallback}>
-              <SpaceForge spaceId={spaceId} />
-            </Suspense>
-          </div>
-        </div>
+          <SpaceForge spaceId={spaceId} />
+        </GlassRouteShell>
         {overlay}
       </>
     );
