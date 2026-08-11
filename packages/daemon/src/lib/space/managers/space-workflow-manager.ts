@@ -22,7 +22,7 @@ import type {
   WorkflowHook,
   Gate,
 } from '@hyperneo/shared';
-import { HANDOFF_TARGET_WILDCARD } from '@hyperneo/shared';
+import { HANDOFF_TARGET_WILDCARD, MAX_NODE_HANDOFF_TRANSITIONS } from '@hyperneo/shared';
 import { validateWorkflowHooks } from '../workflow-hook-validation';
 import { generateUUID } from '@hyperneo/shared';
 import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository';
@@ -980,7 +980,7 @@ export class SpaceWorkflowManager {
   /**
    * Validate declared outbound handoff transitions on every node.
    *
-   * Enforces the workflow handoff CONTRACT (see WorkflowTransition /
+   * Enforces the workflow handoff CONTRACT (see HandoffTransition /
    * HandoffOperation):
    * - `id` is a non-empty string, unique within its node.
    * - `target` is a known node name, agent slot name, or the broadcast wildcard
@@ -1018,12 +1018,23 @@ export class SpaceWorkflowManager {
 
       const seenIds = new Set<string>();
       const seenTargets = new Set<string>();
+      if (transitions.length > MAX_NODE_HANDOFF_TRANSITIONS) {
+        throw new WorkflowValidationError(
+          `node[${ni}] "${node.name}": transitions cannot contain more than ${MAX_NODE_HANDOFF_TRANSITIONS} entries`
+        );
+      }
       for (let ti = 0; ti < transitions.length; ti++) {
         const t = transitions[ti];
         const loc = `node[${ni}] "${node.name}".transitions[${ti}]`;
 
         if (!t.id || !t.id.trim()) {
           throw new WorkflowValidationError(`${loc}: 'id' must be a non-empty string`);
+        }
+        if (t.id.length > 100) {
+          throw new WorkflowValidationError(`${loc}: 'id' must be at most 100 characters`);
+        }
+        if (t.label !== undefined && t.label.length > 200) {
+          throw new WorkflowValidationError(`${loc}: 'label' must be at most 200 characters`);
         }
         if (seenIds.has(t.id)) {
           throw new WorkflowValidationError(
@@ -1034,6 +1045,9 @@ export class SpaceWorkflowManager {
 
         if (!t.target || !t.target.trim()) {
           throw new WorkflowValidationError(`${loc}: 'target' must be a non-empty string`);
+        }
+        if (t.target.length > 100) {
+          throw new WorkflowValidationError(`${loc}: 'target' must be at most 100 characters`);
         }
         if (!targetNames.has(t.target)) {
           throw new WorkflowValidationError(
@@ -1052,6 +1066,9 @@ export class SpaceWorkflowManager {
           if (!t.gateId.trim()) {
             throw new WorkflowValidationError(`${loc}: 'gateId' must be a non-empty string`);
           }
+          if (t.gateId.length > 100) {
+            throw new WorkflowValidationError(`${loc}: 'gateId' must be at most 100 characters`);
+          }
           if (!gateIds.has(t.gateId)) {
             throw new WorkflowValidationError(
               `${loc}: gateId "${t.gateId}" does not reference a known gate`
@@ -1062,6 +1079,9 @@ export class SpaceWorkflowManager {
         if (t.hookId !== undefined) {
           if (!t.hookId.trim()) {
             throw new WorkflowValidationError(`${loc}: 'hookId' must be a non-empty string`);
+          }
+          if (t.hookId.length > 100) {
+            throw new WorkflowValidationError(`${loc}: 'hookId' must be at most 100 characters`);
           }
           if (!hookIds.has(t.hookId)) {
             throw new WorkflowValidationError(

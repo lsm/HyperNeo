@@ -1821,18 +1821,16 @@ export function mergeNodeStructuralFieldsFromTemplate(
       // would silently delete any non-default timeout on a seeded node during
       // restamp and revert the Codex hook to the global default window.
       codexTimeoutSeconds: templateNode?.codexTimeoutSeconds ?? node.codexTimeoutSeconds,
-      // Declared handoff transitions are template-owned structural config (like
-      // postApproval): overwrite from the template on restamp so a template
-      // change to a node's outbound handoffs reaches seeded spaces. When the
-      // template node is absent (renamed away), preserve the existing node's
-      // transitions. Only arrays with length > 0 are carried — an empty/absent
-      // template value clears the field, matching postApproval semantics.
+      // Declared handoff transitions: overwrite from the template ONLY when it
+      // explicitly declares them, otherwise PRESERVE the node's existing value.
+      // Built-in templates do not declare transitions today, so a "clear when
+      // template-silent" rule (like the postApproval one above) would wipe any
+      // operator-/RPC-installed transitions on every daemon restart. Mirrors the
+      // codexTimeoutSeconds preserve-when-template-silent pattern directly above.
       transitions:
-        templateNode && templateNode.transitions && templateNode.transitions.length > 0
+        templateNode?.transitions && templateNode.transitions.length > 0
           ? templateNode.transitions
-          : templateNode
-            ? undefined
-            : node.transitions,
+          : node.transitions,
       agents: node.agents.map((agent) => {
         const key = `${node.name}::${agent.name}`;
         const templateAgent = templateAgentsByKey.get(key);

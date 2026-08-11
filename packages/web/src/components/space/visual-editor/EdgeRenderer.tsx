@@ -1,7 +1,7 @@
 /**
  * EdgeRenderer
  *
- * Renders WorkflowTransition entries as SVG cubic bezier paths.
+ * Renders VisualTransition (canvas edge) entries as SVG cubic bezier paths.
  *
  * Each edge connects the output port (bottom-center) of the source node to the
  * input port (top-center) of the target node. Control points are offset vertically

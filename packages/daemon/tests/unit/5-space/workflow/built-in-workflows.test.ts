@@ -23,6 +23,7 @@ import { join } from 'node:path';
 import type {
   Gate,
   GateScript,
+  HandoffTransition,
   SpaceWorkerAgent,
   SpaceWorkflow,
   WorkflowHook,
@@ -7192,6 +7193,67 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     );
     const mergedReview = merged.find((n) => n.name === 'Review')!;
     expect(mergedReview.codexTimeoutSeconds).toBe(900);
+  });
+
+  test('mergeNodeStructuralFieldsFromTemplate preserves operator-configured handoff transitions when the template is silent', () => {
+    // Built-in templates do not declare transitions today. Restamp must NOT wipe
+    // operator-/RPC-installed transitions on a seeded node — mirrors the
+    // codexTimeoutSeconds preserve-when-template-silent rule directly above.
+    const templateNode = CODING_WITH_QA_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
+    expect(templateNode.transitions).toBeUndefined();
+    const installed: HandoffTransition[] = [{ id: 'to-review', target: 'Review' }];
+    const existingNode: WorkflowNode = {
+      ...templateNode,
+      transitions: installed,
+    };
+
+    const merged = mergeNodeStructuralFieldsFromTemplate(
+      [existingNode],
+      CODING_WITH_QA_WORKFLOW.nodes,
+      () => 'agent-coder'
+    );
+    const mergedCoding = merged.find((n) => n.name === 'Coding')!;
+    expect(mergedCoding.transitions).toEqual(installed);
+  });
+
+  test('mergeNodeStructuralFieldsFromTemplate overwrites transitions when the template declares them', () => {
+    const templateNode = CODING_WITH_QA_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
+    const declared: HandoffTransition[] = [{ id: 'to-review', target: 'Review', gateId: 'g1' }];
+    const templateWithTransitions = CODING_WITH_QA_WORKFLOW.nodes.map((n) =>
+      n.name === 'Coding' ? { ...n, transitions: declared } : n
+    );
+    const existingNode: WorkflowNode = {
+      ...templateNode,
+      transitions: [{ id: 'stale', target: 'Review' }],
+    };
+
+    const merged = mergeNodeStructuralFieldsFromTemplate(
+      [existingNode],
+      templateWithTransitions,
+      () => 'agent-coder'
+    );
+    const mergedCoding = merged.find((n) => n.name === 'Coding')!;
+    expect(mergedCoding.transitions).toEqual(declared);
+  });
+
+  test('mergeNodeStructuralFieldsFromTemplate preserves transitions for a node renamed away from the template', () => {
+    // When the template no longer has a matching node, the existing node is
+    // treated as user-owned; its transitions are preserved (consistent with
+    // codexTimeoutSeconds), not cleared.
+    const installed: HandoffTransition[] = [{ id: 'to-review', target: 'Review' }];
+    const orphan: WorkflowNode = {
+      id: 'orphan-1',
+      name: 'Custom Node',
+      agents: [{ agentId: 'agent-1', name: 'coder' }],
+      transitions: installed,
+    };
+
+    const merged = mergeNodeStructuralFieldsFromTemplate(
+      [orphan],
+      CODING_WITH_QA_WORKFLOW.nodes,
+      () => 'agent-coder'
+    );
+    expect(merged[0].transitions).toEqual(installed);
   });
 
   test('migrateWorkflowGateProgressionToHooks post-pass is idempotent on plan-approval hooks', () => {

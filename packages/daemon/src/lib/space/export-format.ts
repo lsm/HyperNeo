@@ -21,6 +21,7 @@
 
 import { z } from 'zod';
 import { validateGlobPattern } from '../external-events/topic-validator';
+import { MAX_NODE_HANDOFF_TRANSITIONS } from '@hyperneo/shared';
 import type {
   SpaceWorkerAgent,
   SpaceWorkflow,
@@ -29,7 +30,7 @@ import type {
   ExportedWorkflowChannel,
   ExportedWorkflowNode,
   ExportedWorkflowNodeAgent,
-  ExportedWorkflowTransition,
+  ExportedHandoffTransition,
   SpaceExportBundle,
 } from '@hyperneo/shared';
 import { validateSlug } from './slug';
@@ -223,17 +224,21 @@ const workflowHookSchema = z.object({
 
 /**
  * Zod schema for an exported workflow handoff transition.
- * Mirrors the runtime `WorkflowTransition` shape (the runtime and exported
+ * Mirrors the runtime `HandoffTransition` shape (the runtime and exported
  * shapes already agree on name-based addressing, so there is nothing to strip).
  * `gateId` is carried as-is — gates are not part of the export bundle, so it
  * may reference a gate absent on re-import, exactly like channel `gateId`.
+ *
+ * `.trim()` on id/target/gateId/hookId mirrors `eventInterestTopicFromSchema`
+ * — whitespace-only values would slip past a bare `.min(1)` only to fail later
+ * at createWorkflow. String length caps bound unbounded import input.
  */
-const exportedWorkflowTransitionSchema = z.object({
-  id: z.string().min(1),
-  label: z.string().optional(),
-  target: z.string().min(1),
-  gateId: z.string().optional(),
-  hookId: z.string().optional(),
+const exportedHandoffTransitionSchema = z.object({
+  id: z.string().trim().min(1).max(100),
+  label: z.string().max(200).optional(),
+  target: z.string().trim().min(1).max(100),
+  gateId: z.string().trim().min(1).max(100).optional(),
+  hookId: z.string().trim().min(1).max(100).optional(),
   maxCycles: z.number().int().positive().optional(),
 });
 
@@ -251,7 +256,10 @@ const exportedWorkflowNodeSchema = z.object({
   codexPollIntervalMs: z.number().int().positive().optional(),
   codexTimeoutSeconds: z.number().int().positive().optional(),
   /** Declared outbound handoff transitions (first-class handoff contract). */
-  transitions: z.array(exportedWorkflowTransitionSchema).optional(),
+  transitions: z
+    .array(exportedHandoffTransitionSchema)
+    .max(MAX_NODE_HANDOFF_TRANSITIONS)
+    .optional(),
 });
 
 /**
@@ -464,7 +472,7 @@ export function exportWorkflow(
       exported.codexTimeoutSeconds = node.codexTimeoutSeconds;
     if (node.transitions && node.transitions.length > 0) {
       exported.transitions = node.transitions.map((t) => {
-        const out: ExportedWorkflowTransition = { id: t.id, target: t.target };
+        const out: ExportedHandoffTransition = { id: t.id, target: t.target };
         if (t.label !== undefined) out.label = t.label;
         if (t.gateId !== undefined) out.gateId = t.gateId;
         if (t.hookId !== undefined) out.hookId = t.hookId;

@@ -25,6 +25,7 @@ import {
   normalizeOverride,
 } from '../../../../src/lib/space/export-format.ts';
 import type { SpaceWorkerAgent, SpaceWorkflow } from '@hyperneo/shared';
+import { MAX_NODE_HANDOFF_TRANSITIONS } from '@hyperneo/shared';
 
 // ---------------------------------------------------------------------------
 // Test fixtures
@@ -2487,5 +2488,21 @@ describe('validateExportedWorkflow — handoff transitions', () => {
     expect(result.ok).toBe(false);
     if (!result.ok)
       expect(result.error).toContain('hookId "ghost" does not reference a known hook');
+  });
+
+  test('trims and rejects whitespace-only id/target (mirrors eventInterestTopicFrom)', () => {
+    const idResult = validateExportedWorkflow(wfWithTransitions([{ id: '   ', target: 'Review' }]));
+    expect(idResult.ok).toBe(false);
+    const targetResult = validateExportedWorkflow(wfWithTransitions([{ id: 'a', target: '   ' }]));
+    expect(targetResult.ok).toBe(false);
+  });
+
+  test('rejects more than MAX_NODE_HANDOFF_TRANSITIONS transitions on a node', () => {
+    const tooMany = Array.from({ length: MAX_NODE_HANDOFF_TRANSITIONS + 1 }, (_, i) => ({
+      id: `t${i}`,
+      target: 'Review',
+    }));
+    const result = validateExportedWorkflow(wfWithTransitions(tooMany));
+    expect(result.ok).toBe(false);
   });
 });

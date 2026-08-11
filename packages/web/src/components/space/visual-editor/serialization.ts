@@ -153,6 +153,9 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
       requireCodexApproval: s.requireCodexApproval,
       codexPollIntervalMs: s.codexPollIntervalMs,
       codexTimeoutSeconds: s.codexTimeoutSeconds,
+      // Carry declared handoff transitions verbatim so a visual-editor save
+      // round-trips them instead of dropping them to undefined.
+      handoffTransitions: s.transitions,
     };
     return { step, position };
   });
@@ -392,6 +395,10 @@ function buildWorkflowFields(state: VisualEditorState): {
         : {}),
       ...(node.step.codexTimeoutSeconds
         ? { codexTimeoutSeconds: node.step.codexTimeoutSeconds }
+        : {}),
+      // Re-emit carried handoff transitions (mapped back to the backend field).
+      ...(node.step.handoffTransitions && node.step.handoffTransitions.length > 0
+        ? { transitions: node.step.handoffTransitions }
         : {}),
     };
   });

@@ -2,15 +2,23 @@
  * Pure contract logic for the first-class workflow handoff operation.
  *
  * A handoff `target` (see `HandoffOperation`) must resolve to a declared
- * outbound `WorkflowTransition` on the sender's node. This module owns that
+ * outbound `HandoffTransition` on the sender's node. This module owns that
  * resolution as a pure function so the contract is testable without the daemon
  * runtime. Runtime transition EXECUTION (completing the sender's round,
  * delivering to the target, enforcing gate/hook authorization, checking the
  * `data` shape) is a separate phase and intentionally NOT implemented here.
  */
 
-import type { WorkflowTransition } from '../types/space.ts';
+import type { HandoffTransition } from '../types/space.ts';
 import { HANDOFF_TARGET_WILDCARD } from '../types/space.ts';
+
+/**
+ * Maximum number of declared outbound handoff transitions a single node may
+ * carry. Bounded so a node's handoff surface stays auditable and so import
+ * validation (Zod) and direct-RPC validation (SpaceWorkflowManager) share one
+ * contract constant. Mirrors the per-slot cap pattern used for eventInterests.
+ */
+export const MAX_NODE_HANDOFF_TRANSITIONS = 32;
 
 /**
  * Why a handoff failed to resolve.
@@ -25,7 +33,7 @@ import { HANDOFF_TARGET_WILDCARD } from '../types/space.ts';
 export type HandoffResolveFailure = 'no_transitions' | 'unknown_target' | 'ambiguous';
 
 export type HandoffResolveResult =
-  | { ok: true; transition: WorkflowTransition }
+  | { ok: true; transition: HandoffTransition }
   | { ok: false; reason: HandoffResolveFailure };
 
 /**
@@ -43,7 +51,7 @@ export type HandoffResolveResult =
  * @returns The unique matching transition, or a typed failure reason.
  */
 export function resolveHandoffTransition(
-  transitions: readonly WorkflowTransition[] | undefined,
+  transitions: readonly HandoffTransition[] | undefined,
   target: string
 ): HandoffResolveResult {
   if (!transitions || transitions.length === 0) {

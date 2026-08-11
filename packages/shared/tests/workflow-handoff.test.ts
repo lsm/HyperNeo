@@ -9,9 +9,9 @@
 import { describe, expect, test } from 'bun:test';
 import { isBroadcastHandoffTarget, resolveHandoffTransition } from '../src/lib/workflow-handoff.ts';
 import { HANDOFF_TARGET_WILDCARD } from '../src/types/space.ts';
-import type { WorkflowTransition } from '../src/types/space.ts';
+import type { HandoffTransition } from '../src/types/space.ts';
 
-function transition(overrides: Partial<WorkflowTransition> & { id: string }): WorkflowTransition {
+function transition(overrides: Partial<HandoffTransition> & { id: string }): HandoffTransition {
   return { target: 'Review', ...overrides };
 }
 

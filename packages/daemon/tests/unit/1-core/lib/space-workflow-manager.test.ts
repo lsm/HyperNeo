@@ -6,6 +6,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import type { EventInterest } from '@hyperneo/shared';
+import { MAX_NODE_HANDOFF_TRANSITIONS } from '@hyperneo/shared';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
@@ -1489,7 +1490,7 @@ describe('SpaceWorkflowManager', () => {
 
   describe('handoff transition validation', () => {
     function twoNodeParams(
-      transitions: import('@hyperneo/shared').WorkflowTransition[]
+      transitions: import('@hyperneo/shared').HandoffTransition[]
     ): import('@hyperneo/shared').CreateSpaceWorkflowParams {
       return {
         spaceId: 'space-1',
@@ -1519,6 +1520,84 @@ describe('SpaceWorkflowManager', () => {
       ];
       const result = manager.createWorkflow(twoNodeParams(transitions));
       expect(result.nodes[0].transitions).toEqual(transitions);
+    });
+
+    it('re-reads persisted transitions through the repository (DB round-trip)', () => {
+      const transitions = [{ id: 'to-review', target: 'Review', gateId: 'g1', hookId: 'h1' }];
+      const created = manager.createWorkflow({
+        ...twoNodeParams(transitions),
+        gates: [
+          {
+            id: 'g1',
+            fields: [
+              { name: 'ok', type: 'boolean', writers: [], check: { op: '==', value: true } },
+            ],
+            resetOnCycle: false,
+          },
+        ],
+        hooks: [
+          {
+            id: 'h1',
+            enabled: true,
+            sourceNode: 'Coder',
+            targetNode: 'Review',
+            method: 'send_message',
+            validator: {
+              kind: 'script',
+              interpreter: 'bash',
+              source: 'jq -n \'{"type":"allow"}\'',
+            },
+            authorizedCallers: [{ sourceNode: 'Coder' }],
+          },
+        ],
+      });
+      // Explicitly re-read from the DB (not the createWorkflow return value) to
+      // exercise the repository's NodeConfigJson serialize/deserialize path.
+      const reread = repo.getWorkflow(created.id);
+      expect(reread?.nodes[0].transitions).toEqual(transitions);
+    });
+
+    it('accepts gateId/hookId that reference known gates and hooks', () => {
+      const result = manager.createWorkflow({
+        ...twoNodeParams([{ id: 'to-review', target: 'Review', gateId: 'g1', hookId: 'h1' }]),
+        gates: [
+          {
+            id: 'g1',
+            fields: [
+              { name: 'ok', type: 'boolean', writers: [], check: { op: '==', value: true } },
+            ],
+            resetOnCycle: false,
+          },
+        ],
+        hooks: [
+          {
+            id: 'h1',
+            enabled: true,
+            sourceNode: 'Coder',
+            targetNode: 'Review',
+            method: 'send_message',
+            validator: {
+              kind: 'script',
+              interpreter: 'bash',
+              source: 'jq -n \'{"type":"allow"}\'',
+            },
+            authorizedCallers: [{ sourceNode: 'Coder' }],
+          },
+        ],
+      });
+      expect(result.nodes[0].transitions?.[0]).toMatchObject({ gateId: 'g1', hookId: 'h1' });
+    });
+
+    it('rejects more than MAX_NODE_HANDOFF_TRANSITIONS transitions on a node', () => {
+      // 33 transitions — exceeds the cap (32). The array-length check runs before
+      // per-transition uniqueness, so duplicate targets here don't mask the cap.
+      const tooMany = Array.from({ length: MAX_NODE_HANDOFF_TRANSITIONS + 1 }, (_, i) => ({
+        id: `t${i}`,
+        target: 'Review',
+      }));
+      expect(() => manager.createWorkflow(twoNodeParams(tooMany))).toThrow(
+        `cannot contain more than ${MAX_NODE_HANDOFF_TRANSITIONS} entries`
+      );
     });
 
     it('rejects an empty transition id', () => {

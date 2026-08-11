@@ -23,7 +23,7 @@ import type {
   WorkflowNodeInput,
   WorkflowNodeAgent,
   WorkflowChannel,
-  WorkflowTransition,
+  HandoffTransition,
   Gate,
   WorkflowHook,
   CreateSpaceWorkflowParams,
@@ -96,8 +96,8 @@ interface NodeConfigJson {
   codexPollIntervalMs?: number;
   /** Custom timeout (seconds) for the codex review bot reaction check. */
   codexTimeoutSeconds?: number;
-  /** Declared outbound handoff transitions from this node. See WorkflowTransition. */
-  transitions?: WorkflowTransition[];
+  /** Declared outbound handoff transitions from this node. See HandoffTransition. */
+  transitions?: HandoffTransition[];
   /**
    * Forward-compat: rows persisted before PR 5/5 of the
    * task-agent-as-post-approval-executor refactor may carry a legacy

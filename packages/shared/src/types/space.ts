@@ -2303,7 +2303,7 @@ export interface WorkflowChannel {
 }
 
 /**
- * The broadcast wildcard for a handoff {@link WorkflowTransition.target} (and
+ * The broadcast wildcard for a handoff {@link HandoffTransition.target} (and
  * for {@link HandoffOperation.target}). A transition whose `target` is `'*'`
  * hands off to every other node in the workflow; a sender reaches it by calling
  * `handoff({ target: '*' })`. It is a literal target, not a catch-all — a
@@ -2337,7 +2337,7 @@ export const HANDOFF_TARGET_WILDCARD = '*' as const;
  * Runtime transition EXECUTION is not implemented in this contract phase — this
  * type is declarative, validated, and round-tripped through export/import only.
  */
-export interface WorkflowTransition {
+export interface HandoffTransition {
   /**
    * Unique identifier for this transition within its node. Required so a
    * transition has a stable identity for diagnostics and export round-trips.
@@ -2384,7 +2384,7 @@ export interface WorkflowTransition {
  * `send_message`. Semantics formalized by this contract (runtime execution is
  * a separate phase — not implemented here):
  *
- * - **target** MUST resolve to a declared outbound {@link WorkflowTransition}
+ * - **target** MUST resolve to a declared outbound {@link HandoffTransition}
  *   on the sender's node. A target that resolves to no transition is rejected,
  *   not silently delivered as a plain message.
  * - **summary** is a NON-AUTHORITATIVE sender note. It is NOT the target's task
@@ -2401,7 +2401,7 @@ export interface WorkflowTransition {
  *   is owned by the workflow and the target slot, NEVER by the sender.
  */
 export interface HandoffOperation {
-  /** Resolves to a declared outbound {@link WorkflowTransition}. */
+  /** Resolves to a declared outbound {@link HandoffTransition}. */
   target: string;
   /** Non-authoritative sender note. Not the target's task/input. */
   summary: string;
@@ -2469,9 +2469,9 @@ export interface WorkflowNode {
    * resolve to exactly one of these. Omitting it (or an empty array) means the
    * node declares no first-class handoffs — its agents may still communicate
    * over channels, but no round-completing handoff is available. See
-   * {@link WorkflowTransition} and {@link HandoffOperation}.
+   * {@link HandoffTransition} and {@link HandoffOperation}.
    */
-  transitions?: WorkflowTransition[];
+  transitions?: HandoffTransition[];
 }
 
 /**
@@ -2503,7 +2503,7 @@ export interface WorkflowNodeInput {
    */
   codexTimeoutSeconds?: number;
   /** Declared outbound handoff transitions. See {@link WorkflowNode.transitions}. */
-  transitions?: WorkflowTransition[];
+  transitions?: HandoffTransition[];
 }
 
 /**
@@ -2955,13 +2955,13 @@ export interface ExportedWorkflowNodeAgent {
 
 /**
  * A declarative outbound handoff transition in the portable export format.
- * Mirrors {@link WorkflowTransition}. Uses node/agent names (already portable
+ * Mirrors {@link HandoffTransition}. Uses node/agent names (already portable
  * in the export) for `target`; `gateId`/`hookId` are opaque references carried
  * as-is (gates are not exported, so `gateId` may dangle on re-import exactly as
  * `ExportedWorkflowChannel.gateId` does today; `hookId` is checked against the
  * exported `hooks` list on import).
  */
-export interface ExportedWorkflowTransition {
+export interface ExportedHandoffTransition {
   id: string;
   label?: string;
   target: string;
@@ -3008,7 +3008,7 @@ export interface ExportedWorkflowNode {
    * Declared outbound handoff transitions for this node.
    * Mirrors {@link WorkflowNode.transitions}. Preserved through round-trip.
    */
-  transitions?: ExportedWorkflowTransition[];
+  transitions?: ExportedHandoffTransition[];
 }
 
 /**
