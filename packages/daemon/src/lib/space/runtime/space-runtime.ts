@@ -972,6 +972,18 @@ export class SpaceRuntime {
    */
   private isStopped = false;
   /**
+   * Run IDs whose link-bearing artifact/gate write committed while `isStopped`.
+   * The isStopped guard in `materializeRunTopicFromInterests` records a run here
+   * instead of mutating the trie (the trie is preserved across stop→start, and
+   * mutating it after stop risks injecting into torn-down sessions). `start()`
+   * drains this set on the rehydrated (restart) path BEFORE retained-event
+   * replay so the re-derived sub supersedes the stale one before any event is
+   * dispatched — otherwise the preserved trie would replay retained events
+   * against the pre-stop primary link and miss events for the link the in-flight
+   * write established.
+   */
+  private readonly deferredMaterializationRuns = new Set<string>();
+  /**
    * Sync cache of paused/stopped space ids, maintained via the space
    * pause/resume registers and seeded on rehydrate. Lets the delivery hot path
    * defer (not inject) events for paused spaces without an async lookup —
@@ -1281,8 +1293,14 @@ export class SpaceRuntime {
     // Don't touch the trie or kick off replay after the runtime has stopped:
     // the void replay helpers start async event handling that could inject into
     // a torn-down session or hit closed SQLite handles. stop() doesn't drain
-    // these fire-and-forget tasks, so guard at the entry point.
-    if (this.isStopped) return false;
+    // these fire-and-forget tasks, so guard at the entry point. Record the run
+    // for deferred re-materialization on the next start() — the trie is preserved
+    // across stop→start, so without this a post-stop link-bearing write leaves
+    // the stale derived sub in place and the restart replays against the old PR.
+    if (this.isStopped) {
+      this.deferredMaterializationRuns.add(workflowRunId);
+      return false;
+    }
     const run = this.config.workflowRunRepo.getRun(workflowRunId);
     if (!run) return false;
     // Skip terminal runs: cancel/done already cleared the run's interests
@@ -1354,6 +1372,32 @@ export class SpaceRuntime {
     // spaces' published events.
     const run = this.config.workflowRunRepo.getRun(workflowRunId);
     this.redispatchPublishedEventsToNewTargets(run?.spaceId);
+  }
+
+  /**
+   * Re-materialize (and replay) runs whose link-bearing writes committed while
+   * `isStopped`. Called from the rehydrated `start()` path before retained-event
+   * replay. The set is cleared first so a throw in one run's materialization
+   * can't strand the others; eligibility (terminal/stopped) is re-checked inside
+   * `materializeRunTopicFromInterests`, so a run that went terminal after being
+   * deferred is a no-op.
+   */
+  private drainDeferredMaterializationRuns(): void {
+    if (this.deferredMaterializationRuns.size === 0) return;
+    const deferred = [...this.deferredMaterializationRuns];
+    this.deferredMaterializationRuns.clear();
+    for (const workflowRunId of deferred) {
+      try {
+        if (this.materializeRunTopicFromInterests(workflowRunId)) {
+          this.replayRetainedEventsForMaterialization(workflowRunId);
+        }
+      } catch (err) {
+        log.warn(
+          `SpaceRuntime: deferred materialization failed for ${workflowRunId} on restart: ` +
+            `${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
   }
 
   private registerRunInterestsFromWorkflow(run: SpaceWorkflowRun, workflow: SpaceWorkflow): void {
@@ -5021,6 +5065,12 @@ export class SpaceRuntime {
         this.requeuePersistedPendingDeliveries(pausedSpaceIds);
         this.subscribeExternalEventPublished();
         this.reconciliationDone = true;
+        // Drain deferred materializations BEFORE retained-event replay: the
+        // trie is preserved across stop→start, so a link-bearing write that
+        // committed while stopped left a stale derived sub. Re-deriving here
+        // (eligibility re-checked inside materialize) makes the replay dispatch
+        // to the current primary link's sub instead of the pre-stop one.
+        this.drainDeferredMaterializationRuns();
         this.redispatchRetainedExternalEvents();
         this.executeTick().catch((err: unknown) => {
           log.error('SpaceRuntime: initial tick failed:', err);
@@ -5961,6 +6011,13 @@ export class SpaceRuntime {
     // re-evaluated and would expire. Re-entrancy-guarded; no-op when nothing is
     // retained.
     this.redispatchRetainedExternalEvents();
+    // Also replay published events that already have a delivery for ANOTHER
+    // target to any topicFrom sub the resume rebuild above just materialized.
+    // redispatchRetainedExternalEvents only covers no-delivery events; a resumed
+    // run whose event was routed elsewhere while the space was paused would
+    // otherwise never gain a delivery for the resumed target. Space-scoped to
+    // match the resume; mirrors the startup rehydrate path's new-target replay.
+    this.redispatchPublishedEventsToNewTargets(spaceId);
   }
 
   private redispatchPublishedEventsWithoutDeliveries(): void {
@@ -6871,10 +6928,16 @@ export class SpaceRuntime {
     // remove a pr_url that was the run's sole primary-link source. Invalidate
     // the cached link and re-materialize so the superseded PR's topicFrom
     // subscription is cleaned up (mirrors the ChannelRouter onCyclicGateReset
-    // wiring for the delivery path).
+    // wiring for the delivery path). Replay retained/routed events when the
+    // rematerialization produced a sub — recovery runs at startup, before the
+    // retained-event flush, so a fallback-PR event that already has a delivery
+    // for another target would otherwise stay undispatched until another
+    // trigger or expiry.
     if (cyclicGates.length > 0) {
       this.invalidatePrimaryLinkForRun(runId);
-      this.materializeRunTopicFromInterests(runId);
+      if (this.materializeRunTopicFromInterests(runId)) {
+        this.replayRetainedEventsForMaterialization(runId);
+      }
     }
   }
 

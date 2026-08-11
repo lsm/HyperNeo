@@ -7224,6 +7224,59 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     expect(eventStore.getById(fallbackEvent.id)?.state).toBe('delivered');
   });
+
+  test('re-materializes a deferred topicFrom interest on the rehydrated restart path', async () => {
+    // R15-4: a link-bearing write that commits after stop() cannot update the
+    // trie (the isStopped guard records the run deferred). The rehydrated
+    // start() path drains deferred runs BEFORE retained-event replay, so the
+    // stale pre-stop sub is superseded and a retained event for the new PR is
+    // delivered instead of replaying against the old one.
+    const workflow = createTopicFromWorkflow();
+    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    markCoderLive(run.id, 'session-deferred');
+
+    // Establish link 42 and let the first tick rehydrate (sets rehydrated=true
+    // and builds the 42 topicFrom sub from the durable artifact).
+    recordPrLinkArtifact(run.id, 'code', PR_URL);
+    await runtime.executeTick();
+
+    // A newer link (99) lands in durable state, and its event is published while
+    // the cached link is still 42 → retained (the trie's 42 sub does not match).
+    artifactRepo.upsert({
+      id: crypto.randomUUID(),
+      runId: run.id,
+      nodeId: 'code',
+      artifactType: 'link',
+      artifactKey: deriveArtifactKey('link', { kind: 'pr' }),
+      data: { kind: 'pr', url: 'https://github.com/lsm/neokai/pull/99' },
+    });
+    const freshEvent = makeEvent({
+      id: `evt-deferred-99-${Math.random().toString(36).slice(2)}`,
+      topic: 'github/lsm/neokai/pull_request/99.review_submitted',
+      summary: 'PR 99 review (deferred)',
+      dedupeKey: `dedupe-deferred-99-${Math.random().toString(36).slice(2)}`,
+    });
+    await eventService.publish(freshEvent);
+    expect(eventStore.getById(freshEvent.id)?.state).toBe('published');
+
+    // stop(), then the in-flight materialize is deferred (isStopped guard) — the
+    // trie still holds the stale 42 sub.
+    await runtime.stop();
+    expect(runtime.materializeRunTopicFromInterests(run.id)).toBe(false);
+
+    // Restart on the same instance: rehydrated=true, so start() drains the
+    // deferred run before retained-event replay. The 99 sub is created and the
+    // retained 99 event is delivered. The rehydrated start path is async (awaits
+    // a space scan), so poll for delivery.
+    runtime.start();
+    for (let i = 0; i < 50; i += 1) {
+      if (eventStore.getById(freshEvent.id)?.state === 'delivered') break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    await runtime.stop();
+
+    expect(eventStore.getById(freshEvent.id)?.state).toBe('delivered');
+  });
 });
 
 describe('SpaceRuntime queue-health snapshot', () => {

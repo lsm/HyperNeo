@@ -1056,8 +1056,14 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
                 // skip this and leave the topicFrom sub inert. The runtime is
                 // best-effort, run-scoped, terminal-run guarded, and idempotent.
                 try {
-                  const mergedData = updated.data ?? {};
-                  const linkBearing = 'prUrl' in mergedData || 'pr_url' in mergedData;
+                  // linkBearing must reflect the fields committed in THIS merge
+                  // (partialToMerge), not the full merged record. A gate can still
+                  // hold a stale pr_url (PR A) after a newer artifact/hook made PR B
+                  // primary; an unrelated field write would otherwise report
+                  // link-bearing, and since the merge advances the gate record's
+                  // updatedAt (which resolvePrimaryLinkUrl ranks as freshness), the
+                  // rematerialization would reselect PR A and miss PR B's events.
+                  const linkBearing = 'prUrl' in partialToMerge || 'pr_url' in partialToMerge;
                   config.onGateDataMerged?.(workflowRunId, linkBearing);
                 } catch (err) {
                   log.warn(

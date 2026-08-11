@@ -2205,6 +2205,49 @@ describe('node-agent-tools: send_message (gate-write)', () => {
     expect(calls).toEqual([{ runId: ctx.workflowRunId, linkBearing: false }]);
   });
 
+  test('onGateDataMerged linkBearing reflects only the merged partial, not stale gate data', async () => {
+    // Regression (R15-1): linkBearing must be computed from the fields committed
+    // in THIS merge (partialToMerge), not the full merged record. A gate that
+    // already holds a stale pr_url (PR A) — superseded by a newer artifact making
+    // PR B primary — must NOT report an unrelated field write as link-bearing:
+    // that advances the gate record's updatedAt (ranked as freshness by
+    // resolvePrimaryLinkUrl), which would rematerialize back to PR A and miss
+    // PR B's events.
+    const gate: Gate = {
+      id: 'gate-stale-link',
+      fields: [
+        { name: 'pr_url', type: 'string', writers: ['*'], check: { op: 'exists' } },
+        { name: 'note', type: 'string', writers: ['*'], check: { op: 'exists' } },
+      ],
+      resetOnCycle: false,
+    };
+    const workflow = makeWorkflowWithGatedChannel(gate);
+    const calls: Array<{ runId: string; linkBearing: boolean }> = [];
+    const config = makeConfig(ctx, {
+      workflow,
+      channelResolver: makeResolver(workflow.channels ?? []),
+      onGateDataMerged: (runId, linkBearing) => calls.push({ runId, linkBearing }),
+    });
+    const handlers = createNodeAgentToolHandlers(config);
+
+    // First write establishes pr_url (PR A) → linkBearing=true.
+    await handlers.send_message({
+      target: 'reviewer',
+      message: 'pr',
+      data: { pr_url: 'https://github.com/acme/app/pull/1' },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Second write is an UNRELATED field. The merged record still carries PR A's
+    // pr_url, but THIS merge is not link-bearing → linkBearing=false.
+    await handlers.send_message({ target: 'reviewer', message: 'note', data: { note: 'ok' } });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.linkBearing).toBe(true);
+    expect(calls[1]!.linkBearing).toBe(false);
+  });
+
   test('onGateDataChanged fires after queued-only gated delivery via send_message', async () => {
     const gate: Gate = {
       id: 'gate-queued-callback',
