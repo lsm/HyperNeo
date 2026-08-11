@@ -1153,7 +1153,7 @@ export class SpaceRuntime {
    * rehydrate or artifact record produces no duplicates.
    *
    * Pure-ish helper shared by the rehydrate path (`registerRunInterests`) and
-   * the record-triggered path (`materializeTopicFromInterestsForNode`); both
+   * the record-triggered path (`materializeRunTopicFromInterests`); both
    * must derive identical trie state from the same durable inputs.
    */
   private materializeTopicFromInterestsForNodes(
@@ -1245,11 +1245,13 @@ export class SpaceRuntime {
    * terminal (cancel/archive/done already cleared interests — an in-flight
    * save_artifact completing after teardown must not re-add a derived sub).
    *
-   * Returns true when it actually did trie-work (the workflow declares a
-   * topicFrom interest and the run is active) — callers use this to skip the
-   * retained-event replay when nothing could have changed, so an ordinary
-   * non-link artifact/gate write on a non-topicFrom workflow doesn't trigger a
-   * global retained-event scan.
+   * Returns true when the workflow declares a `topicFrom` interest AND the run
+   * is active — i.e. the trie MAY have changed (a sub registered or cleaned up).
+   * It does NOT mean the resolved topic set actually differs from before; an
+   * idempotent re-materialize with an unchanged link also returns true. Callers
+   * gate the retained-event replay on this AND on whether the triggering write
+   * was link-bearing, so an ordinary non-link artifact/gate write skips the
+   * replay scan (a non-topicFrom workflow short-circuits here regardless).
    *
    * Public for the node-agent-tools record triggers (save_artifact +
    * onGateDataChanged), wired via SpaceRuntimeService. Generic infra: knows
@@ -1390,10 +1392,11 @@ export class SpaceRuntime {
     // import) and is registered mid-run after the primary link is recorded, so
     // it is exempt: a node that filled its slots with dynamic subscriptions
     // before the PR link existed must still be able to materialize its own
-    // declarative PR subscription (the cap throw is caught upstream and would
-    // otherwise leave it silently unmaterialized). The count excludes any
-    // existing topicFrom-derived subs so dynamic gets the full budget, and the
-    // throw is skipped entirely for a topicFrom-derived registration.
+    // declarative PR subscription. The exemption is a bypass, not a catch —
+    // `topicFrom`-derived registrations skip the cap check entirely
+    // (`!options.topicFromDerived`), and the materializer checks `result.success`
+    // for other failures. The count excludes existing topicFrom-derived subs so
+    // dynamic gets the full budget.
     if (!options.topicFromDerived) {
       const existingInterests = this.topicTrie.count(
         (target) =>

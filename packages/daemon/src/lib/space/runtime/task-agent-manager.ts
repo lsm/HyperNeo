@@ -5560,10 +5560,12 @@ export class TaskAgentManager {
       // interest resolves from the committed pr_url regardless of the deferral.
       // Best-effort, run-scoped, terminal-run guarded.
       onGateDataMerged: (runId, linkBearing) => {
+        // A gate merge that doesn't carry pr_url can't change the primary link,
+        // so skip materialize + replay (no retained-event scan). Only a
+        // pr_url-bearing merge can alter the link.
+        if (!linkBearing) return;
         try {
-          if (linkBearing) {
-            this.config.spaceRuntimeService.invalidatePrimaryLinkForRun(runId);
-          }
+          this.config.spaceRuntimeService.invalidatePrimaryLinkForRun(runId);
           if (this.config.spaceRuntimeService.materializeRunTopicFromInterests(runId)) {
             this.config.spaceRuntimeService.replayRetainedEventsForMaterialization(runId);
           }
@@ -5602,13 +5604,13 @@ export class TaskAgentManager {
       // workflow declares a topicFrom interest; the runtime is best-effort,
       // terminal-run guarded, and never throws here.
       onArtifactRecorded: (workflowRunId, linkBearing) => {
+        // A non-link artifact save (notes, metrics, …) can't change the primary
+        // link, so the topicFrom subs are already correct — skip materialize +
+        // replay entirely (no retained-event scan). Only link-bearing writes
+        // (a `link` shape or a row carrying pr_url) can alter the link.
+        if (!linkBearing) return;
         try {
-          if (linkBearing) {
-            this.config.spaceRuntimeService.invalidatePrimaryLinkForRun(workflowRunId);
-          }
-          // Replay only when materialization touched the trie, so an ordinary
-          // non-link artifact save on a non-topicFrom workflow doesn't trigger a
-          // global retained-event scan.
+          this.config.spaceRuntimeService.invalidatePrimaryLinkForRun(workflowRunId);
           if (this.config.spaceRuntimeService.materializeRunTopicFromInterests(workflowRunId)) {
             this.config.spaceRuntimeService.replayRetainedEventsForMaterialization(workflowRunId);
           }
