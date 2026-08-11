@@ -177,6 +177,49 @@ export function deliverMessage(
 export { MESSAGE_DELIVERY };
 
 /**
+ * Minimal db view the orphan reconciler needs: the persisted nonterminal user
+ * messages for a session. Kept as an interface so the reconciler is unit-testable
+ * with a real SDKMessageRepository or a stub. See {@link reconcileStrandedDeliveries}.
+ */
+export interface StrandedDeliveryDb {
+  getMessagesByStatus(sessionId: string, status: 'enqueued'): Array<{ uuid?: string }>;
+}
+
+/**
+ * Orphan reconciler core (task #861 item 4) — recover the one case `job_queue`
+ * cannot see by itself: a persisted user message stuck `enqueued` with NO active
+ * `message_delivery` job (the confirmed #856 "stranded pending in an idle
+ * session" shape). Re-enqueues the SAME canonical UUID via {@link deliverMessage}
+ * — never inserts a second user message or a duplicate payload; the handler
+ * reloads content from storage. Idempotent + safe under concurrent ticks/workers:
+ * it only acts on messages with no active job, and `deliverMessage` dedups via
+ * `getActiveDeliveryRole`, so racing ticks no-op. Returns the count re-enqueued.
+ *
+ * This is the pure cross-check; {@link AgentSession.reconcileStrandedDeliveries}
+ * wraps it with a processing-state guard + logging + v2 flag check.
+ */
+export function reconcileStrandedDeliveries(args: {
+  sessionId: string;
+  db: StrandedDeliveryDb;
+  jobQueue: JobQueueRepository;
+}): number {
+  if (!isMessageDeliveryV2Enabled()) return 0;
+  const active = args.jobQueue.activeDeliveryMessageUuids(args.sessionId);
+  const enqueued = args.db.getMessagesByStatus(args.sessionId, 'enqueued');
+  const stranded: string[] = [];
+  for (const msg of enqueued) {
+    const uuid = msg.uuid;
+    if (typeof uuid === 'string' && uuid.length > 0 && !active.has(uuid)) {
+      stranded.push(uuid);
+    }
+  }
+  for (const uuid of stranded) {
+    deliverMessage(args.jobQueue, args.sessionId, uuid, { origin: 'recovery' });
+  }
+  return stranded.length;
+}
+
+/**
  * Narrow an unknown payload to a {@link MessageDeliveryPayload}. The handler
  * validates its own job's payload shape before acting.
  */

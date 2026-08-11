@@ -101,6 +101,13 @@ import { DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@hyperneo/shared';
 export const RECENTLY_EXITED_ROOT_PID_RETENTION_MS = 15 * 60 * 1000;
 
 /**
+ * How often the periodic orphan-reconciliation sweep runs (task #861 item 4).
+ * A backstop beyond the idle + startup hooks; the reconciler is idempotent so a
+ * slow cadence is fine. Aligned with the job-queue stale-reclamation window.
+ */
+const SESSION_RECONCILE_INTERVAL_MS = 60_000;
+
+/**
  * AgentSessionInit - Configuration for creating a new AgentSession
  *
  * Used by SpaceRuntimeService and other session creators to create sessions
@@ -218,6 +225,8 @@ import { MessageQueue } from './message-queue';
 import {
   MESSAGE_DELIVERY_PARK_MS,
   deliverMessage,
+  isMessageDeliveryV2Enabled,
+  reconcileStrandedDeliveries as reconcileStrandedDeliveriesCore,
   signalDeliveryConsumed,
   withSessionLock,
   type DriveTurnOutcome,
@@ -329,6 +338,8 @@ export class AgentSession
   // Session state
   private _isCleaningUp = false;
   private pendingResumeSessionAt: string | undefined;
+  // Periodic orphan-reconciliation timer (task #861 item 4). unref'd; cleared in cleanup().
+  private reconcileTimer: ReturnType<typeof setInterval> | null = null;
   pendingRestartReason: 'settings.local.json' | null = null;
   private initialPendingReplayScheduled = false;
 
@@ -519,6 +530,11 @@ export class AgentSession
     // Set state manager callback - delegates to lifecycleManager
     this.stateManager.setOnIdleCallback(async () => {
       await this.lifecycleManager.executeDeferredRestartIfPending();
+      // Orphan reconciler (task #861 item 4): on each idle transition, recover
+      // any user message stranded in a nonterminal send_status with no active
+      // durable job (the #856 shape). Idempotent — a no-op when nothing is
+      // stranded.
+      await this.reconcileStrandedDeliveries();
     });
 
     // Restore persisted state
@@ -536,6 +552,19 @@ export class AgentSession
 
     if (this.runtimeOptions.autoReplayPendingMessages ?? true) {
       this.scheduleInitialPendingMessageReplay();
+    }
+
+    // Periodic orphan reconciliation (task #861 item 4): a backstop beyond the
+    // idle + startup hooks, for a message that strands without an idle
+    // transition (e.g. a job cancelled mid-flight leaving an enqueued row).
+    // unref'd so it never keeps the daemon alive on shutdown. Idempotent.
+    this.reconcileTimer = setInterval(() => {
+      void this.reconcileStrandedDeliveries().catch((error) => {
+        this.logger.warn('Periodic reconcileStrandedDeliveries failed:', error);
+      });
+    }, SESSION_RECONCILE_INTERVAL_MS);
+    if (typeof this.reconcileTimer.unref === 'function') {
+      this.reconcileTimer.unref();
     }
   }
 
@@ -2137,6 +2166,38 @@ export class AgentSession
     }
   }
 
+  /**
+   * Orphan reconciler (task #861 item 4) — recover the one case `job_queue`
+   * cannot see by itself: a persisted user message stuck `enqueued` with NO
+   * active `message_delivery` job (the confirmed #856 "stranded pending in an
+   * idle session" shape). Delegates to the pure cross-check
+   * {@link reconcileStrandedDeliveries}, adding a processing-state guard (never
+   * reconcile while a turn is driving — the handler owns those messages) and
+   * logging. Runs on each idle transition and on a periodic unref'd timer; the
+   * pure core is idempotent so concurrent ticks/workers are safe.
+   */
+  async reconcileStrandedDeliveries(): Promise<number> {
+    if (!isMessageDeliveryV2Enabled()) return 0;
+    const jobQueue = this.db.getJobQueueRepo?.();
+    if (!jobQueue) return 0;
+    // Don't reconcile while a turn is actively driving — the handler owns those
+    // messages, and re-enqueuing mid-turn could create a competing steer. The
+    // idle/periodic callers run when the session is idle; this guard is an
+    // extra defense for any future caller.
+    const status = this.stateManager.getState().status;
+    if (status === 'processing' || status === 'queued') return 0;
+
+    const count = reconcileStrandedDeliveriesCore({
+      sessionId: this.session.id,
+      db: this.db,
+      jobQueue,
+    });
+    if (count > 0) {
+      this.logger.info(`reconcileStrandedDeliveries: re-enqueued ${count} stranded message(s).`);
+    }
+    return count;
+  }
+
   trackAgentProcess(proc: TrackedAgentProcess): void {
     const pid = proc.pid;
     if (typeof pid !== 'number' || pid <= 0) {
@@ -2323,6 +2384,10 @@ export class AgentSession
   // ============================================================================
 
   async cleanup(): Promise<void> {
+    if (this.reconcileTimer) {
+      clearInterval(this.reconcileTimer);
+      this.reconcileTimer = null;
+    }
     this.rateLimitWatchdog.destroy();
     await this.lifecycleManager.cleanup();
   }

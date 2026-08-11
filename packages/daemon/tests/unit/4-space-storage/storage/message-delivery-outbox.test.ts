@@ -16,6 +16,7 @@ import {
   persistAndEnqueueDelivery,
   enqueueDeliveryRole,
 } from '../../../../src/lib/agent/message-delivery-outbox';
+import { reconcileStrandedDeliveries } from '../../../../src/lib/agent/message-delivery';
 import type { JobQueueRepository as JobQueueRepoType } from '../../../../src/storage/repositories/job-queue-repository';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 
@@ -238,5 +239,87 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
     const role = enqueueDeliveryRole(jobQueue, { ...base, messageUuid: 'u' }, false);
     expect(role).toBe('steer');
     expect(jobPayload(db, SESSION, 'u')?.role).toBe('steer');
+  });
+});
+
+describe('reconcileStrandedDeliveries (task #861 item 4 — orphan reconciler)', () => {
+  let db: Database;
+  let sdkRepo: SDKMessageRepository;
+  let jobQueue: JobQueueRepository;
+
+  beforeEach(() => {
+    ({ db, sdkRepo, jobQueue } = setup());
+  });
+  afterEach(() => db.close());
+
+  function persistEnqueued(uuid: string): void {
+    sdkRepo.saveUserMessage(SESSION, userMessage(uuid), 'enqueued');
+  }
+  function activeJobCount(): number {
+    return (
+      db.prepare(`SELECT COUNT(*) AS c FROM job_queue WHERE queue = 'message_delivery'`).get() as {
+        c: number;
+      }
+    ).c;
+  }
+
+  it('re-enqueues an enqueued message with no active durable job (the #856 shape)', () => {
+    persistEnqueued('stranded-1');
+    expect(activeJobCount()).toBe(0);
+
+    const count = reconcileStrandedDeliveries({ sessionId: SESSION, db: sdkRepo, jobQueue });
+
+    expect(count).toBe(1);
+    expect(jobPayload(db, SESSION, 'stranded-1')).not.toBeNull();
+    expect(jobPayload(db, SESSION, 'stranded-1')?.role).toBe('turn');
+  });
+
+  it('does NOT re-enqueue a message that already has an active durable job', () => {
+    persistEnqueued('owned-1');
+    // Simulate the durable owner: enqueue a job for it.
+    jobQueue.enqueue({
+      queue: MESSAGE_DELIVERY,
+      payload: { sessionId: SESSION, messageUuid: 'owned-1', role: 'turn', origin: 'chat' },
+      maxRetries: 8,
+    });
+    expect(activeJobCount()).toBe(1);
+
+    const count = reconcileStrandedDeliveries({ sessionId: SESSION, db: sdkRepo, jobQueue });
+
+    expect(count).toBe(0);
+    expect(activeJobCount()).toBe(1); // no duplicate job
+  });
+
+  it('is idempotent: a second run after re-enqueue is a no-op', () => {
+    persistEnqueued('once-1');
+    expect(reconcileStrandedDeliveries({ sessionId: SESSION, db: sdkRepo, jobQueue })).toBe(1);
+    // Second run: the message now has an active job → 0 re-enqueued, no dup.
+    expect(reconcileStrandedDeliveries({ sessionId: SESSION, db: sdkRepo, jobQueue })).toBe(0);
+    expect(activeJobCount()).toBe(1);
+  });
+
+  it('reloads content from storage — never inserts a second user row', () => {
+    persistEnqueued('content-1');
+    reconcileStrandedDeliveries({ sessionId: SESSION, db: sdkRepo, jobQueue });
+    // Exactly one sdk_messages row for the uuid (no duplicate payload).
+    const rows = db
+      .prepare(`SELECT COUNT(*) AS c FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ?`)
+      .get(SESSION, 'content-1') as { c: number };
+    expect(rows.c).toBe(1);
+  });
+
+  it('re-enqueues multiple stranded messages, first as turn and the rest as steer', () => {
+    persistEnqueued('s-a');
+    persistEnqueued('s-b');
+    persistEnqueued('s-c');
+    const count = reconcileStrandedDeliveries({ sessionId: SESSION, db: sdkRepo, jobQueue });
+    expect(count).toBe(3);
+    const roles = ['s-a', 's-b', 's-c'].map((u) => jobPayload(db, SESSION, u)?.role);
+    expect(roles.filter((r) => r === 'turn')).toHaveLength(1);
+    expect(roles.filter((r) => r === 'steer')).toHaveLength(2);
+  });
+
+  it('returns 0 when there are no enqueued messages', () => {
+    expect(reconcileStrandedDeliveries({ sessionId: SESSION, db: sdkRepo, jobQueue })).toBe(0);
   });
 });
