@@ -25,6 +25,16 @@ export class ProcessingStateManager {
   private logger: Logger;
   private onIdleCallback?: () => Promise<void>;
   /**
+   * Fired on a TERMINAL idle, immediately BEFORE the delivery waiters are
+   * drained — the last chance to durably persist turn-completion state that the
+   * awaiting delivery job must see before `await turn` resolves. Used to write
+   * the `delivery_turn_end` marker for result-less terminal paths (query error /
+   * interrupt) so a stale re-claim completes an already-ended consumed turn
+   * instead of re-driving it. Receives the terminal messageId captured BEFORE
+   * `setState` clears it. See Codex (PR #2463, P2).
+   */
+  private onBeforeIdleWaiterDrain?: (terminalMessageId: string | undefined) => void | Promise<void>;
+  /**
    * Resolvers awaiting the next terminal idle transition (the message-delivery
    * bridge awaiting a turn's end), keyed by arm id so a caller can cancel its
    * own waiter (failure/park paths) without leaking or accumulating across
@@ -58,6 +68,18 @@ export class ProcessingStateManager {
    */
   setOnIdleCallback(callback: () => Promise<void>): void {
     this.onIdleCallback = callback;
+  }
+
+  /**
+   * Set a callback fired on each TERMINAL idle immediately before the delivery
+   * waiters are drained. The callback may await (e.g. a durable DB write); the
+   * waiter resolution is deferred until it completes so a delivery job awaiting
+   * turn-end observes the persisted state. See the field doc.
+   */
+  setOnBeforeIdleWaiterDrain(
+    callback: (terminalMessageId: string | undefined) => void | Promise<void>
+  ): void {
+    this.onBeforeIdleWaiterDrain = callback;
   }
 
   /**
@@ -187,6 +209,14 @@ export class ProcessingStateManager {
     // stop/start), suppress the drain too — the outer call owns it, deferred
     // until the restart completes so durable turn ownership survives the restart.
     const suppressDrain = opts?.suppressDeliveryWaiters || this.idleCallbackInFlight;
+    // Capture the terminal messageId BEFORE setState replaces the state (it
+    // clears messageId); the before-drain hook needs it to identify the delivery
+    // turn that just ended. Only `queued`/`processing` carry a messageId. See
+    // Codex (PR #2463, P2).
+    const terminalMessageId =
+      this.processingState.status === 'queued' || this.processingState.status === 'processing'
+        ? this.processingState.messageId
+        : undefined;
     // setState persists the idle state BEFORE publishing it, so drain the
     // turn-end waiters in a finally — the state IS idle even if the event
     // publication throws, and a waiting delivery job must not hang on a
@@ -212,6 +242,19 @@ export class ProcessingStateManager {
       }
     } finally {
       if (!suppressDrain) {
+        // Persist turn-completion state BEFORE releasing the delivery waiters:
+        // the awaiting delivery job (`await turn`) resolves on this drain, so
+        // any durable marker it must observe has to be written here first.
+        // A crash between the terminal idle and a later write (the handler's
+        // post-await) would otherwise leave a result-less consumed turn without
+        // a marker and re-drive it on recovery. See Codex (PR #2463, P2).
+        if (this.onBeforeIdleWaiterDrain) {
+          try {
+            await this.onBeforeIdleWaiterDrain(terminalMessageId);
+          } catch (error) {
+            this.logger.error('Error in onBeforeIdleWaiterDrain:', error);
+          }
+        }
         const waiters = [...this.idleWaiters.values()];
         this.idleWaiters.clear();
         for (const w of waiters) w.resolve();

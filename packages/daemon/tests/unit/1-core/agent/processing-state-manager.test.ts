@@ -140,6 +140,33 @@ describe('ProcessingStateManager', () => {
       expect(callbackMock).toHaveBeenCalled();
     });
 
+    test('fires onBeforeIdleWaiterDrain BEFORE the idle waiter resolves, with the terminal messageId', async () => {
+      // The delivery-turn completion marker must be persisted before the delivery
+      // job (`await turn`) resolves on the idle drain — a crash after idle but
+      // before the write would otherwise re-drive a result-less consumed turn.
+      // See Codex (PR #2463, P2).
+      const events: string[] = [];
+      manager.setOnBeforeIdleWaiterDrain(async (terminalMessageId) => {
+        // The waiter must not have resolved yet when this runs.
+        events.push(`drain:${terminalMessageId}`);
+        return new Promise<void>((r) => setTimeout(r, 5));
+      });
+      const waiter = manager.waitForIdleTransition();
+      void waiter.promise.then(() => events.push('waiter-resolved'));
+      await manager.setProcessing('the-message-uuid', 'streaming');
+      await manager.setIdle();
+      await waiter.promise;
+      expect(events).toEqual(['drain:the-message-uuid', 'waiter-resolved']);
+    });
+
+    test('does NOT fire onBeforeIdleWaiterDrain on a suppressed (retry mid-point) idle', async () => {
+      const callbackMock = mock(async () => {});
+      manager.setOnBeforeIdleWaiterDrain(callbackMock);
+      await manager.setProcessing('m', 'streaming');
+      await manager.setIdle({ suppressDeliveryWaiters: true });
+      expect(callbackMock).not.toHaveBeenCalled();
+    });
+
     test('clears pending question state', async () => {
       await manager.setWaitingForInput({ toolUseId: 'tool-123', questions: [] });
 

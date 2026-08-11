@@ -1422,26 +1422,30 @@ export class SDKMessageRepository {
     // to new turns and break grouping on multi-session tasks. Capturing
     // pre-update (filtered by prior send_status) is what excludes them.
     //
-    // Task rows get a fresh turn index AND a timestamp aligned to the
-    // consume/fail moment. Non-task rows (ordinary sessions) get the timestamp
-    // aligned too (turn index stays NULL) — a message queued while another turn
-    // ran and later promoted otherwise keeps its original queued timestamp,
-    // which predates the previous turn's terminal result and would corrupt the
-    // delivery re-claim boundary (`hasTerminalResultAfter`). Persisting the
+    // Renderable TASK rows get a fresh turn index AND a timestamp aligned to the
+    // consume/fail moment. EVERY delivery-consumed user row (renderable or not,
+    // task or non-task) gets the timestamp aligned — a message queued while
+    // another turn ran and later promoted otherwise keeps its original queued
+    // timestamp, which predates the previous turn's terminal result and would
+    // corrupt the delivery re-claim boundary (`hasTerminalResultAfter`). Turn
+    // index assignment stays limited to renderable task anchors. Persisting the
     // timestamp in THIS transaction (not a separate autocommit) makes the
     // consumed-flip + T_consumed atomic across a crash. See Codex (PR #2463).
     const pending =
       newStatus === 'consumed' || newStatus === 'failed'
         ? (this.db
             .prepare(
-              `SELECT id, task_id FROM sdk_messages
+              `SELECT id, task_id, is_renderable FROM sdk_messages
                 WHERE id IN (${placeholders})
                   AND message_type = 'user'
-                  AND is_renderable = 1
                   AND send_status IN ('deferred', 'enqueued', 'submitted')
                 ORDER BY rowid ASC`
             )
-            .all(...messageIds) as Array<{ id: string; task_id: string | null }>)
+            .all(...messageIds) as Array<{
+            id: string;
+            task_id: string | null;
+            is_renderable: number;
+          }>)
         : [];
     // A send_status transition can flip a user row's badge visibility
     // (deferred/enqueued/submitted -> consumed/failed), so capture the affected sessions
@@ -1483,13 +1487,14 @@ export class SDKMessageRepository {
         );
         const timeStmt = this.db.prepare('UPDATE sdk_messages SET timestamp = ? WHERE id = ?');
         for (const row of pending) {
-          if (row.task_id) {
+          if (row.task_id && row.is_renderable === 1) {
             const max = (maxStmt.get(row.task_id) as { m: number | null } | undefined)?.m ?? 0;
             updStmt.run(max + 1, now, row.id);
           } else {
-            // Non-task row: align the timestamp to the consume/fail moment; the
-            // turn index stays NULL. Same transaction as the status flip, so the
-            // boundary survives a crash. See the `pending` capture comment.
+            // Non-renderable or non-task row: align the timestamp to the
+            // consume/fail moment only — turn index stays untouched (limited to
+            // renderable task anchors). Same transaction as the status flip, so
+            // the delivery boundary survives a crash. See the `pending` capture.
             timeStmt.run(now, row.id);
           }
         }

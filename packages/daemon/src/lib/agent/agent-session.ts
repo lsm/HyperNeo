@@ -547,6 +547,26 @@ export class AgentSession
       });
     });
 
+    // Persist a durable delivery-turn completion marker on the TERMINAL idle,
+    // BEFORE the delivery waiters drain — so a result-less terminal path (query
+    // error / interrupt that persists no SDK `result` row) is durably
+    // recognized as ended on a later stale re-claim instead of being re-driven.
+    // Gated on a delivery job still `processing` at idle: a graceful-shutdown
+    // requeue has already flipped it to `pending` (resume desired on next boot),
+    // and an interrupt already cancelled the job, so neither writes a marker.
+    // See Codex (PR #2463, P2).
+    this.stateManager.setOnBeforeIdleWaiterDrain(async (terminalMessageId) => {
+      if (!terminalMessageId) return;
+      try {
+        const jobQueue = this.db.getJobQueueRepo?.();
+        if (!jobQueue) return;
+        if (!jobQueue.isProcessingDelivery(this.session.id, terminalMessageId)) return;
+        this.recordDeliveryTurnEnd(terminalMessageId);
+      } catch (error) {
+        this.logger.warn('Failed to record delivery turn-end marker at idle:', error);
+      }
+    });
+
     // Restore persisted state
     if (session.metadata?.lastContextInfo) {
       this.contextTracker.restoreFromMetadata(session.metadata.lastContextInfo);

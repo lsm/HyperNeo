@@ -200,19 +200,11 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
           await session.settleSkippedDelivery?.(payload.messageUuid);
           return { outcome: 'completed', skipped: 'turn_terminated' };
         }
-        // The turn ran to completion. Persist a durable delivery-turn completion
-        // marker so a LATER stale re-claim of this `consumed` message recognizes
-        // the turn ended even when no SDK `result` row was produced (query-error /
-        // interrupt result-less terminal paths) — instead of re-driving it into an
-        // indefinitely-waiting query. Gated on the job still being `processing`:
-        // a graceful-shutdown requeue (resume desired on next boot) has already
-        // flipped it to `pending` before the turn's idle fires, so it is excluded.
-        if (
-          deps.jobQueue.getJob(job.id)?.status === 'processing' &&
-          session.recordDeliveryTurnEnd
-        ) {
-          session.recordDeliveryTurnEnd(payload.messageUuid);
-        }
+        // A durable delivery-turn completion marker for this consumed message is
+        // persisted by the session's terminal-idle hook (before the delivery
+        // waiter resolves), not here — see ProcessingStateManager's
+        // onBeforeIdleWaiterDrain + AgentSession. That covers result-less
+        // terminal paths (query error / interrupt) across a crash.
         return { outcome: 'completed' };
       } finally {
         clearInterval(heartbeat);

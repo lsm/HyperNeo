@@ -1782,6 +1782,44 @@ describe('SDKMessageRepository', () => {
       expect(repository.hasTerminalResultAfter('session-1', 'queued-msg')).toBe(false);
     });
 
+    it('aligns the timestamp for a NON-RENDERABLE consumed message too (P1)', () => {
+      // A non-renderable user row (e.g. a tool-result response) is excluded from
+      // turn-index assignment but must still be aligned to T_consumed — otherwise
+      // a queued-then-promoted non-renderable message keeps its original time and
+      // matches the PREVIOUS turn's terminal result on a stale re-claim, losing
+      // the response. See Codex (PR #2463, P1).
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid, is_renderable)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        crypto.randomUUID(),
+        'session-1',
+        'user',
+        null,
+        '{}',
+        '2026-08-11T15:20:00.000Z',
+        'enqueued',
+        0,
+        'nr-msg',
+        0 // non-renderable
+      );
+      insertMessage('session-1', 'result', {
+        timestamp: '2026-08-11T15:21:00.000Z',
+        terminal: true,
+      });
+      const flipped = repository.markDeliveryConsumedByUuid('session-1', 'nr-msg');
+      expect(flipped).not.toBeNull();
+      const ts = (
+        db.prepare(`SELECT timestamp FROM sdk_messages WHERE id = ?`).get(flipped) as {
+          timestamp: string;
+        }
+      ).timestamp;
+      // Aligned to ~T_consumed, not the 15:20 queued time.
+      expect(Date.parse(ts)).toBeGreaterThan(Date.parse('2026-08-11T15:22:00.000Z'));
+      // The 15:21 prior result is now before consumption → the turn is NOT ended.
+      expect(repository.hasTerminalResultAfter('session-1', 'nr-msg')).toBe(false);
+    });
+
     it('is true after consumption when the SAME turn later ends (its own result)', () => {
       insertMessage('session-1', 'user', {
         uuid: 'own-turn-msg',

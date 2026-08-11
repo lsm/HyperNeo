@@ -340,6 +340,28 @@ export class JobQueueRepository {
   }
 
   /**
+   * True when a `message_delivery` job for (sessionId, messageUuid) is
+   * currently `processing` — a turn the handler is actively driving. The
+   * terminal-idle turn-end marker gate uses this to distinguish "the delivery
+   * turn ended" from "a graceful-shutdown requeue already flipped the job to
+   * `pending` (resume desired on next boot)". See Codex (PR #2463, P2).
+   */
+  isProcessingDelivery(sessionId: string, messageUuid: string): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT 1
+           FROM job_queue
+          WHERE queue = 'message_delivery'
+            AND status = 'processing'
+            AND json_extract(payload, '$.sessionId') = ?
+            AND json_extract(payload, '$.messageUuid') = ?
+          LIMIT 1`
+      )
+      .get(sessionId, messageUuid) as { 1: number } | undefined | null;
+    return row != null;
+  }
+
+  /**
    * The set of messageUuids with an ACTIVE (pending/processing) message_delivery
    * job for a session. Used by the LEGACY replay paths
    * (replayPendingMessagesForImmediateMode / handleQueryTrigger /

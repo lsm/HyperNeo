@@ -80,6 +80,14 @@ describe('SessionRepository', () => {
 				enabled INTEGER NOT NULL,
 				PRIMARY KEY (server_id, scope_type, scope_id)
 			);
+			-- deleteSession() also cascades delivery_turn_end rows (no FK on
+			-- sessions.id, so it must be explicit).
+			CREATE TABLE delivery_turn_end (
+				session_id TEXT NOT NULL,
+				message_uuid TEXT NOT NULL,
+				ended_at TEXT NOT NULL,
+				PRIMARY KEY (session_id, message_uuid)
+			);
 		`);
     repository = new SessionRepository(db as any);
   });
@@ -928,6 +936,22 @@ describe('SessionRepository', () => {
 
       const rows = db.prepare('SELECT COUNT(*) as c FROM mcp_enablement').get() as { c: number };
       expect(rows.c).toBe(1);
+    });
+
+    it('cascades delivery_turn_end rows for the deleted session (P2)', () => {
+      repository.createSession(createDefaultSession({ id: 'session-1' }));
+      repository.createSession(createDefaultSession({ id: 'session-2' }));
+      const insert = db.prepare(
+        `INSERT INTO delivery_turn_end (session_id, message_uuid, ended_at) VALUES (?, ?, ?)`
+      );
+      insert.run('session-1', 'm-a', 't1');
+      insert.run('session-1', 'm-b', 't2');
+      insert.run('session-2', 'm-c', 't3'); // other session survives
+
+      repository.deleteSession('session-1');
+
+      const rows = db.prepare('SELECT session_id FROM delivery_turn_end').all();
+      expect(rows).toEqual([{ session_id: 'session-2' }]);
     });
 
     it('deletes message search rows before sdk_messages cascade', () => {

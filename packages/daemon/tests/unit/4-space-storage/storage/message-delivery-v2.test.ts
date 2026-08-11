@@ -341,6 +341,18 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
       expect(repo.activeDeliveryMessageUuids(SESSION)).toEqual(new Set(['msg-b']));
     });
   });
+
+  describe('isProcessingDelivery — terminal-idle turn-end marker gate', () => {
+    it('true only for a job currently processing; false when pending or absent', () => {
+      deliverMessage(repo, SESSION, 'proc', { origin: 'chat' });
+      const [job] = repo.dequeue(MESSAGE_DELIVERY, 1); // → processing
+      expect(repo.isProcessingDelivery(SESSION, 'proc')).toBe(true);
+      // Requeue to pending (graceful shutdown) → no longer processing.
+      repo.requeue(job.id, Date.now(), job.claimToken);
+      expect(repo.isProcessingDelivery(SESSION, 'proc')).toBe(false);
+      expect(repo.isProcessingDelivery(SESSION, 'absent')).toBe(false);
+    });
+  });
 });
 
 // ── Handler-level conformance ──────────────────────────────────────────────
@@ -355,7 +367,6 @@ class MockSession implements MessageDeliverySession {
   driveCalls = 0;
   feedCalls = 0;
   settleCalls: string[] = [];
-  turnEndCalls: string[] = [];
   lastUuid?: string;
   lastContent?: unknown;
   lastParentToolUseId?: string | null;
@@ -393,10 +404,6 @@ class MockSession implements MessageDeliverySession {
 
   async settleSkippedDelivery(uuid: string): Promise<void> {
     this.settleCalls.push(uuid);
-  }
-
-  recordDeliveryTurnEnd(uuid: string): void {
-    this.turnEndCalls.push(uuid);
   }
 }
 
@@ -438,46 +445,6 @@ describe('message-delivery v2 — handler (conformance)', () => {
     const result = await handler(job);
     expect(result).toEqual({ outcome: 'completed' });
     expect(session.driveCalls).toBe(1);
-  });
-
-  it('records a durable turn-end marker when a driven turn completes while the job is processing', async () => {
-    // Result-less terminal paths (query error / interrupt) persist no SDK
-    // `result` row; the handler records a durable marker so a later stale
-    // re-claim recognizes the consumed turn ended instead of re-driving it.
-    const session = new MockSession();
-    const job = turnJob(repo, 'msg-runs');
-    const handler = createMessageDeliveryHandler({
-      jobQueue: repo,
-      getSession: () => session,
-      getMessageContent: () => ({ content: 'hello', sendStatus: 'enqueued' }),
-    });
-    const result = await handler(job);
-    expect(result).toEqual({ outcome: 'completed' });
-    expect(session.turnEndCalls).toEqual(['msg-runs']);
-  });
-
-  it('does NOT record a turn-end marker when the job was requeued during the turn (graceful-shutdown resume)', async () => {
-    // Graceful shutdown requeues in-flight delivery jobs to `pending` BEFORE the
-    // turn's idle fires; those must be resumed on next boot, not marked ended.
-    // The handler's gate (job still `processing`) must skip recording here.
-    const session = new MockSession();
-    const job = turnJob(repo, 'msg-shutdown');
-    const jobId = job.id;
-    session.driveDeliveryTurn = async () => {
-      // Simulate requeueAllProcessing flipping the job during the turn await.
-      db.prepare(`UPDATE job_queue SET status = 'pending', started_at = NULL WHERE id = ?`).run(
-        jobId
-      );
-      return { outcome: 'completed' };
-    };
-    const handler = createMessageDeliveryHandler({
-      jobQueue: repo,
-      getSession: () => session,
-      getMessageContent: () => ({ content: 'hello', sendStatus: 'enqueued' }),
-    });
-    const result = await handler(job);
-    expect(result).toEqual({ outcome: 'completed' });
-    expect(session.turnEndCalls).toEqual([]); // resume desired on next boot
   });
 
   it('blocked startup → parks (requeue) and the job stays pending (§13: blocked→parked, not failed)', async () => {
