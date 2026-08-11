@@ -1045,4 +1045,72 @@ describe('SpaceGoalService', () => {
     expect(topics).toContain('space/goal.status');
     expect(topics).toContain('space/goal.progress');
   });
+
+  it('discards lifecycle events when a goal mutation rolls back', async () => {
+    // A rolled-back mutation must not publish a lifecycle event for state that
+    // never persisted. Create the goal with a working service, then run the
+    // update through a service whose goalEventRepo.create() throws —
+    // recordGoalEvent calls emitGoalLifecycleEvent (buffered) then
+    // goalEventRepo.create (throws) inside runAtomic, so the transaction rolls
+    // back and the buffered emit is discarded.
+    const published: ExternalEvent[] = [];
+    const scheduleService = new ScheduleService({
+      db: db as never,
+      scheduleRepo,
+      jobQueue: new JobQueueRepository(db as never),
+      spaceRepo,
+    });
+    const emitter = new SpaceLifecycleEventEmitter({
+      publish: async (event) => {
+        published.push(event);
+        return { outcome: 'published', eventId: event.id };
+      },
+    });
+
+    // Create succeeds with a real goalEventRepo (audit row written).
+    const seedingService = new SpaceGoalService({
+      goalRepo,
+      goalEventRepo,
+      taskRepo,
+      spaceRepo,
+      scheduleService,
+      db: db as never,
+      lifecycleEventEmitter: emitter,
+    });
+    const goal = seedingService.createGoal({
+      spaceId,
+      title: 'Rollback goal',
+      type: 'measurable',
+      progress: 10,
+    });
+    published.length = 0; // ignore the created-event noise
+
+    // The update uses a goalEventRepo that throws on create -> rollback.
+    const throwingEventRepo = {
+      ...goalEventRepo,
+      create: () => {
+        throw new Error('audit insert failed');
+      },
+    } as unknown as SpaceGoalEventRepository;
+    const failingService = new SpaceGoalService({
+      goalRepo,
+      goalEventRepo: throwingEventRepo,
+      taskRepo,
+      spaceRepo,
+      scheduleService,
+      db: db as never,
+      lifecycleEventEmitter: emitter,
+    });
+
+    expect(() => failingService.updateGoal(goal.id, { status: 'paused', progress: 80 })).toThrow(
+      'audit insert failed'
+    );
+    // Nothing published — the rolled-back status/progress transition never
+    // committed, so no subscriber should be woken for it.
+    expect(published).toHaveLength(0);
+    // And the goal itself was not mutated (rollback restored active + progress 10).
+    const restored = goalRepo.getById(goal.id)!;
+    expect(restored.status).toBe('active');
+    expect(restored.progress).toBe(10);
+  });
 });

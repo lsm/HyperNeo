@@ -402,9 +402,40 @@ export class SpaceGoalService {
     }
   }
 
+  /**
+   * True while a `db.transaction` is in progress. Goal lifecycle emits are
+   * buffered while this is set and flushed only after the transaction commits,
+   * so a rolled-back goal mutation can never publish an external event (nor
+   * fire `externalEvent.published`) for state that never persisted. Mirrors the
+   * post-commit emit pattern used by the runtime's recovery path.
+   */
+  private inAtomicBlock = false;
+  private pendingLifecycleEmits: Array<() => void> = [];
+
   private runAtomic<T>(fn: () => T): T {
     if (!this.deps.db) return fn();
-    return this.deps.db.transaction(fn)();
+    this.inAtomicBlock = true;
+    let committed = false;
+    try {
+      const result = this.deps.db.transaction(fn)();
+      committed = true;
+      return result;
+    } finally {
+      this.inAtomicBlock = false;
+      if (committed) {
+        this.flushPendingLifecycleEmits();
+      } else {
+        // Rollback (the exception propagates after finally) — discard queued
+        // emits so a failed mutation publishes nothing.
+        this.pendingLifecycleEmits = [];
+      }
+    }
+  }
+
+  private flushPendingLifecycleEmits(): void {
+    const pending = this.pendingLifecycleEmits;
+    this.pendingLifecycleEmits = [];
+    for (const emit of pending) emit();
   }
 
   private pauseLinkedScheduleOrClear(goal: SpaceGoal): void {
@@ -711,19 +742,28 @@ export class SpaceGoalService {
   ): void {
     const emitter = this.deps.lifecycleEventEmitter;
     if (!emitter) return;
-    if (eventType === 'task_triggered') {
-      const taskId = context?.sourceTaskId ?? current.activeTaskId;
-      if (taskId) emitter.emitGoalTaskTriggered(current, taskId);
-      return;
-    }
-    if (!previous) return;
-    if (eventType === 'status_changed') {
-      emitter.emitGoalStatusChanged(current, previous.status);
-    }
-    // Evaluated independently of the audit event type so a combined status +
-    // progress mutation publishes both events.
-    if (previous.progress !== current.progress) {
-      emitter.emitGoalProgress(current, previous.progress);
+    const fire = (): void => {
+      if (eventType === 'task_triggered') {
+        const taskId = context?.sourceTaskId ?? current.activeTaskId;
+        if (taskId) emitter.emitGoalTaskTriggered(current, taskId);
+        return;
+      }
+      if (!previous) return;
+      if (eventType === 'status_changed') {
+        emitter.emitGoalStatusChanged(current, previous.status);
+      }
+      // Evaluated independently of the audit event type so a combined status +
+      // progress mutation publishes both events.
+      if (previous.progress !== current.progress) {
+        emitter.emitGoalProgress(current, previous.progress);
+      }
+    };
+    // Defer publication when inside a transaction so a rolled-back mutation
+    // never fires an external event; runAtomic flushes after commit.
+    if (this.inAtomicBlock) {
+      this.pendingLifecycleEmits.push(fire);
+    } else {
+      fire();
     }
   }
 
