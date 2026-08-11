@@ -6,6 +6,7 @@ import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
+import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { createSpaceTables } from '../../helpers/space-test-db';
 import { computeDefinitionVersion } from '../../../../src/lib/space/workflows/definition-version';
 import type { SpaceWorkflow } from '@hyperneo/shared';
@@ -455,5 +456,66 @@ describe('SpaceWorkflowRunRepository', () => {
     // hash the SANITIZED gate via the manager, and be idempotent across boots for crash
     // recovery). It is covered end-to-end by the "backfill re-key round-trips against the
     // runtime sanitized read path" test in channel-router.test.ts.
+  });
+
+  // -------------------------------------------------------------------------
+  // Deletion-safety (RFC §4 #3): deleting a workflow (or its runs) must not
+  // orphan a run whose canonical task is not archived — done/cancelled runs
+  // REOPEN, so only an archived task is a non-reopenable tombstone.
+  // -------------------------------------------------------------------------
+  describe('deletion-safety (RFC §4 #3)', () => {
+    let workflowRepo: SpaceWorkflowRepository;
+
+    beforeEach(() => {
+      workflowRepo = new SpaceWorkflowRepository(db as any);
+    });
+
+    it('hasNonArchivedRuns is false when there are no runs', () => {
+      expect(workflowRepo.hasNonArchivedRuns(WORKFLOW_ID)).toBe(false);
+    });
+
+    it('hasNonArchivedRuns is false when the run task is archived (tombstone)', () => {
+      const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'R' });
+      seedTaskForRun(run.id, spaceId, { archived: true });
+      expect(workflowRepo.hasNonArchivedRuns(WORKFLOW_ID)).toBe(false);
+    });
+
+    it('hasNonArchivedRuns is true when the run task is not archived', () => {
+      const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'R' });
+      seedTaskForRun(run.id, spaceId); // not archived
+      expect(workflowRepo.hasNonArchivedRuns(WORKFLOW_ID)).toBe(true);
+    });
+
+    it('hasNonArchivedRuns protects a reopenable done/cancelled run (task not archived)', () => {
+      // The key invariant: a finished run is NOT a tombstone — done/cancelled
+      // reopen — so it must block deletion as long as its task is not archived.
+      const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'R' });
+      repo.updateStatusUnchecked(run.id, 'done');
+      seedTaskForRun(run.id, spaceId); // not archived → still reopenable/executable
+      expect(workflowRepo.hasNonArchivedRuns(WORKFLOW_ID)).toBe(true);
+    });
+
+    it('deleteByWorkflowId removes only tombstoned runs and protects executable ones', () => {
+      const archivedRun = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'archived' });
+      seedTaskForRun(archivedRun.id, spaceId, { archived: true });
+
+      const liveRun = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'live' });
+      seedTaskForRun(liveRun.id, spaceId); // not archived
+
+      // Assert the invariant by which runs survive, not the returned count:
+      // Bun's changes() includes FK cascade effects (space_tasks ... ON DELETE
+      // SET NULL on the archived run's task), so the count over-reports relative
+      // to run rows deleted. No caller uses the count.
+      repo.deleteByWorkflowId(WORKFLOW_ID);
+      expect(repo.getRun(archivedRun.id)).toBeNull(); // tombstoned → removed
+      expect(repo.getRun(liveRun.id)).not.toBeNull(); // executable → protected
+    });
+
+    it('deleteByWorkflowId is a no-op when every run is still executable', () => {
+      const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'live' });
+      seedTaskForRun(run.id, spaceId); // not archived
+      expect(repo.deleteByWorkflowId(WORKFLOW_ID)).toBe(0);
+      expect(repo.getRun(run.id)).not.toBeNull();
+    });
   });
 });

@@ -73,6 +73,25 @@ export class WorkflowValidationError extends Error {
   }
 }
 
+/**
+ * Raised when deleting (or replacing) a workflow that still has a run whose
+ * canonical task is not archived. Such a run is still executable — `done`/
+ * `cancelled` reopen, and only `SpaceTask.archivedAt` is the non-reopenable
+ * tombstone — so deleting the definition would orphan its pinned version and
+ * strand the run. RFC §4 #3. Callers that want to ignore this for a specific
+ * path (resync, import-replacement) catch it and skip-with-warn instead of
+ * surfacing a hard failure.
+ */
+export class WorkflowDeletionBlockedError extends WorkflowValidationError {
+  constructor(
+    message: string,
+    readonly workflowId: string
+  ) {
+    super(message);
+    this.name = 'WorkflowDeletionBlockedError';
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Manager
 // ---------------------------------------------------------------------------
@@ -463,9 +482,31 @@ export class SpaceWorkflowManager {
   // Delete
   // -------------------------------------------------------------------------
 
+  /**
+   * Deletion-safety predicate (RFC §4 #3): does this workflow have any run whose
+   * canonical task is not archived? True ⇒ the run is still executable and
+   * deleting the definition would orphan its pinned version. Used by import-
+   * replacement to pre-check before freeing a name/handle slot.
+   */
+  hasNonArchivedRuns(id: string): boolean {
+    return this.repo.hasNonArchivedRuns(id);
+  }
+
   deleteWorkflow(id: string): boolean {
     const existing = this.repo.getWorkflow(id);
     if (!existing) return false;
+    // RFC §4 #3: refuse to delete a definition that still has a non-archived
+    // (executable) run — deleting it orphans the run's pinned version. The
+    // guard is archive-based so reopenable `done`/`cancelled` runs are protected,
+    // not just currently-active statuses. Callers that must tolerate a blocked
+    // delete (resync, import-replacement) catch WorkflowDeletionBlockedError.
+    if (this.repo.hasNonArchivedRuns(id)) {
+      throw new WorkflowDeletionBlockedError(
+        `Cannot delete workflow "${existing.name}" (${id}): it has run(s) whose ` +
+          `task is not archived. Archive the task(s) first, or keep the workflow.`,
+        id
+      );
+    }
     return this.repo.deleteWorkflow(id);
   }
 

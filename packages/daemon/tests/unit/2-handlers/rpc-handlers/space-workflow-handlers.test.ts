@@ -30,7 +30,10 @@ import {
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
 import type { SpaceWorkflowSummary } from '@hyperneo/shared';
-import { WorkflowValidationError } from '../../../../src/lib/space/managers/space-workflow-manager';
+import {
+  WorkflowValidationError,
+  WorkflowDeletionBlockedError,
+} from '../../../../src/lib/space/managers/space-workflow-manager';
 import type { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
 import type { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import type {
@@ -1413,6 +1416,55 @@ describe('space-workflow-handlers', () => {
           sessionId: 'global',
           spaceId: 'space-1',
         })
+      );
+    });
+
+    it('KEEPS a duplicate whose deletion is blocked by a non-archived run (RFC §4 #3)', async () => {
+      // resync must never strand an in-flight/reopenable run. If deleteWorkflow
+      // refuses a duplicate (WorkflowDeletionBlockedError), resync skips it
+      // rather than aborting the whole operation, and reports it as skipped.
+      const [template] = getBuiltInWorkflows();
+      const agents = agentsForTemplate(template);
+      const older: SpaceWorkflow = {
+        ...mockWorkflow,
+        id: 'wf-older',
+        name: template.name,
+        templateName: template.name,
+        templateHash: 'old',
+        createdAt: 100,
+      };
+      const newer: SpaceWorkflow = {
+        ...mockWorkflow,
+        id: 'wf-newer',
+        name: template.name,
+        templateName: template.name,
+        templateHash: 'new',
+        createdAt: 200,
+      };
+      setupWithGroup([older, newer], agents);
+
+      (workflowManager.updateWorkflow as ReturnType<typeof mock>).mockReturnValue(newer);
+      (workflowManager.deleteWorkflow as ReturnType<typeof mock>).mockImplementation(
+        (id: string) => {
+          if (id === 'wf-older') {
+            throw new WorkflowDeletionBlockedError('blocked: non-archived run', id);
+          }
+          return true;
+        }
+      );
+
+      const result = (await call('spaceWorkflow.resyncDuplicates', {
+        spaceId: 'space-1',
+        templateName: template.name,
+      })) as { deletedIds: string[]; skippedDueToActiveRuns: string[] };
+
+      // The blocked duplicate was kept (not deleted), the kept row was resynced.
+      expect(result.deletedIds).toEqual([]);
+      expect(result.skippedDueToActiveRuns).toEqual(['wf-older']);
+      // No spaceWorkflow.deleted emitted for a workflow that was never deleted.
+      expect(internalEventBus.publish).not.toHaveBeenCalledWith(
+        'spaceWorkflow.deleted',
+        expect.objectContaining({ workflowId: 'wf-older' })
       );
     });
 

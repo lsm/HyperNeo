@@ -364,17 +364,42 @@ export class SpaceWorkflowRunRepository {
   }
 
   /**
-   * Delete every run that belongs to a given workflow.
+   * Delete every TOMBSTONED run that belongs to a given workflow — i.e. runs
+   * whose tasks are all archived (the non-reopenable tombstone, RFC §3.1/§4 #3).
    *
    * Needed because migration 60 rebuilt `space_workflow_runs` without an
    * `ON DELETE CASCADE` FK on `workflow_id`, so callers that remove a workflow
    * must explicitly clean up its runs to avoid orphans.
    *
-   * @returns The number of rows deleted.
+   * Deletion-safe (RFC §4 #3): runs with any non-archived task are PROTECTED —
+   * they may still execute (a `done`/`cancelled` run reopens). Only runs with no
+   * non-archived task are deleted. Callers that need to know whether live runs
+   * block full cleanup should check `SpaceWorkflowRepository.hasNonArchivedRuns`
+   * first; this method silently leaves protected runs in place as defense in
+   * depth (it never strands an executable run regardless of caller).
+   *
+   * @returns The number of rows deleted (never includes protected runs).
    */
   deleteByWorkflowId(workflowId: string): number {
-    const stmt = this.db.prepare(`DELETE FROM space_workflow_runs WHERE workflow_id = ?`);
-    const result = stmt.run(workflowId);
+    // Delete every run of this workflow EXCEPT those that still have a
+    // non-archived task (RFC §4 #3 — such a run is executable: done/cancelled
+    // reopen, so only an archived task is a non-reopenable tombstone). Compute
+    // the protected run-id set first and delete by `NOT IN`, rather than a
+    // correlated `NOT EXISTS` against the target table: SQLite does not
+    // reliably correlate a DELETE's WHERE-subquery against the row being
+    // deleted, so the correlation form over-deletes. The `workflow_run_id IS
+    // NOT NULL` guard keeps `NOT IN` NULL-safe (a NULL in the set would
+    // otherwise suppress every deletion).
+    const result = this.db
+      .prepare(
+        `DELETE FROM space_workflow_runs
+         WHERE workflow_id = ?
+           AND id NOT IN (
+             SELECT t.workflow_run_id FROM space_tasks t
+             WHERE t.archived_at IS NULL AND t.workflow_run_id IS NOT NULL
+           )`
+      )
+      .run(workflowId);
     return result.changes;
   }
 

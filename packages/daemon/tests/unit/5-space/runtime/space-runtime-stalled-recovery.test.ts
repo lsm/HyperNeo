@@ -1809,7 +1809,11 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       const execution = seedExec(run.id, STEP_A, 'Step A', 'in_progress', {
         agentSessionId: 'session:missing-workflow',
       });
-      workflowManager.deleteWorkflow(workflow.id);
+      // Simulate a workflow deleted out from under an active run — a legacy
+      // orphan that the deletion guard (RFC §4 #3) now prevents in normal
+      // operation, but which recoverStalledRuns must still tolerate. Bypass the
+      // manager guard by deleting at the repo level (no active-run check).
+      new SpaceWorkflowRepository(db).deleteWorkflow(workflow.id);
       const cancelledSessions: string[] = [];
       const tam = {
         rehydrate: async () => {},

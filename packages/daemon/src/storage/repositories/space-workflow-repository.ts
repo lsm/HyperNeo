@@ -663,6 +663,49 @@ export class SpaceWorkflowRepository {
     return result.changes > 0;
   }
 
+  /**
+   * Does this workflow have at least one run whose canonical task is NOT archived?
+   *
+   * This is the RFC §4 #3 deletion-safety predicate. A run with a non-archived
+   * task is still executable — `done`/`cancelled` REOPEN (`workflow-run-status-
+   * machine.ts`), and only `SpaceTask.archivedAt` is the non-reopenable
+   * tombstone — so deleting the workflow (or its runs) while such a run exists
+   * orphans/strands it. The predicate is therefore archive-based, NOT
+   * status-based: it protects reopenable `done`/`cancelled` runs, not just
+   * currently-active statuses. Mirrors the `listPinnableRuns` predicate in the
+   * run repository (EXISTS a non-archived task) so the deletion guard and the
+   * pinning backfill agree on what "still executable" means.
+   */
+  hasNonArchivedRuns(workflowId: string): boolean {
+    // Minimal-schema safe-guard: some test fixtures and partial schemas create
+    // `space_workflows` without the runs/tasks tables. No runs table ⇒ no runs
+    // can exist ⇒ nothing to orphan ⇒ deletion is safe. Mirrors the best-effort
+    // tolerance of `recordDefinitionVersion` (which swallows "no such table" on
+    // the version-history append). In production both tables always exist.
+    const runsTable = this.db
+      .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='space_workflow_runs'`)
+      .get();
+    const tasksTable = this.db
+      .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='space_tasks'`)
+      .get();
+    if (!runsTable || !tasksTable) return false;
+
+    const row = this.db
+      .prepare(
+        `SELECT 1 FROM space_workflow_runs r
+         WHERE r.workflow_id = ?
+           AND EXISTS (
+             SELECT 1 FROM space_tasks t
+             WHERE t.workflow_run_id = r.id AND t.archived_at IS NULL
+           )
+         LIMIT 1`
+      )
+      .get(workflowId) as { '1': number } | null | undefined;
+    // Loose null check: Bun's sqlite `.get()` returns `null` for no rows while
+    // better-sqlite3 returns `undefined` — `!= null` treats both as "no match".
+    return row != null;
+  }
+
   // -------------------------------------------------------------------------
   // Handle lookup
   // -------------------------------------------------------------------------

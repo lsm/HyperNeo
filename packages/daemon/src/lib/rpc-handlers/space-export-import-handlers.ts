@@ -789,6 +789,20 @@ export function setupSpaceExportImportHandlers(
           const strategy: ConflictResolutionStrategy =
             res.workflows?.[exportedWorkflow.name] ?? 'skip';
           if (strategy === 'replace') {
+            // Deletion-safe (RFC §4 #3): a workflow with a non-archived
+            // (executable) run cannot be replaced — deleting it would orphan the
+            // run's pinned version. Skip the replacement (keep the existing
+            // workflow and its name/handle slot). Phase 2 detects the missing
+            // replacedIdByName entry and records the workflow as skipped rather
+            // than failing the whole import.
+            if (workflowManager.hasNonArchivedRuns(existing.id)) {
+              allWarnings.push(
+                `Workflow "${exportedWorkflow.name}": replace skipped — existing ` +
+                  `workflow has run(s) whose task is not archived; archive the ` +
+                  `task(s) and re-import to replace`
+              );
+              continue;
+            }
             workflowRepo.deleteWorkflow(existing.id);
             replacedIdByName.set(exportedWorkflow.name, existing.id);
             usedWorkflowNames.delete(exportedWorkflow.name);
@@ -822,6 +836,17 @@ export function setupSpaceExportImportHandlers(
             }
 
             if (strategy === 'replace') {
+              if (!replacedIdByName.has(exportedWorkflow.name)) {
+                // Blocked in the pre-step: the existing workflow had a
+                // non-archived run, so it was kept rather than deleted. Keep it
+                // and skip creating the imported copy (already warned above).
+                workflowResults.push({
+                  name: exportedWorkflow.name,
+                  id: existing.id,
+                  action: 'skipped',
+                });
+                continue;
+              }
               // Already deleted in the pre-step above.
               replacedOldId = replacedIdByName.get(exportedWorkflow.name);
               action = 'replaced';

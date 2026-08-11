@@ -20,6 +20,7 @@ import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/sp
 import {
   SpaceWorkflowManager,
   WorkflowValidationError,
+  WorkflowDeletionBlockedError,
 } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import type { SpaceAgentLookup } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import type { WorkflowNodeInput } from '@hyperneo/shared';
@@ -832,6 +833,53 @@ describe('SpaceWorkflowManager', () => {
 
   test('deleteWorkflow returns false for non-existent workflow', () => {
     expect(manager.deleteWorkflow('no-such-id')).toBe(false);
+  });
+
+  // -------------------------------------------------------------------------
+  // Deletion-safety (RFC §4 #3): a workflow with a non-archived run cannot be
+  // deleted — that run is still executable (done/cancelled reopen; only an
+  // archived task is a tombstone), so deleting the definition would orphan its
+  // pinned version and strand it.
+  // -------------------------------------------------------------------------
+  function seedRunWithTask(workflowId: string, opts: { archived?: boolean } = {}): string {
+    const now = Date.now();
+    const runId = `run-${Math.random().toString(36).slice(2)}`;
+    db.prepare(
+      `INSERT INTO space_workflow_runs
+         (id, space_id, workflow_id, definition_version, title, status, created_at, updated_at)
+       VALUES (?, 'space-1', ?, NULL, 'R', 'in_progress', ?, ?)`
+    ).run(runId, workflowId, now, now);
+    db.prepare(
+      `INSERT INTO space_tasks
+         (id, space_id, task_number, title, status, workflow_run_id, archived_at, created_at, updated_at)
+       VALUES (?, 'space-1', ?, 'T', 'open', ?, ?, ?, ?)`
+    ).run(`task-${runId}`, runId, runId, opts.archived ? now : null, now, now);
+    return runId;
+  }
+
+  test('deleteWorkflow throws WorkflowDeletionBlockedError when a non-archived run exists', () => {
+    const wf = manager.createWorkflow({
+      spaceId: 'space-1',
+      name: 'WithRun',
+      nodes: [coderNode],
+      completionAutonomyLevel: 3,
+    });
+    seedRunWithTask(wf.id); // non-archived task → executable run
+    expect(() => manager.deleteWorkflow(wf.id)).toThrow(WorkflowDeletionBlockedError);
+    // The workflow is kept (not deleted) — the run is not orphaned.
+    expect(manager.getWorkflow(wf.id)).not.toBeNull();
+  });
+
+  test('deleteWorkflow succeeds once the blocking run task is archived', () => {
+    const wf = manager.createWorkflow({
+      spaceId: 'space-1',
+      name: 'Archivable',
+      nodes: [coderNode],
+      completionAutonomyLevel: 3,
+    });
+    seedRunWithTask(wf.id, { archived: true }); // tombstoned → safe to delete
+    expect(manager.deleteWorkflow(wf.id)).toBe(true);
+    expect(manager.getWorkflow(wf.id)).toBeNull();
   });
 
   // -------------------------------------------------------------------------
