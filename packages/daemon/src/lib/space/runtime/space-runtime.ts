@@ -5870,6 +5870,11 @@ export class SpaceRuntime {
         toDeliver.map((entry) => entry.target)
       );
     }
+    // C3: stop() may have run during the awaited hook above. Abort the delivery
+    // loop — the delivery rows registered above remain and are resolved by
+    // their own lifecycle (queue TTL / restart requeue), but a runtime that is
+    // shutting down must not dispatch fresh deliveries.
+    if (this.isStopped) return;
     for (const { target, deliveryKey } of toDeliver) {
       await this.deliverExternalEventToWorkflowTarget(target, payload, deliveryKey);
     }

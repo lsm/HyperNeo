@@ -2616,6 +2616,171 @@ describe('ChannelRouter', () => {
     });
 
     // -----------------------------------------------------------------------
+    // onCyclicGateReset — callback ordering on the cap-failure path
+    // -----------------------------------------------------------------------
+
+    test('onCyclicGateReset: fires on the cyclic cap-failure path before the throw', async () => {
+      // Round-14 regression guard. incrementAndResetCyclicChannel must fire
+      // onCyclicGateReset BEFORE the `if (!incremented) throw ActivationError`
+      // cap-failure branch — otherwise a reset that cleared the sole pr_url
+      // leaves the superseded PR's topicFrom sub active because the runtime
+      // never re-materializes. The cap-failure branch is a TOCTOU backstop
+      // (the public pre-check in deliverMessage already throws when the cap is
+      // reached), so we force it deterministically by stubbing
+      // incrementCycleCount to return false (cap reached during the atomic
+      // increment — the exact case the in-method throw guards).
+      const gate: Gate = {
+        id: 'review-votes-gate',
+        fields: [
+          {
+            name: 'votes',
+            type: 'map',
+            writers: ['reviewer'],
+            check: { op: 'count', match: 'approved', min: 2 },
+          },
+        ],
+        resetOnCycle: true,
+      };
+      const channels: WorkflowChannel[] = [
+        { id: 'ch-fwd', from: 'Coder Node', to: 'Planner Node', gateId: 'review-votes-gate' },
+        { id: 'ch-bwd', from: 'Planner Node', to: 'Coder Node' }, // index 1 (cyclic)
+      ];
+      const workflow = buildWorkflowWithGates(
+        SPACE_ID,
+        workflowManager,
+        [
+          { id: NODE_A, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+          {
+            id: NODE_B,
+            name: 'Planner Node',
+            agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+          },
+        ],
+        channels,
+        [gate]
+      );
+
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Cap-Failure Callback Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+      gateDataRepo.set(run.id, 'review-votes-gate', {
+        votes: { alice: 'approved', bob: 'approved' },
+      });
+
+      // Force the cap-failure branch: the atomic increment reports the cap was
+      // reached (the TOCTOU case the in-method throw guards).
+      channelCycleRepo.incrementCycleCount = () => false;
+
+      let firedFor: string | null = null;
+      const nodeExecutionRepo = new NodeExecutionRepository(db);
+      const routerWithCallback = new ChannelRouter({
+        taskRepo,
+        workflowRunRepo,
+        workflowManager,
+        agentManager,
+        gateDataRepo,
+        channelCycleRepo,
+        db,
+        nodeExecutionRepo,
+        onCyclicGateReset: (runId) => {
+          firedFor = runId;
+        },
+      });
+
+      // Cap-failure path: deliverMessage rejects with the ActivationError.
+      await expect(
+        routerWithCallback.deliverMessage(run.id, 'planner', 'coder', 'iterate to the cap')
+      ).rejects.toThrow(/maximum cycle count/);
+
+      // The callback fired on the cap-failure path...
+      expect(firedFor).toBe(run.id);
+      // ...AFTER the resetOnCycle gate was already reset to defaults inside the
+      // transaction (the committed sequence is reset → increment → callback →
+      // throw). The reset committing before the callback is what makes the
+      // runtime's re-materialization meaningful.
+      const afterReset = gateDataRepo.get(run.id, 'review-votes-gate');
+      expect(afterReset!.data).toMatchObject({ votes: {} });
+    });
+
+    test('onCyclicGateReset: a throwing callback cannot break the cap-failure delivery', async () => {
+      // notifyCyclicGateReset wraps the callback in try/catch, so a throwing
+      // callback is swallowed and the subsequent ActivationError still surfaces.
+      // This proves both the ordering (the callback ran and was caught before
+      // the throw — else its error would propagate instead) and the robustness
+      // guarantee (a callback failure can't break delivery).
+      const gate: Gate = {
+        id: 'review-votes-gate',
+        fields: [
+          {
+            name: 'votes',
+            type: 'map',
+            writers: ['reviewer'],
+            check: { op: 'count', match: 'approved', min: 2 },
+          },
+        ],
+        resetOnCycle: true,
+      };
+      const channels: WorkflowChannel[] = [
+        { id: 'ch-fwd', from: 'Coder Node', to: 'Planner Node', gateId: 'review-votes-gate' },
+        { id: 'ch-bwd', from: 'Planner Node', to: 'Coder Node' }, // index 1 (cyclic)
+      ];
+      const workflow = buildWorkflowWithGates(
+        SPACE_ID,
+        workflowManager,
+        [
+          { id: NODE_A, name: 'Coder Node', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+          {
+            id: NODE_B,
+            name: 'Planner Node',
+            agents: [{ agentId: AGENT_PLANNER, name: 'planner' }],
+          },
+        ],
+        channels,
+        [gate]
+      );
+
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Throwing Callback Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+      gateDataRepo.set(run.id, 'review-votes-gate', {
+        votes: { alice: 'approved', bob: 'approved' },
+      });
+
+      channelCycleRepo.incrementCycleCount = () => false;
+
+      let fired = false;
+      const nodeExecutionRepo = new NodeExecutionRepository(db);
+      const routerWithCallback = new ChannelRouter({
+        taskRepo,
+        workflowRunRepo,
+        workflowManager,
+        agentManager,
+        gateDataRepo,
+        channelCycleRepo,
+        db,
+        nodeExecutionRepo,
+        onCyclicGateReset: () => {
+          fired = true;
+          throw new Error('callback-boom');
+        },
+      });
+
+      // The callback threw, but its throw was swallowed — delivery still fails
+      // with the ActivationError, not 'callback-boom'.
+      await expect(
+        routerWithCallback.deliverMessage(run.id, 'planner', 'coder', 'iterate to the cap')
+      ).rejects.toThrow(/maximum cycle count/);
+
+      expect(fired).toBe(true);
+    });
+
+    // -----------------------------------------------------------------------
     // Incremental writes — correct accumulation pattern for vote-counting
     // -----------------------------------------------------------------------
 
