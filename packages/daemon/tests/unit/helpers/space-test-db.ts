@@ -576,6 +576,17 @@ export function createSpaceTables(db: BunDatabase): void {
 			FOREIGN KEY (source_message_id) REFERENCES sdk_messages(id) ON DELETE CASCADE
 		)
 	`);
+  // Monotonic consumption-watermark counter (saveSDKMessage stamps terminal
+  // results from it). See schema/index.ts + Codex (PR #2463, P2).
+  db.exec(`
+		CREATE TABLE IF NOT EXISTS delivery_consumed_seq (
+			singleton INTEGER PRIMARY KEY DEFAULT 1,
+			next_seq INTEGER NOT NULL DEFAULT 1
+		)
+	`);
+  db.exec(`
+		INSERT OR IGNORE INTO delivery_consumed_seq (singleton, next_seq) VALUES (1, 1)
+	`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_timestamp_id
 		ON sdk_messages(session_id, timestamp DESC, id DESC)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_parent_tool_use_id

@@ -614,6 +614,20 @@ export class SDKMessageRepository {
           taskId,
         ];
         stmt.run(...values, conversationTurnIndex, extractSdkUuid(message));
+        // Stamp a terminal result with a monotonic operation sequence from the
+        // shared counter so the delivery re-claim boundary
+        // (`hasTerminalResultAfter`) can order it against a consumed message's
+        // watermark independent of SQLite rowid reuse. A separate UPDATE (not in
+        // the INSERT) so partial test schemas without the column don't break;
+        // guarded by column presence. See Codex (PR #2463, P2).
+        if (isTerminal && this.tableHasColumn('sdk_messages', 'consumed_seq')) {
+          const resultSeq = this.nextConsumedSeq();
+          if (resultSeq !== null) {
+            this.db
+              .prepare('UPDATE sdk_messages SET consumed_seq = ? WHERE id = ?')
+              .run(resultSeq, id);
+          }
+        }
         this.saveReplacementEdges(id, sessionId, taskId, message);
         if (countsTowardsBadge) this.bumpVisibleMessageCount(sessionId, 1);
       })();
@@ -1485,23 +1499,17 @@ export class SDKMessageRepository {
         const updStmt = this.db.prepare(
           'UPDATE sdk_messages SET conversation_turn_index = ?, timestamp = ? WHERE id = ?'
         );
-        // consumed_seq is a CONSUMPTION WATERMARK = MAX(rowid) + 1 at consume
-        // time — one past the last row inserted BEFORE this consumption. A
-        // message queued in turn A and consumed (promoted) as turn B keeps its
-        // original rowid (below A's result), so the delivery re-claim boundary
-        // (`hasTerminalResultAfter`) compares `result.rowid >= consumed_seq`:
-        // A's result (rowid ≤ MAX) is excluded, B's own later result (rowid >
-        // MAX) is matched. Bounded to MAX(rowid)+1 (not MAX(consumed_seq)) so
-        // prior synthetic watermarks can't outrun a later turn's result rowid.
-        // MAX(rowid) is O(1) via the rowid index. See Codex (PR #2463, P2).
-        const maxRowidStmt = this.db.prepare(
-          `SELECT COALESCE(MAX(rowid), 0) + 1 AS m FROM sdk_messages`
-        );
+        // consumed_seq is a CONSUMPTION WATERMARK drawn from the shared monotonic
+        // counter (delivery_consumed_seq). Terminal results are stamped from the
+        // SAME counter at insert (saveSDKMessage), so `hasTerminalResultAfter`
+        // compares counter-to-counter — independent of SQLite rowid reuse (a
+        // deleted max rowid can be reused by a later insert, which would break a
+        // MAX(rowid)+1 boundary). One counter draw per consumed row. See Codex
+        // (PR #2463, P2).
         const timeStmt = this.db.prepare('UPDATE sdk_messages SET timestamp = ? WHERE id = ?');
         const consumedSeqStmt = this.db.prepare(
           'UPDATE sdk_messages SET consumed_seq = ?, timestamp = ? WHERE id = ?'
         );
-        const consumedSeq = newStatus === 'consumed' ? (maxRowidStmt.get() as { m: number }).m : 0;
         for (const row of pending) {
           if (row.task_id && row.is_renderable === 1) {
             const max = (maxStmt.get(row.task_id) as { m: number | null } | undefined)?.m ?? 0;
@@ -1514,11 +1522,10 @@ export class SDKMessageRepository {
             timeStmt.run(now, row.id);
           }
           // Only a CONSUMED flip carries the consumption boundary (failed rows
-          // were never consumed — no consumed_seq). Same value for every row in
-          // this batch (MAX(rowid)+1 at consume time); a later terminal result
-          // always has a higher rowid.
+          // were never consumed — no consumed_seq). Monotonic counter draw,
+          // independent of rowid reuse.
           if (newStatus === 'consumed') {
-            consumedSeqStmt.run(consumedSeq, now, row.id);
+            consumedSeqStmt.run(this.nextConsumedSeq(), now, row.id);
           }
         }
       }
@@ -1917,7 +1924,8 @@ export class SDKMessageRepository {
             AND r.message_type = 'result'
             AND r.is_terminal = 1
             AND r.parent_tool_use_id IS NULL
-            AND r.rowid >= (
+            AND r.consumed_seq IS NOT NULL
+            AND r.consumed_seq >= (
               SELECT m.consumed_seq FROM sdk_messages m
                WHERE m.session_id = ? AND m.sdk_uuid = ? LIMIT 1
             )
@@ -1925,6 +1933,33 @@ export class SDKMessageRepository {
       )
       .get(sessionId, sessionId, uuid) as { 1: number } | undefined | null;
     return row != null;
+  }
+
+  /**
+   * Atomically draw the next value from the shared monotonic consumption
+   * counter (delivery_consumed_seq). Used to stamp both consumed messages (at
+   * the consumed-flip) and terminal results (at insert) so
+   * `hasTerminalResultAfter` can order them counter-to-counter, independent of
+   * SQLite rowid reuse. Call within the consuming transaction. See Codex
+   * (PR #2463, P2).
+   */
+  private nextConsumedSeq(): number | null {
+    // Bump-then-read in one statement; the singleton row always exists (created
+    // by the schema / migration 189). Table-guarded so partial/legacy test
+    // schemas without the counter don't throw — a NULL stamp means "unknown/
+    // live", which hasTerminalResultAfter never matches (safe: the row just
+    // won't be recognized as turn-ended via the result path).
+    if (!this.tableExists('delivery_consumed_seq')) return null;
+    return (
+      (
+        this.db
+          .prepare(
+            `UPDATE delivery_consumed_seq SET next_seq = next_seq + 1 WHERE singleton = 1
+           RETURNING next_seq`
+          )
+          .get() as { next_seq: number } | undefined
+      )?.next_seq ?? null
+    );
   }
 
   /**

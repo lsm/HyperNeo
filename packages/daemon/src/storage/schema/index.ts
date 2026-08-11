@@ -785,6 +785,20 @@ export function createTables(db: BunDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_delivery_turn_end_session
       ON delivery_turn_end(session_id)
   `);
+  // Monotonic consumption-watermark counter for message-delivery v2. A singleton
+  // row holding the next sequence; consumed_seq is drawn from it at consume time
+  // so it is genuinely monotonic and independent of SQLite rowid reuse (a
+  // deleted max rowid can be reused by a later insert, which would break
+  // MAX(rowid)+1). See message-delivery-v2.md + Codex (PR #2463, P2).
+  db.exec(`
+      CREATE TABLE IF NOT EXISTS delivery_consumed_seq (
+        singleton INTEGER PRIMARY KEY DEFAULT 1,
+        next_seq INTEGER NOT NULL DEFAULT 1
+      )
+    `);
+  db.exec(`
+      INSERT OR IGNORE INTO delivery_consumed_seq (singleton, next_seq) VALUES (1, 1)
+    `);
 
   // Workspace history — persists recently-used workspace paths
   db.exec(`

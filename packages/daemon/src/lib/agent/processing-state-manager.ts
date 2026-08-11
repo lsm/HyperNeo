@@ -80,13 +80,16 @@ export class ProcessingStateManager {
    * abandoned — nobody awaits it). Arm BEFORE the turn starts so a fast turn's
    * idle cannot be missed.
    *
-   * `onEnd` fires when the waiter is released by ANY path (terminal idle drain,
-   * {@link releaseIdleWaiters}, or `cancel()`). The message-delivery bridge uses
-   * it to durably persist turn-completion state keyed by the kickoff UUID it
-   * knows — the durable turn owner — rather than deriving it from mutable
-   * processing state that steers / `waiting_for_input` can overwrite. Fired on
-   * cancel too so a query-close / rejected-acknowledgment abandon still records
-   * the turn ended. See Codex (PR #2463, P2).
+   * `onEnd` fires on a GENUINE turn-end release — the terminal idle drain
+   * ({@link setIdle}) or an explicit {@link releaseIdleWaiters} (a superseded
+   * rate-limit retry / restart that abandons the durable turn as ended). It does
+   * NOT fire on `cancel()`: cancel is a cleanup/abandon path (the delivery
+   * bridge's `finally`, a rejected acknowledgment, a query-close with no idle),
+   * NOT proof the turn ended — firing the marker there would let a consumed-but-
+   * never-delivered prompt (e.g. a post-commit search-index throw that rejects
+   * the acknowledgment) be marked ended, so the retried job completes without
+   * delivering. The bridge derives the durable turn owner (kickoff UUID) from
+   * the closure, not from mutable processing state. See Codex (PR #2463, P2).
    */
   waitForIdleTransition(
     episodeGen?: number,
@@ -103,9 +106,9 @@ export class ProcessingStateManager {
     // marker) WITHOUT resolving the waiter; resolveOnce releases the awaiting
     // delivery job. Splitting the two lets setIdle write the marker
     // synchronously before the awaited idle side effects while deferring waiter
-    // resolution to the finally. endOnce = fireEnd + resolve (releaseIdleWaiters,
-    // cancel). Each is independently idempotent so a waiter can be released by
-    // exactly one path without double-firing the marker or double-resolving.
+    // resolution to the finally. endOnce = fireEnd + resolve (releaseIdleWaiters
+    // — a genuine abandon). cancel() uses resolveOnce ONLY (no marker — see the
+    // doc above). Each is independently idempotent.
     const fireEnd = (): void => {
       if (onEndFired) return;
       onEndFired = true;
@@ -125,7 +128,10 @@ export class ProcessingStateManager {
     return {
       promise,
       cancel: () => {
-        endOnce();
+        // Cleanup/abandon, NOT a turn-end: release the awaiting job without
+        // persisting the turn-completion marker. The marker fires only on the
+        // genuine terminal paths (setIdle drain / releaseIdleWaiters).
+        resolveOnce();
       },
     };
   }

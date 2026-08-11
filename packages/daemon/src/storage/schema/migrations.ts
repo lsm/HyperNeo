@@ -966,6 +966,13 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // `rowid` predates it. Mirrored in the fresh-DB schema (index.ts).
   // See Codex (PR #2463, P2).
   run(migrationMarkerKey(188), () => runMigration188(db));
+
+  // Migration 189: delivery_consumed_seq — a dedicated monotonic counter for the
+  // consumption watermark. MAX(rowid)+1 is not strictly monotonic across deletes
+  // (SQLite may reuse a deleted max rowid for a later insert, moving a terminal
+  // result behind the watermark). A singleton counter row is genuinely monotonic.
+  // Mirrored in the fresh-DB schema (index.ts). See Codex (PR #2463, P2).
+  run(migrationMarkerKey(189), () => runMigration189(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -12313,4 +12320,28 @@ export function runMigration188(db: BunDatabase): void {
   // a full-table pass. Idempotent (IF NOT EXISTS). See Codex (PR #2463, P2).
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_consumed_seq
       ON sdk_messages(consumed_seq)`);
+}
+
+/**
+ * Migration 189: a dedicated monotonic counter for the consumption watermark.
+ *
+ * `MAX(rowid)+1` (migration 188's approach) is not strictly monotonic across
+ * deletes — SQLite may reuse a deleted max rowid for a later insert, which would
+ * place a terminal result's rowid BELOW a prior watermark and make
+ * `hasTerminalResultAfter` miss the completed turn. A singleton counter row
+ * (`delivery_consumed_seq`) is genuinely monotonic and independent of rowid
+ * reuse. Backfills existing NULL `consumed_seq` rows to 0 (treated as
+ * "unknown/live" by hasTerminalResultAfter, never matching a result) so a
+ * migrated in-flight job is not pre-completed. Idempotent.
+ */
+export function runMigration189(db: BunDatabase): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS delivery_consumed_seq (
+      singleton INTEGER PRIMARY KEY DEFAULT 1,
+      next_seq INTEGER NOT NULL DEFAULT 1
+    )
+  `);
+  db.exec(`
+      INSERT OR IGNORE INTO delivery_consumed_seq (singleton, next_seq) VALUES (1, 1)
+    `);
 }

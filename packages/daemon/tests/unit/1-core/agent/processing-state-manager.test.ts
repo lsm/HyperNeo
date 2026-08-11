@@ -197,13 +197,18 @@ describe('ProcessingStateManager', () => {
       expect(ended).toBe(true);
     });
 
-    test('waiter onEnd fires on cancel() (query-close path)', async () => {
+    test('cancel() does NOT fire onEnd (cleanup, not a turn-end) — P2', async () => {
+      // cancel() is the delivery bridge's finally / rejected-acknowledgment /
+      // query-close abandon path. It must NOT persist the turn-completion marker
+      // (a consumed-but-never-delivered prompt must not be marked ended, or the
+      // retried job completes without delivering). Only genuine terminal paths
+      // (setIdle drain, releaseIdleWaiters) fire onEnd.
       let ended = false;
       const handle = manager.waitForIdleTransition(undefined, () => {
         ended = true;
       });
       handle.cancel();
-      expect(ended).toBe(true);
+      expect(ended).toBe(false);
     });
 
     test('waiter onEnd does NOT fire on a suppressed (retry mid-point) idle', async () => {
@@ -254,19 +259,23 @@ describe('ProcessingStateManager', () => {
       expect(resolved).toBe(true);
     });
 
-    test('cancel() fires the onEnd callback (query-close) and is idempotent', async () => {
-      // driveDeliveryTurn cancels its turn-end waiter in the finally once the
-      // turn has ended via query-close (no idle). The waiter-owned onEnd records
-      // the durable turn-end marker; cancel() is a no-op if the waiter already
-      // ended (e.g. via setIdle), so onEnd fires exactly once.
+    test('cancel() is idempotent and releases the waiter without firing onEnd; a later terminal idle does not re-fire it', async () => {
+      // cancel() is cleanup/abandon — it releases the awaiting job WITHOUT
+      // persisting the turn-end marker. Idempotent (double cancel is a no-op),
+      // and a later genuine terminal idle must not re-fire a cancelled waiter.
       let endedCount = 0;
       const handle = manager.waitForIdleTransition(undefined, () => endedCount++);
+      let resolved = false;
+      void handle.promise.then(() => {
+        resolved = true;
+      });
       handle.cancel();
       handle.cancel();
-      expect(endedCount).toBe(1);
-      // A later terminal idle must not re-fire a cancelled waiter.
+      await Promise.resolve();
+      expect(endedCount).toBe(0); // no marker on cancel
+      expect(resolved).toBe(true); // but the await IS released
       await manager.setIdle();
-      expect(endedCount).toBe(1);
+      expect(endedCount).toBe(0); // cancelled waiter isn't re-fired
     });
 
     test('drains waiters even when idle-state publication throws', async () => {

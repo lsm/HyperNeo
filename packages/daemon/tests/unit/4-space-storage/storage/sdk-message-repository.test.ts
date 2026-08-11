@@ -94,6 +94,11 @@ describe('SDKMessageRepository', () => {
 				ended_at TEXT NOT NULL,
 				PRIMARY KEY (session_id, message_uuid)
 			);
+			CREATE TABLE delivery_consumed_seq (
+				singleton INTEGER PRIMARY KEY DEFAULT 1,
+				next_seq INTEGER NOT NULL DEFAULT 1
+			);
+			INSERT OR IGNORE INTO delivery_consumed_seq (singleton, next_seq) VALUES (1, 1);
 			CREATE INDEX idx_sdk_messages_session ON sdk_messages(session_id);
 			CREATE INDEX idx_sdk_messages_timestamp ON sdk_messages(timestamp);
 			CREATE INDEX idx_sdk_messages_task_id ON sdk_messages(task_id);
@@ -1689,18 +1694,22 @@ describe('SDKMessageRepository', () => {
         sendStatus?: string;
       }
     ): void {
-      // A consumed user row gets a consumption watermark = MAX(rowid)+1 at
-      // insert (mirrors markDeliveryConsumedByUuid), so hasTerminalResultAfter
-      // (NULL consumed_seq = "unknown/live") sees it as consumed.
+      // Stamp the shared monotonic counter for consumed user rows AND terminal
+      // results (mirrors saveSDKMessage/markDeliveryConsumedByUuid), so
+      // hasTerminalResultAfter compares counter-to-counter. NULL otherwise.
       const effectiveStatus = opts.sendStatus ?? (type === 'user' ? 'consumed' : null);
-      const consumedSeq =
-        type === 'user' && effectiveStatus === 'consumed'
-          ? (
-              db.prepare(`SELECT COALESCE(MAX(rowid), 0) + 1 AS m FROM sdk_messages`).get() as {
-                m: number;
-              }
-            ).m
-          : null;
+      const needsSeq =
+        (type === 'user' && effectiveStatus === 'consumed') || (type === 'result' && opts.terminal);
+      const consumedSeq = needsSeq
+        ? (
+            db
+              .prepare(
+                `UPDATE delivery_consumed_seq SET next_seq = next_seq + 1 WHERE singleton = 1
+                 RETURNING next_seq`
+              )
+              .get() as { next_seq: number }
+          ).next_seq
+        : null;
       db.prepare(
         `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid, consumed_seq)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -1950,12 +1959,12 @@ describe('SDKMessageRepository', () => {
       expect(repository.hasTerminalResultAfter('session-1', 'promoted-msg')).toBe(true);
     });
 
-    it('keeps watermarks in rowid space — multiple consumes without inserts do not outrun a later turn result (P2)', () => {
-      // If consumed_seq were allowed to exceed MAX(rowid) (e.g. MAX(consumed_seq)+1),
-      // consuming several steers with no intervening inserts would push the
-      // watermark above the rowid of a LATER turn's own terminal result, so that
-      // result (rowid below the watermark) is missed and recovery re-drives the
-      // ended turn. The watermark is MAX(rowid)+1, so it never outruns future rowids.
+    it('uses a genuinely monotonic counter — a terminal result stamped after multiple consumes is detected for all (P2)', () => {
+      // consumed_seq and terminal-result seq both come from the shared
+      // delivery_consumed_seq counter, so ordering is independent of SQLite
+      // rowid reuse (a deleted max rowid can be reused by a later insert).
+      // Consume two steers without intervening inserts, then stamp a terminal
+      // result: it must be detected for both (its counter value is higher).
       const seed = db.prepare(
         `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid, is_renderable)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
@@ -1980,15 +1989,15 @@ describe('SDKMessageRepository', () => {
         'm2',
         1
       );
-      // Consume both WITHOUT any intervening insert.
+      // Consume both — each draws an increasing counter value.
       repository.markDeliveryConsumedByUuid('s', 'm1');
       repository.markDeliveryConsumedByUuid('s', 'm2');
-      // A terminal result inserted AFTER both consumptions must be detected for
-      // both (its rowid exceeds MAX(rowid)+1 at each consume time).
-      seed.run(crypto.randomUUID(), 's', 'result', '{}', '2026-08-11T15:05:00.000Z', null, null, 1);
-      db.prepare(
-        `UPDATE sdk_messages SET is_terminal = 1, message_type = 'result' WHERE sdk_uuid IS NULL AND message_type = 'result'`
-      ).run();
+      // A terminal result stamped AFTER both consumptions (higher counter) is
+      // detected for both.
+      insertMessage('s', 'result', {
+        timestamp: '2026-08-11T15:05:00.000Z',
+        terminal: true,
+      });
       expect(repository.hasTerminalResultAfter('s', 'm1')).toBe(true);
       expect(repository.hasTerminalResultAfter('s', 'm2')).toBe(true);
     });
