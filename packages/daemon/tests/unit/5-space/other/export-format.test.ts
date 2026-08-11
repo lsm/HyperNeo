@@ -2397,12 +2397,13 @@ describe('exportWorkflow — handoff transitions', () => {
     expect(exported.nodes[1].transitions).toBeUndefined();
   });
 
-  test('strips a transition gateId whose gate was filtered out (legacy empty gate)', () => {
-    // A legacy empty gate is dropped at export; a transition referencing it must
-    // have its gateId stripped at the same boundary, or validateExportedWorkflow
-    // rejects the export for a dangling reference.
+  test('strips transition AND channel gateIds whose gate was filtered out (legacy empty gate)', () => {
+    // A legacy empty gate is dropped at export; a transition AND a channel
+    // referencing it must have their gateId stripped at the same boundary — a
+    // dangling channel gateId makes isChannelOpen treat the route as closed.
     const workflow = makeWorkflow({
       gates: [{ id: 'g-empty', resetOnCycle: false } as never],
+      channels: [{ id: 'ch1', from: 'Code step', to: 'Review step', gateId: 'g-empty' }],
       nodes: [
         {
           id: 'node-uuid-1',
@@ -2420,6 +2421,7 @@ describe('exportWorkflow — handoff transitions', () => {
     const exported = exportWorkflow(workflow, []);
     expect(exported.gates).toBeUndefined();
     expect(exported.nodes[0].transitions).toEqual([{ id: 'to-review', target: 'Review step' }]);
+    expect(exported.channels![0]).not.toHaveProperty('gateId');
     expect(validateExportedWorkflow(exported).ok).toBe(true);
   });
 

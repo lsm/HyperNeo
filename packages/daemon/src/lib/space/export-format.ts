@@ -565,7 +565,10 @@ export function exportWorkflow(
       };
       if (ch.maxCycles !== undefined) exported.maxCycles = ch.maxCycles;
       if (ch.label !== undefined) exported.label = ch.label;
-      if (ch.gateId !== undefined) exported.gateId = ch.gateId;
+      // Drop the gateId if its gate was filtered out (e.g. a legacy empty
+      // gate) so the channel does not carry a dangling reference that
+      // isChannelOpen would treat as closed on re-import.
+      if (ch.gateId !== undefined && exportableGateIds.has(ch.gateId)) exported.gateId = ch.gateId;
       return exported;
     });
     result.channels = exportedChannels;

@@ -344,7 +344,15 @@ export function buildWorkflowCreateParams(
   if (startNodeId) params.startNodeId = startNodeId;
   if (endNodeId) params.endNodeId = endNodeId;
   if (exported.description !== undefined) params.description = exported.description;
-  if (exported.channels && exported.channels.length > 0) params.channels = exported.channels;
+  if (exported.channels && exported.channels.length > 0) {
+    // Strip gateIds whose gate was dropped above so a channel does not carry a
+    // dangling reference that isChannelOpen treats as closed.
+    params.channels = exported.channels.map((ch) =>
+      ch.gateId !== undefined && !validGateIds.has(ch.gateId)
+        ? { ...ch, gateId: undefined }
+        : { ...ch }
+    );
+  }
   if (exported.hooks && exported.hooks.length > 0) params.hooks = exported.hooks;
   // Restore gates so channel/handoff-transition `gateId` references resolve at
   // createWorkflow (a gated transition can only import when its gate does).
