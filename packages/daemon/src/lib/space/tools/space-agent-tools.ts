@@ -3436,6 +3436,164 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     },
 
     /**
+     * Validation-only (no-PR) task completion — the agent-reachable equivalent
+     * of the UI's direct status→done transition for a no-code task.
+     *
+     * For tasks that complete via validation rather than a reviewed PR: Forge
+     * review/automation tasks, diagnostics, already-complete work. Captures the
+     * validation outcome as the task result and transitions `review`/`in_progress`
+     * → `done` WITHOUT requiring a `pr_url`. The coder workflow's completion gate
+     * expects a PR; this tool is the escape hatch for tasks that legitimately
+     * produce none (#485 built the path; this exposes it to agents).
+     *
+     * It complements, rather than duplicates, the other completion tools:
+     *   - `approve_task` closes a task already in `review` (PR-oriented).
+     *   - `approve_pending_completion` is the human-approval review→approved path.
+     *   - Neither is reachable for a no-code task that never produced a PR.
+     *
+     * Guards (mirroring `approve_task`):
+     *   - Task must belong to this space.
+     *   - Task must be `review` or `in_progress` (the non-terminal statuses from
+     *     which a no-code task is eligible to close).
+     *   - Task must NOT have a PR: if its workflow run has a primary link
+     *     (`runtime.getApprovedPrUrlForRun`), it is PR-bound and must use the
+     *     normal approve/merge path — this tool never bypasses PR review.
+     *   - Autonomy-gated to the workflow's `completionAutonomyLevel` (default 5)
+     *     — the same capability-vs-autonomy framing as `approve_task`.
+     *
+     * The validation outcome is captured as `task.result`; `approvalSource` is
+     * stamped `'agent'` (effective on review→done; recorded in the audit log
+     * regardless of the source status).
+     */
+    async complete_validation_task(args: {
+      task_id: string;
+      validation_outcome: string;
+      reason?: string;
+    }): Promise<ToolResult> {
+      const outcome = args.validation_outcome?.trim();
+      if (!outcome) {
+        return jsonResult({
+          success: false,
+          error: 'validation_outcome is required — describe what was checked and the verdict.',
+        });
+      }
+
+      const task = taskRepo.getTask(args.task_id);
+      if (!task) {
+        return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
+      }
+      if (task.spaceId !== spaceId) {
+        return jsonResult({
+          success: false,
+          error: `Task ${args.task_id} does not belong to this space.`,
+        });
+      }
+
+      // Eligibility: only `review` and `in_progress` may close via the
+      // validation-only path. `open` has produced no work to validate; terminal
+      // statuses are already closed.
+      if (task.status !== 'review' && task.status !== 'in_progress') {
+        return jsonResult({
+          success: false,
+          error: `Task is in '${task.status}' status. complete_validation_task only applies to tasks in 'review' or 'in_progress' that complete without a PR.`,
+        });
+      }
+
+      // No-PR guard: if the task's workflow run has a primary link (PR), the
+      // task is PR-bound and must close through the normal approve/merge path.
+      // This tool is exclusively the no-PR path — it must never bypass PR review.
+      if (task.workflowRunId) {
+        const prUrl = runtime.getApprovedPrUrlForRun(task.workflowRunId);
+        if (prUrl) {
+          return jsonResult({
+            success: false,
+            error: `Task ${args.task_id} has a PR (${prUrl}); validation-only completion is for no-PR tasks. Use approve_task (if in review) or the normal PR merge path instead.`,
+          });
+        }
+      }
+
+      // Autonomy gate — mirrors `approve_task`. Resolve the workflow's
+      // completionAutonomyLevel (default 5) and reject when effective autonomy
+      // (min(space, agent-ceiling)) is below it.
+      const space = config.spaceManager ? await config.spaceManager.getSpace(spaceId) : null;
+      const spaceLevel =
+        space?.autonomyLevel ?? (getSpaceAutonomyLevel ? await getSpaceAutonomyLevel(spaceId) : 1);
+      const agentLevel = getCallingAgentAutonomyLevel();
+      const currentLevel = agentLevel == null ? spaceLevel : Math.min(spaceLevel, agentLevel);
+      let completionAutonomyLevel = 5;
+      if (task.workflowRunId) {
+        const run = workflowRunRepo.getRun(task.workflowRunId);
+        if (run?.workflowId) {
+          const workflow = workflowManager.getWorkflowForRun(run);
+          if (workflow?.completionAutonomyLevel !== undefined) {
+            completionAutonomyLevel = workflow.completionAutonomyLevel;
+          }
+        }
+      }
+
+      if (currentLevel < completionAutonomyLevel) {
+        if (isAgentCeilingBinding(spaceLevel, agentLevel)) {
+          logAudit(
+            'complete_validation_task',
+            {
+              blocked: true,
+              reason: 'agent_autonomy_ceiling',
+              agentLevel,
+              spaceLevel,
+              required: completionAutonomyLevel,
+            },
+            args.task_id
+          );
+          return jsonResult({
+            success: false,
+            error: `complete_validation_task not permitted: agent autonomy ceiling ${agentLevel} (space ${spaceLevel}) < workflow completionAutonomyLevel ${completionAutonomyLevel}. Request human approval.`,
+          });
+        }
+        return jsonResult({
+          success: false,
+          error: `complete_validation_task not permitted: space autonomy level ${spaceLevel} < workflow completionAutonomyLevel ${completionAutonomyLevel}. Request human approval.`,
+        });
+      }
+
+      try {
+        const updated = await taskManager.setTaskStatus(args.task_id, 'done', {
+          result: outcome,
+          approvalSource: 'agent',
+          approvalReason: args.reason,
+          onCascadedTasks: async (cascadedTasks) => {
+            for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
+          },
+        });
+
+        // Best-effort goal terminal handling — must not block completion.
+        try {
+          config.goalService?.handleTaskTerminal(updated.id);
+        } catch (err) {
+          log.warn(
+            `Goal terminal handling threw for task "${updated.id}": ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+
+        logAudit(
+          'complete_validation_task',
+          {
+            completionMode: 'validation_only',
+            reason: args.reason,
+            previousStatus: task.status,
+          },
+          args.task_id
+        );
+
+        emitTaskUpdated(updated);
+
+        return jsonResult({ success: true, task: updated });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return jsonResult({ success: false, error: message });
+      }
+    },
+
+    /**
      * List goals for this space, optionally filtered by status.
      */
     async list_goals(args: { status?: SpaceGoalStatus } = {}): Promise<ToolResult> {
@@ -4778,6 +4936,24 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
           .describe('Optional approval/rejection note; recorded on the task as approvalReason'),
       },
       (args) => handlers.approve_pending_completion(args)
+    ),
+    tool(
+      'complete_validation_task',
+      "Validation-only (no-PR) task completion — for tasks that complete via validation rather than a reviewed PR (Forge review/automation, diagnostics, already-complete work). Captures the validation outcome as the task result and transitions review/in_progress → done WITHOUT requiring a pr_url. Autonomy-gated to the workflow's completionAutonomyLevel. Rejects tasks whose run already has a PR (use the normal approve/merge path for those).",
+      {
+        task_id: z.string().describe('ID of the no-PR task to complete'),
+        validation_outcome: z
+          .string()
+          .min(1)
+          .describe(
+            'The validation result/outcome — what was checked and the verdict. Captured as the task result.'
+          ),
+        reason: z
+          .string()
+          .optional()
+          .describe('Optional note recorded on the task (approvalReason)'),
+      },
+      (args) => handlers.complete_validation_task(args)
     ),
   ];
 

@@ -438,6 +438,9 @@ describe('createSpaceAgentMcpServer — tool registration', () => {
     const names = getRegisteredToolNames(server);
     expect(names).not.toContain('start_workflow_run');
     expect(names).toContain('create_standalone_task');
+    expect(names).toContain('approve_task');
+    expect(names).toContain('approve_pending_completion');
+    expect(names).toContain('complete_validation_task');
     expect(names).toContain('list_sessions');
     expect(names).toContain('get_session_detail');
     expect(names).toContain('get_session_messages');
@@ -5723,6 +5726,219 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.success).toBe(false);
     expect(parsed.error).toContain('does not belong');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// complete_validation_task — validation-only (no-PR) completion path
+// ---------------------------------------------------------------------------
+//
+// The agent-reachable equivalent of the UI's direct status→done transition for
+// a no-code task. Mirrors approve_task's autonomy framing but is the explicit
+// no-PR path: it captures the validation outcome as task.result and transitions
+// review/in_progress → done without requiring a pr_url. Complements
+// approve_task (PR-oriented, review-only) and approve_pending_completion
+// (human-approval path) — neither of which is reachable for a Forge review /
+// automation task that never produced a PR.
+
+describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
+  let ctx: TestCtx;
+  beforeEach(() => {
+    ctx = makeCtx();
+  });
+  afterEach(() => {
+    ctx.db.close();
+  });
+
+  async function createTask(status: 'review' | 'in_progress'): Promise<string> {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const createResult = await makeHandlers(ctx).create_standalone_task({
+      title: 'Forge review task',
+      description: 'no-code validation task',
+    });
+    const taskId = JSON.parse(createResult.content[0].text).task.id;
+    ctx.taskRepo.updateTask(taskId, { status });
+    return taskId;
+  }
+
+  // Build a task whose workflow run declares a completion autonomy level, so
+  // the gate is exercised against a real workflow (mirrors the approve_task
+  // autonomy tests).
+  function createWorkflowTask(
+    requiredLevel: number,
+    overrides: { status?: 'review' | 'in_progress' } = {}
+  ): SpaceTask {
+    const nodeId = `node-${Math.random().toString(36).slice(2)}`;
+    const workflow = ctx.workflowManager.createWorkflow({
+      spaceId: ctx.spaceId,
+      name: `Validation gated workflow ${requiredLevel}`,
+      description: '',
+      nodes: [{ id: nodeId, name: 'Review', agentId: ctx.agentId }],
+      transitions: [],
+      startNodeId: nodeId,
+      endNodeId: nodeId,
+      rules: [],
+      completionAutonomyLevel: requiredLevel,
+    });
+    const run = ctx.workflowRunRepo.createRun({
+      spaceId: ctx.spaceId,
+      workflowId: workflow.id,
+      title: 'Validation gated run',
+      description: '',
+    });
+    return ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'Validation task',
+      description: '',
+      status: overrides.status ?? 'in_progress',
+      workflowRunId: run.id,
+    });
+  }
+
+  test('completes a no-PR task in review → done and captures the validation outcome', async () => {
+    const taskId = await createTask('review');
+
+    const result = await makeHandlers(ctx).complete_validation_task({
+      task_id: taskId,
+      validation_outcome: 'Reviewed 3 episodes; all evidence scoped correctly.',
+      reason: 'weekly self_nag',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.task.status).toBe('done');
+    expect(parsed.task.result).toBe('Reviewed 3 episodes; all evidence scoped correctly.');
+    // review → done stamps approvalSource 'agent'.
+    expect(parsed.task.approvalSource).toBe('agent');
+    expect(ctx.taskRepo.getTask(taskId)?.result).toBe(
+      'Reviewed 3 episodes; all evidence scoped correctly.'
+    );
+  });
+
+  test('completes a no-PR task in_progress → done', async () => {
+    const taskId = await createTask('in_progress');
+
+    const result = await makeHandlers(ctx).complete_validation_task({
+      task_id: taskId,
+      validation_outcome: 'Diagnostic: no regression found in CI shard 4.',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.task.status).toBe('done');
+    expect(parsed.task.result).toBe('Diagnostic: no regression found in CI shard 4.');
+    expect(ctx.taskRepo.getTask(taskId)?.status).toBe('done');
+  });
+
+  test('rejects when space autonomy is below workflow completionAutonomyLevel', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 3 });
+    const task = createWorkflowTask(5);
+
+    const result = await makeHandlers(ctx).complete_validation_task({
+      task_id: task.id,
+      validation_outcome: 'validated',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('complete_validation_task not permitted');
+    expect(parsed.error).toContain('space autonomy level 3 < workflow completionAutonomyLevel 5');
+    // Task is unchanged.
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
+  });
+
+  test('allows completion when space autonomy meets workflow completionAutonomyLevel', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const task = createWorkflowTask(5);
+
+    const result = await makeHandlers(ctx).complete_validation_task({
+      task_id: task.id,
+      validation_outcome: 'Validation passed; no code change required.',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.task.status).toBe('done');
+    expect(parsed.task.result).toBe('Validation passed; no code change required.');
+  });
+
+  test('rejects a task whose workflow run already has a PR', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const task = createWorkflowTask(5, { status: 'review' });
+    // The run records a primary link (PR) — the task is PR-bound.
+    const prSpy = spyOn(ctx.runtime, 'getApprovedPrUrlForRun').mockReturnValue(
+      'https://github.com/owner/repo/pull/123'
+    );
+
+    const result = await makeHandlers(ctx).complete_validation_task({
+      task_id: task.id,
+      validation_outcome: 'should not reach here',
+    });
+    prSpy.mockRestore();
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('has a PR');
+    expect(parsed.error).toContain('https://github.com/owner/repo/pull/123');
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('review');
+  });
+
+  test('rejects tasks in ineligible statuses', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const createResult = await makeHandlers(ctx).create_standalone_task({
+      title: 'open task',
+      description: 'not started',
+    });
+    const taskId = JSON.parse(createResult.content[0].text).task.id;
+    // Newly created task is `open`.
+    expect(ctx.taskRepo.getTask(taskId)?.status).toBe('open');
+
+    const result = await makeHandlers(ctx).complete_validation_task({
+      task_id: taskId,
+      validation_outcome: 'validated',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain("'open' status");
+  });
+
+  test('rejects an empty validation outcome', async () => {
+    const taskId = await createTask('in_progress');
+
+    const result = await makeHandlers(ctx).complete_validation_task({
+      task_id: taskId,
+      validation_outcome: '   ',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('validation_outcome is required');
+    expect(ctx.taskRepo.getTask(taskId)?.status).toBe('in_progress');
+  });
+
+  test('rejects a task that does not belong to this space', async () => {
+    const taskId = await createTask('in_progress');
+
+    const result = await makeHandlers(ctx, { spaceId: 'other-space' }).complete_validation_task({
+      task_id: taskId,
+      validation_outcome: 'validated',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('does not belong');
+  });
+
+  test('rejects an unknown task id', async () => {
+    const result = await makeHandlers(ctx).complete_validation_task({
+      task_id: 'nonexistent-task',
+      validation_outcome: 'validated',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('Task not found');
   });
 });
 
