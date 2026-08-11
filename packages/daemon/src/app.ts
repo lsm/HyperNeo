@@ -1006,9 +1006,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         // fallback workspace. See Codex (#3742616723).
         isSessionArchived: (sessionId: string) =>
           reactiveDb?.db.getSession(sessionId)?.status === 'archived',
-        hasTerminalResultAfter: (sessionId: string, messageUuid: string) =>
-          reactiveDb?.db.getSDKMessageRepo().hasTerminalResultAfter(sessionId, messageUuid) ??
-          false,
         markDeliveryFailed: (sessionId: string, messageUuid: string) => {
           reactiveDb?.db.getSDKMessageRepo().markDeliveryFailedByUuid(sessionId, messageUuid);
         },

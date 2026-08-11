@@ -1672,7 +1672,13 @@ describe('SDKMessageRepository', () => {
     function insertMessage(
       sessionId: string,
       type: string,
-      opts: { uuid?: string; timestamp: string; terminal?: boolean; subtype?: string }
+      opts: {
+        uuid?: string;
+        timestamp: string;
+        terminal?: boolean;
+        subtype?: string;
+        sendStatus?: string;
+      }
     ): void {
       db.prepare(
         `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid)
@@ -1684,7 +1690,7 @@ describe('SDKMessageRepository', () => {
         opts.subtype ?? null,
         '{}',
         opts.timestamp,
-        type === 'user' ? 'consumed' : null,
+        opts.sendStatus ?? (type === 'user' ? 'consumed' : null),
         opts.terminal ? 1 : 0,
         opts.uuid ?? null
       );
@@ -1721,6 +1727,43 @@ describe('SDKMessageRepository', () => {
         timestamp: '2026-08-11T15:25:00.000Z',
       });
       expect(repository.hasTerminalResultAfter('session-1', 'msg-uuid')).toBe(false);
+    });
+
+    it('uses the CONSUMPTION boundary, not the persistence time — a queued-then-consumed message ignores the prior turn result (P1)', () => {
+      // A message queued while turn T1 ran keeps its original persistence time;
+      // T1 ends with a terminal result AFTER that but BEFORE the message is
+      // consumed as the start of T2. After consumption the boundary must be the
+      // consumption moment so the previous turn's result is excluded.
+      insertMessage('session-1', 'user', {
+        uuid: 'queued-msg',
+        timestamp: '2026-08-11T15:20:00.000Z',
+        sendStatus: 'enqueued',
+      });
+      insertMessage('session-1', 'result', {
+        timestamp: '2026-08-11T15:21:00.000Z',
+        terminal: true,
+      });
+      // T2 consumes the message — the consumed-flip aligns the row to T_consumed.
+      const flipped = repository.markDeliveryConsumedByUuid('session-1', 'queued-msg');
+      expect(flipped).not.toBeNull();
+      // The prior result (15:21) is now before consumption → excluded; T2 hasn't
+      // ended → false (the reclaimed job must resume T2, not complete as done).
+      expect(repository.hasTerminalResultAfter('session-1', 'queued-msg')).toBe(false);
+    });
+
+    it('is true after consumption when the SAME turn later ends (its own result)', () => {
+      insertMessage('session-1', 'user', {
+        uuid: 'own-turn-msg',
+        timestamp: '2026-08-11T15:20:00.000Z',
+        sendStatus: 'enqueued',
+      });
+      repository.markDeliveryConsumedByUuid('session-1', 'own-turn-msg');
+      // The consumed message's own turn ends normally.
+      insertMessage('session-1', 'result', {
+        timestamp: new Date(Date.now() + 60_000).toISOString(),
+        terminal: true,
+      });
+      expect(repository.hasTerminalResultAfter('session-1', 'own-turn-msg')).toBe(true);
     });
 
     it('is false when the terminal result belongs to another session', () => {

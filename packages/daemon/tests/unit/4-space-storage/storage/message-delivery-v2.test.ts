@@ -349,6 +349,8 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
 class MockSession implements MessageDeliverySession {
   driveResult: DriveTurnOutcome = { outcome: 'completed' };
   feedResult: FeedSteerOutcome = { outcome: 'consumed' };
+  /** Per-UUID override — the mock stands in for the bridge's in-lock check. */
+  driveOutcomeByUuid?: Record<string, DriveTurnOutcome>;
   shouldThrow = false;
   driveCalls = 0;
   feedCalls = 0;
@@ -370,6 +372,9 @@ class MockSession implements MessageDeliverySession {
     this.lastParentToolUseId = parentToolUseId;
     this.lastAlreadyConsumed = alreadyConsumed;
     if (this.shouldThrow) throw new Error('turn exploded');
+    if (this.driveOutcomeByUuid && uuid in this.driveOutcomeByUuid) {
+      return this.driveOutcomeByUuid[uuid];
+    }
     return this.driveResult;
   }
 
@@ -549,21 +554,22 @@ describe('handler — status-aware delivery (§8)', () => {
 
   it('a consumed turn whose turn already terminated is completed, not re-driven', async () => {
     // The zombie-reclaim shape: the message was consumed but its turn produced a
-    // terminal result AFTER it (error/interrupt). Re-driving would start a fresh
-    // query that waits for input forever, holding the active-turn slot.
+    // terminal result AFTER it (error/interrupt). The bridge (mocked here)
+    // detects this under the per-session lock and returns turn_terminated;
+    // the handler completes the job so the active-turn slot is freed.
     const session = new MockSession();
+    session.driveResult = { outcome: 'turn_terminated' };
     const metrics = new DeliveryMetrics();
     const job = turnJob(repo, 'msg-terminated');
     const handler = createMessageDeliveryHandler({
       jobQueue: repo,
       getSession: () => session,
       getMessageContent: () => ({ content: 'hello', sendStatus: 'consumed' }),
-      hasTerminalResultAfter: () => true,
       metrics,
     });
     const result = await handler(job);
     expect(result).toEqual({ outcome: 'completed', skipped: 'turn_terminated' });
-    expect(session.driveCalls).toBe(0); // no re-drive → slot freed
+    expect(session.driveCalls).toBe(1); // bridge consulted; it declined to re-drive
     expect(session.settleCalls).toEqual(['msg-terminated']);
     // Observable: the zombie self-heal is counted as a reclaim skip so the
     // diagnostics RPC can flag a rising turn_terminated rate.
@@ -579,6 +585,9 @@ describe('handler — status-aware delivery (§8)', () => {
     const session = new MockSession();
     session.feedResult = { outcome: 'promote' }; // steer sees no active turn once freed
     const statuses: Record<string, string> = { 'zombie-turn': 'consumed' };
+    // The bridge (mocked here) detects the zombie's terminated turn in-lock and
+    // declines to re-drive it; the promoted message drives normally.
+    session.driveOutcomeByUuid = { 'zombie-turn': { outcome: 'turn_terminated' } };
     const handler = createMessageDeliveryHandler({
       jobQueue: repo,
       getSession: () => session,
@@ -586,8 +595,6 @@ describe('handler — status-aware delivery (§8)', () => {
         content: 'hi',
         sendStatus: statuses[uuid] ?? 'enqueued',
       }),
-      // Only the zombie's turn produced a terminal result after it.
-      hasTerminalResultAfter: (_s, uuid) => uuid === 'zombie-turn',
     });
 
     // 1) A turn was delivered + consumed, but its job went stale.
@@ -613,7 +620,7 @@ describe('handler — status-aware delivery (§8)', () => {
     expect((reclaimed.payload as { role: string }).role).toBe('turn');
     const zombieResult = await handler(reclaimed);
     expect(zombieResult).toEqual({ outcome: 'completed', skipped: 'turn_terminated' });
-    expect(session.driveCalls).toBe(0);
+    expect(session.driveCalls).toBe(1); // bridge consulted; declined to re-drive
     expect(session.settleCalls).toContain('zombie-turn');
     repo.complete(reclaimed.id, { ok: true }); // what the processor does on return → slot freed
 
@@ -633,7 +640,7 @@ describe('handler — status-aware delivery (§8)', () => {
     const [promoted] = repo.dequeue(MESSAGE_DELIVERY, 1);
     const promotedResult = await handler(promoted);
     expect(promotedResult).toEqual({ outcome: 'completed' });
-    expect(session.driveCalls).toBe(1);
+    expect(session.driveCalls).toBe(2); // zombie (declined) + promoted (driven)
   });
 
   it('records reclaim-skip counters via the injected metrics sink (review P2.2a)', async () => {

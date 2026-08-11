@@ -63,16 +63,6 @@ export interface MessageDeliveryHandlerDeps {
    * Codex (#3742616723).
    */
   isSessionArchived?(sessionId: string): boolean;
-  /**
-   * True when the consumed message's turn has already produced a terminal
-   * result after it (normal completion, error, or interrupt). A re-claimed
-   * `consumed` turn in this state has nothing to resume — re-driving would start
-   * a fresh streaming query that waits for input forever, holding the
-   * active-turn slot and parking every subsequent message as a steer. The
-   * handler completes such a job instead of driving it. See the repository's
-   * `hasTerminalResultAfter` + message-delivery-v2.md.
-   */
-  hasTerminalResultAfter?(sessionId: string, messageUuid: string): boolean;
   /** Terminalize a still-enqueued prompt when lifecycle rejection completes its job. */
   markDeliveryFailed?(sessionId: string, messageUuid: string): void;
   /**
@@ -172,19 +162,6 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       // lease heartbeat keeps the job from being reclaimed as stale mid-turn.
       // When alreadyConsumed, the bridge skips the feed (no duplicate).
       if (!claimCurrent()) return { outcome: 'stale_attempt' };
-      // A consumed message whose turn already produced a terminal result has
-      // nothing to resume — the crash-resume path (alreadyConsumed, no terminal
-      // result yet) is the only one that should re-drive. Completing here frees
-      // the active-turn slot so the next steer promotes into a real turn instead
-      // of parking forever behind a zombie re-drive. See the dep doc.
-      if (
-        alreadyConsumed &&
-        deps.hasTerminalResultAfter?.(payload.sessionId, payload.messageUuid)
-      ) {
-        metrics.recordReclaimSkip('turn_terminated');
-        await session.settleSkippedDelivery?.(payload.messageUuid);
-        return { outcome: 'completed', skipped: 'turn_terminated' };
-      }
       const turn = session.driveDeliveryTurn(
         payload.messageUuid,
         content,
@@ -212,6 +189,16 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
           // between load and feed — complete without feeding. See #3742774841/#3696.
           await session.settleSkippedDelivery?.(payload.messageUuid);
           return { outcome: 'aborted' };
+        }
+        if (result.outcome === 'turn_terminated') {
+          // A re-claimed consumed turn whose turn already ended: nothing to
+          // resume. Completing frees the active-turn slot so the next steer
+          // promotes into a real turn instead of parking forever behind a zombie
+          // re-drive. The bridge checked this under the per-session lock,
+          // coordinated with waiter registration (Codex P2).
+          metrics.recordReclaimSkip('turn_terminated');
+          await session.settleSkippedDelivery?.(payload.messageUuid);
+          return { outcome: 'completed', skipped: 'turn_terminated' };
         }
         return { outcome: 'completed' };
       } finally {

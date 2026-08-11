@@ -1935,6 +1935,13 @@ export class AgentSession
       if (claimGuard && !claimGuard()) {
         return { kind: 'aborted' as const };
       }
+      // A re-claimed consumed turn whose turn already ended (a terminal result
+      // after its consumption) has nothing to resume. Check BEFORE provider
+      // startup so we don't start a fresh query that would idle waiting for
+      // input forever. See Codex (PR #2463, P1/P2).
+      if (alreadyConsumed && this.hasTurnTerminated(messageUuid)) {
+        return { kind: 'turn_terminated' as const };
+      }
       const queryStartResult = await this.lifecycleManager.ensureQueryStarted();
       if (queryStartResult === 'blocked') {
         return { kind: 'blocked' as const };
@@ -1942,6 +1949,17 @@ export class AgentSession
       const queryPromise = this.queryPromise;
       if (!queryPromise) {
         throw new Error('message_delivery: query did not start; cannot drive turn');
+      }
+      // Re-check termination AFTER startup, immediately before arming the
+      // turn-end waiter — the two statements are adjacent (no await between), so
+      // a turn that terminates in the check→arm window cannot be missed: if it
+      // ended before the check, we abort here; if it ends after the waiter is
+      // armed, the waiter resolves it. Without this, a live-but-stale consumed
+      // turn that finishes during ensureQueryStarted's await would leak a query
+      // waiting for input and hold the active-turn slot forever. See Codex
+      // (PR #2463, P2).
+      if (alreadyConsumed && this.hasTurnTerminated(messageUuid)) {
+        return { kind: 'turn_terminated' as const };
       }
       // Arm the turn-end wait AFTER ensureQueryStarted: ensureQueryStarted awaits
       // a preceding interrupt's completion, and that interrupt's terminal
@@ -1991,6 +2009,11 @@ export class AgentSession
       // instead of idle. See Codex (#2599).
       await this.stateManager.setQueued(messageUuid);
       return { outcome: 'blocked', retryAt: Date.now() + MESSAGE_DELIVERY_PARK_MS };
+    }
+    if (started.kind === 'turn_terminated') {
+      // Nothing to resume — the handler completes the job, freeing the
+      // active-turn slot so the next steer promotes into a real turn.
+      return { outcome: 'turn_terminated' };
     }
     if (started.kind === 'aborted') {
       return { outcome: 'aborted' };
@@ -2182,6 +2205,17 @@ export class AgentSession
       loaded !== null &&
       (loaded.sendStatus === 'enqueued' || (alreadyConsumed && loaded.sendStatus === 'consumed'))
     );
+  }
+
+  /**
+   * True when a `consumed` message's turn already produced a terminal result
+   * after its consumption (normal completion, error, or interrupt) — i.e. there
+   * is nothing left to resume. The boundary is the consumption timestamp (see
+   * `hasTerminalResultAfter`); checked inside the per-session lock so it is
+   * coordinated with the turn-start/waiter registration (Codex P2).
+   */
+  private hasTurnTerminated(messageUuid: string): boolean {
+    return this.db.getSDKMessageRepo().hasTerminalResultAfter(this.session.id, messageUuid);
   }
 
   /**

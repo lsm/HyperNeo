@@ -293,11 +293,18 @@ export const MESSAGE_DELIVERY_PARK_MS = 5_000;
  * - `aborted` ⇒ revalidation immediately before feeding found the session archived
  *   or the message removed/re-classified (removePending TOCTOU) — do NOT feed.
  *   See Codex (#3742774841 archive barrier, #3696 removePending).
+ * - `turn_terminated` ⇒ a re-claimed `consumed` turn whose turn already produced a
+ *   terminal result after its consumption: nothing to resume, so the handler
+ *   completes the job (frees the active-turn slot) instead of re-driving. Checked
+ *   inside the bridge's locked section, immediately before arming the turn-end
+ *   waiter, so a turn that ends in the check→arm window cannot be missed. See
+ *   Codex (PR #2463, P2).
  */
 export type DriveTurnOutcome =
   | { outcome: 'completed' }
   | { outcome: 'blocked'; retryAt: number }
-  | { outcome: 'aborted' };
+  | { outcome: 'aborted' }
+  | { outcome: 'turn_terminated' };
 
 /**
  * Outcome of feeding a steer.

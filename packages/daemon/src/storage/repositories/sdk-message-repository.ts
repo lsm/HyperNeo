@@ -1845,6 +1845,11 @@ export class SDKMessageRepository {
    * would start a fresh streaming query that waits for input forever, holding the
    * active-turn slot and parking every subsequent message as a steer. See
    * message-delivery-v2.md + the handler's turn_terminated skip.
+   *
+   * The boundary is the message's CONSUMPTION timestamp (T_consumed, aligned by
+   * `markDeliveryConsumedByUuid`), not its original persistence time — a message
+   * queued while another turn ran and later promoted would otherwise match the
+   * previous turn's terminal result. See Codex (PR #2463, P1).
    */
   hasTerminalResultAfter(sessionId: string, uuid: string): boolean {
     const row = this.db
@@ -1907,6 +1912,16 @@ export class SDKMessageRepository {
    * (so the caller publishes `messages.statusChanged`), else null.
    * `updateMessageStatus` performs the turn-assignment + timestamp alignment +
    * visible-counter bookkeeping for the transition.
+   *
+   * The row timestamp is aligned to the consumption moment (T_consumed) for ALL
+   * rows, not just task rows: `updateMessageStatus` only re-timestamps pending
+   * rows with a non-null `task_id`, so a message queued while another turn ran
+   * and later promoted keeps its ORIGINAL persistence timestamp — which can
+   * predate the previous turn's terminal result. Delivery re-claims
+   * (`hasTerminalResultAfter`) use the row timestamp as the "what turn is this
+   * message part of" boundary, so an unaligned timestamp would match the
+   * previous turn's result and wrongly complete the reclaimed job. See Codex
+   * (PR #2463, P1).
    */
   markDeliveryConsumedByUuid(sessionId: string, uuid: string): string | null {
     const row = this.db
@@ -1919,6 +1934,12 @@ export class SDKMessageRepository {
       .get(sessionId, uuid) as { id: string } | undefined;
     if (!row) return null;
     this.updateMessageStatus([row.id], 'consumed');
+    // T_consumed — the boundary for delivery re-claims (see above). Keep this a
+    // plain timestamp UPDATE (no search-index upsert; updateMessageStatus just
+    // upserted this row).
+    this.db
+      .prepare(`UPDATE sdk_messages SET timestamp = ? WHERE id = ?`)
+      .run(new Date().toISOString(), row.id);
     return row.id;
   }
 
