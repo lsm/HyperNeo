@@ -44,7 +44,10 @@ err() {
 source "$REPO_ROOT/scripts/test-daemon.sh"
 
 UNIT_ROOT="$REPO_ROOT/packages/daemon/tests/unit"
-SHARED_ROOT="$REPO_ROOT/packages/shared/tests"
+# Scan the WHOLE shared package (not just tests/) so a source-adjacent test
+# (e.g. src/types/x.test.ts) can't sit outside the shared vitest `tests/**`
+# include — and thus off CI — while this guard reports full coverage.
+SHARED_ROOT="$REPO_ROOT/packages/shared"
 
 COVERED_TMP="$(mktemp)"
 trap 'rm -f "$COVERED_TMP"' EXIT
@@ -145,6 +148,16 @@ fi
 if ! grep -qF "exclude: ['node_modules', 'dist']" "$WEB_CFG"; then
 	err "packages/web/vitest.config.ts test exclude is not ['node_modules', 'dist'] — src test files could be excluded"
 	echo "     → keep test.exclude to node_modules/dist, or update this validator" >&2
+fi
+# The web coverage assumes the test-web CI job runs a bare `vitest run` (no
+# targeted path), so the config include/exclude fully determine execution. If
+# that step is removed, disabled, or replaced with a targeted invocation, every
+# src/ file would still be reported covered while CI no longer runs the suite.
+# Anchored at end-of-line: a bare `vitest run` (no targeted path) puts `run` at
+# the end of the line; `vitest run src/foo.test.ts` would not match.
+if ! grep -qE "cd packages/web && bunx vitest run$" "$REPO_ROOT/.github/workflows/main.yml"; then
+	err "test-web CI job no longer runs a bare 'cd packages/web && bunx vitest run' — web coverage assumption broken"
+	echo "     → keep the web job as a bare vitest run, or update this validator" >&2
 fi
 
 # Web test files outside the src/** include are not run by web CI. Each must be
