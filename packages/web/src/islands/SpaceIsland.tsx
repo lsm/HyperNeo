@@ -591,7 +591,7 @@ export default function SpaceIsland({
         data-overview-surface="glass-workspace"
         {...baseLayerProps}
       >
-        <SpacePageHeader pageTitle="Overview" />
+        <SpacePageHeader pageTitle="Overview" subtitle="Space operations and recent activity" />
         <div class="flex-1 overflow-hidden flex flex-col min-w-0">
           <Suspense fallback={lazyFallback}>
             <SpaceOverview
