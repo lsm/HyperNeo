@@ -2242,6 +2242,7 @@ export class AgentSession
       sessionId: this.session.id,
       db: this.db,
       jobQueue,
+      stateManager: this.stateManager,
     });
     // 2) Settle stale 'submitted' rows (orphaned ACP) → failed so they surface.
     // Run under the per-session lock and re-query active ownership AT THE POINT

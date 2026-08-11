@@ -15,7 +15,7 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import type { Database } from '../../storage/database';
 import type { Logger } from '../logger';
 import type { MessageQueue } from './message-queue';
-import { deliverMessage, isMessageDeliveryV2Enabled } from './message-delivery';
+import { deliverAndMarkQueued, isMessageDeliveryV2Enabled } from './message-delivery';
 
 /**
  * Context interface - what QueryModeHandler needs from AgentSession
@@ -27,6 +27,16 @@ export interface QueryModeHandlerContext {
   readonly internalEventBus: InternalEventBus<DaemonInternalEventMap>;
   readonly messageQueue: MessageQueue;
   readonly logger: Logger;
+  /**
+   * State manager — a replayed/enqueued TURN sets the queued marker
+   * (setQueuedIfIdle) so a concurrent `deliveryMode:'defer'` send isn't
+   * mis-converted to immediate while the replayed job waits to be claimed.
+   * Optional for unit-test contexts that don't exercise the marker. (Codex review.)
+   */
+  readonly stateManager?: {
+    setQueuedIfIdle(messageId: string): Promise<boolean>;
+    getState(): { status: string };
+  };
 
   // Method to ensure query is started
   ensureQueryStarted(): Promise<void>;
@@ -83,7 +93,16 @@ export class QueryModeHandler {
         const jobQueue = db.getJobQueueRepo();
         for (const msg of deferredMessages) {
           if (!isSDKUserMessage(msg) || !msg.uuid) continue;
-          deliverMessage(jobQueue, session.id, msg.uuid as string, { origin: 'recovery' });
+          // Use the queued-marker wrapper so the first (turn) message marks the
+          // session busy — a concurrent deliveryMode:'defer' send then stays
+          // deferred instead of being mis-converted to immediate. (Codex review.)
+          await deliverAndMarkQueued({
+            jobQueue,
+            stateManager: this.ctx.stateManager,
+            sessionId: session.id,
+            messageUuid: msg.uuid as string,
+            origin: 'recovery',
+          });
         }
       } else {
         // Legacy inline path (HYPERNEO_MESSAGE_DELIVERY_V2=0 opt-out).
@@ -123,12 +142,19 @@ export class QueryModeHandler {
       }
 
       if (isMessageDeliveryV2Enabled()) {
-        // Durable: enqueue a delivery job per message. Already-enqueued rows
-        // need no status flip; deliverMessage is idempotent.
+        // Durable: enqueue a delivery job per message via the queued-marker
+        // wrapper (see handleQueryTrigger). Already-enqueued rows need no
+        // status flip; deliverAndMarkQueued is idempotent via getActiveDeliveryRole.
         const jobQueue = db.getJobQueueRepo();
         for (const msg of queuedMessages) {
           if (!isSDKUserMessage(msg) || !msg.uuid) continue;
-          deliverMessage(jobQueue, session.id, msg.uuid as string, { origin: 'recovery' });
+          await deliverAndMarkQueued({
+            jobQueue,
+            stateManager: this.ctx.stateManager,
+            sessionId: session.id,
+            messageUuid: msg.uuid as string,
+            origin: 'recovery',
+          });
         }
       } else {
         // Legacy inline path (HYPERNEO_MESSAGE_DELIVERY_V2=0 opt-out).

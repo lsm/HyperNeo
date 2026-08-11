@@ -207,6 +207,16 @@ export async function reconcileStrandedDeliveries(args: {
   sessionId: string;
   db: StrandedDeliveryDb;
   jobQueue: JobQueueRepository;
+  /**
+   * Optional state manager — when present, a re-enqueued TURN sets the queued
+   * marker (setQueuedIfIdle) so the session reports busy until the processor
+   * claims the recovered job; without it, a concurrent `deliveryMode:'defer'`
+   * send would be mis-converted to immediate (a steer into the recovered turn).
+   * Omit in unit tests that don't exercise the queued marker. (Codex review.)
+   */
+  stateManager?: {
+    setQueuedIfIdle(messageId: string): Promise<boolean>;
+  };
 }): Promise<number> {
   if (!isMessageDeliveryV2Enabled()) return 0;
   return withSessionLock(args.sessionId, async () => {
@@ -220,7 +230,16 @@ export async function reconcileStrandedDeliveries(args: {
       }
     }
     for (const uuid of stranded) {
-      deliverMessage(args.jobQueue, args.sessionId, uuid, { origin: 'recovery' });
+      const role = deliverMessage(args.jobQueue, args.sessionId, uuid, { origin: 'recovery' });
+      // Set the queued marker inside this lock (no nested lock) when this
+      // re-enqueue wins the turn role — same contract as deliverAndMarkQueued.
+      if (role === 'turn' && args.stateManager) {
+        try {
+          await args.stateManager.setQueuedIfIdle(uuid);
+        } catch {
+          // Non-fatal — the durable job is enqueued; the handler will drive it.
+        }
+      }
     }
     return stranded.length;
   });
