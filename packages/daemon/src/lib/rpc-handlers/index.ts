@@ -91,7 +91,6 @@ import {
   deliverAndMarkQueued,
   isMessageDeliveryV2Enabled,
 } from '../agent/message-delivery';
-import { persistAndEnqueueDelivery } from '../agent/message-delivery-outbox';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import type { JobQueueProcessor } from '../../storage/job-queue-processor';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository';
@@ -897,36 +896,14 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       // stable id (the pending-row id from flushPendingMessagesForSpaceAgent),
       // don't insert a duplicate sdk_messages row or re-drive a terminal one.
       const sdkMessageRepo = deps.reactiveDb.db.getSDKMessageRepo();
-      const jobQueue = deps.reactiveDb.db.getJobQueueRepo();
       const existing = sdkMessageRepo.getDeliveryContent(sessionId, messageId);
       const fresh = !existing;
-      if (existing?.sendStatus === 'consumed') {
+      if (!existing) {
+        deps.reactiveDb.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+      } else if (existing.sendStatus === 'consumed') {
         return; // genuinely delivered on a prior attempt — don't re-drive
-      }
-      if (fresh) {
-        // Transactional outbox (task #861 item 2): save + enqueue in ONE tx so a
-        // crash between them cannot strand a saved-but-not-enqueued row. The
-        // legacy-owned-turn guard forces a steer while the session processes a
-        // turn the durable index can't see (removed once legacy paths migrate).
-        const legacyOwnedTurn =
-          session.stateManager.getState().status === 'processing' &&
-          !jobQueue.hasActiveTurnDelivery(sessionId);
-        persistAndEnqueueDelivery({
-          db: deps.reactiveDb.db.getDatabase(),
-          sdkMessageRepo,
-          jobQueue,
-          sessionId,
-          message: sdkUserMessage,
-          sendStatus: 'enqueued',
-          delivery: { origin: 'space_agent' },
-          forceSteer: legacyOwnedTurn,
-        });
-      } else {
-        if (existing.sendStatus === 'failed') {
-          sdkMessageRepo.reopenDeliveryByUuid(sessionId, messageId);
-        }
-        // Row already exists (enqueued/deferred/reopened): just (re-)enqueue via
-        // the durable owner below — deliverMessage dedups the active job.
+      } else if (existing.sendStatus === 'failed') {
+        sdkMessageRepo.reopenDeliveryByUuid(sessionId, messageId);
       }
       // Await SDK consumption (onSent) before returning — a direct send_message
       // handoff has no retained source row to retry, so it must not record
@@ -940,7 +917,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         messageUuid: messageId,
         deliver: () =>
           deliverAndMarkQueued({
-            jobQueue,
+            jobQueue: deps.reactiveDb.db.getJobQueueRepo(),
             stateManager: session.stateManager,
             sessionId,
             messageUuid: messageId,

@@ -61,7 +61,6 @@ import {
   deliverAndMarkQueued,
   isMessageDeliveryV2Enabled,
 } from '../../../lib/agent/message-delivery';
-import { persistAndEnqueueDelivery } from '../../../lib/agent/message-delivery-outbox';
 import { validateImageSizes } from '../../session/message-persistence';
 import type { Database } from '../../../storage/database';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
@@ -4715,34 +4714,13 @@ export class TaskAgentManager {
     if (v2Enabled) {
       // The idempotent lookup + consumed/failed handling ran hoisted above; here
       // only the (re-)enqueue + queued marker remain. Reuse the existing row if
-      // present, else insert `enqueued` via the transactional outbox so a crash
-      // between save and enqueue cannot strand a saved-but-not-enqueued row
-      // (task #861 item 2). deliverAndMarkQueued holds withSessionLock so a
-      // concurrent steer can't steal the turn's queued marker; for a fresh row
-      // its enqueue no-ops (idempotent) since the outbox already inserted it.
+      // present, else insert `enqueued`. deliverAndMarkQueued holds withSessionLock
+      // so a concurrent steer can't steal the turn's queued marker; the handler
+      // then owns ensureQueryStarted and feeding the live transport.
+      const dbId = existing
+        ? messageId
+        : this.config.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued', origin);
       const sdkMessageRepo = this.config.db.getSDKMessageRepo();
-      const jobQueue = this.config.db.getJobQueueRepo();
-      let dbId: string;
-      if (existing) {
-        dbId = messageId;
-      } else {
-        // Legacy-owned-turn guard: force a steer while the session processes a
-        // turn the durable index can't see (removed once legacy paths migrate).
-        const legacyOwnedTurn =
-          session.stateManager.getState().status === 'processing' &&
-          !jobQueue.hasActiveTurnDelivery(sessionId);
-        dbId = persistAndEnqueueDelivery({
-          db: this.config.db.getDatabase(),
-          sdkMessageRepo,
-          jobQueue,
-          sessionId,
-          message: sdkUserMessage,
-          sendStatus: 'enqueued',
-          origin,
-          delivery: { origin: 'space_inject' },
-          forceSteer: legacyOwnedTurn,
-        }).dbMessageId;
-      }
       // Await SDK consumption (onSent) before returning — a direct handoff (the
       // live send_message path) has no retained source row to retry, so it must
       // not report delivered after a bare enqueue that may yet dead-letter. On
@@ -4756,7 +4734,7 @@ export class TaskAgentManager {
         messageUuid: messageId,
         deliver: () =>
           deliverAndMarkQueued({
-            jobQueue,
+            jobQueue: this.config.db.getJobQueueRepo(),
             stateManager: session.stateManager,
             sessionId,
             messageUuid: messageId,

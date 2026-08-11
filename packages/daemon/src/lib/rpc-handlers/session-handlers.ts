@@ -32,6 +32,7 @@ import {
   markRefreshAttemptedFor,
 } from '../model-service.js';
 import { getProviderRegistry } from '../providers/registry.js';
+import { deliverMessage, isMessageDeliveryV2Enabled } from '../agent/message-delivery';
 import {
   archiveSDKSessionFiles,
   deleteSDKSessionFiles,
@@ -1289,7 +1290,15 @@ export function setupSessionHandlers(
       status: 'enqueued',
     });
 
-    await agentSession.startQueryAndEnqueue(message.uuid, replayContent);
+    if (isMessageDeliveryV2Enabled()) {
+      // Durable: route the promoted message through the durable owner — the
+      // handler drives it as a turn/steer with the full at-least-once +
+      // synchronous-consumed-flip guarantees, instead of the legacy inline
+      // startQueryAndEnqueue. Idempotent via getActiveDeliveryRole.
+      deliverMessage(db.getJobQueueRepo(), targetSessionId, message.uuid, { origin: 'chat' });
+    } else {
+      await agentSession.startQueryAndEnqueue(message.uuid, replayContent);
+    }
 
     return {
       promoted: true,

@@ -15,6 +15,7 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import type { Database } from '../../storage/database';
 import type { Logger } from '../logger';
 import type { MessageQueue } from './message-queue';
+import { deliverMessage, isMessageDeliveryV2Enabled } from './message-delivery';
 
 /**
  * Context interface - what QueryModeHandler needs from AgentSession
@@ -41,6 +42,14 @@ export class QueryModeHandler {
    * Handle manual query trigger (Manual mode)
    *
    * Retrieves all 'deferred' messages from the database and sends them to Claude.
+   * Under durable delivery (default), each message is flipped to 'enqueued' and
+   * routed through the `deliverMessage` chokepoint — the message_delivery
+   * handler owns ensureQueryStarted + feeding the transport (turn/steer), with
+   * the same atomic single-owner / reclaimStale / synchronous-consumed-flip
+   * guarantees as an immediate kickoff. The first message becomes the turn;
+   * the rest steer into it (the active-turn index arbitrates). Legacy opt-out
+   * (HYPERNEO_MESSAGE_DELIVERY_V2=0) keeps the inline ensureQueryStarted +
+   * enqueueWithId path.
    */
   async handleQueryTrigger(): Promise<{
     success: boolean;
@@ -50,22 +59,14 @@ export class QueryModeHandler {
     const { session, db, internalEventBus, messageQueue, logger } = this.ctx;
 
     try {
-      // Get all deferred messages, EXCLUDING any already owned by a durable v2
-      // delivery job — on restart both the reclaimed v2 job and this legacy
-      // replay would otherwise deliver the same message (duplicate). No-op when
-      // v2 is off (no message_delivery jobs → empty set) or the repo isn't wired
-      // (partial-mock contexts). See §10 + Codex review.
-      const v2Owned =
-        db.getJobQueueRepo?.()?.activeDeliveryMessageUuids?.(session.id) ?? new Set<string>();
-      const deferredMessages = db
-        .getMessagesByStatus(session.id, 'deferred')
-        .filter((m) => !v2Owned.has((m.uuid ?? '') as string));
+      const deferredMessages = db.getMessagesByStatus(session.id, 'deferred');
 
       if (deferredMessages.length === 0) {
         return { success: true, messageCount: 0 };
       }
 
-      // Update status to 'enqueued'
+      // Update status to 'enqueued' so the durable handler drives (not skips)
+      // the message. The handler reloads content by UUID.
       const dbIds = deferredMessages.map((m) => m.dbId);
       db.updateMessageStatus(dbIds, 'enqueued');
 
@@ -76,18 +77,23 @@ export class QueryModeHandler {
         status: 'enqueued',
       });
 
-      // Ensure query is started
-      await this.ctx.ensureQueryStarted();
-
-      // Enqueue each message
-      for (const msg of deferredMessages) {
-        if (!isSDKUserMessage(msg)) {
-          continue;
+      if (isMessageDeliveryV2Enabled()) {
+        // Durable: enqueue a delivery job per message (idempotent via
+        // getActiveDeliveryRole). The handler drives the turn / feeds steers.
+        const jobQueue = db.getJobQueueRepo();
+        for (const msg of deferredMessages) {
+          if (!isSDKUserMessage(msg) || !msg.uuid) continue;
+          deliverMessage(jobQueue, session.id, msg.uuid as string, { origin: 'recovery' });
         }
-
-        const replayContent = this.toReplayContent(msg.message.content);
-        if (replayContent) {
-          await messageQueue.enqueueWithId(msg.uuid as string, replayContent);
+      } else {
+        // Legacy inline path (HYPERNEO_MESSAGE_DELIVERY_V2=0 opt-out).
+        await this.ctx.ensureQueryStarted();
+        for (const msg of deferredMessages) {
+          if (!isSDKUserMessage(msg)) continue;
+          const replayContent = this.toReplayContent(msg.message.content);
+          if (replayContent) {
+            await messageQueue.enqueueWithId(msg.uuid as string, replayContent);
+          }
         }
       }
 
@@ -100,36 +106,39 @@ export class QueryModeHandler {
   }
 
   /**
-   * Send enqueued messages when the agent turn ends (auto-defer mode)
+   * Send enqueued messages when the agent turn ends / on (re)hydration
+   * (auto-defer mode + startup replay). Under durable delivery, each enqueued
+   * message is routed through `deliverMessage` — the handler drives it as a
+   * turn (if idle) or steer (if a turn is active), with the durable owner's
+   * full guarantees. Legacy opt-out keeps the inline path.
    */
   async sendEnqueuedMessagesOnTurnEnd(): Promise<void> {
     const { session, db, messageQueue, logger } = this.ctx;
 
     try {
-      // Get all queued messages, EXCLUDING any already owned by a durable v2
-      // delivery job (see handleQueryTrigger for the restart duplicate guard).
-      const v2Owned =
-        db.getJobQueueRepo?.()?.activeDeliveryMessageUuids?.(session.id) ?? new Set<string>();
-      const queuedMessages = db
-        .getMessagesByStatus(session.id, 'enqueued')
-        .filter((m) => !v2Owned.has((m.uuid ?? '') as string));
+      const queuedMessages = db.getMessagesByStatus(session.id, 'enqueued');
 
       if (queuedMessages.length === 0) {
         return;
       }
 
-      // Ensure query is running before replaying queued messages.
-      await this.ctx.ensureQueryStarted();
-
-      // Enqueue each message
-      for (const msg of queuedMessages) {
-        if (!isSDKUserMessage(msg)) {
-          continue;
+      if (isMessageDeliveryV2Enabled()) {
+        // Durable: enqueue a delivery job per message. Already-enqueued rows
+        // need no status flip; deliverMessage is idempotent.
+        const jobQueue = db.getJobQueueRepo();
+        for (const msg of queuedMessages) {
+          if (!isSDKUserMessage(msg) || !msg.uuid) continue;
+          deliverMessage(jobQueue, session.id, msg.uuid as string, { origin: 'recovery' });
         }
-
-        const replayContent = this.toReplayContent(msg.message.content);
-        if (replayContent) {
-          await messageQueue.enqueueWithId(msg.uuid as string, replayContent);
+      } else {
+        // Legacy inline path (HYPERNEO_MESSAGE_DELIVERY_V2=0 opt-out).
+        await this.ctx.ensureQueryStarted();
+        for (const msg of queuedMessages) {
+          if (!isSDKUserMessage(msg)) continue;
+          const replayContent = this.toReplayContent(msg.message.content);
+          if (replayContent) {
+            await messageQueue.enqueueWithId(msg.uuid as string, replayContent);
+          }
         }
       }
     } catch (error) {
