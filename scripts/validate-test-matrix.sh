@@ -140,6 +140,12 @@ if ! grep -qF 'src/**/*.{test,spec}.{ts,tsx}' "$WEB_CFG"; then
 	err "packages/web/vitest.config.ts include is not the full src/**/*.{test,spec}.{ts,tsx} glob — web tests may be orphaned"
 	echo "     → restore the full include, or update this validator" >&2
 fi
+# test.exclude must stay node_modules/dist only — adding a src/ pattern there
+# would silently skip those tests while this guard still marks them covered.
+if ! grep -qF "exclude: ['node_modules', 'dist']" "$WEB_CFG"; then
+	err "packages/web/vitest.config.ts test exclude is not ['node_modules', 'dist'] — src test files could be excluded"
+	echo "     → keep test.exclude to node_modules/dist, or update this validator" >&2
+fi
 
 # Web test files outside the src/** include are not run by web CI. Each must be
 # under src/ or listed in WEB_EXEMPT (with a reason), or it is flagged — none is
@@ -179,6 +185,22 @@ echo "web: $web_count test file(s) in packages/web/ (${#WEB_EXEMPT[@]} exempt ou
 ONLINE_DIR="packages/daemon/tests/online"
 MAIN_WORKFLOW=".github/workflows/main.yml"
 REAL_API_WORKFLOW=".github/workflows/real-api-tests.yml"
+
+# The online runner config (vitest.online.config.ts) determines which matrix
+# paths Vitest actually executes — Vitest applies include/exclude even to
+# explicitly-passed paths. Assert the include stays broad and the exclude
+# doesn't drop tests/online/, or matrix paths could be filtered out while this
+# guard (which only checks the matrix) stays green.
+ONLINE_CFG="$REPO_ROOT/packages/daemon/vitest.online.config.ts"
+if ! grep -qF "include: ['tests/online/**/*.test.ts']" "$ONLINE_CFG"; then
+	err "packages/daemon/vitest.online.config.ts include is not tests/online/**/*.test.ts — online matrix paths could be filtered out"
+	echo "     → keep the include broad, or update this validator" >&2
+fi
+online_exclude=$(grep -E "^[[:space:]]*exclude:" "$ONLINE_CFG" | head -n1)
+if printf '%s' "$online_exclude" | grep -q 'tests/online/'; then
+	err "packages/daemon/vitest.online.config.ts exclude references tests/online/ — online tests would be skipped"
+	echo "     → remove the tests/online/ path from exclude" >&2
+fi
 
 RPC_FILES=(
 	rpc-agent-handlers.test.ts
@@ -258,6 +280,11 @@ check_workflow_references() {
 		if [ "${active:-0}" -eq 0 ]; then
 			err "$test_path has no active reference in $workflow"
 			echo "     → add it to the active CI matrix in $workflow" >&2
+		elif [ "$active" -gt 1 ]; then
+			# Exactly-one-shard contract: a file listed in two matrix rows runs
+			# twice, wasting CI time and (for real-provider shards) paid calls.
+			err "$test_path has $active active references in $workflow — duplicate shard ownership"
+			echo "     → list it in exactly one matrix row" >&2
 		fi
 	done
 }
@@ -350,6 +377,9 @@ for dir in "$ONLINE_DIR"/*/; do
 		if [ "${file_refs:-0}" -eq 0 ]; then
 			err "online test not covered by any active CI shard: tests/online/$dirname/$fname"
 			echo "     → add it to a matrix in $MAIN_WORKFLOW (or to EXEMPT_DIRS if the module is disabled)" >&2
+		elif [ "$file_refs" -gt 1 ]; then
+			err "tests/online/$dirname/$fname has $file_refs active references — duplicate shard ownership"
+			echo "     → list it in exactly one matrix row" >&2
 		fi
 	done < <(find "$dir" -name "*.test.ts" -type f | sort)
 done

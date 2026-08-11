@@ -475,6 +475,19 @@ jobs:
           GLM_API_KEY: ""
           CLAUDE_CODE_OAUTH_TOKEN: ""
 
+      - name: Fix coverage paths for monorepo
+        if: always()
+        working-directory: packages/${{ matrix.shard == 'shared' && 'shared' || 'daemon' }}
+        run: |
+          # Vitest writes SF: paths relative to the package dir (src/...); Coveralls
+          # needs repo-root paths (packages/<pkg>/src/...). Mirror the online/web jobs.
+          PKG="${{ matrix.shard == 'shared' && 'shared' || 'daemon' }}"
+          LCOV=coverage/lcov.info
+          [ -f "$LCOV" ] || exit 0
+          sed -i "s|^SF:src/|SF:packages/${PKG}/src/|g" "$LCOV" || true
+          sed -i 's|^SF:\.\./shared/|SF:packages/shared/|g' "$LCOV" || true
+          sed -i 's|^SF:\.\./daemon/|SF:packages/daemon/|g' "$LCOV" || true
+
       - name: Upload coverage (parallel)
         if: always()
         uses: coverallsapp/github-action@v2
