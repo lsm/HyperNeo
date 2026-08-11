@@ -733,26 +733,25 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
   for (const hook of result.data.hooks ?? []) {
     if (hook?.id) transitionHookIds.add(hook.id);
   }
+  // Build the destination map ONCE (not per source node) so validation stays
+  // linear in the node count instead of quadratic — a crafted bundle with many
+  // nodes must not make import validation O(N²).
+  const targetDestinations = new Map<string, Set<string>>();
+  const countDest = (name: string | undefined, key: string) => {
+    if (!name) return;
+    const set = targetDestinations.get(name) ?? new Set<string>();
+    set.add(key);
+    targetDestinations.set(name, set);
+  };
+  result.data.nodes.forEach((other, idx) => {
+    countDest(other.name, `node:${idx}`);
+    for (const a of other.agents ?? []) countDest(a.name, `slot:${idx}`);
+  });
+
   for (let n = 0; n < result.data.nodes.length; n++) {
     const node = result.data.nodes[n];
     const transitions = node.transitions;
     if (!transitions || transitions.length === 0) continue;
-
-    // Count distinct destinations per name (node-name destinations and
-    // slot-name destinations separately, mirroring the manager) so an ambiguous
-    // target — a name matching more than one node/slot — is rejected here, not
-    // only to roll back at createWorkflow during execute.
-    const targetDestinations = new Map<string, Set<string>>();
-    const countDest = (name: string | undefined, key: string) => {
-      if (!name) return;
-      const set = targetDestinations.get(name) ?? new Set<string>();
-      set.add(key);
-      targetDestinations.set(name, set);
-    };
-    result.data.nodes.forEach((other, idx) => {
-      countDest(other.name, `node:${idx}`);
-      for (const a of other.agents ?? []) countDest(a.name, `slot:${idx}`);
-    });
 
     const seenIds = new Set<string>();
     const seenTargets = new Set<string>();

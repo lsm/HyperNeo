@@ -362,6 +362,10 @@ function buildWorkflowFields(state: VisualEditorState): {
   // Gates referenced by carried handoff transitions must be retained alongside
   // channel-referenced gates, or their gateId becomes unknown on save.
   const handoffGateIds = new Set<string>();
+  // Current hook ids — a carried transition whose hookId was removed (e.g. the
+  // hook's source/target node was deleted) must be dropped, not emitted with a
+  // dangling reference that validateTransitions rejects.
+  const currentHookIds = new Set(state.hooks.map((h) => h.id));
 
   const nodes = persistableNodes.map((node, i) => {
     const key = node.step.id ?? node.step.localId;
@@ -424,9 +428,15 @@ function buildWorkflowFields(state: VisualEditorState): {
       // validateTransitions. Collect referenced gates so they are retained below.
       ...(() => {
         const valid = (node.step.handoffTransitions ?? []).filter((t) => {
-          if (t.target === '*') return true;
-          const dests = handoffTargetDestinations.get(t.target);
-          return dests !== undefined && dests.size === 1;
+          if (t.target !== '*') {
+            const dests = handoffTargetDestinations.get(t.target);
+            if (!dests || dests.size !== 1) return false;
+          }
+          // Drop transitions whose referenced hook/gate was removed from the
+          // current graph (e.g. by a node deletion).
+          if (t.hookId !== undefined && !currentHookIds.has(t.hookId)) return false;
+          if (t.gateId !== undefined && !state.gates.some((g) => g.id === t.gateId)) return false;
+          return true;
         });
         for (const t of valid) if (t.gateId) handoffGateIds.add(t.gateId);
         return valid.length > 0 ? { transitions: valid } : {};
