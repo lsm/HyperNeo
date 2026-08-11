@@ -30,7 +30,11 @@ import type {
   UpdateSpaceWorkflowParams,
 } from '@hyperneo/shared';
 import { Logger } from '../../lib/logger';
-import { computeDefinitionVersion } from '../../lib/space/workflows/definition-version';
+import {
+  computeDefinitionVersion,
+  stableVersionTimestamp,
+  verifyDefinitionVersion,
+} from '../../lib/space/workflows/definition-version';
 import {
   SpaceWorkflowDefinitionVersionRepository,
   type DefinitionVersionSource,
@@ -299,6 +303,64 @@ export class SpaceWorkflowRepository {
     return rowToWorkflow(row, nodes);
   }
 
+  /**
+   * Resolve the RAW persisted definition an in-flight run executes (RFC §4 Phase 1 read
+   * cutover), without manager-level sanitization. Mirrors `getWorkflow` (raw) but resolves
+   * a pinned run through its immutable version instead of the mutable head. Callers that
+   * need the sanitized runtime view use `SpaceWorkflowManager.getWorkflowForRun`; this raw
+   * variant serves paths (e.g. delivery-permission checks) that today read the raw repo
+   * row. See the manager method for the stable-timestamp, fallback, and built-in-gate
+   * boundary rationale.
+   */
+  getWorkflowForRun(run: {
+    workflowId: string;
+    definitionVersion: string | null;
+  }): SpaceWorkflow | null {
+    const versionHash = run.definitionVersion;
+    if (versionHash) {
+      try {
+        const version = this.definitionVersions.getVersion(run.workflowId, versionHash);
+        if (version) {
+          const parsed = JSON.parse(version.payload) as SpaceWorkflow;
+          // Validate shape + integrity before trusting the pinned payload: a corrupt or
+          // tampered row (valid JSON but wrong shape or hash mismatch) must not flow into
+          // sanitizePostApprovalForLoad (which assumes .nodes is an array). Fall through to
+          // the live head instead of returning a malformed object.
+          if (!parsed || !Array.isArray(parsed.nodes)) {
+            log.warn(
+              `getWorkflowForRun: pinned payload for ${versionHash} has invalid shape; falling back to live head`
+            );
+            return this.getWorkflow(run.workflowId);
+          }
+          if (!verifyDefinitionVersion(version.payload, versionHash)) {
+            log.warn(
+              `getWorkflowForRun: payload hash mismatch for workflow ${run.workflowId} (version ${versionHash}); falling back to live head`
+            );
+            return this.getWorkflow(run.workflowId);
+          }
+          // updatedAt is derived from the immutable version hash so the gate-open cache
+          // fingerprint is version-stable: it does not churn on unrelated head edits, and is
+          // identical on first activation and recovery (independent of when the version row
+          // was appended — INSERT OR IGNORE can leave a reused hash's created_at stale). The
+          // startup backfill re-keys existing persisted gate-open entries to this basis, so a
+          // backfilled in-flight run's cache survives the cutover without re-evaluation.
+          return {
+            ...parsed,
+            createdAt: version.createdAt,
+            updatedAt: stableVersionTimestamp(versionHash),
+          };
+        }
+      } catch (err) {
+        log.warn(
+          `getWorkflowForRun: failed to rehydrate pinned version ${versionHash} for workflow ` +
+            `${run.workflowId}; falling back to live head:`,
+          err
+        );
+      }
+    }
+    return this.getWorkflow(run.workflowId);
+  }
+
   listWorkflows(spaceId: string): SpaceWorkflow[] {
     const rows = this.db
       .prepare(
@@ -535,9 +597,11 @@ export class SpaceWorkflowRepository {
   }
 
   /**
-   * Record an immutable version snapshot of the definition (RFC §4, Phase 1 — shadow mode).
-   * Best-effort: a failure here must never break a definition write, because no run read path
-   * depends on these rows yet. Idempotent on `(workflow_id, version_hash)` — re-stamping a
+   * Record an immutable version snapshot of the definition (RFC §4, Phase 1). Best-effort
+   * at write time: a failure here must never break a definition write — the read cutover
+   * resolves a pinned run through `getWorkflowForRun`, which falls back to the live head if
+   * a version row is missing, so a missed append degrades to the pre-cutover read rather
+   * than failing. Idempotent on `(workflow_id, version_hash)` — re-stamping a
    * behaviorally-identical definition is a silent no-op.
    */
   private recordDefinitionVersion(workflow: SpaceWorkflow, source: DefinitionVersionSource): void {
@@ -552,7 +616,7 @@ export class SpaceWorkflowRepository {
         createdAt: Date.now(),
       });
     } catch (err) {
-      log.warn('Failed to record workflow definition version (shadow mode, non-fatal):', err);
+      log.warn('Failed to record workflow definition version (non-fatal):', err);
     }
   }
 

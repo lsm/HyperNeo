@@ -3729,9 +3729,7 @@ export class SpaceRuntime {
     const run = current.workflowRunId
       ? this.config.workflowRunRepo.getRun(current.workflowRunId)
       : null;
-    const workflow = run
-      ? (this.config.spaceWorkflowManager.getWorkflow(run.workflowId) ?? null)
-      : null;
+    const workflow = run ? (this.config.spaceWorkflowManager.getWorkflowForRun(run) ?? null) : null;
 
     // 1. Ensure the task is in `approved` before routing. Uses the space's
     //    task manager so the transition validator runs (rejects illegal
@@ -4401,7 +4399,7 @@ export class SpaceRuntime {
     if (isWorkflowRunSucceeded(run.status)) {
       const workflow =
         this.executorMeta.get(run.id)?.workflow ??
-        this.config.spaceWorkflowManager.getWorkflow(run.workflowId) ??
+        this.config.spaceWorkflowManager.getWorkflowForRun(run) ??
         null;
       const summaryFromArtifact = this.resolvePrimaryResultArtifactSummary(run.id);
       const summaryFromWorkflow = workflow
@@ -4966,7 +4964,7 @@ export class SpaceRuntime {
       // Refuse to reopen against a workflow definition that no longer exists
       // (e.g. deleted after the run completed) — otherwise the task/run are
       // mutated to in_progress but the run can never tick or spawn again.
-      const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+      const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
       if (!workflow) {
         throw new Error(`Workflow not found: ${run.workflowId}`);
       }
@@ -5120,9 +5118,7 @@ export class SpaceRuntime {
     // cached, so a recover after a cancel/archive cleared the run's static
     // workflow interests would leave them unregistered. Re-register explicitly
     // (idempotent: refreshes static interests, preserves dynamic/auto_pr).
-    const recoveredWorkflow = this.config.spaceWorkflowManager.getWorkflow(
-      recovered.run.workflowId
-    );
+    const recoveredWorkflow = this.config.spaceWorkflowManager.getWorkflowForRun(recovered.run);
     if (recoveredWorkflow) {
       this.registerRunInterestsFromWorkflow(recovered.run, recoveredWorkflow);
     }
@@ -5181,7 +5177,7 @@ export class SpaceRuntime {
   ): Promise<boolean> {
     if (this.executors.has(run.id)) return true;
 
-    const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+    const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
     if (!workflow) return false;
 
     const space = knownSpace ?? (await this.config.spaceManager.getSpace(run.spaceId));
@@ -5374,7 +5370,7 @@ export class SpaceRuntime {
       .listBySpace(spaceId)
       .filter((run) => this.isRunInterestRebuildEligible(run));
     for (const run of reactiveRuns) {
-      const staticWorkflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+      const staticWorkflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
       if (staticWorkflow) {
         try {
           this.registerRunInterestsFromWorkflow(run, staticWorkflow);
@@ -5604,7 +5600,7 @@ export class SpaceRuntime {
       }
       for (const run of this.config.workflowRunRepo.listBySpace(space.id)) {
         if (!this.isRunInterestRebuildEligible(run)) continue;
-        const staticWorkflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+        const staticWorkflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
         if (staticWorkflow) {
           try {
             this.registerRunInterestsFromWorkflow(run, staticWorkflow);
@@ -5759,7 +5755,7 @@ export class SpaceRuntime {
   private async recoverSingleRun(
     run: SpaceWorkflowRun
   ): Promise<'completion-pending' | 'blocked' | 'skipped'> {
-    const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+    const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
     const executions = this.config.nodeExecutionRepo.listByWorkflowRun(run.id);
     if (!workflow) {
       await this.blockRunWithMissingWorkflow(run, executions);
@@ -5946,7 +5942,7 @@ export class SpaceRuntime {
     run: SpaceWorkflowRun,
     executions: NodeExecution[]
   ): Promise<boolean> {
-    const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+    const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
     if (!workflow) return false;
     const channels = workflow.channels ?? [];
     if (channels.length === 0) return false;
@@ -9564,7 +9560,7 @@ export class SpaceRuntime {
   getWorkflowChannels(runId: string): WorkflowChannel[] {
     const run = this.config.workflowRunRepo.getRun(runId);
     if (!run) return [];
-    const workflow = this.config.spaceWorkflowManager.getWorkflow(run.workflowId);
+    const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
     return workflow?.channels ?? [];
   }
 }

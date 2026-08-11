@@ -899,9 +899,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   // Migration 180: Create `space_workflow_definition_versions` — the append-only history
   // of immutable workflow-definition snapshots (RFC §4 Phase 1). Each row is a full,
-  // self-contained definition payload identified by a SHA-256 `version_hash`. Shadow mode:
-  // this PR creates the table and begins populating it on definition writes; no run read
-  // resolves through it yet (the Phase-1 read cutover lands in a later PR). No FK to
+  // self-contained definition payload identified by a SHA-256 `version_hash`. The Phase-1
+  // read cutover resolves pinned runs through these rows (`getWorkflowForRun`); a startup
+  // backfill captures every existing head. No FK to
   // space_workflows(id): pinned versions must survive deletion of the mutable head
   // (orphan/tombstone policy). New databases get the table from createTables(); this
   // brings existing databases to parity.
@@ -2772,9 +2772,9 @@ function runMigration29(db: BunDatabase): void {
   // space_workflow_definition_versions
   //
   // Append-only history of immutable workflow-definition snapshots (RFC §4 Phase 1).
-  // Shadow mode: populated on definition writes; no run read resolves through it yet.
-  // No FK to space_workflows(id) — pinned versions must survive deletion of the mutable
-  // head (orphan/tombstone policy).
+  // Populated on definition writes; the Phase-1 read cutover resolves pinned runs through
+  // these rows. No FK to space_workflows(id) — pinned versions must survive deletion of
+  // the mutable head (orphan/tombstone policy).
   // -------------------------------------------------------------------------
   db.exec(`
 		CREATE TABLE IF NOT EXISTS space_workflow_definition_versions (
@@ -12101,9 +12101,9 @@ export function runMigration178(db: BunDatabase): void {
  * of immutable workflow-definition snapshots (RFC §4 Phase 1).
  *
  * Each row is a full, self-contained definition payload identified by a SHA-256
- * `version_hash` (see `computeDefinitionVersion`). Shadow mode: populated on definition
- * writes; no run read resolves through it yet. There is intentionally NO FK to
- * `space_workflows(id)` — pinned versions must survive deletion of the mutable head
+ * `version_hash` (see `computeDefinitionVersion`). Populated on definition writes; the
+ * Phase-1 read cutover resolves pinned runs through these rows. There is intentionally NO
+ * FK to `space_workflows(id)` — pinned versions must survive deletion of the mutable head
  * (orphan/tombstone policy); a cascade would erase the rows a pinned run depends on.
  */
 export function runMigration180(db: BunDatabase): void {

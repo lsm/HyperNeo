@@ -259,7 +259,7 @@ export class SpaceMessageResolver implements ActorResolver {
   ): boolean {
     const run = this.config.workflowRunRepo.getRun(workflowRunId);
     if (!run || run.spaceId !== this.context.spaceId) return false;
-    const workflow = this.config.workflowRepo.getWorkflow(run.workflowId);
+    const workflow = this.config.workflowRepo.getWorkflowForRun(run);
     if (!workflow) return false;
     const parsed = parseWorkerActorId(actor.actorId);
     if (!parsed) return false;
@@ -359,7 +359,7 @@ export class SpaceMessageResolver implements ActorResolver {
   private workflowForRun(workflowRunId: string) {
     const run = this.config.workflowRunRepo.getRun(workflowRunId);
     if (!run || run.spaceId !== this.context.spaceId) return null;
-    return this.config.workflowRepo.getWorkflow(run.workflowId) ?? null;
+    return this.config.workflowRepo.getWorkflowForRun(run) ?? null;
   }
 }
 

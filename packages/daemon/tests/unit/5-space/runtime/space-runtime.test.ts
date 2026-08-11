@@ -942,6 +942,34 @@ describe('SpaceRuntime', () => {
       ).toBeDefined();
     });
 
+    test('in-flight run reads its pinned definition, not a later head edit (read cutover)', async () => {
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+        { id: 'coder-step', name: 'Code', agentId: AGENT_CODER },
+      ]);
+
+      const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Pinned Run');
+      // Baseline: whatever channels the pinned definition has immediately after start
+      // (robust to whether transitions are materialized as channels).
+      const pinnedChannelCount = runtime.getWorkflowChannels(run.id).length;
+
+      // Edit the head AFTER the run was pinned — append a back-channel that did not exist
+      // at run creation. An in-flight run must keep executing its pinned version.
+      const head = workflowManager.getWorkflow(workflow.id)!;
+      workflowManager.updateWorkflow(workflow.id, {
+        channels: [
+          ...(head.channels ?? []),
+          { id: 'back-code-plan', from: 'Code', to: 'Plan', maxCycles: 3 },
+        ],
+      });
+
+      // The head now carries one more channel; the run's runtime read stays pinned.
+      expect(workflowManager.getWorkflow(workflow.id)?.channels ?? []).toHaveLength(
+        pinnedChannelCount + 1
+      );
+      expect(runtime.getWorkflowChannels(run.id)).toHaveLength(pinnedChannelCount);
+    });
+
     test('creates initial SpaceTask for the start step', async () => {
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },

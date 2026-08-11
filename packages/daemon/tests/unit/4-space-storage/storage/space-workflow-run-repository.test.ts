@@ -58,6 +58,17 @@ describe('SpaceWorkflowRunRepository', () => {
     };
   }
 
+  /** Seed a canonical task for a run. Backfill only considers runs with a non-archived
+   * task, so tests exercising listPinnableRuns / backfillDefinitionPins must seed one. */
+  function seedTaskForRun(runId: string, sId: string, opts: { archived?: boolean } = {}): void {
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO space_tasks
+         (id, space_id, task_number, title, status, workflow_run_id, archived_at, created_at, updated_at)
+       VALUES (?, ?, ?, 'Task', 'open', ?, ?, ?, ?)`
+    ).run(`task-${runId}`, sId, runId, runId, opts.archived ? now : null, now, now);
+  }
+
   describe('createRun', () => {
     it('creates a run with required fields', () => {
       const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Run #1' });
@@ -324,5 +335,125 @@ describe('SpaceWorkflowRunRepository', () => {
       const fetched = repo.getRun(run.id)!;
       expect(fetched.startedAt).not.toBeNull();
     });
+  });
+
+  describe('pinExistingRun + backfillDefinitionPins (Phase 1 read-cutover backfill)', () => {
+    it('listPinnableRuns returns only runs without a definition pin', () => {
+      const legacy = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Legacy' });
+      seedTaskForRun(legacy.id, spaceId);
+      const pinned = repo.createPinnedRun({
+        spaceId,
+        workflowId: WORKFLOW_ID,
+        title: 'Pinned',
+        rawWorkflow: rawWorkflow(),
+      });
+      const ids = repo.listPinnableRuns().map((r) => r.id);
+      expect(ids).toContain(legacy.id);
+      expect(ids).not.toContain(pinned.id);
+    });
+
+    it('listPinnableRuns excludes runs whose canonical task is archived (tombstoned)', () => {
+      const live = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Live' });
+      seedTaskForRun(live.id, spaceId);
+      const archived = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Archived' });
+      seedTaskForRun(archived.id, spaceId, { archived: true });
+
+      const ids = repo.listPinnableRuns().map((r) => r.id);
+      expect(ids).toContain(live.id);
+      expect(ids).not.toContain(archived.id); // tombstoned — not worth pinning
+    });
+
+    it('pinExistingRun stamps a pin and appends the version row atomically', () => {
+      const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Legacy' });
+      expect(run.definitionVersion).toBeNull();
+
+      const wf = rawWorkflow({ name: 'Backfilled' });
+      const ok = repo.pinExistingRun(run.id, wf);
+
+      expect(ok).toBe(true);
+      const stamped = repo.getRun(run.id)!;
+      expect(stamped.definitionVersion).toBe(computeDefinitionVersion(wf).versionHash);
+      const row = db
+        .prepare(
+          `SELECT source FROM space_workflow_definition_versions
+           WHERE workflow_id = ? AND version_hash = ?`
+        )
+        .get(WORKFLOW_ID, stamped.definitionVersion) as { source: string };
+      expect(row.source).toBe('backfill');
+    });
+
+    it('pinExistingRun is idempotent and never overwrites an existing pin', () => {
+      const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Legacy' });
+      const first = rawWorkflow({ name: 'First' });
+      repo.pinExistingRun(run.id, first);
+      const firstPin = repo.getRun(run.id)!.definitionVersion;
+
+      // A second call with a DIFFERENT head must not overwrite (WHERE definition_version IS NULL).
+      const ok = repo.pinExistingRun(run.id, rawWorkflow({ name: 'Second' }));
+
+      expect(ok).toBe(false);
+      expect(repo.getRun(run.id)!.definitionVersion).toBe(firstPin);
+    });
+
+    it('backfillDefinitionPins pins every unpinned run with an existing head', () => {
+      const a = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'A' });
+      const b = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'B' });
+      seedTaskForRun(a.id, spaceId);
+      seedTaskForRun(b.id, spaceId);
+      const wf = rawWorkflow();
+      const expectedHash = computeDefinitionVersion(wf).versionHash;
+
+      const count = repo.backfillDefinitionPins(() => wf);
+
+      expect(count).toBe(2);
+      expect(repo.getRun(a.id)!.definitionVersion).toBe(expectedHash);
+      expect(repo.getRun(b.id)!.definitionVersion).toBe(expectedHash);
+    });
+
+    it('backfillDefinitionPins leaves runs unpinned when the head is deleted and is idempotent', () => {
+      const live = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Live' });
+      const orphan = repo.createRun({ spaceId, workflowId: 'deleted-wf', title: 'Orphan' });
+      seedTaskForRun(live.id, spaceId);
+      seedTaskForRun(orphan.id, spaceId);
+      const wf = rawWorkflow();
+
+      let calls = 0;
+      const count = repo.backfillDefinitionPins((id) => {
+        calls += 1;
+        return id === WORKFLOW_ID ? wf : null; // deleted head → null
+      });
+
+      expect(count).toBe(1); // only the live run
+      expect(repo.getRun(live.id)!.definitionVersion).not.toBeNull();
+      expect(repo.getRun(orphan.id)!.definitionVersion).toBeNull(); // skipped, stays on fallback
+
+      // Second pass: every remaining run is either pinned or unbackfillable → no work.
+      const second = repo.backfillDefinitionPins((id) => (id === WORKFLOW_ID ? wf : null));
+      expect(second).toBe(0);
+      expect(calls).toBeGreaterThan(0);
+    });
+
+    it('backfillDefinitionPins isolates failures: one bad run does not block the others', () => {
+      const good = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Good' });
+      const bad = repo.createRun({ spaceId, workflowId: 'broken-wf', title: 'Bad' });
+      seedTaskForRun(good.id, spaceId);
+      seedTaskForRun(bad.id, spaceId);
+      const wf = rawWorkflow();
+      const expectedHash = computeDefinitionVersion(wf).versionHash;
+
+      const count = repo.backfillDefinitionPins((id) => {
+        if (id === 'broken-wf') throw new Error('boom'); // loader failure for one run
+        return wf;
+      });
+
+      // The good run is still pinned; the bad one is skipped (left null → fallback), not fatal.
+      expect(count).toBe(1);
+      expect(repo.getRun(good.id)!.definitionVersion).toBe(expectedHash);
+      expect(repo.getRun(bad.id)!.definitionVersion).toBeNull();
+    });
+    // The cutover gate-open-cache re-key lives in the rpc-handlers startup sweep (it must
+    // hash the SANITIZED gate via the manager, and be idempotent across boots for crash
+    // recovery). It is covered end-to-end by the "backfill re-key round-trips against the
+    // runtime sanitized read path" test in channel-router.test.ts.
   });
 });
