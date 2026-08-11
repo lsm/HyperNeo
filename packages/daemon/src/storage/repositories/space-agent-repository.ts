@@ -22,6 +22,13 @@ import type {
 } from '@hyperneo/shared';
 import type { SQLiteValue } from '../types';
 
+/**
+ * Cap on how many referencing run IDs the deletion guard surfaces in its error
+ * details. The `referenced` boolean is authoritative regardless; this only
+ * bounds the list shown to the user when an agent backs many in-flight runs.
+ */
+const MAX_REPORTED_REFERENCING_RUNS = 10;
+
 export class SpaceAgentRepository {
   constructor(private db: BunDatabase) {}
 
@@ -234,6 +241,53 @@ export class SpaceAgentRepository {
 
     const workflowNames = rows.map((r) => r.name);
     return { referenced: workflowNames.length > 0, workflowNames };
+  }
+
+  /**
+   * Check whether a non-archived (still-executable) run is pinned to a
+   * definition version that references this agent (RFC §4 #5).
+   *
+   * `isAgentReferenced` scans only the mutable head (`space_workflow_nodes`).
+   * After Phase-1 version pinning, an in-flight run executes the version pinned
+   * at its creation (`space_workflow_runs.definition_version`), not the current
+   * head. If that pinned version still references the agent but the head no
+   * longer does (the workflow was edited, or the agent slot was removed from the
+   * head), deleting the agent would strand the run: `resolveAgentInit` loads the
+   * agent by id at spawn (`custom-agent.ts`) and throws "Agent not found" when it
+   * is gone. Agent deletion must therefore account for executable pinned
+   * versions, not just the head.
+   *
+   * "Non-archived" mirrors the Phase-1 backfill and the §4 #3 workflow-deletion
+   * guard: a run with at least one non-archived task (`archived_at IS NULL`) is
+   * still executable — reopenable `done`/`cancelled` runs qualify; only
+   * `SpaceTask.archivedAt` is a non-reopenable tombstone. Runs pinned to a
+   * version that does NOT reference the agent, and unpinned runs
+   * (`definition_version IS NULL`, which re-read the head and are already covered
+   * by `isAgentReferenced`), are excluded.
+   *
+   * Returns the IDs of the referencing runs (bounded) for error reporting; the
+   * `referenced` flag is authoritative.
+   */
+  isReferencedByActivePinnedRun(agentId: string): { referenced: boolean; runIds: string[] } {
+    const rows = this.db
+      .prepare(
+        `SELECT DISTINCT r.id AS run_id
+				FROM space_workflow_definition_versions v
+				JOIN space_workflow_runs r
+					ON r.workflow_id = v.workflow_id AND r.definition_version = v.version_hash
+				WHERE v.payload LIKE ?
+					AND EXISTS (
+						SELECT 1 FROM space_tasks t
+						WHERE t.workflow_run_id = r.id AND t.archived_at IS NULL
+					)
+				LIMIT ?`
+      )
+      .all(`%"agentId":"${agentId}"%`, MAX_REPORTED_REFERENCING_RUNS) as Array<{
+      run_id: string;
+    }>;
+
+    const runIds = rows.map((r) => r.run_id);
+    return { referenced: runIds.length > 0, runIds };
   }
 
   private generateUniqueHandle(spaceId: string, name: string): string {

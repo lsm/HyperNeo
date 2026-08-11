@@ -24,7 +24,11 @@ import {
 import { computeAgentTemplateHash } from '../../../../src/lib/space/agents/agent-template-hash';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
-import { createSpaceAgentSchema, insertSpace } from '../../helpers/space-agent-schema';
+import {
+  createSpaceAgentSchema,
+  createWorkflowPinningTables,
+  insertSpace,
+} from '../../helpers/space-agent-schema';
 
 describe('seedPresetAgents', () => {
   let db: Database;
@@ -33,6 +37,7 @@ describe('seedPresetAgents', () => {
   beforeEach(() => {
     db = new Database(':memory:');
     createSpaceAgentSchema(db);
+    createWorkflowPinningTables(db);
     insertSpace(db);
     const repo = new SpaceAgentRepository(db as any);
     manager = new SpaceAgentManager(repo);
@@ -387,6 +392,7 @@ describe('preset agent exact definitions', () => {
   beforeEach(() => {
     db = new Database(':memory:');
     createSpaceAgentSchema(db);
+    createWorkflowPinningTables(db);
     insertSpace(db);
     const repo = new SpaceAgentRepository(db as any);
     manager = new SpaceAgentManager(repo);
@@ -682,6 +688,7 @@ describe('PRESET_AGENT_TOOLS export', () => {
   it('PRESET_AGENT_TOOLS matches what seedPresetAgents actually seeds', async () => {
     const db = new Database(':memory:');
     createSpaceAgentSchema(db);
+    createWorkflowPinningTables(db);
     insertSpace(db);
     const repo = new SpaceAgentRepository(db as any);
     const mgr = new SpaceAgentManager(repo);
@@ -784,6 +791,7 @@ describe('retireRemovedPresetAgents', () => {
   beforeEach(() => {
     db = new Database(':memory:');
     createSpaceAgentSchema(db);
+    createWorkflowPinningTables(db);
     insertSpace(db);
     const repo = new SpaceAgentRepository(db as any);
     manager = new SpaceAgentManager(repo);

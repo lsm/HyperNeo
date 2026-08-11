@@ -7,7 +7,9 @@
  *   - Model must be recognized; when a provider is also given, validation is
  *     scoped to that provider via the provider-aware isValidModel() API
  *   - Tool names must be from KNOWN_TOOLS (validated on create and non-null update)
- *   - Deletion blocked when agent is referenced by workflow nodes
+ *   - Deletion blocked when agent is referenced by workflow nodes, or by an
+ *     in-flight (non-archived) run pinned to a definition version that still
+ *     references it (RFC §4 #5)
  */
 
 import type {
@@ -129,7 +131,9 @@ export class SpaceAgentManager {
   }
 
   /**
-   * Delete an agent, unless it is referenced by workflow nodes.
+   * Delete an agent, unless it is referenced by the mutable head (workflow nodes)
+   * or by an in-flight (non-archived) run pinned to a definition version that
+   * still references it.
    */
   delete(id: string): SpaceAgentResult<void> {
     const existing = this.repo.getById(id);
@@ -141,6 +145,22 @@ export class SpaceAgentManager {
         ok: false,
         error: `Cannot delete agent "${existing.name}" - it is referenced by workflow nodes`,
         details: workflowNames.map((n) => `Workflow: ${n}`),
+      };
+    }
+
+    // RFC §4 #5: the head no longer references this agent, but an in-flight run
+    // may still be pinned to an older definition version that does. Deleting the
+    // agent would strand that run — `resolveAgentInit` throws "Agent not found"
+    // at spawn. Block (rather than strand) when any non-archived run is pinned to
+    // a referencing version.
+    const { referenced: pinnedReferenced, runIds } = this.repo.isReferencedByActivePinnedRun(id);
+    if (pinnedReferenced) {
+      return {
+        ok: false,
+        error:
+          `Cannot delete agent "${existing.name}" - it is referenced by an in-flight run ` +
+          `pinned to an older workflow version`,
+        details: runIds.map((rid) => `Run: ${rid}`),
       };
     }
 
