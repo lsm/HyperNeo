@@ -23,6 +23,8 @@ import {
 } from '../../../src/lib/rpc-handlers';
 import { mergeEvolutionPolicy } from '../../../src/lib/space/evolution-scope-service';
 import { ScheduleService } from '../../../src/lib/space/schedule/schedule-service';
+import { SpaceLifecycleEventEmitter } from '../../../src/lib/space/lifecycle/space-lifecycle-event-emitter';
+import type { ExternalEvent } from '../../../src/lib/external-events/types';
 import { createSpaceTables } from '../helpers/space-test-db';
 
 function createAutomationJob(payload: Job['payload'], id = 'job-automation'): Job {
@@ -684,6 +686,56 @@ describe('GoalAutomationService', () => {
     });
 
     expect(duplicate).toEqual({ enqueued: false, reason: 'not_applicable' });
+  });
+
+  it('does not enqueue on space-source events — breaks the Forge feedback loop', () => {
+    // Goal automation must ignore space-source lifecycle events entirely.
+    // Otherwise a Forge review task reaching `done` (status emit, no provenance
+    // marker) or the auto-chain createImmediateTask would emit space/task.* and
+    // re-trigger Forge with a fresh task id / externalEventId / cursor each
+    // cycle — a self-sustaining loop. No criterion requires goal-automation to
+    // react to space events (coordinators wake via long-horizon delivery, an
+    // independent path).
+    const goal = goalRepo.create({ spaceId, title: 'Watch tasks', type: 'recurring' });
+    evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Watch tasks',
+      objective: 'React to tasks',
+      policy: { automation: { eventSubscriptions: [{ source: 'space', topic: 'space/task.*' }] } },
+    });
+
+    // The two loop vectors: a Forge-task completion (unmarked status emit) and
+    // the auto-chain created emit.
+    const [done] = service.onExternalEventPublished({
+      eventId: 'space-evt-done',
+      spaceId,
+      source: 'space',
+      topic: 'space/task.done',
+      dedupeKey: 'task:forge-1:in_progress:done:5000',
+      summary: 'Forge review task done',
+      payload: { taskId: 'forge-1', action: 'done', goalId: goal.id, labels: ['forge', 'review'] },
+      occurredAt: 30,
+      ingestedAt: 31,
+    });
+    const [created] = service.onExternalEventPublished({
+      eventId: 'space-evt-created',
+      spaceId,
+      source: 'space',
+      topic: 'space/task.created',
+      dedupeKey: 'task:forge-2:created:6000',
+      summary: 'Auto-chain task created',
+      payload: { taskId: 'forge-2', action: 'created', goalId: goal.id },
+      occurredAt: 40,
+      ingestedAt: 41,
+    });
+
+    expect(done).toEqual({ enqueued: false, reason: 'not_applicable' });
+    expect(created).toEqual({ enqueued: false, reason: 'not_applicable' });
+    expect(jobQueue.listJobs({ queue: GOAL_AUTOMATION_EXECUTE, status: 'pending' })).toHaveLength(
+      0
+    );
   });
 
   it('deduplicates external events against processing jobs', () => {
@@ -1482,6 +1534,88 @@ describe('handleGoalAutomationExecute', () => {
       lastEpisodeId: result.episodeId,
     });
     expect(cursor?.metadata.evidenceIds).toEqual([evidence.id]);
+  });
+
+  it('publishes space/task.created lifecycle event for the Forge review task', async () => {
+    const goal = goalRepo.create({ spaceId, title: 'Review lessons', type: 'recurring' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Review lessons',
+      objective: 'Generate retrospectives',
+      policy: { automation: { completedTaskThreshold: 1 } },
+    });
+    const task = taskRepo.createTask({ spaceId, title: 'Completed task', goalId: goal.id });
+    taskRepo.updateTask(task.id, { status: 'done', result: 'Finished' });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'task_result',
+      sourceId: task.id,
+      summary: 'Completed task result',
+      createdAt: 40,
+    });
+    const published: ExternalEvent[] = [];
+
+    const result = await handleGoalAutomationExecute(
+      {
+        id: 'job-lifecycle',
+        queue: GOAL_AUTOMATION_EXECUTE,
+        status: 'processing',
+        payload: {
+          goalId: goal.id,
+          scopeId: scope.id,
+          triggerKind: 'completed_task_threshold',
+          triggerKey: 'threshold:1',
+          reason: 'task_completed',
+          taskId: task.id,
+        },
+        result: null,
+        error: null,
+        priority: 0,
+        maxRetries: 2,
+        retryCount: 0,
+        runAt: Date.now(),
+        createdAt: Date.now(),
+        startedAt: Date.now(),
+        completedAt: null,
+      } satisfies Job,
+      {
+        goalRepo,
+        taskRepo,
+        evolutionRepo,
+        cursorRepo,
+        episodeService: {
+          createFromEvidence: async ({ evidenceIds }) => ({
+            episode: evolutionRepo.createEpisode({
+              scopeId: scope.id,
+              title: 'Draft retrospective',
+              evidenceIds,
+              outcomeSummary: 'Useful outcome',
+              findings: [],
+            }),
+            proposals: [],
+            lessons: [],
+          }),
+        },
+        lifecycleEventEmitter: new SpaceLifecycleEventEmitter({
+          publish: async (event) => {
+            published.push(event);
+            return { outcome: 'published', eventId: event.id };
+          },
+        }),
+      }
+    );
+
+    expect(result.skipped).toBe(false);
+    expect(result.reviewTaskId).toBeString();
+    const created = published.find((e) => e.topic === 'space/task.created');
+    expect(created).toBeDefined();
+    expect(created!.payload).toMatchObject({
+      taskId: result.reviewTaskId,
+      action: 'created',
+      goalId: goal.id,
+    });
   });
 
   it('skips completed-task execution for non-recurring goals without explicit threshold', async () => {

@@ -57,7 +57,13 @@ export function setupSpaceMcpHandlers(
   messageHub: MessageHub,
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
   db: Database,
-  spaceManager: SpaceManager
+  spaceManager: SpaceManager,
+  /**
+   * Home directory for the user-level `~/.claude/.mcp.json` scan path.
+   * Defaults to `os.homedir()`; injectable so tests can isolate the scan
+   * from the real user-level config.
+   */
+  homeDir: string = homedir()
 ): void {
   /**
    * List every registry entry with its resolved per-space enabled state so
@@ -174,7 +180,7 @@ export function setupSpaceMcpHandlers(
 
     const mcpJsonPaths = buildMcpJsonPaths({
       workspacePaths,
-      homeDir: homedir(),
+      homeDir,
     });
 
     const result = await scanMcpImports(db.appMcpServers, { mcpJsonPaths });

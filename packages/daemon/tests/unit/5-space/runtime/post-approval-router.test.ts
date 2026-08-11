@@ -26,6 +26,8 @@ import {
   POST_APPROVAL_ROUTING_FLAG_ENV,
   mapPostApprovalDispatchWarning,
 } from '../../../../src/lib/space/runtime/post-approval-router.ts';
+import { SpaceLifecycleEventEmitter } from '../../../../src/lib/space/lifecycle/space-lifecycle-event-emitter';
+import type { ExternalEvent } from '../../../../src/lib/external-events/types';
 import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 
 const SPACE_ID = 'space-par-test';
@@ -171,6 +173,29 @@ describe('PostApprovalRouter.route', () => {
     const final = taskRepo.getTask(task.id);
     expect(final?.status).toBe('done');
     expect(delegates.spawned).toHaveLength(0);
+  });
+
+  test('no postApproval → publishes space/task.done lifecycle event', async () => {
+    const task = makeApprovedTask(taskRepo);
+    const delegates = makeDelegates();
+    const published: ExternalEvent[] = [];
+    const router = new PostApprovalRouter({
+      taskRepo,
+      spawner: delegates.spawner,
+      livenessProbe: delegates.liveness,
+      lifecycleEventEmitter: new SpaceLifecycleEventEmitter({
+        publish: async (event) => {
+          published.push(event);
+          return { outcome: 'published', eventId: event.id };
+        },
+      }),
+    });
+
+    await router.route(task, stubWorkflow(), { approvalSource: 'agent', spaceId: SPACE_ID });
+
+    const done = published.find((e) => e.topic === 'space/task.done');
+    expect(done).toBeDefined();
+    expect(done!.payload).toMatchObject({ taskId: task.id, from: 'approved', to: 'done' });
   });
 
   test('targetAgent pointing at node agent → spawn sub-session + stamp', async () => {

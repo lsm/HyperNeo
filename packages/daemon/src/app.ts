@@ -838,6 +838,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       spaceWorktreeManager,
       spaceGoalService,
       goalAutomationService,
+      spaceLifecycleEventEmitter,
     } = rpcHandlers;
     taskAgentManager = rpcHandlers.taskAgentManager;
 
@@ -1058,6 +1059,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         spaceRepo: taskScheduleSpaceRepo,
         taskRepo: taskScheduleTaskRepo,
         eventHub: internalEventBus,
+        lifecycleEventEmitter: spaceLifecycleEventEmitter,
         goalService: spaceGoalService,
         goalRepo: new SpaceGoalRepository(db.getDatabase(), reactiveDb),
         goalAutomationService,

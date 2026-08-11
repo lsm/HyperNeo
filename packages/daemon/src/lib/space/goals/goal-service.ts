@@ -20,6 +20,7 @@ import type { SpaceGoalRepository } from '../../../storage/repositories/space-go
 import type { ScheduleService } from '../schedule/schedule-service';
 import type { GoalAutomationService } from './goal-automation-service';
 import { pauseScheduleStrict } from './goal-automation-schedule-sync';
+import type { SpaceLifecycleEventEmitter } from '../lifecycle/space-lifecycle-event-emitter';
 
 export type PublicSpaceGoalUpdateParams = Pick<
   UpdateSpaceGoalParams,
@@ -57,6 +58,7 @@ export interface SpaceGoalServiceDeps {
     publish: (event: string, data: Record<string, unknown>) => Promise<unknown>;
   };
   goalAutomationService?: Pick<GoalAutomationService, 'onTaskCompleted'>;
+  lifecycleEventEmitter?: SpaceLifecycleEventEmitter;
   onGoalResumed?: (goalId: string, spaceId: string) => void;
 }
 
@@ -353,7 +355,24 @@ export class SpaceGoalService {
     }
     const claimed = this.deps.goalRepo.claimActiveTask(goal.id, taskId);
     const updated = this.deps.goalRepo.getById(goal.id);
+    // NOTE: the lifecycle emits (space/goal.check_in + space/goal.task_triggered)
+    // are intentionally NOT fired here. claimScheduledTask is invoked inside the
+    // caller's db.transaction (task-schedule-fire.handler), and firing here would
+    // publish events for a claim that could still roll back. The caller publishes
+    // them after its transaction commits, using the returned goal.
     return { goal: updated, claimed };
+  }
+
+  /**
+   * Publish the lifecycle events for a scheduled check-in. Public so the
+   * schedule-fire handler can call it AFTER its transaction commits — calling
+   * it inside the transaction would risk publishing for a rolled-back claim.
+   */
+  emitScheduledCheckInLifecycle(goal: SpaceGoal, taskId: string): void {
+    const emitter = this.deps.lifecycleEventEmitter;
+    if (!emitter) return;
+    emitter.emitGoalCheckIn(goal, taskId);
+    emitter.emitGoalTaskTriggered(goal, taskId);
   }
 
   updateScheduledCheckIn(
@@ -391,9 +410,40 @@ export class SpaceGoalService {
     }
   }
 
+  /**
+   * True while a `db.transaction` is in progress. Goal lifecycle emits are
+   * buffered while this is set and flushed only after the transaction commits,
+   * so a rolled-back goal mutation can never publish an external event (nor
+   * fire `externalEvent.published`) for state that never persisted. Mirrors the
+   * post-commit emit pattern used by the runtime's recovery path.
+   */
+  private inAtomicBlock = false;
+  private pendingLifecycleEmits: Array<() => void> = [];
+
   private runAtomic<T>(fn: () => T): T {
     if (!this.deps.db) return fn();
-    return this.deps.db.transaction(fn)();
+    this.inAtomicBlock = true;
+    let committed = false;
+    try {
+      const result = this.deps.db.transaction(fn)();
+      committed = true;
+      return result;
+    } finally {
+      this.inAtomicBlock = false;
+      if (committed) {
+        this.flushPendingLifecycleEmits();
+      } else {
+        // Rollback (the exception propagates after finally) — discard queued
+        // emits so a failed mutation publishes nothing.
+        this.pendingLifecycleEmits = [];
+      }
+    }
+  }
+
+  private flushPendingLifecycleEmits(): void {
+    const pending = this.pendingLifecycleEmits;
+    this.pendingLifecycleEmits = [];
+    for (const emit of pending) emit();
   }
 
   private pauseLinkedScheduleOrClear(goal: SpaceGoal): void {
@@ -633,6 +683,11 @@ export class SpaceGoalService {
     context?: SpaceGoalMutationContext,
     previousCadence?: GoalCadence | null
   ): void {
+    // Publish space-source external events for meaningful goal transitions so
+    // subscribed long-horizon agents wake. This is independent of the goal-event
+    // audit log below — emit even when no goalEventRepo is wired (tests).
+    this.emitGoalLifecycleEvent(eventType, previous, current, context);
+
     if (!this.deps.goalEventRepo) return;
     const currentCadence = this.readGoalCadence(current);
     const previousState = previous
@@ -671,7 +726,60 @@ export class SpaceGoalService {
     };
   }
 
+  /**
+   * Translate a goal audit event into `space/goal.<action>` external events.
+   *
+   * - `task_triggered` → `space/goal.task_triggered` (anchor: the spawned task)
+   * - `status_changed` → `space/goal.status`
+   * - any update with a progress delta → `space/goal.progress` (no event when
+   *   progress is unchanged, so frequent metadata updates do not storm)
+   *
+   * Status and progress are evaluated independently: a single `updateGoal` can
+   * change both fields at once, and subscribers to each topic should both wake.
+   *
+   * Other audit event types (`created`, `task_queued`, `task_terminal`,
+   * `schedule_updated`) have no dedicated external topic and are intentionally
+   * silent — the task lifecycle events cover terminal work, and the others are
+   * bookkeeping subscribers do not act on.
+   */
+  private emitGoalLifecycleEvent(
+    eventType: SpaceGoalEventType,
+    previous: SpaceGoal | null,
+    current: SpaceGoal,
+    context?: SpaceGoalMutationContext
+  ): void {
+    const emitter = this.deps.lifecycleEventEmitter;
+    if (!emitter) return;
+    const fire = (): void => {
+      if (eventType === 'task_triggered') {
+        const taskId = context?.sourceTaskId ?? current.activeTaskId;
+        if (taskId) emitter.emitGoalTaskTriggered(current, taskId);
+        return;
+      }
+      if (!previous) return;
+      if (eventType === 'status_changed') {
+        emitter.emitGoalStatusChanged(current, previous.status);
+      }
+      // Evaluated independently of the audit event type so a combined status +
+      // progress mutation publishes both events.
+      if (previous.progress !== current.progress) {
+        emitter.emitGoalProgress(current, previous.progress);
+      }
+    };
+    // Defer publication when inside a transaction so a rolled-back mutation
+    // never fires an external event; runAtomic flushes after commit.
+    if (this.inAtomicBlock) {
+      this.pendingLifecycleEmits.push(fire);
+    } else {
+      fire();
+    }
+  }
+
   private emitTaskCreated(task: SpaceTask): void {
+    // Goal tasks are created through the task repo directly (not via
+    // SpaceTaskManager.createTask), so publish the space/task.created external
+    // event here to keep goal-spawned tasks observable to subscribers.
+    this.deps.lifecycleEventEmitter?.emitTaskCreated(task);
     if (!this.deps.eventHub) return;
     this.deps.eventHub
       .publish('space.task.created', {

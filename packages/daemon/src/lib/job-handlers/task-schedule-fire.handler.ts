@@ -28,6 +28,7 @@ import type { SpaceRepository } from '../../storage/repositories/space-repositor
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
 import type { SpaceGoalService } from '../space/goals/goal-service';
 import type { GoalAutomationService } from '../space/goals/goal-automation-service';
+import type { SpaceLifecycleEventEmitter } from '../space/lifecycle/space-lifecycle-event-emitter';
 import type { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository';
 
 const log = new Logger('task-schedule-fire-handler');
@@ -77,6 +78,13 @@ export interface TaskScheduleFireHandlerDeps {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     publish: (event: string, data: any) => Promise<unknown>;
   };
+  /**
+   * Optional lifecycle event emitter — publishes the `space/task.created`
+   * external event for schedule-fired (check-in) tasks so subscribed
+   * long-horizon agents observe them at creation. Independent of `eventHub`
+   * (the legacy internal bus event), which only refreshes the web client.
+   */
+  lifecycleEventEmitter?: SpaceLifecycleEventEmitter;
 }
 
 export async function handleTaskScheduleFire(
@@ -94,6 +102,7 @@ export async function handleTaskScheduleFire(
     goalRepo,
     goalAutomationService,
     eventHub,
+    lifecycleEventEmitter,
   } = deps;
 
   const schedule = scheduleRepo.getById(scheduleId);
@@ -214,6 +223,10 @@ export async function handleTaskScheduleFire(
   // retry to spawn a duplicate task.
   let taskId: string | null = null;
   let nextRunAt: number | null = null;
+  // Goal id captured inside the transaction so the check-in lifecycle events
+  // can be published AFTER the transaction commits (claimScheduledTask no longer
+  // emits inline, to avoid publishing for a claim that rolls back).
+  let claimedGoalId: string | null = null;
 
   try {
     const result = db.transaction(() => {
@@ -289,6 +302,7 @@ export async function handleTaskScheduleFire(
         if (!claimed.claimed) {
           throw new Error(`Goal ${schedule.goalId} already has an active task`);
         }
+        if (claimed.goal) claimedGoalId = claimed.goal.id;
       }
 
       return { taskId: task.id, nextRunAt: computedNextRunAt, skipped: false as const };
@@ -304,22 +318,34 @@ export async function handleTaskScheduleFire(
 
     // Emit events so the web client can refresh its state without polling.
     // Fire-and-forget — handler success must not depend on event delivery.
-    if (eventHub) {
-      if (taskId) {
-        const emittedTask = taskRepo.getTask(taskId);
-        if (emittedTask) {
-          eventHub
-            .publish('space.task.created', {
-              sessionId: 'global',
-              spaceId: schedule.spaceId,
-              taskId,
-              task: emittedTask,
-            })
-            .catch(() => {
-              // Swallow — event emission is best-effort.
-            });
-        }
+    if (taskId) {
+      const emittedTask = taskRepo.getTask(taskId);
+      if (emittedTask) {
+        // External lifecycle event — wakes subscribed long-horizon agents on
+        // `space/task.created`. Independent of the legacy internal bus event
+        // below (which only refreshes the web client).
+        lifecycleEventEmitter?.emitTaskCreated(emittedTask);
+        eventHub
+          ?.publish('space.task.created', {
+            sessionId: 'global',
+            spaceId: schedule.spaceId,
+            taskId,
+            task: emittedTask,
+          })
+          .catch(() => {
+            // Swallow — event emission is best-effort.
+          });
       }
+      // Publish the scheduled check-in lifecycle events (space/goal.check_in +
+      // space/goal.task_triggered) AFTER the fire transaction commits —
+      // claimScheduledTask no longer emits inline so a rolled-back claim can't
+      // publish events for a goal/task that never persisted.
+      if (claimedGoalId && goalService && taskId) {
+        const claimedGoal = goalService.getGoal(claimedGoalId);
+        if (claimedGoal) goalService.emitScheduledCheckInLifecycle(claimedGoal, taskId);
+      }
+    }
+    if (eventHub) {
       const emittedSchedule = scheduleRepo.getById(scheduleId);
       if (emittedSchedule) {
         eventHub

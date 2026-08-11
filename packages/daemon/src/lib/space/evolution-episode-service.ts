@@ -36,6 +36,7 @@ import type {
 } from '../../storage/repositories/workflow-run-artifact-repository';
 import type { SpaceGoalService } from './goals/goal-service';
 import type { WorkflowArtifactProfile } from './runtime/artifact-profile';
+import type { SpaceLifecycleEventEmitter } from './lifecycle/space-lifecycle-event-emitter';
 import { isRunningUnderBun, resolveSDKCliPath } from '../agent/sdk-cli-resolver';
 import { Logger } from '../logger';
 import { getProviderService, mergeProviderEnvVars } from '../provider-service';
@@ -132,6 +133,12 @@ export interface EvolutionEpisodeServiceDeps {
   taskCreatedEventHub?: {
     publish: (event: string, data: Record<string, unknown>) => Promise<unknown>;
   };
+  /**
+   * Lifecycle event emitter — publishes `space/task.created` for tasks created
+   * from a Forge proposal so subscribed long-horizon agents observe them at
+   * creation, not only on later transitions.
+   */
+  lifecycleEventEmitter?: SpaceLifecycleEventEmitter;
   judgeEpisode?: (input: EpisodeJudgePromptInput) => Promise<EpisodeJudgeOutput>;
 }
 
@@ -535,6 +542,9 @@ export class EvolutionEpisodeService {
   }
 
   private emitTaskCreated(task: SpaceTask): void {
+    // Publish the external lifecycle event so subscribers on `space/task.created`
+    // see proposal-spawned tasks. Independent of the legacy internal bus event.
+    this.deps.lifecycleEventEmitter?.emitTaskCreated(task);
     if (!this.deps.taskCreatedEventHub) return;
     this.deps.taskCreatedEventHub
       .publish('space.task.created', {

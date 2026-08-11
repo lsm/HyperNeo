@@ -165,7 +165,7 @@ describe('space-mcp-handlers', () => {
 
       const { hub, handlers } = createMockHub();
       const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
-      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
+      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager, tmpRoot);
 
       const handler = handlers.get('space.mcp.list')!;
       const result = (await handler({ spaceId: 'space-A' })) as SpaceMcpListResponse;
@@ -194,7 +194,7 @@ describe('space-mcp-handlers', () => {
 
       const { hub, handlers } = createMockHub();
       const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
-      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
+      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager, tmpRoot);
 
       const handler = handlers.get('space.mcp.list')!;
       const result = (await handler({ spaceId: 'space-A' })) as SpaceMcpListResponse;
@@ -206,7 +206,7 @@ describe('space-mcp-handlers', () => {
     test('throws when spaceId is missing', async () => {
       const { hub, handlers } = createMockHub();
       const spaceManager = createSpaceManagerMock([]);
-      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
+      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager, tmpRoot);
 
       const handler = handlers.get('space.mcp.list')!;
       await expect(handler({})).rejects.toThrow('spaceId is required');
@@ -215,7 +215,7 @@ describe('space-mcp-handlers', () => {
     test('throws when space does not exist', async () => {
       const { hub, handlers } = createMockHub();
       const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
-      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
+      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager, tmpRoot);
 
       const handler = handlers.get('space.mcp.list')!;
       await expect(handler({ spaceId: 'nope' })).rejects.toThrow('Space not found');
@@ -239,7 +239,7 @@ describe('space-mcp-handlers', () => {
       const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
       const internalEventBus = createMockInternalEventBus();
       const publish = internalEventBus.publish as ReturnType<typeof mock>;
-      setupSpaceMcpHandlers(hub, internalEventBus, db, spaceManager);
+      setupSpaceMcpHandlers(hub, internalEventBus, db, spaceManager, tmpRoot);
 
       const handler = handlers.get('space.mcp.setEnabled')!;
       const result = (await handler({
@@ -270,7 +270,7 @@ describe('space-mcp-handlers', () => {
 
       const { hub, handlers } = createMockHub();
       const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
-      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
+      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager, tmpRoot);
 
       const handler = handlers.get('space.mcp.setEnabled')!;
       await handler({ spaceId: 'space-A', serverId: srv.id, enabled: false });
@@ -287,7 +287,7 @@ describe('space-mcp-handlers', () => {
     test('throws when serverId does not exist', async () => {
       const { hub, handlers } = createMockHub();
       const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
-      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
+      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager, tmpRoot);
 
       const handler = handlers.get('space.mcp.setEnabled')!;
       await expect(
@@ -298,7 +298,7 @@ describe('space-mcp-handlers', () => {
     test('throws on missing required fields', async () => {
       const { hub, handlers } = createMockHub();
       const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
-      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
+      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager, tmpRoot);
 
       const handler = handlers.get('space.mcp.setEnabled')!;
       await expect(handler({ serverId: 'x', enabled: true })).rejects.toThrow(
@@ -315,7 +315,7 @@ describe('space-mcp-handlers', () => {
     test('throws when space does not exist', async () => {
       const { hub, handlers } = createMockHub();
       const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
-      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
+      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager, tmpRoot);
 
       const handler = handlers.get('space.mcp.setEnabled')!;
       await expect(handler({ spaceId: 'missing', serverId: 'x', enabled: true })).rejects.toThrow(
@@ -342,7 +342,7 @@ describe('space-mcp-handlers', () => {
       const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
       const internalEventBus = createMockInternalEventBus();
       const publish = internalEventBus.publish as ReturnType<typeof mock>;
-      setupSpaceMcpHandlers(hub, internalEventBus, db, spaceManager);
+      setupSpaceMcpHandlers(hub, internalEventBus, db, spaceManager, tmpRoot);
 
       const handler = handlers.get('space.mcp.clearOverride')!;
       const result = (await handler({ spaceId: 'space-A', serverId: srv.id })) as {
@@ -367,7 +367,7 @@ describe('space-mcp-handlers', () => {
       const { hub, handlers } = createMockHub();
       const { emit } = createMockDaemonHub();
       const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
-      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
+      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager, tmpRoot);
 
       const handler = handlers.get('space.mcp.clearOverride')!;
       const result = (await handler({ spaceId: 'space-A', serverId: srv.id })) as {
@@ -380,7 +380,7 @@ describe('space-mcp-handlers', () => {
     test('throws on missing ids', async () => {
       const { hub, handlers } = createMockHub();
       const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
-      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
+      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager, tmpRoot);
 
       const handler = handlers.get('space.mcp.clearOverride')!;
       await expect(handler({ serverId: 'x' })).rejects.toThrow('spaceId is required');
@@ -412,7 +412,7 @@ describe('space-mcp-handlers', () => {
       const spaceManager = createSpaceManagerMock([fakeSpace('space-A', wsPath)]);
       const internalEventBus = createMockInternalEventBus();
       const publish = internalEventBus.publish as ReturnType<typeof mock>;
-      setupSpaceMcpHandlers(hub, internalEventBus, db, spaceManager);
+      setupSpaceMcpHandlers(hub, internalEventBus, db, spaceManager, tmpRoot);
 
       const handler = handlers.get('mcp.imports.refresh')!;
       const result = (await handler({ workspacePath: wsPath })) as McpImportsRefreshResponse;
@@ -443,7 +443,7 @@ describe('space-mcp-handlers', () => {
 
       const { hub, handlers } = createMockHub();
       const spaceManager = createSpaceManagerMock([fakeSpace('sA', ws1), fakeSpace('sB', ws2)]);
-      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
+      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager, tmpRoot);
 
       const handler = handlers.get('mcp.imports.refresh')!;
       const result = (await handler({})) as McpImportsRefreshResponse;
@@ -462,7 +462,7 @@ describe('space-mcp-handlers', () => {
       const { hub, handlers } = createMockHub();
       const { emit } = createMockDaemonHub();
       const spaceManager = createSpaceManagerMock([fakeSpace('space-A', wsPath)]);
-      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
+      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager, tmpRoot);
 
       const handler = handlers.get('mcp.imports.refresh')!;
       const result = (await handler({ workspacePath: wsPath })) as McpImportsRefreshResponse;
@@ -480,7 +480,7 @@ describe('space-mcp-handlers', () => {
 
       const { hub, handlers } = createMockHub();
       const spaceManager = createSpaceManagerMock([fakeSpace('space-A', wsPath)]);
-      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
+      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager, tmpRoot);
 
       const handler = handlers.get('mcp.imports.refresh')!;
       const result = (await handler({ workspacePath: wsPath })) as McpImportsRefreshResponse;

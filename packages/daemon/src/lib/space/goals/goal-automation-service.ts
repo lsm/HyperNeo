@@ -123,6 +123,18 @@ export class GoalAutomationService {
   }
 
   onExternalEventPublished(event: ExternalEventPublishedPayload): GoalAutomationEnqueueResult[] {
+    // Ignore internal `space`-source lifecycle events. No acceptance criterion
+    // requires goal-automation to react to them (coordinators wake via
+    // long-horizon delivery, an independent path), and reacting to them is
+    // structurally loop-prone: a Forge review task reaching `done`, the
+    // auto-chain `createImmediateTask`, or any status emit would re-trigger
+    // Forge (fresh task id / externalEventId / cursor each cycle) with no
+    // marker to collapse it. The dedicated `completed_task_threshold` trigger
+    // covers task-completion retrospectives loop-safely. External integrations
+    // (github, etc.) remain fully reactive.
+    if (event.source === 'space') {
+      return [{ enqueued: false, reason: 'not_applicable' }];
+    }
     const goals = this.deps.goalRepo.list({ spaceId: event.spaceId, status: 'active' });
     const results: GoalAutomationEnqueueResult[] = [];
     for (const goal of goals) {

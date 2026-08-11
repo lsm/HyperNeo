@@ -62,6 +62,7 @@ import {
 } from '../workflows/post-approval-template';
 import { Logger } from '../../logger';
 import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator';
+import type { SpaceLifecycleEventEmitter } from '../lifecycle/space-lifecycle-event-emitter';
 
 const log = new Logger('post-approval-router');
 
@@ -142,6 +143,11 @@ export interface PostApprovalRouterDeps {
     import('../evolution-scope-service').EvolutionScopeService,
     'captureCompletedTaskEvidence'
   >;
+  /**
+   * Optional lifecycle event emitter — publishes `space/task.done` for the
+   * post-approval completion so subscribed agents wake on router-driven done.
+   */
+  lifecycleEventEmitter?: SpaceLifecycleEventEmitter;
 }
 
 // ---------------------------------------------------------------------------
@@ -365,6 +371,10 @@ export class PostApprovalRouter {
         postApprovalSourceNodeId: null,
       };
       this.deps.taskRepo.updateTask(task.id, updates);
+      // Publish space/task.done for the router-driven completion (the router
+      // writes taskRepo directly, bypassing SpaceTaskManager.setTaskStatus).
+      const completed = this.deps.taskRepo.getTask(task.id);
+      if (completed) this.deps.lifecycleEventEmitter?.emitTaskStatusChanged(completed, task.status);
       // Best-effort Forge evidence capture — must not block approval routing.
       try {
         this.deps.evolutionScopeService?.captureCompletedTaskEvidence({ taskId: task.id });

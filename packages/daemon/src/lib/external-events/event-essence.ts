@@ -18,6 +18,15 @@
 import type { ExternalEventPublishedPayload } from './external-event-service';
 
 /**
+ * Maximum characters of a task `result` projected into a delivered lifecycle
+ * essence. Task results are unbounded (full reports / tool output), so the
+ * lean essence truncates to keep an injected wake-up message from overflowing
+ * a subscriber's context. The full result stays reachable via
+ * `get_external_event` / task lookup.
+ */
+const SPACE_LIFECYCLE_RESULT_MAX_CHARS = 500;
+
+/**
  * Render the lean essence for an injected external-event message.
  *
  * @returns a pretty-printed JSON string (the injected message body).
@@ -150,6 +159,38 @@ export function formatExternalEventEssence(event: ExternalEventPublishedPayload)
       'requiredStatusChecks',
       'changedFields',
     ]);
+  }
+
+  // Space lifecycle events (space/task.*, space/goal.*): project the entity
+  // identifiers and transition fields so a woken subscriber can identify and act
+  // on the affected task/goal without an extra get_external_event round-trip.
+  if (event.topic.startsWith('space/')) {
+    copyExternalEventFields(essence, payload, [
+      'taskId',
+      'taskNumber',
+      'goalId',
+      'workflowRunId',
+      'from',
+      'to',
+      'progress',
+      'priority',
+      'labels',
+      'blockReason',
+      'origin',
+    ]);
+    // `result` is unbounded task output — truncate it so a large report cannot
+    // overflow a subscriber's context on injection. The full value stays
+    // reachable via get_external_event / the task lookup.
+    const result = payload.result;
+    if (typeof result === 'string' && result.length > 0) {
+      essence.result =
+        result.length > SPACE_LIFECYCLE_RESULT_MAX_CHARS
+          ? `${result.slice(0, SPACE_LIFECYCLE_RESULT_MAX_CHARS)}…`
+          : result;
+    }
+    // `status` collides with the check_run field above; ensure it is projected
+    // for lifecycle events (it is the task/goal status here, not a CI status).
+    if (payload.status !== undefined) essence.status = payload.status;
   }
 
   return JSON.stringify(omitUndefinedExternalEventFields(essence), null, 2);
