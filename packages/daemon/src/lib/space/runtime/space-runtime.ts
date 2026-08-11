@@ -429,10 +429,13 @@ interface SubscriptionPersistedRow {
  * An active in-memory trie entry — the live cross-check layer, NEVER the
  * answer on its own. `source` reconciles it against durable state:
  * `'declared'` (a workflow-definition interest backs this static entry),
- * `'persisted'` (a table row backs this dynamic entry), or `'orphan'` (in the
+ * `'persisted'` (a table row backs this dynamic entry), `'orphan'` (in the
  * trie with no durable backing — indicates drift, e.g. a stale trie entry left
- * by a partial rehydrate or a mid-run definition-version change; benign in the
- * upgrade window, worth investigating if it persists in steady state).
+ * by a partial rehydrate, a mid-run definition-version change, or a static
+ * entry surviving on a terminal/non-canonical task; benign in the upgrade
+ * window, worth investigating if it persists in steady state), or `'unknown'`
+ * (a static entry whose declaration layer could not be loaded — backing is
+ * unverifiable, so it is neither confirmed nor reported as drift).
  */
 interface SubscriptionActiveEntry {
   nodeId: string;
@@ -440,7 +443,7 @@ interface SubscriptionActiveEntry {
   taskId: string;
   topic: string;
   subscriptionKind: 'static' | 'dynamic';
-  source: 'declared' | 'persisted' | 'orphan';
+  source: 'declared' | 'persisted' | 'orphan' | 'unknown';
 }
 
 interface SubscriptionListResult {
@@ -1438,6 +1441,7 @@ export class SpaceRuntime {
       return { success: false, error: `Workflow run ${workflowRunId} is not in this space.` };
     }
     const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run) ?? null;
+    const definitionResolved = workflow !== null;
     const nodeFilter = nodeId ?? null;
     // Whether static interests should currently be materialized in the trie.
     // Mirrors registerRunInterestsFromWorkflow, which skips static re-materialization
@@ -1518,14 +1522,31 @@ export class SpaceRuntime {
         source: 'orphan' as const,
       }));
 
-    // Reconcile durable ↔ trie via normalized keys. Static keys are task-
-    // independent (declared interests are slot-level); dynamic keys include the
-    // taskId so two tasks sharing a slot+topic can't cross-match.
+    // Reconcile durable ↔ trie via normalized keys.
+    //
+    // Dynamic keys include the taskId so two tasks sharing a slot+topic can't
+    // cross-match. Static declaration is slot-level (no task), but a static trie
+    // entry only "effectively" backs a declaration when the definition loaded
+    // (definitionResolved), the canonical task is non-terminal
+    // (staticMaterializable), AND the entry belongs to the canonical task — a
+    // duplicate/superseded task's static entry is stale. When the definition
+    // itself is unavailable, a static entry's backing is unverifiable, reported
+    // as `source: 'unknown'` (neither drift nor confirmed) rather than a false
+    // `orphan`.
+    const canonicalTaskId = canonicalTask?.id ?? null;
     const activeStaticKeys = new Set<string>();
     const activeDynamicKeys = new Set<string>();
     for (const entry of active) {
       if (entry.subscriptionKind === 'static') {
-        activeStaticKeys.add(subscriptionReconcileKey(entry.nodeId, entry.agentName, entry.topic));
+        if (
+          definitionResolved &&
+          staticMaterializable &&
+          (!canonicalTaskId || entry.taskId === canonicalTaskId)
+        ) {
+          activeStaticKeys.add(
+            subscriptionReconcileKey(entry.nodeId, entry.agentName, entry.topic)
+          );
+        }
       } else {
         activeDynamicKeys.add(
           subscriptionReconcileKey(entry.nodeId, entry.agentName, entry.topic, entry.taskId)
@@ -1547,24 +1568,25 @@ export class SpaceRuntime {
     }
     let orphanActive = 0;
     for (const entry of active) {
-      // A static entry is "backed" only while the canonical task is non-terminal:
-      // on a done/archived/cancelled task the lifecycle clears static interests,
-      // so any surviving static entry is stale cleanup (counted as orphan) rather
-      // than a legitimate declared interest. Without this, a terminal task with a
-      // leftover static entry reads zero across every mismatch count.
-      const backed =
-        entry.subscriptionKind === 'static'
-          ? staticMaterializable &&
-            declaredKeys.has(subscriptionReconcileKey(entry.nodeId, entry.agentName, entry.topic))
-          : persistedKeys.has(
-              subscriptionReconcileKey(entry.nodeId, entry.agentName, entry.topic, entry.taskId)
-            );
-      entry.source = backed
-        ? entry.subscriptionKind === 'static'
-          ? 'declared'
-          : 'persisted'
-        : 'orphan';
-      if (!backed) orphanActive += 1;
+      if (entry.subscriptionKind === 'static') {
+        if (!definitionResolved) {
+          entry.source = 'unknown';
+          continue; // declaration layer unavailable — can't classify, don't count
+        }
+        const canonicalOwned = !canonicalTaskId || entry.taskId === canonicalTaskId;
+        const backed =
+          staticMaterializable &&
+          canonicalOwned &&
+          declaredKeys.has(subscriptionReconcileKey(entry.nodeId, entry.agentName, entry.topic));
+        entry.source = backed ? 'declared' : 'orphan';
+        if (!backed) orphanActive += 1;
+      } else {
+        const backed = persistedKeys.has(
+          subscriptionReconcileKey(entry.nodeId, entry.agentName, entry.topic, entry.taskId)
+        );
+        entry.source = backed ? 'persisted' : 'orphan';
+        if (!backed) orphanActive += 1;
+      }
     }
 
     return {
@@ -1572,7 +1594,7 @@ export class SpaceRuntime {
       result: {
         workflowRunId,
         nodeId: nodeFilter,
-        definitionResolved: workflow !== null,
+        definitionResolved,
         declared,
         persisted,
         active,

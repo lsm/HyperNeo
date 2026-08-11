@@ -438,6 +438,68 @@ describe('SpaceRuntime.listSubscriptions', () => {
     expect(res.result.mismatches.orphanActive).toBe(1);
   });
 
+  test('a static entry is "unknown" (not orphan) when the definition cannot be loaded', () => {
+    // If getWorkflowForRun returns null while a static entry is still in the
+    // trie, the declaration layer is unavailable — not absent — so the entry's
+    // backing is unverifiable. Report source:'unknown' and do not count it as
+    // drift (a false orphan would mislead).
+    const runtime = makeRuntime({
+      spaceWorkflowManager: { getWorkflowForRun: () => null } as unknown as typeof workflowManager,
+    });
+    const { workflow, runId, taskId } = createRun({
+      coderInterests: [{ topic: 'github/owner/repo/issues/*' }],
+    });
+    // Materialize the static entry (registerRunInterests needs no workflow def),
+    // then inspect via the stubbed runtime whose definition won't resolve.
+    runtime.registerRunInterests(runId, taskId, workflow.nodes);
+
+    const res = runtime.listSubscriptions(runId, SPACE_ID);
+    expect(res.success).toBe(true);
+    if (!res.success) return;
+    expect(res.result.definitionResolved).toBe(false);
+    expect(res.result.active).toHaveLength(1);
+    expect(res.result.active[0].source).toBe('unknown');
+    expect(res.result.mismatches.orphanActive).toBe(0);
+  });
+
+  test('a static entry on a non-canonical task is orphan, not declared', () => {
+    // A run with a duplicate/superseded task: a static entry registered for the
+    // non-canonical task must not mark the slot's declaration active or be
+    // labeled declared. Only the canonical task's static entries back a
+    // declaration; the stale entry surfaces as orphan.
+    const runtime = makeRuntime();
+    const {
+      workflow,
+      runId,
+      taskId: canonicalId,
+    } = createRun({
+      coderInterests: [{ topic: 'github/owner/repo/issues/*' }],
+    });
+    // Create a second, non-canonical task (different title → not picked as canonical).
+    const dupTask = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      workflowRunId: runId,
+      title: 'Duplicate',
+      description: '',
+      status: 'in_progress',
+    }).id;
+    expect(dupTask).not.toBe(canonicalId);
+    // Register the static interest under the duplicate task only.
+    runtime.registerRunInterests(runId, dupTask, workflow.nodes);
+
+    const res = runtime.listSubscriptions(runId, SPACE_ID);
+    expect(res.success).toBe(true);
+    if (!res.success) return;
+    // The duplicate's static entry is drift, not a backing for the declaration.
+    expect(res.result.active).toHaveLength(1);
+    expect(res.result.active[0].taskId).toBe(dupTask);
+    expect(res.result.active[0].source).toBe('orphan');
+    expect(res.result.mismatches.orphanActive).toBe(1);
+    // And the slot's declared interest is NOT marked active by the stale entry.
+    expect(res.result.declared[0].active).toBe(false);
+    expect(res.result.mismatches.declaredNotActive).toBe(1);
+  });
+
   test('multiple static interests on the same slot do not collapse', () => {
     const runtime = makeRuntime();
     const { workflow, runId, taskId } = createRun({
