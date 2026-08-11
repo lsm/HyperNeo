@@ -1939,7 +1939,7 @@ export class AgentSession
       // after its consumption) has nothing to resume. Check BEFORE provider
       // startup so we don't start a fresh query that would idle waiting for
       // input forever. See Codex (PR #2463, P1/P2).
-      if (alreadyConsumed && this.hasTurnTerminated(messageUuid)) {
+      if (alreadyConsumed && this.hasSettledTurnTermination(messageUuid)) {
         return { kind: 'turn_terminated' as const };
       }
       const queryStartResult = await this.lifecycleManager.ensureQueryStarted();
@@ -1958,7 +1958,7 @@ export class AgentSession
       // turn that finishes during ensureQueryStarted's await would leak a query
       // waiting for input and hold the active-turn slot forever. See Codex
       // (PR #2463, P2).
-      if (alreadyConsumed && this.hasTurnTerminated(messageUuid)) {
+      if (alreadyConsumed && this.hasSettledTurnTermination(messageUuid)) {
         return { kind: 'turn_terminated' as const };
       }
       // Arm the turn-end wait AFTER ensureQueryStarted: ensureQueryStarted awaits
@@ -2243,7 +2243,11 @@ export class AgentSession
    * per-session lock so it is coordinated with the turn-start/waiter
    * registration (Codex P2).
    */
-  private hasTurnTerminated(messageUuid: string): boolean {
+  private hasSettledTurnTermination(messageUuid: string): boolean {
+    // Result persistence precedes finishTurn's awaited setIdle. Keep durable turn
+    // ownership while that terminal idle is still running, or a newly promoted
+    // message could feed the old query and be released by the old turn's drain.
+    if (this.stateManager.isTerminalIdleInFlight()) return false;
     const repo = this.db.getSDKMessageRepo();
     return (
       repo.hasTerminalResultAfter(this.session.id, messageUuid) ||

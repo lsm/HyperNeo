@@ -184,6 +184,37 @@ describe('ProcessingStateManager', () => {
       expect(events).toEqual(['onEnd', 'waiter-resolved']);
     });
 
+    test('late waiter armed during terminal idle fires onEnd before resolving', async () => {
+      const events: string[] = [];
+      let resolvePublish!: () => void;
+      emitMock.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            resolvePublish = resolve;
+          })
+      );
+
+      const setIdlePromise = manager.setIdle();
+      expect(manager.isTerminalIdleInFlight()).toBe(true);
+      const waiter = manager.waitForIdleTransition(undefined, () => events.push('onEnd'));
+      void waiter.promise.then(() => events.push('waiter-resolved'));
+
+      resolvePublish();
+      await setIdlePromise;
+      await waiter.promise;
+      expect(events).toEqual(['onEnd', 'waiter-resolved']);
+      expect(manager.isTerminalIdleInFlight()).toBe(false);
+    });
+
+    test('terminal idle in-flight flag clears when idle publication throws', async () => {
+      emitMock.mockImplementation(async () => {
+        throw new Error('publish failed');
+      });
+
+      await expect(manager.setIdle()).rejects.toThrow('publish failed');
+      expect(manager.isTerminalIdleInFlight()).toBe(false);
+    });
+
     test('waiter onEnd fires on a direct releaseIdleWaiters (restart/reset failure path)', async () => {
       // Direct releaseIdleWaiters (query-lifecycle restart/reset failures,
       // ask-user-question answer-reinjection) must still record the turn-end

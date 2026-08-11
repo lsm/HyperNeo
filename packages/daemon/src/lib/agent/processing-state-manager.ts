@@ -52,6 +52,8 @@ export class ProcessingStateManager {
    * restart). (Codex P1.)
    */
   private idleCallbackInFlight = false;
+  /** Number of terminal setIdle transitions whose side effects have not settled. */
+  private terminalIdleTransitions = 0;
 
   constructor(
     private sessionId: string,
@@ -222,6 +224,11 @@ export class ProcessingStateManager {
     return this.processingState.status === 'idle';
   }
 
+  /** True while a terminal idle transition is still running its side effects. */
+  isTerminalIdleInFlight(): boolean {
+    return this.terminalIdleTransitions > 0;
+  }
+
   /**
    * Set state to idle. Pass `{ suppressDeliveryWaiters: true }` on a
    * NON-terminal idle — one that is immediately followed by a query re-start
@@ -236,6 +243,7 @@ export class ProcessingStateManager {
     // stop/start), suppress the drain too — the outer call owns it, deferred
     // until the restart completes so durable turn ownership survives the restart.
     const suppressDrain = opts?.suppressDeliveryWaiters || this.idleCallbackInFlight;
+    if (!suppressDrain) this.terminalIdleTransitions += 1;
     // Persist the waiter-owned turn-completion markers SYNCHRONOUSLY, BEFORE any
     // await (the idle DB persist + session.updated publish, the deferred-restart
     // callback). A crash after the idle-state DB write but during those awaited
@@ -271,12 +279,13 @@ export class ProcessingStateManager {
       }
     } finally {
       if (!suppressDrain) {
-        // Release the delivery waiters. The markers were already persisted above
-        // (fireEnd, before the awaits); resolveOnce releases the awaiting jobs
-        // WITHOUT re-firing the marker callback. See waitForIdleTransition.
+        // Waiters armed while setState/onIdleCallback was suspended missed the
+        // initial fireEnd snapshot. Use the idempotent full end path so those late
+        // waiters also persist their marker before their jobs are released.
         const waiters = [...this.idleWaiters.values()];
         this.idleWaiters.clear();
-        for (const w of waiters) w.resolveOnce();
+        for (const w of waiters) w.endOnce();
+        this.terminalIdleTransitions -= 1;
       }
     }
   }
