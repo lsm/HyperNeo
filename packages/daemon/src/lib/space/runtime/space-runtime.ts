@@ -81,7 +81,13 @@ import {
   type SpaceWorkflowManager,
 } from '../managers/space-workflow-manager';
 import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format';
-import { getBuiltInGateScript } from '../workflows/built-in-workflows';
+import {
+  gateScriptDiagnosticKey,
+  isGateScriptStatusEmitting,
+  logTemplateGateScriptReload,
+  resolveTemplateGateScript,
+  sharedGateScriptDiagnosticLedger,
+} from '../workflows/built-in-workflows';
 import { getEffectiveGate } from './gate-features';
 import { deliveryModeFromFailureReason } from './delivery-mode';
 import { CompletionDetector } from './completion-detector';
@@ -6625,11 +6631,25 @@ export class SpaceRuntime {
         reason: `Gate "${channel.gateId}" not found — channel "${channel.id}" is closed (misconfiguration)`,
       };
     }
-    let gate = storedGate;
-    if (workflow.templateName) {
-      const liveScript = getBuiltInGateScript(workflow.templateName, storedGate.id);
-      if (liveScript && storedGate.script) gate = { ...storedGate, script: liveScript };
+    const { gate: liveTemplateGate, status: gateScriptStatus } = resolveTemplateGateScript(
+      storedGate,
+      workflow
+    );
+    if (
+      isGateScriptStatusEmitting(gateScriptStatus) &&
+      sharedGateScriptDiagnosticLedger.shouldEmit(
+        gateScriptDiagnosticKey(runId, storedGate.id, gateScriptStatus)
+      )
+    ) {
+      logTemplateGateScriptReload({
+        log,
+        status: gateScriptStatus,
+        templateName: workflow.templateName,
+        gateId: storedGate.id,
+        runId,
+      });
     }
+    let gate = liveTemplateGate;
     gate = getEffectiveGate(gate, workflow, sourceName ?? channel.from);
     const gateDataRepo = new GateDataRepository(this.config.db);
     const gateDataRecord = gateDataRepo.get(runId, gate.id);

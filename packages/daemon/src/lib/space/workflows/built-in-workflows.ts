@@ -1419,6 +1419,208 @@ export function getBuiltInGateScript(templateName: string, gateId: string): Gate
 }
 
 /**
+ * Outcome of resolving a stored gate's script against its built-in template's
+ * live definition. Reported by {@link resolveTemplateGateScript} and consumed
+ * by the reload diagnostics at the gate-evaluation call sites.
+ */
+export type TemplateGateScriptStatus =
+  /** The workflow was not seeded from a built-in template — no reload. */
+  | 'no-template'
+  /**
+   * The template defines no live script for this gate (or the gate is not
+   * reached via a template). Nothing to reload; the stored gate is used as-is.
+   */
+  | 'no-live-script'
+  /**
+   * The template carries a live script for this gate, but the stored gate has
+   * no script. The live script is NOT applied, so the template update silently
+   * fails to take effect until the workflow is resynced. Surfaced as a warning.
+   */
+  | 'live-ignored-no-stored'
+  /** The stored script matches the live template across all executable fields — no-op. */
+  | 'in-sync'
+  /** The live template script differs from the stored script — reloaded (drift). */
+  | 'reloaded';
+
+export interface ResolvedTemplateGateScript {
+  gate: Gate;
+  status: TemplateGateScriptStatus;
+}
+
+/**
+ * Resolve the effective gate definition for evaluation, swapping in the live
+ * built-in template's gate script whenever both the template and the stored
+ * gate carry a script. This is the single source of truth for the "always use
+ * the current template's gate script" reload behavior that was previously
+ * inlined (and duplicated) at the two gate-evaluation sites
+ * (channel-router `doEvaluateGate` and space-runtime restart-recovery).
+ *
+ * Effective-gate behavior is identical to the former inline logic: when both
+ * scripts exist, the live template script is applied. The returned status is
+ * purely diagnostic, distinguishing a real source change (`reloaded`) from a
+ * no-op reload (`in-sync`) and — importantly — flagging the silent footgun
+ * where a live script exists but the stored gate is scriptless
+ * (`live-ignored-no-stored`).
+ */
+export function resolveTemplateGateScript(
+  storedGate: Gate,
+  workflow: SpaceWorkflow
+): ResolvedTemplateGateScript {
+  if (!workflow.templateName) return { gate: storedGate, status: 'no-template' };
+  return applyTemplateGateScript(
+    storedGate,
+    getBuiltInGateScript(workflow.templateName, storedGate.id)
+  );
+}
+
+/**
+ * Pure decision core of {@link resolveTemplateGateScript}: combine a stored
+ * gate with an optional live template script. Extracted so the live-script
+ * branches are unit-testable without mutating the built-in template registry.
+ */
+export function applyTemplateGateScript(
+  storedGate: Gate,
+  liveScript: GateScript | undefined
+): ResolvedTemplateGateScript {
+  if (!liveScript) return { gate: storedGate, status: 'no-live-script' };
+  if (!storedGate.script) return { gate: storedGate, status: 'live-ignored-no-stored' };
+  // The effective gate substitutes the entire live script object, so a reload
+  // changes behavior whenever ANY executable field differs — not just `source`.
+  // Comparing interpreter/timeoutMs too surfaces operational changes (e.g. a
+  // timeout bump or interpreter switch) as reloads instead of mislabeling them
+  // in-sync.
+  const drifted = gateScriptsDiffer(liveScript, storedGate.script);
+  return {
+    gate: { ...storedGate, script: liveScript },
+    status: drifted ? 'reloaded' : 'in-sync',
+  };
+}
+
+/**
+ * Whether two gate scripts differ in any field that affects execution
+ * (`source`, `interpreter`, `timeoutMs`). Used to decide the reload diagnostic.
+ */
+function gateScriptsDiffer(a: GateScript, b: GateScript): boolean {
+  return a.source !== b.source || a.interpreter !== b.interpreter || a.timeoutMs !== b.timeoutMs;
+}
+
+/**
+ * Stable identity for a gate-script diagnostic, used to deduplicate emissions
+ * across repeated gate evaluations (a persistent mismatch otherwise warns on
+ * every retry/delivery attempt). Combines the run, gate, and status so a
+ * status transition (e.g. after a resync) re-emits.
+ */
+export function gateScriptDiagnosticKey(
+  runId: string | undefined,
+  gateId: string,
+  status: TemplateGateScriptStatus
+): string {
+  return `${runId ?? ''}|${gateId}|${status}`;
+}
+
+/**
+ * Bounded dedup ledger for gate-script reload diagnostics. Gate evaluation runs
+ * on every channel delivery and retries while blocked, so a persistent
+ * mismatch (e.g. `live-ignored-no-stored`) would otherwise flood the logs. Each
+ * (run, gate, status) diagnostic is emitted at most once; the ledger is capped
+ * so a very long-lived process cannot grow it without bound — once the cap is
+ * reached it stops recording and emits every call, degrading to the pre-dedup
+ * behavior rather than consuming memory.
+ */
+export class GateScriptDiagnosticLedger {
+  private readonly seen = new Set<string>();
+  private readonly cap: number;
+
+  constructor(capacity = 8192) {
+    this.cap = capacity;
+  }
+
+  /** Returns true the first time this key is seen (and records it). */
+  shouldEmit(key: string): boolean {
+    if (this.seen.has(key)) return false;
+    if (this.seen.size >= this.cap) return true;
+    this.seen.add(key);
+    return true;
+  }
+
+  /** Clear recorded keys. Intended for tests that need a deterministic ledger. */
+  reset(): void {
+    this.seen.clear();
+  }
+}
+
+/**
+ * Process-wide shared ledger for gate-script reload diagnostics. Gate
+ * evaluation runs across multiple transient {@link ChannelRouter} instances
+ * (one per delivery in some paths) as well as long-lived ones, so the dedup
+ * state must outlive any single router. Keys include the run id (globally
+ * unique), so there is no cross-run collision; the ledger cap bounds memory.
+ */
+export const sharedGateScriptDiagnosticLedger = new GateScriptDiagnosticLedger();
+
+/**
+ * The statuses for which {@link logTemplateGateScriptReload} actually emits a
+ * log line. Single source of truth so call sites can avoid consuming dedup
+ * ledger capacity for the quiet statuses (`no-template` / `no-live-script` /
+ * `in-sync`) that never log — otherwise ordinary traffic would fill the ledger
+ * and a later mismatch would flood again.
+ */
+const GATE_SCRIPT_EMITTING_STATUSES: ReadonlySet<TemplateGateScriptStatus> = new Set([
+  'live-ignored-no-stored',
+  'reloaded',
+]);
+
+/** Whether a status produces a log line in {@link logTemplateGateScriptReload}. */
+export function isGateScriptStatusEmitting(status: TemplateGateScriptStatus): boolean {
+  return GATE_SCRIPT_EMITTING_STATUSES.has(status);
+}
+
+/**
+ * Minimal logger surface {@link logTemplateGateScriptReload} needs. Accepts the
+ * daemon {@link Logger} or any compatible test double.
+ */
+export interface TemplateGateScriptReloadLogger {
+  warn(...args: unknown[]): void;
+  debug(...args: unknown[]): void;
+}
+
+/**
+ * Emit reload diagnostics for a resolved template gate script:
+ * - `live-ignored-no-stored` (WARN): the template defines a script but the
+ *   stored gate has none — an unambiguous footgun, since the template update
+ *   cannot take effect without a resync.
+ * - `reloaded` (DEBUG): the live template script differs from the stored one.
+ *
+ * Stays quiet for `no-template` / `no-live-script` / `in-sync`. Callers should
+ * gate the dedup ledger on {@link isGateScriptStatusEmitting} so persistent
+ * mismatches do not flood and quiet statuses do not consume ledger capacity.
+ */
+export function logTemplateGateScriptReload(args: {
+  log: TemplateGateScriptReloadLogger;
+  status: TemplateGateScriptStatus;
+  templateName?: string;
+  gateId: string;
+  runId?: string;
+}): void {
+  const { log, status, templateName, gateId, runId } = args;
+  if (!isGateScriptStatusEmitting(status)) return;
+  const where = runId ? ` in run ${runId}` : '';
+  const tmpl = templateName ?? '?';
+  if (status === 'live-ignored-no-stored') {
+    log.warn(
+      `Gate "${gateId}"${where}: built-in template "${tmpl}" defines a gate script, but the stored ` +
+        'gate has no script — the template script update is NOT applied and will not take effect ' +
+        'until the workflow is resynced from the template.'
+    );
+    return;
+  }
+  log.debug(
+    `Gate "${gateId}"${where}: reloaded gate script from live template "${tmpl}" ` +
+      '(stored script differed from the template).'
+  );
+}
+
+/**
  * Returns all built-in workflow templates.
  *
  * The returned objects have empty `id` and `spaceId` fields and use role names
