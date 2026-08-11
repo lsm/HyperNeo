@@ -547,16 +547,20 @@ export class AgentSession
 
     if (this.runtimeOptions.autoReplayPendingMessages ?? true) {
       this.scheduleInitialPendingMessageReplay();
+      // Orphan reconciler startup pass (task #861 item 4/7): settle stranded
+      // deliveries now that state is restored — re-enqueue stuck 'enqueued'
+      // rows and surface stale 'submitted' rows as failed. Gated on the SAME
+      // autoReplayPendingMessages flag as pending replay: restored Space /
+      // task-agent sessions pass false so current prompts, runtime MCP servers,
+      // and tool-continuation maps are provisioned before any pending input
+      // starts a query — reconciling then would race that provisioning. Those
+      // owners call replayPendingMessagesForImmediateMode (which routes through
+      // the durable owner) after provisioning; the idle + periodic hooks cover
+      // the rest. (Codex review.)
+      void this.reconcileStrandedDeliveries().catch((error) => {
+        this.logger.warn('Startup reconcileStrandedDeliveries failed:', error);
+      });
     }
-
-    // Orphan reconciler startup pass (task #861 item 4/7): settle stranded
-    // deliveries now that state is restored — re-enqueue stuck 'enqueued' rows
-    // and surface stale 'submitted' rows as failed. Idempotent; the idle +
-    // periodic hooks keep it correct thereafter. Replaces the deleted
-    // recoverOrphanedConsumedMessages.
-    void this.reconcileStrandedDeliveries().catch((error) => {
-      this.logger.warn('Startup reconcileStrandedDeliveries failed:', error);
-    });
 
     // Periodic orphan reconciliation (task #861 item 4): a backstop beyond the
     // idle + startup hooks, for a message that strands without an idle
@@ -1948,9 +1952,6 @@ export class AgentSession
         acknowledgment = this.messageQueue.admitWithId(messageUuid, content, false, {
           durable: true,
         });
-        // Exactly-once observability (task #861 item 13a): ground-truth feed
-        // counter — a UUID incremented >1 is a real duplicate handoff to the SDK.
-        deliveryMetrics.recordFeed(messageUuid);
       }
       return { kind: 'driving' as const, queryPromise, turnEnd, acknowledgment };
     });
@@ -1973,24 +1974,28 @@ export class AgentSession
     // turnEnd wins and the job completes promptly when the SDK finishes the turn.
     try {
       await started.acknowledgment;
+      // onSent fired → the prompt reached the SDK / subprocess (the ACTUAL
+      // handoff). Record the feed here, not at admission: admitWithId only
+      // places the row in the in-memory queue, so a provider-startup stall,
+      // queue interrupt, or admission timeout before the generator yields is
+      // NOT a handoff and must not be counted as one (else a later legit retry
+      // reads as a ground-truth duplicate). (Codex review.)
+      deliveryMetrics.recordFeed(messageUuid);
       // For the Claude SDK, onSent is the consume signal — flip send_status →
       // 'consumed' SYNCHRONOUSLY (item 12) so reclaimStale almost always sees
-      // 'consumed' and skips the re-feed. ACP is EXCLUDED: its onSent fires at
-      // submission (enqueued→submitted via markMessageSubmitted), and the real
-      // consume boundary is acceptance (markMessageAccepted → consumed). Flipping
-      // here for ACP would mark a not-yet-accepted prompt consumed, so a failed
-      // acceptance could no longer be terminalized by markACPDeliveryFailed
-      // (which only flips enqueued/deferred/submitted → failed). (Codex review.)
+      // 'consumed' and skips the re-feed, and signal delivery waiters (LTA /
+      // task-agent confirm their source only after genuine consumption). ACP is
+      // EXCLUDED on both: its onSent fires at submission (enqueued→submitted),
+      // and the real consume boundary is acceptance (markMessageAccepted →
+      // consumed + signalDeliveryConsumed). Flipping/signaling here for ACP
+      // would confirm an LTA source before acceptance; if the adapter then
+      // rejects, the source is already acknowledged and won't retry. (Codex.)
       if (this.session.config.provider !== 'acp') {
         const consumeSignalMs = Date.now();
         this.markDeliveryConsumed(messageUuid);
         deliveryMetrics.recordResidualWindow(Date.now() - consumeSignalMs);
+        signalDeliveryConsumed(this.session.id, messageUuid);
       }
-      // Signal long-horizon delivery waiters (injectLongTermAgentMessage) so they
-      // confirm the source record only after genuine consumption, not bare
-      // enqueue (which can still dead-letter). No-op when no waiter is armed.
-      // (Codex P1.)
-      signalDeliveryConsumed(this.session.id, messageUuid);
       await Promise.race([started.turnEnd.promise, started.queryPromise.catch(() => {})]);
     } finally {
       // Cancel the waiter if it didn't win the race (e.g. queryPromise resolved
@@ -2029,9 +2034,6 @@ export class AgentSession
         const acknowledgment = this.messageQueue.admitWithId(messageUuid, content, false, {
           durable: true,
         });
-        // Exactly-once observability (item 13a): ground-truth feed counter — a
-        // UUID incremented >1 is a real duplicate handoff to the SDK.
-        deliveryMetrics.recordFeed(messageUuid);
         return { kind: 'feed' as const, acknowledgment };
       }
       if (status === 'queued') return { kind: 'park' as const };
@@ -2050,15 +2052,16 @@ export class AgentSession
     // Admission happened atomically under the lock; only the provider
     // acknowledgment is awaited here.
     await action.acknowledgment;
-    // Claude SDK: the steer's onSent is the consume signal — flip synchronously
-    // (item 12). ACP is excluded (consume boundary is acceptance, not onSent);
-    // see driveDeliveryTurn for the full rationale.
+    // onSent fired → the steer reached the SDK (actual handoff). Record here,
+    // not at admission (see driveDeliveryTurn).
+    deliveryMetrics.recordFeed(messageUuid);
+    // Claude SDK: onSent is the consume signal — flip synchronously (item 12)
+    // and signal delivery waiters. ACP is excluded (consume boundary is
+    // acceptance, not onSent); see driveDeliveryTurn for the full rationale.
     if (this.session.config.provider !== 'acp') {
       this.markDeliveryConsumed(messageUuid);
+      signalDeliveryConsumed(this.session.id, messageUuid);
     }
-    // The steer was consumed by the live turn (onSent) — signal long-horizon
-    // delivery waiters awaiting consumption. No-op when none are armed. (Codex P1.)
-    signalDeliveryConsumed(this.session.id, messageUuid);
     return { outcome: 'consumed' };
   }
 

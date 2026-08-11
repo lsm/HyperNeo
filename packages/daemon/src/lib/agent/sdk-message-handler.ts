@@ -18,6 +18,7 @@
 
 import type { UUID } from 'crypto';
 import type { QueryLike } from './query-like';
+import { signalDeliveryConsumed } from './message-delivery';
 import type { ContextInfo, MessageHub, Session } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
@@ -491,6 +492,12 @@ export class SDKMessageHandler {
     // projection path as a normal SDK yield so status, timestamp, transcript
     // delta, and server-side events stay consistent.
     this.handleMessageYielded(messageId, Date.now());
+    // ACP's onSent fires at submission; the durable bridge therefore gates its
+    // markDeliveryConsumed + signalDeliveryConsumed on non-ACP. Signal the
+    // delivery waiters (LTA / task-agent consumption-await) HERE, at the real
+    // acceptance boundary, so a source record is confirmed only once ACP has
+    // accepted the prompt. (Codex review, task #861.)
+    signalDeliveryConsumed(this.ctx.session.id, messageId);
   }
 
   /**

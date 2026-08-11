@@ -857,14 +857,26 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   // Message-delivery diagnostics (task #861 item 6 + item 13) — a thin
   // job_queue query (counts by status = unclaimed/stale/failed) paired with the
   // exactly-once observability snapshot (feed-count-per-UUID duplicate detector,
-  // reclaim-outcome breakdown, residual-window latency). Read-only.
+  // reclaim-skip breakdown, residual-window latency). Read-only.
   deps.messageHub.onRequest('messageDelivery.diagnostics', async () => {
     const counts = deps.jobQueue.countByStatus(MESSAGE_DELIVERY);
+    // Split `processing` into genuinely-stale (lease past the reclaimStale
+    // threshold — reclaimable) vs active (healthy in-flight turn). Without this,
+    // every live model turn reads as "stale" for its whole runtime. Same cutoff
+    // as JobQueueProcessor.reclaimStale (5 min default). (Codex review.)
+    const staleThresholdMs = 5 * 60 * 1000;
+    const staleProcessing = deps.jobQueue.countStaleProcessing(
+      MESSAGE_DELIVERY,
+      Date.now() - staleThresholdMs
+    );
     return {
       lane: MESSAGE_DELIVERY,
-      // unclaimed = pending; stale = processing (reclaimStale sweeps these);
-      // failed = dead (exhausted retries → onDead → message 'failed').
       statusCounts: counts,
+      // unclaimed = pending; stale = processing past the lease window
+      // (reclaimStale will sweep these); activeProcessing = healthy in-flight;
+      // failed = dead (exhausted retries → onDead → message 'failed').
+      staleProcessing,
+      activeProcessing: Math.max(0, counts.processing - staleProcessing),
       metrics: deliveryMetrics.snapshot(),
     };
   });

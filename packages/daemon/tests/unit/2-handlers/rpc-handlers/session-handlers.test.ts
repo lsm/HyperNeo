@@ -10,7 +10,7 @@
  * is unaffected, so we use setModelsCache(new Map()) to empty the cache.
  */
 
-import { describe, expect, it, beforeEach, mock } from 'bun:test';
+import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
 import type { ModelInfo } from '@hyperneo/shared';
 import type { Provider } from '@hyperneo/shared/provider';
@@ -468,16 +468,21 @@ describe('Session RPC Handlers — models.list', () => {
       );
 
       const dbFacade = {
+        // Parse the sdk_message blob into an SDK message (+dbId) the way the real
+        // SDKMessageRepository.getMessagesByStatus does, so isSDKUserMessage +
+        // toReplayContent see the expected shape.
         getMessagesByStatus: (_sid: string, status: string) =>
-          db
-            .prepare(
-              `SELECT id AS dbId, sdk_message, timestamp FROM sdk_messages WHERE session_id = ? AND send_status = ?`
-            )
-            .all('sess-1', status) as Array<{
-            dbId: string;
-            sdk_message: string;
-            timestamp: string;
-          }>,
+          (
+            db
+              .prepare(
+                `SELECT id AS dbId, sdk_message, timestamp FROM sdk_messages WHERE session_id = ? AND send_status = ?`
+              )
+              .all('sess-1', status) as Array<{
+              dbId: string;
+              sdk_message: string;
+              timestamp: string;
+            }>
+          ).map((row) => ({ ...JSON.parse(row.sdk_message), dbId: row.dbId, timestamp: 0 })),
         updateMessageStatus: (ids: string[], status: string) =>
           db
             .prepare(

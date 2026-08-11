@@ -317,12 +317,20 @@ export class MessagePersistence {
         }
       }
 
-      // Broadcast status update for queue-aware UI
-      await this.internalEventBus.publish('messages.statusChanged', {
-        sessionId,
-        messageIds: [dbMessageId],
-        status: sendStatus,
-      });
+      // Broadcast status update for queue-aware UI. Best-effort once the row is
+      // saved: under v2 the outbox has already committed the durable job, so a
+      // throwing subscriber must NOT reject the send (a client retry would mint a
+      // fresh UUID and deliver twice). The non-v2 path also benefits — the save
+      // already succeeded. (Codex review.)
+      await this.internalEventBus
+        .publish('messages.statusChanged', {
+          sessionId,
+          messageIds: [dbMessageId],
+          status: sendStatus,
+        })
+        .catch((err) =>
+          this.logger.warn('[MessagePersistence] statusChanged publish failed:', err)
+        );
 
       // 7. For immediate delivery, start the query inline — UNLESS message-delivery
       // v2 is enabled, in which case the durable job_queue path owns dispatch:
@@ -336,22 +344,27 @@ export class MessagePersistence {
       // 8. Emit 'message.persisted' for non-critical post-processing.
       // skipQueryStart reflects whether the inline start above already happened:
       // under v2 it is false so the subscriber proceeds to the v2 check and
-      // routes through deliverChatMessage (the durable chokepoint).
+      // routes through deliverChatMessage (the durable chokepoint). Best-effort
+      // for the same reason as the statusChanged publish above.
       if (shouldDispatchToQuery) {
-        await this.internalEventBus.publish('message.persisted', {
-          sessionId,
-          messageId,
-          messageContent,
-          userMessageText: content, // Original content (before expansion)
-          // Auto-title init is needed only when no title has been settled yet —
-          // either auto-generated or manually set by the user (titleSetBy).
-          needsWorkspaceInit:
-            !session.metadata.titleGenerated && session.metadata.titleSetBy !== 'user',
-          hasDraftToClear: session.metadata?.inputDraft === content.trim(),
-          sendStatus,
-          deliveryMode: effectiveDeliveryMode,
-          skipQueryStart: !useV2Delivery,
-        });
+        await this.internalEventBus
+          .publish('message.persisted', {
+            sessionId,
+            messageId,
+            messageContent,
+            userMessageText: content, // Original content (before expansion)
+            // Auto-title init is needed only when no title has been settled yet —
+            // either auto-generated or manually set by the user (titleSetBy).
+            needsWorkspaceInit:
+              !session.metadata.titleGenerated && session.metadata.titleSetBy !== 'user',
+            hasDraftToClear: session.metadata?.inputDraft === content.trim(),
+            sendStatus,
+            deliveryMode: effectiveDeliveryMode,
+            skipQueryStart: !useV2Delivery,
+          })
+          .catch((err) =>
+            this.logger.warn('[MessagePersistence] message.persisted publish failed:', err)
+          );
       }
     } catch (error) {
       this.logger.error('[MessagePersistence] Error persisting message:', error);
