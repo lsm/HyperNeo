@@ -5,6 +5,7 @@
     { "path": "./packages/daemon" },
     { "path": "./packages/messaging" },
     { "path": "./packages/shared" },
+    { "path": "./packages/extensions/hooks" },
     { "path": "./packages/ui" },
     { "path": "./packages/web" }
   ],
