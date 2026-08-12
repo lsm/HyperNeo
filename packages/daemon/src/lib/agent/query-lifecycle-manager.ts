@@ -586,7 +586,7 @@ export class QueryLifecycleManager {
    * state.sdkMessages.delta event so it appears in the chat timeline.
    * The query stays blocked; startStreamingQuery() is NOT called here.
    */
-  private async emitSdkResumeChoiceMessage(): Promise<void> {
+  private async emitSdkResumeChoiceMessage(): Promise<boolean> {
     const { session, db, messageHub } = this.ctx;
 
     // Dedupe: under message-delivery v2 a blocked turn job is parked + re-claimed
@@ -594,8 +594,9 @@ export class QueryLifecycleManager {
     // FRESH card when an unresolved sdk_resume_choice already exists (otherwise
     // ~12 duplicate cards/min). Falls through (emit) when the repo isn't wired
     // (partial-mock contexts). See message-delivery-v2.md §8 + review P2.
-    if (db.getSDKMessageRepo?.()?.hasUnresolvedHyperNeoAction?.(session.id, 'sdk_resume_choice')) {
-      return;
+    const messageRepo = db.getSDKMessageRepo?.();
+    if (messageRepo?.hasUnresolvedHyperNeoAction?.(session.id, 'sdk_resume_choice')) {
+      return true;
     }
 
     const actionMessage: HyperNeoActionMessage = {
@@ -609,11 +610,19 @@ export class QueryLifecycleManager {
 
     db.saveHyperNeoActionMessage(session.id, actionMessage);
 
+    if (
+      messageRepo?.hasUnresolvedHyperNeoAction &&
+      !messageRepo.hasUnresolvedHyperNeoAction(session.id, 'sdk_resume_choice')
+    ) {
+      return false;
+    }
+
     messageHub.event(
       'state.sdkMessages.delta',
       { added: [actionMessage], timestamp: Date.now() },
       { channel: `session:${session.id}` }
     );
+    return true;
   }
 
   /**
@@ -679,7 +688,13 @@ export class QueryLifecycleManager {
           `SDK session file missing for sdkSessionId=${session.sdkSessionId}. ` +
             'Emitting sdk_resume_choice action message for user.'
         );
-        await this.emitSdkResumeChoiceMessage();
+        const recoveryPromptAvailable = await this.emitSdkResumeChoiceMessage();
+        if (!recoveryPromptAvailable) {
+          throw new Error(
+            `Unable to start session: SDK transcript ${session.sdkSessionId} is missing ` +
+              'and the recovery prompt could not be persisted.'
+          );
+        }
         return 'blocked';
       }
     }

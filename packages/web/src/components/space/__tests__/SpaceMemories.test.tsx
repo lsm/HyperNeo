@@ -148,6 +148,7 @@ describe('SpaceMemories', () => {
 
     expect(screen.getByText('Memories · 2 stored')).toBeTruthy();
     expect(screen.getByTestId('memory-create-button')).toBeTruthy();
+    expect(screen.getByTestId('space-memories-introduction')).toBeTruthy();
   });
 
   it('renders a result count while a search is active', () => {

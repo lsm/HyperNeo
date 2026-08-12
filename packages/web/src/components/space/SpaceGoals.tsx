@@ -1,18 +1,24 @@
 import type { SpaceGoal, SpaceGoalEvent, SpaceGoalStatus, SpaceTask } from '@hyperneo/shared';
 import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useState } from 'preact/hooks';
+import { getGoalStatusClasses, getGoalStatusConfig } from '../../lib/goal-status';
 import { navigateToSpaceTask } from '../../lib/router';
 import { currentSpaceGoalIdSignal, rightPanelTargetSignal } from '../../lib/signals';
 import { spaceStore } from '../../lib/space-store';
-import { getGoalStatusClasses, getGoalStatusConfig } from '../../lib/goal-status';
 import { cn, getRelativeTime } from '../../lib/utils';
-import { SpaceGoalDialog } from './SpaceGoalDialog';
+import {
+  FLAT_SURFACE,
+  GLASS_CONTENT_CONTAINER_CLASS,
+  GLASS_PRIMARY_BUTTON_CLASS,
+  GLASS_SURFACE,
+} from './glass-workspace';
 import {
   formatGoalMetricSnapshot,
   getGoalActivityTask,
   getGoalLastActivityAt,
   getRecurringGoalActivityStatus,
 } from './goal-display-utils';
+import { SpaceGoalDialog } from './SpaceGoalDialog';
 
 interface SpaceGoalsProps {
   spaceId: string;
@@ -104,62 +110,87 @@ function GoalCard({
     <button
       type="button"
       onClick={onSelect}
+      aria-pressed={selected}
       class={cn(
-        'group flex min-h-[10.5rem] w-full flex-col rounded-lg border p-4 text-left transition-colors',
+        'group relative flex min-h-[12rem] w-full flex-col overflow-hidden rounded-2xl border border-white/[0.14] p-5 text-left transition duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/70',
+        FLAT_SURFACE,
         selected
-          ? 'border-blue-500/70 bg-blue-950/20 shadow-[0_0_0_1px_rgb(59_130_246_/_0.08)]'
-          : 'border-dark-700 bg-dark-900/60 hover:border-dark-600 hover:bg-dark-850/80'
+          ? '!border-[rgba(111,177,255,0.72)] bg-[linear-gradient(145deg,rgba(35,82,137,0.44),rgba(13,20,32,0.96)_62%)] shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_20px_48px_rgba(0,0,0,0.3)]'
+          : 'hover:-translate-y-0.5 hover:bg-dark-850/95'
       )}
     >
       <div class="min-w-0">
-        <h3 class="line-clamp-2 text-sm font-semibold leading-5 text-gray-100">{goal.title}</h3>
-        <div class="mt-2 flex flex-wrap items-center gap-2">
+        <div class="flex items-start justify-between gap-4">
+          <h3 class="line-clamp-2 text-base font-semibold leading-6 tracking-tight text-gray-50">
+            {goal.title}
+          </h3>
+          <span class="shrink-0 text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-500">
+            {goal.priority}
+          </span>
+        </div>
+        <div class="mt-2.5 flex flex-wrap items-center gap-2">
           <GoalStatusBadge status={goal.status} />
-          <span class="rounded-full border border-dark-600 px-2 py-0.5 text-[11px] font-medium text-gray-400">
+          <span class="rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[11px] font-medium text-gray-300">
             {TYPE_LABELS[goal.type]}
           </span>
           {goal.pendingNextRun && (
-            <span class="rounded-full border border-amber-800/40 bg-amber-950/20 px-2 py-0.5 text-xs text-amber-300">
+            <span class="rounded-full border border-amber-300/20 bg-amber-300/[0.08] px-2 py-0.5 text-xs text-amber-200">
               Pending next
             </span>
           )}
         </div>
-        <p class="mt-2 line-clamp-2 min-h-8 text-xs leading-4 text-gray-400">
+        <p class="mt-3 line-clamp-2 min-h-10 text-sm leading-5 text-gray-300">
           {goal.summary || goal.description || 'No summary recorded yet'}
         </p>
       </div>
 
       {goal.type === 'recurring' ? (
-        <div class="mt-auto space-y-2 pt-4 text-xs">
+        <div class="mt-4 rounded-xl border border-white/[0.08] bg-white/[0.035] px-3.5 py-3 text-xs">
           <div class="flex items-center justify-between gap-2">
             <span class="font-medium text-gray-400">Activity</span>
-            <span class="capitalize text-gray-300">{recurringActivityStatus}</span>
+            <span class="flex items-center gap-1.5 capitalize text-gray-200">
+              <span
+                class={`h-1.5 w-1.5 rounded-full ${
+                  recurringActivityStatus === 'active'
+                    ? 'bg-emerald-300/80'
+                    : recurringActivityStatus === 'paused'
+                      ? 'bg-amber-300/80'
+                      : 'bg-gray-400/80'
+                }`}
+                aria-hidden="true"
+              />
+              {recurringActivityStatus}
+            </span>
           </div>
-          <div class="text-gray-500">Last activity: {lastActivityLabel(goal, lastTask)}</div>
-          <div class="line-clamp-2 text-gray-400">Metrics: {formatGoalMetricSnapshot(goal)}</div>
+          <div class="mt-2 text-gray-400">Last activity: {lastActivityLabel(goal, lastTask)}</div>
+          <div class="mt-1 line-clamp-2 text-gray-300">
+            Metrics: {formatGoalMetricSnapshot(goal)}
+          </div>
         </div>
       ) : (
-        <div class="mt-auto space-y-2 pt-4">
+        <div class="mt-4 space-y-2.5 rounded-xl border border-white/[0.08] bg-white/[0.035] px-3.5 py-3">
           <div class="flex items-center justify-between text-xs">
             <span class="font-medium text-gray-400">Progress</span>
-            <span class="text-gray-300">{goal.progress ?? 0}% complete</span>
+            <span class="text-gray-200">{goal.progress ?? 0}% complete</span>
           </div>
           <ProgressBar value={goal.progress ?? 0} />
         </div>
       )}
 
-      <div class="mt-3 grid grid-cols-3 gap-2 text-xs text-gray-400">
-        <div>
-          <span class="block text-gray-400">Next check-in</span>
-          <span class="text-gray-300">{formatDate(goal.nextCheckInAt)}</span>
+      <div class="mt-auto grid grid-cols-3 gap-3 border-t border-white/[0.08] pt-3 text-xs">
+        <div class="min-w-0">
+          <span class="block text-gray-500">Next check-in</span>
+          <span class="mt-0.5 block truncate text-gray-300">{formatDate(goal.nextCheckInAt)}</span>
         </div>
-        <div>
-          <span class="block text-gray-400">Last task</span>
-          <span class="truncate text-gray-300">{lastTask?.title ?? goal.lastTaskId ?? '—'}</span>
+        <div class="min-w-0">
+          <span class="block text-gray-500">Last task</span>
+          <span class="mt-0.5 block truncate text-gray-300">
+            {lastTask?.title ?? goal.lastTaskId ?? '—'}
+          </span>
         </div>
-        <div>
-          <span class="block text-gray-400">Priority</span>
-          <span class="capitalize text-gray-300">{goal.priority}</span>
+        <div class="min-w-0">
+          <span class="block text-gray-500">Priority</span>
+          <span class="mt-0.5 block capitalize text-gray-300">{goal.priority}</span>
         </div>
       </div>
     </button>
@@ -485,55 +516,94 @@ export function SpaceGoals({ spaceId, navigationSpaceId: _navigationSpaceId }: S
 
   return (
     <div class="flex h-full min-h-0 flex-col overflow-hidden">
-      <div class="flex h-[88px] flex-shrink-0 items-center justify-between gap-3 border-b border-dark-700 px-4">
-        <div>
-          <h2 class="text-sm font-semibold text-gray-100">Active objectives</h2>
-          <p class="text-xs text-gray-400">
-            {formatGoalCount(visibleGoals.length)} tracking long-horizon Space outcomes
-          </p>
-        </div>
-      </div>
-
-      <div class="flex-1 overflow-y-auto p-4">
-        <div class="mb-4 flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setCreateOpen(true)}
-            class="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-blue-500"
+      <div class="flex-1 overflow-y-auto">
+        <div class={GLASS_CONTENT_CONTAINER_CLASS}>
+          <section
+            class={cn(
+              'mb-5 flex flex-col gap-4 rounded-2xl border p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6',
+              GLASS_SURFACE
+            )}
+            data-testid="space-goals-introduction"
+            aria-label="Goals workspace summary"
           >
-            Create goal
-          </button>
-          <label class="flex items-center gap-1.5 rounded-lg border border-dark-700 bg-dark-900/60 px-2 py-1.5 text-xs text-gray-400">
-            <input
-              type="checkbox"
-              checked={showArchived}
-              onChange={(e) => setShowArchived((e.target as HTMLInputElement).checked)}
-              class="h-3.5 w-3.5 rounded border-dark-600 bg-dark-800"
-            />
-            Show archived
-          </label>
-        </div>
-        {loading && <p class="text-sm text-gray-400">Loading goals...</p>}
-        {error && <p class="text-sm text-red-400">{error}</p>}
-        {!loading && visibleGoals.length === 0 && (
-          <div class="rounded-lg border border-dashed border-dark-700 bg-dark-900/30 p-8 text-center">
-            <p class="text-sm text-gray-400">No goals yet</p>
-            <p class="mt-1 text-xs text-gray-400">Create a goal to track long-horizon work.</p>
-          </div>
-        )}
-        {visibleGoals.length > 0 && (
-          <div class="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(20rem,1fr))]">
-            {visibleGoals.map((goal) => (
-              <GoalCard
-                key={goal.id}
-                goal={goal}
-                selected={selectedGoalId === goal.id}
-                lastTask={goalDisplayTask(goal, tasks)}
-                onSelect={() => openGoal(goal.id)}
+            <div class="max-w-2xl">
+              <div class="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-amber-200/80">
+                <span class="h-1.5 w-1.5 rounded-full bg-amber-300" />
+                Tracked objectives
+              </div>
+              <h2 class="mt-2 text-lg font-semibold tracking-tight text-gray-50">
+                Active objectives ·{' '}
+                <span data-testid="space-goal-count">{visibleGoals.length}</span>
+              </h2>
+              <p class="mt-1 text-sm leading-5 text-gray-300">
+                {formatGoalCount(visibleGoals.length)} connecting recurring work, measurable
+                progress, and the next operational move.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setCreateOpen(true)}
+              class={GLASS_PRIMARY_BUTTON_CLASS}
+            >
+              Create goal
+            </button>
+          </section>
+
+          <div class="mb-4 flex items-center justify-between gap-3">
+            <p class="text-xs text-gray-400">
+              {showArchived ? 'All objectives' : 'Current objectives'}
+            </p>
+            <label
+              class={cn(
+                'flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-xs text-gray-300 transition hover:border-white/25 hover:bg-white/[0.1]',
+                GLASS_SURFACE
+              )}
+            >
+              <input
+                type="checkbox"
+                checked={showArchived}
+                onChange={(e) => setShowArchived((e.target as HTMLInputElement).checked)}
+                class="h-3.5 w-3.5 rounded border-white/20 bg-dark-800 accent-amber-300"
               />
-            ))}
+              Show archived
+            </label>
           </div>
-        )}
+
+          {loading && (
+            <div class={cn('rounded-2xl border p-6 text-sm text-gray-300', FLAT_SURFACE)}>
+              Loading goals...
+            </div>
+          )}
+          {error && (
+            <div
+              class={cn(
+                'rounded-2xl border border-red-300/20 p-6 text-sm text-red-200',
+                FLAT_SURFACE
+              )}
+            >
+              {error}
+            </div>
+          )}
+          {!loading && visibleGoals.length === 0 && (
+            <div class={cn('rounded-2xl border border-dashed p-10 text-center', FLAT_SURFACE)}>
+              <p class="text-sm font-medium text-gray-200">No goals yet</p>
+              <p class="mt-1 text-xs text-gray-400">Create a goal to track long-horizon work.</p>
+            </div>
+          )}
+          {visibleGoals.length > 0 && (
+            <div class="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(min(21rem,100%),1fr))]">
+              {visibleGoals.map((goal) => (
+                <GoalCard
+                  key={goal.id}
+                  goal={goal}
+                  selected={selectedGoalId === goal.id}
+                  lastTask={goalDisplayTask(goal, tasks)}
+                  onSelect={() => openGoal(goal.id)}
+                />
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       <SpaceGoalDialog

@@ -10,6 +10,7 @@ import { spaceStore } from '../../lib/space-store';
 import { toast } from '../../lib/toast';
 import { Button } from '../ui/Button';
 import { ConfirmModal } from '../ui/ConfirmModal';
+import { FLAT_SURFACE, GLASS_PRIMARY_BUTTON_CLASS, GLASS_SURFACE } from './glass-workspace';
 import { WorkflowModelSelect } from './visual-editor/WorkflowModelSelect';
 
 const THINKING_LEVEL_OPTIONS: Array<{ value: '' | ThinkingLevel; label: string }> = [
@@ -28,9 +29,6 @@ const AUTONOMY_LABELS: Record<number, string> = {
   4: 'Full auto',
   5: 'Unrestricted',
 };
-
-const FLAT_SURFACE =
-  'border-white/15 bg-dark-900/95 shadow-[inset_0_1px_0_rgba(255,255,255,0.07),0_18px_44px_rgba(0,0,0,0.24)]';
 
 function isCoordinator(agent: SpaceLongHorizonAgent): boolean {
   return agent.handle === 'coordinator';
@@ -713,14 +711,26 @@ export function SpaceLongHorizonAgents({
 
   return (
     <div class="h-full overflow-y-auto scrollbar-dark">
-      <div class="mx-auto max-w-5xl space-y-7 px-4 py-4 sm:px-8 sm:py-6">
+      <div class="mx-auto max-w-6xl space-y-7 px-4 py-4 sm:px-8 sm:py-6">
         <section
-          class="flex items-center justify-between gap-4"
+          class={`flex flex-col gap-4 rounded-2xl border p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6 ${GLASS_SURFACE}`}
           data-testid="space-agents-introduction"
+          aria-label="Agents workspace summary"
         >
-          <p class="text-base font-medium text-gray-200">
-            Configured · <span data-testid="configured-agent-count">{sortedAgents.length}</span>
-          </p>
+          <div class="max-w-2xl">
+            <div class="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-amber-200/80">
+              <span class="h-1.5 w-1.5 rounded-full bg-amber-300" />
+              Long-horizon agents
+            </div>
+            <h2 class="mt-2 text-lg font-semibold tracking-tight text-gray-50">
+              Configured agents ·{' '}
+              <span data-testid="configured-agent-count">{sortedAgents.length}</span>
+            </h2>
+            <p class="mt-1 text-sm leading-5 text-gray-300">
+              Persistent Space actors — coordinators, workers, and custom roles — rehydrated by the
+              runtime and recalled across runs.
+            </p>
+          </div>
           <button
             type="button"
             onClick={() => {
@@ -728,7 +738,7 @@ export function SpaceLongHorizonAgents({
               setEditingAgent(null);
               setShowEditor(true);
             }}
-            class="self-start rounded-xl bg-amber-300 px-4 py-2.5 text-sm font-semibold text-dark-950 shadow-[0_10px_28px_rgba(251,191,36,0.16)] transition-colors hover:bg-amber-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/70 sm:self-auto"
+            class={GLASS_PRIMARY_BUTTON_CLASS}
           >
             + Custom agent
           </button>
