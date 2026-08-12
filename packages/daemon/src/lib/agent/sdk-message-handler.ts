@@ -813,11 +813,9 @@ export class SDKMessageHandler {
     // /clear results are internal and intentionally suppress that idle.
     const parentToolUseId = (message as SDKMessage & { parent_tool_use_id?: string | null })
       .parent_tool_use_id;
-    if (
-      isSDKResultMessage(message) &&
-      (parentToolUseId === null || parentToolUseId === undefined) &&
-      !this.suppressIdleOnNextResult
-    ) {
+    const isTopLevelResult =
+      isSDKResultMessage(message) && (parentToolUseId === null || parentToolUseId === undefined);
+    if (isTopLevelResult && !this.suppressIdleOnNextResult) {
       stateManager.beginTerminalIdle();
     }
 
@@ -848,7 +846,7 @@ export class SDKMessageHandler {
     // Terminal messages end the turn even when they represent errors.
     // Clear stale waiting_for_input state before type-specific handling so
     // interrupted AskUserQuestion turns cannot keep the composer locked.
-    if (isSDKResultMessage(message) && !this.usesSessionStateChangedTurnEnd) {
+    if (isTopLevelResult && !this.usesSessionStateChangedTurnEnd) {
       if (!this.suppressIdleOnNextResult) {
         await stateManager.setIdle();
       }
@@ -858,7 +856,7 @@ export class SDKMessageHandler {
       // cleared handoff is reviewed. The flag is consumed at finishTurn.
     }
 
-    if (isSDKResultMessage(message)) {
+    if (isTopLevelResult) {
       this.lastResultWasSuccess = isSDKResultSuccess(message);
       // Reset turn-level thinking token tracking now, before any turn-end
       // handler can trigger an immediate queued turn replay.

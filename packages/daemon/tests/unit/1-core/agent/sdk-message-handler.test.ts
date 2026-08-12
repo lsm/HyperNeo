@@ -1938,6 +1938,7 @@ describe('SDKMessageHandler', () => {
       await handler.handleMessage(nestedResult);
 
       expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
+      expect(setIdleSpy).not.toHaveBeenCalled();
     });
 
     it('refreshes context at turn end for any result message (success)', async () => {
