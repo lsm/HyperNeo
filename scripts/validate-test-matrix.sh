@@ -153,8 +153,13 @@ matrix_excludes() {
 # test wrongly accepts `test_path: >-` with no value as nonempty). Lets callers
 # count ACTUAL values per module so an empty test_path is caught.
 module_values() {
-	awk '
+	awk -v job="$2" '
 		function trim(v) { sub(/^[[:space:]]+/, "", v); sub(/[[:space:]]+$/, "", v); return v }
+		# Scope to the target job only: a `- module:`/`test_path:` pair in an
+		# UNRELATED job must not satisfy the orphan/ownership checks of THIS job.
+		$0 ~ "^  " job ":" { injob=1; next }
+		injob && /^  [a-z]/ { injob=0; mod=""; folding=0; next }
+		!injob { next }
 		/^[[:space:]]*#/ { next }
 		/^[[:space:]]*- module:[[:space:]]*[a-z0-9-]+/ {
 			mod=$0; sub(/^[[:space:]]*- module:[[:space:]]*/, "", mod); sub(/[[:space:]]*$/, "", mod)
@@ -353,8 +358,11 @@ if ! grep -qE "^    include: \['src/\*\*/\*\.\{test,spec\}\.\{ts,tsx\}'\]" "$WEB
 fi
 # test.exclude must stay node_modules/dist only — adding a src/ pattern there
 # would silently skip those tests while this guard still marks them covered.
-if [ "$(active_hits "$WEB_CFG" "exclude: ['node_modules', 'dist']")" -eq 0 ]; then
-	err "packages/web/vitest.config.ts active test exclude is not ['node_modules', 'dist'] — src test files could be excluded"
+# Anchor to `test.exclude` (4-space indent) like the include check above, so a
+# `coverage.exclude` holding ['node_modules','dist'] can't mask a narrowed
+# test.exclude that drops src tests.
+if ! grep -qE "^    exclude: \['node_modules', 'dist'\]" "$WEB_CFG"; then
+	err "packages/web/vitest.config.ts test.exclude is not ['node_modules', 'dist'] — src test files could be excluded (a nested coverage.exclude no longer masks it)"
 	echo "     → keep test.exclude to node_modules/dist, or update this validator" >&2
 fi
 # The web coverage assumes the test-web CI job runs a bare `vitest run` (no
@@ -470,7 +478,7 @@ _axis_modules=$(awk '
 ' "$MAIN_WORKFLOW")
 # Build a module→value map (parses folded-scalar CONTENTS, not just the marker —
 # see module_values) so the orphan check can count ACTUAL values per module.
-_module_values=$(module_values "$MAIN_WORKFLOW")
+_module_values=$(module_values "$MAIN_WORKFLOW" "test-daemon-online")
 for _m in $_axis_modules; do
 	_count=$(printf '%s\n' "$_module_values" | awk -F'\t' -v m="$_m" '$1 == m { c++ } END { print c+0 }')
 	if [ "$_count" -eq 0 ]; then
@@ -485,7 +493,7 @@ done
 # test_path expands to a bare `bun test`, which `bun test --help` documents as
 # "Run all test files" — running the entire online suite (and, with real keys,
 # paid provider calls). The main.yml orphan check above doesn't cover this file.
-_real_module_values=$(module_values "$REAL_API_WORKFLOW")
+_real_module_values=$(module_values "$REAL_API_WORKFLOW" "daemon-real-api")
 # Per-RECORD validation (not grouped by module name): each daemon-real-api
 # include row IS a combination running `bun test ${{ matrix.test_path }}`, so a
 # row without a non-empty test_path expands to a bare `bun test` (which
@@ -497,7 +505,10 @@ while IFS= read -r _rm; do
 	err "real-api include row for module '$_rm' has no non-empty test_path — \${{ matrix.test_path }} would expand empty, so 'bun test' runs the entire online suite"
 	echo "     → add a test_path to the row, or remove it" >&2
 done < <(awk '
-	function flush() { if (mod != "" && !has_path) print mod }
+	function flush() { if (injob && mod != "" && !has_path) print mod }
+	$0 ~ "^  daemon-real-api:" { injob=1; next }
+	injob && /^  [a-z]/ { flush(); injob=0; mod=""; has_path=0; folding=0; next }
+	!injob { next }
 	/^[[:space:]]*#/ { next }
 	/^[[:space:]]*- module:[[:space:]]*[a-z0-9-]+[[:space:]]*$/ {
 		flush()
@@ -538,6 +549,9 @@ fi
 # precisely because it is commented out of the axis). The checks above only
 # iterate `_axis_modules`, so such an include-only row is otherwise invisible.
 _include_modules=$(awk '
+	$0 ~ "^  test-daemon-online:" { injob=1; next }
+	injob && /^  [a-z]/ { injob=0; next }
+	!injob { next }
 	/^[[:space:]]*#/ { next }
 	/^[[:space:]]*- module:[[:space:]]*[a-z0-9-]+/ {
 		m=$0; sub(/^[[:space:]]*- module:[[:space:]]*/, "", m); sub(/[[:space:]]*$/, "", m); print m
@@ -763,16 +777,28 @@ for dir in "$ONLINE_DIR"/*/; do
 	# the parsed maps (not a whole-file grep) means a test_path in an unrelated
 	# job's matrix can't pose as coverage here.
 	dir_refs=$(online_value_count "tests/online/$dirname")
-	if [[ " $EXEMPT_DIRS " == *" $dirname "* ]] || [[ " $SPLIT_DIRS " == *" $dirname "* ]]; then
-		# Exempt dirs are intentionally not run; split dirs are owned file-by-file
-		# via check_split_module. A DIRECTORY-level test_path owner is wrong either
-		# way: it re-enables a disabled module (exempt), or runs every file under
-		# the dir AGAIN on top of the explicit rows (split) — duplicating tests
-		# and, for real-API split modules like cross-provider, repeating paid
-		# provider calls. The old code `continue`d before checking, hiding it.
+	if [[ " $EXEMPT_DIRS " == *" $dirname "* ]]; then
+		# Exempt dirs are intentionally not run, so NO test_path may reference
+		# them — not the directory value AND not any file beneath it. A file-level
+		# owner (e.g. tests/online/glm/glm-provider.test.ts) would re-enable a
+		# disabled module; the old code only checked the directory value.
+		file_under=$(awk -F'\t' -v p="^tests/online/$dirname/" '$2 ~ p' <<<"$_module_values
+$_real_module_values" | wc -l | tr -d ' ')
+		if [ "${dir_refs:-0}" -gt 0 ] || [ "${file_under:-0}" -gt 0 ]; then
+			err "online exempt directory 'tests/online/$dirname' is referenced by a test_path (the dir or a file under it) — that would re-enable an intentionally disabled module"
+			echo "     → remove the test_path row, or drop the dir from EXEMPT_DIRS" >&2
+		fi
+		continue
+	fi
+	if [[ " $SPLIT_DIRS " == *" $dirname "* ]]; then
+		# Split dirs are owned file-by-file via check_split_module (file-level
+		# owners are the explicit rows). A DIRECTORY-level owner is wrong: it runs
+		# every file under the dir AGAIN on top of the explicit rows — duplicating
+		# tests and, for real-API split modules like cross-provider, repeating
+		# paid provider calls. (File-level owners here are expected, so unchecked.)
 		if [ "${dir_refs:-0}" -gt 0 ]; then
-			err "online directory 'tests/online/$dirname' has a directory-level test_path owner but is a split/exempt module — files under it would run on top of their explicit rows (or re-enable a disabled module)"
-			echo "     → point test_path at specific files (split module), or remove the row (exempt module)" >&2
+			err "online directory 'tests/online/$dirname' has a directory-level test_path owner but is a split module — files under it would run on top of their explicit rows"
+			echo "     → point test_path at specific files, or remove the directory-level row" >&2
 		fi
 		continue
 	fi
