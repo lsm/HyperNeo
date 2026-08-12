@@ -25,7 +25,6 @@ import type {
   SpaceWorkflow,
   WorkflowNode,
   WorkflowChannel,
-  Gate,
   SpaceAutonomyLevel,
   WorkflowHook,
 } from '@hyperneo/shared';
@@ -86,7 +85,6 @@ function buildTemplateCanvasSignature(
   edges: VisualEdge[],
   channels: WorkflowChannel[],
   startNodeId: string,
-  gates: Gate[],
   hooks: WorkflowHook[],
   endNodeId: string | undefined
 ): string {
@@ -115,7 +113,6 @@ function buildTemplateCanvasSignature(
         node.step.channels?.map((channel) => ({
           from: channel.from,
           to: Array.isArray(channel.to) ? [...channel.to] : channel.to,
-          gateId: channel.gateId,
         })) ?? [],
       postApproval: node.step.postApproval ? { ...node.step.postApproval } : null,
       position: { x: node.position.x, y: node.position.y },
@@ -136,19 +133,9 @@ function buildTemplateCanvasSignature(
     .map((channel) => ({
       from: channel.from,
       to: Array.isArray(channel.to) ? [...channel.to] : channel.to,
-      gateId: channel.gateId ?? null,
       maxCycles: channel.maxCycles ?? null,
     }))
     .sort((a, b) => `${a.from}:${String(a.to)}`.localeCompare(`${b.from}:${String(b.to)}`));
-
-  const normalizedGates = gates
-    .map((gate) => ({
-      id: gate.id,
-      description: gate.description ?? null,
-      fields: gate.fields ?? [],
-      resetOnCycle: gate.resetOnCycle,
-    }))
-    .sort((a, b) => a.id.localeCompare(b.id));
 
   const normalizedHooks = hooks
     .map((hook) => ({
@@ -171,7 +158,6 @@ function buildTemplateCanvasSignature(
     channels: normalizedChannels,
     startNodeId,
     endNodeId,
-    gates: normalizedGates,
     hooks: normalizedHooks,
   });
 }
@@ -250,7 +236,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
   const [startNodeId, setStartStepId] = useState<string>(() => initState?.startNodeId ?? '');
   const [endNodeId, setEndNodeId] = useState<string | undefined>(() => initState?.endNodeId);
   const [channels, setChannels] = useState<WorkflowChannel[]>(() => initState?.channels ?? []);
-  const [gates, setGates] = useState<Gate[]>(() => initState?.gates ?? []);
   const [hooks, setHooks] = useState<WorkflowHook[]>(() => initState?.hooks ?? []);
   const [completionAutonomyLevel, setCompletionAutonomyLevel] = useState<SpaceAutonomyLevel>(
     () =>
@@ -291,9 +276,8 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
   const nodeExecutionsByNodeId = spaceStore.nodeExecutionsByNodeId.value;
   const regularNodes = nodes;
   const currentTemplateCanvasSignature = useMemo(
-    () =>
-      buildTemplateCanvasSignature(nodes, edges, channels, startNodeId, gates, hooks, endNodeId),
-    [nodes, edges, channels, startNodeId, gates, hooks, endNodeId]
+    () => buildTemplateCanvasSignature(nodes, edges, channels, startNodeId, hooks, endNodeId),
+    [nodes, edges, channels, startNodeId, hooks, endNodeId]
   );
   const [templateBaselineSignature, setTemplateBaselineSignature] = useState(() =>
     buildTemplateCanvasSignature(
@@ -301,7 +285,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
       initState?.edges ?? [],
       initState?.channels ?? [],
       initState?.startNodeId ?? '',
-      initState?.gates ?? [],
       initState?.hooks ?? [],
       initState?.endNodeId
     )
@@ -386,8 +369,8 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
   }, [channels, endpointNodeIdLookup, nodeOrderByLocalId]);
 
   const semanticEdges = useMemo(
-    () => buildSemanticWorkflowEdges(nodes, channels, gates, cyclicChannelIndexes),
-    [nodes, channels, gates, cyclicChannelIndexes]
+    () => buildSemanticWorkflowEdges(nodes, channels, cyclicChannelIndexes),
+    [nodes, channels, cyclicChannelIndexes]
   );
 
   const routedSemanticEdges = useMemo(
@@ -405,14 +388,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
       fromStepId: edge.fromStepId,
       toStepId: edge.toStepId,
       direction: edge.direction,
-      gateType: edge.gateType,
-      reverseGateType: edge.reverseGateType,
-      gateLabel: edge.gateLabel,
-      gateColor: edge.gateColor,
-      hasScript: edge.hasScript,
-      reverseGateLabel: edge.reverseGateLabel,
-      reverseGateColor: edge.reverseGateColor,
-      reverseHasScript: edge.reverseHasScript,
       isCyclic: edge.hasCyclic,
       sourceSide: edge.sourceSide,
       targetSide: edge.targetSide,
@@ -599,7 +574,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
             ? `${fromNode.step.name || 'Unnamed'} ↔ ${toNode.step.name || 'Unnamed'}`
             : `${fromNode.step.name || 'Unnamed'} → ${toNode.step.name || 'Unnamed'}`,
         channelCount: edge.channelCount,
-        hasGate: edge.hasGate,
       };
 
       linksByNodeId.set(edge.fromStepId, [...(linksByNodeId.get(edge.fromStepId) ?? []), link]);
@@ -828,10 +802,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
     []
   );
 
-  const handleUpdateGatesFromEdgePanel = useCallback((nextGates: Gate[]) => {
-    setGates(nextGates);
-  }, []);
-
   const handleDeleteChannelFromEdgePanel = useCallback((index: number) => {
     setChannels((prev) => prev.filter((_, i) => i !== index));
   }, []);
@@ -1020,16 +990,11 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
       ...channel,
       to: Array.isArray(channel.to) ? [...channel.to] : channel.to,
     }));
-    const nextGates = (template.gates ?? []).map((gate) => ({
-      ...gate,
-      fields: [...(gate.fields ?? [])],
-    }));
     const nextHooks = (template.hooks ?? []).map((hook) => ({ ...hook }));
 
     setNodes(nextNodes);
     setEdges(newEdges);
     setChannels(nextChannels);
-    setGates(nextGates);
     setHooks(nextHooks);
     if (template.tags) {
       setTags([...template.tags]);
@@ -1046,7 +1011,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
         newEdges,
         nextChannels,
         resolvedStartLocalId,
-        nextGates,
         nextHooks,
         resolvedEndLocalId
       )
@@ -1127,7 +1091,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
       endNodeId: endNodeId || undefined,
       tags,
       channels,
-      gates,
       hooks,
       completionAutonomyLevel,
       disabled,
@@ -1553,8 +1516,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
             }
             onUpdateChannelLink={handleUpdateChannelFromEdgePanel}
             onDeleteChannelLink={handleDeleteChannelFromEdgePanel}
-            channelRelationGates={gates}
-            onUpdateChannelGates={handleUpdateGatesFromEdgePanel}
             onConvertChannelRelationToBidirectional={handleConvertChannelRelationToBidirectional}
             onCloseChannelLink={() => setSelectedChannelId(null)}
             onClose={() => {
@@ -1601,8 +1562,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
             reverseLinks={selectedChannelInfo.reverseLinks}
             canConvertToBidirectional={selectedChannelInfo.canConvertToBidirectional}
             onConvertToBidirectional={handleConvertChannelRelationToBidirectional}
-            gates={gates}
-            onGatesChange={handleUpdateGatesFromEdgePanel}
             onChange={handleUpdateChannelFromEdgePanel}
             onDelete={handleDeleteChannelFromEdgePanel}
             onBack={selectedNode ? () => setSelectedChannelId(null) : undefined}

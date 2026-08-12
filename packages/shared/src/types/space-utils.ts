@@ -6,8 +6,6 @@
  * - A bidirectional relationship is two separate WorkflowChannel entries.
  * - There is no intermediate "ResolvedChannel" layer — WorkflowChannel is the
  *   routing unit at both the schema and runtime levels.
- * - Gate writer authorization is node-level: any agent in the FROM node may
- *   write to a gate attached to that channel. No slot-label matching needed.
  */
 
 import type {
@@ -247,21 +245,6 @@ export function validateChannels(workflow: SpaceWorkflow, agents: SpaceWorkerAge
 
   const channels = workflow.channels ?? [];
 
-  // Check each gate is referenced by at most one channel
-  const gateChannelCount = new Map<string, number>();
-  for (const ch of channels) {
-    if (ch.gateId) {
-      gateChannelCount.set(ch.gateId, (gateChannelCount.get(ch.gateId) ?? 0) + 1);
-    }
-  }
-  for (const [gateId, count] of gateChannelCount) {
-    if (count > 1) {
-      errors.push(
-        `Gate "${gateId}" is referenced by ${count} channels. Each gate must belong to exactly one channel.`
-      );
-    }
-  }
-
   for (let i = 0; i < channels.length; i++) {
     const ch = channels[i];
     const loc = `workflow.channels[${i}]`;
@@ -301,36 +284,4 @@ export function validateChannels(workflow: SpaceWorkflow, agents: SpaceWorkerAge
   }
 
   return errors;
-}
-
-// ============================================================================
-// Gate writer authorization (node-level)
-// ============================================================================
-
-/**
- * Determines whether an agent in `agentNodeName` is authorized to write to a
- * gate field given the gate's `writers` list and the channel the gate belongs to.
- *
- * Authorization rules:
- * - `writers` absent (null/undefined) → authorized iff `agentNodeName === channel.from`
- * - `writers` is empty `[]`           → never authorized (external-only gate)
- * - `writers` includes `'*'`          → always authorized
- * - `writers` includes node names     → authorized iff `agentNodeName` is in the list
- *
- * @param agentNodeName - The name of the node this agent belongs to.
- * @param channel       - The channel the gate is attached to.
- * @param writers       - The `writers` array from the gate field definition.
- */
-export function isGateWriterAuthorized(
-  agentNodeName: string,
-  channel: WorkflowChannel,
-  writers: string[]
-): boolean {
-  if (!writers) {
-    // Inferred: FROM node agents can write
-    return agentNodeName === channel.from;
-  }
-  if (writers.length === 0) return false; // external-only gate
-  if (writers.includes('*')) return true;
-  return writers.includes(agentNodeName);
 }

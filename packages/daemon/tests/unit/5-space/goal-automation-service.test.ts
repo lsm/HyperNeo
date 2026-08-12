@@ -9,7 +9,6 @@ import {
 } from '../../../src/lib/space/goals/goal-automation-service';
 import { EvolutionScopeService } from '../../../src/lib/space/evolution-scope-service';
 import { EvolutionRepository } from '../../../src/storage/repositories/evolution-repository';
-import { GateOpenStateRepository } from '../../../src/storage/repositories/gate-open-state-repository';
 import { GoalAutomationCursorRepository } from '../../../src/storage/repositories/goal-automation-cursor-repository';
 import { JobQueueRepository } from '../../../src/storage/repositories/job-queue-repository';
 import { SpaceGoalRepository } from '../../../src/storage/repositories/space-goal-repository';
@@ -100,10 +99,7 @@ describe('GoalAutomationService', () => {
       spaceRepo,
       goalRepo,
       taskRepo,
-      workflowRunRepo: new SpaceWorkflowRunRepository(
-        db as never,
-        new GateOpenStateRepository(db as never)
-      ),
+      workflowRunRepo: new SpaceWorkflowRunRepository(db as never),
     });
     service = new GoalAutomationService({
       goalRepo,

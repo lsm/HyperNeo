@@ -3,7 +3,7 @@
  * tools available to node agent sub-sessions.
  *
  * Action tools:
- *   send_message    — channel-validated direct messaging; writes gate data on gated channels
+ *   send_message    — channel-validated direct messaging
  *   save_artifact   — persist typed data to the workflow run artifact store (replaces save/write_artifact)
  *   create_standalone_task — create a new task in the same Space
  *
@@ -12,8 +12,6 @@
  *   list_peers           — list other group members with statuses and permitted channels
  *   list_reachable_agents — list all reachable agents/nodes grouped by proximity
  *   list_channels        — list all channels declared in the workflow
- *   list_gates           — list all gates with current runtime data
- *   read_gate            — read current data for a specific gate
  *
  * This file contains only schema definitions — no runtime logic or side effects.
  *
@@ -51,12 +49,6 @@ export type ListPeersInput = z.infer<typeof ListPeersSchema>;
  *   - Node name: `target: 'node-name'` — fan-out to all agents in the named node
  *   - Multicast array: `target: ['coder', 'reviewer']` — deliver to multiple agents
  *   - Broadcast to all permitted: `target: '*'`
- *
- * When the target channel is gated, the optional `data` payload is automatically
- * merged into the gate's data store (merge semantics: top-level keys overwrite,
- * other keys survive). Gate re-evaluation fires after the merge — if the gate
- * opens, the message is delivered immediately; otherwise it is held until the
- * gate condition passes.
  */
 export const SendMessageSchema = z.object({
   /**
@@ -76,13 +68,12 @@ export const SendMessageSchema = z.object({
   message: z.string().min(1).describe('The message content to send to the target peer(s)'),
   /**
    * Optional structured data payload attached to the message.
-   * When the target channel is gated, this data is automatically merged into the gate.
-   * Also passed through to the target as part of the delivery.
+   * Passed through to the target and available to send_message hooks for validation.
    */
   data: z
     .record(z.string(), z.unknown())
     .describe(
-      'Optional structured data payload. Automatically merged into the gate data store when the channel is gated (merge semantics). Also passed through to the target agent.'
+      'Optional structured data payload. Passed through to the target agent and available to send_message hooks.'
     )
     .optional(),
 });
@@ -117,7 +108,7 @@ export const SubscribePrEventsSchema = z.object({
     .optional()
     .describe(
       "GitHub PR URL to scope events to (e.g. 'https://github.com/owner/repo/pull/123'). " +
-        "Omit to use this workflow run's current PR, resolved from gate data / artifacts."
+        "Omit to use this workflow run's current PR, resolved from hook state / artifacts."
     ),
   label: z.string().describe('Optional label for diagnostics').optional(),
 });
@@ -442,32 +433,6 @@ export const ListChannelsSchema = z.object({});
 export type ListChannelsInput = z.infer<typeof ListChannelsSchema>;
 
 // ---------------------------------------------------------------------------
-// list_gates
-// ---------------------------------------------------------------------------
-
-/**
- * Schema for `list_gates` input.
- * Lists all gates declared in the current workflow with their current data.
- * No arguments — gates are derived from the workflow run context.
- */
-export const ListGatesSchema = z.object({});
-
-export type ListGatesInput = z.infer<typeof ListGatesSchema>;
-
-// ---------------------------------------------------------------------------
-// read_gate
-// ---------------------------------------------------------------------------
-
-/**
- * Schema for `read_gate` input.
- * Reads the current runtime data for a specific gate from the gate_data table.
- */
-export const ReadGateSchema = z.object({
-  /** The ID of the gate to read data for. */
-  gateId: z.string().min(1).describe('The gate ID to read current data for'),
-});
-
-export type ReadGateInput = z.infer<typeof ReadGateSchema>;
 
 // ---------------------------------------------------------------------------
 // list_artifacts
@@ -572,8 +537,6 @@ export const NODE_AGENT_TOOL_SCHEMAS = {
   list_artifacts: ListArtifactsSchema,
   list_reachable_agents: ListReachableAgentsSchema,
   list_channels: ListChannelsSchema,
-  list_gates: ListGatesSchema,
-  read_gate: ReadGateSchema,
   subscribe_external_event: SubscribeExternalEventSchema,
   unsubscribe_external_event: UnsubscribeExternalEventSchema,
   subscribe_pr_events: SubscribePrEventsSchema,

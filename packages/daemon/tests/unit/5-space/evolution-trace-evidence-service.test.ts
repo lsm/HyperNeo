@@ -4,7 +4,6 @@ import type { EvidenceRef } from '@hyperneo/shared';
 import { EvolutionScopeService } from '../../../src/lib/space/evolution-scope-service';
 import { EvolutionTraceEvidenceService } from '../../../src/lib/space/evolution-trace-evidence-service';
 import { EvolutionRepository } from '../../../src/storage/repositories/evolution-repository';
-import { GateOpenStateRepository } from '../../../src/storage/repositories/gate-open-state-repository';
 import { SpaceGoalRepository } from '../../../src/storage/repositories/space-goal-repository';
 import { SpaceRepository } from '../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository';
@@ -28,10 +27,7 @@ describe('EvolutionTraceEvidenceService', () => {
     evolutionRepo = new EvolutionRepository(db as never);
     goalRepo = new SpaceGoalRepository(db as never);
     taskRepo = new SpaceTaskRepository(db as never);
-    const workflowRunRepo = new SpaceWorkflowRunRepository(
-      db as never,
-      new GateOpenStateRepository(db as never)
-    );
+    const workflowRunRepo = new SpaceWorkflowRunRepository(db as never);
     traceEvidenceService = new EvolutionTraceEvidenceService({
       db: db as never,
       evolutionRepo,

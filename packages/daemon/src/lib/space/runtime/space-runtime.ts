@@ -35,7 +35,6 @@ import type {
 } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import {
-  computeGateDefaults,
   isChannelCyclic,
   isRateOrUsageLimited,
   isWorkflowRunSucceeded,
@@ -60,7 +59,6 @@ import { legacyGitHubTopic } from '../../external-events/github-subscription-pat
 import { composeLongHorizonSubscriptionPattern } from '../../external-events/long-horizon-subscription-pattern';
 import { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
 import { normalizeMeaningfulTaskResult } from '../task-result-utils';
-import { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { WorkflowArtifactProfile } from './artifact-profile';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
@@ -81,14 +79,6 @@ import {
   type SpaceWorkflowManager,
 } from '../managers/space-workflow-manager';
 import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format';
-import {
-  gateScriptDiagnosticKey,
-  isGateScriptStatusEmitting,
-  logTemplateGateScriptReload,
-  resolveTemplateGateScript,
-  sharedGateScriptDiagnosticLedger,
-} from '../workflows/built-in-workflows';
-import { getEffectiveGate } from './gate-features';
 import { deliveryModeFromFailureReason } from './delivery-mode';
 import { CompletionDetector } from './completion-detector';
 import {
@@ -101,8 +91,6 @@ import {
   MAX_TASK_AGENT_CRASH_RETRIES,
   MAX_TERMINAL_ERROR_CONTINUE_RETRIES,
 } from './constants';
-import { evaluateGate } from './gate-evaluator';
-import { executeGateScript } from './gate-script-executor';
 import { classifyLastMessageForIdleAgent } from './last-message-classifier';
 import {
   COMPACT_RESULT_TIMEOUT_MS,
@@ -189,8 +177,6 @@ export interface SpaceRuntimeConfig {
   taskRepo: SpaceTaskRepository;
   /** Node execution repository for workflow-internal execution state */
   nodeExecutionRepo: NodeExecutionRepository;
-  /** Optional gate data repository used to resolve PR URLs written through gated channels. */
-  gateDataRepo?: GateDataRepository;
   /** Optional reactive DB invalidation hooks for task LiveQuery surfaces */
   reactiveDb?: ReactiveDatabase;
   /**
@@ -314,29 +300,6 @@ export interface SpaceRuntimeConfig {
     message: string;
     idempotencyKey: string;
   }) => Promise<{ delivered: boolean }>;
-  /**
-   * Optional hook invoked once after an external event is delivered to any
-   * subscription target whose workflow run is currently in `blocked` status.
-   *
-   * Wired by `SpaceRuntimeService` to trigger immediate gate re-evaluation
-   * (rather than waiting for the next poll cycle) and notify the blocked
-   * agent session when a gate opens as a result.
-   *
-   * Resolves to `true` when at least one gate opened as a result of the
-   * re-evaluation, `'retry'` when a deferred gate-evaluation retry was
-   * scheduled (the event must stay published so the retry can wake the
-   * gate later), and `false`/`undefined` when no gate opened and no retry
-   * is scheduled. The runtime uses the resolved value to decide whether
-   * to terminally mark the event `failed` when no delivery was produced —
-   * leaving the event `published` forever would cause the redispatch sweep
-   * to replay it on every restart and rerun gate scripts for an event that
-   * already failed to unblock anything, but marking it terminal when a
-   * retry is scheduled would lose the only wake-up event.
-   */
-  onBlockedRunExternalEvent?: (payload: {
-    runId: string;
-    event: ExternalEventPublishedPayload;
-  }) => Promise<boolean | 'retry'> | boolean | 'retry' | void;
 }
 
 interface StartWorkflowRunOptions {
@@ -958,14 +921,6 @@ export class SpaceRuntime {
    */
   private externalEventHandlingDepth = 0;
   private retainedEventRedispatchPending = false;
-  /**
-   * Accumulates across concurrent handleExternalEvent calls: set true by any
-   * handler that left its event published for a scheduled gate retry. The
-   * outermost handler's finally checks it (instead of a per-call local) so a
-   * retry-pending event isn't flushed just because a later, non-retry handler
-   * was the last to unwind.
-   */
-  private externalEventRetryPending = false;
 
   constructor(private config: SpaceRuntimeConfig) {
     this.internalEventBus = config.internalEventBus;
@@ -1581,8 +1536,8 @@ export class SpaceRuntime {
 
   /**
    * Reset any blocked node executions for a run back to pending. Called by
-   * direct resume paths (approve_gate, event-driven gate-open resume) that
-   * bypass the normal blocked → in_progress transition so the tick loop
+   * direct resume paths that bypass the normal blocked → in_progress
+   * transition so the tick loop
    * re-drives the recovered slot instead of short-circuiting through the
    * blocked-execution guard. Best-effort — errors are logged and swallowed.
    */
@@ -1867,49 +1822,21 @@ export class SpaceRuntime {
   private async handleExternalEvent(payload: ExternalEventPublishedPayload): Promise<void> {
     this.externalEventHandlingDepth += 1;
     try {
-      const retryPending = await this.handleExternalEventImpl(payload);
-      // Accumulate into the depth-wide flag so the outermost handler's finally
-      // sees if ANY concurrent handler left an event retry-pending.
-      if (retryPending) {
-        this.externalEventRetryPending = true;
-      }
+      await this.handleExternalEventImpl(payload);
     } finally {
       this.externalEventHandlingDepth -= 1;
-      if (this.externalEventHandlingDepth === 0) {
-        // Reset the depth-wide retry-pending flag at every outermost unwind so
-        // it can't strand a later unrelated handler's retained replay.
-        const anyRetryPending = this.externalEventRetryPending;
-        this.externalEventRetryPending = false;
-        if (this.retainedEventRedispatchPending) {
-          this.retainedEventRedispatchPending = false;
-          // Skip the immediate flush when any concurrent handler left an event
-          // published for a scheduled gate retry — re-handling it now would
-          // bypass the GateRetryScheduler and repeat gate evaluation.
-          if (!anyRetryPending && !this.isStopped) {
-            this.redispatchRetainedExternalEvents();
-          }
+      if (this.externalEventHandlingDepth === 0 && this.retainedEventRedispatchPending) {
+        this.retainedEventRedispatchPending = false;
+        if (!this.isStopped) {
+          this.redispatchRetainedExternalEvents();
         }
       }
     }
   }
 
-  private async handleExternalEventImpl(payload: ExternalEventPublishedPayload): Promise<boolean> {
+  private async handleExternalEventImpl(payload: ExternalEventPublishedPayload): Promise<void> {
     const store = this.config.externalEventStore;
-    if (!store) return false;
-    const allMatches = this.lookupSubscriptionTargets(payload.topic);
-    // Trigger event-driven gate re-evaluation for blocked runs before normal
-    // delivery. The hook is an independent side effect: whether a gate opens
-    // must not decide if a matching subscription receives the event.
-    //
-    // Awaiting the hook here also prevents the deduper from terminally
-    // marking the event `ignored` if the hook is still in flight when the
-    // delivery filter below finds zero deliverable targets — without this,
-    // a daemon crash between the fire-and-forget dispatch and gate
-    // re-evaluation would lose the only wake-up event for a blocked run.
-    const blockedHookOutcome = await this.fireBlockedRunExternalEventHook(payload, allMatches);
-
-    // Re-lookup after the hook because gate evaluation may change workflow state,
-    // but never treat that state as a subscription or delivery-lifecycle gate.
+    if (!store) return;
     const matches = this.lookupSubscriptionTargets(payload.topic).filter((target) => {
       if (isLongHorizonSubscriptionTarget(target)) return target.spaceId === payload.spaceId;
       return this.isWorkflowTargetOwnedBySpace(target, payload.spaceId);
@@ -1933,7 +1860,7 @@ export class SpaceRuntime {
           );
         }
       }
-      return blockedHookOutcome.anyRetryScheduled;
+      return;
     }
 
     const workflowDeliveries = new Map<
@@ -2030,7 +1957,6 @@ export class SpaceRuntime {
     for (const { target, deliveryKey } of workflowDeliveries.values()) {
       await this.deliverExternalEventToWorkflowTarget(target, payload, deliveryKey);
     }
-    return false;
   }
 
   /**
@@ -2241,79 +2167,6 @@ export class SpaceRuntime {
           `${resolved.workflowRunId}/${resolved.nodeId}/${resolved.agentName}: ${formatCommandError(err)}`
       );
     }
-  }
-
-  /**
-   * Returns the set of runIds the hook was actually fired for (after all
-   * guards) and whether any of those runs reported a gate opening. Caller
-   * uses this to decide whether to terminally mark the event `ignored` —
-   * if a hook is in flight, the event must stay `published` so the deduper
-   * can retry it should the hook fail before re-evaluation completes. When
-   * the hook completed but no gate opened, the event is terminally marked
-   * `failed` so the redispatch sweep does not replay it forever.
-   */
-  private async fireBlockedRunExternalEventHook(
-    payload: ExternalEventPublishedPayload,
-    matches: SubscriptionTarget[]
-  ): Promise<{ firedRunIds: Set<string>; anyGateOpened: boolean; anyRetryScheduled: boolean }> {
-    const hook = this.config.onBlockedRunExternalEvent;
-    const firedRunIds = new Set<string>();
-    if (!hook) return { firedRunIds, anyGateOpened: false, anyRetryScheduled: false };
-    const visitedRunIds = new Set<string>();
-    const inflight: Array<Promise<unknown>> = [];
-    let syncGateOpened = false;
-    let syncRetryScheduled = false;
-    for (const target of matches) {
-      if (isLongHorizonSubscriptionTarget(target)) continue;
-      const runId = target.workflowRunId;
-      if (visitedRunIds.has(runId)) continue;
-      const run = this.config.workflowRunRepo.getRun(runId);
-      if (!run || run.status !== 'blocked' || run.spaceId !== payload.spaceId) continue;
-      // Gate the hook by the owning task lifecycle: a cancelled task whose
-      // subscription lingers must not open a gate and resume the run.
-      const owningTask = this.pickCanonicalTaskForRun(
-        run,
-        this.config.taskRepo.listByWorkflowRunIncludingArchived(run.id)
-      );
-      if (owningTask && (owningTask.status === 'cancelled' || owningTask.status === 'archived')) {
-        continue;
-      }
-      const space = await this.config.spaceManager.getSpace(run.spaceId);
-      if (!space || space.paused || space.stopped) continue;
-      visitedRunIds.add(runId);
-      firedRunIds.add(runId);
-      try {
-        const result = hook({ runId, event: payload });
-        if (result && typeof (result as Promise<unknown>).then === 'function') {
-          inflight.push(
-            (result as Promise<unknown>).catch((err) => {
-              log.warn(
-                `SpaceRuntime: onBlockedRunExternalEvent failed for run ${runId}: ` +
-                  `${err instanceof Error ? err.message : String(err)}`
-              );
-              return false;
-            })
-          );
-        } else if (result === true) {
-          syncGateOpened = true;
-        } else if (result === 'retry') {
-          syncRetryScheduled = true;
-        }
-      } catch (err) {
-        log.warn(
-          `SpaceRuntime: onBlockedRunExternalEvent threw for run ${runId}: ` +
-            `${err instanceof Error ? err.message : String(err)}`
-        );
-      }
-    }
-    let anyGateOpened = syncGateOpened;
-    let anyRetryScheduled = syncRetryScheduled;
-    if (inflight.length > 0) {
-      const results = await Promise.all(inflight);
-      anyGateOpened = anyGateOpened || results.some((value) => value === true);
-      anyRetryScheduled = anyRetryScheduled || results.some((value) => value === 'retry');
-    }
-    return { firedRunIds, anyGateOpened, anyRetryScheduled };
   }
 
   private async isTargetSpacePausedOrStopped(target: WorkflowSubscriptionTarget): Promise<boolean> {
@@ -4806,7 +4659,6 @@ export class SpaceRuntime {
     // Cancel any deferred retained-event flush so an in-flight handleExternalEvent
     // finally doesn't process retained webhooks after shutdown.
     this.retainedEventRedispatchPending = false;
-    this.externalEventRetryPending = false;
     this.unsubscribeExternalEventPublished?.();
     this.unsubscribeExternalEventPublished = undefined;
     this.unsubscribeSdkToolUseCreated?.();
@@ -4985,18 +4837,6 @@ export class SpaceRuntime {
     const run = this.config.workflowRunRepo.transitionStatus(pendingRun.id, 'in_progress');
     await this.safeOnWorkflowRunCreated(spaceId, run);
 
-    // Initialize gate data defaults so per-cycle anchors (e.g. cycle_start_at)
-    // are present from the start of the run.
-    if (this.config.gateDataRepo && workflow.gates) {
-      this.config.gateDataRepo.initializeForRun(
-        run.id,
-        workflow.gates.map((gate) => ({
-          id: gate.id,
-          data: computeGateDefaults(gate.fields ?? []),
-        }))
-      );
-    }
-
     // Register executor and meta. If a later step fails, we must clean these up.
     const meta: ExecutorMeta = { workflow, spaceId, workspacePath: space.workspacePath };
     this.executorMeta.set(run.id, meta);
@@ -5096,18 +4936,6 @@ export class SpaceRuntime {
    */
   getExecutor(runId: string): WorkflowExecutor | undefined {
     return this.executors.get(runId);
-  }
-
-  /** @internal — exposed only for unit tests/diagnostics. */
-  getActiveGatePollCount(): number {
-    return 0;
-  }
-
-  /** @internal — exposed only for unit tests/diagnostics. */
-  isGatePollActive(runId: string, gateId: string): boolean {
-    void runId;
-    void gateId;
-    return false;
   }
 
   /**
@@ -6402,7 +6230,7 @@ export class SpaceRuntime {
     }
 
     const createdOrReset: string[] = [];
-    const blockedGateReasons: string[] = [];
+    const blockedReasons: string[] = [];
 
     for (const {
       sourceExecution,
@@ -6418,7 +6246,7 @@ export class SpaceRuntime {
         channelIndex
       );
       if (!cycleResult.open) {
-        blockedGateReasons.push(cycleResult.reason);
+        blockedReasons.push(cycleResult.reason);
         continue;
       }
       let activatedOnChannel = false;
@@ -6426,25 +6254,11 @@ export class SpaceRuntime {
         const targetNode = nodeByName.get(targetName);
         if (!targetNode || targetNode.id === sourceNode.id) continue;
 
-        const gateSourceName = channel.from === '*' ? sourceNode.name : channel.from;
-        const gateResult = await this.evaluateRestartRecoveryChannelGate(
-          run.id,
-          workflow,
-          channel,
-          gateSourceName
-        );
-        if (!gateResult.open) {
-          blockedGateReasons.push(
-            gateResult.reason ?? `Gate ${channel.gateId ?? 'unknown'} blocked channel ${channel.id}`
-          );
-          continue;
-        }
-
         // Validate this target's configured agent references now that the channel
-        // is confirmed reachable (cycle cap and gate both open), but BEFORE
-        // creating any execution for it. A stale reference blocks the run via
-        // recoverSingleRun's handler; an UNREACHABLE target (closed gate / capped
-        // cycle) was skipped above and must not block recovery of other branches.
+        // is confirmed reachable (cycle cap open), but BEFORE creating any
+        // execution for it. A stale reference blocks the run via
+        // recoverSingleRun's handler; an UNREACHABLE target (capped cycle) was
+        // skipped above and must not block recovery of other branches.
         // Built-in/worker slots (agentId=null) are preserved.
         const missing = findMissingNodeAgentReferences(
           targetNode,
@@ -6515,10 +6329,10 @@ export class SpaceRuntime {
       );
       return true;
     }
-    if (blockedGateReasons.length > 0) {
+    if (blockedReasons.length > 0) {
       log.warn(
-        `SpaceRuntime.recoverStalledRuns: run ${run.id} has downstream transition(s) but gate(s) are closed: ${[
-          ...new Set(blockedGateReasons),
+        `SpaceRuntime.recoverStalledRuns: run ${run.id} has downstream transition(s) that cannot proceed: ${[
+          ...new Set(blockedReasons),
         ].join('; ')}`
       );
     }
@@ -6555,16 +6369,7 @@ export class SpaceRuntime {
     if (!isChannelCyclic(channelIndex, workflow.channels ?? [], workflow.nodes)) return;
     const maxCycles = channel.maxCycles ?? 5;
     const cycleRepo = new ChannelCycleRepository(this.config.db);
-    const gateDataRepo = new GateDataRepository(this.config.db);
-    const cyclicGates = (workflow.gates ?? []).filter((gate) => gate.resetOnCycle);
-    const increment = () => {
-      for (const gate of cyclicGates) {
-        gateDataRepo.reset(runId, gate.id, computeGateDefaults(gate.fields ?? []));
-      }
-      return cycleRepo.incrementCycleCount(runId, channelIndex, maxCycles);
-    };
-    const incremented =
-      cyclicGates.length > 0 ? this.config.db.transaction(increment)() : increment();
+    const incremented = cycleRepo.incrementCycleCount(runId, channelIndex, maxCycles);
     if (!incremented) {
       log.warn(
         `SpaceRuntime.recoverStalledRuns: cyclic channel "${channel.id ?? channelIndex}" reached maxCycles during recovery activation`
@@ -6615,59 +6420,6 @@ export class SpaceRuntime {
       resolvedTargets.add(targetNode?.name ?? rawTarget);
     }
     return [...resolvedTargets];
-  }
-
-  private async evaluateRestartRecoveryChannelGate(
-    runId: string,
-    workflow: SpaceWorkflow,
-    channel: WorkflowChannel,
-    sourceName?: string
-  ): Promise<{ open: boolean; reason?: string }> {
-    if (!channel.gateId) return { open: true };
-    const storedGate = (workflow.gates ?? []).find((candidate) => candidate.id === channel.gateId);
-    if (!storedGate) {
-      return {
-        open: false,
-        reason: `Gate "${channel.gateId}" not found — channel "${channel.id}" is closed (misconfiguration)`,
-      };
-    }
-    const { gate: liveTemplateGate, status: gateScriptStatus } = resolveTemplateGateScript(
-      storedGate,
-      workflow
-    );
-    if (
-      isGateScriptStatusEmitting(gateScriptStatus) &&
-      sharedGateScriptDiagnosticLedger.shouldEmit(
-        gateScriptDiagnosticKey(runId, storedGate.id, gateScriptStatus)
-      )
-    ) {
-      logTemplateGateScriptReload({
-        log,
-        status: gateScriptStatus,
-        templateName: workflow.templateName,
-        gateId: storedGate.id,
-        runId,
-      });
-    }
-    let gate = liveTemplateGate;
-    gate = getEffectiveGate(gate, workflow, sourceName ?? channel.from);
-    const gateDataRepo = new GateDataRepository(this.config.db);
-    const gateDataRecord = gateDataRepo.get(runId, gate.id);
-    const runtimeData = gateDataRecord?.data ?? computeGateDefaults(gate.fields ?? []);
-    const run = this.config.workflowRunRepo.getRun(runId);
-    const space = await this.config.spaceManager.getSpace(workflow.spaceId);
-    const result = await evaluateGate(gate, runtimeData, executeGateScript, {
-      workspacePath: space?.workspacePath ?? process.cwd(),
-      gateId: gate.id,
-      runId,
-      gateData: runtimeData,
-      workflowStartIso: run ? new Date(run.createdAt).toISOString() : undefined,
-      gateDataUpdatedIso: gateDataRecord
-        ? new Date(gateDataRecord.updatedAt).toISOString()
-        : undefined,
-      prUrl: this.resolvePrUrlForRun(runId) || undefined,
-    });
-    return { open: result.open, reason: result.reason };
   }
 
   private enqueueRestartRecoveryMessage(
@@ -8044,10 +7796,7 @@ export class SpaceRuntime {
             await this.blockRunForAgentCrash(runId, meta.spaceId, canonicalTask, nodeExecutions);
             return;
           }
-          if (
-            canonicalTask.status === 'open' ||
-            (canonicalTask.status === 'review' && canonicalTask.pendingCheckpointType === 'gate')
-          ) {
+          if (canonicalTask.status === 'open') {
             const nowTs = Date.now();
             await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
               status: 'in_progress',

@@ -2785,13 +2785,9 @@ describe('activateWorkflowNode() — InternalEventBus forwarding', () => {
       // Build real repos/managers on this DB
       const taskRepo = new SpaceTaskRepo(db);
       const workflowRunRepo = new SpaceWorkflowRunRepo(db);
-      const { GateDataRepository } = await import(
-        '../../../../src/storage/repositories/gate-data-repository.ts'
-      );
       const { ChannelCycleRepository } = await import(
         '../../../../src/storage/repositories/channel-cycle-repository.ts'
       );
-      const gateDataRepo = new GateDataRepository(db);
       const channelCycleRepo = new ChannelCycleRepository(db);
       const agentRepo = new SpaceAgentRepository(db);
       const agentManager = new AgentMgr(agentRepo);
@@ -2828,7 +2824,6 @@ describe('activateWorkflowNode() — InternalEventBus forwarding', () => {
         rules: [],
         tags: [],
         channels: [],
-        gates: [],
         completionAutonomyLevel: 3,
       });
 
@@ -2856,7 +2851,6 @@ describe('activateWorkflowNode() — InternalEventBus forwarding', () => {
         workflowRunRepo,
         taskRepo,
         tickIntervalMs: 60_000,
-        gateDataRepo,
         channelCycleRepo,
         internalEventBus: bus,
       });

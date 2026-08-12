@@ -32,7 +32,6 @@ import { Dropdown, type DropdownMenuItem } from '../ui/Dropdown';
 import { StatusBadge } from '../ui/StatusBadge';
 import { EditTaskModal } from './EditTaskModal';
 import { NodeAgentChoiceOverlay } from './NodeAgentChoiceOverlay';
-import { PendingGateBanner } from './PendingGateBanner';
 import { PendingHookBanner } from './PendingHookBanner';
 import { PendingPostApprovalBanner } from './PendingPostApprovalBanner';
 import { PendingTaskCompletionBanner } from './PendingTaskCompletionBanner';
@@ -43,7 +42,6 @@ import { TaskBlockedBanner } from './TaskBlockedBanner';
 import { TaskCanvasToggleButton, TaskSessionChatComposer } from './TaskSessionChatComposer';
 import { ImageDropOverlay } from '../ImageDropOverlay.tsx';
 import { getTransitionActions } from './TaskStatusActions';
-import { useRunGateSummaries } from './use-run-gate-summaries.ts';
 import { useRunHookStates } from './use-run-hook-states.ts';
 
 interface SpaceTaskPaneProps {
@@ -258,14 +256,13 @@ export function SpaceTaskPane({
     };
   }, [taskId]);
 
-  // Resolve runId/workflowId here (before the early returns) so the gate-status
+  // Resolve runId/workflowId here (before the early returns) so the hook-state
   // hook is always called — React's Rules of Hooks require a stable call order.
   const _runId = task?.workflowRunId ?? null;
   const _workflowRunForHook = _runId
     ? (spaceStore.workflowRuns.value.find((r) => r.id === _runId) ?? null)
     : null;
   const _workflowIdForHook = _workflowRunForHook?.workflowId ?? null;
-  const { summaries: gateSummaries } = useRunGateSummaries(_runId, _workflowIdForHook);
   const {
     summaries: hookSummaries,
     fetchError: hookFetchError,
@@ -709,14 +706,10 @@ export function SpaceTaskPane({
   const activitySummary = STATUS_LABELS[task.status];
   const resolvedBanner = resolveActiveTaskBanner(
     task,
-    hookSummaries as unknown as import('../../lib/task-banner').HookBannerSummary[],
-    gateSummaries
+    hookSummaries as unknown as import('../../lib/task-banner').HookBannerSummary[]
   );
   const activeBanner =
-    hasWorkflowHooks &&
-    hookFetchError &&
-    _runId &&
-    (resolvedBanner === null || resolvedBanner.kind === 'gate_pending')
+    hasWorkflowHooks && hookFetchError && _runId && resolvedBanner === null
       ? ({ kind: 'hook_pending', runId: _runId } as const)
       : resolvedBanner;
   const showHeaderStatusBadge = activeBanner === null;
@@ -1318,9 +1311,7 @@ export function SpaceTaskPane({
   // approval metadata stamping. Hide them so the only Approve / Cancel path
   // is the banner. Non-approval escape hatches (Reopen, Archive) stay.
   const filteredTransitionActions =
-    task.status === 'review' ||
-    task.pendingCheckpointType === 'task_completion' ||
-    task.pendingCheckpointType === 'gate'
+    task.status === 'review' || task.pendingCheckpointType === 'task_completion'
       ? allTransitionActions.filter(({ target }) => target !== 'done' && target !== 'cancelled')
       : allTransitionActions;
 
@@ -1544,7 +1535,7 @@ export function SpaceTaskPane({
       {(() => {
         // Single-slot precedence renderer — at most one banner is ever
         // shown. Precedence (high → low):
-        //   blocked > post_approval_blocked > task_completion_pending > hook_pending > gate_pending
+        //   blocked > post_approval_blocked > task_completion_pending > hook_pending
         // The helper captures the rule so it can be unit-tested
         // independently of the render tree.
         const banner = activeBanner;
@@ -1560,7 +1551,7 @@ export function SpaceTaskPane({
             <PendingPostApprovalBanner task={task} spaceId={runtimeSpaceId} />
           ) : banner.kind === 'task_completion_pending' ? (
             <PendingTaskCompletionBanner task={task} spaceId={runtimeSpaceId} />
-          ) : banner.kind === 'hook_pending' ? (
+          ) : (
             // hook_pending — PendingHookBanner renders rows for every
             // blocked or retryable hook on the run.
             <PendingHookBanner
@@ -1570,14 +1561,6 @@ export function SpaceTaskPane({
               summaries={hookSummaries}
               fetchError={hookFetchError}
               retry={retryHookFetch}
-            />
-          ) : (
-            // gate_pending — PendingGateBanner renders rows for every
-            // waiting gate on the run. Legacy workflows only.
-            <PendingGateBanner
-              runId={banner.runId}
-              spaceId={runtimeSpaceId}
-              workflowId={canvasWorkflowId}
             />
           );
         return (

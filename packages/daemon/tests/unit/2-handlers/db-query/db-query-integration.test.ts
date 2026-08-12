@@ -555,37 +555,6 @@ describe('db-query integration', () => {
       }
     });
 
-    it('can query gate_data filtered via space_workflow_runs indirect scope', async () => {
-      seedGateData(db);
-      const handlers = createDbQueryToolHandlers(
-        { dbPath: ':memory:', scopeType: 'space', scopeValue: 'space-int-1' },
-        db
-      );
-      const result = await handlers.db_query({ sql: 'SELECT run_id, gate_id FROM gate_data' });
-      const parsed = parseResult(result);
-
-      expect(parsed.isError).toBeFalsy();
-      // swfr-int-1 and swfr-int-2 belong to space-int-1
-      // swfr-int-3 belongs to space-int-2 — excluded
-      expect(parsed.rows).toHaveLength(2);
-      const runIds = parsed.rows.map((r: Record<string, unknown>) => r.run_id).sort();
-      expect(runIds).toEqual(['swfr-int-1', 'swfr-int-2']);
-    });
-
-    it('gate_data from other spaces is excluded via indirect scope', async () => {
-      seedGateData(db);
-      const handlers = createDbQueryToolHandlers(
-        { dbPath: ':memory:', scopeType: 'space', scopeValue: 'space-int-2' },
-        db
-      );
-      const result = await handlers.db_query({ sql: 'SELECT run_id FROM gate_data' });
-      const parsed = parseResult(result);
-
-      expect(parsed.isError).toBeFalsy();
-      expect(parsed.rows).toHaveLength(1);
-      expect(parsed.rows[0].run_id).toBe('swfr-int-3');
-    });
-
     it('cannot query room-scoped table tasks — rejected with scope error', async () => {
       const handlers = createDbQueryToolHandlers(
         { dbPath: ':memory:', scopeType: 'space', scopeValue: 'space-int-1' },
@@ -643,7 +612,6 @@ describe('db-query integration', () => {
       expect(parsed.isError).toBeFalsy();
       expect(parsed.tables).toContain('space_tasks');
       expect(parsed.tables).toContain('space_workflows');
-      expect(parsed.tables).toContain('gate_data');
       // Room-scoped tables must NOT appear
       expect(parsed.tables).not.toContain('tasks');
       expect(parsed.tables).not.toContain('goals');
@@ -899,7 +867,6 @@ describe('db-query integration', () => {
       expect(parsed.tables).toContain('session_group_members');
       // Still includes original space tables
       expect(parsed.tables).toContain('space_tasks');
-      expect(parsed.tables).toContain('gate_data');
       // Room/global tables still excluded from space scope
       expect(parsed.tables).not.toContain('tasks');
       expect(parsed.tables).not.toContain('rooms');

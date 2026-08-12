@@ -86,14 +86,14 @@ export function WorkflowTemplateSyncDiffModal({ workflow, onClose, onApplied }: 
         {loadError && <p class="text-xs text-red-400">Failed to load diff: {loadError}</p>}
 
         {/* Persistent warning: apply is a full structural overwrite. Shown in
-            every state so the review gate is substantive even when the
+            every state so the review process is substantive even when the
             field-level diff is empty or omits the customized field — the diff
             below only enumerates description/instructions/step-names, but sync
-            also overwrites gates, channels, hooks, and per-step settings. */}
+            also overwrites channels, hooks, and per-step settings. */}
         {preview && (
           <p class="rounded-md border border-amber-500/20 bg-amber-500/[0.06] px-3 py-2 text-xs text-amber-200/90">
-            Applying overwrites the entire workflow structure — steps, instructions, gates,
-            channels, and per-step settings — with the current template.
+            Applying overwrites the entire workflow structure — steps, instructions, channels, and
+            per-step settings — with the current template.
             {preview.customized ? ' Local edits will be lost.' : ''}
           </p>
         )}
@@ -101,7 +101,7 @@ export function WorkflowTemplateSyncDiffModal({ workflow, onClose, onApplied }: 
         {preview && !hasDiff(preview) && (
           <p class="text-xs text-gray-400">
             {preview.customized
-              ? 'No description, instructions, or step-name changes to show — the local edits are in gates, channels, hooks, or per-step prompts, all of which applying overwrites.'
+              ? 'No description, instructions, or step-name changes to show — the local edits are in channels, hooks, or per-step prompts, all of which applying overwrites.'
               : `No field-level changes to show — applying only re-stamps the version (${preview.storedHash ? 'stale' : 'missing'} → current) so the badge clears.`}
           </p>
         )}

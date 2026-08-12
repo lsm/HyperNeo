@@ -756,10 +756,10 @@ export class SpaceTaskRepository {
    *   map (coder/reviewer/etc.) and is the only path that can re-attach the
    *   in-process `node-agent` / `space-agent-tools` MCP servers to those
    *   sub-sessions after a daemon restart. Excluding `'review'` here was the
-   *   root cause of task #126: a coder/reviewer sub-session sitting at a gate
+   *   root cause of task #126: a coder/reviewer sub-session waiting for review
    *   while the parent task waited in `'review'` lost both MCP servers across
-   *   a daemon restart, so `write_gate` / `read_gate` / `send_message` all
-   *   silently failed with "No such tool available".
+   *   a daemon restart, so `send_message` silently failed with
+   *   "No such tool available".
    * - `'blocked'` — task awaits human input but the Task Agent session must
    *   stay live so unblocking messages reach it.
    * - `'approved'` — the Task Agent can still be live while the post-approval

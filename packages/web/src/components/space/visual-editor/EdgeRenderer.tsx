@@ -25,8 +25,7 @@
  * Direction is encoded by the line style:
  *   one-way       -> dashed
  *   bidirectional -> solid + double arrowheads
- * Gates are rendered as midpoint badges so gate state does not compete with
- * direction for the same visual channel.
+ * Cyclic (loop-back) channels render a Loop badge at the midpoint.
  * Channels are selectable by clicking; the selected channel highlights in white.
  */
 
@@ -75,41 +74,12 @@ export interface ResolvedWorkflowChannel {
   /** Visual direction derived from channel topology: 'bidirectional' means arrows in both directions. */
   direction: 'one-way' | 'bidirectional';
   isCyclic?: boolean;
-  /**
-   * Gate condition type for the forward direction (from→to).
-   * For one-way channels this is the only gate.
-   * For bidirectional channels this is the gate on the fromStepId→toStepId direction.
-   */
-  gateType?: 'human' | 'condition' | 'task_result' | 'check' | 'count';
-  /**
-   * Gate condition type for the reverse direction (to→from).
-   * Only set on bidirectional channels where the reverse direction has its own gate.
-   */
-  reverseGateType?: 'human' | 'condition' | 'task_result' | 'check' | 'count';
-  /** Custom badge label for the forward gate. `undefined` → heuristic fallback. */
-  gateLabel?: string;
-  /** Custom badge color for the forward gate (hex `#rrggbb`). `undefined` → heuristic fallback. */
-  gateColor?: string;
-  /** Whether the forward gate has a script-based pre-check. */
-  hasScript?: boolean;
-  /** Custom badge label for the reverse gate. `undefined` → heuristic fallback. */
-  reverseGateLabel?: string;
-  /** Custom badge color for the reverse gate (hex `#rrggbb`). `undefined` → heuristic fallback. */
-  reverseGateColor?: string;
-  /** Whether the reverse gate has a script-based pre-check. */
-  reverseHasScript?: boolean;
   /** Stable ID for selection -- typically the workflow-level channel array index as a string. */
   id?: string;
   /** Optional display label from WorkflowChannel.label */
   label?: string;
   sourceSide?: AnchorSide;
   targetSide?: AnchorSide;
-  /** Runtime gate status for the forward direction (from→to). Only set in runtime/read-only view mode. */
-  runtimeStatus?: 'open' | 'blocked' | 'waiting_human';
-  /** Forward gate ID — set when the channel has a gate with runtime status. */
-  gateId?: string;
-  /** Vote count for count-type gates: current number of matching votes and the required minimum. */
-  voteCount?: { current: number; min: number };
 }
 
 /** Channel edge color -- teal, distinct from transition edge colors */
@@ -122,29 +92,9 @@ const CHANNEL_MARKER_SIZE = 7;
 const CHANNEL_GATE_BADGE_HEIGHT = 20;
 const CHANNEL_GATE_BADGE_HORIZONTAL_PADDING = 8;
 const CHANNEL_GATE_BADGE_CHAR_WIDTH = 7;
-/** Width of the directional arrow triangle rendered on one-way gate badges */
-const CHANNEL_GATE_ARROW_WIDTH = 8;
-/** Gap between the arrow indicator and the gate label text */
-const CHANNEL_GATE_ARROW_GAP = 4;
-/** Total horizontal space the arrow indicator + gap occupies */
-const CHANNEL_GATE_ARROW_TOTAL = CHANNEL_GATE_ARROW_WIDTH + CHANNEL_GATE_ARROW_GAP;
-/** Extra horizontal padding added to badge width to give the arrow room to breathe */
-const CHANNEL_GATE_ARROW_EXTRA_PADDING = 2;
-const CHANNEL_GATE_SCRIPT_ICON_GAP = 4;
-const CHANNEL_GATE_SCRIPT_ICON_WIDTH = 11;
 const CHANNEL_GATE_BADGE_BG = '#0f1115';
 const CHANNEL_GATE_BADGE_BORDER = '#232733';
 const CHANNEL_LOOP_BADGE_COLOR = '#f59e0b';
-const CHANNEL_GATE_BADGE_COLORS: Record<
-  NonNullable<ResolvedWorkflowChannel['gateType']>,
-  string
-> = {
-  human: EDGE_COLORS.human,
-  condition: EDGE_COLORS.condition,
-  task_result: EDGE_COLORS.task_result,
-  check: '#60a5fa',
-  count: '#ec4899',
-};
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -161,8 +111,6 @@ export interface EdgeRendererProps {
   selectedChannelId?: string | null;
   /** Called when the user clicks a channel edge. Receives the channel's `id` field. */
   onChannelSelect?: (channelId: string) => void;
-  /** Called when the user clicks a gate runtime-status icon. Receives the gateId and mouse event for popup positioning. */
-  onGateClick?: (gateId: string, event: MouseEvent) => void;
   /** When true, the Delete/Backspace keydown listener is not registered. */
   readOnly?: boolean;
 }
@@ -545,7 +493,6 @@ export function EdgeRenderer({
   channels = [],
   selectedChannelId,
   onChannelSelect,
-  onGateClick,
   readOnly = false,
 }: EdgeRendererProps) {
   // Stable per-instance prefix to prevent marker ID collisions across instances
@@ -696,8 +643,8 @@ export function EdgeRenderer({
       })}
 
       {/* Channel edges -- teal edges connecting semantic node relationships.
-			    One-way channels render dashed. Bidirectional channels render solid.
-			    Gates are shown as midpoint badges instead of changing the line style. */}
+		    One-way channels render dashed. Bidirectional channels render solid.
+		    Cyclic (loop-back) channels render a Loop badge at the midpoint. */}
       {channels.map((channel, idx) => {
         const pts = computeChannelEdgePoints(channel, nodePositions);
         if (!pts) return null;
@@ -706,86 +653,14 @@ export function EdgeRenderer({
         const visiblePoints = getVisibleChannelPathPoints(channel, pts);
         const visibleD = roundedOrthogonalPath(visiblePoints);
         const isBidirectional = channel.direction === 'bidirectional';
-        // A channel is gated if either the forward or reverse direction has a gate.
-        const isGated = !!(channel.gateType || channel.reverseGateType);
         const isCyclic = !!channel.isCyclic;
         const isSelected = channel.id != null && channel.id === selectedChannelId;
-        // A bidirectional gate badge has arrows on both sides when both directions
-        // are gated. When only one direction is gated on a bidirectional channel the
-        // badge shows a single directional arrow (just like a one-way channel).
-        const hasBothDirectionGates =
-          isBidirectional && !!channel.gateType && !!channel.reverseGateType;
 
         const strokeColor = isSelected ? 'white' : CHANNEL_EDGE_COLOR;
         const strokeWidth = isSelected ? CHANNEL_SELECTED_STROKE_WIDTH : CHANNEL_STROKE_WIDTH;
         const strokeDasharray = isBidirectional ? undefined : CHANNEL_EDGE_DASH_ARRAY;
         const strokeOpacity = isSelected ? 1 : 0.85;
-        // Always compute midpoint + angle — needed for all badge variants.
-        const gateBadgeMidpoint = isGated
-          ? getOrthogonalPathMidpointWithAngle(visiblePoints)
-          : null;
-        const gateBadgePosition = gateBadgeMidpoint;
-        const loopBadgePosition = isCyclic
-          ? {
-              x: (gateBadgePosition ?? getOrthogonalPathMidpoint(visiblePoints)).x,
-              y:
-                (gateBadgePosition ?? getOrthogonalPathMidpoint(visiblePoints)).y +
-                (isGated ? 26 : 0),
-            }
-          : null;
-        // Determine which gate type to use for the color/label.
-        // For one-way or single-direction bidirectional: use whichever is set.
-        // For both-direction bidirectional: use forward gate type (gateType).
-        const effectiveGateType = channel.gateType ?? channel.reverseGateType ?? undefined;
-        // When only the reverse direction is gated on a bidirectional channel,
-        // use the reverse direction's custom fields.
-        const effectiveGateLabel = channel.gateType ? channel.gateLabel : channel.reverseGateLabel;
-        const effectiveGateColor = channel.gateType ? channel.gateColor : channel.reverseGateColor;
-        // Prefer custom gate color, fall back to type-based color.
-        const gateColor =
-          effectiveGateColor ??
-          (effectiveGateType ? CHANNEL_GATE_BADGE_COLORS[effectiveGateType] : CHANNEL_EDGE_COLOR);
-        // gate.label is the authoritative badge text — no heuristic fallback.
-        const gateLabel = effectiveGateLabel ?? 'Gate';
-        // Whether to show a script icon next to the badge.
-        // For bidirectional channels, use the forward direction's hasScript when available.
-        const effectiveHasScript = channel.gateType
-          ? !!channel.hasScript
-          : !!channel.reverseHasScript;
-        // Arrow count determines badge width:
-        //   0 arrows (no gate):              base label width
-        //   1 arrow (one-way / single-dir):  label + ARROW_TOTAL
-        //   2 arrows (both-direction gate):  label + 2 * ARROW_TOTAL
-        const arrowCount = hasBothDirectionGates ? 2 : isGated ? 1 : 0;
-        const scriptIconExtra = effectiveHasScript
-          ? CHANNEL_GATE_SCRIPT_ICON_WIDTH + CHANNEL_GATE_SCRIPT_ICON_GAP
-          : 0;
-        const gateBadgeWidth =
-          gateLabel.length * CHANNEL_GATE_BADGE_CHAR_WIDTH +
-          scriptIconExtra +
-          CHANNEL_GATE_BADGE_HORIZONTAL_PADDING * 2 +
-          (arrowCount > 0
-            ? arrowCount * CHANNEL_GATE_ARROW_TOTAL + CHANNEL_GATE_ARROW_EXTRA_PADDING
-            : 0);
-
-        // Pre-compute layout values used in badge JSX.
-        const labelPixelWidth = gateLabel.length * CHANNEL_GATE_BADGE_CHAR_WIDTH;
-        // For single-arrow badges: text shifts right by ARROW_TOTAL/2; arrow is to its left.
-        const singleArrowTextX = CHANNEL_GATE_ARROW_TOTAL / 2;
-        const singleArrowX = -(labelPixelWidth / 2 + CHANNEL_GATE_ARROW_GAP / 2);
-        // For dual-arrow badges: text is centered; arrows flank the label.
-        const dualArrowOffsetX =
-          labelPixelWidth / 2 + CHANNEL_GATE_ARROW_GAP + CHANNEL_GATE_ARROW_WIDTH / 2;
-        // Forward arrow points toward toStepId (path direction = gateBadgeMidpoint.angle).
-        // Reverse arrow points toward fromStepId = (angle + 180) % 360.
-        const forwardAngle = gateBadgeMidpoint?.angle ?? 0;
-        const reverseAngle = (forwardAngle + 180) % 360;
-        // For single-arrow on a bidirectional channel where only the reverse direction is
-        // gated, the arrow points toward fromStepId (reverseAngle).
-        const singleArrowAngle =
-          isBidirectional && !channel.gateType && !!channel.reverseGateType
-            ? reverseAngle
-            : forwardAngle;
+        const loopBadgePosition = isCyclic ? getOrthogonalPathMidpoint(visiblePoints) : null;
         const loopBadgeWidth =
           'Loop'.length * CHANNEL_GATE_BADGE_CHAR_WIDTH + CHANNEL_GATE_BADGE_HORIZONTAL_PADDING * 2;
 
@@ -805,7 +680,6 @@ export function EdgeRenderer({
             data-channel-edge="true"
             data-channel-direction={channel.direction}
             data-channel-id={channel.id}
-            data-channel-gated={isGated ? 'true' : undefined}
             data-channel-cyclic={isCyclic ? 'true' : undefined}
             data-selected={isSelected ? 'true' : 'false'}
             style={{ pointerEvents: 'auto' }}
@@ -841,105 +715,8 @@ export function EdgeRenderer({
               markerStart={isBidirectional ? `url(#${markerEndId})` : undefined}
               data-stroke-color={strokeColor}
               data-stroke-width={String(strokeWidth)}
-              data-channel-gated={isGated ? 'true' : undefined}
               style={{ pointerEvents: 'none' }}
             />
-            {gateBadgePosition && (
-              <g
-                transform={`translate(${gateBadgePosition.x}, ${gateBadgePosition.y})`}
-                data-testid={`channel-gate-${channel.fromStepId}-${channel.toStepId}`}
-                data-gate-angle={isGated ? String(forwardAngle) : undefined}
-                style={{
-                  pointerEvents: onChannelSelect && channel.id != null ? 'auto' : 'none',
-                  cursor: onChannelSelect && channel.id != null ? 'pointer' : 'default',
-                }}
-                onClick={
-                  onChannelSelect && channel.id != null
-                    ? (e: MouseEvent) => {
-                        e.stopPropagation();
-                        onChannelSelect(channel.id!);
-                      }
-                    : undefined
-                }
-              >
-                <rect
-                  x={-gateBadgeWidth / 2}
-                  y={-CHANNEL_GATE_BADGE_HEIGHT / 2}
-                  width={gateBadgeWidth}
-                  height={CHANNEL_GATE_BADGE_HEIGHT}
-                  rx="10"
-                  fill={CHANNEL_GATE_BADGE_BG}
-                  stroke={isSelected ? 'white' : CHANNEL_GATE_BADGE_BORDER}
-                  strokeWidth="1"
-                />
-                {arrowCount === 1 && (
-                  // Single arrow: one-way channel, or bidirectional channel where
-                  // only one direction is gated.
-                  // Layout: [arrow(8px) | gap(4px) | text] centered as a unit at x=0.
-                  //
-                  // SVG applies transforms right-to-left to points:
-                  //   rotate(angle)  — pivots the right-pointing triangle around (0,0)
-                  //   translate(tx)  — shifts the rotated arrow to singleArrowX
-                  // This order is deliberate: rotating around origin first ensures the
-                  // arrow stays centred at singleArrowX for all four cardinal angles.
-                  <polygon
-                    points="-4,-5 4,0 -4,5"
-                    fill={isSelected ? 'white' : gateColor}
-                    transform={`translate(${singleArrowX}, 0) rotate(${singleArrowAngle})`}
-                    data-testid={`channel-gate-arrow-${channel.fromStepId}-${channel.toStepId}`}
-                  />
-                )}
-                {arrowCount === 2 && (
-                  // Dual arrows: bidirectional channel where both directions are gated.
-                  // Layout: [←(8px) | gap(4px) | text | gap(4px) | →(8px)] centered at x=0.
-                  // Left arrow = reverse direction (toStepId → fromStepId).
-                  // Right arrow = forward direction (fromStepId → toStepId).
-                  <>
-                    <polygon
-                      points="-4,-5 4,0 -4,5"
-                      fill={isSelected ? 'white' : gateColor}
-                      transform={`translate(${-dualArrowOffsetX}, 0) rotate(${reverseAngle})`}
-                      data-testid={`channel-gate-reverse-arrow-${channel.fromStepId}-${channel.toStepId}`}
-                    />
-                    <polygon
-                      points="-4,-5 4,0 -4,5"
-                      fill={isSelected ? 'white' : gateColor}
-                      transform={`translate(${dualArrowOffsetX}, 0) rotate(${forwardAngle})`}
-                      data-testid={`channel-gate-arrow-${channel.fromStepId}-${channel.toStepId}`}
-                    />
-                  </>
-                )}
-                <text
-                  x={
-                    arrowCount === 1 ? singleArrowTextX + scriptIconExtra / 2 : scriptIconExtra / 2
-                  }
-                  y="4"
-                  textAnchor="middle"
-                  fontSize="11"
-                  fontWeight="600"
-                  letterSpacing="0.06em"
-                  fill={isSelected ? 'white' : gateColor}
-                >
-                  {gateLabel}
-                </text>
-                {effectiveHasScript && (
-                  <text
-                    x={
-                      arrowCount === 1
-                        ? singleArrowTextX - labelPixelWidth / 2 - CHANNEL_GATE_SCRIPT_ICON_GAP
-                        : -labelPixelWidth / 2 - CHANNEL_GATE_SCRIPT_ICON_GAP
-                    }
-                    y="3"
-                    textAnchor="middle"
-                    fontSize="9"
-                    fill={isSelected ? 'white' : gateColor}
-                    opacity={0.7}
-                  >
-                    {'\u26A1'}
-                  </text>
-                )}
-              </g>
-            )}
             {loopBadgePosition && (
               <g
                 transform={`translate(${loopBadgePosition.x}, ${loopBadgePosition.y})`}
@@ -978,76 +755,6 @@ export function EdgeRenderer({
                 >
                   Loop
                 </text>
-              </g>
-            )}
-            {/* Runtime gate status icon — clickable when waiting_human */}
-            {channel.runtimeStatus && gateBadgePosition && (
-              <g
-                data-testid={`gate-icon-${channel.runtimeStatus}`}
-                data-gate-id={channel.gateId ?? ''}
-                style={{
-                  pointerEvents:
-                    channel.runtimeStatus === 'waiting_human' && onGateClick && channel.gateId
-                      ? 'auto'
-                      : 'none',
-                  cursor:
-                    channel.runtimeStatus === 'waiting_human' && onGateClick && channel.gateId
-                      ? 'pointer'
-                      : 'default',
-                }}
-                onClick={
-                  channel.runtimeStatus === 'waiting_human' && onGateClick && channel.gateId
-                    ? (e: MouseEvent) => {
-                        e.stopPropagation();
-                        onGateClick(channel.gateId!, e);
-                      }
-                    : undefined
-                }
-              >
-                <circle
-                  cx={gateBadgePosition.x + gateBadgeWidth / 2 + 10}
-                  cy={gateBadgePosition.y}
-                  r={channel.runtimeStatus === 'waiting_human' ? 7 : 5}
-                  fill={
-                    channel.runtimeStatus === 'open'
-                      ? '#16a34a'
-                      : channel.runtimeStatus === 'waiting_human'
-                        ? '#f59e0b'
-                        : '#ef4444'
-                  }
-                  data-testid={`channel-runtime-status-${channel.id ?? ''}`}
-                >
-                  {channel.runtimeStatus === 'waiting_human' && (
-                    <animate
-                      attributeName="opacity"
-                      values="1;0.4;1"
-                      dur="1.5s"
-                      repeatCount="indefinite"
-                    />
-                  )}
-                </circle>
-                {/* Blocked icon: small X */}
-                {channel.runtimeStatus === 'blocked' && (
-                  <g
-                    transform={`translate(${gateBadgePosition.x + gateBadgeWidth / 2 + 10}, ${gateBadgePosition.y})`}
-                  >
-                    <line x1="-2.5" y1="-2.5" x2="2.5" y2="2.5" stroke="white" stroke-width="1.5" />
-                    <line x1="2.5" y1="-2.5" x2="-2.5" y2="2.5" stroke="white" stroke-width="1.5" />
-                  </g>
-                )}
-                {/* Vote count label for count-type gates (e.g. "2/3") */}
-                {channel.voteCount && (
-                  <text
-                    data-testid="gate-vote-count"
-                    x={gateBadgePosition.x + gateBadgeWidth / 2 + 10}
-                    y={gateBadgePosition.y + 16}
-                    textAnchor="middle"
-                    fontSize="9"
-                    fill="#9ca3af"
-                  >
-                    {channel.voteCount.current}/{channel.voteCount.min}
-                  </text>
-                )}
               </g>
             )}
           </g>
