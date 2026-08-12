@@ -79,6 +79,28 @@ enabled_run_cmd() {
 	' "$1"
 }
 
+# True (exit 0) if `marker` is EXECUTED by runner command `runval` — i.e. it
+# appears OUTSIDE single quotes OR inside a bash/sh -lc/-c body (which the shell
+# executes). A marker that appears only inside another quoted argument — e.g.
+# `run: echo './scripts/test-daemon.sh ${{ matrix.shard }}'` — is data, not an
+# executed command, so the step runs zero tests while the guard stays green.
+marker_executed() {
+	awk -v runval="$1" -v marker="$2" '
+		function executed_text(s,   i,n,c,out,inq,qstart,before,content) {
+			n=length(s); out=""; inq=0
+			for (i=1; i<=n; i++) {
+				c=substr(s,i,1)
+				if (c == "'\''") {
+					if (!inq) { inq=1; qstart=i; before=substr(s,1,i-1) }
+					else { inq=0; content=substr(s,qstart+1,i-qstart-1); if (before ~ /(bash|sh)[[:space:]]+-l?c[[:space:]]*$/) out=out content }
+				} else if (!inq) { out=out c }
+			}
+			return out
+		}
+		BEGIN { exit (index(executed_text(runval), marker) > 0) ? 0 : 1 }
+	'
+}
+
 # Count ACTIVE lines in workflow $1 that are a test_path VALUE for path $2 —
 # either a folded bare-path line (`  tests/online/...`) or a single-line
 # `test_path: tests/online/...`. Excludes a docs `echo tests/online/...` line
@@ -101,7 +123,10 @@ test_path_value_hits() {
 online_test_path_values() {
 	awk '
 		function trim(v) { sub(/^[[:space:]]+/, "", v); sub(/[[:space:]]+$/, "", v); return v }
-		/^[[:space:]]*#/ { next }
+		# A `#`-line INSIDE a folded scalar is scalar CONTENT, not a YAML comment —
+		# only skip comment lines when not folding (the caller rejects shell
+		# metacharacters in the captured value).
+		!folding && /^[[:space:]]*#/ { next }
 		# Folded block marker: test_path: >-  or  test_path: |-
 		/^[[:space:]]*test_path:[[:space:]]*[>|]-[[:space:]]*$/ {
 			folding=1; base=0; while (substr($0, base+1, 1)==" ") base++; next
@@ -167,7 +192,9 @@ module_values() {
 		$0 ~ "^  " job ":" { injob=1; next }
 		injob && /^  [a-z]/ { injob=0; mod=""; folding=0; next }
 		!injob { next }
-		/^[[:space:]]*#/ { next }
+		# A `#`-line INSIDE a folded scalar is content, not a comment — only skip
+		# comment lines when not folding (the caller rejects shell metachars).
+		!folding && /^[[:space:]]*#/ { next }
 		# New include record: capture module name + its indent (mi).
 		/^[[:space:]]*- module:[[:space:]]*[^[:space:]]/ {
 			mi=0; while (substr($0,mi+1,1)==" ") mi++
@@ -224,6 +251,20 @@ test_prop_absent() {
 	! grep -qE "^    $2:" "$1"
 }
 
+# Require vitest config $1 (package label $2) to set NONE of the selection-
+# changing test options (dir, shard) — each narrows which files run without
+# touching include/exclude (which test_prop_has pins), so a narrowed dir/shard
+# drops files while this guard reports them covered.
+test_no_select_opts() {
+	local cfg="$1" pkg="$2" opt
+	for opt in dir shard; do
+		if ! test_prop_absent "$cfg" "$opt"; then
+			err "$pkg/vitest.config.ts sets test.$opt — it narrows which files run while this guard reports them covered"
+			echo "     → drop test.$opt (use the default), or update this validator" >&2
+		fi
+	done
+}
+
 # ===========================================================================
 # 1. DAEMON UNIT TESTS  (source of truth: scripts/test-daemon.sh)
 # ===========================================================================
@@ -259,12 +300,9 @@ for _cfg in "$REPO_ROOT/packages/daemon/vitest.config.ts" "$REPO_ROOT/packages/s
 		err "$_cfg_pkg/vitest.config.ts test.exclude is not $_exp_exclude — a broad/changed glob could filter unit shard paths"
 		echo "     → keep the exclude to the expected set under test:, or update this validator" >&2
 	fi
-	# A narrowed test.dir would shrink the discovery root (files outside it stop
-	# running) without touching include/exclude — reject it; rely on the default.
-	if ! test_prop_absent "$_cfg" dir; then
-		err "$_cfg_pkg/vitest.config.ts sets test.dir — a narrowed discovery root would silently drop shard files while this guard reports them covered"
-		echo "     → drop test.dir (use the default root), or update this validator" >&2
-	fi
+	# Selection-changing test options (dir, shard) narrow which files run without
+	# touching include/exclude — reject them.
+	test_no_select_opts "$_cfg" "$_cfg_pkg"
 done
 
 COVERED_TMP="$(mktemp)"
@@ -337,6 +375,30 @@ unit_matrix=$(awk '
 		n=split(s, a, ","); for (i=1; i<=n; i++) { gsub(/[[:space:]]/, "", a[i]); if (a[i] != "") print a[i] }
 	}
 ' "$REPO_ROOT/.github/workflows/main.yml")
+# test-daemon-shared-unit's matrix must have ONLY the `shard:` axis (+ include/
+# exclude). A sibling axis (e.g. replica: [a,b]) makes GitHub take the Cartesian
+# product, running every unit test once per value (duplicate runs + duplicate
+# Coveralls uploads) while this guard reports each file covered once.
+_unit_sibling_axes=$(awk '
+	$0 ~ "^  test-daemon-shared-unit:" { injob=1; next }
+	injob && /^  [a-z]/ { injob=0; inmatrix=0; next }
+	!injob { next }
+	# `matrix:` block lives at 6-space indent under strategy: (4-space). Enter on
+	# matrix:, leave on any sibling key at <= 6-space (e.g. steps:) — step keys
+	# (uses:/with:/run:) are also 8-space but live under steps:, NOT matrix:.
+	/^[[:space:]]{6}matrix:[[:space:]]*$/ { inmatrix=1; next }
+	/^[[:space:]]{0,6}[a-z]/ { inmatrix=0 }
+	inmatrix && /^[[:space:]]{8}[a-z][a-z0-9_-]*:/ && $0 !~ /^[[:space:]]{8}(shard|include|exclude):/ {
+		s=$0; sub(/^[[:space:]]+/, "", s); sub(/:.*/, "", s); print s
+	}
+' "$REPO_ROOT/.github/workflows/main.yml")
+if [ -n "$_unit_sibling_axes" ]; then
+	while IFS= read -r _ax; do
+		[ -n "$_ax" ] || continue
+		err "test-daemon-shared-unit matrix has an extra axis '$_ax:' — GitHub takes the Cartesian product, so every unit test runs once per value (duplicating runs) while this guard reports each file covered once"
+		echo "     → remove the '$_ax:' axis, or model its combinations in this validator" >&2
+	done <<< "$_unit_sibling_axes"
+fi
 # matrix.exclude under test-daemon-shared-unit drops combinations GitHub would
 # otherwise schedule. A shard present in the raw `shard:` axis but excluded
 # never runs, so accepting it as covered (it's in the raw axis) is a false
@@ -374,6 +436,9 @@ _unit_run=$(enabled_run_cmd "$REPO_ROOT/.github/workflows/main.yml" 'test-daemon
 if [ -z "$_unit_run" ]; then
 	err "test-daemon-shared-unit runner is missing, commented, disabled, or does not forward \${{ matrix.shard }} — unit matrix values don't reach the runner"
 	echo "     → keep an active, enabled './scripts/test-daemon.sh \${{ matrix.shard }} ...' step" >&2
+elif ! marker_executed "$_unit_run" 'test-daemon.sh ${{ matrix.shard }}'; then
+	err "test-daemon-shared-unit runner contains the marker but does not EXECUTE it (e.g. it is echoed/quoted as data) — zero tests would run while this guard reports them covered"
+	echo "     → invoke test-daemon.sh as a command, not as an argument to echo/another command" >&2
 else
 	# Inspect ONLY the args after `test-daemon.sh` (there is another
 	# ${{ matrix.shard }} earlier, inside the --report ...json name). Allowlist
@@ -445,13 +510,9 @@ if ! test_prop_has "$WEB_CFG" exclude "['node_modules', 'dist']"; then
 	err "packages/web/vitest.config.ts test.exclude is not ['node_modules', 'dist'] — src test files could be excluded (a nested coverage.exclude / appended expression no longer masks it)"
 	echo "     → keep test.exclude to node_modules/dist, or update this validator" >&2
 fi
-# A narrowed test.dir (e.g. dir: 'src/components') shrinks the discovery root;
-# files outside it stop running while this guard still reports all src/ files
-# covered. Reject it and rely on the default (the package root).
-if ! test_prop_absent "$WEB_CFG" dir; then
-	err "packages/web/vitest.config.ts sets test.dir — a narrowed discovery root would silently drop src test files while this guard reports them covered"
-	echo "     → drop test.dir (use the default root), or update this validator" >&2
-fi
+# Selection-changing test options (dir, shard) narrow which files run without
+# touching include/exclude — reject them.
+test_no_select_opts "$WEB_CFG" "packages/web"
 # The web coverage assumes the test-web CI job runs a bare `vitest run` (no
 # positional target) in an ENABLED step, so the config include/exclude fully
 # determine execution. enabled_run_cmd folds the runner command (a `>-` scalar)
@@ -462,6 +523,9 @@ _web_cmd=$(enabled_run_cmd "$REPO_ROOT/.github/workflows/main.yml" 'cd packages/
 if [ -z "$_web_cmd" ]; then
 	err "test-web runner is missing, commented, or disabled (if: false|never) — web coverage assumption broken"
 	echo "     → keep an active, enabled 'cd packages/web && bunx vitest run' step" >&2
+elif ! marker_executed "$_web_cmd" 'cd packages/web && bunx vitest run'; then
+	err "test-web runner contains the marker but does not EXECUTE it (e.g. it is echoed/quoted as data) — zero tests would run while this guard reports them covered"
+	echo "     → invoke 'bunx vitest run' as a command, not as an argument to echo/another command" >&2
 elif [ -n "$(printf '%s' "$_web_cmd" \
 		| sed 's/.*bunx vitest run//' \
 		| sed -E -e 's/--reporter[[:space:]]+[^[:space:]]+//g' \
@@ -539,11 +603,9 @@ if ! test_prop_has "$ONLINE_CFG" exclude "['node_modules', 'dist', 'tests/unit/*
 	err "packages/daemon/vitest.online.config.ts test.exclude is not ['node_modules','dist','tests/unit/**'] — a broad/changed glob could exclude online tests"
 	echo "     → keep the exclude to node_modules/dist/tests/unit/** under test:, or update this validator" >&2
 fi
-# A narrowed test.dir would shrink the online discovery root; reject it.
-if ! test_prop_absent "$ONLINE_CFG" dir; then
-	err "packages/daemon/vitest.online.config.ts sets test.dir — a narrowed discovery root would silently drop online tests while this guard reports them covered"
-	echo "     → drop test.dir (use the default root), or update this validator" >&2
-fi
+# Selection-changing test options (dir, shard) narrow which files run without
+# touching include/exclude — reject them.
+test_no_select_opts "$ONLINE_CFG" "packages/daemon/vitest.online"
 
 # Online matrix test_path values must reach an ENABLED runner that forwards
 # ${{ matrix.test_path }}. The marker picks the runner step itself
@@ -554,6 +616,9 @@ _online_main=$(enabled_run_cmd "$REPO_ROOT/.github/workflows/main.yml" 'vitest.o
 if [ -z "$_online_main" ] || ! printf '%s' "$_online_main" | grep -qF '${{ matrix.test_path }}'; then
 	err "main.yml online runner is missing, commented, disabled, or does not forward \${{ matrix.test_path }} — online matrix values don't reach the runner"
 	echo "     → keep an active, enabled 'vitest ... \${{ matrix.test_path }}' step" >&2
+elif ! marker_executed "$_online_main" 'vitest.online.config.ts'; then
+	err "main.yml online runner contains the marker but does not EXECUTE it (e.g. it is echoed/quoted as data) — zero tests would run while this guard reports them covered"
+	echo "     → invoke vitest as a command, not as an argument to echo/another command" >&2
 else
 	# After `vitest run`, only ${{ matrix.test_path }} (the one selector) and
 	# coverage-neutral flags (--config, --coverage*, --reporter, --outputFile.*,
@@ -562,7 +627,7 @@ else
 	# covered. (The config file itself is guarded separately, so --config is safe.)
 	_oextra=$(printf '%s' "$_online_main" \
 		| sed 's/.*vitest run//' \
-		| sed -E -e 's/\$\{\{[^}]*\}\}//g' \
+		| sed -E -e 's/\$\{\{[[:space:]]*matrix\.[^}]*\}\}//g' \
 		         -e 's/--config[[:space:]]+[^[:space:]]+//g' \
 		         -e 's/--reporter[[:space:]]+[^[:space:]]+//g' \
 		         -e 's/--reporter=[^[:space:]]+//g' \
@@ -580,6 +645,9 @@ _online_real=$(enabled_run_cmd "$REPO_ROOT/.github/workflows/real-api-tests.yml"
 if [ -z "$_online_real" ] || ! printf '%s' "$_online_real" | grep -qF '${{ matrix.test_path }}'; then
 	err "real-api-tests.yml online runner is missing, commented, disabled, or does not forward \${{ matrix.test_path }} — online matrix values don't reach the runner"
 	echo "     → keep an active, enabled 'bun test \${{ matrix.test_path }}' step" >&2
+elif ! marker_executed "$_online_real" 'bun test'; then
+	err "real-api-tests.yml runner contains the marker but does not EXECUTE it (e.g. it is echoed/quoted as data) — zero tests would run while this guard reports them covered"
+	echo "     → invoke 'bun test' as a command, not as an argument to echo/another command" >&2
 else
 	# After `bun test`, only ${{ matrix.test_path }} may select. A selection flag
 	# like --only (test.only only) / --grep / --filter would run ZERO tests on a
@@ -629,6 +697,16 @@ done
 # "Run all test files" — running the entire online suite (and, with real keys,
 # paid provider calls). The main.yml orphan check above doesn't cover this file.
 _real_module_values=$(module_values "$REAL_API_WORKFLOW" "daemon-real-api")
+# A test_path value must be a plain path — no shell metacharacters. The online
+# runners are `bash -lc '... <test_path> ...'`, so a value containing `#` (a YAML
+# folded-scalar line that only LOOKS like a comment), `;`, `&`, `|`, or `<`/`>`
+# is reinterpreted by the shell: a `#` comments out the rest of the line,
+# dropping subsequent paths/flags while this guard reports them covered.
+while IFS= read -r _bad; do
+	[ -n "$_bad" ] || continue
+	err "online test_path value contains shell metacharacters (the bash -lc runner would reinterpret them — e.g. # comments out the rest): $_bad"
+	echo "     → keep test_path a plain path (no # ; & | < >)" >&2
+done < <(printf '%s\n' "$_module_values" "$_real_module_values" | awk -F'\t' '{print $2}' | grep -E '[#;&|<>]' | sort -u)
 # Per-RECORD validation (not grouped by module name): each daemon-real-api
 # include row IS a combination running `bun test ${{ matrix.test_path }}`, so a
 # row without a non-empty test_path expands to a bare `bun test` (which
@@ -648,17 +726,23 @@ done < <(awk '
 	# Accept an optional YAML quote around the module name; strip non-token chars.
 	/^[[:space:]]*- module:[[:space:]]*[^[:space:]]+[[:space:]]*$/ {
 		flush()
+		mi=0; while (substr($0,mi+1,1)==" ") mi++
 		mod=$0; sub(/^[[:space:]]*- module:[[:space:]]*/, "", mod); sub(/[[:space:]]+$/, "", mod); gsub(/[^a-z0-9-]/, "", mod)
 		has_path=0; folding=0; next
 	}
-	mod != "" {
+	# A test_path counts ONLY as a DIRECT record property (indent mi+2); a dedent
+	# to/under the record indent flushes+clears mod, so test_path in env/steps/job
+	# scope (which does not populate ${{ matrix.test_path }}) cannot satisfy it.
+	{
+		n=0; while (substr($0,n+1,1)==" ") n++
+		if (mod != "" && n <= mi) { flush(); mod=""; has_path=0; folding=0 }
+		if (mod == "") next
 		if (folding) {
-			n=0; while (substr($0,n+1,1)==" ") n++
 			if (n > base) { has_path=1; next }
 			folding=0
 		}
-		if ($0 ~ /test_path:[[:space:]]*[>|]-[[:space:]]*$/) { folding=1; base=0; while (substr($0,base+1,1)==" ") base++; next }
-		if ($0 ~ /test_path:[[:space:]]+[^[:space:]>|-]/) { has_path=1 }
+		if (n == mi+2 && $0 ~ /test_path:[[:space:]]*[>|]-[[:space:]]*$/) { folding=1; base=n; next }
+		if (n == mi+2 && $0 ~ /test_path:[[:space:]]+[^[:space:]>|-]/) { has_path=1 }
 	}
 	END { flush() }
 ' "$REAL_API_WORKFLOW")
@@ -689,8 +773,9 @@ _include_modules=$(awk '
 	injob && /^  [a-z]/ { injob=0; next }
 	!injob { next }
 	/^[[:space:]]*#/ { next }
-	/^[[:space:]]*- module:[[:space:]]*[a-z0-9-]+/ {
-		m=$0; sub(/^[[:space:]]*- module:[[:space:]]*/, "", m); sub(/[[:space:]]*$/, "", m); print m
+	# Accept an optional YAML quote around the module name; strip non-token chars.
+	/^[[:space:]]*- module:[[:space:]]*[^[:space:]]/ {
+		m=$0; sub(/^[[:space:]]*- module:[[:space:]]*/, "", m); sub(/[[:space:]]+$/, "", m); gsub(/[^a-z0-9-]/, "", m); if (m != "") print m
 	}
 ' "$MAIN_WORKFLOW")
 for _im in $_include_modules; do
