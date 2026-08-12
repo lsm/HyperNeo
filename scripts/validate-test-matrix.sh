@@ -52,8 +52,11 @@ active_hits() { grep -hF "$2" "$1" 2>/dev/null | grep -cvE '^[[:space:]]*(#|//|/
 enabled_run_cmd() {
 	awk -v marker="$2" '
 		function emit() { if (runval != "" && index(runval, marker) > 0 && !disabled && !job_disabled && !done) { print runval; done=1 } }
-		# A job key (2-space indent under jobs:) starts a fresh job; reset its condition.
-		/^[[:space:]]{2}[[:alnum:]_-]+:[[:space:]]*$/ { job_disabled=0 }
+		# A job key (2-space indent under jobs:) starts a fresh job. Emit the
+		# PREVIOUS pending step FIRST (while its job_disabled still applies), then
+		# reset — otherwise a job-level if:false on a job whose last step is the
+		# runner is cleared before emit, so the runner wrongly counts as enabled.
+		/^[[:space:]]{2}[[:alnum:]_-]+:[[:space:]]*$/ { emit(); runval=""; disabled=0; incmd=0; job_disabled=0 }
 		# Step boundary: emit the PREVIOUS step now that ALL its properties — including
 		# a trailing `if: false` placed after `run:` — have been seen, then reset.
 		/^[[:space:]]*-[[:space:]]/ { emit(); runval=""; disabled=0; incmd=0 }
@@ -161,8 +164,9 @@ module_values() {
 		injob && /^  [a-z]/ { injob=0; mod=""; folding=0; next }
 		!injob { next }
 		/^[[:space:]]*#/ { next }
-		/^[[:space:]]*- module:[[:space:]]*[a-z0-9-]+/ {
-			mod=$0; sub(/^[[:space:]]*- module:[[:space:]]*/, "", mod); sub(/[[:space:]]*$/, "", mod)
+		# Accept an optional YAML quote around the module name; strip non-token chars.
+		/^[[:space:]]*- module:[[:space:]]*[^[:space:]]/ {
+			mod=$0; sub(/^[[:space:]]*- module:[[:space:]]*/, "", mod); sub(/[[:space:]]*$/, "", mod); gsub(/[^a-z0-9-]/, "", mod)
 			folding=0; next
 		}
 		mod && /test_path:[[:space:]]*[>|]-[[:space:]]*$/ { folding=1; base=0; while (substr($0, base+1, 1)==" ") base++; next }
@@ -187,6 +191,18 @@ online_value_count() {
 $_real_module_values" | wc -l | tr -d ' '
 }
 
+# True (exit 0) if vitest config $1 has `    <prop>: <value>` directly under
+# test: (4-space indent) with <value> the COMPLETE property — the closing `]` of
+# the array must be followed by `,` or EOL, so a `.map()`/expression appended
+# after the array (which would narrow execution) is rejected. Regex-escapes the
+# value, so a whole-file substring check (active_hits) can no longer be satisfied
+# by the same value placed in a nested coverage.<prop> while test.<prop> narrows.
+test_prop_has() {
+	local val_re
+	val_re=$(printf '%s' "$3" | sed 's/[][{}.*\\]/\\&/g')
+	grep -qE "^    $2: ${val_re}(,|\$)" "$1"
+}
+
 # ===========================================================================
 # 1. DAEMON UNIT TESTS  (source of truth: scripts/test-daemon.sh)
 # ===========================================================================
@@ -208,21 +224,19 @@ SHARED_ROOT="$REPO_ROOT/packages/shared"
 # paths while this guard stays green.
 for _cfg in "$REPO_ROOT/packages/daemon/vitest.config.ts" "$REPO_ROOT/packages/shared/vitest.config.ts"; do
 	_cfg_pkg=$(basename "$(dirname "$_cfg")")
-	if [ "$(active_hits "$_cfg" "include: ['tests/**/*.test.ts', 'tests/**/*_test.ts']")" -eq 0 ]; then
-		err "$_cfg_pkg/vitest.config.ts active include is not ['tests/**/*.test.ts', 'tests/**/*_test.ts'] — unit shard paths could be filtered out"
-		echo "     → keep the include broad, or update this validator" >&2
+	if ! test_prop_has "$_cfg" include "['tests/**/*.test.ts', 'tests/**/*_test.ts']"; then
+		err "$_cfg_pkg/vitest.config.ts test.include is not ['tests/**/*.test.ts', 'tests/**/*_test.ts'] — unit shard paths could be filtered out (a nested coverage.include / appended expression no longer masks it)"
+		echo "     → keep the include broad under test:, or update this validator" >&2
 	fi
-	# Require the EXACT expected exclude (per package) — a substring check for
-	# tests/unit/|src/ misses a broad glob like tests/** that would filter every
-	# unit shard path. daemon legitimately excludes tests/online/** (separate
-	# online config).
+	# Require the EXACT expected exclude per package — daemon legitimately excludes
+	# tests/online/** (separate online config). scoped to test.exclude (4-space).
 	case "$_cfg_pkg" in
-		daemon) _exp_exclude="exclude: ['node_modules', 'dist', 'tests/online/**']" ;;
-		shared) _exp_exclude="exclude: ['node_modules', 'dist']" ;;
+		daemon) _exp_exclude="['node_modules', 'dist', 'tests/online/**']" ;;
+		shared) _exp_exclude="['node_modules', 'dist']" ;;
 	esac
-	if [ "$(active_hits "$_cfg" "$_exp_exclude")" -eq 0 ]; then
-		err "$_cfg_pkg/vitest.config.ts active exclude is not the expected \"$_exp_exclude\" — a broad/changed glob could filter unit shard paths"
-		echo "     → keep the exclude to the expected set, or update this validator" >&2
+	if ! test_prop_has "$_cfg" exclude "$_exp_exclude"; then
+		err "$_cfg_pkg/vitest.config.ts test.exclude is not $_exp_exclude — a broad/changed glob could filter unit shard paths"
+		echo "     → keep the exclude to the expected set under test:, or update this validator" >&2
 	fi
 done
 
@@ -274,8 +288,18 @@ done
 # runs locally via test-daemon.sh but is absent from CI would make this guard
 # falsely report its files as covered (this is how `shared` — 25 files under
 # packages/shared/tests — was silently skipped before being added to the matrix).
-unit_matrix=$(grep -E "^[[:space:]]*shard:[[:space:]]*\[" "$REPO_ROOT/.github/workflows/main.yml" \
-	| head -n1 | sed -E 's/.*\[//; s/\].*//' | tr ',' '\n' | tr -d ' ')
+# Read the shard axis scoped to test-daemon-shared-unit — the FIRST `shard: [...]`
+# anywhere in main.yml could belong to an unrelated job added later, masking a
+# shard dropped from the real unit matrix.
+unit_matrix=$(awk '
+	$0 ~ "^  test-daemon-shared-unit:" { injob=1; next }
+	injob && /^  [a-z]/ { injob=0; next }
+	!injob { next }
+	/^[[:space:]]*shard:[[:space:]]*\[/ {
+		s=$0; sub(/.*\[/, "", s); sub(/\].*/, "", s)
+		n=split(s, a, ","); for (i=1; i<=n; i++) { gsub(/[[:space:]]/, "", a[i]); if (a[i] != "") print a[i] }
+	}
+' "$REPO_ROOT/.github/workflows/main.yml")
 # matrix.exclude under test-daemon-shared-unit drops combinations GitHub would
 # otherwise schedule. A shard present in the raw `shard:` axis but excluded
 # never runs, so accepting it as covered (it's in the raw axis) is a false
@@ -309,9 +333,27 @@ done
 # unit runner is missing, commented, or disabled (if:false), or no longer
 # forwards ${{ matrix.shard }}. (Replacing it with a fixed shard would run one
 # shard in every matrix job while this guard reported all as covered.)
-if [ -z "$(enabled_run_cmd "$REPO_ROOT/.github/workflows/main.yml" 'test-daemon.sh ${{ matrix.shard }}')" ]; then
+_unit_run=$(enabled_run_cmd "$REPO_ROOT/.github/workflows/main.yml" 'test-daemon.sh ${{ matrix.shard }}')
+if [ -z "$_unit_run" ]; then
 	err "test-daemon-shared-unit runner is missing, commented, disabled, or does not forward \${{ matrix.shard }} — unit matrix values don't reach the runner"
 	echo "     → keep an active, enabled './scripts/test-daemon.sh \${{ matrix.shard }} ...' step" >&2
+else
+	# Inspect ONLY the args after `test-daemon.sh` (there is another
+	# ${{ matrix.shard }} earlier, inside the --report ...json name). After
+	# stripping the matrix token and options, any leftover token is a bare
+	# shard-name positional — test-daemon.sh's arg loop makes the LAST non-option
+	# the TARGET_SHARD, so it would override matrix.shard and run one shard in
+	# every job while this guard reports all as covered.
+	_tdargs=$(printf '%s' "$_unit_run" | awk '{ i=index($0,"test-daemon.sh"); print (i>0)? substr($0,i+14) : "" }')
+	_extra=$(printf '%s' "$_tdargs" \
+		| sed -E -e 's/\$\{\{[[:space:]]*matrix\.shard[[:space:]]*\}\}//g' \
+		         -e 's/--[[:alnum:]._-]+=[^[:space:]]+//g' \
+		         -e 's/--[[:alnum:]_-]+//g' \
+		| tr -d "[:space:]'")
+	if [ -n "$_extra" ]; then
+		err "test-daemon-shared-unit runner passes an extra positional shard after \${{ matrix.shard }} — last non-option wins in test-daemon.sh, so one shard would run in every job while this guard reports all covered"
+		echo "     → keep \${{ matrix.shard }} as the only positional shard argument" >&2
+	fi
 fi
 
 # Assert every unit/shared test file on disk is covered by exactly one shard.
@@ -352,8 +394,8 @@ WEB_CFG="$REPO_ROOT/packages/web/vitest.config.ts"
 # so a glob placed in coverage.include would mask a narrowed test.include and
 # the guard would still report all files covered while the runner executes only
 # the narrowed set. Anchoring the exact indent + glob pins it to test.include.
-if ! grep -qE "^    include: \['src/\*\*/\*\.\{test,spec\}\.\{ts,tsx\}'\]" "$WEB_CFG"; then
-	err "packages/web/vitest.config.ts test.include is not the full src/**/*.{test,spec}.{ts,tsx} glob — web tests may be orphaned (a nested coverage.include no longer masks it)"
+if ! test_prop_has "$WEB_CFG" include "['src/**/*.{test,spec}.{ts,tsx}']"; then
+	err "packages/web/vitest.config.ts test.include is not the full src/**/*.{test,spec}.{ts,tsx} glob — web tests may be orphaned (a nested coverage.include / appended expression no longer masks it)"
 	echo "     → restore the full include under test:, or update this validator" >&2
 fi
 # test.exclude must stay node_modules/dist only — adding a src/ pattern there
@@ -361,8 +403,8 @@ fi
 # Anchor to `test.exclude` (4-space indent) like the include check above, so a
 # `coverage.exclude` holding ['node_modules','dist'] can't mask a narrowed
 # test.exclude that drops src tests.
-if ! grep -qE "^    exclude: \['node_modules', 'dist'\]" "$WEB_CFG"; then
-	err "packages/web/vitest.config.ts test.exclude is not ['node_modules', 'dist'] — src test files could be excluded (a nested coverage.exclude no longer masks it)"
+if ! test_prop_has "$WEB_CFG" exclude "['node_modules', 'dist']"; then
+	err "packages/web/vitest.config.ts test.exclude is not ['node_modules', 'dist'] — src test files could be excluded (a nested coverage.exclude / appended expression no longer masks it)"
 	echo "     → keep test.exclude to node_modules/dist, or update this validator" >&2
 fi
 # The web coverage assumes the test-web CI job runs a bare `vitest run` (no
@@ -378,15 +420,19 @@ if [ -z "$_web_cmd" ]; then
 elif [ -n "$(printf '%s' "$_web_cmd" \
 		| sed 's/.*bunx vitest run//' \
 		| sed -E -e 's/--reporter[[:space:]]+[^[:space:]]+//g' \
-		         -e 's/--[[:alnum:]._-]+=[^[:space:]]+//g' \
-		         -e 's/--[[:alnum:]_-]+//g' \
+		         -e 's/--reporter=[^[:space:]]+//g' \
+		         -e 's/--outputFile\.[[:alnum:]_-]+(=[^[:space:]]+)?//g' \
+		         -e 's/--coverage(=[^[:space:]]+)?//g' \
+		         -e 's/--coverage\.[[:alnum:]_.-]+(=[^[:space:]]+)?//g' \
+		         -e 's/--color//g' -e 's/--no-color//g' \
 		| tr -d "[:space:]'\"")" ]; then
-	# Strip known flags (--reporter <val>, --flag=<val>, bare --flags) after
-	# `vitest run`; any leftover token is a positional [filter] (path OR a bare
-	# word like `components`) that selects a subset of files — Vitest accepts
-	# filters anywhere in the arg list, even after options.
-	err "test-web runner passes a positional filter to 'vitest run' — web coverage assumption broken (only some files would run)"
-	echo "     → keep 'vitest run' bare (flags only, no positional path)" >&2
+	# Allowlist ONLY coverage-neutral flags (--reporter, --coverage*, --color);
+	# do NOT blanket-strip every --flag. Selection-changing flags like --changed,
+	# --testNamePattern, or --dir narrow which files run while this guard reports
+	# all covered, so anything left after the allowlist (a positional OR an
+	# unknown flag) fails.
+	err "test-web runner passes a positional filter or non-allowlisted flag to 'vitest run' — web coverage assumption broken (e.g. --changed/--testNamePattern would narrow discovery while this guard reports all files covered)"
+	echo "     → keep 'vitest run' bare (only --reporter/--coverage*/--color flags, no positional or selection-changing flag)" >&2
 fi
 
 # Web test files outside the src/** include are not run by web CI. Each must be
@@ -437,17 +483,16 @@ REAL_API_WORKFLOW=".github/workflows/real-api-tests.yml"
 # also not drop tests/online/ via the exclude, or matrix paths could be filtered
 # out while this guard (which only checks the matrix) stays green.
 ONLINE_CFG="$REPO_ROOT/packages/daemon/vitest.online.config.ts"
-if [ "$(active_hits "$ONLINE_CFG" "include: ['tests/online/**/*.test.ts', 'tests/online/**/*_test.ts']")" -eq 0 ]; then
-	err "packages/daemon/vitest.online.config.ts active include must be ['tests/online/**/*.test.ts', 'tests/online/**/*_test.ts'] — a *_test.ts file enumerated as covered must actually be run, not filtered out"
-	echo "     → keep the include covering both *.test.ts and *_test.ts" >&2
+if ! test_prop_has "$ONLINE_CFG" include "['tests/online/**/*.test.ts', 'tests/online/**/*_test.ts']"; then
+	err "packages/daemon/vitest.online.config.ts test.include must be ['tests/online/**/*.test.ts', 'tests/online/**/*_test.ts'] — a *_test.ts file enumerated as covered must actually be run, not filtered out (a nested coverage.include no longer masks it)"
+	echo "     → keep the include covering both *.test.ts and *_test.ts under test:" >&2
 fi
-# Require the exact exclude — a substring check for "tests/online/" misses a
-# broad glob (e.g. tests/** or **/legacy/**) that would silently exclude online
-# tests. node_modules/dist/tests/unit/** is the expected set (tests/unit/** keeps
-# the online config from picking up unit suites).
-if [ "$(active_hits "$ONLINE_CFG" "exclude: ['node_modules', 'dist', 'tests/unit/**']")" -eq 0 ]; then
-	err "packages/daemon/vitest.online.config.ts active exclude is not ['node_modules','dist','tests/unit/**'] — a broad/changed glob could exclude online tests"
-	echo "     → keep the exclude to node_modules/dist/tests/unit/**, or update this validator" >&2
+# Require the exact exclude (scoped to test.exclude) — node_modules/dist/
+# tests/unit/** is the expected set (tests/unit/** keeps the online config from
+# picking up unit suites).
+if ! test_prop_has "$ONLINE_CFG" exclude "['node_modules', 'dist', 'tests/unit/**']"; then
+	err "packages/daemon/vitest.online.config.ts test.exclude is not ['node_modules','dist','tests/unit/**'] — a broad/changed glob could exclude online tests"
+	echo "     → keep the exclude to node_modules/dist/tests/unit/** under test:, or update this validator" >&2
 fi
 
 # Online matrix test_path values must reach an ENABLED runner that forwards
@@ -510,9 +555,10 @@ done < <(awk '
 	injob && /^  [a-z]/ { flush(); injob=0; mod=""; has_path=0; folding=0; next }
 	!injob { next }
 	/^[[:space:]]*#/ { next }
-	/^[[:space:]]*- module:[[:space:]]*[a-z0-9-]+[[:space:]]*$/ {
+	# Accept an optional YAML quote around the module name; strip non-token chars.
+	/^[[:space:]]*- module:[[:space:]]*[^[:space:]]+[[:space:]]*$/ {
 		flush()
-		mod=$0; sub(/^[[:space:]]*- module:[[:space:]]*/, "", mod); sub(/[[:space:]]+$/, "", mod)
+		mod=$0; sub(/^[[:space:]]*- module:[[:space:]]*/, "", mod); sub(/[[:space:]]+$/, "", mod); gsub(/[^a-z0-9-]/, "", mod)
 		has_path=0; folding=0; next
 	}
 	mod != "" {
@@ -672,12 +718,15 @@ check_workflow_references() {
 
 	for f in "${expected[@]}"; do
 		local test_path="tests/online/$module_name/$f"
-		# A split file must be a test_path VALUE in its DESIGNATED workflow, and
-		# NOT in the other (a docs echo mentioning the path doesn't count; a file
-		# moved to the other workflow is a missing owner here + a duplicate there).
-		local designated other
-		designated=$(test_path_value_hits "$workflow" "$test_path")
-		other=$(test_path_value_hits "$other_wf" "$test_path")
+		# A split file must be a test_path VALUE in its DESIGNATED workflow's
+		# include block, and NOT in the other's. Count via the JOB-SCOPED maps
+		# (_module_values = test-daemon-online, _real_module_values =
+		# daemon-real-api) so a test_path in an UNRELATED job can't satisfy the
+		# designated check when the real online row is removed.
+		local designated other main_hits real_hits
+		main_hits=$(awk -F'\t' -v p="$test_path" '$2 == p' <<<"$_module_values" | wc -l | tr -d ' ')
+		real_hits=$(awk -F'\t' -v p="$test_path" '$2 == p' <<<"$_real_module_values" | wc -l | tr -d ' ')
+		if [ "$workflow" = "$MAIN_WORKFLOW" ]; then designated=$main_hits; other=$real_hits; else designated=$real_hits; other=$main_hits; fi
 		if [ "${designated:-0}" -eq 0 ]; then
 			err "$test_path is not a test_path value in its designated workflow $workflow"
 			echo "     → add it to a matrix row in $workflow" >&2
