@@ -44,6 +44,24 @@ err() {
 # hiding a pattern is a residual requiring a TS-aware parser.
 active_hits() { grep -hF "$2" "$1" 2>/dev/null | grep -cvE '^[[:space:]]*(#|//|/\*)'; }
 
+# Print the FOLDED `run:` command of the ENABLED workflow step whose run command
+# contains the literal marker $2 (in file $1). Folds `run: >-`/`|-` blocks AND
+# handles single-line `run:`. Empty if no enabled step matches — i.e. the step is
+# missing, commented, or disabled (`if: false|never`). Lets the wiring checks
+# verify a matrix value actually reaches an enabled runner command.
+enabled_run_cmd() {
+	awk -v marker="$2" '
+		function emit() { if (runval != "" && index(runval, marker) > 0 && !disabled && !done) { print runval; done=1 } }
+		/^[[:space:]]*-[[:space:]]/ { emit(); runval=""; disabled=0; incmd=0 }
+		/if:[[:space:]]*(false|never)([[:space:]]|$)/ { disabled=1 }
+		/^[[:space:]]*#/ { next }
+		incmd { n=0; while (substr($0,n+1,1)==" ") n++; if (n > runindent) { runval=runval" "$0; next }; emit(); runval=""; incmd=0 }
+		/^[[:space:]]*run:[[:space:]]*[>|]/ { incmd=1; n=0; while (substr($0,n+1,1)==" ") n++; runindent=n; runval=$0; next }
+		/^[[:space:]]*run:[[:space:]]+/ { runval=$0; emit(); runval=""; incmd=0; next }
+		END { emit() }
+	' "$1"
+}
+
 # ===========================================================================
 # 1. DAEMON UNIT TESTS  (source of truth: scripts/test-daemon.sh)
 # ===========================================================================
@@ -134,19 +152,27 @@ done
 unit_matrix=$(grep -E "^[[:space:]]*shard:[[:space:]]*\[" "$REPO_ROOT/.github/workflows/main.yml" \
 	| head -n1 | sed -E 's/.*\[//; s/\].*//' | tr ',' '\n' | tr -d ' ')
 for shard in "${SHARDS[@]}"; do
-	if ! printf '%s\n' "$unit_matrix" | grep -qxF "$shard"; then
+	# Exactly-once: a shard must appear in the matrix once. Missing = its files
+	# never run; duplicated = GitHub schedules it twice (duplicate test runs +
+	# coverage uploads under the same flag).
+	count=$(printf '%s\n' "$unit_matrix" | grep -xF "$shard" | wc -l | tr -d ' ')
+	if [ "$count" -eq 0 ]; then
 		err "daemon unit shard '$shard' is declared in test-daemon.sh SHARDS but missing from the CI unit matrix"
 		echo "     → add it to the test-daemon-shared-unit matrix in .github/workflows/main.yml (or drop it from SHARDS)" >&2
+	elif [ "$count" -gt 1 ]; then
+		err "daemon unit shard '$shard' appears $count times in the CI unit matrix — duplicate (would run twice)"
+		echo "     → list each shard exactly once" >&2
 	fi
 done
 
-# The matrix value must actually reach the runner: assert the test-daemon-shared-
-# unit job forwards ${{ matrix.shard }} to test-daemon.sh. Replacing it with a
-# fixed shard would run that one shard in every matrix job while this guard
-# still reported every shard's files as covered.
-if [ "$(active_hits "$REPO_ROOT/.github/workflows/main.yml" 'test-daemon.sh ${{ matrix.shard }}')" -eq 0 ]; then
-	err "test-daemon-shared-unit job does not forward \${{ matrix.shard }} to test-daemon.sh — unit matrix values don't reach the runner"
-	echo "     → keep './scripts/test-daemon.sh \${{ matrix.shard }} ...' in the unit job" >&2
+# The matrix value must reach an ENABLED runner. enabled_run_cmd finds the
+# folded run command of the enabled step containing the marker; empty means the
+# unit runner is missing, commented, or disabled (if:false), or no longer
+# forwards ${{ matrix.shard }}. (Replacing it with a fixed shard would run one
+# shard in every matrix job while this guard reported all as covered.)
+if [ -z "$(enabled_run_cmd "$REPO_ROOT/.github/workflows/main.yml" 'test-daemon.sh ${{ matrix.shard }}')" ]; then
+	err "test-daemon-shared-unit runner is missing, commented, disabled, or does not forward \${{ matrix.shard }} — unit matrix values don't reach the runner"
+	echo "     → keep an active, enabled './scripts/test-daemon.sh \${{ matrix.shard }} ...' step" >&2
 fi
 
 # Assert every unit/shared test file on disk is covered by exactly one shard.
@@ -193,25 +219,18 @@ if [ "$(active_hits "$WEB_CFG" "exclude: ['node_modules', 'dist']")" -eq 0 ]; th
 	echo "     → keep test.exclude to node_modules/dist, or update this validator" >&2
 fi
 # The web coverage assumes the test-web CI job runs a bare `vitest run` (no
-# targeted path), so the config include/exclude fully determine execution. If
-# that step is removed, disabled, or replaced with a targeted invocation, every
-# src/ file would still be reported covered while CI no longer runs the suite.
-# Anchored at end-of-line: a bare `vitest run` (no targeted path) puts `run` at
-# the end of the line; `vitest run src/foo.test.ts` would not match.
-# The web coverage assumes the test-web CI job runs a bare `vitest run` (no
-# targeted path) in an ACTIVE, ENABLED step. Searching raw text would match a
-# commented-out command (`# … vitest run`) or a step disabled with `if: false`.
-# The awk tracks per-step `if: false|never`, skips comment lines, and requires
-# the bare run line to be in an enabled step.
-if ! awk '
-	/^[[:space:]]*-[[:space:]]/ { disabled=0 }
-	/if:[[:space:]]*(false|never)([[:space:]]|$)/ { disabled=1 }
-	/^[[:space:]]*#/ { next }
-	/cd packages\/web && bunx vitest run[[:space:]]*$/ { found=1; if (!disabled) active=1 }
-	END { exit !(found && active) }
-' "$REPO_ROOT/.github/workflows/main.yml"; then
-	err "test-web CI job's bare 'cd packages/web && bunx vitest run' is missing, commented, or in a disabled (if: false|never) step — web coverage assumption broken"
-	echo "     → keep an active, enabled bare vitest run step" >&2
+# positional target) in an ENABLED step, so the config include/exclude fully
+# determine execution. enabled_run_cmd folds the runner command (a `>-` scalar)
+# and skips disabled/commented steps; we then require `vitest run` to be followed
+# by a flag (or the closing quote), not a positional path — a target on a folded
+# continuation line would otherwise evade an end-of-physical-line check.
+_web_cmd=$(enabled_run_cmd "$REPO_ROOT/.github/workflows/main.yml" 'cd packages/web && bunx vitest run')
+if [ -z "$_web_cmd" ]; then
+	err "test-web runner is missing, commented, or disabled (if: false|never) — web coverage assumption broken"
+	echo "     → keep an active, enabled 'cd packages/web && bunx vitest run' step" >&2
+elif printf '%s' "$_web_cmd" | grep -qE 'bunx vitest run[[:space:]]+[^-[:space:]]'; then
+	err "test-web runner passes a positional target to 'vitest run' — web coverage assumption broken (only some files would run)"
+	echo "     → keep 'vitest run' bare (flags only, no positional path)" >&2
 fi
 
 # Web test files outside the src/** include are not run by web CI. Each must be
@@ -272,19 +291,21 @@ if [ "$(active_hits "$ONLINE_CFG" "exclude: ['node_modules', 'dist', 'tests/unit
 	echo "     → keep the exclude to node_modules/dist/tests/unit/**, or update this validator" >&2
 fi
 
-# Online matrix test_path values must reach the RUNNER command. Scope to lines
-# that both interpolate ${{ matrix.test_path }} AND invoke the runner (`bun test`
-# / `vitest`) — a docs `echo "Tests: ${{ matrix.test_path }}"` step must not
-# satisfy this, and swapping the runner for a fixed target must fail.
-for _wf in "$REPO_ROOT/.github/workflows/main.yml" "$REPO_ROOT/.github/workflows/real-api-tests.yml"; do
-	_runner_uses=$(grep -hF '${{ matrix.test_path }}' "$_wf" 2>/dev/null \
-		| grep -vE '^[[:space:]]*(#|//)' \
-		| grep -cE 'bun test|vitest')
-	if [ "${_runner_uses:-0}" -eq 0 ]; then
-		err "$(basename "$_wf") online runner no longer consumes \${{ matrix.test_path }} (no active 'bun test'/'vitest' line with it) — online matrix values don't reach the runner"
-		echo "     → keep '\${{ matrix.test_path }}' on the runner command" >&2
-	fi
-done
+# Online matrix test_path values must reach an ENABLED runner that forwards
+# ${{ matrix.test_path }}. The marker picks the runner step itself
+# (vitest.online.config.ts in main.yml; `bun test` in real-api — NOT the docs
+# `echo "Tests: …"` step), so a commented/disabled (if:false) runner, or one
+# swapped for a fixed target, fails.
+_online_main=$(enabled_run_cmd "$REPO_ROOT/.github/workflows/main.yml" 'vitest.online.config.ts')
+if [ -z "$_online_main" ] || ! printf '%s' "$_online_main" | grep -qF '${{ matrix.test_path }}'; then
+	err "main.yml online runner is missing, commented, disabled, or does not forward \${{ matrix.test_path }} — online matrix values don't reach the runner"
+	echo "     → keep an active, enabled 'vitest ... \${{ matrix.test_path }}' step" >&2
+fi
+_online_real=$(enabled_run_cmd "$REPO_ROOT/.github/workflows/real-api-tests.yml" 'bun test')
+if [ -z "$_online_real" ] || ! printf '%s' "$_online_real" | grep -qF '${{ matrix.test_path }}'; then
+	err "real-api-tests.yml online runner is missing, commented, disabled, or does not forward \${{ matrix.test_path }} — online matrix values don't reach the runner"
+	echo "     → keep an active, enabled 'bun test \${{ matrix.test_path }}' step" >&2
+fi
 
 RPC_FILES=(
 	rpc-agent-handlers.test.ts
@@ -447,11 +468,11 @@ for dir in "$ONLINE_DIR"/*/; do
 		continue
 	fi
 	# A directory-level reference (test_path: tests/online/<dir>) covers every
-	# file under it. Match tests/online/<dir> NOT followed by a character that
-	# could extend the dir name ('/', alnum, '-', '_'), so a reference to
-	# tests/online/rpc-foo is not mistaken for tests/online/rpc, and a file-level
-	# path like tests/online/agent/<file> is not mistaken for the whole dir.
+	# file under it. Require the `test_path:` prefix so a docs/echo line that
+	# merely mentions the path can't pose as coverage. Match tests/online/<dir>
+	# NOT followed by a char that could extend the dir name.
 	dir_refs=$(grep -hE "tests/online/$dirname([^/[:alnum:]_-]|$)" "$MAIN_WORKFLOW" "$REAL_API_WORKFLOW" 2>/dev/null \
+		| grep -F 'test_path:' \
 		| grep -cvE '^[[:space:]]*#')
 	if [ "${dir_refs:-0}" -gt 1 ]; then
 		# Exactly-one-shard contract: a directory referenced by two matrix rows
@@ -467,6 +488,7 @@ for dir in "$ONLINE_DIR"/*/; do
 		while IFS= read -r f; do
 			rel="${f#"${dir%/}"/}"
 			file_refs=$(grep -hF "tests/online/$dirname/$rel" "$MAIN_WORKFLOW" "$REAL_API_WORKFLOW" 2>/dev/null \
+				| grep -F 'test_path:' \
 				| grep -cvE '^[[:space:]]*#')
 			if [ "${file_refs:-0}" -gt 0 ]; then
 				err "tests/online/$dirname/$rel is covered by both a directory-level row and a file-level row — duplicate shard ownership"
@@ -485,6 +507,7 @@ for dir in "$ONLINE_DIR"/*/; do
 		# yields the module-relative path (e.g. nested/x.test.ts), not the full path.
 		rel="${f#"${dir%/}"/}"
 		file_refs=$(grep -hF "tests/online/$dirname/$rel" "$MAIN_WORKFLOW" "$REAL_API_WORKFLOW" 2>/dev/null \
+			| grep -F 'test_path:' \
 			| grep -cvE '^[[:space:]]*#')
 		if [ "${file_refs:-0}" -eq 0 ]; then
 			err "online test not covered by any active CI shard: tests/online/$dirname/$rel"
