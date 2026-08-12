@@ -1007,6 +1007,15 @@ describe('drainDeliveryWaitersOnTerminalSDKMessage (handleSDKMessage-catch gatin
     expect(setIdle).toHaveBeenCalledTimes(1);
   });
 
+  it('does NOT call setIdle for a nested subagent result throw', async () => {
+    const setIdle = mock(async () => {});
+    await drainDeliveryWaitersOnTerminalSDKMessage({ setIdle }, {
+      type: 'result',
+      parent_tool_use_id: 'outer-agent-tool-use',
+    } as SDKMessage);
+    expect(setIdle).not.toHaveBeenCalled();
+  });
+
   it('does NOT call setIdle for a non-terminal (assistant) message throw', async () => {
     const setIdle = mock(async () => {});
     await drainDeliveryWaitersOnTerminalSDKMessage({ setIdle }, {

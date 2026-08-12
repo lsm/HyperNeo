@@ -37,7 +37,9 @@ export async function drainDeliveryWaitersOnTerminalSDKMessage(
   stateManager: { setIdle(): Promise<void> },
   message: SDKMessage
 ): Promise<void> {
-  if (message.type === 'result') {
+  const parentToolUseId = (message as SDKMessage & { parent_tool_use_id?: string | null })
+    .parent_tool_use_id;
+  if (message.type === 'result' && (parentToolUseId === null || parentToolUseId === undefined)) {
     await stateManager.setIdle();
   }
 }
