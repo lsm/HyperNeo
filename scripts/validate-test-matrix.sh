@@ -257,13 +257,17 @@ if [ "$(active_hits "$ONLINE_CFG" "exclude: ['node_modules', 'dist', 'tests/unit
 	echo "     → keep the exclude to node_modules/dist/tests/unit/**, or update this validator" >&2
 fi
 
-# Online matrix test_path values must reach the runner commands. Assert both
-# online jobs forward ${{ matrix.test_path }} (a fixed target would skip the
-# other files while this guard still reports them covered).
+# Online matrix test_path values must reach the RUNNER command. Scope to lines
+# that both interpolate ${{ matrix.test_path }} AND invoke the runner (`bun test`
+# / `vitest`) — a docs `echo "Tests: ${{ matrix.test_path }}"` step must not
+# satisfy this, and swapping the runner for a fixed target must fail.
 for _wf in "$REPO_ROOT/.github/workflows/main.yml" "$REPO_ROOT/.github/workflows/real-api-tests.yml"; do
-	if [ "$(active_hits "$_wf" '${{ matrix.test_path }}')" -eq 0 ]; then
-		err "$(basename "$_wf") online job does not forward \${{ matrix.test_path }} — online matrix values don't reach the runner"
-		echo "     → keep '\${{ matrix.test_path }}' in the online run command" >&2
+	_runner_uses=$(grep -hF '${{ matrix.test_path }}' "$_wf" 2>/dev/null \
+		| grep -vE '^[[:space:]]*(#|//)' \
+		| grep -cE 'bun test|vitest')
+	if [ "${_runner_uses:-0}" -eq 0 ]; then
+		err "$(basename "$_wf") online runner no longer consumes \${{ matrix.test_path }} (no active 'bun test'/'vitest' line with it) — online matrix values don't reach the runner"
+		echo "     → keep '\${{ matrix.test_path }}' on the runner command" >&2
 	fi
 done
 
@@ -340,16 +344,18 @@ check_workflow_references() {
 		# ACTIVE (non-commented) references only — a commented-out matrix entry
 		# or a header comment must not satisfy this check, or a disabled shard
 		# would still pass while its tests disappear from CI.
+		# Count ACTIVE (non-commented) references across BOTH workflows. A split
+		# file listed in its designated workflow AND echoed/added in the other
+		# would run twice (wasted CI / paid real-provider calls), so the count
+		# must be exactly one across the union.
 		local active
-		active=$(grep -hF "$test_path" "$workflow" 2>/dev/null | grep -cvE '^[[:space:]]*#')
+		active=$(grep -hF "$test_path" "$MAIN_WORKFLOW" "$REAL_API_WORKFLOW" 2>/dev/null | grep -cvE '^[[:space:]]*#')
 		if [ "${active:-0}" -eq 0 ]; then
-			err "$test_path has no active reference in $workflow"
-			echo "     → add it to the active CI matrix in $workflow" >&2
+			err "$test_path has no active reference in any CI workflow"
+			echo "     → add it to the active matrix in $workflow" >&2
 		elif [ "$active" -gt 1 ]; then
-			# Exactly-one-shard contract: a file listed in two matrix rows runs
-			# twice, wasting CI time and (for real-provider shards) paid calls.
-			err "$test_path has $active active references in $workflow — duplicate shard ownership"
-			echo "     → list it in exactly one matrix row" >&2
+			err "$test_path has $active active references across workflows — duplicate shard ownership"
+			echo "     → list it in exactly one matrix row in one workflow" >&2
 		fi
 	done
 }
@@ -440,6 +446,18 @@ for dir in "$ONLINE_DIR"/*/; do
 		echo "     → list it in exactly one matrix row" >&2
 	fi
 	if [ "${dir_refs:-0}" -gt 0 ]; then
+		# Directory-level coverage: every file under it already runs once via the
+		# dir row, so an ADDITIONAL file-level row for any of those files would
+		# run it again — compare dir + file ownership together (can't have both).
+		while IFS= read -r f; do
+			rel="${f#"${dir%/}"/}"
+			file_refs=$(grep -hF "tests/online/$dirname/$rel" "$MAIN_WORKFLOW" "$REAL_API_WORKFLOW" 2>/dev/null \
+				| grep -cvE '^[[:space:]]*#')
+			if [ "${file_refs:-0}" -gt 0 ]; then
+				err "tests/online/$dirname/$rel is covered by both a directory-level row and a file-level row — duplicate shard ownership"
+				echo "     → remove the file-level row (the directory-level row already covers it)" >&2
+			fi
+		done < <(find "$dir" -name "*.test.ts" -type f | sort)
 		continue
 	fi
 	# No directory-level reference: each file needs its own active reference,
