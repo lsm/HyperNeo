@@ -8127,6 +8127,20 @@ export class SpaceRuntime {
                 `Queued workflow handoff target "${targetAgentName}" is not declared in workflow "${meta.workflow.id}"`
               );
             }
+            // Normalize legacy compound / null-scoped rows to the pinned bare
+            // form (bare agent + resolved node id) so the flush drains them via
+            // the bare-agent key. The router now emits this form directly, but
+            // rows queued by the previous router (e.g. actor-registry
+            // "<nodeId>/<agent>" with no workflowNodeId) would otherwise expire
+            // undelivered now that the compound drain alias is gone.
+            if (
+              targetAgentName !== resolved.agentName ||
+              (workflowNodeId ?? null) !== resolved.nodeId
+            ) {
+              for (const row of remainingForGroup) {
+                repo.rescopeTarget(row.id, resolved.agentName, resolved.nodeId);
+              }
+            }
             execution = this.createNodeExecutionOrIgnore({
               workflowRunId: runId,
               workflowNodeId: resolved.nodeId,

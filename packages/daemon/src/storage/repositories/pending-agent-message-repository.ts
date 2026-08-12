@@ -312,6 +312,25 @@ export class PendingAgentMessageRepository {
   }
 
   /**
+   * Rewrite a pending row's target scope to the bare agent name + resolved node
+   * id. Used by the queued-handoff sweep to normalize legacy compound / null-
+   * scoped rows (emitted by the previous router, e.g. actor-registry
+   * "<nodeId>/<agent>" with no workflowNodeId) into the pinned bare form the
+   * flush drains — so they aren't stranded when the compound drain alias is gone.
+   */
+  rescopeTarget(id: string, targetAgentName: string, workflowNodeId: string): void {
+    this.db
+      .prepare(
+        `UPDATE pending_agent_messages
+				 SET target_agent_name = ?,
+				     workflow_node_id = ?
+				 WHERE id = ? AND status = 'pending'`
+      )
+      .run(targetAgentName, workflowNodeId, id);
+    this.notify();
+  }
+
+  /**
    * Record a failed delivery attempt.
    * Increments `attempts`; if the new count reaches `max_attempts`, the row
    * status is set to `'failed'` so it is no longer drained.

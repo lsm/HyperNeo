@@ -2467,6 +2467,47 @@ describe('SpaceRuntime', () => {
       expect(pendingRepo.listAllForRun(run.id)[0].status).toBe('delivered');
     });
 
+    test('legacy "<nodeId>/<agent>" rows (prior router) are normalized and delivered', async () => {
+      // A row queued by the previous router from an actor-registry handle stored
+      // the id-compound "<nodeId>/<agent>" with NO workflowNodeId. The sweep
+      // resolves it and rewrites it to bare+workflowNodeId so the flush drains it
+      // — otherwise it would expire undelivered now that the compound drain alias
+      // is gone.
+      const workflow = makeCompoundHandoffWorkflow();
+      const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Legacy id');
+      const task = tasks[0];
+      taskRepo.updateTask(task.id, { status: 'in_progress' });
+      nodeExecutionRepo.update(nodeExecutionRepo.listByWorkflowRun(run.id)[0]!.id, {
+        status: 'idle',
+        agentSessionId: null,
+      });
+      const pendingRepo = new PendingAgentMessageRepository(db);
+      pendingRepo.enqueue({
+        workflowRunId: run.id,
+        spaceId: SPACE_ID,
+        taskId: task.id,
+        sourceAgentName: 'coder',
+        targetKind: 'node_agent',
+        targetAgentName: 'review-node/reviewer',
+        message: 'please review',
+        ttlMs: 60_000,
+        maxAttempts: 3,
+      });
+      const tam = makeRepairTam({ flush: makeCompoundAwareFlush(workflow) });
+      await buildRepairRuntime(tam, pendingRepo).executeTick();
+
+      const reviewerExec = nodeExecutionRepo
+        .listByWorkflowRun(run.id)
+        .find((e) => e.workflowNodeId === 'review-node');
+      expect(reviewerExec?.agentName).toBe('reviewer');
+      expect(reviewerExec?.status).toBe('in_progress');
+      // The row was rescoped to bare+workflowNodeId and delivered.
+      const row = pendingRepo.listAllForRun(run.id)[0];
+      expect(row.targetAgentName).toBe('reviewer');
+      expect(row.workflowNodeId).toBe('review-node');
+      expect(row.status).toBe('delivered');
+    });
+
     test('non-compound "reviewer" slot name still resolves (backward compat)', async () => {
       const workflow = makeCompoundHandoffWorkflow();
       const { run, tasks } = await runtime.startWorkflowRun(

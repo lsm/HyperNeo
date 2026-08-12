@@ -124,7 +124,10 @@ export class SpaceWorkflowManager {
     this.validateName(params.spaceId, trimmedName, null);
     const nodes = (params.nodes ?? []).map((node) => ({
       ...node,
-      id: node.id ?? generateUUID(),
+      // Normalize empty/whitespace ids to a generated UUID. `?? generateUUID()`
+      // alone preserves '' (only catches null/undefined), and an empty node id
+      // breaks workflowNodeId pinning downstream.
+      id: node.id?.trim() || generateUUID(),
     }));
     this.validateNodes(params.spaceId, nodes);
 
@@ -676,6 +679,12 @@ export class SpaceWorkflowManager {
     const seenIds = new Set<string>();
     for (let i = 0; i < nodes.length; i++) {
       const id = nodes[i].id;
+      // Reject an explicit empty/whitespace id rather than skipping it — an
+      // empty node id breaks workflowNodeId pinning downstream. createWorkflow
+      // normalizes these to a UUID, so this is defensive for other callers.
+      if (id !== undefined && id !== null && id.trim().length === 0) {
+        throw new WorkflowValidationError(`node[${i}]: id must be a non-empty string`);
+      }
       if (!id) continue;
       if (seenIds.has(id)) {
         throw new WorkflowValidationError(`node[${i}]: duplicate node id "${id}"`);
