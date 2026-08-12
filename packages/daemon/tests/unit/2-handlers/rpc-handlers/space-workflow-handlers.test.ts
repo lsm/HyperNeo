@@ -156,7 +156,7 @@ function createMockWorkflowManager(
     ),
     updateWorkflow: mock(() => ({ ...workflow!, name: 'Updated' })),
     deleteWorkflow: mock(() => true),
-    hasNonArchivedRuns: mock(() => false),
+    hasExecutableRuns: mock(() => false),
   } as unknown as SpaceWorkflowManager;
 }
 
@@ -1163,7 +1163,11 @@ describe('space-workflow-handlers', () => {
       expect(result.reports).toEqual([]);
     });
 
-    it('excludes groups whose rows all share the same hash (duplicates without drift)', async () => {
+    it('REPORTS uniform-hash duplicate groups (duplicates warrant cleanup, not only drift)', async () => {
+      // Any >1-row built-in group is surfaced for consolidation so the
+      // "Resync duplicates" badge stays until the group is actually reduced to
+      // one row — a partial resync (or a post-archival retry) never leaves the
+      // user without a cleanup path.
       const [t1] = getBuiltInWorkflows();
       setupWithWorkflows([
         {
@@ -1181,37 +1185,6 @@ describe('space-workflow-handlers', () => {
           createdAt: 200,
         },
       ]);
-      const result = (await call('spaceWorkflow.detectDuplicateDrift', {
-        spaceId: 'space-1',
-      })) as { reports: DuplicateDriftReport[] };
-      expect(result.reports).toEqual([]);
-    });
-
-    it('KEEPS a uniform-hash group reported when a row has an executable run (partial-resync retry path)', async () => {
-      // After a partial resync, the kept row is resynced to the canonical hash;
-      // if the skipped duplicate already shared that hash the group would
-      // otherwise stop being reported and the user loses the "Resync duplicates"
-      // action. Keep it visible while any row still blocks on an executable run.
-      const [t1] = getBuiltInWorkflows();
-      setupWithWorkflows([
-        {
-          ...mockWorkflow,
-          id: 'wf-a',
-          templateName: t1.name,
-          templateHash: 'same-hash',
-          createdAt: 100,
-        },
-        {
-          ...mockWorkflow,
-          id: 'wf-b',
-          templateName: t1.name,
-          templateHash: 'same-hash',
-          createdAt: 200,
-        },
-      ]);
-      (workflowManager.hasNonArchivedRuns as ReturnType<typeof mock>).mockImplementation(
-        (id: string) => id === 'wf-a'
-      );
       const result = (await call('spaceWorkflow.detectDuplicateDrift', {
         spaceId: 'space-1',
       })) as { reports: DuplicateDriftReport[] };
@@ -1495,20 +1468,20 @@ describe('space-workflow-handlers', () => {
 
       (workflowManager.updateWorkflow as ReturnType<typeof mock>).mockReturnValue(newer);
       // The older duplicate is blocked: it has an executable run. The pre-check
-      // (hasNonArchivedRuns) fires before any cleanup, so the duplicate is left
+      // (hasExecutableRuns) fires before any cleanup, so the duplicate is left
       // untouched — neither deleteByWorkflowId nor deleteWorkflow runs for it.
-      (workflowManager.hasNonArchivedRuns as ReturnType<typeof mock>).mockImplementation(
+      (workflowManager.hasExecutableRuns as ReturnType<typeof mock>).mockImplementation(
         (id: string) => id === 'wf-older'
       );
 
       const result = (await call('spaceWorkflow.resyncDuplicates', {
         spaceId: 'space-1',
         templateName: template.name,
-      })) as { deletedIds: string[]; skippedDueToNonArchivedRuns: string[] };
+      })) as { deletedIds: string[]; skippedDueToExecutableRuns: string[] };
 
       // The blocked duplicate was kept (not deleted), the kept row was resynced.
       expect(result.deletedIds).toEqual([]);
-      expect(result.skippedDueToNonArchivedRuns).toEqual(['wf-older']);
+      expect(result.skippedDueToExecutableRuns).toEqual(['wf-older']);
       // Neither the workflow row nor its runs were touched.
       expect(workflowManager.deleteWorkflow).not.toHaveBeenCalledWith('wf-older');
       expect(workflowRunRepo.deleteByWorkflowId).not.toHaveBeenCalledWith('wf-older');

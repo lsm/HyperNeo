@@ -592,13 +592,13 @@ export function WorkflowList({
     }
     const result = await hub.request<{
       deletedIds: string[];
-      skippedDueToNonArchivedRuns?: string[];
+      skippedDueToExecutableRuns?: string[];
     }>('spaceWorkflow.resyncDuplicates', {
       spaceId,
       templateName,
     });
     const removed = result.deletedIds.length;
-    const skipped = result.skippedDueToNonArchivedRuns?.length ?? 0;
+    const skipped = result.skippedDueToExecutableRuns?.length ?? 0;
     if (skipped > 0) {
       // A duplicate was kept because it still has an executable run — tell the
       // user it's a partial result and what to do next, instead of implying all
@@ -674,11 +674,19 @@ export function WorkflowList({
           ? `Imported ${createdWorkflows} workflow${createdWorkflows === 1 ? '' : 's'}`
           : 'Nothing imported'
       );
-      // Surface every warning (e.g. agent-handle rewrites AND each blocked
-      // workflow replacement) — not just the first, so the user knows which
-      // workflows still need their tasks archived before a retry.
-      for (const warning of result.warnings) {
-        toast.warning(warning);
+      // Collapse all warnings (agent-handle rewrites, blocked replacements, …)
+      // into ONE toast. The toast container caps visible toasts at 3 and each
+      // toast is a role="alert" region, so an unbounded loop would both lose the
+      // earlier warnings and spam assistive tech. The summary names the count;
+      // the per-workflow detail is already in result.warnings for follow-up.
+      if (result.warnings.length > 0) {
+        const first = result.warnings[0];
+        const extra = result.warnings.length - 1;
+        toast.warning(
+          extra > 0
+            ? `${first} (…and ${extra} more warning${extra === 1 ? '' : 's'} — see import details)`
+            : first
+        );
       }
       setImportBundle(null);
       setImportPreview(null);

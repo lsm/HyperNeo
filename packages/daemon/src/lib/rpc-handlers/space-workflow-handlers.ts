@@ -883,18 +883,16 @@ export function setupSpaceWorkflowHandlers(
     const reports: DuplicateDriftReport[] = [];
     for (const [templateName, rows] of byTemplate) {
       if (rows.length < 2) continue;
-      // Drift = hash values diverge across rows. Rows with identical hashes
-      // aren't considered drift (even though they're still technically
-      // duplicates — left for separate cleanup) — UNLESS a row still has an
-      // executable run that blocked a prior resync. In that case keep the group
-      // reported so the badge (and the "Resync duplicates" action) stays visible;
-      // otherwise the kept row's resync collapses the hashes, the group stops
-      // being reported, and the user loses the UI path to archive the task and
-      // retry that the partial-resync warning promised.
-      const distinctHashes = new Set(rows.map((r) => r.templateHash ?? null));
-      const hasDrift = distinctHashes.size >= 2;
-      const hasBlockedRun = rows.some((r) => workflowManager.hasNonArchivedRuns(r.id));
-      if (!hasDrift && !hasBlockedRun) continue;
+      // Report EVERY >1-row built-in group as a duplicate warranting
+      // consolidation (resync keeps the newest, deletes the rest), not only
+      // hash-divergent ones. This keeps the "Resync duplicates" badge DURABLE:
+      // it stays until the group is actually consolidated down to one row, so a
+      // partial resync (a duplicate skipped because it has an executable run)
+      // never leaves the user without a cleanup path — after they archive the
+      // blocking task and remount, the badge is still there to retry. Built-in
+      // templates should have exactly one row, so any duplicate is unwanted and
+      // surfacing it for cleanup is on-mission (the previous hash-only rule hid
+      // uniform-hash duplicates indefinitely, which is what created the dead-end).
       const sortedRows = [...rows].sort((a, b) => b.createdAt - a.createdAt);
       reports.push({
         templateName,
@@ -984,7 +982,7 @@ export function setupSpaceWorkflowHandlers(
     // not ON DELETE CASCADE (migration 60 dropped it). Without this the tombstoned
     // rows would orphan and show up in no UI but still consume disk.
     //
-    // Deletion-safe (RFC §4 #3): check hasNonArchivedRuns BEFORE cleanup so a
+    // Deletion-safe (RFC §4 #3): check hasExecutableRuns BEFORE cleanup so a
     // skipped duplicate is left untouched. deleteByWorkflowId is itself guarded
     // (it only removes tombstoned runs), but running it first would still strip a
     // mixed-status duplicate's archived runs — and FK-cascade their tasks — before
@@ -992,10 +990,10 @@ export function setupSpaceWorkflowHandlers(
     // and the cleanup/delete below are synchronous with no await between them, so
     // no interleaving; a duplicate with any executable run is kept whole.
     const deletedIds: string[] = [];
-    const skippedDueToNonArchivedRuns: string[] = [];
+    const skippedDueToExecutableRuns: string[] = [];
     for (const wf of toDelete) {
-      if (workflowManager.hasNonArchivedRuns(wf.id)) {
-        skippedDueToNonArchivedRuns.push(wf.id);
+      if (workflowManager.hasExecutableRuns(wf.id)) {
+        skippedDueToExecutableRuns.push(wf.id);
         log.warn(
           `[resync] Kept duplicate workflow "${wf.name}" (${wf.id}): ` +
             `it has executable run(s) (in progress or not archived) — archive the task(s) and re-resync`
@@ -1029,6 +1027,6 @@ export function setupSpaceWorkflowHandlers(
         log.warn('Failed to emit spaceWorkflow.updated:', err);
       });
 
-    return { workflow: updated, keptWorkflowId: kept.id, deletedIds, skippedDueToNonArchivedRuns };
+    return { workflow: updated, keptWorkflowId: kept.id, deletedIds, skippedDueToExecutableRuns };
   });
 }

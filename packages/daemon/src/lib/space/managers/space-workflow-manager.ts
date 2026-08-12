@@ -490,8 +490,8 @@ export class SpaceWorkflowManager {
    * non-archived task (`done`/`cancelled` reopen). Used by import-replacement
    * to pre-check before freeing a name/handle slot.
    */
-  hasNonArchivedRuns(id: string): boolean {
-    return this.repo.hasNonArchivedRuns(id);
+  hasExecutableRuns(id: string): boolean {
+    return this.repo.hasExecutableRuns(id);
   }
 
   deleteWorkflow(id: string): boolean {
@@ -503,7 +503,7 @@ export class SpaceWorkflowManager {
     // attached) or terminal with a non-archived task (done/cancelled reopen).
     // Callers that must tolerate a blocked delete (resync, import-replacement)
     // catch WorkflowDeletionBlockedError.
-    if (this.repo.hasNonArchivedRuns(id)) {
+    if (this.repo.hasExecutableRuns(id)) {
       throw new WorkflowDeletionBlockedError(
         `Cannot delete workflow "${existing.name}" (${id}): it has run(s) that ` +
           `are still executable (in progress, or not archived). Archive the ` +

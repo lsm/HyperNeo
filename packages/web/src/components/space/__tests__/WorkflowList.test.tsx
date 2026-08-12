@@ -485,7 +485,7 @@ describe('WorkflowList', () => {
           return { updateAvailable: false, customized: false };
         if (method === 'spaceWorkflow.resyncDuplicates') {
           // The older duplicate was kept — it still has an executable run.
-          return { deletedIds: [], skippedDueToNonArchivedRuns: ['wf-older'] };
+          return { deletedIds: [], skippedDueToExecutableRuns: ['wf-older'] };
         }
         return undefined;
       });

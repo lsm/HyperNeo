@@ -372,12 +372,12 @@ export class SpaceWorkflowRunRepository {
    *
    * Deletion-safe (RFC §4 #3): only PROVABLE tombstones are deleted — terminal
    * (`done`/`cancelled`) runs that have ≥1 task and no non-archived task.
-   * Everything else is protected and left in place (see `hasNonArchivedRuns`):
+   * Everything else is protected and left in place (see `hasExecutableRuns`):
    * non-terminal runs; terminal runs with a non-archived task (they reopen); and
    * terminal runs with NO task (never got one, e.g. the `startWorkflowRun` catch
    * path — `ChannelRouter.isParentTaskArchived` treats zero tasks as not-archived,
    * so neither should this). Callers that need to know whether executable runs
-   * block full cleanup should check `hasNonArchivedRuns` first; this method
+   * block full cleanup should check `hasExecutableRuns` first; this method
    * silently leaves protected runs in place as defense in depth.
    *
    * @returns The number of run rows deleted. NOTE: under FK enforcement this

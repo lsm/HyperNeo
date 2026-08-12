@@ -663,7 +663,7 @@ export class SpaceWorkflowRepository {
    * check for executable runs, so calling it directly can orphan in-flight runs
    * (there is no `workflow_id` FK on `space_workflow_runs`). Production callers
    * MUST go through `SpaceWorkflowManager.deleteWorkflow`, which refuses when
-   * `hasNonArchivedRuns` is true. Direct repo use is reserved for internal
+   * `hasExecutableRuns` is true. Direct repo use is reserved for internal
    * fixtures that intentionally simulate a legacy orphan (e.g. recovery tests).
    */
   deleteWorkflow(id: string): boolean {
@@ -688,7 +688,7 @@ export class SpaceWorkflowRepository {
    *     which treats zero tasks as not-archived.
    * Only a terminal run with ≥1 task, all archived, is a true tombstone.
    */
-  hasNonArchivedRuns(workflowId: string): boolean {
+  hasExecutableRuns(workflowId: string): boolean {
     // Minimal-schema safe-guard: some test fixtures and partial schemas create
     // `space_workflows` without the runs/tasks tables. No runs table ⇒ no runs
     // can exist ⇒ nothing to orphan ⇒ deletion is safe. Mirrors the best-effort

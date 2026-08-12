@@ -795,15 +795,22 @@ export function setupSpaceExportImportHandlers(
             // workflow and its name/handle slot). Phase 2 detects the missing
             // replacedIdByName entry and records the workflow as skipped rather
             // than failing the whole import.
-            if (workflowManager.hasNonArchivedRuns(existing.id)) {
+            if (workflowManager.hasExecutableRuns(existing.id)) {
               allWarnings.push(
                 `Workflow "${exportedWorkflow.name}": replace skipped — existing ` +
-                  `workflow has run(s) whose task is not archived; archive the ` +
-                  `task(s) and re-import to replace`
+                  `workflow has executable run(s) (in progress or not archived); ` +
+                  `archive the task(s) and re-import to replace`
               );
               continue;
             }
-            workflowRepo.deleteWorkflow(existing.id);
+            // Route through the manager (not the repo) so the deletion-safety
+            // guard is the fence even if the pre-check above is ever dropped —
+            // defense in depth mirroring the resync path. The pre-check already
+            // proved the workflow is deletable, so this does not throw here; if
+            // it ever did (e.g. a run appeared between the check and the delete)
+            // the WorkflowDeletionBlockedError propagates and rolls back the
+            // whole import transaction rather than orphaning the run.
+            workflowManager.deleteWorkflow(existing.id);
             replacedIdByName.set(exportedWorkflow.name, existing.id);
             usedWorkflowNames.delete(exportedWorkflow.name);
             if (existing.handle) usedWorkflowHandles.delete(existing.handle);

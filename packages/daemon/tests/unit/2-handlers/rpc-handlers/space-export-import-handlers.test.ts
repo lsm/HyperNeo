@@ -139,7 +139,7 @@ function createSchema(db: Database): void {
 		)
 	`);
   // Minimal runs/tasks tables so the deletion-safety predicate (RFC §4 #3) has
-  // real data to query on the replace path. Only the columns hasNonArchivedRuns
+  // real data to query on the replace path. Only the columns hasExecutableRuns
   // touches are needed; the full schema lives in migrations.
   db.exec(`
 		CREATE TABLE space_workflow_runs (
