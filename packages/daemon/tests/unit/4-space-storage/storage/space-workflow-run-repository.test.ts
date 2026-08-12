@@ -514,6 +514,18 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(workflowRepo.hasExecutableRuns(WORKFLOW_ID)).toBe(true);
     });
 
+    it('hasExecutableRuns treats a non-terminal run with ALL tasks archived as a tombstone', () => {
+      // Legacy stale state: archiving used to leave an in_progress run stranded
+      // (space-task-handlers.ts:515-524). Such a run is non-terminal but its
+      // task(s) are all archived, so it is a provable tombstone (isParentTaskArchived
+      // is true) and must NOT block deletion — otherwise the user is told to
+      // "archive the task" for a task that is already archived.
+      const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'stale' });
+      // status defaults to 'pending' (non-terminal); task is archived.
+      seedTaskForRun(run.id, spaceId, { archived: true });
+      expect(workflowRepo.hasExecutableRuns(WORKFLOW_ID)).toBe(false);
+    });
+
     it('deleteByWorkflowId removes only tombstoned runs and protects executable ones', () => {
       const tombstoned = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'tomb' });
       repo.updateStatusUnchecked(tombstoned.id, 'cancelled'); // terminal
@@ -529,6 +541,14 @@ describe('SpaceWorkflowRunRepository', () => {
       repo.deleteByWorkflowId(WORKFLOW_ID);
       expect(repo.getRun(tombstoned.id)).toBeNull(); // tombstone → removed
       expect(repo.getRun(liveRun.id)).not.toBeNull(); // executable → protected
+    });
+
+    it('deleteByWorkflowId cleans up a non-terminal run whose tasks are all archived', () => {
+      // The legacy stale state (above) is cleanable on run-cleanup too.
+      const stale = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'stale' });
+      seedTaskForRun(stale.id, spaceId, { archived: true }); // non-terminal + all archived
+      repo.deleteByWorkflowId(WORKFLOW_ID);
+      expect(repo.getRun(stale.id)).toBeNull();
     });
 
     it('deleteByWorkflowId protects a non-terminal run that has no task yet (startup window)', () => {

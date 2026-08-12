@@ -675,18 +675,22 @@ export class SpaceWorkflowRepository {
    * Does this workflow have at least one EXECUTABLE run that must not be orphaned?
    *
    * RFC §4 #3 deletion-safety predicate. A run is protected (deletion must be
-   * refused) unless it is a provable tombstone. A run is EXECUTABLE (protected)
-   * when ANY of:
-   *   - non-terminal (`pending`/`in_progress`/`blocked`) — covers the
-   *     `startWorkflowRun` window where the run is inserted and promoted to
-   *     `in_progress` BEFORE its canonical task is attached;
-   *   - has a non-archived task — `done`/`cancelled` REOPEN, so only an archived
-   *     task is a non-reopenable tombstone;
-   *   - has NO task at all — a terminal run with no task is NOT a tombstone (it
-   *     never got one, e.g. the `startWorkflowRun` catch path cancels the run
-   *     when task creation fails). This mirrors `ChannelRouter.isParentTaskArchived`,
-   *     which treats zero tasks as not-archived.
-   * Only a terminal run with ≥1 task, all archived, is a true tombstone.
+   * refused) unless it is a provable tombstone. The predicate is task-based and
+   * mirrors `ChannelRouter.isParentTaskArchived` exactly: a run is a tombstone
+   * iff it has ≥1 task and every one of them is archived. So a run is EXECUTABLE
+   * (protected) when:
+   *   - it has NO task attached — the `startWorkflowRun` startup window (the run
+   *     is inserted and promoted before its canonical task lands) and the failed-
+   *     task-creation catch path (run cancelled with no task). Zero tasks is NOT
+   *     a tombstone (the work was never provably finished);
+   *   - OR it has a non-archived task — `done`/`cancelled` REOPEN, so only an
+   *     archived task is a non-reopenable tombstone.
+   * Run status is deliberately NOT consulted: a non-terminal run whose tasks are
+   * all archived is a stale tombstone (legacy runs left stranded because archiving
+   * used to leave an `in_progress` run behind — see space-task-handlers.ts:515-524),
+   * and the active-run archive guard now prevents creating new ones, so treating
+   * such rows as cleanable is correct and unblocks the user instead of demanding
+   * they "archive tasks" that are already archived.
    */
   hasExecutableRuns(workflowId: string): boolean {
     // Minimal-schema safe-guard: some test fixtures and partial schemas create
@@ -707,13 +711,12 @@ export class SpaceWorkflowRepository {
         `SELECT 1 FROM space_workflow_runs r
          WHERE r.workflow_id = ?
            AND (
-             r.status IN ('pending', 'in_progress', 'blocked')
+             NOT EXISTS (
+               SELECT 1 FROM space_tasks t WHERE t.workflow_run_id = r.id
+             )
              OR EXISTS (
                SELECT 1 FROM space_tasks t
                WHERE t.workflow_run_id = r.id AND t.archived_at IS NULL
-             )
-             OR NOT EXISTS (
-               SELECT 1 FROM space_tasks t WHERE t.workflow_run_id = r.id
              )
            )
          LIMIT 1`

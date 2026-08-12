@@ -370,15 +370,16 @@ export class SpaceWorkflowRunRepository {
    * `ON DELETE CASCADE` FK on `workflow_id`, so callers that remove a workflow
    * must explicitly clean up its runs to avoid orphans.
    *
-   * Deletion-safe (RFC §4 #3): only PROVABLE tombstones are deleted — terminal
-   * (`done`/`cancelled`) runs that have ≥1 task and no non-archived task.
-   * Everything else is protected and left in place (see `hasExecutableRuns`):
-   * non-terminal runs; terminal runs with a non-archived task (they reopen); and
-   * terminal runs with NO task (never got one, e.g. the `startWorkflowRun` catch
-   * path — `ChannelRouter.isParentTaskArchived` treats zero tasks as not-archived,
-   * so neither should this). Callers that need to know whether executable runs
-   * block full cleanup should check `hasExecutableRuns` first; this method
-   * silently leaves protected runs in place as defense in depth.
+   * Deletion-safe (RFC §4 #3): only PROVABLE tombstones are deleted — runs that
+   * have ≥1 task and NO non-archived task (i.e. `isParentTaskArchived` is true),
+   * regardless of run status. Everything else is protected and left in place
+   * (see `hasExecutableRuns`): runs with no task at all (startup window / failed
+   * task creation) and runs with a non-archived task (they reopen). Consulting
+   * task state rather than run status means a legacy non-terminal run whose
+   * tasks are all archived is cleaned up instead of stranding the user. Callers
+   * that need to know whether executable runs block full cleanup should check
+   * `hasExecutableRuns` first; this method silently leaves protected runs in
+   * place as defense in depth.
    *
    * @returns The number of run rows deleted. NOTE: under FK enforcement this
    *          count may include cascade effects (e.g. `space_tasks.workflow_run_id
@@ -390,7 +391,6 @@ export class SpaceWorkflowRunRepository {
       .prepare(
         `DELETE FROM space_workflow_runs
          WHERE workflow_id = ?
-           AND status IN ('done', 'cancelled')
            AND EXISTS (
              SELECT 1 FROM space_tasks t WHERE t.workflow_run_id = space_workflow_runs.id
            )

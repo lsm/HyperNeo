@@ -287,7 +287,7 @@ function WorkflowCard({
               {duplicateDrift && (
                 <span
                   class="inline-flex items-center rounded bg-orange-500/10 px-1.5 py-0.5 text-xs text-orange-300"
-                  title={`${duplicateDrift.groupSize} rows share the "${duplicateDrift.templateName}" template with diverging content. Resync keeps the newest row and removes the rest.`}
+                  title={`${duplicateDrift.groupSize} rows share the "${duplicateDrift.templateName}" template (duplicates). Resync keeps the newest row and removes the rest.`}
                 >
                   Duplicate ×{duplicateDrift.groupSize}
                 </span>
@@ -416,7 +416,7 @@ function WorkflowCard({
               This space has{' '}
               <span class="font-medium text-gray-200">{duplicateDrift.groupSize} rows</span> sharing
               the <span class="font-medium text-gray-200">"{duplicateDrift.templateName}"</span>{' '}
-              template with diverging content.
+              template (duplicate rows).
             </p>
             <p class="text-xs text-gray-400 mb-1">
               The newest row <span class="font-medium text-gray-200">"{workflow.name}"</span> will
@@ -674,19 +674,14 @@ export function WorkflowList({
           ? `Imported ${createdWorkflows} workflow${createdWorkflows === 1 ? '' : 's'}`
           : 'Nothing imported'
       );
-      // Collapse all warnings (agent-handle rewrites, blocked replacements, …)
-      // into ONE toast. The toast container caps visible toasts at 3 and each
-      // toast is a role="alert" region, so an unbounded loop would both lose the
-      // earlier warnings and spam assistive tech. The summary names the count;
-      // the per-workflow detail is already in result.warnings for follow-up.
+      // Surface every warning in ONE toast (joined). The toast container caps
+      // visible toasts at 3 and each toast is a role="alert" region, so a
+      // per-warning loop would lose earlier warnings past 3 and spam assistive
+      // tech; a single summary would hide which workflows were skipped. Joining
+      // all warnings into one toast keeps every detail visible (which workflow
+      // needs its task archived before retry) without the cap/spam problems.
       if (result.warnings.length > 0) {
-        const first = result.warnings[0];
-        const extra = result.warnings.length - 1;
-        toast.warning(
-          extra > 0
-            ? `${first} (…and ${extra} more warning${extra === 1 ? '' : 's'} — see import details)`
-            : first
-        );
+        toast.warning(result.warnings.join(' · '));
       }
       setImportBundle(null);
       setImportPreview(null);
