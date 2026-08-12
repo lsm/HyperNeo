@@ -129,10 +129,25 @@ export function buildSemanticWorkflowEdges(
       };
     }
 
+    // One-way channel: emit the edge in the channel's actual direction so a
+    // backward (highToLow) feedback/cyclic channel renders with a correct
+    // highId → lowId arrow, not a reversed lowId → highId one.
+    if (aggregate.lowToHigh) {
+      return {
+        id: `${aggregate.lowId}:${aggregate.highId}`,
+        fromStepId: aggregate.lowId,
+        toStepId: aggregate.highId,
+        direction: 'one-way' as const,
+        channelCount: aggregate.channelCount,
+        hasCyclic: aggregate.hasCyclic,
+        channelIndexes: Array.from(aggregate.channelIndexes),
+      };
+    }
+
     return {
-      id: `${aggregate.lowId}:${aggregate.highId}`,
-      fromStepId: aggregate.lowId,
-      toStepId: aggregate.highId,
+      id: `${aggregate.highId}:${aggregate.lowId}`,
+      fromStepId: aggregate.highId,
+      toStepId: aggregate.lowId,
       direction: 'one-way' as const,
       channelCount: aggregate.channelCount,
       hasCyclic: aggregate.hasCyclic,
