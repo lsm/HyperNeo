@@ -139,6 +139,31 @@ matrix_excludes() {
 	' "$REPO_ROOT/.github/workflows/main.yml"
 }
 
+# Print a module→value map (one `module<TAB>value` line per test_path value) for
+# workflow file $1, parsing the FOLDED-scalar CONTENTS — not just the `>-`/`|-`
+# marker (the marker is non-space, so a naive `test_path:[[:space:]]*[^[:space:]]`
+# test wrongly accepts `test_path: >-` with no value as nonempty). Lets callers
+# count ACTUAL values per module so an empty test_path is caught.
+module_values() {
+	awk '
+		function trim(v) { sub(/^[[:space:]]+/, "", v); sub(/[[:space:]]+$/, "", v); return v }
+		/^[[:space:]]*#/ { next }
+		/^[[:space:]]*- module:[[:space:]]*[a-z0-9-]+/ {
+			mod=$0; sub(/^[[:space:]]*- module:[[:space:]]*/, "", mod); sub(/[[:space:]]*$/, "", mod)
+			folding=0; next
+		}
+		mod && /test_path:[[:space:]]*[>|]-[[:space:]]*$/ { folding=1; base=0; while (substr($0, base+1, 1)==" ") base++; next }
+		folding {
+			n=0; while (substr($0, n+1, 1)==" ") n++
+			if (n > base) { v=trim($0); if (v != "") print mod "\t" v; next }
+			folding=0
+		}
+		mod && /test_path:[[:space:]]+[^[:space:]>|-]/ {
+			v=$0; sub(/^.*test_path:[[:space:]]+/, "", v); v=trim(v); if (v != "") print mod "\t" v
+		}
+	' "$1"
+}
+
 # ===========================================================================
 # 1. DAEMON UNIT TESTS  (source of truth: scripts/test-daemon.sh)
 # ===========================================================================
@@ -420,34 +445,35 @@ _axis_modules=$(awk '
 	injob && /^[[:space:]]*include:/ { inaxis=0 }
 	inaxis && !/^[[:space:]]*#/ && /^[[:space:]]+- [a-z][a-z0-9-]+[[:space:]]*$/ { sub(/^[[:space:]]+- /, ""); print }
 ' "$MAIN_WORKFLOW")
-# Build a module→value map that parses the FOLDED-scalar CONTENTS, not just the
-# `>-`/`|-` marker. The marker itself is non-space, so a naive
-# `test_path:[[:space:]]*[^[:space:]]` test accepts `test_path: >-` with NO
-# indented value as a nonempty path — yet GitHub resolves that to an EMPTY
-# ${{ matrix.test_path }}, so the runner executes the entire online suite
-# unfiltered. Counting ACTUAL values per module closes that hole.
-_module_values=$(awk '
-	function trim(v) { sub(/^[[:space:]]+/, "", v); sub(/[[:space:]]+$/, "", v); return v }
-	/^[[:space:]]*#/ { next }
-	/^[[:space:]]*- module:[[:space:]]*[a-z0-9-]+/ {
-		mod=$0; sub(/^[[:space:]]*- module:[[:space:]]*/, "", mod); sub(/[[:space:]]*$/, "", mod)
-		folding=0; next
-	}
-	mod && /test_path:[[:space:]]*[>|]-[[:space:]]*$/ { folding=1; base=0; while (substr($0, base+1, 1)==" ") base++; next }
-	folding {
-		n=0; while (substr($0, n+1, 1)==" ") n++
-		if (n > base) { v=trim($0); if (v != "") print mod "\t" v; next }
-		folding=0
-	}
-	mod && /test_path:[[:space:]]+[^[:space:]>|-]/ {
-		v=$0; sub(/^.*test_path:[[:space:]]+/, "", v); v=trim(v); if (v != "") print mod "\t" v
-	}
-' "$MAIN_WORKFLOW")
+# Build a module→value map (parses folded-scalar CONTENTS, not just the marker —
+# see module_values) so the orphan check can count ACTUAL values per module.
+_module_values=$(module_values "$MAIN_WORKFLOW")
 for _m in $_axis_modules; do
 	_count=$(printf '%s\n' "$_module_values" | awk -F'\t' -v m="$_m" '$1 == m { c++ } END { print c+0 }')
 	if [ "$_count" -eq 0 ]; then
 		err "online matrix module '$_m' has no include record with a non-empty test_path — \${{ matrix.test_path }} would be empty (or a folded >- with no values) → unfiltered run of the entire online suite"
 		echo "     → add an include: entry for '$_m' with a test_path, or drop it from the module axis" >&2
+	fi
+done
+
+# Symmetric check for real-api-tests.yml: its daemon-real-api job is an
+# include-only matrix (no `module:` axis), so every include row IS a combination
+# that runs `bun test ${{ matrix.test_path }}`. A row without a non-empty
+# test_path expands to a bare `bun test`, which `bun test --help` documents as
+# "Run all test files" — running the entire online suite (and, with real keys,
+# paid provider calls). The main.yml orphan check above doesn't cover this file.
+_real_module_values=$(module_values "$REAL_API_WORKFLOW")
+_real_include_modules=$(awk '
+	/^[[:space:]]*#/ { next }
+	/^[[:space:]]*- module:[[:space:]]*[a-z0-9-]+/ {
+		m=$0; sub(/^[[:space:]]*- module:[[:space:]]*/, "", m); sub(/[[:space:]]*$/, "", m); print m
+	}
+' "$REAL_API_WORKFLOW")
+for _rm in $_real_include_modules; do
+	_rcount=$(printf '%s\n' "$_real_module_values" | awk -F'\t' -v m="$_rm" '$1 == m { c++ } END { print c+0 }')
+	if [ "$_rcount" -eq 0 ]; then
+		err "real-api include row for module '$_rm' has no non-empty test_path — \${{ matrix.test_path }} would expand empty, so 'bun test' runs the entire online suite"
+		echo "     → add a test_path to the row, or remove it" >&2
 	fi
 done
 
@@ -698,9 +724,6 @@ SPLIT_DIRS="rpc room features providers cross-provider rewind space"
 for dir in "$ONLINE_DIR"/*/; do
 	[ -d "$dir" ] || continue
 	dirname=$(basename "$dir")
-	if [[ " $EXEMPT_DIRS " == *" $dirname "* ]] || [[ " $SPLIT_DIRS " == *" $dirname "* ]]; then
-		continue
-	fi
 	# A directory-level reference (test_path: tests/online/<dir>) covers every
 	# file under it. Require the `test_path:` prefix so a docs/echo line that
 	# merely mentions the path can't pose as coverage. Match tests/online/<dir>
@@ -708,6 +731,19 @@ for dir in "$ONLINE_DIR"/*/; do
 	dir_refs=$(grep -hE "tests/online/$dirname([^/[:alnum:]_-]|$)" "$MAIN_WORKFLOW" "$REAL_API_WORKFLOW" 2>/dev/null \
 		| grep -F 'test_path:' \
 		| grep -cvE '^[[:space:]]*#')
+	if [[ " $EXEMPT_DIRS " == *" $dirname "* ]] || [[ " $SPLIT_DIRS " == *" $dirname "* ]]; then
+		# Exempt dirs are intentionally not run; split dirs are owned file-by-file
+		# via check_split_module. A DIRECTORY-level test_path owner is wrong either
+		# way: it re-enables a disabled module (exempt), or runs every file under
+		# the dir AGAIN on top of the explicit rows (split) — duplicating tests
+		# and, for real-API split modules like cross-provider, repeating paid
+		# provider calls. The old code `continue`d before checking, hiding it.
+		if [ "${dir_refs:-0}" -gt 0 ]; then
+			err "online directory 'tests/online/$dirname' has a directory-level test_path owner but is a split/exempt module — files under it would run on top of their explicit rows (or re-enable a disabled module)"
+			echo "     → point test_path at specific files (split module), or remove the row (exempt module)" >&2
+		fi
+		continue
+	fi
 	if [ "${dir_refs:-0}" -gt 1 ]; then
 		# Exactly-one-shard contract: a directory referenced by two matrix rows
 		# (or both workflows) runs every file under it twice — wasted CI and, for
