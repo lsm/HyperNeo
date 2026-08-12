@@ -17,6 +17,7 @@ import type {
   WorkflowHookResult,
   WorkflowNode,
 } from '@hyperneo/shared';
+import type { GateScriptExecutorFn } from '../../../../src/lib/space/runtime/gate-evaluator.ts';
 import type { HandoffExecutorConfig } from '../../../../src/lib/space/runtime/handoff-executor.ts';
 import {
   HandoffExecutor,
@@ -273,6 +274,31 @@ describe('HandoffExecutor: success', () => {
     expect(result.delivered).toHaveLength(2);
     expect(ctx.injected).toHaveLength(2);
   });
+
+  test('partial delivery: reachable target delivered, unreachable reported', async () => {
+    const workflow = makeWorkflow({
+      nodes: [
+        node('n-coding', 'coding', 'coder', [{ id: 'broadcast', target: '*' }]),
+        node('n-review', 'review', 'reviewer'),
+        node('n-qa', 'qa', 'tester'),
+      ],
+      channels: [{ id: 'ch-broadcast', from: 'coding', to: ['review', 'qa'] }],
+    });
+    // Only reviewer is live; tester has no session and no queue is configured.
+    seedPeer(ctx.db, ctx.runId, 'n-review', 'reviewer', 'session-reviewer');
+    const executor = makeExecutor(ctx, workflow);
+
+    const result = await executor.execute({
+      fromAgentName: 'coder',
+      fromSessionId: 'session-coder',
+      workflowNodeId: 'n-coding',
+      operation: { target: '*', summary: 'heads up' },
+    });
+
+    expect(result.status).toBe('delivered');
+    expect(result.delivered).toEqual([{ agentName: 'reviewer', sessionId: 'session-reviewer' }]);
+    expect(result.reason).toContain('tester');
+  });
 });
 
 describe('HandoffExecutor: transition resolution', () => {
@@ -508,6 +534,120 @@ describe('HandoffExecutor: gate commit', () => {
     expect(result.stage).toBe('gate');
     expect(result.reason).toContain('rogue');
   });
+
+  test('propagates a rate-limited scripted gate as a retryable block', async () => {
+    const gate: Gate = {
+      id: 'gate-scripted',
+      resetOnCycle: false,
+      fields: [
+        { name: 'approved', type: 'boolean', writers: ['coder'], check: { op: '==', value: true } },
+      ],
+      script: { interpreter: 'bash', source: 'exit 1' },
+    };
+    const workflow = makeWorkflow({
+      nodes: [
+        node('n-coding', 'coding', 'coder', [
+          { id: 'to-review', target: 'review', gateId: 'gate-scripted' },
+        ]),
+        node('n-review', 'review', 'reviewer'),
+      ],
+      channels: [{ id: 'ch', from: 'coding', to: 'review' }],
+      gates: [gate],
+    });
+    const executor = makeExecutor(ctx, workflow, {
+      scriptExecutor: (async () => ({
+        success: false,
+        rateLimited: true,
+        retryAfterMs: 5000,
+        data: {},
+        error: 'GitHub 403',
+      })) as GateScriptExecutorFn,
+      scriptContext: { workspacePath: '/tmp', runId: ctx.runId },
+    });
+
+    const result = await executor.execute({
+      fromAgentName: 'coder',
+      fromSessionId: 'session-coder',
+      workflowNodeId: 'n-coding',
+      operation: { target: 'review', summary: 'go', data: { approved: true } },
+    });
+
+    expect(result.status).toBe('blocked');
+    expect(result.stage).toBe('gate');
+    expect(result.rateLimited).toBe(true);
+    expect(result.retryAfterMs).toBe(5000);
+    expect(result.gate?.rateLimited).toBe(true);
+  });
+
+  test('autonomy path: a no-writers field is writable at sufficient autonomy', async () => {
+    const gate: Gate = {
+      id: 'gate-autonomy',
+      resetOnCycle: false,
+      requiredLevel: 3,
+      fields: [
+        { name: 'approved', type: 'boolean', writers: [], check: { op: '==', value: true } },
+      ],
+    };
+    const workflow = makeWorkflow({
+      nodes: [
+        node('n-coding', 'coding', 'coder', [
+          { id: 'to-review', target: 'review', gateId: 'gate-autonomy' },
+        ]),
+        node('n-review', 'review', 'reviewer'),
+      ],
+      channels: [{ id: 'ch', from: 'coding', to: 'review' }],
+      gates: [gate],
+    });
+    seedPeer(ctx.db, ctx.runId, 'n-review', 'reviewer', 'session-reviewer');
+    const executor = makeExecutor(ctx, workflow, {
+      getSpaceAutonomyLevel: async () => 5,
+    });
+
+    const result = await executor.execute({
+      fromAgentName: 'coder',
+      fromSessionId: 'session-coder',
+      workflowNodeId: 'n-coding',
+      operation: { target: 'review', summary: 'go', data: { approved: true } },
+    });
+
+    expect(result.status).toBe('delivered');
+    expect(result.gate?.open).toBe(true);
+  });
+
+  test('autonomy path: a no-writers field is rejected below required autonomy', async () => {
+    const gate: Gate = {
+      id: 'gate-autonomy',
+      resetOnCycle: false,
+      requiredLevel: 3,
+      fields: [
+        { name: 'approved', type: 'boolean', writers: [], check: { op: '==', value: true } },
+      ],
+    };
+    const workflow = makeWorkflow({
+      nodes: [
+        node('n-coding', 'coding', 'coder', [
+          { id: 'to-review', target: 'review', gateId: 'gate-autonomy' },
+        ]),
+        node('n-review', 'review', 'reviewer'),
+      ],
+      channels: [{ id: 'ch', from: 'coding', to: 'review' }],
+      gates: [gate],
+    });
+    const executor = makeExecutor(ctx, workflow, {
+      getSpaceAutonomyLevel: async () => 1,
+    });
+
+    const result = await executor.execute({
+      fromAgentName: 'coder',
+      fromSessionId: 'session-coder',
+      workflowNodeId: 'n-coding',
+      operation: { target: 'review', summary: 'go', data: { approved: true } },
+    });
+
+    expect(result.status).toBe('blocked');
+    expect(result.stage).toBe('gate');
+    expect(result.reason).toContain('not authorized');
+  });
 });
 
 describe('HandoffExecutor: hook validator', () => {
@@ -572,6 +712,49 @@ describe('HandoffExecutor: hook validator', () => {
 
     expect(result.status).toBe('delivered');
     expect(result.hook?.result.type).toBe('allow');
+  });
+
+  test('propagates a retryable_block hook as a retryable block', async () => {
+    const executor = makeExecutor(ctx, workflowWithHook(), {
+      hookExecutor: stubHookExecutor({
+        type: 'retryable_block',
+        reason: 'review not posted yet',
+        retryAfterMs: 30_000,
+      }),
+    });
+
+    const result = await executor.execute({
+      fromAgentName: 'coder',
+      fromSessionId: 'session-coder',
+      workflowNodeId: 'n-coding',
+      operation: { target: 'review', summary: 'go' },
+    });
+
+    expect(result.status).toBe('blocked');
+    expect(result.stage).toBe('hook');
+    expect(result.hook?.result.type).toBe('retryable_block');
+    expect(result.retryAfterMs).toBe(30_000);
+    expect(result.reason).toBe('review not posted yet');
+  });
+
+  test('a throwing validator maps to a failed result (never throws)', async () => {
+    const throwingHook = {
+      execute: async () => {
+        throw new Error('validator crashed');
+      },
+    } as unknown as HookExecutor;
+    const executor = makeExecutor(ctx, workflowWithHook(), { hookExecutor: throwingHook });
+
+    const result = await executor.execute({
+      fromAgentName: 'coder',
+      fromSessionId: 'session-coder',
+      workflowNodeId: 'n-coding',
+      operation: { target: 'review', summary: 'go' },
+    });
+
+    expect(result.status).toBe('failed');
+    expect(result.stage).toBe('hook');
+    expect(result.reason).toContain('validator crashed');
   });
 });
 
@@ -648,6 +831,46 @@ describe('HandoffExecutor: cyclic maxCycles', () => {
       expect(result.status).toBe('delivered');
     }
   });
+
+  test('a failed delivery does not consume a cycle (reservation refunded)', async () => {
+    const workflow = makeWorkflow({
+      nodes: [
+        node('n-coding', 'coding', 'coder', [{ id: 'to-review', target: 'review' }]),
+        node('n-review', 'review', 'reviewer', [
+          { id: 'to-coding', target: 'coding', maxCycles: 1 },
+        ]),
+      ],
+    });
+    // No live coder session and no pendingMessageRepo → every review→coding
+    // handoff fails delivery. (activateTargetSession in makeExecutor returns [].)
+    const executor = makeExecutor(ctx, workflow);
+    const key = `n-review/to-coding`;
+
+    for (let i = 0; i < 3; i++) {
+      const result = await executor.execute({
+        fromAgentName: 'reviewer',
+        fromSessionId: 'session-reviewer',
+        workflowNodeId: 'n-review',
+        operation: { target: 'coding', summary: `attempt ${i}` },
+      });
+      expect(result.status).toBe('failed');
+      expect(result.stage).toBe('deliver');
+    }
+
+    // The reservation was refunded each time — the cap is intact (0 takes) and a
+    // later successful handoff is still allowed.
+    expect(ctx.handoffCycleRepo.get(ctx.runId, key)?.count ?? 0).toBe(0);
+
+    seedPeer(ctx.db, ctx.runId, 'n-coding', 'coder', 'session-coder');
+    const ok = await executor.execute({
+      fromAgentName: 'reviewer',
+      fromSessionId: 'session-reviewer',
+      workflowNodeId: 'n-review',
+      operation: { target: 'coding', summary: 'now it works' },
+    });
+    expect(ok.status).toBe('delivered');
+    expect(ctx.handoffCycleRepo.get(ctx.runId, key)?.count).toBe(1);
+  });
 });
 
 describe('HandoffExecutor: queued activation', () => {
@@ -713,6 +936,29 @@ describe('HandoffExecutor: run-state validation', () => {
     expect(result.status).toBe('blocked');
     expect(result.stage).toBe('resolve_run');
     expect(result.reason).toContain('done');
+  });
+
+  test('blocks a handoff on a cancelled run', async () => {
+    const workflow = makeWorkflow({
+      nodes: [
+        node('n-coding', 'coding', 'coder', [{ id: 'to-review', target: 'review' }]),
+        node('n-review', 'review', 'reviewer'),
+      ],
+      channels: [{ id: 'ch', from: 'coding', to: 'review' }],
+    });
+    ctx.workflowRunRepo.updateRun(ctx.runId, { status: 'cancelled' });
+    const executor = makeExecutor(ctx, workflow);
+
+    const result = await executor.execute({
+      fromAgentName: 'coder',
+      fromSessionId: 'session-coder',
+      workflowNodeId: 'n-coding',
+      operation: { target: 'review', summary: 'go' },
+    });
+
+    expect(result.status).toBe('blocked');
+    expect(result.stage).toBe('resolve_run');
+    expect(result.reason).toContain('cancelled');
   });
 
   test('fails when the run does not exist', async () => {

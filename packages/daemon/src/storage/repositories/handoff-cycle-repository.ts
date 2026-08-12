@@ -72,6 +72,24 @@ export class HandoffCycleRepository {
   }
 
   /**
+   * Refund one previously-reserved cycle (decrement, floored at 0).
+   *
+   * The runtime reserves a cycle BEFORE delivery (atomic {@link increment}) so
+   * the cap is enforced without a check-then-increment race. When the handoff
+   * ultimately is NOT taken (no live session received it and it was not
+   * queueable), the reservation is refunded so a failed attempt does not burn a
+   * cycle — leaving the cap available for the attempt that succeeds once the
+   * target wakes up. No-op when no row exists or the count is already 0.
+   */
+  decrement(runId: string, transitionKey: string): void {
+    this.db
+      .prepare(
+        'UPDATE handoff_cycles SET count = count - 1, updated_at = ? WHERE run_id = ? AND transition_key = ? AND count > 0'
+      )
+      .run(Date.now(), runId, transitionKey);
+  }
+
+  /**
    * Resets the cycle counter for a specific transition back to 0.
    */
   reset(runId: string, transitionKey: string): void {

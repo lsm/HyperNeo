@@ -80,7 +80,25 @@ export type HandoffStage =
   | 'cycle_limit'
   | 'gate'
   | 'hook'
-  | 'deliver';
+  | 'deliver'
+  | 'unexpected';
+
+/**
+ * Internal typed error thrown by the gate/hook/delivery helpers when an
+ * underlying call (DB read/write, gate script, hook validator) throws
+ * unexpectedly. {@link HandoffExecutor.execute} catches it (and any other
+ * throw) and maps it to a structured `failed` result so the operation never
+ * throws to its caller.
+ */
+class HandoffExecutionError extends Error {
+  constructor(
+    readonly stage: HandoffStage,
+    message: string
+  ) {
+    super(message);
+    this.name = 'HandoffExecutionError';
+  }
+}
 
 export type HandoffExecutionStatus = 'delivered' | 'queued' | 'blocked' | 'failed';
 
@@ -202,9 +220,32 @@ export class HandoffExecutor {
 
   /**
    * Execute a first-class handoff operation. Never throws — every failure path
-   * returns a structured `blocked`/`failed` result.
+   * (expected or unexpected) returns a structured `blocked`/`failed` result.
    */
   async execute(params: HandoffExecutionParams): Promise<HandoffExecutionResult> {
+    // Tracked across the try/catch so an unexpected throw after a cycle
+    // reservation can refund it (a reserved-but-unconsumed cycle must not stick).
+    let cycleReserved = false;
+    let reservedKey = '';
+
+    try {
+      return await this.runHandoff(params, (reserved, key) => {
+        cycleReserved = reserved;
+        reservedKey = key;
+      });
+    } catch (err) {
+      if (cycleReserved) this.refundCycle(this.config.workflowRunId, reservedKey);
+      const stage = err instanceof HandoffExecutionError ? err.stage : 'unexpected';
+      const message = err instanceof Error ? err.message : String(err);
+      log.warn(`[HandoffExecutor] ${stage} failure: ${message}`);
+      return this.failed(stage, `Handoff ${stage} failed: ${message}`);
+    }
+  }
+
+  private async runHandoff(
+    params: HandoffExecutionParams,
+    trackReservation: (reserved: boolean, key: string) => void
+  ): Promise<HandoffExecutionResult> {
     const { fromAgentName, fromSessionId, workflowNodeId, operation } = params;
     const { workflow, workflowRunId } = this.config;
 
@@ -256,20 +297,12 @@ export class HandoffExecutor {
       }
     }
 
-    // 5. Enforce cyclic transition maxCycles (pre-check).
     const transitionKey = `${sourceNode.id}/${transition.id}`;
     const cyclic = isCyclicHandoff(workflow, fromNodeName, targets.nodes);
     const maxCycles = transition.maxCycles;
-    if (cyclic && typeof maxCycles === 'number' && maxCycles > 0) {
-      if (this.config.handoffCycleRepo.isCapReached(workflowRunId, transitionKey, maxCycles)) {
-        return this.blocked(
-          'cycle_limit',
-          `Cyclic handoff "${transition.id}" from "${fromNodeName}" has reached its maxCycles cap (${maxCycles}).`
-        );
-      }
-    }
+    const cycleLimited = cyclic && typeof maxCycles === 'number' && maxCycles > 0;
 
-    // 6. Authorize + commit the transition's declared gate fields.
+    // 5. Authorize + commit the transition's declared gate fields.
     let gateOutcome: HandoffGateOutcome | undefined;
     if (transition.gateId) {
       gateOutcome = await this.commitGate({
@@ -296,7 +329,7 @@ export class HandoffExecutor {
       }
     }
 
-    // 7. Execute the transition's hook validator.
+    // 6. Execute the transition's hook validator.
     let hookOutcome: HandoffHookOutcome | undefined;
     if (transition.hookId) {
       hookOutcome = await this.runHook({
@@ -327,6 +360,40 @@ export class HandoffExecutor {
       }
     }
 
+    // 7. Reserve a cycle for cyclic transitions BEFORE delivery. The atomic
+    //    UPSERT both checks the cap and reserves in one step, closing the
+    //    check-then-increment race two concurrent handoffs would otherwise have.
+    //    If delivery ultimately reaches no live or queueable target, the
+    //    reservation is refunded (step 9) so a failed attempt does not consume a
+    //    cycle — leaving the cap for the attempt that succeeds once the target
+    //    wakes up.
+    if (cycleLimited) {
+      let reserved: boolean;
+      try {
+        reserved = this.config.handoffCycleRepo.increment(workflowRunId, transitionKey, maxCycles!);
+      } catch (err) {
+        throw new HandoffExecutionError(
+          'cycle_limit',
+          `Cycle reservation failed: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+      if (!reserved) {
+        return {
+          status: 'blocked',
+          stage: 'cycle_limit',
+          transition,
+          targetNodes: targets.nodes,
+          targetSlots: targets.slots,
+          delivered: [],
+          queued: [],
+          reason: `Cyclic handoff "${transition.id}" from "${fromNodeName}" has reached its maxCycles cap (${maxCycles}).`,
+          gate: gateOutcome,
+          hook: hookOutcome,
+        };
+      }
+      trackReservation(true, transitionKey);
+    }
+
     // 8. Activate or reuse the target worker session(s) + deliver the peer message.
     const delivery = await this.deliver({
       fromAgentName,
@@ -336,10 +403,14 @@ export class HandoffExecutor {
       data: operation.data,
     });
 
-    // 9. Commit the cyclic transition cycle counter (only on a taken handoff).
-    if (cyclic && typeof maxCycles === 'number' && maxCycles > 0) {
-      this.config.handoffCycleRepo.increment(workflowRunId, transitionKey, maxCycles);
+    // 9. Refund the reservation when the handoff was NOT taken (no live session
+    //    received it and nothing was queueable). A taken handoff (delivered or
+    //    queued) keeps its reservation and counts toward the cap.
+    const taken = delivery.delivered.length > 0 || delivery.queued.length > 0;
+    if (cycleLimited && !taken) {
+      this.refundCycle(workflowRunId, transitionKey);
     }
+    trackReservation(false, '');
 
     // Aggregate the delivery outcome into the handoff status. A delivered
     // handoff (≥1 live session received it) wins over a queued one; queued wins
@@ -353,6 +424,9 @@ export class HandoffExecutor {
         targetSlots: targets.slots,
         delivered: delivery.delivered,
         queued: delivery.queued,
+        // Surface partial-delivery diagnostics (e.g. a broadcast target that
+        // was unreachable) even on an otherwise-delivered handoff.
+        reason: delivery.reason,
         gate: gateOutcome,
         hook: hookOutcome,
       };
@@ -383,6 +457,18 @@ export class HandoffExecutor {
       gate: gateOutcome,
       hook: hookOutcome,
     };
+  }
+
+  /** Best-effort cycle refund; never throws (logged on failure). */
+  private refundCycle(runId: string, transitionKey: string): void {
+    if (!transitionKey) return;
+    try {
+      this.config.handoffCycleRepo.decrement(runId, transitionKey);
+    } catch (err) {
+      log.warn(
+        `[HandoffExecutor] cycle refund failed for "${transitionKey}": ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -450,71 +536,83 @@ export class HandoffExecutor {
     // fields atomically (per-writer entries must not clobber one another),
     // identical to the send_message path. When the agent supplied no data we
     // skip the write but still evaluate — a gate already opened by a prior write
-    // (e.g. human approval) must let the handoff proceed.
-    const mapFields = new Set<string>();
-    for (const key of Object.keys(authorizedData)) {
-      const fieldDef = fieldMap.get(key);
-      if (fieldDef?.type === 'map') mapFields.add(key);
-    }
-    const hasAuthorizedWrite = Object.keys(authorizedData).length > 0;
-    const partial: Record<string, unknown> = { ...authorizedData, approvalSource: 'agent' };
-    const gateData = hasAuthorizedWrite
-      ? mapFields.size > 0
-        ? this.config.gateDataRepo.mergeWithMapFields(
-            this.config.workflowRunId,
-            gateId,
-            partial,
-            mapFields
-          ).data
-        : this.config.gateDataRepo.merge(this.config.workflowRunId, gateId, partial).data
-      : (this.config.gateDataRepo.get(this.config.workflowRunId, gateId)?.data ?? {});
+    // (e.g. human approval) must let the handoff proceed. The merge/eval calls
+    // are wrapped so a DB or gate-script throw maps to a structured `failed`
+    // result rather than escaping execute().
+    try {
+      const mapFields = new Set<string>();
+      for (const key of Object.keys(authorizedData)) {
+        const fieldDef = fieldMap.get(key);
+        if (fieldDef?.type === 'map') mapFields.add(key);
+      }
+      const hasAuthorizedWrite = Object.keys(authorizedData).length > 0;
+      const partial: Record<string, unknown> = { ...authorizedData, approvalSource: 'agent' };
+      // Capture the merge return (its updatedAt) so we don't re-read the row.
+      const mergedRecord = hasAuthorizedWrite
+        ? mapFields.size > 0
+          ? this.config.gateDataRepo.mergeWithMapFields(
+              this.config.workflowRunId,
+              gateId,
+              partial,
+              mapFields
+            )
+          : this.config.gateDataRepo.merge(this.config.workflowRunId, gateId, partial)
+        : this.config.gateDataRepo.get(this.config.workflowRunId, gateId);
+      const gateData = mergedRecord?.data ?? {};
+      const gateDataUpdatedIso = mergedRecord
+        ? new Date(mergedRecord.updatedAt).toISOString()
+        : undefined;
 
-    const updatedRecord = this.config.gateDataRepo.get(this.config.workflowRunId, gateId);
-    const freshPrUrl = this.config.resolvePrimaryLinkUrl?.(this.config.workflowRunId) ?? '';
-    const evalResult = await evaluateGate(
-      getEffectiveGate(gateDef, workflow, fromNodeName),
-      gateData,
-      this.config.scriptExecutor,
-      this.config.scriptContext
-        ? {
-            ...this.config.scriptContext,
+      const freshPrUrl = this.config.resolvePrimaryLinkUrl?.(this.config.workflowRunId) ?? '';
+      const evalResult = await evaluateGate(
+        getEffectiveGate(gateDef, workflow, fromNodeName),
+        gateData,
+        this.config.scriptExecutor,
+        this.config.scriptContext
+          ? {
+              ...this.config.scriptContext,
+              gateId,
+              gateData,
+              gateDataUpdatedIso,
+              prUrl: freshPrUrl || this.config.scriptContext.prUrl,
+            }
+          : undefined
+      );
+
+      // Domain profile side-artifact hook (mirrors send_message). Only fired when
+      // the agent actually committed a write.
+      if (hasAuthorizedWrite && this.config.onGateDataCommitted) {
+        try {
+          await this.config.onGateDataCommitted({
+            runId: this.config.workflowRunId,
+            nodeId: sourceNode.id,
             gateId,
             gateData,
-            gateDataUpdatedIso: updatedRecord
-              ? new Date(updatedRecord.updatedAt).toISOString()
-              : undefined,
-            prUrl: freshPrUrl || this.config.scriptContext.prUrl,
-          }
-        : undefined
-    );
-
-    // Domain profile side-artifact hook (mirrors send_message). Only fired when
-    // the agent actually committed a write.
-    if (hasAuthorizedWrite && this.config.onGateDataCommitted) {
-      try {
-        await this.config.onGateDataCommitted({
-          runId: this.config.workflowRunId,
-          nodeId: sourceNode.id,
-          gateId,
-          gateData,
-          committedData: authorizedData,
-          messageData: data,
-        });
-      } catch (err) {
-        log.warn(
-          `onGateDataCommitted failed for gate "${gateId}" in run "${this.config.workflowRunId}":`,
-          err instanceof Error ? err.message : String(err)
-        );
+            committedData: authorizedData,
+            messageData: data,
+          });
+        } catch (err) {
+          log.warn(
+            `onGateDataCommitted failed for gate "${gateId}" in run "${this.config.workflowRunId}":`,
+            err instanceof Error ? err.message : String(err)
+          );
+        }
       }
-    }
 
-    return {
-      gateId,
-      open: evalResult.open,
-      reason: evalResult.reason,
-      rateLimited: evalResult.rateLimited,
-      retryAfterMs: evalResult.retryAfterMs,
-    };
+      return {
+        gateId,
+        open: evalResult.open,
+        reason: evalResult.reason,
+        rateLimited: evalResult.rateLimited,
+        retryAfterMs: evalResult.retryAfterMs,
+      };
+    } catch (err) {
+      if (err instanceof HandoffExecutionError) throw err;
+      throw new HandoffExecutionError(
+        'gate',
+        `Gate "${gateId}" evaluation failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -578,8 +676,16 @@ export class HandoffExecutor {
       permittedExternalLookups: [],
     };
 
-    const { result } = await this.config.hookExecutor.execute(hook, context);
-    return { hookId, result };
+    try {
+      const { result } = await this.config.hookExecutor.execute(hook, context);
+      return { hookId, result };
+    } catch (err) {
+      if (err instanceof HandoffExecutionError) throw err;
+      throw new HandoffExecutionError(
+        'hook',
+        `Hook "${hookId}" execution failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -618,15 +724,25 @@ export class HandoffExecutor {
     const queued: Array<{ agentName: string; messageId: string }> = [];
     const notFound: string[] = [];
 
+    // Hoist the execution read: listByWorkflowRun once up front, then once more
+    // only after an activation actually spawns a session (avoids the per-slot
+    // N+1 the prior liveSessionsFor-per-call shape had in the broadcast loop).
+    let executions = this.readLiveExecutions();
+    const sessionsFor = (agentName: string) =>
+      executions.filter(
+        (e) => e.agentName === agentName && e.agentSessionId && e.agentSessionId !== fromSessionId
+      );
+
     for (const agentName of targetSlots) {
       // Activate the target worker session (reuse if already live). This is the
       // SAME activation primitive send_message uses; it is intentionally
       // separate from gate evaluation.
-      let sessions = this.liveSessionsFor(agentName, fromSessionId);
+      let sessions = sessionsFor(agentName);
       if (sessions.length === 0 && this.config.activateTargetSession) {
         try {
           await this.config.activateTargetSession(agentName);
-          sessions = this.liveSessionsFor(agentName, fromSessionId);
+          executions = this.readLiveExecutions();
+          sessions = sessionsFor(agentName);
         } catch (err) {
           log.warn(
             `[HandoffExecutor] failed to activate target "${agentName}": ${err instanceof Error ? err.message : String(err)}`
@@ -638,8 +754,8 @@ export class HandoffExecutor {
         const message = envelope();
         for (const session of sessions) {
           try {
-            await this.config.messageInjector(session.sessionId, message);
-            delivered.push({ agentName, sessionId: session.sessionId });
+            await this.config.messageInjector(session.agentSessionId!, message);
+            delivered.push({ agentName, sessionId: session.agentSessionId! });
           } catch (err) {
             log.warn(
               `[HandoffExecutor] inject failed for "${agentName}": ${err instanceof Error ? err.message : String(err)}`
@@ -689,17 +805,21 @@ export class HandoffExecutor {
     return { delivered, queued, reason };
   }
 
-  private liveSessionsFor(
-    agentName: string,
-    excludeSessionId: string
-  ): Array<{ sessionId: string; agentName: string }> {
-    return this.config.nodeExecutionRepo
-      .listByWorkflowRun(this.config.workflowRunId)
-      .filter(
-        (e) =>
-          e.agentName === agentName && e.agentSessionId && e.agentSessionId !== excludeSessionId
-      )
-      .map((e) => ({ sessionId: e.agentSessionId!, agentName: e.agentName }));
+  /**
+   * Read the run's node executions, wrapping the DB read so a failure maps to a
+   * structured `failed` result (via {@link HandoffExecutionError}) rather than
+   * escaping execute().
+   */
+  private readLiveExecutions() {
+    try {
+      return this.config.nodeExecutionRepo.listByWorkflowRun(this.config.workflowRunId);
+    } catch (err) {
+      if (err instanceof HandoffExecutionError) throw err;
+      throw new HandoffExecutionError(
+        'deliver',
+        `Target session lookup failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
   }
 
   private senderAliases(fromAgentName: string, fromNodeName: string): Set<string> {
