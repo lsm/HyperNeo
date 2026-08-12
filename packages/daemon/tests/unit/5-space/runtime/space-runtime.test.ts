@@ -2803,6 +2803,36 @@ describe('SpaceRuntime', () => {
       ).toThrow(/duplicate node id/);
     });
 
+    test('createWorkflow rejects empty and surrounding-whitespace node ids', () => {
+      // Rejecting (rather than silently trimming) keeps a supplied id verbatim so
+      // params.layout keys still match — trimming would discard saved positions.
+      const base = {
+        spaceId: SPACE_ID,
+        transitions: [],
+        channels: [],
+        rules: [],
+        completionAutonomyLevel: 3,
+      } as const;
+      expect(() =>
+        workflowManager.createWorkflow({
+          ...base,
+          name: 'Empty id',
+          nodes: [{ id: '', name: 'A', agents: [{ name: 'a', agentId: AGENT_CODER }] }],
+          startNodeId: '',
+          endNodeId: '',
+        })
+      ).toThrow(/non-empty string/);
+      expect(() =>
+        workflowManager.createWorkflow({
+          ...base,
+          name: 'Whitespace id',
+          nodes: [{ id: ' review ', name: 'A', agents: [{ name: 'a', agentId: AGENT_CODER }] }],
+          startNodeId: ' review ',
+          endNodeId: ' review ',
+        })
+      ).toThrow(/surrounding whitespace/);
+    });
+
     test('skips repair while target execution is waiting for rebind recovery', async () => {
       const { run, pendingRepo } = await setupQueuedHandoff();
       const targetExec = nodeExecutionRepo
