@@ -58,7 +58,13 @@ import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-man
 import { evaluateGate, type GateEvalResult, type GateScriptExecutorFn } from './gate-evaluator';
 import type { GateScriptContext } from './gate-script-executor';
 import { executeGateScript } from './gate-script-executor';
-import { getBuiltInGateScript } from '../workflows/built-in-workflows';
+import {
+  gateScriptDiagnosticKey,
+  isGateScriptStatusEmitting,
+  logTemplateGateScriptReload,
+  resolveTemplateGateScript,
+  sharedGateScriptDiagnosticLedger,
+} from '../workflows/built-in-workflows';
 import { getEffectiveGate } from './gate-features';
 import { RATE_LIMIT_MIN_BACKOFF_MS } from './rate-limit-detector';
 import { GateRetryScheduler } from './gate-retry-scheduler';
@@ -1452,6 +1458,17 @@ export class ChannelRouter {
     const effectiveGateDef = getEffectiveGate(gateDef, workflow, sourceNodeName);
     if (effectiveGateDef.validator) return true;
     if (effectiveGateDef.script && (workflow.templateName || !gateDef.script)) return true;
+    // Known limitation (gate-script reload diagnostics, follow-up): the checks
+    // above use getEffectiveGate (the feature registry), which does NOT reflect
+    // a script supplied purely via the built-in template reload path
+    // (getBuiltInGateScript, applied in doEvaluateGate). So a template that
+    // ADDS a script to a previously-scriptless, cached-open, non-cyclic gate
+    // would not force re-evaluation here, and the live-ignored-no-stored
+    // diagnostic would be bypassed on that cached path. Unreachable today — no
+    // built-in template ships a script gate — and the reachable
+    // live-removed-stored-script case (stored gate already carries a script) IS
+    // re-evaluated by the line above. When a template reintroduces a script
+    // gate, consult getBuiltInGateScript here so the cache invalidates.
     // Known limitation (deferred, #835 follow-up): forcing re-evaluation here
     // bypasses the cache READ, but a prior cacheGateOpened() entry is NOT cleared
     // when the re-evaluation returns closed. allWorkflowGatesOpen() (the
@@ -1577,13 +1594,28 @@ export class ChannelRouter {
     // was baked in at seed time. This ensures that template script updates (bug
     // fixes, new fallback logic, etc.) take immediate effect for all running
     // workflow instances without requiring a resync.
-    let gateDef = storedGateDef;
-    if (workflow.templateName) {
-      const liveScript = getBuiltInGateScript(workflow.templateName, gateId);
-      if (liveScript && storedGateDef.script) {
-        gateDef = { ...storedGateDef, script: liveScript };
-      }
+    const { gate: liveTemplateGate, status: gateScriptStatus } = resolveTemplateGateScript(
+      storedGateDef,
+      workflow
+    );
+    // Persistent mismatches (e.g. live-ignored-no-stored) would otherwise warn on
+    // every gate evaluation/retry; dedupe to once per run+gate+status. Only
+    // emitting statuses touch the ledger so quiet statuses don't consume capacity.
+    if (
+      isGateScriptStatusEmitting(gateScriptStatus) &&
+      sharedGateScriptDiagnosticLedger.shouldEmit(
+        gateScriptDiagnosticKey(runId, gateId, gateScriptStatus)
+      )
+    ) {
+      logTemplateGateScriptReload({
+        log,
+        status: gateScriptStatus,
+        templateName: workflow.templateName,
+        gateId,
+        runId,
+      });
     }
+    let gateDef = liveTemplateGate;
     gateDef = getEffectiveGate(gateDef, workflow, sourceNodeName);
 
     // Load runtime data from DB; fall back to computed defaults from fields

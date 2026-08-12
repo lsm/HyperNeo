@@ -9,6 +9,7 @@
 
 import type {
   DeclarativeToolGuard,
+  HandoffTransition,
   SpaceWorkerAgent,
   SpaceWorkflow,
   WorkflowChannel,
@@ -79,6 +80,12 @@ export interface WorkflowTemplateStep {
    * so cloned built-in templates keep their runtime enforcement.
    */
   toolGuards?: DeclarativeToolGuard[];
+  /**
+   * Declared outbound handoff transitions. Preserved through workflowToTemplate
+   * → buildTemplateNodes so a workflow cloned via the template picker keeps its
+   * handoff contract (gates/hooks/channels already clone).
+   */
+  handoffTransitions?: HandoffTransition[];
 }
 
 export interface WorkflowTemplateAgentSlot {
@@ -226,6 +233,9 @@ export function workflowToTemplate(workflow: SpaceWorkflow): WorkflowTemplate {
         requireCodexApproval: node.requireCodexApproval,
         codexPollIntervalMs: node.codexPollIntervalMs,
         codexTimeoutSeconds: node.codexTimeoutSeconds,
+        ...(node.transitions?.length
+          ? { handoffTransitions: node.transitions.map((t) => ({ ...t })) }
+          : {}),
       };
     }
 
@@ -242,6 +252,9 @@ export function workflowToTemplate(workflow: SpaceWorkflow): WorkflowTemplate {
       requireCodexApproval: node.requireCodexApproval,
       codexPollIntervalMs: node.codexPollIntervalMs,
       codexTimeoutSeconds: node.codexTimeoutSeconds,
+      ...(node.transitions?.length
+        ? { handoffTransitions: node.transitions.map((t) => ({ ...t })) }
+        : {}),
     };
   });
 
@@ -324,6 +337,9 @@ export function buildTemplateNodes(
         requireCodexApproval: step.requireCodexApproval,
         codexPollIntervalMs: step.codexPollIntervalMs,
         codexTimeoutSeconds: step.codexTimeoutSeconds,
+        ...(step.handoffTransitions?.length
+          ? { handoffTransitions: step.handoffTransitions.map((t) => ({ ...t })) }
+          : {}),
       };
     }
 
@@ -372,6 +388,9 @@ export function buildTemplateNodes(
       requireCodexApproval: step.requireCodexApproval,
       codexPollIntervalMs: step.codexPollIntervalMs,
       codexTimeoutSeconds: step.codexTimeoutSeconds,
+      ...(step.handoffTransitions?.length
+        ? { handoffTransitions: step.handoffTransitions.map((t) => ({ ...t })) }
+        : {}),
     };
   });
 }

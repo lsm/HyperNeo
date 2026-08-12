@@ -20,7 +20,15 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { SpaceWorkerAgent, SpaceWorkflow, WorkflowHook, WorkflowNode } from '@hyperneo/shared';
+import type {
+  Gate,
+  GateScript,
+  HandoffTransition,
+  SpaceWorkerAgent,
+  SpaceWorkflow,
+  WorkflowHook,
+  WorkflowNode,
+} from '@hyperneo/shared';
 import {
   exportWorkflow,
   validateExportedWorkflow,
@@ -55,9 +63,15 @@ import {
   LEGACY_CODING_TEMPLATE_IDENTITIES,
   mergeChannelsFromTemplate,
   mergeNodeStructuralFieldsFromTemplate,
+  applyTemplateGateScript,
+  GateScriptDiagnosticLedger,
+  gateScriptDiagnosticKey,
   getBuiltInGateScript,
   getBuiltInWorkflows,
+  isGateScriptStatusEmitting,
+  logTemplateGateScriptReload,
   mergeGateStructuralFieldsFromTemplate,
+  resolveTemplateGateScript,
   PLAN_AND_DECOMPOSE_WORKFLOW,
   validateWorkflowTemplateGateWriters,
   type WorkflowMigrationWarning,
@@ -5220,6 +5234,233 @@ describe('getBuiltInGateScript()', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// resolveTemplateGateScript() + logTemplateGateScriptReload()
+// ---------------------------------------------------------------------------
+// The reload helper is the single source of truth for "always evaluate with the
+// current template gate script." These tests pin its effective-gate behavior
+// (identical to the former inline logic) and each diagnostic status, including
+// the silent footgun where a live script is ignored because the stored gate is
+// scriptless.
+
+describe('resolveTemplateGateScript() + applyTemplateGateScript()', () => {
+  const LIVE_SCRIPT: GateScript = { interpreter: 'bash', source: 'echo live', timeoutMs: 5000 };
+
+  function makeGate(script?: GateScript): Gate {
+    return {
+      id: 'test-gate',
+      fields: [{ name: 'pr_url', type: 'string', writers: ['*'], check: { op: 'exists' } }],
+      ...(script ? { script } : {}),
+      resetOnCycle: false,
+    };
+  }
+
+  function makeWorkflow(templateName?: string): SpaceWorkflow {
+    return {
+      id: 'wf',
+      spaceId: 'space',
+      name: 'Workflow',
+      handle: 'workflow',
+      description: '',
+      nodes: [],
+      startNodeId: '',
+      endNodeId: '',
+      tags: [],
+      channels: [],
+      createdAt: 0,
+      updatedAt: 0,
+      ...(templateName ? { templateName } : {}),
+    };
+  }
+
+  test('returns no-template and the stored gate when the workflow has no templateName', () => {
+    const gate = makeGate(LIVE_SCRIPT);
+    const result = resolveTemplateGateScript(gate, makeWorkflow(undefined));
+    expect(result.status).toBe('no-template');
+    expect(result.gate).toBe(gate);
+  });
+
+  test('returns no-live-script for a genuinely scriptless gate under a template', () => {
+    // Stored gate has no script and the template carries none for it either.
+    const gate = makeGate(undefined);
+    const result = resolveTemplateGateScript(gate, makeWorkflow(CODING_WORKFLOW.name));
+    expect(result.status).toBe('no-live-script');
+    expect(result.gate).toBe(gate);
+  });
+
+  test('returns no-live-script when the template has no live script (stored gate may still carry one)', () => {
+    // No live script is resolvable for this gate. A stored gate that still
+    // carries a script (e.g. a retired template script, or an operator-added
+    // custom script) is NOT flagged here: that case is ambiguous and cannot be
+    // distinguished from a legitimate customization at runtime, so it stays the
+    // quiet no-live-script rather than risking a false "resync" warning.
+    const gate = makeGate(LIVE_SCRIPT);
+    const result = resolveTemplateGateScript(gate, makeWorkflow(CODING_WORKFLOW.name));
+    expect(result.status).toBe('no-live-script');
+    expect(result.gate).toBe(gate);
+  });
+
+  test('applyTemplateGateScript: no-live-script for any stored gate when no live script is supplied', () => {
+    // Scriptless stored gate, no live script.
+    expect(applyTemplateGateScript(makeGate(undefined), undefined).status).toBe('no-live-script');
+    // Stored gate WITH a script but no live script — still no-live-script (see
+    // the resolveTemplateGateScript test above for why this is not flagged).
+    expect(applyTemplateGateScript(makeGate(LIVE_SCRIPT), undefined).status).toBe('no-live-script');
+  });
+
+  test('applyTemplateGateScript: live-ignored-no-stored footgun (live script present, stored scriptless)', () => {
+    const scriptlessGate = makeGate(undefined);
+    const result = applyTemplateGateScript(scriptlessGate, LIVE_SCRIPT);
+    expect(result.status).toBe('live-ignored-no-stored');
+    // The live script is NOT applied — the stored gate stays scriptless.
+    expect(result.gate).toBe(scriptlessGate);
+    expect(result.gate.script).toBeUndefined();
+  });
+
+  test('applyTemplateGateScript: in-sync when all executable fields match', () => {
+    const stored = makeGate({ ...LIVE_SCRIPT });
+    const result = applyTemplateGateScript(stored, LIVE_SCRIPT);
+    expect(result.status).toBe('in-sync');
+    expect(result.gate.script?.source).toBe(LIVE_SCRIPT.source);
+  });
+
+  test('applyTemplateGateScript: reloaded when only the source differs (drift)', () => {
+    const stale: GateScript = { ...LIVE_SCRIPT, source: 'echo stale drifted' };
+    const stored = makeGate(stale);
+    const result = applyTemplateGateScript(stored, LIVE_SCRIPT);
+    expect(result.status).toBe('reloaded');
+    // Effective gate uses the live template script, not the stale stored one.
+    expect(result.gate.script?.source).toBe(LIVE_SCRIPT.source);
+    expect(result.gate.script).not.toBe(stored.script);
+  });
+
+  test('applyTemplateGateScript: reloaded when only the interpreter differs', () => {
+    const stored = makeGate({ ...LIVE_SCRIPT, interpreter: 'node' });
+    const result = applyTemplateGateScript(stored, LIVE_SCRIPT);
+    expect(result.status).toBe('reloaded');
+    expect(result.gate.script?.interpreter).toBe(LIVE_SCRIPT.interpreter);
+  });
+
+  test('applyTemplateGateScript: reloaded when only the timeout differs', () => {
+    const stored = makeGate({ ...LIVE_SCRIPT, timeoutMs: 99999 });
+    const result = applyTemplateGateScript(stored, LIVE_SCRIPT);
+    expect(result.status).toBe('reloaded');
+    expect(result.gate.script?.timeoutMs).toBe(LIVE_SCRIPT.timeoutMs);
+  });
+});
+
+describe('logTemplateGateScriptReload()', () => {
+  function makeLogger() {
+    const calls: { level: 'warn' | 'debug'; message: string }[] = [];
+    return {
+      log: {
+        warn: (...args: unknown[]) => calls.push({ level: 'warn', message: args.join(' ') }),
+        debug: (...args: unknown[]) => calls.push({ level: 'debug', message: args.join(' ') }),
+      },
+      calls,
+    };
+  }
+
+  test('warns on the live-ignored-no-stored footgun and includes the gate id and template', () => {
+    const { log, calls } = makeLogger();
+    logTemplateGateScriptReload({
+      log,
+      status: 'live-ignored-no-stored',
+      templateName: 'Coding',
+      gateId: 'review-posted-gate',
+      runId: 'run-42',
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].level).toBe('warn');
+    expect(calls[0].message).toContain('review-posted-gate');
+    expect(calls[0].message).toContain('Coding');
+    expect(calls[0].message).toContain('run-42');
+    expect(calls[0].message).toContain('NOT applied');
+  });
+
+  test('logs drift at debug level for reloaded', () => {
+    const { log, calls } = makeLogger();
+    logTemplateGateScriptReload({
+      log,
+      status: 'reloaded',
+      templateName: 'Coding',
+      gateId: 'g1',
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].level).toBe('debug');
+    expect(calls[0].message).toContain('g1');
+    expect(calls[0].message).toContain('reloaded');
+  });
+
+  test('stays quiet for the common no-template / no-live-script / in-sync paths', () => {
+    for (const status of ['no-template', 'no-live-script', 'in-sync'] as const) {
+      const { log, calls } = makeLogger();
+      logTemplateGateScriptReload({ log, status, templateName: 'Coding', gateId: 'g1' });
+      expect(calls).toHaveLength(0);
+    }
+  });
+
+  test('tolerates a missing templateName and runId in the warning', () => {
+    const { log, calls } = makeLogger();
+    logTemplateGateScriptReload({
+      log,
+      status: 'live-ignored-no-stored',
+      gateId: 'g1',
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].message).toContain('g1');
+    expect(calls[0].message).toContain('?');
+  });
+});
+
+describe('gateScriptDiagnosticKey() + GateScriptDiagnosticLedger', () => {
+  test('isGateScriptStatusEmitting is true only for statuses that log', () => {
+    // Only these consume ledger capacity at the call sites.
+    for (const status of ['live-ignored-no-stored', 'reloaded'] as const) {
+      expect(isGateScriptStatusEmitting(status)).toBe(true);
+    }
+    // Quiet statuses must not consume the ledger.
+    for (const status of ['no-template', 'no-live-script', 'in-sync'] as const) {
+      expect(isGateScriptStatusEmitting(status)).toBe(false);
+    }
+  });
+
+  test('gateScriptDiagnosticKey combines runId, gateId, and status (empty runId when absent)', () => {
+    expect(gateScriptDiagnosticKey('run-1', 'g', 'reloaded')).toBe('run-1|g|reloaded');
+    expect(gateScriptDiagnosticKey(undefined, 'g', 'in-sync')).toBe('|g|in-sync');
+  });
+
+  test('ledger emits once per key and again for a different key or status', () => {
+    const ledger = new GateScriptDiagnosticLedger();
+    const key = gateScriptDiagnosticKey('run-1', 'g', 'live-ignored-no-stored');
+    expect(ledger.shouldEmit(key)).toBe(true);
+    expect(ledger.shouldEmit(key)).toBe(false); // deduped
+    // Same run+gate, different status (e.g. after a resync) re-emits.
+    expect(ledger.shouldEmit(gateScriptDiagnosticKey('run-1', 'g', 'in-sync'))).toBe(true);
+    // Different run re-emits.
+    expect(ledger.shouldEmit(gateScriptDiagnosticKey('run-2', 'g', 'live-ignored-no-stored'))).toBe(
+      true
+    );
+  });
+
+  test('ledger stops growing past its capacity (emits without recording once full)', () => {
+    const ledger = new GateScriptDiagnosticLedger(2);
+    expect(ledger.shouldEmit('a')).toBe(true);
+    expect(ledger.shouldEmit('b')).toBe(true);
+    // At capacity: emits but does not record, so memory is bounded.
+    expect(ledger.shouldEmit('c')).toBe(true);
+    expect(ledger.shouldEmit('c')).toBe(true); // not recorded, so still true
+  });
+
+  test('ledger.reset() clears recorded keys', () => {
+    const ledger = new GateScriptDiagnosticLedger();
+    const key = gateScriptDiagnosticKey('run-x', 'g', 'reloaded');
+    expect(ledger.shouldEmit(key)).toBe(true);
+    ledger.reset();
+    expect(ledger.shouldEmit(key)).toBe(true);
+  });
+});
+
 describe('all built-in workflow gates pass creation-time validation', () => {
   const workflows = getBuiltInWorkflows();
 
@@ -6952,6 +7193,141 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     );
     const mergedReview = merged.find((n) => n.name === 'Review')!;
     expect(mergedReview.codexTimeoutSeconds).toBe(900);
+  });
+
+  test('mergeNodeStructuralFieldsFromTemplate preserves operator-configured handoff transitions when the template is silent', () => {
+    // Built-in templates do not declare transitions today. Restamp must NOT wipe
+    // operator-/RPC-installed transitions on a seeded node — mirrors the
+    // codexTimeoutSeconds preserve-when-template-silent rule directly above.
+    const templateNode = CODING_WITH_QA_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
+    expect(templateNode.transitions).toBeUndefined();
+    const installed: HandoffTransition[] = [{ id: 'to-review', target: 'Review' }];
+    const existingNode: WorkflowNode = {
+      ...templateNode,
+      transitions: installed,
+    };
+
+    const merged = mergeNodeStructuralFieldsFromTemplate(
+      [existingNode],
+      CODING_WITH_QA_WORKFLOW.nodes,
+      () => 'agent-coder'
+    );
+    const mergedCoding = merged.find((n) => n.name === 'Coding')!;
+    expect(mergedCoding.transitions).toEqual(installed);
+  });
+
+  test('mergeNodeStructuralFieldsFromTemplate overwrites transitions when the template declares them', () => {
+    const templateNode = CODING_WITH_QA_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
+    const declared: HandoffTransition[] = [{ id: 'to-review', target: 'Review', gateId: 'g1' }];
+    const templateWithTransitions = CODING_WITH_QA_WORKFLOW.nodes.map((n) =>
+      n.name === 'Coding' ? { ...n, transitions: declared } : n
+    );
+    const existingNode: WorkflowNode = {
+      ...templateNode,
+      transitions: [{ id: 'stale', target: 'Review' }],
+    };
+
+    const merged = mergeNodeStructuralFieldsFromTemplate(
+      [existingNode],
+      templateWithTransitions,
+      () => 'agent-coder'
+    );
+    const mergedCoding = merged.find((n) => n.name === 'Coding')!;
+    expect(mergedCoding.transitions).toEqual(declared);
+  });
+
+  test('mergeNodeStructuralFieldsFromTemplate preserves transitions for a node renamed away from the template', () => {
+    // When the template no longer has a matching node, the existing node is
+    // treated as user-owned; its transitions are preserved (consistent with
+    // codexTimeoutSeconds), not cleared.
+    const installed: HandoffTransition[] = [{ id: 'to-review', target: 'Review' }];
+    const orphan: WorkflowNode = {
+      id: 'orphan-1',
+      name: 'Custom Node',
+      agents: [{ agentId: 'agent-1', name: 'coder' }],
+      transitions: installed,
+    };
+
+    const merged = mergeNodeStructuralFieldsFromTemplate(
+      [orphan],
+      CODING_WITH_QA_WORKFLOW.nodes,
+      () => 'agent-coder'
+    );
+    expect(merged[0].transitions).toEqual(installed);
+  });
+
+  test('mergeNodeStructuralFieldsFromTemplate remaps transition targets to the installed graph', () => {
+    // When the template declares a transition and the user renamed the target
+    // node in the installed space (same node id, different name), the template
+    // target name must be remapped to the installed name — otherwise the
+    // subsequent updateWorkflow validation sees the template name as unknown and
+    // aborts the entire re-stamp on every startup. Mirrors the channel/hook remap.
+    const codingTemplate = CODING_WITH_QA_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
+    const reviewTemplate = CODING_WITH_QA_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
+    const declared: HandoffTransition[] = [{ id: 'to-review', target: 'Review' }];
+    const templateWithTransitions = CODING_WITH_QA_WORKFLOW.nodes.map((n) =>
+      n.name === 'Coding' ? { ...n, transitions: declared } : n
+    );
+    // Installed space renamed 'Review' → 'Reviewer' (same node id).
+    const installed: WorkflowNode[] = CODING_WITH_QA_WORKFLOW.nodes.map((n) =>
+      n.id === reviewTemplate.id ? { ...n, name: 'Reviewer' } : { ...n }
+    );
+
+    const merged = mergeNodeStructuralFieldsFromTemplate(
+      installed,
+      templateWithTransitions,
+      () => 'agent-coder'
+    );
+    const mergedCoding = merged.find((n) => n.id === codingTemplate.id)!;
+    expect(mergedCoding.transitions?.[0].target).toBe('Reviewer');
+  });
+
+  test('mergeNodeStructuralFieldsFromTemplate preserves agent-slot targets verbatim', () => {
+    // A slot-name target (e.g. a reviewer slot) must NOT be remapped to its
+    // enclosing node name — that would change the destination for a multi-agent
+    // node. Only node-name targets are remapped; slot targets and '*' are kept.
+    const codingTemplate = CODING_WITH_QA_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
+    const reviewTemplate = CODING_WITH_QA_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
+    const reviewerSlotName = reviewTemplate.agents[0]?.name ?? 'Reviewer';
+    const declared: HandoffTransition[] = [{ id: 'to-slot', target: reviewerSlotName }];
+    const templateWithTransitions = CODING_WITH_QA_WORKFLOW.nodes.map((n) =>
+      n.name === 'Coding' ? { ...n, transitions: declared } : n
+    );
+
+    const merged = mergeNodeStructuralFieldsFromTemplate(
+      CODING_WITH_QA_WORKFLOW.nodes.map((n) => ({ ...n })),
+      templateWithTransitions,
+      () => 'agent-coder'
+    );
+    const mergedCoding = merged.find((n) => n.id === codingTemplate.id)!;
+    expect(mergedCoding.transitions?.[0].target).toBe(reviewerSlotName);
+  });
+
+  test('mergeNodeStructuralFieldsFromTemplate remaps a renamed slot target by position', () => {
+    // When the installed space renamed a slot targeted by a template transition
+    // (same node id, slot at the same position renamed), the target is remapped
+    // to the installed slot name so re-stamp validation does not abort.
+    const codingTemplate = CODING_WITH_QA_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
+    const reviewTemplate = CODING_WITH_QA_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
+    const reviewerSlotName = reviewTemplate.agents[0]?.name ?? 'Reviewer';
+    const declared: HandoffTransition[] = [{ id: 'to-slot', target: reviewerSlotName }];
+    const templateWithTransitions = CODING_WITH_QA_WORKFLOW.nodes.map((n) =>
+      n.name === 'Coding' ? { ...n, transitions: declared } : n
+    );
+    // Installed: rename the Review node's first slot to 'Senior Reviewer'.
+    const installed = CODING_WITH_QA_WORKFLOW.nodes.map((n) => {
+      if (n.id !== reviewTemplate.id) return { ...n };
+      const agents = n.agents.map((a, i) => (i === 0 ? { ...a, name: 'Senior Reviewer' } : a));
+      return { ...n, agents };
+    });
+
+    const merged = mergeNodeStructuralFieldsFromTemplate(
+      installed,
+      templateWithTransitions,
+      () => 'agent-coder'
+    );
+    const mergedCoding = merged.find((n) => n.id === codingTemplate.id)!;
+    expect(mergedCoding.transitions?.[0].target).toBe('Senior Reviewer');
   });
 
   test('migrateWorkflowGateProgressionToHooks post-pass is idempotent on plan-approval hooks', () => {

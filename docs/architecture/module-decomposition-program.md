@@ -288,6 +288,57 @@ pull-request head-ref identity family from `github-event-extension.ts`.
   separate responsibility families and remain in `github-event-extension.ts`,
   candidates for their own increments.
 
+## Increment 7
+
+**`external-events/github/github-pr-row-state.ts`** — extracted the GitHub
+pull-request row-state decoders from `github-event-extension.ts`.
+
+- **Family:** reading the lifecycle state of a raw GitHub `/pulls` row — two
+  `unknown → primitive` decoders. `pullRequestUpdatedAt` reads `updated_at` as
+  an epoch-millis watermark (returning `0` only for a missing/malformed row, and
+  delegating to `parseGitHubTimestamp` — which returns `Date.now()` — for an
+  object row whose field is absent or unparseable, so a timestamp-less row is
+  treated as fresh rather than dropped), and `isPullRequestOpen` classifies the
+  row's `state` (true only for the literal `'open'`). Closed internal dependency
+  boundary: only `pullRequestUpdatedAt` reaches downward, to
+  `parseGitHubTimestamp` from `github-normalizer`; `isPullRequestOpen` is an
+  independent leaf.
+- **Why it scored highest:**
+  - *Cohesion:* both share one concern — decoding a `/pulls` row's state — and
+    are consumed together in the `/pulls` polling handler (the `updated_at`
+    watermark cutoff, and the open-state filtering that maintains the per-head
+    PR-number index and the reaction-slot list). Nothing outside the family is
+    needed except the one timestamp helper. This is the explicit next step
+    named in Increment 6's deferred list.
+  - *Churn / conflict:* isolates a stable pure decoder family out of the
+    4564-line `github-event-extension.ts` (~31 commits/yr — the largest
+    external-events production module; 4564 → 4553 lines), leaving the class
+    as the imperative shell that polls.
+  - *Coverage:* neither had **any** direct unit tests (each was referenced
+    only at its call sites in the polling handler); characterization tests
+    now pin every branch — including `pullRequestUpdatedAt`'s split between
+    the literal-`0` non-object return and the `parseGitHubTimestamp`
+    `Date.now()` fallback for object rows with absent / null / non-string /
+    unparseable / empty `updated_at`, and `isPullRequestOpen`'s strict
+    `'open'` equality (closed / merged / other / `''` all false; case-sensitive
+    so `'OPEN'` / `'Open'` are false; non-string `state` false).
+  - *Regression risk:* low — pure deterministic functions; the consumer suites
+    (`2-handlers/github/`, 643 tests) pass unchanged.
+- **Narrow surface:** both functions are exported (each has an external caller
+  in the extension); the leaf has no module-private members.
+- **Dependency direction:** the new leaf lives in `external-events/github/`
+  alongside `github-normalizer.ts`, the only module it depends on (downward).
+  `github-event-extension.ts` already imported downward from `github-normalizer`;
+  after the move it no longer references `parseGitHubTimestamp` directly (the
+  orphaned import was removed), so no new direction was introduced.
+- **Deferred:** the head-sha-by-commit matcher family (`pullHeadSha`,
+  `pickPrNumbersByHeadSha`, `addPullRequestNumberByHeadSha`,
+  `removePullRequestNumberByHeadSha`) remains in `github-event-extension.ts`.
+  It mixes two pure query helpers with two `Map`-mutation index maintainers
+  (mutable invariants); per the program principles those are extracted only
+  once their boundary is clean, so the family is a candidate for a later
+  Pattern-B increment rather than the next pure-leaf step.
+
 ## Increment log
 
 | # | Module extracted | From | PR | Outcome |
@@ -297,4 +348,5 @@ pull-request head-ref identity family from `github-event-extension.ts`.
 | 3 | `external-events/long-horizon-subscription-pattern.ts` | `space/runtime/space-runtime.ts` + `rpc-handlers/space-long-horizon-agent-handlers.ts` | #2403 | Pure long-horizon topic composer extracted; verbatim duplicate across two files consolidated behind a 1-function surface; characterization tests added for every branch. |
 | 4 | `space/agent-handle.ts` | `space/tools/space-agent-tools.ts` + `space/tools/node-agent-tools.ts` | #2418 | Pure agent handle/name-token normalization family extracted; verbatim `normalizeAgentNameToken` duplicate across two tool files consolidated behind a 3-function surface; characterization tests added for every branch. |
 | 5 | `external-events/github/github-check-run-fields.ts` | `external-events/github/github-event-extension.ts` | #2430 | Pure GitHub `check_run` row field decoders extracted behind a 6-function surface; characterization tests added for every branch (previously no direct unit coverage). |
-| 6 | `external-events/github/github-pr-head-ref.ts` | `external-events/github/github-event-extension.ts` | _(this PR)_ | Pure GitHub PR head-ref identity family (repo path, PR number, head SHA/repo, head-ref key compose/parse) extracted behind a 6-function surface; characterization tests added for every branch (previously no direct unit coverage). |
+| 6 | `external-events/github/github-pr-head-ref.ts` | `external-events/github/github-event-extension.ts` | #2449 | Pure GitHub PR head-ref identity family (repo path, PR number, head SHA/repo, head-ref key compose/parse) extracted behind a 6-function surface; characterization tests added for every branch (previously no direct unit coverage). |
+| 7 | `external-events/github/github-pr-row-state.ts` | `external-events/github/github-event-extension.ts` | _(this PR)_ | Pure GitHub `/pulls` row-state decoders (`updated_at` watermark + `state` openness) extracted behind a 2-function surface; characterization tests added for every branch (previously no direct unit coverage). |

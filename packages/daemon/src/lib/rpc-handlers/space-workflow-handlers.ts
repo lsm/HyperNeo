@@ -140,6 +140,10 @@ function buildTemplateUpdateParams(
       ...(node.requireCodexApproval ? { requireCodexApproval: true } : {}),
       ...(node.codexPollIntervalMs ? { codexPollIntervalMs: node.codexPollIntervalMs } : {}),
       ...(node.codexTimeoutSeconds ? { codexTimeoutSeconds: node.codexTimeoutSeconds } : {}),
+      // Carry declared handoff transitions (template is authoritative; node
+      // names are mapped 1:1 so targets resolve) so syncFromTemplate/resync
+      // don't silently strip a template's handoff contract.
+      ...(node.transitions?.length ? { transitions: node.transitions.map((t) => ({ ...t })) } : {}),
     };
   });
 

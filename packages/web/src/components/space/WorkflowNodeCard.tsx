@@ -13,6 +13,7 @@ import type {
   SpaceWorkerAgent,
   ThinkingLevel,
   WorkflowChannel,
+  HandoffTransition,
   WorkflowNodeAgent,
   WorkflowNodeAgentOverride,
 } from '@hyperneo/shared';
@@ -67,6 +68,15 @@ export interface NodeDraft {
   codexPollIntervalMs?: number;
   /** Custom timeout (seconds) for the codex review bot reaction check. */
   codexTimeoutSeconds?: number;
+  /**
+   * Declared outbound handoff transitions for this node. Carried verbatim
+   * through the editor (load → build) so a visual-editor save does NOT drop
+   * them — the field is writable via RPC/import, so silent loss would be a
+   * data-loss trap. Named `handoffTransitions` (not `transitions`) to avoid
+   * colliding with the visual editor's edge/`VisualTransition` concept, which
+   * uses `transitions` throughout the canvas code.
+   */
+  handoffTransitions?: HandoffTransition[];
 }
 
 // ============================================================================
