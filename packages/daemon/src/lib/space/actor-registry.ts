@@ -265,8 +265,9 @@ function pendingWorkerActors(
     workflow?.nodes.filter((node) => node.agents.some((agent) => agent.name === targetAgentName)) ??
     [];
   // Scope to the pinned node when the queued row carries one, so two nodes
-  // reusing a slot don't both project through the first one.
-  if (workflowNodeId) {
+  // reusing a slot don't both project through the first one. Explicit null check
+  // so an empty-string node id still pins.
+  if (workflowNodeId != null) {
     nodes = nodes.filter((node) => node.id === workflowNodeId);
   }
   if (nodes.length === 0) return [];

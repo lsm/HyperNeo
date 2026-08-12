@@ -1773,7 +1773,6 @@ describe('AgentMessageRouter: generic address targets', () => {
 
     expect(result.success).toBe(false);
     expect(result.queued).toHaveLength(1);
-    // onMessageQueued still receives the compound form (activation callback).
     // onMessageQueued now receives the BARE slot name (+ resolved node id) so the
     // activation callback can match declared agents; the compound is for reporting only.
     expect(queuedAgents).toEqual(['reviewer']);

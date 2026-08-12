@@ -8310,11 +8310,13 @@ export class SpaceRuntime {
     //    cross-receive. Worker handles encode either the node name or id, and
     //    node/agent names may contain "/", so match by prefixing each node
     //    identifier and comparing exactly — never split on the first "/".
-    // Unpinned only: a slot name may itself contain "/" and resemble another
-    // node's compound (e.g. Audit slot "Review/foo" vs Review's compound
-    // "Review/foo"). An exact bare-slot match must win over compound parsing, so
-    // check every node for an exact slot first.
-    if (!workflowNodeId) {
+    // Unpinned only, and only for slash-shaped targets: a slot name containing
+    // "/" can resemble another node's compound (e.g. Audit slot "Review/foo" vs
+    // Review's compound "Review/foo"), so an exact bare-slot match must win over
+    // compound parsing. Limit to "/"-containing values so a bare node name like
+    // "Review" still falls through to the bare-node/legacy handling below even
+    // if another node happens to have a slot of that name.
+    if (!workflowNodeId && targetAgentName.includes('/')) {
       for (const node of workflow.nodes) {
         const exact = resolveNodeAgents(node).find((slot) => slot.name === targetAgentName);
         if (exact)
@@ -8324,13 +8326,14 @@ export class SpaceRuntime {
     for (const node of workflow.nodes) {
       // Node-scoped resolution: only consider the pinned node so two nodes
       // reusing a slot name don't both resolve to the first one.
-      if (workflowNodeId && node.id !== workflowNodeId) continue;
+      if (workflowNodeId != null && node.id !== workflowNodeId) continue;
       const slots = resolveNodeAgents(node);
 
-      if (workflowNodeId) {
+      if (workflowNodeId != null) {
         // Pinned row: bare slot name. Match exactly (a slot named
         // "<node>/reviewer" must not be stripped to "reviewer"). No compound
         // parsing, no slots[0] fallback — the row is for this node specifically.
+        // Use an explicit null check so an empty-string node id still pins.
         const direct = slots.find((slot) => slot.name === targetAgentName);
         if (direct)
           return { nodeId: node.id, agentName: direct.name, agentId: direct.agentId ?? null };

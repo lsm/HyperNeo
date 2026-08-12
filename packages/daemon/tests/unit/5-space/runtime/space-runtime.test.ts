@@ -2046,9 +2046,10 @@ describe('SpaceRuntime', () => {
         const targets = [agentName, ...(nodeName ? [`${nodeName}/${agentName}`] : [])];
         const seen = new Set<string>();
         for (const target of targets) {
-          const rows = execution?.workflowNodeId
-            ? repo.listPendingForTarget(runId, target, execution.workflowNodeId)
-            : repo.listPendingForTarget(runId, target);
+          const rows =
+            execution?.workflowNodeId != null
+              ? repo.listPendingForTarget(runId, target, execution.workflowNodeId)
+              : repo.listPendingForTarget(runId, target);
           for (const row of rows) {
             if (seen.has(row.id)) continue;
             seen.add(row.id);
@@ -2311,6 +2312,64 @@ describe('SpaceRuntime', () => {
       expect(pendingRepo.listAllForRun(run.id)[0].status).toBe('delivered');
     });
 
+    test('a bare node-name target is not captured by another node same-named slot (no slash)', async () => {
+      // Node Review's first slot is 'reviewer'; node Other has a slot literally
+      // named 'Review'. A bare unpinned 'Review' targets the NODE, and must still
+      // resolve to Review (via the bare-node path) — the exact-slot-first pass is
+      // limited to slash-shaped values, so it must not hand 'Review' to Other.
+      const workflow = workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: `Bare node vs slot ${Date.now()}-${Math.random()}`,
+        description: 'Bare node name not captured by a same-named slot',
+        nodes: [
+          { id: 'coding-node', name: 'Coding', agents: [{ name: 'coder', agentId: AGENT_CODER }] },
+          {
+            id: 'review-node',
+            name: 'Review',
+            agents: [{ name: 'reviewer', agentId: AGENT_GENERAL }],
+          },
+          { id: 'other-node', name: 'Other', agents: [{ name: 'Review', agentId: AGENT_PLANNER }] },
+        ],
+        transitions: [],
+        channels: [],
+        startNodeId: 'coding-node',
+        endNodeId: 'review-node',
+        rules: [],
+        completionAutonomyLevel: 3,
+      });
+      const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Bare node');
+      const task = tasks[0];
+      taskRepo.updateTask(task.id, { status: 'in_progress' });
+      nodeExecutionRepo.update(nodeExecutionRepo.listByWorkflowRun(run.id)[0]!.id, {
+        status: 'idle',
+        agentSessionId: null,
+      });
+      const pendingRepo = new PendingAgentMessageRepository(db);
+      pendingRepo.enqueue({
+        workflowRunId: run.id,
+        spaceId: SPACE_ID,
+        taskId: task.id,
+        sourceAgentName: 'coder',
+        targetKind: 'node_agent',
+        targetAgentName: 'Review',
+        message: 'for Review node',
+        ttlMs: 60_000,
+        maxAttempts: 3,
+      });
+      const tam = makeRepairTam({ flush: makeCompoundAwareFlush(workflow) });
+      await buildRepairRuntime(tam, pendingRepo).executeTick();
+
+      // Resolves to the Review node's first slot, NOT Other's 'Review' slot.
+      const reviewExec = nodeExecutionRepo
+        .listByWorkflowRun(run.id)
+        .find((e) => e.workflowNodeId === 'review-node');
+      expect(reviewExec?.agentName).toBe('reviewer');
+      expect(reviewExec?.status).toBe('in_progress');
+      expect(
+        nodeExecutionRepo.listByWorkflowRun(run.id).find((e) => e.workflowNodeId === 'other-node')
+      ).toBeUndefined();
+    });
+
     test('disambiguates two nodes sharing a slot name, via the pinned workflowNodeId', async () => {
       // Two nodes both declare a 'reviewer' slot. The router and restart-recovery
       // emit BARE 'reviewer' + each node's workflowNodeId, so the resolver pins
@@ -2557,6 +2616,52 @@ describe('SpaceRuntime', () => {
       expect(row.status).toBe('failed');
       expect(row.lastError).toContain('is not declared in workflow');
       expect(workflowRunRepo.getRun(run.id)!.status).toBe('blocked');
+    });
+
+    test('createWorkflow rejects a node id that collides with another node name (channel isolation)', () => {
+      // Channel authorization is by node NAME, but worker-handle resolution can
+      // resolve a name-authorized ref to a node by ID. A node id equal to another
+      // node's name makes that ref ambiguous and can route a message into a node
+      // the topology never authorized — reject it at definition time.
+      expect(() =>
+        workflowManager.createWorkflow({
+          spaceId: SPACE_ID,
+          name: 'Collision',
+          nodes: [
+            {
+              id: 'node-review',
+              name: 'Review',
+              agents: [{ name: 'reviewer', agentId: AGENT_GENERAL }],
+            },
+            { id: 'Review', name: 'Audit', agents: [{ name: 'leaker', agentId: AGENT_PLANNER }] },
+          ],
+          transitions: [],
+          channels: [{ id: 'c-r', from: 'Coding', to: 'Review' }],
+          startNodeId: 'node-review',
+          endNodeId: 'node-review',
+          rules: [],
+          completionAutonomyLevel: 3,
+        })
+      ).toThrow(/must not equal node/);
+    });
+
+    test('createWorkflow rejects duplicate node ids', () => {
+      expect(() =>
+        workflowManager.createWorkflow({
+          spaceId: SPACE_ID,
+          name: 'Dup ids',
+          nodes: [
+            { id: 'dup', name: 'A', agents: [{ name: 'a', agentId: AGENT_CODER }] },
+            { id: 'dup', name: 'B', agents: [{ name: 'b', agentId: AGENT_GENERAL }] },
+          ],
+          transitions: [],
+          channels: [],
+          startNodeId: 'dup',
+          endNodeId: 'dup',
+          rules: [],
+          completionAutonomyLevel: 3,
+        })
+      ).toThrow(/duplicate node id/);
     });
 
     test('skips repair while target execution is waiting for rebind recovery', async () => {

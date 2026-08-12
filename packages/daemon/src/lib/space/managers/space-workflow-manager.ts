@@ -667,6 +667,30 @@ export class SpaceWorkflowManager {
       throw new WorkflowValidationError('A workflow must have at least one node');
     }
 
+    // Reject node ids that collide with another node's name (or a duplicate id).
+    // Channel authorization is by node NAME, while queued-handoff resolution can
+    // resolve a name-authorized worker ref to a node by ID — so a node id equal
+    // to another node's name makes the ref ambiguous and can route a message
+    // into a node the topology never authorized. ids are generated before this
+    // check (createWorkflow/updateWorkflow), so every node has one here.
+    const seenIds = new Set<string>();
+    for (let i = 0; i < nodes.length; i++) {
+      const id = nodes[i].id;
+      if (!id) continue;
+      if (seenIds.has(id)) {
+        throw new WorkflowValidationError(`node[${i}]: duplicate node id "${id}"`);
+      }
+      seenIds.add(id);
+      for (let j = 0; j < nodes.length; j++) {
+        if (i !== j && nodes[j].name === id) {
+          throw new WorkflowValidationError(
+            `node[${i}] id "${id}" must not equal node "${nodes[j].name}"'s name — ` +
+              'a node id colliding with another node name makes worker-handle resolution ambiguous and can bypass node-name channel authorization'
+          );
+        }
+      }
+    }
+
     for (let i = 0; i < nodes.length; i++) {
       const node = nodes[i];
       this.validateNodeAgentRef(spaceId, node, i);

@@ -1692,7 +1692,7 @@ export class TaskAgentManager {
     const seenIds = new Set<string>();
     const pending = queueTargetNames
       .flatMap((targetName) =>
-        drainWorkflowNodeId
+        drainWorkflowNodeId != null
           ? repo.listPendingForTarget(workflowRunId, targetName, drainWorkflowNodeId)
           : repo.listPendingForTarget(workflowRunId, targetName)
       )

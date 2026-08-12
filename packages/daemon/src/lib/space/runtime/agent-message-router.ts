@@ -541,7 +541,7 @@ export class AgentMessageRouter {
           // from parsing the "node/agent" string, which cannot tell two slots
           // apart within one node when the node's id extends its name with "/".
           const queueTargetName = hasNodeNameMap ? scopedAgentName(nodeName, agentName) : agentName;
-          const storedTargetName = queueWorkflowNodeId ? agentName : queueTargetName;
+          const storedTargetName = queueWorkflowNodeId != null ? agentName : queueTargetName;
           const { record, deduped } = pendingMessageRepo.enqueue({
             workflowRunId,
             spaceId,
