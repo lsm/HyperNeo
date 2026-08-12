@@ -12,15 +12,16 @@
  * - Rule `appliesTo` node UUIDs → node names (stable across re-import)
  *
  * Version policy:
- * - Accept: version 1 or 2 (v2 adds optional `topicFrom` on eventInterests as
- *   an alternative to a static `topic`; a v1-only client rejects v2 bundles via
- *   the version path rather than as schema-malformed).
+ * - Accept: version 1, 2, or 3 (v2 adds optional `topicFrom` on eventInterests;
+ *   v3 adds node handoff transitions and workflow gates). Older clients reject
+ *   newer bundles via the version path rather than as schema-malformed.
  * - Reject with "requires newer version": version > CURRENT_EXPORT_VERSION
  * - Reject as invalid: version missing, null, < 1, or non-integer
  */
 
 import { z } from 'zod';
 import { validateGlobPattern } from '../external-events/topic-validator';
+import { MAX_NODE_HANDOFF_TRANSITIONS } from '@hyperneo/shared';
 import type {
   SpaceWorkerAgent,
   SpaceWorkflow,
@@ -29,9 +30,23 @@ import type {
   ExportedWorkflowChannel,
   ExportedWorkflowNode,
   ExportedWorkflowNodeAgent,
+  ExportedHandoffTransition,
   SpaceExportBundle,
 } from '@hyperneo/shared';
 import { validateSlug } from './slug';
+import { validateGate } from './runtime/gate-evaluator';
+
+/**
+ * Whether a gate would pass current `validateGate` rules. Gates that fail
+ * (e.g. a legacy empty gate with no fields/script/validator/features, persisted
+ * before the rule existed) cannot round-trip through export/import — they pass
+ * the permissive export schema and preview but roll back createWorkflow. Used
+ * to filter such gates out of exports and hand-crafted import bundles at the
+ * boundary.
+ */
+export function gatePassesValidation(gate: unknown): boolean {
+  return validateGate(gate).length === 0;
+}
 
 // ============================================================================
 // Zod schemas
@@ -220,6 +235,32 @@ const workflowHookSchema = z.object({
   humanOnly: z.boolean().optional(),
 });
 
+/**
+ * Zod schema for an exported workflow handoff transition.
+ * Mirrors the runtime `HandoffTransition` shape.
+ *
+ * `target`/`gateId`/`hookId` are REFERENCES to other entities (node/slot names,
+ * gate ids, hook ids). They are validated non-mutating (reject whitespace-only
+ * via refine, but preserve the exact value) so they match the referenced
+ * entity's id verbatim — a `.trim()` here would desynchronize a reference from a
+ * whitespace-carrying hook/gate id that the manager persisted and accepted.
+ * String length caps bound unbounded import input.
+ */
+const nonEmptyRef = (maxLen: number) =>
+  z
+    .string()
+    .max(maxLen)
+    .refine((v) => v.trim().length > 0, { message: 'must be a non-empty string' });
+
+const exportedHandoffTransitionSchema = z.object({
+  id: nonEmptyRef(100),
+  label: z.string().max(200).optional(),
+  target: nonEmptyRef(100),
+  gateId: nonEmptyRef(100).optional(),
+  hookId: nonEmptyRef(100).optional(),
+  maxCycles: z.number().int().positive().optional(),
+});
+
 const exportedWorkflowNodeSchema = z.object({
   agents: z.array(exportedWorkflowNodeAgentSchema).min(1),
   name: z.string().min(1),
@@ -233,6 +274,11 @@ const exportedWorkflowNodeSchema = z.object({
   requireCodexApproval: z.boolean().optional(),
   codexPollIntervalMs: z.number().int().positive().optional(),
   codexTimeoutSeconds: z.number().int().positive().optional(),
+  /** Declared outbound handoff transitions (first-class handoff contract). */
+  transitions: z
+    .array(exportedHandoffTransitionSchema)
+    .max(MAX_NODE_HANDOFF_TRANSITIONS)
+    .optional(),
 });
 
 /**
@@ -243,10 +289,15 @@ const exportedWorkflowNodeSchema = z.object({
  *   a static `topic`). v2 is the first version that may emit topicFrom-only
  *   interests; v1-only clients reject v2 bundles with "requires newer version"
  *   instead of a confusing schema-malformed error.
+ * - v3: adds node handoff `transitions` and workflow `gates` to the portable
+ *   schema. v3 is the first version that may emit them; a v2-only client's Zod
+ *   node schema would silently strip the unknown `transitions` field (and the
+ *   `gates` workflow field), so a v1/v2 bundle carrying either is rejected via
+ *   the version path rather than imported lossily.
  */
-export const CURRENT_EXPORT_VERSION = 2 as const;
-const SUPPORTED_EXPORT_VERSIONS: ReadonlySet<number> = new Set<number>([1, 2]);
-export type ExportVersion = 1 | 2;
+export const CURRENT_EXPORT_VERSION = 3 as const;
+const SUPPORTED_EXPORT_VERSIONS: ReadonlySet<number> = new Set<number>([1, 2, 3]);
+export type ExportVersion = 1 | 2 | 3;
 
 /**
  * Coerce an already-`checkVersion`-validated value to the supported version
@@ -287,6 +338,23 @@ const exportedAgentBaseSchema = z.object({
   settingSources: z.array(z.enum(['user', 'project', 'local'])).optional(),
 });
 
+/**
+ * Zod schema for an exported gate. Gates are exported verbatim (their `id`s are
+ * semantic identifiers referenced by channels and handoff transitions, not
+ * space-specific UUIDs) so `gateId` references survive round-trip. The schema
+ * requires the identity/required fields and passes the rest through; deep field/
+ * script/poll validation is deferred to `validateGate` at createWorkflow, the
+ * same way the runtime trusts the manager's gate validator on direct RPC.
+ *
+ * Added in v3 (a transition's `gateId` can only round-trip when its gate does).
+ */
+const exportedGateSchema = z
+  .object({
+    id: z.string().min(1),
+    resetOnCycle: z.boolean(),
+  })
+  .passthrough();
+
 const exportedWorkflowBaseSchema = z.object({
   type: z.literal('workflow'),
   name: z.string().min(1),
@@ -297,6 +365,8 @@ const exportedWorkflowBaseSchema = z.object({
   tags: z.array(z.string()),
   channels: z.array(exportedWorkflowChannelSchema).optional(),
   hooks: z.array(workflowHookSchema).optional(),
+  /** Workflow gates (v3) — exported so channel/transition `gateId` refs round-trip. */
+  gates: z.array(exportedGateSchema).optional(),
   // Optional in schema for backward compatibility with v1 exports that predate
   // the completionAutonomyLevel field. Import code falls back to a sensible
   // default when the field is absent.
@@ -399,6 +469,13 @@ export function exportWorkflow(
   // Support both `nodes` (new) and `steps` (legacy, during migration) for backward compat
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const nodes = workflow.nodes ?? (workflow as any).steps ?? [];
+  // Gates that survive validation (legacy empty gates are dropped below). A
+  // handoff transition referencing a dropped gate must have its gateId stripped
+  // at the same boundary, or validateExportedWorkflow rejects the export for a
+  // dangling reference.
+  const exportableGateIds = new Set(
+    (workflow.gates ?? []).filter((g) => gatePassesValidation(g)).map((g) => g.id)
+  );
   // Build a map from node UUID → node name
   const nodeIdToName = new Map<string, string>();
   for (const node of nodes) {
@@ -443,6 +520,18 @@ export function exportWorkflow(
       exported.codexPollIntervalMs = node.codexPollIntervalMs;
     if (node.codexTimeoutSeconds !== undefined)
       exported.codexTimeoutSeconds = node.codexTimeoutSeconds;
+    if (node.transitions && node.transitions.length > 0) {
+      exported.transitions = node.transitions.map((t) => {
+        const out: ExportedHandoffTransition = { id: t.id, target: t.target };
+        if (t.label !== undefined) out.label = t.label;
+        // Drop the gateId if its gate was filtered out (e.g. a legacy empty
+        // gate) so the export does not carry a dangling reference.
+        if (t.gateId !== undefined && exportableGateIds.has(t.gateId)) out.gateId = t.gateId;
+        if (t.hookId !== undefined) out.hookId = t.hookId;
+        if (t.maxCycles !== undefined) out.maxCycles = t.maxCycles;
+        return out;
+      });
+    }
 
     return exported;
   });
@@ -476,13 +565,25 @@ export function exportWorkflow(
       };
       if (ch.maxCycles !== undefined) exported.maxCycles = ch.maxCycles;
       if (ch.label !== undefined) exported.label = ch.label;
-      if (ch.gateId !== undefined) exported.gateId = ch.gateId;
+      // Drop the gateId if its gate was filtered out (e.g. a legacy empty
+      // gate) so the channel does not carry a dangling reference that
+      // isChannelOpen would treat as closed on re-import.
+      if (ch.gateId !== undefined && exportableGateIds.has(ch.gateId)) exported.gateId = ch.gateId;
       return exported;
     });
     result.channels = exportedChannels;
   }
   if (workflow.hooks && workflow.hooks.length > 0) {
     result.hooks = workflow.hooks;
+  }
+  // Export gates verbatim so channel/transition `gateId` references survive the
+  // round-trip (a gated handoff can only re-import when its gate re-imports).
+  // Drop gates that would not pass current validation — e.g. a legacy empty
+  // gate (`fields: []`, no script/validator/features) persisted before the rule
+  // existed — so the bundle re-imports instead of rolling back at createWorkflow.
+  if (workflow.gates && workflow.gates.length > 0) {
+    const exportable = workflow.gates.filter((g) => gatePassesValidation(g));
+    if (exportable.length > 0) result.gates = exportable;
   }
   return result;
 }
@@ -519,8 +620,8 @@ export function exportBundle(
  * Validate an unknown value as an ExportedSpaceWorkerAgent.
  *
  * Version handling:
- * - version === 1 → accepted
- * - version > 1 → error: "requires newer version: ..."
+ * - version 1, 2, or 3 → accepted
+ * - version > CURRENT_EXPORT_VERSION → error: "requires newer version: ..."
  * - version < 1 or missing/non-integer → error: "invalid: ..."
  */
 export function validateExportedAgent(data: unknown): ValidationResult<ExportedSpaceWorkerAgent> {
@@ -614,6 +715,118 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
             error: `invalid: ${loc}.to[${ti}] "${toList[ti]}" does not reference a known agent slot name or node name`,
           };
         }
+      }
+    }
+  }
+
+  // Handoff transitions: each declared transition's `target` must reference a
+  // known node/agent name or the '*' wildcard; transition ids and targets must
+  // be unique within a node (so handoff({ target }) resolves unambiguously);
+  // and `gateId`/`hookId` must reference a known exported gate/hook. Unlike
+  // channel `gateId` (left dangling because channels predate gate export),
+  // transition refs are checked now that gates are part of the v3 bundle.
+  const transitionGateIds = new Set<string>();
+  const seenGateIds = new Set<string>();
+  for (let gi = 0; gi < (result.data.gates ?? []).length; gi++) {
+    const gate = result.data.gates![gi];
+    if (!gate?.id) continue;
+    if (seenGateIds.has(gate.id)) {
+      return { ok: false, error: `invalid: gates[${gi}]: duplicate gate id "${gate.id}"` };
+    }
+    seenGateIds.add(gate.id);
+    transitionGateIds.add(gate.id);
+  }
+  const transitionHookIds = new Set<string>();
+  for (const hook of result.data.hooks ?? []) {
+    if (hook?.id) transitionHookIds.add(hook.id);
+  }
+  // Build the destination map ONCE (not per source node) so validation stays
+  // linear in the node count instead of quadratic — a crafted bundle with many
+  // nodes must not make import validation O(N²).
+  const targetDestinations = new Map<string, Set<string>>();
+  const countDest = (name: string | undefined, key: string) => {
+    if (!name) return;
+    const set = targetDestinations.get(name) ?? new Set<string>();
+    set.add(key);
+    targetDestinations.set(name, set);
+  };
+  result.data.nodes.forEach((other, idx) => {
+    countDest(other.name, `node:${idx}`);
+    for (const a of other.agents ?? []) countDest(a.name, `slot:${idx}`);
+  });
+
+  for (let n = 0; n < result.data.nodes.length; n++) {
+    const node = result.data.nodes[n];
+    const transitions = node.transitions;
+    if (!transitions || transitions.length === 0) continue;
+
+    const seenIds = new Set<string>();
+    const seenTargets = new Set<string>();
+    for (let ti = 0; ti < transitions.length; ti++) {
+      const t = transitions[ti];
+      const loc = `nodes[${n}].transitions[${ti}]`;
+      if (seenIds.has(t.id)) {
+        return { ok: false, error: `invalid: ${loc}: duplicate transition id "${t.id}"` };
+      }
+      seenIds.add(t.id);
+      if (t.target !== '*') {
+        const dests = targetDestinations.get(t.target);
+        if (!dests || dests.size === 0) {
+          return {
+            ok: false,
+            error: `invalid: ${loc}.target "${t.target}" does not reference a known node name or agent slot name`,
+          };
+        }
+        if (dests.size > 1) {
+          return {
+            ok: false,
+            error: `invalid: ${loc}.target "${t.target}" is ambiguous — matches ${dests.size} destinations`,
+          };
+        }
+      }
+      if (seenTargets.has(t.target)) {
+        return {
+          ok: false,
+          error: `invalid: ${loc}: duplicate transition target "${t.target}" within node "${node.name}"`,
+        };
+      }
+      seenTargets.add(t.target);
+      if (t.gateId !== undefined && !transitionGateIds.has(t.gateId)) {
+        return {
+          ok: false,
+          error: `invalid: ${loc}.gateId "${t.gateId}" does not reference a known gate`,
+        };
+      }
+      if (t.hookId !== undefined && !transitionHookIds.has(t.hookId)) {
+        return {
+          ok: false,
+          error: `invalid: ${loc}.hookId "${t.hookId}" does not reference a known hook`,
+        };
+      }
+    }
+  }
+
+  // Handoff transitions and gates are version-3 features. A v1/v2 workflow must
+  // not carry them, or the version compatibility gate is meaningless: a v2-only
+  // client's Zod node schema would silently strip the unknown `transitions`
+  // field (and the `gates` workflow field), importing lossily. Reject via the
+  // version path instead.
+  if (version < 3) {
+    if (result.data.gates && result.data.gates.length > 0) {
+      return {
+        ok: false,
+        error: `invalid: workflow gates require version 3 (this workflow declares version ${version})`,
+      };
+    }
+    for (let n = 0; n < result.data.nodes.length; n++) {
+      const transitions = result.data.nodes[n].transitions;
+      if (transitions && transitions.length > 0) {
+        return {
+          ok: false,
+          error:
+            `invalid: nodes[${n}].transitions require version 3 ` +
+            `(this workflow declares version ${version})`,
+        };
       }
     }
   }

@@ -750,3 +750,51 @@ describe('workflow hook migration replay suite', () => {
     }
   });
 });
+
+describe('migrateWorkflowGateProgressionToHooks retains transition-referenced gates', () => {
+  it('keeps a gate referenced by a handoff transition even when its channel migrates', () => {
+    // A gate shared between a migrating channel (review-posted-gate) and a
+    // handoff transition must be retained — otherwise the channel's migration
+    // drops the gate and the transition's gateId dangles.
+    const input = {
+      name: 'Transition Gate Retain',
+      nodes: [
+        {
+          id: 'n1',
+          name: 'Coding',
+          agents: [{ agentId: 'a1', name: 'coder' }],
+          transitions: [{ id: 'to-review', target: 'Review', gateId: 'review-posted-gate' }],
+        },
+        { id: 'n2', name: 'Review', agents: [{ agentId: 'a2', name: 'reviewer' }] },
+      ],
+      channels: [{ id: 'ch', from: 'Coding', to: 'Review', gateId: 'review-posted-gate' }],
+      gates: [{ id: 'review-posted-gate', resetOnCycle: false }],
+      hooks: [],
+      templateGates: [],
+    } as unknown as MigrationInput;
+    const out = migrateWorkflowGateProgressionToHooks(input);
+    expect(out.workflow.gates?.some((g) => g.id === 'review-posted-gate')).toBe(true);
+    expect(out.workflow.nodes?.[0].transitions?.[0].gateId).toBe('review-posted-gate');
+  });
+
+  it('shape-guards a malformed transitions payload without throwing', () => {
+    // The transition scan runs before validateTransitions; a non-array or
+    // non-object element must not crash the migration.
+    const input = {
+      name: 'Malformed Transitions',
+      nodes: [
+        {
+          id: 'n1',
+          name: 'Coding',
+          agents: [{ agentId: 'a1', name: 'coder' }],
+          transitions: { not: 'array' } as unknown,
+        },
+      ],
+      channels: [],
+      gates: [],
+      hooks: [],
+      templateGates: [],
+    } as unknown as MigrationInput;
+    expect(() => migrateWorkflowGateProgressionToHooks(input)).not.toThrow();
+  });
+});

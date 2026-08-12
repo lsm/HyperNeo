@@ -348,6 +348,18 @@ export function validateGate(gate: unknown): string[] {
 
   const g = gate as Record<string, unknown>;
 
+  // Required identity/state fields. Reject a wrong TYPE so a malformed gate is
+  // never persisted (and the stricter export schema doesn't reject the app's own
+  // export). `resetOnCycle` is defaulted to `false` at the create/update
+  // boundary before this runs, so a missing value is allowed here; only a
+  // present non-boolean (e.g. a string) is rejected.
+  if (typeof g.id !== 'string' || g.id.trim() === '') {
+    errors.push('gate: "id" must be a non-empty string');
+  }
+  if (g.resetOnCycle !== undefined && typeof g.resetOnCycle !== 'boolean') {
+    errors.push('gate: "resetOnCycle" must be a boolean');
+  }
+
   // Validate optional fields — sub-validators handle null/undefined gracefully
   errors.push(...validateGateColor(g.color));
   errors.push(...validateGateLabel(g.label));

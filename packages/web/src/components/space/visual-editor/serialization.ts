@@ -153,6 +153,9 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
       requireCodexApproval: s.requireCodexApproval,
       codexPollIntervalMs: s.codexPollIntervalMs,
       codexTimeoutSeconds: s.codexTimeoutSeconds,
+      // Carry declared handoff transitions verbatim so a visual-editor save
+      // round-trips them instead of dropping them to undefined.
+      handoffTransitions: s.transitions,
     };
     return { step, position };
   });
@@ -339,6 +342,31 @@ function buildWorkflowFields(state: VisualEditorState): {
     keyToPersistedId.set(entry.node.step.localId, entry.persistedId);
   }
 
+  // Distinct destinations a handoff target name can address in the CURRENT
+  // graph (node-name destinations and slot-name destinations counted separately,
+  // mirroring the daemon). The editor does not expose handoff transitions for
+  // editing, so a rename/delete can leave a carried transition pointing at a
+  // stale OR newly-ambiguous target — drop those so an unrelated visual-editor
+  // save is not rejected by validateTransitions.
+  const handoffTargetDestinations = new Map<string, Set<string>>();
+  const countDestination = (name: string, key: string) => {
+    if (!name) return;
+    const set = handoffTargetDestinations.get(name) ?? new Set<string>();
+    set.add(key);
+    handoffTargetDestinations.set(name, set);
+  };
+  for (const n of state.nodes) {
+    countDestination(n.step.name, `node:${n.step.localId}`);
+    for (const a of n.step.agents ?? []) countDestination(a.name, `slot:${n.step.localId}`);
+  }
+  // Gates referenced by carried handoff transitions must be retained alongside
+  // channel-referenced gates, or their gateId becomes unknown on save.
+  const handoffGateIds = new Set<string>();
+  // Current hook ids — a carried transition whose hookId was removed (e.g. the
+  // hook's source/target node was deleted) must be dropped, not emitted with a
+  // dangling reference that validateTransitions rejects.
+  const currentHookIds = new Set(state.hooks.map((h) => h.id));
+
   const nodes = persistableNodes.map((node, i) => {
     const key = node.step.id ?? node.step.localId;
     const persistedId = nodeMap.get(key)!.persistedId;
@@ -393,6 +421,26 @@ function buildWorkflowFields(state: VisualEditorState): {
       ...(node.step.codexTimeoutSeconds
         ? { codexTimeoutSeconds: node.step.codexTimeoutSeconds }
         : {}),
+      // Re-emit carried handoff transitions (mapped back to the backend field),
+      // dropping any whose target no longer resolves to exactly one destination
+      // — a renamed/deleted target (zero destinations) OR a renamed-slot
+      // collision (more than one) — so the save is not rejected by
+      // validateTransitions. Collect referenced gates so they are retained below.
+      ...(() => {
+        const valid = (node.step.handoffTransitions ?? []).filter((t) => {
+          if (t.target !== '*') {
+            const dests = handoffTargetDestinations.get(t.target);
+            if (!dests || dests.size !== 1) return false;
+          }
+          // Drop transitions whose referenced hook/gate was removed from the
+          // current graph (e.g. by a node deletion).
+          if (t.hookId !== undefined && !currentHookIds.has(t.hookId)) return false;
+          if (t.gateId !== undefined && !state.gates.some((g) => g.id === t.gateId)) return false;
+          return true;
+        });
+        for (const t of valid) if (t.gateId) handoffGateIds.add(t.gateId);
+        return valid.length > 0 ? { transitions: valid } : {};
+      })(),
     };
   });
 
@@ -426,6 +474,8 @@ function buildWorkflowFields(state: VisualEditorState): {
   const referencedGateIds = new Set(
     state.channels.map((channel) => channel.gateId).filter((gateId): gateId is string => !!gateId)
   );
+  // Also retain gates referenced only by handoff transitions (not attached to a channel).
+  for (const gateId of handoffGateIds) referencedGateIds.add(gateId);
   const gates = state.gates.filter((gate) => referencedGateIds.has(gate.id));
   const hookNodeNames = buildHookNodeNameMap(persistableNodes);
   const hooks = state.hooks

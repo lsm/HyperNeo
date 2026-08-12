@@ -2303,13 +2303,112 @@ export interface WorkflowChannel {
 }
 
 /**
- * A single node in the workflow graph.
- * Nodes run one or more agents (in parallel when multiple are specified).
- * Nodes are connected by WorkflowChannels.
- *
- * All agents are specified via `agents: WorkflowNodeAgent[]` — there is no
- * single-agent `agentId` shorthand. `agents` must be non-empty.
+ * The broadcast wildcard for a handoff {@link HandoffTransition.target} (and
+ * for {@link HandoffOperation.target}). A transition whose `target` is `'*'`
+ * hands off to every other node in the workflow; a sender reaches it by calling
+ * `handoff({ target: '*' })`. It is a literal target, not a catch-all — a
+ * `'*'` transition does not match a sender-supplied named target.
  */
+export const HANDOFF_TARGET_WILDCARD = '*' as const;
+
+/**
+ * A declarative outbound handoff transition from a workflow node.
+ *
+ * A transition names ONE legal handoff target reachable from the node that
+ * declares it. A first-class `handoff({ target, summary, data? })` issued by an
+ * agent in that node must resolve to exactly one of its declared transitions —
+ * see {@link resolveHandoffTransition}. A `target` that resolves to no
+ * transition is rejected by the contract; it is never silently delivered as a
+ * plain message.
+ *
+ * Relationship to {@link WorkflowChannel}: channels are messaging topology
+ * (any agent-to-agent message). Transitions are control-flow handoffs — a
+ * successful handoff completes the sender's current execution round, and the
+ * target's context/reset policy is owned by the workflow and the target slot
+ * (e.g. {@link WorkflowNodeAgent.resetContextPerTurn}), never by the sender.
+ * The two coexist: a workflow may declare channels for peer discussion and
+ * transitions for round-completing handoffs independently.
+ *
+ * `gateId` / `hookId` bind a transition to the SAME authorization primitives
+ * that channels use. When `gateId` is set, the gate's writable fields are the
+ * legal `data` keys for the handoff and the gate must pass for it to complete.
+ * When `hookId` is set, the hook's validator must pass.
+ *
+ * Runtime transition EXECUTION is not implemented in this contract phase — this
+ * type is declarative, validated, and round-tripped through export/import only.
+ */
+export interface HandoffTransition {
+  /**
+   * Unique identifier for this transition within its node. Required so a
+   * transition has a stable identity for diagnostics and export round-trips.
+   */
+  id: string;
+  /** Optional human-readable label. Reserved for future UI use; not currently rendered by the visual editor. */
+  label?: string;
+  /**
+   * Handoff target: a node name, an agent slot name, or
+   * {@link HANDOFF_TARGET_WILDCARD} (`'*'`) for broadcast. Must resolve to a
+   * declared node/agent at validation time. Targets must be unique within a
+   * node so a `handoff({ target })` resolves unambiguously (at most one
+   * transition per concrete name, at most one `'*'`).
+   */
+  target: string;
+  /**
+   * Optional gate that authorizes this transition. When set, the gate's
+   * writable fields are the legal keys for the handoff's `data`, and the gate
+   * must pass before the handoff completes. References a gate in
+   * `SpaceWorkflow.gates`.
+   */
+  gateId?: string;
+  /**
+   * Optional hook whose validator must pass for this transition (e.g.
+   * `pr_ready`). References a hook in `SpaceWorkflow.hooks`.
+   */
+  hookId?: string;
+  /**
+   * For cyclic transitions (target is an earlier node, closing a loop), the
+   * maximum number of times this transition may be taken in a single workflow
+   * run before it is blocked. Cyclicity is inferred from graph topology at
+   * runtime, not stored. Mirrors {@link WorkflowChannel.maxCycles}. Must be a
+   * positive integer when present.
+   */
+  maxCycles?: number;
+}
+
+/**
+ * The minimal sender-facing shape of a first-class handoff operation:
+ *
+ *   handoff({ target, summary, data? })
+ *
+ * This is the contract an agent invokes; it is distinct from a generic
+ * `send_message`. Semantics formalized by this contract (runtime execution is
+ * a separate phase — not implemented here):
+ *
+ * - **target** MUST resolve to a declared outbound {@link HandoffTransition}
+ *   on the sender's node. A target that resolves to no transition is rejected,
+ *   not silently delivered as a plain message.
+ * - **summary** is a NON-AUTHORITATIVE sender note. It is NOT the target's task
+ *   description or input — the target's task/context is owned by the workflow
+ *   and the target slot. Recipients may read it as context but must not treat
+ *   it as an instruction channel, and the sender must not use it to direct the
+ *   target's work or reset policy.
+ * - **data** supplies the workflow-declared fields for the resolved transition
+ *   (the writable fields of its `gateId`, or the template fields of its
+ *   `hookId`). Keys outside the declared shape are rejected.
+ * - A successful handoff COMPLETES the sender's current execution round; the
+ *   sender does not continue after issuing one.
+ * - Target context/reset policy (e.g. {@link WorkflowNodeAgent.resetContextPerTurn})
+ *   is owned by the workflow and the target slot, NEVER by the sender.
+ */
+export interface HandoffOperation {
+  /** Resolves to a declared outbound {@link HandoffTransition}. */
+  target: string;
+  /** Non-authoritative sender note. Not the target's task/input. */
+  summary: string;
+  /** Supplies the transition's workflow-declared hook/gate fields. */
+  data?: Record<string, unknown>;
+}
+
 /**
  * A single node in the workflow graph.
  * Nodes are the unit of workflow topology — they group one or more agents that
@@ -2356,6 +2455,15 @@ export interface WorkflowNode {
    * 600s default timed out before the bot posted its +1.
    */
   codexTimeoutSeconds?: number;
+  /**
+   * Declared outbound handoff transitions from this node. A first-class
+   * `handoff({ target, summary, data? })` issued by an agent in this node must
+   * resolve to exactly one of these. Omitting it (or an empty array) means the
+   * node declares no first-class handoffs — its agents may still communicate
+   * over channels, but no round-completing handoff is available. See
+   * {@link HandoffTransition} and {@link HandoffOperation}.
+   */
+  transitions?: HandoffTransition[];
 }
 
 /**
@@ -2386,6 +2494,8 @@ export interface WorkflowNodeInput {
    * `requireCodexApproval` is true. See {@link WorkflowNode.codexTimeoutSeconds}.
    */
   codexTimeoutSeconds?: number;
+  /** Declared outbound handoff transitions. See {@link WorkflowNode.transitions}. */
+  transitions?: HandoffTransition[];
 }
 
 /**
@@ -2836,6 +2946,23 @@ export interface ExportedWorkflowNodeAgent {
 }
 
 /**
+ * A declarative outbound handoff transition in the portable export format.
+ * Mirrors {@link HandoffTransition}. Uses node/agent names (already portable
+ * in the export) for `target`. `gateId`/`hookId` are checked against the
+ * exported `gates`/`hooks` lists on import; a `gateId` whose gate was filtered
+ * out (e.g. a legacy empty gate) is stripped at the export/import boundary so
+ * no dangling reference survives.
+ */
+export interface ExportedHandoffTransition {
+  id: string;
+  label?: string;
+  target: string;
+  gateId?: string;
+  hookId?: string;
+  maxCycles?: number;
+}
+
+/**
  * A single workflow node (graph node) in the exported format.
  *
  * Differences from `WorkflowNode`:
@@ -2869,6 +2996,11 @@ export interface ExportedWorkflowNode {
    * `requireCodexApproval` is true. See {@link WorkflowNode.codexTimeoutSeconds}.
    */
   codexTimeoutSeconds?: number;
+  /**
+   * Declared outbound handoff transitions for this node.
+   * Mirrors {@link WorkflowNode.transitions}. Preserved through round-trip.
+   */
+  transitions?: ExportedHandoffTransition[];
 }
 
 /**
@@ -2876,8 +3008,8 @@ export interface ExportedWorkflowNode {
  * Space-specific fields (`id`, `spaceId`, `createdAt`, `updatedAt`) are stripped.
  */
 export interface ExportedSpaceWorkerAgent {
-  /** Format version (1 or 2; v2 adds optional `topicFrom` on eventInterests). */
-  version: 1 | 2;
+  /** Format version (1, 2, or 3; v2 adds optional `topicFrom` on eventInterests; v3 adds node handoff transitions and workflow gates). */
+  version: 1 | 2 | 3;
   /** Discriminator for the exported entity type */
   type: 'agent';
   /** Human-readable name */
@@ -2920,8 +3052,8 @@ export interface ExportedSpaceWorkerAgent {
  * Channel IDs are stripped; `from`/`to` use node/agent names.
  */
 export interface ExportedSpaceWorkflow {
-  /** Format version (1 or 2; v2 adds optional `topicFrom` on eventInterests). */
-  version: 1 | 2;
+  /** Format version (1, 2, or 3; v2 adds optional `topicFrom` on eventInterests; v3 adds node handoff transitions and workflow gates). */
+  version: 1 | 2 | 3;
   /** Discriminator for the exported entity type */
   type: 'workflow';
   /** Human-readable name */
@@ -2949,6 +3081,12 @@ export interface ExportedSpaceWorkflow {
   /** Workflow hooks in portable form. Node references use node/agent slot names. */
   hooks?: WorkflowHook[];
   /**
+   * Workflow gates (v3). Exported verbatim so channel and handoff-transition
+   * `gateId` references survive the round-trip — gate `id`s are semantic
+   * identifiers, not space-specific UUIDs. Absent on v1/v2 bundles.
+   */
+  gates?: Gate[];
+  /**
    * Minimum autonomy level (1-5) required for end-node agents to self-close
    * the task via `approve_task`. Below this threshold, `approve_task` becomes
    * a no-op and the agent must use `submit_for_approval` to request human
@@ -2969,8 +3107,8 @@ export interface ExportedSpaceWorkflow {
  * The bundle is the top-level unit of the export/import file format.
  */
 export interface SpaceExportBundle {
-  /** Format version (1 or 2; v2 adds optional `topicFrom` on eventInterests). */
-  version: 1 | 2;
+  /** Format version (1, 2, or 3; v2 adds optional `topicFrom` on eventInterests; v3 adds node handoff transitions and workflow gates). */
+  version: 1 | 2 | 3;
   /** Discriminator for the top-level type */
   type: 'bundle';
   /** Human-readable bundle name */

@@ -19,8 +19,10 @@ import type {
   CreateSpaceWorkflowParams,
   UpdateSpaceWorkflowParams,
   WorkflowChannel,
+  WorkflowHook,
   Gate,
 } from '@hyperneo/shared';
+import { HANDOFF_TARGET_WILDCARD, MAX_NODE_HANDOFF_TRANSITIONS } from '@hyperneo/shared';
 import { validateWorkflowHooks } from '../workflow-hook-validation';
 import { generateUUID } from '@hyperneo/shared';
 import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository';
@@ -138,6 +140,7 @@ export class SpaceWorkflowManager {
     this.validateEndNodeId(endNodeId, nodes);
 
     this.validateNoDuplicateHookIds(params.hooks ?? []);
+    this.normalizeGateDefaults(params.gates);
     params = migrateWorkflowGateProgressionToHooks({
       ...params,
       nodes: nodes as SpaceWorkflow['nodes'],
@@ -155,6 +158,8 @@ export class SpaceWorkflowManager {
     }
 
     this.validateHooks(params.hooks ?? [], nodes);
+
+    this.validateTransitions(nodes, params.gates ?? [], params.hooks ?? []);
 
     this.validateCodexApprovalAgainstScriptedGates(
       nodes,
@@ -435,6 +440,7 @@ export class SpaceWorkflowManager {
               requireCodexApproval: n.requireCodexApproval,
               codexPollIntervalMs: n.codexPollIntervalMs,
               codexTimeoutSeconds: n.codexTimeoutSeconds,
+              transitions: n.transitions,
             })
           )
         : existing.nodes.map(
@@ -446,6 +452,7 @@ export class SpaceWorkflowManager {
               requireCodexApproval: n.requireCodexApproval,
               codexPollIntervalMs: n.codexPollIntervalMs,
               codexTimeoutSeconds: n.codexTimeoutSeconds,
+              transitions: n.transitions,
             })
           );
 
@@ -492,6 +499,7 @@ export class SpaceWorkflowManager {
     }
 
     this.validateNoDuplicateHookIds(params.hooks ?? []);
+    this.normalizeGateDefaults(params.gates);
     const migrated = migrateWorkflowGateProgressionToHooks({
       channels: params.channels === undefined ? existing.channels : (params.channels ?? undefined),
       gates: params.gates === undefined ? existing.gates : (params.gates ?? undefined),
@@ -524,6 +532,7 @@ export class SpaceWorkflowManager {
       effectiveChannels,
       effectiveGates
     );
+    this.validateTransitions(effectiveNodes, effectiveGates, effectiveHooks);
 
     // Validate node-level postApproval plus the legacy workflow-level route
     // against the effective node set so a rename submitted in the same update
@@ -967,6 +976,199 @@ export class SpaceWorkflowManager {
           throw new WorkflowValidationError(`${loc}: 'to' must be a non-empty agent name string`);
         }
       }
+    }
+  }
+
+  /**
+   * Validate declared outbound handoff transitions on every node.
+   *
+   * Enforces the workflow handoff CONTRACT (see HandoffTransition /
+   * HandoffOperation):
+   * - `id` is a non-empty string, unique within its node.
+   * - `target` is a known node name, agent slot name, or the broadcast wildcard
+   *   `'*'`. A handoff target must resolve to a declared node/agent.
+   * - `target` is unique within the node (at most one transition per concrete
+   *   name, at most one `'*'`) so `handoff({ target })` resolves unambiguously.
+   * - `gateId`, when set, references a known gate id.
+   * - `hookId`, when set, references a known hook id.
+   * - `maxCycles`, when set, is a positive integer.
+   *
+   * Runtime transition EXECUTION is out of scope here; this only enforces the
+   * declarative shape and referential integrity.
+   */
+  private validateTransitions(
+    nodes: WorkflowNodeInput[],
+    gates: Gate[],
+    hooks: WorkflowHook[]
+  ): void {
+    const gateIds = new Set(gates.map((g) => g.id));
+    const hookIds = new Set(hooks.map((h) => h.id));
+    // Valid target names: every node name + every agent slot name (matches
+    // channel addressing). The broadcast wildcard is always valid. A name is
+    // AMBIGUOUS when a name can address more than one destination — two nodes
+    // share a name, a slot name appears in multiple nodes, OR a node name
+    // collides with a slot name (even within the same node). Count distinct
+    // addressable destinations per name (a node-name destination and a slot-name
+    // destination are distinct), and reject names addressing more than one.
+    const targetNameDestinations = new Map<string, Set<string>>();
+    const addDestination = (name: string, destinationKey: string) => {
+      const set = targetNameDestinations.get(name) ?? new Set<string>();
+      set.add(destinationKey);
+      targetNameDestinations.set(name, set);
+    };
+    for (const node of nodes) {
+      // node.id is optional on WorkflowNodeInput; names are unique within a
+      // workflow, so fall back to the name when id is absent.
+      const nodeId = node.id ?? node.name;
+      addDestination(node.name, `node:${nodeId}`);
+      for (const agent of node.agents ?? []) {
+        if (agent.name) addDestination(agent.name, `slot:${nodeId}`);
+      }
+    }
+
+    for (let ni = 0; ni < nodes.length; ni++) {
+      const node = nodes[ni];
+      const transitions = node.transitions;
+      if (transitions === undefined) continue;
+      // RPC JSON is untyped — a non-array (e.g. `{}`) is truthy with no .length
+      // and would otherwise slip past the guards below and be silently dropped by
+      // the repository. Fail loudly instead.
+      if (!Array.isArray(transitions)) {
+        throw new WorkflowValidationError(
+          `node[${ni}] "${node.name}": transitions must be an array`
+        );
+      }
+      if (transitions.length === 0) continue;
+
+      const seenIds = new Set<string>();
+      const seenTargets = new Set<string>();
+      if (transitions.length > MAX_NODE_HANDOFF_TRANSITIONS) {
+        throw new WorkflowValidationError(
+          `node[${ni}] "${node.name}": transitions cannot contain more than ${MAX_NODE_HANDOFF_TRANSITIONS} entries`
+        );
+      }
+      for (let ti = 0; ti < transitions.length; ti++) {
+        const t = transitions[ti];
+        const loc = `node[${ni}] "${node.name}".transitions[${ti}]`;
+
+        // RPC JSON is untyped — a non-object element (e.g. null) would throw a
+        // TypeError on the field reads below; reject it cleanly first.
+        if (!t || typeof t !== 'object') {
+          throw new WorkflowValidationError(`${loc}: transition must be an object`);
+        }
+        if (typeof t.id !== 'string') {
+          throw new WorkflowValidationError(`${loc}: 'id' must be a string`);
+        }
+        if (!t.id.trim()) {
+          throw new WorkflowValidationError(`${loc}: 'id' must be a non-empty string`);
+        }
+        if (t.id.length > 100) {
+          throw new WorkflowValidationError(`${loc}: 'id' must be at most 100 characters`);
+        }
+        // RPC JSON is untyped — reject a non-string label before the length
+        // check (a numeric label has no .length and would otherwise slip through).
+        if (t.label !== undefined && typeof t.label !== 'string') {
+          throw new WorkflowValidationError(`${loc}: 'label' must be a string`);
+        }
+        if (typeof t.label === 'string' && t.label.length > 200) {
+          throw new WorkflowValidationError(`${loc}: 'label' must be at most 200 characters`);
+        }
+        if (seenIds.has(t.id)) {
+          throw new WorkflowValidationError(
+            `${loc}: duplicate transition id "${t.id}" within node "${node.name}"`
+          );
+        }
+        seenIds.add(t.id);
+
+        if (typeof t.target !== 'string') {
+          throw new WorkflowValidationError(`${loc}: 'target' must be a string`);
+        }
+        if (!t.target.trim()) {
+          throw new WorkflowValidationError(`${loc}: 'target' must be a non-empty string`);
+        }
+        if (t.target.length > 100) {
+          throw new WorkflowValidationError(`${loc}: 'target' must be at most 100 characters`);
+        }
+        if (t.target !== HANDOFF_TARGET_WILDCARD) {
+          const destinations = targetNameDestinations.get(t.target);
+          if (!destinations || destinations.size === 0) {
+            throw new WorkflowValidationError(
+              `${loc}: target "${t.target}" does not reference a known node name or agent slot name`
+            );
+          }
+          if (destinations.size > 1) {
+            throw new WorkflowValidationError(
+              `${loc}: target "${t.target}" is ambiguous — matches ${destinations.size} destinations; ` +
+                'use a name unique to one node or slot'
+            );
+          }
+        }
+        if (seenTargets.has(t.target)) {
+          throw new WorkflowValidationError(
+            `${loc}: duplicate transition target "${t.target}" within node "${node.name}" — ` +
+              'a handoff target must resolve to a single declared transition'
+          );
+        }
+        seenTargets.add(t.target);
+
+        if (t.gateId !== undefined) {
+          if (typeof t.gateId !== 'string') {
+            throw new WorkflowValidationError(`${loc}: 'gateId' must be a string`);
+          }
+          if (!t.gateId.trim()) {
+            throw new WorkflowValidationError(`${loc}: 'gateId' must be a non-empty string`);
+          }
+          if (t.gateId.length > 100) {
+            throw new WorkflowValidationError(`${loc}: 'gateId' must be at most 100 characters`);
+          }
+          if (!gateIds.has(t.gateId)) {
+            throw new WorkflowValidationError(
+              `${loc}: gateId "${t.gateId}" does not reference a known gate`
+            );
+          }
+        }
+
+        if (t.hookId !== undefined) {
+          if (typeof t.hookId !== 'string') {
+            throw new WorkflowValidationError(`${loc}: 'hookId' must be a string`);
+          }
+          if (!t.hookId.trim()) {
+            throw new WorkflowValidationError(`${loc}: 'hookId' must be a non-empty string`);
+          }
+          if (t.hookId.length > 100) {
+            throw new WorkflowValidationError(`${loc}: 'hookId' must be at most 100 characters`);
+          }
+          if (!hookIds.has(t.hookId)) {
+            throw new WorkflowValidationError(
+              `${loc}: hookId "${t.hookId}" does not reference a known hook`
+            );
+          }
+        }
+
+        if (t.maxCycles !== undefined) {
+          if (typeof t.maxCycles !== 'number' || !Number.isFinite(t.maxCycles)) {
+            throw new WorkflowValidationError(`${loc}: 'maxCycles' must be a finite number`);
+          }
+          if (t.maxCycles <= 0 || !Number.isInteger(t.maxCycles)) {
+            throw new WorkflowValidationError(`${loc}: 'maxCycles' must be a positive integer`);
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Default each gate's `resetOnCycle` to `false` when omitted, in place.
+   * Runs at the create/update boundary BEFORE gate→hook migration and
+   * `validateGate`, so a gate constructed without `resetOnCycle` (common in
+   * fixtures and untyped RPC) is persisted with a boolean instead of being
+   * rejected — while a present non-boolean (e.g. a string) is still rejected
+   * by `validateGate`. Mirrors the historical DB default.
+   */
+  private normalizeGateDefaults(gates: Gate[] | null | undefined): void {
+    if (!gates) return;
+    for (const gate of gates) {
+      if (gate.resetOnCycle === undefined) gate.resetOnCycle = false;
     }
   }
 

@@ -1168,3 +1168,125 @@ describe('workflowsMatchFingerprint', () => {
     ).toEqual([`Coder|coder|${JSON.stringify([interest])}`]);
   });
 });
+
+describe('buildWorkflowFingerprint — handoff transitions', () => {
+  it('includes node transitions in a canonical ordered shape so a change is detected as drift', () => {
+    const transitions = [
+      { id: 'to-reviewer', target: 'Reviewer', gateId: 'g1' },
+      { id: 'to-qa', target: 'QA', label: 'QA handoff' },
+    ];
+    const withTransitions = makeWorkflow({
+      nodes: [
+        {
+          id: 'n1',
+          name: 'Coder',
+          agents: [{ agentId: 'agent-uuid-1', name: 'Coder' }],
+          transitions,
+        },
+        { id: 'n2', name: 'Reviewer', agents: [{ agentId: 'agent-uuid-2', name: 'Reviewer' }] },
+      ],
+    });
+    // Canonical shape: fixed key order, optionals defaulted to null, sorted by id.
+    // 'to-qa' sorts before 'to-reviewer', so the order differs from the input.
+    const canonical = JSON.stringify([
+      {
+        id: 'to-qa',
+        target: 'QA',
+        label: 'QA handoff',
+        gateId: null,
+        hookId: null,
+        maxCycles: null,
+      },
+      {
+        id: 'to-reviewer',
+        target: 'Reviewer',
+        label: null,
+        gateId: 'g1',
+        hookId: null,
+        maxCycles: null,
+      },
+    ]);
+    expect(
+      (buildWorkflowFingerprint(withTransitions) as Record<string, unknown>).nodeTransitions
+    ).toEqual([`Coder|${canonical}`]);
+  });
+
+  it('canonicalizes transitions so reordering does not cause false drift', () => {
+    const transitionsA = [
+      { id: 'a', target: 'Review' },
+      { id: 'b', target: 'QA' },
+    ];
+    const transitionsB = [
+      { id: 'b', target: 'QA' },
+      { id: 'a', target: 'Review' },
+    ];
+    const fpA = buildWorkflowFingerprint(
+      makeWorkflow({
+        nodes: [
+          {
+            id: 'n1',
+            name: 'Coder',
+            agents: [{ agentId: 'agent-uuid-1', name: 'Coder' }],
+            transitions: transitionsA,
+          },
+          { id: 'n2', name: 'Reviewer', agents: [{ agentId: 'agent-uuid-2', name: 'Reviewer' }] },
+        ],
+      })
+    );
+    const fpB = buildWorkflowFingerprint(
+      makeWorkflow({
+        nodes: [
+          {
+            id: 'n1',
+            name: 'Coder',
+            agents: [{ agentId: 'agent-uuid-1', name: 'Coder' }],
+            transitions: transitionsB,
+          },
+          { id: 'n2', name: 'Reviewer', agents: [{ agentId: 'agent-uuid-2', name: 'Reviewer' }] },
+        ],
+      })
+    );
+    expect(fpA.nodeTransitions).toEqual(fpB.nodeTransitions);
+  });
+
+  it('omits nodeTransitions when no node declares transitions', () => {
+    expect(
+      (buildWorkflowFingerprint(makeWorkflow()) as Record<string, unknown>).nodeTransitions
+    ).toBeUndefined();
+  });
+
+  it('produces a different hash when transitions differ', () => {
+    const base = makeWorkflow();
+    const withTransitions = makeWorkflow({
+      nodes: [
+        {
+          id: 'n1',
+          name: 'Coder',
+          agents: [{ agentId: 'agent-uuid-1', name: 'Coder' }],
+          transitions: [{ id: 'to-reviewer', target: 'Reviewer' }],
+        },
+        { id: 'n2', name: 'Reviewer', agents: [{ agentId: 'agent-uuid-2', name: 'Reviewer' }] },
+      ],
+    });
+    expect(computeWorkflowHash(base)).not.toBe(computeWorkflowHash(withTransitions));
+  });
+
+  it('detects single-field transition drift (e.g. gateId change)', () => {
+    const node = (transitions: import('@hyperneo/shared').HandoffTransition[]) => [
+      {
+        id: 'n1',
+        name: 'Coder',
+        agents: [{ agentId: 'agent-uuid-1', name: 'Coder' }],
+        transitions,
+      },
+      { id: 'n2', name: 'Reviewer', agents: [{ agentId: 'agent-uuid-2', name: 'Reviewer' }] },
+    ];
+    const withoutGate = makeWorkflow({
+      nodes: node([{ id: 'to-reviewer', target: 'Reviewer' }]),
+    });
+    const withGate = makeWorkflow({
+      nodes: node([{ id: 'to-reviewer', target: 'Reviewer', gateId: 'g1' }]),
+    });
+    expect(computeWorkflowHash(withoutGate)).not.toBe(computeWorkflowHash(withGate));
+  });
+});

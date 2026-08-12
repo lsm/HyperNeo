@@ -1755,12 +1755,14 @@ export function mergeNodeStructuralFieldsFromTemplate(
   existingNodes: WorkflowNode[],
   templateNodes: Pick<
     WorkflowNode,
+    | 'id'
     | 'name'
     | 'agents'
     | 'postApproval'
     | 'requireCodexApproval'
     | 'codexPollIntervalMs'
     | 'codexTimeoutSeconds'
+    | 'transitions'
   >[],
   resolveAgentId: (name: string) => string | undefined
 ): WorkflowNode[] {
@@ -1820,6 +1822,28 @@ export function mergeNodeStructuralFieldsFromTemplate(
       // would silently delete any non-default timeout on a seeded node during
       // restamp and revert the Codex hook to the global default window.
       codexTimeoutSeconds: templateNode?.codexTimeoutSeconds ?? node.codexTimeoutSeconds,
+      // Declared handoff transitions: overwrite from the template ONLY when it
+      // explicitly declares them, otherwise PRESERVE the node's existing value
+      // (mirrors the codexTimeoutSeconds preserve-when-template-silent rule).
+      // When the template declares them, remap targets to the installed graph:
+      // NODE-name targets via remapTemplateChannelRef (a renamed node), SLOT-name
+      // targets via remapTransitionSlotTarget (a renamed slot, by position); only
+      // '*' is carried verbatim. gateId/hookId are ids, not node refs, so they
+      // are carried verbatim.
+      transitions:
+        templateNode?.transitions && templateNode.transitions.length > 0
+          ? templateNode.transitions.map((t) => {
+              const isNodeTarget = templateNodes.some((n) => n.name === t.target);
+              return {
+                ...t,
+                target: isNodeTarget
+                  ? remapTemplateChannelRef(t.target, templateNodes, existingNodes)
+                  : t.target === '*'
+                    ? '*'
+                    : remapTransitionSlotTarget(t.target, templateNodes, existingNodes),
+              };
+            })
+          : node.transitions,
       agents: node.agents.map((agent) => {
         const key = `${node.name}::${agent.name}`;
         const templateAgent = templateAgentsByKey.get(key);
@@ -2467,6 +2491,36 @@ function remapTemplateChannel(
     from: remapRef(channel.from),
     to: Array.isArray(channel.to) ? channel.to.map(remapRef) : remapRef(channel.to),
   };
+}
+
+/**
+ * Remap a handoff transition's SLOT target from the template graph to the
+ * installed graph, mirroring `remapTemplateHookAgentSlots`: find the template
+ * node containing the slot, the corresponding installed node (handling node
+ * renames via `remapTemplateChannelRef`), then keep the slot name if it still
+ * exists, else map by position within the node. Falls back to the original
+ * target when no mapping is possible (the manager then flags a true deletion).
+ */
+function remapTransitionSlotTarget(
+  target: string,
+  templateNodes: WorkflowNode[],
+  existingNodes: WorkflowNode[]
+): string {
+  const templateNode = templateNodes.find((n) => n.agents.some((a) => a.name === target));
+  if (!templateNode) return target;
+  const installedNodeName = remapTemplateChannelRef(
+    templateNode.name,
+    templateNodes,
+    existingNodes
+  );
+  const installedNode =
+    existingNodes.find((n) => n.name === installedNodeName) ??
+    existingNodes.find((n) => n.id === templateNode.id);
+  if (!installedNode) return target;
+  if (installedNode.agents.some((a) => a.name === target)) return target;
+  const slotIndex = templateNode.agents.findIndex((a) => a.name === target);
+  const installedSlotName = slotIndex >= 0 ? installedNode.agents[slotIndex]?.name : undefined;
+  return installedSlotName ?? target;
 }
 
 function removeLegacyPrReadyGateChannels(
@@ -3322,6 +3376,12 @@ export function seedBuiltInWorkflows(
         })),
         ...(s.postApproval ? { postApproval: { ...s.postApproval } } : {}),
         ...(s.requireCodexApproval ? { requireCodexApproval: true } : {}),
+        // Carry declared handoff transitions so a fresh install matches a
+        // re-stamped space when a template declares them. Targets reference
+        // node/agent names, which are unchanged on fresh install.
+        ...(s.transitions && s.transitions.length > 0
+          ? { transitions: s.transitions.map((t) => ({ ...t })) }
+          : {}),
       }));
 
       const startNodeId = nodeIdMap.get(template.startNodeId);

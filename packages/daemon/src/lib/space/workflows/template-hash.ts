@@ -279,6 +279,31 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
     ? `${workflow.postApproval.targetAgent}|${workflow.postApproval.instructions ?? ''}|${workflow.postApproval.requirePrMerge ? '1' : '0'}`
     : '';
 
+  // Serialize node-level handoff transitions (the first-class handoff contract)
+  // so a change to a node's declared outbound transitions is detected as drift
+  // and re-stamped into installed spaces via mergeNodeStructuralFieldsFromTemplate.
+  // Only emitted when a node declares at least one transition. Each transition is
+  // serialized as an explicit ordered shape (not the raw object) and the per-node
+  // list is sorted by id so reordering transitions in the editor does not produce
+  // false drift — same canonicalization approach used for gates/channels above.
+  const nodeTransitions = workflow.nodes
+    .filter((n) => n.transitions && n.transitions.length > 0)
+    .map((n) => {
+      const serialized = n
+        .transitions!.slice()
+        .sort((a, b) => compareStrings(a.id, b.id))
+        .map((t) => ({
+          id: t.id,
+          target: t.target,
+          label: t.label ?? null,
+          gateId: t.gateId ?? null,
+          hookId: t.hookId ?? null,
+          maxCycles: t.maxCycles ?? null,
+        }));
+      return `${n.name}|${JSON.stringify(serialized)}`;
+    })
+    .sort();
+
   return {
     description: workflow.description ?? '',
     instructions: workflow.instructions ?? '',
@@ -303,6 +328,7 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
     nodeCodexPollIntervals,
     nodeCodexTimeouts,
     legacyPostApproval,
+    ...(nodeTransitions.length > 0 ? { nodeTransitions } : {}),
   };
 }
 
