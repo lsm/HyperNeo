@@ -42,7 +42,14 @@ export const GLASS_CONTENT_CONTAINER_CLASS =
 export const GLASS_PRIMARY_BUTTON_CLASS =
   'inline-flex h-10 shrink-0 items-center justify-center rounded-xl bg-amber-300 px-4 text-sm font-semibold text-dark-950 shadow-[0_10px_24px_rgba(252,211,77,0.16)] transition hover:-translate-y-0.5 hover:bg-amber-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/70';
 
-type GlassSurfaceKey = 'overview' | 'agents' | 'goals' | 'memories' | 'forge' | 'tasks';
+type GlassSurfaceKey =
+  | 'overview'
+  | 'agents'
+  | 'goals'
+  | 'memories'
+  | 'forge'
+  | 'tasks'
+  | 'sessions';
 
 interface GlassRouteShellProps {
   pageTitle: string;

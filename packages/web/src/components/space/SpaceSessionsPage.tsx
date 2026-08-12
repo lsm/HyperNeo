@@ -1,275 +1,241 @@
 /**
  * SpaceSessionsPage — lists all user-created sessions for a space.
  *
- * Sessions are grouped by status in cards matching the SpaceTasks style.
- * Excludes system sessions (task worker sessions, workflow sessions).
- *
- * Navigation: clicking a session calls navigateToSpaceSession() which uses
- * pushState, so the browser back button naturally returns to /space/:id/sessions
- * where handlePopState restores spaceViewMode = 'sessions'.
+ * Sessions are grouped by runtime/read state and exclude task/workflow system sessions.
  */
 
-import { useMemo, useRef, useState } from 'preact/hooks';
-import type { SpaceWorkerAgentPromotionDraft } from '@hyperneo/shared';
-import { spaceStore } from '../../lib/space-store';
+import type { ComponentChildren } from 'preact';
+import { useEffect, useMemo, useState } from 'preact/hooks';
 import { navigateToSpaceSession } from '../../lib/router';
+import type { SpaceSessionRow } from '../../lib/space-store';
+import { spaceStore } from '../../lib/space-store';
+import {
+  getSpaceSessionUnreadCount,
+  spaceSessionLastSeen,
+  syncSpaceSessionSeen,
+} from '../../lib/space-unread';
 import { getRelativeTime } from '../../lib/utils';
-import { toast } from '../../lib/toast';
-import { useSessionRename } from '../../hooks/useSessionRename';
-import { RenameIcon } from '../icons/RenameIcon';
-import { SpaceAgentEditor } from './SpaceAgentEditor';
+import {
+  FLAT_SURFACE,
+  GLASS_CONTENT_CONTAINER_CLASS,
+  GLASS_PRIMARY_BUTTON_CLASS,
+} from './glass-workspace';
 
-type Session = { id: string; title: string; status: string; lastActiveAt: number; type?: string };
+const SESSION_PAGE_SIZE = 10;
 
-// Left-border accent per lifecycle status. Tones mirror the unified indicator
-// palette: active=success(green), paused=warning(amber), pending=warning(amber),
-// ended/archived=neutral(gray). `paused` is warning, not success — a paused
-// session needs attention, it isn't healthy.
-const STATUS_BORDER: Record<string, string> = {
-  active: 'border-l-green-500',
-  paused: 'border-l-amber-500',
-  pending_worktree_choice: 'border-l-amber-500',
-  ended: 'border-l-gray-600',
-  archived: 'border-l-gray-600',
-};
+type RuntimeGroupKey = 'waiting' | 'idle-unread' | 'error' | 'running' | 'idle-read';
+type RuntimeKind = 'idle' | 'error' | 'running' | 'waiting';
 
-const STATUS_LABEL: Record<string, string> = {
-  active: 'Active',
-  paused: 'Paused',
-  pending_worktree_choice: 'Pending',
-  ended: 'Ended',
-  archived: 'Archived',
-};
-
-const ACTIVE_PAGE_SIZE = 10;
-const ARCHIVED_LIMIT = 5;
-
-interface StatusGroupDef {
-  statuses: string[];
-  title: string;
-  variant: 'green' | 'yellow' | 'gray';
-  /** Hard cap with "+N more" footer — used for Archived */
-  hardLimit?: number;
-  /** Paginated with prev/next controls — used for Active */
-  paginated?: boolean;
+interface ClassifiedSession {
+  session: SpaceSessionRow;
+  runtimeKind: RuntimeKind;
+  runtimeLabel: string;
+  unreadCount: number;
 }
 
-const SESSION_GROUPS: StatusGroupDef[] = [
-  { statuses: ['pending_worktree_choice'], title: 'Pending', variant: 'yellow' },
-  { statuses: ['active', 'paused'], title: 'Active', variant: 'green', paginated: true },
-  { statuses: ['ended'], title: 'Archived', variant: 'gray', hardLimit: ARCHIVED_LIMIT },
+interface RuntimeGroupDef {
+  key: RuntimeGroupKey;
+  title: string;
+  accent: string;
+}
+
+const RUNTIME_GROUPS: RuntimeGroupDef[] = [
+  { key: 'waiting', title: 'Waiting for input', accent: 'bg-amber-300/80' },
+  { key: 'idle-unread', title: 'Unread', accent: 'bg-sky-300/80' },
+  { key: 'error', title: 'Error', accent: 'bg-red-300/80' },
+  { key: 'running', title: 'Running', accent: 'bg-emerald-300/80' },
+  { key: 'idle-read', title: 'Idle', accent: 'bg-gray-400/80' },
 ];
 
-function PaginatedSessionGroup({
+const RUNNING_LABELS: Record<string, string> = {
+  queued: 'Queued',
+  processing: 'Processing',
+  rate_limit_cooldown: 'Rate limit cooldown',
+};
+
+function parseRuntimeState(value: unknown): { kind: RuntimeKind; label: string } {
+  let parsed: unknown = value;
+  if (typeof value === 'string') {
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      return { kind: 'idle', label: 'Idle' };
+    }
+  }
+  if (!parsed || typeof parsed !== 'object') return { kind: 'idle', label: 'Idle' };
+  const status = (parsed as { status?: unknown }).status;
+  if (status === 'interrupted') return { kind: 'error', label: 'Interrupted' };
+  if (status === 'waiting_for_input') return { kind: 'waiting', label: 'Waiting for input' };
+  if (typeof status === 'string' && status in RUNNING_LABELS) {
+    return { kind: 'running', label: RUNNING_LABELS[status] };
+  }
+  return { kind: 'idle', label: 'Idle' };
+}
+
+function groupKeyFor(session: ClassifiedSession): RuntimeGroupKey {
+  if (session.runtimeKind === 'waiting') return 'waiting';
+  if (session.runtimeKind === 'error') return 'error';
+  if (session.runtimeKind === 'running') return 'running';
+  return session.unreadCount > 0 ? 'idle-unread' : 'idle-read';
+}
+
+function GroupShell({
   title,
   count,
-  variant,
-  sessions,
-  spaceId,
-  onPromote,
+  accent,
+  children,
 }: {
   title: string;
   count: number;
-  variant: 'green' | 'yellow' | 'gray';
-  sessions: Session[];
-  spaceId: string;
-  onPromote: (session: Session) => void;
+  accent: string;
+  children: ComponentChildren;
 }) {
-  const [page, setPage] = useState(0);
-  const totalPages = Math.ceil(sessions.length / ACTIVE_PAGE_SIZE);
-  const displayed = sessions.slice(page * ACTIVE_PAGE_SIZE, (page + 1) * ACTIVE_PAGE_SIZE);
-
-  const headerStyles: Record<string, string> = {
-    green: 'bg-green-900/20',
-    yellow: 'bg-yellow-900/20',
-    gray: 'bg-dark-800',
-  };
-  const titleStyles: Record<string, string> = {
-    green: 'text-green-400',
-    yellow: 'text-yellow-400',
-    gray: 'text-gray-400',
-  };
-
+  const headingId = `session-group-${title.toLowerCase().replaceAll(' ', '-')}`;
   return (
-    <div class="bg-dark-850 border border-dark-700 rounded-xl overflow-hidden">
-      <div
-        class={`px-4 py-3 border-b border-dark-700 ${headerStyles[variant]} flex items-center gap-1`}
-      >
-        <h3 class={`font-semibold ${titleStyles[variant]}`}>
+    <section class="space-y-2" aria-labelledby={headingId} data-testid="session-group">
+      <div class="flex items-center gap-2 px-1">
+        <span class={`h-1.5 w-1.5 rounded-full ${accent}`} aria-hidden="true" />
+        <h3 id={headingId} class="text-xs font-semibold uppercase tracking-[0.14em] text-gray-300">
           {title} ({count})
         </h3>
       </div>
-      <div class="divide-y divide-dark-700">
+      <div class={`overflow-hidden rounded-2xl border ${FLAT_SURFACE}`}>{children}</div>
+    </section>
+  );
+}
+
+function PaginatedSessionGroup({
+  group,
+  sessions,
+  spaceId,
+}: {
+  group: RuntimeGroupDef;
+  sessions: ClassifiedSession[];
+  spaceId: string;
+}) {
+  const [page, setPage] = useState(0);
+  const totalPages = Math.max(1, Math.ceil(sessions.length / SESSION_PAGE_SIZE));
+
+  useEffect(() => {
+    setPage((current) => Math.min(current, totalPages - 1));
+  }, [totalPages]);
+
+  const start = page * SESSION_PAGE_SIZE;
+  const displayed = sessions.slice(start, start + SESSION_PAGE_SIZE);
+  const end = start + displayed.length;
+  const buttonClass =
+    'rounded-lg px-2.5 py-1 text-xs text-gray-300 transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/50 disabled:cursor-not-allowed disabled:opacity-40';
+
+  return (
+    <GroupShell title={group.title} count={sessions.length} accent={group.accent}>
+      <div class="divide-y divide-white/10">
         {displayed.map((session) => (
-          <SessionItem key={session.id} session={session} spaceId={spaceId} onPromote={onPromote} />
+          <SessionItem key={session.session.id} classified={session} spaceId={spaceId} />
         ))}
       </div>
       {totalPages > 1 && (
-        <div class="px-4 py-2 border-t border-dark-700 flex items-center justify-between">
+        <div class="flex items-center justify-between border-t border-white/10 bg-black/10 px-4 py-2">
           <button
-            onClick={() => setPage((p) => Math.max(0, p - 1))}
+            type="button"
+            onClick={() => setPage((current) => Math.max(0, current - 1))}
             disabled={page === 0}
-            class="px-2 py-1 text-xs text-gray-400 hover:text-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
+            class={buttonClass}
+            aria-label={`Previous ${group.title.toLowerCase()} sessions`}
           >
             ← Prev
           </button>
-          <span class="text-xs text-gray-400">
-            {page + 1} / {totalPages}
+          <span class="text-xs text-gray-400" aria-live="polite">
+            Showing {start + 1}–{end} of {sessions.length}
           </span>
           <button
-            onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+            type="button"
+            onClick={() => setPage((current) => Math.min(totalPages - 1, current + 1))}
             disabled={page === totalPages - 1}
-            class="px-2 py-1 text-xs text-gray-400 hover:text-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
+            class={buttonClass}
+            aria-label={`Next ${group.title.toLowerCase()} sessions`}
           >
             Next →
           </button>
         </div>
       )}
-    </div>
+    </GroupShell>
   );
 }
 
-function SessionGroup({
-  title,
-  count,
-  variant,
-  sessions,
-  spaceId,
-  hardLimit,
-  onPromote,
-}: {
-  title: string;
-  count: number;
-  variant: 'green' | 'yellow' | 'gray';
-  sessions: Session[];
-  spaceId: string;
-  hardLimit?: number;
-  onPromote: (session: Session) => void;
-}) {
-  const displayed = hardLimit ? sessions.slice(0, hardLimit) : sessions;
-  const hidden = hardLimit ? Math.max(0, sessions.length - hardLimit) : 0;
-
-  const headerStyles: Record<string, string> = {
-    green: 'bg-green-900/20',
-    yellow: 'bg-yellow-900/20',
-    gray: 'bg-dark-800',
-  };
-  const titleStyles: Record<string, string> = {
-    green: 'text-green-400',
-    yellow: 'text-yellow-400',
-    gray: 'text-gray-400',
-  };
+function SessionItem({ classified, spaceId }: { classified: ClassifiedSession; spaceId: string }) {
+  const { session, runtimeKind, runtimeLabel, unreadCount } = classified;
+  const title = session.title || session.id;
+  const runtimeTone =
+    runtimeKind === 'waiting'
+      ? 'text-amber-200'
+      : runtimeKind === 'error'
+        ? 'text-red-300'
+        : runtimeKind === 'running'
+          ? 'text-emerald-200'
+          : unreadCount > 0
+            ? 'text-sky-200'
+            : 'text-gray-400';
 
   return (
-    <div class="bg-dark-850 border border-dark-700 rounded-xl overflow-hidden">
-      <div
-        class={`px-4 py-3 border-b border-dark-700 ${headerStyles[variant]} flex items-center gap-1`}
-      >
-        <h3 class={`font-semibold ${titleStyles[variant]}`}>
-          {title} ({count})
-        </h3>
-      </div>
-      <div class="divide-y divide-dark-700">
-        {displayed.map((session) => (
-          <SessionItem key={session.id} session={session} spaceId={spaceId} onPromote={onPromote} />
-        ))}
-        {hidden > 0 && (
-          <div class="px-4 py-2 text-xs text-gray-400 text-center">+{hidden} more not shown</div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function SessionItem({
-  session,
-  spaceId,
-  onPromote,
-}: {
-  session: Session;
-  spaceId: string;
-  onPromote: (session: Session) => void;
-}) {
-  const borderColor = STATUS_BORDER[session.status] ?? 'border-l-transparent';
-  const canPromote = session.type !== 'space_task_agent';
-  const { isEditing, startEditing, inputProps } = useSessionRename(session.id, session.title);
-
-  if (isEditing) {
-    return (
-      <div class={`px-4 py-3 border-l-2 ${borderColor}`}>
-        <input
-          type="text"
-          data-testid="space-session-rename-input"
-          {...inputProps}
-          class="w-full px-2 py-1 text-sm bg-white/10 rounded-md text-gray-100 outline-none ring-1 ring-blue-500/60"
-        />
-      </div>
-    );
-  }
-
-  return (
-    <div
-      class={`group/row relative px-4 py-3 border-l-2 ${borderColor} cursor-pointer hover:bg-dark-800/50 transition-colors`}
+    <button
+      type="button"
+      class="group/open flex w-full items-start justify-between gap-3 px-5 py-4 text-left transition hover:bg-white/[0.045] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-200/55"
       onClick={() => navigateToSpaceSession(spaceId, session.id)}
+      aria-label={`Open session ${title}`}
+      data-testid="space-session-item"
     >
-      <div class="flex items-start justify-between">
-        <div class="flex-1 min-w-0">
-          <h4 class="text-sm font-medium text-gray-100 truncate">{session.title || session.id}</h4>
-          <div class="flex items-center gap-2 mt-1">
-            <span class="text-xs text-gray-400">
-              {STATUS_LABEL[session.status] ?? session.status}
+      <div class="min-w-0 flex-1">
+        <div class="flex items-center gap-2">
+          <h4 class="truncate text-[15px] font-semibold text-gray-50">{title}</h4>
+          {unreadCount > 0 && (
+            <span
+              class="inline-flex min-w-5 shrink-0 items-center justify-center rounded-md bg-sky-400/15 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-sky-200"
+              aria-label={`${unreadCount} unread messages`}
+            >
+              {unreadCount}
             </span>
-            {session.lastActiveAt > 0 && (
-              <span class="text-xs text-gray-400">{getRelativeTime(session.lastActiveAt)}</span>
-            )}
-          </div>
+          )}
         </div>
-        <div class="ml-4 flex flex-shrink-0 items-center gap-2">
-          <button
-            type="button"
-            data-testid="space-session-rename"
-            onClick={(event) => {
-              event.stopPropagation();
-              startEditing();
-            }}
-            title="Rename session"
-            aria-label={`Rename ${session.title || 'session'}`}
-            class="opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 rounded-md p-1 text-gray-500 transition-colors hover:text-gray-100 hover:bg-white/10"
-          >
-            <RenameIcon className="w-3.5 h-3.5" />
-          </button>
-          {canPromote && (
-            <>
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onPromote(session);
-                }}
-                class="rounded-md border border-blue-500/30 px-2 py-1 text-xs text-blue-300 transition-colors hover:bg-blue-500/10 hover:text-blue-200"
-              >
-                Promote
-              </button>
-              <span class="text-xs text-gray-400">&rarr;</span>
-            </>
+        <div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+          <span class={runtimeTone}>{runtimeLabel}</span>
+          {session.lastActiveAt > 0 && (
+            <span class="text-gray-500">Updated {getRelativeTime(session.lastActiveAt)}</span>
           )}
         </div>
       </div>
-    </div>
+      <svg
+        class="mt-1 h-4 w-4 shrink-0 text-gray-600 transition group-hover/open:translate-x-0.5 group-hover/open:text-gray-300"
+        viewBox="0 0 20 20"
+        fill="currentColor"
+        aria-hidden="true"
+      >
+        <path
+          fill-rule="evenodd"
+          d="M7.21 14.77a.75.75 0 010-1.06L10.94 10 7.21 6.29a.75.75 0 111.06-1.06l4.25 4.24a.75.75 0 010 1.06l-4.25 4.24a.75.75 0 01-1.06 0z"
+          clip-rule="evenodd"
+        />
+      </svg>
+    </button>
   );
 }
 
 interface SpaceSessionsPageProps {
   spaceId: string;
   navigationSpaceId?: string;
+  onCreateSession?: (event: Event) => void;
+  creatingSession?: boolean;
 }
 
-export function SpaceSessionsPage({ spaceId, navigationSpaceId }: SpaceSessionsPageProps) {
+export function SpaceSessionsPage({
+  spaceId,
+  navigationSpaceId,
+  onCreateSession,
+  creatingSession = false,
+}: SpaceSessionsPageProps) {
   const routeSpaceId = navigationSpaceId ?? spaceId;
   const storeSessions = spaceStore.sessions.value;
-  const agents = spaceStore.agents.value;
-  const [promotionDraft, setPromotionDraft] = useState<SpaceWorkerAgentPromotionDraft | null>(null);
-  const promotionRequestId = useRef(0);
+  // Subscribe so marking a session read immediately moves it between idle groups.
+  void spaceSessionLastSeen.value;
 
   const sessions = useMemo(() => {
     const isSystemSpaceSession = (sessionId: string): boolean =>
@@ -277,94 +243,86 @@ export function SpaceSessionsPage({ spaceId, navigationSpaceId }: SpaceSessionsP
       sessionId.startsWith(`space:${spaceId}:workflow:`);
 
     return [...storeSessions]
-      .filter((s) => !isSystemSpaceSession(s.id))
+      .filter((session) => !isSystemSpaceSession(session.id))
       .sort((a, b) => (b.lastActiveAt ?? 0) - (a.lastActiveAt ?? 0));
   }, [storeSessions, spaceId]);
 
-  const existingAgentNames = agents.map((agent) => agent.name);
+  useEffect(() => {
+    syncSpaceSessionSeen(sessions);
+  }, [sessions]);
 
-  const handlePromote = async (session: Session) => {
-    const requestId = promotionRequestId.current + 1;
-    promotionRequestId.current = requestId;
-    try {
-      const draft = await spaceStore.getAgentPromotionDraft(session.id);
-      if (promotionRequestId.current !== requestId) return;
-      setPromotionDraft(draft);
-    } catch (err) {
-      if (promotionRequestId.current !== requestId) return;
-      toast.error(
-        `Failed to generate promotion draft: ${err instanceof Error ? err.message : String(err)}`
-      );
-    }
-  };
-
-  if (sessions.length === 0) {
-    return (
-      <div class="w-full px-8 flex flex-col items-center justify-center py-16 text-center">
-        <svg
-          class="w-10 h-10 text-gray-400 mb-3"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width={1.5}
-            d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
-          />
-        </svg>
-        <p class="text-sm text-gray-400 font-medium">No sessions yet</p>
-        <p class="text-xs text-gray-400 mt-1">Sessions will appear here when created</p>
-      </div>
-    );
-  }
+  const classifiedSessions = sessions.map((session) => {
+    const runtime = parseRuntimeState(session.processingState);
+    return {
+      session,
+      runtimeKind: runtime.kind,
+      runtimeLabel: runtime.label,
+      unreadCount: getSpaceSessionUnreadCount(session.id, session.messageCount),
+    };
+  });
 
   return (
-    <>
-      <div class="flex-1 min-h-0 w-full px-4 py-4 sm:px-8 sm:py-6 overflow-y-auto">
-        <div class="min-h-[calc(100%+1px)] space-y-4">
-          {SESSION_GROUPS.map((group) => {
-            const groupSessions = sessions.filter((s) => group.statuses.includes(s.status));
-            if (groupSessions.length === 0) return null;
-            if (group.paginated) {
+    <div class="flex-1 min-h-0 w-full overflow-y-auto">
+      <div class={`${GLASS_CONTENT_CONTAINER_CLASS} min-h-[calc(100%+1px)] space-y-4`}>
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-200/80">
+              Working conversations
+            </p>
+            <p class="mt-1 text-sm text-gray-400">
+              Resume running work, review unread output, or return to an idle session.
+            </p>
+          </div>
+          <p class="text-xs tabular-nums text-gray-500">
+            {sessions.length} {sessions.length === 1 ? 'session' : 'sessions'} tracked
+          </p>
+        </div>
+
+        {sessions.length === 0 ? (
+          <div
+            class={`flex min-h-52 flex-col items-center justify-center rounded-2xl border px-6 py-10 text-center ${FLAT_SURFACE}`}
+            role="status"
+          >
+            <span
+              class="mb-4 inline-flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/[0.05] text-gray-400"
+              aria-hidden="true"
+            >
+              ◇
+            </span>
+            <p class="text-sm font-semibold text-gray-100">No sessions yet</p>
+            <p class="mt-1 text-xs leading-5 text-gray-400">
+              Create a session to begin a focused conversation in this space.
+            </p>
+            {onCreateSession && (
+              <button
+                type="button"
+                class={`${GLASS_PRIMARY_BUTTON_CLASS} mt-5`}
+                onClick={onCreateSession}
+                disabled={creatingSession}
+              >
+                Create session
+              </button>
+            )}
+          </div>
+        ) : (
+          <div class="space-y-4">
+            {RUNTIME_GROUPS.map((group) => {
+              const groupSessions = classifiedSessions.filter(
+                (session) => groupKeyFor(session) === group.key
+              );
+              if (groupSessions.length === 0) return null;
               return (
                 <PaginatedSessionGroup
-                  key={group.title}
-                  title={group.title}
-                  count={groupSessions.length}
-                  variant={group.variant}
+                  key={group.key}
+                  group={group}
                   sessions={groupSessions}
                   spaceId={routeSpaceId}
-                  onPromote={handlePromote}
                 />
               );
-            }
-            return (
-              <SessionGroup
-                key={group.title}
-                title={group.title}
-                count={groupSessions.length}
-                variant={group.variant}
-                sessions={groupSessions}
-                spaceId={routeSpaceId}
-                hardLimit={group.hardLimit}
-                onPromote={handlePromote}
-              />
-            );
-          })}
-        </div>
+            })}
+          </div>
+        )}
       </div>
-      {promotionDraft && (
-        <SpaceAgentEditor
-          key={promotionDraft.sourceSessionId}
-          agent={null}
-          promotionDraft={promotionDraft}
-          existingAgentNames={existingAgentNames}
-          onSave={() => setPromotionDraft(null)}
-          onCancel={() => setPromotionDraft(null)}
-        />
-      )}
-    </>
+    </div>
   );
 }

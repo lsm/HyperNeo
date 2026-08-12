@@ -468,45 +468,46 @@ export default function SpaceIsland({
   if (viewMode === 'sessions' && space) {
     return (
       <>
-        <div
-          class="flex-1 flex flex-col overflow-hidden bg-app-content"
-          data-testid="space-sessions-view"
-          {...baseLayerProps}
-        >
-          <SpacePageHeader
-            pageTitle="Sessions"
-            actions={
-              <button
-                type="button"
-                onClick={handleCreateSession}
-                disabled={creatingSession}
-                class="flex-shrink-0 rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-white/5 hover:text-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
-                aria-label="Create session"
-                title="Create session"
+        <GlassRouteShell
+          pageTitle="Sessions"
+          appearance="hero"
+          surfaceKey="sessions"
+          testId="space-sessions-view"
+          baseLayerProps={baseLayerProps}
+          fallback={lazyFallback}
+          actions={
+            <button
+              type="button"
+              onClick={handleCreateSession}
+              disabled={creatingSession}
+              class={`${GLASS_PRIMARY_BUTTON_CLASS} !h-9 !px-3 sm:!px-4 disabled:cursor-not-allowed disabled:opacity-50`}
+              aria-label="Create session"
+            >
+              <svg
+                class="h-4 w-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                aria-hidden="true"
               >
-                <svg
-                  class="w-4 h-4"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  aria-hidden="true"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width={2}
-                    d="M12 4v16m8-8H4"
-                  />
-                </svg>
-              </button>
-            }
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width={2}
+                  d="M12 4v16m8-8H4"
+                />
+              </svg>
+              <span class="ml-1.5 hidden sm:inline">New session</span>
+            </button>
+          }
+        >
+          <SpaceSessionsPage
+            spaceId={spaceId}
+            navigationSpaceId={navigationSpaceId}
+            onCreateSession={handleCreateSession}
+            creatingSession={creatingSession}
           />
-          <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
-            <Suspense fallback={lazyFallback}>
-              <SpaceSessionsPage spaceId={spaceId} navigationSpaceId={navigationSpaceId} />
-            </Suspense>
-          </div>
-        </div>
+        </GlassRouteShell>
         {overlay}
       </>
     );
