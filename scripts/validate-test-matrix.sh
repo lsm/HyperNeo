@@ -648,6 +648,9 @@ if [ -z "$_online_real" ] || ! printf '%s' "$_online_real" | grep -qF '${{ matri
 elif ! marker_executed "$_online_real" 'bun test'; then
 	err "real-api-tests.yml runner contains the marker but does not EXECUTE it (e.g. it is echoed/quoted as data) — zero tests would run while this guard reports them covered"
 	echo "     → invoke 'bun test' as a command, not as an argument to echo/another command" >&2
+elif [ "$(printf '%s' "$_online_real" | sed -E 's/^[[:space:]]*run:[[:space:]]*//' | sed -E 's/^([>|]-)[[:space:]]*//' | sed -E 's/^[("'"'"')]//' | awk '{print $1}')" != "bun" ]; then
+	err "real-API runner's first command token is not 'bun' — 'bun test' would be an argument to another command (e.g. echo), running zero tests while this guard reports the file covered"
+	echo "     → invoke 'bun test \${{ matrix.test_path }}' as the command" >&2
 else
 	# After `bun test`, only ${{ matrix.test_path }} may select. A selection flag
 	# like --only (test.only only) / --grep / --filter would run ZERO tests on a
