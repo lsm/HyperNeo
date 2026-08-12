@@ -1042,7 +1042,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           // (session.error before the settlement idle) is load-bearing. See
           // message-delivery-dead-letter.ts. (Codex P1.)
           void settleMessageDeliveryDeadLetter(payload, {
-            markDeliveryFailedByUuid: (sid, uuid) => sdkRepo.markDeliveryFailedByUuid(sid, uuid),
+            // Inclusive: a driven turn that already reached `consumed` can also
+            // exhaust its retries (recoverable) or dead-letter at once
+            // (non-recoverable) — flip those rows too so the failed prompt is
+            // visible (pagination hides non-consumed) and the UI offers Retry.
+            markDeliveryFailedByUuid: (sid, uuid) =>
+              sdkRepo.markDeliveryFailedByUuidInclusive(sid, uuid),
             publishStatusChanged: (sid, messageIds) =>
               internalEventBus.publish('messages.statusChanged', {
                 sessionId: sid,

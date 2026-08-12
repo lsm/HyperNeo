@@ -1957,9 +1957,7 @@ sdk_rows_raw AS (
     CASE
       WHEN sm.message_type != 'user' THEN NULL
       WHEN COALESCE(sm.send_status, 'consumed') = 'failed' THEN 'failed'
-      WHEN COALESCE(sm.send_status, 'consumed') = 'consumed' THEN 'delivered'
-      WHEN COALESCE(sm.send_status, 'consumed') IN ('deferred', 'enqueued', 'submitted')
-           AND EXISTS (
+      WHEN EXISTS (
              SELECT 1
              FROM job_queue jq
              WHERE jq.queue = 'message_delivery'
@@ -1969,6 +1967,7 @@ sdk_rows_raw AS (
                AND jq.retry_count > 0
            )
       THEN 'retrying'
+      WHEN COALESCE(sm.send_status, 'consumed') = 'consumed' THEN 'delivered'
       WHEN COALESCE(sm.send_status, 'consumed') = 'submitted' THEN 'processing'
       ELSE 'queued'
     END AS deliveryState,
@@ -2280,9 +2279,7 @@ sdk_rows AS (
     CASE
       WHEN sm.message_type != 'user' THEN NULL
       WHEN COALESCE(sm.send_status, 'consumed') = 'failed' THEN 'failed'
-      WHEN COALESCE(sm.send_status, 'consumed') = 'consumed' THEN 'delivered'
-      WHEN COALESCE(sm.send_status, 'consumed') IN ('deferred', 'enqueued', 'submitted')
-           AND EXISTS (
+      WHEN EXISTS (
              SELECT 1
              FROM job_queue jq
              WHERE jq.queue = 'message_delivery'
@@ -2292,6 +2289,7 @@ sdk_rows AS (
                AND jq.retry_count > 0
            )
       THEN 'retrying'
+      WHEN COALESCE(sm.send_status, 'consumed') = 'consumed' THEN 'delivered'
       WHEN COALESCE(sm.send_status, 'consumed') = 'submitted' THEN 'processing'
       ELSE 'queued'
     END AS deliveryState,
@@ -3320,20 +3318,27 @@ WITH top_level AS (
     send_status,
     origin,
     rowid,
-    -- Active-delivery retry signal for the "retrying" UI state (task #862):
-    -- true when a pending/processing message_delivery job for this session
-    -- references the row's canonical uuid AND has already been retried
-    -- (retry_count > 0). Scoped to this session's active jobs (few) via the
-    -- partial index idx_message_delivery_session_active; one bounded lookup.
-    EXISTS (
-      SELECT 1
+    -- Active-delivery retry info for the "retrying" UI state (task #862):
+    -- the pending/processing message_delivery job for this row's canonical
+    -- uuid, packed as {count, runAt, max}. count > 0 drives the "retrying"
+    -- badge; runAt (next attempt epoch ms) + max drive the countdown +
+    -- "attempt N/M" affordance. Scoped to this session's active jobs (few) via
+    -- idx_message_delivery_session_active; one bounded lookup. NULL when no
+    -- active job (delivered / failed / idle).
+    (
+      SELECT json_object(
+        'count', jq.retry_count,
+        'runAt', jq.run_at,
+        'max', jq.max_retries
+      )
       FROM job_queue jq
       WHERE jq.queue = 'message_delivery'
         AND jq.status IN ('pending', 'processing')
         AND json_extract(jq.payload, '$.sessionId') = ?1
         AND json_extract(jq.payload, '$.messageUuid') = sdk_messages.sdk_uuid
-        AND jq.retry_count > 0
-    ) AS deliveryRetry
+      ORDER BY jq.retry_count DESC
+      LIMIT 1
+    ) AS deliveryRetryInfo
   FROM sdk_messages
   WHERE session_id = ?1
     AND parent_tool_use_id IS NULL
@@ -3403,15 +3408,20 @@ subagent AS (
     sm.send_status AS send_status,
     sm.origin AS origin,
     sm.rowid AS rowid,
-    EXISTS (
-      SELECT 1
+    (
+      SELECT json_object(
+        'count', jq.retry_count,
+        'runAt', jq.run_at,
+        'max', jq.max_retries
+      )
       FROM job_queue jq
       WHERE jq.queue = 'message_delivery'
         AND jq.status IN ('pending', 'processing')
         AND json_extract(jq.payload, '$.sessionId') = ?1
         AND json_extract(jq.payload, '$.messageUuid') = sm.sdk_uuid
-        AND jq.retry_count > 0
-    ) AS deliveryRetry
+      ORDER BY jq.retry_count DESC
+      LIMIT 1
+    ) AS deliveryRetryInfo
   FROM sdk_messages sm
   WHERE sm.session_id = ?1
     AND sm.parent_tool_use_id IN (SELECT id FROM tool_use_ids)
@@ -3424,7 +3434,7 @@ SELECT
   send_status                                                       AS sendStatus,
   origin                                                            AS origin,
   rowid                                                             AS rowid,
-  deliveryRetry                                                     AS deliveryRetry
+  deliveryRetryInfo                                                 AS deliveryRetryInfo
 FROM top_level
 UNION ALL
 SELECT
@@ -3434,7 +3444,7 @@ SELECT
   send_status                                                       AS sendStatus,
   origin                                                            AS origin,
   rowid                                                             AS rowid,
-  deliveryRetry                                                     AS deliveryRetry
+  deliveryRetryInfo                                                 AS deliveryRetryInfo
 FROM subagent
 ORDER BY timestamp ASC, rowid ASC
 `.trim();
@@ -3476,12 +3486,31 @@ function mapMessageRow(row: Record<string, unknown>): Record<string, unknown> {
     rowid: typeof row.rowid === 'number' ? row.rowid : Number(row.rowid ?? 0),
     origin: row.origin != null ? row.origin : undefined,
   };
-  // Only user messages carry a delivery lifecycle. SQLite EXISTS returns 0/1.
+  // Only user messages carry a delivery lifecycle. The active-job retry info
+  // arrives as a JSON blob {count, runAt, max} (NULL when no active job).
   if (parsed.type === 'user') {
+    let retryCount = 0;
+    let retryInfo: { count?: number; runAt?: number; max?: number } | null = null;
+    const raw = row.deliveryRetryInfo;
+    if (typeof raw === 'string' && raw.length > 0) {
+      try {
+        retryInfo = JSON.parse(raw) as { count?: number; runAt?: number; max?: number };
+        retryCount = Number(retryInfo?.count ?? 0);
+      } catch {
+        // malformed blob — treat as no active job
+      }
+    }
     const deliveryStatus = sendStatusToDeliveryStatus(row.sendStatus as string | null, {
-      retrying: Number(row.deliveryRetry ?? 0) > 0,
+      retrying: retryCount > 0,
     });
     if (deliveryStatus) extras.deliveryStatus = deliveryStatus;
+    if (retryCount > 0 && retryInfo) {
+      extras.deliveryRetry = {
+        count: retryCount,
+        runAt: typeof retryInfo.runAt === 'number' ? retryInfo.runAt : undefined,
+        maxRetries: typeof retryInfo.max === 'number' ? retryInfo.max : undefined,
+      };
+    }
   }
 
   return { ...parsed, ...extras };

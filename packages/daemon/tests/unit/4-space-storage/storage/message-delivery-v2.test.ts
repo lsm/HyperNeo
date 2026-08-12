@@ -22,6 +22,7 @@ import {
   deliverMessage,
   drainDeliveryWaitersOnTerminalSDKMessage,
   isUniqueConstraintError,
+  MAX_STEER_PARKS,
   signalDeliveryConsumed,
   waitForDeliveryConsumption,
   type MessageDeliverySession,
@@ -1070,5 +1071,45 @@ describe('awaitDeliveryConsumption — terminalize a fresh job on timeout (no-st
       terminalizeOnTimeout: terminalize,
     });
     expect(terminalize).not.toHaveBeenCalled();
+  });
+});
+
+describe('message-delivery v2 — steer park bound (dead-letter after MAX_STEER_PARKS)', () => {
+  let db: Database;
+  let repo: JobQueueRepository;
+
+  beforeEach(() => {
+    ({ db, repo } = setupRepo());
+  });
+  afterEach(() => db.close());
+
+  it('parks up to the budget, then throws DeadLetterImmediatelyError', async () => {
+    const session = new MockSession();
+    session.feedResult = { outcome: 'park' };
+    const handler = createMessageDeliveryHandler({
+      jobQueue: repo,
+      getSession: () => session,
+      getMessageContent: () => ({ content: 'steer', sendStatus: 'enqueued' }),
+    });
+
+    let current = steerJob(repo, 'msg-park-bound');
+
+    // Park exactly MAX_STEER_PARKS times — each returns {parked} and re-queues
+    // (bumping __parkCount) without burning the retry budget. Re-claim each
+    // iteration (the park sets run_at into the future; reset it to re-claim).
+    for (let i = 0; i < MAX_STEER_PARKS; i++) {
+      const result = await handler(current);
+      expect(result).toMatchObject({ parked: 'turn_blocked' });
+      expect(repo.getJob(current.id)?.retryCount).toBe(0); // parking is not a retry
+      db.prepare(`UPDATE job_queue SET run_at = 0 WHERE id = ?`).run(current.id);
+      const [next] = repo.dequeue(MESSAGE_DELIVERY, 1);
+      expect(next).toBeTruthy();
+      current = next!;
+    }
+    expect(repo.getParkCount(current.id)).toBeGreaterThanOrEqual(MAX_STEER_PARKS);
+
+    // The next attempt exceeds the budget → the handler throws so the processor
+    // dead-letters the job (→ message flipped to `failed` with a Retry affordance).
+    await expect(handler(current)).rejects.toThrow(/parked past its budget/);
   });
 });

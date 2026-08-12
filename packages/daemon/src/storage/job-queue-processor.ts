@@ -3,6 +3,23 @@ import type { TableChangeScope } from './reactive-database';
 
 export type JobHandler = (job: Job) => Promise<Record<string, unknown> | void>;
 
+/**
+ * Throw from a handler to force a job straight to `dead` (bypassing the retry
+ * budget) while still firing the lane's `onDead` hook. Used by the
+ * `message_delivery` lane for a turn that ended in a NON-recoverable error
+ * (auth/permission/quota): retrying won't help, so the job dead-letters
+ * immediately and `onDead` terminalizes the persisted message as `failed` (with
+ * a Retry affordance) instead of burning all `maxRetries` attempts first. The
+ * generic processor treats this as terminal without knowing anything about the
+ * delivery domain. See docs/features/message-delivery-v2.md.
+ */
+export class DeadLetterImmediatelyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'DeadLetterImmediatelyError';
+  }
+}
+
 /** Derive a reactive change scope from a job's payload, when it carries one. */
 function scopeFromJob(job: Job): TableChangeScope | undefined {
   const sessionId = typeof job.payload?.sessionId === 'string' ? job.payload.sessionId : undefined;
@@ -182,7 +199,14 @@ export class JobQueueProcessor {
       this.notifyChange(scope);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      const updated = this.repo.fail(job.id, message, job.claimToken);
+      // A handler throws `DeadLetterImmediatelyError` to terminalize without
+      // burning the retry budget (e.g. a delivery turn that ended in a
+      // non-recoverable error). Force `dead` and fire `onDead` just like
+      // retry-exhaustion would.
+      const updated =
+        err instanceof DeadLetterImmediatelyError
+          ? this.repo.markDead(job.id, message, job.claimToken)
+          : this.repo.fail(job.id, message, job.claimToken);
       if (updated && updated.status === 'dead' && reg?.onDead) {
         try {
           reg.onDead(updated);

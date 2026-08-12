@@ -1315,6 +1315,68 @@ export function setupSessionHandlers(
     };
   });
 
+  // Retry a failed user message immediately (manual "Retry" affordance). Reopens
+  // the `failed` row to `enqueued` and re-enqueues its durable delivery job so
+  // the handler re-drives it. Mirrors the promotePending / Space idempotent
+  // retry pattern (reopenDeliveryByUuid + deliverAndMarkQueued). Used by the
+  // per-message Retry button shown on `deliveryStatus === 'failed'`.
+  messageHub.onRequest('session.messages.retry', async (data) => {
+    const { sessionId: targetSessionId, messageDbId } = data as {
+      sessionId?: string;
+      messageDbId?: string;
+    };
+
+    if (!targetSessionId || !messageDbId) {
+      throw new Error('sessionId and messageDbId are required');
+    }
+
+    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    if (!agentSession) {
+      throw new Error('Session not found');
+    }
+
+    const db = sessionManager.getDatabase();
+    const message = db
+      .getMessagesByStatus(targetSessionId, 'failed')
+      .find((queuedMessage) => queuedMessage.dbId === messageDbId);
+
+    if (!message || !isSDKUserMessage(message) || !message.uuid) {
+      return { retried: false };
+    }
+
+    const reopenedId = db.getSDKMessageRepo().reopenDeliveryByUuid(targetSessionId, message.uuid);
+    if (!reopenedId) {
+      return { retried: false };
+    }
+
+    await internalEventBus.publish('messages.statusChanged', {
+      sessionId: targetSessionId,
+      messageIds: [reopenedId],
+      status: 'enqueued',
+    });
+
+    if (isMessageDeliveryV2Enabled()) {
+      await deliverAndMarkQueued({
+        jobQueue: db.getJobQueueRepo(),
+        stateManager: agentSession.stateManager,
+        sessionId: targetSessionId,
+        messageUuid: message.uuid,
+        origin: 'chat',
+      });
+    } else {
+      const replayContent = toReplayContent(message.message.content);
+      if (replayContent) {
+        await agentSession.startQueryAndEnqueue(message.uuid, replayContent);
+      }
+    }
+
+    return {
+      retried: true,
+      messageId: reopenedId,
+      status: 'enqueued',
+    };
+  });
+
   /**
    * Handle the user's response to an sdk_resume_choice action message.
    *

@@ -20,6 +20,7 @@
 import type { MessageContent } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
+import { DeadLetterImmediatelyError } from '../../storage/job-queue-processor';
 import { MESSAGE_DELIVERY } from '../job-queue-constants';
 
 /**
@@ -92,6 +93,46 @@ export function isMessageDeliveryV2Enabled(): boolean {
 export function isUniqueConstraintError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   return /UNIQUE constraint/i.test(err.message);
+}
+
+/**
+ * Thrown by `driveDeliveryTurn` when the SDK turn ended in a RECOVERABLE error
+ * (e.g. a transient provider 5xx / "unexpected error", category SYSTEM). The
+ * handler does NOT catch it, so it propagates to the processor's `processJob`
+ * catch → `repo.fail` → exponential backoff → retry. Each retry re-claims the
+ * (now `consumed`) message and re-drives via `ensureQueryStarted`, which
+ * restarts the query — the same "send a new message and it works" recovery the
+ * user observed, now automatic. The message stays `consumed` throughout retries
+ * (the `deliveryRetry` LiveQuery signal surfaces "retrying" in the UI); on
+ * exhaustion the dead-letter path flips it to `failed`. See
+ * docs/features/message-delivery-v2.md.
+ */
+export class MessageDeliveryRecoverableTurnError extends Error {
+  constructor(
+    message: string,
+    readonly category?: string
+  ) {
+    super(message);
+    this.name = 'MessageDeliveryRecoverableTurnError';
+  }
+}
+
+/**
+ * Thrown by `driveDeliveryTurn` when the SDK turn ended in a NON-recoverable
+ * error (auth/permission/quota). Extends {@link DeadLetterImmediatelyError} so
+ * the processor force-dead-letters the job (no retry budget burned) and fires
+ * `onDead`, which terminalizes the persisted message as `failed` with a Retry
+ * affordance — retrying won't fix a credential/quota error, but the UI surfaces
+ * it honestly instead of silently idling on a `consumed` row.
+ */
+export class MessageDeliveryTerminalTurnError extends DeadLetterImmediatelyError {
+  constructor(
+    message: string,
+    readonly category?: string
+  ) {
+    super(message);
+    this.name = 'MessageDeliveryTerminalTurnError';
+  }
 }
 
 export interface DeliverMessageOptions {
@@ -287,6 +328,15 @@ export type DeliveryLoadResult = { content: DeliveryContent; sendStatus: string 
  * parked, so it does not count against stale-reclamation.
  */
 export const MESSAGE_DELIVERY_PARK_MS = 5_000;
+
+/**
+ * Maximum times a STEER may park (owning turn blocked on `sdk_resume_choice`)
+ * before it dead-letters. Parking uses `requeue` (no retry_count bump), so
+ * without this bound a steer whose owning turn never unblocks re-parks every
+ * {@link MESSAGE_DELIVERY_PARK_MS} indefinitely. ~5 min at the 5s park cadence;
+ * the user can re-send if the owning turn was abandoned.
+ */
+export const MAX_STEER_PARKS = 60;
 
 /**
  * Outcome of driving a turn.

@@ -39,10 +39,11 @@
  */
 
 import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository';
-import type { JobHandler } from '../../storage/job-queue-processor';
+import { DeadLetterImmediatelyError, type JobHandler } from '../../storage/job-queue-processor';
 import {
   asMessageDeliveryPayload,
   isUniqueConstraintError,
+  MAX_STEER_PARKS,
   MESSAGE_DELIVERY_PARK_MS,
   type DeliveryLoadResult,
   type MessageDeliverySession,
@@ -239,8 +240,19 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       // slot). Park it with the turn's delay so it is NOT reclaimed every poll
       // (unbounded hot loop); it re-evaluates (feed/promote) when reclaimed after
       // the delay. See Codex (#3742693683).
+      //
+      // Bounded: parking uses requeue (no retry_count bump), so without a cap a
+      // steer whose owning turn never unblocks re-parks every cycle forever.
+      // After MAX_STEER_PARKS, dead-letter (the owning turn was likely abandoned)
+      // so the message surfaces as `failed` with a Retry affordance instead of
+      // parking silently forever.
+      if (deps.jobQueue.getParkCount(job.id) >= MAX_STEER_PARKS) {
+        throw new DeadLetterImmediatelyError(
+          'Steer parked past its budget — owning turn never unblocked'
+        );
+      }
       const retryAt = Date.now() + MESSAGE_DELIVERY_PARK_MS;
-      deps.jobQueue.requeue(job.id, retryAt, job.claimToken);
+      deps.jobQueue.requeueParked(job.id, retryAt, job.claimToken);
       return { parked: 'turn_blocked', retryAt };
     }
     if (result.outcome === 'promote') {

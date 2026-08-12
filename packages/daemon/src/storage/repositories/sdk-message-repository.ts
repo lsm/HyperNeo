@@ -2066,6 +2066,31 @@ export class SDKMessageRepository {
   }
 
   /**
+   * Like {@link markDeliveryFailedByUuid} but ALSO flips a `consumed` row. Used
+   * ONLY by the message-delivery dead-letter settlement when a driven turn that
+   * already reached `consumed` (the SDK accepted the prompt) then died on a
+   * provider error and exhausted its retries (or hit a non-recoverable error).
+   * The narrow method deliberately excludes `consumed` (other callers — archive
+   * barriers, enqueue failures, interrupts — must not fail a message that WAS
+   * delivered), so this sibling exists for the one path where a consumed row
+   * genuinely failed. Returns the flipped db id, else null. See
+   * `message-delivery-dead-letter.ts` + docs/features/message-delivery-v2.md.
+   */
+  markDeliveryFailedByUuidInclusive(sessionId: string, uuid: string): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT id FROM sdk_messages
+           WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
+             AND send_status IN ('enqueued', 'deferred', 'submitted', 'consumed')
+           ORDER BY timestamp ASC LIMIT 1`
+      )
+      .get(sessionId, uuid) as { id: string } | undefined;
+    if (!row) return null;
+    this.updateMessageStatus([row.id], 'failed');
+    return row.id;
+  }
+
+  /**
    * Flip a pending delivery row to `consumed` at the earliest SDK-consume
    * signal (the onSent/started-acknowledgment, before the turn runs) — the
    * at-least-once quality hardening (task #861 item 12). Delivery is
