@@ -614,6 +614,20 @@ export class SDKMessageRepository {
           taskId,
         ];
         stmt.run(...values, conversationTurnIndex, extractSdkUuid(message));
+        // Stamp a terminal result with a monotonic operation sequence from the
+        // shared counter so the delivery re-claim boundary
+        // (`hasTerminalResultAfter`) can order it against a consumed message's
+        // watermark independent of SQLite rowid reuse. A separate UPDATE (not in
+        // the INSERT) so partial test schemas without the column don't break;
+        // guarded by column presence. See Codex (PR #2463, P2).
+        if (isTerminal && this.tableHasColumn('sdk_messages', 'consumed_seq')) {
+          const resultSeq = this.nextConsumedSeq();
+          if (resultSeq !== null) {
+            this.db
+              .prepare('UPDATE sdk_messages SET consumed_seq = ? WHERE id = ?')
+              .run(resultSeq, id);
+          }
+        }
         this.saveReplacementEdges(id, sessionId, taskId, message);
         if (countsTowardsBadge) this.bumpVisibleMessageCount(sessionId, 1);
       })();
@@ -1421,19 +1435,31 @@ export class SDKMessageRepository {
     // anchored and must keep their turn — re-bumping those would scatter them
     // to new turns and break grouping on multi-session tasks. Capturing
     // pre-update (filtered by prior send_status) is what excludes them.
+    //
+    // Renderable TASK rows get a fresh turn index AND a timestamp aligned to the
+    // consume/fail moment. EVERY delivery-consumed user row (renderable or not,
+    // task or non-task) gets the timestamp aligned — a message queued while
+    // another turn ran and later promoted otherwise keeps its original queued
+    // timestamp, which predates the previous turn's terminal result and would
+    // corrupt the delivery re-claim boundary (`hasTerminalResultAfter`). Turn
+    // index assignment stays limited to renderable task anchors. Persisting the
+    // timestamp in THIS transaction (not a separate autocommit) makes the
+    // consumed-flip + T_consumed atomic across a crash. See Codex (PR #2463).
     const pending =
       newStatus === 'consumed' || newStatus === 'failed'
         ? (this.db
             .prepare(
-              `SELECT id, task_id FROM sdk_messages
+              `SELECT id, task_id, is_renderable FROM sdk_messages
                 WHERE id IN (${placeholders})
                   AND message_type = 'user'
-                  AND is_renderable = 1
-                  AND task_id IS NOT NULL
                   AND send_status IN ('deferred', 'enqueued', 'submitted')
                 ORDER BY rowid ASC`
             )
-            .all(...messageIds) as Array<{ id: string; task_id: string }>)
+            .all(...messageIds) as Array<{
+            id: string;
+            task_id: string | null;
+            is_renderable: number;
+          }>)
         : [];
     // A send_status transition can flip a user row's badge visibility
     // (deferred/enqueued/submitted -> consumed/failed), so capture the affected sessions
@@ -1473,9 +1499,34 @@ export class SDKMessageRepository {
         const updStmt = this.db.prepare(
           'UPDATE sdk_messages SET conversation_turn_index = ?, timestamp = ? WHERE id = ?'
         );
+        // consumed_seq is a CONSUMPTION WATERMARK drawn from the shared monotonic
+        // counter (delivery_consumed_seq). Terminal results are stamped from the
+        // SAME counter at insert (saveSDKMessage), so `hasTerminalResultAfter`
+        // compares counter-to-counter — independent of SQLite rowid reuse (a
+        // deleted max rowid can be reused by a later insert, which would break a
+        // MAX(rowid)+1 boundary). One counter draw per consumed row. See Codex
+        // (PR #2463, P2).
+        const timeStmt = this.db.prepare('UPDATE sdk_messages SET timestamp = ? WHERE id = ?');
+        const consumedSeqStmt = this.db.prepare(
+          'UPDATE sdk_messages SET consumed_seq = ?, timestamp = ? WHERE id = ?'
+        );
         for (const row of pending) {
-          const max = (maxStmt.get(row.task_id) as { m: number | null } | undefined)?.m ?? 0;
-          updStmt.run(max + 1, now, row.id);
+          if (row.task_id && row.is_renderable === 1) {
+            const max = (maxStmt.get(row.task_id) as { m: number | null } | undefined)?.m ?? 0;
+            updStmt.run(max + 1, now, row.id);
+          } else {
+            // Non-renderable or non-task row: align the timestamp to the
+            // consume/fail moment only — turn index stays untouched (limited to
+            // renderable task anchors). Same transaction as the status flip, so
+            // the delivery boundary survives a crash. See the `pending` capture.
+            timeStmt.run(now, row.id);
+          }
+          // Only a CONSUMED flip carries the consumption boundary (failed rows
+          // were never consumed — no consumed_seq). Monotonic counter draw,
+          // independent of rowid reuse.
+          if (newStatus === 'consumed') {
+            consumedSeqStmt.run(this.nextConsumedSeq(), now, row.id);
+          }
         }
       }
 
@@ -1620,16 +1671,22 @@ export class SDKMessageRepository {
   deleteMessagesAfter(sessionId: string, afterTimestamp: number): number {
     const isoTimestamp = new Date(afterTimestamp).toISOString();
     const rows = this.db
-      .prepare(`SELECT id FROM sdk_messages WHERE session_id = ? AND timestamp > ?`)
-      .all(sessionId, isoTimestamp) as Array<{ id: string }>;
+      .prepare(`SELECT id, sdk_uuid FROM sdk_messages WHERE session_id = ? AND timestamp > ?`)
+      .all(sessionId, isoTimestamp) as Array<{ id: string; sdk_uuid: string | null }>;
     const stmt = this.db.prepare(`DELETE FROM sdk_messages WHERE session_id = ? AND timestamp > ?`);
-    // Wrap DELETE + counter recompute in one transaction (FTS cleanup below is
-    // best-effort, outside the tx) so an FTS throw can't leave the counter stale.
+    // Wrap DELETE + counter recompute + turn-end marker cleanup in one
+    // transaction (FTS cleanup below is best-effort, outside the tx) so an FTS
+    // throw can't leave the counter stale. Markers for rewound UUIDs must go so
+    // a re-persisted UUID (e.g. a long-horizon inbox retry) isn't skipped as
+    // "already ended" by a stale marker. See Codex (PR #2463, P2).
     let deleted = 0;
     let badgeChanged = false;
     this.db.transaction(() => {
       deleted = stmt.run(sessionId, isoTimestamp).changes;
       badgeChanged = this.recomputeVisibleMessageCount(sessionId);
+      for (const { sdk_uuid } of rows) {
+        if (sdk_uuid) this.clearDeliveryTurnEnd(sessionId, sdk_uuid);
+      }
     })();
     if (badgeChanged) this.notifySessionsChanged(sessionId);
     for (const row of rows) this.deleteMessageSearchRow(row.id);
@@ -1649,18 +1706,22 @@ export class SDKMessageRepository {
   deleteMessagesAtAndAfter(sessionId: string, atTimestamp: number): number {
     const isoTimestamp = new Date(atTimestamp).toISOString();
     const rows = this.db
-      .prepare(`SELECT id FROM sdk_messages WHERE session_id = ? AND timestamp >= ?`)
-      .all(sessionId, isoTimestamp) as Array<{ id: string }>;
+      .prepare(`SELECT id, sdk_uuid FROM sdk_messages WHERE session_id = ? AND timestamp >= ?`)
+      .all(sessionId, isoTimestamp) as Array<{ id: string; sdk_uuid: string | null }>;
     const stmt = this.db.prepare(
       `DELETE FROM sdk_messages WHERE session_id = ? AND timestamp >= ?`
     );
-    // Wrap DELETE + counter recompute in one transaction (FTS cleanup below is
-    // best-effort, outside the tx) so an FTS throw can't leave the counter stale.
+    // Wrap DELETE + counter recompute + turn-end marker cleanup in one
+    // transaction (FTS cleanup below is best-effort, outside the tx) so an FTS
+    // throw can't leave the counter stale. See deleteMessagesAfter / Codex (#2463).
     let deleted = 0;
     let badgeChanged = false;
     this.db.transaction(() => {
       deleted = stmt.run(sessionId, isoTimestamp).changes;
       badgeChanged = this.recomputeVisibleMessageCount(sessionId);
+      for (const { sdk_uuid } of rows) {
+        if (sdk_uuid) this.clearDeliveryTurnEnd(sessionId, sdk_uuid);
+      }
     })();
     if (badgeChanged) this.notifySessionsChanged(sessionId);
     for (const row of rows) this.deleteMessageSearchRow(row.id);
@@ -1838,6 +1899,118 @@ export class SDKMessageRepository {
   }
 
   /**
+   * True when the session's transcript has a TERMINAL `result` message after the
+   * message identified by `uuid` — i.e. the turn that consumed it has fully ended
+   * (normal completion, `error_during_execution`, or an interrupt). A re-claimed
+   * `consumed` delivery turn in this state has nothing to resume: re-driving it
+   * would start a fresh streaming query that waits for input forever, holding the
+   * active-turn slot and parking every subsequent message as a steer. See
+   * message-delivery-v2.md + the handler's turn_terminated skip.
+   *
+   * The boundary is the message's CONSUMPTION timestamp (T_consumed, aligned by
+   * `markDeliveryConsumedByUuid`), not its original persistence time — a message
+   * queued while another turn ran and later promoted would otherwise match the
+   * previous turn's terminal result. Ordering breaks timestamp ties by `rowid`
+   * (a result inserted in the same millisecond as consumption still sorts after
+   * it), so an immediate error/interrupt that lands in the same ms as the
+   * consumed-flip is not mistaken for a still-live turn. See Codex (PR #2463).
+   */
+  hasTerminalResultAfter(sessionId: string, uuid: string): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT 1
+           FROM sdk_messages r
+          WHERE r.session_id = ?
+            AND r.message_type = 'result'
+            AND r.is_terminal = 1
+            AND r.parent_tool_use_id IS NULL
+            AND r.consumed_seq IS NOT NULL
+            AND r.consumed_seq >= (
+              SELECT m.consumed_seq FROM sdk_messages m
+               WHERE m.session_id = ? AND m.sdk_uuid = ? LIMIT 1
+            )
+          LIMIT 1`
+      )
+      .get(sessionId, sessionId, uuid) as { 1: number } | undefined | null;
+    return row != null;
+  }
+
+  /**
+   * Atomically draw the next value from the shared monotonic consumption
+   * counter (delivery_consumed_seq). Used to stamp both consumed messages (at
+   * the consumed-flip) and terminal results (at insert) so
+   * `hasTerminalResultAfter` can order them counter-to-counter, independent of
+   * SQLite rowid reuse. Call within the consuming transaction. See Codex
+   * (PR #2463, P2).
+   */
+  private nextConsumedSeq(): number | null {
+    // Bump-then-read in one statement; the singleton row always exists (created
+    // by the schema / migration 189). Table-guarded so partial/legacy test
+    // schemas without the counter don't throw — a NULL stamp means "unknown/
+    // live", which hasTerminalResultAfter never matches (safe: the row just
+    // won't be recognized as turn-ended via the result path).
+    if (!this.tableExists('delivery_consumed_seq')) return null;
+    return (
+      (
+        this.db
+          .prepare(
+            `UPDATE delivery_consumed_seq SET next_seq = next_seq + 1 WHERE singleton = 1
+           RETURNING next_seq`
+          )
+          .get() as { next_seq: number } | undefined
+      )?.next_seq ?? null
+    );
+  }
+
+  /**
+   * Persist a durable delivery-turn completion marker for a consumed message
+   * whose turn ended via a RESULT-LESS terminal path (query-level error,
+   * interrupt) that persisted no SDK `result` row. `hasDeliveryTurnEnd` lets a
+   * stale re-claim recognize the turn already ended instead of re-driving it
+   * into an indefinitely-waiting query. Written by the delivery handler when a
+   * driven turn completes while its job is still `processing` (gated so a
+   * graceful-shutdown requeue — where resume is desired — does not mark it).
+   * See Codex (PR #2463, P2 result-less terminal paths).
+   */
+  recordDeliveryTurnEnd(sessionId: string, messageUuid: string, endedAt: string): void {
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO delivery_turn_end (session_id, message_uuid, ended_at)
+         VALUES (?, ?, ?)`
+      )
+      .run(sessionId, messageUuid, endedAt);
+  }
+
+  /**
+   * True when a durable delivery-turn completion marker exists for `messageUuid`
+   * in this session — i.e. a result-less terminal path recorded that the turn
+   * ended. Complements {@link hasTerminalResultAfter}; the delivery re-claim
+   * treats either as "the consumed turn ended".
+   */
+  hasDeliveryTurnEnd(sessionId: string, messageUuid: string): boolean {
+    const row = this.db
+      .prepare(`SELECT 1 FROM delivery_turn_end WHERE session_id = ? AND message_uuid = ? LIMIT 1`)
+      .get(sessionId, messageUuid) as { 1: number } | undefined | null;
+    return row != null;
+  }
+
+  /**
+   * Delete a durable delivery-turn completion marker for `messageUuid`. Called
+   * on rewind (`deleteMessagesAfter` / `deleteMessagesAtAndAfter`): delivery
+   * paths such as long-horizon inbox retries intentionally reuse stable message
+   * UUIDs, so a stale marker for a rewound UUID must not survive to mark a
+   * re-persisted message's new turn as already ended. No-op when the
+   * delivery_turn_end table is absent (legacy/partial test schemas). See Codex
+   * (PR #2463, P2).
+   */
+  clearDeliveryTurnEnd(sessionId: string, messageUuid: string): void {
+    if (!this.tableExists('delivery_turn_end')) return;
+    this.db
+      .prepare(`DELETE FROM delivery_turn_end WHERE session_id = ? AND message_uuid = ?`)
+      .run(sessionId, messageUuid);
+  }
+
+  /**
    * Terminalize a user message as `failed` by UUID — the message-delivery v2
    * dead-letter path. Called from the processor's `onDead` hook when a delivery
    * job exhausts its retry budget; without this, the persisted row stays
@@ -1880,6 +2053,18 @@ export class SDKMessageRepository {
    * (so the caller publishes `messages.statusChanged`), else null.
    * `updateMessageStatus` performs the turn-assignment + timestamp alignment +
    * visible-counter bookkeeping for the transition.
+   *
+   * The row timestamp is aligned to the consumption moment (T_consumed) for ALL
+   * rows, not just task rows, INSIDE the same transaction as the status flip —
+   * a message queued while another turn ran and later promoted otherwise keeps
+   * its ORIGINAL persistence timestamp (which can predate the previous turn's
+   * terminal result), and a crash between flip and a separate timestamp write
+   * would leave the boundary wrong. Delivery re-claims
+   * (`hasTerminalResultAfter`) use the row timestamp as the "what turn is this
+   * message part of" boundary, so the atomic alignment is required for
+   * correctness. The `updateMessageStatus` search-index upsert also reflects
+   * T_consumed, so message search orders the row by consumption, not queue time.
+   * See Codex (PR #2463, P1 + P2 search-index).
    */
   markDeliveryConsumedByUuid(sessionId: string, uuid: string): string | null {
     const row = this.db

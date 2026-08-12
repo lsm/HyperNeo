@@ -513,6 +513,7 @@ function createHandler(): {
 
   const stateManager = {
     detectPhaseFromMessage: mock(async () => {}),
+    beginTerminalIdle: mock(() => {}),
     setIdle: mock(async () => {}),
     setCompacting: mock(async () => {}),
     getState: mock(() => ({ phase: 'idle' })),

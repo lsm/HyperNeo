@@ -190,6 +190,21 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
           await session.settleSkippedDelivery?.(payload.messageUuid);
           return { outcome: 'aborted' };
         }
+        if (result.outcome === 'turn_terminated') {
+          // A re-claimed consumed turn whose turn already ended: nothing to
+          // resume. Completing frees the active-turn slot so the next steer
+          // promotes into a real turn instead of parking forever behind a zombie
+          // re-drive. The bridge checked this under the per-session lock,
+          // coordinated with waiter registration (Codex P2).
+          metrics.recordReclaimSkip('turn_terminated');
+          await session.settleSkippedDelivery?.(payload.messageUuid);
+          return { outcome: 'completed', skipped: 'turn_terminated' };
+        }
+        // A durable delivery-turn completion marker for this consumed message is
+        // persisted by the session's terminal-idle hook (before the delivery
+        // waiter resolves), not here — see ProcessingStateManager's
+        // onBeforeIdleWaiterDrain + AgentSession. That covers result-less
+        // terminal paths (query error / interrupt) across a crash.
         return { outcome: 'completed' };
       } finally {
         clearInterval(heartbeat);

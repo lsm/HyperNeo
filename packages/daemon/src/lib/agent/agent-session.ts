@@ -1935,6 +1935,13 @@ export class AgentSession
       if (claimGuard && !claimGuard()) {
         return { kind: 'aborted' as const };
       }
+      // A re-claimed consumed turn whose turn already ended (a terminal result
+      // after its consumption) has nothing to resume. Check BEFORE provider
+      // startup so we don't start a fresh query that would idle waiting for
+      // input forever. See Codex (PR #2463, P1/P2).
+      if (alreadyConsumed && this.hasSettledTurnTermination(messageUuid)) {
+        return { kind: 'turn_terminated' as const };
+      }
       const queryStartResult = await this.lifecycleManager.ensureQueryStarted();
       if (queryStartResult === 'blocked') {
         return { kind: 'blocked' as const };
@@ -1942,6 +1949,17 @@ export class AgentSession
       const queryPromise = this.queryPromise;
       if (!queryPromise) {
         throw new Error('message_delivery: query did not start; cannot drive turn');
+      }
+      // Re-check termination AFTER startup, immediately before arming the
+      // turn-end waiter — the two statements are adjacent (no await between), so
+      // a turn that terminates in the check→arm window cannot be missed: if it
+      // ended before the check, we abort here; if it ends after the waiter is
+      // armed, the waiter resolves it. Without this, a live-but-stale consumed
+      // turn that finishes during ensureQueryStarted's await would leak a query
+      // waiting for input and hold the active-turn slot forever. See Codex
+      // (PR #2463, P2).
+      if (alreadyConsumed && this.hasSettledTurnTermination(messageUuid)) {
+        return { kind: 'turn_terminated' as const };
       }
       // Arm the turn-end wait AFTER ensureQueryStarted: ensureQueryStarted awaits
       // a preceding interrupt's completion, and that interrupt's terminal
@@ -1959,7 +1977,34 @@ export class AgentSession
       // captures as episodeGeneration (its own supersession guard keeps the
       // generation stable at this value through the 429'd turn's life).
       const turnEnd = this.stateManager.waitForIdleTransition(
-        this.rateLimitWatchdog.getGeneration()
+        this.rateLimitWatchdog.getGeneration(),
+        // Waiter-owned turn-end marker: fire on ANY release path (terminal idle
+        // drain, direct releaseIdleWaiters from restart/reset/answer-reinjection
+        // failures, or this waiter's cancel) — the kickoff UUID is the durable
+        // turn owner, so it isn't corrupted by a steer overwriting the
+        // processing messageId or waiting_for_input dropping it. Gated on the
+        // message having been CONSUMED and the job still being `processing`
+        // (a graceful-shutdown requeue, or a pre-consumption transient idle,
+        // records nothing). See Codex (PR #2463, P2).
+        () => {
+          try {
+            // Scope completion to the durable delivery UUID, not this transient
+            // claim. A lease handoff can invalidate the predecessor claim before a
+            // result-less terminal idle fires; that genuine completion still belongs
+            // to the same consumed message and must survive until the replacement
+            // handler observes it. The processing+UUID+consumed checks below prevent
+            // an old waiter from marking a different or already-settled turn.
+            const repo = this.db.getSDKMessageRepo();
+            const jobQueue = this.db.getJobQueueRepo?.();
+            if (!repo || !jobQueue) return;
+            if (!jobQueue.isProcessingDelivery(this.session.id, messageUuid)) return;
+            const loaded = repo.getDeliveryContent(this.session.id, messageUuid);
+            if (!loaded || loaded.sendStatus !== 'consumed') return;
+            this.recordDeliveryTurnEnd(messageUuid);
+          } catch (error) {
+            this.logger.warn('Failed to record delivery turn-end marker at turn end:', error);
+          }
+        }
       );
       // Feed the kickoff (resolves on onSent = the SDK consumed it) UNLESS a
       // prior attempt already did (alreadyConsumed = reclaim after a crash): the
@@ -1991,6 +2036,11 @@ export class AgentSession
       // instead of idle. See Codex (#2599).
       await this.stateManager.setQueued(messageUuid);
       return { outcome: 'blocked', retryAt: Date.now() + MESSAGE_DELIVERY_PARK_MS };
+    }
+    if (started.kind === 'turn_terminated') {
+      // Nothing to resume — the handler completes the job, freeing the
+      // active-turn slot so the next steer promotes into a real turn.
+      return { outcome: 'turn_terminated' };
     }
     if (started.kind === 'aborted') {
       return { outcome: 'aborted' };
@@ -2182,6 +2232,40 @@ export class AgentSession
       loaded !== null &&
       (loaded.sendStatus === 'enqueued' || (alreadyConsumed && loaded.sendStatus === 'consumed'))
     );
+  }
+
+  /**
+   * True when a `consumed` message's turn already ended — i.e. there is nothing
+   * left to resume. Recognized two ways: a terminal SDK `result` row after its
+   * consumption (boundary = consumption timestamp, see `hasTerminalResultAfter`),
+   * OR a durable delivery-turn completion marker for a result-less terminal path
+   * (query error / interrupt; see `hasDeliveryTurnEnd`). Checked inside the
+   * per-session lock so it is coordinated with the turn-start/waiter
+   * registration (Codex P2).
+   */
+  private hasSettledTurnTermination(messageUuid: string): boolean {
+    // Result persistence precedes finishTurn's awaited setIdle. Keep durable turn
+    // ownership while that terminal idle is still running, or a newly promoted
+    // message could feed the old query and be released by the old turn's drain.
+    if (this.stateManager.isTerminalIdleInFlight()) return false;
+    const repo = this.db.getSDKMessageRepo();
+    return (
+      repo.hasTerminalResultAfter(this.session.id, messageUuid) ||
+      repo.hasDeliveryTurnEnd(this.session.id, messageUuid)
+    );
+  }
+
+  /**
+   * Persist a durable delivery-turn completion marker for a consumed message
+   * whose turn ended via a result-less terminal path. Called by the delivery
+   * handler when a driven turn completes while its job is still `processing`
+   * (gated there so a graceful-shutdown requeue — where resume is desired —
+   * does not mark it). See `MessageDeliverySession.recordDeliveryTurnEnd`.
+   */
+  recordDeliveryTurnEnd(messageUuid: string): void {
+    this.db
+      .getSDKMessageRepo()
+      .recordDeliveryTurnEnd(this.session.id, messageUuid, new Date().toISOString());
   }
 
   /**

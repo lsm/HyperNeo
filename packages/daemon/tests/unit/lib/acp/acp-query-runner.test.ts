@@ -171,6 +171,7 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
     stateManager: {
       getState: mock(() => ({ status: 'idle' })),
       setProcessing: mock(async () => {}),
+      beginTerminalIdle: mock(() => {}),
       setIdle: mock(async () => {}),
     } as unknown as ProcessingStateManager,
     errorManager: { handleError: mock(async () => {}) } as unknown as ErrorManager,
@@ -1096,6 +1097,69 @@ describe('AcpQueryRunner', () => {
 
     expect(firstClient.close).toHaveBeenCalled();
     expect(secondClient.sendPrompt).toHaveBeenCalled();
+  });
+
+  test('does not start terminal fence when ACP rate-limit cooldown is scheduled', async () => {
+    const client = createMockClient();
+    client.initialize.mockRejectedValue(new Error('429 Too Many Requests'));
+    const { ctx } = createRunnerFixture({ client });
+    ctx.onRateLimitExhausted = mock(async () => true);
+    const runner = new AcpQueryRunner(ctx, () => client as unknown as AcpClient);
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    expect(ctx.onRateLimitExhausted).toHaveBeenCalledTimes(1);
+    expect(ctx.stateManager.beginTerminalIdle).not.toHaveBeenCalled();
+    expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    expect(ctx.stateManager.setIdle).not.toHaveBeenCalled();
+  });
+
+  test('preserves ACP cooldown state through a recursive retry', async () => {
+    const firstClient = createMockClient();
+    firstClient.initialize.mockRejectedValue(new Error('TypeError: fetch failed'));
+    const secondClient = createMockClient();
+    secondClient.initialize.mockRejectedValue(new Error('429 Too Many Requests'));
+    const clients = [firstClient, secondClient];
+    const { ctx } = createRunnerFixture({ client: firstClient });
+    ctx.onRateLimitExhausted = mock(async () => true);
+    const runner = new AcpQueryRunner(ctx, () => clients.shift() as unknown as AcpClient);
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    expect(ctx.onRateLimitExhausted).toHaveBeenCalledTimes(1);
+    expect(ctx.stateManager.beginTerminalIdle).not.toHaveBeenCalled();
+    expect(ctx.stateManager.setIdle.mock.calls).toEqual([[{ suppressDeliveryWaiters: true }]]);
+  });
+
+  test('starts terminal fence before awaiting ACP error publication', async () => {
+    const client = createMockClient();
+    client.initialize.mockRejectedValue(new Error('401 Unauthorized'));
+    const { ctx } = createRunnerFixture({ client });
+    let resolveError!: () => void;
+    ctx.errorManager.handleError = mock(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveError = resolve;
+        })
+    );
+    const runner = new AcpQueryRunner(ctx, () => client as unknown as AcpClient);
+
+    await runner.start();
+    for (
+      let attempt = 0;
+      attempt < 20 && ctx.errorManager.handleError.mock.calls.length === 0;
+      attempt += 1
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+
+    expect(ctx.stateManager.beginTerminalIdle).toHaveBeenCalledTimes(1);
+    expect(ctx.stateManager.setIdle).not.toHaveBeenCalled();
+    resolveError();
+    await ctx.queryPromise;
+    expect(ctx.stateManager.setIdle).toHaveBeenCalled();
   });
 
   test('surfaces provider auth failure without spawning ACP client', async () => {

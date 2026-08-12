@@ -540,6 +540,12 @@ const EXCLUDED_TABLE_NAMES: string[] = [
   'space_external_event_source_configs',
   'space_external_events',
   'space_external_event_deliveries',
+  // Durable delivery-turn completion markers — internal message-delivery v2
+  // re-claim state (delivery_turn_end), not useful for ad-hoc agent queries.
+  'delivery_turn_end',
+  // Monotonic consumption-watermark counter — internal message-delivery v2
+  // sequence state (delivery_consumed_seq), not useful for ad-hoc agent queries.
+  'delivery_consumed_seq',
   // Agent memory search index/vector storage — query through space_agent_memory instead.
   'memory_vectors',
   'space_agent_memory_fts',

@@ -950,6 +950,29 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // createIndexes() for fresh DBs. (task #861, review P2.) Renumbered 185→186:
   // dev shipped M185 for workflow-event-subscriptions.
   run(migrationMarkerKey(186), () => runMigration186(db));
+
+  // Migration 187: delivery_turn_end — durable delivery-turn completion markers
+  // for result-less terminal paths (query error / interrupt that persist no SDK
+  // `result` row). A stale re-claim consults this so it completes an
+  // already-ended consumed turn instead of re-driving it into an
+  // indefinitely-waiting query. Mirrored in the fresh-DB schema (index.ts).
+  // See Codex (PR #2463, P2 result-less terminal paths).
+  run(migrationMarkerKey(187), () => runMigration187(db));
+
+  // Migration 188: sdk_messages.consumed_seq — a monotonic consumption sequence
+  // assigned at the consumed-flip, so the delivery re-claim boundary
+  // (`hasTerminalResultAfter`) can order a consumed message before a terminal
+  // result that lands in the same millisecond even when the message's original
+  // `rowid` predates it. Mirrored in the fresh-DB schema (index.ts).
+  // See Codex (PR #2463, P2).
+  run(migrationMarkerKey(188), () => runMigration188(db));
+
+  // Migration 189: delivery_consumed_seq — a dedicated monotonic counter for the
+  // consumption watermark. MAX(rowid)+1 is not strictly monotonic across deletes
+  // (SQLite may reuse a deleted max rowid for a later insert, moving a terminal
+  // result behind the watermark). A singleton counter row is genuinely monotonic.
+  // Mirrored in the fresh-DB schema (index.ts). See Codex (PR #2463, P2).
+  run(migrationMarkerKey(189), () => runMigration189(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -12248,4 +12271,77 @@ export function runMigration186(db: BunDatabase): void {
       ON job_queue (json_extract(payload, '$.sessionId'))
       WHERE queue = 'message_delivery' AND status IN ('pending', 'processing')
   `);
+}
+
+/**
+ * Migration 187: durable delivery-turn completion markers.
+ *
+ * The `delivery_turn_end` table records when a delivery-driven turn ended via a
+ * result-less terminal path (query-level error, interrupt) that persists no SDK
+ * `result` row. The delivery bridge (`hasTurnTerminated`) ORs a lookup here
+ * against the SDK-result-row check, so a stale re-claim of a `consumed` turn
+ * recognizes it already ended and completes instead of re-driving it into an
+ * indefinitely-waiting query. Idempotent (`CREATE TABLE IF NOT EXISTS`); no-op
+ * on tables that pre-date the lane.
+ */
+export function runMigration187(db: BunDatabase): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS delivery_turn_end (
+      session_id TEXT NOT NULL,
+      message_uuid TEXT NOT NULL,
+      ended_at TEXT NOT NULL,
+      PRIMARY KEY (session_id, message_uuid)
+    )
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_delivery_turn_end_session
+      ON delivery_turn_end(session_id)
+  `);
+}
+
+/**
+ * Migration 188: sdk_messages.consumed_seq — a monotonic consumption sequence.
+ *
+ * `rowid` reflects INSERTION order only. A message queued during turn A and
+ * consumed (promoted) as turn B keeps its original rowid, so a terminal result
+ * of A persisted in the same millisecond as B's consumption would sort AFTER the
+ * message by rowid, corrupting the delivery re-claim boundary. Assigning a
+ * monotonic sequence at the consumed-flip lets `hasTerminalResultAfter` order by
+ * (consumed_seq) instead of (timestamp, rowid). `ALTER TABLE ADD COLUMN` (no
+ * table rebuild; rows already consumed are backfilled as NULL — the query treats
+ * NULL as "no consumption recorded", i.e. an un-consumed message).
+ */
+export function runMigration188(db: BunDatabase): void {
+  if (!tableExists(db, 'sdk_messages')) return;
+  if (!tableHasColumn(db, 'sdk_messages', 'consumed_seq')) {
+    db.exec(`ALTER TABLE sdk_messages ADD COLUMN consumed_seq INTEGER`);
+  }
+  // MAX(consumed_seq) on the consumed-flip hot path must be an index scan, not
+  // a full-table pass. Idempotent (IF NOT EXISTS). See Codex (PR #2463, P2).
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_consumed_seq
+      ON sdk_messages(consumed_seq)`);
+}
+
+/**
+ * Migration 189: a dedicated monotonic counter for the consumption watermark.
+ *
+ * `MAX(rowid)+1` (migration 188's approach) is not strictly monotonic across
+ * deletes — SQLite may reuse a deleted max rowid for a later insert, which would
+ * place a terminal result's rowid BELOW a prior watermark and make
+ * `hasTerminalResultAfter` miss the completed turn. A singleton counter row
+ * (`delivery_consumed_seq`) is genuinely monotonic and independent of rowid
+ * reuse. Backfills existing NULL `consumed_seq` rows to 0 (treated as
+ * "unknown/live" by hasTerminalResultAfter, never matching a result) so a
+ * migrated in-flight job is not pre-completed. Idempotent.
+ */
+export function runMigration189(db: BunDatabase): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS delivery_consumed_seq (
+      singleton INTEGER PRIMARY KEY DEFAULT 1,
+      next_seq INTEGER NOT NULL DEFAULT 1
+    )
+  `);
+  db.exec(`
+      INSERT OR IGNORE INTO delivery_consumed_seq (singleton, next_seq) VALUES (1, 1)
+    `);
 }
