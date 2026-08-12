@@ -242,11 +242,17 @@ _web_cmd=$(enabled_run_cmd "$REPO_ROOT/.github/workflows/main.yml" 'cd packages/
 if [ -z "$_web_cmd" ]; then
 	err "test-web runner is missing, commented, or disabled (if: false|never) — web coverage assumption broken"
 	echo "     → keep an active, enabled 'cd packages/web && bunx vitest run' step" >&2
-elif printf '%s' "$_web_cmd" | sed 's/.*bunx vitest run//' | grep -qE 'src/|\.test\.|\.spec\.'; then
-	# A positional file/dir filter anywhere after `vitest run` (even after flags,
-	# e.g. `vitest run --coverage src/foo.test.ts`) would select a subset while the
-	# guard reports every src file as covered.
-	err "test-web runner passes a positional target to 'vitest run' — web coverage assumption broken (only some files would run)"
+elif [ -n "$(printf '%s' "$_web_cmd" \
+		| sed 's/.*bunx vitest run//' \
+		| sed -E -e 's/--reporter[[:space:]]+[^[:space:]]+//g' \
+		         -e 's/--[[:alnum:]._-]+=[^[:space:]]+//g' \
+		         -e 's/--[[:alnum:]_-]+//g' \
+		| tr -d "[:space:]'\"")" ]; then
+	# Strip known flags (--reporter <val>, --flag=<val>, bare --flags) after
+	# `vitest run`; any leftover token is a positional [filter] (path OR a bare
+	# word like `components`) that selects a subset of files — Vitest accepts
+	# filters anywhere in the arg list, even after options.
+	err "test-web runner passes a positional filter to 'vitest run' — web coverage assumption broken (only some files would run)"
 	echo "     → keep 'vitest run' bare (flags only, no positional path)" >&2
 fi
 
@@ -405,6 +411,9 @@ check_workflow_references() {
 		if [ "${designated:-0}" -eq 0 ]; then
 			err "$test_path is not a test_path value in its designated workflow $workflow"
 			echo "     → add it to a matrix row in $workflow" >&2
+		elif [ "${designated:-0}" -gt 1 ]; then
+			err "$test_path is a test_path value in $designated rows of $workflow — duplicate shard ownership (would run twice)"
+			echo "     → list it in exactly one matrix row" >&2
 		elif [ "${other:-0}" -gt 0 ]; then
 			err "$test_path is a test_path value in both $workflow and $other_wf — duplicate shard ownership"
 			echo "     → list it in exactly one workflow" >&2
@@ -420,7 +429,20 @@ check_split_module() {
 
 	local dir="$ONLINE_DIR/$module_name"
 	if [ ! -d "$dir" ]; then
-		echo "WARNING: split module directory $dir does not exist"
+		# A split module with expected files whose directory vanished means CI's
+		# test_path filters match nothing — `bun test`/`vitest` exit 0 with "filters
+		# did not match any test files", so every matrix job stays green with zero
+		# tests run. That's a coverage hole, not a warning. Only an intentionally
+		# empty module (e.g. room) stays a warning. Count non-empty expected entries
+		# (an empty ROOM_FILES=[] can arrive as one empty-string arg via ${arr[@]:-}).
+		local n=0 f
+		for f in "${expected[@]}"; do [ -n "$f" ] && n=$((n + 1)); done
+		if [ "$n" -gt 0 ]; then
+			err "split module directory $dir is missing but $workflow expects $n test_path(s) — CI would run zero tests"
+			echo "     → restore the directory, or clear the module's expected files" >&2
+		else
+			echo "WARNING: split module directory $dir does not exist (empty module)"
+		fi
 		return
 	fi
 
