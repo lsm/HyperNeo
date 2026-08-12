@@ -94,7 +94,7 @@ interface HookReturn {
 There is **no `effects` field** and **no `validator` / `side_effect`
 classification**. The hook performs its side effects itself, inside `run`, by
 calling `HookContext` methods (§5) — record state, queue a follow-up, write an
-artifact, call a connector. The engine's only obligations for the return are:
+artifact. The engine's only obligations for the return are:
 
 - honor `flow` — `continue` proceeds to delivery, `stop` blocks delivery and
   ends the chain, `retry` re-runs after engine-managed backoff;
@@ -117,9 +117,6 @@ interface HookContext {
   queueFollowUp(targetNode: string, message: string): void;
   writeArtifact(artifact: ArtifactInput): void;
   readArtifacts(): Artifact[];
-
-  connectors: ConnectorAccess;                      // vendor-agnostic call(connectorId, op, args); gated by permittedExternalLookups
-  permittedExternalLookups: string[];
 }
 ```
 

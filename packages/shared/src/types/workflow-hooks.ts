@@ -76,16 +76,6 @@ export interface HookArtifact {
 }
 
 /**
- * Vendor-agnostic connector access, gated by the context's
- * `permittedExternalLookups`. The meta type names no connector on purpose —
- * which connector/op to call is business knowledge that belongs in the
- * extensions layer, not here. Typed wrappers live in @hyperneo/extensions-hooks.
- */
-export interface HookConnectorAccess {
-  call(connectorId: string, op: string, args: Record<string, unknown>): Promise<unknown>;
-}
-
-/**
  * Everything a hook can do beyond deciding flow. The daemon implements every
  * method; the hook decides *what* to do, the daemon *executes* it. This is
  * what keeps the extensions package free of daemon internals.
@@ -104,9 +94,6 @@ export interface HookContext {
   queueFollowUp(targetNode: string, message: string): void;
   writeArtifact(artifact: HookArtifactInput): void;
   readArtifacts(): HookArtifact[];
-
-  connectors: HookConnectorAccess;
-  permittedExternalLookups: string[];
 }
 
 // ---------------------------------------------------------------------------
