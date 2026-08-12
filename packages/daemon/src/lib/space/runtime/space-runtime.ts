@@ -5756,14 +5756,6 @@ export class SpaceRuntime {
     const recoveredWorkflow = this.config.spaceWorkflowManager.getWorkflowForRun(recovered.run);
     if (recoveredWorkflow) {
       this.registerRunInterestsFromWorkflow(recovered.run, recoveredWorkflow);
-      // The rebuild above re-materializes the recovered task's topicFrom sub
-      // (its static interests were cleared by clearRunInterestsPreservingDynamic
-      // on cancel). Replay retained/routed events so an event that landed during
-      // cancellation — published with no delivery, or a delivery only for another
-      // target — reaches the recovered task before TTL expiry. Idempotent and
-      // TTL-bounded; a no-op when nothing was retained or the workflow has no
-      // topicFrom interest.
-      this.replayRetainedEventsForMaterialization(recovered.run.id);
     }
     for (const sessionId of liveSessionIds) {
       // If the live session is paused in a rate/usage-limit cooldown, break it
@@ -5791,6 +5783,16 @@ export class SpaceRuntime {
           `Workflow resume could not prepare MCP tools for live node-agent session ${sessionId}`
         );
       }
+    }
+    // Now that every reused live session has been resumed/prepared (rate-limit
+    // broken out, workflow MCP tools re-attached), replay retained/routed events
+    // for the topicFrom sub rebuilt above. Replaying earlier would race a retained
+    // event into a rate-limited or unprepared session. Idempotent and TTL-bounded;
+    // a no-op when nothing was retained or the workflow declares no topicFrom
+    // interest. Event-driven (check_failed) recovery still orders through
+    // recoveryInFlight — these deliveries await an in-flight recovery there.
+    if (recoveredWorkflow) {
+      this.replayRetainedEventsForMaterialization(recovered.run.id);
     }
     await this.safeOnWorkflowRunUpdated(
       spaceId,
