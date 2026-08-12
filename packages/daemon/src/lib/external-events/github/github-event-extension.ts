@@ -29,6 +29,7 @@ import {
   pullRequestNumberFrom,
 } from './github-pr-head-ref';
 import { isPullRequestOpen, pullRequestUpdatedAt } from './github-pr-row-state';
+import { isPositiveReaction, reactionIdFrom } from './github-reaction-fields';
 import {
   normalizeGitHubCheckRun,
   normalizeGitHubDeployment,
@@ -4500,18 +4501,6 @@ function pullRequestNumbersFromCheckRun(
     }
   }
   return numbers.length > 0 ? numbers : fallbackPrNumbers;
-}
-
-function isPositiveReaction(row: unknown): boolean {
-  if (!row || typeof row !== 'object') return false;
-  const content = (row as { content?: unknown }).content;
-  return content === '+1' || content === 'thumbs_up';
-}
-
-function reactionIdFrom(row: unknown): string {
-  if (!row || typeof row !== 'object') return '';
-  const id = (row as { id?: unknown }).id;
-  return typeof id === 'number' ? String(id) : '';
 }
 
 function getConfiguredWebhookUrl(): string {
