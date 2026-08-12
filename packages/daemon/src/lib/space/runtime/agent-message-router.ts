@@ -557,8 +557,12 @@ export class AgentMessageRouter {
           });
           queued.push({ agentName: queueTargetName, messageId: record.id });
           // The activation callback consumes bare slot names (and the resolved
-          // node id) — not the compound — so pass the bare agent + node id here.
-          if (!deduped) onMessageQueued?.(agentName, queueWorkflowNodeId);
+          // node id) — not the compound. Only fire it when the worker node
+          // resolved (or there's no node map to resolve against); an unknown
+          // node ref (@worker:WrongNode/...) must not activate an unrelated node
+          // that happens to declare the slot.
+          const nodeResolved = !hasNodeNameMap || queueWorkflowNodeId != null;
+          if (!deduped && nodeResolved) onMessageQueued?.(agentName, queueWorkflowNodeId);
         }
         notFound.push(agentName);
         continue;

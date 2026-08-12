@@ -319,14 +319,37 @@ export class PendingAgentMessageRepository {
    * flush drains — so they aren't stranded when the compound drain alias is gone.
    */
   rescopeTarget(id: string, targetAgentName: string, workflowNodeId: string): void {
-    this.db
-      .prepare(
-        `UPDATE pending_agent_messages
+    // Atomic check-then-act: if a bare retry row the new router inserted already
+    // occupies the new (run, target, idempotency_key) — sender retried the same
+    // message after upgrade — rescoping this legacy compound row into that tuple
+    // would violate idx_pending_agent_messages_idem and fail every sweep tick.
+    // Drop the superseded legacy row instead; otherwise rewrite it in place.
+    const tx = this.db.transaction(() => {
+      const row = this.getById(id);
+      if (!row || row.status !== 'pending') return;
+      if (row.idempotencyKey != null) {
+        const conflict = this.db
+          .prepare(
+            `SELECT 1 FROM pending_agent_messages
+					 WHERE workflow_run_id = ? AND target_agent_name = ? AND idempotency_key = ?
+					   AND id != ? LIMIT 1`
+          )
+          .get(row.workflowRunId, targetAgentName, row.idempotencyKey, id);
+        if (conflict) {
+          this.db.prepare(`DELETE FROM pending_agent_messages WHERE id = ?`).run(id);
+          return;
+        }
+      }
+      this.db
+        .prepare(
+          `UPDATE pending_agent_messages
 				 SET target_agent_name = ?,
 				     workflow_node_id = ?
 				 WHERE id = ? AND status = 'pending'`
-      )
-      .run(targetAgentName, workflowNodeId, id);
+        )
+        .run(targetAgentName, workflowNodeId, id);
+    });
+    tx();
     this.notify();
   }
 

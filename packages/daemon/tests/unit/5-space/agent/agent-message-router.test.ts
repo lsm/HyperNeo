@@ -1360,6 +1360,46 @@ describe('AgentMessageRouter: persist workflowNodeId on queued @worker targets',
     // whose id is "Review", which an id-first lookup would wrongly select.
     expect(pending[0].workflowNodeId).toBe('x');
   });
+
+  test('does not fire the activation callback for an unknown worker node ref', async () => {
+    // @worker:WrongNode/reviewer — WrongNode is unknown, so resolveWorkflowNodeId
+    // returns undefined. The activation callback must NOT fire, or it would
+    // activate an unrelated node that happens to declare 'reviewer'.
+    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+      makeChannel('coder', 'reviewer'),
+    ]);
+    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+    ctx.nodeExecutionRepo.createOrIgnore({
+      workflowRunId,
+      workflowNodeId: 'review-node',
+      agentName: 'reviewer',
+      status: 'pending',
+    });
+    const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
+    const queuedAgents: string[] = [];
+    const router = new AgentMessageRouter({
+      nodeExecutionRepo: ctx.nodeExecutionRepo,
+      workflowRunId,
+      workflowChannels: [makeChannel('coder', 'reviewer')],
+      messageInjector: async () => {},
+      pendingMessageRepo,
+      spaceId: ctx.spaceId,
+      taskId: null,
+      workflowNodeNameById: { 'review-node': 'Review' },
+      nodeGroups: { Review: ['reviewer'] },
+      onMessageQueued: (agentName) => queuedAgents.push(agentName),
+    });
+
+    await router.deliverMessage({
+      fromAgentName: 'coder',
+      fromSessionId: ctx.coderSessionId,
+      target: '@worker:WrongNode/reviewer',
+      message: 'please review',
+    });
+
+    // Row queued (compound, unresolved node), but activation callback NOT fired.
+    expect(queuedAgents).toEqual([]);
+  });
 });
 
 describe('AgentMessageRouter: broadcast * with mixed active/inactive targets', () => {
