@@ -35,10 +35,14 @@ err() {
 }
 
 # Count ACTIVE (non-commented) lines in file $1 containing the fixed string $2.
-# Config/workflow checks use this so a commented-out line can't satisfy them
-# (the raw `grep -qF` form matched header/comment lines). Filters both `#`
-# (YAML/JSON workflow files) and `//` (TS config files) line comments.
-active_hits() { grep -hF "$2" "$1" 2>/dev/null | grep -cvE '^[[:space:]]*(#|//)'; }
+# Config/workflow checks use this so a commented-out line can't satisfy them.
+# Filters lines starting with `#` (YAML/JSON), `//` (TS line comment), or `/*`
+# (TS block comment that opens the line). NOTE: we deliberately do NOT strip
+# `/* ... */` spans, because the legitimate include/exclude globs contain `/**/`
+# (e.g. tests/**/*.test.ts) which is textually identical to an empty block
+# comment — a regex strip would mangle the patterns. A mid-line block comment
+# hiding a pattern is a residual requiring a TS-aware parser.
+active_hits() { grep -hF "$2" "$1" 2>/dev/null | grep -cvE '^[[:space:]]*(#|//|/\*)'; }
 
 # ===========================================================================
 # 1. DAEMON UNIT TESTS  (source of truth: scripts/test-daemon.sh)
@@ -194,9 +198,20 @@ fi
 # src/ file would still be reported covered while CI no longer runs the suite.
 # Anchored at end-of-line: a bare `vitest run` (no targeted path) puts `run` at
 # the end of the line; `vitest run src/foo.test.ts` would not match.
-if ! grep -qE "cd packages/web && bunx vitest run$" "$REPO_ROOT/.github/workflows/main.yml"; then
-	err "test-web CI job no longer runs a bare 'cd packages/web && bunx vitest run' — web coverage assumption broken"
-	echo "     → keep the web job as a bare vitest run, or update this validator" >&2
+# The web coverage assumes the test-web CI job runs a bare `vitest run` (no
+# targeted path) in an ACTIVE, ENABLED step. Searching raw text would match a
+# commented-out command (`# … vitest run`) or a step disabled with `if: false`.
+# The awk tracks per-step `if: false|never`, skips comment lines, and requires
+# the bare run line to be in an enabled step.
+if ! awk '
+	/^[[:space:]]*-[[:space:]]/ { disabled=0 }
+	/if:[[:space:]]*(false|never)([[:space:]]|$)/ { disabled=1 }
+	/^[[:space:]]*#/ { next }
+	/cd packages\/web && bunx vitest run[[:space:]]*$/ { found=1; if (!disabled) active=1 }
+	END { exit !(found && active) }
+' "$REPO_ROOT/.github/workflows/main.yml"; then
+	err "test-web CI job's bare 'cd packages/web && bunx vitest run' is missing, commented, or in a disabled (if: false|never) step — web coverage assumption broken"
+	echo "     → keep an active, enabled bare vitest run step" >&2
 fi
 
 # Web test files outside the src/** include are not run by web CI. Each must be
