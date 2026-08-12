@@ -101,6 +101,16 @@ marker_executed() {
 	'
 }
 
+# True (exit 0 = BAD) if the runner command's first token (after run:/run:>-,
+# ignoring a leading quote) is a data/no-op command (echo/printf/cat/true/false/:)
+# — the marker would be an argument, not executed. An unquoted `echo marker ...`
+# bypasses marker_executed (the marker is outside single quotes).
+runner_is_data_cmd() {
+	local tok
+	tok=$(printf '%s' "$1" | sed -E 's/^[[:space:]]*run:[[:space:]]*//' | sed -E 's/^([>|]-)[[:space:]]*//' | sed -E "s/^[\"']//" | awk '{print $1}')
+	case "$tok" in echo|printf|cat|true|false|:) return 0 ;; *) return 1 ;; esac
+}
+
 # Count ACTIVE lines in workflow $1 that are a test_path VALUE for path $2 —
 # either a folded bare-path line (`  tests/online/...`) or a single-line
 # `test_path: tests/online/...`. Excludes a docs `echo tests/online/...` line
@@ -257,7 +267,7 @@ test_prop_absent() {
 # drops files while this guard reports them covered.
 test_no_select_opts() {
 	local cfg="$1" pkg="$2" opt
-	for opt in dir shard; do
+	for opt in dir shard testNamePattern; do
 		if ! test_prop_absent "$cfg" "$opt"; then
 			err "$pkg/vitest.config.ts sets test.$opt — it narrows which files run while this guard reports them covered"
 			echo "     → drop test.$opt (use the default), or update this validator" >&2
@@ -439,6 +449,9 @@ if [ -z "$_unit_run" ]; then
 elif ! marker_executed "$_unit_run" 'test-daemon.sh ${{ matrix.shard }}'; then
 	err "test-daemon-shared-unit runner contains the marker but does not EXECUTE it (e.g. it is echoed/quoted as data) — zero tests would run while this guard reports them covered"
 	echo "     → invoke test-daemon.sh as a command, not as an argument to echo/another command" >&2
+elif runner_is_data_cmd "$_unit_run"; then
+	err "test-daemon-shared-unit runner's first command token is a data command (echo/printf/cat) — the marker is an argument, not executed"
+	echo "     → invoke test-daemon.sh as a command, not via echo" >&2
 else
 	# Inspect ONLY the args after `test-daemon.sh` (there is another
 	# ${{ matrix.shard }} earlier, inside the --report ...json name). Allowlist
@@ -526,6 +539,9 @@ if [ -z "$_web_cmd" ]; then
 elif ! marker_executed "$_web_cmd" 'cd packages/web && bunx vitest run'; then
 	err "test-web runner contains the marker but does not EXECUTE it (e.g. it is echoed/quoted as data) — zero tests would run while this guard reports them covered"
 	echo "     → invoke 'bunx vitest run' as a command, not as an argument to echo/another command" >&2
+elif runner_is_data_cmd "$_web_cmd"; then
+	err "test-web runner's first command token is a data command (echo/printf/cat) — the marker is an argument, not executed"
+	echo "     → invoke 'bunx vitest run' as a command, not via echo" >&2
 elif [ -n "$(printf '%s' "$_web_cmd" \
 		| sed 's/.*bunx vitest run//' \
 		| sed -E -e 's/--reporter[[:space:]]+[^[:space:]]+//g' \
@@ -619,6 +635,9 @@ if [ -z "$_online_main" ] || ! printf '%s' "$_online_main" | grep -qF '${{ matri
 elif ! marker_executed "$_online_main" 'vitest.online.config.ts'; then
 	err "main.yml online runner contains the marker but does not EXECUTE it (e.g. it is echoed/quoted as data) — zero tests would run while this guard reports them covered"
 	echo "     → invoke vitest as a command, not as an argument to echo/another command" >&2
+elif runner_is_data_cmd "$_online_main"; then
+	err "main.yml online runner's first command token is a data command (echo/printf/cat) — the marker is an argument, not executed"
+	echo "     → invoke vitest as a command, not via echo" >&2
 else
 	# After `vitest run`, only ${{ matrix.test_path }} (the one selector) and
 	# coverage-neutral flags (--config, --coverage*, --reporter, --outputFile.*,
@@ -627,7 +646,8 @@ else
 	# covered. (The config file itself is guarded separately, so --config is safe.)
 	_oextra=$(printf '%s' "$_online_main" \
 		| sed 's/.*vitest run//' \
-		| sed -E -e 's/\$\{\{[[:space:]]*matrix\.[^}]*\}\}//g' \
+		| sed -E -e 's/\$\{\{[[:space:]]*matrix\.test_path[[:space:]]*\}\}//g' \
+		         -e 's/\$\{\{[[:space:]]*matrix\.module[[:space:]]*\}\}//g' \
 		         -e 's/--config[[:space:]]+[^[:space:]]+//g' \
 		         -e 's/--reporter[[:space:]]+[^[:space:]]+//g' \
 		         -e 's/--reporter=[^[:space:]]+//g' \
@@ -672,6 +692,9 @@ _real_wd=$(awk '
 	$0 ~ "^  daemon-real-api:" { injob=1; next }
 	injob && /^  [a-z]/ { injob=0; next }
 	!injob { next }
+	# working-directory is STEP-SCOPED: reset wd at each step boundary so a
+	# working-directory on a PRECEDING step does not leak to the bun-test step.
+	/^[[:space:]]*-[[:space:]]/ { wd="" }
 	/working-directory:/ { wd=$0; sub(/.*working-directory:[[:space:]]*/, "", wd); sub(/[[:space:]]*$/, "", wd) }
 	/run:.*bun test/ { print wd; wd="DEFAULT" }
 ' "$REAL_API_WORKFLOW")
