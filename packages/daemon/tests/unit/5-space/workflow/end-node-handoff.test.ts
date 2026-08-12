@@ -15,9 +15,6 @@
  *   - Review-Only intentionally does NOT declare `postApproval` (no PR to
  *     merge).
  *
- *   - Plan & Decompose is unchanged: it closes on its own end-node directive
- *     (verify-tasks-created) and has no `postApproval` route.
- *
  * These tests protect against silent regressions where someone edits an end-
  * node prompt and accidentally removes the runtime-owned post-approval handoff,
  * adds a `gh pr merge` back into QA, or drops one of the `postApproval` routes.
@@ -28,7 +25,6 @@ import type { SpaceWorkflow } from '@hyperneo/shared';
 import {
   CODING_WORKFLOW,
   CODING_WITH_QA_WORKFLOW,
-  PLAN_AND_DECOMPOSE_WORKFLOW,
   RESEARCH_WORKFLOW,
   REVIEW_ONLY_WORKFLOW,
 } from '../../../../src/lib/space/workflows/built-in-workflows.ts';
@@ -82,7 +78,6 @@ const IMPLEMENTER_ROUTED_WORKFLOWS: Array<[string, SpaceWorkflow, string]> = [
 /** Workflows that MUST NOT declare any post-approval route. */
 const NO_POST_APPROVAL_WORKFLOWS: Array<[string, SpaceWorkflow]> = [
   ['REVIEW_ONLY_WORKFLOW', REVIEW_ONLY_WORKFLOW],
-  ['PLAN_AND_DECOMPOSE_WORKFLOW', PLAN_AND_DECOMPOSE_WORKFLOW],
 ];
 
 // ---------------------------------------------------------------------------
@@ -313,18 +308,5 @@ describe('Review-Only end-node prompt loses verification boilerplate', () => {
     expect(prompt).toContain('post a visible GitHub review');
     expect(prompt).toContain('save_artifact');
     expect(prompt).toContain('approve_task()');
-  });
-});
-
-describe('Plan & Decompose end-node is unchanged', () => {
-  test('PLAN_AND_DECOMPOSE_WORKFLOW Task Dispatcher prompt does NOT signal the task-agent', () => {
-    const prompt = endNodePrompt(PLAN_AND_DECOMPOSE_WORKFLOW);
-    expect(prompt).not.toContain('send_message');
-  });
-
-  test('PLAN_AND_DECOMPOSE_WORKFLOW Task Dispatcher still calls create_standalone_task + approve_task', () => {
-    const prompt = endNodePrompt(PLAN_AND_DECOMPOSE_WORKFLOW);
-    expect(prompt).toContain('create_standalone_task');
-    expect(prompt).toContain('approve_task');
   });
 });

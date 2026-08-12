@@ -1017,6 +1017,126 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect(mapped[0].severity).toBe('error');
     });
 
+    test('spaceTaskMessages.byTask maps user-message send_status to the delivery lifecycle + retrying', () => {
+      const workflowRunId = 'wr-stm-delivery';
+      const sessionIdValue = 'session-stm-delivery';
+      const taskId = insertSpaceTask({
+        id: 'task-stm-delivery',
+        workflowRunId,
+        status: 'in_progress',
+      });
+      sessionTaskIds.set(sessionIdValue, taskId);
+      const userPayload = (uuid: string) => ({
+        type: 'user',
+        uuid,
+        message: { role: 'user', content: [{ type: 'text', text: 'handoff' }] },
+      });
+      // One user message per send_status; stamp sdk_uuid so the retry EXISTS can match.
+      const cases: Array<{ id: string; uuid: string; sendStatus: string; expected: string }> = [
+        {
+          id: 'stm-consumed',
+          uuid: 'u-stm-consumed',
+          sendStatus: 'consumed',
+          expected: 'delivered',
+        },
+        { id: 'stm-deferred', uuid: 'u-stm-deferred', sendStatus: 'deferred', expected: 'queued' },
+        { id: 'stm-enqueued', uuid: 'u-stm-enqueued', sendStatus: 'enqueued', expected: 'queued' },
+        {
+          id: 'stm-submitted',
+          uuid: 'u-stm-submitted',
+          sendStatus: 'submitted',
+          expected: 'processing',
+        },
+        { id: 'stm-failed', uuid: 'u-stm-failed', sendStatus: 'failed', expected: 'failed' },
+        { id: 'stm-retry', uuid: 'u-stm-retry', sendStatus: 'enqueued', expected: 'retrying' },
+      ];
+      for (const c of cases) {
+        insertSdkMessageAt(
+          c.id,
+          sessionIdValue,
+          now + 1000,
+          'user',
+          c.sendStatus,
+          'human',
+          null,
+          userPayload(c.uuid)
+        );
+        db.prepare(`UPDATE sdk_messages SET sdk_uuid = ? WHERE id = ?`).run(c.uuid, c.id);
+      }
+      // An active message_delivery job with retry_count > 0 → the retry row reads "retrying".
+      db.prepare(
+        `INSERT INTO job_queue (id, queue, status, payload, retry_count, max_retries, run_at, created_at)
+         VALUES (?, 'message_delivery', 'pending', ?, 1, 8, ?, ?)`
+      ).run(
+        'job-stm-retry',
+        JSON.stringify({
+          sessionId: sessionIdValue,
+          messageUuid: 'u-stm-retry',
+          role: 'turn',
+          origin: 'space_inject',
+        }),
+        now,
+        now
+      );
+
+      const byId = new Map(queryMessages(taskId).map((r) => [r.id as string, r]));
+      for (const c of cases) {
+        expect((byId.get(c.id) as Record<string, unknown> | undefined)?.deliveryState).toBe(
+          c.expected
+        );
+      }
+    });
+
+    test('a pending user row does not become the turnId for subsequent assistant rows (full feed)', () => {
+      // Task #862 (review P2): the widened full feed emits a pending prompt, but
+      // it must NOT anchor a conversation turn — saveUserMessageCore withholds
+      // the anchor until consumed/failed. Subsequent assistant rows must keep
+      // inheriting the last SETTLED user row's id as turnUserMessageId.
+      const workflowRunId = 'wr-stm-sentinel';
+      const sessionIdValue = 'session-stm-sentinel';
+      const taskId = insertSpaceTask({
+        id: 'task-stm-sentinel',
+        workflowRunId,
+        status: 'in_progress',
+      });
+      sessionTaskIds.set(sessionIdValue, taskId);
+      const userPayload = (uuid: string) => ({
+        type: 'user',
+        uuid,
+        message: { role: 'user', content: 'x' },
+      });
+      // Settled anchor establishes the turn.
+      insertSdkMessageAt(
+        'anchor',
+        sessionIdValue,
+        now + 1000,
+        'user',
+        'consumed',
+        'human',
+        null,
+        userPayload('u-anchor')
+      );
+      // Pending prompt — emitted for its badge but not a turn sentinel.
+      insertSdkMessageAt(
+        'pending',
+        sessionIdValue,
+        now + 2000,
+        'user',
+        'enqueued',
+        'human',
+        null,
+        userPayload('u-pending')
+      );
+      // Assistant row produced after the pending prompt.
+      insertSdkMessageAt('assist', sessionIdValue, now + 3000, 'assistant', 'consumed', 'system');
+
+      const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask')!;
+      const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+      const assistRow = rows.find((r) => r.id === 'assist');
+      expect(assistRow).toBeTruthy();
+      expect(assistRow!.turnUserMessageId).toBe('anchor');
+    });
+
     test('actorMessages.byTask does not fan out SDK rows across node execution history', () => {
       const workflowRunId = 'wr-actor-sdk';
       const nodeSessionId = 'node-agent-actor-sdk';
@@ -2578,6 +2698,113 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(rows[0].origin).toBe('system');
       });
 
+      test('includes a queued prompt to a dormant session even when its turn is older than the recent-turn cutoff', () => {
+        // Task #862 (review P2): a message queued to a session whose last turn
+        // index is older than the compact feed's recent-turn window would be
+        // dropped entirely (conversation_turn_index < rt.minTurn). The OR clause
+        // must include active nonterminal user rows independently of the cutoff.
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        // Session A: a settled anchor establishes turn 1, then a queued prompt
+        // inherits the session's turn (1) because nonterminal rows are not anchors.
+        insertSdkMessageAt(
+          'a-anchor',
+          sessionId,
+          now + 1000,
+          { type: 'user', uuid: 'u-a-anchor', message: { role: 'user', content: 'go' } },
+          'user'
+        );
+        insertSdkMessageAt(
+          'a-queued',
+          sessionId,
+          now + 2000,
+          { type: 'user', uuid: 'u-a-queued', message: { role: 'user', content: 'queued' } },
+          'user'
+        );
+        db.prepare(
+          `UPDATE sdk_messages SET send_status = 'enqueued', sdk_uuid = 'u-a-queued' WHERE id = 'a-queued'`
+        ).run();
+
+        // Session B (node agent on the same task) pushes the task-wide turn count
+        // past the 100-turn recent window, so rt.minTurn > 1.
+        const sessionB = 'sess-dormant-b';
+        insertSession(sessionB, 'worker', '{"status":"processing"}');
+        sessionTaskIds.set(sessionB, taskId);
+        for (let i = 0; i < 100; i += 1) {
+          insertSdkMessageAt(
+            `b-anchor-${i}`,
+            sessionB,
+            now + 3000 + i,
+            { type: 'user', uuid: `u-b-${i}`, message: { role: 'user', content: `b${i}` } },
+            'user'
+          );
+        }
+
+        const rows = queryCompact(taskId);
+        const queued = rows.find((r) => r.id === 'a-queued');
+        expect(queued).toBeTruthy();
+        expect((queued as Record<string, unknown>).deliveryState).toBe('queued');
+      });
+
+      test('maps user-message send_status to the delivery lifecycle + retrying (compact feed)', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+        const userPayload = (uuid: string) => ({
+          type: 'user',
+          uuid,
+          message: { role: 'user', content: 'handoff' },
+        });
+        const cases: Array<{ id: string; uuid: string; sendStatus: string; expected: string }> = [
+          {
+            id: 'c-delivered',
+            uuid: 'u-c-delivered',
+            sendStatus: 'consumed',
+            expected: 'delivered',
+          },
+          { id: 'c-queued', uuid: 'u-c-queued', sendStatus: 'enqueued', expected: 'queued' },
+          {
+            id: 'c-processing',
+            uuid: 'u-c-processing',
+            sendStatus: 'submitted',
+            expected: 'processing',
+          },
+          { id: 'c-failed', uuid: 'u-c-failed', sendStatus: 'failed', expected: 'failed' },
+          { id: 'c-retry', uuid: 'u-c-retry', sendStatus: 'enqueued', expected: 'retrying' },
+        ];
+        for (const c of cases) {
+          insertSdkMessageAt(c.id, sessionId, now + 1000, userPayload(c.uuid), 'user');
+          // The compact helper hardcodes send_status='consumed' + no sdk_uuid;
+          // stamp both so the mapping + retry EXISTS behave like production.
+          db.prepare(`UPDATE sdk_messages SET send_status = ?, sdk_uuid = ? WHERE id = ?`).run(
+            c.sendStatus,
+            c.uuid,
+            c.id
+          );
+        }
+        db.prepare(
+          `INSERT INTO job_queue (id, queue, status, payload, retry_count, max_retries, run_at, created_at)
+           VALUES (?, 'message_delivery', 'pending', ?, 1, 8, ?, ?)`
+        ).run(
+          'job-c-retry',
+          JSON.stringify({
+            sessionId,
+            messageUuid: 'u-c-retry',
+            role: 'turn',
+            origin: 'space_inject',
+          }),
+          now,
+          now
+        );
+
+        const byId = new Map(queryCompact(taskId).map((r) => [r.id as string, r]));
+        for (const c of cases) {
+          expect((byId.get(c.id) as Record<string, unknown> | undefined)?.deliveryState).toBe(
+            c.expected
+          );
+        }
+      });
+
       test('keeps anchor + last-assistant summary + result per conversation turn', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
@@ -3318,6 +3545,68 @@ describe('NAMED_QUERY_REGISTRY', () => {
         // No closed-turn (turn 1) entries leak through.
         const previews = entries.map((e) => String(e.preview ?? e.text ?? ''));
         expect(previews).not.toContain('closed-text');
+      });
+
+      test('keeps an in-turn prompt in the active roster but excludes a deferred one', async () => {
+        // Task #862 (review P2): a deferred prompt is explicitly waiting for the
+        // next turn — it must stay in the main thread but NOT appear in the live
+        // active-turn roster as input "inside" the active turn. An enqueued
+        // (in-turn) prompt should still appear.
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        // Active turn 1 (no result yet).
+        insertSdkMessageAt(
+          'u1',
+          sessionId,
+          now + 1000,
+          { type: 'user', uuid: 'u1', message: { role: 'user', content: 'go' } },
+          'user'
+        );
+        // Enqueued → in the active turn, belongs in the roster.
+        insertSdkMessageAt(
+          'u-enq',
+          sessionId,
+          now + 2000,
+          { type: 'user', uuid: 'u-enq', message: { role: 'user', content: 'enq' } },
+          'user'
+        );
+        db.prepare(
+          `UPDATE sdk_messages SET send_status = 'enqueued', sdk_uuid = 'u-enq' WHERE id = 'u-enq'`
+        ).run();
+        // Deferred → waiting for the next turn, must be excluded from the roster.
+        insertSdkMessageAt(
+          'u-def',
+          sessionId,
+          now + 3000,
+          { type: 'user', uuid: 'u-def', message: { role: 'user', content: 'def' } },
+          'user'
+        );
+        db.prepare(
+          `UPDATE sdk_messages SET send_status = 'deferred', sdk_uuid = 'u-def' WHERE id = 'u-def'`
+        ).run();
+        // A non-terminal agent row makes turn 1 the active roster turn.
+        insertSdkMessageAt(
+          'a1',
+          sessionId,
+          now + 4000,
+          {
+            type: 'assistant',
+            uuid: 'a1',
+            message: { content: [{ type: 'text', text: 'working' }] },
+          },
+          'assistant'
+        );
+
+        const rows = (await runEntries(taskId)) as Array<{
+          blockType: string;
+          uuid: string;
+        }>;
+        const userUuids = rows
+          .filter((r) => r.blockType === '__user_message' || r.blockType === '__user_replay')
+          .map((r) => r.uuid);
+        expect(userUuids).toContain('u-enq');
+        expect(userUuids).not.toContain('u-def');
       });
 
       test('emits no summary when the latest turn is closed', async () => {

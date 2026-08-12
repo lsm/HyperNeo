@@ -10,7 +10,7 @@
  *   - `amber`  — awaiting approval / blocked on human
  *   - `blue`   — informational, in-progress
  *   - `green`  — success / positive
- *   - `purple` — gate / policy
+ *   - `purple` — policy / blocked on hook
  *   - `red`    — failure / error
  *   - `gray`   — inert
  *

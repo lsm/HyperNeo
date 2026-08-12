@@ -6,6 +6,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import type { EventInterest } from '@hyperneo/shared';
+import { MAX_NODE_HANDOFF_TRANSITIONS } from '@hyperneo/shared';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
@@ -1091,69 +1092,6 @@ describe('SpaceWorkflowManager', () => {
     });
   });
 
-  describe('gate validation on create/update', () => {
-    it('createWorkflow rejects a gate with an unregistered feature', () => {
-      expect(() =>
-        manager.createWorkflow({
-          spaceId: 'space-1',
-          name: 'Bad Gate',
-          nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
-          gates: [{ id: 'g1', features: { codex_review_bto: true }, resetOnCycle: false }],
-          completionAutonomyLevel: 3,
-        })
-      ).toThrow('gates[0]');
-    });
-
-    it('createWorkflow rejects a gate with feature + custom script', () => {
-      expect(() =>
-        manager.createWorkflow({
-          spaceId: 'space-1',
-          name: 'Conflicting Gate',
-          nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
-          gates: [
-            {
-              id: 'g1',
-              features: { codex_review_bot: true },
-              script: { interpreter: 'bash', source: 'echo hi' },
-              resetOnCycle: false,
-            },
-          ],
-          completionAutonomyLevel: 3,
-        })
-      ).toThrow('cannot combine');
-    });
-
-    it('updateWorkflow rejects gates with invalid features', () => {
-      const wf = manager.createWorkflow({
-        spaceId: 'space-1',
-        name: 'Updatable',
-        nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
-        completionAutonomyLevel: 3,
-      });
-
-      expect(() =>
-        manager.updateWorkflow(wf.id, {
-          gates: [{ id: 'g1', features: { unknown_feature: true }, resetOnCycle: false }],
-        })
-      ).toThrow('gates[0]');
-    });
-
-    it('updateWorkflow accepts valid feature-only gates', () => {
-      const wf = manager.createWorkflow({
-        spaceId: 'space-1',
-        name: 'Updatable',
-        nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
-        completionAutonomyLevel: 3,
-      });
-
-      const updated = manager.updateWorkflow(wf.id, {
-        gates: [{ id: 'g1', features: { codex_review_bot: true }, resetOnCycle: false }],
-      });
-      expect(updated).not.toBeNull();
-      expect(updated!.gates![0].features).toEqual({ codex_review_bot: true });
-    });
-  });
-
   describe('getWorkflowForRun (Phase 1 read cutover)', () => {
     const VERSIONS_DDL = `
       CREATE TABLE space_workflow_definition_versions (
@@ -1277,7 +1215,6 @@ describe('SpaceWorkflowManager', () => {
       // (the version row's created_at) rather than the head's volatile values.
       expect(resolved.nodes).toEqual(live.nodes);
       expect(resolved.channels ?? []).toEqual(live.channels ?? []);
-      expect(resolved.gates ?? []).toEqual(live.gates ?? []);
       expect(resolved.completionAutonomyLevel).toBe(live.completionAutonomyLevel);
       expect(resolved.startNodeId).toBe(live.startNodeId);
       // updatedAt is derived from the immutable version hash, so the gate-open cache
@@ -1484,6 +1421,249 @@ describe('SpaceWorkflowManager', () => {
       expect(resolvedA.name).toBe('V1');
       expect(resolvedB.name).toBe('V2');
       expect(resolvedA.updatedAt).not.toBe(resolvedB.updatedAt);
+    });
+  });
+
+  describe('handoff transition validation', () => {
+    function twoNodeParams(
+      transitions: import('@hyperneo/shared').HandoffTransition[]
+    ): import('@hyperneo/shared').CreateSpaceWorkflowParams {
+      return {
+        spaceId: 'space-1',
+        name: 'Handoff Workflow',
+        nodes: [
+          {
+            id: 'node-1',
+            name: 'Coder',
+            agents: [{ agentId: 'agent-1', name: 'coder' }],
+            transitions,
+          },
+          {
+            id: 'node-2',
+            name: 'Review',
+            agents: [{ agentId: 'agent-1', name: 'reviewer' }],
+          },
+        ],
+        completionAutonomyLevel: 3,
+      };
+    }
+
+    it('accepts valid transitions and persists them through create', () => {
+      const transitions = [
+        { id: 'to-review', target: 'Review', label: 'hand off for review' },
+        { id: 'to-reviewer', target: 'reviewer' },
+        { id: 'broadcast', target: '*' },
+      ];
+      const result = manager.createWorkflow(twoNodeParams(transitions));
+      expect(result.nodes[0].transitions).toEqual(transitions);
+    });
+
+    it('re-reads persisted transitions through the repository (DB round-trip)', () => {
+      const transitions = [{ id: 'to-review', target: 'Review', hookId: 'h1' }];
+      const created = manager.createWorkflow({
+        ...twoNodeParams(transitions),
+        hooks: [
+          {
+            id: 'h1',
+            enabled: true,
+            sourceNode: 'Coder',
+            targetNode: 'Review',
+            method: 'send_message',
+            validator: {
+              kind: 'script',
+              interpreter: 'bash',
+              source: 'jq -n \'{"type":"allow"}\'',
+            },
+            authorizedCallers: [{ sourceNode: 'Coder' }],
+          },
+        ],
+      });
+      // Explicitly re-read from the DB (not the createWorkflow return value) to
+      // exercise the repository's NodeConfigJson serialize/deserialize path.
+      const reread = repo.getWorkflow(created.id);
+      expect(reread?.nodes[0].transitions).toEqual(transitions);
+    });
+
+    it('accepts a hookId that references a known hook', () => {
+      const result = manager.createWorkflow({
+        ...twoNodeParams([{ id: 'to-review', target: 'Review', hookId: 'h1' }]),
+        hooks: [
+          {
+            id: 'h1',
+            enabled: true,
+            sourceNode: 'Coder',
+            targetNode: 'Review',
+            method: 'send_message',
+            validator: {
+              kind: 'script',
+              interpreter: 'bash',
+              source: 'jq -n \'{"type":"allow"}\'',
+            },
+            authorizedCallers: [{ sourceNode: 'Coder' }],
+          },
+        ],
+      });
+      expect(result.nodes[0].transitions?.[0]).toMatchObject({ hookId: 'h1' });
+    });
+
+    it('rejects more than MAX_NODE_HANDOFF_TRANSITIONS transitions on a node', () => {
+      // 33 transitions — exceeds the cap (32). The array-length check runs before
+      // per-transition uniqueness, so duplicate targets here don't mask the cap.
+      const tooMany = Array.from({ length: MAX_NODE_HANDOFF_TRANSITIONS + 1 }, (_, i) => ({
+        id: `t${i}`,
+        target: 'Review',
+      }));
+      expect(() => manager.createWorkflow(twoNodeParams(tooMany))).toThrow(
+        `cannot contain more than ${MAX_NODE_HANDOFF_TRANSITIONS} entries`
+      );
+    });
+
+    it('rejects an empty transition id', () => {
+      expect(() => manager.createWorkflow(twoNodeParams([{ id: '  ', target: 'Review' }]))).toThrow(
+        "'id' must be a non-empty string"
+      );
+    });
+
+    it('rejects a duplicate transition id within a node', () => {
+      expect(() =>
+        manager.createWorkflow(
+          twoNodeParams([
+            { id: 'dup', target: 'Review' },
+            { id: 'dup', target: 'reviewer' },
+          ])
+        )
+      ).toThrow('duplicate transition id "dup"');
+    });
+
+    it('rejects a target that is not a known node/agent name', () => {
+      expect(() => manager.createWorkflow(twoNodeParams([{ id: 't', target: 'Ghost' }]))).toThrow(
+        'does not reference a known node name or agent slot name'
+      );
+    });
+
+    it('rejects a duplicate transition target within a node (ambiguous resolution)', () => {
+      expect(() =>
+        manager.createWorkflow(
+          twoNodeParams([
+            { id: 'a', target: 'Review' },
+            { id: 'b', target: 'Review' },
+          ])
+        )
+      ).toThrow('duplicate transition target "Review"');
+    });
+
+    it('rejects a hookId that does not reference a known hook', () => {
+      expect(() =>
+        manager.createWorkflow(twoNodeParams([{ id: 't', target: 'Review', hookId: 'ghost' }]))
+      ).toThrow('hookId "ghost" does not reference a known hook');
+    });
+
+    it('rejects a non-positive maxCycles', () => {
+      expect(() =>
+        manager.createWorkflow(twoNodeParams([{ id: 't', target: 'Review', maxCycles: 0 }]))
+      ).toThrow("'maxCycles' must be a positive integer");
+    });
+
+    it('rejects an empty target', () => {
+      expect(() => manager.createWorkflow(twoNodeParams([{ id: 't', target: '  ' }]))).toThrow(
+        "'target' must be a non-empty string"
+      );
+    });
+
+    it('validates transitions on update too', () => {
+      const wf = manager.createWorkflow(twoNodeParams([]));
+      expect(() =>
+        manager.updateWorkflow(wf.id, {
+          nodes: [
+            {
+              id: 'node-1',
+              name: 'Coder',
+              agents: [{ agentId: 'agent-1', name: 'coder' }],
+              transitions: [{ id: 't', target: 'Ghost' }],
+            },
+            { id: 'node-2', name: 'Review', agents: [{ agentId: 'agent-1', name: 'reviewer' }] },
+          ],
+        })
+      ).toThrow('does not reference a known node name or agent slot name');
+    });
+
+    it('rejects a non-string transition label (untyped RPC JSON)', () => {
+      expect(() =>
+        manager.createWorkflow(
+          twoNodeParams([{ id: 't', target: 'Review', label: 5 as unknown as string }])
+        )
+      ).toThrow("'label' must be a string");
+    });
+
+    it('rejects non-string id/target/hookId without throwing a TypeError', () => {
+      // Untyped RPC JSON could send numbers; field reads (.trim/.length) must
+      // yield a clean WorkflowValidationError, not an uncaught TypeError.
+      expect(() =>
+        manager.createWorkflow(twoNodeParams([{ id: 42 as unknown as string, target: 'Review' }]))
+      ).toThrow("'id' must be a string");
+      expect(() =>
+        manager.createWorkflow(twoNodeParams([{ id: 't', target: 42 as unknown as string }]))
+      ).toThrow("'target' must be a string");
+      expect(() =>
+        manager.createWorkflow(
+          twoNodeParams([{ id: 't', target: 'Review', hookId: 7 as unknown as string }])
+        )
+      ).toThrow("'hookId' must be a string");
+    });
+
+    it('rejects a non-object transition element (untyped RPC JSON)', () => {
+      expect(() =>
+        manager.createWorkflow(
+          twoNodeParams([null as unknown as import('@hyperneo/shared').HandoffTransition])
+        )
+      ).toThrow('transition must be an object');
+    });
+
+    it('rejects a non-array transitions payload (untyped RPC JSON)', () => {
+      // A plain object `{}` is truthy with no .length; without this guard it
+      // would slip through validation and be silently dropped by the repository.
+      const params: import('@hyperneo/shared').CreateSpaceWorkflowParams = {
+        spaceId: 'space-1',
+        name: 'Bad',
+        nodes: [
+          {
+            id: 'node-1',
+            name: 'Coder',
+            agents: [{ agentId: 'agent-1', name: 'coder' }],
+            transitions: {
+              id: 't',
+              target: 'Review',
+            } as unknown as import('@hyperneo/shared').HandoffTransition[],
+          },
+          { id: 'node-2', name: 'Review', agents: [{ agentId: 'agent-1', name: 'reviewer' }] },
+        ],
+        completionAutonomyLevel: 3,
+      };
+      expect(() => manager.createWorkflow(params)).toThrow('transitions must be an array');
+    });
+
+    it('rejects an ambiguous target whose name matches multiple nodes', () => {
+      // Two nodes share the agent-slot name 'shared-slot', so a handoff targeting
+      // that name cannot select a single destination.
+      const params: import('@hyperneo/shared').CreateSpaceWorkflowParams = {
+        spaceId: 'space-1',
+        name: 'Ambiguous',
+        nodes: [
+          {
+            id: 'node-1',
+            name: 'Coder',
+            agents: [{ agentId: 'agent-1', name: 'shared-slot' }],
+            transitions: [{ id: 't', target: 'shared-slot' }],
+          },
+          {
+            id: 'node-2',
+            name: 'Review',
+            agents: [{ agentId: 'agent-1', name: 'shared-slot' }],
+          },
+        ],
+        completionAutonomyLevel: 3,
+      };
+      expect(() => manager.createWorkflow(params)).toThrow('is ambiguous');
     });
   });
 });

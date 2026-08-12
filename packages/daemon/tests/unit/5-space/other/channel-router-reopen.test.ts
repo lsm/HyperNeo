@@ -13,14 +13,9 @@
  *    node when the parent task is not archived.
  * 3. deliverMessage throws `ActivationError` with the archived-task message
  *    when the parent task is archived (regardless of run status).
- * 4. onGateDataChanged re-evaluates and activates target nodes on a `done`
- *    run when the parent task is not archived.
- * 5. onGateDataChanged returns `[]` when the parent task is archived.
- * 6. A `workflow_run_reopened` notification event is emitted to the
+ * 4. A `workflow_run_reopened` notification event is emitted to the
  *    InternalEventBus exactly once per reopen, with the correct `fromStatus`
  *    and `by` fields.
- * 7. Completion actions do NOT re-fire when a previously-completed run is
- *    reopened and the resolution path is hit again.
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -30,7 +25,6 @@ import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/sp
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
-import { GateDataRepository } from '../../../../src/storage/repositories/gate-data-repository.ts';
 import { ChannelCycleRepository } from '../../../../src/storage/repositories/channel-cycle-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
@@ -40,7 +34,7 @@ import {
   ActivationError,
   ARCHIVED_TASK_ERROR_MESSAGE,
 } from '../../../../src/lib/space/runtime/channel-router.ts';
-import type { Gate, SpaceWorkflow, WorkflowChannel } from '@hyperneo/shared';
+import type { SpaceWorkflow, WorkflowChannel } from '@hyperneo/shared';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import type {
   DaemonInternalEventMap,
@@ -110,8 +104,7 @@ function buildSimpleWorkflow(
   spaceId: string,
   workflowManager: SpaceWorkflowManager,
   nodes: Array<{ id: string; name: string; agentId: string }>,
-  channels: WorkflowChannel[] = [],
-  gates: Gate[] = []
+  channels: WorkflowChannel[] = []
 ): SpaceWorkflow {
   return workflowManager.createWorkflow({
     spaceId,
@@ -124,7 +117,6 @@ function buildSimpleWorkflow(
     rules: [],
     tags: [],
     channels,
-    gates,
     completionAutonomyLevel: 3,
   });
 }
@@ -140,7 +132,6 @@ describe('ChannelRouter — reopen on inbound activity (archive tombstone)', () 
   let workflowRunRepo: SpaceWorkflowRunRepository;
   let workflowManager: SpaceWorkflowManager;
   let agentManager: SpaceAgentManager;
-  let gateDataRepo: GateDataRepository;
   let channelCycleRepo: ChannelCycleRepository;
   let bus: InternalEventBus<DaemonInternalEventMap>;
   let collector: RecordingCollector;
@@ -160,7 +151,6 @@ describe('ChannelRouter — reopen on inbound activity (archive tombstone)', () 
 
     taskRepo = new SpaceTaskRepository(db);
     workflowRunRepo = new SpaceWorkflowRunRepository(db);
-    gateDataRepo = new GateDataRepository(db);
     channelCycleRepo = new ChannelCycleRepository(db);
 
     // One-task-per-run: ensure every createRun also creates a canonical task.
@@ -189,7 +179,6 @@ describe('ChannelRouter — reopen on inbound activity (archive tombstone)', () 
       workflowRunRepo,
       workflowManager,
       agentManager,
-      gateDataRepo,
       channelCycleRepo,
       db,
       nodeExecutionRepo: new NodeExecutionRepository(db),
@@ -336,80 +325,6 @@ describe('ChannelRouter — reopen on inbound activity (archive tombstone)', () 
   });
 
   // -------------------------------------------------------------------------
-  // onGateDataChanged — reopen and archive blocking
-  // -------------------------------------------------------------------------
-
-  describe('onGateDataChanged', () => {
-    test('does not reopen a done run on gate-data refresh', async () => {
-      const gate: Gate = {
-        id: 'ok-gate',
-        fields: [{ name: 'done', type: 'string', writers: ['*'], check: { op: 'exists' } }],
-        resetOnCycle: false,
-      };
-      const channels: WorkflowChannel[] = [{ id: 'ch', from: '*', to: 'B', gateId: 'ok-gate' }];
-      const workflow = buildSimpleWorkflow(
-        SPACE_ID,
-        workflowManager,
-        [
-          { id: NODE_A, name: 'A', agentId: AGENT_A },
-          { id: NODE_B, name: 'B', agentId: AGENT_B },
-        ],
-        channels,
-        [gate]
-      );
-
-      const run = workflowRunRepo.createRun({
-        spaceId: SPACE_ID,
-        workflowId: workflow.id,
-        title: 'Gate Reopen',
-      });
-      workflowRunRepo.updateStatusUnchecked(run.id, 'done');
-
-      gateDataRepo.set(run.id, 'ok-gate', { done: true });
-      const activated = await router.onGateDataChanged(run.id, 'ok-gate');
-      expect(activated).toHaveLength(0);
-
-      expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
-      expect(collector.reopens()).toHaveLength(0);
-    });
-
-    test('returns [] and emits no reopen when parent task is archived', async () => {
-      const gate: Gate = {
-        id: 'ok-gate',
-        fields: [{ name: 'done', type: 'string', writers: ['*'], check: { op: 'exists' } }],
-        resetOnCycle: false,
-      };
-      const channels: WorkflowChannel[] = [{ id: 'ch', from: '*', to: 'B', gateId: 'ok-gate' }];
-      const workflow = buildSimpleWorkflow(
-        SPACE_ID,
-        workflowManager,
-        [
-          { id: NODE_A, name: 'A', agentId: AGENT_A },
-          { id: NODE_B, name: 'B', agentId: AGENT_B },
-        ],
-        channels,
-        [gate]
-      );
-
-      const run = workflowRunRepo.createRun({
-        spaceId: SPACE_ID,
-        workflowId: workflow.id,
-        title: 'Gate Archived',
-      });
-      workflowRunRepo.updateStatusUnchecked(run.id, 'done');
-      for (const t of taskRepo.listByWorkflowRunIncludingArchived(run.id)) {
-        taskRepo.archiveTask(t.id);
-      }
-
-      gateDataRepo.set(run.id, 'ok-gate', { done: true });
-      const activated = await router.onGateDataChanged(run.id, 'ok-gate');
-      expect(activated).toHaveLength(0);
-      expect(collector.reopens()).toHaveLength(0);
-      expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
-    });
-  });
-
-  // -------------------------------------------------------------------------
   // Idempotency & resilience
   // -------------------------------------------------------------------------
 
@@ -431,7 +346,6 @@ describe('ChannelRouter — reopen on inbound activity (archive tombstone)', () 
         workflowRunRepo,
         workflowManager,
         agentManager,
-        gateDataRepo,
         channelCycleRepo,
         db,
         nodeExecutionRepo: new NodeExecutionRepository(db),

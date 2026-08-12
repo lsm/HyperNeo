@@ -523,5 +523,37 @@ describe('JobQueueProcessor', () => {
 
       expect(notified.length).toBe(0);
     });
+
+    it('passes a session-scoped change for jobs whose payload carries a sessionId', async () => {
+      // Task #862 (review P2): the message_delivery notifier must be
+      // session-scoped so a delivery job only re-evaluates that session's
+      // transcript feed, not every open one.
+      const scopes: Array<Record<string, string> | undefined> = [];
+      processor.setChangeNotifier((_table, scope) => scopes.push(scope));
+      processor.register('message_delivery', async () => {});
+
+      repo.enqueue({
+        queue: 'message_delivery',
+        payload: { sessionId: 'sess-a', messageUuid: 'u-1', role: 'turn' },
+      });
+      await processor.tick();
+      await flush();
+
+      expect(scopes.length).toBeGreaterThan(0);
+      expect(scopes[0]).toEqual({ sessionId: 'sess-a' });
+    });
+
+    it('notifies without a scope for jobs whose payload has no sessionId', async () => {
+      const scopes: Array<Record<string, string> | undefined> = [];
+      processor.setChangeNotifier((_table, scope) => scopes.push(scope));
+      processor.register('schedule', async () => {});
+
+      repo.enqueue({ queue: 'schedule', payload: { scheduleId: 's1' } });
+      await processor.tick();
+      await flush();
+
+      expect(scopes.length).toBeGreaterThan(0);
+      expect(scopes[0]).toBeUndefined();
+    });
   });
 });

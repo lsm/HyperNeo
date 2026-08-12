@@ -6,7 +6,7 @@ import { borderColors } from '../../lib/design-tokens.ts';
 const RUNTIME_MCP_LABELS: Record<string, { title: string; description: string }> = {
   'space-agent-tools': {
     title: 'Space coordination',
-    description: 'send_message_to_agent, list_peers, gate I/O, task management',
+    description: 'send_message_to_agent, list_peers, task management',
   },
   'db-query': {
     title: 'Database queries',

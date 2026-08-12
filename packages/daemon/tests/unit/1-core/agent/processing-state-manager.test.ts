@@ -140,6 +140,133 @@ describe('ProcessingStateManager', () => {
       expect(callbackMock).toHaveBeenCalled();
     });
 
+    test('waiter onEnd fires BEFORE the waiter promise resolves on a terminal idle', async () => {
+      // The delivery-turn completion marker must be persisted before the delivery
+      // job (`await turn`) resolves on the idle drain — a crash after idle but
+      // before the write would otherwise re-drive a result-less consumed turn.
+      // See Codex (PR #2463, P2).
+      const events: string[] = [];
+      const waiter = manager.waitForIdleTransition(undefined, () => events.push('onEnd'));
+      void waiter.promise.then(() => events.push('waiter-resolved'));
+      await manager.setIdle();
+      await waiter.promise;
+      expect(events).toEqual(['onEnd', 'waiter-resolved']);
+    });
+
+    test('waiter onEnd (marker) fires BEFORE the awaited idle side effects (P2)', async () => {
+      // The durable marker must be persisted synchronously at the START of
+      // setIdle — before the session.updated publish and the deferred-restart
+      // callback — so a crash after the idle-state DB write can't lose it.
+      // The waiter promise (job completion) stays deferred until the finally.
+      const events: string[] = [];
+      let resolveCallback!: () => void;
+      manager.setOnIdleCallback(
+        () =>
+          new Promise<void>((r) => {
+            resolveCallback = r;
+          })
+      );
+      const waiter = manager.waitForIdleTransition(undefined, () => events.push('onEnd'));
+      void waiter.promise.then(() => events.push('waiter-resolved'));
+      const setIdlePromise = manager.setIdle();
+      // onEnd fires synchronously (before setIdle's first await); the waiter
+      // does NOT resolve until the finally (after the deferred callback).
+      expect(events).toEqual(['onEnd']);
+      expect(events).not.toContain('waiter-resolved');
+      // Flush microtasks so setState's publish resolves and onIdleCallback is
+      // invoked (now awaiting our resolver) — still before the finally drain.
+      await new Promise((r) => setTimeout(r, 0));
+      expect(typeof resolveCallback).toBe('function');
+      expect(events).not.toContain('waiter-resolved');
+      resolveCallback();
+      await setIdlePromise;
+      await waiter.promise;
+      expect(events).toEqual(['onEnd', 'waiter-resolved']);
+    });
+
+    test('late waiter armed during terminal idle fires onEnd before resolving', async () => {
+      const events: string[] = [];
+      let resolvePublish!: () => void;
+      emitMock.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            resolvePublish = resolve;
+          })
+      );
+
+      const setIdlePromise = manager.setIdle();
+      expect(manager.isTerminalIdleInFlight()).toBe(true);
+      const waiter = manager.waitForIdleTransition(undefined, () => events.push('onEnd'));
+      void waiter.promise.then(() => events.push('waiter-resolved'));
+
+      resolvePublish();
+      await setIdlePromise;
+      await waiter.promise;
+      expect(events).toEqual(['onEnd', 'waiter-resolved']);
+      expect(manager.isTerminalIdleInFlight()).toBe(false);
+    });
+
+    test('terminal idle in-flight flag clears when idle publication throws', async () => {
+      emitMock.mockImplementation(async () => {
+        throw new Error('publish failed');
+      });
+
+      await expect(manager.setIdle()).rejects.toThrow('publish failed');
+      expect(manager.isTerminalIdleInFlight()).toBe(false);
+    });
+
+    test('beginTerminalIdle fences and fires onEnd without resolving until setIdle', async () => {
+      const events: string[] = [];
+      const waiter = manager.waitForIdleTransition(undefined, () => events.push('onEnd'));
+      void waiter.promise.then(() => events.push('waiter-resolved'));
+
+      manager.beginTerminalIdle();
+      await Promise.resolve();
+      expect(events).toEqual(['onEnd']);
+      expect(manager.isTerminalIdleInFlight()).toBe(true);
+
+      await manager.setIdle();
+      await waiter.promise;
+      expect(events).toEqual(['onEnd', 'waiter-resolved']);
+      expect(manager.isTerminalIdleInFlight()).toBe(false);
+    });
+
+    test('waiter onEnd fires on a direct releaseIdleWaiters (restart/reset failure path)', async () => {
+      // Direct releaseIdleWaiters (query-lifecycle restart/reset failures,
+      // ask-user-question answer-reinjection) must still record the turn-end
+      // marker — the waiter-owned callback covers it. See Codex (PR #2463, P2).
+      let ended = false;
+      manager.waitForIdleTransition(undefined, () => {
+        ended = true;
+      });
+      manager.releaseIdleWaiters();
+      await Promise.resolve();
+      expect(ended).toBe(true);
+    });
+
+    test('cancel() does NOT fire onEnd (cleanup, not a turn-end) — P2', async () => {
+      // cancel() is the delivery bridge's finally / rejected-acknowledgment /
+      // query-close abandon path. It must NOT persist the turn-completion marker
+      // (a consumed-but-never-delivered prompt must not be marked ended, or the
+      // retried job completes without delivering). Only genuine terminal paths
+      // (setIdle drain, releaseIdleWaiters) fire onEnd.
+      let ended = false;
+      const handle = manager.waitForIdleTransition(undefined, () => {
+        ended = true;
+      });
+      handle.cancel();
+      expect(ended).toBe(false);
+    });
+
+    test('waiter onEnd does NOT fire on a suppressed (retry mid-point) idle', async () => {
+      let ended = false;
+      manager.waitForIdleTransition(undefined, () => {
+        ended = true;
+      });
+      await manager.setIdle({ suppressDeliveryWaiters: true });
+      expect(ended).toBe(false);
+    });
+
     test('clears pending question state', async () => {
       await manager.setWaitingForInput({ toolUseId: 'tool-123', questions: [] });
 
@@ -179,17 +306,23 @@ describe('ProcessingStateManager', () => {
       expect(resolved).toBe(true);
     });
 
-    test('cancel() removes the waiter so it never resolves (failure/park path)', async () => {
-      // driveDeliveryTurn cancels its turn-end waiter on the blocked (park) and
-      // query-didn't-start paths so waiters don't accumulate across reclaims.
+    test('cancel() is idempotent and releases the waiter without firing onEnd; a later terminal idle does not re-fire it', async () => {
+      // cancel() is cleanup/abandon — it releases the awaiting job WITHOUT
+      // persisting the turn-end marker. Idempotent (double cancel is a no-op),
+      // and a later genuine terminal idle must not re-fire a cancelled waiter.
+      let endedCount = 0;
+      const handle = manager.waitForIdleTransition(undefined, () => endedCount++);
       let resolved = false;
-      const handle = manager.waitForIdleTransition();
       void handle.promise.then(() => {
         resolved = true;
       });
       handle.cancel();
-      await manager.setIdle(); // a terminal idle must NOT resolve a cancelled waiter
-      expect(resolved).toBe(false);
+      handle.cancel();
+      await Promise.resolve();
+      expect(endedCount).toBe(0); // no marker on cancel
+      expect(resolved).toBe(true); // but the await IS released
+      await manager.setIdle();
+      expect(endedCount).toBe(0); // cancelled waiter isn't re-fired
     });
 
     test('drains waiters even when idle-state publication throws', async () => {
@@ -283,6 +416,20 @@ describe('ProcessingStateManager', () => {
 
       expect(waiterResolvedAtCallback).toBe(false); // NOT drained during the callback
       expect(waiterResolved).toBe(true); // drained after the callback completed
+    });
+
+    test('a reentrant terminal idle consumes its fence without draining early', async () => {
+      let terminalInFlightAfterReentrantIdle = false;
+      manager.setOnIdleCallback(async () => {
+        manager.beginTerminalIdle();
+        await manager.setIdle();
+        terminalInFlightAfterReentrantIdle = manager.isTerminalIdleInFlight();
+      });
+
+      await manager.setIdle();
+
+      expect(terminalInFlightAfterReentrantIdle).toBe(true); // outer transition still owns the drain
+      expect(manager.isTerminalIdleInFlight()).toBe(false); // both transitions settled
     });
 
     test('a reentrant setIdle during the callback does not re-fire it or drain early', async () => {

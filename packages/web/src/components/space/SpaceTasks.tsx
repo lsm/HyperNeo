@@ -33,7 +33,7 @@ type TaskFilterTab = 'action' | 'active' | 'draft' | 'completed' | 'scheduled';
 type LegacyTaskFilterTab = TaskFilterTab | 'archived';
 
 /** Block reasons that indicate a task needs human attention */
-const ATTENTION_BLOCK_REASONS: SpaceBlockReason[] = ['human_input_requested', 'gate_rejected'];
+const ATTENTION_BLOCK_REASONS: SpaceBlockReason[] = ['human_input_requested'];
 
 /**
  * Per-tab membership predicates. The `action` and `active` predicates are
@@ -97,14 +97,6 @@ const ACTION_GROUPS: StatusGroupDef[] = [
     blockReason: 'human_input_requested',
     matchFn: (t) =>
       t.status === 'blocked' && (t.blockReason as SpaceBlockReason) === 'human_input_requested',
-  },
-  {
-    status: 'blocked',
-    title: 'Gate Pending',
-    variant: 'red',
-    blockReason: 'gate_rejected',
-    matchFn: (t) =>
-      t.status === 'blocked' && (t.blockReason as SpaceBlockReason) === 'gate_rejected',
   },
   { status: 'review', title: 'Awaiting Review', variant: 'purple' },
   {

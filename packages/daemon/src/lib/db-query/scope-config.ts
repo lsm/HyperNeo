@@ -275,17 +275,6 @@ const SPACE_SCOPE_TABLES: ScopeTableConfig[] = [
     description: 'Git worktree mappings for space tasks with slug and path tracking.',
   },
   {
-    tableName: 'gate_data',
-    scopeJoin: {
-      localColumn: 'run_id',
-      joinTable: 'space_workflow_runs',
-      joinPkColumn: 'id',
-      scopeColumn: 'space_id',
-    },
-    blacklistedColumns: [],
-    description: 'Gate evaluation data for human-in-the-loop approval checkpoints in workflows.',
-  },
-  {
     tableName: 'workflow_hook_state',
     scopeJoin: {
       localColumn: 'run_id',
@@ -506,8 +495,6 @@ const EXCLUDED_TABLE_NAMES: string[] = [
   'space_github_watched_repos',
   // Node execution tracking — transient per-run agent state, not useful for ad-hoc queries
   'node_executions',
-  // Gate-open cache — internal state for skipping gate re-evaluation, not useful for ad-hoc queries
-  'gate_open_state',
   // Tool continuation recovery — internal bridge/runtime recovery state for orphaned tool_result chunks
   'tool_continuation_recovery',
   'tool_continuation_inbox',
@@ -540,6 +527,12 @@ const EXCLUDED_TABLE_NAMES: string[] = [
   'space_external_event_source_configs',
   'space_external_events',
   'space_external_event_deliveries',
+  // Durable delivery-turn completion markers — internal message-delivery v2
+  // re-claim state (delivery_turn_end), not useful for ad-hoc agent queries.
+  'delivery_turn_end',
+  // Monotonic consumption-watermark counter — internal message-delivery v2
+  // sequence state (delivery_consumed_seq), not useful for ad-hoc agent queries.
+  'delivery_consumed_seq',
   // Agent memory search index/vector storage — query through space_agent_memory instead.
   'memory_vectors',
   'space_agent_memory_fts',

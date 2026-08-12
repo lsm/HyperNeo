@@ -71,6 +71,23 @@ export class TopicTrie<T> {
   }
 
   /**
+   * Return every stored value (across all patterns). Read-only enumeration
+   * used by diagnostics (e.g. listing active subscriptions for a run) — not a
+   * matching path. Each value is responsible for carrying its own topic/pattern
+   * (the trie keys by path and does not reconstruct the original pattern here).
+   */
+  values(): T[] {
+    const out: T[] = [];
+    const walk = (node: TrieNode<T>): void => {
+      if (node.values) out.push(...node.values);
+      for (const child of node.exactChildren.values()) walk(child);
+      for (const child of node.globChildren.values()) walk(child);
+    };
+    walk(this.root);
+    return out;
+  }
+
+  /**
    * Count all stored values matching a predicate.
    */
   count(predicate: (value: T) => boolean): number {

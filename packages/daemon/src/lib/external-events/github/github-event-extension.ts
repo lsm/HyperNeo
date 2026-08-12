@@ -28,6 +28,8 @@ import {
   parseHeadRefKey,
   pullRequestNumberFrom,
 } from './github-pr-head-ref';
+import { isPullRequestOpen, pullRequestUpdatedAt } from './github-pr-row-state';
+import { isPositiveReaction, reactionIdFrom } from './github-reaction-fields';
 import {
   normalizeGitHubCheckRun,
   normalizeGitHubDeployment,
@@ -36,7 +38,6 @@ import {
   normalizeGitHubReaction,
   normalizeGitHubStatus,
   normalizeGitHubWebhook,
-  parseGitHubTimestamp,
   repoFromPayload,
   toExternalEvent,
   type GitHubPollingRepo,
@@ -4444,17 +4445,6 @@ function mergeRateLimitInfo(
   return next;
 }
 
-function pullRequestUpdatedAt(row: unknown): number {
-  if (!row || typeof row !== 'object') return 0;
-  return parseGitHubTimestamp((row as { updated_at?: unknown }).updated_at);
-}
-
-function isPullRequestOpen(row: unknown): boolean {
-  if (!row || typeof row !== 'object') return false;
-  const state = (row as { state?: unknown }).state;
-  return state === 'open';
-}
-
 function rowsFromPollingPayload(payload: unknown, endpointKey: string): unknown[] {
   if (endpointKey === 'check_runs') {
     const checkRuns = (payload as { check_runs?: unknown } | null)?.check_runs;
@@ -4511,18 +4501,6 @@ function pullRequestNumbersFromCheckRun(
     }
   }
   return numbers.length > 0 ? numbers : fallbackPrNumbers;
-}
-
-function isPositiveReaction(row: unknown): boolean {
-  if (!row || typeof row !== 'object') return false;
-  const content = (row as { content?: unknown }).content;
-  return content === '+1' || content === 'thumbs_up';
-}
-
-function reactionIdFrom(row: unknown): string {
-  if (!row || typeof row !== 'object') return '';
-  const id = (row as { id?: unknown }).id;
-  return typeof id === 'number' ? String(id) : '';
 }
 
 function getConfiguredWebhookUrl(): string {

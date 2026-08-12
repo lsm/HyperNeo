@@ -91,7 +91,6 @@ export function createSpaceTables(db: BunDatabase): void {
 			end_node_id TEXT,
 			tags TEXT NOT NULL DEFAULT '[]',
 			channels TEXT,
-			gates TEXT,
 				hooks TEXT,
 			layout TEXT,
 			template_name TEXT DEFAULT NULL,
@@ -211,32 +210,6 @@ export function createSpaceTables(db: BunDatabase): void {
     `CREATE INDEX IF NOT EXISTS idx_workflow_hook_result_artifacts_run_hook ` +
       `ON workflow_hook_result_artifacts(run_id, hook_id, created_at)`
   );
-
-  db.exec(`
-			CREATE TABLE IF NOT EXISTS gate_data (
-			run_id TEXT NOT NULL,
-			gate_id TEXT NOT NULL,
-			data TEXT NOT NULL DEFAULT '{}',
-			updated_at INTEGER NOT NULL,
-			PRIMARY KEY (run_id, gate_id),
-			FOREIGN KEY (run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
-		)
-	`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_gate_data_run ON gate_data(run_id)`);
-
-  // Persisted gate-open cache (migration 130). Mirrors production schema so
-  // service-level integration tests can exercise the full ChannelRouter path.
-  db.exec(`
-		CREATE TABLE IF NOT EXISTS gate_open_state (
-			run_id TEXT NOT NULL,
-			gate_id TEXT NOT NULL,
-			opened_workflow_updated_at INTEGER NOT NULL,
-			opened_at INTEGER NOT NULL,
-			PRIMARY KEY (run_id, gate_id),
-			FOREIGN KEY (run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
-		)
-	`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_gate_open_state_run ON gate_open_state(run_id)`);
 
   // Per-channel cycle counters (migration 69). Tracks how many times each
   // backward (cyclic) channel has been traversed in a workflow run.
@@ -560,6 +533,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			parent_tool_use_id TEXT,
 			task_id TEXT,
 			sdk_uuid TEXT,
+			consumed_seq INTEGER,
 			replacement_metadata_normalized INTEGER NOT NULL DEFAULT 0,
 			FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 		)
@@ -575,6 +549,17 @@ export function createSpaceTables(db: BunDatabase): void {
 			FOREIGN KEY (source_message_id) REFERENCES sdk_messages(id) ON DELETE CASCADE
 		)
 	`);
+  // Monotonic consumption-watermark counter (saveSDKMessage stamps terminal
+  // results from it). See schema/index.ts + Codex (PR #2463, P2).
+  db.exec(`
+		CREATE TABLE IF NOT EXISTS delivery_consumed_seq (
+			singleton INTEGER PRIMARY KEY DEFAULT 1,
+			next_seq INTEGER NOT NULL DEFAULT 1
+		)
+	`);
+  db.exec(`
+		INSERT OR IGNORE INTO delivery_consumed_seq (singleton, next_seq) VALUES (1, 1)
+	`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_timestamp_id
 		ON sdk_messages(session_id, timestamp DESC, id DESC)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_parent_tool_use_id
@@ -585,6 +570,8 @@ export function createSpaceTables(db: BunDatabase): void {
 		ON sdk_messages(message_type, message_subtype)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_subtype_parent
 		ON sdk_messages(session_id, message_subtype_norm, parent_tool_use_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_consumed_seq
+		ON sdk_messages(consumed_seq)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_send_status
 		ON sdk_messages(session_id, send_status)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_id

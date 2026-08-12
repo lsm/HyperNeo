@@ -137,6 +137,13 @@ const rowTimestamp = (m: ChatMessage): number => (m as MessageRow).timestamp || 
 const rowRowid = (m: ChatMessage): number => (m as MessageRow).rowid ?? 0;
 const rowId = (m: ChatMessage): unknown => (m as MessageRow).id;
 
+/** Sort by the daemon's `(timestamp, rowid)` transcript cursor. */
+function sortByTimestampRowid(messages: ChatMessage[]): ChatMessage[] {
+  return [...messages].sort(
+    (a, b) => rowTimestamp(a) - rowTimestamp(b) || rowRowid(a) - rowRowid(b)
+  );
+}
+
 /**
  * Tolerance for comparing pagination-boundary timestamps across the two server
  * paths that feed the transcript. `message.sdkMessages` computes epoch-ms via
@@ -983,6 +990,10 @@ export class SessionStore {
         }
         return m;
       });
+      // Task #862 (review P2): a delivery-status update (e.g. queued → consumed)
+      // moves the row's timestamp, so the replaced rows may no longer be in
+      // transcript order — re-sort by the daemon's (timestamp, rowid) cursor.
+      if (changed) next = sortByTimestampRowid(next);
     }
 
     if (event.added?.length) {
@@ -997,11 +1008,7 @@ export class SessionStore {
       }
       if (trulyNew.length) {
         changed = true;
-        next = [...next, ...trulyNew].sort(
-          (a, b) =>
-            ((a as ChatMessage & { timestamp?: number }).timestamp || 0) -
-            ((b as ChatMessage & { timestamp?: number }).timestamp || 0)
-        );
+        next = sortByTimestampRowid([...next, ...trulyNew]);
       }
       this._syncCommandsFromSDKMessages(trulyNew);
     }

@@ -12,15 +12,16 @@
  * - Rule `appliesTo` node UUIDs → node names (stable across re-import)
  *
  * Version policy:
- * - Accept: version 1 or 2 (v2 adds optional `topicFrom` on eventInterests as
- *   an alternative to a static `topic`; a v1-only client rejects v2 bundles via
- *   the version path rather than as schema-malformed).
+ * - Accept: version 1, 2, or 3 (v2 adds optional `topicFrom` on eventInterests;
+ *   v3 adds node handoff transitions and workflow gates). Older clients reject
+ *   newer bundles via the version path rather than as schema-malformed.
  * - Reject with "requires newer version": version > CURRENT_EXPORT_VERSION
  * - Reject as invalid: version missing, null, < 1, or non-integer
  */
 
 import { z } from 'zod';
 import { validateGlobPattern } from '../external-events/topic-validator';
+import { MAX_NODE_HANDOFF_TRANSITIONS } from '@hyperneo/shared';
 import type {
   SpaceWorkerAgent,
   SpaceWorkflow,
@@ -29,6 +30,7 @@ import type {
   ExportedWorkflowChannel,
   ExportedWorkflowNode,
   ExportedWorkflowNodeAgent,
+  ExportedHandoffTransition,
   SpaceExportBundle,
 } from '@hyperneo/shared';
 import { validateSlug } from './slug';
@@ -153,7 +155,6 @@ const exportedWorkflowChannelSchema = z.object({
   to: z.union([z.string().min(1), z.array(z.string().min(1))]),
   maxCycles: z.number().int().positive().optional(),
   label: z.string().optional(),
-  gateId: z.string().optional(),
 });
 
 const workflowHookValidatorSchema = z.union([
@@ -220,6 +221,31 @@ const workflowHookSchema = z.object({
   humanOnly: z.boolean().optional(),
 });
 
+/**
+ * Zod schema for an exported workflow handoff transition.
+ * Mirrors the runtime `HandoffTransition` shape.
+ *
+ * `target`/`hookId` are REFERENCES to other entities (node/slot names, hook
+ * ids). They are validated non-mutating (reject whitespace-only via refine, but
+ * preserve the exact value) so they match the referenced entity's id verbatim —
+ * a `.trim()` here would desynchronize a reference from a whitespace-carrying
+ * hook id that the manager persisted and accepted. String length caps bound
+ * unbounded import input.
+ */
+const nonEmptyRef = (maxLen: number) =>
+  z
+    .string()
+    .max(maxLen)
+    .refine((v) => v.trim().length > 0, { message: 'must be a non-empty string' });
+
+const exportedHandoffTransitionSchema = z.object({
+  id: nonEmptyRef(100),
+  label: z.string().max(200).optional(),
+  target: nonEmptyRef(100),
+  hookId: nonEmptyRef(100).optional(),
+  maxCycles: z.number().int().positive().optional(),
+});
+
 const exportedWorkflowNodeSchema = z.object({
   agents: z.array(exportedWorkflowNodeAgentSchema).min(1),
   name: z.string().min(1),
@@ -230,9 +256,11 @@ const exportedWorkflowNodeSchema = z.object({
       requirePrMerge: z.boolean().optional(),
     })
     .optional(),
-  requireCodexApproval: z.boolean().optional(),
-  codexPollIntervalMs: z.number().int().positive().optional(),
-  codexTimeoutSeconds: z.number().int().positive().optional(),
+  /** Declared outbound handoff transitions (first-class handoff contract). */
+  transitions: z
+    .array(exportedHandoffTransitionSchema)
+    .max(MAX_NODE_HANDOFF_TRANSITIONS)
+    .optional(),
 });
 
 /**
@@ -243,10 +271,15 @@ const exportedWorkflowNodeSchema = z.object({
  *   a static `topic`). v2 is the first version that may emit topicFrom-only
  *   interests; v1-only clients reject v2 bundles with "requires newer version"
  *   instead of a confusing schema-malformed error.
+ * - v3: adds node handoff `transitions` and workflow `gates` to the portable
+ *   schema. v3 is the first version that may emit them; a v2-only client's Zod
+ *   node schema would silently strip the unknown `transitions` field (and the
+ *   `gates` workflow field), so a v1/v2 bundle carrying either is rejected via
+ *   the version path rather than imported lossily.
  */
-export const CURRENT_EXPORT_VERSION = 2 as const;
-const SUPPORTED_EXPORT_VERSIONS: ReadonlySet<number> = new Set<number>([1, 2]);
-export type ExportVersion = 1 | 2;
+export const CURRENT_EXPORT_VERSION = 3 as const;
+const SUPPORTED_EXPORT_VERSIONS: ReadonlySet<number> = new Set<number>([1, 2, 3]);
+export type ExportVersion = 1 | 2 | 3;
 
 /**
  * Coerce an already-`checkVersion`-validated value to the supported version
@@ -437,12 +470,15 @@ export function exportWorkflow(
       agents: exportedAgents,
     };
     if (node.postApproval !== undefined) exported.postApproval = node.postApproval;
-    if (node.requireCodexApproval !== undefined)
-      exported.requireCodexApproval = node.requireCodexApproval;
-    if (node.codexPollIntervalMs !== undefined)
-      exported.codexPollIntervalMs = node.codexPollIntervalMs;
-    if (node.codexTimeoutSeconds !== undefined)
-      exported.codexTimeoutSeconds = node.codexTimeoutSeconds;
+    if (node.transitions && node.transitions.length > 0) {
+      exported.transitions = node.transitions.map((t) => {
+        const out: ExportedHandoffTransition = { id: t.id, target: t.target };
+        if (t.label !== undefined) out.label = t.label;
+        if (t.hookId !== undefined) out.hookId = t.hookId;
+        if (t.maxCycles !== undefined) out.maxCycles = t.maxCycles;
+        return out;
+      });
+    }
 
     return exported;
   });
@@ -476,7 +512,6 @@ export function exportWorkflow(
       };
       if (ch.maxCycles !== undefined) exported.maxCycles = ch.maxCycles;
       if (ch.label !== undefined) exported.label = ch.label;
-      if (ch.gateId !== undefined) exported.gateId = ch.gateId;
       return exported;
     });
     result.channels = exportedChannels;
@@ -519,8 +554,8 @@ export function exportBundle(
  * Validate an unknown value as an ExportedSpaceWorkerAgent.
  *
  * Version handling:
- * - version === 1 → accepted
- * - version > 1 → error: "requires newer version: ..."
+ * - version 1, 2, or 3 → accepted
+ * - version > CURRENT_EXPORT_VERSION → error: "requires newer version: ..."
  * - version < 1 or missing/non-integer → error: "invalid: ..."
  */
 export function validateExportedAgent(data: unknown): ValidationResult<ExportedSpaceWorkerAgent> {
@@ -614,6 +649,92 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
             error: `invalid: ${loc}.to[${ti}] "${toList[ti]}" does not reference a known agent slot name or node name`,
           };
         }
+      }
+    }
+  }
+
+  // Handoff transitions: each declared transition's `target` must reference a
+  // known node/agent name or the '*' wildcard; transition ids and targets must
+  // be unique within a node (so handoff({ target }) resolves unambiguously);
+  // and `hookId` must reference a known exported hook.
+  const transitionHookIds = new Set<string>();
+  for (const hook of result.data.hooks ?? []) {
+    if (hook?.id) transitionHookIds.add(hook.id);
+  }
+  // Build the destination map ONCE (not per source node) so validation stays
+  // linear in the node count instead of quadratic — a crafted bundle with many
+  // nodes must not make import validation O(N²).
+  const targetDestinations = new Map<string, Set<string>>();
+  const countDest = (name: string | undefined, key: string) => {
+    if (!name) return;
+    const set = targetDestinations.get(name) ?? new Set<string>();
+    set.add(key);
+    targetDestinations.set(name, set);
+  };
+  result.data.nodes.forEach((other, idx) => {
+    countDest(other.name, `node:${idx}`);
+    for (const a of other.agents ?? []) countDest(a.name, `slot:${idx}`);
+  });
+
+  for (let n = 0; n < result.data.nodes.length; n++) {
+    const node = result.data.nodes[n];
+    const transitions = node.transitions;
+    if (!transitions || transitions.length === 0) continue;
+
+    const seenIds = new Set<string>();
+    const seenTargets = new Set<string>();
+    for (let ti = 0; ti < transitions.length; ti++) {
+      const t = transitions[ti];
+      const loc = `nodes[${n}].transitions[${ti}]`;
+      if (seenIds.has(t.id)) {
+        return { ok: false, error: `invalid: ${loc}: duplicate transition id "${t.id}"` };
+      }
+      seenIds.add(t.id);
+      if (t.target !== '*') {
+        const dests = targetDestinations.get(t.target);
+        if (!dests || dests.size === 0) {
+          return {
+            ok: false,
+            error: `invalid: ${loc}.target "${t.target}" does not reference a known node name or agent slot name`,
+          };
+        }
+        if (dests.size > 1) {
+          return {
+            ok: false,
+            error: `invalid: ${loc}.target "${t.target}" is ambiguous — matches ${dests.size} destinations`,
+          };
+        }
+      }
+      if (seenTargets.has(t.target)) {
+        return {
+          ok: false,
+          error: `invalid: ${loc}: duplicate transition target "${t.target}" within node "${node.name}"`,
+        };
+      }
+      seenTargets.add(t.target);
+      if (t.hookId !== undefined && !transitionHookIds.has(t.hookId)) {
+        return {
+          ok: false,
+          error: `invalid: ${loc}.hookId "${t.hookId}" does not reference a known hook`,
+        };
+      }
+    }
+  }
+
+  // Handoff transitions are a version-3 feature. A v1/v2 workflow must
+  // not carry them, or the version compatibility gate is meaningless: a v2-only
+  // client's Zod node schema would silently strip the unknown `transitions`
+  // field, importing lossily. Reject via the version path instead.
+  if (version < 3) {
+    for (let n = 0; n < result.data.nodes.length; n++) {
+      const transitions = result.data.nodes[n].transitions;
+      if (transitions && transitions.length > 0) {
+        return {
+          ok: false,
+          error:
+            `invalid: nodes[${n}].transitions require version 3 ` +
+            `(this workflow declares version ${version})`,
+        };
       }
     }
   }

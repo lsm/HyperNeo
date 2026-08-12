@@ -24,6 +24,12 @@
  *      duplicates-PREVENTED leading indicator; a spike means crashes-during-turn
  *      are rising. (A fresh claim feeds an `enqueued` row — counted in
  *      `feedsObserved`, not here, so it cannot dilute the skip signal.)
+ *      `turn_terminated` is a sub-signal of `alreadyConsumed`: the consumed
+ *      message's turn already produced a terminal result, so the job was
+ *      completed instead of re-driven (the "zombie turn" self-heal). A spike
+ *      means stale-consumed turns whose queries leaked are being detected and
+ *      freed — the deadlock this counter watches for would otherwise park every
+ *      new message as a steer behind the held active-turn slot.
  *  (c) residual-window latency — time from the SDK-consume signal (onSent) to
  *      the persisted consumed-flip, P50/P99. This is the exposure surface for a
  *      crash-duplicate; item 12's synchronous flip keeps it sub-ms.
@@ -32,7 +38,11 @@
  * restart. Every structure is bounded so a long-running daemon does not grow it.
  */
 
-export type ReclaimSkipOutcome = 'alreadyConsumed' | 'alreadySubmitted' | 'noContent';
+export type ReclaimSkipOutcome =
+  | 'alreadyConsumed'
+  | 'alreadySubmitted'
+  | 'noContent'
+  | 'turn_terminated';
 
 export interface DeliveryMetricsSnapshot {
   /** Total SDK handoffs observed (plain counter, O(1) memory). */
@@ -84,6 +94,7 @@ export class DeliveryMetrics {
     alreadyConsumed: 0,
     alreadySubmitted: 0,
     noContent: 0,
+    turn_terminated: 0,
   };
   private residualWindows: number[] = [];
 

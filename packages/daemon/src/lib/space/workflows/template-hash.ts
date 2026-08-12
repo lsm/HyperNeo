@@ -1,14 +1,14 @@
 /**
- * ⚠️ IMPORTANT: GATE/CHANNEL FINGERPRINT RULES ⚠️
+ * ⚠️ IMPORTANT: WORKFLOW FINGERPRINT RULES ⚠️
  *
  * This module computes a canonical hash of workflow templates for drift detection.
  * The fingerprint is derived from the FULL workflow structure — all hook fields,
- * gate fields, channel fields, and node prompt fields are automatically included via exhaustive
+ * channel fields, and node prompt fields are automatically included via exhaustive
  * JSON serialization.
  *
- * When adding new fields to Gate, GatePoll, Channel, or WorkflowNodeAgent types,
- * NO changes to this file are needed — the exhaustive serialization ensures
- * new fields are captured automatically.
+ * When adding new fields to Channel or WorkflowNodeAgent types, NO changes to
+ * this file are needed — the exhaustive serialization ensures new fields are
+ * captured automatically.
  *
  * Hash changes trigger template re-seeding on daemon restart. This is expected
  * and correct behavior — it ensures all spaces get the latest template structure.
@@ -17,7 +17,7 @@
  * Always use JSON.stringify on the relevant subset of each object.
  */
 
-import type { GateField, GateFieldCheck, SpaceWorkflow } from '@hyperneo/shared';
+import type { SpaceWorkflow } from '@hyperneo/shared';
 import { createHash } from 'node:crypto';
 
 /**
@@ -33,12 +33,6 @@ interface WorkflowFingerprint {
    * All structurally-meaningful fields are included automatically.
    */
   channels: string[];
-  /**
-   * Exhaustive JSON serialization of each gate.
-   * All structurally-meaningful fields (id, requiredLevel, resetOnCycle, fields,
-   * script, poll) are included automatically — no hand-crafted string format.
-   */
-  gates: string[];
   /**
    * Exhaustive JSON serialization of each workflow hook.
    * All structurally-meaningful fields are included automatically.
@@ -72,23 +66,6 @@ interface WorkflowFingerprint {
    */
   nodePostApproval: string[];
   /**
-   * Node-level Codex approval flags, sorted. Format: `<nodeName>|true`.
-   * Detects changes to the requireCodexApproval toggle so drift detection
-   * catches user edits and template changes that flip this flag.
-   */
-  nodeCodexFlags: string[];
-  /**
-   * Node-level Codex poll intervals, sorted. Format: `<nodeName>|<ms>`.
-   * Empty string when absent. Detects changes to custom poll intervals.
-   */
-  nodeCodexPollIntervals: string[];
-  /**
-   * Node-level Codex review bot timeouts (seconds), sorted. Format:
-   * `<nodeName>|<seconds>`. Empty string when absent. Detects changes to
-   * custom per-node codex reaction-check timeouts.
-   */
-  nodeCodexTimeouts: string[];
-  /**
    * Legacy workflow-level post-approval route. Kept in the fingerprint so
    * clearing old template-level routes also triggers a re-stamp.
    */
@@ -96,40 +73,10 @@ interface WorkflowFingerprint {
 }
 
 /**
- * Locale-independent string comparison for deterministic ordering.
+ * Compare two strings for deterministic sorting (used by transitions below).
  */
 function compareStrings(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
-}
-
-/**
- * Total-order comparator for gate fields. Sorts by name, then type, then
- * serialized check — ensuring deterministic ordering even when field names
- * are duplicated (which is not enforced by runtime validation).
- */
-function compareGateFields(a: GateField, b: GateField): number {
-  return (
-    compareStrings(a.name, b.name) ||
-    compareStrings(a.type, b.type) ||
-    compareStrings(JSON.stringify(serializeCheck(a.check)), JSON.stringify(serializeCheck(b.check)))
-  );
-}
-
-/**
- * Serialize a gate field check into a deterministic object with keys in fixed
- * order. This avoids reliance on JSON key insertion order from imported objects,
- * which can vary across parse/serialize round-trips.
- */
-function serializeCheck(check: GateFieldCheck): Record<string, unknown> {
-  if (check.op === 'count') {
-    return { op: 'count', match: check.match, min: check.min };
-  }
-  // Scalar checks: op is always present; value only when defined.
-  const result: Record<string, unknown> = { op: check.op };
-  if ('value' in check && check.value !== undefined) {
-    result.value = check.value;
-  }
-  return result;
 }
 
 /**
@@ -152,43 +99,10 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
       return JSON.stringify({
         from: c.from,
         to: normalizedTo,
-        gateId: c.gateId ?? null,
         maxCycles: c.maxCycles ?? null,
         label: c.label ?? null,
       });
     })
-    .sort();
-
-  // Exhaustive JSON serialization of gates — all structurally-meaningful fields
-  // included automatically. No hand-crafted string format that can drift from
-  // the type definition.
-  const gates = (workflow.gates ?? [])
-    .map((g) =>
-      JSON.stringify({
-        id: g.id,
-        requiredLevel: g.requiredLevel ?? 0,
-        resetOnCycle: g.resetOnCycle,
-        fields: (g.fields ?? [])
-          .slice()
-          .sort(compareGateFields)
-          .map((f) => ({
-            name: f.name,
-            type: f.type,
-            writers: [...f.writers].sort(),
-            check: serializeCheck(f.check),
-          })),
-        features: g.features ?? null,
-        script: g.script ? g.script.source : null,
-        poll: g.poll
-          ? {
-              intervalMs: g.poll.intervalMs,
-              target: g.poll.target,
-              messageTemplate: g.poll.messageTemplate ?? '',
-              script: g.poll.script,
-            }
-          : null,
-      })
-    )
     .sort();
 
   const hooks = (workflow.hooks ?? []).map((hook) => JSON.stringify(hook)).sort();
@@ -256,35 +170,40 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
     )
     .sort();
 
-  // Serialize node-level Codex approval flags.
-  const nodeCodexFlags = workflow.nodes
-    .filter((n) => n.requireCodexApproval)
-    .map((n) => `${n.name}|true`)
-    .sort();
-
-  // Serialize node-level Codex poll intervals.
-  const nodeCodexPollIntervals = workflow.nodes
-    .filter((n) => n.codexPollIntervalMs)
-    .map((n) => `${n.name}|${n.codexPollIntervalMs}`)
-    .sort();
-
-  // Serialize node-level Codex review bot timeouts (seconds).
-  const nodeCodexTimeouts = workflow.nodes
-    .filter((n) => n.codexTimeoutSeconds)
-    .map((n) => `${n.name}|${n.codexTimeoutSeconds}`)
-    .sort();
-
   // Serialize legacy workflow-level post-approval route (include requirePrMerge).
   const legacyPostApproval = workflow.postApproval
     ? `${workflow.postApproval.targetAgent}|${workflow.postApproval.instructions ?? ''}|${workflow.postApproval.requirePrMerge ? '1' : '0'}`
     : '';
+
+  // Serialize node-level handoff transitions (the first-class handoff contract)
+  // so a change to a node's declared outbound transitions is detected as drift
+  // and re-stamped into installed spaces via mergeNodeStructuralFieldsFromTemplate.
+  // Only emitted when a node declares at least one transition. Each transition is
+  // serialized as an explicit ordered shape (not the raw object) and the per-node
+  // list is sorted by id so reordering transitions in the editor does not produce
+  // false drift — same canonicalization approach used for gates/channels above.
+  const nodeTransitions = workflow.nodes
+    .filter((n) => n.transitions && n.transitions.length > 0)
+    .map((n) => {
+      const serialized = n
+        .transitions!.slice()
+        .sort((a, b) => compareStrings(a.id, b.id))
+        .map((t) => ({
+          id: t.id,
+          target: t.target,
+          label: t.label ?? null,
+          hookId: t.hookId ?? null,
+          maxCycles: t.maxCycles ?? null,
+        }));
+      return `${n.name}|${JSON.stringify(serialized)}`;
+    })
+    .sort();
 
   return {
     description: workflow.description ?? '',
     instructions: workflow.instructions ?? '',
     nodeNames,
     channels,
-    gates,
     hooks,
     nodePrompts,
     // Only emitted when non-empty — see the comment on the declaration above.
@@ -299,10 +218,8 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
       : {}),
     completionAutonomyLevel: workflow.completionAutonomyLevel,
     nodePostApproval,
-    nodeCodexFlags,
-    nodeCodexPollIntervals,
-    nodeCodexTimeouts,
     legacyPostApproval,
+    ...(nodeTransitions.length > 0 ? { nodeTransitions } : {}),
   };
 }
 
