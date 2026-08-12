@@ -299,6 +299,19 @@ export class HandoffExecutor {
       );
     }
 
+    // 3b. Reject `data` keys the transition does not declare a shape for. The
+    //     contract requires data keys to come from the bound gate's writable
+    //     fields or the hook's template fields; a transition with neither a
+    //     gate nor a hook accepts NO structured keys (gate-bound keys are
+    //     validated against the gate in commitGate below).
+    const dataKeys = operation.data ? Object.keys(operation.data) : [];
+    if (dataKeys.length > 0 && !transition.gateId && !transition.hookId) {
+      return this.blocked(
+        'resolve_target',
+        `Transition "${transition.id}" declares no gate or hook, so it accepts no handoff data keys (got: ${dataKeys.join(', ')}).`
+      );
+    }
+
     // 4. Authorize the declared channel topology (when declared).
     const resolver = new ChannelResolver(workflow.channels ?? []);
     if (!resolver.isEmpty()) {
@@ -810,7 +823,16 @@ export class HandoffExecutor {
     let executions = this.readLiveExecutions();
     const sessionsFor = (agentName: string) =>
       executions.filter(
-        (e) => e.agentName === agentName && e.agentSessionId && e.agentSessionId !== fromSessionId
+        (e) =>
+          e.agentName === agentName &&
+          e.agentSessionId &&
+          e.agentSessionId !== fromSessionId &&
+          // Exclude stale executions: a pending/cancelled row can retain a dead
+          // agentSessionId (e.g. after a spawn retry); injecting into it would
+          // skip activation and hit a failed session. Mirrors the production
+          // activation path's status filter.
+          e.status !== 'pending' &&
+          e.status !== 'cancelled'
       );
 
     for (const agentName of targetSlots) {

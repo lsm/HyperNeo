@@ -384,6 +384,28 @@ describe('HandoffExecutor: transition resolution', () => {
     expect(result.stage).toBe('resolve_target');
     expect(result.reason).toContain("sender's own node");
   });
+
+  test('rejects data keys when the transition declares no gate or hook', async () => {
+    const workflow = makeWorkflow({
+      nodes: [
+        node('n-coding', 'coding', 'coder', [{ id: 'to-review', target: 'review' }]),
+        node('n-review', 'review', 'reviewer'),
+      ],
+      channels: [{ id: 'ch', from: 'coding', to: 'review' }],
+    });
+    const executor = makeExecutor(ctx, workflow);
+
+    const result = await executor.execute({
+      fromAgentName: 'coder',
+      fromSessionId: 'session-coder',
+      workflowNodeId: 'n-coding',
+      operation: { target: 'review', summary: 'go', data: { rogue: 1 } },
+    });
+
+    expect(result.status).toBe('blocked');
+    expect(result.stage).toBe('resolve_target');
+    expect(result.reason).toContain('no gate or hook');
+  });
 });
 
 describe('HandoffExecutor: channel authorization', () => {
@@ -965,6 +987,37 @@ describe('HandoffExecutor: queued activation', () => {
     expect(result.queued[0].agentName).toBe('reviewer');
     expect(result.delivered).toHaveLength(0);
     expect(ctx.activations).toContain('reviewer');
+  });
+
+  test('does not deliver to a stale (cancelled) execution session', async () => {
+    const workflow = makeWorkflow({
+      nodes: [
+        node('n-coding', 'coding', 'coder', [{ id: 'to-review', target: 'review' }]),
+        node('n-review', 'review', 'reviewer'),
+      ],
+      channels: [{ id: 'ch', from: 'coding', to: 'review' }],
+    });
+    // A cancelled execution retains a dead session id; it must not be selected.
+    const repo = new NodeExecutionRepository(ctx.db);
+    const stale = repo.createOrIgnore({
+      workflowRunId: ctx.runId,
+      workflowNodeId: 'n-review',
+      agentName: 'reviewer',
+      agentSessionId: 'session-stale',
+      status: 'cancelled',
+    });
+    repo.update(stale.id, { agentSessionId: 'session-stale', status: 'cancelled' });
+    const executor = makeExecutor(ctx, workflow); // no queue → fails rather than injects
+
+    const result = await executor.execute({
+      fromAgentName: 'coder',
+      fromSessionId: 'session-coder',
+      workflowNodeId: 'n-coding',
+      operation: { target: 'review', summary: 'go' },
+    });
+
+    expect(result.status).toBe('failed');
+    expect(ctx.injected).toHaveLength(0); // never injected into the stale session
   });
 });
 
