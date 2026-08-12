@@ -434,6 +434,7 @@ interface ProposalValidation {
   ownerTaskId: string | null;        // immutable provenance: creating task
   currentOwnerLeaseId: string | null; // audited, transferable: the lease that currently owns this attempt (for orphan adoption)
   currentOwnerTaskId: string | null;  // audited, transferable: the task that currently owns this attempt
+  ownershipTransfers: { fromLeaseId: string | null; toLeaseId: string; fromTaskId: string | null; toTaskId: string; actor: string; transferredAt: number }[]; // append-only audit trail of every adoption/transfer
   validatingEpisodeId: string;
   metricSnapshotIds: string[];
   expected: string;
