@@ -26,7 +26,6 @@ const OUT_DIR = process.argv[2] ?? join(dirname(import.meta.path), 'real-snapsho
 const TEMPLATES = [
   'Coding Workflow',
   'Coding with QA Workflow',
-  'Plan & Decompose Workflow',
   'Research Workflow',
   'Review-Only Workflow',
 ] as const;

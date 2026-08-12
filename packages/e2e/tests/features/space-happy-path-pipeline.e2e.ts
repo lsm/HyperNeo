@@ -151,9 +151,7 @@ test.describe('Space Happy Path Pipeline (Task-First)', () => {
     }
   });
 
-  test('seeded agents/workflows are present and Plan Review node carries 4 reviewer slots', async ({
-    page,
-  }) => {
+  test('seeded agents and workflows are present', async ({ page }) => {
     // Navigate to the space configure view where Agents/Workflows tabs are available.
     await gotoAndWaitForConnection(page, `/space/${spaceId}/configure`);
     await page.waitForURL(`/space/${spaceId}/configure`, { timeout: 10000 });
@@ -172,30 +170,9 @@ test.describe('Space Happy Path Pipeline (Task-First)', () => {
     await expect(page.getByText('QA', { exact: true }).first()).toBeVisible({ timeout: 5000 });
 
     await page.getByTestId('space-configure-tab-workflows').click();
-    await expect(page.getByText('Plan & Decompose Workflow', { exact: true })).toBeVisible({
+    await expect(page.getByText('Coding with QA', { exact: true })).toBeVisible({
       timeout: 5000,
     });
-
-    const reviewSlotCount = await page.evaluate(async () => {
-      const hub = window.__messageHub || window.appState?.messageHub;
-      if (!hub?.request) throw new Error('MessageHub not available');
-      const sid = window.location.pathname.split('/')[2];
-      // list returns summaries — fetch full detail to read nodes
-      const list = (await hub.request('spaceWorkflow.list', { spaceId: sid })) as {
-        workflows: Array<{ id: string; name: string }>;
-      };
-      const planDecompose = list.workflows.find((w) => w.name === 'Plan & Decompose Workflow');
-      if (!planDecompose) return 0;
-      const detail = (await hub.request('spaceWorkflow.get', {
-        spaceId: sid,
-        id: planDecompose.id,
-      })) as {
-        workflow: { nodes: Array<{ name: string; agents?: Array<{ name: string }> }> } | null;
-      };
-      const reviewNode = detail.workflow?.nodes.find((n) => n.name === 'Plan Review');
-      return reviewNode?.agents?.length ?? 0;
-    });
-    expect(reviewSlotCount).toBe(4);
   });
 
   test('workflow run task opens task route and shows thread activity', async ({ page }) => {

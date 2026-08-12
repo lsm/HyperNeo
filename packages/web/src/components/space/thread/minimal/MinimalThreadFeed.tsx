@@ -23,7 +23,7 @@
  */
 
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
-import type { ActiveTurnSummary, ActivityEntry, ActorMessageDeliveryState } from '@hyperneo/shared';
+import type { ActiveTurnSummary, ActivityEntry, MessageDeliveryStatus } from '@hyperneo/shared';
 import {
   isSDKAssistantMessage,
   isSDKCompactBoundary,
@@ -318,7 +318,7 @@ interface MessageFeedTurn {
   /** Recipient session id — same role as `CompletedFeedTurn.sessionId`. */
   sessionId: string | null;
   /** User-message delivery state, shown as a small send-state badge. */
-  deliveryState?: ActorMessageDeliveryState | null;
+  deliveryState?: MessageDeliveryStatus | null;
   /** SDK message UUID, used to deep-link the slide-over. */
   highlightMessageUuid?: string;
   replacementStatus?: MessageReplacementStatus;

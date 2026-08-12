@@ -220,6 +220,26 @@ describe('InterruptHandler', () => {
       expect(callOrder).toEqual(['cancel', 'setInterrupted']);
     });
 
+    it('notifies the delivery feeds (sdk_messages + job_queue) after cancelling deliveries (#862 review P1)', async () => {
+      // cancelForSessionWithMessages (raw DELETE job_queue) and
+      // markDeliveryFailedByUuid (raw UPDATE sdk_messages) write without a
+      // notify, so without the explicit notifyChange the queued/retrying badge
+      // would stay stuck after an interrupt until an unrelated write/reconnect.
+      const notifySpy = mock(() => {});
+      cancelForSessionSpy = mock(() => ['turn-uuid']);
+      mockDb = {
+        getJobQueueRepo: mock(() => ({ cancelForSessionWithMessages: cancelForSessionSpy })),
+        getSDKMessageRepo: mock(() => ({ markDeliveryFailedByUuid: markFailedSpy })),
+        notifyChange: notifySpy,
+      } as unknown as InterruptHandlerContext['db'];
+      handler = createHandler({ db: mockDb });
+
+      await handler.handleInterrupt();
+
+      expect(notifySpy).toHaveBeenCalledWith('sdk_messages', { sessionId: 'test-session-id' });
+      expect(notifySpy).toHaveBeenCalledWith('job_queue', { sessionId: 'test-session-id' });
+    });
+
     it('cancels durable deliveries even when the session is already idle', async () => {
       getStateSpy.mockReturnValue({ status: 'idle', phase: 'idle' });
       cancelForSessionSpy = mock(() => ['pre-claim-uuid']);

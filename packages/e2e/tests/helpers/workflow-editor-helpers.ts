@@ -278,21 +278,6 @@ export async function clickChannelEdge(editor: Locator, edgeIndex = 0): Promise<
 }
 
 /**
- * Add a gate to a channel via the channel relation config panel.
- * Precondition: the channel relation config panel must be open (call clickChannelEdge first).
- *
- * @param editor - Locator scoped to the `visual-workflow-editor` element
- */
-export async function addGateToChannel(editor: Locator): Promise<void> {
-  const panel = editor.getByTestId('channel-relation-config-panel');
-  // Click the "Add Gate" button in the channel edge config panel.
-  // Assert exactly one button matches to avoid ambiguity when multiple edges exist.
-  const addGateBtn = panel.getByTestId(/^channel-edge-add-gate-/);
-  await expect(addGateBtn).toHaveCount(1, { timeout: 3000 });
-  await addGateBtn.click();
-}
-
-/**
  * Close the channel relation config panel.
  *
  * @param editor - Locator scoped to the `visual-workflow-editor` element

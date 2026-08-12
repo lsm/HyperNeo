@@ -23,92 +23,19 @@
 import type {
   DeclarativeToolGuard,
   EventInterest,
-  Gate,
-  GateField,
-  GateScript,
   SpaceWorkflow,
-  WorkflowChannel,
   WorkflowNode,
   WorkflowNodeAgentOverride,
 } from '@hyperneo/shared';
-import { generateUUID, hasEnabledGateFeature, resolveNodeAgents } from '@hyperneo/shared';
+import { generateUUID } from '@hyperneo/shared';
 import { createHash } from 'node:crypto';
 import { Logger } from '../../logger';
 import { QA_SYSTEM_CONTRACT } from '../agents/system-contracts.ts';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
-import { isApprovalGate } from '../runtime/gate-features';
 import { CODER_OWNED_MERGE_INSTRUCTIONS } from './post-approval-merge-template.ts';
 import { computeWorkflowHash } from './template-hash.ts';
-import { migrateWorkflowGateProgressionToHooks } from './workflow-migration.ts';
-
-// ---------------------------------------------------------------------------
-// Gate writer validation
-// ---------------------------------------------------------------------------
-
-export function validateWorkflowTemplateGateWriters(workflow: SpaceWorkflow): string[] {
-  const errors: string[] = [];
-  const validWriters = new Set<string>(['*']);
-
-  for (const node of workflow.nodes) {
-    validWriters.add(node.name);
-    for (const agent of node.agents ?? []) {
-      validWriters.add(agent.name);
-    }
-  }
-
-  for (const gate of workflow.gates ?? []) {
-    for (const field of gate.fields ?? []) {
-      const loc = `${workflow.name}.gates.${gate.id}.fields.${field.name}.writers`;
-      validateGateFieldWriters(field, validWriters, loc, errors);
-    }
-  }
-
-  return errors;
-}
-
-function validateGateFieldWriters(
-  field: GateField,
-  validWriters: ReadonlySet<string>,
-  loc: string,
-  errors: string[]
-): void {
-  if (!Array.isArray(field.writers)) {
-    errors.push(`${loc}: must be an array`);
-    return;
-  }
-
-  // Built-in templates require automated writers; [] remains valid only for custom external-only gates.
-  if (field.writers.length === 0) {
-    errors.push(`${loc}: must contain at least one writer role`);
-    return;
-  }
-
-  for (const writer of field.writers) {
-    if (typeof writer !== 'string' || writer.trim().length === 0) {
-      errors.push(`${loc}: writer roles must be non-empty strings`);
-      continue;
-    }
-
-    if (!validWriters.has(writer)) {
-      errors.push(`${loc}: unknown writer role "${writer}"`);
-    }
-  }
-}
 
 const builtInSeederLog = new Logger('seed-built-in-workflows');
-
-const LEGACY_PR_READY_GATE_IDS = new Set([
-  'code-ready-gate',
-  'research-ready-gate',
-  'plan-pr-gate',
-  'code-pr-gate',
-]);
-const LEGACY_PR_READY_TEMPLATE_ROUTES = new Set([
-  'code-ready-gate:Coding:Review',
-  'research-ready-gate:Research:Review',
-  'plan-pr-gate:Planning:Plan Review',
-  'code-pr-gate:Coding:Review',
-]);
 
 // ---------------------------------------------------------------------------
 // Retired declarative tool guard: coder-role agents must not merge
@@ -136,11 +63,6 @@ const RETIRED_CODER_NO_MERGE_GUARD: DeclarativeToolGuard = {
 // ---------------------------------------------------------------------------
 // Template node ID constants (used as stable IDs for workflow nodes and startNodeId)
 // ---------------------------------------------------------------------------
-
-// Plan & Decompose node IDs
-const PD_PLANNING_NODE = 'tpl-pd-planning';
-const PD_PLAN_REVIEW_NODE = 'tpl-pd-plan-review';
-const PD_TASK_DISPATCHER_NODE = 'tpl-pd-task-dispatcher';
 
 /**
  * Review-posted gate.
@@ -184,24 +106,6 @@ function reviewerFeedbackProcedure(upstreamNodeName: string): string {
   );
 }
 
-const PD_PLANNING_PROMPT =
-  'You are the Planning node in a Plan & Decompose Workflow. Your role is to turn the user goal ' +
-  'into a concrete, decomposable plan that a Task Dispatcher can fan out into standalone tasks.\n\n' +
-  'Your plan must include:\n' +
-  '- Goal summary: what is being built, migrated, or delivered, in one paragraph\n' +
-  '- Work items: a numbered list of actionable items — each a unit small enough for one task, ' +
-  'with a clear title, 2-4 sentence description, and suggested priority (low/normal/high/urgent)\n' +
-  '- Dependencies: between work items (item B depends on item A)\n' +
-  '- Out of scope: what is intentionally not included\n' +
-  '- Open questions: anything that needs clarification before tasks are dispatched\n\n' +
-  'Write the plan to `plan.md` at the repo root, commit it, and open/update a PR targeting the ' +
-  'default branch. After the PR is open and mergeable, hand off to Plan Review by calling ' +
-  '`send_message(target="Plan Review", message="<short summary>", data: { pr_url: "<plan PR url>" })`. ' +
-  'The hook validates the PR is open and mergeable before Plan Review activates. Without this explicit ' +
-  '`pr_url` the send is blocked. Always re-supply ' +
-  '`data: { pr_url }` on every send to Plan Review — the hook runs on every send, so the ' +
-  'URL must be reasserted after every revision.';
-
 const CODEX_REACTION_APPROVAL_GUIDANCE =
   'After posting your approval review, verify the Codex review bot reaction status ' +
   'before closing or handing off. Use the run-scoped GraphQL reaction lookup ' +
@@ -226,79 +130,6 @@ const CODEX_REACTION_APPROVAL_GUIDANCE =
   '`+1` after the timeout window elapses, proceed only with a warning recorded in your ' +
   'result artifact. Do not close the task before the Codex bot has `+1` unless that ' +
   'timeout window has elapsed.';
-
-const PD_PLAN_REVIEW_PROMPT =
-  'You are one of four independent Plan Reviewers. Review the plan PR through your lens before ' +
-  'tasks are dispatched. Use the Reviewer System Contract for review quality and severity.\n\n' +
-  'Plan Review is not the end node: do not call approve_task or submit_for_approval. Your terminal ' +
-  'action is sending your `approvals` vote in the Task Dispatcher handoff data. Vote approved only for zero P0-P3 ' +
-  'lens findings; otherwise vote rejected and send actionable feedback to Planning.\n\n' +
-  CODEX_REACTION_APPROVAL_GUIDANCE +
-  '\n\n' +
-  'Procedure: read the PR diff with `gh pr diff` / `gh pr view`, post a visible PR review comment, then ' +
-  'send_message(target="Task Dispatcher", message: "<short summary>", data: { approvals: { "<your lens>": "approved" }, ' +
-  'pr_url: "<plan PR url>" }). Early approvals normally get a hook-blocked response; ' +
-  'the hook records each vote until all four approvals are present. On rejection, send ' +
-  '`{ "<your lens>": "rejected" }` to Planning with required changes.';
-
-const PD_TASK_DISPATCHER_PROMPT =
-  'You are the Task Dispatcher in a Plan & Decompose Workflow. You are the end node. ' +
-  'All four Plan Reviewers have approved the plan — your job is to fan the plan out into ' +
-  'standalone follow-up tasks using the `create_standalone_task` MCP tool. Each task ' +
-  'description must include stacked PR instructions so the downstream coder knows exactly ' +
-  'which base branch to target, forming a reviewable PR chain across the plan.\n\n' +
-  'Follow the terminal-action tool contract. approve_task/submit_for_approval are final ' +
-  'actions; use only after every downstream task is created and every returned task ID is ' +
-  'recorded in a result artifact. If dispatch is incomplete, send feedback to Planning and stop.\n\n' +
-  'Steps:\n' +
-  '1. Read the approved plan from the plan PR (`gh pr diff` or `gh pr view --json files`). ' +
-  'Identify each actionable work item in order and record its title, description, priority, ' +
-  'and acceptance criteria.\n' +
-  '2. Generate a stack prefix from the plan title: a short kebab-case slug derived from the ' +
-  'key words, e.g. "Migrate auth to JWT tokens" → "migrate-auth-jwt", "Add file upload ' +
-  'support" → "add-file-upload". All branches in the stack share this prefix so they are ' +
-  'grouped: `plan/<prefix>/<item-slug>`.\n' +
-  '3. Create standalone tasks in BOTTOM-UP order (item 1 first, then item 2, etc.) by ' +
-  'calling `create_standalone_task({ title, description, priority, depends_on })` for each. ' +
-  'ALWAYS pass `depends_on` as a structured array of prerequisite task IDs so the runtime can ' +
-  'enforce ordering, block dependents until prerequisites are done, and cascade-cancel on ' +
-  'failure. Do NOT rely on prose-only dependency hints — they are informational, not enforced.\n\n' +
-  '   - BOTTOM task (item 1): `depends_on: []` (no prerequisites).\n' +
-  '   - MIDDLE / TOP tasks (item N > 1): `depends_on: [<task_id of item N-1>]`.\n\n' +
-  'The `description` must contain the original plan item content PLUS a ' +
-  '"## Stacked PR Instructions" section appended at the end.\n\n' +
-  '   For the BOTTOM task (item 1 — PR base is `dev`):\n' +
-  '   ```\n' +
-  '   ## Stacked PR Instructions\n' +
-  '   This task is the bottom of a stacked PR chain. When creating your PR:\n' +
-  '   - Branch name: plan/<stack-prefix>/<item-1-slug>\n' +
-  '   - Base branch: dev\n' +
-  '   - PR body must include: "Part of stack: <plan title>. PR 1 of N (bottom)."\n' +
-  '   ```\n\n' +
-  "   For MIDDLE and TOP tasks (item N where N > 1 — PR base is the previous item's branch):\n" +
-  '   ```\n' +
-  '   ## Stacked PR Instructions\n' +
-  '   This task is part of a stacked PR chain. When creating your PR:\n' +
-  '   - Branch name: plan/<stack-prefix>/<item-N-slug>\n' +
-  '   - Base branch: plan/<stack-prefix>/<item-(N-1)-slug>\n' +
-  '   - PR body must include: "Part of stack: <plan title>. PR N of [total]."\n' +
-  '   - IMPORTANT: The task below you in the stack (task #<prev-task-id>) must have an ' +
-  'open or merged PR on branch plan/<stack-prefix>/<item-(N-1)-slug> before you create ' +
-  'yours. Verify with: `gh pr list --head plan/<stack-prefix>/<item-(N-1)-slug>`\n' +
-  '   - This task depends on task #<prev-task-id>. Start implementation only after ' +
-  "that task's branch exists.\n" +
-  '   ```\n\n' +
-  '4. Collect the returned task IDs. Build a stack map: ' +
-  '{ prefix, items: [{ title, task_id, branch, base_branch, position }] }.\n' +
-  '5. Call `save_artifact({ shape: "decision", summary: "Created N tasks from plan: <short list>", ' +
-  'data: { recommendation: "dispatched", created_task_ids: [<ids>], stack_prefix: "<prefix>", ' +
-  'stack_branches: ["plan/<prefix>/<item-1-slug>", "plan/<prefix>/<item-2-slug>", ...] } })` to record the dispatch outcome.\n' +
-  '6. Call `approve_task()` as your final action. If autonomy blocks self-close, call ' +
-  '`submit_for_approval({ reason: "..." })` instead.\n\n' +
-  'CRITICAL: Do NOT create branches, make commits, push to git, or open PRs yourself — ' +
-  "that is the downstream coder's job. Do NOT implement the work items yourself. " +
-  'Do NOT create fewer tasks than the plan requires. ' +
-  'If the plan is empty or ambiguous, send feedback to Planning before closing the task.';
 
 const REVIEW_THREAD_RESOLUTION_GUIDANCE =
   'After pushing fixes for review feedback, resolve ALL open GitHub review conversation ' +
@@ -747,32 +578,17 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
       validator: { kind: 'built_in', id: 'pr_ready' },
       authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
     },
-  ],
-  gates: [
     {
-      id: 'review-posted-gate',
+      id: 'review-posted',
+      enabled: true,
       label: 'Review Posted',
-      description:
-        'Reviewer has posted a GitHub review or PR comment since the workflow started. ' +
-        'Accepts a formal GitHub review as primary evidence; falls back to ' +
-        'PR conversation comments for same-account setups where GitHub blocks self-reviews. ' +
-        'Blocks the Review → Coding feedback channel until review evidence is visible on the PR.',
-      fields: [
-        {
-          name: 'pr_url',
-          type: 'string',
-          writers: ['Review'],
-          check: { op: 'exists' },
-        },
-        {
-          name: 'review_url',
-          type: 'string',
-          writers: ['Review'],
-          check: { op: 'exists' },
-        },
-      ],
+      sourceNode: 'Review',
+      targetNode: 'Coding',
+      method: 'send_message',
+      classification: 'validation',
+      order: 0,
       validator: { kind: 'built_in', id: 'review_posted' },
-      resetOnCycle: true,
+      authorizedCallers: [{ sourceNode: 'Review' }],
     },
   ],
   channels: [
@@ -784,7 +600,6 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
     {
       from: 'Review',
       to: 'Coding',
-      gateId: 'review-posted-gate',
       maxCycles: 5,
       label: 'Review → Coding (changes requested)',
     },
@@ -965,230 +780,6 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 };
 
 /**
- * Plan & Decompose Workflow
- *
- * Three-node graph: Planner → 4-Reviewer Plan Review → Task Dispatcher.
- * Useful for multi-task goals ("build X feature", "migrate Y system") that
- * should be broken into smaller standalone tasks before any coding starts.
- *
- * Main progression:
- *   Planning → Plan Review (send_message hook validates plan PR is open/mergeable)
- *   Plan Review → Task Dispatcher (plan-approval-gate: all 4 reviewers approve)
- *
- * Cyclic feedback:
- *   Plan Review → Planning (revision requests, maxCycles: 5)
- *
- * Task Dispatcher (end node) creates follow-up tasks via `create_standalone_task`
- * and calls `save_artifact({ shape: 'decision', data: { created_task_ids } })`
- * before `approve_task()` closes the run.
- */
-export const PLAN_AND_DECOMPOSE_WORKFLOW: SpaceWorkflow = {
-  id: '',
-  spaceId: '',
-  name: 'Plan & Decompose Workflow',
-  handle: 'plan-decompose-workflow',
-  description:
-    'Planning-only workflow that ends by creating follow-up tasks rather than writing code. ' +
-    'A Planner drafts a plan PR, four Reviewers review it through different lenses ' +
-    '(architecture, security, correctness, UX), and a Task Dispatcher fans the approved plan ' +
-    'out into standalone tasks via create_standalone_task. Each task description includes ' +
-    'stacked PR instructions — branch name, base branch, and dependency ordering — so ' +
-    'downstream coders automatically produce a reviewable PR chain (each PR targets the ' +
-    'branch of the item below it, bottom-up from dev). Use for multi-task goals that ' +
-    'should be broken down before any coding starts.',
-  nodes: [
-    {
-      id: PD_PLANNING_NODE,
-      name: 'Planning',
-      agents: [
-        {
-          agentId: 'Planner',
-          name: 'planner',
-          customPrompt: {
-            value:
-              PD_PLANNING_PROMPT +
-              '\n\n' +
-              'Expected inputs: A high-level goal from the workflow trigger.\n' +
-              'Expected outputs: `plan.md` committed to a PR branch, with an open mergeable PR.\n\n' +
-              'Steps:\n' +
-              '1. Analyze the goal and explore the relevant codebase\n' +
-              '2. Decompose the goal into concrete, small-enough work items\n' +
-              '3. Write `plan.md` — one section per work item with title, description, priority\n' +
-              '4. Commit and open/update a PR against the default branch\n' +
-              '5. Hand off to Plan Review by calling ' +
-              '`send_message(target="Plan Review", message="<short summary>", ' +
-              'data: { pr_url: "<plan PR url>" })`. The hook validates the PR is open and ' +
-              'mergeable before Plan Review activates. Skipping this call or an unready PR ' +
-              'blocks the send.\n' +
-              '6. Wait for Plan Review feedback. If re-activated, address each reviewer ' +
-              'comment, update `plan.md`, push to the same PR branch, then repeat step 5 ' +
-              '(re-supply `data: { pr_url }` — the hook runs on every send).',
-          },
-        },
-      ],
-    },
-    {
-      id: PD_PLAN_REVIEW_NODE,
-      name: 'Plan Review',
-      requireCodexApproval: true,
-      agents: [
-        {
-          agentId: 'Reviewer',
-          name: 'architecture-reviewer',
-          customPrompt: {
-            value:
-              PD_PLAN_REVIEW_PROMPT +
-              '\n\n' +
-              'Your lens: **Architecture**. Focus on module boundaries, coupling between work ' +
-              'items, long-term maintainability, and whether the decomposition will hold up as ' +
-              'the system grows. Flag items that smuggle unrelated concerns together or create ' +
-              'hidden cross-cutting dependencies.\n\n' +
-              'When voting, your lens key is `"architecture"` — send ' +
-              '`data: { approvals: { architecture: "approved" }, pr_url: "<plan PR url>" }` ' +
-              'to Task Dispatcher when approving. Send rejected votes with findings to Planning.',
-          },
-        },
-        {
-          agentId: 'Reviewer',
-          name: 'security-reviewer',
-          customPrompt: {
-            value:
-              PD_PLAN_REVIEW_PROMPT +
-              '\n\n' +
-              'Your lens: **Security**. Focus on the threat model, input validation, ' +
-              'authentication/authorization, secrets handling, and supply-chain risk for any ' +
-              'new dependencies. Flag items that expose user data, bypass existing auth checks, ' +
-              'or rely on untrusted input without validation.\n\n' +
-              'When voting, your lens key is `"security"` — send ' +
-              '`data: { approvals: { security: "approved" }, pr_url: "<plan PR url>" }` ' +
-              'to Task Dispatcher when approving. Send rejected votes with findings to Planning.',
-          },
-        },
-        {
-          agentId: 'Reviewer',
-          name: 'correctness-reviewer',
-          customPrompt: {
-            value:
-              PD_PLAN_REVIEW_PROMPT +
-              '\n\n' +
-              'Your lens: **Correctness**. Focus on edge cases, error handling, data ' +
-              'consistency across failures, idempotency, and race conditions. Flag items ' +
-              'whose acceptance criteria are vague, whose failure modes are unclear, or ' +
-              'whose tests would not catch the obvious regressions.\n\n' +
-              'When voting, your lens key is `"correctness"` — send ' +
-              '`data: { approvals: { correctness: "approved" }, pr_url: "<plan PR url>" }` ' +
-              'to Task Dispatcher when approving. Send rejected votes with findings to Planning.',
-          },
-        },
-        {
-          agentId: 'Reviewer',
-          name: 'ux-reviewer',
-          customPrompt: {
-            value:
-              PD_PLAN_REVIEW_PROMPT +
-              '\n\n' +
-              'Your lens: **UX**. Focus on user-visible behavior, API ergonomics, ' +
-              'documentation, error messages, and upgrade/migration experience for ' +
-              'existing users. Flag items that change public interfaces without describing ' +
-              'what users will see or how docs will be updated.\n\n' +
-              'When voting, your lens key is `"ux"` — send ' +
-              '`data: { approvals: { ux: "approved" }, pr_url: "<plan PR url>" }` ' +
-              'to Task Dispatcher when approving. Send rejected votes with findings to Planning.',
-          },
-        },
-      ],
-    },
-    {
-      id: PD_TASK_DISPATCHER_NODE,
-      name: 'Task Dispatcher',
-      agents: [
-        {
-          agentId: 'General',
-          name: 'task-dispatcher',
-          customPrompt: {
-            value:
-              PD_TASK_DISPATCHER_PROMPT +
-              '\n\n' +
-              'Expected inputs: An approved plan PR (all 4 reviewers sent approved votes).\n' +
-              'Expected outputs: One standalone task per actionable work item in the plan, ' +
-              'then save_artifact({ shape: "decision", summary: "Dispatched N tasks", data: { recommendation: "dispatched", created_task_ids: [...] } }).\n\n' +
-              'Tool contract:\n' +
-              "- `create_standalone_task` is available from the space's MCP server and " +
-              'creates a task owned by the same space as this workflow.',
-          },
-        },
-      ],
-    },
-  ],
-  startNodeId: PD_PLANNING_NODE,
-  endNodeId: PD_TASK_DISPATCHER_NODE,
-  tags: ['planning', 'decomposition'],
-  createdAt: 0,
-  updatedAt: 0,
-  // Plan & Decompose ends by creating follow-up tasks (no merges, no
-  // destructive actions) but does alter the task graph — match the default
-  // Coding Workflow tier.
-  completionAutonomyLevel: 3,
-  hooks: [
-    {
-      id: 'plan-pr-ready',
-      enabled: true,
-      label: 'PR Ready',
-      sourceNode: 'Planning',
-      targetNode: 'Plan Review',
-      method: 'send_message',
-      classification: 'validation',
-      order: 0,
-      validator: { kind: 'built_in', id: 'pr_ready' },
-      authorizedCallers: [{ sourceNode: 'Planning', agentSlots: ['planner'] }],
-    },
-  ],
-  gates: [
-    {
-      id: 'plan-approval-gate',
-      label: 'Plan Approvals',
-      description:
-        'All four Plan Reviewers must approve the plan before Task Dispatcher activates. ' +
-        'Each reviewer writes to the `approvals` map with their lens name as the key ' +
-        '(architecture, security, correctness, ux) and the string `"approved"` as the ' +
-        "value. The auto-gate-write deep-merges map fields, so each reviewer's entry " +
-        'accumulates without overwriting earlier votes. Gate passes when ≥ 4 entries ' +
-        'have value `"approved"`. Note: `resetOnCycle: true` means all approvals are ' +
-        'cleared when Plan Review→Planning revision feedback fires — fresh votes are ' +
-        'collected after each plan revision because the plan diff has changed.',
-      fields: [
-        {
-          name: 'approvals',
-          type: 'map',
-          writers: ['Plan Review'],
-          check: { op: 'count', match: 'approved', min: 4 },
-        },
-      ],
-      resetOnCycle: true,
-    },
-  ],
-  channels: [
-    {
-      from: 'Planning',
-      to: 'Plan Review',
-      label: 'Planning → Plan Review',
-    },
-    {
-      from: 'Plan Review',
-      to: 'Task Dispatcher',
-      gateId: 'plan-approval-gate',
-      label: 'Plan Review → Task Dispatcher',
-    },
-    {
-      from: 'Plan Review',
-      to: 'Planning',
-      maxCycles: 5,
-      label: 'Plan Review → Planning (revision requested)',
-    },
-  ],
-};
-
-/**
  * Coding with QA Workflow
  *
  * Three-node workflow for backend+frontend tasks that need explicit code review
@@ -1270,7 +861,6 @@ export const CODING_WITH_QA_WORKFLOW: SpaceWorkflow = {
     {
       id: 'tpl-stable-qa-review',
       name: 'Review',
-      requireCodexApproval: true,
       agents: [
         {
           agentId: 'Reviewer',
@@ -1303,23 +893,6 @@ export const CODING_WITH_QA_WORKFLOW: SpaceWorkflow = {
   // merge) runs only after that approval has already happened. Aligned with
   // Coding's autonomy tier (3).
   completionAutonomyLevel: 3,
-  gates: [
-    {
-      id: 'review-approval-gate',
-      label: 'Review',
-      description:
-        'Reviewer approved the PR for QA and the Codex review bot reaction check passed or timed out.',
-      fields: [
-        {
-          name: 'approved',
-          type: 'boolean',
-          writers: ['Review', 'reviewer'],
-          check: { op: '==', value: true },
-        },
-      ],
-      resetOnCycle: true,
-    },
-  ],
   layout: {
     'tpl-stable-qa-coding': { x: 80, y: 160 },
     'tpl-stable-qa-review': { x: 420, y: 80 },
@@ -1334,7 +907,6 @@ export const CODING_WITH_QA_WORKFLOW: SpaceWorkflow = {
     {
       from: 'Review',
       to: 'QA',
-      gateId: 'review-approval-gate',
       label: 'Review → QA',
     },
     {
@@ -1397,228 +969,6 @@ export const CODING_WITH_QA_WORKFLOW: SpaceWorkflow = {
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
-
-/**
- * Returns the current gate script for a given built-in template name and gate ID.
- *
- * Gate scripts are stored in the `space_workflows.gates` JSON column at seed time.
- * When a template script is updated, existing workflow instances still carry the old
- * script from when they were seeded. Callers that need the **live** script (e.g. the
- * gate evaluator) should use this function to resolve the script at call time instead
- * of relying on the stored copy.
- *
- * Returns `undefined` when the template or gate is not found, or when the gate has
- * no script (field-only gate). Callers should fall back to the stored gate definition
- * in that case.
- */
-export function getBuiltInGateScript(templateName: string, gateId: string): GateScript | undefined {
-  const template = resolveBuiltInWorkflowTemplate(templateName);
-  if (!template) return undefined;
-  const gate = (template.gates ?? []).find((g) => g.id === gateId);
-  return gate?.script;
-}
-
-/**
- * Outcome of resolving a stored gate's script against its built-in template's
- * live definition. Reported by {@link resolveTemplateGateScript} and consumed
- * by the reload diagnostics at the gate-evaluation call sites.
- */
-export type TemplateGateScriptStatus =
-  /** The workflow was not seeded from a built-in template — no reload. */
-  | 'no-template'
-  /**
-   * The template defines no live script for this gate (or the gate is not
-   * reached via a template). Nothing to reload; the stored gate is used as-is.
-   */
-  | 'no-live-script'
-  /**
-   * The template carries a live script for this gate, but the stored gate has
-   * no script. The live script is NOT applied, so the template update silently
-   * fails to take effect until the workflow is resynced. Surfaced as a warning.
-   */
-  | 'live-ignored-no-stored'
-  /** The stored script matches the live template across all executable fields — no-op. */
-  | 'in-sync'
-  /** The live template script differs from the stored script — reloaded (drift). */
-  | 'reloaded';
-
-export interface ResolvedTemplateGateScript {
-  gate: Gate;
-  status: TemplateGateScriptStatus;
-}
-
-/**
- * Resolve the effective gate definition for evaluation, swapping in the live
- * built-in template's gate script whenever both the template and the stored
- * gate carry a script. This is the single source of truth for the "always use
- * the current template's gate script" reload behavior that was previously
- * inlined (and duplicated) at the two gate-evaluation sites
- * (channel-router `doEvaluateGate` and space-runtime restart-recovery).
- *
- * Effective-gate behavior is identical to the former inline logic: when both
- * scripts exist, the live template script is applied. The returned status is
- * purely diagnostic, distinguishing a real source change (`reloaded`) from a
- * no-op reload (`in-sync`) and — importantly — flagging the silent footgun
- * where a live script exists but the stored gate is scriptless
- * (`live-ignored-no-stored`).
- */
-export function resolveTemplateGateScript(
-  storedGate: Gate,
-  workflow: SpaceWorkflow
-): ResolvedTemplateGateScript {
-  if (!workflow.templateName) return { gate: storedGate, status: 'no-template' };
-  return applyTemplateGateScript(
-    storedGate,
-    getBuiltInGateScript(workflow.templateName, storedGate.id)
-  );
-}
-
-/**
- * Pure decision core of {@link resolveTemplateGateScript}: combine a stored
- * gate with an optional live template script. Extracted so the live-script
- * branches are unit-testable without mutating the built-in template registry.
- */
-export function applyTemplateGateScript(
-  storedGate: Gate,
-  liveScript: GateScript | undefined
-): ResolvedTemplateGateScript {
-  if (!liveScript) return { gate: storedGate, status: 'no-live-script' };
-  if (!storedGate.script) return { gate: storedGate, status: 'live-ignored-no-stored' };
-  // The effective gate substitutes the entire live script object, so a reload
-  // changes behavior whenever ANY executable field differs — not just `source`.
-  // Comparing interpreter/timeoutMs too surfaces operational changes (e.g. a
-  // timeout bump or interpreter switch) as reloads instead of mislabeling them
-  // in-sync.
-  const drifted = gateScriptsDiffer(liveScript, storedGate.script);
-  return {
-    gate: { ...storedGate, script: liveScript },
-    status: drifted ? 'reloaded' : 'in-sync',
-  };
-}
-
-/**
- * Whether two gate scripts differ in any field that affects execution
- * (`source`, `interpreter`, `timeoutMs`). Used to decide the reload diagnostic.
- */
-function gateScriptsDiffer(a: GateScript, b: GateScript): boolean {
-  return a.source !== b.source || a.interpreter !== b.interpreter || a.timeoutMs !== b.timeoutMs;
-}
-
-/**
- * Stable identity for a gate-script diagnostic, used to deduplicate emissions
- * across repeated gate evaluations (a persistent mismatch otherwise warns on
- * every retry/delivery attempt). Combines the run, gate, and status so a
- * status transition (e.g. after a resync) re-emits.
- */
-export function gateScriptDiagnosticKey(
-  runId: string | undefined,
-  gateId: string,
-  status: TemplateGateScriptStatus
-): string {
-  return `${runId ?? ''}|${gateId}|${status}`;
-}
-
-/**
- * Bounded dedup ledger for gate-script reload diagnostics. Gate evaluation runs
- * on every channel delivery and retries while blocked, so a persistent
- * mismatch (e.g. `live-ignored-no-stored`) would otherwise flood the logs. Each
- * (run, gate, status) diagnostic is emitted at most once; the ledger is capped
- * so a very long-lived process cannot grow it without bound — once the cap is
- * reached it stops recording and emits every call, degrading to the pre-dedup
- * behavior rather than consuming memory.
- */
-export class GateScriptDiagnosticLedger {
-  private readonly seen = new Set<string>();
-  private readonly cap: number;
-
-  constructor(capacity = 8192) {
-    this.cap = capacity;
-  }
-
-  /** Returns true the first time this key is seen (and records it). */
-  shouldEmit(key: string): boolean {
-    if (this.seen.has(key)) return false;
-    if (this.seen.size >= this.cap) return true;
-    this.seen.add(key);
-    return true;
-  }
-
-  /** Clear recorded keys. Intended for tests that need a deterministic ledger. */
-  reset(): void {
-    this.seen.clear();
-  }
-}
-
-/**
- * Process-wide shared ledger for gate-script reload diagnostics. Gate
- * evaluation runs across multiple transient {@link ChannelRouter} instances
- * (one per delivery in some paths) as well as long-lived ones, so the dedup
- * state must outlive any single router. Keys include the run id (globally
- * unique), so there is no cross-run collision; the ledger cap bounds memory.
- */
-export const sharedGateScriptDiagnosticLedger = new GateScriptDiagnosticLedger();
-
-/**
- * The statuses for which {@link logTemplateGateScriptReload} actually emits a
- * log line. Single source of truth so call sites can avoid consuming dedup
- * ledger capacity for the quiet statuses (`no-template` / `no-live-script` /
- * `in-sync`) that never log — otherwise ordinary traffic would fill the ledger
- * and a later mismatch would flood again.
- */
-const GATE_SCRIPT_EMITTING_STATUSES: ReadonlySet<TemplateGateScriptStatus> = new Set([
-  'live-ignored-no-stored',
-  'reloaded',
-]);
-
-/** Whether a status produces a log line in {@link logTemplateGateScriptReload}. */
-export function isGateScriptStatusEmitting(status: TemplateGateScriptStatus): boolean {
-  return GATE_SCRIPT_EMITTING_STATUSES.has(status);
-}
-
-/**
- * Minimal logger surface {@link logTemplateGateScriptReload} needs. Accepts the
- * daemon {@link Logger} or any compatible test double.
- */
-export interface TemplateGateScriptReloadLogger {
-  warn(...args: unknown[]): void;
-  debug(...args: unknown[]): void;
-}
-
-/**
- * Emit reload diagnostics for a resolved template gate script:
- * - `live-ignored-no-stored` (WARN): the template defines a script but the
- *   stored gate has none — an unambiguous footgun, since the template update
- *   cannot take effect without a resync.
- * - `reloaded` (DEBUG): the live template script differs from the stored one.
- *
- * Stays quiet for `no-template` / `no-live-script` / `in-sync`. Callers should
- * gate the dedup ledger on {@link isGateScriptStatusEmitting} so persistent
- * mismatches do not flood and quiet statuses do not consume ledger capacity.
- */
-export function logTemplateGateScriptReload(args: {
-  log: TemplateGateScriptReloadLogger;
-  status: TemplateGateScriptStatus;
-  templateName?: string;
-  gateId: string;
-  runId?: string;
-}): void {
-  const { log, status, templateName, gateId, runId } = args;
-  if (!isGateScriptStatusEmitting(status)) return;
-  const where = runId ? ` in run ${runId}` : '';
-  const tmpl = templateName ?? '?';
-  if (status === 'live-ignored-no-stored') {
-    log.warn(
-      `Gate "${gateId}"${where}: built-in template "${tmpl}" defines a gate script, but the stored ` +
-        'gate has no script — the template script update is NOT applied and will not take effect ' +
-        'until the workflow is resynced from the template.'
-    );
-    return;
-  }
-  log.debug(
-    `Gate "${gateId}"${where}: reloaded gate script from live template "${tmpl}" ` +
-      '(stored script differed from the template).'
-  );
-}
 
 /**
  * Returns all built-in workflow templates.
@@ -1688,10 +1038,6 @@ export function getBuiltInWorkflows(): SpaceWorkflow[] {
   // `default`-tagged workflow, so the stable Coding template is the default for
   // newly created AND upgraded spaces.
   //
-  // PLAN_AND_DECOMPOSE_WORKFLOW is tagged `planning` / `decomposition` (NOT
-  // `default`) so the LLM picks it explicitly for multi-task goals that should
-  // be broken down before coding starts.
-  //
   // Note: this ordering only affects *newly created* spaces — seedBuiltInWorkflows
   // adds missing templates to existing spaces rather than reordering them, so
   // upgraded spaces keep their historical created_at order (and rely on the
@@ -1699,22 +1045,10 @@ export function getBuiltInWorkflows(): SpaceWorkflow[] {
   const workflows = [
     CODING_WORKFLOW,
     CODING_WITH_QA_WORKFLOW,
-    PLAN_AND_DECOMPOSE_WORKFLOW,
     RESEARCH_WORKFLOW,
     REVIEW_ONLY_WORKFLOW,
   ];
-  const errors = workflows.flatMap(validateWorkflowTemplateGateWriters);
-  if (errors.length > 0) {
-    throw new Error(`Built-in workflow gate writer validation failed:\n${errors.join('\n')}`);
-  }
-  return workflows.map(
-    (workflow) =>
-      migrateWorkflowGateProgressionToHooks({
-        ...workflow,
-        templateName: workflow.name,
-        templateGates: workflow.gates ?? [],
-      }).workflow
-  );
+  return workflows;
 }
 
 export interface SeedBuiltInWorkflowsResult {
@@ -1725,7 +1059,7 @@ export interface SeedBuiltInWorkflowsResult {
    * PR 3/5 uses this path to land `postApproval` routes, updated
    * `completionAutonomyLevel`, and refreshed `templateHash` values onto
    * existing spaces without rewriting user-customisable fields (node
-   * UUIDs, custom prompt text, channels, gates), except for known retired
+   * UUIDs, custom prompt text, channels), except for known retired
    * built-in prompt text patched during restamp.
    */
   restamped: string[];
@@ -1753,15 +1087,7 @@ export interface SeedBuiltInWorkflowsResult {
  */
 export function mergeNodeStructuralFieldsFromTemplate(
   existingNodes: WorkflowNode[],
-  templateNodes: Pick<
-    WorkflowNode,
-    | 'name'
-    | 'agents'
-    | 'postApproval'
-    | 'requireCodexApproval'
-    | 'codexPollIntervalMs'
-    | 'codexTimeoutSeconds'
-  >[],
+  templateNodes: Pick<WorkflowNode, 'id' | 'name' | 'agents' | 'postApproval' | 'transitions'>[],
   resolveAgentId: (name: string) => string | undefined
 ): WorkflowNode[] {
   const templateNodesByName = new Map(templateNodes.map((node) => [node.name, node]));
@@ -1808,18 +1134,27 @@ export function mergeNodeStructuralFieldsFromTemplate(
     return {
       ...node,
       postApproval: templateNode ? templateNode.postApproval : node.postApproval,
-      requireCodexApproval: templateNode
-        ? templateNode.requireCodexApproval
-        : node.requireCodexApproval,
-      codexPollIntervalMs: templateNode
-        ? templateNode.codexPollIntervalMs
-        : node.codexPollIntervalMs,
-      // Preserve an existing operator-/RPC-configured codexTimeoutSeconds when
-      // the template does not explicitly set an override. Built-in templates
-      // leave this field undefined, so blindly taking templateNode.codexTimeoutSeconds
-      // would silently delete any non-default timeout on a seeded node during
-      // restamp and revert the Codex hook to the global default window.
-      codexTimeoutSeconds: templateNode?.codexTimeoutSeconds ?? node.codexTimeoutSeconds,
+      // Declared handoff transitions: overwrite from the template ONLY when it
+      // explicitly declares them, otherwise PRESERVE the node's existing value.
+      // When the template declares them, remap targets to the installed graph:
+      // NODE-name targets via remapTemplateChannelRef (a renamed node), SLOT-name
+      // targets via remapTransitionSlotTarget (a renamed slot, by position); only
+      // '*' is carried verbatim. hookId is an id, not a node ref, so it is
+      // carried verbatim.
+      transitions:
+        templateNode?.transitions && templateNode.transitions.length > 0
+          ? templateNode.transitions.map((t) => {
+              const isNodeTarget = templateNodes.some((n) => n.name === t.target);
+              return {
+                ...t,
+                target: isNodeTarget
+                  ? remapTemplateChannelRef(t.target, templateNodes, existingNodes)
+                  : t.target === '*'
+                    ? '*'
+                    : remapTransitionSlotTarget(t.target, templateNodes, existingNodes),
+              };
+            })
+          : node.transitions,
       agents: node.agents.map((agent) => {
         const key = `${node.name}::${agent.name}`;
         const templateAgent = templateAgentsByKey.get(key);
@@ -1890,119 +1225,6 @@ export function mergeNodeStructuralFieldsFromTemplate(
   });
 
   return [...mergedExistingNodes, ...(missingTemplateNodes as WorkflowNode[])];
-}
-
-/**
- * When a gate still carries the legacy `codex_review_bot` feature (preserved
- * during restamp for backward compatibility), set `requireCodexApproval: true`
- * on the source node(s) for that gate's channels so the visual editor toggle
- * reflects reality and the node-level config drives runtime injection.
- *
- * Also strips `codex_review_bot` from the gate features so the node toggle
- * becomes the single source of truth and can be disabled by unchecking it.
- */
-function migrateCodexFeatureToNodeToggle(
-  nodes: WorkflowNode[],
-  channels: WorkflowChannel[],
-  gates: Gate[]
-): { nodes: WorkflowNode[]; gates: Gate[] } {
-  // Only migrate gates that do not have a custom script. For scripted gates,
-  // dynamic injection is blocked so the node flag cannot replace the legacy
-  // feature; leaving them untouched preserves the legacy feature as the sole
-  // mechanism and keeps the checkbox as a single source of truth for
-  // non-scripted gates.
-  // Only migrate legacy features on approval gates — dynamic Codex injection
-  // requires isApprovalGate(), so migrating a non-approval gate would break it.
-  const codexGateIds = new Set(
-    gates
-      .filter((g) => !g.script && isApprovalGate(g) && hasEnabledGateFeature(g, 'codex_review_bot'))
-      .map((g) => g.id)
-  );
-  // Scripted approval gates with legacy codex: strip node toggles so the UI
-  // doesn't show a misleading enabled checkbox for gates where dynamic
-  // injection is blocked and the legacy feature is the actual mechanism.
-  const scriptedCodexGateIds = new Set(
-    gates
-      .filter((g) => g.script && isApprovalGate(g) && hasEnabledGateFeature(g, 'codex_review_bot'))
-      .map((g) => g.id)
-  );
-
-  const collectSourceNodes = (gateIdSet: Set<string>): Set<string> => {
-    const result = new Set<string>();
-    for (const channel of channels) {
-      if (!channel.gateId || !gateIdSet.has(channel.gateId)) continue;
-      if (channel.from === '*') {
-        for (const node of nodes) result.add(node.id);
-        continue;
-      }
-      const nodeByName = nodes.find((n) => n.name === channel.from);
-      if (nodeByName) {
-        result.add(nodeByName.id);
-        continue;
-      }
-      for (const node of nodes) {
-        try {
-          const agents = resolveNodeAgents(node);
-          if (agents.some((a) => a.name === channel.from)) {
-            result.add(node.id);
-          }
-        } catch {
-          // skip malformed nodes
-        }
-      }
-    }
-    return result;
-  };
-
-  const nodesToFlag = collectSourceNodes(codexGateIds);
-  const nodesToUnflag = collectSourceNodes(scriptedCodexGateIds);
-
-  // Also strip toggles for nodes connected to ANY scripted approval gate
-  // (even without a legacy codex_review_bot feature). Dynamic Codex injection
-  // is blocked for scripted approval gates, so a node toggle is misleading
-  // when the node sends through one.
-  const allScriptedApprovalGateIds = new Set(
-    gates.filter((g) => g.script && isApprovalGate(g)).map((g) => g.id)
-  );
-  for (const nodeId of collectSourceNodes(allScriptedApprovalGateIds)) {
-    nodesToUnflag.add(nodeId);
-  }
-
-  const needsNodeChange = nodesToFlag.size > 0 || nodesToUnflag.size > 0;
-  const migratedNodes = needsNodeChange
-    ? nodes.map((node) => {
-        if (nodesToUnflag.has(node.id)) {
-          const next = { ...node };
-          delete next.requireCodexApproval;
-          return next;
-        }
-        if (nodesToFlag.has(node.id)) {
-          return { ...node, requireCodexApproval: true };
-        }
-        return node;
-      })
-    : nodes;
-
-  const migratedGateIdsToStrip = new Set<string>();
-  for (const gateId of codexGateIds) {
-    const sources = collectSourceNodes(new Set([gateId]));
-    const hasUnflaggedSource = Array.from(sources).some((nodeId) => nodesToUnflag.has(nodeId));
-    if (!hasUnflaggedSource) migratedGateIdsToStrip.add(gateId);
-  }
-
-  const migratedGates = gates.map((gate) => {
-    if (!gate.features?.codex_review_bot) return gate;
-    // Preserve legacy feature on gates that cannot be replaced by dynamic
-    // approval-gate injection.
-    if (gate.script || gate.poll || !migratedGateIdsToStrip.has(gate.id)) return gate;
-    const { codex_review_bot: _ignored, ...restFeatures } = gate.features;
-    return {
-      ...gate,
-      features: Object.keys(restFeatures).length > 0 ? restFeatures : undefined,
-    };
-  });
-
-  return { nodes: migratedNodes, gates: migratedGates };
 }
 
 const CURRENT_CODING_WORKFLOW_PR_STEP_PROMPT =
@@ -2153,11 +1375,11 @@ const RETIRED_HARDCODED_FULLSTACK_CODING_STEP_PROMPT =
   '`save_artifact` alone will not open `code-pr-gate`\n';
 
 // Retired shared Codex approval guidance (pre codex-bot-rename + 2h timeout
-// fix). Used by patchKnownBuiltInPromptDrift to recognize persisted Plan
-// Review and Fullstack Review agent prompts that still cite `codex[bot]` and
-// the old "10 minutes" timeout, and swap them to the current guidance during
-// restamp. Without this, existing seeded spaces keep telling reviewers the
-// window is 10 minutes while the migrated gate/hook now blocks for 2 hours.
+// fix). Used by patchKnownBuiltInPromptDrift to recognize persisted Fullstack
+// Review agent prompts that still cite `codex[bot]` and the old "10 minutes"
+// timeout, and swap them to the current guidance during restamp. Without this,
+// existing seeded spaces keep telling reviewers the window is 10 minutes while
+// the migrated gate/hook now blocks for 2 hours.
 const RETIRED_CODEX_REACTION_APPROVAL_GUIDANCE =
   'After posting your approval review, verify codex[bot] reaction status before ' +
   'closing or handing off. Use `gh api repos/{owner}/{repo}/issues/{number}/reactions` ' +
@@ -2201,18 +1423,6 @@ const SHAPE_PR_LINK_REVIEW_ONLY =
   'save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } }) to record the PR';
 const RETIRED_TYPE_RESULT_PR_LINK_REVIEW_ONLY =
   'save_artifact({ type: "result", data: { pr_url: "<url>" } }) to save a result artifact';
-const SHAPE_DECISION_DISPATCHER_STACK =
-  'save_artifact({ shape: "decision", summary: "Created N tasks from plan: <short list>", ' +
-  'data: { recommendation: "dispatched", created_task_ids: [<ids>], stack_prefix: "<prefix>", ' +
-  'stack_branches: ["plan/<prefix>/<item-1-slug>", "plan/<prefix>/<item-2-slug>", ...] } })` to record the dispatch outcome';
-const RETIRED_TYPE_RESULT_DISPATCHER_STACK =
-  'save_artifact({ type: "result", append: true, summary: "Created N tasks from plan: <short list>", ' +
-  'created_task_ids: [<ids>], stack_prefix: "<prefix>", ' +
-  'stack_branches: ["plan/<prefix>/<item-1-slug>", "plan/<prefix>/<item-2-slug>", ...] })` to record the dispatch audit entry';
-const SHAPE_DECISION_DISPATCHER_SHORT =
-  'save_artifact({ shape: "decision", summary: "Dispatched N tasks", data: { recommendation: "dispatched", created_task_ids: [...] } })';
-const RETIRED_TYPE_RESULT_DISPATCHER_SHORT =
-  'save_artifact({ type: "result", append: true, created_task_ids: [...] })';
 const SHAPE_NOTE_QA_FAILED =
   '`save_artifact({ shape: "note", kind: "qa", key: "cycle-<N>", summary: "QA failed (cycle <N>): ..." })` to record the audit entry — a note, never a terminal decision, and keyed per cycle (<N> = this QA round, 1-based) so each failure cycle keeps its own repro evidence instead of overwriting the last. Do ';
 const RETIRED_TYPE_RESULT_QA_FAILED =
@@ -2340,16 +1550,6 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
   // Handoff-only swap for the pre-fix variant (covers the rare case where
   // guidance was already patched but handoff was not).
   [[CURRENT_FULLSTACK_REVIEW_HANDOFF_PROMPT, RETIRED_PRE_FIX_FULLSTACK_REVIEW_HANDOFF_PROMPT]],
-  // Plan Review procedure: the reviewer briefly used the authed `get_pr_diff`
-  // tool (now removed — the reviewer has bash again). Existing seeded spaces
-  // that carried the get_pr_diff line converge back to the gh-based procedure
-  // during restamp.
-  [
-    [
-      'Procedure: read the PR diff with `gh pr diff` / `gh pr view`, post a visible PR review comment, then ',
-      'Procedure: read the PR diff with the `get_pr_diff` tool, post a visible PR review comment, then ',
-    ],
-  ],
   // Post-approval redesign: the re-approval paragraph was APPENDED to the
   // Reviewer end-node prompts (Coding + Research) and the Fullstack QA end-node
   // prompt. Existing template-linked workflows retain the pre-redesign prompt
@@ -2372,8 +1572,6 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
     [SHAPE_PR_LINK, RETIRED_TYPE_RESULT_PR_LINK],
   ],
   [[SHAPE_PR_LINK_REVIEW_ONLY, RETIRED_TYPE_RESULT_PR_LINK_REVIEW_ONLY]],
-  [[SHAPE_DECISION_DISPATCHER_STACK, RETIRED_TYPE_RESULT_DISPATCHER_STACK]],
-  [[SHAPE_DECISION_DISPATCHER_SHORT, RETIRED_TYPE_RESULT_DISPATCHER_SHORT]],
   [[SHAPE_NOTE_QA_FAILED, RETIRED_TYPE_RESULT_QA_FAILED]],
   [[SHAPE_QA_ALL_GREEN, RETIRED_TYPE_RESULT_QA_ALL_GREEN]],
 ] as const;
@@ -2469,29 +1667,34 @@ function remapTemplateChannel(
   };
 }
 
-function removeLegacyPrReadyGateChannels(
-  channels: SpaceWorkflow['channels'],
+/**
+ * Remap a handoff transition's SLOT target from the template graph to the
+ * installed graph, mirroring `remapTemplateHookAgentSlots`: find the template
+ * node containing the slot, the corresponding installed node (handling node
+ * renames via `remapTemplateChannelRef`), then keep the slot name if it still
+ * exists, else map by position within the node. Falls back to the original
+ * target when no mapping is possible (the manager then flags a true deletion).
+ */
+function remapTransitionSlotTarget(
+  target: string,
   templateNodes: WorkflowNode[],
   existingNodes: WorkflowNode[]
-): SpaceWorkflow['channels'] {
-  const legacyRouteKeys = new Set(LEGACY_PR_READY_TEMPLATE_ROUTES);
-  for (const route of LEGACY_PR_READY_TEMPLATE_ROUTES) {
-    const [gateId, from, to] = route.split(':');
-    legacyRouteKeys.add(
-      `${gateId}:${remapTemplateChannelRef(from, templateNodes, existingNodes)}:${remapTemplateChannelRef(
-        to,
-        templateNodes,
-        existingNodes
-      )}`
-    );
-  }
-
-  return channels?.filter((channel) => {
-    const gateId = channel.gateId;
-    if (!gateId || !LEGACY_PR_READY_GATE_IDS.has(gateId)) return true;
-    const routeKey = `${gateId}:${channel.from}:${String(channel.to)}`;
-    return !legacyRouteKeys.has(routeKey);
-  });
+): string {
+  const templateNode = templateNodes.find((n) => n.agents.some((a) => a.name === target));
+  if (!templateNode) return target;
+  const installedNodeName = remapTemplateChannelRef(
+    templateNode.name,
+    templateNodes,
+    existingNodes
+  );
+  const installedNode =
+    existingNodes.find((n) => n.name === installedNodeName) ??
+    existingNodes.find((n) => n.id === templateNode.id);
+  if (!installedNode) return target;
+  if (installedNode.agents.some((a) => a.name === target)) return target;
+  const slotIndex = templateNode.agents.findIndex((a) => a.name === target);
+  const installedSlotName = slotIndex >= 0 ? installedNode.agents[slotIndex]?.name : undefined;
+  return installedSlotName ?? target;
 }
 
 const RETIRED_POST_APPROVAL_NODE = 'Post-Approval';
@@ -2537,9 +1740,8 @@ export const RETIRED_PR_MERGER_SLOT_PROMPT =
  * from a restamped row converging to a stable coder-owned template.
  *
  * The merge helpers (`mergeNodeStructuralFieldsFromTemplate`,
- * `mergeChannelsFromTemplate`, `mergeHooksFromTemplate`,
- * `mergeGateStructuralFieldsFromTemplate`) only ever ADD missing template
- * pieces — they never remove nodes/channels/hooks/gates that exist in the
+ * `mergeChannelsFromTemplate`, `mergeHooksFromTemplate`) only ever ADD missing
+ * template pieces — they never remove nodes/channels/hooks that exist in the
  * stored row but not in the template. So when the dedicated merger node was
  * removed from the built-in templates, seeded spaces that still carry it (plus
  * the Post-Approval↔* channels and any Post-Approval hooks) would keep them
@@ -2686,7 +1888,6 @@ export function mergeChannelsFromTemplate(
     return JSON.stringify({
       from: channel.from,
       to: normalizedTo,
-      gateId: channel.gateId ?? null,
     });
   };
 
@@ -2695,10 +1896,10 @@ export function mergeChannelsFromTemplate(
   );
 
   // In-place merge of structural channel fields (maxCycles, label) onto
-  // channels that already exist in the seeded workflow, mirroring the gate
-  // (writers/features) and node-agent (toolGuards) merges. Channels are
-  // structural topology: {from, to, gateId} is the stable match key and the
-  // template owns maxCycles + label. Propagating them keeps structural changes
+  // channels that already exist in the seeded workflow, mirroring the node-agent
+  // (toolGuards) merges. Channels are structural topology: {from, to} is the
+  // stable match key and the template owns maxCycles + label. Propagating them
+  // keeps structural changes
   // (e.g. raising a cyclic cap 6 → 50) landing on pre-existing spaces; without
   // this, the unconditional templateHash write would stamp the new hash while
   // leaving the old field values in place, then block any future fix from
@@ -2827,57 +2028,6 @@ function mergeHooksFromTemplate(
 }
 
 /** @internal Exported for testing. */
-export function mergeGateStructuralFieldsFromTemplate(
-  existingGates: Gate[] | undefined,
-  templateGates: Gate[] | undefined
-): Gate[] | undefined {
-  if (!templateGates) return existingGates;
-  if (!existingGates) return templateGates;
-
-  const templateGatesById = new Map(templateGates.map((gate) => [gate.id, gate]));
-  const existingGateIds = new Set(existingGates.map((gate) => gate.id));
-  const missingTemplateGates = templateGates.filter((gate) => !existingGateIds.has(gate.id));
-
-  return existingGates
-    .map((gate) => {
-      const templateGate = templateGatesById.get(gate.id);
-      if (!templateGate) return gate;
-
-      const templateFieldsByName = new Map(
-        (templateGate.fields ?? []).map((field) => [field.name, field])
-      );
-      const fields = (gate.fields ?? []).map((field) => {
-        const templateField = templateFieldsByName.get(field.name);
-        if (!templateField) return field;
-        return { ...field, writers: templateField.writers };
-      });
-
-      // Skip copying template features if the existing gate already has a custom
-      // script or poll, so feature-backed mechanisms do not silently override
-      // custom gate logic at runtime. When copying is allowed, propagate the
-      // template's features (including undefined when the template removed them).
-      // Preserve existing codex_review_bot feature during transition to node-level
-      // config so pre-existing workflows that relied on gate-level codex keep working.
-      const shouldCopyFeatures = !gate.script && !gate.poll;
-      let nextFeatures: Gate['features'] | undefined;
-      if (shouldCopyFeatures) {
-        if (templateGate.features) {
-          nextFeatures = { ...templateGate.features };
-        }
-        if (hasEnabledGateFeature(gate, 'codex_review_bot')) {
-          nextFeatures = { codex_review_bot: true, ...nextFeatures };
-        }
-      } else {
-        nextFeatures = gate.features;
-      }
-      return {
-        ...gate,
-        fields,
-        features: nextFeatures,
-      };
-    })
-    .concat(missingTemplateGates);
-}
 
 /**
  * Fields that the built-in seeder re-stamps when it detects template drift
@@ -2894,16 +2044,11 @@ export function mergeGateStructuralFieldsFromTemplate(
  *   (customPrompt, model, disabledSkillIds, etc.) are preserved. Template nodes
  *   missing from an existing workflow are appended so new terminal branches can
  *   land without replacing existing node IDs.
- * - Gate field `writers` are merged onto matching gate fields (by gate id +
- *   field name) so structural authorization changes land on pre-existing spaces.
- *   Gate `features` are copied from matching template gates so data-driven runtime
- *   checks land on pre-existing spaces. Missing template gates are appended.
- *   Existing checks, scripts, and gate topology remain untouched.
  * - Structural channel fields (maxCycles, label) are merged in-place onto channels matched by
- *   {from, to, gateId}, and missing template channels are appended so newly-added built-in
+ *   {from, to}, and missing template channels are appended so newly-added built-in
  *   branches become reachable on pre-existing spaces. This is how a raised cyclic cap (e.g.
  *   maxCycles 6 → 50) lands on pre-existing spaces instead of only newly-created ones. Like the
- *   other template-owned structural fields (completionAutonomyLevel, gate writers/features, node
+ *   other template-owned structural fields (completionAutonomyLevel, node
  *   toolGuards, hooks), built-in channel maxCycles/label are template-managed: a user-customized
  *   value (editable via the visual editor) is reset to the template value when drift triggers a
  *   re-stamp — clone to a custom (non-re-stamped) workflow for a persistent custom cap. Template
@@ -2918,7 +2063,6 @@ const RESTAMP_FIELDS = [
   'completionAutonomyLevel',
   'templateHash',
   'nodes(postApproval + toolGuards in-place + missing template nodes)',
-  'gates(field writers + features in-place + missing template gates)',
   'channels(maxCycles + label in-place on matched channels + missing template channels)',
   'hooks(template hooks)',
 ] as const;
@@ -3154,29 +2298,16 @@ export function seedBuiltInWorkflows(
           template.nodes,
           resolveAgentId
         );
-        const existingChannels = removeLegacyPrReadyGateChannels(
-          row.channels,
-          template.nodes,
-          row.nodes
-        );
         const mergedChannels = mergeChannelsFromTemplate(
-          existingChannels,
+          row.channels,
           template.channels,
           template.nodes,
           row.nodes
         );
-        const mergedGates = mergeGateStructuralFieldsFromTemplate(row.gates, template.gates);
-        const { nodes: migratedNodes, gates: migratedGates } = migrateCodexFeatureToNodeToggle(
-          mergedNodes,
-          mergedChannels ?? row.channels ?? [],
-          mergedGates ?? row.gates ?? []
-        );
-        const removedLegacyPrReadyChannels =
-          (existingChannels?.length ?? 0) !== (row.channels?.length ?? 0);
         const mergedHooks = mergeHooksFromTemplate(
           template.hooks,
           template.nodes,
-          migratedNodes,
+          mergedNodes,
           row.hooks
         );
         // The merge helpers above only ADD missing template pieces — they never
@@ -3186,7 +2317,7 @@ export function seedBuiltInWorkflows(
         // stable 2-node / 3-node coder-owned graph.
         const stripped = stripRetiredPostApproval({
           templateName: template.name,
-          nodes: migratedNodes,
+          nodes: mergedNodes,
           channels: mergedChannels,
           hooks: mergedHooks,
         });
@@ -3195,20 +2326,17 @@ export function seedBuiltInWorkflows(
         // missing template channels. Detect whether the merge changed anything
         // — added channels OR updated structural fields — so the result is
         // persisted even when the channel count is unchanged (e.g. raising a
-        // cyclic cap 6 → 50 on an already-seeded workflow). channelsChanged
-        // subsumes the new-channel and legacy-removal cases;
-        // stripped.channelsChanged covers the Validation Complete strip above.
-        const channelsChanged =
-          removedLegacyPrReadyChannels ||
-          JSON.stringify(mergedChannels) !== JSON.stringify(existingChannels);
-        const writeChannels = channelsChanged || stripped.channelsChanged;
+        // cyclic cap 6 → 50 on an already-seeded workflow).
+        const writeChannels =
+          JSON.stringify(mergedChannels) !== JSON.stringify(row.channels) ||
+          stripped.channelsChanged;
 
         // Stamp the hash of the ACTUALLY-merged row, then advance the stored
         // hash ONLY when the merge fully converged the row to the current
         // template (mergedHash === expectedHash). The merge above reconciles
-        // structural fields (nodes, channels, gates, hooks, post-approval,
-        // autonomy) and patches prompts that match known retired template text,
-        // but it deliberately preserves genuine user prompts, description, and
+        // structural fields (nodes, channels, hooks, post-approval, autonomy)
+        // and patches prompts that match known retired template text, but it
+        // deliberately preserves genuine user prompts, description, and
         // instructions. If those still differ from the template, stamping
         // `expectedHash` would falsely claim the row is fully up-to-date,
         // collapse `updateAvailable` to false, and permanently hide the
@@ -3223,7 +2351,6 @@ export function seedBuiltInWorkflows(
         const mergedHash = computeWorkflowHash({
           ...row,
           nodes: stripped.nodes,
-          gates: migratedGates,
           // computeWorkflowHash treats null/undefined identically (?? [], truthy
           // check), so normalizing to undefined just satisfies the SpaceWorkflow
           // shape — the hashed value matches the persisted row either way.
@@ -3239,7 +2366,6 @@ export function seedBuiltInWorkflows(
           // Built-ins now store routes on terminal nodes. Clear any legacy
           // workflow-level value while the node updater writes node routes.
           postApproval: null,
-          gates: migratedGates,
           hooks: stripped.hooks ?? null,
           nodes: stripped.nodes,
           ...(writeChannels ? { channels: stripped.channels } : {}),
@@ -3321,7 +2447,12 @@ export function seedBuiltInWorkflows(
           agentId: resolvedIds.get(a.agentId)!,
         })),
         ...(s.postApproval ? { postApproval: { ...s.postApproval } } : {}),
-        ...(s.requireCodexApproval ? { requireCodexApproval: true } : {}),
+        // Carry declared handoff transitions so a fresh install matches a
+        // re-stamped space when a template declares them. Targets reference
+        // node/agent names, which are unchanged on fresh install.
+        ...(s.transitions && s.transitions.length > 0
+          ? { transitions: s.transitions.map((t) => ({ ...t })) }
+          : {}),
       }));
 
       const startNodeId = nodeIdMap.get(template.startNodeId);
@@ -3356,7 +2487,6 @@ export function seedBuiltInWorkflows(
         channels: template.channels
           ? template.channels.map((ch) => ({ ...ch, id: ch.id ?? generateUUID() }))
           : undefined,
-        gates: template.gates ? [...template.gates] : undefined,
         hooks: template.hooks ? [...template.hooks] : undefined,
         layout: template.layout
           ? Object.fromEntries(

@@ -9,7 +9,6 @@ import type {
 import {
   resolveNodeAgents,
   validateChannels,
-  isGateWriterAuthorized,
   findChannel,
   getChannelsFromNode,
   getChannelsToNode,
@@ -215,26 +214,6 @@ describe('validateChannels', () => {
     expect(errors.some((e) => e.includes('NonExistent'))).toBe(true);
   });
 
-  test('returns error when gate is referenced by more than one channel', () => {
-    const workflow = makeWorkflow({
-      nodes: [
-        { id: 'n1', name: 'Code', agents: [{ agentId: 'agent-coder-id', name: 'coder' }] },
-        { id: 'n2', name: 'Review', agents: [{ agentId: 'agent-reviewer-id', name: 'reviewer' }] },
-        {
-          id: 'n3',
-          name: 'QA',
-          agents: [{ agentId: 'agent-security-id', name: 'qa' }],
-        },
-      ],
-      channels: [
-        { id: 'ch-1', from: 'Code', to: 'Review', gateId: 'shared-gate' },
-        { id: 'ch-2', from: 'Code', to: 'QA', gateId: 'shared-gate' },
-      ],
-    });
-    const errors = validateChannels(workflow, allAgents);
-    expect(errors.some((e) => e.includes('shared-gate'))).toBe(true);
-  });
-
   test('returns error when channel id is missing', () => {
     const workflow = makeWorkflow({
       nodes: [
@@ -287,36 +266,6 @@ describe('validateChannels', () => {
     });
     const errors = validateChannels(workflow, allAgents);
     expect(errors).toEqual([]);
-  });
-});
-
-// ============================================================================
-// isGateWriterAuthorized — node-level gate write authorization
-// ============================================================================
-
-describe('isGateWriterAuthorized', () => {
-  const channel = makeChannel({ from: 'Code', to: 'Review' });
-
-  test('empty writers → external-only gate, no agent authorized', () => {
-    expect(isGateWriterAuthorized('Code', channel, [])).toBe(false);
-    expect(isGateWriterAuthorized('Review', channel, [])).toBe(false);
-  });
-
-  test("writers: ['*'] → any node authorized", () => {
-    expect(isGateWriterAuthorized('Code', channel, ['*'])).toBe(true);
-    expect(isGateWriterAuthorized('Review', channel, ['*'])).toBe(true);
-    expect(isGateWriterAuthorized('SomeOtherNode', channel, ['*'])).toBe(true);
-  });
-
-  test('writers with explicit node name → that node authorized', () => {
-    expect(isGateWriterAuthorized('Code', channel, ['Code'])).toBe(true);
-    expect(isGateWriterAuthorized('Review', channel, ['Code'])).toBe(false);
-  });
-
-  test('writers with multiple node names → listed nodes authorized', () => {
-    expect(isGateWriterAuthorized('Code', channel, ['Code', 'Review'])).toBe(true);
-    expect(isGateWriterAuthorized('Review', channel, ['Code', 'Review'])).toBe(true);
-    expect(isGateWriterAuthorized('Other', channel, ['Code', 'Review'])).toBe(false);
   });
 });
 

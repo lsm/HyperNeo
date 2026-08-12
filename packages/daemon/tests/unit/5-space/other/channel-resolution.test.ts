@@ -101,20 +101,6 @@ describe('validateChannels — node-to-node model', () => {
     expect(errors.some((e) => e.includes('id'))).toBe(true);
   });
 
-  test('error when gate referenced by two channels', () => {
-    const nodes = [
-      makeNode('n1', 'Code', 'agent-coder'),
-      makeNode('n2', 'Review', 'agent-reviewer'),
-      makeNode('n3', 'QA', 'agent-coder'),
-    ];
-    const workflow = makeWorkflow(nodes, [
-      { id: 'ch-1', from: 'Code', to: 'Review', gateId: 'shared-gate' },
-      { id: 'ch-2', from: 'Code', to: 'QA', gateId: 'shared-gate' },
-    ]);
-    const errors = validateChannels(workflow, [agentCoder, agentReviewer]);
-    expect(errors.some((e) => e.includes('shared-gate'))).toBe(true);
-  });
-
   test('wildcard from is allowed', () => {
     const nodes = [
       makeNode('n1', 'Code', 'agent-coder'),

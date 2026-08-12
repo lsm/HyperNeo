@@ -113,10 +113,9 @@ function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string): void {
 function buildLinearWorkflow(
   spaceId: string,
   workflowManager: SpaceWorkflowManager,
-  nodes: Array<{ id: string; name: string; agentId: string; requireCodexApproval?: boolean }>,
+  nodes: Array<{ id: string; name: string; agentId: string }>,
   opts: {
     channels?: SpaceWorkflow['channels'];
-    gates?: SpaceWorkflow['gates'];
     endNodeId?: string;
   } = {}
 ): SpaceWorkflow {
@@ -139,7 +138,6 @@ function buildLinearWorkflow(
         from: step.name,
         to: nodes[i + 1].name,
       })),
-    gates: opts.gates,
     startNodeId: nodes[0].id,
     endNodeId: opts.endNodeId ?? nodes.at(-1)?.id,
     rules: [],
@@ -1137,105 +1135,6 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       expect(pendingRepo.listAllForRun(run.id)[0].status).toBe('delivered');
     });
 
-    test('coder idle with blocked coder→reviewer gate → run blocked', async () => {
-      const workflow = buildLinearWorkflow(
-        SPACE_ID,
-        workflowManager,
-        [
-          { id: STEP_A, name: 'Coding', agentId: AGENT },
-          { id: STEP_B, name: 'Review', agentId: AGENT },
-        ],
-        {
-          channels: [{ id: 'coding-to-review', from: 'Coding', to: 'Review', gateId: 'ready' }],
-          gates: [
-            {
-              id: 'ready',
-              resetOnCycle: false,
-              fields: [
-                { name: 'pr_url', type: 'string', writers: [], check: { op: 'exists' as const } },
-              ],
-            },
-          ],
-        }
-      );
-      const run = workflowRunRepo.createRun({
-        spaceId: SPACE_ID,
-        workflowId: workflow.id,
-        title: 'Gate blocked handoff',
-      });
-      workflowRunRepo.transitionStatus(run.id, 'in_progress');
-      const task = taskRepo.createTask({
-        spaceId: SPACE_ID,
-        title: 'Gate blocked handoff',
-        description: '',
-        workflowRunId: run.id,
-        workflowNodeId: STEP_A,
-        status: 'in_progress',
-      });
-      seedExec(run.id, STEP_A, 'Coding', 'idle');
-
-      await makeRuntime({
-        pendingMessageRepo: new PendingAgentMessageRepository(db),
-      }).recoverStalledRuns();
-
-      expect(findExec(run.id, STEP_B)).toBeUndefined();
-      expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
-      expect(taskRepo.getTask(task.id)?.blockReason).toBe('execution_failed');
-    });
-
-    test('coder idle with open coder→reviewer gate → reviewer is activated', async () => {
-      const workflow = buildLinearWorkflow(
-        SPACE_ID,
-        workflowManager,
-        [
-          { id: STEP_A, name: 'Coding', agentId: AGENT },
-          { id: STEP_B, name: 'Review', agentId: AGENT },
-        ],
-        {
-          channels: [{ id: 'coding-to-review', from: 'Coding', to: 'Review', gateId: 'ready' }],
-          gates: [
-            {
-              id: 'ready',
-              resetOnCycle: false,
-              fields: [
-                { name: 'pr_url', type: 'string', writers: [], check: { op: 'exists' as const } },
-              ],
-            },
-          ],
-        }
-      );
-      const run = workflowRunRepo.createRun({
-        spaceId: SPACE_ID,
-        workflowId: workflow.id,
-        title: 'Gate open handoff',
-      });
-      workflowRunRepo.transitionStatus(run.id, 'in_progress');
-      taskRepo.createTask({
-        spaceId: SPACE_ID,
-        title: 'Gate open handoff',
-        description: '',
-        workflowRunId: run.id,
-        workflowNodeId: STEP_A,
-        status: 'in_progress',
-      });
-      seedExec(run.id, STEP_A, 'Coding', 'idle');
-      db.prepare(
-        `INSERT INTO gate_data (run_id, gate_id, data, updated_at) VALUES (?, ?, ?, ?)`
-      ).run(
-        run.id,
-        'ready',
-        JSON.stringify({ pr_url: 'https://github.com/acme/repo/pull/1' }),
-        Date.now()
-      );
-
-      await makeRuntime({
-        pendingMessageRepo: new PendingAgentMessageRepository(db),
-      }).recoverStalledRuns();
-
-      expect(findExec(run.id, STEP_B).status).toBe('pending');
-      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
-    });
-
     test('coder idle and reviewer cancelled from prior activation → reviewer resets pending', async () => {
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Coding', agentId: AGENT },
@@ -1522,71 +1421,6 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
     });
 
-    test('cyclic recovery increments cycle count and resets cycle gates', async () => {
-      const workflow = buildLinearWorkflow(
-        SPACE_ID,
-        workflowManager,
-        [
-          { id: STEP_A, name: 'Coding', agentId: AGENT },
-          { id: STEP_B, name: 'Review', agentId: AGENT },
-        ],
-        {
-          channels: [
-            { id: 'coding-to-review', from: 'Coding', to: 'Review' },
-            { id: 'review-to-coding', from: 'Review', to: 'Coding', maxCycles: 2 },
-          ],
-          gates: [
-            {
-              id: 'cycle-votes',
-              resetOnCycle: true,
-              fields: [
-                {
-                  name: 'votes',
-                  type: 'map',
-                  writers: [],
-                  check: { op: 'count', match: 'approved', min: 1 },
-                },
-              ],
-            },
-          ],
-          endNodeId: STEP_B,
-        }
-      );
-      const run = workflowRunRepo.createRun({
-        spaceId: SPACE_ID,
-        workflowId: workflow.id,
-        title: 'Recover cyclic handoff',
-      });
-      workflowRunRepo.transitionStatus(run.id, 'in_progress');
-      taskRepo.createTask({
-        spaceId: SPACE_ID,
-        title: 'Recover cyclic handoff',
-        description: '',
-        workflowRunId: run.id,
-        workflowNodeId: STEP_A,
-        status: 'in_progress',
-      });
-      seedExec(run.id, STEP_B, 'Review', 'idle');
-      db.prepare(
-        `INSERT INTO gate_data (run_id, gate_id, data, updated_at) VALUES (?, ?, ?, ?)`
-      ).run(run.id, 'cycle-votes', JSON.stringify({ votes: { reviewer: true } }), Date.now());
-
-      await makeRuntime({
-        pendingMessageRepo: new PendingAgentMessageRepository(db),
-      }).recoverStalledRuns();
-
-      expect(findExec(run.id, STEP_A).status).toBe('pending');
-      expect(new ChannelCycleRepository(db).get(run.id, 1)?.count).toBe(1);
-      expect(
-        JSON.parse(
-          db
-            .prepare(`SELECT data FROM gate_data WHERE run_id = ? AND gate_id = ?`)
-            .get(run.id, 'cycle-votes')?.data as string
-        )
-      ).toMatchObject({ votes: {} });
-      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
-    });
-
     test('cyclic channel at maxCycles → run blocked', async () => {
       const workflow = buildLinearWorkflow(
         SPACE_ID,
@@ -1626,166 +1460,6 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 
       expect(findExec(run.id, STEP_A)).toBeUndefined();
       expect(findExec(run.id, STEP_B).status).toBe('idle');
-      expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
-      expect(taskRepo.getTask(task.id)?.blockReason).toBe('execution_failed');
-    });
-
-    test('coder idle with closed script gate → run blocked', async () => {
-      const workflow = buildLinearWorkflow(
-        SPACE_ID,
-        workflowManager,
-        [
-          { id: STEP_A, name: 'Coding', agentId: AGENT },
-          { id: STEP_B, name: 'Review', agentId: AGENT },
-        ],
-        {
-          channels: [
-            { id: 'coding-to-review', from: 'Coding', to: 'Review', gateId: 'script-ready' },
-          ],
-          gates: [
-            {
-              id: 'script-ready',
-              resetOnCycle: false,
-              fields: [],
-              script: { interpreter: 'bash', source: 'exit 1' },
-            },
-          ],
-        }
-      );
-      const run = workflowRunRepo.createRun({
-        spaceId: SPACE_ID,
-        workflowId: workflow.id,
-        title: 'Script gate blocked handoff',
-      });
-      workflowRunRepo.transitionStatus(run.id, 'in_progress');
-      const task = taskRepo.createTask({
-        spaceId: SPACE_ID,
-        title: 'Script gate blocked handoff',
-        description: '',
-        workflowRunId: run.id,
-        workflowNodeId: STEP_A,
-        status: 'in_progress',
-      });
-      seedExec(run.id, STEP_A, 'Coding', 'idle');
-
-      await makeRuntime({
-        pendingMessageRepo: new PendingAgentMessageRepository(db),
-      }).recoverStalledRuns();
-
-      expect(findExec(run.id, STEP_B)).toBeUndefined();
-      expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
-      expect(taskRepo.getTask(task.id)?.blockReason).toBe('execution_failed');
-    });
-
-    test('coder idle with feature-backed gate whose script blocks → run blocked', async () => {
-      const workflow = buildLinearWorkflow(
-        SPACE_ID,
-        workflowManager,
-        [
-          { id: STEP_A, name: 'Coding', agentId: AGENT },
-          { id: STEP_B, name: 'Review', agentId: AGENT },
-        ],
-        {
-          channels: [
-            { id: 'coding-to-review', from: 'Coding', to: 'Review', gateId: 'feature-ready' },
-          ],
-          gates: [
-            {
-              id: 'feature-ready',
-              resetOnCycle: false,
-              fields: [
-                {
-                  name: 'approved',
-                  type: 'boolean',
-                  writers: [],
-                  check: { op: '==', value: true },
-                },
-              ],
-              features: { codex_review_bot: true },
-            },
-          ],
-        }
-      );
-      const run = workflowRunRepo.createRun({
-        spaceId: SPACE_ID,
-        workflowId: workflow.id,
-        title: 'Feature gate blocked handoff',
-      });
-      workflowRunRepo.transitionStatus(run.id, 'in_progress');
-      const task = taskRepo.createTask({
-        spaceId: SPACE_ID,
-        title: 'Feature gate blocked handoff',
-        description: '',
-        workflowRunId: run.id,
-        workflowNodeId: STEP_A,
-        status: 'in_progress',
-      });
-      seedExec(run.id, STEP_A, 'Coding', 'idle');
-      db.prepare(
-        `INSERT INTO gate_data (run_id, gate_id, data, updated_at) VALUES (?, ?, ?, ?)`
-      ).run(run.id, 'feature-ready', JSON.stringify({ approved: true }), Date.now());
-
-      await makeRuntime({
-        pendingMessageRepo: new PendingAgentMessageRepository(db),
-      }).recoverStalledRuns();
-
-      expect(findExec(run.id, STEP_B)).toBeUndefined();
-      expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
-      expect(taskRepo.getTask(task.id)?.blockReason).toBe('execution_failed');
-    });
-
-    test('wildcard feature-backed gate uses recovered source node during restart recovery', async () => {
-      const workflow = buildLinearWorkflow(
-        SPACE_ID,
-        workflowManager,
-        [
-          { id: STEP_A, name: 'Coding', agentId: AGENT, requireCodexApproval: true },
-          { id: STEP_B, name: 'Review', agentId: AGENT },
-        ],
-        {
-          channels: [
-            { id: 'wildcard-to-review', from: '*', to: 'Review', gateId: 'feature-ready' },
-          ],
-          gates: [
-            {
-              id: 'feature-ready',
-              resetOnCycle: false,
-              fields: [
-                {
-                  name: 'approved',
-                  type: 'boolean',
-                  writers: [],
-                  check: { op: '==', value: true },
-                },
-              ],
-            },
-          ],
-        }
-      );
-      const run = workflowRunRepo.createRun({
-        spaceId: SPACE_ID,
-        workflowId: workflow.id,
-        title: 'Wildcard feature gate blocked handoff',
-      });
-      workflowRunRepo.transitionStatus(run.id, 'in_progress');
-      const task = taskRepo.createTask({
-        spaceId: SPACE_ID,
-        title: 'Wildcard feature gate blocked handoff',
-        description: '',
-        workflowRunId: run.id,
-        workflowNodeId: STEP_A,
-        status: 'in_progress',
-      });
-      seedExec(run.id, STEP_A, 'Coding', 'idle');
-      db.prepare(
-        `INSERT INTO gate_data (run_id, gate_id, data, updated_at) VALUES (?, ?, ?, ?)`
-      ).run(run.id, 'feature-ready', JSON.stringify({ approved: true }), Date.now());
-
-      await makeRuntime({
-        pendingMessageRepo: new PendingAgentMessageRepository(db),
-      }).recoverStalledRuns();
-
-      expect(findExec(run.id, STEP_B)).toBeUndefined();
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
       expect(taskRepo.getTask(task.id)?.blockReason).toBe('execution_failed');
     });
@@ -2593,67 +2267,6 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
       expect(findExec(run.id, STEP_B).status).toBe('pending');
       expect(findExec(run.id, STEP_B).agentId).toBe(STALE_AGENT);
-    });
-
-    test('a stale agent behind a closed gate does not block recovery of an open branch', async () => {
-      // Source node has two outgoing channels: one open to a valid target, one
-      // gated (closed) to a target whose agent was deleted. Recovery must
-      // activate the open branch and NOT block the run over the unreachable,
-      // stale-agent target — the gate check runs before the agent check.
-      const VALID_AGENT = 'agent-valid-open-branch';
-      seedAgentRow(db, STALE_AGENT, SPACE_ID);
-      seedAgentRow(db, VALID_AGENT, SPACE_ID);
-      const workflow = buildLinearWorkflow(
-        SPACE_ID,
-        workflowManager,
-        [
-          { id: 'src', name: 'Coding', agentId: AGENT },
-          { id: 'open-target', name: 'OpenTarget', agentId: VALID_AGENT },
-          { id: 'gated-target', name: 'GatedTarget', agentId: STALE_AGENT },
-        ],
-        {
-          channels: [
-            { id: 'to-open', from: 'Coding', to: 'OpenTarget' },
-            { id: 'to-gated', from: 'Coding', to: 'GatedTarget', gateId: 'closed-gate' },
-          ],
-          gates: [
-            {
-              id: 'closed-gate',
-              resetOnCycle: false,
-              fields: [
-                { name: 'pr_url', type: 'string', writers: [], check: { op: 'exists' as const } },
-              ],
-            },
-          ],
-        }
-      );
-      // Delete the agent on the gated branch AFTER the workflow pinned it.
-      db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(STALE_AGENT);
-
-      const run = workflowRunRepo.createRun({
-        spaceId: SPACE_ID,
-        workflowId: workflow.id,
-        title: 'Stale behind closed gate',
-      });
-      workflowRunRepo.transitionStatus(run.id, 'in_progress');
-      taskRepo.createTask({
-        spaceId: SPACE_ID,
-        title: 'Stale behind closed gate',
-        description: '',
-        workflowRunId: run.id,
-        workflowNodeId: 'src',
-        status: 'in_progress',
-      });
-      seedExec(run.id, 'src', 'Coding', 'idle');
-
-      await makeRuntime({
-        pendingMessageRepo: new PendingAgentMessageRepository(db),
-      }).recoverStalledRuns();
-
-      // Open branch recovered; gated (stale) branch never created; run NOT blocked.
-      expect(findExec(run.id, 'open-target').status).toBe('pending');
-      expect(findExec(run.id, 'gated-target')).toBeUndefined();
-      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
     });
   });
 });

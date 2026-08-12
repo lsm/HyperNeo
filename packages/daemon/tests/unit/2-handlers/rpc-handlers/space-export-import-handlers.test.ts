@@ -373,7 +373,7 @@ describe('Space Export/Import RPC Handlers', () => {
       expect(exported.tools).toEqual(['read_file']);
       expect(exported.id).toBeUndefined();
       expect(exported.spaceId).toBeUndefined();
-      expect(exported.version).toBe(2);
+      expect(exported.version).toBe(3);
       expect(exported.type).toBe('agent');
     });
 
@@ -676,6 +676,39 @@ describe('Space Export/Import RPC Handlers', () => {
       await expect(
         call(handlers, 'spaceImport.execute', { spaceId: SPACE_ID, bundle: { bad: true } })
       ).rejects.toThrow('Invalid bundle');
+    });
+
+    it('drops a legacy empty gate instead of rolling back the import', async () => {
+      // A v3 bundle carrying a legacy empty gate (no fields/script/validator/
+      // features) passes the permissive export schema but would fail validateGate
+      // at createWorkflow. The import boundary sanitizes it so the whole bundle
+      // imports instead of rolling back for one bad gate.
+      const bundle = {
+        version: 3,
+        type: 'bundle',
+        name: 'B',
+        agents: [{ version: 3, type: 'agent', name: 'Coder' }],
+        workflows: [
+          {
+            version: 3,
+            type: 'workflow',
+            name: 'Pipeline',
+            nodes: [{ agents: [{ agentRef: 'Coder', name: 'Coder' }], name: 'Code' }],
+            startNode: 'Code',
+            tags: [],
+            gates: [{ id: 'empty', resetOnCycle: false }],
+          },
+        ],
+        exportedAt: 1000,
+      };
+
+      const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+        spaceId: SPACE_ID,
+        bundle,
+      });
+      const workflow = workflowRepo.getWorkflow(result.workflows[0].id)!;
+      expect(workflow).toBeTruthy();
+      expect(workflow.gates ?? []).toEqual([]);
     });
 
     it('imports static external event interests for agent slots', async () => {

@@ -56,7 +56,15 @@ describe('DeliveryMetrics (task #861 item 13)', () => {
         alreadyConsumed: 2,
         alreadySubmitted: 1,
         noContent: 1,
+        turn_terminated: 0,
       });
+    });
+
+    it('turn_terminated counts a consumed turn whose turn already ended (zombie self-heal)', () => {
+      metrics.recordReclaimSkip('turn_terminated');
+      metrics.recordReclaimSkip('turn_terminated');
+      const { reclaimSkips } = metrics.snapshot();
+      expect(reclaimSkips.turn_terminated).toBe(2);
     });
 
     it('alreadyConsumed + alreadySubmitted are the duplicates-prevented leading indicator', () => {

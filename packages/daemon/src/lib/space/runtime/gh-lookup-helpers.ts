@@ -15,7 +15,7 @@
 import { existsSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
-import { collectWithMaxBuffer, MAX_BUFFER_BYTES } from './gate-script-executor';
+import { collectWithMaxBuffer, MAX_BUFFER_BYTES } from './script-utils';
 import {
   computeRateLimitRetryMs,
   isRateLimitError,

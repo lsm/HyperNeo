@@ -604,11 +604,6 @@ REWIND_FILES=(
 
 SPACE_FILES=(
 	space-chat-session.test.ts
-	space-edge-cases.test.ts
-	space-happy-path-code-review.test.ts
-	space-happy-path-full-pipeline.test.ts
-	space-happy-path-plan-to-approve.test.ts
-	space-happy-path-qa-completion.test.ts
 	task-agent-lifecycle.test.ts
 	task-agent-skills.test.ts
 	prompt-too-long-kimi-recovery.test.ts

@@ -305,14 +305,9 @@ jobs:
           - module: space-1
             test_path: >-
               tests/online/space/space-chat-session.test.ts
-              tests/online/space/space-edge-cases.test.ts
-              tests/online/space/space-happy-path-code-review.test.ts
-              tests/online/space/space-happy-path-full-pipeline.test.ts
             mock_sdk: true
           - module: space-2
             test_path: >-
-              tests/online/space/space-happy-path-plan-to-approve.test.ts
-              tests/online/space/space-happy-path-qa-completion.test.ts
               tests/online/space/task-agent-lifecycle.test.ts
               tests/online/space/task-agent-skills.test.ts
               tests/online/space/prompt-too-long-kimi-recovery.test.ts

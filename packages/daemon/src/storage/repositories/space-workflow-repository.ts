@@ -23,7 +23,7 @@ import type {
   WorkflowNodeInput,
   WorkflowNodeAgent,
   WorkflowChannel,
-  Gate,
+  HandoffTransition,
   WorkflowHook,
   CreateSpaceWorkflowParams,
   PostApprovalRoute,
@@ -55,7 +55,6 @@ interface WorkflowRow {
   end_node_id?: string | null;
   tags: string;
   channels: string | null;
-  gates: string | null;
   hooks: string | null;
   layout: string | null;
   template_name: string | null;
@@ -89,12 +88,8 @@ interface NodeConfigJson {
   agents?: WorkflowNodeAgent[];
   /** Optional post-approval route scoped to this workflow node. */
   postApproval?: PostApprovalRoute;
-  /** Require codex[bot] +1 on approval gates for channels from this node. */
-  requireCodexApproval?: boolean;
-  /** Custom poll interval (ms) for the codex review bot. */
-  codexPollIntervalMs?: number;
-  /** Custom timeout (seconds) for the codex review bot reaction check. */
-  codexTimeoutSeconds?: number;
+  /** Declared outbound handoff transitions from this node. See HandoffTransition. */
+  transitions?: HandoffTransition[];
   /**
    * Forward-compat: rows persisted before PR 5/5 of the
    * task-agent-as-post-approval-executor refactor may carry a legacy
@@ -158,9 +153,7 @@ function rowToNode(row: NodeRow, ctx?: NodeMigrationContext): WorkflowNode {
     name: row.name,
     agents,
     ...(cfg.postApproval ? { postApproval: cfg.postApproval } : {}),
-    ...(cfg.requireCodexApproval ? { requireCodexApproval: true } : {}),
-    ...(cfg.codexPollIntervalMs ? { codexPollIntervalMs: cfg.codexPollIntervalMs } : {}),
-    ...(cfg.codexTimeoutSeconds ? { codexTimeoutSeconds: cfg.codexTimeoutSeconds } : {}),
+    ...(cfg.transitions && cfg.transitions.length > 0 ? { transitions: cfg.transitions } : {}),
   };
 }
 
@@ -169,7 +162,6 @@ function rowToWorkflow(row: WorkflowRow, nodes: WorkflowNode[]): SpaceWorkflow {
   const tags = parseJson<string[]>(row.tags, []);
   const layout = parseJson<Record<string, { x: number; y: number }> | null>(row.layout, null);
   const channels = parseJson<WorkflowChannel[] | null>(row.channels, null);
-  const gates = parseJson<Gate[] | null>(row.gates, null);
   const hooks = parseJson<WorkflowHook[] | null>(row.hooks, null);
 
   const wf: SpaceWorkflow = {
@@ -186,7 +178,6 @@ function rowToWorkflow(row: WorkflowRow, nodes: WorkflowNode[]): SpaceWorkflow {
   };
   if (row.end_node_id) wf.endNodeId = row.end_node_id;
   if (channels && channels.length > 0) wf.channels = channels;
-  if (gates && gates.length > 0) wf.gates = gates;
   if (hooks && hooks.length > 0) wf.hooks = hooks;
   if (layout) wf.layout = layout;
   if (row.template_name) wf.templateName = row.template_name;
@@ -244,15 +235,14 @@ export class SpaceWorkflowRepository {
 
     const channelsJson =
       params.channels && params.channels.length > 0 ? JSON.stringify(params.channels) : null;
-    const gatesJson = params.gates && params.gates.length > 0 ? JSON.stringify(params.gates) : null;
     const hooksJson = params.hooks && params.hooks.length > 0 ? JSON.stringify(params.hooks) : null;
     const layoutJson = params.layout ? JSON.stringify(params.layout) : null;
     const postApprovalJson = params.postApproval ? JSON.stringify(params.postApproval) : null;
 
     this.db
       .prepare(
-        `INSERT INTO space_workflows (id, space_id, name, description, start_node_id, end_node_id, tags, channels, gates, hooks, layout, template_name, template_hash, instructions, completion_autonomy_level, post_approval, disabled, handle, created_at, updated_at)
-	         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO space_workflows (id, space_id, name, description, start_node_id, end_node_id, tags, channels, hooks, layout, template_name, template_hash, instructions, completion_autonomy_level, post_approval, disabled, handle, created_at, updated_at)
+	         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         workflowId,
@@ -263,7 +253,6 @@ export class SpaceWorkflowRepository {
         endNodeId,
         JSON.stringify(params.tags ?? []),
         channelsJson,
-        gatesJson,
         hooksJson,
         layoutJson,
         params.templateName ?? null,
@@ -493,11 +482,6 @@ export class SpaceWorkflowRepository {
       );
     }
 
-    if (params.gates !== undefined) {
-      fields.push('gates = ?');
-      values.push(params.gates && params.gates.length > 0 ? JSON.stringify(params.gates) : null);
-    }
-
     if (params.hooks !== undefined) {
       fields.push('hooks = ?');
       values.push(params.hooks && params.hooks.length > 0 ? JSON.stringify(params.hooks) : null);
@@ -578,9 +562,9 @@ export class SpaceWorkflowRepository {
       const cfg: NodeConfigJson = {
         agents: node.agents,
         ...(node.postApproval ? { postApproval: node.postApproval } : {}),
-        ...(node.requireCodexApproval ? { requireCodexApproval: true } : {}),
-        ...(node.codexPollIntervalMs ? { codexPollIntervalMs: node.codexPollIntervalMs } : {}),
-        ...(node.codexTimeoutSeconds ? { codexTimeoutSeconds: node.codexTimeoutSeconds } : {}),
+        ...(node.transitions && node.transitions.length > 0
+          ? { transitions: node.transitions }
+          : {}),
       };
       const result = updateNode.run(JSON.stringify(cfg), now, workflowId, node.id);
       if (result.changes === 0) {
@@ -858,14 +842,8 @@ export class SpaceWorkflowRepository {
     if (input.postApproval) {
       nodeCfg.postApproval = input.postApproval;
     }
-    if (input.requireCodexApproval) {
-      nodeCfg.requireCodexApproval = true;
-    }
-    if (input.codexPollIntervalMs) {
-      nodeCfg.codexPollIntervalMs = input.codexPollIntervalMs;
-    }
-    if (input.codexTimeoutSeconds) {
-      nodeCfg.codexTimeoutSeconds = input.codexTimeoutSeconds;
+    if (input.transitions && input.transitions.length > 0) {
+      nodeCfg.transitions = input.transitions;
     }
 
     return nodeCfg;

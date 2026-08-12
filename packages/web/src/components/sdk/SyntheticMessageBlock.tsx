@@ -23,12 +23,11 @@
  *   placement as the human bubble for visual consistency).
  */
 
-import type { ActorMessageDeliveryState } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
 import { SpaceTaskThreadMessageActions } from '../space/thread/SpaceTaskThreadMessageActions.tsx';
-import { DeliveryStateBadge } from '../ui/DeliveryStateBadge.tsx';
+import { DeliveryStateBadge, type DeliveryBadgeState } from '../ui/DeliveryStateBadge.tsx';
 
 type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
 
@@ -53,7 +52,7 @@ interface Props {
   /** Optional shorter label for the TO badge (defaults to `toAgent`). */
   toShort?: string;
   /** Optional delivery state for synthetic actor messages. */
-  deliveryState?: ActorMessageDeliveryState | null;
+  deliveryState?: DeliveryBadgeState | null;
   /** When provided, an "open in session" icon appears in the actions row. */
   onOpenSession?: () => void;
   /** When provided, a session-info dropdown appears in the actions row,

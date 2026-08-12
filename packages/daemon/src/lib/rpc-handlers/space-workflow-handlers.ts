@@ -137,9 +137,10 @@ function buildTemplateUpdateParams(
       name: node.name,
       agents: resolvedAgents,
       ...(node.postApproval ? { postApproval: { ...node.postApproval } } : {}),
-      ...(node.requireCodexApproval ? { requireCodexApproval: true } : {}),
-      ...(node.codexPollIntervalMs ? { codexPollIntervalMs: node.codexPollIntervalMs } : {}),
-      ...(node.codexTimeoutSeconds ? { codexTimeoutSeconds: node.codexTimeoutSeconds } : {}),
+      // Carry declared handoff transitions (template is authoritative; node
+      // names are mapped 1:1 so targets resolve) so syncFromTemplate/resync
+      // don't silently strip a template's handoff contract.
+      ...(node.transitions?.length ? { transitions: node.transitions.map((t) => ({ ...t })) } : {}),
     };
   });
 
@@ -151,7 +152,6 @@ function buildTemplateUpdateParams(
   const newChannels = template.channels
     ? template.channels.map((ch) => ({ ...ch, id: ch.id ?? generateUUID() }))
     : null;
-  const newGates = template.gates ? [...template.gates] : null;
   const templateHash = computeWorkflowHash(template);
 
   return {
@@ -162,7 +162,6 @@ function buildTemplateUpdateParams(
     startNodeId: newStartNodeId,
     endNodeId: newEndNodeId ?? null,
     channels: newChannels,
-    gates: newGates,
     hooks: template.hooks ? [...template.hooks] : null,
     tags: [...template.tags],
     completionAutonomyLevel: template.completionAutonomyLevel,
@@ -178,7 +177,7 @@ function buildTemplateUpdateParams(
  * instructions, and the node set (by name). Returned by
  * {@link spaceWorkflow.previewTemplateSync}. Kept concise so the preview modal
  * can render a readable delta; the modal always states the full structure is
- * overwritten on sync, so fields not enumerated here (channels/gates/hooks)
+ * overwritten on sync, so fields not enumerated here (channels/hooks)
  * are not silently hidden from the user.
  */
 function buildWorkflowSyncDiff(
@@ -323,7 +322,7 @@ export async function checkBuiltInWorkflowDriftOnStartup(
  * `completionAutonomyLevel`, and `templateHash` — see the seeder's
  * `RESTAMP_FIELDS` constant for the full list and rationale.
  *
- * Full structural re-sync (nodes/channels/gates/prompts) still requires the
+ * Full structural re-sync (nodes/channels/prompts) still requires the
  * user to click "Sync" in the Workflow List UI, because that path regenerates
  * node UUIDs and would invalidate any live workflow-run references.
  *
@@ -488,9 +487,9 @@ export function setupSpaceWorkflowHandlers(
       throw new Error(`Space not found: ${params.spaceId}`);
     }
 
-    // Built-in templates are a small fixed set (5 workflows). Return full
-    // workflows so the visual editor template picker can use nodes/channels/gates
-    // without an extra round-trip per template.
+    // Built-in templates are a small fixed set. Return full workflows so the
+    // visual editor template picker can use nodes/channels/hooks without an
+    // extra round-trip per template.
     const workflows: SpaceWorkflow[] = getBuiltInWorkflows();
     return { workflows };
   });

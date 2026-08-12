@@ -17,7 +17,6 @@ import { computeDefinitionVersion } from '../../lib/space/workflows/definition-v
 import { SpaceWorkflowDefinitionVersionRepository } from './space-workflow-definition-version-repository';
 import type { SQLiteValue } from '../types';
 import { assertValidTransition } from '../../lib/space/runtime/workflow-run-status-machine';
-import type { GateOpenStateRepository } from './gate-open-state-repository';
 import { Logger } from '../../lib/logger';
 
 const log = new Logger('space-workflow-run-repository');
@@ -32,10 +31,7 @@ export interface UpdateWorkflowRunParams {
 }
 
 export class SpaceWorkflowRunRepository {
-  constructor(
-    private db: BunDatabase,
-    private gateOpenStateRepo?: GateOpenStateRepository
-  ) {}
+  constructor(private db: BunDatabase) {}
 
   /**
    * Create a new workflow run
@@ -158,8 +154,7 @@ export class SpaceWorkflowRunRepository {
       try {
         const workflow = loadWorkflow(run.workflowId);
         if (!workflow) continue; // deleted head → leave unpinned (read-cutover fallback)
-        // pinExistingRun only stamps the pin; the gate-open cache re-key is a separate
-        // idempotent startup sweep (rekeyPinnedGateOpenCaches) that runs after this.
+        // pinExistingRun only stamps the pin; the startup backfill sweep runs after this.
         if (this.pinExistingRun(run.id, workflow)) count += 1;
       } catch (err) {
         log.warn(`backfillDefinitionPins: skipped run ${run.id} (non-fatal):`, err);
@@ -261,7 +256,7 @@ export class SpaceWorkflowRunRepository {
    * List runs that need an executor on startup: in_progress and blocked.
    *
    * This superset of getActiveRuns() is used exclusively by rehydrateExecutors()
-   * so that runs blocked at a human gate get an executor reloaded on restart.
+   * so that runs awaiting review get an executor reloaded on restart.
    *
    * `pending` is still excluded for the same reason as in getActiveRuns().
    */
@@ -356,16 +351,6 @@ export class SpaceWorkflowRunRepository {
     if (!run) throw new Error(`WorkflowRun not found: ${id}`);
     assertValidTransition(run.status, to, id);
     const updated = this.updateRun(id, { status: to })!;
-
-    // Clear persisted gate-open state when transitioning to terminal OR blocked
-    // status. The blocked transition MUST clear the cache so that
-    // approveGate's rejection branch (which does not call fireGateChanged)
-    // cannot leave a stale `open=true` row that causes future deliverMessage
-    // calls to bypass the now-rejected gate at channel-router.ts:620-624.
-    if (this.gateOpenStateRepo && (to === 'done' || to === 'cancelled' || to === 'blocked')) {
-      this.gateOpenStateRepo.clearOpenedByRun(id);
-    }
-
     return updated;
   }
 

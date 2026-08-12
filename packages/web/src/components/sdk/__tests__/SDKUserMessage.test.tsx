@@ -489,11 +489,11 @@ describe('SDKUserMessage', () => {
     });
   });
 
-  describe('Send Status', () => {
-    it('should show "not delivered" badge when sendStatus is failed', () => {
+  describe('Delivery Status', () => {
+    it('should show "not delivered" badge when deliveryStatus is failed', () => {
       const message = {
         ...createTextMessage('Hello world'),
-        sendStatus: 'failed',
+        deliveryStatus: 'failed' as const,
       };
 
       const { container } = render(<SDKUserMessage message={message} />);
@@ -501,12 +501,105 @@ describe('SDKUserMessage', () => {
       expect(container.textContent).toContain('not delivered');
     });
 
-    it('should not show "not delivered" badge when sendStatus is absent', () => {
+    it('should show "queued" badge when deliveryStatus is queued', () => {
+      const message = {
+        ...createTextMessage('Hello world'),
+        deliveryStatus: 'queued' as const,
+      };
+
+      const { container } = render(<SDKUserMessage message={message} />);
+
+      expect(container.textContent).toContain('queued');
+    });
+
+    it('should show "sending" badge when deliveryStatus is processing', () => {
+      const message = {
+        ...createTextMessage('Hello world'),
+        deliveryStatus: 'processing' as const,
+      };
+
+      const { container } = render(<SDKUserMessage message={message} />);
+
+      expect(container.textContent).toContain('sending');
+    });
+
+    it('should show "retrying" badge with stalled-delivery copy when deliveryStatus is retrying', async () => {
+      const message = {
+        ...createTextMessage('Hello world'),
+        deliveryStatus: 'retrying' as const,
+      };
+
+      const { container } = render(<SDKUserMessage message={message} />);
+
+      const badge = container.querySelector('[data-testid="user-delivery-state"]');
+      expect(badge).toBeTruthy();
+      expect(badge?.textContent).toContain('retrying');
+
+      // The stalled-delivery hint lives in the badge's hover tooltip. mouseenter
+      // is non-bubbling, so fire it on the Tooltip wrapper (the badge's parent).
+      fireEvent.mouseEnter(badge!.parentElement!);
+      await waitFor(() => {
+        expect(container.textContent).toContain('Delivery stalled — retrying');
+      });
+    });
+
+    it('should NOT show a badge when deliveryStatus is delivered (avoid noise)', () => {
+      const message = {
+        ...createTextMessage('Hello world'),
+        deliveryStatus: 'delivered' as const,
+      };
+
+      const { container } = render(<SDKUserMessage message={message} />);
+
+      expect(container.textContent).not.toContain('delivered');
+      expect(container.textContent).not.toContain('not delivered');
+    });
+
+    it('should not show a badge when deliveryStatus is absent', () => {
       const message = createTextMessage('Hello world');
 
       const { container } = render(<SDKUserMessage message={message} />);
 
       expect(container.textContent).not.toContain('not delivered');
+      expect(container.textContent).not.toContain('queued');
+    });
+  });
+
+  describe('Rewind gating', () => {
+    const renderWithRewind = (deliveryStatus?: string) =>
+      render(
+        <SDKUserMessage
+          message={{
+            ...createTextMessage('Hello world'),
+            ...(deliveryStatus ? { deliveryStatus } : {}),
+          }}
+          onRewind={() => {}}
+          sessionId="s1"
+        />
+      );
+
+    it('shows the rewind button for terminal delivered messages', () => {
+      const { container } = renderWithRewind('delivered');
+      expect(container.querySelector('[title="Rewind to here"]')).toBeTruthy();
+    });
+
+    it('shows the rewind button for terminal failed messages', () => {
+      const { container } = renderWithRewind('failed');
+      expect(container.querySelector('[title="Rewind to here"]')).toBeTruthy();
+    });
+
+    it('shows the rewind button when deliveryStatus is absent (legacy settled row)', () => {
+      const { container } = renderWithRewind();
+      expect(container.querySelector('[title="Rewind to here"]')).toBeTruthy();
+    });
+
+    it.each([
+      'queued',
+      'processing',
+      'retrying',
+    ])('hides the rewind button for nonterminal %s delivery', (status) => {
+      const { container } = renderWithRewind(status);
+      expect(container.querySelector('[title="Rewind to here"]')).toBeFalsy();
     });
   });
 

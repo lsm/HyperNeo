@@ -105,7 +105,6 @@ vi.mock('../../../lib/space-store', () => ({
       unsubscribeTaskActivity: vi.fn(),
       ensureConfigData: vi.fn().mockResolvedValue(undefined),
       ensureNodeExecutions: vi.fn().mockResolvedValue(undefined),
-      listGateData: vi.fn().mockResolvedValue([]),
       workflowVersions: signal(new Map()),
     };
   },

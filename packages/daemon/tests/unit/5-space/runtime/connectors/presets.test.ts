@@ -21,7 +21,7 @@ import {
 } from '../../../../../src/lib/space/runtime/connectors';
 import type { HookExecutorContext } from '../../../../../src/lib/space/runtime/hook-executor';
 import { runGhJson } from '../../../../../src/lib/space/runtime/gh-lookup-helpers';
-import { MAX_BUFFER_BYTES } from '../../../../../src/lib/space/runtime/gate-script-executor';
+import { MAX_BUFFER_BYTES } from '../../../../../src/lib/space/runtime/script-utils';
 import { RATE_LIMIT_MIN_BACKOFF_MS } from '../../../../../src/lib/space/runtime/rate-limit-detector';
 
 const PR_URL = 'https://github.com/acme/corp/pull/42';

@@ -468,7 +468,7 @@ function WorkflowCard({
               This updates <span class="font-medium text-gray-200">"{workflow.name}"</span> to the
               latest version of the{' '}
               <span class="font-medium text-gray-200">"{workflow.templateName}"</span> template
-              (structure, instructions, gates, and channels).
+              (structure, instructions, and channels).
             </p>
             <p class="text-xs text-gray-500 mb-4">
               No edits were detected to this workflow's steps, instructions, or prompts — though

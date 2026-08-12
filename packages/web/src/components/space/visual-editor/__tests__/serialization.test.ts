@@ -169,36 +169,6 @@ describe('workflowToVisualState', () => {
     expect(state.tags).toEqual(['coding', 'review']);
   });
 
-  it('passes workflow gates through', () => {
-    const wf = makeWorkflow({
-      nodes: [makeStep('s1')],
-      startNodeId: 's1',
-      gates: [
-        {
-          id: 'review-votes-gate',
-          fields: [
-            {
-              name: 'votes',
-              type: 'map',
-              writers: ['*'],
-              check: { op: 'count', match: 'approved', min: 3 },
-            },
-          ],
-          resetOnCycle: true,
-        },
-      ],
-    });
-    const state = workflowToVisualState(wf);
-    expect(state.gates).toHaveLength(1);
-    expect(state.gates[0].id).toBe('review-votes-gate');
-    expect(state.gates[0].fields![0].name).toBe('votes');
-    expect(state.gates[0].fields![0].check).toMatchObject({
-      op: 'count',
-      match: 'approved',
-      min: 3,
-    });
-  });
-
   it('migrates legacy workflow postApproval onto the end node', () => {
     const wf = makeWorkflow({
       nodes: [makeStep('s1')],
@@ -285,7 +255,6 @@ describe('visualStateToCreateParams', () => {
       startNodeId: 's1',
       tags: [],
       channels: [],
-      gates: [],
       hooks: [],
       ...overrides,
     };
@@ -446,7 +415,6 @@ describe('visualStateToCreateParams', () => {
       startNodeId: 'local-new',
       tags: [],
       channels: [],
-      gates: [],
       hooks: [],
     };
     const params = visualStateToCreateParams(state, 'space-1', 'WF');
@@ -461,7 +429,6 @@ describe('visualStateToCreateParams', () => {
       startNodeId: '',
       tags: [],
       channels: [],
-      gates: [],
       hooks: [],
     };
     const params = visualStateToCreateParams(state, 'space-1', 'WF');
@@ -777,6 +744,173 @@ describe('visualStateToCreateParams', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Handoff transition preservation (carried opaquely through the editor)
+// ---------------------------------------------------------------------------
+
+describe('handoff transition preservation', () => {
+  function makeHandoffState(overrides: Partial<VisualEditorState> = {}): VisualEditorState {
+    return {
+      nodes: [
+        {
+          step: {
+            localId: 'l1',
+            id: 's1',
+            name: 'Coder',
+            agentId: 'a1',
+            handoffTransitions: [{ id: 't', target: 'Review' }],
+          },
+          position: { x: 0, y: 0 },
+        },
+        {
+          step: { localId: 'l2', id: 's2', name: 'Review', agentId: 'a2' },
+          position: { x: 0, y: 0 },
+        },
+      ],
+      edges: [],
+      startNodeId: 's1',
+      tags: [],
+      channels: [],
+      hooks: [],
+      ...overrides,
+    };
+  }
+
+  it('drops a handoff transition whose target no longer exists', () => {
+    // The editor does not expose handoff transitions to correct a rename/delete,
+    // so a stale target is dropped rather than failing the whole save.
+    const params = visualStateToUpdateParams(
+      makeHandoffState({
+        nodes: [
+          {
+            step: {
+              localId: 'l1',
+              id: 's1',
+              name: 'Coder',
+              agentId: 'a1',
+              handoffTransitions: [
+                { id: 'stale', target: 'Gone' },
+                { id: 'ok', target: 'Review' },
+              ],
+            },
+            position: { x: 0, y: 0 },
+          },
+          {
+            step: { localId: 'l2', id: 's2', name: 'Review', agentId: 'a2' },
+            position: { x: 0, y: 0 },
+          },
+        ],
+      })
+    );
+    expect(params.nodes![0].transitions).toEqual([{ id: 'ok', target: 'Review' }]);
+  });
+
+  it('drops a handoff transition when its target node is renamed', () => {
+    // The editor carries transitions opaquely and does not track node renames,
+    // so a renamed target no longer resolves and the transition is dropped on
+    // save (rather than rejecting the save). Exposing/remapping transitions is
+    // future UI work.
+    const params = visualStateToUpdateParams(
+      makeHandoffState({
+        nodes: [
+          {
+            step: {
+              localId: 'l1',
+              id: 's1',
+              name: 'Coder',
+              agentId: 'a1',
+              handoffTransitions: [{ id: 't', target: 'Review' }],
+            },
+            position: { x: 0, y: 0 },
+          },
+          {
+            // Target node renamed Review -> Reviewer
+            step: { localId: 'l2', id: 's2', name: 'Reviewer', agentId: 'a2' },
+            position: { x: 0, y: 0 },
+          },
+        ],
+      })
+    );
+    expect(params.nodes![0].transitions).toBeUndefined();
+  });
+
+  it('drops a handoff transition whose target becomes ambiguous after a rename', () => {
+    // Two nodes now expose a slot named 'shared' (a rename collision), so a
+    // carried transition targeting 'shared' no longer resolves to one
+    // destination. Drop it instead of letting validateTransitions reject the save.
+    const params = visualStateToUpdateParams(
+      makeHandoffState({
+        nodes: [
+          {
+            step: {
+              localId: 'l1',
+              id: 's1',
+              name: 'Coder',
+              agentId: 'a1',
+              handoffTransitions: [{ id: 't', target: 'shared' }],
+            },
+            position: { x: 0, y: 0 },
+          },
+          {
+            step: {
+              localId: 'l2',
+              id: 's2',
+              name: 'Review',
+              agentId: '',
+              agents: [
+                { agentId: 'a2', name: 'shared' },
+                { agentId: 'a3', name: 'other' },
+              ],
+            },
+            position: { x: 0, y: 0 },
+          },
+          {
+            step: {
+              localId: 'l3',
+              id: 's3',
+              name: 'QA',
+              agentId: '',
+              agents: [{ agentId: 'a4', name: 'shared' }],
+            },
+            position: { x: 0, y: 0 },
+          },
+        ],
+      })
+    );
+    expect(params.nodes![0].transitions).toBeUndefined();
+  });
+
+  it('drops handoff transitions whose referenced hook was removed', () => {
+    // A node deletion prunes removed-node hooks from state; a carried
+    // transition still referencing one must be dropped, not emitted with a
+    // dangling hookId that validateTransitions rejects.
+    const params = visualStateToUpdateParams(
+      makeHandoffState({
+        nodes: [
+          {
+            step: {
+              localId: 'l1',
+              id: 's1',
+              name: 'Coder',
+              agentId: 'a1',
+              handoffTransitions: [
+                { id: 'stale-hook', target: 'Review', hookId: 'gone-hook' },
+                { id: 'ok', target: 'Review' },
+              ],
+            },
+            position: { x: 0, y: 0 },
+          },
+          {
+            step: { localId: 'l2', id: 's2', name: 'Review', agentId: 'a2' },
+            position: { x: 0, y: 0 },
+          },
+        ],
+      })
+    );
+    expect(params.nodes![0].transitions).toEqual([{ id: 'ok', target: 'Review' }]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Round-trip: workflowToVisualState -> visualStateToUpdateParams
 // ---------------------------------------------------------------------------
 
@@ -926,7 +1060,6 @@ describe('visualStateToUpdateParams', () => {
       startNodeId: 's1',
       tags: [],
       channels: [],
-      gates: [],
       hooks: [],
     };
     const params = visualStateToUpdateParams(state, {
@@ -954,7 +1087,6 @@ describe('visualStateToUpdateParams', () => {
       endNodeId: 's2',
       tags: [],
       channels: [],
-      gates: [],
       hooks: [],
     };
     const params = visualStateToUpdateParams(state);
@@ -982,7 +1114,6 @@ describe('visualStateToUpdateParams', () => {
       startNodeId: 's1',
       tags: [],
       channels: [],
-      gates: [],
       hooks: [],
     };
     const params = visualStateToUpdateParams(state);
@@ -1005,7 +1136,6 @@ describe('visualStateToUpdateParams', () => {
       startNodeId: 's1',
       tags: [],
       channels: [],
-      gates: [],
       hooks: [],
     };
     const params = visualStateToUpdateParams(state);
@@ -1091,7 +1221,6 @@ describe('multi-agent step serialization', () => {
       startNodeId: 's1',
       tags: [],
       channels: [],
-      gates: [],
       hooks: [],
     };
     const params = visualStateToCreateParams(state, 'space-1', 'WF');
@@ -1121,74 +1250,11 @@ describe('multi-agent step serialization', () => {
       startNodeId: 's1',
       tags: [],
       channels: [],
-      gates: [],
       hooks: [],
     };
     const params = visualStateToCreateParams(state, 'space-1', 'WF');
     // Channels are not yet supported in visualStateToCreateParams output
     // (they are workflow-level, not editor state level)
-  });
-
-  it('visualStateToCreateParams persists only gates referenced by channels', () => {
-    const state: VisualEditorState = {
-      nodes: [
-        {
-          step: {
-            localId: 'local-1',
-            id: 's1',
-            name: 'Plan',
-            agentId: '',
-            agents: [{ agentId: 'a1', name: 'planner' }],
-          },
-          position: { x: 0, y: 0 },
-        },
-        {
-          step: {
-            localId: 'local-2',
-            id: 's2',
-            name: 'Code',
-            agentId: '',
-            agents: [{ agentId: 'a2', name: 'coder' }],
-          },
-          position: { x: 200, y: 0 },
-        },
-      ],
-      edges: [],
-      startNodeId: 's1',
-      tags: [],
-      channels: [
-        {
-          from: 'Plan',
-          to: 'Code',
-          gateId: 'review-votes-gate',
-        },
-      ],
-      gates: [
-        {
-          id: 'review-votes-gate',
-          fields: [
-            {
-              name: 'votes',
-              type: 'map',
-              writers: ['*'],
-              check: { op: 'count', match: 'approved', min: 3 },
-            },
-          ],
-          resetOnCycle: true,
-        },
-        {
-          id: 'unused-gate',
-          fields: [
-            { name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
-          ],
-          resetOnCycle: false,
-        },
-      ],
-      hooks: [],
-    };
-    const params = visualStateToCreateParams(state, 'space-1', 'WF');
-    expect(params.gates).toHaveLength(1);
-    expect(params.gates![0].id).toBe('review-votes-gate');
   });
 
   it('single-agent step round-trip: agents preserved through workflowToVisualState and serialized output', () => {

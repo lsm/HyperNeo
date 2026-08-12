@@ -1,4 +1,5 @@
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
+import type { MessageDeliveryStatus } from '@hyperneo/shared';
 import {
   type ContentBlock,
   hasRenderableThinking,
@@ -41,7 +42,7 @@ export interface ParsedThreadRow {
   createdAt: number;
   turnIndex?: number;
   turnHiddenMessageCount?: number;
-  deliveryState?: 'delivered' | 'failed' | null;
+  deliveryState?: MessageDeliveryStatus | null;
   message: SDKMessage | null;
   fallbackText: string | null;
   replacementStatus?: MessageReplacementStatus;
