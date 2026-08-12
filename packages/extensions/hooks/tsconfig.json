@@ -8,6 +8,7 @@
     "skipLibCheck": true,
     "allowImportingTsExtensions": true,
     "noEmit": true,
+    "types": ["bun"],
     "paths": {
       "@hyperneo/shared": ["../../shared/src/mod.ts"],
       "@hyperneo/shared/*": ["../../shared/src/*"]
