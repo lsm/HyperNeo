@@ -2606,6 +2606,59 @@ describe('SpaceRuntime', () => {
       expect(bare[0].status).toBe('delivered');
     });
 
+    test('rescoping a legacy compound row proceeds when the same-key retry row already failed', async () => {
+      // The unique index covers only pending rows, so a failed/expired retry
+      // with the same idempotency key is NOT a conflict — the legacy row is
+      // rescoped and delivered, not dropped (it's the only retryable handoff).
+      const workflow = makeCompoundHandoffWorkflow();
+      const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Failed retry');
+      const task = tasks[0];
+      taskRepo.updateTask(task.id, { status: 'in_progress' });
+      nodeExecutionRepo.update(nodeExecutionRepo.listByWorkflowRun(run.id)[0]!.id, {
+        status: 'idle',
+        agentSessionId: null,
+      });
+      const pendingRepo = new PendingAgentMessageRepository(db);
+      // Bare retry row that already FAILED (terminal), same idempotency key.
+      const retry = pendingRepo.enqueue({
+        workflowRunId: run.id,
+        spaceId: SPACE_ID,
+        taskId: task.id,
+        sourceAgentName: 'coder',
+        targetKind: 'node_agent',
+        targetAgentName: 'reviewer',
+        workflowNodeId: 'review-node',
+        message: 'please review',
+        idempotencyKey: 'K1',
+        ttlMs: 60_000,
+        maxAttempts: 1,
+      });
+      pendingRepo.markAttemptFailed(retry.record.id, 'prior failure');
+      // Legacy compound row, same key.
+      pendingRepo.enqueue({
+        workflowRunId: run.id,
+        spaceId: SPACE_ID,
+        taskId: task.id,
+        sourceAgentName: 'coder',
+        targetKind: 'node_agent',
+        targetAgentName: 'review-node/reviewer',
+        message: 'please review',
+        idempotencyKey: 'K1',
+        ttlMs: 60_000,
+        maxAttempts: 3,
+      });
+      const tam = makeRepairTam({ flush: makeCompoundAwareFlush(workflow) });
+      await buildRepairRuntime(tam, pendingRepo).executeTick();
+
+      const rows = pendingRepo.listAllForRun(run.id);
+      // The legacy compound row was rescoped (not dropped) and delivered.
+      expect(rows.filter((r) => r.targetAgentName === 'review-node/reviewer')).toHaveLength(0);
+      const delivered = rows.filter(
+        (r) => r.targetAgentName === 'reviewer' && r.status === 'delivered'
+      );
+      expect(delivered).toHaveLength(1);
+    });
+
     test('non-compound "reviewer" slot name still resolves (backward compat)', async () => {
       const workflow = makeCompoundHandoffWorkflow();
       const { run, tasks } = await runtime.startWorkflowRun(

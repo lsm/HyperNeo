@@ -328,11 +328,15 @@ export class PendingAgentMessageRepository {
       const row = this.getById(id);
       if (!row || row.status !== 'pending') return;
       if (row.idempotencyKey != null) {
+        // The unique index (idx_pending_agent_messages_idem_pending) and enqueue
+        // dedup only cover status = 'pending', so a failed/expired historical
+        // row with the same key is NOT a real conflict — restrict the check to
+        // pending rows or we'd silently drop the only retryable handoff.
         const conflict = this.db
           .prepare(
             `SELECT 1 FROM pending_agent_messages
 					 WHERE workflow_run_id = ? AND target_agent_name = ? AND idempotency_key = ?
-					   AND id != ? LIMIT 1`
+					   AND status = 'pending' AND id != ? LIMIT 1`
           )
           .get(row.workflowRunId, targetAgentName, row.idempotencyKey, id);
         if (conflict) {
