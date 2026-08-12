@@ -811,7 +811,13 @@ export class SDKMessageHandler {
     // fence before publication or type-specific awaited work; the corresponding
     // immediate/session-state idle consumes it after finalization. In-stream
     // /clear results are internal and intentionally suppress that idle.
-    if (isSDKResultMessage(message) && !this.suppressIdleOnNextResult) {
+    const parentToolUseId = (message as SDKMessage & { parent_tool_use_id?: string | null })
+      .parent_tool_use_id;
+    if (
+      isSDKResultMessage(message) &&
+      (parentToolUseId === null || parentToolUseId === undefined) &&
+      !this.suppressIdleOnNextResult
+    ) {
       stateManager.beginTerminalIdle();
     }
 

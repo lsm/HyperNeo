@@ -1918,6 +1918,28 @@ describe('SDKMessageHandler', () => {
       expect(setIdleSpy).toHaveBeenCalled();
     });
 
+    it('does not start the terminal fence for a nested subagent result', async () => {
+      const nestedResult: SDKMessage = {
+        type: 'result',
+        subtype: 'error_during_execution',
+        uuid: 'nested-result-uuid',
+        parent_tool_use_id: 'outer-agent-tool-use',
+        usage: {
+          input_tokens: 0,
+          output_tokens: 0,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        total_cost_usd: 0,
+        modelUsage: {},
+        is_error: true,
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(nestedResult);
+
+      expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
+    });
+
     it('refreshes context at turn end for any result message (success)', async () => {
       const getContextUsageSpy = mock(async () => makeSdkContextResponse());
       mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;

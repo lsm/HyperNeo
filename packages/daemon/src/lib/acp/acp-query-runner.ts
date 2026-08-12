@@ -921,6 +921,9 @@ export class AcpQueryRunner {
     messageQueue.clear();
 
     if (!isAbortError) {
+      // No retry path remains. Fence durable delivery completion before rate-limit
+      // recovery or error publication awaits; terminal setIdle consumes it.
+      stateManager.beginTerminalIdle();
       let category = ErrorCategory.SYSTEM;
       const lowerMessage = errorMessage.toLowerCase();
 

@@ -1279,6 +1279,10 @@ export class QueryRunner {
         retryAttempt >= maxProviderRetries && isRetryableProviderError(errorMessage);
 
       if (!isAbortError) {
+        // No retry path remains. Fence durable completion before validation,
+        // rate-limit recovery, or error publication awaits. A scheduled cooldown
+        // retains the fence until its eventual cancel/retry idle consumes it.
+        stateManager.beginTerminalIdle();
         const apiErrorHandled = await this.handleApiValidationError(error);
 
         // Track whether rate limit cooldown was scheduled; if so, skip setIdle
@@ -1401,10 +1405,6 @@ export class QueryRunner {
           // the session.error event is terminal in Space workflows and would
           // prematurely mark the task as failed before the auto-retry fires.
           if (!rateLimitCooldownScheduled) {
-            // This exception is terminal. Start the durable completion fence and
-            // persist waiter markers before error publication; setIdle below
-            // consumes the fence and releases the waiters after side effects.
-            stateManager.beginTerminalIdle();
             await errorManager.handleError(
               session.id,
               error as Error,
