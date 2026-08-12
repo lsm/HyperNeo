@@ -1,6 +1,15 @@
 import type { Job, JobQueueRepository, PayloadMatch } from './repositories/job-queue-repository';
+import type { TableChangeScope } from './reactive-database';
 
 export type JobHandler = (job: Job) => Promise<Record<string, unknown> | void>;
+
+/** Derive a reactive change scope from a job's payload, when it carries one. */
+function scopeFromJob(job: Job): TableChangeScope | undefined {
+  const sessionId = typeof job.payload?.sessionId === 'string' ? job.payload.sessionId : undefined;
+  const taskId = typeof job.payload?.taskId === 'string' ? job.payload.taskId : undefined;
+  if (!sessionId && !taskId) return undefined;
+  return { ...(sessionId ? { sessionId } : {}), ...(taskId ? { taskId } : {}) };
+}
 
 export interface JobQueueProcessorOptions {
   pollIntervalMs?: number;
@@ -52,7 +61,7 @@ export class JobQueueProcessor {
   // be starved by — nor starve — capped jobs. Both count toward `stop()` drain.
   private inFlightExempt = 0;
   private running = false;
-  private changeNotifier: ((table: string) => void) | null = null;
+  private changeNotifier: ((table: string, scope?: TableChangeScope) => void) | null = null;
   private readonly pollIntervalMs: number;
   private readonly maxConcurrent: number;
   private readonly staleThresholdMs: number;
@@ -159,17 +168,18 @@ export class JobQueueProcessor {
     if (exempt) this.inFlightExempt++;
     else this.inFlightCapped++;
     const reg = this.handlers.get(job.queue);
+    const scope = scopeFromJob(job);
     try {
       if (!reg) {
         this.repo.fail(job.id, `No handler registered for queue: ${job.queue}`);
-        this.notifyChange();
+        this.notifyChange(scope);
         return;
       }
       const result = await reg.handler(job);
       // message_delivery parks/promotes by requeueing the job itself; the
       // auto-complete here is then a no-op (row no longer 'processing').
       this.repo.complete(job.id, result ?? undefined, job.claimToken);
-      this.notifyChange();
+      this.notifyChange(scope);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       const updated = this.repo.fail(job.id, message, job.claimToken);
@@ -180,20 +190,20 @@ export class JobQueueProcessor {
           // A dead-letter side-effect must never break the processor loop.
         }
       }
-      this.notifyChange();
+      this.notifyChange(scope);
     } finally {
       if (exempt) this.inFlightExempt--;
       else this.inFlightCapped--;
     }
   }
 
-  setChangeNotifier(notifier: (table: string) => void): void {
+  setChangeNotifier(notifier: (table: string, scope?: TableChangeScope) => void): void {
     this.changeNotifier = notifier;
   }
 
-  private notifyChange(): void {
+  private notifyChange(scope?: TableChangeScope): void {
     if (this.changeNotifier) {
-      this.changeNotifier('job_queue');
+      this.changeNotifier('job_queue', scope);
     }
   }
 

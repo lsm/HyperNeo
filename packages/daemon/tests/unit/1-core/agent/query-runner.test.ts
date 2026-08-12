@@ -45,6 +45,7 @@ describe('QueryRunner', () => {
   let getStateSpy: ReturnType<typeof mock>;
   let setIdleSpy: ReturnType<typeof mock>;
   let setProcessingSpy: ReturnType<typeof mock>;
+  let beginTerminalIdleSpy: ReturnType<typeof mock>;
   let handleErrorSpy: ReturnType<typeof mock>;
   let publishSpy: ReturnType<typeof mock>;
   let saveSDKMessageSpy: ReturnType<typeof mock>;
@@ -159,10 +160,12 @@ describe('QueryRunner', () => {
     getStateSpy = mock(() => ({ status: 'idle' }));
     setIdleSpy = mock(async () => {});
     setProcessingSpy = mock(async () => {});
+    beginTerminalIdleSpy = mock(() => {});
     mockStateManager = {
       getState: getStateSpy,
       setIdle: setIdleSpy,
       setProcessing: setProcessingSpy,
+      beginTerminalIdle: beginTerminalIdleSpy,
     } as unknown as ProcessingStateManager;
 
     // ErrorManager spies
@@ -2364,6 +2367,99 @@ describe('QueryRunner', () => {
       expect(buildSpy).toHaveBeenCalledTimes(1);
     });
 
+    it('should not persist turn termination when a rate-limit cooldown is scheduled', async () => {
+      for (const errorMessage of [
+        '429 Too Many Requests',
+        'rate limit exceeded',
+        'Request failed: 429',
+      ]) {
+        beginTerminalIdleSpy.mockClear();
+        handleErrorSpy.mockClear();
+        setIdleSpy.mockClear();
+        buildSpy.mockRejectedValueOnce(new Error(errorMessage));
+        const onRateLimitExhausted = mock(async () => true);
+
+        const ctx = createContext({ onRateLimitExhausted });
+        runner = new QueryRunner(ctx);
+        runner.start();
+        await ctx.queryPromise?.catch(() => {});
+
+        expect(onRateLimitExhausted).toHaveBeenCalledTimes(1);
+        expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
+        expect(handleErrorSpy).not.toHaveBeenCalled();
+        expect(setIdleSpy).not.toHaveBeenCalled();
+      }
+    });
+
+    it('should preserve cooldown state through a recursive retry', async () => {
+      buildSpy
+        .mockRejectedValueOnce(new Error('TypeError: fetch failed'))
+        .mockRejectedValueOnce(new Error('429 Too Many Requests'));
+      const onRateLimitExhausted = mock(async () => true);
+
+      const ctx = createContext({ onRateLimitExhausted });
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(2);
+      expect(onRateLimitExhausted).toHaveBeenCalledTimes(1);
+      expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
+      expect(setIdleSpy.mock.calls).toEqual([[{ suppressDeliveryWaiters: true }]]);
+    });
+
+    it('should fence handled validation errors before rendering them', async () => {
+      buildSpy.mockRejectedValue(
+        new Error('400 {"error":{"message":"invalid rate limit field abc429xyz"}}')
+      );
+      let resolveDisplay!: () => void;
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.displayErrorAsAssistantMessage = mock(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveDisplay = resolve;
+          })
+      );
+      runner.start();
+
+      for (let attempt = 0; attempt < 20 && !resolveDisplay; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+      expect(beginTerminalIdleSpy).toHaveBeenCalledTimes(1);
+      expect(setIdleSpy).not.toHaveBeenCalled();
+
+      resolveDisplay();
+      await ctx.queryPromise?.catch(() => {});
+      expect(setIdleSpy).toHaveBeenCalled();
+    });
+
+    it('should persist turn termination before awaiting terminal error publication', async () => {
+      buildSpy.mockRejectedValue(new Error('terminal query failure'));
+      let resolveError!: () => void;
+      handleErrorSpy.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveError = resolve;
+          })
+      );
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.start();
+
+      for (let attempt = 0; attempt < 20 && handleErrorSpy.mock.calls.length === 0; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      expect(handleErrorSpy).toHaveBeenCalledTimes(1);
+      expect(beginTerminalIdleSpy).toHaveBeenCalledTimes(1);
+      expect(setIdleSpy).not.toHaveBeenCalled();
+
+      resolveError();
+      await ctx.queryPromise?.catch(() => {});
+      expect(setIdleSpy.mock.calls.length).toBeGreaterThan(0);
+    });
+
     it('should clear _lastConsumedUserMessage on terminal error to prevent stale replay', async () => {
       // Use a non-retryable error (401) so no retry path is entered. The finally
       // block must clear _lastConsumedUserMessage so a stale value from a
@@ -3091,9 +3187,11 @@ describe('QueryRunner cleaning up state', () => {
 // rate-limit recovery branch (fallback chain / reset-aware cooldown) instead of
 // being rendered as a terminal validation error.
 describe('looksLikeRateLimit429', () => {
-  it('matches a bare 429 and the API Error: 429 shape', () => {
+  it('matches bare, API Error, and Error-wrapped 429 shapes', () => {
     expect(looksLikeRateLimit429('429 rate limited')).toBe(true);
     expect(looksLikeRateLimit429('API Error: 429 {"type":"error"}')).toBe(true);
+    expect(looksLikeRateLimit429('Error: 429 Too Many Requests')).toBe(true);
+    expect(looksLikeRateLimit429('Error: {"error":{"message":"429 rate limited"}}')).toBe(true);
   });
 
   it('matches a JSON body following the leading 429', () => {

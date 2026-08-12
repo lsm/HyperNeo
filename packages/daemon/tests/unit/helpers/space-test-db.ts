@@ -252,7 +252,7 @@ export function createSpaceTables(db: BunDatabase): void {
 		)
 	`);
 
-  // Per-handoff-transition cycle counters (migration 187, task #923). Backs
+  // Per-handoff-transition cycle counters (migration 190, task #923). Backs
   // HandoffTransition.maxCycles enforcement for cyclic handoffs.
   db.exec(`
 		CREATE TABLE IF NOT EXISTS handoff_cycles (
@@ -574,6 +574,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			parent_tool_use_id TEXT,
 			task_id TEXT,
 			sdk_uuid TEXT,
+			consumed_seq INTEGER,
 			replacement_metadata_normalized INTEGER NOT NULL DEFAULT 0,
 			FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 		)
@@ -589,6 +590,17 @@ export function createSpaceTables(db: BunDatabase): void {
 			FOREIGN KEY (source_message_id) REFERENCES sdk_messages(id) ON DELETE CASCADE
 		)
 	`);
+  // Monotonic consumption-watermark counter (saveSDKMessage stamps terminal
+  // results from it). See schema/index.ts + Codex (PR #2463, P2).
+  db.exec(`
+		CREATE TABLE IF NOT EXISTS delivery_consumed_seq (
+			singleton INTEGER PRIMARY KEY DEFAULT 1,
+			next_seq INTEGER NOT NULL DEFAULT 1
+		)
+	`);
+  db.exec(`
+		INSERT OR IGNORE INTO delivery_consumed_seq (singleton, next_seq) VALUES (1, 1)
+	`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_timestamp_id
 		ON sdk_messages(session_id, timestamp DESC, id DESC)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_parent_tool_use_id
@@ -599,6 +611,8 @@ export function createSpaceTables(db: BunDatabase): void {
 		ON sdk_messages(message_type, message_subtype)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_subtype_parent
 		ON sdk_messages(session_id, message_subtype_norm, parent_tool_use_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_consumed_seq
+		ON sdk_messages(consumed_seq)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_send_status
 		ON sdk_messages(session_id, send_status)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_id

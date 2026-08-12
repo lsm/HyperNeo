@@ -373,11 +373,22 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     //       One-shot shutdown polling with hard timeout; not a recurring task.
     //   • ProcessWatchdog timer (process-watchdog.ts)
     //       Last-resort OS process leak safety net; intentionally independent from the job queue.
-    jobProcessor.setChangeNotifier((table) => {
-      reactiveDb.notifyChange(table);
-    });
-    messageDeliveryProcessor.setChangeNotifier((table) => {
-      reactiveDb.notifyChange(table);
+    // Task #862 (review P2): the transcript/task feeds depend on `job_queue`
+    // ONLY for the message_delivery retry signal (the EXISTS vs an active
+    // message_delivery job). The generic processor handles every non-delivery
+    // lane (schedules, cleanup, polling, workflow) — notifying `job_queue` there
+    // would re-run all open transcript queries on every unrelated job, so it is
+    // a no-op.
+    //
+    // INVARIANT: no non-delivery live query subscribes to `job_queue` today. If
+    // one ever does, give the generic notifier a session/task scope (the
+    // processor already threads it from job payloads) instead of making it a
+    // no-op, so unrelated lanes don't re-run open feeds.
+    jobProcessor.setChangeNotifier(() => {});
+    // The message_delivery processor notifies session-scoped so only that
+    // session's feed re-evaluates on a delivery job transition.
+    messageDeliveryProcessor.setChangeNotifier((table, scope) => {
+      reactiveDb.notifyChange(table, scope);
     });
     let sessionManager: SessionManager | null = null;
     let taskAgentManager: TaskAgentManager | null = null;

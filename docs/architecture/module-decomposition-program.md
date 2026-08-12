@@ -339,6 +339,59 @@ pull-request row-state decoders from `github-event-extension.ts`.
   once their boundary is clean, so the family is a candidate for a later
   Pattern-B increment rather than the next pure-leaf step.
 
+## Increment 8
+
+**`external-events/github/github-reaction-fields.ts`** — extracted the GitHub
+reaction-row field decoders from `github-event-extension.ts`.
+
+- **Family:** reading typed fields off a raw GitHub reaction row — two
+  `unknown → primitive` decoders. `isPositiveReaction` classifies a reaction
+  as positive (true only when `content` is `'+1'` or `'thumbs_up'`), and
+  `reactionIdFrom` reads the reaction `id` as a string (the durable key the
+  polling handler stores in its `seenReactionIds` dedup index; `''` for a
+  missing/malformed row or any non-number `id`). Closed internal dependency
+  boundary: both are independent leaves with no internal or external edges —
+  the only such zero-edge family remaining in the file.
+- **Why it scored highest:**
+  - *Cohesion:* both share one concern — decoding a reaction row — and are
+    consumed together in a single contiguous block of the reaction polling
+    handler (filter to positive reactions, then read each one's dedup id two
+    lines apart).
+  - *Churn / conflict:* isolates a stable pure decoder family out of
+    `github-event-extension.ts` (4553 → 4542 lines; ~31 commits/yr — the
+    largest external-events production module), leaving the class as the
+    imperative shell that polls. This is the next clean pure-leaf step in the
+    established external-events payload-decoder seam; Increment 7's explicit
+    next candidate (the head-sha-by-commit matcher family) mixes pure query
+    helpers with `Map`-mutation index maintainers and so stays deferred as a
+    later Pattern-B increment per its own note.
+  - *Coverage:* neither had **any** direct unit tests (each was referenced
+    only at its definition site and one call site); characterization tests
+    now pin every branch — including the exact `'+1'` / `'thumbs_up'`
+    positive set (the seven other GitHub reaction contents, whitespace and
+    case variants, and non-string content all false), and `reactionIdFrom`'s
+    `typeof id === 'number'` gate (numeric id stringified, non-number id →
+    `''`, and the `Number.NaN` / float edge cases that coerce through
+    `String()`).
+  - *Regression risk:* low — pure deterministic functions; the consumer suite
+    (`2-handlers/github/`, 655 tests) passes unchanged.
+- **Narrow surface:** both functions are exported (each has an external caller
+  in the extension); the leaf has no module-private members.
+- **Dependency direction:** the new leaf lives in `external-events/github/`
+  and depends on nothing — not even the sibling `github-normalizer` leaf that
+  the prior row-decoder increments reached down to. `github-event-extension.ts`
+  already imported downward from this directory, so no new direction was
+  introduced.
+- **Deferred:** the head-sha-by-commit matcher family (`pullHeadSha`,
+  `pickPrNumbersByHeadSha`, `addPullRequestNumberByHeadSha`,
+  `removePullRequestNumberByHeadSha`) remains the explicit next candidate,
+  still scoped as a later Pattern-B increment once its mixed pure / mutable
+  boundary is clean. The webhook-event validation family
+  (`missingRequiredEvents`, `validateRemoteHook`, `isOnlyMissingEvents`) is a
+  larger cohesive pure family but is entangled with the `WEBHOOK_EVENTS` /
+  `REQUIRED_WEBHOOK_EVENTS` vocabulary used elsewhere in the file; it is a
+  candidate for a follow-up that extracts the event vocabulary alongside it.
+
 ## Increment log
 
 | # | Module extracted | From | PR | Outcome |
@@ -349,4 +402,5 @@ pull-request row-state decoders from `github-event-extension.ts`.
 | 4 | `space/agent-handle.ts` | `space/tools/space-agent-tools.ts` + `space/tools/node-agent-tools.ts` | #2418 | Pure agent handle/name-token normalization family extracted; verbatim `normalizeAgentNameToken` duplicate across two tool files consolidated behind a 3-function surface; characterization tests added for every branch. |
 | 5 | `external-events/github/github-check-run-fields.ts` | `external-events/github/github-event-extension.ts` | #2430 | Pure GitHub `check_run` row field decoders extracted behind a 6-function surface; characterization tests added for every branch (previously no direct unit coverage). |
 | 6 | `external-events/github/github-pr-head-ref.ts` | `external-events/github/github-event-extension.ts` | #2449 | Pure GitHub PR head-ref identity family (repo path, PR number, head SHA/repo, head-ref key compose/parse) extracted behind a 6-function surface; characterization tests added for every branch (previously no direct unit coverage). |
-| 7 | `external-events/github/github-pr-row-state.ts` | `external-events/github/github-event-extension.ts` | _(this PR)_ | Pure GitHub `/pulls` row-state decoders (`updated_at` watermark + `state` openness) extracted behind a 2-function surface; characterization tests added for every branch (previously no direct unit coverage). |
+| 7 | `external-events/github/github-pr-row-state.ts` | `external-events/github/github-event-extension.ts` | #2462 | Pure GitHub `/pulls` row-state decoders (`updated_at` watermark + `state` openness) extracted behind a 2-function surface; characterization tests added for every branch (previously no direct unit coverage). |
+| 8 | `external-events/github/github-reaction-fields.ts` | `external-events/github/github-event-extension.ts` | _(this PR)_ | Pure GitHub reaction-row field decoders (`isPositiveReaction`, `reactionIdFrom`) extracted behind a 2-function surface; characterization tests added for every branch (previously no direct unit coverage). |

@@ -45,6 +45,7 @@ type IndexInfoRow = {
 
 export const HELPER_SCHEMA_TABLES = [
   'channel_cycles',
+  'delivery_consumed_seq',
   'evolution_episodes',
   'evolution_evidence',
   'evolution_lessons',

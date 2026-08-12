@@ -105,6 +105,14 @@ export class InterruptHandler {
           }
         }
       });
+      // Task #862 (review P1): both cancelForSessionWithMessages (raw DELETE on
+      // job_queue) and markDeliveryFailedByUuid (raw UPDATE on sdk_messages) write
+      // without a notify, so after interrupting a pending/enqueued message (or an
+      // in-flight steer job) the queued/retrying badge would stay stuck until an
+      // unrelated write or reconnect. Notify both tables (session-scoped) so the
+      // widened delivery feeds re-evaluate immediately.
+      this.ctx.db.notifyChange?.('sdk_messages', { sessionId: session.id });
+      this.ctx.db.notifyChange?.('job_queue', { sessionId: session.id });
     }
 
     const currentState = stateManager.getState();
