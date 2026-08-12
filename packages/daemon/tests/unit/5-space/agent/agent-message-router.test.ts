@@ -1315,6 +1315,51 @@ describe('AgentMessageRouter: persist workflowNodeId on queued @worker targets',
     // Pinned to the id "Review" (the second node), NOT node "x" whose name is "Review".
     expect(pending[0].workflowNodeId).toBe('Review');
   });
+
+  test('a name/id ref collision resolves by the agent slot, not by namespace precedence', async () => {
+    // Node id "x" is named "Review" (slot "reviewer"); another node has id
+    // "Review" (slot "other-agent"). An @worker address "Review/reviewer" is
+    // ambiguous as a string — "Review" is node-x's NAME and the other node's ID —
+    // so neither name-first nor id-first is always right. Resolve the pair: only
+    // node-x declares "reviewer".
+    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+      makeChannel('coder', 'Review'),
+    ]);
+    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+    ctx.nodeExecutionRepo.createOrIgnore({
+      workflowRunId,
+      workflowNodeId: 'x',
+      agentName: 'reviewer',
+      status: 'pending',
+    });
+    const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
+    const router = new AgentMessageRouter({
+      nodeExecutionRepo: ctx.nodeExecutionRepo,
+      workflowRunId,
+      workflowChannels: [makeChannel('coder', 'Review')],
+      messageInjector: async () => {},
+      pendingMessageRepo,
+      spaceId: ctx.spaceId,
+      taskId: null,
+      workflowNodeNameById: { x: 'Review', Review: 'Other' },
+      nodeGroups: { Review: ['reviewer'], Other: ['other-agent'] },
+    });
+
+    const result = await router.deliverMessage({
+      fromAgentName: 'coder',
+      fromSessionId: ctx.coderSessionId,
+      target: '@worker:Review/reviewer',
+      message: 'please review',
+    });
+
+    expect(result.queued).toBeDefined();
+    expect(result.queued).toHaveLength(1);
+    const pending = pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer');
+    expect(pending).toHaveLength(1);
+    // Pinned to node id "x" (name "Review", declares "reviewer") — NOT the node
+    // whose id is "Review", which an id-first lookup would wrongly select.
+    expect(pending[0].workflowNodeId).toBe('x');
+  });
 });
 
 describe('AgentMessageRouter: broadcast * with mixed active/inactive targets', () => {

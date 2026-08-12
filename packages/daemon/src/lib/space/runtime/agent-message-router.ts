@@ -224,6 +224,7 @@ export class AgentMessageRouter {
       workflowNodeNameById,
       messageResolver,
       longTermAgentDelivery,
+      nodeGroups,
     } = this.config;
     const resolver = new ChannelResolver(workflowChannels);
     const fromNodeName = slotToNode.get(fromAgentName) ?? fromAgentName;
@@ -246,20 +247,28 @@ export class AgentMessageRouter {
     const scopedAgentName = (nodeName: string, agentName: string) => `${nodeName}/${agentName}`;
     // Resolve a worker target's node ref — a node id (actor-registry worker
     // handle) or a node name (messaging-adapter worker handle) — to the canonical
-    // workflow node id. Persisting it on the queued row lets the handoff resolver
-    // pin the exact node instead of parsing the concatenated "node/agent" string,
-    // which is ambiguous when either component contains "/" (e.g. node "Pair" slot
-    // "Review/reviewer" vs node "Pair/Review" slot "reviewer" both stringify to
-    // "Pair/Review/reviewer"). Node names are unique, so the name->id lookup is
-    // unambiguous; ids are authoritative when the ref is already an id.
-    const resolveWorkflowNodeId = (nodeRef: string): string | undefined => {
+    // workflow node id, paired with the agent slot. Persisting the id on the
+    // queued row lets the handoff resolver pin the exact node instead of parsing
+    // the concatenated "node/agent" string. The ref alone is ambiguous when a
+    // name collides with another node's id, so the agent slot is used to
+    // disambiguate (only the intended node declares that slot).
+    const resolveWorkflowNodeId = (nodeRef: string, agentName: string): string | undefined => {
       if (!workflowNodeNameById) return undefined;
       const entries = Object.entries(workflowNodeNameById);
       // Object.entries yields own enumerable properties only — never inherited
       // ones, so a node named "constructor"/"toString"/etc. can't fool the id
-      // lookup the way the `in` operator would. IDs are authoritative: a
-      // caller-supplied node id may collide with another node's name, so check
-      // all own IDs first, then fall back to a name lookup.
+      // lookup the way the `in` operator would. A node ref is a name OR an id,
+      // and a name can collide with another node's id (or vice versa), so the
+      // string alone is ambiguous. Disambiguate by the agent slot: the intended
+      // node is the one matching the ref by name or id AND declaring that slot.
+      // nodeGroups (name -> slots) is wired in production whenever there is a
+      // workflow; when it's absent, fall back to id-authoritative then name.
+      const hasSlot = (nodeName: string) =>
+        nodeGroups ? nodeGroups[nodeName]?.includes(agentName) === true : false;
+      const slotMatch = entries.find(
+        ([nodeId, name]) => (nodeId === nodeRef || name === nodeRef) && hasSlot(name)
+      );
+      if (slotMatch) return slotMatch[0];
       if (entries.some(([nodeId]) => nodeId === nodeRef)) return nodeRef;
       return entries.find(([, name]) => name === nodeRef)?.[0];
     };
@@ -522,7 +531,9 @@ export class AgentMessageRouter {
             taskNumber,
             nodeId: fromAgentName,
           });
-          const queueWorkflowNodeId = hasNodeNameMap ? resolveWorkflowNodeId(nodeName) : undefined;
+          const queueWorkflowNodeId = hasNodeNameMap
+            ? resolveWorkflowNodeId(nodeName, agentName)
+            : undefined;
           // queueTargetName (compound) is reported to the caller and the
           // onMessageQueued activation callback — keep it stable. But persist the
           // BARE agent name on the row when the node is pinned: the
