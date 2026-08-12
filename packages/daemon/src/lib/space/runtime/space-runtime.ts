@@ -8310,6 +8310,17 @@ export class SpaceRuntime {
     //    cross-receive. Worker handles encode either the node name or id, and
     //    node/agent names may contain "/", so match by prefixing each node
     //    identifier and comparing exactly — never split on the first "/".
+    // Unpinned only: a slot name may itself contain "/" and resemble another
+    // node's compound (e.g. Audit slot "Review/foo" vs Review's compound
+    // "Review/foo"). An exact bare-slot match must win over compound parsing, so
+    // check every node for an exact slot first.
+    if (!workflowNodeId) {
+      for (const node of workflow.nodes) {
+        const exact = resolveNodeAgents(node).find((slot) => slot.name === targetAgentName);
+        if (exact)
+          return { nodeId: node.id, agentName: exact.name, agentId: exact.agentId ?? null };
+      }
+    }
     for (const node of workflow.nodes) {
       // Node-scoped resolution: only consider the pinned node so two nodes
       // reusing a slot name don't both resolve to the first one.

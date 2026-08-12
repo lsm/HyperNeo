@@ -2252,6 +2252,65 @@ describe('SpaceRuntime', () => {
       expect(pendingRepo.listAllForRun(run.id)[0].status).toBe('delivered');
     });
 
+    test('an unpinned bare slot name containing "/" resolves to its exact node, not a compound', async () => {
+      // Node Review declares "foo"; node Audit declares a slot literally named
+      // "Review/foo". A bare unpinned row "Review/foo" (e.g. a generic send to
+      // Audit's slot) must resolve to Audit's exact slot — not be parsed as
+      // Review's compound "Review/foo" -> foo.
+      const workflow = workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: `Slash bare slot ${Date.now()}-${Math.random()}`,
+        description: 'Unpinned bare slot name containing "/"',
+        nodes: [
+          { id: 'coding-node', name: 'Coding', agents: [{ name: 'coder', agentId: AGENT_CODER }] },
+          { id: 'review-node', name: 'Review', agents: [{ name: 'foo', agentId: AGENT_GENERAL }] },
+          {
+            id: 'audit-node',
+            name: 'Audit',
+            agents: [{ name: 'Review/foo', agentId: AGENT_PLANNER }],
+          },
+        ],
+        transitions: [],
+        channels: [],
+        startNodeId: 'coding-node',
+        endNodeId: 'audit-node',
+        rules: [],
+        completionAutonomyLevel: 3,
+      });
+      const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Slash bare');
+      const task = tasks[0];
+      taskRepo.updateTask(task.id, { status: 'in_progress' });
+      nodeExecutionRepo.update(nodeExecutionRepo.listByWorkflowRun(run.id)[0]!.id, {
+        status: 'idle',
+        agentSessionId: null,
+      });
+      const pendingRepo = new PendingAgentMessageRepository(db);
+      pendingRepo.enqueue({
+        workflowRunId: run.id,
+        spaceId: SPACE_ID,
+        taskId: task.id,
+        sourceAgentName: 'coder',
+        targetKind: 'node_agent',
+        targetAgentName: 'Review/foo',
+        message: 'for Audit',
+        ttlMs: 60_000,
+        maxAttempts: 3,
+      });
+      const tam = makeRepairTam({ flush: makeCompoundAwareFlush(workflow) });
+      await buildRepairRuntime(tam, pendingRepo).executeTick();
+
+      const auditExec = nodeExecutionRepo
+        .listByWorkflowRun(run.id)
+        .find((e) => e.workflowNodeId === 'audit-node');
+      expect(auditExec?.agentName).toBe('Review/foo');
+      expect(auditExec?.status).toBe('in_progress');
+      // Review's "foo" slot must NOT have been spawned (no compound misresolution).
+      expect(
+        nodeExecutionRepo.listByWorkflowRun(run.id).find((e) => e.workflowNodeId === 'review-node')
+      ).toBeUndefined();
+      expect(pendingRepo.listAllForRun(run.id)[0].status).toBe('delivered');
+    });
+
     test('disambiguates two nodes sharing a slot name, via the pinned workflowNodeId', async () => {
       // Two nodes both declare a 'reviewer' slot. The router and restart-recovery
       // emit BARE 'reviewer' + each node's workflowNodeId, so the resolver pins
