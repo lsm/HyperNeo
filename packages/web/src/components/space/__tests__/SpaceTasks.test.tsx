@@ -240,9 +240,13 @@ describe('SpaceTasks', () => {
     mockCurrentSpaceTasksFilterTabSignal.value = 'archived';
     mockTasks.value = [makeTask('t1', 'archived')];
     const { findByText, getAllByText } = render(<SpaceTasks spaceId="space-1" />);
-    expect(getAllByText('Completed')[0].closest('button')?.getAttribute('aria-pressed')).toBe(
-      'true'
-    );
+    // Completed may render inline (wide strip) or as the More overflow's active
+    // label (compact strip) depending on draft count; assert the actual tab
+    // button is pressed rather than relying on match order.
+    const completedButtons = getAllByText('Completed');
+    expect(
+      completedButtons.some((el) => el.closest('button')?.getAttribute('aria-pressed') === 'true')
+    ).toBe(true);
     expect(await findByText('Task t1')).toBeTruthy();
     expect(await findByText(/Archived \(1\)/)).toBeTruthy();
   });

@@ -217,6 +217,8 @@ function MoreTabsDropdown({
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const moreIsActive = tabs.some((tab) => tab.key === activeTab);
 
   useEffect(() => {
@@ -228,9 +230,61 @@ function MoreTabsDropdown({
     return () => document.removeEventListener('click', close);
   }, [isOpen]);
 
+  // Move focus into the menu on open so arrow/Escape work immediately. Restored
+  // to the trigger explicitly on Escape and after a selection (below); together
+  // these match the keyboard behavior of the Dropdown this replaced.
+  useEffect(() => {
+    if (!isOpen) return;
+    const firstItem = menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]');
+    firstItem?.focus();
+  }, [isOpen]);
+
+  const focusItemAt = (index: number) => {
+    const items = menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]');
+    if (!items || items.length === 0) return;
+    items[(index + items.length) % items.length].focus();
+  };
+
+  const activeIndex = () => {
+    const items = menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]');
+    if (!items) return -1;
+    return Array.from(items).findIndex((item) => item === document.activeElement);
+  };
+
+  const onTriggerKeyDown = (event: KeyboardEvent) => {
+    // Open with the arrow keys in addition to the native Enter/Space toggle.
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      setIsOpen(true);
+    }
+  };
+
+  const onMenuKeyDown = (event: KeyboardEvent) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      setIsOpen(false);
+      triggerRef.current?.focus();
+    } else if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      focusItemAt(activeIndex() + 1);
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      const i = activeIndex();
+      focusItemAt(i <= 0 ? 0 : i - 1);
+    } else if (event.key === 'Home') {
+      event.preventDefault();
+      focusItemAt(0);
+    } else if (event.key === 'End') {
+      event.preventDefault();
+      const items = menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]');
+      focusItemAt(items ? items.length - 1 : 0);
+    }
+  };
+
   return (
     <div ref={rootRef} class="relative flex-1 sm:flex-none">
       <button
+        ref={triggerRef}
         type="button"
         class={`flex w-full items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition sm:w-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/50 ${
           moreIsActive
@@ -245,14 +299,17 @@ function MoreTabsDropdown({
         aria-haspopup="menu"
         aria-expanded={isOpen}
         onClick={() => setIsOpen((open) => !open)}
+        onKeyDown={onTriggerKeyDown}
       >
         <span>{moreIsActive ? tabs.find((tab) => tab.key === activeTab)?.label : 'More'}</span>
         <span aria-hidden="true">···</span>
       </button>
       {isOpen && (
         <div
+          ref={menuRef}
           class={`absolute right-0 top-full z-50 mt-2 min-w-[180px] rounded-xl border p-1.5 ${FLAT_SURFACE}`}
           role="menu"
+          onKeyDown={onMenuKeyDown}
         >
           {tabs.map((tab) => (
             <button
@@ -262,8 +319,9 @@ function MoreTabsDropdown({
               aria-current={activeTab === tab.key ? 'page' : undefined}
               class="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm text-gray-300 transition-colors hover:bg-white/[0.07] hover:text-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/50"
               onClick={() => {
-                navigateToSpaceTasks(navigationSpaceId, tab.key);
+                triggerRef.current?.focus();
                 setIsOpen(false);
+                navigateToSpaceTasks(navigationSpaceId, tab.key);
               }}
             >
               <span>{tab.label}</span>
@@ -483,6 +541,16 @@ function TaskGroup({
 
   const showPagination = !!pagination && pagination.total > pagination.limit;
 
+  // Multi-word titles ("In Progress", "Post-Approval Running") must collapse to
+  // a single valid ID token — `aria-labelledby` splits on whitespace, so a raw
+  // title would make assistive tech look up several nonexistent IDs instead of
+  // the actual heading.
+  const slug =
+    title
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'group';
+
   // Body precedence: error > loading-without-rows > rows. We deliberately
   // render the loading placeholder when `tasks.length === 0` because the
   // parent (`PaginatedTaskGroup`) clears the row list while a new page is
@@ -530,11 +598,11 @@ function TaskGroup({
   );
 
   return (
-    <section class="space-y-2" data-testid="task-group" aria-labelledby={`task-group-${title}`}>
+    <section class="space-y-2" data-testid="task-group" aria-labelledby={`task-group-${slug}`}>
       <div class="flex items-center gap-2 px-1">
         <span class={`h-1.5 w-1.5 rounded-full ${accentStyles[variant]}`} aria-hidden="true" />
         <h3
-          id={`task-group-${title}`}
+          id={`task-group-${slug}`}
           class="text-xs font-semibold uppercase tracking-[0.14em] text-gray-300"
         >
           {title} ({count})
@@ -664,6 +732,12 @@ function TaskItem({
       onKeyDown={
         isClickable
           ? (event) => {
+              // Only activate when the row itself has focus. A keydown that
+              // originated on a nested control (e.g. a dependency badge) must
+              // reach that control's own activation handler — calling
+              // preventDefault here would otherwise swallow the badge's native
+              // Enter/Space → click and open the task instead of the dependency.
+              if (event.target !== event.currentTarget) return;
               if (event.key === 'Enter' || event.key === ' ') {
                 event.preventDefault();
                 activate();
@@ -814,10 +888,11 @@ export function SpaceTasks({
     completedTab,
   ];
 
-  // The middle column can remain narrow even on a wide viewport when both side
-  // panels are open. Keep only the two priority tabs in the compact strip and
-  // reveal the full set only at xl, where the middle column has enough room.
-  const compactTabCount = draftTab ? 3 : 4;
+  // The middle column can stay narrow (mobile, or desktop with both side panels
+  // open). Cap the compact strip at three inline tabs so the overflow menu is
+  // always present and the strip doesn't overflow on 320–420 px screens; the
+  // full set renders inline only at xl, where the column has enough room.
+  const compactTabCount = 3;
   const compactTabs = allTabs.slice(0, compactTabCount);
   const compactOverflowTabs = allTabs.slice(compactTabCount);
 

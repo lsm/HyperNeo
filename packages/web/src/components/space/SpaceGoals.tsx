@@ -149,7 +149,16 @@ function GoalCard({
           <div class="flex items-center justify-between gap-2">
             <span class="font-medium text-gray-400">Activity</span>
             <span class="flex items-center gap-1.5 capitalize text-gray-200">
-              <span class="h-1.5 w-1.5 rounded-full bg-emerald-300/80" />
+              <span
+                class={`h-1.5 w-1.5 rounded-full ${
+                  recurringActivityStatus === 'active'
+                    ? 'bg-emerald-300/80'
+                    : recurringActivityStatus === 'paused'
+                      ? 'bg-amber-300/80'
+                      : 'bg-gray-400/80'
+                }`}
+                aria-hidden="true"
+              />
               {recurringActivityStatus}
             </span>
           </div>

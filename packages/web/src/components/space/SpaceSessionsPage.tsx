@@ -23,8 +23,14 @@ import {
 
 const SESSION_PAGE_SIZE = 10;
 
-type RuntimeGroupKey = 'waiting' | 'idle-unread' | 'error' | 'running' | 'idle-read';
-type RuntimeKind = 'idle' | 'error' | 'running' | 'waiting';
+type RuntimeGroupKey =
+  | 'waiting'
+  | 'idle-unread'
+  | 'error'
+  | 'running'
+  | 'rate-limited'
+  | 'idle-read';
+type RuntimeKind = 'idle' | 'error' | 'running' | 'waiting' | 'rate-limited';
 
 interface ClassifiedSession {
   session: SpaceSessionRow;
@@ -44,36 +50,62 @@ const RUNTIME_GROUPS: RuntimeGroupDef[] = [
   { key: 'idle-unread', title: 'Unread', accent: 'bg-sky-300/80' },
   { key: 'error', title: 'Error', accent: 'bg-red-300/80' },
   { key: 'running', title: 'Running', accent: 'bg-emerald-300/80' },
+  { key: 'rate-limited', title: 'Rate Limited', accent: 'bg-orange-300/80' },
   { key: 'idle-read', title: 'Idle', accent: 'bg-gray-400/80' },
 ];
 
 const RUNNING_LABELS: Record<string, string> = {
   queued: 'Queued',
   processing: 'Processing',
-  rate_limit_cooldown: 'Rate limit cooldown',
 };
 
-function parseRuntimeState(value: unknown): { kind: RuntimeKind; label: string } {
-  let parsed: unknown = value;
-  if (typeof value === 'string') {
+/**
+ * Classify a session into a runtime group + human label. Lifecycle state is
+ * considered alongside the persisted processing phase so actionable and
+ * terminal sessions surface correctly instead of all collapsing to "Idle":
+ *  - `pending_worktree_choice` is actionable (the chat needs a worktree before
+ *    it can proceed) → surfaced under "Waiting for input".
+ *  - `rate_limit_cooldown` is a warning (throttled, auto-resumes), not active
+ *    execution → its own "Rate Limited" group, matching session-processing-phase.
+ *  - `paused` / `ended` stay under Idle but are labelled accurately.
+ * Malformed or unknown state falls back to Idle, never Error.
+ */
+function classifySession(
+  status: string,
+  processingStateValue: unknown
+): { kind: RuntimeKind; label: string } {
+  if (status === 'pending_worktree_choice') {
+    return { kind: 'waiting', label: 'Needs worktree choice' };
+  }
+
+  let parsed: unknown = processingStateValue;
+  if (typeof processingStateValue === 'string') {
     try {
-      parsed = JSON.parse(value);
+      parsed = JSON.parse(processingStateValue);
     } catch {
-      return { kind: 'idle', label: 'Idle' };
+      parsed = null;
     }
   }
-  if (!parsed || typeof parsed !== 'object') return { kind: 'idle', label: 'Idle' };
-  const status = (parsed as { status?: unknown }).status;
-  if (status === 'interrupted') return { kind: 'error', label: 'Interrupted' };
-  if (status === 'waiting_for_input') return { kind: 'waiting', label: 'Waiting for input' };
-  if (typeof status === 'string' && status in RUNNING_LABELS) {
-    return { kind: 'running', label: RUNNING_LABELS[status] };
+  if (parsed && typeof parsed === 'object') {
+    const phase = (parsed as { status?: unknown }).status;
+    if (phase === 'interrupted') return { kind: 'error', label: 'Interrupted' };
+    if (phase === 'waiting_for_input') return { kind: 'waiting', label: 'Waiting for input' };
+    if (phase === 'rate_limit_cooldown') {
+      return { kind: 'rate-limited', label: 'Rate limit cooldown' };
+    }
+    if (typeof phase === 'string' && phase in RUNNING_LABELS) {
+      return { kind: 'running', label: RUNNING_LABELS[phase] };
+    }
   }
+
+  if (status === 'paused') return { kind: 'idle', label: 'Paused' };
+  if (status === 'ended') return { kind: 'idle', label: 'Ended' };
   return { kind: 'idle', label: 'Idle' };
 }
 
 function groupKeyFor(session: ClassifiedSession): RuntimeGroupKey {
   if (session.runtimeKind === 'waiting') return 'waiting';
+  if (session.runtimeKind === 'rate-limited') return 'rate-limited';
   if (session.runtimeKind === 'error') return 'error';
   if (session.runtimeKind === 'running') return 'running';
   return session.unreadCount > 0 ? 'idle-unread' : 'idle-read';
@@ -172,16 +204,18 @@ function SessionItem({ classified, spaceId }: { classified: ClassifiedSession; s
         ? 'text-red-300'
         : runtimeKind === 'running'
           ? 'text-emerald-200'
-          : unreadCount > 0
-            ? 'text-sky-200'
-            : 'text-gray-400';
+          : runtimeKind === 'rate-limited'
+            ? 'text-orange-200'
+            : unreadCount > 0
+              ? 'text-sky-200'
+              : 'text-gray-400';
 
   return (
     <button
       type="button"
       class="group/open flex w-full items-start justify-between gap-3 px-5 py-4 text-left transition hover:bg-white/[0.045] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-200/55"
       onClick={() => navigateToSpaceSession(spaceId, session.id)}
-      aria-label={`Open session ${title}`}
+      aria-label={`Open session ${title}, ${runtimeLabel}${unreadCount > 0 ? `, ${unreadCount} unread` : ''}`}
       data-testid="space-session-item"
     >
       <div class="min-w-0 flex-1">
@@ -252,7 +286,7 @@ export function SpaceSessionsPage({
   }, [sessions]);
 
   const classifiedSessions = sessions.map((session) => {
-    const runtime = parseRuntimeState(session.processingState);
+    const runtime = classifySession(session.status, session.processingState);
     return {
       session,
       runtimeKind: runtime.kind,
