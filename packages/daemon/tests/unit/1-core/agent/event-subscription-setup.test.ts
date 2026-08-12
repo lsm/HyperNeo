@@ -116,14 +116,14 @@ describe('EventSubscriptionSetup', () => {
     it('should register all event subscriptions', () => {
       setup.setup();
 
-      // Should register 6 event handlers
-      expect(onSpy).toHaveBeenCalledTimes(6);
+      // Should register 5 event handlers (query.sendEnqueuedOnTurnEnd was
+      // removed — it was never published; task #861 item 14).
+      expect(onSpy).toHaveBeenCalledTimes(5);
       expect(registeredCallbacks.has('model.switchRequest')).toBe(true);
       expect(registeredCallbacks.has('agent.interruptRequest')).toBe(true);
       expect(registeredCallbacks.has('agent.resetRequest')).toBe(true);
       expect(registeredCallbacks.has('message.persisted')).toBe(true);
       expect(registeredCallbacks.has('query.trigger')).toBe(true);
-      expect(registeredCallbacks.has('query.sendEnqueuedOnTurnEnd')).toBe(true);
     });
 
     it('should pass sessionId to subscription options', () => {
@@ -443,17 +443,6 @@ describe('EventSubscriptionSetup', () => {
         expect(mockQueryModeHandler.handleQueryTrigger).toHaveBeenCalled();
       });
     });
-
-    describe('query.sendEnqueuedOnTurnEnd handler', () => {
-      it('should call queryModeHandler.sendEnqueuedMessagesOnTurnEnd', async () => {
-        setup.setup();
-
-        const callback = registeredCallbacks.get('query.sendEnqueuedOnTurnEnd')!;
-        await callback({ sessionId: 'test-session-id' });
-
-        expect(mockQueryModeHandler.sendEnqueuedMessagesOnTurnEnd).toHaveBeenCalled();
-      });
-    });
   });
 
   describe('cleanup', () => {
@@ -461,8 +450,8 @@ describe('EventSubscriptionSetup', () => {
       setup.setup();
       setup.cleanup();
 
-      // 6 subscriptions = 6 unsubscribe calls
-      expect(unsubscribeSpy).toHaveBeenCalledTimes(6);
+      // 5 subscriptions = 5 unsubscribe calls
+      expect(unsubscribeSpy).toHaveBeenCalledTimes(5);
     });
 
     it('should clear unsubscribers array', () => {
@@ -471,7 +460,7 @@ describe('EventSubscriptionSetup', () => {
 
       // Second cleanup should not call unsubscribe again
       setup.cleanup();
-      expect(unsubscribeSpy).toHaveBeenCalledTimes(6); // Still 6, not 12
+      expect(unsubscribeSpy).toHaveBeenCalledTimes(5); // Still 5, not 10
     });
 
     it('should handle unsubscribe errors gracefully', () => {

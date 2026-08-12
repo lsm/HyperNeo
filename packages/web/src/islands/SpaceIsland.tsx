@@ -522,11 +522,12 @@ export default function SpaceIsland({
     return (
       <>
         <div
-          class="flex-1 flex flex-col overflow-hidden bg-app-content"
+          class="relative isolate flex-1 flex flex-col overflow-hidden bg-app-content before:pointer-events-none before:absolute before:inset-0 before:-z-10 before:bg-[radial-gradient(circle_at_7%_0%,rgba(145,77,108,0.25),transparent_34%),radial-gradient(circle_at_96%_8%,rgba(42,94,125,0.2),transparent_40%),radial-gradient(circle_at_60%_112%,rgba(73,70,160,0.24),transparent_50%)] after:pointer-events-none after:absolute after:inset-0 after:-z-10 after:bg-[linear-gradient(180deg,rgba(12,15,22,0.02),rgba(8,11,18,0.2))]"
           data-testid="space-agents-view"
+          data-agents-surface="glass-workspace"
           {...baseLayerProps}
         >
-          <SpacePageHeader pageTitle="Agents" />
+          <SpacePageHeader pageTitle="Agents" appearance="hero" />
           <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
             <Suspense fallback={lazyFallback}>
               <SpaceLongHorizonAgents
@@ -586,11 +587,12 @@ export default function SpaceIsland({
     <>
       {overlay}
       <div
-        class="flex-1 flex flex-col overflow-hidden bg-app-content"
+        class="relative isolate flex-1 flex flex-col overflow-hidden bg-app-content before:pointer-events-none before:absolute before:inset-0 before:-z-10 before:bg-[radial-gradient(circle_at_6%_0%,rgba(137,74,102,0.16),transparent_32%),radial-gradient(circle_at_96%_10%,rgba(43,83,108,0.14),transparent_38%),radial-gradient(circle_at_58%_112%,rgba(70,60,145,0.2),transparent_48%)] after:pointer-events-none after:absolute after:inset-0 after:-z-10 after:bg-[linear-gradient(180deg,rgba(12,15,22,0.04),rgba(8,11,18,0.24))]"
         data-testid="space-overview-view"
+        data-overview-surface="glass-workspace"
         {...baseLayerProps}
       >
-        <SpacePageHeader pageTitle="Overview" />
+        <SpacePageHeader pageTitle="Overview" subtitle="Space operations and recent activity" />
         <div class="flex-1 overflow-hidden flex flex-col min-w-0">
           <Suspense fallback={lazyFallback}>
             <SpaceOverview

@@ -30,6 +30,7 @@ describe('getConfig', () => {
     delete process.env.MAX_TOKENS;
     delete process.env.TEMPERATURE;
     delete process.env.MAX_SESSIONS;
+    delete process.env.HYPERNEO_MAX_SUBSCRIPTIONS_PER_CLIENT;
     process.env.NODE_ENV = 'production';
 
     const config = getConfig();
@@ -42,6 +43,8 @@ describe('getConfig', () => {
     expect(config.maxTokens).toBe(8192);
     expect(config.temperature).toBe(1.0);
     expect(config.maxSessions).toBe(10);
+    // Ingress fan-out guardrail default (task #899)
+    expect(config.maxSubscriptionsPerClient).toBe(128);
     expect(config.nodeEnv).toBe('production');
   });
 
@@ -53,6 +56,7 @@ describe('getConfig', () => {
     process.env.MAX_TOKENS = '4096';
     process.env.TEMPERATURE = '0.5';
     process.env.MAX_SESSIONS = '20';
+    process.env.HYPERNEO_MAX_SUBSCRIPTIONS_PER_CLIENT = '256';
     process.env.NODE_ENV = 'production';
 
     const config = getConfig();
@@ -64,6 +68,31 @@ describe('getConfig', () => {
     expect(config.maxTokens).toBe(4096);
     expect(config.temperature).toBe(0.5);
     expect(config.maxSessions).toBe(20);
+    expect(config.maxSubscriptionsPerClient).toBe(256);
+  });
+
+  test('HYPERNEO_MAX_SUBSCRIPTIONS_PER_CLIENT fails closed to the default on invalid input', () => {
+    // A guardrail must not silently disable itself on bad input.
+    process.env.HYPERNEO_MAX_SUBSCRIPTIONS_PER_CLIENT = 'not-a-number';
+    expect(getConfig().maxSubscriptionsPerClient).toBe(128);
+
+    process.env.HYPERNEO_MAX_SUBSCRIPTIONS_PER_CLIENT = '0';
+    expect(getConfig().maxSubscriptionsPerClient).toBe(128);
+
+    process.env.HYPERNEO_MAX_SUBSCRIPTIONS_PER_CLIENT = '-5';
+    expect(getConfig().maxSubscriptionsPerClient).toBe(128);
+
+    // Partial parses must NOT be accepted: a numeric prefix or scientific
+    // notation would otherwise misconfigure the cap (1000000 disables it; 1e3
+    // breaks clients after one subscribe).
+    process.env.HYPERNEO_MAX_SUBSCRIPTIONS_PER_CLIENT = '1000000oops';
+    expect(getConfig().maxSubscriptionsPerClient).toBe(128);
+
+    process.env.HYPERNEO_MAX_SUBSCRIPTIONS_PER_CLIENT = '1e3';
+    expect(getConfig().maxSubscriptionsPerClient).toBe(128);
+
+    process.env.HYPERNEO_MAX_SUBSCRIPTIONS_PER_CLIENT = '12.5';
+    expect(getConfig().maxSubscriptionsPerClient).toBe(128);
   });
 
   test('HYPERNEO_PORT sets the port', () => {

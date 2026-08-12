@@ -10,7 +10,7 @@
  * is unaffected, so we use setModelsCache(new Map()) to empty the cache.
  */
 
-import { describe, expect, it, beforeEach, mock } from 'bun:test';
+import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
 import type { ModelInfo } from '@hyperneo/shared';
 import type { Provider } from '@hyperneo/shared/provider';
@@ -24,6 +24,9 @@ import { setModelsCache } from '../../../../src/lib/model-service.js';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import { detectStrandedProviders } from '../../../../src/lib/rpc-handlers/session-handlers';
+import { Database } from '../../../../src/storage/sqlite-compat';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
+import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants';
 
 function createMockInternalEventBus(): InternalEventBus<DaemonInternalEventMap> {
   return {
@@ -407,6 +410,130 @@ describe('Session RPC Handlers — models.list', () => {
       expect(result.success).toBe(true);
       expect(archiveResourcesMock).toHaveBeenCalledWith('sess-1', 'ui_session_archive');
       expect(removeSessionMock).toHaveBeenCalledWith('space-1', 'sess-1');
+    });
+  });
+
+  // Task #861 item 3 — the session.messages.promotePending RPC (UI "promote
+  // next-turn → current turn") routes through the durable owner under v2.
+  describe('Session RPC Handlers — session.messages.promotePending (v2)', () => {
+    let messageHubData: ReturnType<typeof createMockMessageHub>;
+    let eventBus: ReturnType<typeof createMockInternalEventBus>;
+    let db: Database;
+    let jobQueue: JobQueueRepository;
+    let v2Previous: string | undefined;
+
+    beforeEach(async () => {
+      messageHubData = createMockMessageHub();
+      eventBus = createMockInternalEventBus();
+      v2Previous = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+      process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '1';
+
+      db = new Database(':memory:');
+      db.exec(`
+        CREATE TABLE sdk_messages (
+          id TEXT PRIMARY KEY, session_id TEXT, message_type TEXT, message_subtype TEXT,
+          sdk_message TEXT, timestamp TEXT, send_status TEXT, origin TEXT,
+          is_renderable INTEGER DEFAULT 1, is_terminal INTEGER DEFAULT 0,
+          conversation_turn_index INTEGER, parent_tool_use_id TEXT, task_id TEXT,
+          sdk_uuid TEXT, replacement_metadata_normalized INTEGER DEFAULT 0
+        );
+        CREATE TABLE job_queue (
+          id TEXT PRIMARY KEY, queue TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending', payload TEXT NOT NULL DEFAULT '{}',
+          result TEXT, error TEXT, priority INTEGER NOT NULL DEFAULT 0,
+          max_retries INTEGER NOT NULL DEFAULT 3, retry_count INTEGER NOT NULL DEFAULT 0,
+          run_at INTEGER NOT NULL, created_at INTEGER NOT NULL, started_at INTEGER, completed_at INTEGER
+        );
+        CREATE UNIQUE INDEX uq_message_delivery_active_turn
+          ON job_queue (queue, json_extract(payload, '$.sessionId'))
+          WHERE queue = 'message_delivery'
+            AND json_extract(payload, '$.role') = 'turn'
+            AND status IN ('pending', 'processing');
+      `);
+      jobQueue = new JobQueueRepository(db as never);
+      // Seed one deferred user message.
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid)
+         VALUES (?, ?, 'user', ?, ?, 'deferred', ?)`
+      ).run(
+        'db-1',
+        'sess-1',
+        JSON.stringify({
+          type: 'user',
+          uuid: 'promote-me',
+          message: { role: 'user', content: 'next turn' },
+        }),
+        new Date().toISOString(),
+        'promote-me'
+      );
+
+      const dbFacade = {
+        // Parse the sdk_message blob into an SDK message (+dbId) the way the real
+        // SDKMessageRepository.getMessagesByStatus does, so isSDKUserMessage +
+        // toReplayContent see the expected shape.
+        getMessagesByStatus: (_sid: string, status: string) =>
+          (
+            db
+              .prepare(
+                `SELECT id AS dbId, sdk_message, timestamp FROM sdk_messages WHERE session_id = ? AND send_status = ?`
+              )
+              .all('sess-1', status) as Array<{
+              dbId: string;
+              sdk_message: string;
+              timestamp: string;
+            }>
+          ).map((row) => ({ ...JSON.parse(row.sdk_message), dbId: row.dbId, timestamp: 0 })),
+        updateMessageStatus: (ids: string[], status: string) =>
+          db
+            .prepare(
+              `UPDATE sdk_messages SET send_status = ? WHERE id IN (${ids.map(() => '?').join(',')})`
+            )
+            .run(status, ...ids),
+        getJobQueueRepo: () => jobQueue,
+      };
+      const sessionManager = {
+        getSessionAsync: mock(async () => ({
+          getSessionData: () => ({ id: 'sess-1', status: 'active' }),
+          startQueryAndEnqueue: mock(async () => {}),
+        })),
+        getDatabase: () => dbFacade,
+      } as unknown as SessionManager;
+
+      const { setupSessionHandlers } = await import(
+        '../../../../src/lib/rpc-handlers/session-handlers'
+      );
+      setupSessionHandlers(messageHubData.hub, sessionManager, eventBus, {
+        removeSession: mock(async () => ({ id: '', sessionIds: [] })),
+      } as unknown as SpaceManager);
+    });
+
+    afterEach(() => {
+      if (v2Previous === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+      else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = v2Previous;
+      db.close();
+    });
+
+    it('routes the promoted message through deliverMessage (durable owner) under v2', async () => {
+      const handler = messageHubData.handlers.get('session.messages.promotePending');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ sessionId: 'sess-1', messageDbId: 'db-1' }, {})) as {
+        promoted: boolean;
+      };
+      expect(result.promoted).toBe(true);
+
+      // The deferred row was flipped to enqueued ...
+      const row = db.prepare(`SELECT send_status FROM sdk_messages WHERE id = ?`).get('db-1') as {
+        send_status: string;
+      };
+      expect(row.send_status).toBe('enqueued');
+      // ... and a durable turn job was enqueued for it (not the legacy inline feed).
+      const job = db
+        .prepare(
+          `SELECT json_extract(payload, '$.role') AS role FROM job_queue WHERE queue = ? AND json_extract(payload, '$.messageUuid') = ?`
+        )
+        .get(MESSAGE_DELIVERY, 'promote-me') as { role: string };
+      expect(job.role).toBe('turn');
     });
   });
 });

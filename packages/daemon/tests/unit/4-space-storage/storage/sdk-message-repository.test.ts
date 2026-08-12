@@ -1192,29 +1192,6 @@ describe('SDKMessageRepository', () => {
     });
   });
 
-  describe('getLatestSystemInitTimestamp', () => {
-    it('returns the latest system init timestamp without loading the full transcript', async () => {
-      repository.saveSDKMessage('session-1', {
-        type: 'system',
-        subtype: 'init',
-        uuid: 'init-1',
-        session_id: 'session-1',
-      } as unknown as SDKMessage);
-      await new Promise((resolve) => setTimeout(resolve, 5));
-      const beforeLatest = Date.now();
-      await new Promise((resolve) => setTimeout(resolve, 5));
-      repository.saveSDKMessage('session-1', {
-        type: 'system',
-        subtype: 'init',
-        uuid: 'init-2',
-        session_id: 'session-1',
-      } as unknown as SDKMessage);
-
-      expect(repository.getLatestSystemInitTimestamp('session-1')).toBeGreaterThan(beforeLatest);
-      expect(repository.getLatestSystemInitTimestamp('missing-session')).toBe(0);
-    });
-  });
-
   describe('getSDKMessageCount', () => {
     it('should return count of top-level messages', () => {
       repository.saveSDKMessage('session-1', createUserMessage('Msg 1'));
@@ -1646,6 +1623,48 @@ describe('SDKMessageRepository', () => {
       repository.updateMessageStatus([id], 'consumed');
       expect(repository.getMessagesByStatus('session-1', 'consumed').length).toBe(1);
       expect(repository.getMessagesByStatus('session-1', 'enqueued').length).toBe(0);
+    });
+  });
+
+  describe('markDeliveryConsumedByUuid (task #861 item 12 — synchronous consumed-flip)', () => {
+    it('flips an enqueued row to consumed and returns its db id', () => {
+      const id = repository.saveUserMessage(
+        'session-1',
+        createUserMessage('consume me', 'uuid-consume'),
+        'enqueued'
+      );
+
+      const flipped = repository.markDeliveryConsumedByUuid('session-1', 'uuid-consume');
+
+      expect(flipped).toBe(id);
+      expect(repository.getMessagesByStatus('session-1', 'enqueued').length).toBe(0);
+      expect(repository.getMessagesByStatus('session-1', 'consumed').length).toBe(1);
+    });
+
+    it('is idempotent: a second call returns null (already consumed, no double-flip)', () => {
+      repository.saveUserMessage(
+        'session-1',
+        createUserMessage('once only', 'uuid-once'),
+        'enqueued'
+      );
+
+      expect(repository.markDeliveryConsumedByUuid('session-1', 'uuid-once')).not.toBeNull();
+      // Already consumed — no-op, returns null so the caller skips the broadcast.
+      expect(repository.markDeliveryConsumedByUuid('session-1', 'uuid-once')).toBeNull();
+    });
+
+    it('does not flip a deferred row (not a consume candidate)', () => {
+      repository.saveUserMessage(
+        'session-1',
+        createUserMessage('still deferred', 'uuid-def'),
+        'deferred'
+      );
+      expect(repository.markDeliveryConsumedByUuid('session-1', 'uuid-def')).toBeNull();
+      expect(repository.getMessagesByStatus('session-1', 'deferred').length).toBe(1);
+    });
+
+    it('returns null when the uuid is unknown', () => {
+      expect(repository.markDeliveryConsumedByUuid('session-1', 'no-such-uuid')).toBeNull();
     });
   });
 
@@ -2150,82 +2169,6 @@ describe('SDKMessageRepository', () => {
       const count = repository.countMessagesAfter('session-1', middleTime);
 
       expect(count).toBe(0);
-    });
-  });
-
-  describe('getConsumedUserMessagesAfterLatestInit', () => {
-    function insertMessage(
-      id: string,
-      sessionId: string,
-      message: SDKMessage,
-      timestamp: string,
-      sendStatus: SendStatus | null = 'consumed'
-    ): void {
-      db.prepare(
-        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).run(
-        id,
-        sessionId,
-        message.type,
-        (message as SDKMessage & { subtype?: string }).subtype ?? null,
-        JSON.stringify(message),
-        timestamp,
-        sendStatus
-      );
-    }
-
-    it('returns only consumed user messages after the latest system init', () => {
-      insertMessage(
-        'old-user',
-        'session-1',
-        createUserMessage('before init', 'old-user'),
-        '2026-01-01T00:00:00.000Z'
-      );
-      insertMessage(
-        'init',
-        'session-1',
-        { type: 'system', subtype: 'init', session_id: 'session-1' } as unknown as SDKMessage,
-        '2026-01-01T00:01:00.000Z',
-        null
-      );
-      insertMessage(
-        'assistant-after-init',
-        'session-1',
-        createAssistantMessage('after init'),
-        '2026-01-01T00:02:00.000Z'
-      );
-      insertMessage(
-        'deferred-user-after-init',
-        'session-1',
-        createUserMessage('deferred after init', 'deferred-user-after-init'),
-        '2026-01-01T00:03:00.000Z',
-        'deferred'
-      );
-      insertMessage(
-        'candidate-user',
-        'session-1',
-        createUserMessage('candidate', 'candidate-user'),
-        '2026-01-01T00:04:00.000Z'
-      );
-
-      const messages = repository.getConsumedUserMessagesAfterLatestInit('session-1');
-
-      expect(messages.map((message) => message.dbId)).toEqual(['candidate-user']);
-      expect(messages[0]?.uuid).toBe('candidate-user');
-    });
-
-    it('returns consumed user messages when no system init exists', () => {
-      insertMessage(
-        'candidate-user',
-        'session-1',
-        createUserMessage('candidate', 'candidate-user'),
-        '2026-01-01T00:04:00.000Z'
-      );
-
-      const messages = repository.getConsumedUserMessagesAfterLatestInit('session-1');
-
-      expect(messages.map((message) => message.dbId)).toEqual(['candidate-user']);
     });
   });
 
