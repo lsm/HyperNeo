@@ -2508,6 +2508,52 @@ describe('SpaceRuntime', () => {
       expect(row.status).toBe('delivered');
     });
 
+    test('legacy "<nodeId>/<agent>" rows are rescoped even when an execution already exists', async () => {
+      // The rescope must run BEFORE the execution lookup — if a matching
+      // NodeExecution already exists, the no-execution branch (where rescope used
+      // to live) is skipped and the row keeps its old "<nodeId>/<agent>" key, so
+      // the flush never drains it.
+      const workflow = makeCompoundHandoffWorkflow();
+      const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Legacy exec');
+      const task = tasks[0];
+      taskRepo.updateTask(task.id, { status: 'in_progress' });
+      // Pre-create the target execution with a live session (e.g. spawned earlier).
+      nodeExecutionRepo.createOrIgnore({
+        workflowRunId: run.id,
+        workflowNodeId: 'review-node',
+        agentName: 'reviewer',
+        agentSessionId: 'session:reviewer',
+        status: 'in_progress',
+      });
+      nodeExecutionRepo.update(
+        nodeExecutionRepo.listByWorkflowRun(run.id).find((e) => e.workflowNodeId === 'coding-node')!
+          .id,
+        { status: 'idle', agentSessionId: null }
+      );
+      const pendingRepo = new PendingAgentMessageRepository(db);
+      pendingRepo.enqueue({
+        workflowRunId: run.id,
+        spaceId: SPACE_ID,
+        taskId: task.id,
+        sourceAgentName: 'coder',
+        targetKind: 'node_agent',
+        targetAgentName: 'review-node/reviewer',
+        message: 'please review',
+        ttlMs: 60_000,
+        maxAttempts: 3,
+      });
+      const tam = makeRepairTam({
+        liveSessions: new Set(['session:reviewer']),
+        flush: makeCompoundAwareFlush(workflow),
+      });
+      await buildRepairRuntime(tam, pendingRepo).executeTick();
+
+      const updated = pendingRepo.listAllForRun(run.id)[0];
+      expect(updated.targetAgentName).toBe('reviewer');
+      expect(updated.workflowNodeId).toBe('review-node');
+      expect(updated.status).toBe('delivered');
+    });
+
     test('non-compound "reviewer" slot name still resolves (backward compat)', async () => {
       const workflow = makeCompoundHandoffWorkflow();
       const { run, tasks } = await runtime.startWorkflowRun(

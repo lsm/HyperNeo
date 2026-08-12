@@ -8109,6 +8109,27 @@ export class SpaceRuntime {
           );
           if (remainingForGroup.length === 0) continue;
 
+          // Resolve the target and rescope legacy compound / null-scoped rows to
+          // the pinned bare form (bare agent + resolved node id) BEFORE the
+          // execution lookup. The rescope must run whether or not an execution
+          // already exists — otherwise an existing execution skips it, the row
+          // keeps its old "<nodeId>/<agent>" key, and the flush (bare agent +
+          // "<nodeName>/<agent>") never sees it, so it expires and blocks the run.
+          const rescopedTarget = this.resolveQueuedHandoffTarget(
+            meta.workflow,
+            targetAgentName,
+            workflowNodeId
+          );
+          if (
+            rescopedTarget &&
+            (targetAgentName !== rescopedTarget.agentName ||
+              (workflowNodeId ?? null) !== rescopedTarget.nodeId)
+          ) {
+            for (const row of remainingForGroup) {
+              repo.rescopeTarget(row.id, rescopedTarget.agentName, rescopedTarget.nodeId);
+            }
+          }
+
           let execution = this.resolveQueuedHandoffExecution(
             runId,
             meta.workflow,
@@ -8117,35 +8138,16 @@ export class SpaceRuntime {
           );
 
           if (!execution) {
-            const resolved = this.resolveQueuedHandoffTarget(
-              meta.workflow,
-              targetAgentName,
-              workflowNodeId
-            );
-            if (!resolved) {
+            if (!rescopedTarget) {
               throw new Error(
                 `Queued workflow handoff target "${targetAgentName}" is not declared in workflow "${meta.workflow.id}"`
               );
             }
-            // Normalize legacy compound / null-scoped rows to the pinned bare
-            // form (bare agent + resolved node id) so the flush drains them via
-            // the bare-agent key. The router now emits this form directly, but
-            // rows queued by the previous router (e.g. actor-registry
-            // "<nodeId>/<agent>" with no workflowNodeId) would otherwise expire
-            // undelivered now that the compound drain alias is gone.
-            if (
-              targetAgentName !== resolved.agentName ||
-              (workflowNodeId ?? null) !== resolved.nodeId
-            ) {
-              for (const row of remainingForGroup) {
-                repo.rescopeTarget(row.id, resolved.agentName, resolved.nodeId);
-              }
-            }
             execution = this.createNodeExecutionOrIgnore({
               workflowRunId: runId,
-              workflowNodeId: resolved.nodeId,
-              agentName: resolved.agentName,
-              agentId: resolved.agentId,
+              workflowNodeId: rescopedTarget.nodeId,
+              agentName: rescopedTarget.agentName,
+              agentId: rescopedTarget.agentId,
               status: 'pending',
             });
           }
