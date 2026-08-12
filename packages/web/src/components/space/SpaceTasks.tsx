@@ -718,35 +718,29 @@ function TaskItem({
   const activate = () => onClick?.(task.id);
 
   return (
-    <div
-      data-testid="space-task-item"
-      class={`group px-5 py-4 outline-none transition ${
-        isClickable
-          ? 'cursor-pointer hover:bg-white/[0.045] focus-visible:bg-white/[0.045] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-200/55'
-          : ''
-      }`}
-      role={isClickable ? 'button' : undefined}
-      tabIndex={isClickable ? 0 : undefined}
-      aria-label={isClickable ? `Open task #${task.taskNumber}: ${task.title}` : undefined}
-      onClick={isClickable ? activate : undefined}
-      onKeyDown={
-        isClickable
-          ? (event) => {
-              // Only activate when the row itself has focus. A keydown that
-              // originated on a nested control (e.g. a dependency badge) must
-              // reach that control's own activation handler — calling
-              // preventDefault here would otherwise swallow the badge's native
-              // Enter/Space → click and open the task instead of the dependency.
-              if (event.target !== event.currentTarget) return;
-              if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault();
-                activate();
+    <div class="px-5 py-4">
+      <div
+        data-testid="space-task-item"
+        class={`group flex items-start justify-between gap-4 outline-none transition ${
+          isClickable
+            ? 'cursor-pointer hover:bg-white/[0.045] focus-visible:bg-white/[0.045] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-200/55'
+            : ''
+        }`}
+        role={isClickable ? 'button' : undefined}
+        tabIndex={isClickable ? 0 : undefined}
+        aria-label={isClickable ? `Open task #${task.taskNumber}: ${task.title}` : undefined}
+        onClick={isClickable ? activate : undefined}
+        onKeyDown={
+          isClickable
+            ? (event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  activate();
+                }
               }
-            }
-          : undefined
-      }
-    >
-      <div class="flex items-start justify-between gap-4">
+            : undefined
+        }
+      >
         <div class="min-w-0 flex-1">
           <div class="flex items-baseline gap-2">
             <h4 class="truncate text-[15px] font-semibold text-gray-50">{task.title}</h4>
@@ -759,20 +753,6 @@ function TaskItem({
               <span class="text-xs text-gray-500">Updated {getRelativeTime(task.updatedAt)}</span>
             )}
           </div>
-          <TaskDependencyBadges
-            dependsOnIds={task.dependsOn}
-            taskById={taskById}
-            onSelectDependency={onClick}
-          />
-          {task.status === 'blocked' && task.result && (
-            <p
-              class="mt-2 truncate text-xs leading-5 text-amber-200/75"
-              data-testid="task-blocked-reason"
-              title={task.result}
-            >
-              {task.result}
-            </p>
-          )}
         </div>
         {isClickable && (
           <svg
@@ -789,6 +769,23 @@ function TaskItem({
           </svg>
         )}
       </div>
+      {/* Dependency pills are siblings of the row's button (not descendants):
+          interactive elements inside role="button" are invalid ARIA and can be
+          suppressed by assistive tech, so the badges render outside it. */}
+      <TaskDependencyBadges
+        dependsOnIds={task.dependsOn}
+        taskById={taskById}
+        onSelectDependency={onClick}
+      />
+      {task.status === 'blocked' && task.result && (
+        <p
+          class="mt-2 truncate text-xs leading-5 text-amber-200/75"
+          data-testid="task-blocked-reason"
+          title={task.result}
+        >
+          {task.result}
+        </p>
+      )}
     </div>
   );
 }
@@ -889,10 +886,11 @@ export function SpaceTasks({
   ];
 
   // The middle column can stay narrow (mobile, or desktop with both side panels
-  // open). Cap the compact strip at three inline tabs so the overflow menu is
-  // always present and the strip doesn't overflow on 320–420 px screens; the
-  // full set renders inline only at xl, where the column has enough room.
-  const compactTabCount = 3;
+  // open). Cap the compact strip at two inline tabs so the strip shows three
+  // controls total (two tabs + the overflow trigger) and never overflows on
+  // 320–420 px screens; the full set renders inline only at xl, where the
+  // column has enough room.
+  const compactTabCount = 2;
   const compactTabs = allTabs.slice(0, compactTabCount);
   const compactOverflowTabs = allTabs.slice(compactTabCount);
 
