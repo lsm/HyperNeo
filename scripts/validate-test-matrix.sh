@@ -327,13 +327,16 @@ REAL_API_WORKFLOW=".github/workflows/real-api-tests.yml"
 
 # The online runner config (vitest.online.config.ts) determines which matrix
 # paths Vitest actually executes — Vitest applies include/exclude even to
-# explicitly-passed paths. Assert the include stays broad and the exclude
-# doesn't drop tests/online/, or matrix paths could be filtered out while this
-# guard (which only checks the matrix) stays green.
+# explicitly-passed paths. The include must cover BOTH suffixes this guard
+# enumerates (*.test.ts AND *_test.ts): if the config matched only *.test.ts, a
+# *_test.ts file under a directory-owned module would be counted as "covered"
+# here yet filtered out by Vitest, so its shard would run it zero times. It must
+# also not drop tests/online/ via the exclude, or matrix paths could be filtered
+# out while this guard (which only checks the matrix) stays green.
 ONLINE_CFG="$REPO_ROOT/packages/daemon/vitest.online.config.ts"
-if [ "$(active_hits "$ONLINE_CFG" "include: ['tests/online/**/*.test.ts']")" -eq 0 ]; then
-	err "packages/daemon/vitest.online.config.ts active include is not tests/online/**/*.test.ts — online matrix paths could be filtered out"
-	echo "     → keep the include broad, or update this validator" >&2
+if [ "$(active_hits "$ONLINE_CFG" "include: ['tests/online/**/*.test.ts', 'tests/online/**/*_test.ts']")" -eq 0 ]; then
+	err "packages/daemon/vitest.online.config.ts active include must be ['tests/online/**/*.test.ts', 'tests/online/**/*_test.ts'] — a *_test.ts file enumerated as covered must actually be run, not filtered out"
+	echo "     → keep the include covering both *.test.ts and *_test.ts" >&2
 fi
 # Require the exact exclude — a substring check for "tests/online/" misses a
 # broad glob (e.g. tests/** or **/legacy/**) that would silently exclude online
@@ -370,15 +373,33 @@ _axis_modules=$(awk '
 	injob && /^[[:space:]]*include:/ { inaxis=0 }
 	inaxis && !/^[[:space:]]*#/ && /^[[:space:]]+- [a-z][a-z0-9-]+[[:space:]]*$/ { sub(/^[[:space:]]+- /, ""); print }
 ' "$MAIN_WORKFLOW")
-_include_map=$(awk '
+# Build a module→value map that parses the FOLDED-scalar CONTENTS, not just the
+# `>-`/`|-` marker. The marker itself is non-space, so a naive
+# `test_path:[[:space:]]*[^[:space:]]` test accepts `test_path: >-` with NO
+# indented value as a nonempty path — yet GitHub resolves that to an EMPTY
+# ${{ matrix.test_path }}, so the runner executes the entire online suite
+# unfiltered. Counting ACTUAL values per module closes that hole.
+_module_values=$(awk '
+	function trim(v) { sub(/^[[:space:]]+/, "", v); sub(/[[:space:]]+$/, "", v); return v }
 	/^[[:space:]]*#/ { next }
-	/^[[:space:]]+- module:[[:space:]]*[a-z0-9-]+/ { sub(/^[[:space:]]+- module:[[:space:]]*/, ""); sub(/[[:space:]]*$/, ""); mod=$0 }
-	mod && /test_path:[[:space:]]*[^[:space:]]/ { sub(/.*test_path:[[:space:]]*/, ""); sub(/[[:space:]]*$/, ""); print mod "\t" $0; mod="" }
+	/^[[:space:]]*- module:[[:space:]]*[a-z0-9-]+/ {
+		mod=$0; sub(/^[[:space:]]*- module:[[:space:]]*/, "", mod); sub(/[[:space:]]*$/, "", mod)
+		folding=0; next
+	}
+	mod && /test_path:[[:space:]]*[>|]-[[:space:]]*$/ { folding=1; base=0; while (substr($0, base+1, 1)==" ") base++; next }
+	folding {
+		n=0; while (substr($0, n+1, 1)==" ") n++
+		if (n > base) { v=trim($0); if (v != "") print mod "\t" v; next }
+		folding=0
+	}
+	mod && /test_path:[[:space:]]+[^[:space:]>|-]/ {
+		v=$0; sub(/^.*test_path:[[:space:]]+/, "", v); v=trim(v); if (v != "") print mod "\t" v
+	}
 ' "$MAIN_WORKFLOW")
 for _m in $_axis_modules; do
-	_path=$(printf '%s\n' "$_include_map" | awk -F'\t' -v m="$_m" '$1 == m { print $2; exit }')
-	if [ -z "$_path" ]; then
-		err "online matrix module '$_m' has no include record with a non-empty test_path — \${{ matrix.test_path }} would be empty → unfiltered run of the entire online suite"
+	_count=$(printf '%s\n' "$_module_values" | awk -F'\t' -v m="$_m" '$1 == m { c++ } END { print c+0 }')
+	if [ "$_count" -eq 0 ]; then
+		err "online matrix module '$_m' has no include record with a non-empty test_path — \${{ matrix.test_path }} would be empty (or a folded >- with no values) → unfiltered run of the entire online suite"
 		echo "     → add an include: entry for '$_m' with a test_path, or drop it from the module axis" >&2
 	fi
 done
