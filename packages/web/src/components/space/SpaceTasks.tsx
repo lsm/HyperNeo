@@ -11,16 +11,23 @@
  */
 
 import type { SpaceBlockReason, SpaceTask, SpaceTaskStatus, TaskSchedule } from '@hyperneo/shared';
-import { useEffect, useMemo, useState } from 'preact/hooks';
+import type { ComponentChildren } from 'preact';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { navigateToSpaceTasks } from '../../lib/router';
 import { currentSpaceTasksFilterTabSignal } from '../../lib/signals';
 import { spaceStore } from '../../lib/space-store';
 import { isActionRequired, isActiveTask, isDraftTask } from '../../lib/task-filters';
+import { toast } from '../../lib/toast';
 import { getTaskStatusConfig } from '../../lib/task-status';
 import { ActivitySpinner } from '../ui/ActivitySpinner';
-import { Dropdown } from '../ui/Dropdown';
 import { StatusBadge } from '../ui/StatusBadge';
 import { formatRelativeFuture, getRelativeTime } from '../../lib/utils';
+import {
+  FLAT_SURFACE,
+  GLASS_CONTENT_CONTAINER_CLASS,
+  GLASS_PRIMARY_BUTTON_CLASS,
+  GLASS_SURFACE,
+} from './glass-workspace';
 
 type TaskFilterTab = 'action' | 'active' | 'draft' | 'completed' | 'scheduled';
 type LegacyTaskFilterTab = TaskFilterTab | 'archived';
@@ -168,47 +175,28 @@ function TabButton({
   onClick: () => void;
   variant?: TabVariant;
 }) {
-  const baseClasses =
-    'px-4 py-2 text-sm font-medium transition-colors relative flex items-center gap-1.5';
-
-  const variantClasses: Record<string, string> = {
-    default: isActive
-      ? 'text-blue-400 border-b-2 border-blue-400'
-      : 'text-gray-400 hover:text-gray-300 border-b-2 border-transparent',
-    amber: isActive
-      ? 'text-amber-400 border-b-2 border-amber-400'
-      : 'text-gray-400 hover:text-gray-300 border-b-2 border-transparent',
-    purple: isActive
-      ? 'text-purple-400 border-b-2 border-purple-400'
-      : 'text-gray-400 hover:text-gray-300 border-b-2 border-transparent',
-    green: isActive
-      ? 'text-green-400 border-b-2 border-green-400'
-      : 'text-gray-400 hover:text-gray-300 border-b-2 border-transparent',
-    red: isActive
-      ? 'text-red-400 border-b-2 border-red-400'
-      : 'text-gray-400 hover:text-gray-300 border-b-2 border-transparent',
-    gray: isActive
-      ? 'text-gray-400 border-b-2 border-gray-500'
-      : 'text-gray-400 hover:text-gray-400 border-b-2 border-transparent',
+  const activeTint: Record<TabVariant, string> = {
+    default: 'bg-white/10 text-gray-50',
+    amber: 'bg-amber-400/15 text-amber-100',
+    purple: 'bg-purple-400/15 text-purple-100',
+    green: 'bg-green-400/15 text-green-100',
+    red: 'bg-red-400/15 text-red-100',
+    gray: 'bg-white/10 text-gray-200',
   };
-
   return (
-    <button class={`${baseClasses} ${variantClasses[variant]}`} onClick={onClick}>
+    <button
+      type="button"
+      class={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition sm:flex-none ${
+        isActive ? activeTint[variant] : 'text-gray-400 hover:bg-white/5 hover:text-gray-200'
+      }`}
+      onClick={onClick}
+      aria-pressed={isActive}
+    >
       {label}
       {count > 0 && (
         <span
-          class={`text-xs px-1.5 py-0.5 rounded ${
-            variant === 'amber'
-              ? 'bg-amber-900/30'
-              : variant === 'purple'
-                ? 'bg-purple-900/30'
-                : variant === 'green'
-                  ? 'bg-green-900/30'
-                  : variant === 'red'
-                    ? 'bg-red-900/30'
-                    : variant === 'gray'
-                      ? 'bg-dark-800'
-                      : 'bg-dark-700'
+          class={`rounded px-1.5 py-0.5 text-xs ${
+            isActive ? 'bg-black/20 text-current' : 'bg-white/10 text-gray-400'
           }`}
         >
           {count}
@@ -228,22 +216,51 @@ function MoreTabsDropdown({
   navigationSpaceId: string;
 }) {
   const [isOpen, setIsOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
   const moreIsActive = tabs.some((tab) => tab.key === activeTab);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const close = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setIsOpen(false);
+    };
+    document.addEventListener('click', close);
+    return () => document.removeEventListener('click', close);
+  }, [isOpen]);
+
   return (
-    <Dropdown
-      position="left"
-      items={[]}
-      isOpen={isOpen}
-      onOpenChange={setIsOpen}
-      customContent={
-        <div class="py-1 bg-dark-850 border border-dark-700 rounded-lg min-w-[160px]">
+    <div ref={rootRef} class="relative flex-1 sm:flex-none">
+      <button
+        type="button"
+        class={`flex w-full items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition sm:w-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/50 ${
+          moreIsActive
+            ? 'bg-white/10 text-gray-50'
+            : 'text-gray-400 hover:bg-white/5 hover:text-gray-200'
+        }`}
+        aria-label={
+          moreIsActive
+            ? `More task tabs, ${tabs.find((tab) => tab.key === activeTab)?.label} selected`
+            : 'More task tabs'
+        }
+        aria-haspopup="menu"
+        aria-expanded={isOpen}
+        onClick={() => setIsOpen((open) => !open)}
+      >
+        <span>{moreIsActive ? tabs.find((tab) => tab.key === activeTab)?.label : 'More'}</span>
+        <span aria-hidden="true">···</span>
+      </button>
+      {isOpen && (
+        <div
+          class={`absolute right-0 top-full z-50 mt-2 min-w-[180px] rounded-xl border p-1.5 ${FLAT_SURFACE}`}
+          role="menu"
+        >
           {tabs.map((tab) => (
             <button
               key={tab.key}
               type="button"
               role="menuitem"
-              class="w-full px-4 py-2 text-left text-sm flex items-center justify-between gap-3 text-gray-300 hover:bg-dark-800 hover:text-gray-100 transition-colors"
+              aria-current={activeTab === tab.key ? 'page' : undefined}
+              class="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm text-gray-300 transition-colors hover:bg-white/[0.07] hover:text-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/50"
               onClick={() => {
                 navigateToSpaceTasks(navigationSpaceId, tab.key);
                 setIsOpen(false);
@@ -251,28 +268,47 @@ function MoreTabsDropdown({
             >
               <span>{tab.label}</span>
               {tab.count > 0 && (
-                <span class="text-xs px-1.5 py-0.5 rounded bg-dark-700 text-gray-300">
+                <span class="rounded bg-white/10 px-1.5 py-0.5 text-xs text-gray-300">
                   {tab.count}
                 </span>
               )}
             </button>
           ))}
         </div>
-      }
-      trigger={
-        <button
-          type="button"
-          class={`px-4 py-2 text-sm font-medium transition-colors relative flex items-center gap-1.5 ${
-            moreIsActive
-              ? 'text-blue-400 border-b-2 border-blue-400'
-              : 'text-gray-400 hover:text-gray-300 border-b-2 border-transparent'
-          }`}
-          aria-label="More task tabs"
-        >
-          ⋯
-        </button>
-      }
-    />
+      )}
+    </div>
+  );
+}
+
+function TaskStatePanel({
+  title,
+  description,
+  icon = '○',
+  role = 'status',
+  action,
+}: {
+  title: string;
+  description: string;
+  icon?: string;
+  role?: 'status' | 'alert';
+  action?: ComponentChildren;
+}) {
+  return (
+    <div
+      class={`flex min-h-44 flex-col items-center justify-center rounded-2xl border px-6 py-10 text-center ${FLAT_SURFACE}`}
+      role={role}
+      data-testid="task-state-panel"
+    >
+      <span
+        class="mb-4 inline-flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/[0.05] text-lg text-gray-400"
+        aria-hidden="true"
+      >
+        {icon}
+      </span>
+      <p class="text-sm font-semibold text-gray-100">{title}</p>
+      <p class="mt-1 max-w-md text-xs leading-5 text-gray-400">{description}</p>
+      {action && <div class="mt-5">{action}</div>}
+    </div>
   );
 }
 
@@ -296,12 +332,7 @@ function EmptyTabState({ tab }: { tab: TaskFilterTab }) {
 
   const { title, description } = messages[tab];
 
-  return (
-    <div class="flex flex-col items-center justify-center py-12 text-center">
-      <p class="text-sm text-gray-400 font-medium">{title}</p>
-      <p class="text-xs text-gray-400 mt-1">{description}</p>
-    </div>
-  );
+  return <TaskStatePanel title={title} description={description} />;
 }
 
 /** Max dependency badges to render inline before collapsing into a "+N" overflow chip. */
@@ -360,6 +391,11 @@ function TaskDependencyBadges({
             data-dep-id={depId}
             data-dep-status={dep?.status ?? 'missing'}
             title={tooltip}
+            aria-label={
+              isMissing
+                ? 'Dependency task not found'
+                : `${interactive ? 'Open dependency' : 'Dependency'} ${label}: ${tooltip}`
+            }
             disabled={!interactive}
             onClick={(e) => {
               e.stopPropagation();
@@ -380,6 +416,7 @@ function TaskDependencyBadges({
         <span
           data-testid="task-dependency-overflow"
           class="inline-flex items-center text-xs font-mono font-medium text-gray-400 bg-dark-700 border border-dark-600 px-1.5 py-0.5 rounded flex-shrink-0"
+          aria-label={`${overflow} more dependencies`}
         >
           +{overflow}
         </span>
@@ -435,31 +472,13 @@ function TaskGroup({
    */
   error?: { message: string; onRetry?: () => void } | null;
 }) {
-  const headerStyles: Record<string, string> = {
-    default: '',
-    yellow: 'bg-yellow-900/20',
-    purple: 'bg-purple-900/20',
-    green: 'bg-green-900/20',
-    red: 'bg-red-900/20',
-    gray: 'bg-dark-800',
-  };
-
-  const titleStyles: Record<string, string> = {
-    default: 'text-gray-100',
-    yellow: 'text-yellow-400',
-    purple: 'text-purple-400',
-    green: 'text-green-400',
-    red: 'text-red-400',
-    gray: 'text-gray-400',
-  };
-
-  const borderStyles: Record<string, string> = {
-    default: 'border-dark-700',
-    yellow: 'border-dark-700',
-    purple: 'border-dark-700',
-    green: 'border-dark-700',
-    red: 'border-red-800/60',
-    gray: 'border-dark-700',
+  const accentStyles: Record<string, string> = {
+    default: 'bg-sky-300/80',
+    yellow: 'bg-amber-300/80',
+    purple: 'bg-purple-300/80',
+    green: 'bg-emerald-300/80',
+    red: 'bg-red-300/80',
+    gray: 'bg-gray-400/80',
   };
 
   const showPagination = !!pagination && pagination.total > pagination.limit;
@@ -470,7 +489,7 @@ function TaskGroup({
   // fetching to prevent click-through to stale rows.
   const body = error ? (
     <div
-      class="px-4 py-6 text-sm text-red-400 flex items-center justify-between gap-3"
+      class="flex items-center justify-between gap-3 px-5 py-7 text-sm text-red-300"
       data-testid="task-group-error"
       role="alert"
     >
@@ -478,7 +497,7 @@ function TaskGroup({
       {error.onRetry && (
         <button
           type="button"
-          class="px-2 py-1 text-xs rounded text-gray-300 hover:bg-dark-700"
+          class="rounded-lg border border-white/10 px-2.5 py-1 text-xs text-gray-200 transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300/50"
           onClick={error.onRetry}
           data-testid="task-group-retry"
         >
@@ -487,39 +506,58 @@ function TaskGroup({
       )}
     </div>
   ) : loading && tasks.length === 0 ? (
-    <div class="px-4 py-6 text-xs text-gray-400" data-testid="task-group-loading" aria-busy="true">
-      Loading…
+    <div
+      class="flex items-center gap-2 px-5 py-7 text-xs text-gray-400"
+      data-testid="task-group-loading"
+      aria-busy="true"
+      role="status"
+    >
+      <ActivitySpinner tone="info" />
+      Loading tasks…
     </div>
   ) : (
-    <div class="divide-y divide-dark-700">
+    <div class="divide-y divide-white/10">
       {tasks.map((task) => (
-        <TaskItem key={task.id} task={task} taskById={taskById} onClick={onTaskClick} />
+        <TaskItem
+          key={task.id}
+          task={task}
+          taskById={taskById}
+          onClick={onTaskClick}
+          showStatus={false}
+        />
       ))}
     </div>
   );
 
   return (
-    <div class={`bg-dark-850 border rounded-xl overflow-hidden ${borderStyles[variant]}`}>
-      <div
-        class={`px-4 py-3 border-b ${borderStyles[variant]} ${headerStyles[variant]} flex items-center gap-1`}
-      >
-        <h3 class={`font-semibold ${titleStyles[variant]}`}>
+    <section class="space-y-2" data-testid="task-group" aria-labelledby={`task-group-${title}`}>
+      <div class="flex items-center gap-2 px-1">
+        <span class={`h-1.5 w-1.5 rounded-full ${accentStyles[variant]}`} aria-hidden="true" />
+        <h3
+          id={`task-group-${title}`}
+          class="text-xs font-semibold uppercase tracking-[0.14em] text-gray-300"
+        >
           {title} ({count})
         </h3>
       </div>
-      {body}
-      {showPagination && pagination && (
-        <TaskGroupPagination
-          offset={pagination.offset}
-          limit={pagination.limit}
-          total={pagination.total}
-          pageSize={tasks.length}
-          onPrev={pagination.onPrev}
-          onNext={pagination.onNext}
-          isLoading={pagination.isLoading}
-        />
-      )}
-    </div>
+      <div
+        class={`overflow-hidden rounded-2xl border ${FLAT_SURFACE}`}
+        data-testid="task-group-list"
+      >
+        {body}
+        {showPagination && pagination && (
+          <TaskGroupPagination
+            offset={pagination.offset}
+            limit={pagination.limit}
+            total={pagination.total}
+            pageSize={tasks.length}
+            onPrev={pagination.onPrev}
+            onNext={pagination.onNext}
+            isLoading={pagination.isLoading}
+          />
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -554,12 +592,12 @@ export function TaskGroupPagination({
   const nextDisabled = offset + limit >= total || isLoading;
 
   const buttonClass =
-    'px-2 py-1 text-xs rounded text-gray-300 hover:bg-dark-700 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent';
+    'rounded-lg px-2.5 py-1 text-xs text-gray-300 transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/50 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent';
 
   return (
     <div
       data-testid="task-group-pagination"
-      class="flex items-center justify-between px-4 py-2 border-t border-dark-700 bg-dark-900/30"
+      class="flex items-center justify-between border-t border-white/10 bg-black/10 px-4 py-2"
     >
       <button
         type="button"
@@ -570,7 +608,7 @@ export function TaskGroupPagination({
       >
         ← Prev
       </button>
-      <span class="text-xs text-gray-400" data-testid="task-group-range">
+      <span class="text-xs text-gray-400" data-testid="task-group-range" aria-live="polite">
         Showing {start}–{end} of {total}
       </span>
       <button
@@ -592,10 +630,12 @@ function TaskItem({
   task,
   taskById,
   onClick,
+  showStatus = true,
 }: {
   task: SpaceTask;
   taskById: ReadonlyMap<string, SpaceTask>;
   onClick?: (taskId: string) => void;
+  showStatus?: boolean;
 }) {
   const isClickable = !!onClick;
   const statusConfig = getTaskStatusConfig(task.status);
@@ -607,25 +647,42 @@ function TaskItem({
     task.status === 'in_progress' &&
     (!task.workflowRunId || spaceStore.activeRuns.value.some((r) => r.id === task.workflowRunId));
 
+  const activate = () => onClick?.(task.id);
+
   return (
     <div
       data-testid="space-task-item"
-      class={`px-4 py-3 ${isClickable ? 'cursor-pointer hover:bg-dark-800/50 transition-colors' : ''}`}
-      onClick={isClickable ? () => onClick(task.id) : undefined}
+      class={`group px-5 py-4 outline-none transition ${
+        isClickable
+          ? 'cursor-pointer hover:bg-white/[0.045] focus-visible:bg-white/[0.045] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-200/55'
+          : ''
+      }`}
+      role={isClickable ? 'button' : undefined}
+      tabIndex={isClickable ? 0 : undefined}
+      aria-label={isClickable ? `Open task #${task.taskNumber}: ${task.title}` : undefined}
+      onClick={isClickable ? activate : undefined}
+      onKeyDown={
+        isClickable
+          ? (event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                activate();
+              }
+            }
+          : undefined
+      }
     >
-      <div class="flex items-start justify-between">
-        <div class="flex-1 min-w-0">
-          <div class="flex items-center gap-2 flex-wrap">
-            <h4 class="text-sm font-medium text-gray-100 truncate">{task.title}</h4>
-            <span class="inline-flex items-center text-xs font-mono font-medium text-gray-400 bg-dark-700 border border-dark-600 px-1.5 py-0.5 rounded flex-shrink-0">
-              #{task.taskNumber}
-            </span>
+      <div class="flex items-start justify-between gap-4">
+        <div class="min-w-0 flex-1">
+          <div class="flex items-baseline gap-2">
+            <h4 class="truncate text-[15px] font-semibold text-gray-50">{task.title}</h4>
+            <span class="shrink-0 font-mono text-[11px] text-gray-500">#{task.taskNumber}</span>
           </div>
-          <div class="flex items-center gap-2 mt-1">
-            <StatusBadge tone={statusConfig.tone} label={statusConfig.label} />
+          <div class="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+            {showStatus && <StatusBadge tone={statusConfig.tone} label={statusConfig.label} />}
             {showsActivity && <ActivitySpinner tone="info" />}
             {task.updatedAt > 0 && (
-              <span class="text-xs text-gray-400">{getRelativeTime(task.updatedAt)}</span>
+              <span class="text-xs text-gray-500">Updated {getRelativeTime(task.updatedAt)}</span>
             )}
           </div>
           <TaskDependencyBadges
@@ -634,14 +691,29 @@ function TaskItem({
             onSelectDependency={onClick}
           />
           {task.status === 'blocked' && task.result && (
-            <p class="mt-1 text-xs text-amber-400/80 truncate" data-testid="task-blocked-reason">
+            <p
+              class="mt-2 truncate text-xs leading-5 text-amber-200/75"
+              data-testid="task-blocked-reason"
+              title={task.result}
+            >
               {task.result}
             </p>
           )}
         </div>
-        <div class="ml-4 flex items-center flex-shrink-0">
-          {isClickable && <span class="text-xs text-gray-400">&rarr;</span>}
-        </div>
+        {isClickable && (
+          <svg
+            class="mt-1 h-4 w-4 shrink-0 text-gray-600 transition group-hover:translate-x-0.5 group-hover:text-gray-300 group-focus-visible:translate-x-0.5 group-focus-visible:text-amber-200"
+            viewBox="0 0 20 20"
+            fill="currentColor"
+            aria-hidden="true"
+          >
+            <path
+              fill-rule="evenodd"
+              d="M7.21 14.77a.75.75 0 010-1.06L10.94 10 7.21 6.29a.75.75 0 111.06-1.06l4.25 4.24a.75.75 0 010 1.06l-4.25 4.24a.75.75 0 01-1.06 0z"
+              clip-rule="evenodd"
+            />
+          </svg>
+        )}
       </div>
     </div>
   );
@@ -651,9 +723,15 @@ interface SpaceTasksProps {
   spaceId: string;
   navigationSpaceId?: string;
   onSelectTask?: (taskId: string) => void;
+  onCreateTask?: () => void;
 }
 
-export function SpaceTasks({ spaceId, navigationSpaceId, onSelectTask }: SpaceTasksProps) {
+export function SpaceTasks({
+  spaceId,
+  navigationSpaceId,
+  onSelectTask,
+  onCreateTask,
+}: SpaceTasksProps) {
   const tasks = spaceStore.tasks.value;
   const schedules = spaceStore.schedules.value;
   const rawActiveTab = currentSpaceTasksFilterTabSignal.value as LegacyTaskFilterTab;
@@ -736,31 +814,35 @@ export function SpaceTasks({ spaceId, navigationSpaceId, onSelectTask }: SpaceTa
     completedTab,
   ];
 
-  // JS-driven mobile tab count — avoids Tailwind arbitrary-breakpoint ordering issues
-  const [mobileTabCount, setMobileTabCount] = useState(() => {
-    const w = typeof window !== 'undefined' ? window.innerWidth : 0;
-    return w > 420 ? 4 : w > 320 ? 3 : 2;
-  });
-
-  useEffect(() => {
-    const update = () => {
-      const w = window.innerWidth;
-      setMobileTabCount(w > 420 ? 4 : w > 320 ? 3 : 2);
-    };
-    window.addEventListener('resize', update);
-    return () => window.removeEventListener('resize', update);
-  }, []);
-
-  const mobileTabs = allTabs.slice(0, mobileTabCount);
-  const mobileOverflowTabs = allTabs.slice(mobileTabCount);
+  // The middle column can remain narrow even on a wide viewport when both side
+  // panels are open. Keep only the two priority tabs in the compact strip and
+  // reveal the full set only at xl, where the middle column has enough room.
+  const compactTabCount = draftTab ? 3 : 4;
+  const compactTabs = allTabs.slice(0, compactTabCount);
+  const compactOverflowTabs = allTabs.slice(compactTabCount);
 
   return (
-    <div class="flex-1 min-h-0 w-full px-4 py-4 sm:px-8 sm:py-6 overflow-y-auto">
-      <div class="min-h-[calc(100%+1px)] space-y-6">
-        <div class="flex border-b border-dark-700">
-          {/* Mobile (<640px): JS-driven count */}
-          <div class="flex sm:hidden">
-            {mobileTabs.map((tab) => (
+    <div class="flex-1 min-h-0 w-full overflow-y-auto">
+      <div class={`${GLASS_CONTENT_CONTAINER_CLASS} space-y-4`}>
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-200/80">
+              Operational queue
+            </p>
+            <p class="mt-1 text-sm text-gray-400">
+              Review attention, active execution, schedules, and completed outcomes.
+            </p>
+          </div>
+          <p class="text-xs tabular-nums text-gray-500">
+            {tasks.length} {tasks.length === 1 ? 'task' : 'tasks'} tracked
+          </p>
+        </div>
+        <div
+          class={`flex w-full gap-1 rounded-2xl border p-1.5 sm:w-auto sm:self-start ${GLASS_SURFACE}`}
+        >
+          {/* Compact middle column: priority tabs plus an overflow menu. */}
+          <div class="flex w-full gap-1 sm:w-auto xl:hidden">
+            {compactTabs.map((tab) => (
               <TabButton
                 key={tab.key}
                 label={tab.label}
@@ -770,16 +852,16 @@ export function SpaceTasks({ spaceId, navigationSpaceId, onSelectTask }: SpaceTa
                 variant={tab.variant}
               />
             ))}
-            {mobileOverflowTabs.length > 0 && (
+            {compactOverflowTabs.length > 0 && (
               <MoreTabsDropdown
-                tabs={mobileOverflowTabs}
+                tabs={compactOverflowTabs}
                 activeTab={activeTab}
                 navigationSpaceId={routeSpaceId}
               />
             )}
           </div>
-          {/* Desktop (640px+): all tabs inline */}
-          <div class="hidden sm:flex">
+          {/* Wide middle column: all tabs inline. */}
+          <div class="hidden gap-1 xl:flex">
             {allTabs.map((tab) => (
               <TabButton
                 key={tab.key}
@@ -794,31 +876,26 @@ export function SpaceTasks({ spaceId, navigationSpaceId, onSelectTask }: SpaceTa
         </div>
 
         {showGlobalEmpty ? (
-          <div class="flex flex-col items-center justify-center py-16 text-center">
-            <svg
-              class="w-10 h-10 text-gray-400 mb-3"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width={1.5}
-                d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
-              />
-            </svg>
-            <p class="text-sm text-gray-400 font-medium">No tasks yet</p>
-            <p class="text-xs text-gray-400 mt-1">Create a task to get started</p>
-          </div>
+          <TaskStatePanel
+            title="No tasks yet"
+            description="Create a task to get started"
+            icon="◇"
+            action={
+              onCreateTask ? (
+                <button type="button" class={GLASS_PRIMARY_BUTTON_CLASS} onClick={onCreateTask}>
+                  Create task
+                </button>
+              ) : undefined
+            }
+          />
         ) : activeTab === 'scheduled' ? (
           schedules.length === 0 ? (
             <EmptyTabState tab="scheduled" />
           ) : (
             <ScheduleList
               schedules={schedules}
-              onPause={(id) => spaceStore.pauseSchedule(id).catch(() => {})}
-              onResume={(id) => spaceStore.resumeSchedule(id).catch(() => {})}
+              onPause={(id) => spaceStore.pauseSchedule(id)}
+              onResume={(id) => spaceStore.resumeSchedule(id)}
               onDelete={(id) => spaceStore.deleteSchedule(id)}
             />
           )
@@ -846,25 +923,22 @@ function ScheduleList({
   onDelete,
 }: {
   schedules: TaskSchedule[];
-  onPause: (id: string) => void;
-  onResume: (id: string) => void;
+  onPause: (id: string) => Promise<unknown>;
+  onResume: (id: string) => Promise<unknown>;
   onDelete: (id: string) => Promise<unknown>;
 }) {
-  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<{ id: string; action: string } | null>(null);
 
-  const handleDelete = (id: string) => {
-    setDeletingId(id);
-    // Always clear `deletingId` once the RPC settles so a transient failure
-    // (network blip, daemon restart) doesn't permanently disable the row's
-    // Delete button for the rest of the session. The store throws on failure;
-    // we swallow it here because the user-visible feedback is the row staying
-    // in place — a follow-up retry just clicks Delete again.
-    onDelete(id)
-      .catch(() => {
-        /* silently ignore — UI state stays as-is, user can retry */
+  const runAction = (id: string, action: string, operation: () => Promise<unknown>) => {
+    setPendingAction({ id, action });
+    operation()
+      .catch((error) => {
+        toast.error(error instanceof Error ? error.message : `Failed to ${action} schedule`);
       })
       .finally(() => {
-        setDeletingId((curr) => (curr === id ? null : curr));
+        setPendingAction((current) =>
+          current?.id === id && current.action === action ? null : current
+        );
       });
   };
 
@@ -880,63 +954,85 @@ function ScheduleList({
   };
 
   return (
-    <div class="space-y-2">
-      {schedules.map((s) => (
-        <div
-          key={s.id}
-          class="flex items-start gap-3 rounded-lg border border-dark-700 bg-dark-800 p-3"
+    <section class="space-y-2" aria-labelledby="scheduled-tasks-heading">
+      <div class="flex items-center gap-2 px-1">
+        <span class="h-1.5 w-1.5 rounded-full bg-sky-300/80" aria-hidden="true" />
+        <h3
+          id="scheduled-tasks-heading"
+          class="text-xs font-semibold uppercase tracking-[0.14em] text-gray-300"
         >
-          <div class="flex-1 min-w-0">
-            <div class="flex items-center gap-2">
-              <span class="text-sm font-medium text-gray-200 truncate">{s.title}</span>
-              <span
-                class={`text-xs px-1.5 py-0.5 rounded ${
-                  s.status === 'active'
-                    ? 'bg-green-900/40 text-green-400'
-                    : s.status === 'paused'
-                      ? 'bg-amber-900/40 text-amber-400'
-                      : 'bg-gray-800 text-gray-400'
-                }`}
-              >
-                {s.status}
-              </span>
+          Schedules
+        </h3>
+        <span class="text-xs tabular-nums text-gray-500">{schedules.length}</span>
+      </div>
+      <div class={`divide-y divide-white/10 overflow-hidden rounded-2xl border ${FLAT_SURFACE}`}>
+        {schedules.map((s) => {
+          const isPending = pendingAction?.id === s.id;
+          return (
+            <div key={s.id} class="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center">
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center gap-2">
+                  <span class="truncate text-[15px] font-semibold text-gray-50">{s.title}</span>
+                  <span
+                    class={`rounded px-1.5 py-0.5 text-[11px] font-medium capitalize ${
+                      s.status === 'active'
+                        ? 'bg-emerald-400/10 text-emerald-200'
+                        : s.status === 'paused'
+                          ? 'bg-amber-400/10 text-amber-200'
+                          : 'bg-white/[0.06] text-gray-400'
+                    }`}
+                  >
+                    {s.status}
+                  </span>
+                </div>
+                <div class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
+                  <span title="Trigger">Trigger · {formatTrigger(s)}</span>
+                  {s.nextRunAt && s.status === 'active' && (
+                    <span>Next · {formatNextRun(s.nextRunAt)}</span>
+                  )}
+                  {s.lastRunAt && <span>Last · {getRelativeTime(s.lastRunAt)}</span>}
+                </div>
+              </div>
+              <div class="flex shrink-0 items-center gap-1 self-end sm:self-auto">
+                {s.status === 'active' && (
+                  <button
+                    type="button"
+                    class="rounded-lg px-2.5 py-1.5 text-xs text-amber-200 transition hover:bg-amber-400/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/50 disabled:opacity-40"
+                    onClick={() => runAction(s.id, 'pause', () => onPause(s.id))}
+                    disabled={isPending}
+                    aria-label={`Pause schedule ${s.title}`}
+                  >
+                    Pause
+                  </button>
+                )}
+                {s.status === 'paused' && (
+                  <button
+                    type="button"
+                    class="rounded-lg px-2.5 py-1.5 text-xs text-emerald-200 transition hover:bg-emerald-400/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-200/50 disabled:opacity-40"
+                    onClick={() => runAction(s.id, 'resume', () => onResume(s.id))}
+                    disabled={isPending}
+                    aria-label={`Resume schedule ${s.title}`}
+                  >
+                    Resume
+                  </button>
+                )}
+                <button
+                  type="button"
+                  class="rounded-lg px-2.5 py-1.5 text-xs text-red-300 transition hover:bg-red-400/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300/50 disabled:opacity-40"
+                  onClick={() => runAction(s.id, 'delete', () => onDelete(s.id))}
+                  disabled={isPending}
+                  aria-label={`Delete schedule ${s.title}`}
+                >
+                  {pendingAction?.id === s.id && pendingAction.action === 'delete'
+                    ? 'Deleting…'
+                    : 'Delete'}
+                </button>
+              </div>
             </div>
-            <div class="mt-1 flex items-center gap-3 text-xs text-gray-400">
-              <span title="Trigger">{formatTrigger(s)}</span>
-              {s.nextRunAt && s.status === 'active' && (
-                <span>next: {formatNextRun(s.nextRunAt)}</span>
-              )}
-              {s.lastRunAt && <span>last: {getRelativeTime(s.lastRunAt)}</span>}
-            </div>
-          </div>
-          <div class="flex items-center gap-1 shrink-0">
-            {s.status === 'active' && (
-              <button
-                class="px-2 py-1 text-xs rounded text-amber-400 hover:bg-amber-900/20"
-                onClick={() => onPause(s.id)}
-              >
-                Pause
-              </button>
-            )}
-            {s.status === 'paused' && (
-              <button
-                class="px-2 py-1 text-xs rounded text-green-400 hover:bg-green-900/20"
-                onClick={() => onResume(s.id)}
-              >
-                Resume
-              </button>
-            )}
-            <button
-              class="px-2 py-1 text-xs rounded text-red-400 hover:bg-red-900/20"
-              onClick={() => handleDelete(s.id)}
-              disabled={deletingId === s.id}
-            >
-              Delete
-            </button>
-          </div>
-        </div>
-      ))}
-    </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -1153,7 +1249,7 @@ function PaginatedTaskGroup({
       tasks={pageChanging || hasError ? [] : page.tasks}
       taskById={taskById}
       onTaskClick={onTaskClick}
-      loading={pageChanging}
+      loading={loading && (pageChanging || page.tasks.length === 0)}
       error={hasError ? { message: 'Failed to load tasks.', onRetry: retry } : null}
       pagination={{
         offset,

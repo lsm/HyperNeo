@@ -14,7 +14,7 @@ import { lazy, Suspense } from 'preact/compat';
 import { useCallback, useEffect, useState } from 'preact/hooks';
 import { AgentOverlayChat } from '../components/space/AgentOverlayChat';
 import { SpaceCreateTaskDialog } from '../components/space/SpaceCreateTaskDialog';
-import { GlassRouteShell } from '../components/space/glass-workspace';
+import { GLASS_PRIMARY_BUTTON_CLASS, GlassRouteShell } from '../components/space/glass-workspace';
 import { SpacePageHeader } from '../components/space/SpacePageHeader';
 import { TaskAuxiliaryPanel } from '../components/space/TaskAuxiliaryPanel';
 import { createSession } from '../lib/api-helpers';
@@ -374,48 +374,45 @@ export default function SpaceIsland({
   if (viewMode === 'tasks' && space) {
     return (
       <>
-        <div
-          class="flex-1 flex flex-col overflow-hidden bg-app-content"
-          data-testid="space-tasks-view"
-          {...baseLayerProps}
-        >
-          <SpacePageHeader
-            pageTitle="Tasks"
-            actions={
-              <button
-                type="button"
-                onClick={() => setCreateTaskOpen(true)}
-                class="flex-shrink-0 rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-white/5 hover:text-gray-100"
-                aria-label="Create task"
-                title="Create task"
+        <GlassRouteShell
+          pageTitle="Tasks"
+          appearance="hero"
+          surfaceKey="tasks"
+          testId="space-tasks-view"
+          baseLayerProps={baseLayerProps}
+          fallback={lazyFallback}
+          actions={
+            <button
+              type="button"
+              onClick={() => setCreateTaskOpen(true)}
+              class={`${GLASS_PRIMARY_BUTTON_CLASS} !h-9 !px-3 sm:!px-4`}
+              aria-label="Create task"
+            >
+              <svg
+                class="h-4 w-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                aria-hidden="true"
               >
-                <svg
-                  class="w-4 h-4"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  aria-hidden="true"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width={2}
-                    d="M12 4v16m8-8H4"
-                  />
-                </svg>
-              </button>
-            }
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width={2}
+                  d="M12 4v16m8-8H4"
+                />
+              </svg>
+              <span class="ml-1.5 hidden sm:inline">Create task</span>
+            </button>
+          }
+        >
+          <SpaceTasks
+            spaceId={spaceId}
+            navigationSpaceId={navigationSpaceId}
+            onSelectTask={(taskId) => navigateToSpaceTask(navigationSpaceId, taskId)}
+            onCreateTask={() => setCreateTaskOpen(true)}
           />
-          <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
-            <Suspense fallback={lazyFallback}>
-              <SpaceTasks
-                spaceId={spaceId}
-                navigationSpaceId={navigationSpaceId}
-                onSelectTask={(taskId) => navigateToSpaceTask(navigationSpaceId, taskId)}
-              />
-            </Suspense>
-          </div>
-        </div>
+        </GlassRouteShell>
         <SpaceCreateTaskDialog
           isOpen={createTaskOpen}
           onClose={() => setCreateTaskOpen(false)}

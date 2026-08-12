@@ -42,7 +42,7 @@ export const GLASS_CONTENT_CONTAINER_CLASS =
 export const GLASS_PRIMARY_BUTTON_CLASS =
   'inline-flex h-10 shrink-0 items-center justify-center rounded-xl bg-amber-300 px-4 text-sm font-semibold text-dark-950 shadow-[0_10px_24px_rgba(252,211,77,0.16)] transition hover:-translate-y-0.5 hover:bg-amber-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/70';
 
-type GlassSurfaceKey = 'overview' | 'agents' | 'goals' | 'memories' | 'forge';
+type GlassSurfaceKey = 'overview' | 'agents' | 'goals' | 'memories' | 'forge' | 'tasks';
 
 interface GlassRouteShellProps {
   pageTitle: string;
@@ -56,6 +56,8 @@ interface GlassRouteShellProps {
   baseLayerProps?: { inert?: boolean; 'aria-hidden'?: boolean };
   /** Suspense fallback while the route's lazy body loads. */
   fallback?: ComponentChildren;
+  /** Optional header actions (e.g. a create button) forwarded to SpacePageHeader. */
+  actions?: ComponentChildren;
   children: ComponentChildren;
 }
 
@@ -73,6 +75,7 @@ export function GlassRouteShell({
   testId,
   baseLayerProps = {},
   fallback = null,
+  actions,
   children,
 }: GlassRouteShellProps) {
   return (
@@ -82,7 +85,12 @@ export function GlassRouteShell({
       {...{ [`data-${surfaceKey}-surface`]: 'glass-workspace' }}
       {...baseLayerProps}
     >
-      <SpacePageHeader pageTitle={pageTitle} subtitle={subtitle} appearance={appearance} />
+      <SpacePageHeader
+        pageTitle={pageTitle}
+        subtitle={subtitle}
+        appearance={appearance}
+        actions={actions}
+      />
       <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
         <Suspense fallback={fallback}>{children}</Suspense>
       </div>
