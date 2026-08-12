@@ -953,6 +953,37 @@ describe('HandoffExecutor: cyclic maxCycles', () => {
     expect(ok.status).toBe('delivered');
     expect(ctx.handoffCycleRepo.get(ctx.runId, key)?.count).toBe(1);
   });
+
+  test('a deduped enqueue does not charge a second cycle', async () => {
+    const workflow = makeWorkflow({
+      nodes: [
+        node('n-coding', 'coding', 'coder', [{ id: 'to-review', target: 'review' }]),
+        node('n-review', 'review', 'reviewer', [
+          { id: 'to-coding', target: 'coding', maxCycles: 2 },
+        ]),
+      ],
+    });
+    // Target offline; pendingMessageRepo configured so handoffs queue.
+    const executor = makeExecutor(ctx, workflow, {
+      pendingMessageRepo: ctx.pendingMessageRepo,
+    });
+    const key = 'n-review/to-coding';
+    const op = {
+      fromAgentName: 'reviewer',
+      fromSessionId: 'session-reviewer',
+      workflowNodeId: 'n-review',
+      operation: { target: 'coding', summary: 'dup' },
+    };
+
+    const first = await executor.execute(op);
+    const second = await executor.execute(op); // identical → deduped enqueue
+
+    expect(first.status).toBe('queued');
+    expect(second.status).toBe('queued');
+    // The first (new enqueue) charged a cycle; the second (deduped) was
+    // refunded — the cap is intact at 1, not 2.
+    expect(ctx.handoffCycleRepo.get(ctx.runId, key)?.count).toBe(1);
+  });
 });
 
 describe('HandoffExecutor: queued activation', () => {
