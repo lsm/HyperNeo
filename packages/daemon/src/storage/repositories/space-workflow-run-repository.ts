@@ -370,16 +370,14 @@ export class SpaceWorkflowRunRepository {
    * `ON DELETE CASCADE` FK on `workflow_id`, so callers that remove a workflow
    * must explicitly clean up its runs to avoid orphans.
    *
-   * Deletion-safe (RFC §4 #3): only TERMINAL runs (`done`/`cancelled`) with no
-   * non-archived task are deleted — i.e. true tombstones. Everything else is
-   * protected and left in place:
-   *   - non-terminal runs (`pending`/`in_progress`/`blocked`) — always
-   *     protected, covering the `startWorkflowRun` window where the run exists
-   *     before its task is attached (see `hasNonArchivedRuns`);
-   *   - terminal runs with a non-archived task — `done`/`cancelled` reopen, so
-   *     only `SpaceTask.archivedAt` is a non-reopenable tombstone.
-   * Callers that need to know whether executable runs block full cleanup should
-   * check `SpaceWorkflowRepository.hasNonArchivedRuns` first; this method
+   * Deletion-safe (RFC §4 #3): only PROVABLE tombstones are deleted — terminal
+   * (`done`/`cancelled`) runs that have ≥1 task and no non-archived task.
+   * Everything else is protected and left in place (see `hasNonArchivedRuns`):
+   * non-terminal runs; terminal runs with a non-archived task (they reopen); and
+   * terminal runs with NO task (never got one, e.g. the `startWorkflowRun` catch
+   * path — `ChannelRouter.isParentTaskArchived` treats zero tasks as not-archived,
+   * so neither should this). Callers that need to know whether executable runs
+   * block full cleanup should check `hasNonArchivedRuns` first; this method
    * silently leaves protected runs in place as defense in depth.
    *
    * @returns The number of run rows deleted. NOTE: under FK enforcement this
@@ -393,6 +391,9 @@ export class SpaceWorkflowRunRepository {
         `DELETE FROM space_workflow_runs
          WHERE workflow_id = ?
            AND status IN ('done', 'cancelled')
+           AND EXISTS (
+             SELECT 1 FROM space_tasks t WHERE t.workflow_run_id = space_workflow_runs.id
+           )
            AND NOT EXISTS (
              SELECT 1 FROM space_tasks t
              WHERE t.workflow_run_id = space_workflow_runs.id AND t.archived_at IS NULL

@@ -674,8 +674,11 @@ export function WorkflowList({
           ? `Imported ${createdWorkflows} workflow${createdWorkflows === 1 ? '' : 's'}`
           : 'Nothing imported'
       );
-      if (result.warnings.length) {
-        toast.warning(result.warnings[0]);
+      // Surface every warning (e.g. agent-handle rewrites AND each blocked
+      // workflow replacement) — not just the first, so the user knows which
+      // workflows still need their tasks archived before a retry.
+      for (const warning of result.warnings) {
+        toast.warning(warning);
       }
       setImportBundle(null);
       setImportPreview(null);

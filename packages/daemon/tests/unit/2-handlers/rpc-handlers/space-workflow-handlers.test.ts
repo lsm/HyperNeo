@@ -1187,6 +1187,38 @@ describe('space-workflow-handlers', () => {
       expect(result.reports).toEqual([]);
     });
 
+    it('KEEPS a uniform-hash group reported when a row has an executable run (partial-resync retry path)', async () => {
+      // After a partial resync, the kept row is resynced to the canonical hash;
+      // if the skipped duplicate already shared that hash the group would
+      // otherwise stop being reported and the user loses the "Resync duplicates"
+      // action. Keep it visible while any row still blocks on an executable run.
+      const [t1] = getBuiltInWorkflows();
+      setupWithWorkflows([
+        {
+          ...mockWorkflow,
+          id: 'wf-a',
+          templateName: t1.name,
+          templateHash: 'same-hash',
+          createdAt: 100,
+        },
+        {
+          ...mockWorkflow,
+          id: 'wf-b',
+          templateName: t1.name,
+          templateHash: 'same-hash',
+          createdAt: 200,
+        },
+      ]);
+      (workflowManager.hasNonArchivedRuns as ReturnType<typeof mock>).mockImplementation(
+        (id: string) => id === 'wf-a'
+      );
+      const result = (await call('spaceWorkflow.detectDuplicateDrift', {
+        spaceId: 'space-1',
+      })) as { reports: DuplicateDriftReport[] };
+      expect(result.reports).toHaveLength(1);
+      expect(result.reports[0].templateName).toBe(t1.name);
+    });
+
     it('excludes groups keyed on a non-built-in templateName', async () => {
       setupWithWorkflows([
         {

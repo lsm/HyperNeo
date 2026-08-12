@@ -885,9 +885,16 @@ export function setupSpaceWorkflowHandlers(
       if (rows.length < 2) continue;
       // Drift = hash values diverge across rows. Rows with identical hashes
       // aren't considered drift (even though they're still technically
-      // duplicates — left for separate cleanup).
+      // duplicates — left for separate cleanup) — UNLESS a row still has an
+      // executable run that blocked a prior resync. In that case keep the group
+      // reported so the badge (and the "Resync duplicates" action) stays visible;
+      // otherwise the kept row's resync collapses the hashes, the group stops
+      // being reported, and the user loses the UI path to archive the task and
+      // retry that the partial-resync warning promised.
       const distinctHashes = new Set(rows.map((r) => r.templateHash ?? null));
-      if (distinctHashes.size < 2) continue;
+      const hasDrift = distinctHashes.size >= 2;
+      const hasBlockedRun = rows.some((r) => workflowManager.hasNonArchivedRuns(r.id));
+      if (!hasDrift && !hasBlockedRun) continue;
       const sortedRows = [...rows].sort((a, b) => b.createdAt - a.createdAt);
       reports.push({
         templateName,

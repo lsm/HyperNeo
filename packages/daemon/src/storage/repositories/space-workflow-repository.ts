@@ -675,18 +675,18 @@ export class SpaceWorkflowRepository {
    * Does this workflow have at least one EXECUTABLE run that must not be orphaned?
    *
    * RFC §4 #3 deletion-safety predicate. A run is protected (deletion must be
-   * refused) when it is still executable, which is EITHER:
+   * refused) unless it is a provable tombstone. A run is EXECUTABLE (protected)
+   * when ANY of:
    *   - non-terminal (`pending`/`in_progress`/`blocked`) — covers the
-   *     `startWorkflowRun` window where the run row is inserted and promoted to
-   *     `in_progress` BEFORE its canonical task is attached (`space-runtime.ts`
-   *     inserts the run, `await`s the run-created event, then creates the task);
-   *     during that `await` a concurrent delete/resync/import must not strand it.
-   *     A non-terminal run is protected regardless of its task state.
-   *   - OR terminal (`done`/`cancelled`) with a non-archived task — `done`/
-   *     `cancelled` REOPEN (`workflow-run-status-machine.ts`), and only
-   *     `SpaceTask.archivedAt` is the non-reopenable tombstone.
-   * Only a terminal run whose task is archived (or absent) is a true tombstone
-   * and safe to delete over.
+   *     `startWorkflowRun` window where the run is inserted and promoted to
+   *     `in_progress` BEFORE its canonical task is attached;
+   *   - has a non-archived task — `done`/`cancelled` REOPEN, so only an archived
+   *     task is a non-reopenable tombstone;
+   *   - has NO task at all — a terminal run with no task is NOT a tombstone (it
+   *     never got one, e.g. the `startWorkflowRun` catch path cancels the run
+   *     when task creation fails). This mirrors `ChannelRouter.isParentTaskArchived`,
+   *     which treats zero tasks as not-archived.
+   * Only a terminal run with ≥1 task, all archived, is a true tombstone.
    */
   hasNonArchivedRuns(workflowId: string): boolean {
     // Minimal-schema safe-guard: some test fixtures and partial schemas create
@@ -711,6 +711,9 @@ export class SpaceWorkflowRepository {
              OR EXISTS (
                SELECT 1 FROM space_tasks t
                WHERE t.workflow_run_id = r.id AND t.archived_at IS NULL
+             )
+             OR NOT EXISTS (
+               SELECT 1 FROM space_tasks t WHERE t.workflow_run_id = r.id
              )
            )
          LIMIT 1`

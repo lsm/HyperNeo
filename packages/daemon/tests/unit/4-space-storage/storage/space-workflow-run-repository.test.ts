@@ -505,6 +505,15 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(workflowRepo.hasNonArchivedRuns(WORKFLOW_ID)).toBe(true);
     });
 
+    it('hasNonArchivedRuns protects a TERMINAL run with no task (failure-cleanup case)', () => {
+      // If task creation fails, startWorkflowRun's catch path cancels the run
+      // with no task attached. A terminal run with no task is NOT a tombstone
+      // (mirrors ChannelRouter.isParentTaskArchived: zero tasks ⇒ not archived).
+      const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'R' });
+      repo.updateStatusUnchecked(run.id, 'cancelled'); // terminal, no task seeded
+      expect(workflowRepo.hasNonArchivedRuns(WORKFLOW_ID)).toBe(true);
+    });
+
     it('deleteByWorkflowId removes only tombstoned runs and protects executable ones', () => {
       const tombstoned = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'tomb' });
       repo.updateStatusUnchecked(tombstoned.id, 'cancelled'); // terminal
@@ -525,6 +534,13 @@ describe('SpaceWorkflowRunRepository', () => {
     it('deleteByWorkflowId protects a non-terminal run that has no task yet (startup window)', () => {
       const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'starting' });
       // non-terminal, no task — must survive run-cleanup during the attach gap.
+      repo.deleteByWorkflowId(WORKFLOW_ID);
+      expect(repo.getRun(run.id)).not.toBeNull();
+    });
+
+    it('deleteByWorkflowId protects a terminal run with no task (failure-cleanup case)', () => {
+      const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'cancelled-notask' });
+      repo.updateStatusUnchecked(run.id, 'cancelled'); // terminal, no task
       repo.deleteByWorkflowId(WORKFLOW_ID);
       expect(repo.getRun(run.id)).not.toBeNull();
     });
