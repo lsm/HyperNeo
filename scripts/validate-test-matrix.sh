@@ -54,14 +54,20 @@ enabled_run_cmd() {
 		function emit() { if (runval != "" && index(runval, marker) > 0 && !disabled && !job_disabled && !done) { print runval; done=1 } }
 		# A job key (2-space indent under jobs:) starts a fresh job; reset its condition.
 		/^[[:space:]]{2}[[:alnum:]_-]+:[[:space:]]*$/ { job_disabled=0 }
+		# Step boundary: emit the PREVIOUS step now that ALL its properties — including
+		# a trailing `if: false` placed after `run:` — have been seen, then reset.
 		/^[[:space:]]*-[[:space:]]/ { emit(); runval=""; disabled=0; incmd=0 }
 		# if:false|never disables a step (>= 6 indent) or the whole job (<= 4 indent).
 		# Accept the optional ${{ }} expression wrapper GitHub allows (if: ${{ false }}).
 		/if:[[:space:]]*(\$\{\{[[:space:]]*)?(false|never)([[:space:]]|\}|$)/ { n=0; while (substr($0,n+1,1)==" ") n++; if (n <= 4) job_disabled=1; else disabled=1 }
 		/^[[:space:]]*#/ { next }
-		incmd { n=0; while (substr($0,n+1,1)==" ") n++; if (n > runindent) { runval=runval" "$0; next }; emit(); runval=""; incmd=0 }
+		# Folded run: keep accumulating; on dedent just stop (NO emit — a later
+		# if:false on the same step must be honored, so emit is deferred to the step boundary/END).
+		incmd { n=0; while (substr($0,n+1,1)==" ") n++; if (n > runindent) { runval=runval" "$0; next }; incmd=0 }
 		/^[[:space:]]*run:[[:space:]]*[>|]/ { incmd=1; n=0; while (substr($0,n+1,1)==" ") n++; runindent=n; runval=$0; next }
-		/^[[:space:]]*run:[[:space:]]+/ { runval=$0; emit(); runval=""; incmd=0; next }
+		# Single-line run: stash the command only — emit is DEFERRED so a later
+		# if:false (which GitHub allows after `run:`) is parsed before the step counts as enabled.
+		/^[[:space:]]*run:[[:space:]]+/ { runval=$0; incmd=0; next }
 		END { emit() }
 	' "$1"
 }
@@ -118,11 +124,13 @@ matrix_excludes() {
 	awk -v job="$1" -v key="$2" '
 		$0 ~ "^  " job ":" { injob=1; next }
 		injob && /^  [a-z]/ { injob=0 }
-		# Flow form: exclude: [ ... ] on one line — pull every "key: <token>" out of it.
+		# Flow form: exclude: [ ... ] on one line — pull every "key: <token>" out.
+		# The token runs up to a delimiter (], ,, }, whitespace) so optional YAML
+		# quotes (single/double) are captured and then stripped (gsub non-token).
 		injob && $0 ~ "^[[:space:]]*exclude:[[:space:]]*\\[" {
 			s=$0
-			while (match(s, key ":[[:space:]]*[a-z0-9-]+")) {
-				v=substr(s, RSTART, RLENGTH); sub(".*" key ":[[:space:]]*", "", v); print v
+			while (match(s, key ":[[:space:]]*[^][,}[:space:]]+")) {
+				v=substr(s, RSTART, RLENGTH); sub(".*" key ":[[:space:]]*", "", v); gsub(/[^a-z0-9-]/, "", v); if (v != "") print v
 				s=substr(s, RSTART + RLENGTH)
 			}
 			next
@@ -132,8 +140,8 @@ matrix_excludes() {
 		injob && inblock && !/^[[:space:]]*#/ && !/^[[:space:]]*$/ {
 			n=0; while (substr($0,n+1,1)==" ") n++
 			if (n <= 8) { inblock=0; next }
-			if (match($0, key ":[[:space:]]*[a-z0-9-]+")) {
-				v=substr($0, RSTART, RLENGTH); sub(".*" key ":[[:space:]]*", "", v); print v
+			if (match($0, key ":[[:space:]]*[^][,}[:space:]]+")) {
+				v=substr($0, RSTART, RLENGTH); sub(".*" key ":[[:space:]]*", "", v); gsub(/[^a-z0-9-]/, "", v); if (v != "") print v
 			}
 		}
 	' "$REPO_ROOT/.github/workflows/main.yml"
@@ -162,6 +170,16 @@ module_values() {
 			v=$0; sub(/^.*test_path:[[:space:]]+/, "", v); v=trim(v); if (v != "") print mod "\t" v
 		}
 	' "$1"
+}
+
+# Count online test_path VALUES — from the include-block maps _module_values
+# (main.yml) and _real_module_values (real-api-tests.yml), set later — that
+# EXACTLY equal $1. Scoping ownership to these parsed maps (instead of a
+# whole-file grep) means a test_path in an UNRELATED job's matrix can't pose as
+# coverage, and the match is exact (a file under a dir is not a dir-level owner).
+online_value_count() {
+	awk -F'\t' -v p="$1" '$2 == p' <<<"$_module_values
+$_real_module_values" | wc -l | tr -d ' '
 }
 
 # ===========================================================================
@@ -324,9 +342,14 @@ WEB_CFG="$REPO_ROOT/packages/web/vitest.config.ts"
 # inserting .unit., restricting the suffix, …) is caught rather than silently
 # dropping files while this guard reports full coverage. A substring/fragment
 # check is not enough — only the exact glob is.
-if [ "$(active_hits "$WEB_CFG" 'src/**/*.{test,spec}.{ts,tsx}')" -eq 0 ]; then
-	err "packages/web/vitest.config.ts active include is not the full src/**/*.{test,spec}.{ts,tsx} glob — web tests may be orphaned"
-	echo "     → restore the full include, or update this validator" >&2
+# Scope the glob to `test.include` specifically (4-space indent, directly under
+# test:) — NOT a nested coverage.include. active_hits searches the whole file,
+# so a glob placed in coverage.include would mask a narrowed test.include and
+# the guard would still report all files covered while the runner executes only
+# the narrowed set. Anchoring the exact indent + glob pins it to test.include.
+if ! grep -qE "^    include: \['src/\*\*/\*\.\{test,spec\}\.\{ts,tsx\}'\]" "$WEB_CFG"; then
+	err "packages/web/vitest.config.ts test.include is not the full src/**/*.{test,spec}.{ts,tsx} glob — web tests may be orphaned (a nested coverage.include no longer masks it)"
+	echo "     → restore the full include under test:, or update this validator" >&2
 fi
 # test.exclude must stay node_modules/dist only — adding a src/ pattern there
 # would silently skip those tests while this guard still marks them covered.
@@ -463,19 +486,35 @@ done
 # "Run all test files" — running the entire online suite (and, with real keys,
 # paid provider calls). The main.yml orphan check above doesn't cover this file.
 _real_module_values=$(module_values "$REAL_API_WORKFLOW")
-_real_include_modules=$(awk '
+# Per-RECORD validation (not grouped by module name): each daemon-real-api
+# include row IS a combination running `bun test ${{ matrix.test_path }}`, so a
+# row without a non-empty test_path expands to a bare `bun test` (which
+# `bun test --help` documents as "Run all test files"). Validating per-record —
+# not by module name — catches two rows sharing a module where one omits
+# test_path (a name-grouped count would let the valid row cover both).
+while IFS= read -r _rm; do
+	[ -n "$_rm" ] || continue
+	err "real-api include row for module '$_rm' has no non-empty test_path — \${{ matrix.test_path }} would expand empty, so 'bun test' runs the entire online suite"
+	echo "     → add a test_path to the row, or remove it" >&2
+done < <(awk '
+	function flush() { if (mod != "" && !has_path) print mod }
 	/^[[:space:]]*#/ { next }
-	/^[[:space:]]*- module:[[:space:]]*[a-z0-9-]+/ {
-		m=$0; sub(/^[[:space:]]*- module:[[:space:]]*/, "", m); sub(/[[:space:]]*$/, "", m); print m
+	/^[[:space:]]*- module:[[:space:]]*[a-z0-9-]+[[:space:]]*$/ {
+		flush()
+		mod=$0; sub(/^[[:space:]]*- module:[[:space:]]*/, "", mod); sub(/[[:space:]]+$/, "", mod)
+		has_path=0; folding=0; next
 	}
+	mod != "" {
+		if (folding) {
+			n=0; while (substr($0,n+1,1)==" ") n++
+			if (n > base) { has_path=1; next }
+			folding=0
+		}
+		if ($0 ~ /test_path:[[:space:]]*[>|]-[[:space:]]*$/) { folding=1; base=0; while (substr($0,base+1,1)==" ") base++; next }
+		if ($0 ~ /test_path:[[:space:]]+[^[:space:]>|-]/) { has_path=1 }
+	}
+	END { flush() }
 ' "$REAL_API_WORKFLOW")
-for _rm in $_real_include_modules; do
-	_rcount=$(printf '%s\n' "$_real_module_values" | awk -F'\t' -v m="$_rm" '$1 == m { c++ } END { print c+0 }')
-	if [ "$_rcount" -eq 0 ]; then
-		err "real-api include row for module '$_rm' has no non-empty test_path — \${{ matrix.test_path }} would expand empty, so 'bun test' runs the entire online suite"
-		echo "     → add a test_path to the row, or remove it" >&2
-	fi
-done
 
 # Every active module-axis value must occur EXACTLY once. GitHub expands each
 # axis entry into a separate job, so a duplicated value (e.g. two `- components`
@@ -719,13 +758,11 @@ SPLIT_DIRS="rpc room features providers cross-provider rewind space"
 for dir in "$ONLINE_DIR"/*/; do
 	[ -d "$dir" ] || continue
 	dirname=$(basename "$dir")
-	# A directory-level reference (test_path: tests/online/<dir>) covers every
-	# file under it. Require the `test_path:` prefix so a docs/echo line that
-	# merely mentions the path can't pose as coverage. Match tests/online/<dir>
-	# NOT followed by a char that could extend the dir name.
-	dir_refs=$(grep -hE "tests/online/$dirname([^/[:alnum:]_-]|$)" "$MAIN_WORKFLOW" "$REAL_API_WORKFLOW" 2>/dev/null \
-		| grep -F 'test_path:' \
-		| grep -cvE '^[[:space:]]*#')
+	# Directory-level owners: online test_path VALUES (scoped to the include
+	# blocks via online_value_count) that EXACTLY equal the dir path. Scoping to
+	# the parsed maps (not a whole-file grep) means a test_path in an unrelated
+	# job's matrix can't pose as coverage here.
+	dir_refs=$(online_value_count "tests/online/$dirname")
 	if [[ " $EXEMPT_DIRS " == *" $dirname "* ]] || [[ " $SPLIT_DIRS " == *" $dirname "* ]]; then
 		# Exempt dirs are intentionally not run; split dirs are owned file-by-file
 		# via check_split_module. A DIRECTORY-level test_path owner is wrong either
@@ -752,12 +789,12 @@ for dir in "$ONLINE_DIR"/*/; do
 		# run it again — compare dir + file ownership together (can't have both).
 		while IFS= read -r f; do
 			rel="${f#"${dir%/}"/}"
-			# EXACT test_path value match (test_path_value_hits anchors the path
-			# with a trailing whitespace/EOL), not a substring grep — otherwise a
-			# typo'd longer value like "x.test.ts.bak" substring-matches the real
-			# file and hides the duplicate.
+			# EXACT test_path value match, scoped to the online include blocks
+			# (online_value_count), not a substring grep — otherwise a typo'd
+			# longer value like "x.test.ts.bak" substring-matches the real file
+			# and hides the duplicate.
 			_tp="tests/online/$dirname/$rel"
-			file_refs=$(( $(test_path_value_hits "$MAIN_WORKFLOW" "$_tp") + $(test_path_value_hits "$REAL_API_WORKFLOW" "$_tp") ))
+			file_refs=$(online_value_count "$_tp")
 			if [ "${file_refs:-0}" -gt 0 ]; then
 				err "tests/online/$dirname/$rel is covered by both a directory-level row and a file-level row — duplicate shard ownership"
 				echo "     → remove the file-level row (the directory-level row already covers it)" >&2
@@ -774,15 +811,14 @@ for dir in "$ONLINE_DIR"/*/; do
 		# $dir ends in '/' (from the */ glob) — normalize so the prefix strip
 		# yields the module-relative path (e.g. nested/x.test.ts), not the full path.
 		rel="${f#"${dir%/}"/}"
-		# EXACT test_path value match (test_path_value_hits anchors the path with a
-		# trailing whitespace/EOL), not a substring grep. A substring grep would
-		# report a disk file covered when the matrix actually points at a longer
-		# typo'd value (e.g. "agent-session-sdk.test.ts.bak"): the real path is a
-		# substring of ".bak", so it matches, yet the shard filter matches nothing
-		# and runs zero files. (Stale values are also caught by the exact-value
-		# existence check above.)
+		# EXACT test_path value match, scoped to the online include blocks
+		# (online_value_count). A whole-file/substring grep would report a disk
+		# file covered when the matrix actually points at a longer typo'd value
+		# (e.g. "agent-session-sdk.test.ts.bak"), or when an unrelated job's
+		# matrix mentions the path. (Stale values are also caught by the
+		# exact-value existence check above.)
 		_tp="tests/online/$dirname/$rel"
-		file_refs=$(( $(test_path_value_hits "$MAIN_WORKFLOW" "$_tp") + $(test_path_value_hits "$REAL_API_WORKFLOW" "$_tp") ))
+		file_refs=$(online_value_count "$_tp")
 		if [ "${file_refs:-0}" -eq 0 ]; then
 			err "online test not covered by any active CI shard: tests/online/$dirname/$rel"
 			echo "     → add it to a matrix in $MAIN_WORKFLOW (or to EXEMPT_DIRS if the module is disabled)" >&2
