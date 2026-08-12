@@ -950,6 +950,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // createIndexes() for fresh DBs. (task #861, review P2.) Renumbered 185→186:
   // dev shipped M185 for workflow-event-subscriptions.
   run(migrationMarkerKey(186), () => runMigration186(db));
+
+  // Migration 187: Per-handoff-transition cycle counters (task #923 runtime
+  //   handoff). Backs HandoffTransition.maxCycles enforcement; mirrors channel
+  //   cycle tracking (migration 69) keyed by (run_id, transition_key).
+  run(migrationMarkerKey(187), () => runMigration187(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -12248,4 +12253,32 @@ export function runMigration186(db: BunDatabase): void {
       ON job_queue (json_extract(payload, '$.sessionId'))
       WHERE queue = 'message_delivery' AND status IN ('pending', 'processing')
   `);
+}
+
+/**
+ * Migration 187: Per-handoff-transition cycle tracking.
+ *
+ * Creates a `handoff_cycles` table that tracks how many times each cyclic
+ * handoff transition (see `HandoffTransition.maxCycles`) has been taken in a
+ * workflow run. Mirrors `channel_cycles` (migration 69), but keyed by
+ * `(run_id, transition_key)` since transition ids are unique within a node, not
+ * globally — the runtime composes a stable composite key per transition
+ * occurrence. Idempotent (`tableExists` guard); new databases get the same table
+ * from `runMigrations` like `channel_cycles`.
+ */
+export function runMigration187(db: BunDatabase): void {
+  if (!tableExists(db, 'space_workflow_runs')) return;
+  if (tableExists(db, 'handoff_cycles')) return;
+
+  db.exec(`
+		CREATE TABLE handoff_cycles (
+			run_id TEXT NOT NULL,
+			transition_key TEXT NOT NULL,
+			count INTEGER NOT NULL DEFAULT 0,
+			max_cycles INTEGER NOT NULL DEFAULT 5,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY (run_id, transition_key),
+			FOREIGN KEY (run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
+		)
+	`);
 }

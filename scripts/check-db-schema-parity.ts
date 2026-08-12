@@ -54,6 +54,7 @@ export const HELPER_SCHEMA_TABLES = [
   'gate_data',
   'gate_open_state',
   'goal_automation_cursors',
+  'handoff_cycles',
   'mcp_audit_log',
   'node_executions',
   'pending_agent_messages',

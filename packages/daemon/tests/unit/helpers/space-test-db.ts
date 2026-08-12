@@ -252,6 +252,20 @@ export function createSpaceTables(db: BunDatabase): void {
 		)
 	`);
 
+  // Per-handoff-transition cycle counters (migration 187, task #923). Backs
+  // HandoffTransition.maxCycles enforcement for cyclic handoffs.
+  db.exec(`
+		CREATE TABLE IF NOT EXISTS handoff_cycles (
+			run_id TEXT NOT NULL,
+			transition_key TEXT NOT NULL,
+			count INTEGER NOT NULL DEFAULT 0,
+			max_cycles INTEGER NOT NULL DEFAULT 5,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY (run_id, transition_key),
+			FOREIGN KEY (run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
+		)
+	`);
+
   db.exec(`
 		CREATE TABLE IF NOT EXISTS node_executions (
 			id TEXT PRIMARY KEY,
