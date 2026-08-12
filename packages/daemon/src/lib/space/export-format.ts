@@ -225,12 +225,12 @@ const workflowHookSchema = z.object({
  * Zod schema for an exported workflow handoff transition.
  * Mirrors the runtime `HandoffTransition` shape.
  *
- * `target`/`gateId`/`hookId` are REFERENCES to other entities (node/slot names,
- * gate ids, hook ids). They are validated non-mutating (reject whitespace-only
- * via refine, but preserve the exact value) so they match the referenced
- * entity's id verbatim — a `.trim()` here would desynchronize a reference from a
- * whitespace-carrying hook/gate id that the manager persisted and accepted.
- * String length caps bound unbounded import input.
+ * `target`/`hookId` are REFERENCES to other entities (node/slot names, hook
+ * ids). They are validated non-mutating (reject whitespace-only via refine, but
+ * preserve the exact value) so they match the referenced entity's id verbatim —
+ * a `.trim()` here would desynchronize a reference from a whitespace-carrying
+ * hook id that the manager persisted and accepted. String length caps bound
+ * unbounded import input.
  */
 const nonEmptyRef = (maxLen: number) =>
   z
@@ -242,7 +242,6 @@ const exportedHandoffTransitionSchema = z.object({
   id: nonEmptyRef(100),
   label: z.string().max(200).optional(),
   target: nonEmptyRef(100),
-  gateId: nonEmptyRef(100).optional(),
   hookId: nonEmptyRef(100).optional(),
   maxCycles: z.number().int().positive().optional(),
 });
@@ -257,9 +256,6 @@ const exportedWorkflowNodeSchema = z.object({
       requirePrMerge: z.boolean().optional(),
     })
     .optional(),
-  requireCodexApproval: z.boolean().optional(),
-  codexPollIntervalMs: z.number().int().positive().optional(),
-  codexTimeoutSeconds: z.number().int().positive().optional(),
   /** Declared outbound handoff transitions (first-class handoff contract). */
   transitions: z
     .array(exportedHandoffTransitionSchema)
@@ -474,12 +470,6 @@ export function exportWorkflow(
       agents: exportedAgents,
     };
     if (node.postApproval !== undefined) exported.postApproval = node.postApproval;
-    if (node.requireCodexApproval !== undefined)
-      exported.requireCodexApproval = node.requireCodexApproval;
-    if (node.codexPollIntervalMs !== undefined)
-      exported.codexPollIntervalMs = node.codexPollIntervalMs;
-    if (node.codexTimeoutSeconds !== undefined)
-      exported.codexTimeoutSeconds = node.codexTimeoutSeconds;
     if (node.transitions && node.transitions.length > 0) {
       exported.transitions = node.transitions.map((t) => {
         const out: ExportedHandoffTransition = { id: t.id, target: t.target };

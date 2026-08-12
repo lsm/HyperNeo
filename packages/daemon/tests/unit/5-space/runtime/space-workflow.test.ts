@@ -652,45 +652,6 @@ describe('SpaceWorkflowManager', () => {
     expect(updated?.name).toBe('WF');
   });
 
-  test('updateWorkflow validates Codex scripted-gate conflicts against null clears', () => {
-    const wf = repo.createWorkflow({
-      spaceId: 'space-1',
-      name: 'Legacy Invalid Codex Workflow',
-      nodes: [
-        {
-          id: 'node-code',
-          name: 'Code',
-          agents: [{ agentId: 'agent-coder', name: 'coder' }],
-          requireCodexApproval: true,
-        },
-        {
-          id: 'node-review',
-          name: 'Review',
-          agents: [{ agentId: 'agent-general', name: 'reviewer' }],
-        },
-      ],
-      channels: [{ id: 'ch-code-review', from: 'Code', to: 'Review', gateId: 'approval-gate' }],
-      gates: [
-        {
-          id: 'approval-gate',
-          fields: [
-            { name: 'approved', type: 'boolean', writers: [], check: { op: '==', value: true } },
-          ],
-          script: { interpreter: 'bash', source: 'echo custom', timeoutMs: 10000 },
-          resetOnCycle: false,
-        },
-      ],
-      startNodeId: 'node-code',
-      endNodeId: 'node-review',
-      completionAutonomyLevel: 3,
-    });
-
-    const updated = manager.updateWorkflow(wf.id, { channels: null, gates: null });
-
-    expect(updated?.channels).toBeUndefined();
-    expect(updated?.gates).toBeUndefined();
-  });
-
   test('name is trimmed before storage — whitespace variants collide', () => {
     manager.createWorkflow({
       spaceId: 'space-1',

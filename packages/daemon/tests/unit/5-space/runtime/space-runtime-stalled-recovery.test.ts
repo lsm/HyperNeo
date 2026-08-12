@@ -113,7 +113,7 @@ function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string): void {
 function buildLinearWorkflow(
   spaceId: string,
   workflowManager: SpaceWorkflowManager,
-  nodes: Array<{ id: string; name: string; agentId: string; requireCodexApproval?: boolean }>,
+  nodes: Array<{ id: string; name: string; agentId: string }>,
   opts: {
     channels?: SpaceWorkflow['channels'];
     endNodeId?: string;

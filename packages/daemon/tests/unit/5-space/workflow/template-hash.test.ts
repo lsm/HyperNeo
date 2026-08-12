@@ -6,8 +6,7 @@
  * - computeWorkflowHash returns a stable hex string for identical workflows
  * - workflowsMatchFingerprint returns true/false correctly
  * - Layout coordinates and agent UUIDs do NOT affect the hash
- * - Gate poll fields are included in the fingerprint
- * - Channel gateId and maxCycles are included in the fingerprint
+ * - Channel maxCycles is included in the fingerprint
  */
 
 import { describe, it, expect } from 'bun:test';
@@ -568,7 +567,7 @@ describe('workflowsMatchFingerprint', () => {
 describe('buildWorkflowFingerprint — handoff transitions', () => {
   it('includes node transitions in a canonical ordered shape so a change is detected as drift', () => {
     const transitions = [
-      { id: 'to-reviewer', target: 'Reviewer', gateId: 'g1' },
+      { id: 'to-reviewer', target: 'Reviewer', hookId: 'h1' },
       { id: 'to-qa', target: 'QA', label: 'QA handoff' },
     ];
     const withTransitions = makeWorkflow({
@@ -589,7 +588,6 @@ describe('buildWorkflowFingerprint — handoff transitions', () => {
         id: 'to-qa',
         target: 'QA',
         label: 'QA handoff',
-        gateId: null,
         hookId: null,
         maxCycles: null,
       },
@@ -597,8 +595,7 @@ describe('buildWorkflowFingerprint — handoff transitions', () => {
         id: 'to-reviewer',
         target: 'Reviewer',
         label: null,
-        gateId: 'g1',
-        hookId: null,
+        hookId: 'h1',
         maxCycles: null,
       },
     ]);
@@ -667,7 +664,7 @@ describe('buildWorkflowFingerprint — handoff transitions', () => {
     expect(computeWorkflowHash(base)).not.toBe(computeWorkflowHash(withTransitions));
   });
 
-  it('detects single-field transition drift (e.g. gateId change)', () => {
+  it('detects single-field transition drift (e.g. hookId change)', () => {
     const node = (transitions: import('@hyperneo/shared').HandoffTransition[]) => [
       {
         id: 'n1',
@@ -677,12 +674,12 @@ describe('buildWorkflowFingerprint — handoff transitions', () => {
       },
       { id: 'n2', name: 'Reviewer', agents: [{ agentId: 'agent-uuid-2', name: 'Reviewer' }] },
     ];
-    const withoutGate = makeWorkflow({
+    const withoutHook = makeWorkflow({
       nodes: node([{ id: 'to-reviewer', target: 'Reviewer' }]),
     });
-    const withGate = makeWorkflow({
-      nodes: node([{ id: 'to-reviewer', target: 'Reviewer', gateId: 'g1' }]),
+    const withHook = makeWorkflow({
+      nodes: node([{ id: 'to-reviewer', target: 'Reviewer', hookId: 'h1' }]),
     });
-    expect(computeWorkflowHash(withoutGate)).not.toBe(computeWorkflowHash(withGate));
+    expect(computeWorkflowHash(withoutHook)).not.toBe(computeWorkflowHash(withHook));
   });
 });

@@ -299,9 +299,6 @@ export function buildWorkflowCreateParams(
       name: exportedNode.name,
       agents,
       postApproval: exportedNode.postApproval,
-      requireCodexApproval: exportedNode.requireCodexApproval,
-      codexPollIntervalMs: exportedNode.codexPollIntervalMs,
-      codexTimeoutSeconds: exportedNode.codexTimeoutSeconds,
     };
     if (exportedNode.transitions && exportedNode.transitions.length > 0) {
       node.transitions = exportedNode.transitions.map((t) => ({ ...t }));

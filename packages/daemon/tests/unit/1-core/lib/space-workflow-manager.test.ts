@@ -1459,18 +1459,9 @@ describe('SpaceWorkflowManager', () => {
     });
 
     it('re-reads persisted transitions through the repository (DB round-trip)', () => {
-      const transitions = [{ id: 'to-review', target: 'Review', gateId: 'g1', hookId: 'h1' }];
+      const transitions = [{ id: 'to-review', target: 'Review', hookId: 'h1' }];
       const created = manager.createWorkflow({
         ...twoNodeParams(transitions),
-        gates: [
-          {
-            id: 'g1',
-            fields: [
-              { name: 'ok', type: 'boolean', writers: [], check: { op: '==', value: true } },
-            ],
-            resetOnCycle: false,
-          },
-        ],
         hooks: [
           {
             id: 'h1',
@@ -1493,18 +1484,9 @@ describe('SpaceWorkflowManager', () => {
       expect(reread?.nodes[0].transitions).toEqual(transitions);
     });
 
-    it('accepts gateId/hookId that reference known gates and hooks', () => {
+    it('accepts a hookId that references a known hook', () => {
       const result = manager.createWorkflow({
-        ...twoNodeParams([{ id: 'to-review', target: 'Review', gateId: 'g1', hookId: 'h1' }]),
-        gates: [
-          {
-            id: 'g1',
-            fields: [
-              { name: 'ok', type: 'boolean', writers: [], check: { op: '==', value: true } },
-            ],
-            resetOnCycle: false,
-          },
-        ],
+        ...twoNodeParams([{ id: 'to-review', target: 'Review', hookId: 'h1' }]),
         hooks: [
           {
             id: 'h1',
@@ -1521,41 +1503,7 @@ describe('SpaceWorkflowManager', () => {
           },
         ],
       });
-      expect(result.nodes[0].transitions?.[0]).toMatchObject({ gateId: 'g1', hookId: 'h1' });
-    });
-
-    it('defaults a missing resetOnCycle, rejects a non-boolean type, and rejects an empty id', () => {
-      // A missing resetOnCycle is defaulted to false at the boundary (matches
-      // the historical DB default); a present non-boolean is rejected; an empty
-      // id is rejected. So a malformed gate is never persisted.
-      const baseFields = [
-        { name: 'ok', type: 'boolean', writers: [], check: { op: '==', value: true } },
-      ];
-      // Missing resetOnCycle → defaulted to false, accepted.
-      const defaulted = manager.createWorkflow({
-        ...twoNodeParams([]),
-        name: 'Gate Default',
-        gates: [{ id: 'g1', fields: baseFields } as never],
-      });
-      expect(defaulted.gates![0].resetOnCycle).toBe(false);
-      // Non-boolean resetOnCycle → rejected.
-      expect(() =>
-        manager.createWorkflow({
-          ...twoNodeParams([]),
-          name: 'Gate Bad Type',
-          gates: [
-            { id: 'g2', resetOnCycle: 'no' as unknown as boolean, fields: baseFields } as never,
-          ],
-        })
-      ).toThrow('"resetOnCycle" must be a boolean');
-      // Empty id → rejected.
-      expect(() =>
-        manager.createWorkflow({
-          ...twoNodeParams([]),
-          name: 'Gate Bad Id',
-          gates: [{ id: '  ', resetOnCycle: false, fields: baseFields } as never],
-        })
-      ).toThrow('"id" must be a non-empty string');
+      expect(result.nodes[0].transitions?.[0]).toMatchObject({ hookId: 'h1' });
     });
 
     it('rejects more than MAX_NODE_HANDOFF_TRANSITIONS transitions on a node', () => {
@@ -1604,12 +1552,6 @@ describe('SpaceWorkflowManager', () => {
       ).toThrow('duplicate transition target "Review"');
     });
 
-    it('rejects a gateId that does not reference a known gate', () => {
-      expect(() =>
-        manager.createWorkflow(twoNodeParams([{ id: 't', target: 'Review', gateId: 'ghost' }]))
-      ).toThrow('gateId "ghost" does not reference a known gate');
-    });
-
     it('rejects a hookId that does not reference a known hook', () => {
       expect(() =>
         manager.createWorkflow(twoNodeParams([{ id: 't', target: 'Review', hookId: 'ghost' }]))
@@ -1653,7 +1595,7 @@ describe('SpaceWorkflowManager', () => {
       ).toThrow("'label' must be a string");
     });
 
-    it('rejects non-string id/target/gateId/hookId without throwing a TypeError', () => {
+    it('rejects non-string id/target/hookId without throwing a TypeError', () => {
       // Untyped RPC JSON could send numbers; field reads (.trim/.length) must
       // yield a clean WorkflowValidationError, not an uncaught TypeError.
       expect(() =>
@@ -1662,11 +1604,6 @@ describe('SpaceWorkflowManager', () => {
       expect(() =>
         manager.createWorkflow(twoNodeParams([{ id: 't', target: 42 as unknown as string }]))
       ).toThrow("'target' must be a string");
-      expect(() =>
-        manager.createWorkflow(
-          twoNodeParams([{ id: 't', target: 'Review', gateId: 7 as unknown as string }])
-        )
-      ).toThrow("'gateId' must be a string");
       expect(() =>
         manager.createWorkflow(
           twoNodeParams([{ id: 't', target: 'Review', hookId: 7 as unknown as string }])

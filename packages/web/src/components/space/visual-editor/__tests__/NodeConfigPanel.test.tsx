@@ -343,21 +343,6 @@ describe('NodeConfigPanel', () => {
       const { getByTestId } = render(<NodeConfigPanel {...makeProps()} />);
       expect(getByTestId('delete-step-button')).toBeTruthy();
     });
-
-    it('describes the Codex approval toggle as accepting any login containing "codex"', () => {
-      // Drift guard: the runtime matcher accepts any GitHub App bot whose
-      // login contains "codex" (not just codex[bot]). The user-facing help
-      // text under the "Require Codex approval" checkbox must match so users
-      // are not told to expect a specific bot name.
-      const { container } = render(
-        <NodeConfigPanel {...makeProps({ step: makeStep({ requireCodexApproval: true }) })} />
-      );
-
-      const helpText = container.textContent ?? '';
-      expect(helpText).toContain('any GitHub App');
-      expect(helpText).toContain('contains "codex"');
-      expect(helpText).not.toMatch(/require a codex\[bot\] \+1/);
-    });
   });
 
   describe('start node badge', () => {

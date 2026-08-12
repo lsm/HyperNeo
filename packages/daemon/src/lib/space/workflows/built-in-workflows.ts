@@ -861,7 +861,6 @@ export const CODING_WITH_QA_WORKFLOW: SpaceWorkflow = {
     {
       id: 'tpl-stable-qa-review',
       name: 'Review',
-      requireCodexApproval: true,
       agents: [
         {
           agentId: 'Reviewer',
@@ -1088,17 +1087,7 @@ export interface SeedBuiltInWorkflowsResult {
  */
 export function mergeNodeStructuralFieldsFromTemplate(
   existingNodes: WorkflowNode[],
-  templateNodes: Pick<
-    WorkflowNode,
-    | 'id'
-    | 'name'
-    | 'agents'
-    | 'postApproval'
-    | 'requireCodexApproval'
-    | 'codexPollIntervalMs'
-    | 'codexTimeoutSeconds'
-    | 'transitions'
-  >[],
+  templateNodes: Pick<WorkflowNode, 'id' | 'name' | 'agents' | 'postApproval' | 'transitions'>[],
   resolveAgentId: (name: string) => string | undefined
 ): WorkflowNode[] {
   const templateNodesByName = new Map(templateNodes.map((node) => [node.name, node]));
@@ -1145,26 +1134,13 @@ export function mergeNodeStructuralFieldsFromTemplate(
     return {
       ...node,
       postApproval: templateNode ? templateNode.postApproval : node.postApproval,
-      requireCodexApproval: templateNode
-        ? templateNode.requireCodexApproval
-        : node.requireCodexApproval,
-      codexPollIntervalMs: templateNode
-        ? templateNode.codexPollIntervalMs
-        : node.codexPollIntervalMs,
-      // Preserve an existing operator-/RPC-configured codexTimeoutSeconds when
-      // the template does not explicitly set an override. Built-in templates
-      // leave this field undefined, so blindly taking templateNode.codexTimeoutSeconds
-      // would silently delete any non-default timeout on a seeded node during
-      // restamp and revert the Codex hook to the global default window.
-      codexTimeoutSeconds: templateNode?.codexTimeoutSeconds ?? node.codexTimeoutSeconds,
       // Declared handoff transitions: overwrite from the template ONLY when it
-      // explicitly declares them, otherwise PRESERVE the node's existing value
-      // (mirrors the codexTimeoutSeconds preserve-when-template-silent rule).
+      // explicitly declares them, otherwise PRESERVE the node's existing value.
       // When the template declares them, remap targets to the installed graph:
       // NODE-name targets via remapTemplateChannelRef (a renamed node), SLOT-name
       // targets via remapTransitionSlotTarget (a renamed slot, by position); only
-      // '*' is carried verbatim. gateId/hookId are ids, not node refs, so they
-      // are carried verbatim.
+      // '*' is carried verbatim. hookId is an id, not a node ref, so it is
+      // carried verbatim.
       transitions:
         templateNode?.transitions && templateNode.transitions.length > 0
           ? templateNode.transitions.map((t) => {
@@ -2471,7 +2447,6 @@ export function seedBuiltInWorkflows(
           agentId: resolvedIds.get(a.agentId)!,
         })),
         ...(s.postApproval ? { postApproval: { ...s.postApproval } } : {}),
-        ...(s.requireCodexApproval ? { requireCodexApproval: true } : {}),
         // Carry declared handoff transitions so a fresh install matches a
         // re-stamped space when a template declares them. Targets reference
         // node/agent names, which are unchanged on fresh install.

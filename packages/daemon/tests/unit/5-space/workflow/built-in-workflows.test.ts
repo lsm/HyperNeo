@@ -1649,24 +1649,6 @@ describe('seedBuiltInWorkflows()', () => {
     expect(result.find((c) => c.from === 'QA' && c.to === 'Coding')).toBeDefined();
   });
 
-  test('mergeNodeStructuralFieldsFromTemplate clears removed template Codex approval flags', () => {
-    const existingNodes = CODING_WITH_QA_WORKFLOW.nodes.map((node) =>
-      node.name === 'Review' ? { ...node, requireCodexApproval: true } : node
-    );
-    const templateNodes = CODING_WITH_QA_WORKFLOW.nodes.map((node) =>
-      node.name === 'Review' ? { ...node, requireCodexApproval: undefined } : node
-    );
-
-    const result = mergeNodeStructuralFieldsFromTemplate(
-      existingNodes,
-      templateNodes,
-      resolveAgentId
-    );
-
-    const reviewNode = result.find((node) => node.name === 'Review')!;
-    expect(reviewNode.requireCodexApproval).toBeUndefined();
-  });
-
   test('mergeNodeStructuralFieldsFromTemplate applies template resetContextPerTurn to existing agent slots', () => {
     // Existing space seeded before the flag existed: reviewer slot has no flag.
     const existingNodes = CODING_WORKFLOW.nodes.map((node) =>
@@ -3448,8 +3430,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
 
   test('mergeNodeStructuralFieldsFromTemplate preserves operator-configured handoff transitions when the template is silent', () => {
     // Built-in templates do not declare transitions today. Restamp must NOT wipe
-    // operator-/RPC-installed transitions on a seeded node — mirrors the
-    // codexTimeoutSeconds preserve-when-template-silent rule directly above.
+    // operator-/RPC-installed transitions on a seeded node.
     const templateNode = CODING_WITH_QA_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
     expect(templateNode.transitions).toBeUndefined();
     const installed: HandoffTransition[] = [{ id: 'to-review', target: 'Review' }];
@@ -3489,8 +3470,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
 
   test('mergeNodeStructuralFieldsFromTemplate preserves transitions for a node renamed away from the template', () => {
     // When the template no longer has a matching node, the existing node is
-    // treated as user-owned; its transitions are preserved (consistent with
-    // codexTimeoutSeconds), not cleared.
+    // treated as user-owned; its transitions are preserved, not cleared.
     const installed: HandoffTransition[] = [{ id: 'to-review', target: 'Review' }];
     const orphan: WorkflowNode = {
       id: 'orphan-1',
@@ -3587,8 +3567,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
 
     // The stable reviewer prompt is behavioral: it does NOT hard-code the QA
     // target or review-approval-gate field (those are injected centrally), and
-    // it does not embed the retired Fullstack codex handoff prose either — codex
-    // enforcement lives in the review-approval hook / requireCodexApproval flag.
+    // it does not embed the retired Fullstack codex handoff prose either.
     expect(prompt).not.toContain('any login containing `codex`');
     expect(prompt).not.toContain('2 hours by default');
     // It does defer the final-approval handoff to the injected contract.

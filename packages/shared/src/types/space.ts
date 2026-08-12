@@ -2109,10 +2109,9 @@ export const HANDOFF_TARGET_WILDCARD = '*' as const;
  * The two coexist: a workflow may declare channels for peer discussion and
  * transitions for round-completing handoffs independently.
  *
- * `gateId` / `hookId` bind a transition to the SAME authorization primitives
- * that channels use. When `gateId` is set, the gate's writable fields are the
- * legal `data` keys for the handoff and the gate must pass for it to complete.
- * When `hookId` is set, the hook's validator must pass.
+ * `hookId` binds a transition to the SAME authorization primitive that
+ * channels use. When `hookId` is set, the hook's validator must pass for the
+ * handoff to complete.
  *
  * Runtime transition EXECUTION is not implemented in this contract phase — this
  * type is declarative, validated, and round-tripped through export/import only.
@@ -2133,13 +2132,6 @@ export interface HandoffTransition {
    * transition per concrete name, at most one `'*'`).
    */
   target: string;
-  /**
-   * Optional gate that authorizes this transition. When set, the gate's
-   * writable fields are the legal keys for the handoff's `data`, and the gate
-   * must pass before the handoff completes. References a gate in
-   * `SpaceWorkflow.gates`.
-   */
-  gateId?: string;
   /**
    * Optional hook whose validator must pass for this transition (e.g.
    * `pr_ready`). References a hook in `SpaceWorkflow.hooks`.
@@ -2173,8 +2165,8 @@ export interface HandoffTransition {
  *   it as an instruction channel, and the sender must not use it to direct the
  *   target's work or reset policy.
  * - **data** supplies the workflow-declared fields for the resolved transition
- *   (the writable fields of its `gateId`, or the template fields of its
- *   `hookId`). Keys outside the declared shape are rejected.
+ *   (the template fields of its `hookId`). Keys outside the declared shape are
+ *   rejected.
  * - A successful handoff COMPLETES the sender's current execution round; the
  *   sender does not continue after issuing one.
  * - Target context/reset policy (e.g. {@link WorkflowNodeAgent.resetContextPerTurn})
@@ -2185,7 +2177,7 @@ export interface HandoffOperation {
   target: string;
   /** Non-authoritative sender note. Not the target's task/input. */
   summary: string;
-  /** Supplies the transition's workflow-declared hook/gate fields. */
+  /** Supplies the transition's workflow-declared hook fields. */
   data?: Record<string, unknown>;
 }
 
@@ -2217,25 +2209,6 @@ export interface WorkflowNode {
    */
   postApproval?: PostApprovalRoute;
   /**
-   * When true, gated channels from this node that have an approval gate will
-   * also require a codex[bot] +1 reaction before opening. Defaults to false.
-   */
-  requireCodexApproval?: boolean;
-  /**
-   * Custom poll interval (ms) for the codex review bot when
-   * `requireCodexApproval` is true. Defaults to 300 000 (5 minutes).
-   */
-  codexPollIntervalMs?: number;
-  /**
-   * Custom timeout (seconds) for the codex review bot reaction check when
-   * `requireCodexApproval` is true. After this many seconds without a +1
-   * reaction since `cycle_start_at`, the gate is allowed to open with a
-   * `codex_bot_reaction: "timeout"` warning. Defaults to 7200 (2 hours) —
-   * Codex reviews on large PRs routinely take 20–30 minutes, so the previous
-   * 600s default timed out before the bot posted its +1.
-   */
-  codexTimeoutSeconds?: number;
-  /**
    * Declared outbound handoff transitions from this node. A first-class
    * `handoff({ target, summary, data? })` issued by an agent in this node must
    * resolve to exactly one of these. Omitting it (or an empty array) means the
@@ -2262,18 +2235,6 @@ export interface WorkflowNodeInput {
   agents: WorkflowNodeAgent[];
   /** Optional node-level post-approval route. See {@link WorkflowNode.postApproval}. */
   postApproval?: PostApprovalRoute;
-  /** Require codex[bot] +1 on approval gates for channels from this node. */
-  requireCodexApproval?: boolean;
-  /**
-   * Custom poll interval (ms) for the codex review bot when
-   * `requireCodexApproval` is true. Defaults to 300 000 (5 minutes).
-   */
-  codexPollIntervalMs?: number;
-  /**
-   * Custom timeout (seconds) for the codex review bot reaction check when
-   * `requireCodexApproval` is true. See {@link WorkflowNode.codexTimeoutSeconds}.
-   */
-  codexTimeoutSeconds?: number;
   /** Declared outbound handoff transitions. See {@link WorkflowNode.transitions}. */
   transitions?: HandoffTransition[];
 }
@@ -2715,16 +2676,14 @@ export interface ExportedWorkflowNodeAgent {
 /**
  * A declarative outbound handoff transition in the portable export format.
  * Mirrors {@link HandoffTransition}. Uses node/agent names (already portable
- * in the export) for `target`. `gateId`/`hookId` are checked against the
- * exported `gates`/`hooks` lists on import; a `gateId` whose gate was filtered
- * out (e.g. a legacy empty gate) is stripped at the export/import boundary so
- * no dangling reference survives.
+ * in the export) for `target`. `hookId` is checked against the exported
+ * `hooks` list on import; a `hookId` whose hook was filtered out is stripped
+ * at the export/import boundary so no dangling reference survives.
  */
 export interface ExportedHandoffTransition {
   id: string;
   label?: string;
   target: string;
-  gateId?: string;
   hookId?: string;
   maxCycles?: number;
 }
@@ -2751,18 +2710,6 @@ export interface ExportedWorkflowNode {
   name: string;
   /** Optional node-level post-approval route. */
   postApproval?: PostApprovalRoute;
-  /** Require codex[bot] +1 on approval gates for channels from this node. */
-  requireCodexApproval?: boolean;
-  /**
-   * Custom poll interval (ms) for the codex review bot when
-   * `requireCodexApproval` is true. Defaults to 300 000 (5 minutes).
-   */
-  codexPollIntervalMs?: number;
-  /**
-   * Custom timeout (seconds) for the codex review bot reaction check when
-   * `requireCodexApproval` is true. See {@link WorkflowNode.codexTimeoutSeconds}.
-   */
-  codexTimeoutSeconds?: number;
   /**
    * Declared outbound handoff transitions for this node.
    * Mirrors {@link WorkflowNode.transitions}. Preserved through round-trip.

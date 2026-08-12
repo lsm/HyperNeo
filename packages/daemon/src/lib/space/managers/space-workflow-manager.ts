@@ -375,9 +375,6 @@ export class SpaceWorkflowManager {
               name: n.name,
               agents: n.agents,
               postApproval: n.postApproval,
-              requireCodexApproval: n.requireCodexApproval,
-              codexPollIntervalMs: n.codexPollIntervalMs,
-              codexTimeoutSeconds: n.codexTimeoutSeconds,
               transitions: n.transitions,
             })
           )
@@ -387,9 +384,6 @@ export class SpaceWorkflowManager {
               name: n.name,
               agents: n.agents,
               postApproval: n.postApproval,
-              requireCodexApproval: n.requireCodexApproval,
-              codexPollIntervalMs: n.codexPollIntervalMs,
-              codexTimeoutSeconds: n.codexTimeoutSeconds,
               transitions: n.transitions,
             })
           );
@@ -577,62 +571,6 @@ export class SpaceWorkflowManager {
       const node = nodes[i];
       this.validateNodeAgentRef(spaceId, node, i);
       this.validateEventInterests(node, i);
-      this.validateCodexPollInterval(node, i);
-      this.validateCodexTimeout(node, i);
-      this.validateCodexApprovalFlag(node, i);
-    }
-  }
-
-  private validateCodexPollInterval(node: WorkflowNodeInput, index: number): void {
-    if (node.codexPollIntervalMs === undefined || node.codexPollIntervalMs === null) {
-      return;
-    }
-    if (
-      typeof node.codexPollIntervalMs !== 'number' ||
-      !Number.isFinite(node.codexPollIntervalMs)
-    ) {
-      throw new WorkflowValidationError(
-        `node[${index}]: codexPollIntervalMs must be a finite number`
-      );
-    }
-    if (node.codexPollIntervalMs <= 0) {
-      throw new WorkflowValidationError(
-        `node[${index}]: codexPollIntervalMs must be a positive number`
-      );
-    }
-    if (!Number.isInteger(node.codexPollIntervalMs)) {
-      throw new WorkflowValidationError(`node[${index}]: codexPollIntervalMs must be an integer`);
-    }
-  }
-
-  private validateCodexTimeout(node: WorkflowNodeInput, index: number): void {
-    if (node.codexTimeoutSeconds === undefined || node.codexTimeoutSeconds === null) {
-      return;
-    }
-    if (
-      typeof node.codexTimeoutSeconds !== 'number' ||
-      !Number.isFinite(node.codexTimeoutSeconds)
-    ) {
-      throw new WorkflowValidationError(
-        `node[${index}]: codexTimeoutSeconds must be a finite number`
-      );
-    }
-    if (node.codexTimeoutSeconds <= 0) {
-      throw new WorkflowValidationError(
-        `node[${index}]: codexTimeoutSeconds must be a positive number`
-      );
-    }
-    if (!Number.isInteger(node.codexTimeoutSeconds)) {
-      throw new WorkflowValidationError(`node[${index}]: codexTimeoutSeconds must be an integer`);
-    }
-  }
-
-  private validateCodexApprovalFlag(node: WorkflowNodeInput, index: number): void {
-    if (node.requireCodexApproval === undefined || node.requireCodexApproval === null) {
-      return;
-    }
-    if (typeof node.requireCodexApproval !== 'boolean') {
-      throw new WorkflowValidationError(`node[${index}]: requireCodexApproval must be a boolean`);
     }
   }
 

@@ -88,12 +88,6 @@ interface NodeConfigJson {
   agents?: WorkflowNodeAgent[];
   /** Optional post-approval route scoped to this workflow node. */
   postApproval?: PostApprovalRoute;
-  /** Require codex[bot] +1 on approval gates for channels from this node. */
-  requireCodexApproval?: boolean;
-  /** Custom poll interval (ms) for the codex review bot. */
-  codexPollIntervalMs?: number;
-  /** Custom timeout (seconds) for the codex review bot reaction check. */
-  codexTimeoutSeconds?: number;
   /** Declared outbound handoff transitions from this node. See HandoffTransition. */
   transitions?: HandoffTransition[];
   /**
@@ -159,9 +153,6 @@ function rowToNode(row: NodeRow, ctx?: NodeMigrationContext): WorkflowNode {
     name: row.name,
     agents,
     ...(cfg.postApproval ? { postApproval: cfg.postApproval } : {}),
-    ...(cfg.requireCodexApproval ? { requireCodexApproval: true } : {}),
-    ...(cfg.codexPollIntervalMs ? { codexPollIntervalMs: cfg.codexPollIntervalMs } : {}),
-    ...(cfg.codexTimeoutSeconds ? { codexTimeoutSeconds: cfg.codexTimeoutSeconds } : {}),
     ...(cfg.transitions && cfg.transitions.length > 0 ? { transitions: cfg.transitions } : {}),
   };
 }
@@ -571,9 +562,6 @@ export class SpaceWorkflowRepository {
       const cfg: NodeConfigJson = {
         agents: node.agents,
         ...(node.postApproval ? { postApproval: node.postApproval } : {}),
-        ...(node.requireCodexApproval ? { requireCodexApproval: true } : {}),
-        ...(node.codexPollIntervalMs ? { codexPollIntervalMs: node.codexPollIntervalMs } : {}),
-        ...(node.codexTimeoutSeconds ? { codexTimeoutSeconds: node.codexTimeoutSeconds } : {}),
         ...(node.transitions && node.transitions.length > 0
           ? { transitions: node.transitions }
           : {}),
@@ -853,15 +841,6 @@ export class SpaceWorkflowRepository {
     }
     if (input.postApproval) {
       nodeCfg.postApproval = input.postApproval;
-    }
-    if (input.requireCodexApproval) {
-      nodeCfg.requireCodexApproval = true;
-    }
-    if (input.codexPollIntervalMs) {
-      nodeCfg.codexPollIntervalMs = input.codexPollIntervalMs;
-    }
-    if (input.codexTimeoutSeconds) {
-      nodeCfg.codexTimeoutSeconds = input.codexTimeoutSeconds;
     }
     if (input.transitions && input.transitions.length > 0) {
       nodeCfg.transitions = input.transitions;

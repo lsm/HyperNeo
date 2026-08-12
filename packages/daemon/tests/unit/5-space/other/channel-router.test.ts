@@ -116,8 +116,6 @@ function buildWorkflow(
     name: string;
     agentId?: string;
     agents?: Array<{ agentId: string; name: string }>;
-    requireCodexApproval?: boolean;
-    codexPollIntervalMs?: number;
   }>,
   channels?: WorkflowChannel[]
 ): SpaceWorkflow {
@@ -131,8 +129,6 @@ function buildWorkflow(
       name: n.name,
       agentId: n.agentId,
       agents: n.agents,
-      requireCodexApproval: n.requireCodexApproval,
-      codexPollIntervalMs: n.codexPollIntervalMs,
     })),
     transitions: [],
     startNodeId,

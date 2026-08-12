@@ -147,9 +147,6 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
           ?.requirePrMerge === true
           ? true
           : undefined,
-      requireCodexApproval: s.requireCodexApproval,
-      codexPollIntervalMs: s.codexPollIntervalMs,
-      codexTimeoutSeconds: s.codexTimeoutSeconds,
       // Carry declared handoff transitions verbatim so a visual-editor save
       // round-trips them instead of dropping them to undefined.
       handoffTransitions: s.transitions,
@@ -406,13 +403,6 @@ function buildWorkflowFields(state: VisualEditorState): {
       name: node.step.name || `Step ${i + 1}`,
       agents,
       ...(postApproval ? { postApproval } : {}),
-      ...(node.step.requireCodexApproval ? { requireCodexApproval: true } : {}),
-      ...(node.step.codexPollIntervalMs
-        ? { codexPollIntervalMs: node.step.codexPollIntervalMs }
-        : {}),
-      ...(node.step.codexTimeoutSeconds
-        ? { codexTimeoutSeconds: node.step.codexTimeoutSeconds }
-        : {}),
       // Re-emit carried handoff transitions (mapped back to the backend field),
       // dropping any whose target no longer resolves to exactly one destination
       // — a renamed/deleted target (zero destinations) OR a renamed-slot
