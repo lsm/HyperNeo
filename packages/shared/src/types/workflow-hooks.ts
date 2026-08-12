@@ -22,7 +22,7 @@
 // Input contract (Layer 1, data)
 // ---------------------------------------------------------------------------
 
-export type HookDataFieldType = 'string' | 'number' | 'boolean' | 'url';
+export type HookDataFieldType = 'string' | 'number' | 'boolean' | 'link';
 
 /**
  * One field of a hook's required input contract. Drives agent-prompt
@@ -30,7 +30,7 @@ export type HookDataFieldType = 'string' | 'number' | 'boolean' | 'url';
  * route and tells the agent what to put in `send_message.data`.
  */
 export interface HookDataField {
-  /** Data key the agent must supply (e.g. `pr_url`). */
+  /** Data key the agent must supply (e.g. `pr_link`). */
   key: string;
   type: HookDataFieldType;
   required: boolean;
@@ -76,14 +76,13 @@ export interface HookArtifact {
 }
 
 /**
- * Connector access gated by the workflow/run's `permittedExternalLookups`.
- * Named props are added as connectors are wired; built-in hooks currently use
- * `github` only.
+ * Vendor-agnostic connector access, gated by the context's
+ * `permittedExternalLookups`. The meta type names no connector on purpose —
+ * which connector/op to call is business knowledge that belongs in the
+ * extensions layer, not here. Typed wrappers live in @hyperneo/extensions-hooks.
  */
 export interface HookConnectorAccess {
-  github?: {
-    getPr(url: string): Promise<unknown>;
-  };
+  call(connectorId: string, op: string, args: Record<string, unknown>): Promise<unknown>;
 }
 
 /**
@@ -96,8 +95,6 @@ export interface HookContext {
   workspacePath: string;
   taskId: string;
   taskStatus?: string;
-  /** The run's frozen reviewed PR url (stamped by the pr_ready hook). */
-  frozenPrUrl?: string;
   /** Route the hook is bound to. */
   sourceNode: string;
   targetNode?: string;

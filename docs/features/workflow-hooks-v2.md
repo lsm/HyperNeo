@@ -111,7 +111,6 @@ interface HookContext {
   workspacePath: string;
   taskId: string;
   taskStatus?: string;
-  frozenPrUrl?: string;
 
   readState(key: string): unknown;
   recordState(key: string, value: unknown): void;
@@ -119,7 +118,7 @@ interface HookContext {
   writeArtifact(artifact: ArtifactInput): void;
   readArtifacts(): Artifact[];
 
-  connectors: ConnectorAccess;                      // e.g. github.getPr(url), gated by permittedExternalLookups
+  connectors: ConnectorAccess;                      // vendor-agnostic call(connectorId, op, args); gated by permittedExternalLookups
   permittedExternalLookups: string[];
 }
 ```
@@ -142,8 +141,8 @@ special-case and the stale-prompt drift that the gate removal surfaced.
 `codex_review_approved` — each becomes `{ id, requiredData, run }`, with `run`
 lifted from the current validator files. Seed `requiredData`:
 
-- `pr_ready` → `[{ key:'pr_url', type:'url', required:true }]`
-- `post_approval_only` → `[{ key:'pr_url', ... }, { key:'reason', ... }]`
+- `pr_ready` → `[{ key:'pr_link', type:'link', required:true }]`
+- `post_approval_only` → `[{ key:'pr_link', ... }, { key:'reason', ... }]`
 - `review_posted`, `pr_merged`, `codex_review_approved` → their respective inputs.
 
 ## 8. What dies (no migration)
