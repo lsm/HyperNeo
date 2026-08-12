@@ -10,6 +10,10 @@
  * This is the replacement for the old connector layer. There is deliberately no
  * credential handling here: built-in hooks are trusted code with full daemon
  * access, and pretending otherwise (the old restricted-env sandbox) was theater.
+ *
+ * NOTE: the GraphQL ops (review threads, review evidence, codex approval) are
+ * first-page-only and need online validation in step 7. They are faithful in
+ * intent to the retired validators; field details may need real-GitHub tuning.
  */
 
 import type { HookContext, HookReturn } from '@hyperneo/shared/types/workflow-hooks';
@@ -133,6 +137,30 @@ async function runGh(opts: {
   return { ok: false, retryable: false, error: errText || `gh exited with code ${exitCode}` };
 }
 
+/** Run a GraphQL query via `gh api graphql` and parse the JSON envelope. */
+async function runGhGraphql(ctx: HookContext, query: string): Promise<GithubResult<unknown>> {
+  const result = await runGh({
+    workspacePath: ctx.workspacePath,
+    args: ['api', 'graphql', '-f', `query=${query}`],
+  });
+  if (!result.ok) return result;
+  try {
+    return { ok: true, data: JSON.parse(result.data) };
+  } catch {
+    return { ok: false, retryable: false, error: 'gh api graphql returned non-JSON output' };
+  }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+// ---------------------------------------------------------------------------
+// gh pr view — merge fields
+// ---------------------------------------------------------------------------
+
 /** Fetch a PR's view (state, mergeable, mergeStateStatus) via `gh pr view`. */
 export async function ghGetPr(ctx: HookContext, link: string): Promise<GithubResult<GithubPrView>> {
   const result = await runGh({
@@ -150,7 +178,7 @@ export async function ghGetPr(ctx: HookContext, link: string): Promise<GithubRes
 }
 
 function parsePrView(value: unknown): GithubPrView {
-  const v = (value ?? {}) as Record<string, unknown>;
+  const v = asRecord(value) ?? {};
   return {
     state: (typeof v.state === 'string' ? v.state : 'CLOSED') as GithubPrView['state'],
     mergeable: (typeof v.mergeable === 'string'
@@ -158,4 +186,188 @@ function parsePrView(value: unknown): GithubPrView {
       : 'UNKNOWN') as GithubPrView['mergeable'],
     mergeStateStatus: typeof v.mergeStateStatus === 'string' ? v.mergeStateStatus : 'UNKNOWN',
   };
+}
+
+// ---------------------------------------------------------------------------
+// PR link parsing + review threads (pr_ready)
+// ---------------------------------------------------------------------------
+
+export interface ParsedPrLink {
+  host: string;
+  owner: string;
+  repo: string;
+  number: number;
+}
+
+/** Parse owner/repo/number from a GitHub PR link (any host, including Enterprise). */
+export function parsePrLink(link: string): ParsedPrLink | undefined {
+  const match = /^https?:\/\/([^/]+)\/([^/]+)\/([^/]+)\/pull\/(\d+)\/?/.exec(link);
+  if (!match) return undefined;
+  return {
+    host: match[1] as string,
+    owner: match[2] as string,
+    repo: match[3] as string,
+    number: Number(match[4]),
+  };
+}
+
+/**
+ * Unresolved review-conversation URLs on a PR (first page). Drives `pr_ready`'s
+ * "no unresolved threads" leg. Owner/repo/number are interpolated into the
+ * query after parsing the PR link, so injection is bounded to validated tokens.
+ */
+export async function ghGetUnresolvedReviewThreads(
+  ctx: HookContext,
+  link: string
+): Promise<GithubResult<string[]>> {
+  const pr = parsePrLink(link);
+  if (!pr) {
+    return { ok: false, retryable: false, error: `unable to parse GitHub PR link: ${link}` };
+  }
+  const query =
+    `query { repository(owner:"${pr.owner}",name:"${pr.repo}") { pullRequest(number:${pr.number}) { ` +
+    'reviewThreads(first: 50) { nodes { isResolved comments(first: 1) { nodes { url } } } } } } }';
+  const result = await runGhGraphql(ctx, query);
+  if (!result.ok) return result;
+  return { ok: true, data: extractUnresolvedThreads(result.data) };
+}
+
+function extractUnresolvedThreads(value: unknown): string[] {
+  const root = asRecord(value) ?? {};
+  const repo = asRecord(asRecord(root.data)?.repository);
+  const pr = asRecord(repo?.pullRequest);
+  const threads = asRecord(pr?.reviewThreads);
+  const nodes = threads?.nodes;
+  if (!Array.isArray(nodes)) return [];
+  const urls: string[] = [];
+  for (const node of nodes) {
+    const thread = asRecord(node);
+    if (!thread || thread.isResolved !== false) continue;
+    const commentNodes = asRecord(asRecord(thread.comments)?.nodes);
+    const firstUrl = commentNodes?.url;
+    if (typeof firstUrl === 'string') urls.push(firstUrl);
+  }
+  return urls;
+}
+
+// ---------------------------------------------------------------------------
+// review evidence (review_posted)
+// ---------------------------------------------------------------------------
+
+export interface GithubReviewEvidence {
+  /** Formal reviews (APPROVED / CHANGES_REQUESTED) since `sinceIso`. */
+  formalReviewCount: number;
+  /** PR comments since `sinceIso` (own-PR fallback evidence). */
+  commentEvidenceCount: number;
+  /** Whether the viewer owns the PR (self-review fallback eligibility). */
+  ownPr: boolean;
+}
+
+/**
+ * Review evidence for the `review_posted` gate: counts formal reviews and
+ * comments landed since `sinceIso` (ISO 8601), plus whether the viewer owns the
+ * PR. First-page only.
+ */
+export async function ghGetReviewEvidence(
+  ctx: HookContext,
+  link: string,
+  sinceIso: string
+): Promise<GithubResult<GithubReviewEvidence>> {
+  const pr = parsePrLink(link);
+  if (!pr) {
+    return { ok: false, retryable: false, error: `unable to parse GitHub PR link: ${link}` };
+  }
+  const query =
+    `query { viewer { login } repository(owner:"${pr.owner}",name:"${pr.repo}") { pullRequest(number:${pr.number}) { ` +
+    'author { login } reviews(first: 50) { nodes { state publishedAt } } ' +
+    'comments(first: 50) { nodes { createdAt } } } } }';
+  const result = await runGhGraphql(ctx, query);
+  if (!result.ok) return result;
+  return { ok: true, data: extractReviewEvidence(result.data, sinceIso) };
+}
+
+function extractReviewEvidence(value: unknown, sinceIso: string): GithubReviewEvidence {
+  const root = asRecord(value) ?? {};
+  const viewerLogin = asRecord(root.viewer)?.login;
+  const repo = asRecord(asRecord(root.data)?.repository);
+  const pr = asRecord(repo?.pullRequest);
+  const authorLogin = asRecord(pr?.author)?.login;
+  const ownPr = typeof viewerLogin === 'string' && viewerLogin === authorLogin;
+
+  const reviewNodes = asRecord(asRecord(pr?.reviews)?.nodes);
+  let formalReviewCount = 0;
+  if (Array.isArray(reviewNodes)) {
+    for (const node of reviewNodes) {
+      const review = asRecord(node);
+      const state = review?.state;
+      const publishedAt = review?.publishedAt;
+      if (
+        (state === 'APPROVED' || state === 'CHANGES_REQUESTED') &&
+        typeof publishedAt === 'string' &&
+        publishedAt >= sinceIso
+      ) {
+        formalReviewCount += 1;
+      }
+    }
+  }
+
+  const commentNodes = asRecord(asRecord(pr?.comments)?.nodes);
+  let commentEvidenceCount = 0;
+  if (Array.isArray(commentNodes)) {
+    for (const node of commentNodes) {
+      const createdAt = asRecord(node)?.createdAt;
+      if (typeof createdAt === 'string' && createdAt >= sinceIso) {
+        commentEvidenceCount += 1;
+      }
+    }
+  }
+
+  return { formalReviewCount, commentEvidenceCount, ownPr };
+}
+
+// ---------------------------------------------------------------------------
+// codex approval (codex_review_approved) — resolves PR from the workspace branch
+// ---------------------------------------------------------------------------
+
+export interface GithubCodexApproval {
+  approved: boolean;
+  prLink?: string;
+}
+
+/**
+ * Whether a codex review-bot has posted an APPROVED review on the workspace's
+ * current PR (resolved from the branch, not a caller-supplied link, so the gate
+ * binds to the run's actual PR). First-page reviews only; head-binding is
+ * relaxed vs the retired validator (any codex APPROVED review counts). Opt-in.
+ */
+export async function ghGetCodexApproval(
+  ctx: HookContext
+): Promise<GithubResult<GithubCodexApproval>> {
+  const result = await runGh({
+    workspacePath: ctx.workspacePath,
+    args: ['pr', 'view', '--json', 'url,reviews'],
+  });
+  if (!result.ok) return result;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(result.data);
+  } catch {
+    return { ok: false, retryable: false, error: 'gh pr view returned non-JSON output' };
+  }
+  return { ok: true, data: extractCodexApproval(parsed) };
+}
+
+function extractCodexApproval(value: unknown): GithubCodexApproval {
+  const pr = asRecord(value) ?? {};
+  const prLink = typeof pr.url === 'string' ? pr.url : undefined;
+  const nodes = asRecord(pr.reviews)?.nodes;
+  if (!Array.isArray(nodes)) return { approved: false, prLink };
+  for (const node of nodes) {
+    const review = asRecord(node);
+    const author = asRecord(review?.author)?.login;
+    if (typeof author === 'string' && /codex/i.test(author) && review?.state === 'APPROVED') {
+      return { approved: true, prLink };
+    }
+  }
+  return { approved: false, prLink };
 }

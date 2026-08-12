@@ -111,6 +111,7 @@ interface HookContext {
   workspacePath: string;
   taskId: string;
   taskStatus?: string;
+  runStartedAt?: number;
 
   readState(key: string): unknown;
   recordState(key: string, value: unknown): void;

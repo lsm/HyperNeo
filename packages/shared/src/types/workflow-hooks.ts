@@ -85,6 +85,8 @@ export interface HookContext {
   workspacePath: string;
   taskId: string;
   taskStatus?: string;
+  /** When the run started (ms epoch). Hooks use it to scope "fresh" external evidence (e.g. a review posted since the run started). */
+  runStartedAt?: number;
   /** Route the hook is bound to. */
   sourceNode: string;
   targetNode?: string;
