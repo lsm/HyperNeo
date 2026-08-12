@@ -1844,6 +1844,146 @@ describe('node-agent-tools: list_deliveries', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Tests: list_subscriptions
+// ---------------------------------------------------------------------------
+
+describe('node-agent-tools: list_subscriptions', () => {
+  let ctx: TestCtx;
+
+  beforeEach(() => {
+    ctx = makeCtx();
+  });
+
+  afterEach(() => {
+    ctx.db.close();
+  });
+
+  test('delegates to onListSubscriptions, defaulting to the current run', async () => {
+    const calls: Array<{ workflowRunId?: string; nodeId?: string }> = [];
+    const handlers = createNodeAgentToolHandlers(
+      makeConfig(ctx, {
+        onListSubscriptions: async (args) => {
+          calls.push(args);
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({ success: true, declared: [], persisted: [] }),
+              },
+            ],
+          };
+        },
+      })
+    );
+
+    const result = await handlers.list_subscriptions({});
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.success).toBe(true);
+    // No args → callback receives the session's current run, no node filter.
+    expect(calls).toEqual([{ workflowRunId: undefined, nodeId: undefined }]);
+  });
+
+  test('forwards workflowRunId and nodeId overrides', async () => {
+    const calls: Array<{ workflowRunId?: string; nodeId?: string }> = [];
+    const handlers = createNodeAgentToolHandlers(
+      makeConfig(ctx, {
+        onListSubscriptions: async (args) => {
+          calls.push(args);
+          return { content: [{ type: 'text', text: JSON.stringify({ success: true }) }] };
+        },
+      })
+    );
+
+    await handlers.list_subscriptions({
+      workflowRunId: 'run-other',
+      nodeId: 'node-review',
+    });
+
+    expect(calls).toEqual([{ workflowRunId: 'run-other', nodeId: 'node-review' }]);
+  });
+
+  test('returns unavailable when onListSubscriptions is not wired', async () => {
+    const handlers = createNodeAgentToolHandlers(makeConfig(ctx));
+
+    const result = await handlers.list_subscriptions({});
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.success).toBe(false);
+    expect(data.error).toContain('not available');
+  });
+
+  test('a realistic result envelope survives the jsonResult round-trip', async () => {
+    // End-to-end pass-through: the structured {success, result:{declared, persisted,
+    // active, mismatches}} envelope the callback returns is what the agent receives.
+    const handlers = createNodeAgentToolHandlers(
+      makeConfig(ctx, {
+        onListSubscriptions: async () => ({
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                success: true,
+                result: {
+                  workflowRunId: ctx.workflowRunId,
+                  nodeId: null,
+                  declared: [
+                    {
+                      nodeId: 'code',
+                      agentName: 'coder',
+                      topic: 'github/o/r/issues/*',
+                      active: true,
+                    },
+                  ],
+                  persisted: [],
+                  active: [],
+                  mismatches: { declaredNotActive: 0, persistedNotActive: 0, orphanActive: 0 },
+                },
+              }),
+            },
+          ],
+        }),
+      })
+    );
+
+    const result = await handlers.list_subscriptions({});
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.success).toBe(true);
+    expect(data.result.workflowRunId).toBe(ctx.workflowRunId);
+    expect(data.result.declared).toHaveLength(1);
+    expect(data.result.declared[0]).toMatchObject({ topic: 'github/o/r/issues/*', active: true });
+    expect(data.result.mismatches).toEqual({
+      declaredNotActive: 0,
+      persistedNotActive: 0,
+      orphanActive: 0,
+    });
+  });
+
+  test('createNodeAgentMcpServer registers list_subscriptions only when the callback is wired', () => {
+    const withoutCallback = createNodeAgentMcpServer(makeConfig(ctx));
+    const withoutRegistered = Object.keys(
+      (withoutCallback as unknown as { instance: { _registeredTools: Record<string, unknown> } })
+        .instance._registeredTools
+    );
+    expect(withoutRegistered).not.toContain('list_subscriptions');
+
+    const withCallback = createNodeAgentMcpServer(
+      makeConfig(ctx, {
+        onListSubscriptions: async () => ({
+          content: [{ type: 'text', text: JSON.stringify({ success: true }) }],
+        }),
+      })
+    );
+    const withRegistered = Object.keys(
+      (withCallback as unknown as { instance: { _registeredTools: Record<string, unknown> } })
+        .instance._registeredTools
+    );
+    expect(withRegistered).toContain('list_subscriptions');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tests: createNodeAgentMcpServer (factory)
 // ---------------------------------------------------------------------------
 

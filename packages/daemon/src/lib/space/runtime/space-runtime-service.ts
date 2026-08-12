@@ -1127,6 +1127,18 @@ export class SpaceRuntimeService {
   }
 
   /**
+   * Read-only subscription diagnostic (Task #908). Delegates to
+   * {@link SpaceRuntime.listSubscriptions}; `spaceId` guards cross-space access.
+   */
+  listSubscriptions(
+    workflowRunId: string,
+    spaceId: string,
+    nodeId?: string
+  ): ReturnType<SpaceRuntime['listSubscriptions']> {
+    return this.runtime.listSubscriptions(workflowRunId, spaceId, nodeId);
+  }
+
+  /**
    * Stop all active work for a space: terminates running agent sessions and
    * cancels all in-progress/open tasks and active workflow runs.
    *

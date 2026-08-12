@@ -195,6 +195,47 @@ export const ListDeliveriesSchema = z.object({
 export type ListDeliveriesInput = z.infer<typeof ListDeliveriesSchema>;
 
 // ---------------------------------------------------------------------------
+// list_subscriptions
+// ---------------------------------------------------------------------------
+
+/**
+ * Schema for `list_subscriptions` input.
+ *
+ * Read-only diagnostic that snapshots a workflow run's external-event
+ * subscriptions across three layers — so an agent can answer "is this node
+ * actually subscribed to these events?" from durable state, without raw SQL:
+ *
+ *   1. `declared`  — static interests from the workflow definition (durable).
+ *   2. `persisted` — dynamic rows from `space_workflow_event_subscriptions`
+ *      (durable; the PR 5 table).
+ *   3. `active`    — in-memory trie entries, shown ONLY as a live cross-check.
+ *
+ * The durable layers (1 + 2) are the source of truth; the trie (3) is never the
+ * answer. Each active entry is reconciled against durable state
+ * (`source: 'declared' | 'persisted' | 'orphan'`), and durable rows missing
+ * from the trie surface as `active: false` plus a `mismatches` summary — so a
+ * declared-vs-active discrepancy is immediately visible. Always scoped to the
+ * current space; defaults to this workflow run.
+ */
+export const ListSubscriptionsSchema = z.object({
+  workflowRunId: z
+    .string()
+    .min(1)
+    .describe(
+      'Filter to a single workflow run. Defaults to this workflow run. ' +
+        'Pass an explicit value to inspect another run in the same Space.'
+    )
+    .optional(),
+  nodeId: z
+    .string()
+    .min(1)
+    .describe('Filter to a single workflow node (matches declared/persisted/active entries).')
+    .optional(),
+});
+
+export type ListSubscriptionsInput = z.infer<typeof ListSubscriptionsSchema>;
+
+// ---------------------------------------------------------------------------
 // save_artifact
 // ---------------------------------------------------------------------------
 
@@ -542,6 +583,7 @@ export const NODE_AGENT_TOOL_SCHEMAS = {
   subscribe_pr_events: SubscribePrEventsSchema,
   get_external_event: GetExternalEventSchema,
   list_deliveries: ListDeliveriesSchema,
+  list_subscriptions: ListSubscriptionsSchema,
   restore_node_agent: RestoreNodeAgentSchema,
   list_tasks: ListTasksSchema,
   get_task: GetTaskSchema,

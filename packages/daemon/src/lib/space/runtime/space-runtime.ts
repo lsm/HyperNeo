@@ -364,6 +364,107 @@ function isLongHorizonSubscriptionTarget(
   return target.kind === 'long_horizon_agent';
 }
 
+// ---------------------------------------------------------------------------
+// listSubscriptions — read-only diagnostic result (Task #908)
+// ---------------------------------------------------------------------------
+
+/**
+ * A declared static event interest, re-derived from the workflow definition
+ * (durable). `topic` and `topicFrom` are mutually exclusive. `active` is a live
+ * cross-check against the in-memory trie: true iff a `static` trie entry exists
+ * for this slot + topic. `topicFrom` interests are inert until their resolver
+ * ships, so they report `active: false` and are excluded from the mismatch
+ * count (they are known-not-active by design, not drift).
+ */
+interface SubscriptionDeclaredInterest {
+  nodeId: string;
+  nodeName: string;
+  agentName: string;
+  topic: string | null;
+  topicFrom: { source: 'primaryLink'; pattern: string } | null;
+  label: string | null;
+  active: boolean;
+}
+
+/**
+ * A persisted dynamic subscription row from `space_workflow_event_subscriptions`
+ * (durable). `active` is a live cross-check: true iff a `dynamic` trie entry
+ * exists for this slot + topic.
+ */
+interface SubscriptionPersistedRow {
+  nodeId: string;
+  agentName: string;
+  taskId: string;
+  topic: string;
+  createdAt: number;
+  updatedAt: number;
+  active: boolean;
+}
+
+/**
+ * An active in-memory trie entry — the live cross-check layer, NEVER the
+ * answer on its own. `source` reconciles it against durable state:
+ * `'declared'` (a workflow-definition interest backs this static entry),
+ * `'persisted'` (a table row backs this dynamic entry), `'orphan'` (in the
+ * trie with no durable backing — indicates drift, e.g. a stale trie entry left
+ * by a partial rehydrate, a mid-run definition-version change, or a static
+ * entry surviving on a terminal/non-canonical task; benign in the upgrade
+ * window, worth investigating if it persists in steady state), or `'unknown'`
+ * (a static entry whose declaration layer could not be loaded — backing is
+ * unverifiable, so it is neither confirmed nor reported as drift).
+ */
+interface SubscriptionActiveEntry {
+  nodeId: string;
+  agentName: string;
+  taskId: string;
+  topic: string;
+  subscriptionKind: 'static' | 'dynamic';
+  source: 'declared' | 'persisted' | 'orphan' | 'unknown';
+}
+
+interface SubscriptionListResult {
+  workflowRunId: string;
+  /** nodeId filter applied, or null when the whole run is returned. */
+  nodeId: string | null;
+  /**
+   * Whether the run's workflow definition resolved. When false, `declared` is
+   * empty NOT because nothing is declared but because the definition could not
+   * be loaded (e.g. a deleted/stale definition) — so the caller does not
+   * misread an unavailable durable layer as "node declares no subscriptions."
+   */
+  definitionResolved: boolean;
+  declared: SubscriptionDeclaredInterest[];
+  persisted: SubscriptionPersistedRow[];
+  active: SubscriptionActiveEntry[];
+  /** Reconciliation counts derived from the three layers. */
+  mismatches: {
+    /**
+     * Declared concrete-topic interests with no matching active static entry.
+     * Suppressed for terminal-task runs (see listSubscriptions): their static
+     * interests are intentionally cleared by the task lifecycle.
+     */
+    declaredNotActive: number;
+    /** Persisted rows with no matching active dynamic entry. */
+    persistedNotActive: number;
+    /** Active entries with no durable backing (static w/o declared, dynamic w/o persisted). */
+    orphanActive: number;
+  };
+}
+
+// Normalized reconciliation key: slot (node + agent) + lowercased topic, plus
+// an optional taskId. Static declaration has no task (interests are slot-level
+// in the workflow definition), so static keys omit it; dynamic rows/targets
+// both carry taskId and include it so two tasks sharing a slot+topic can't
+// cross-match (which would mask the persisted↔active drift this tool surfaces).
+function subscriptionReconcileKey(
+  nodeId: string,
+  agentName: string,
+  topic: string,
+  taskId?: string
+): string {
+  return `${nodeId}|${agentName.toLowerCase()}|${topic.toLowerCase()}${taskId ? `|${taskId}` : ''}`;
+}
+
 interface PendingExternalEvent {
   event: ExternalEventPublishedPayload;
   deliveryKey: string;
@@ -1300,6 +1401,212 @@ export class SpaceRuntime {
           target.subscriptionKind === subscriptionKind &&
           (target.topic ?? '').toLowerCase() === normalizedTopic
       );
+  }
+
+  /**
+   * Read-only diagnostic snapshot of a run's external-event subscriptions across
+   * three layers (Task #908):
+   *   1. `declared`  — static interests from the workflow definition (durable).
+   *   2. `persisted` — dynamic rows from `space_workflow_event_subscriptions` (durable).
+   *   3. `active`    — in-memory trie entries (live cross-check ONLY).
+   *
+   * The durable layers (1 + 2) are the source of truth; the trie (3) is never
+   * the answer, only a sanity check — each active entry is reconciled against
+   * durable state so declared-vs-active drift surfaces as `source: 'orphan'`,
+   * and durable rows missing from the trie surface via `active: false` plus the
+   * `mismatches` counts. For task #896 this returns "Coding node has no declared
+   * PR-event interest" from durable data alone.
+   *
+   * `spaceId` guards cross-space access: a run in another space is rejected.
+   *
+   * `declaredNotActive` only fires when a static entry *should* be live — i.e.
+   * the run's canonical task is non-terminal. For a terminal task
+   * (`done`/`archived`/`cancelled`) `registerRunInterestsFromWorkflow`
+   * deliberately clears static interests, so their `active: false` is expected
+   * lifecycle cleanup, not drift (the count is suppressed there to keep the
+   * headline signal honest for the common "investigate a finished run" case).
+   */
+  listSubscriptions(
+    workflowRunId: string,
+    spaceId: string,
+    nodeId?: string
+  ): { success: true; result: SubscriptionListResult } | { success: false; error: string } {
+    const run = this.config.workflowRunRepo.getRun(workflowRunId);
+    if (!run) {
+      return { success: false, error: `Workflow run not found: ${workflowRunId}` };
+    }
+    if (run.spaceId !== spaceId) {
+      return { success: false, error: `Workflow run ${workflowRunId} is not in this space.` };
+    }
+    const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run) ?? null;
+    const definitionResolved = workflow !== null;
+    const nodeFilter = nodeId ?? null;
+    // Whether static interests should currently be materialized in the trie.
+    // Mirrors registerRunInterestsFromWorkflow, which skips static re-materialization
+    // when the canonical task is absent or terminal (its interests were cleared by the
+    // task lifecycle). When false, declared `active: false` is expected, not drift.
+    const canonicalTask = this.pickCanonicalTaskForRun(
+      run,
+      this.config.taskRepo.listByWorkflowRun(run.id)
+    );
+    const staticMaterializable =
+      !!canonicalTask &&
+      canonicalTask.status !== 'done' &&
+      canonicalTask.status !== 'archived' &&
+      canonicalTask.status !== 'cancelled';
+
+    // Layer 1 — declared static interests, re-derived from the definition.
+    const declared: SubscriptionDeclaredInterest[] = [];
+    if (workflow) {
+      for (const node of workflow.nodes) {
+        if (nodeFilter && node.id !== nodeFilter) continue;
+        let agents: ReturnType<typeof resolveNodeAgents>;
+        try {
+          agents = resolveNodeAgents(node);
+        } catch {
+          continue; // malformed node — nothing to declare.
+        }
+        for (const agent of agents) {
+          for (const interest of agent.eventInterests ?? []) {
+            const topic = typeof interest.topic === 'string' ? interest.topic : null;
+            declared.push({
+              nodeId: node.id,
+              nodeName: node.name,
+              agentName: agent.name,
+              topic,
+              topicFrom: interest.topicFrom ?? null,
+              label: interest.label ?? null,
+              // topicFrom interests are inert (no resolver yet) → never active.
+              active: false,
+            });
+          }
+        }
+      }
+    }
+
+    // Layer 2 — persisted dynamic rows.
+    const persisted: SubscriptionPersistedRow[] = this.workflowEventSubscriptionRepo
+      .listByRun(workflowRunId)
+      .filter((row) => !nodeFilter || row.nodeId === nodeFilter)
+      .map((row) => ({
+        nodeId: row.nodeId,
+        agentName: row.agentName,
+        taskId: row.taskId,
+        topic: row.topic,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+        active: false,
+      }));
+
+    // Layer 3 — active in-memory trie entries (workflow targets for this run).
+    // values() walks the whole per-space trie, so this is O(total subscriptions
+    // in the space); acceptable for an occasionally-invoked diagnostic. A
+    // run-indexed trie structure can be added later if this is ever called in a
+    // loop or spaces grow large.
+    const active: SubscriptionActiveEntry[] = this.topicTrie
+      .values()
+      .filter(
+        (target): target is WorkflowSubscriptionTarget =>
+          isWorkflowSubscriptionTarget(target) &&
+          target.workflowRunId === workflowRunId &&
+          (!nodeFilter || target.nodeId === nodeFilter)
+      )
+      .map((target) => ({
+        nodeId: target.nodeId,
+        agentName: target.agentName,
+        taskId: target.taskId,
+        topic: target.topic ?? '',
+        subscriptionKind: target.subscriptionKind ?? 'dynamic',
+        source: 'orphan' as const,
+      }));
+
+    // Reconcile durable ↔ trie via normalized keys.
+    //
+    // Dynamic keys include the taskId so two tasks sharing a slot+topic can't
+    // cross-match. Static declaration is slot-level (no task), but a static trie
+    // entry only "effectively" backs a declaration when the definition loaded
+    // (definitionResolved), the canonical task is non-terminal
+    // (staticMaterializable), AND the entry belongs to the canonical task — a
+    // duplicate/superseded task's static entry is stale. When the definition
+    // itself is unavailable, a static entry's backing is unverifiable, reported
+    // as `source: 'unknown'` (neither drift nor confirmed) rather than a false
+    // `orphan`.
+    const canonicalTaskId = canonicalTask?.id ?? null;
+    const activeStaticKeys = new Set<string>();
+    const activeDynamicKeys = new Set<string>();
+    for (const entry of active) {
+      if (entry.subscriptionKind === 'static') {
+        if (
+          definitionResolved &&
+          staticMaterializable &&
+          (!canonicalTaskId || entry.taskId === canonicalTaskId)
+        ) {
+          activeStaticKeys.add(
+            subscriptionReconcileKey(entry.nodeId, entry.agentName, entry.topic)
+          );
+        }
+      } else {
+        activeDynamicKeys.add(
+          subscriptionReconcileKey(entry.nodeId, entry.agentName, entry.topic, entry.taskId)
+        );
+      }
+    }
+    const declaredKeys = new Set<string>();
+    for (const d of declared) {
+      if (d.topic === null) continue; // topicFrom is not reconcilable yet.
+      const key = subscriptionReconcileKey(d.nodeId, d.agentName, d.topic);
+      declaredKeys.add(key);
+      d.active = activeStaticKeys.has(key);
+    }
+    const persistedKeys = new Set<string>();
+    for (const p of persisted) {
+      const key = subscriptionReconcileKey(p.nodeId, p.agentName, p.topic, p.taskId);
+      persistedKeys.add(key);
+      p.active = activeDynamicKeys.has(key);
+    }
+    let orphanActive = 0;
+    for (const entry of active) {
+      if (entry.subscriptionKind === 'static') {
+        if (!definitionResolved) {
+          entry.source = 'unknown';
+          continue; // declaration layer unavailable — can't classify, don't count
+        }
+        const canonicalOwned = !canonicalTaskId || entry.taskId === canonicalTaskId;
+        const backed =
+          staticMaterializable &&
+          canonicalOwned &&
+          declaredKeys.has(subscriptionReconcileKey(entry.nodeId, entry.agentName, entry.topic));
+        entry.source = backed ? 'declared' : 'orphan';
+        if (!backed) orphanActive += 1;
+      } else {
+        const backed = persistedKeys.has(
+          subscriptionReconcileKey(entry.nodeId, entry.agentName, entry.topic, entry.taskId)
+        );
+        entry.source = backed ? 'persisted' : 'orphan';
+        if (!backed) orphanActive += 1;
+      }
+    }
+
+    return {
+      success: true,
+      result: {
+        workflowRunId,
+        nodeId: nodeFilter,
+        definitionResolved,
+        declared,
+        persisted,
+        active,
+        mismatches: {
+          // Only count as drift when a static entry should be live; for terminal
+          // tasks static interests are intentionally cleared (see above).
+          declaredNotActive: staticMaterializable
+            ? declared.filter((d) => d.topic !== null && !d.active).length
+            : 0,
+          persistedNotActive: persisted.filter((p) => !p.active).length,
+          orphanActive,
+        },
+      },
+    };
   }
 
   refreshLongHorizonSubscription(
