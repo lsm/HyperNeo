@@ -3001,7 +3001,7 @@ describe('handleGoalAutomationExecute', () => {
       kind: 'session',
       sourceId: null,
       summary: 'Conversation trace: no friction detected',
-      metadata: { status: 'no_friction' },
+      metadata: { traceDiagnostic: true, status: 'no_friction' },
       createdAt: 30,
     });
     const goalEventRepo = new SpaceGoalEventRepository(db as never);
@@ -3060,6 +3060,75 @@ describe('handleGoalAutomationExecute', () => {
     expect(goalEventRepo.listByGoal(goal.id)[0]).toMatchObject({
       eventType: 'automation_noop',
     });
+  });
+
+  it('still produces an episode for a genuine session summary without the traceDiagnostic marker', async () => {
+    const goal = goalRepo.create({ spaceId, title: 'Session summary', type: 'recurring' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Session summary',
+      objective: 'Genuine session conversation summary',
+      policy: { automation: { selfNagCronExpression: '0 * * * *' } },
+    });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'session',
+      sourceId: null,
+      // A real conversation summary (no traceDiagnostic marker, no outcome
+      // words) must NOT be treated as thin just because it is kind 'session'.
+      summary: 'Discussed the API design tradeoffs with the team.',
+      createdAt: 30,
+    });
+
+    const result = await handleGoalAutomationExecute(
+      createAutomationJob({
+        goalId: goal.id,
+        scopeId: scope.id,
+        triggerKind: 'self_nag',
+        triggerKey: 'schedule-session-summary',
+        reason: 'self_nag',
+        scheduleId: 'schedule-session-summary',
+      }),
+      {
+        goalRepo,
+        taskRepo,
+        evolutionRepo,
+        cursorRepo,
+        episodeService: {
+          createFromEvidence: async ({ evidenceIds }) => ({
+            episode: evolutionRepo.createEpisode({
+              scopeId: scope.id,
+              title: 'Session summary retrospective',
+              evidenceIds,
+              outcomeSummary: 'Session outcome',
+              findings: [],
+            }),
+            proposals: [],
+            lessons: [],
+          }),
+          preflightEvidence: () =>
+            makePreflight({
+              level: 'low',
+              score: 0,
+              requiresConfirmation: true,
+              counts: {
+                total: 1,
+                manualNotes: 0,
+                taskResults: 0,
+                workflowArtifacts: 0,
+                metricSnapshots: 0,
+                outcomes: 0,
+              },
+            }),
+        },
+      }
+    );
+
+    expect(result.skipped).toBe(false);
+    expect(result.episodeId).toBeString();
+    expect(evolutionRepo.listEpisodes(scope.id)).toHaveLength(1);
   });
 
   it('captures external event evidence before generating the episode', async () => {

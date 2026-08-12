@@ -158,14 +158,14 @@ export async function handleGoalAutomationExecute(
 
   // self_nag: skip no-op episodes on thin, process-level evidence. When the
   // preflight is low-confidence AND the selection carries no substantive signal
-  // (no concrete outcomes such as PR/CI/merge/error, and every row is a kind
-  // that can be empty or purely process-level — a manual note or an auto-generated
-  // session diagnostic), record a lightweight no-op note on the goal and advance
-  // the cursor without spending an episode-judge call or creating a review task.
-  // Substantive manual notes (with real outcomes) and any task result, friction
-  // trace, artifact, error, or in-batch metric still produces an episode.
-  // Honors the goal guardrail: "if evidence is insufficient, finish without
-  // inventing work." (#919)
+  // (no concrete outcomes such as PR/CI/merge/error, and every row is thin — a
+  // manual note or an auto-generated session trace diagnostic marked
+  // `metadata.traceDiagnostic`), record a lightweight no-op note on the goal and
+  // advance the cursor without spending an episode-judge call or creating a
+  // review task. Substantive manual notes (with real outcomes), genuine session
+  // summaries, and any task result, friction trace, artifact, error, or in-batch
+  // metric still produces an episode. Honors the goal guardrail: "if evidence is
+  // insufficient, finish without inventing work." (#919)
   if (payload.triggerKind === 'self_nag' && deps.episodeService.preflightEvidence) {
     const preflight = deps.episodeService.preflightEvidence({
       scopeId: scope.id,
@@ -488,11 +488,17 @@ function advanceCursor(
 }
 
 /**
- * Evidence kinds that can be empty or purely process-level: free-form manual
- * notes and auto-generated session trace diagnostics (e.g. a `no_friction`
- * marker). Every other kind is structural/task-linked captured activity.
+ * Whether a single evidence row can be empty or purely process-level:
+ * a free-form manual note, or an auto-generated session trace diagnostic
+ * (`metadata.traceDiagnostic === true`, e.g. a `no_friction` marker). A genuine
+ * session conversation summary lacks that marker and is substantive, so only
+ * the marked diagnostics — not every `session` row — count as thin.
  */
-const THIN_EVIDENCE_KINDS = new Set<EvidenceRef['kind']>(['manual_note', 'session']);
+function isThinEvidence(item: EvidenceRef): boolean {
+  if (item.kind === 'manual_note') return true;
+  if (item.kind === 'session') return item.metadata?.traceDiagnostic === true;
+  return false;
+}
 
 /**
  * A self_nag tick is a no-op worth skipping when the preflight is low-confidence
@@ -501,8 +507,8 @@ const THIN_EVIDENCE_KINDS = new Set<EvidenceRef['kind']>(['manual_note', 'sessio
  * in any row's text or metadata, so a detailed manual note still counts) or any
  * structural/task-linked evidence kind (task results, friction traces like
  * slow_tool_call/permission_block that resolve to task context, workflow
- * artifacts, errors, in-batch metrics). Only a batch with no outcomes where
- * every row is a thin kind (manual note or empty session diagnostic) is skipped.
+ * artifacts, errors, in-batch metrics, or a genuine session summary). Only a
+ * batch with no outcomes where every row is thin is skipped.
  */
 function shouldSkipSelfNagNoOp(
   preflight: EvidenceQualityPreflight,
@@ -510,7 +516,7 @@ function shouldSkipSelfNagNoOp(
 ): boolean {
   if (preflight.level !== 'low') return false;
   if (preflight.counts.outcomes > 0) return false;
-  return evidence.length > 0 && evidence.every((item) => THIN_EVIDENCE_KINDS.has(item.kind));
+  return evidence.length > 0 && evidence.every(isThinEvidence);
 }
 
 function recordSelfNagNoOpNote(
