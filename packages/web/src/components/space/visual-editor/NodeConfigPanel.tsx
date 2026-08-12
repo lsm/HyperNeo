@@ -19,7 +19,6 @@
 import { useState, useEffect, useCallback } from 'preact/hooks';
 import { useComputed } from '@preact/signals';
 import type {
-  Gate,
   SpaceWorkerAgent,
   ThinkingLevel,
   WorkflowChannel,
@@ -31,7 +30,6 @@ import type { NodeDraft } from '../WorkflowNodeCard';
 import { isMultiAgentNode, extractOverrideValue, buildOverride } from '../WorkflowNodeCard';
 import { WorkflowModelSelect } from './WorkflowModelSelect';
 import { ChannelRelationConfigPanel } from './ChannelRelationConfigPanel';
-import { GateEditorPanel } from './GateEditorPanel';
 import { HookEditorPanel } from './HookEditorPanel';
 import { skillsStore } from '../../../lib/skills-store';
 import { normalizeThinkingLevel } from '@hyperneo/shared';
@@ -97,7 +95,6 @@ export interface NodeChannelLink {
   id: string;
   label: string;
   channelCount: number;
-  hasGate: boolean;
 }
 
 export interface NodeConfigPanelProps {
@@ -119,10 +116,8 @@ export interface NodeConfigPanelProps {
     reverseLinks?: Array<{ index: number; channel: WorkflowChannel }>;
     canConvertToBidirectional?: boolean;
   };
-  channelRelationGates?: Gate[];
   onUpdateChannelLink?: (index: number, channel: WorkflowChannel) => void;
   onDeleteChannelLink?: (index: number) => void;
-  onUpdateChannelGates?: (gates: Gate[]) => void;
   onConvertChannelRelationToBidirectional?: () => void;
   onCloseChannelLink?: () => void;
   onClose: () => void;
@@ -764,7 +759,6 @@ function CustomPromptEditor({
 type PanelView =
   | { kind: 'main' }
   | { kind: 'channel-links' }
-  | { kind: 'gate-editor'; gateId: string }
   | { kind: 'hook-editor'; hookId: string }
   | { kind: 'single-prompts' }
   | { kind: 'slot-prompts'; role: string };
@@ -780,10 +774,8 @@ export function NodeConfigPanel({
   channelLinks = [],
   onOpenChannelLink,
   selectedChannelRelation,
-  channelRelationGates = [],
   onUpdateChannelLink,
   onDeleteChannelLink,
-  onUpdateChannelGates,
   onConvertChannelRelationToBidirectional,
   onCloseChannelLink,
   onClose,
@@ -809,16 +801,10 @@ export function NodeConfigPanel({
 
   useEffect(() => {
     if (selectedChannelRelation) {
-      // Only navigate to channel-links from main view — don't override
-      // gate-editor view which is a deeper navigation (main → channel-links → gate-editor).
-      // Gate updates cause selectedChannelRelation to change reference,
-      // which would otherwise snap the panel back to channel-links.
-      setPanelView((prev) => (prev.kind === 'gate-editor' ? prev : { kind: 'channel-links' }));
+      setPanelView({ kind: 'channel-links' });
       return;
     }
-    setPanelView((prev) =>
-      prev.kind === 'channel-links' || prev.kind === 'gate-editor' ? { kind: 'main' } : prev
-    );
+    setPanelView((prev) => (prev.kind === 'channel-links' ? { kind: 'main' } : prev));
   }, [selectedChannelRelation]);
 
   const handleDeleteClick = () => {
@@ -914,15 +900,13 @@ export function NodeConfigPanel({
     const title =
       panelView.kind === 'channel-links'
         ? 'Channel Links'
-        : panelView.kind === 'gate-editor'
-          ? 'Gate Editor'
-          : panelView.kind === 'hook-editor'
-            ? 'Hook Editor'
-            : panelView.kind === 'single-prompts'
-              ? 'Prompts'
-              : panelView.kind === 'slot-prompts'
-                ? 'Slot Prompts'
-                : step.name || 'Unnamed Node';
+        : panelView.kind === 'hook-editor'
+          ? 'Hook Editor'
+          : panelView.kind === 'single-prompts'
+            ? 'Prompts'
+            : panelView.kind === 'slot-prompts'
+              ? 'Slot Prompts'
+              : step.name || 'Unnamed Node';
 
     return (
       <div class="flex items-center justify-between border-b border-white/10 bg-dark-850/60 px-4 py-3 flex-shrink-0">
@@ -931,10 +915,6 @@ export function NodeConfigPanel({
             type="button"
             data-testid="node-panel-back-button"
             onClick={() => {
-              if (panelView.kind === 'gate-editor') {
-                setPanelView({ kind: 'channel-links' });
-                return;
-              }
               if (panelView.kind === 'hook-editor') {
                 setPanelView({ kind: 'main' });
                 return;
@@ -986,23 +966,6 @@ export function NodeConfigPanel({
   };
 
   const renderPanelBody = () => {
-    if (panelView.kind === 'gate-editor') {
-      const editingGate = channelRelationGates.find((g) => g.id === panelView.gateId);
-      if (!editingGate) return null;
-      return (
-        <GateEditorPanel
-          gate={editingGate}
-          onChange={(updated) => {
-            onUpdateChannelGates?.(
-              channelRelationGates.map((g) => (g.id === updated.id ? updated : g))
-            );
-          }}
-          onBack={() => setPanelView({ kind: 'channel-links' })}
-          embedded
-        />
-      );
-    }
-
     if (panelView.kind === 'hook-editor') {
       const editingHook = nodeHooks.find((h) => h.id === panelView.hookId);
       if (!editingHook) return null;
@@ -1174,9 +1137,6 @@ export function NodeConfigPanel({
           reverseLinks={selectedChannelRelation.reverseLinks}
           canConvertToBidirectional={selectedChannelRelation.canConvertToBidirectional}
           onConvertToBidirectional={onConvertChannelRelationToBidirectional}
-          gates={channelRelationGates}
-          onGatesChange={(nextGates) => onUpdateChannelGates?.(nextGates)}
-          onEditGate={(gateId) => setPanelView({ kind: 'gate-editor', gateId })}
           onChange={(index, channel) => onUpdateChannelLink?.(index, channel)}
           onDelete={(index) => onDeleteChannelLink?.(index)}
           onClose={onClose}
@@ -1262,7 +1222,6 @@ export function NodeConfigPanel({
                         <span>
                           {link.channelCount} link{link.channelCount === 1 ? '' : 's'}
                         </span>
-                        {link.hasGate && <span class="text-teal-400">has gate</span>}
                       </div>
                     </div>
                     <svg

@@ -23,90 +23,19 @@
 import type {
   DeclarativeToolGuard,
   EventInterest,
-  Gate,
-  GateField,
-  GateScript,
   SpaceWorkflow,
-  WorkflowChannel,
   WorkflowNode,
   WorkflowNodeAgentOverride,
 } from '@hyperneo/shared';
-import { generateUUID, hasEnabledGateFeature, resolveNodeAgents } from '@hyperneo/shared';
+import { generateUUID } from '@hyperneo/shared';
 import { createHash } from 'node:crypto';
 import { Logger } from '../../logger';
 import { QA_SYSTEM_CONTRACT } from '../agents/system-contracts.ts';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
-import { isApprovalGate } from '../runtime/gate-features';
 import { CODER_OWNED_MERGE_INSTRUCTIONS } from './post-approval-merge-template.ts';
 import { computeWorkflowHash } from './template-hash.ts';
-import { migrateWorkflowGateProgressionToHooks } from './workflow-migration.ts';
-
-// ---------------------------------------------------------------------------
-// Gate writer validation
-// ---------------------------------------------------------------------------
-
-export function validateWorkflowTemplateGateWriters(workflow: SpaceWorkflow): string[] {
-  const errors: string[] = [];
-  const validWriters = new Set<string>(['*']);
-
-  for (const node of workflow.nodes) {
-    validWriters.add(node.name);
-    for (const agent of node.agents ?? []) {
-      validWriters.add(agent.name);
-    }
-  }
-
-  for (const gate of workflow.gates ?? []) {
-    for (const field of gate.fields ?? []) {
-      const loc = `${workflow.name}.gates.${gate.id}.fields.${field.name}.writers`;
-      validateGateFieldWriters(field, validWriters, loc, errors);
-    }
-  }
-
-  return errors;
-}
-
-function validateGateFieldWriters(
-  field: GateField,
-  validWriters: ReadonlySet<string>,
-  loc: string,
-  errors: string[]
-): void {
-  if (!Array.isArray(field.writers)) {
-    errors.push(`${loc}: must be an array`);
-    return;
-  }
-
-  // Built-in templates require automated writers; [] remains valid only for custom external-only gates.
-  if (field.writers.length === 0) {
-    errors.push(`${loc}: must contain at least one writer role`);
-    return;
-  }
-
-  for (const writer of field.writers) {
-    if (typeof writer !== 'string' || writer.trim().length === 0) {
-      errors.push(`${loc}: writer roles must be non-empty strings`);
-      continue;
-    }
-
-    if (!validWriters.has(writer)) {
-      errors.push(`${loc}: unknown writer role "${writer}"`);
-    }
-  }
-}
 
 const builtInSeederLog = new Logger('seed-built-in-workflows');
-
-const LEGACY_PR_READY_GATE_IDS = new Set([
-  'code-ready-gate',
-  'research-ready-gate',
-  'code-pr-gate',
-]);
-const LEGACY_PR_READY_TEMPLATE_ROUTES = new Set([
-  'code-ready-gate:Coding:Review',
-  'research-ready-gate:Research:Review',
-  'code-pr-gate:Coding:Review',
-]);
 
 // ---------------------------------------------------------------------------
 // Retired declarative tool guard: coder-role agents must not merge
@@ -649,32 +578,17 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
       validator: { kind: 'built_in', id: 'pr_ready' },
       authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
     },
-  ],
-  gates: [
     {
-      id: 'review-posted-gate',
+      id: 'review-posted',
+      enabled: true,
       label: 'Review Posted',
-      description:
-        'Reviewer has posted a GitHub review or PR comment since the workflow started. ' +
-        'Accepts a formal GitHub review as primary evidence; falls back to ' +
-        'PR conversation comments for same-account setups where GitHub blocks self-reviews. ' +
-        'Blocks the Review → Coding feedback channel until review evidence is visible on the PR.',
-      fields: [
-        {
-          name: 'pr_url',
-          type: 'string',
-          writers: ['Review'],
-          check: { op: 'exists' },
-        },
-        {
-          name: 'review_url',
-          type: 'string',
-          writers: ['Review'],
-          check: { op: 'exists' },
-        },
-      ],
+      sourceNode: 'Review',
+      targetNode: 'Coding',
+      method: 'send_message',
+      classification: 'validation',
+      order: 0,
       validator: { kind: 'built_in', id: 'review_posted' },
-      resetOnCycle: true,
+      authorizedCallers: [{ sourceNode: 'Review' }],
     },
   ],
   channels: [
@@ -686,7 +600,6 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
     {
       from: 'Review',
       to: 'Coding',
-      gateId: 'review-posted-gate',
       maxCycles: 5,
       label: 'Review → Coding (changes requested)',
     },
@@ -981,23 +894,6 @@ export const CODING_WITH_QA_WORKFLOW: SpaceWorkflow = {
   // merge) runs only after that approval has already happened. Aligned with
   // Coding's autonomy tier (3).
   completionAutonomyLevel: 3,
-  gates: [
-    {
-      id: 'review-approval-gate',
-      label: 'Review',
-      description:
-        'Reviewer approved the PR for QA and the Codex review bot reaction check passed or timed out.',
-      fields: [
-        {
-          name: 'approved',
-          type: 'boolean',
-          writers: ['Review', 'reviewer'],
-          check: { op: '==', value: true },
-        },
-      ],
-      resetOnCycle: true,
-    },
-  ],
   layout: {
     'tpl-stable-qa-coding': { x: 80, y: 160 },
     'tpl-stable-qa-review': { x: 420, y: 80 },
@@ -1012,7 +908,6 @@ export const CODING_WITH_QA_WORKFLOW: SpaceWorkflow = {
     {
       from: 'Review',
       to: 'QA',
-      gateId: 'review-approval-gate',
       label: 'Review → QA',
     },
     {
@@ -1075,228 +970,6 @@ export const CODING_WITH_QA_WORKFLOW: SpaceWorkflow = {
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
-
-/**
- * Returns the current gate script for a given built-in template name and gate ID.
- *
- * Gate scripts are stored in the `space_workflows.gates` JSON column at seed time.
- * When a template script is updated, existing workflow instances still carry the old
- * script from when they were seeded. Callers that need the **live** script (e.g. the
- * gate evaluator) should use this function to resolve the script at call time instead
- * of relying on the stored copy.
- *
- * Returns `undefined` when the template or gate is not found, or when the gate has
- * no script (field-only gate). Callers should fall back to the stored gate definition
- * in that case.
- */
-export function getBuiltInGateScript(templateName: string, gateId: string): GateScript | undefined {
-  const template = resolveBuiltInWorkflowTemplate(templateName);
-  if (!template) return undefined;
-  const gate = (template.gates ?? []).find((g) => g.id === gateId);
-  return gate?.script;
-}
-
-/**
- * Outcome of resolving a stored gate's script against its built-in template's
- * live definition. Reported by {@link resolveTemplateGateScript} and consumed
- * by the reload diagnostics at the gate-evaluation call sites.
- */
-export type TemplateGateScriptStatus =
-  /** The workflow was not seeded from a built-in template — no reload. */
-  | 'no-template'
-  /**
-   * The template defines no live script for this gate (or the gate is not
-   * reached via a template). Nothing to reload; the stored gate is used as-is.
-   */
-  | 'no-live-script'
-  /**
-   * The template carries a live script for this gate, but the stored gate has
-   * no script. The live script is NOT applied, so the template update silently
-   * fails to take effect until the workflow is resynced. Surfaced as a warning.
-   */
-  | 'live-ignored-no-stored'
-  /** The stored script matches the live template across all executable fields — no-op. */
-  | 'in-sync'
-  /** The live template script differs from the stored script — reloaded (drift). */
-  | 'reloaded';
-
-export interface ResolvedTemplateGateScript {
-  gate: Gate;
-  status: TemplateGateScriptStatus;
-}
-
-/**
- * Resolve the effective gate definition for evaluation, swapping in the live
- * built-in template's gate script whenever both the template and the stored
- * gate carry a script. This is the single source of truth for the "always use
- * the current template's gate script" reload behavior that was previously
- * inlined (and duplicated) at the two gate-evaluation sites
- * (channel-router `doEvaluateGate` and space-runtime restart-recovery).
- *
- * Effective-gate behavior is identical to the former inline logic: when both
- * scripts exist, the live template script is applied. The returned status is
- * purely diagnostic, distinguishing a real source change (`reloaded`) from a
- * no-op reload (`in-sync`) and — importantly — flagging the silent footgun
- * where a live script exists but the stored gate is scriptless
- * (`live-ignored-no-stored`).
- */
-export function resolveTemplateGateScript(
-  storedGate: Gate,
-  workflow: SpaceWorkflow
-): ResolvedTemplateGateScript {
-  if (!workflow.templateName) return { gate: storedGate, status: 'no-template' };
-  return applyTemplateGateScript(
-    storedGate,
-    getBuiltInGateScript(workflow.templateName, storedGate.id)
-  );
-}
-
-/**
- * Pure decision core of {@link resolveTemplateGateScript}: combine a stored
- * gate with an optional live template script. Extracted so the live-script
- * branches are unit-testable without mutating the built-in template registry.
- */
-export function applyTemplateGateScript(
-  storedGate: Gate,
-  liveScript: GateScript | undefined
-): ResolvedTemplateGateScript {
-  if (!liveScript) return { gate: storedGate, status: 'no-live-script' };
-  if (!storedGate.script) return { gate: storedGate, status: 'live-ignored-no-stored' };
-  // The effective gate substitutes the entire live script object, so a reload
-  // changes behavior whenever ANY executable field differs — not just `source`.
-  // Comparing interpreter/timeoutMs too surfaces operational changes (e.g. a
-  // timeout bump or interpreter switch) as reloads instead of mislabeling them
-  // in-sync.
-  const drifted = gateScriptsDiffer(liveScript, storedGate.script);
-  return {
-    gate: { ...storedGate, script: liveScript },
-    status: drifted ? 'reloaded' : 'in-sync',
-  };
-}
-
-/**
- * Whether two gate scripts differ in any field that affects execution
- * (`source`, `interpreter`, `timeoutMs`). Used to decide the reload diagnostic.
- */
-function gateScriptsDiffer(a: GateScript, b: GateScript): boolean {
-  return a.source !== b.source || a.interpreter !== b.interpreter || a.timeoutMs !== b.timeoutMs;
-}
-
-/**
- * Stable identity for a gate-script diagnostic, used to deduplicate emissions
- * across repeated gate evaluations (a persistent mismatch otherwise warns on
- * every retry/delivery attempt). Combines the run, gate, and status so a
- * status transition (e.g. after a resync) re-emits.
- */
-export function gateScriptDiagnosticKey(
-  runId: string | undefined,
-  gateId: string,
-  status: TemplateGateScriptStatus
-): string {
-  return `${runId ?? ''}|${gateId}|${status}`;
-}
-
-/**
- * Bounded dedup ledger for gate-script reload diagnostics. Gate evaluation runs
- * on every channel delivery and retries while blocked, so a persistent
- * mismatch (e.g. `live-ignored-no-stored`) would otherwise flood the logs. Each
- * (run, gate, status) diagnostic is emitted at most once; the ledger is capped
- * so a very long-lived process cannot grow it without bound — once the cap is
- * reached it stops recording and emits every call, degrading to the pre-dedup
- * behavior rather than consuming memory.
- */
-export class GateScriptDiagnosticLedger {
-  private readonly seen = new Set<string>();
-  private readonly cap: number;
-
-  constructor(capacity = 8192) {
-    this.cap = capacity;
-  }
-
-  /** Returns true the first time this key is seen (and records it). */
-  shouldEmit(key: string): boolean {
-    if (this.seen.has(key)) return false;
-    if (this.seen.size >= this.cap) return true;
-    this.seen.add(key);
-    return true;
-  }
-
-  /** Clear recorded keys. Intended for tests that need a deterministic ledger. */
-  reset(): void {
-    this.seen.clear();
-  }
-}
-
-/**
- * Process-wide shared ledger for gate-script reload diagnostics. Gate
- * evaluation runs across multiple transient {@link ChannelRouter} instances
- * (one per delivery in some paths) as well as long-lived ones, so the dedup
- * state must outlive any single router. Keys include the run id (globally
- * unique), so there is no cross-run collision; the ledger cap bounds memory.
- */
-export const sharedGateScriptDiagnosticLedger = new GateScriptDiagnosticLedger();
-
-/**
- * The statuses for which {@link logTemplateGateScriptReload} actually emits a
- * log line. Single source of truth so call sites can avoid consuming dedup
- * ledger capacity for the quiet statuses (`no-template` / `no-live-script` /
- * `in-sync`) that never log — otherwise ordinary traffic would fill the ledger
- * and a later mismatch would flood again.
- */
-const GATE_SCRIPT_EMITTING_STATUSES: ReadonlySet<TemplateGateScriptStatus> = new Set([
-  'live-ignored-no-stored',
-  'reloaded',
-]);
-
-/** Whether a status produces a log line in {@link logTemplateGateScriptReload}. */
-export function isGateScriptStatusEmitting(status: TemplateGateScriptStatus): boolean {
-  return GATE_SCRIPT_EMITTING_STATUSES.has(status);
-}
-
-/**
- * Minimal logger surface {@link logTemplateGateScriptReload} needs. Accepts the
- * daemon {@link Logger} or any compatible test double.
- */
-export interface TemplateGateScriptReloadLogger {
-  warn(...args: unknown[]): void;
-  debug(...args: unknown[]): void;
-}
-
-/**
- * Emit reload diagnostics for a resolved template gate script:
- * - `live-ignored-no-stored` (WARN): the template defines a script but the
- *   stored gate has none — an unambiguous footgun, since the template update
- *   cannot take effect without a resync.
- * - `reloaded` (DEBUG): the live template script differs from the stored one.
- *
- * Stays quiet for `no-template` / `no-live-script` / `in-sync`. Callers should
- * gate the dedup ledger on {@link isGateScriptStatusEmitting} so persistent
- * mismatches do not flood and quiet statuses do not consume ledger capacity.
- */
-export function logTemplateGateScriptReload(args: {
-  log: TemplateGateScriptReloadLogger;
-  status: TemplateGateScriptStatus;
-  templateName?: string;
-  gateId: string;
-  runId?: string;
-}): void {
-  const { log, status, templateName, gateId, runId } = args;
-  if (!isGateScriptStatusEmitting(status)) return;
-  const where = runId ? ` in run ${runId}` : '';
-  const tmpl = templateName ?? '?';
-  if (status === 'live-ignored-no-stored') {
-    log.warn(
-      `Gate "${gateId}"${where}: built-in template "${tmpl}" defines a gate script, but the stored ` +
-        'gate has no script — the template script update is NOT applied and will not take effect ' +
-        'until the workflow is resynced from the template.'
-    );
-    return;
-  }
-  log.debug(
-    `Gate "${gateId}"${where}: reloaded gate script from live template "${tmpl}" ` +
-      '(stored script differed from the template).'
-  );
-}
 
 /**
  * Returns all built-in workflow templates.
@@ -1376,18 +1049,7 @@ export function getBuiltInWorkflows(): SpaceWorkflow[] {
     RESEARCH_WORKFLOW,
     REVIEW_ONLY_WORKFLOW,
   ];
-  const errors = workflows.flatMap(validateWorkflowTemplateGateWriters);
-  if (errors.length > 0) {
-    throw new Error(`Built-in workflow gate writer validation failed:\n${errors.join('\n')}`);
-  }
-  return workflows.map(
-    (workflow) =>
-      migrateWorkflowGateProgressionToHooks({
-        ...workflow,
-        templateName: workflow.name,
-        templateGates: workflow.gates ?? [],
-      }).workflow
-  );
+  return workflows;
 }
 
 export interface SeedBuiltInWorkflowsResult {
@@ -1398,7 +1060,7 @@ export interface SeedBuiltInWorkflowsResult {
    * PR 3/5 uses this path to land `postApproval` routes, updated
    * `completionAutonomyLevel`, and refreshed `templateHash` values onto
    * existing spaces without rewriting user-customisable fields (node
-   * UUIDs, custom prompt text, channels, gates), except for known retired
+   * UUIDs, custom prompt text, channels), except for known retired
    * built-in prompt text patched during restamp.
    */
   restamped: string[];
@@ -1587,119 +1249,6 @@ export function mergeNodeStructuralFieldsFromTemplate(
   });
 
   return [...mergedExistingNodes, ...(missingTemplateNodes as WorkflowNode[])];
-}
-
-/**
- * When a gate still carries the legacy `codex_review_bot` feature (preserved
- * during restamp for backward compatibility), set `requireCodexApproval: true`
- * on the source node(s) for that gate's channels so the visual editor toggle
- * reflects reality and the node-level config drives runtime injection.
- *
- * Also strips `codex_review_bot` from the gate features so the node toggle
- * becomes the single source of truth and can be disabled by unchecking it.
- */
-function migrateCodexFeatureToNodeToggle(
-  nodes: WorkflowNode[],
-  channels: WorkflowChannel[],
-  gates: Gate[]
-): { nodes: WorkflowNode[]; gates: Gate[] } {
-  // Only migrate gates that do not have a custom script. For scripted gates,
-  // dynamic injection is blocked so the node flag cannot replace the legacy
-  // feature; leaving them untouched preserves the legacy feature as the sole
-  // mechanism and keeps the checkbox as a single source of truth for
-  // non-scripted gates.
-  // Only migrate legacy features on approval gates — dynamic Codex injection
-  // requires isApprovalGate(), so migrating a non-approval gate would break it.
-  const codexGateIds = new Set(
-    gates
-      .filter((g) => !g.script && isApprovalGate(g) && hasEnabledGateFeature(g, 'codex_review_bot'))
-      .map((g) => g.id)
-  );
-  // Scripted approval gates with legacy codex: strip node toggles so the UI
-  // doesn't show a misleading enabled checkbox for gates where dynamic
-  // injection is blocked and the legacy feature is the actual mechanism.
-  const scriptedCodexGateIds = new Set(
-    gates
-      .filter((g) => g.script && isApprovalGate(g) && hasEnabledGateFeature(g, 'codex_review_bot'))
-      .map((g) => g.id)
-  );
-
-  const collectSourceNodes = (gateIdSet: Set<string>): Set<string> => {
-    const result = new Set<string>();
-    for (const channel of channels) {
-      if (!channel.gateId || !gateIdSet.has(channel.gateId)) continue;
-      if (channel.from === '*') {
-        for (const node of nodes) result.add(node.id);
-        continue;
-      }
-      const nodeByName = nodes.find((n) => n.name === channel.from);
-      if (nodeByName) {
-        result.add(nodeByName.id);
-        continue;
-      }
-      for (const node of nodes) {
-        try {
-          const agents = resolveNodeAgents(node);
-          if (agents.some((a) => a.name === channel.from)) {
-            result.add(node.id);
-          }
-        } catch {
-          // skip malformed nodes
-        }
-      }
-    }
-    return result;
-  };
-
-  const nodesToFlag = collectSourceNodes(codexGateIds);
-  const nodesToUnflag = collectSourceNodes(scriptedCodexGateIds);
-
-  // Also strip toggles for nodes connected to ANY scripted approval gate
-  // (even without a legacy codex_review_bot feature). Dynamic Codex injection
-  // is blocked for scripted approval gates, so a node toggle is misleading
-  // when the node sends through one.
-  const allScriptedApprovalGateIds = new Set(
-    gates.filter((g) => g.script && isApprovalGate(g)).map((g) => g.id)
-  );
-  for (const nodeId of collectSourceNodes(allScriptedApprovalGateIds)) {
-    nodesToUnflag.add(nodeId);
-  }
-
-  const needsNodeChange = nodesToFlag.size > 0 || nodesToUnflag.size > 0;
-  const migratedNodes = needsNodeChange
-    ? nodes.map((node) => {
-        if (nodesToUnflag.has(node.id)) {
-          const next = { ...node };
-          delete next.requireCodexApproval;
-          return next;
-        }
-        if (nodesToFlag.has(node.id)) {
-          return { ...node, requireCodexApproval: true };
-        }
-        return node;
-      })
-    : nodes;
-
-  const migratedGateIdsToStrip = new Set<string>();
-  for (const gateId of codexGateIds) {
-    const sources = collectSourceNodes(new Set([gateId]));
-    const hasUnflaggedSource = Array.from(sources).some((nodeId) => nodesToUnflag.has(nodeId));
-    if (!hasUnflaggedSource) migratedGateIdsToStrip.add(gateId);
-  }
-
-  const migratedGates = gates.map((gate) => {
-    if (!gate.features?.codex_review_bot) return gate;
-    // Preserve legacy feature on gates that cannot be replaced by dynamic
-    // approval-gate injection.
-    if (gate.script || gate.poll || !migratedGateIdsToStrip.has(gate.id)) return gate;
-    const { codex_review_bot: _ignored, ...restFeatures } = gate.features;
-    return {
-      ...gate,
-      features: Object.keys(restFeatures).length > 0 ? restFeatures : undefined,
-    };
-  });
-
-  return { nodes: migratedNodes, gates: migratedGates };
 }
 
 const CURRENT_CODING_WORKFLOW_PR_STEP_PROMPT =
@@ -2172,31 +1721,6 @@ function remapTransitionSlotTarget(
   return installedSlotName ?? target;
 }
 
-function removeLegacyPrReadyGateChannels(
-  channels: SpaceWorkflow['channels'],
-  templateNodes: WorkflowNode[],
-  existingNodes: WorkflowNode[]
-): SpaceWorkflow['channels'] {
-  const legacyRouteKeys = new Set(LEGACY_PR_READY_TEMPLATE_ROUTES);
-  for (const route of LEGACY_PR_READY_TEMPLATE_ROUTES) {
-    const [gateId, from, to] = route.split(':');
-    legacyRouteKeys.add(
-      `${gateId}:${remapTemplateChannelRef(from, templateNodes, existingNodes)}:${remapTemplateChannelRef(
-        to,
-        templateNodes,
-        existingNodes
-      )}`
-    );
-  }
-
-  return channels?.filter((channel) => {
-    const gateId = channel.gateId;
-    if (!gateId || !LEGACY_PR_READY_GATE_IDS.has(gateId)) return true;
-    const routeKey = `${gateId}:${channel.from}:${String(channel.to)}`;
-    return !legacyRouteKeys.has(routeKey);
-  });
-}
-
 const RETIRED_POST_APPROVAL_NODE = 'Post-Approval';
 const RETIRED_MERGER_SLOT_NAMES = new Set(['merger']);
 const RETIRED_MERGE_INSTRUCTIONS_SHA256 =
@@ -2240,9 +1764,8 @@ export const RETIRED_PR_MERGER_SLOT_PROMPT =
  * from a restamped row converging to a stable coder-owned template.
  *
  * The merge helpers (`mergeNodeStructuralFieldsFromTemplate`,
- * `mergeChannelsFromTemplate`, `mergeHooksFromTemplate`,
- * `mergeGateStructuralFieldsFromTemplate`) only ever ADD missing template
- * pieces — they never remove nodes/channels/hooks/gates that exist in the
+ * `mergeChannelsFromTemplate`, `mergeHooksFromTemplate`) only ever ADD missing
+ * template pieces — they never remove nodes/channels/hooks that exist in the
  * stored row but not in the template. So when the dedicated merger node was
  * removed from the built-in templates, seeded spaces that still carry it (plus
  * the Post-Approval↔* channels and any Post-Approval hooks) would keep them
@@ -2389,7 +1912,6 @@ export function mergeChannelsFromTemplate(
     return JSON.stringify({
       from: channel.from,
       to: normalizedTo,
-      gateId: channel.gateId ?? null,
     });
   };
 
@@ -2398,10 +1920,10 @@ export function mergeChannelsFromTemplate(
   );
 
   // In-place merge of structural channel fields (maxCycles, label) onto
-  // channels that already exist in the seeded workflow, mirroring the gate
-  // (writers/features) and node-agent (toolGuards) merges. Channels are
-  // structural topology: {from, to, gateId} is the stable match key and the
-  // template owns maxCycles + label. Propagating them keeps structural changes
+  // channels that already exist in the seeded workflow, mirroring the node-agent
+  // (toolGuards) merges. Channels are structural topology: {from, to} is the
+  // stable match key and the template owns maxCycles + label. Propagating them
+  // keeps structural changes
   // (e.g. raising a cyclic cap 6 → 50) landing on pre-existing spaces; without
   // this, the unconditional templateHash write would stamp the new hash while
   // leaving the old field values in place, then block any future fix from
@@ -2530,57 +2052,6 @@ function mergeHooksFromTemplate(
 }
 
 /** @internal Exported for testing. */
-export function mergeGateStructuralFieldsFromTemplate(
-  existingGates: Gate[] | undefined,
-  templateGates: Gate[] | undefined
-): Gate[] | undefined {
-  if (!templateGates) return existingGates;
-  if (!existingGates) return templateGates;
-
-  const templateGatesById = new Map(templateGates.map((gate) => [gate.id, gate]));
-  const existingGateIds = new Set(existingGates.map((gate) => gate.id));
-  const missingTemplateGates = templateGates.filter((gate) => !existingGateIds.has(gate.id));
-
-  return existingGates
-    .map((gate) => {
-      const templateGate = templateGatesById.get(gate.id);
-      if (!templateGate) return gate;
-
-      const templateFieldsByName = new Map(
-        (templateGate.fields ?? []).map((field) => [field.name, field])
-      );
-      const fields = (gate.fields ?? []).map((field) => {
-        const templateField = templateFieldsByName.get(field.name);
-        if (!templateField) return field;
-        return { ...field, writers: templateField.writers };
-      });
-
-      // Skip copying template features if the existing gate already has a custom
-      // script or poll, so feature-backed mechanisms do not silently override
-      // custom gate logic at runtime. When copying is allowed, propagate the
-      // template's features (including undefined when the template removed them).
-      // Preserve existing codex_review_bot feature during transition to node-level
-      // config so pre-existing workflows that relied on gate-level codex keep working.
-      const shouldCopyFeatures = !gate.script && !gate.poll;
-      let nextFeatures: Gate['features'] | undefined;
-      if (shouldCopyFeatures) {
-        if (templateGate.features) {
-          nextFeatures = { ...templateGate.features };
-        }
-        if (hasEnabledGateFeature(gate, 'codex_review_bot')) {
-          nextFeatures = { codex_review_bot: true, ...nextFeatures };
-        }
-      } else {
-        nextFeatures = gate.features;
-      }
-      return {
-        ...gate,
-        fields,
-        features: nextFeatures,
-      };
-    })
-    .concat(missingTemplateGates);
-}
 
 /**
  * Fields that the built-in seeder re-stamps when it detects template drift
@@ -2597,16 +2068,11 @@ export function mergeGateStructuralFieldsFromTemplate(
  *   (customPrompt, model, disabledSkillIds, etc.) are preserved. Template nodes
  *   missing from an existing workflow are appended so new terminal branches can
  *   land without replacing existing node IDs.
- * - Gate field `writers` are merged onto matching gate fields (by gate id +
- *   field name) so structural authorization changes land on pre-existing spaces.
- *   Gate `features` are copied from matching template gates so data-driven runtime
- *   checks land on pre-existing spaces. Missing template gates are appended.
- *   Existing checks, scripts, and gate topology remain untouched.
  * - Structural channel fields (maxCycles, label) are merged in-place onto channels matched by
- *   {from, to, gateId}, and missing template channels are appended so newly-added built-in
+ *   {from, to}, and missing template channels are appended so newly-added built-in
  *   branches become reachable on pre-existing spaces. This is how a raised cyclic cap (e.g.
  *   maxCycles 6 → 50) lands on pre-existing spaces instead of only newly-created ones. Like the
- *   other template-owned structural fields (completionAutonomyLevel, gate writers/features, node
+ *   other template-owned structural fields (completionAutonomyLevel, node
  *   toolGuards, hooks), built-in channel maxCycles/label are template-managed: a user-customized
  *   value (editable via the visual editor) is reset to the template value when drift triggers a
  *   re-stamp — clone to a custom (non-re-stamped) workflow for a persistent custom cap. Template
@@ -2621,7 +2087,6 @@ const RESTAMP_FIELDS = [
   'completionAutonomyLevel',
   'templateHash',
   'nodes(postApproval + toolGuards in-place + missing template nodes)',
-  'gates(field writers + features in-place + missing template gates)',
   'channels(maxCycles + label in-place on matched channels + missing template channels)',
   'hooks(template hooks)',
 ] as const;
@@ -2857,29 +2322,16 @@ export function seedBuiltInWorkflows(
           template.nodes,
           resolveAgentId
         );
-        const existingChannels = removeLegacyPrReadyGateChannels(
-          row.channels,
-          template.nodes,
-          row.nodes
-        );
         const mergedChannels = mergeChannelsFromTemplate(
-          existingChannels,
+          row.channels,
           template.channels,
           template.nodes,
           row.nodes
         );
-        const mergedGates = mergeGateStructuralFieldsFromTemplate(row.gates, template.gates);
-        const { nodes: migratedNodes, gates: migratedGates } = migrateCodexFeatureToNodeToggle(
-          mergedNodes,
-          mergedChannels ?? row.channels ?? [],
-          mergedGates ?? row.gates ?? []
-        );
-        const removedLegacyPrReadyChannels =
-          (existingChannels?.length ?? 0) !== (row.channels?.length ?? 0);
         const mergedHooks = mergeHooksFromTemplate(
           template.hooks,
           template.nodes,
-          migratedNodes,
+          mergedNodes,
           row.hooks
         );
         // The merge helpers above only ADD missing template pieces — they never
@@ -2889,7 +2341,7 @@ export function seedBuiltInWorkflows(
         // stable 2-node / 3-node coder-owned graph.
         const stripped = stripRetiredPostApproval({
           templateName: template.name,
-          nodes: migratedNodes,
+          nodes: mergedNodes,
           channels: mergedChannels,
           hooks: mergedHooks,
         });
@@ -2898,20 +2350,17 @@ export function seedBuiltInWorkflows(
         // missing template channels. Detect whether the merge changed anything
         // — added channels OR updated structural fields — so the result is
         // persisted even when the channel count is unchanged (e.g. raising a
-        // cyclic cap 6 → 50 on an already-seeded workflow). channelsChanged
-        // subsumes the new-channel and legacy-removal cases;
-        // stripped.channelsChanged covers the Validation Complete strip above.
-        const channelsChanged =
-          removedLegacyPrReadyChannels ||
-          JSON.stringify(mergedChannels) !== JSON.stringify(existingChannels);
-        const writeChannels = channelsChanged || stripped.channelsChanged;
+        // cyclic cap 6 → 50 on an already-seeded workflow).
+        const writeChannels =
+          JSON.stringify(mergedChannels) !== JSON.stringify(row.channels) ||
+          stripped.channelsChanged;
 
         // Stamp the hash of the ACTUALLY-merged row, then advance the stored
         // hash ONLY when the merge fully converged the row to the current
         // template (mergedHash === expectedHash). The merge above reconciles
-        // structural fields (nodes, channels, gates, hooks, post-approval,
-        // autonomy) and patches prompts that match known retired template text,
-        // but it deliberately preserves genuine user prompts, description, and
+        // structural fields (nodes, channels, hooks, post-approval, autonomy)
+        // and patches prompts that match known retired template text, but it
+        // deliberately preserves genuine user prompts, description, and
         // instructions. If those still differ from the template, stamping
         // `expectedHash` would falsely claim the row is fully up-to-date,
         // collapse `updateAvailable` to false, and permanently hide the
@@ -2926,7 +2375,6 @@ export function seedBuiltInWorkflows(
         const mergedHash = computeWorkflowHash({
           ...row,
           nodes: stripped.nodes,
-          gates: migratedGates,
           // computeWorkflowHash treats null/undefined identically (?? [], truthy
           // check), so normalizing to undefined just satisfies the SpaceWorkflow
           // shape — the hashed value matches the persisted row either way.
@@ -2942,7 +2390,6 @@ export function seedBuiltInWorkflows(
           // Built-ins now store routes on terminal nodes. Clear any legacy
           // workflow-level value while the node updater writes node routes.
           postApproval: null,
-          gates: migratedGates,
           hooks: stripped.hooks ?? null,
           nodes: stripped.nodes,
           ...(writeChannels ? { channels: stripped.channels } : {}),
@@ -3065,7 +2512,6 @@ export function seedBuiltInWorkflows(
         channels: template.channels
           ? template.channels.map((ch) => ({ ...ch, id: ch.id ?? generateUUID() }))
           : undefined,
-        gates: template.gates ? [...template.gates] : undefined,
         hooks: template.hooks ? [...template.hooks] : undefined,
         layout: template.layout
           ? Object.fromEntries(

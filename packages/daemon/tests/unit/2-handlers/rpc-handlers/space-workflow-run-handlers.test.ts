@@ -20,7 +20,7 @@ import {
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import type { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
-import type { GateDataRepository } from '../../../../src/storage/repositories/gate-data-repository.ts';
+import type { WorkflowHookStateRepository } from '../../../../src/storage/repositories/workflow-hook-state-repository.ts';
 import type { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
 import type { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
@@ -165,22 +165,24 @@ function createMockRunRepo(
   } as unknown as SpaceWorkflowRunRepository;
 }
 
-function createMockGateDataRepo(): GateDataRepository {
+function createMockHookStateRepo(): WorkflowHookStateRepository {
   return {
     get: mock(() => null),
-    merge: mock((_runId: string, _gateId: string, partial: Record<string, unknown>) => ({
+    ensure: mock((_runId: string, _hookId: string, defaults: Record<string, unknown> = {}) => ({
       runId: _runId,
-      gateId: _gateId,
-      data: partial,
+      hookId: _hookId,
+      version: 0,
+      localState: defaults,
+      lastResult: undefined,
+      retryCount: 0,
+      nextRetryAt: undefined,
+      voteMaps: {},
+      createdAt: Date.now(),
       updatedAt: Date.now(),
     })),
-    set: mock(() => null),
     listByRun: mock(() => []),
-    delete: mock(() => false),
-    deleteByRun: mock(() => 0),
-    initializeForRun: mock(() => {}),
-    reset: mock(() => null),
-  } as unknown as GateDataRepository;
+    update: mock(() => null),
+  } as unknown as WorkflowHookStateRepository;
 }
 
 function createMockRuntime(run: SpaceWorkflowRun = mockRun): SpaceRuntime {
@@ -338,7 +340,6 @@ describe('space-workflow-run-handlers', () => {
       spaceManager,
       workflowManager,
       runRepo,
-      createMockGateDataRepo(),
       runtimeService,
       taskManagerFactory,
       internalEventBus,
@@ -346,7 +347,8 @@ describe('space-workflow-run-handlers', () => {
       spaceWorktreeManager,
       createMockArtifactRepo(),
       createMockArtifactCacheRepo(),
-      createMockJobQueue()
+      createMockJobQueue(),
+      createMockHookStateRepo()
     );
   }
 
@@ -678,74 +680,8 @@ describe('space-workflow-run-handlers', () => {
     });
   });
 
-  describe('spaceWorkflowRun.listGateData', () => {
-    it('throws if runId is missing', async () => {
-      setup();
-      await expect(call('spaceWorkflowRun.listGateData', {})).rejects.toThrow('runId is required');
-    });
-
-    it('throws if run not found', async () => {
-      setup({ run: null });
-      await expect(call('spaceWorkflowRun.listGateData', { runId: 'nonexistent' })).rejects.toThrow(
-        'WorkflowRun not found: nonexistent'
-      );
-    });
-
-    it('returns empty gateData when no records exist', async () => {
-      setup();
-      const result = await call('spaceWorkflowRun.listGateData', { runId: 'run-1' });
-      expect(result).toEqual({ gateData: [] });
-    });
-
-    it('returns all gate data records for the run via listByRun', async () => {
-      const gateRecords = [
-        { runId: 'run-1', gateId: 'gate-1', data: { approved: true }, updatedAt: NOW },
-        {
-          runId: 'run-1',
-          gateId: 'gate-2',
-          data: { reviews: { alice: 'approved' } },
-          updatedAt: NOW,
-        },
-      ];
-
-      // Set up with a custom gateDataRepo that has the test records
-      const mh = createMockMessageHub();
-      hub = mh.hub;
-      handlers = mh.handlers;
-      internalEventBus = createMockInternalEventBus();
-      spaceManager = createMockSpaceManager(mockSpace);
-      workflowManager = createMockWorkflowManager([mockWorkflow], mockWorkflow);
-      runRepo = createMockRunRepo(mockRun, [mockRun]);
-      runtime = createMockRuntime(mockRun);
-      runtimeService = createMockRuntimeService(mockSpace, runtime);
-      taskManagerFactory = mock(() => createMockTaskManager([]));
-
-      const customGateRepo = {
-        ...createMockGateDataRepo(),
-        listByRun: mock(() => gateRecords),
-      } as unknown as GateDataRepository;
-
-      setupSpaceWorkflowRunHandlers(
-        hub,
-        spaceManager,
-        workflowManager,
-        runRepo,
-        customGateRepo,
-        runtimeService,
-        taskManagerFactory,
-        internalEventBus,
-        createMockSpaceTaskRepo([mockTask]),
-        createMockSpaceWorktreeManager(),
-        createMockArtifactRepo(),
-        createMockArtifactCacheRepo(),
-        createMockJobQueue()
-      );
-
-      const result = await call('spaceWorkflowRun.listGateData', { runId: 'run-1' });
-      expect(result).toEqual({ gateData: gateRecords });
-      expect(customGateRepo.listByRun).toHaveBeenCalledWith('run-1');
-    });
-  });
+  // Note: the spaceWorkflowRun.listGateData / approveGate / writeGateData RPCs
+  // and the GateDataRepository were removed with the legacy gate subsystem.
 
   // ─── spaceWorkflowRun.getGateArtifacts — worktree path resolution ─────────
 
@@ -785,7 +721,7 @@ describe('space-workflow-run-handlers', () => {
         createMockSpaceManager(mockSpace),
         createMockWorkflowManager(),
         createMockRunRepo(mockRun),
-        createMockGateDataRepo(),
+
         createMockRuntimeService(),
         mock(() => createMockTaskManager()),
         createMockInternalEventBus(),
@@ -793,7 +729,8 @@ describe('space-workflow-run-handlers', () => {
         mockWorktreeManager,
         createMockArtifactRepo(),
         createMockArtifactCacheRepo(),
-        createMockJobQueue()
+        createMockJobQueue(),
+        createMockHookStateRepo()
       );
 
       await call('spaceWorkflowRun.getGateArtifacts', {
@@ -822,7 +759,7 @@ describe('space-workflow-run-handlers', () => {
         createMockSpaceManager(mockSpace),
         createMockWorkflowManager(),
         createMockRunRepo(mockRun),
-        createMockGateDataRepo(),
+
         createMockRuntimeService(),
         mock(() => createMockTaskManager()),
         createMockInternalEventBus(),
@@ -830,7 +767,8 @@ describe('space-workflow-run-handlers', () => {
         mockWorktreeManager,
         createMockArtifactRepo(),
         createMockArtifactCacheRepo(),
-        createMockJobQueue()
+        createMockJobQueue(),
+        createMockHookStateRepo()
       );
 
       // The handler will run git diff in /tmp/task-worktree but that path doesn't exist,
@@ -857,7 +795,7 @@ describe('space-workflow-run-handlers', () => {
         mockSpaceMgr,
         createMockWorkflowManager(),
         createMockRunRepo(mockRun),
-        createMockGateDataRepo(),
+
         createMockRuntimeService(),
         mock(() => createMockTaskManager()),
         createMockInternalEventBus(),
@@ -865,7 +803,8 @@ describe('space-workflow-run-handlers', () => {
         mockWorktreeManager,
         createMockArtifactRepo(),
         createMockArtifactCacheRepo(),
-        createMockJobQueue()
+        createMockJobQueue(),
+        createMockHookStateRepo()
       );
 
       // The handler will try to run git diff in /tmp/test-workspace (fallback),
@@ -892,7 +831,7 @@ describe('space-workflow-run-handlers', () => {
         mockSpaceMgr,
         createMockWorkflowManager(),
         createMockRunRepo(mockRun),
-        createMockGateDataRepo(),
+
         createMockRuntimeService(),
         mock(() => createMockTaskManager()),
         createMockInternalEventBus(),
@@ -900,7 +839,8 @@ describe('space-workflow-run-handlers', () => {
         mockWorktreeManager,
         createMockArtifactRepo(),
         createMockArtifactCacheRepo(),
-        createMockJobQueue()
+        createMockJobQueue(),
+        createMockHookStateRepo()
       );
 
       await call('spaceWorkflowRun.getGateArtifacts', { runId: 'run-1' }).catch(() => {});
@@ -963,7 +903,7 @@ describe('space-workflow-run-handlers', () => {
         createMockSpaceManager(mockSpace),
         createMockWorkflowManager(),
         createMockRunRepo(mockRun),
-        createMockGateDataRepo(),
+
         createMockRuntimeService(),
         mock(() => createMockTaskManager()),
         createMockInternalEventBus(),
@@ -971,7 +911,8 @@ describe('space-workflow-run-handlers', () => {
         mockWorktreeManager,
         createMockArtifactRepo(),
         createMockArtifactCacheRepo(),
-        createMockJobQueue()
+        createMockJobQueue(),
+        createMockHookStateRepo()
       );
 
       await call('spaceWorkflowRun.getFileDiff', {
@@ -999,7 +940,7 @@ describe('space-workflow-run-handlers', () => {
         createMockSpaceManager(mockSpace),
         createMockWorkflowManager(),
         createMockRunRepo(mockRun),
-        createMockGateDataRepo(),
+
         createMockRuntimeService(),
         mock(() => createMockTaskManager()),
         createMockInternalEventBus(),
@@ -1007,7 +948,8 @@ describe('space-workflow-run-handlers', () => {
         mockWorktreeManager,
         createMockArtifactRepo(),
         createMockArtifactCacheRepo(),
-        createMockJobQueue()
+        createMockJobQueue(),
+        createMockHookStateRepo()
       );
 
       await call('spaceWorkflowRun.getFileDiff', {
@@ -1033,7 +975,7 @@ describe('space-workflow-run-handlers', () => {
         createMockSpaceManager(spaceWithoutWorkspace),
         createMockWorkflowManager(),
         createMockRunRepo(mockRun),
-        createMockGateDataRepo(),
+
         createMockRuntimeService(),
         mock(() => createMockTaskManager()),
         createMockInternalEventBus(),
@@ -1041,7 +983,8 @@ describe('space-workflow-run-handlers', () => {
         mockWorktreeManager,
         createMockArtifactRepo(),
         createMockArtifactCacheRepo(),
-        createMockJobQueue()
+        createMockJobQueue(),
+        createMockHookStateRepo()
       );
 
       await expect(
@@ -1097,7 +1040,7 @@ describe('space-workflow-run-handlers', () => {
         createMockSpaceManager(mockSpace),
         createMockWorkflowManager(),
         createMockRunRepo(mockRun),
-        createMockGateDataRepo(),
+
         createMockRuntimeService(),
         mock(() => createMockTaskManager()),
         createMockInternalEventBus(),
@@ -1105,7 +1048,8 @@ describe('space-workflow-run-handlers', () => {
         createMockSpaceWorktreeManager('/tmp/fake-worktree'),
         createMockArtifactRepo(),
         cacheRepo,
-        jobQueueRepo
+        jobQueueRepo,
+        createMockHookStateRepo()
       );
 
       return { cacheRepo, jobQueueRepo };
@@ -1213,7 +1157,7 @@ describe('space-workflow-run-handlers', () => {
         createMockSpaceManager(mockSpace),
         createMockWorkflowManager(),
         createMockRunRepo(mockRun),
-        createMockGateDataRepo(),
+
         createMockRuntimeService(),
         mock(() => createMockTaskManager()),
         createMockInternalEventBus(),
@@ -1221,7 +1165,8 @@ describe('space-workflow-run-handlers', () => {
         createMockSpaceWorktreeManager('/tmp/fake-worktree'),
         createMockArtifactRepo(),
         cacheRepo,
-        jobQueueRepo
+        jobQueueRepo,
+        createMockHookStateRepo()
       );
 
       await call('spaceWorkflowRun.getGateArtifacts', { runId: 'run-1' }).catch(() => {});
@@ -1276,7 +1221,7 @@ describe('space-workflow-run-handlers', () => {
         createMockSpaceManager(mockSpace),
         createMockWorkflowManager(),
         createMockRunRepo(mockRun),
-        createMockGateDataRepo(),
+
         createMockRuntimeService(),
         mock(() => createMockTaskManager()),
         createMockInternalEventBus(),
@@ -1284,7 +1229,8 @@ describe('space-workflow-run-handlers', () => {
         createMockSpaceWorktreeManager('/tmp/fake-worktree'),
         createMockArtifactRepo(),
         cacheRepo,
-        jobQueueRepo
+        jobQueueRepo,
+        createMockHookStateRepo()
       );
 
       const result = (await call('spaceWorkflowRun.getFileDiff', {

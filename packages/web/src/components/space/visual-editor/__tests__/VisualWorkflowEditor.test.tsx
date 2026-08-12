@@ -1120,7 +1120,7 @@ describe('VisualWorkflowEditor', () => {
 
       expect(queryByTestId('channel-relation-config-panel')).toBeNull();
       const firstChannelHitbox = container.querySelector(
-        '[data-channel-edge="true"][data-channel-gated="true"] path[stroke="transparent"]'
+        '[data-channel-edge="true"] path[stroke="transparent"]'
       ) as SVGPathElement | null;
       expect(firstChannelHitbox).toBeTruthy();
       fireEvent.click(firstChannelHitbox!);
@@ -1223,40 +1223,6 @@ describe('VisualWorkflowEditor', () => {
       await waitFor(() => expect(getAllByTestId('channel-edge-config-panel')).toHaveLength(2));
       // The backward link (Code→Plan) should show cyclic info
       expect(getAllByTestId('channel-cyclic-info')).toHaveLength(1);
-    });
-
-    it('edits a vote-count gate backed by workflow.gates', async () => {
-      const workflow = makeWorkflow({
-        channels: [{ from: 'Plan', to: 'Code', gateId: 'review-votes-gate' }],
-        gates: [
-          {
-            id: 'review-votes-gate',
-            fields: [
-              {
-                name: 'votes',
-                type: 'map',
-                writers: ['*'],
-                check: { op: 'count', match: 'approved', min: 3 },
-              },
-            ],
-            resetOnCycle: true,
-          },
-        ],
-      });
-      const { container, getByTestId } = render(
-        <VisualWorkflowEditor {...makeProps({ workflow })} />
-      );
-
-      const firstChannelHitbox = container.querySelector(
-        '[data-channel-edge="true"][data-channel-gated="true"] path[stroke="transparent"]'
-      ) as SVGPathElement | null;
-      expect(firstChannelHitbox).toBeTruthy();
-      fireEvent.click(firstChannelHitbox!);
-
-      await waitFor(() => expect(getByTestId('channel-edge-edit-gate-0')).toBeTruthy());
-      fireEvent.click(getByTestId('channel-edge-edit-gate-0'));
-
-      await waitFor(() => expect(getByTestId('gate-editor-panel')).toBeTruthy());
     });
 
     it('node side panel lists channel links that open the nested relation view and back returns to node details', () => {

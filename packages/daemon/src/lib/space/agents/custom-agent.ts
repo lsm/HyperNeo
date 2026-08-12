@@ -31,7 +31,6 @@ import { inferProviderForModel } from '../../providers/registry';
 import { Logger } from '../../logger';
 import { SUB_SESSION_FEATURES } from './seed-agents';
 import { deriveWorkerDisallowedTools } from './tool-policy';
-import { formatGatedHandoffCall, getSendMessageTargets } from '../runtime/gated-handoff-guidance';
 import { createHash } from 'node:crypto';
 
 const DEFAULT_CUSTOM_AGENT_MODEL = 'claude-sonnet-4-6';
@@ -129,18 +128,6 @@ export function expandPrompt(
   return `${trimmedBase}\n\n${trimmedExpansion}`;
 }
 
-/**
- * A snapshot of gate runtime data passed into `buildCustomAgentTaskMessage`.
- * The builder uses these records to derive runtime state such as the current
- * PR URL (any gate record with a `pr_url` string field is considered).
- */
-export interface GateDataSnapshot {
-  gateId: string;
-  data: Record<string, unknown>;
-  /** Unix epoch ms when this gate data was last updated. */
-  updatedAt?: number;
-}
-
 export interface CustomAgentConfig {
   /** The Space agent definition */
   customAgent: SpaceWorkerAgent;
@@ -166,22 +153,14 @@ export interface CustomAgentConfig {
   slotOverrides?: SlotOverrides;
   /**
    * ID of the workflow node this session belongs to (required to scope the
-   * "Your Role in This Workflow" section to the current node's peers,
-   * channels, and gates). Omit when running outside a workflow.
+   * "Your Role in This Workflow" section to the current node's peers and
+   * channels). Omit when running outside a workflow.
    */
   nodeId?: string;
   /**
    * Agent slot name for the current node execution (`WorkflowNodeAgent.name`).
-   * Used together with the node name to compute the set of gates the agent
-   * can write to.
    */
   agentSlotName?: string;
-  /**
-   * Snapshot of gate data for the current workflow run. Used to derive
-   * runtime state such as the current PR URL ("Runtime Location" section).
-   * Absent when running outside a workflow or when no data has been written.
-   */
-  gateData?: GateDataSnapshot[];
   /** Space-scoped core memories selected by background consolidation. */
   coreMemories?: AgentMemoryCoreEntry[];
   /** Relevant persistent memories to inject into the task prompt. */
@@ -257,10 +236,9 @@ function hashPrompt(prompt: string): string {
  *
  * Section order (top → bottom), action-first:
  *   1. `## Your Task` — title, description, priority
- *   2. `## Runtime Location` — worktree path, derived PR URL
+ *   2. `## Runtime Location` — worktree path
  *   3. `## Relevant Scope Lessons` — accepted lessons from task scope
- *   4. `## Your Role in This Workflow` — current node, peers, outbound channels,
- *      writable gates (omitted outside a workflow)
+ *   4. `## Your Role in This Workflow` — current node, peers, outbound channels
  *   5. `## Previous Work on This Goal` — bulleted summaries
  *   6. `## Project Context` — space.backgroundContext
  *   7. `## Standing Instructions` — space.instructions + workflow.instructions
@@ -281,7 +259,6 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
     previousTaskSummaries,
     nodeId,
     agentSlotName,
-    gateData,
     coreMemories,
     relevantMemories,
   } = config;
@@ -295,13 +272,11 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
   sections.push(`**Description:** ${task.description}`);
   if (task.priority) sections.push(`**Priority:** ${task.priority}`);
 
-  // 2. Runtime Location — worktree is always known, PR URL derived from gate data.
-  const prUrl = derivePrUrlFromGateData(gateData);
+  // 2. Runtime Location — worktree is always known.
   sections.push('');
   sections.push('## Runtime Location');
   sections.push('');
   sections.push(`- Worktree: ${workspacePath}`);
-  sections.push(`- PR: ${prUrl ?? 'none yet'}`);
 
   // 3. Linked Goal — rolling state for long-horizon work.
   if (goal) {
@@ -420,23 +395,6 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
   return message;
 }
 
-/**
- * Resolve a PR URL from a snapshot of gate data. The first gate record whose
- * data contains a non-empty `pr_url` string wins. Returns `undefined` when no
- * such field is present.
- */
-function derivePrUrlFromGateData(gateData: GateDataSnapshot[] | undefined): string | undefined {
-  if (!gateData || gateData.length === 0) return undefined;
-  const sorted = [...gateData].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
-  for (const record of sorted) {
-    const value = record.data?.pr_url;
-    if (typeof value === 'string' && value.trim().length > 0) {
-      return value.trim();
-    }
-  }
-  return undefined;
-}
-
 function truncateMemoryPromptContent(content: string): string {
   if (content.length <= MEMORY_PROMPT_CONTENT_LIMIT) return content;
   return `${content.slice(0, MEMORY_PROMPT_CONTENT_LIMIT)}…`;
@@ -489,7 +447,7 @@ function buildCoreMemoryLines(coreMemories: AgentMemoryCoreEntry[] | undefined):
 function buildRoleSection(
   workflow: SpaceWorkflow | null | undefined,
   nodeId: string | undefined,
-  agentSlotName: string | undefined
+  _agentSlotName: string | undefined
 ): string[] {
   if (!workflow) return [];
   if (!workflow.nodes || workflow.nodes.length === 0) return [];
@@ -516,23 +474,10 @@ function buildRoleSection(
     lines.push(`- Channels from this node: ${outboundChannels.map(describeChannel).join('; ')}`);
   }
 
-  const writableGates = (workflow.gates ?? []).filter((gate) =>
-    isGateWritableFromNode(gate.fields, currentNode.name, agentSlotName)
-  );
-  if (writableGates.length > 0) {
-    lines.push(
-      `- Gates you can write: ${writableGates
-        .map((g) => (g.label ? `${g.id} (${g.label})` : g.id))
-        .join(', ')}`
-    );
-  }
-
-  const gatedHandoffs = buildGatedHandoffLines(workflow, currentNode, agentSlotName);
   const hookValidatedHandoffs = buildHookValidatedHandoffLines(workflow, currentNode);
-  const handoffLines = [...hookValidatedHandoffs, ...gatedHandoffs];
-  if (handoffLines.length > 0) {
-    lines.push('- Outbound gated handoffs:');
-    lines.push(...handoffLines);
+  if (hookValidatedHandoffs.length > 0) {
+    lines.push('- Outbound handoffs:');
+    lines.push(...hookValidatedHandoffs);
   }
 
   return lines;
@@ -545,14 +490,10 @@ function buildHookValidatedHandoffLines(
   // Built-in send_message validators that gate a handoff on the run's PR
   // identity, which the agent must carry as data.pr_url (the hook resolves it
   // from there). pr_ready gates the coder→reviewer handoff; review_posted gates
-  // the Review→Coding feedback handoff. Both need the same prompt guidance —
-  // before this set covered review_posted, the gate→hook migration silently
-  // deleted the guidance for the Review→Coding channel (it has no gateId), so
-  // the reviewer never learned to pass data.pr_url and the hook false-blocked.
+  // the Review→Coding feedback handoff.
   const PR_URL_HANDOFF_HOOK_VALIDATORS = new Set(['pr_ready', 'review_posted']);
   const outboundHookValidatedChannels = (workflow.channels ?? []).filter(
     (channel) =>
-      !channel.gateId &&
       isChannelFromNode(channel, currentNode.name) &&
       (workflow.hooks ?? []).some(
         (hook) =>
@@ -575,37 +516,6 @@ function buildHookValidatedHandoffLines(
   return lines;
 }
 
-function buildGatedHandoffLines(
-  workflow: SpaceWorkflow,
-  currentNode: WorkflowNode,
-  agentSlotName: string | undefined
-): string[] {
-  const gateById = new Map((workflow.gates ?? []).map((gate) => [gate.id, gate]));
-  const outboundGatedChannels = (workflow.channels ?? []).filter(
-    (channel) => channel.gateId && isChannelFromNode(channel, currentNode.name)
-  );
-  const lines: string[] = [];
-
-  for (const channel of outboundGatedChannels) {
-    const gate = gateById.get(channel.gateId!);
-    const writableFields = (gate?.fields ?? []).filter((field) =>
-      isGateWritableFromNode([field], currentNode.name, agentSlotName)
-    );
-    if (writableFields.length === 0) continue;
-
-    for (const target of getSendMessageTargets(
-      channel.to,
-      getBroadcastTargets(workflow, currentNode, agentSlotName)
-    )) {
-      lines.push(
-        `  - ${describeChannelTarget(channel, target)}: call \`${formatGatedHandoffCall(target, writableFields)}\`; \`save_artifact\` alone does not deliver this gated handoff.`
-      );
-    }
-  }
-
-  return lines;
-}
-
 function isChannelFromNode(channel: WorkflowChannel, nodeName: string): boolean {
   if (channel.from === '*') return true;
   return channel.from === nodeName;
@@ -619,39 +529,6 @@ function describeChannel(channel: WorkflowChannel): string {
 function describeChannelTarget(channel: WorkflowChannel, target: string): string {
   if (!Array.isArray(channel.to) && channel.to !== '*') return describeChannel(channel);
   return channel.label ? `${target} (${channel.label})` : target;
-}
-
-function getBroadcastTargets(
-  workflow: SpaceWorkflow,
-  currentNode: WorkflowNode,
-  agentSlotName: string | undefined
-): string[] {
-  const targets = new Set<string>();
-  for (const node of workflow.nodes) {
-    if (node.id !== currentNode.id) targets.add(node.name);
-    for (const agent of node.agents ?? []) {
-      if (node.id === currentNode.id && agent.name === agentSlotName) continue;
-      targets.add(agent.name);
-    }
-  }
-  targets.delete(currentNode.name);
-  return [...targets];
-}
-
-function isGateWritableFromNode(
-  fields: Array<{ writers: string[] }> | undefined,
-  nodeName: string,
-  agentSlotName: string | undefined
-): boolean {
-  if (!fields || fields.length === 0) return false;
-  const candidates = [nodeName.toLowerCase()];
-  if (agentSlotName) candidates.push(agentSlotName.toLowerCase());
-  return fields.some((field) => {
-    return field.writers.some((writer) => {
-      const w = writer.toLowerCase();
-      return w === '*' || candidates.includes(w);
-    });
-  });
 }
 
 /**

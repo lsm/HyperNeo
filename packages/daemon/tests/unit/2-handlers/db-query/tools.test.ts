@@ -678,22 +678,6 @@ describe('db-query tools', () => {
         expect(goalIds.sort()).toEqual(['goal-1', 'goal-1', 'goal-2']);
       });
 
-      it('gate_data filtered via space_workflow_runs space scope', async () => {
-        seedGateData(db);
-        const handlers = createDbQueryToolHandlers(
-          { dbPath: ':memory:', scopeType: 'space', scopeValue: 'space-1' },
-          db
-        );
-        const result = await handlers.db_query({ sql: 'SELECT * FROM gate_data' });
-        const parsed = parseResult(result);
-
-        expect(parsed.isError).toBeFalsy();
-        // run-1 (space-1) has gate-1; run-2 (space-1) has gate-1
-        expect(parsed.rows).toHaveLength(2);
-        const runIds = parsed.rows.map((r: Record<string, unknown>) => r.run_id);
-        expect(runIds.sort()).toEqual(['run-1', 'run-2']);
-      });
-
       it('indirect scope does not leak data from other scopes', async () => {
         seedMissionExecutions(db);
         const handlers = createDbQueryToolHandlers(
@@ -1423,7 +1407,6 @@ describe('db-query tools', () => {
       expect(parsed.isError).toBeFalsy();
       expect(parsed.tables).toContain('space_tasks');
       expect(parsed.tables).toContain('space_workflow_runs');
-      expect(parsed.tables).toContain('gate_data');
       // Should NOT contain room or global tables
       expect(parsed.tables).not.toContain('tasks');
       expect(parsed.tables).not.toContain('goals');

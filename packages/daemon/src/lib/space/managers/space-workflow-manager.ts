@@ -20,7 +20,6 @@ import type {
   UpdateSpaceWorkflowParams,
   WorkflowChannel,
   WorkflowHook,
-  Gate,
 } from '@hyperneo/shared';
 import { HANDOFF_TARGET_WILDCARD, MAX_NODE_HANDOFF_TRANSITIONS } from '@hyperneo/shared';
 import { validateWorkflowHooks } from '../workflow-hook-validation';
@@ -33,42 +32,14 @@ import {
   validatePostApproval,
   validatePostApprovalRoutes,
 } from '../workflows/post-approval-validator';
-import { validateGate } from '../runtime/gate-evaluator';
-import { isApprovalGate } from '../runtime/gate-features';
 import { KNOWN_TOPIC_FROM_SOURCES } from '../runtime/parse-pr-url';
 // Side-effect: seed the connector registry before workflow validation runs, so
 // externalLookups are admitted via the registry (see connectors/production.ts).
 import '../runtime/connectors/production';
 import { slugify, validateSlug } from '../slug';
-import {
-  CODING_WORKFLOW,
-  CODING_WITH_QA_WORKFLOW,
-  LEGACY_CODING_TEMPLATE_IDENTITIES,
-  RESEARCH_WORKFLOW,
-  REVIEW_ONLY_WORKFLOW,
-} from '../workflows/built-in-workflows';
-import { migrateWorkflowGateProgressionToHooks } from '../workflows/workflow-migration';
 
 const logger = new Logger('SpaceWorkflowManager');
 const RESERVED_WORKFLOW_AGENT_NAMES = new Set(['space-agent', 'task-agent']);
-
-// Keyed by template name (current canonical names) so load-time gate→hook
-// migration can resolve template gates for every built-in, including the
-// stable templates. Legacy pre-split names are aliased to their canonical
-// template's gates below so rows seeded under the old names converge to the
-// hook-based topology instead of being left with a stale gated channel + a
-// duplicated open route.
-const BUILT_IN_TEMPLATE_GATES = new Map(
-  [CODING_WORKFLOW, CODING_WITH_QA_WORKFLOW, RESEARCH_WORKFLOW, REVIEW_ONLY_WORKFLOW].map(
-    (workflow) => [workflow.name, workflow.gates ?? []]
-  )
-);
-for (const identity of LEGACY_CODING_TEMPLATE_IDENTITIES) {
-  const canonical = [CODING_WORKFLOW, CODING_WITH_QA_WORKFLOW].find(
-    (workflow) => workflow.name === identity.name
-  );
-  if (canonical) BUILT_IN_TEMPLATE_GATES.set(identity.legacyName, canonical.gates ?? []);
-}
 
 function normalizeWorkflowAgentName(name: string): string {
   return name.trim().toLowerCase();
@@ -135,32 +106,14 @@ export class SpaceWorkflowManager {
     this.validateEndNodeId(endNodeId, nodes);
 
     this.validateNoDuplicateHookIds(params.hooks ?? []);
-    this.normalizeGateDefaults(params.gates);
-    params = migrateWorkflowGateProgressionToHooks({
-      ...params,
-      nodes: nodes as SpaceWorkflow['nodes'],
-      templateGates: params.templateName
-        ? (BUILT_IN_TEMPLATE_GATES.get(params.templateName) ?? [])
-        : [],
-    }).workflow;
 
     if (params.channels && params.channels.length > 0) {
       this.validateChannels(params.channels);
     }
 
-    if (params.gates && params.gates.length > 0) {
-      this.validateGates(params.gates);
-    }
-
     this.validateHooks(params.hooks ?? [], nodes);
 
-    this.validateTransitions(nodes, params.gates ?? [], params.hooks ?? []);
-
-    this.validateCodexApprovalAgainstScriptedGates(
-      nodes,
-      params.channels ?? [],
-      params.gates ?? []
-    );
+    this.validateTransitions(nodes, params.hooks ?? []);
 
     // Hard-reject invalid post-approval routes at create time. Stale routes
     // (target no longer exists) must be caught before the row lands in the DB,
@@ -244,13 +197,8 @@ export class SpaceWorkflowManager {
    * run is backfilled to a pin equal to its current head, so resolving through the pin
    * changes nothing at cutover time; only a later edit diverges, which is the invariant.
    *
-   * Known boundary (RFC §4 #2): built-in gate SCRIPTS and `templateGates` are injected at
-   * sanitize time from `BUILT_IN_TEMPLATE_GATES` — a compile-time static map, not a runtime
-   * registry — so they are stable within a daemon version but are NOT captured in the pinned
-   * payload. The invariant therefore holds for user-authored content (nodes, channels,
-   * gates-as-data, agents, post-approval) and for built-in gates within a version, but does
-   * NOT hold for built-in gates across a daemon upgrade. RFC §4 #2 calls this out as
-   * unresolved; capturing built-in gate scripts in the pinned payload is tracked Phase-1 work.
+   * The pinned payload captures user-authored content (nodes, channels, hooks,
+   * agents, post-approval) and built-in definitions as authored.
    */
   getWorkflowForRun(run: {
     workflowId: string;
@@ -324,12 +272,7 @@ export class SpaceWorkflowManager {
     });
 
     const withSanitizedNodes = sanitized ? { ...sanitized, nodes: nextNodes } : wf;
-    return migrateWorkflowGateProgressionToHooks({
-      ...withSanitizedNodes,
-      templateGates: withSanitizedNodes.templateName
-        ? (BUILT_IN_TEMPLATE_GATES.get(withSanitizedNodes.templateName) ?? [])
-        : [],
-    }).workflow;
+    return withSanitizedNodes;
   }
 
   // -------------------------------------------------------------------------
@@ -481,53 +424,12 @@ export class SpaceWorkflowManager {
       this.validateChannels(params.channels);
     }
 
-    if (params.gates && params.gates.length > 0) {
-      const existingGates = existing.gates ?? [];
-      const changedGates = params.gates.filter((g) => {
-        const existingGate = existingGates.find((eg) => eg.id === g.id);
-        if (!existingGate) return true;
-        return JSON.stringify(existingGate) !== JSON.stringify(g);
-      });
-      if (changedGates.length > 0) {
-        this.validateGates(changedGates);
-      }
-    }
-
     this.validateNoDuplicateHookIds(params.hooks ?? []);
-    this.normalizeGateDefaults(params.gates);
-    const migrated = migrateWorkflowGateProgressionToHooks({
-      channels: params.channels === undefined ? existing.channels : (params.channels ?? undefined),
-      gates: params.gates === undefined ? existing.gates : (params.gates ?? undefined),
-      hooks: params.hooks === undefined ? existing.hooks : (params.hooks ?? undefined),
-      nodes: effectiveNodes as SpaceWorkflow['nodes'],
-      templateName:
-        params.templateName === undefined
-          ? existing.templateName
-          : (params.templateName ?? undefined),
-      templateGates: existing.templateName
-        ? (BUILT_IN_TEMPLATE_GATES.get(existing.templateName) ?? [])
-        : [],
-    }).workflow;
-    params = {
-      ...params,
-      channels: migrated.channels ?? [],
-      gates: migrated.gates ?? [],
-      hooks: migrated.hooks ?? [],
-    };
 
-    const effectiveChannels =
-      params.channels === undefined ? (existing.channels ?? []) : (params.channels ?? []);
-    const effectiveGates =
-      params.gates === undefined ? (existing.gates ?? []) : (params.gates ?? []);
     const effectiveHooks =
       params.hooks === undefined ? (existing.hooks ?? []) : (params.hooks ?? []);
     this.validateHooks(effectiveHooks, effectiveNodes);
-    this.validateCodexApprovalAgainstScriptedGates(
-      effectiveNodes,
-      effectiveChannels,
-      effectiveGates
-    );
-    this.validateTransitions(effectiveNodes, effectiveGates, effectiveHooks);
+    this.validateTransitions(effectiveNodes, effectiveHooks);
 
     // Validate node-level postApproval plus the legacy workflow-level route
     // against the effective node set so a rename submitted in the same update
@@ -731,42 +633,6 @@ export class SpaceWorkflowManager {
     }
     if (typeof node.requireCodexApproval !== 'boolean') {
       throw new WorkflowValidationError(`node[${index}]: requireCodexApproval must be a boolean`);
-    }
-  }
-
-  private validateCodexApprovalAgainstScriptedGates(
-    nodes: WorkflowNodeInput[],
-    channels: WorkflowChannel[],
-    gates: Gate[]
-  ): void {
-    const gateMap = new Map(gates.map((g) => [g.id, g]));
-
-    for (let i = 0; i < nodes.length; i++) {
-      const node = nodes[i];
-      if (!node.requireCodexApproval) continue;
-
-      const nodeRefs = new Set([node.name, ...(node.agents?.map((a) => a.name) ?? [])]);
-
-      for (let ci = 0; ci < channels.length; ci++) {
-        const ch = channels[ci];
-        if (!ch.gateId) continue;
-        const gate = gateMap.get(ch.gateId);
-        if (!gate?.script || !isApprovalGate(gate)) continue;
-
-        if (ch.from === '*') {
-          throw new WorkflowValidationError(
-            `node[${i}] "${node.name}": requireCodexApproval is incompatible with scripted approval gate "${ch.gateId}" on wildcard channel[${ci}]; ` +
-              'dynamic Codex injection is blocked when an approval gate has a custom script'
-          );
-        }
-
-        if (nodeRefs.has(ch.from)) {
-          throw new WorkflowValidationError(
-            `node[${i}] "${node.name}": requireCodexApproval is incompatible with scripted approval gate "${ch.gateId}" on channel[${ci}]; ` +
-              'dynamic Codex injection is blocked when an approval gate has a custom script'
-          );
-        }
-      }
     }
   }
 
@@ -984,19 +850,13 @@ export class SpaceWorkflowManager {
    *   `'*'`. A handoff target must resolve to a declared node/agent.
    * - `target` is unique within the node (at most one transition per concrete
    *   name, at most one `'*'`) so `handoff({ target })` resolves unambiguously.
-   * - `gateId`, when set, references a known gate id.
    * - `hookId`, when set, references a known hook id.
    * - `maxCycles`, when set, is a positive integer.
    *
    * Runtime transition EXECUTION is out of scope here; this only enforces the
    * declarative shape and referential integrity.
    */
-  private validateTransitions(
-    nodes: WorkflowNodeInput[],
-    gates: Gate[],
-    hooks: WorkflowHook[]
-  ): void {
-    const gateIds = new Set(gates.map((g) => g.id));
+  private validateTransitions(nodes: WorkflowNodeInput[], hooks: WorkflowHook[]): void {
     const hookIds = new Set(hooks.map((h) => h.id));
     // Valid target names: every node name + every agent slot name (matches
     // channel addressing). The broadcast wildcard is always valid. A name is
@@ -1106,23 +966,6 @@ export class SpaceWorkflowManager {
         }
         seenTargets.add(t.target);
 
-        if (t.gateId !== undefined) {
-          if (typeof t.gateId !== 'string') {
-            throw new WorkflowValidationError(`${loc}: 'gateId' must be a string`);
-          }
-          if (!t.gateId.trim()) {
-            throw new WorkflowValidationError(`${loc}: 'gateId' must be a non-empty string`);
-          }
-          if (t.gateId.length > 100) {
-            throw new WorkflowValidationError(`${loc}: 'gateId' must be at most 100 characters`);
-          }
-          if (!gateIds.has(t.gateId)) {
-            throw new WorkflowValidationError(
-              `${loc}: gateId "${t.gateId}" does not reference a known gate`
-            );
-          }
-        }
-
         if (t.hookId !== undefined) {
           if (typeof t.hookId !== 'string') {
             throw new WorkflowValidationError(`${loc}: 'hookId' must be a string`);
@@ -1148,30 +991,6 @@ export class SpaceWorkflowManager {
             throw new WorkflowValidationError(`${loc}: 'maxCycles' must be a positive integer`);
           }
         }
-      }
-    }
-  }
-
-  /**
-   * Default each gate's `resetOnCycle` to `false` when omitted, in place.
-   * Runs at the create/update boundary BEFORE gate→hook migration and
-   * `validateGate`, so a gate constructed without `resetOnCycle` (common in
-   * fixtures and untyped RPC) is persisted with a boolean instead of being
-   * rejected — while a present non-boolean (e.g. a string) is still rejected
-   * by `validateGate`. Mirrors the historical DB default.
-   */
-  private normalizeGateDefaults(gates: Gate[] | null | undefined): void {
-    if (!gates) return;
-    for (const gate of gates) {
-      if (gate.resetOnCycle === undefined) gate.resetOnCycle = false;
-    }
-  }
-
-  private validateGates(gates: unknown[]): void {
-    for (let gi = 0; gi < gates.length; gi++) {
-      const errors = validateGate(gates[gi]);
-      if (errors.length > 0) {
-        throw new WorkflowValidationError(`gates[${gi}]: ${errors.join('; ')}`);
       }
     }
   }

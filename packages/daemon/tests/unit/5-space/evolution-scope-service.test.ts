@@ -7,7 +7,6 @@ import {
   rankLessonsByTaskRelevance,
 } from '../../../src/lib/space/evolution-scope-service';
 import { EvolutionRepository } from '../../../src/storage/repositories/evolution-repository';
-import { GateOpenStateRepository } from '../../../src/storage/repositories/gate-open-state-repository';
 import { SpaceGoalRepository } from '../../../src/storage/repositories/space-goal-repository';
 import { SpaceRepository } from '../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository';
@@ -34,10 +33,7 @@ describe('EvolutionScopeService', () => {
     evolutionRepo = new EvolutionRepository(db as never);
     goalRepo = new SpaceGoalRepository(db as never);
     taskRepo = new SpaceTaskRepository(db as never);
-    workflowRunRepo = new SpaceWorkflowRunRepository(
-      db as never,
-      new GateOpenStateRepository(db as never)
-    );
+    workflowRunRepo = new SpaceWorkflowRunRepository(db as never);
     workflowRepo = new SpaceWorkflowRepository(db as never);
     service = new EvolutionScopeService({
       evolutionRepo,

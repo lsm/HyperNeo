@@ -124,7 +124,6 @@ test.describe('Post-approval routing: no-route branch', () => {
     // possible banner should be absent:
     //   - TaskBlockedBanner (status != blocked)
     //   - PendingPostApprovalBanner (no blocked reason)
-    //   - PendingGateBanner (no workflow run)
     //   - PendingTaskCompletionBanner (no pending checkpoint)
     //
     // This is the positive contract: a `no-route` task should be a clean
@@ -132,7 +131,6 @@ test.describe('Post-approval routing: no-route branch', () => {
     // post-approval step is coming.
     await expect(page.getByTestId('task-blocked-banner')).toBeHidden({ timeout: 5000 });
     await expect(page.getByTestId('pending-post-approval-banner')).toBeHidden({ timeout: 5000 });
-    await expect(page.getByTestId('pending-gate-banner')).toBeHidden({ timeout: 5000 });
     await expect(page.getByTestId('pending-task-completion-banner')).toBeHidden({ timeout: 5000 });
   });
 

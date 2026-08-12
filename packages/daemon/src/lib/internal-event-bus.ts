@@ -693,13 +693,6 @@ interface ClientForwardingEvents {
     runId: string;
     run?: Partial<import('@hyperneo/shared').SpaceWorkflowRun>;
   };
-  'space.gateData.updated': {
-    sessionId: string;
-    spaceId: string;
-    runId: string;
-    gateId: string;
-    data: Record<string, unknown>;
-  };
   'space.hookState.updated': {
     sessionId: string;
     spaceId: string;

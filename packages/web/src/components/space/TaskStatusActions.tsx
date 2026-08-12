@@ -116,7 +116,7 @@ interface TaskStatusActionsProps {
    * routed through `PendingTaskCompletionBanner` instead — that banner shows
    * what the approval actually does, which the generic buttons can't.
    */
-  pendingCheckpointType?: 'gate' | 'task_completion' | null;
+  pendingCheckpointType?: 'task_completion' | null;
 }
 
 export function TaskStatusActions({
@@ -131,23 +131,17 @@ export function TaskStatusActions({
   //   - `task_completion` checkpoint → `PendingTaskCompletionBanner` owns
   //     Approve / Send back, routed through `approvePendingCompletion` so the
   //     PostApprovalRouter runs and approval metadata is stamped.
-  //   - `gate` checkpoint            → `PendingGateBanner` owns Approve /
-  //     Reject; bypassing it via the generic button would mark the task done
-  //     without opening the gate.
   //
-  // After unification, every fresh `review` task carries
-  // `pendingCheckpointType === 'task_completion'` (set by the unified
-  // `submitTaskForReview` helper) — so the banner is always present and the
-  // generic Approve / Cancel buttons would never be the right answer. We hide
-  // them whenever the task is in `review`, regardless of `pendingCheckpointType`,
-  // so legacy data (older tasks that landed in `review` before unification with
-  // a null checkpoint type) still routes through the banner once they're
-  // approved through other means. Non-approval transitions (Reopen → in_progress,
-  // Archive) stay visible as escape hatches.
+  // Every fresh `review` task carries `pendingCheckpointType === 'task_completion'`
+  // (set by the unified `submitTaskForReview` helper) — so the banner is always
+  // present and the generic Approve / Cancel buttons would never be the right
+  // answer. We hide them whenever the task is in `review`, regardless of
+  // `pendingCheckpointType`, so legacy data (older tasks that landed in `review`
+  // before unification with a null checkpoint type) still routes through the
+  // banner once they're approved through other means. Non-approval transitions
+  // (Reopen → in_progress, Archive) stay visible as escape hatches.
   const actions =
-    status === 'review' ||
-    pendingCheckpointType === 'task_completion' ||
-    pendingCheckpointType === 'gate'
+    status === 'review' || pendingCheckpointType === 'task_completion'
       ? allActions.filter(({ target }) => target !== 'done' && target !== 'cancelled')
       : allActions;
 

@@ -28,7 +28,7 @@ import type { WorkflowHookStateRepository } from '../../../../src/storage/reposi
 
 /**
  * HookExecutor script validators shell out via `Bun.spawn` in production
- * (gate-script-executor.ts), which is unavailable under the Vitest/Node
+ * (script-utils.ts / hook-executor.ts), which is unavailable under the Vitest/Node
  * runner. The script-execution describe is gated until the production
  * module is de-Bun-ified.
  */

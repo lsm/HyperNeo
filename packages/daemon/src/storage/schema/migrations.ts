@@ -973,6 +973,13 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // result behind the watermark). A singleton counter row is genuinely monotonic.
   // Mirrored in the fresh-DB schema (index.ts). See Codex (PR #2463, P2).
   run(migrationMarkerKey(189), () => runMigration189(db));
+
+  // Migration 190: Remove the legacy workflow gate subsystem — drop the
+  // `gate_data` and `gate_open_state` tables and the `gates` column from
+  // `space_workflows`. Workflow progression is now enforced by MCP action hooks;
+  // gate storage is obsolete. Idempotent via existence guards. Renumbered from
+  // 187 (dev shipped M187–M189 for message-delivery-v2, #862).
+  run(migrationMarkerKey(190), () => runMigration190(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -12344,4 +12351,23 @@ export function runMigration189(db: BunDatabase): void {
   db.exec(`
       INSERT OR IGNORE INTO delivery_consumed_seq (singleton, next_seq) VALUES (1, 1)
     `);
+}
+
+/**
+ * Migration 190: Remove the legacy workflow gate subsystem.
+ *
+ * Workflow progression is enforced by MCP action hooks; gate entities, gate
+ * data, and gate-open caching are obsolete. This drops:
+ *   - `gate_data` table (per-run gate runtime data)
+ *   - `gate_open_state` table (persisted gate-open cache)
+ *   - `space_workflows.gates` column (JSON gate definitions)
+ *
+ * Idempotent via existence guards (DROP TABLE IF EXISTS / column check).
+ */
+export function runMigration190(db: BunDatabase): void {
+  db.exec(`DROP TABLE IF EXISTS gate_open_state`);
+  db.exec(`DROP TABLE IF EXISTS gate_data`);
+  if (tableHasColumn(db, 'space_workflows', 'gates')) {
+    db.exec(`ALTER TABLE space_workflows DROP COLUMN gates`);
+  }
 }

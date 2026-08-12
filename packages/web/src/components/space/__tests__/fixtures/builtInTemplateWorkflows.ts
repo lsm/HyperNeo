@@ -122,13 +122,11 @@ export function makeBuiltInTemplateWorkflows(
         {
           from: 'Coding',
           to: 'Review',
-          gateId: 'code-pr-gate',
           label: 'Coding → Review',
         },
         {
           from: 'Review',
           to: 'QA',
-          gateId: 'review-approval-gate',
           label: 'Review → QA',
         },
         {
@@ -142,28 +140,6 @@ export function makeBuiltInTemplateWorkflows(
           to: 'Coding',
           maxCycles: 6,
           label: 'QA → Coding (issues found)',
-        },
-      ],
-      gates: [
-        {
-          id: 'code-pr-gate',
-          description: 'PR URL captured',
-          fields: [{ name: 'pr_url', type: 'string', writers: ['*'], check: { op: 'exists' } }],
-          script: { interpreter: 'bash', source: 'echo', timeoutMs: 30000 },
-          resetOnCycle: true,
-        },
-        {
-          id: 'review-approval-gate',
-          description: 'Reviewer approved',
-          fields: [
-            {
-              name: 'approved',
-              type: 'boolean',
-              writers: ['reviewer'],
-              check: { op: '==', value: true },
-            },
-          ],
-          resetOnCycle: true,
         },
       ],
     },

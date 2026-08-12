@@ -13,7 +13,6 @@ import type {
   SpaceWorkerAgent,
   SpaceWorkflow,
   WorkflowChannel,
-  Gate,
   WorkflowNodeAgent,
   PostApprovalRoute,
 } from '@hyperneo/shared';
@@ -37,8 +36,6 @@ export interface WorkflowTemplate {
   steps?: WorkflowTemplateStep[];
   /** Optional workflow-level channels to seed with the template. */
   channels?: WorkflowChannel[];
-  /** Optional first-class workflow gates to seed with the template. */
-  gates?: Gate[];
   /** Optional workflow hooks to seed with the template. */
   hooks?: import('@hyperneo/shared').WorkflowHook[];
   /** Optional tags to seed with the template. */
@@ -267,10 +264,6 @@ export function workflowToTemplate(workflow: SpaceWorkflow): WorkflowTemplate {
     channels: (workflow.channels ?? []).map((channel) => ({
       ...channel,
       to: Array.isArray(channel.to) ? [...channel.to] : channel.to,
-    })),
-    gates: (workflow.gates ?? []).map((gate) => ({
-      ...gate,
-      fields: [...(gate.fields ?? [])],
     })),
     hooks: (workflow.hooks ?? []).map((hook) => ({ ...hook })),
     tags: [...(workflow.tags ?? [])],

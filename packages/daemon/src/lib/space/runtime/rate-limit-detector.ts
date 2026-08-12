@@ -1,8 +1,8 @@
 /**
  * Shared rate-limit detection helpers.
  *
- * Used by gate hook executors (pr-ready-validator, gate-script-executor) to
- * detect GitHub API rate-limit failures in command stderr and compute a sane
+ * Used by hook executors (pr-ready-validator, GitHub lookups) to detect
+ * GitHub API rate-limit failures in command stderr and compute a sane
  * retry-after backoff. The HTTP-header-based parser lives in the GitHub
  * extension (`parseRateLimitHeaders`) because it consumes `Response.headers`,
  * whereas these helpers operate on plain text emitted by `gh` / bash scripts.

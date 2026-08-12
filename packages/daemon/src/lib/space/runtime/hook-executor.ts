@@ -16,7 +16,7 @@ import {
   deepMergeWithDepthLimit,
   MAX_BUFFER_BYTES,
   parseJsonStdout,
-} from './gate-script-executor';
+} from './script-utils';
 import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';

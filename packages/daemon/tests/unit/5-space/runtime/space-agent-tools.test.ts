@@ -24,7 +24,6 @@ import { EvolutionRepository } from '../../../../src/storage/repositories/evolut
 import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
-import { GateDataRepository } from '../../../../src/storage/repositories/gate-data-repository.ts';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
@@ -3947,52 +3946,6 @@ describe('createSpaceAgentToolHandlers — change_plan', () => {
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.success).toBe(false);
     expect(parsed.error).toContain('Workflow not found');
-  });
-});
-
-describe('createSpaceAgentToolHandlers — approve_gate', () => {
-  let ctx: TestCtx;
-  beforeEach(() => {
-    ctx = makeCtx();
-  });
-  afterEach(() => {
-    ctx.db.close();
-  });
-
-  test('rejects cross-space workflow runs', async () => {
-    const otherSpaceId = 'other-gate-space';
-    seedSpaceRow(ctx.db, otherSpaceId, '/tmp/other-gate-space');
-    const wf = buildSingleStepWorkflow(
-      ctx.spaceId,
-      ctx.workflowManager,
-      ctx.agentId,
-      'Other Gate WF'
-    );
-    const rawRun = ctx.workflowRunRepo.createRun({
-      spaceId: otherSpaceId,
-      workflowId: wf.id,
-      title: 'other-space gate',
-    });
-
-    const handlers = createSpaceAgentToolHandlers({
-      spaceId: ctx.spaceId,
-      runtime: ctx.runtime,
-      workflowManager: ctx.workflowManager,
-      taskRepo: ctx.taskRepo,
-      workflowRunRepo: ctx.workflowRunRepo,
-      taskManager: ctx.taskManager,
-      spaceAgentManager: ctx.agentManager,
-      nodeExecutionRepo: ctx.nodeExecutionRepo,
-      gateDataRepo: new GateDataRepository(ctx.db),
-    });
-    const result = await handlers.approve_gate({
-      run_id: rawRun.id,
-      gate_id: 'gate-1',
-      approved: true,
-    });
-    const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.success).toBe(false);
-    expect(parsed.error).toContain(rawRun.id);
   });
 });
 
@@ -8854,45 +8807,6 @@ describe('createSpaceAgentToolHandlers — agent-level autonomy ceiling', () => 
     return task.id;
   }
 
-  function createGatedRun(requiredLevel: 1 | 2 | 3 | 4 | 5, writers: string[] = []): string {
-    const nodeId = `node-${Math.random().toString(36).slice(2)}`;
-    const workflow = ctx.workflowManager.createWorkflow({
-      spaceId: ctx.spaceId,
-      name: `Gated ${requiredLevel} WF`,
-      description: '',
-      nodes: [{ id: nodeId, name: 'Work', agentId: ctx.agentId }],
-      transitions: [],
-      startNodeId: nodeId,
-      endNodeId: nodeId,
-      rules: [],
-      gates: [
-        {
-          id: 'gate-1',
-          fields: [
-            {
-              name: 'approved',
-              type: 'boolean',
-              writers,
-              check: { op: '==', value: true },
-            },
-          ],
-          requiredLevel,
-          resetOnCycle: false,
-        },
-      ],
-    });
-    const run = ctx.workflowRunRepo.createRun({
-      spaceId: ctx.spaceId,
-      workflowId: workflow.id,
-      title: 'gated run',
-      description: '',
-    });
-    // createRun defaults to 'pending', which approve_gate rejects before the
-    // autonomy check — move it to 'in_progress' so the gate is reachable.
-    ctx.workflowRunRepo.transitionStatus(run.id, 'in_progress');
-    return run.id;
-  }
-
   test('level-1 long-horizon agent is blocked from session-write at space level 5', async () => {
     await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
     const agentId = seedLongHorizonAgent(1);
@@ -9006,45 +8920,6 @@ describe('createSpaceAgentToolHandlers — agent-level autonomy ceiling', () => 
     expect(ctx.taskRepo.getTask(taskId)?.status).toBe('done');
   });
 
-  test('approve_gate: level-1 agent is blocked via the autonomy path at space level 5', async () => {
-    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
-    const agentId = seedLongHorizonAgent(1);
-    const runId = createGatedRun(5);
-    const handlers = makeHandlers(ctx, {
-      myAgentId: agentId,
-      mySessionId: 'caller-session',
-      getSpaceAutonomyLevel: async () => 5,
-      gateDataRepo: new GateDataRepository(ctx.db),
-    });
-
-    const parsed = parseResult(
-      await handlers.approve_gate({ run_id: runId, gate_id: 'gate-1', approved: true })
-    );
-
-    expect(parsed.success).toBe(false);
-    const error = String(parsed.error);
-    expect(error).toContain('agent autonomy ceiling is 1');
-    expect(error).toContain('space 5');
-  });
-
-  test('approve_gate: level-5 agent passes the autonomy path at space level 5', async () => {
-    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
-    const agentId = seedLongHorizonAgent(5);
-    const runId = createGatedRun(5);
-    const handlers = makeHandlers(ctx, {
-      myAgentId: agentId,
-      mySessionId: 'caller-session',
-      getSpaceAutonomyLevel: async () => 5,
-      gateDataRepo: new GateDataRepository(ctx.db),
-    });
-
-    const parsed = parseResult(
-      await handlers.approve_gate({ run_id: runId, gate_id: 'gate-1', approved: true })
-    );
-
-    expect(parsed.success).toBe(true);
-  });
-
   test('ceiling-blocked session-write denial is recorded in the audit log', async () => {
     await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
     const agentId = seedLongHorizonAgent(1);
@@ -9071,59 +8946,6 @@ describe('createSpaceAgentToolHandlers — agent-level autonomy ceiling', () => 
     expect(summary.blocked).toBe(true);
     expect(summary.reason).toBe('agent_autonomy_ceiling');
     expect(summary.agentLevel).toBe(1);
-  });
-
-  // -------------------------------------------------------------------------
-  // Writers-allowlist override: an explicit gate writer delegation bypasses
-  // the agent ceiling (the ceiling only binds the autonomy path).
-  // -------------------------------------------------------------------------
-
-  test('approve_gate: writers-allowlist overrides the ceiling when delegated by immutable handle', async () => {
-    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
-    const agentId = seedLongHorizonAgent(1, 'auditor');
-    // Gate explicitly delegates approval to this agent by its immutable handle
-    // (@handle) → writerMatches is true, so the autonomy path (and the ceiling)
-    // is skipped entirely.
-    const runId = createGatedRun(5, ['@auditor']);
-    const handlers = makeHandlers(ctx, {
-      myAgentId: agentId,
-      myAgentNameAliases: ['@auditor'],
-      mySessionId: 'caller-session',
-      getSpaceAutonomyLevel: async () => 5,
-      gateDataRepo: new GateDataRepository(ctx.db),
-    });
-
-    const parsed = parseResult(
-      await handlers.approve_gate({ run_id: runId, gate_id: 'gate-1', approved: true })
-    );
-
-    expect(parsed.success).toBe(true);
-    expect(parsed.gateData?.approved).toBe(true);
-  });
-
-  test('approve_gate: a self-renamed level-1 agent cannot spoof a gate writer to bypass the ceiling', async () => {
-    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
-    const agentId = seedLongHorizonAgent(1, 'auditor');
-    // The agent renamed its mutable displayName to 'Review' (a node-name writer
-    // entry) via update_agent. The writers path must authenticate by the
-    // immutable handle (@auditor), not the spoofed displayName, so the ceiling
-    // still binds and the approval is rejected.
-    const runId = createGatedRun(5, ['Review']);
-    const handlers = makeHandlers(ctx, {
-      myAgentId: agentId,
-      myAgentName: 'Review',
-      myAgentNameAliases: ['@auditor'],
-      mySessionId: 'caller-session',
-      getSpaceAutonomyLevel: async () => 5,
-      gateDataRepo: new GateDataRepository(ctx.db),
-    });
-
-    const parsed = parseResult(
-      await handlers.approve_gate({ run_id: runId, gate_id: 'gate-1', approved: true })
-    );
-
-    expect(parsed.success).toBe(false);
-    expect(String(parsed.error)).toContain('agent autonomy ceiling is 1');
   });
 
   // -------------------------------------------------------------------------

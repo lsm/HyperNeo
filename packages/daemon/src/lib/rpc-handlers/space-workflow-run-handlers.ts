@@ -7,13 +7,10 @@
  * - spaceWorkflowRun.get            - Gets a run by ID
  * - spaceWorkflowRun.cancel         - Cancels a run and all pending tasks
  * - spaceWorkflowRun.markFailed     - Marks a run as blocked with a specific failure reason
- * - spaceWorkflowRun.approveGate    - Approves or rejects a human approval gate
- * - spaceWorkflowRun.listGateData   - Returns all gate data records for a run
  * - spaceWorkflowRun.getGateArtifacts   - Returns uncommitted files and diff summary for a run's worktree
  * - spaceWorkflowRun.getFileDiff        - Returns unified diff for a specific uncommitted file
  * - spaceWorkflowRun.getCommits         - Returns git commits between branch point and HEAD with per-commit stats
  * - spaceWorkflowRun.getCommitFileDiff  - Returns unified diff for a specific file in a specific commit
- * - spaceWorkflowRun.writeGateData  - Writes arbitrary gate data (E2E test infrastructure only)
  *
  * Artifact-git RPCs (`getGateArtifacts`, `getFileDiff`, `getCommits`,
  * `getCommitFileDiff`) are cache-first: the handler reads the most recent row
@@ -28,7 +25,6 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
-import type { GateDataRepository } from '../../storage/repositories/gate-data-repository';
 import type { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository';
 import type { WorkflowRunArtifactCacheRepository } from '../../storage/repositories/workflow-run-artifact-cache-repository';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
@@ -181,7 +177,6 @@ export function setupSpaceWorkflowRunHandlers(
   spaceManager: SpaceManager,
   spaceWorkflowManager: SpaceWorkflowManager,
   workflowRunRepo: SpaceWorkflowRunRepository,
-  gateDataRepo: GateDataRepository,
   spaceRuntimeService: SpaceRuntimeService,
   taskManagerFactory: SpaceWorkflowRunTaskManagerFactory,
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
@@ -192,16 +187,6 @@ export function setupSpaceWorkflowRunHandlers(
   jobQueue: JobQueueRepository,
   hookStateRepo: WorkflowHookStateRepository
 ): void {
-  /**
-   * Helper: notify the channel router that gate data has changed.
-   * Triggers lazy node activation for any newly-unblocked channels.
-   * Fire-and-forget — callers do not need to await this.
-   */
-  function fireGateChanged(runId: string, gateId: string): void {
-    void spaceRuntimeService.notifyGateDataChanged(runId, gateId).catch((err) => {
-      log.warn(`notifyGateDataChanged failed for gate "${gateId}" in run "${runId}":`, err);
-    });
-  }
   // ─── spaceWorkflowRun.start ──────────────────────────────────────────────
   messageHub.onRequest('spaceWorkflowRun.start', async (data) => {
     const params = data as {
@@ -428,244 +413,6 @@ export function setupSpaceWorkflowRunHandlers(
     await spaceRuntimeService.cancelWorkflowRun(run.spaceId, run.id);
 
     return { success: true };
-  });
-
-  // ─── spaceWorkflowRun.approveGate ────────────────────────────────────────
-  //
-  // Writes approval or rejection decision to gate data. Idempotent: calling
-  // approve on an already-approved gate returns the existing data unchanged.
-  // Rejection transitions the run to `blocked` with `humanRejected`
-  // via the status machine. Approval after a prior rejection also transitions
-  // the run back to `in_progress` so the workflow resumes.
-  messageHub.onRequest('spaceWorkflowRun.approveGate', async (data) => {
-    const params = data as {
-      runId: string;
-      gateId: string;
-      approved: boolean;
-      reason?: string;
-    };
-
-    if (!params.runId) throw new Error('runId is required');
-    if (!params.gateId) throw new Error('gateId is required');
-    if (params.approved === undefined || params.approved === null) {
-      throw new Error('approved is required');
-    }
-
-    const run = workflowRunRepo.getRun(params.runId);
-    if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
-
-    if (run.status === 'done' || run.status === 'cancelled' || run.status === 'pending') {
-      throw new Error(
-        `Cannot modify gate on a ${workflowRunAttemptLabel(run.status)} workflow run`
-      );
-    }
-
-    const existing = gateDataRepo.get(params.runId, params.gateId);
-
-    if (params.approved) {
-      // Idempotent: already approved — return existing state
-      if (existing?.data?.approved === true) {
-        // Re-trigger gate evaluation so feature scripts (e.g. codex_review_bot)
-        // get a chance to run even though the human approval data has not changed.
-        fireGateChanged(params.runId, params.gateId);
-        return { run, gateData: existing };
-      }
-
-      const gateData = gateDataRepo.merge(params.runId, params.gateId, {
-        approved: true,
-        approvedAt: Date.now(),
-        approvalSource: 'human',
-      });
-
-      // If the run was previously rejected (blocked + humanRejected),
-      // approval overrides that — transition back to in_progress so the
-      // workflow executor picks it up again on the next tick, and clear
-      // the stale failureReason so the run appears clean to the UI.
-      let updatedRun = run;
-      if (run.status === 'blocked' && run.failureReason === 'humanRejected') {
-        workflowRunRepo.transitionStatus(params.runId, 'in_progress');
-        // Sweep any persisted PR-event auto-subscription on the resume.
-        spaceRuntimeService.notifyRunResumed(params.runId);
-        updatedRun = workflowRunRepo.updateRun(params.runId, { failureReason: null }) ?? run;
-      }
-
-      internalEventBus
-        .publish('space.workflowRun.updated', {
-          sessionId: 'global',
-          spaceId: run.spaceId,
-          runId: run.id,
-          run: updatedRun,
-        })
-        .catch((err) => {
-          log.warn('Failed to emit space.workflowRun.updated:', err);
-        });
-
-      internalEventBus
-        .publish('space.gateData.updated', {
-          sessionId: 'global',
-          spaceId: run.spaceId,
-          runId: params.runId,
-          gateId: params.gateId,
-          data: gateData.data,
-        })
-        .catch((err) => {
-          log.warn('Failed to emit space.gateData.updated:', err);
-        });
-
-      // Trigger channel re-evaluation so downstream nodes activate if the gate is now open.
-      fireGateChanged(params.runId, params.gateId);
-
-      return { run: updatedRun, gateData };
-    } else {
-      // Rejection — idempotent: gate data already shows rejected
-      if (existing?.data?.approved === false) {
-        return { run, gateData: existing };
-      }
-
-      const gateData = gateDataRepo.merge(params.runId, params.gateId, {
-        approved: false,
-        rejectedAt: Date.now(),
-        reason: params.reason ?? null,
-        approvalSource: 'human',
-      });
-
-      // Enforce the state machine: only call transitionStatus when the run is
-      // not already in blocked (e.g. blocked by a different mechanism).
-      // In either case, write failureReason via a separate updateRun so it
-      // is always persisted regardless of whether the status changed.
-      if (run.status !== 'blocked') {
-        workflowRunRepo.transitionStatus(params.runId, 'blocked');
-      }
-      const updated =
-        workflowRunRepo.updateRun(params.runId, { failureReason: 'humanRejected' }) ?? run;
-
-      // Block the canonical task with gate_rejected reason
-      // Skip terminal tasks (done, cancelled, archived) — their status
-      // cannot transition back to blocked.
-      const TERMINAL_TASK_STATUSES = new Set(['done', 'cancelled', 'archived']);
-      const runTasks = spaceTaskRepo.listByWorkflowRun(params.runId);
-      const canonicalTask = runTasks[0];
-      if (canonicalTask && !TERMINAL_TASK_STATUSES.has(canonicalTask.status)) {
-        const taskMgr = taskManagerFactory(run.spaceId);
-        await taskMgr.setTaskStatus(canonicalTask.id, 'blocked', {
-          result: params.reason ?? 'Gate rejected',
-          blockReason: 'gate_rejected',
-        });
-      }
-
-      internalEventBus
-        .publish('space.workflowRun.updated', {
-          sessionId: 'global',
-          spaceId: run.spaceId,
-          runId: run.id,
-          run: updated,
-        })
-        .catch((err) => {
-          log.warn('Failed to emit space.workflowRun.updated:', err);
-        });
-
-      internalEventBus
-        .publish('space.gateData.updated', {
-          sessionId: 'global',
-          spaceId: run.spaceId,
-          runId: params.runId,
-          gateId: params.gateId,
-          data: gateData.data,
-        })
-        .catch((err) => {
-          log.warn('Failed to emit space.gateData.updated:', err);
-        });
-
-      return { run: updated, gateData };
-    }
-  });
-
-  // ─── spaceWorkflowRun.writeGateData ──────────────────────────────────────
-  //
-  // Writes (merges) arbitrary data into a gate's runtime record and triggers
-  // channel re-evaluation so downstream nodes activate when a gate opens.
-  //
-  // Used by test helpers to simulate agent behavior (e.g. writing approval/vote
-  // gate payloads) without spinning up a real agent session.
-  // Does NOT enforce allowedWriterRoles — callers are trusted.
-  //
-  // Disabled in production to prevent unauthorized gate manipulation.
-  if (process.env.NODE_ENV !== 'production')
-    messageHub.onRequest('spaceWorkflowRun.writeGateData', async (data) => {
-      const params = data as {
-        runId: string;
-        gateId: string;
-        data: Record<string, unknown>;
-        /**
-         * When true, skip channel routing after writing gate data.
-         * Used by E2E browser tests that seed gate data for visual assertions
-         * without wanting to activate downstream nodes. The channel router can
-         * reset cyclic gates (resetOnCycle: true) as a side-effect of opening
-         * them, which would immediately wipe the data the test just wrote and
-         * cause the canvas to show a stale "blocked" state.
-         * Defaults to false (i.e., fireGateChanged is called as usual) so that
-         * daemon-level integration tests still get the downstream node activation
-         * they depend on.
-         */
-        skipChannelRouting?: boolean;
-      };
-
-      if (!params.runId) throw new Error('runId is required');
-      if (!params.gateId) throw new Error('gateId is required');
-      if (!params.data || typeof params.data !== 'object' || Array.isArray(params.data)) {
-        throw new Error('data must be an object');
-      }
-
-      const run = workflowRunRepo.getRun(params.runId);
-      if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
-
-      if (run.status === 'done' || run.status === 'cancelled' || run.status === 'pending') {
-        throw new Error(
-          `Cannot write gate data on a ${workflowRunAttemptLabel(run.status)} workflow run`
-        );
-      }
-
-      const gateData = gateDataRepo.merge(params.runId, params.gateId, params.data);
-
-      internalEventBus
-        .publish('space.gateData.updated', {
-          sessionId: 'global',
-          spaceId: run.spaceId,
-          runId: params.runId,
-          gateId: params.gateId,
-          data: gateData.data,
-        })
-        .catch((err) => {
-          log.warn('Failed to emit space.gateData.updated:', err);
-        });
-
-      // Only trigger channel routing if skipChannelRouting is not set.
-      // E2E tests pass skipChannelRouting: true to seed gate data for visual
-      // assertions without activating downstream nodes or triggering cyclic gate
-      // resets (resetOnCycle: true gates get wiped when the cyclic channel fires,
-      // causing the canvas to show stale "blocked" state instead of the written data).
-      if (!params.skipChannelRouting) {
-        fireGateChanged(params.runId, params.gateId);
-      }
-
-      return { gateData };
-    });
-
-  // ─── spaceWorkflowRun.listGateData ───────────────────────────────────────
-  //
-  // Returns all gate data records for a workflow run.
-  // Used by the WorkflowCanvas component to show gate status on channel lines.
-  messageHub.onRequest('spaceWorkflowRun.listGateData', async (data) => {
-    const params = data as { runId: string };
-
-    if (!params.runId) throw new Error('runId is required');
-
-    const run = workflowRunRepo.getRun(params.runId);
-    if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
-
-    const gateDataRecords = gateDataRepo.listByRun(params.runId);
-
-    return { gateData: gateDataRecords };
   });
 
   // ─── spaceWorkflowRun.getGateArtifacts ───────────────────────────────────
