@@ -42,6 +42,7 @@ import type {
   HandoffOperation,
   HandoffTransition,
   SpaceWorkflow,
+  WorkflowHook,
   WorkflowHookResult,
   WorkflowNode,
 } from '@hyperneo/shared';
@@ -154,6 +155,12 @@ export interface HandoffExecutorConfig {
   spaceId: string;
   taskId?: string;
   taskNumber?: number | null;
+  /**
+   * The run's workspace path (the task worktree). Passed into hook context so
+   * hook validators/script hooks resolve the correct repository (built-ins like
+   * `pr_ready` run `gh` here; script hooks use it as spawn cwd).
+   */
+  workspacePath?: string;
 
   /** Hook validator engine. Required for transitions that bind a hookId. */
   hookExecutor?: HookExecutor;
@@ -281,6 +288,16 @@ export class HandoffExecutor {
         `Handoff target "${operation.target}" resolves to no active agent slot.`
       );
     }
+    // A self-targeted handoff (transition back to the sender's own node) would
+    // queue back into the sender's live session and violate the contract that a
+    // handoff ends the current round. The complete-then-reactivate path for
+    // self-loops is deferred with the fresh-turn packet work; reject until then.
+    if (targets.nodes.includes(fromNodeName)) {
+      return this.blocked(
+        'resolve_target',
+        `Handoff target "${operation.target}" resolves to the sender's own node "${fromNodeName}"; self-targeted handoffs are not supported yet.`
+      );
+    }
 
     // 4. Authorize the declared channel topology (when declared).
     const resolver = new ChannelResolver(workflow.channels ?? []);
@@ -301,6 +318,27 @@ export class HandoffExecutor {
     const cyclic = isCyclicHandoff(workflow, fromNodeName, targets.nodes);
     const maxCycles = transition.maxCycles;
     const cycleLimited = cyclic && typeof maxCycles === 'number' && maxCycles > 0;
+
+    // 4b. Read-only cycle cap check BEFORE gate/hook side effects. A cyclic
+    //     transition already at its cap must not persist gate data or run hook
+    //     validators/scripts on a guaranteed-to-fail retry. The atomic
+    //     reservation still happens right before delivery (step 7) to close the
+    //     TOCTOU.
+    if (
+      cycleLimited &&
+      this.config.handoffCycleRepo.isCapReached(workflowRunId, transitionKey, maxCycles!)
+    ) {
+      return {
+        status: 'blocked',
+        stage: 'cycle_limit',
+        transition,
+        targetNodes: targets.nodes,
+        targetSlots: targets.slots,
+        delivered: [],
+        queued: [],
+        reason: `Cyclic handoff "${transition.id}" from "${fromNodeName}" has reached its maxCycles cap (${maxCycles}).`,
+      };
+    }
 
     // 5. Authorize + commit the transition's declared gate fields.
     let gateOutcome: HandoffGateOutcome | undefined;
@@ -395,6 +433,20 @@ export class HandoffExecutor {
     }
 
     // 8. Activate or reuse the target worker session(s) + deliver the peer message.
+    //    Re-check run state first: a hook/gate can await an external check for
+    //    tens of seconds, and the run may have been cancelled meanwhile. A
+    //    terminal run must not receive the handoff (and the cycle reservation is
+    //    refunded by the caller's catch/path below).
+    const rerun = this.config.workflowRunRepo.getRun(workflowRunId);
+    if (rerun && (rerun.status === 'done' || rerun.status === 'cancelled')) {
+      if (cycleLimited) this.refundCycle(workflowRunId, transitionKey);
+      trackReservation(false, '');
+      return this.blocked(
+        'resolve_run',
+        `Cannot hand off: run became ${rerun.status} during validation.`
+      );
+    }
+
     const delivery = await this.deliver({
       fromAgentName,
       fromSessionId,
@@ -403,9 +455,10 @@ export class HandoffExecutor {
       data: operation.data,
     });
 
-    // 9. Refund the reservation when the handoff was NOT taken (no live session
-    //    received it and nothing was queueable). A taken handoff (delivered or
-    //    queued) keeps its reservation and counts toward the cap.
+    // 9. Refund the reservation when the handoff was NOT taken. "Taken" means a
+    //    NEW delivery or a NEW enqueue this call — a DEDUPED enqueue (same
+    //    message already pending from a prior attempt) does not charge a cycle;
+    //    the prior attempt already accounted for it.
     const taken = delivery.delivered.length > 0 || delivery.queued.length > 0;
     if (cycleLimited && !taken) {
       this.refundCycle(workflowRunId, transitionKey);
@@ -413,8 +466,8 @@ export class HandoffExecutor {
     trackReservation(false, '');
 
     // Aggregate the delivery outcome into the handoff status. A delivered
-    // handoff (≥1 live session received it) wins over a queued one; queued wins
-    // over a total delivery failure.
+    // handoff (≥1 live session received it) wins over a queued one; queued (new
+    // or already-pending deduped) wins over a total delivery failure.
     if (delivery.delivered.length > 0) {
       return {
         status: 'delivered',
@@ -431,7 +484,7 @@ export class HandoffExecutor {
         hook: hookOutcome,
       };
     }
-    if (delivery.queued.length > 0) {
+    if (delivery.queued.length > 0 || delivery.dedupedCount > 0) {
       return {
         status: 'queued',
         stage: 'deliver',
@@ -440,7 +493,10 @@ export class HandoffExecutor {
         targetSlots: targets.slots,
         delivered: [],
         queued: delivery.queued,
-        reason: delivery.reason,
+        reason:
+          delivery.queued.length === 0
+            ? `Handoff already pending for ${delivery.dedupedCount} target(s); no new cycle charged.`
+            : delivery.reason,
         gate: gateOutcome,
         hook: hookOutcome,
       };
@@ -653,9 +709,21 @@ export class HandoffExecutor {
         },
       };
     }
+    // Enforce the same caller-authorization WorkflowHookEngine applies before
+    // invoking a hook: enabled, not human-only, source-node match, optional
+    // target-node match, and a matching authorizedCaller entry (empty/absent
+    // fails closed). Without this, an agent-triggered transition could run a
+    // hook that was not authorized for it.
+    const authReason = hookAuthorizationReason(hook, fromNodeName, fromAgentName, targetNodeNames);
+    if (authReason) {
+      return { hookId, result: { type: 'block', reason: authReason } };
+    }
 
     const context: HookExecutorContext = {
-      workspacePath: '',
+      // Carry the run's actual workspace so hook validators (e.g. pr_ready's
+      // `gh`) and script hooks (spawn cwd) resolve the task worktree, not the
+      // daemon's cwd.
+      workspacePath: this.config.workspacePath ?? '',
       runId: this.config.workflowRunId,
       hookId,
       methodName: 'handoff',
@@ -665,7 +733,17 @@ export class HandoffExecutor {
         data: operation.data ?? {},
         targetNodes: targetNodeNames,
       },
-      rawParams: { fromAgentName, fromNodeName },
+      // Built-in validators read (rawParams ?? params).data — populate rawParams
+      // with the full payload (including data) so they see the supplied fields
+      // (e.g. pr_url) instead of only the sender identity.
+      rawParams: {
+        target: operation.target,
+        summary: operation.summary,
+        data: operation.data ?? {},
+        targetNodes: targetNodeNames,
+        fromAgentName,
+        fromNodeName,
+      },
       nodeId: sourceNode.id,
       nodeName: fromNodeName,
       sessionId: fromSessionId,
@@ -701,6 +779,7 @@ export class HandoffExecutor {
   }): Promise<{
     delivered: Array<{ agentName: string; sessionId: string }>;
     queued: Array<{ agentName: string; messageId: string }>;
+    dedupedCount: number;
     reason?: string;
   }> {
     const { fromAgentName, fromSessionId, targetSlots, summary, data } = args;
@@ -722,6 +801,7 @@ export class HandoffExecutor {
 
     const delivered: Array<{ agentName: string; sessionId: string }> = [];
     const queued: Array<{ agentName: string; messageId: string }> = [];
+    let dedupedCount = 0;
     const notFound: string[] = [];
 
     // Hoist the execution read: listByWorkflowRun once up front, then once more
@@ -767,7 +847,11 @@ export class HandoffExecutor {
       }
 
       // No live session — queue for later delivery if a persistent queue is
-      // configured (mirrors send_message's declared-but-inactive path).
+      // configured (mirrors send_message's declared-but-inactive path). A
+      // DEDUPED enqueue (same message already pending from a prior attempt) is
+      // tracked separately: the message is still queued (status), but it does
+      // NOT count as a newly-taken handoff for cycle accounting — the prior
+      // attempt already charged (or refunded) the cycle.
       if (this.config.pendingMessageRepo && spaceId) {
         const rawMessage = envelope();
         try {
@@ -783,8 +867,12 @@ export class HandoffExecutor {
             ttlMs: 60_000,
             maxAttempts: 3,
           });
-          queued.push({ agentName, messageId: record.id });
-          if (!deduped) this.config.onMessageQueued?.(agentName);
+          if (deduped) {
+            dedupedCount += 1;
+          } else {
+            queued.push({ agentName, messageId: record.id });
+            this.config.onMessageQueued?.(agentName);
+          }
         } catch (err) {
           log.warn(
             `[HandoffExecutor] failed to queue for "${agentName}": ${err instanceof Error ? err.message : String(err)}`
@@ -802,7 +890,7 @@ export class HandoffExecutor {
         : notFound.length > 0
           ? `Partial delivery — not reachable: ${notFound.join(', ')}.`
           : undefined;
-    return { delivered, queued, reason };
+    return { delivered, queued, dedupedCount, reason };
   }
 
   /**
@@ -1001,6 +1089,42 @@ function safeResolveAgents(node: WorkflowNode): { name: string }[] {
   } catch {
     return [];
   }
+}
+
+/**
+ * Caller-authorization for a transition-bound hook, mirroring the checks
+ * `WorkflowHookEngine` applies: enabled, not human-only, source-node match,
+ * optional target-node match, and a matching `authorizedCallers` entry (empty/
+ * absent fails closed). Returns a block reason when unauthorized, else undefined.
+ */
+function hookAuthorizationReason(
+  hook: WorkflowHook,
+  fromNodeName: string,
+  fromAgentName: string,
+  targetNodeNames: string[]
+): string | undefined {
+  if (!hook.enabled) return `Hook "${hook.id}" is disabled.`;
+  if (hook.humanOnly) {
+    return `Hook "${hook.id}" is human-only and cannot run from an agent handoff.`;
+  }
+  if (hook.sourceNode !== fromNodeName) {
+    return `Hook "${hook.id}" sourceNode "${hook.sourceNode}" does not match handoff source "${fromNodeName}".`;
+  }
+  if (hook.targetNode && !targetNodeNames.includes(hook.targetNode)) {
+    return `Hook "${hook.id}" targetNode "${hook.targetNode}" is not a target of this handoff.`;
+  }
+  if (!hook.authorizedCallers || hook.authorizedCallers.length === 0) {
+    return `Hook "${hook.id}" has no authorizedCallers; agent handoffs fail closed.`;
+  }
+  const allowed = hook.authorizedCallers.some((caller) => {
+    if (caller.sourceNode !== fromNodeName) return false;
+    if (!caller.agentSlots || caller.agentSlots.length === 0) return true;
+    return caller.agentSlots.includes(fromAgentName);
+  });
+  if (!allowed) {
+    return `Agent "${fromAgentName}" is not an authorized caller for hook "${hook.id}".`;
+  }
+  return undefined;
 }
 
 /** Per-field two-path gate write authorization (mirrors send_message). */

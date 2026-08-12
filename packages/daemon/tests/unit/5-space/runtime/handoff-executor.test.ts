@@ -363,6 +363,27 @@ describe('HandoffExecutor: transition resolution', () => {
     expect(result.status).toBe('failed');
     expect(result.stage).toBe('resolve_source');
   });
+
+  test('rejects a self-targeted handoff (round boundary)', async () => {
+    const workflow = makeWorkflow({
+      nodes: [
+        node('n-coding', 'coding', 'coder', [{ id: 'to-self', target: 'coding' }]),
+        node('n-review', 'review', 'reviewer'),
+      ],
+    });
+    const executor = makeExecutor(ctx, workflow);
+
+    const result = await executor.execute({
+      fromAgentName: 'coder',
+      fromSessionId: 'session-coder',
+      workflowNodeId: 'n-coding',
+      operation: { target: 'coding', summary: 'loop' },
+    });
+
+    expect(result.status).toBe('blocked');
+    expect(result.stage).toBe('resolve_target');
+    expect(result.reason).toContain("sender's own node");
+  });
 });
 
 describe('HandoffExecutor: channel authorization', () => {
@@ -673,6 +694,7 @@ describe('HandoffExecutor: hook validator', () => {
           sourceNode: 'coding',
           method: 'send_message',
           validator: { kind: 'built_in', id: 'pr_ready' },
+          authorizedCallers: [{ sourceNode: 'coding' }],
         },
       ],
     });
@@ -755,6 +777,44 @@ describe('HandoffExecutor: hook validator', () => {
     expect(result.status).toBe('failed');
     expect(result.stage).toBe('hook');
     expect(result.reason).toContain('validator crashed');
+  });
+
+  test('blocks when the hook is not authorized for the sending slot', async () => {
+    // Hook authorizes a different slot than the sender.
+    const workflow = makeWorkflow({
+      nodes: [
+        node('n-coding', 'coding', 'coder', [
+          { id: 'to-review', target: 'review', hookId: 'hook-pr-ready' },
+        ]),
+        node('n-review', 'review', 'reviewer'),
+      ],
+      channels: [{ id: 'ch', from: 'coding', to: 'review' }],
+      hooks: [
+        {
+          id: 'hook-pr-ready',
+          enabled: true,
+          sourceNode: 'coding',
+          method: 'send_message',
+          validator: { kind: 'built_in', id: 'pr_ready' },
+          authorizedCallers: [{ sourceNode: 'coding', agentSlots: ['someone-else'] }],
+        },
+      ],
+    });
+    const executor = makeExecutor(ctx, workflow, {
+      hookExecutor: stubHookExecutor({ type: 'allow' }),
+    });
+
+    const result = await executor.execute({
+      fromAgentName: 'coder',
+      fromSessionId: 'session-coder',
+      workflowNodeId: 'n-coding',
+      operation: { target: 'review', summary: 'go' },
+    });
+
+    expect(result.status).toBe('blocked');
+    expect(result.stage).toBe('hook');
+    expect(result.hook?.result.type).toBe('block');
+    expect(result.reason).toContain('authorized caller');
   });
 });
 
