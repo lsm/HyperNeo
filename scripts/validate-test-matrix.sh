@@ -168,19 +168,28 @@ module_values() {
 		injob && /^  [a-z]/ { injob=0; mod=""; folding=0; next }
 		!injob { next }
 		/^[[:space:]]*#/ { next }
-		# Accept an optional YAML quote around the module name; strip non-token chars.
+		# New include record: capture module name + its indent (mi).
 		/^[[:space:]]*- module:[[:space:]]*[^[:space:]]/ {
+			mi=0; while (substr($0,mi+1,1)==" ") mi++
 			mod=$0; sub(/^[[:space:]]*- module:[[:space:]]*/, "", mod); sub(/[[:space:]]*$/, "", mod); gsub(/[^a-z0-9-]/, "", mod)
 			folding=0; next
 		}
-		mod && /test_path:[[:space:]]*[>|]-[[:space:]]*$/ { folding=1; base=0; while (substr($0, base+1, 1)==" ") base++; next }
-		folding {
-			n=0; while (substr($0, n+1, 1)==" ") n++
-			if (n > base) { v=trim($0); if (v != "") print mod "\t" v; next }
-			folding=0
-		}
-		mod && /test_path:[[:space:]]+[^[:space:]>|-]/ {
-			v=$0; sub(/^.*test_path:[[:space:]]+/, "", v); v=trim(v); if (v != "") print mod "\t" v
+		# Any other line in the job: dispatch by indent. test_path counts ONLY as a
+		# DIRECT record property (indent mi+2); a dedent to/under the record
+		# `- module:` indent ends the record, so test_path in env/steps/job scope
+		# (which does NOT populate ${{ matrix.test_path }}) cannot pose as a value.
+		{
+			n=0; while (substr($0,n+1,1)==" ") n++
+			if (mod != "" && n <= mi) { mod=""; folding=0 }
+			if (mod == "") next
+			if (folding) {
+				if (n > base) { v=trim($0); if (v != "") print mod "\t" v; next }
+				folding=0
+			}
+			if (n == mi+2 && $0 ~ /test_path:[[:space:]]*[>|]-[[:space:]]*$/) { folding=1; base=n; next }
+			if (n == mi+2 && $0 ~ /test_path:[[:space:]]+[^[:space:]>|-]/) {
+				v=$0; sub(/^.*test_path:[[:space:]]+/, "", v); v=trim(v); if (v != "") print mod "\t" v
+			}
 		}
 	' "$1"
 }
@@ -205,6 +214,14 @@ test_prop_has() {
 	local val_re
 	val_re=$(printf '%s' "$3" | sed 's/[][{}.*\\]/\\&/g')
 	grep -qE "^    $2: ${val_re}(,|\$)" "$1"
+}
+
+# True (exit 0) if vitest config $1 does NOT set `<prop>` directly under test:
+# (4-space indent). Guards options like `dir:` that narrow the discovery root
+# without touching include/exclude (which test_prop_has pins) — a narrowed dir
+# makes files outside it unreachable while the guard still reports them covered.
+test_prop_absent() {
+	! grep -qE "^    $2:" "$1"
 }
 
 # ===========================================================================
@@ -241,6 +258,12 @@ for _cfg in "$REPO_ROOT/packages/daemon/vitest.config.ts" "$REPO_ROOT/packages/s
 	if ! test_prop_has "$_cfg" exclude "$_exp_exclude"; then
 		err "$_cfg_pkg/vitest.config.ts test.exclude is not $_exp_exclude — a broad/changed glob could filter unit shard paths"
 		echo "     → keep the exclude to the expected set under test:, or update this validator" >&2
+	fi
+	# A narrowed test.dir would shrink the discovery root (files outside it stop
+	# running) without touching include/exclude — reject it; rely on the default.
+	if ! test_prop_absent "$_cfg" dir; then
+		err "$_cfg_pkg/vitest.config.ts sets test.dir — a narrowed discovery root would silently drop shard files while this guard reports them covered"
+		echo "     → drop test.dir (use the default root), or update this validator" >&2
 	fi
 done
 
@@ -287,6 +310,16 @@ for shard in "${SHARDS[@]}"; do
 		esac
 	done < <(shard_paths "$shard")
 done
+
+# A covered file must live under a package tests/ dir — the unit/shared configs
+# include `tests/**`, so a shard path outside packages/*/tests/ (e.g. a file
+# under packages/shared/src/ listed from the shared shard) is counted covered
+# here yet filtered out by Vitest's include glob. Reject such owners.
+while IFS= read -r _bad; do
+	[ -n "$_bad" ] || continue
+	err "unit/shared shard path is outside the config include root (packages/*/tests/), so Vitest would filter it out while this guard reports it covered: $_bad"
+	echo "     → move it under the package tests/ dir, or drop it from shard_paths()" >&2
+done < <(awk -F'\t' '{ print $1 }' "$COVERED_TMP" | grep -vE '^packages/[^/]+/tests/' | sort -u)
 
 # Every SHARDS entry must also appear in the ACTIVE CI unit matrix. A shard that
 # runs locally via test-daemon.sh but is absent from CI would make this guard
@@ -412,6 +445,13 @@ if ! test_prop_has "$WEB_CFG" exclude "['node_modules', 'dist']"; then
 	err "packages/web/vitest.config.ts test.exclude is not ['node_modules', 'dist'] — src test files could be excluded (a nested coverage.exclude / appended expression no longer masks it)"
 	echo "     → keep test.exclude to node_modules/dist, or update this validator" >&2
 fi
+# A narrowed test.dir (e.g. dir: 'src/components') shrinks the discovery root;
+# files outside it stop running while this guard still reports all src/ files
+# covered. Reject it and rely on the default (the package root).
+if ! test_prop_absent "$WEB_CFG" dir; then
+	err "packages/web/vitest.config.ts sets test.dir — a narrowed discovery root would silently drop src test files while this guard reports them covered"
+	echo "     → drop test.dir (use the default root), or update this validator" >&2
+fi
 # The web coverage assumes the test-web CI job runs a bare `vitest run` (no
 # positional target) in an ENABLED step, so the config include/exclude fully
 # determine execution. enabled_run_cmd folds the runner command (a `>-` scalar)
@@ -499,6 +539,11 @@ if ! test_prop_has "$ONLINE_CFG" exclude "['node_modules', 'dist', 'tests/unit/*
 	err "packages/daemon/vitest.online.config.ts test.exclude is not ['node_modules','dist','tests/unit/**'] — a broad/changed glob could exclude online tests"
 	echo "     → keep the exclude to node_modules/dist/tests/unit/** under test:, or update this validator" >&2
 fi
+# A narrowed test.dir would shrink the online discovery root; reject it.
+if ! test_prop_absent "$ONLINE_CFG" dir; then
+	err "packages/daemon/vitest.online.config.ts sets test.dir — a narrowed discovery root would silently drop online tests while this guard reports them covered"
+	echo "     → drop test.dir (use the default root), or update this validator" >&2
+fi
 
 # Online matrix test_path values must reach an ENABLED runner that forwards
 # ${{ matrix.test_path }}. The marker picks the runner step itself
@@ -509,6 +554,27 @@ _online_main=$(enabled_run_cmd "$REPO_ROOT/.github/workflows/main.yml" 'vitest.o
 if [ -z "$_online_main" ] || ! printf '%s' "$_online_main" | grep -qF '${{ matrix.test_path }}'; then
 	err "main.yml online runner is missing, commented, disabled, or does not forward \${{ matrix.test_path }} — online matrix values don't reach the runner"
 	echo "     → keep an active, enabled 'vitest ... \${{ matrix.test_path }}' step" >&2
+else
+	# After `vitest run`, only ${{ matrix.test_path }} (the one selector) and
+	# coverage-neutral flags (--config, --coverage*, --reporter, --outputFile.*,
+	# --color) may appear. A selection flag like --exclude=<glob> or
+	# --testNamePattern would omit files while the ownership walk reports them
+	# covered. (The config file itself is guarded separately, so --config is safe.)
+	_oextra=$(printf '%s' "$_online_main" \
+		| sed 's/.*vitest run//' \
+		| sed -E -e 's/\$\{\{[^}]*\}\}//g' \
+		         -e 's/--config[[:space:]]+[^[:space:]]+//g' \
+		         -e 's/--reporter[[:space:]]+[^[:space:]]+//g' \
+		         -e 's/--reporter=[^[:space:]]+//g' \
+		         -e 's/--coverage\.[[:alnum:]_.-]+(=[^[:space:]]+)?//g' \
+		         -e 's/--outputFile\.[[:alnum:]_-]+(=[^[:space:]]+)?//g' \
+		         -e 's/--coverage(=[^[:space:]]+)?//g' \
+		         -e 's/--color//g' -e 's/--no-color//g' \
+		| tr -d "[:space:]'")
+	if [ -n "$_oextra" ]; then
+		err "main.yml online runner has a selection flag or extra arg after 'vitest run' — e.g. --exclude=<glob>/--testNamePattern would omit files while the ownership walk reports them covered"
+		echo "     → keep only \${{ matrix.test_path }} plus --config/--coverage*/--reporter/--outputFile.* flags" >&2
+	fi
 fi
 _online_real=$(enabled_run_cmd "$REPO_ROOT/.github/workflows/real-api-tests.yml" 'bun test' 'daemon-real-api')
 if [ -z "$_online_real" ] || ! printf '%s' "$_online_real" | grep -qF '${{ matrix.test_path }}'; then
