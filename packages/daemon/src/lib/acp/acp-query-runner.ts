@@ -446,6 +446,7 @@ export class AcpQueryRunner {
     let receivedAcpMessageDuringRun = false;
     let restoreMessageEnqueuedHandler: (() => void) | undefined;
     let proxyBridge: AcpMcpProxyBridge | null = null;
+    let rateLimitCooldownScheduled = false;
 
     try {
       const { initializeProviders, waitForOptionalProviderRegistration } = await import(
@@ -791,6 +792,9 @@ export class AcpQueryRunner {
         async () => {
           await proxyBridge?.close();
           proxyBridge = null;
+        },
+        () => {
+          rateLimitCooldownScheduled = true;
         }
       );
     } finally {
@@ -828,7 +832,7 @@ export class AcpQueryRunner {
           this.ctx.originalEnvVars = {};
         }
 
-        if (!this.ctx.isCleaningUp()) {
+        if (!this.ctx.isCleaningUp() && !rateLimitCooldownScheduled) {
           await stateManager.setIdle();
         }
 
@@ -844,7 +848,8 @@ export class AcpQueryRunner {
     client?: AcpClient | null,
     createdAcpSessionDuringRun = false,
     receivedAcpMessageDuringRun = false,
-    closeProxyBridge: () => Promise<void> = async () => {}
+    closeProxyBridge: () => Promise<void> = async () => {},
+    onRateLimitCooldownScheduled: () => void = () => {}
   ): Promise<void> {
     const { session, messageQueue, stateManager, errorManager, logger } = this.ctx;
     logger.error('ACP query error:', error);
@@ -921,9 +926,6 @@ export class AcpQueryRunner {
     messageQueue.clear();
 
     if (!isAbortError) {
-      // No retry path remains. Fence durable delivery completion before rate-limit
-      // recovery or error publication awaits; terminal setIdle consumes it.
-      stateManager.beginTerminalIdle();
       let category = ErrorCategory.SYSTEM;
       const lowerMessage = errorMessage.toLowerCase();
 
@@ -956,6 +958,9 @@ export class AcpQueryRunner {
       const rateLimitCooldownScheduled =
         is429Error &&
         !!(await this.ctx.onRateLimitExhausted?.(errorMessage, this._lastConsumedUserMessage));
+      if (rateLimitCooldownScheduled) {
+        onRateLimitCooldownScheduled();
+      }
       const userMessage = isStartupTimeout
         ? `The ACP agent failed to start (workspace: ${session.workspacePath ?? 'unbound'}). Check HYPERNEO_ACP_COMMAND and resend your message.`
         : errorMessage.includes('[MCP invariant]')
@@ -963,6 +968,8 @@ export class AcpQueryRunner {
           : undefined;
 
       if (!rateLimitCooldownScheduled) {
+        // Recovery declined, so this error is terminal. Fence before publishing it.
+        stateManager.beginTerminalIdle();
         await errorManager.handleError(
           session.id,
           error instanceof Error ? error : new Error(errorMessage),

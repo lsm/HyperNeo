@@ -141,7 +141,8 @@ function sleep(ms: number): Promise<void> {
 
 /**
  * Detect a 429 rate-limit error in any of the shapes the SDK surfaces: a
- * leading `429`/`API Error: 429` (optionally followed by a JSON body or text),
+ * leading `429`/`API Error: 429` (optionally prefixed by `Error: ` and followed by
+ * a JSON body or text),
  * or a JSON envelope whose inner error message starts with `429`. Used to
  * decline `handleApiValidationError` for 429s so they reach the rate-limit
  * recovery branch (fallback chain / reset-aware cooldown) instead of being
@@ -150,10 +151,11 @@ function sleep(ms: number): Promise<void> {
 export function looksLikeRateLimit429(errorMessage: string): boolean {
   if (!errorMessage) return false;
   // Leading `429` / `API Error: 429` (the common Anthropic/relay shape).
-  if (/^(?:API Error:\s*)?429\b/i.test(errorMessage)) return true;
+  if (/^(?:Error:\s*)?(?:API Error:\s*)?429\b/i.test(errorMessage)) return true;
   // JSON envelope with an inner `429 ...` message (Copilot bridge shape).
   try {
-    const parsed = JSON.parse(errorMessage) as { error?: { message?: string } };
+    const jsonMessage = errorMessage.replace(/^Error:\s*/, '');
+    const parsed = JSON.parse(jsonMessage) as { error?: { message?: string } };
     const inner = parsed?.error?.message;
     if (typeof inner === 'string' && /^429\b/.test(inner)) return true;
   } catch {
@@ -487,6 +489,7 @@ export class QueryRunner {
    */
   private async runQuery(queryGeneration: number, retryAttempt = 0): Promise<void> {
     const { session, messageQueue, stateManager, errorManager, logger, optionsBuilder } = this.ctx;
+    let rateLimitCooldownScheduled = false;
 
     try {
       // Verify authentication for the selected provider
@@ -1279,15 +1282,14 @@ export class QueryRunner {
         retryAttempt >= maxProviderRetries && isRetryableProviderError(errorMessage);
 
       if (!isAbortError) {
-        // No retry path remains. Fence durable completion before validation,
-        // rate-limit recovery, or error publication awaits. A scheduled cooldown
-        // retains the fence until its eventual cancel/retry idle consumes it.
-        stateManager.beginTerminalIdle();
+        // Validation errors publish before setIdle, so fence them now. A recoverable
+        // 429 is different: its cooldown continues the same turn and must not create
+        // durable turn-end evidence unless recovery declines to schedule it.
+        const deferTerminalFence = looksLikeRateLimit429(errorMessage);
+        if (!deferTerminalFence) {
+          stateManager.beginTerminalIdle();
+        }
         const apiErrorHandled = await this.handleApiValidationError(error);
-
-        // Track whether rate limit cooldown was scheduled; if so, skip setIdle
-        // below to preserve the rate_limit_cooldown processing state.
-        let rateLimitCooldownScheduled = false;
 
         if (!apiErrorHandled) {
           let category = ErrorCategory.SYSTEM;
@@ -1372,6 +1374,9 @@ export class QueryRunner {
           rateLimitCooldownScheduled =
             is429Error &&
             !!(await this.ctx.onRateLimitExhausted?.(errorMessage, this._lastConsumedUserMessage));
+          if (deferTerminalFence && !rateLimitCooldownScheduled) {
+            stateManager.beginTerminalIdle();
+          }
 
           // For startup timeouts / resume failures, provide actionable recovery hints.
           // Keep the hints distinct: HYPERNEO_SDK_STARTUP_TIMEOUT_MS is irrelevant to a
@@ -1487,7 +1492,7 @@ export class QueryRunner {
           this.ctx.originalEnvVars = {};
         }
 
-        if (!this.ctx.isCleaningUp()) {
+        if (!this.ctx.isCleaningUp() && !rateLimitCooldownScheduled) {
           await stateManager.setIdle();
         }
 

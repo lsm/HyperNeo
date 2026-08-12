@@ -1099,6 +1099,22 @@ describe('AcpQueryRunner', () => {
     expect(secondClient.sendPrompt).toHaveBeenCalled();
   });
 
+  test('does not start terminal fence when ACP rate-limit cooldown is scheduled', async () => {
+    const client = createMockClient();
+    client.initialize.mockRejectedValue(new Error('429 Too Many Requests'));
+    const { ctx } = createRunnerFixture({ client });
+    ctx.onRateLimitExhausted = mock(async () => true);
+    const runner = new AcpQueryRunner(ctx, () => client as unknown as AcpClient);
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    expect(ctx.onRateLimitExhausted).toHaveBeenCalledTimes(1);
+    expect(ctx.stateManager.beginTerminalIdle).not.toHaveBeenCalled();
+    expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    expect(ctx.stateManager.setIdle).not.toHaveBeenCalled();
+  });
+
   test('starts terminal fence before awaiting ACP error publication', async () => {
     const client = createMockClient();
     client.initialize.mockRejectedValue(new Error('401 Unauthorized'));

@@ -2367,6 +2367,21 @@ describe('QueryRunner', () => {
       expect(buildSpy).toHaveBeenCalledTimes(1);
     });
 
+    it('should not persist turn termination when a rate-limit cooldown is scheduled', async () => {
+      buildSpy.mockRejectedValue(new Error('429 Too Many Requests'));
+      const onRateLimitExhausted = mock(async () => true);
+
+      const ctx = createContext({ onRateLimitExhausted });
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(onRateLimitExhausted).toHaveBeenCalledTimes(1);
+      expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(setIdleSpy).not.toHaveBeenCalled();
+    });
+
     it('should persist turn termination before awaiting terminal error publication', async () => {
       buildSpy.mockRejectedValue(new Error('terminal query failure'));
       let resolveError!: () => void;
@@ -3120,9 +3135,11 @@ describe('QueryRunner cleaning up state', () => {
 // rate-limit recovery branch (fallback chain / reset-aware cooldown) instead of
 // being rendered as a terminal validation error.
 describe('looksLikeRateLimit429', () => {
-  it('matches a bare 429 and the API Error: 429 shape', () => {
+  it('matches bare, API Error, and Error-wrapped 429 shapes', () => {
     expect(looksLikeRateLimit429('429 rate limited')).toBe(true);
     expect(looksLikeRateLimit429('API Error: 429 {"type":"error"}')).toBe(true);
+    expect(looksLikeRateLimit429('Error: 429 Too Many Requests')).toBe(true);
+    expect(looksLikeRateLimit429('Error: {"error":{"message":"429 rate limited"}}')).toBe(true);
   });
 
   it('matches a JSON body following the leading 429', () => {
