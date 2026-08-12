@@ -660,7 +660,11 @@ export class SDKMessageRepository {
     sinceRowid?: number
   ): {
     messages: Array<
-      ChatMessage & { timestamp: number; origin?: MessageOrigin; deliveryStatus?: MessageDeliveryStatus }
+      ChatMessage & {
+        timestamp: number;
+        origin?: MessageOrigin;
+        deliveryStatus?: MessageDeliveryStatus;
+      }
     >;
     hasMore: boolean;
   } {
@@ -745,7 +749,11 @@ export class SDKMessageRepository {
     sinceRowid?: number
   ): {
     messages: Array<
-      ChatMessage & { timestamp: number; origin?: MessageOrigin; deliveryStatus?: MessageDeliveryStatus }
+      ChatMessage & {
+        timestamp: number;
+        origin?: MessageOrigin;
+        deliveryStatus?: MessageDeliveryStatus;
+      }
     >;
     hasMore: boolean;
   } {
