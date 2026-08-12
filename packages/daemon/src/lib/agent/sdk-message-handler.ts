@@ -872,7 +872,7 @@ export class SDKMessageHandler {
       await this.handleSystemMessage(message);
     }
 
-    if (isSDKResultSuccess(message)) {
+    if (isTopLevelResult && isSDKResultSuccess(message)) {
       await this.handleResultMessage(message);
     }
 

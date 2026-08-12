@@ -2391,6 +2391,49 @@ describe('QueryRunner', () => {
       }
     });
 
+    it('should preserve cooldown state through a recursive retry', async () => {
+      buildSpy
+        .mockRejectedValueOnce(new Error('TypeError: fetch failed'))
+        .mockRejectedValueOnce(new Error('429 Too Many Requests'));
+      const onRateLimitExhausted = mock(async () => true);
+
+      const ctx = createContext({ onRateLimitExhausted });
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(2);
+      expect(onRateLimitExhausted).toHaveBeenCalledTimes(1);
+      expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
+      expect(setIdleSpy.mock.calls).toEqual([[{ suppressDeliveryWaiters: true }]]);
+    });
+
+    it('should fence handled validation errors before rendering them', async () => {
+      buildSpy.mockRejectedValue(
+        new Error('400 {"error":{"message":"invalid rate limit field abc429xyz"}}')
+      );
+      let resolveDisplay!: () => void;
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.displayErrorAsAssistantMessage = mock(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveDisplay = resolve;
+          })
+      );
+      runner.start();
+
+      for (let attempt = 0; attempt < 20 && !resolveDisplay; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+      expect(beginTerminalIdleSpy).toHaveBeenCalledTimes(1);
+      expect(setIdleSpy).not.toHaveBeenCalled();
+
+      resolveDisplay();
+      await ctx.queryPromise?.catch(() => {});
+      expect(setIdleSpy).toHaveBeenCalled();
+    });
+
     it('should persist turn termination before awaiting terminal error publication', async () => {
       buildSpy.mockRejectedValue(new Error('terminal query failure'));
       let resolveError!: () => void;

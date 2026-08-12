@@ -1115,6 +1115,24 @@ describe('AcpQueryRunner', () => {
     expect(ctx.stateManager.setIdle).not.toHaveBeenCalled();
   });
 
+  test('preserves ACP cooldown state through a recursive retry', async () => {
+    const firstClient = createMockClient();
+    firstClient.initialize.mockRejectedValue(new Error('TypeError: fetch failed'));
+    const secondClient = createMockClient();
+    secondClient.initialize.mockRejectedValue(new Error('429 Too Many Requests'));
+    const clients = [firstClient, secondClient];
+    const { ctx } = createRunnerFixture({ client: firstClient });
+    ctx.onRateLimitExhausted = mock(async () => true);
+    const runner = new AcpQueryRunner(ctx, () => clients.shift() as unknown as AcpClient);
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    expect(ctx.onRateLimitExhausted).toHaveBeenCalledTimes(1);
+    expect(ctx.stateManager.beginTerminalIdle).not.toHaveBeenCalled();
+    expect(ctx.stateManager.setIdle.mock.calls).toEqual([[{ suppressDeliveryWaiters: true }]]);
+  });
+
   test('starts terminal fence before awaiting ACP error publication', async () => {
     const client = createMockClient();
     client.initialize.mockRejectedValue(new Error('401 Unauthorized'));

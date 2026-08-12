@@ -1918,10 +1918,12 @@ describe('SDKMessageHandler', () => {
       expect(setIdleSpy).toHaveBeenCalled();
     });
 
-    it('does not start the terminal fence for a nested subagent result', async () => {
+    it('does not finish the outer turn for nested subagent results', async () => {
+      const finishTurnSpy = mock(async () => {});
+      (handler as unknown as { finishTurn: () => Promise<void> }).finishTurn = finishTurnSpy;
       const nestedResult: SDKMessage = {
         type: 'result',
-        subtype: 'error_during_execution',
+        subtype: 'success',
         uuid: 'nested-result-uuid',
         parent_tool_use_id: 'outer-agent-tool-use',
         usage: {
@@ -1939,6 +1941,7 @@ describe('SDKMessageHandler', () => {
 
       expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
       expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(finishTurnSpy).not.toHaveBeenCalled();
     });
 
     it('refreshes context at turn end for any result message (success)', async () => {

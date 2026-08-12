@@ -144,7 +144,7 @@ function sleep(ms: number): Promise<void> {
  * leading `429`/`API Error: 429` (optionally prefixed by `Error: ` and followed by
  * a JSON body or text),
  * or a JSON envelope whose inner error message starts with `429`. Used to
- * decline `handleApiValidationError` for 429s so they reach the rate-limit
+ * decline validation-error rendering for 429s so they reach the rate-limit
  * recovery branch (fallback chain / reset-aware cooldown) instead of being
  * rendered as a terminal validation error.
  */
@@ -487,9 +487,12 @@ export class QueryRunner {
    *   transient-connection retries fire only on attempt 0 (1-shot), while
    *   the 5xx/overloaded provider-retry path fires up to the configured cap.
    */
-  private async runQuery(queryGeneration: number, retryAttempt = 0): Promise<void> {
+  private async runQuery(
+    queryGeneration: number,
+    retryAttempt = 0,
+    recoveryState = { rateLimitCooldownScheduled: false }
+  ): Promise<void> {
     const { session, messageQueue, stateManager, errorManager, logger, optionsBuilder } = this.ctx;
-    let rateLimitCooldownScheduled = false;
 
     try {
       // Verify authentication for the selected provider
@@ -1026,7 +1029,7 @@ export class QueryRunner {
         // Use `return await` so this call's finally{} runs only after the retry
         // completes. Otherwise finally{} would race the retry and can tear down
         // shared state (queue/controller/queryObject) while it is still running.
-        return await this.runQuery(queryGeneration, 1);
+        return await this.runQuery(queryGeneration, 1, recoveryState);
       }
       if (isMessageNotFound && retryAttempt === 0 && !this.ctx.isCleaningUp()) {
         // Consume the stale resumeSessionAt before retrying. The for-await loop
@@ -1055,7 +1058,7 @@ export class QueryRunner {
           this.ctx.resetProcessExitedPromise();
         }
 
-        return await this.runQuery(queryGeneration, 1);
+        return await this.runQuery(queryGeneration, 1, recoveryState);
       }
 
       // Auto-retry once on transient connection errors (mid-stream HTTP drop).
@@ -1113,7 +1116,7 @@ export class QueryRunner {
           this.ctx.resetProcessExitedPromise();
         }
 
-        return await this.runQuery(queryGeneration, 1);
+        return await this.runQuery(queryGeneration, 1, recoveryState);
       }
 
       // Bounded retry for 5xx / overloaded / provider-unavailable errors that
@@ -1269,7 +1272,7 @@ export class QueryRunner {
           this._lastConsumedUserMessage = null;
         }
 
-        return await this.runQuery(queryGeneration, retryAttempt + 1);
+        return await this.runQuery(queryGeneration, retryAttempt + 1, recoveryState);
       }
 
       // Clear the queue on non-retryable errors so stale messages don't bleed into the next session.
@@ -1282,15 +1285,17 @@ export class QueryRunner {
         retryAttempt >= maxProviderRetries && isRetryableProviderError(errorMessage);
 
       if (!isAbortError) {
-        // Validation errors publish before setIdle, so fence them now. A recoverable
-        // 429 is different: its cooldown continues the same turn and must not create
-        // durable turn-end evidence unless recovery declines to schedule it.
-        const deferTerminalFence =
-          errorMessage.includes('429') || errorMessage.toLowerCase().includes('rate limit');
-        if (!deferTerminalFence) {
+        // Classify validation errors without publishing so terminal fencing can be
+        // decided from the actual path: handled 4xx errors fence before rendering,
+        // while cooldown-eligible errors wait for the scheduling result.
+        const apiValidationError = this.parseApiValidationError(error);
+        if (apiValidationError) {
           stateManager.beginTerminalIdle();
+          await this.displayErrorAsAssistantMessage(apiValidationError.text, {
+            markAsError: true,
+          });
         }
-        const apiErrorHandled = await this.handleApiValidationError(error);
+        const apiErrorHandled = apiValidationError !== null;
 
         if (!apiErrorHandled) {
           let category = ErrorCategory.SYSTEM;
@@ -1372,10 +1377,10 @@ export class QueryRunner {
             category === ErrorCategory.RATE_LIMIT &&
             !isBillingError &&
             (errorMessage.includes('429') || lowerMsg.includes('rate limit'));
-          rateLimitCooldownScheduled =
+          recoveryState.rateLimitCooldownScheduled =
             is429Error &&
             !!(await this.ctx.onRateLimitExhausted?.(errorMessage, this._lastConsumedUserMessage));
-          if (deferTerminalFence && !rateLimitCooldownScheduled) {
+          if (!recoveryState.rateLimitCooldownScheduled) {
             stateManager.beginTerminalIdle();
           }
 
@@ -1410,7 +1415,7 @@ export class QueryRunner {
           // Skip error broadcast when rate-limit cooldown is scheduled —
           // the session.error event is terminal in Space workflows and would
           // prematurely mark the task as failed before the auto-retry fires.
-          if (!rateLimitCooldownScheduled) {
+          if (!recoveryState.rateLimitCooldownScheduled) {
             await errorManager.handleError(
               session.id,
               error as Error,
@@ -1431,7 +1436,7 @@ export class QueryRunner {
         // Skip idle transition when rate limit cooldown was scheduled —
         // the watchdog already set rate_limit_cooldown state and will
         // transition to idle when the user cancels or the retry fires.
-        if (!rateLimitCooldownScheduled) {
+        if (!recoveryState.rateLimitCooldownScheduled) {
           await stateManager.setIdle();
         }
       }
@@ -1493,7 +1498,7 @@ export class QueryRunner {
           this.ctx.originalEnvVars = {};
         }
 
-        if (!this.ctx.isCleaningUp() && !rateLimitCooldownScheduled) {
+        if (!this.ctx.isCleaningUp() && !recoveryState.rateLimitCooldownScheduled) {
           await stateManager.setIdle();
         }
 
@@ -1730,85 +1735,65 @@ export class QueryRunner {
   }
 
   /**
-   * Handle API validation errors (400-level)
+   * Parse API validation errors (400-level) without side effects. Keeping parsing
+   * synchronous lets the caller establish terminal fencing before rendering.
    */
-  private async handleApiValidationError(error: unknown): Promise<boolean> {
-    const { logger } = this.ctx;
+  private parseApiValidationError(error: unknown): { text: string } | null {
+    const errorMessage = error instanceof Error ? error.message : String(error);
 
-    try {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+    // Decline genuine 429 rate-limit errors so they fall through to recovery.
+    if (looksLikeRateLimit429(errorMessage)) return null;
 
-      // Decline 429 rate-limit errors so they fall through to the rate-limit
-      // branch (onRateLimitExhausted → fallback chain / reset-aware cooldown).
-      // Treating a 429 as a terminal validation error here would render it and
-      // never engage recovery. 402/quota/billing and other 4xx are still handled
-      // below as validation errors.
-      if (looksLikeRateLimit429(errorMessage)) {
-        return false;
-      }
-
-      // JSON-body 4xx. Depending on where the Claude SDK raises it,
-      // this can arrive as either `402 {...}` or `API Error: 402 {...}`.
-      const apiErrorMatch = errorMessage.match(/^(?:API Error:\s*)?(4\d{2})\s+(\{.+\})$/s);
-      if (apiErrorMatch) {
-        const [, statusCode, jsonBody] = apiErrorMatch;
-
-        let errorBody: { type?: string; error?: { type?: string; message?: string } };
-        try {
-          errorBody = JSON.parse(jsonBody);
-        } catch {
-          return false;
-        }
-
-        const apiErrorMessage = errorBody.error?.message || errorMessage;
-        const apiErrorType = errorBody.error?.type || 'api_error';
-
-        await this.displayErrorAsAssistantMessage(
-          `**API Error (${statusCode})**: ${apiErrorType}\n\n${apiErrorMessage}\n\nThis error occurred while processing your request. Please review the error message above and adjust your request accordingly.`,
-          { markAsError: true }
-        );
-
-        return true;
-      }
-
-      // Plain-text 4xx (e.g. Copilot returns "402 You have no quota (Request ID: ...)")
-      const plainErrorMatch = errorMessage.match(/^(?:API Error:\s*)?(4\d{2})\s+(.+)$/s);
-      if (plainErrorMatch) {
-        const [, statusCode, plainMessage] = plainErrorMatch;
-        await this.displayErrorAsAssistantMessage(
-          `**API Error (${statusCode})**: ${plainMessage.trim()}\n\nThis error occurred while processing your request.`,
-          { markAsError: true }
-        );
-        return true;
-      }
-
-      // JSON SSE error event (e.g. from Copilot bridge: {"type":"error","error":{"type":"api_error","message":"402 You have no quota ..."}})
+    // JSON-body 4xx. Depending on where the Claude SDK raises it,
+    // this can arrive as either `402 {...}` or `API Error: 402 {...}`.
+    const apiErrorMatch = errorMessage.match(/^(?:API Error:\s*)?(4\d{2})\s+(\{.+\})$/s);
+    if (apiErrorMatch) {
+      const [, statusCode, jsonBody] = apiErrorMatch;
       try {
-        const parsed = JSON.parse(errorMessage) as {
+        const errorBody = JSON.parse(jsonBody) as {
           type?: string;
           error?: { type?: string; message?: string };
         };
-        const innerMessage = parsed?.error?.message;
-        if (typeof innerMessage === 'string') {
-          const innerMatch = innerMessage.match(/^(4\d{2})\s+(.+)$/s);
-          if (innerMatch) {
-            const [, statusCode, plainMessage] = innerMatch;
-            await this.displayErrorAsAssistantMessage(
-              `**API Error (${statusCode})**: ${plainMessage.trim()}\n\nThis error occurred while processing your request.`,
-              { markAsError: true }
-            );
-            return true;
-          }
-        }
+        const apiErrorMessage = errorBody.error?.message || errorMessage;
+        const apiErrorType = errorBody.error?.type || 'api_error';
+        return {
+          text: `**API Error (${statusCode})**: ${apiErrorType}\n\n${apiErrorMessage}\n\nThis error occurred while processing your request. Please review the error message above and adjust your request accordingly.`,
+        };
       } catch {
-        // not JSON
+        return null;
       }
-
-      return false;
-    } catch (err) {
-      logger.warn('Failed to handle API validation error:', err);
-      return false;
     }
+
+    // Plain-text 4xx (e.g. Copilot returns "402 You have no quota (Request ID: ...)")
+    const plainErrorMatch = errorMessage.match(/^(?:API Error:\s*)?(4\d{2})\s+(.+)$/s);
+    if (plainErrorMatch) {
+      const [, statusCode, plainMessage] = plainErrorMatch;
+      return {
+        text: `**API Error (${statusCode})**: ${plainMessage.trim()}\n\nThis error occurred while processing your request.`,
+      };
+    }
+
+    // JSON SSE error event (e.g. from Copilot bridge).
+    try {
+      const parsed = JSON.parse(errorMessage) as {
+        type?: string;
+        error?: { type?: string; message?: string };
+      };
+      const innerMessage = parsed?.error?.message;
+      if (typeof innerMessage === 'string') {
+        const innerMatch = innerMessage.match(/^(4\d{2})\s+(.+)$/s);
+        if (innerMatch) {
+          const [, statusCode, plainMessage] = innerMatch;
+          return {
+            text: `**API Error (${statusCode})**: ${plainMessage.trim()}\n\nThis error occurred while processing your request.`,
+          };
+        }
+      }
+    } catch {
+      // not JSON
+    }
+
+    return null;
   }
 
   /**

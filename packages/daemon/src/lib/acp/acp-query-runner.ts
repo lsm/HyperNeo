@@ -437,7 +437,11 @@ export class AcpQueryRunner {
     this.ctx.queryPromise = this.runQuery(currentGeneration);
   }
 
-  private async runQuery(queryGeneration: number, isRetry = false): Promise<void> {
+  private async runQuery(
+    queryGeneration: number,
+    isRetry = false,
+    recoveryState = { rateLimitCooldownScheduled: false }
+  ): Promise<void> {
     const { session, messageQueue, stateManager, errorManager, logger, optionsBuilder } = this.ctx;
     let client: AcpClient | null = null;
     let queryStartTime = Date.now();
@@ -446,7 +450,6 @@ export class AcpQueryRunner {
     let receivedAcpMessageDuringRun = false;
     let restoreMessageEnqueuedHandler: (() => void) | undefined;
     let proxyBridge: AcpMcpProxyBridge | null = null;
-    let rateLimitCooldownScheduled = false;
 
     try {
       const { initializeProviders, waitForOptionalProviderRegistration } = await import(
@@ -793,9 +796,7 @@ export class AcpQueryRunner {
           await proxyBridge?.close();
           proxyBridge = null;
         },
-        () => {
-          rateLimitCooldownScheduled = true;
-        }
+        recoveryState
       );
     } finally {
       restoreMessageEnqueuedHandler?.();
@@ -832,7 +833,7 @@ export class AcpQueryRunner {
           this.ctx.originalEnvVars = {};
         }
 
-        if (!this.ctx.isCleaningUp() && !rateLimitCooldownScheduled) {
+        if (!this.ctx.isCleaningUp() && !recoveryState.rateLimitCooldownScheduled) {
           await stateManager.setIdle();
         }
 
@@ -849,7 +850,7 @@ export class AcpQueryRunner {
     createdAcpSessionDuringRun = false,
     receivedAcpMessageDuringRun = false,
     closeProxyBridge: () => Promise<void> = async () => {},
-    onRateLimitCooldownScheduled: () => void = () => {}
+    recoveryState = { rateLimitCooldownScheduled: false }
   ): Promise<void> {
     const { session, messageQueue, stateManager, errorManager, logger } = this.ctx;
     logger.error('ACP query error:', error);
@@ -920,7 +921,7 @@ export class AcpQueryRunner {
         this.ctx.resetProcessExitedPromise();
       }
 
-      return await this.runQuery(queryGeneration, true);
+      return await this.runQuery(queryGeneration, true, recoveryState);
     }
 
     messageQueue.clear();
@@ -959,7 +960,7 @@ export class AcpQueryRunner {
         is429Error &&
         !!(await this.ctx.onRateLimitExhausted?.(errorMessage, this._lastConsumedUserMessage));
       if (rateLimitCooldownScheduled) {
-        onRateLimitCooldownScheduled();
+        recoveryState.rateLimitCooldownScheduled = true;
       }
       const userMessage = isStartupTimeout
         ? `The ACP agent failed to start (workspace: ${session.workspacePath ?? 'unbound'}). Check HYPERNEO_ACP_COMMAND and resend your message.`
@@ -967,7 +968,7 @@ export class AcpQueryRunner {
           ? errorMessage
           : undefined;
 
-      if (!rateLimitCooldownScheduled) {
+      if (!recoveryState.rateLimitCooldownScheduled) {
         // Recovery declined, so this error is terminal. Fence before publishing it.
         stateManager.beginTerminalIdle();
         await errorManager.handleError(
