@@ -77,6 +77,35 @@ test_path_value_hits() {
 		| grep -cvE '^[[:space:]]*(#|//)'
 }
 
+# Print every ACTIVE test_path VALUE from workflow $1 — both the inline single
+# form (`test_path: <value>`) and the folded multi form (`test_path: >-` / `|-`
+# followed by indented value lines, which GitHub joins with spaces into one
+# `${{ matrix.test_path }}`). Comments are skipped. Emitting the EXACT values
+# (rather than substring-grepping disk files) lets the caller verify each one
+# resolves to a real file/dir on disk — a typo like ".bak" or a stale path
+# otherwise makes the shard's filter match nothing while this guard, which only
+# checks that real files are referenced, stays green.
+online_test_path_values() {
+	awk '
+		function trim(v) { sub(/^[[:space:]]+/, "", v); sub(/[[:space:]]+$/, "", v); return v }
+		/^[[:space:]]*#/ { next }
+		# Folded block marker: test_path: >-  or  test_path: |-
+		/^[[:space:]]*test_path:[[:space:]]*[>|]-[[:space:]]*$/ {
+			folding=1; base=0; while (substr($0, base+1, 1)==" ") base++; next
+		}
+		folding {
+			n=0; while (substr($0, n+1, 1)==" ") n++
+			if (n > base) { v=trim($0); if (v != "") print v; next }
+			folding=0
+			# fall through: a dedented line may open a new inline test_path
+		}
+		# Inline single value: the value starts with a non-space, non-fold-marker char
+		/^[[:space:]]*test_path:[[:space:]]+[^[:space:]>|-]/ {
+			v=$0; sub(/^[[:space:]]*test_path:[[:space:]]+/, "", v); v=trim(v); if (v != "") print v
+		}
+	' "$1"
+}
+
 # ===========================================================================
 # 1. DAEMON UNIT TESTS  (source of truth: scripts/test-daemon.sh)
 # ===========================================================================
@@ -354,6 +383,36 @@ for _m in $_axis_modules; do
 	fi
 done
 
+# Every active module-axis value must occur EXACTLY once. GitHub expands each
+# axis entry into a separate job, so a duplicated value (e.g. two `- components`
+# rows sharing one include) runs the same test_path twice — wasted CI and, for
+# real-provider shards, paid calls. The orphan check above only verifies each
+# name resolves to a path; it never counts occurrences.
+_dup_axis=$(printf '%s\n' "$_axis_modules" | sort | uniq -d)
+if [ -n "$_dup_axis" ]; then
+	while IFS= read -r _d; do
+		[ -n "$_d" ] || continue
+		err "online module-axis value '$_d' appears more than once — GitHub expands both entries, running the same test_path in duplicate jobs"
+		echo "     → list each module exactly once in the module: axis" >&2
+	done <<< "$_dup_axis"
+fi
+
+# Every test_path VALUE (inline or folded, either workflow) must resolve to a
+# real file or directory on disk. A typo (e.g. a ".bak" suffix) or stale path
+# makes the shard's `bun test`/`vitest` filter match nothing, so that job exits 0
+# having run ZERO files — a coverage hole the per-disk-file walk below cannot
+# see: it only checks that real files are referenced, not that references are
+# real. Exact-value parsing (online_test_path_values) is what makes ".bak"
+# visible — the disk file's path is a substring of ".bak", so the old substring
+# grep reported it covered.
+while IFS= read -r _tp; do
+	[ -n "$_tp" ] || continue
+	if [ ! -e "$REPO_ROOT/packages/daemon/$_tp" ]; then
+		err "online test_path value '$_tp' does not exist on disk — CI would run zero files for that shard"
+		echo "     → fix the path, or remove the matrix row" >&2
+	fi
+done < <(online_test_path_values "$MAIN_WORKFLOW"; online_test_path_values "$REAL_API_WORKFLOW")
+
 RPC_FILES=(
 	rpc-agent-handlers.test.ts
 	rpc-config-handlers.test.ts
@@ -549,9 +608,12 @@ for dir in "$ONLINE_DIR"/*/; do
 		# run it again — compare dir + file ownership together (can't have both).
 		while IFS= read -r f; do
 			rel="${f#"${dir%/}"/}"
-			file_refs=$(grep -hF "tests/online/$dirname/$rel" "$MAIN_WORKFLOW" "$REAL_API_WORKFLOW" 2>/dev/null \
-				| grep -F 'test_path:' \
-				| grep -cvE '^[[:space:]]*#')
+			# EXACT test_path value match (test_path_value_hits anchors the path
+			# with a trailing whitespace/EOL), not a substring grep — otherwise a
+			# typo'd longer value like "x.test.ts.bak" substring-matches the real
+			# file and hides the duplicate.
+			_tp="tests/online/$dirname/$rel"
+			file_refs=$(( $(test_path_value_hits "$MAIN_WORKFLOW" "$_tp") + $(test_path_value_hits "$REAL_API_WORKFLOW" "$_tp") ))
 			if [ "${file_refs:-0}" -gt 0 ]; then
 				err "tests/online/$dirname/$rel is covered by both a directory-level row and a file-level row — duplicate shard ownership"
 				echo "     → remove the file-level row (the directory-level row already covers it)" >&2
@@ -568,9 +630,15 @@ for dir in "$ONLINE_DIR"/*/; do
 		# $dir ends in '/' (from the */ glob) — normalize so the prefix strip
 		# yields the module-relative path (e.g. nested/x.test.ts), not the full path.
 		rel="${f#"${dir%/}"/}"
-		file_refs=$(grep -hF "tests/online/$dirname/$rel" "$MAIN_WORKFLOW" "$REAL_API_WORKFLOW" 2>/dev/null \
-			| grep -F 'test_path:' \
-			| grep -cvE '^[[:space:]]*#')
+		# EXACT test_path value match (test_path_value_hits anchors the path with a
+		# trailing whitespace/EOL), not a substring grep. A substring grep would
+		# report a disk file covered when the matrix actually points at a longer
+		# typo'd value (e.g. "agent-session-sdk.test.ts.bak"): the real path is a
+		# substring of ".bak", so it matches, yet the shard filter matches nothing
+		# and runs zero files. (Stale values are also caught by the exact-value
+		# existence check above.)
+		_tp="tests/online/$dirname/$rel"
+		file_refs=$(( $(test_path_value_hits "$MAIN_WORKFLOW" "$_tp") + $(test_path_value_hits "$REAL_API_WORKFLOW" "$_tp") ))
 		if [ "${file_refs:-0}" -eq 0 ]; then
 			err "online test not covered by any active CI shard: tests/online/$dirname/$rel"
 			echo "     → add it to a matrix in $MAIN_WORKFLOW (or to EXEMPT_DIRS if the module is disabled)" >&2
