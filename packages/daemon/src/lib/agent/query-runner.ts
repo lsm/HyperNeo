@@ -1269,12 +1269,6 @@ export class QueryRunner {
         return await this.runQuery(queryGeneration, retryAttempt + 1);
       }
 
-      // No retry path remains: this query exception is terminal. Persist the
-      // waiter-owned turn-end marker before any awaited validation/error handling
-      // below, while retaining setIdle as the later waiter-release point. A daemon
-      // exit during those awaits must not re-drive an already-ended consumed turn.
-      stateManager.markIdleWaitersEnded();
-
       // Clear the queue on non-retryable errors so stale messages don't bleed into the next session.
       messageQueue.clear();
 
@@ -1407,6 +1401,10 @@ export class QueryRunner {
           // the session.error event is terminal in Space workflows and would
           // prematurely mark the task as failed before the auto-retry fires.
           if (!rateLimitCooldownScheduled) {
+            // This exception is terminal. Start the durable completion fence and
+            // persist waiter markers before error publication; setIdle below
+            // consumes the fence and releases the waiters after side effects.
+            stateManager.beginTerminalIdle();
             await errorManager.handleError(
               session.id,
               error as Error,

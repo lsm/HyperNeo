@@ -807,6 +807,14 @@ export class SDKMessageHandler {
       return;
     }
 
+    // A persisted terminal result proves this turn ended. Start the completion
+    // fence before publication or type-specific awaited work; the corresponding
+    // immediate/session-state idle consumes it after finalization. In-stream
+    // /clear results are internal and intentionally suppress that idle.
+    if (isSDKResultMessage(message) && !this.suppressIdleOnNextResult) {
+      stateManager.beginTerminalIdle();
+    }
+
     // Broadcast SDK message delta to frontend clients
     messageHub.event(
       'state.sdkMessages.delta',

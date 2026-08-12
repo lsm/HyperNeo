@@ -45,7 +45,7 @@ describe('QueryRunner', () => {
   let getStateSpy: ReturnType<typeof mock>;
   let setIdleSpy: ReturnType<typeof mock>;
   let setProcessingSpy: ReturnType<typeof mock>;
-  let markIdleWaitersEndedSpy: ReturnType<typeof mock>;
+  let beginTerminalIdleSpy: ReturnType<typeof mock>;
   let handleErrorSpy: ReturnType<typeof mock>;
   let publishSpy: ReturnType<typeof mock>;
   let saveSDKMessageSpy: ReturnType<typeof mock>;
@@ -160,12 +160,12 @@ describe('QueryRunner', () => {
     getStateSpy = mock(() => ({ status: 'idle' }));
     setIdleSpy = mock(async () => {});
     setProcessingSpy = mock(async () => {});
-    markIdleWaitersEndedSpy = mock(() => {});
+    beginTerminalIdleSpy = mock(() => {});
     mockStateManager = {
       getState: getStateSpy,
       setIdle: setIdleSpy,
       setProcessing: setProcessingSpy,
-      markIdleWaitersEnded: markIdleWaitersEndedSpy,
+      beginTerminalIdle: beginTerminalIdleSpy,
     } as unknown as ProcessingStateManager;
 
     // ErrorManager spies
@@ -2385,7 +2385,7 @@ describe('QueryRunner', () => {
         await new Promise((resolve) => setTimeout(resolve, 5));
       }
       expect(handleErrorSpy).toHaveBeenCalledTimes(1);
-      expect(markIdleWaitersEndedSpy).toHaveBeenCalledTimes(1);
+      expect(beginTerminalIdleSpy).toHaveBeenCalledTimes(1);
       expect(setIdleSpy).not.toHaveBeenCalled();
 
       resolveError();

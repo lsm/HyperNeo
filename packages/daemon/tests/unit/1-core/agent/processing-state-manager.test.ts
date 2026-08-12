@@ -215,18 +215,20 @@ describe('ProcessingStateManager', () => {
       expect(manager.isTerminalIdleInFlight()).toBe(false);
     });
 
-    test('markIdleWaitersEnded fires onEnd without resolving until setIdle', async () => {
+    test('beginTerminalIdle fences and fires onEnd without resolving until setIdle', async () => {
       const events: string[] = [];
       const waiter = manager.waitForIdleTransition(undefined, () => events.push('onEnd'));
       void waiter.promise.then(() => events.push('waiter-resolved'));
 
-      manager.markIdleWaitersEnded();
+      manager.beginTerminalIdle();
       await Promise.resolve();
       expect(events).toEqual(['onEnd']);
+      expect(manager.isTerminalIdleInFlight()).toBe(true);
 
       await manager.setIdle();
       await waiter.promise;
       expect(events).toEqual(['onEnd', 'waiter-resolved']);
+      expect(manager.isTerminalIdleInFlight()).toBe(false);
     });
 
     test('waiter onEnd fires on a direct releaseIdleWaiters (restart/reset failure path)', async () => {

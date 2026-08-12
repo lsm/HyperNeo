@@ -52,8 +52,10 @@ export class ProcessingStateManager {
    * restart). (Codex P1.)
    */
   private idleCallbackInFlight = false;
-  /** Number of terminal setIdle transitions whose side effects have not settled. */
+  /** Number of terminal transitions whose side effects have not settled. */
   private terminalIdleTransitions = 0;
+  /** Pre-idle fences waiting to be consumed by their corresponding setIdle. */
+  private pendingTerminalIdleTransitions = 0;
 
   constructor(
     private sessionId: string,
@@ -154,11 +156,13 @@ export class ProcessingStateManager {
   }
 
   /**
-   * Persist turn-end markers without releasing the delivery jobs. Terminal query
-   * exceptions call this before awaited error publication; setIdle later performs
-   * the normal idempotent marker + waiter drain.
+   * Start a terminal-idle fence and persist turn-end markers without releasing
+   * delivery jobs. The corresponding setIdle consumes this fence after its side
+   * effects and waiter drain settle.
    */
-  markIdleWaitersEnded(): void {
+  beginTerminalIdle(): void {
+    this.terminalIdleTransitions += 1;
+    this.pendingTerminalIdleTransitions += 1;
     for (const waiter of this.idleWaiters.values()) waiter.fireEnd();
   }
 
@@ -252,7 +256,10 @@ export class ProcessingStateManager {
     // stop/start), suppress the drain too — the outer call owns it, deferred
     // until the restart completes so durable turn ownership survives the restart.
     const suppressDrain = opts?.suppressDeliveryWaiters || this.idleCallbackInFlight;
-    if (!suppressDrain) this.terminalIdleTransitions += 1;
+    if (!suppressDrain) {
+      if (this.pendingTerminalIdleTransitions > 0) this.pendingTerminalIdleTransitions -= 1;
+      else this.terminalIdleTransitions += 1;
+    }
     // Persist the waiter-owned turn-completion markers SYNCHRONOUSLY, BEFORE any
     // await (the idle DB persist + session.updated publish, the deferred-restart
     // callback). A crash after the idle-state DB write but during those awaited

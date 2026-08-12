@@ -85,6 +85,7 @@ describe('SDKMessageHandler', () => {
   let emitSpy: ReturnType<typeof mock>;
   let detectPhaseFromMessageSpy: ReturnType<typeof mock>;
   let setIdleSpy: ReturnType<typeof mock>;
+  let beginTerminalIdleSpy: ReturnType<typeof mock>;
   let setCompactingSpy: ReturnType<typeof mock>;
   let getContextInfoSpy: ReturnType<typeof mock>;
   let updateWithDetailedBreakdownSpy: ReturnType<typeof mock>;
@@ -160,11 +161,13 @@ describe('SDKMessageHandler', () => {
     // StateManager spies
     detectPhaseFromMessageSpy = mock(async () => {});
     setIdleSpy = mock(async () => {});
+    beginTerminalIdleSpy = mock(() => {});
     setCompactingSpy = mock(async () => {});
     getStateSpy = mock(() => ({ phase: 'idle' }));
     mockStateManager = {
       detectPhaseFromMessage: detectPhaseFromMessageSpy,
       setIdle: setIdleSpy,
+      beginTerminalIdle: beginTerminalIdleSpy,
       setCompacting: setCompactingSpy,
       getState: getStateSpy,
     } as unknown as ProcessingStateManager;
@@ -1875,6 +1878,45 @@ describe('SDKMessageHandler', () => {
         apiUsage: null,
       };
     }
+
+    it('starts the terminal fence before publishing a persisted result', async () => {
+      let resolvePublish!: () => void;
+      emitSpy.mockImplementation(
+        (_event: string) =>
+          new Promise<void>((resolve) => {
+            resolvePublish = resolve;
+          })
+      );
+      const resultMessage: SDKMessage = {
+        type: 'result',
+        subtype: 'error_during_execution',
+        uuid: 'result-fence-uuid',
+        usage: {
+          input_tokens: 0,
+          output_tokens: 0,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        total_cost_usd: 0,
+        modelUsage: {},
+        is_error: true,
+      } as unknown as SDKMessage;
+
+      const handling = handler.handleMessage(resultMessage);
+      for (
+        let attempt = 0;
+        attempt < 20 && beginTerminalIdleSpy.mock.calls.length === 0;
+        attempt += 1
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+      expect(beginTerminalIdleSpy).toHaveBeenCalledTimes(1);
+      expect(setIdleSpy).not.toHaveBeenCalled();
+
+      resolvePublish();
+      await handling;
+      expect(setIdleSpy).toHaveBeenCalled();
+    });
 
     it('refreshes context at turn end for any result message (success)', async () => {
       const getContextUsageSpy = mock(async () => makeSdkContextResponse());
