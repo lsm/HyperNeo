@@ -1756,12 +1756,16 @@ describe('AgentMessageRouter: generic address targets', () => {
     });
     const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
     const queuedAgents: string[] = [];
+    const queuedNodeIds: string[] = [];
     const router = makeRouter(ctx, workflowRunId, [], [makeChannel('Coding', 'Review')], {
       nodeGroups: { Coding: ['coder'], Review: ['reviewer'] },
       workflowNodeNameById: { 'node-coding': 'Coding', 'node-review': 'Review' },
       pendingMessageRepo,
       spaceId: ctx.spaceId,
-      onMessageQueued: (agentName) => queuedAgents.push(agentName),
+      onMessageQueued: (agentName, workflowNodeId) => {
+        queuedAgents.push(agentName);
+        queuedNodeIds.push(workflowNodeId ?? '');
+      },
     });
 
     const result = await router.deliverMessage({
@@ -1776,6 +1780,7 @@ describe('AgentMessageRouter: generic address targets', () => {
     // onMessageQueued now receives the BARE slot name (+ resolved node id) so the
     // activation callback can match declared agents; the compound is for reporting only.
     expect(queuedAgents).toEqual(['reviewer']);
+    expect(queuedNodeIds).toEqual(['node-review']);
     // The row stores the bare agent name pinned to the node id.
     const pending = pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer');
     expect(pending).toHaveLength(1);
