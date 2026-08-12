@@ -50,13 +50,17 @@ active_hits() { grep -hF "$2" "$1" 2>/dev/null | grep -cvE '^[[:space:]]*(#|//|/
 # missing, commented, or disabled (`if: false|never`). Lets the wiring checks
 # verify a matrix value actually reaches an enabled runner command.
 enabled_run_cmd() {
-	awk -v marker="$2" '
-		function emit() { if (runval != "" && index(runval, marker) > 0 && !disabled && !job_disabled && !done) { print runval; done=1 } }
+	awk -v marker="$2" -v job="$3" '
+		function emit() { if (runval != "" && index(runval, marker) > 0 && !disabled && !job_disabled && !done && curjob == job) { print runval; done=1 } }
 		# A job key (2-space indent under jobs:) starts a fresh job. Emit the
-		# PREVIOUS pending step FIRST (while its job_disabled still applies), then
-		# reset — otherwise a job-level if:false on a job whose last step is the
-		# runner is cleared before emit, so the runner wrongly counts as enabled.
-		/^[[:space:]]{2}[[:alnum:]_-]+:[[:space:]]*$/ { emit(); runval=""; disabled=0; incmd=0; job_disabled=0 }
+		# PREVIOUS pending step FIRST (while its job_disabled + curjob still apply),
+		# then reset and capture the new job name — so emit only fires for the
+		# TARGET job (a marker in an UNRELATED job can no longer mask the real
+		# runner being disabled/removed in its own job).
+		/^[[:space:]]{2}[[:alnum:]_-]+:[[:space:]]*$/ {
+			emit(); runval=""; disabled=0; incmd=0; job_disabled=0
+			curjob=$0; sub(/^[[:space:]]+/, "", curjob); sub(/:.*$/, "", curjob); next
+		}
 		# Step boundary: emit the PREVIOUS step now that ALL its properties — including
 		# a trailing `if: false` placed after `run:` — have been seen, then reset.
 		/^[[:space:]]*-[[:space:]]/ { emit(); runval=""; disabled=0; incmd=0 }
@@ -333,26 +337,27 @@ done
 # unit runner is missing, commented, or disabled (if:false), or no longer
 # forwards ${{ matrix.shard }}. (Replacing it with a fixed shard would run one
 # shard in every matrix job while this guard reported all as covered.)
-_unit_run=$(enabled_run_cmd "$REPO_ROOT/.github/workflows/main.yml" 'test-daemon.sh ${{ matrix.shard }}')
+_unit_run=$(enabled_run_cmd "$REPO_ROOT/.github/workflows/main.yml" 'test-daemon.sh ${{ matrix.shard }}' 'test-daemon-shared-unit')
 if [ -z "$_unit_run" ]; then
 	err "test-daemon-shared-unit runner is missing, commented, disabled, or does not forward \${{ matrix.shard }} — unit matrix values don't reach the runner"
 	echo "     → keep an active, enabled './scripts/test-daemon.sh \${{ matrix.shard }} ...' step" >&2
 else
 	# Inspect ONLY the args after `test-daemon.sh` (there is another
-	# ${{ matrix.shard }} earlier, inside the --report ...json name). After
-	# stripping the matrix token and options, any leftover token is a bare
-	# shard-name positional — test-daemon.sh's arg loop makes the LAST non-option
-	# the TARGET_SHARD, so it would override matrix.shard and run one shard in
-	# every job while this guard reports all as covered.
+	# ${{ matrix.shard }} earlier, inside the --report ...json name). Allowlist
+	# ONLY the execution-preserving --coverage flag: test-daemon.sh's other flags
+	# (--rerun/--verify/--show-failures) are MODE switches handled before
+	# RUN_SHARDS, so in a clean job --rerun/--verify exit 0 having run ZERO tests.
+	# A bare positional shard is also rejected (last non-option wins as
+	# TARGET_SHARD). After stripping the matrix token and --coverage, any leftover
+	# is a mode switch or extra shard and fails.
 	_tdargs=$(printf '%s' "$_unit_run" | awk '{ i=index($0,"test-daemon.sh"); print (i>0)? substr($0,i+14) : "" }')
 	_extra=$(printf '%s' "$_tdargs" \
 		| sed -E -e 's/\$\{\{[[:space:]]*matrix\.shard[[:space:]]*\}\}//g' \
-		         -e 's/--[[:alnum:]._-]+=[^[:space:]]+//g' \
-		         -e 's/--[[:alnum:]_-]+//g' \
+		         -e 's/--coverage//g' \
 		| tr -d "[:space:]'")
 	if [ -n "$_extra" ]; then
-		err "test-daemon-shared-unit runner passes an extra positional shard after \${{ matrix.shard }} — last non-option wins in test-daemon.sh, so one shard would run in every job while this guard reports all covered"
-		echo "     → keep \${{ matrix.shard }} as the only positional shard argument" >&2
+		err "test-daemon-shared-unit runner has a non-allowlisted arg after \${{ matrix.shard }} (only --coverage is permitted) — a mode flag (--rerun/--verify/--show-failures) would run zero tests, or a bare shard would override matrix.shard"
+		echo "     → keep the runner as 'test-daemon.sh \${{ matrix.shard }} [--coverage] only" >&2
 	fi
 fi
 
@@ -413,7 +418,7 @@ fi
 # and skips disabled/commented steps; we then require `vitest run` to be followed
 # by a flag (or the closing quote), not a positional path — a target on a folded
 # continuation line would otherwise evade an end-of-physical-line check.
-_web_cmd=$(enabled_run_cmd "$REPO_ROOT/.github/workflows/main.yml" 'cd packages/web && bunx vitest run')
+_web_cmd=$(enabled_run_cmd "$REPO_ROOT/.github/workflows/main.yml" 'cd packages/web && bunx vitest run' 'test-web')
 if [ -z "$_web_cmd" ]; then
 	err "test-web runner is missing, commented, or disabled (if: false|never) — web coverage assumption broken"
 	echo "     → keep an active, enabled 'cd packages/web && bunx vitest run' step" >&2
@@ -500,15 +505,28 @@ fi
 # (vitest.online.config.ts in main.yml; `bun test` in real-api — NOT the docs
 # `echo "Tests: …"` step), so a commented/disabled (if:false) runner, or one
 # swapped for a fixed target, fails.
-_online_main=$(enabled_run_cmd "$REPO_ROOT/.github/workflows/main.yml" 'vitest.online.config.ts')
+_online_main=$(enabled_run_cmd "$REPO_ROOT/.github/workflows/main.yml" 'vitest.online.config.ts' 'test-daemon-online')
 if [ -z "$_online_main" ] || ! printf '%s' "$_online_main" | grep -qF '${{ matrix.test_path }}'; then
 	err "main.yml online runner is missing, commented, disabled, or does not forward \${{ matrix.test_path }} — online matrix values don't reach the runner"
 	echo "     → keep an active, enabled 'vitest ... \${{ matrix.test_path }}' step" >&2
 fi
-_online_real=$(enabled_run_cmd "$REPO_ROOT/.github/workflows/real-api-tests.yml" 'bun test')
+_online_real=$(enabled_run_cmd "$REPO_ROOT/.github/workflows/real-api-tests.yml" 'bun test' 'daemon-real-api')
 if [ -z "$_online_real" ] || ! printf '%s' "$_online_real" | grep -qF '${{ matrix.test_path }}'; then
 	err "real-api-tests.yml online runner is missing, commented, disabled, or does not forward \${{ matrix.test_path }} — online matrix values don't reach the runner"
 	echo "     → keep an active, enabled 'bun test \${{ matrix.test_path }}' step" >&2
+else
+	# After `bun test`, only ${{ matrix.test_path }} may select. A selection flag
+	# like --only (test.only only) / --grep / --filter would run ZERO tests on a
+	# file of ordinary tests yet exit 0, so every paid real-API shard could
+	# silently run nothing while this guard reports its file covered.
+	_bextra=$(printf '%s' "$_online_real" \
+		| sed 's/.*bun test//' \
+		| sed -E -e 's/\$\{\{[[:space:]]*matrix\.test_path[[:space:]]*\}\}//g' \
+		| tr -d "[:space:]'")
+	if [ -n "$_bextra" ]; then
+		err "real-api-tests.yml runner has an extra arg after 'bun test \${{ matrix.test_path }}' — a selection flag like --only/--grep would run zero tests while this guard reports the file covered"
+		echo "     → keep the runner as 'bun test \${{ matrix.test_path }}' with no selection flag or extra positional" >&2
+	fi
 fi
 
 # Every online `module:` axis entry must have an include record with a non-empty
@@ -519,7 +537,13 @@ _axis_modules=$(awk '
 	/^  test-daemon-online:/ { injob=1 }
 	injob && /^[[:space:]]*module:[[:space:]]*$/ { inaxis=1; next }
 	injob && /^[[:space:]]*include:/ { inaxis=0 }
-	inaxis && !/^[[:space:]]*#/ && /^[[:space:]]+- [a-z][a-z0-9-]+[[:space:]]*$/ { sub(/^[[:space:]]+- /, ""); print }
+	# Accept an optional YAML quote around the axis value; strip non-token chars
+	# so a quoted entry with no include record is still seen by the orphan check
+	# rather than silently ignored.
+	inaxis && !/^[[:space:]]*#/ && /^[[:space:]]+- [^[:space:]#]/ {
+		v=$0; sub(/^[[:space:]]+- [[:space:]]*/, "", v); sub(/[[:space:]].*/, "", v); gsub(/[^a-z0-9-]/, "", v)
+		if (v ~ /^[a-z0-9][a-z0-9-]*$/) print v
+	}
 ' "$MAIN_WORKFLOW")
 # Build a module→value map (parses folded-scalar CONTENTS, not just the marker —
 # see module_values) so the orphan check can count ACTUAL values per module.
