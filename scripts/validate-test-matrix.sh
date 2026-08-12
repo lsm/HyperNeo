@@ -51,15 +51,29 @@ active_hits() { grep -hF "$2" "$1" 2>/dev/null | grep -cvE '^[[:space:]]*(#|//|/
 # verify a matrix value actually reaches an enabled runner command.
 enabled_run_cmd() {
 	awk -v marker="$2" '
-		function emit() { if (runval != "" && index(runval, marker) > 0 && !disabled && !done) { print runval; done=1 } }
+		function emit() { if (runval != "" && index(runval, marker) > 0 && !disabled && !job_disabled && !done) { print runval; done=1 } }
+		# A job key (2-space indent under jobs:) starts a fresh job; reset its condition.
+		/^[[:space:]]{2}[[:alnum:]_-]+:[[:space:]]*$/ { job_disabled=0 }
 		/^[[:space:]]*-[[:space:]]/ { emit(); runval=""; disabled=0; incmd=0 }
-		/if:[[:space:]]*(false|never)([[:space:]]|$)/ { disabled=1 }
+		# if:false|never disables a step (>= 6 indent) or the whole job (<= 4 indent).
+		/if:[[:space:]]*(false|never)([[:space:]]|$)/ { n=0; while (substr($0,n+1,1)==" ") n++; if (n <= 4) job_disabled=1; else disabled=1 }
 		/^[[:space:]]*#/ { next }
 		incmd { n=0; while (substr($0,n+1,1)==" ") n++; if (n > runindent) { runval=runval" "$0; next }; emit(); runval=""; incmd=0 }
 		/^[[:space:]]*run:[[:space:]]*[>|]/ { incmd=1; n=0; while (substr($0,n+1,1)==" ") n++; runindent=n; runval=$0; next }
 		/^[[:space:]]*run:[[:space:]]+/ { runval=$0; emit(); runval=""; incmd=0; next }
 		END { emit() }
 	' "$1"
+}
+
+# Count ACTIVE lines in workflow $1 that are a test_path VALUE for path $2 —
+# either a folded bare-path line (`  tests/online/...`) or a single-line
+# `test_path: tests/online/...`. Excludes a docs `echo tests/online/...` line
+# (which has `echo` before the path) and comments. Dots are escaped.
+test_path_value_hits() {
+	local re
+	re=$(printf '%s' "$2" | sed 's/[.]/\\&/g')
+	grep -hE "(^[[:space:]]*${re}([[:space:]]|$))|(test_path:[[:space:]]*${re}([[:space:]]|$))" "$1" 2>/dev/null \
+		| grep -cvE '^[[:space:]]*(#|//)'
 }
 
 # ===========================================================================
@@ -228,7 +242,10 @@ _web_cmd=$(enabled_run_cmd "$REPO_ROOT/.github/workflows/main.yml" 'cd packages/
 if [ -z "$_web_cmd" ]; then
 	err "test-web runner is missing, commented, or disabled (if: false|never) — web coverage assumption broken"
 	echo "     → keep an active, enabled 'cd packages/web && bunx vitest run' step" >&2
-elif printf '%s' "$_web_cmd" | grep -qE 'bunx vitest run[[:space:]]+[^-[:space:]]'; then
+elif printf '%s' "$_web_cmd" | sed 's/.*bunx vitest run//' | grep -qE 'src/|\.test\.|\.spec\.'; then
+	# A positional file/dir filter anywhere after `vitest run` (even after flags,
+	# e.g. `vitest run --coverage src/foo.test.ts`) would select a subset while the
+	# guard reports every src file as covered.
 	err "test-web runner passes a positional target to 'vitest run' — web coverage assumption broken (only some files would run)"
 	echo "     → keep 'vitest run' bare (flags only, no positional path)" >&2
 fi
@@ -374,24 +391,23 @@ check_workflow_references() {
 	local workflow=$2
 	shift 2
 	local expected=("$@")
+	local other_wf
+	if [ "$workflow" = "$MAIN_WORKFLOW" ]; then other_wf="$REAL_API_WORKFLOW"; else other_wf="$MAIN_WORKFLOW"; fi
 
 	for f in "${expected[@]}"; do
 		local test_path="tests/online/$module_name/$f"
-		# ACTIVE (non-commented) references only — a commented-out matrix entry
-		# or a header comment must not satisfy this check, or a disabled shard
-		# would still pass while its tests disappear from CI.
-		# Count ACTIVE (non-commented) references across BOTH workflows. A split
-		# file listed in its designated workflow AND echoed/added in the other
-		# would run twice (wasted CI / paid real-provider calls), so the count
-		# must be exactly one across the union.
-		local active
-		active=$(grep -hF "$test_path" "$MAIN_WORKFLOW" "$REAL_API_WORKFLOW" 2>/dev/null | grep -cvE '^[[:space:]]*#')
-		if [ "${active:-0}" -eq 0 ]; then
-			err "$test_path has no active reference in any CI workflow"
-			echo "     → add it to the active matrix in $workflow" >&2
-		elif [ "$active" -gt 1 ]; then
-			err "$test_path has $active active references across workflows — duplicate shard ownership"
-			echo "     → list it in exactly one matrix row in one workflow" >&2
+		# A split file must be a test_path VALUE in its DESIGNATED workflow, and
+		# NOT in the other (a docs echo mentioning the path doesn't count; a file
+		# moved to the other workflow is a missing owner here + a duplicate there).
+		local designated other
+		designated=$(test_path_value_hits "$workflow" "$test_path")
+		other=$(test_path_value_hits "$other_wf" "$test_path")
+		if [ "${designated:-0}" -eq 0 ]; then
+			err "$test_path is not a test_path value in its designated workflow $workflow"
+			echo "     → add it to a matrix row in $workflow" >&2
+		elif [ "${other:-0}" -gt 0 ]; then
+			err "$test_path is a test_path value in both $workflow and $other_wf — duplicate shard ownership"
+			echo "     → list it in exactly one workflow" >&2
 		fi
 	done
 }
