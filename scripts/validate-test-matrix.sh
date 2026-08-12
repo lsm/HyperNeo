@@ -34,6 +34,12 @@ err() {
 	ERRORS=$((ERRORS + 1))
 }
 
+# Count ACTIVE (non-commented) lines in file $1 containing the fixed string $2.
+# Config/workflow checks use this so a commented-out line can't satisfy them
+# (the raw `grep -qF` form matched header/comment lines). Filters both `#`
+# (YAML/JSON workflow files) and `//` (TS config files) line comments.
+active_hits() { grep -hF "$2" "$1" 2>/dev/null | grep -cvE '^[[:space:]]*(#|//)'; }
+
 # ===========================================================================
 # 1. DAEMON UNIT TESTS  (source of truth: scripts/test-daemon.sh)
 # ===========================================================================
@@ -55,17 +61,21 @@ SHARED_ROOT="$REPO_ROOT/packages/shared"
 # paths while this guard stays green.
 for _cfg in "$REPO_ROOT/packages/daemon/vitest.config.ts" "$REPO_ROOT/packages/shared/vitest.config.ts"; do
 	_cfg_pkg=$(basename "$(dirname "$_cfg")")
-	if ! grep -qF "include: ['tests/**/*.test.ts', 'tests/**/*_test.ts']" "$_cfg"; then
-		err "$_cfg_pkg/vitest.config.ts include is not ['tests/**/*.test.ts', 'tests/**/*_test.ts'] — unit shard paths could be filtered out"
+	if [ "$(active_hits "$_cfg" "include: ['tests/**/*.test.ts', 'tests/**/*_test.ts']")" -eq 0 ]; then
+		err "$_cfg_pkg/vitest.config.ts active include is not ['tests/**/*.test.ts', 'tests/**/*_test.ts'] — unit shard paths could be filtered out"
 		echo "     → keep the include broad, or update this validator" >&2
 	fi
-	# exclude must not drop a unit/shared test root (tests/unit/ or src/). The
-	# daemon config legitimately excludes tests/online/** (online has its own
-	# config), so that specific path is allowed.
-	_cfg_exclude=$(grep -E "^[[:space:]]*exclude:" "$_cfg" | head -n1)
-	if printf '%s' "$_cfg_exclude" | grep -qE 'tests/unit/|src/'; then
-		err "$_cfg_pkg/vitest.config.ts exclude references a unit/shared test path (tests/unit/ or src/) — tests could be skipped"
-		echo "     → remove the test-path exclusion" >&2
+	# Require the EXACT expected exclude (per package) — a substring check for
+	# tests/unit/|src/ misses a broad glob like tests/** that would filter every
+	# unit shard path. daemon legitimately excludes tests/online/** (separate
+	# online config).
+	case "$_cfg_pkg" in
+		daemon) _exp_exclude="exclude: ['node_modules', 'dist', 'tests/online/**']" ;;
+		shared) _exp_exclude="exclude: ['node_modules', 'dist']" ;;
+	esac
+	if [ "$(active_hits "$_cfg" "$_exp_exclude")" -eq 0 ]; then
+		err "$_cfg_pkg/vitest.config.ts active exclude is not the expected \"$_exp_exclude\" — a broad/changed glob could filter unit shard paths"
+		echo "     → keep the exclude to the expected set, or update this validator" >&2
 	fi
 done
 
@@ -126,6 +136,15 @@ for shard in "${SHARDS[@]}"; do
 	fi
 done
 
+# The matrix value must actually reach the runner: assert the test-daemon-shared-
+# unit job forwards ${{ matrix.shard }} to test-daemon.sh. Replacing it with a
+# fixed shard would run that one shard in every matrix job while this guard
+# still reported every shard's files as covered.
+if [ "$(active_hits "$REPO_ROOT/.github/workflows/main.yml" 'test-daemon.sh ${{ matrix.shard }}')" -eq 0 ]; then
+	err "test-daemon-shared-unit job does not forward \${{ matrix.shard }} to test-daemon.sh — unit matrix values don't reach the runner"
+	echo "     → keep './scripts/test-daemon.sh \${{ matrix.shard }} ...' in the unit job" >&2
+fi
+
 # Assert every unit/shared test file on disk is covered by exactly one shard.
 unit_disk=$(
 	find "$UNIT_ROOT" "$SHARED_ROOT" -type f \( -name '*.test.ts' -o -name '*_test.ts' \) |
@@ -159,14 +178,14 @@ WEB_CFG="$REPO_ROOT/packages/web/vitest.config.ts"
 # inserting .unit., restricting the suffix, …) is caught rather than silently
 # dropping files while this guard reports full coverage. A substring/fragment
 # check is not enough — only the exact glob is.
-if ! grep -qF 'src/**/*.{test,spec}.{ts,tsx}' "$WEB_CFG"; then
-	err "packages/web/vitest.config.ts include is not the full src/**/*.{test,spec}.{ts,tsx} glob — web tests may be orphaned"
+if [ "$(active_hits "$WEB_CFG" 'src/**/*.{test,spec}.{ts,tsx}')" -eq 0 ]; then
+	err "packages/web/vitest.config.ts active include is not the full src/**/*.{test,spec}.{ts,tsx} glob — web tests may be orphaned"
 	echo "     → restore the full include, or update this validator" >&2
 fi
 # test.exclude must stay node_modules/dist only — adding a src/ pattern there
 # would silently skip those tests while this guard still marks them covered.
-if ! grep -qF "exclude: ['node_modules', 'dist']" "$WEB_CFG"; then
-	err "packages/web/vitest.config.ts test exclude is not ['node_modules', 'dist'] — src test files could be excluded"
+if [ "$(active_hits "$WEB_CFG" "exclude: ['node_modules', 'dist']")" -eq 0 ]; then
+	err "packages/web/vitest.config.ts active test exclude is not ['node_modules', 'dist'] — src test files could be excluded"
 	echo "     → keep test.exclude to node_modules/dist, or update this validator" >&2
 fi
 # The web coverage assumes the test-web CI job runs a bare `vitest run` (no
@@ -225,18 +244,28 @@ REAL_API_WORKFLOW=".github/workflows/real-api-tests.yml"
 # doesn't drop tests/online/, or matrix paths could be filtered out while this
 # guard (which only checks the matrix) stays green.
 ONLINE_CFG="$REPO_ROOT/packages/daemon/vitest.online.config.ts"
-if ! grep -qF "include: ['tests/online/**/*.test.ts']" "$ONLINE_CFG"; then
-	err "packages/daemon/vitest.online.config.ts include is not tests/online/**/*.test.ts — online matrix paths could be filtered out"
+if [ "$(active_hits "$ONLINE_CFG" "include: ['tests/online/**/*.test.ts']")" -eq 0 ]; then
+	err "packages/daemon/vitest.online.config.ts active include is not tests/online/**/*.test.ts — online matrix paths could be filtered out"
 	echo "     → keep the include broad, or update this validator" >&2
 fi
 # Require the exact exclude — a substring check for "tests/online/" misses a
 # broad glob (e.g. tests/** or **/legacy/**) that would silently exclude online
 # tests. node_modules/dist/tests/unit/** is the expected set (tests/unit/** keeps
 # the online config from picking up unit suites).
-if ! grep -qF "exclude: ['node_modules', 'dist', 'tests/unit/**']" "$ONLINE_CFG"; then
-	err "packages/daemon/vitest.online.config.ts exclude is not ['node_modules','dist','tests/unit/**'] — a broad/changed glob could exclude online tests"
+if [ "$(active_hits "$ONLINE_CFG" "exclude: ['node_modules', 'dist', 'tests/unit/**']")" -eq 0 ]; then
+	err "packages/daemon/vitest.online.config.ts active exclude is not ['node_modules','dist','tests/unit/**'] — a broad/changed glob could exclude online tests"
 	echo "     → keep the exclude to node_modules/dist/tests/unit/**, or update this validator" >&2
 fi
+
+# Online matrix test_path values must reach the runner commands. Assert both
+# online jobs forward ${{ matrix.test_path }} (a fixed target would skip the
+# other files while this guard still reports them covered).
+for _wf in "$REPO_ROOT/.github/workflows/main.yml" "$REPO_ROOT/.github/workflows/real-api-tests.yml"; do
+	if [ "$(active_hits "$_wf" '${{ matrix.test_path }}')" -eq 0 ]; then
+		err "$(basename "$_wf") online job does not forward \${{ matrix.test_path }} — online matrix values don't reach the runner"
+		echo "     → keep '\${{ matrix.test_path }}' in the online run command" >&2
+	fi
+done
 
 RPC_FILES=(
 	rpc-agent-handlers.test.ts
@@ -415,19 +444,33 @@ for dir in "$ONLINE_DIR"/*/; do
 	fi
 	# No directory-level reference: each file needs its own active reference,
 	# so a single-file module (e.g. agent) can't hide an uncovered sibling.
+	# Match the module-RELATIVE path (not basename): a nested file whose basename
+	# collides with a root-level entry (agent/nested/x.test.ts vs agent/x.test.ts)
+	# must not be treated as the root file.
 	while IFS= read -r f; do
-		fname=$(basename "$f")
-		file_refs=$(grep -hF "tests/online/$dirname/$fname" "$MAIN_WORKFLOW" "$REAL_API_WORKFLOW" 2>/dev/null \
+		# $dir ends in '/' (from the */ glob) — normalize so the prefix strip
+		# yields the module-relative path (e.g. nested/x.test.ts), not the full path.
+		rel="${f#"${dir%/}"/}"
+		file_refs=$(grep -hF "tests/online/$dirname/$rel" "$MAIN_WORKFLOW" "$REAL_API_WORKFLOW" 2>/dev/null \
 			| grep -cvE '^[[:space:]]*#')
 		if [ "${file_refs:-0}" -eq 0 ]; then
-			err "online test not covered by any active CI shard: tests/online/$dirname/$fname"
+			err "online test not covered by any active CI shard: tests/online/$dirname/$rel"
 			echo "     → add it to a matrix in $MAIN_WORKFLOW (or to EXEMPT_DIRS if the module is disabled)" >&2
 		elif [ "$file_refs" -gt 1 ]; then
-			err "tests/online/$dirname/$fname has $file_refs active references — duplicate shard ownership"
+			err "tests/online/$dirname/$rel has $file_refs active references — duplicate shard ownership"
 			echo "     → list it in exactly one matrix row" >&2
 		fi
 	done < <(find "$dir" -name "*.test.ts" -type f | sort)
 done
+
+# A test file placed directly under tests/online/ (not in a module subdir) is
+# owned by no matrix row — every matrix test_path is tests/online/<module>/…, so
+# a root-level file would never run while this guard (which only walks subdirs
+# above) stays silent. Flag any.
+while IFS= read -r f; do
+	err "online test file directly under tests/online/ (no module dir owns it): ${f#"$REPO_ROOT"/}"
+	echo "     → move it under a module dir that has a CI matrix shard" >&2
+done < <(find "$ONLINE_DIR" -maxdepth 1 -name "*.test.ts" -type f | sort)
 
 # ===========================================================================
 # Result
