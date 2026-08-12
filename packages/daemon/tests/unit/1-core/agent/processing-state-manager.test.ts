@@ -418,6 +418,20 @@ describe('ProcessingStateManager', () => {
       expect(waiterResolved).toBe(true); // drained after the callback completed
     });
 
+    test('a reentrant terminal idle consumes its fence without draining early', async () => {
+      let terminalInFlightAfterReentrantIdle = false;
+      manager.setOnIdleCallback(async () => {
+        manager.beginTerminalIdle();
+        await manager.setIdle();
+        terminalInFlightAfterReentrantIdle = manager.isTerminalIdleInFlight();
+      });
+
+      await manager.setIdle();
+
+      expect(terminalInFlightAfterReentrantIdle).toBe(true); // outer transition still owns the drain
+      expect(manager.isTerminalIdleInFlight()).toBe(false); // both transitions settled
+    });
+
     test('a reentrant setIdle during the callback does not re-fire it or drain early', async () => {
       // The callback's restart drives its own idle (reentrant setIdle). The guard
       // must prevent a double restart AND keep the drain deferred to the outer

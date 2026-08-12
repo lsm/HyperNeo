@@ -256,9 +256,12 @@ export class ProcessingStateManager {
     // stop/start), suppress the drain too — the outer call owns it, deferred
     // until the restart completes so durable turn ownership survives the restart.
     const suppressDrain = opts?.suppressDeliveryWaiters || this.idleCallbackInFlight;
-    if (!suppressDrain) {
-      if (this.pendingTerminalIdleTransitions > 0) this.pendingTerminalIdleTransitions -= 1;
-      else this.terminalIdleTransitions += 1;
+    const consumesTerminalFence = this.pendingTerminalIdleTransitions > 0;
+    const ownsTerminalTransition = !suppressDrain || consumesTerminalFence;
+    if (consumesTerminalFence) {
+      this.pendingTerminalIdleTransitions -= 1;
+    } else if (!suppressDrain) {
+      this.terminalIdleTransitions += 1;
     }
     // Persist the waiter-owned turn-completion markers SYNCHRONOUSLY, BEFORE any
     // await (the idle DB persist + session.updated publish, the deferred-restart
@@ -301,6 +304,8 @@ export class ProcessingStateManager {
         const waiters = [...this.idleWaiters.values()];
         this.idleWaiters.clear();
         for (const w of waiters) w.endOnce();
+      }
+      if (ownsTerminalTransition) {
         this.terminalIdleTransitions -= 1;
       }
     }

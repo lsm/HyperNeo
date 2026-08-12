@@ -1988,12 +1988,12 @@ export class AgentSession
         // records nothing). See Codex (PR #2463, P2).
         () => {
           try {
-            // Fence with THIS handler's claim: a stale predecessor resumed after
-            // its job was reclaimed must NOT persist a marker for the replacement
-            // turn. isProcessingDelivery alone checks "a delivery is processing",
-            // not "this claim owns it"; claimGuard closes that race. See Codex
-            // (PR #2463, P2).
-            if (claimGuard && !claimGuard()) return;
+            // Scope completion to the durable delivery UUID, not this transient
+            // claim. A lease handoff can invalidate the predecessor claim before a
+            // result-less terminal idle fires; that genuine completion still belongs
+            // to the same consumed message and must survive until the replacement
+            // handler observes it. The processing+UUID+consumed checks below prevent
+            // an old waiter from marking a different or already-settled turn.
             const repo = this.db.getSDKMessageRepo();
             const jobQueue = this.db.getJobQueueRepo?.();
             if (!repo || !jobQueue) return;
