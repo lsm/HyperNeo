@@ -107,7 +107,7 @@ export interface AgentMessageRouterConfig {
    *
    * Fires only for non-deduped enqueues (deduped = message already in queue).
    */
-  onMessageQueued?: (agentName: string) => void;
+  onMessageQueued?: (agentName: string, workflowNodeId?: string) => void;
   /**
    * Optional lookup callback for reply-to-session routing.
    * When a node agent sends to `space-agent`, this callback is invoked to
@@ -556,7 +556,9 @@ export class AgentMessageRouter {
             maxAttempts: 3,
           });
           queued.push({ agentName: queueTargetName, messageId: record.id });
-          if (!deduped) onMessageQueued?.(queueTargetName);
+          // The activation callback consumes bare slot names (and the resolved
+          // node id) — not the compound — so pass the bare agent + node id here.
+          if (!deduped) onMessageQueued?.(agentName, queueWorkflowNodeId);
         }
         notFound.push(agentName);
         continue;

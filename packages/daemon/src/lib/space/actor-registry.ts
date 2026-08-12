@@ -87,7 +87,8 @@ export class SpaceActorRegistryAdapter {
         spaceId,
         row.workflowRunId,
         row.targetAgentName,
-        workflow
+        workflow,
+        row.workflowNodeId
       )) {
         this.add(actors, worker);
       }
@@ -257,11 +258,17 @@ function pendingWorkerActors(
   spaceId: string,
   workflowRunId: string,
   targetAgentName: string,
-  workflow: SpaceWorkflow | null
+  workflow: SpaceWorkflow | null,
+  workflowNodeId?: string | null
 ): ActorRef[] {
-  const nodes =
+  let nodes =
     workflow?.nodes.filter((node) => node.agents.some((agent) => agent.name === targetAgentName)) ??
     [];
+  // Scope to the pinned node when the queued row carries one, so two nodes
+  // reusing a slot don't both project through the first one.
+  if (workflowNodeId) {
+    nodes = nodes.filter((node) => node.id === workflowNodeId);
+  }
   if (nodes.length === 0) return [];
 
   const node = nodes[0];

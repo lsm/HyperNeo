@@ -5299,8 +5299,15 @@ export class TaskAgentManager {
       //      workflow node stranded in `pending` state would otherwise queue
       //      forever. `activateNode` is idempotent so this is safe regardless
       //      of the existing row's status.
-      onMessageQueued: (targetAgentName) => {
-        void this.tryResumeNodeAgentSession(workflowRunId, targetAgentName).catch((err) => {
+      onMessageQueued: (targetAgentName, queuedWorkflowNodeId) => {
+        // The router now passes the BARE slot name (+ resolved node id); the
+        // compound form never matched a declared agent, so lazy activation was a
+        // no-op for @worker queues before.
+        void this.tryResumeNodeAgentSession(
+          workflowRunId,
+          targetAgentName,
+          queuedWorkflowNodeId
+        ).catch((err) => {
           log.warn(
             `AgentMessageRouter.onMessageQueued: tryResumeNodeAgentSession failed for "${targetAgentName}": ${err instanceof Error ? err.message : String(err)}`
           );
@@ -5313,6 +5320,7 @@ export class TaskAgentManager {
           void this.ensureWorkflowNodeActivationForAgent(taskId, targetAgentName, {
             reopenReason: `node-agent send_message to lazily activate "${targetAgentName}"`,
             reopenBy: `agent:${agentName}`,
+            workflowNodeId: queuedWorkflowNodeId,
           }).catch((err) => {
             log.warn(
               `AgentMessageRouter.onMessageQueued: ensureWorkflowNodeActivationForAgent failed for "${targetAgentName}": ${err instanceof Error ? err.message : String(err)}`

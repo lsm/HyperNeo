@@ -1774,7 +1774,9 @@ describe('AgentMessageRouter: generic address targets', () => {
     expect(result.success).toBe(false);
     expect(result.queued).toHaveLength(1);
     // onMessageQueued still receives the compound form (activation callback).
-    expect(queuedAgents).toEqual(['Review/reviewer']);
+    // onMessageQueued now receives the BARE slot name (+ resolved node id) so the
+    // activation callback can match declared agents; the compound is for reporting only.
+    expect(queuedAgents).toEqual(['reviewer']);
     // The row stores the bare agent name pinned to the node id.
     const pending = pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer');
     expect(pending).toHaveLength(1);
