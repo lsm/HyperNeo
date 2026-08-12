@@ -107,7 +107,12 @@ marker_executed() {
 # bypasses marker_executed (the marker is outside single quotes).
 runner_is_data_cmd() {
 	local tok
-	tok=$(printf '%s' "$1" | sed -E 's/^[[:space:]]*run:[[:space:]]*//' | sed -E 's/^([>|]-)[[:space:]]*//' | sed -E "s/^[\"']//" | awk '{print $1}')
+	tok=$(printf '%s' "$1" \
+		| sed -E 's/^[[:space:]]*run:[[:space:]]*//' \
+		| sed -E 's/^([>|]-)[[:space:]]*//' \
+		| sed -E "s/^[\"']//" \
+		| sed -E 's/.* -- //' \
+		| awk '{print $1}')
 	case "$tok" in echo|printf|cat|true|false|:) return 0 ;; *) return 1 ;; esac
 }
 
@@ -822,6 +827,28 @@ if [ -n "$_dup_axis" ]; then
 	done <<< "$_dup_axis"
 fi
 
+# test-daemon-online's matrix must have ONLY the `module:` axis (+ include/
+# exclude). A sibling axis (e.g. replica: [a,b]) takes the Cartesian product,
+# running every mocked-online shard once per value (duplicate runs + concurrent
+# duplicate Coveralls uploads).
+_online_sibling_axes=$(awk '
+	$0 ~ "^  test-daemon-online:" { injob=1; next }
+	injob && /^  [a-z]/ { injob=0; inmatrix=0; next }
+	!injob { next }
+	/^[[:space:]]{6}matrix:[[:space:]]*$/ { inmatrix=1; next }
+	/^[[:space:]]{0,6}[a-z]/ { inmatrix=0 }
+	inmatrix && /^[[:space:]]{8}[a-z][a-z0-9_-]*:/ && $0 !~ /^[[:space:]]{8}(module|include|exclude):/ {
+		s=$0; sub(/^[[:space:]]+/, "", s); sub(/:.*/, "", s); print s
+	}
+' "$MAIN_WORKFLOW")
+if [ -n "$_online_sibling_axes" ]; then
+	while IFS= read -r _ax; do
+		[ -n "$_ax" ] || continue
+		err "test-daemon-online matrix has an extra axis '$_ax:' — GitHub takes the Cartesian product, so every online shard runs once per value (duplicate runs)"
+		echo "     → remove the '$_ax:' axis" >&2
+	done <<< "$_online_sibling_axes"
+fi
+
 # Every active `include:` module must ALSO be in the `module:` axis. GitHub
 # treats an include row whose module is NOT in the axis as an ADDITIONAL
 # combination (it cannot augment any existing axis entry), so it silently
@@ -888,6 +915,13 @@ while IFS= read -r _tp; do
 		err "online test_path value '$_tp' does not exist on disk — CI would run zero files for that shard"
 		echo "     → fix the path, or remove the matrix row" >&2
 	elif [ -d "$_full" ]; then
+		case "$_tp" in
+			tests/online/*) ;;
+			*)
+				err "online test_path directory '$_tp' is not under tests/online/ — CI could run a non-online suite (e.g. tests/unit)"
+				echo "     → point test_path at a directory under tests/online/" >&2
+				;;
+		esac
 		# Directory-level test_path: Vitest auto-discovers test files under it, so
 		# the directory must contain at least one — otherwise the filter matches
 		# nothing and `bun test`/`vitest` exits 0 having run ZERO tests (a hole the
