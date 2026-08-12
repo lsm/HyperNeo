@@ -331,6 +331,29 @@ if [ -z "$_online_real" ] || ! printf '%s' "$_online_real" | grep -qF '${{ matri
 	echo "     → keep an active, enabled 'bun test \${{ matrix.test_path }}' step" >&2
 fi
 
+# Every online `module:` axis entry must have an include record with a non-empty
+# test_path. An axis module with no include gets an EMPTY ${{ matrix.test_path }},
+# so the runner becomes an UNFILTERED vitest/bun run that executes the ENTIRE
+# online suite (duplicates tests across jobs, reaches intentionally-exempt dirs).
+_axis_modules=$(awk '
+	/^  test-daemon-online:/ { injob=1 }
+	injob && /^[[:space:]]*module:[[:space:]]*$/ { inaxis=1; next }
+	injob && /^[[:space:]]*include:/ { inaxis=0 }
+	inaxis && !/^[[:space:]]*#/ && /^[[:space:]]+- [a-z][a-z0-9-]+[[:space:]]*$/ { sub(/^[[:space:]]+- /, ""); print }
+' "$MAIN_WORKFLOW")
+_include_map=$(awk '
+	/^[[:space:]]*#/ { next }
+	/^[[:space:]]+- module:[[:space:]]*[a-z0-9-]+/ { sub(/^[[:space:]]+- module:[[:space:]]*/, ""); sub(/[[:space:]]*$/, ""); mod=$0 }
+	mod && /test_path:[[:space:]]*[^[:space:]]/ { sub(/.*test_path:[[:space:]]*/, ""); sub(/[[:space:]]*$/, ""); print mod "\t" $0; mod="" }
+' "$MAIN_WORKFLOW")
+for _m in $_axis_modules; do
+	_path=$(printf '%s\n' "$_include_map" | awk -F'\t' -v m="$_m" '$1 == m { print $2; exit }')
+	if [ -z "$_path" ]; then
+		err "online matrix module '$_m' has no include record with a non-empty test_path — \${{ matrix.test_path }} would be empty → unfiltered run of the entire online suite"
+		echo "     → add an include: entry for '$_m' with a test_path, or drop it from the module axis" >&2
+	fi
+done
+
 RPC_FILES=(
 	rpc-agent-handlers.test.ts
 	rpc-config-handlers.test.ts
@@ -462,7 +485,7 @@ check_split_module() {
 			err "$file is not in any CI matrix shard for '$module_name'"
 			echo "     → add it to the appropriate matrix in $workflow" >&2
 		fi
-	done < <(find "$dir" -name "*.test.ts" -type f | sort)
+	done < <(find "$dir" \( -name "*.test.ts" -o -name "*_test.ts" \) -type f | sort)
 
 	# No expected file may be missing from disk (stale reference).
 	for f in "${expected[@]}"; do
@@ -533,7 +556,7 @@ for dir in "$ONLINE_DIR"/*/; do
 				err "tests/online/$dirname/$rel is covered by both a directory-level row and a file-level row — duplicate shard ownership"
 				echo "     → remove the file-level row (the directory-level row already covers it)" >&2
 			fi
-		done < <(find "$dir" -name "*.test.ts" -type f | sort)
+		done < <(find "$dir" \( -name "*.test.ts" -o -name "*_test.ts" \) -type f | sort)
 		continue
 	fi
 	# No directory-level reference: each file needs its own active reference,
@@ -555,7 +578,7 @@ for dir in "$ONLINE_DIR"/*/; do
 			err "tests/online/$dirname/$rel has $file_refs active references — duplicate shard ownership"
 			echo "     → list it in exactly one matrix row" >&2
 		fi
-	done < <(find "$dir" -name "*.test.ts" -type f | sort)
+	done < <(find "$dir" \( -name "*.test.ts" -o -name "*_test.ts" \) -type f | sort)
 done
 
 # A test file placed directly under tests/online/ (not in a module subdir) is
@@ -565,7 +588,7 @@ done
 while IFS= read -r f; do
 	err "online test file directly under tests/online/ (no module dir owns it): ${f#"$REPO_ROOT"/}"
 	echo "     → move it under a module dir that has a CI matrix shard" >&2
-done < <(find "$ONLINE_DIR" -maxdepth 1 -name "*.test.ts" -type f | sort)
+done < <(find "$ONLINE_DIR" -maxdepth 1 \( -name "*.test.ts" -o -name "*_test.ts" \) -type f | sort)
 
 # ===========================================================================
 # Result
