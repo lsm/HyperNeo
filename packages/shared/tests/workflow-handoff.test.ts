@@ -25,7 +25,7 @@ describe('resolveHandoffTransition', () => {
   });
 
   test('resolves an exact named target to its transition', () => {
-    const t = transition({ id: 'to-review', target: 'Review', gateId: 'g1' });
+    const t = transition({ id: 'to-review', target: 'Review', hookId: 'h1' });
     const result = resolveHandoffTransition([t], 'Review');
     expect(result).toEqual({ ok: true, transition: t });
   });
@@ -59,7 +59,7 @@ describe('resolveHandoffTransition', () => {
     // validated workflow never reaches this branch; the resolver stays
     // defensive for hand-built (unvalidated) transition lists.
     const a = transition({ id: 'a', target: 'Review' });
-    const b = transition({ id: 'b', target: 'Review', gateId: 'g1' });
+    const b = transition({ id: 'b', target: 'Review', hookId: 'h1' });
     expect(resolveHandoffTransition([a, b], 'Review')).toEqual({ ok: false, reason: 'ambiguous' });
   });
 

@@ -13,7 +13,6 @@ import { GoalAutomationService } from '../../../../src/lib/space/goals/goal-auto
 import { ScheduleService } from '../../../../src/lib/space/schedule/schedule-service';
 import { getLongHorizonAgentTemplate } from '../../../../src/lib/space/agents/long-horizon-agent-templates';
 import { syncGoalAutomationSelfNagScheduleForScope } from '../../../../src/lib/rpc-handlers';
-import { GateOpenStateRepository } from '../../../../src/storage/repositories/gate-open-state-repository';
 import { GoalAutomationCursorRepository } from '../../../../src/storage/repositories/goal-automation-cursor-repository';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { EvolutionRepository } from '../../../../src/storage/repositories/evolution-repository';
@@ -81,10 +80,7 @@ describe('long-horizon agent lifecycle integration', () => {
     spaceRepo = new SpaceRepository(db as never);
     taskRepo = new SpaceTaskRepository(db as never);
     workflowRepo = new SpaceWorkflowRepository(db as never);
-    workflowRunRepo = new SpaceWorkflowRunRepository(
-      db as never,
-      new GateOpenStateRepository(db as never)
-    );
+    workflowRunRepo = new SpaceWorkflowRunRepository(db as never);
     spaceId = spaceRepo.createSpace({
       workspacePath: '/workspace/long-horizon-agent-lifecycle',
       slug: 'long-horizon-agent-lifecycle',

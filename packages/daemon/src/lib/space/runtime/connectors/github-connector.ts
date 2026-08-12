@@ -387,11 +387,9 @@ function makeGetCodexApprovalOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
     // → COMMENTED still rejects (the changes request stands until a later
     // APPROVED supersedes it). Mirrors the repo's hasOutstandingChangesRequest.
     //
-    // This is STRICTER than the legacy codex gate, which accepted a +1 reaction
-    // or a bot comment whose body contained the head SHA (the migrated hooks in
-    // workflow-migration.ts still generate those matchers for existing spaces).
-    // It presumes the configured Codex posts a formal APPROVED review; the gate
-    // has no timeout, so a Codex that only +1s or comments would leave the
+    // This is STRICTER than a legacy +1-reaction check: it presumes the
+    // configured Codex posts a formal APPROVED review; the validator has no
+    // timeout, so a Codex that only +1s or comments would leave the
     // handoff in retryable_block (fail-safe — never wrongly opens, but never
     // proceeds). Operators whose Codex behaves that way should not enable it.
     const codexHeadReviews = reviews.filter((r) => isCodexBot(r.login) && r.commitId === headSha);

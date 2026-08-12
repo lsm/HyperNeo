@@ -9,7 +9,19 @@
  * order of migrations.
  */
 
+import {
+  type ArtifactShape,
+  deriveArtifactKey,
+  isArtifactShape,
+  normalizeLinkData,
+  resolveLegacyShape,
+} from '@hyperneo/shared';
+import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
+import { migrateLegacyLongHorizonAgentData } from '../../lib/space/agents/legacy-long-horizon-migration';
+import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug';
 import type { Database as BunDatabase } from '../sqlite-compat';
+import { createEvolutionTables } from './evolution';
+import { createLongHorizonAgentTables } from './long-horizon-agents';
 import { runMigration94 as runMigration94External } from './m94-backfill-workflow-templates';
 import { runMigration106 as runMigration106External } from './m106-backfill-agent-templates';
 import { runMigration170 as runMigration170External } from './m170-backfill-missing-preset-agents';
@@ -17,18 +29,6 @@ import { runMigration171 } from './m171-backfill-post-approval-review-channels';
 import { runMigration172 as runMigration172External } from './m172-backfill-orphaned-preset-agents';
 import { runMigration184 as runMigration184External } from './m184-backfill-reviewer-bash-tools';
 import { runMigration185 as runMigration185External } from './m185-workflow-event-subscriptions';
-import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug';
-import {
-  deriveArtifactKey,
-  isArtifactShape,
-  normalizeLinkData,
-  resolveLegacyShape,
-  type ArtifactShape,
-} from '@hyperneo/shared';
-import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
-import { createEvolutionTables } from './evolution';
-import { createLongHorizonAgentTables } from './long-horizon-agents';
-import { migrateLegacyLongHorizonAgentData } from '../../lib/space/agents/legacy-long-horizon-migration';
 
 /**
  * Run all database migrations
@@ -974,11 +974,18 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // Mirrored in the fresh-DB schema (index.ts). See Codex (PR #2463, P2).
   run(migrationMarkerKey(189), () => runMigration189(db));
 
-  // Migration 190: Per-handoff-transition cycle counters (task #923 runtime
+  // Migration 190: Remove the legacy workflow gate subsystem — drop the
+  // `gate_data` and `gate_open_state` tables and the `gates` column from
+  // `space_workflows`. Workflow progression is now enforced by MCP action hooks;
+  // gate storage is obsolete. Idempotent via existence guards. Renumbered from
+  // 187 (dev shipped M187–M189 for message-delivery-v2, #862).
+  run(migrationMarkerKey(190), () => runMigration190(db));
+
+  // Migration 191: Per-handoff-transition cycle counters (task #923 runtime
   //   handoff). Backs HandoffTransition.maxCycles enforcement; mirrors channel
   //   cycle tracking (migration 69) keyed by (run_id, transition_key).
-  //   Renumbered 187→190: dev shipped M187/M188/M189 for delivery (#2463).
-  run(migrationMarkerKey(190), () => runMigration190(db));
+  //   Renumbered 190→191: dev shipped M190 to remove the legacy gate subsystem.
+  run(migrationMarkerKey(191), () => runMigration191(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -8270,9 +8277,7 @@ export function runMigration108(db: BunDatabase): void {
           }
         }
         if (mutated) update.run(JSON.stringify(config), row.id);
-      } catch {
-        continue;
-      }
+      } catch {}
     }
   }
 }
@@ -10860,7 +10865,7 @@ function migrateNeoMessageOrigins(db: BunDatabase): void {
  */
 function generateValidHandle(name: string, existingHandles: string[]): string {
   const maxLen = 60;
-  let base = slugify(name, existingHandles);
+  const base = slugify(name, existingHandles);
   // If the initial slugify result is already valid, we're done.
   if (validateSlug(base) === null) return base;
 
@@ -12353,7 +12358,26 @@ export function runMigration189(db: BunDatabase): void {
 }
 
 /**
- * Migration 190: Per-handoff-transition cycle tracking.
+ * Migration 190: Remove the legacy workflow gate subsystem.
+ *
+ * Workflow progression is enforced by MCP action hooks; gate entities, gate
+ * data, and gate-open caching are obsolete. This drops:
+ *   - `gate_data` table (per-run gate runtime data)
+ *   - `gate_open_state` table (persisted gate-open cache)
+ *   - `space_workflows.gates` column (JSON gate definitions)
+ *
+ * Idempotent via existence guards (DROP TABLE IF EXISTS / column check).
+ */
+export function runMigration190(db: BunDatabase): void {
+  db.exec(`DROP TABLE IF EXISTS gate_open_state`);
+  db.exec(`DROP TABLE IF EXISTS gate_data`);
+  if (tableHasColumn(db, 'space_workflows', 'gates')) {
+    db.exec(`ALTER TABLE space_workflows DROP COLUMN gates`);
+  }
+}
+
+/**
+ * Migration 191: Per-handoff-transition cycle tracking.
  *
  * Creates a `handoff_cycles` table that tracks how many times each cyclic
  * handoff transition (see `HandoffTransition.maxCycles`) has been taken in a
@@ -12361,10 +12385,10 @@ export function runMigration189(db: BunDatabase): void {
  * `(run_id, transition_key)` since transition ids are unique within a node, not
  * globally — the runtime composes a stable composite key per transition
  * occurrence. Idempotent (`tableExists` guard); new databases get the same table
- * from `runMigrations` like `channel_cycles`. Renumbered 187→190: dev shipped
- * M187/M188/M189 for delivery (PR #2463).
+ * from `runMigrations` like `channel_cycles`. Renumbered 190→191: dev shipped
+ * M190 to remove the legacy gate subsystem.
  */
-export function runMigration190(db: BunDatabase): void {
+export function runMigration191(db: BunDatabase): void {
   if (!tableExists(db, 'space_workflow_runs')) return;
   if (tableExists(db, 'handoff_cycles')) return;
 

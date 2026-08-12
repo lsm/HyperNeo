@@ -51,18 +51,13 @@ import {
   resolveHandoffTransition,
   resolveNodeAgents,
 } from '@hyperneo/shared';
-import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { HandoffCycleRepository } from '../../../storage/repositories/handoff-cycle-repository';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import { Logger } from '../../logger';
-import { normalizeAgentNameToken } from '../agent-handle';
 import { formatAgentMessage } from '../agent-message-envelope';
 import { ChannelResolver } from './channel-resolver';
-import { evaluateGate, type GateScriptExecutorFn } from './gate-evaluator';
-import { getEffectiveGate } from './gate-features';
-import type { GateScriptContext } from './gate-script-executor';
 import type { HookExecutor, HookExecutorContext } from './hook-executor';
 
 const log = new Logger('handoff-executor');
@@ -103,14 +98,6 @@ class HandoffExecutionError extends Error {
 
 export type HandoffExecutionStatus = 'delivered' | 'queued' | 'blocked' | 'failed';
 
-export interface HandoffGateOutcome {
-  gateId: string;
-  open: boolean;
-  reason?: string;
-  rateLimited?: boolean;
-  retryAfterMs?: number;
-}
-
 export interface HandoffHookOutcome {
   hookId: string;
   result: WorkflowHookResult;
@@ -130,22 +117,17 @@ export interface HandoffExecutionResult {
   reason?: string;
   /** Stage that produced the outcome. */
   stage?: HandoffStage;
-  /** Gate outcome when a transition gate was committed/evaluated. */
-  gate?: HandoffGateOutcome;
   /** Hook outcome when a transition validator ran. */
   hook?: HandoffHookOutcome;
-  /** True when blocked by an upstream rate-limit (defer retry past retryAfterMs). */
-  rateLimited?: boolean;
+  /** Suggested backoff when blocked by a retryable hook (retryable_block). */
   retryAfterMs?: number;
 }
 
 export interface HandoffExecutorConfig {
   /** Run-state validation. */
   workflowRunRepo: SpaceWorkflowRunRepository;
-  /** The workflow definition for this run (nodes/gates/hooks/channels/transitions). */
+  /** The workflow definition for this run (nodes/hooks/channels/transitions). */
   workflow: SpaceWorkflow;
-  /** Gate data store (commit declared gate fields). */
-  gateDataRepo: GateDataRepository;
   /** Per-transition cycle counters (enforce cyclic maxCycles). */
   handoffCycleRepo: HandoffCycleRepository;
   /** Node execution rows (target session discovery). */
@@ -164,22 +146,6 @@ export interface HandoffExecutorConfig {
 
   /** Hook validator engine. Required for transitions that bind a hookId. */
   hookExecutor?: HookExecutor;
-  /** Gate script executor + context (for scripted gates), mirroring send_message. */
-  scriptExecutor?: GateScriptExecutorFn;
-  scriptContext?: Omit<GateScriptContext, 'gateId' | 'gateData' | 'gateDataUpdatedIso'>;
-
-  /**
-   * Current space autonomy level. Gate field writes use the same two-path
-   * authorization as send_message: explicit writers (any match) bypass autonomy;
-   * fields with no writers require `spaceLevel >= gate.requiredLevel`.
-   */
-  getSpaceAutonomyLevel?: (spaceId: string) => Promise<number>;
-
-  /**
-   * Sender name aliases (agent name, node name, …) normalized for gate-field
-   * writer matching. Mirrors the alias set node-agent-tools builds per session.
-   */
-  agentNameAliases?: Set<string>;
 
   /** node name → agent slot names (fan-out / slot→node resolution). */
   nodeGroups?: Record<string, string[]>;
@@ -196,18 +162,6 @@ export interface HandoffExecutorConfig {
   pendingMessageRepo?: PendingAgentMessageRepository;
   /** Fired after a non-deduped enqueue (auto-resume backstop, mirrors send_message). */
   onMessageQueued?: (agentName: string) => void;
-
-  /** Domain profile hook fired after a gate-data commit (mirrors send_message). */
-  onGateDataCommitted?: (params: {
-    runId: string;
-    nodeId: string;
-    gateId: string;
-    gateData: Record<string, unknown>;
-    committedData: Record<string, unknown>;
-    messageData?: Record<string, unknown>;
-  }) => Promise<void> | void;
-  /** Resolves the run's primary link URL (e.g. PR URL) for scripted gates. */
-  resolvePrimaryLinkUrl?: (runId: string) => string;
 }
 
 export interface HandoffExecutionParams {
@@ -300,15 +254,13 @@ export class HandoffExecutor {
     }
 
     // 3b. Reject `data` keys the transition does not declare a shape for. The
-    //     contract requires data keys to come from the bound gate's writable
-    //     fields or the hook's template fields; a transition with neither a
-    //     gate nor a hook accepts NO structured keys (gate-bound keys are
-    //     validated against the gate in commitGate below).
+    //     contract requires data keys to come from the bound hook's template
+    //     fields; a transition with no hook accepts NO structured keys.
     const dataKeys = operation.data ? Object.keys(operation.data) : [];
-    if (dataKeys.length > 0 && !transition.gateId && !transition.hookId) {
+    if (dataKeys.length > 0 && !transition.hookId) {
       return this.blocked(
         'resolve_target',
-        `Transition "${transition.id}" declares no gate or hook, so it accepts no handoff data keys (got: ${dataKeys.join(', ')}).`
+        `Transition "${transition.id}" declares no hook, so it accepts no handoff data keys (got: ${dataKeys.join(', ')}).`
       );
     }
 
@@ -332,11 +284,10 @@ export class HandoffExecutor {
     const maxCycles = transition.maxCycles;
     const cycleLimited = cyclic && typeof maxCycles === 'number' && maxCycles > 0;
 
-    // 4b. Read-only cycle cap check BEFORE gate/hook side effects. A cyclic
-    //     transition already at its cap must not persist gate data or run hook
-    //     validators/scripts on a guaranteed-to-fail retry. The atomic
-    //     reservation still happens right before delivery (step 7) to close the
-    //     TOCTOU.
+    // 4b. Read-only cycle cap check BEFORE the hook side effect. A cyclic
+    //     transition already at its cap must not run its hook validator on a
+    //     guaranteed-to-fail retry. The atomic reservation still happens right
+    //     before delivery (step 6) to close the TOCTOU.
     if (
       cycleLimited &&
       this.config.handoffCycleRepo.isCapReached(workflowRunId, transitionKey, maxCycles!)
@@ -353,34 +304,9 @@ export class HandoffExecutor {
       };
     }
 
-    // 5. Authorize + commit the transition's declared gate fields.
-    let gateOutcome: HandoffGateOutcome | undefined;
-    if (transition.gateId) {
-      gateOutcome = await this.commitGate({
-        sourceNode,
-        fromNodeName,
-        fromAgentName,
-        gateId: transition.gateId,
-        data: operation.data,
-      });
-      if (!gateOutcome.open) {
-        return {
-          status: 'blocked',
-          stage: 'gate',
-          transition,
-          targetNodes: targets.nodes,
-          targetSlots: targets.slots,
-          delivered: [],
-          queued: [],
-          reason: gateOutcome.reason ?? `Gate "${transition.gateId}" blocked the handoff.`,
-          gate: gateOutcome,
-          rateLimited: gateOutcome.rateLimited,
-          retryAfterMs: gateOutcome.retryAfterMs,
-        };
-      }
-    }
-
-    // 6. Execute the transition's hook validator.
+    // 5. Execute the transition's hook validator (the sole authorization
+    //    primitive now that the legacy gate subsystem is gone). A hook may
+    //    block, retryable-block, or allow the handoff.
     let hookOutcome: HandoffHookOutcome | undefined;
     if (transition.hookId) {
       hookOutcome = await this.runHook({
@@ -403,7 +329,6 @@ export class HandoffExecutor {
           delivered: [],
           queued: [],
           reason: hookOutcome.result.reason ?? `Hook "${transition.hookId}" blocked the handoff.`,
-          gate: gateOutcome,
           hook: hookOutcome,
           retryAfterMs:
             resultType === 'retryable_block' ? hookOutcome.result.retryAfterMs : undefined,
@@ -438,18 +363,17 @@ export class HandoffExecutor {
           delivered: [],
           queued: [],
           reason: `Cyclic handoff "${transition.id}" from "${fromNodeName}" has reached its maxCycles cap (${maxCycles}).`,
-          gate: gateOutcome,
           hook: hookOutcome,
         };
       }
       trackReservation(true, transitionKey);
     }
 
-    // 8. Activate or reuse the target worker session(s) + deliver the peer message.
-    //    Re-check run state first: a hook/gate can await an external check for
-    //    tens of seconds, and the run may have been cancelled meanwhile. A
-    //    terminal run must not receive the handoff (and the cycle reservation is
-    //    refunded by the caller's catch/path below).
+    // 6. Activate or reuse the target worker session(s) + deliver the peer message.
+    //    Re-check run state first: a hook can await an external check for tens
+    //    of seconds, and the run may have been cancelled meanwhile. A terminal
+    //    run must not receive the handoff (and the cycle reservation is refunded
+    //    by the caller's catch/path below).
     const rerun = this.config.workflowRunRepo.getRun(workflowRunId);
     if (rerun && (rerun.status === 'done' || rerun.status === 'cancelled')) {
       if (cycleLimited) this.refundCycle(workflowRunId, transitionKey);
@@ -493,7 +417,6 @@ export class HandoffExecutor {
         // Surface partial-delivery diagnostics (e.g. a broadcast target that
         // was unreachable) even on an otherwise-delivered handoff.
         reason: delivery.reason,
-        gate: gateOutcome,
         hook: hookOutcome,
       };
     }
@@ -510,7 +433,6 @@ export class HandoffExecutor {
           delivery.queued.length === 0
             ? `Handoff already pending for ${delivery.dedupedCount} target(s); no new cycle charged.`
             : delivery.reason,
-        gate: gateOutcome,
         hook: hookOutcome,
       };
     }
@@ -523,7 +445,6 @@ export class HandoffExecutor {
       delivered: [],
       queued: [],
       reason: delivery.reason ?? 'Handoff delivery failed: no live or queueable target.',
-      gate: gateOutcome,
       hook: hookOutcome,
     };
   }
@@ -541,151 +462,8 @@ export class HandoffExecutor {
   }
 
   // -------------------------------------------------------------------------
-  // Gate commit (mirrors send_message's gated-channel gate-write path)
-  // -------------------------------------------------------------------------
-
-  private async commitGate(args: {
-    sourceNode: WorkflowNode;
-    fromNodeName: string;
-    fromAgentName: string;
-    gateId: string;
-    data?: Record<string, unknown>;
-  }): Promise<HandoffGateOutcome> {
-    const { sourceNode, fromNodeName, gateId, data } = args;
-    const workflow = this.config.workflow;
-    const gateDef = (workflow.gates ?? []).find((g) => g.id === gateId);
-    if (!gateDef) {
-      return {
-        gateId,
-        open: false,
-        reason: `Transition references unknown gate "${gateId}".`,
-      };
-    }
-
-    const supplied = data ?? {};
-    const fieldMap = new Map((gateDef.fields ?? []).map((f) => [f.name, f]));
-
-    // Contract: `data` keys must be in the gate's writable shape. Keys outside
-    // it (unknown, or not writable by this sender) are rejected — not silently
-    // dropped as in send_message. A handoff is a formal operation; an
-    // ill-shaped payload must surface, not half-commit.
-    const aliases = this.senderAliases(args.fromAgentName, fromNodeName);
-    const effectiveRequiredLevel = gateDef.requiredLevel ?? 5;
-    const spaceLevel = this.config.getSpaceAutonomyLevel
-      ? await this.config.getSpaceAutonomyLevel(this.config.spaceId)
-      : 0;
-    const authorizedData: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(supplied)) {
-      const fieldDef = fieldMap.get(key);
-      if (!fieldDef) {
-        return {
-          gateId,
-          open: false,
-          reason: `Gate "${gateId}" has no field "${key}"; handoff data keys must match the gate's declared fields.`,
-        };
-      }
-      const fieldAllowed = isFieldWritableBy(
-        fieldDef,
-        aliases,
-        spaceLevel,
-        effectiveRequiredLevel,
-        !!this.config.getSpaceAutonomyLevel
-      );
-      if (!fieldAllowed) {
-        return {
-          gateId,
-          open: false,
-          reason: `Agent "${args.fromAgentName}" is not authorized to write gate field "${key}" on gate "${gateId}".`,
-        };
-      }
-      authorizedData[key] = value;
-    }
-
-    // Commit the authorized write (if any), then evaluate. Deep-merge map-type
-    // fields atomically (per-writer entries must not clobber one another),
-    // identical to the send_message path. When the agent supplied no data we
-    // skip the write but still evaluate — a gate already opened by a prior write
-    // (e.g. human approval) must let the handoff proceed. The merge/eval calls
-    // are wrapped so a DB or gate-script throw maps to a structured `failed`
-    // result rather than escaping execute().
-    try {
-      const mapFields = new Set<string>();
-      for (const key of Object.keys(authorizedData)) {
-        const fieldDef = fieldMap.get(key);
-        if (fieldDef?.type === 'map') mapFields.add(key);
-      }
-      const hasAuthorizedWrite = Object.keys(authorizedData).length > 0;
-      const partial: Record<string, unknown> = { ...authorizedData, approvalSource: 'agent' };
-      // Capture the merge return (its updatedAt) so we don't re-read the row.
-      const mergedRecord = hasAuthorizedWrite
-        ? mapFields.size > 0
-          ? this.config.gateDataRepo.mergeWithMapFields(
-              this.config.workflowRunId,
-              gateId,
-              partial,
-              mapFields
-            )
-          : this.config.gateDataRepo.merge(this.config.workflowRunId, gateId, partial)
-        : this.config.gateDataRepo.get(this.config.workflowRunId, gateId);
-      const gateData = mergedRecord?.data ?? {};
-      const gateDataUpdatedIso = mergedRecord
-        ? new Date(mergedRecord.updatedAt).toISOString()
-        : undefined;
-
-      const freshPrUrl = this.config.resolvePrimaryLinkUrl?.(this.config.workflowRunId) ?? '';
-      const evalResult = await evaluateGate(
-        getEffectiveGate(gateDef, workflow, fromNodeName),
-        gateData,
-        this.config.scriptExecutor,
-        this.config.scriptContext
-          ? {
-              ...this.config.scriptContext,
-              gateId,
-              gateData,
-              gateDataUpdatedIso,
-              prUrl: freshPrUrl || this.config.scriptContext.prUrl,
-            }
-          : undefined
-      );
-
-      // Domain profile side-artifact hook (mirrors send_message). Only fired when
-      // the agent actually committed a write.
-      if (hasAuthorizedWrite && this.config.onGateDataCommitted) {
-        try {
-          await this.config.onGateDataCommitted({
-            runId: this.config.workflowRunId,
-            nodeId: sourceNode.id,
-            gateId,
-            gateData,
-            committedData: authorizedData,
-            messageData: data,
-          });
-        } catch (err) {
-          log.warn(
-            `onGateDataCommitted failed for gate "${gateId}" in run "${this.config.workflowRunId}":`,
-            err instanceof Error ? err.message : String(err)
-          );
-        }
-      }
-
-      return {
-        gateId,
-        open: evalResult.open,
-        reason: evalResult.reason,
-        rateLimited: evalResult.rateLimited,
-        retryAfterMs: evalResult.retryAfterMs,
-      };
-    } catch (err) {
-      if (err instanceof HandoffExecutionError) throw err;
-      throw new HandoffExecutionError(
-        'gate',
-        `Gate "${gateId}" evaluation failed: ${err instanceof Error ? err.message : String(err)}`
-      );
-    }
-  }
-
-  // -------------------------------------------------------------------------
-  // Hook validator (mirrors the validation classification hooks run before send)
+  // Hook validator (the sole authorization primitive; mirrors the validation
+  // classification hooks run before send)
   // -------------------------------------------------------------------------
 
   private async runHook(args: {
@@ -932,15 +710,6 @@ export class HandoffExecutor {
     }
   }
 
-  private senderAliases(fromAgentName: string, fromNodeName: string): Set<string> {
-    const base = this.config.agentNameAliases
-      ? [fromAgentName, fromNodeName, ...this.config.agentNameAliases]
-      : [fromAgentName, fromNodeName];
-    return new Set(
-      base.map((value) => normalizeAgentNameToken(value)).filter((value) => value.length > 0)
-    );
-  }
-
   private blocked(stage: HandoffStage, reason: string): HandoffExecutionResult {
     return {
       status: 'blocked',
@@ -1147,24 +916,6 @@ function hookAuthorizationReason(
     return `Agent "${fromAgentName}" is not an authorized caller for hook "${hook.id}".`;
   }
   return undefined;
-}
-
-/** Per-field two-path gate write authorization (mirrors send_message). */
-function isFieldWritableBy(
-  field: { writers: string[] },
-  aliases: Set<string>,
-  spaceLevel: number,
-  requiredLevel: number,
-  autonomyConfigured: boolean
-): boolean {
-  if (field.writers.length > 0) {
-    return field.writers.some((writer) => {
-      const normalized = normalizeAgentNameToken(writer);
-      return normalized === '*' || aliases.has(normalized);
-    });
-  }
-  // Autonomy path: no explicit writers → require sufficient space autonomy.
-  return autonomyConfigured ? spaceLevel >= requiredLevel : false;
 }
 
 function reasonForResolveFailure(

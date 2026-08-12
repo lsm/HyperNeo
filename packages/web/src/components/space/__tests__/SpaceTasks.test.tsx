@@ -195,21 +195,14 @@ describe('SpaceTasks', () => {
     });
   });
 
-  it('renders desktop tabs inline and removes the standalone Archived tab', () => {
-    // Simulate narrow viewport so mobileTabCount=2 and the More overflow button appears.
-    Object.defineProperty(window, 'innerWidth', {
-      value: 0,
-      configurable: true,
-      writable: true,
-    });
+  it('renders the available tabs and removes the standalone Archived tab', () => {
     mockTasks.value = [makeTask('t1', 'open')];
-    const { getAllByText, queryByText, getByLabelText } = render(<SpaceTasks spaceId="space-1" />);
+    const { getAllByText, queryByText } = render(<SpaceTasks spaceId="space-1" />);
     expect(getAllByText('Action').length).toBeGreaterThan(0);
     expect(getAllByText('Active').length).toBeGreaterThan(0);
     expect(getAllByText('Completed').length).toBeGreaterThan(0);
     expect(getAllByText('Scheduled').length).toBeGreaterThan(0);
     expect(queryByText('Archived')).toBeNull();
-    expect(getByLabelText('More task tabs')).toBeTruthy();
   });
 
   it('shows global empty state when there are no tasks at all', () => {
@@ -247,7 +240,13 @@ describe('SpaceTasks', () => {
     mockCurrentSpaceTasksFilterTabSignal.value = 'archived';
     mockTasks.value = [makeTask('t1', 'archived')];
     const { findByText, getAllByText } = render(<SpaceTasks spaceId="space-1" />);
-    expect(getAllByText('Completed')[0].className).toContain('text-green-400');
+    // Completed may render inline (wide strip) or as the More overflow's active
+    // label (compact strip) depending on draft count; assert the actual tab
+    // button is pressed rather than relying on match order.
+    const completedButtons = getAllByText('Completed');
+    expect(
+      completedButtons.some((el) => el.closest('button')?.getAttribute('aria-pressed') === 'true')
+    ).toBe(true);
     expect(await findByText('Task t1')).toBeTruthy();
     expect(await findByText(/Archived \(1\)/)).toBeTruthy();
   });
@@ -314,13 +313,7 @@ describe('SpaceTasks', () => {
     expect(text.some((t) => t?.includes('Archived'))).toBe(false);
   });
 
-  it('shows secondary tabs and Scheduled in the mobile More dropdown', async () => {
-    // Simulate narrow viewport so mobileTabCount=2 and draft/scheduled/completed go to overflow.
-    Object.defineProperty(window, 'innerWidth', {
-      value: 0,
-      configurable: true,
-      writable: true,
-    });
+  it('shows the final secondary tab in the compact More dropdown', async () => {
     mockTasks.value = [
       makeTask('t1', 'open'),
       makeTask('t2', 'draft'),
@@ -328,15 +321,14 @@ describe('SpaceTasks', () => {
       makeTask('t4', 'archived'),
     ];
     mockSchedules.value = [makeSchedule('s1')];
-    const { getByLabelText, findByRole } = render(<SpaceTasks spaceId="space-1" />);
+    const { getByLabelText, findByRole, getAllByText } = render(<SpaceTasks spaceId="space-1" />);
 
+    // Action, Active, and Drafts fit inline; Completed stays in More.
+    expect(getAllByText('Drafts').length).toBeGreaterThan(0);
+    expect(getAllByText('Scheduled').length).toBeGreaterThan(0);
     fireEvent.click(getByLabelText('More task tabs'));
-    const draftsItem = await findByRole('menuitem', { name: /Drafts/ });
     const completedItem = await findByRole('menuitem', { name: /Completed/ });
-    const scheduledItem = await findByRole('menuitem', { name: /Scheduled/ });
-    expect(draftsItem.textContent).toContain('1');
     expect(completedItem.textContent).toContain('2');
-    expect(scheduledItem.textContent).toContain('1');
 
     fireEvent.click(completedItem);
 
@@ -371,10 +363,25 @@ describe('SpaceTasks', () => {
     expect(onSelectTask).toHaveBeenCalledWith('t1');
   });
 
-  it('renders status label and relative time for each task', async () => {
+  it('uses the group heading for status without repeating it in the task row', async () => {
     mockTasks.value = [makeTask('t1', 'in_progress')];
-    const { findByText } = render(<SpaceTasks spaceId="space-1" />);
-    expect(await findByText('In Progress')).toBeTruthy();
+    const { findByRole, findByText, queryAllByText } = render(<SpaceTasks spaceId="space-1" />);
+    expect(await findByRole('heading', { name: 'In Progress (1)' })).toBeTruthy();
+    expect(await findByText(/Updated/)).toBeTruthy();
+    expect(queryAllByText('In Progress')).toHaveLength(0);
+  });
+
+  it('opens a task row with Enter or Space', async () => {
+    mockTasks.value = [makeTask('t1', 'open')];
+    const onSelectTask = vi.fn();
+    const { findByRole } = render(<SpaceTasks spaceId="space-1" onSelectTask={onSelectTask} />);
+    const row = await findByRole('button', { name: 'Open task #1: Task t1' });
+
+    fireEvent.keyDown(row, { key: 'Enter' });
+    fireEvent.keyDown(row, { key: ' ' });
+
+    expect(onSelectTask).toHaveBeenNthCalledWith(1, 't1');
+    expect(onSelectTask).toHaveBeenNthCalledWith(2, 't1');
   });
 
   it('renders task number badge', async () => {

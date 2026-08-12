@@ -64,6 +64,10 @@
       "!.claude",
       "!.worktrees",
       "!**/.worktrees",
+      "!.codebase-memory",
+      "!**/.codebase-memory/**",
+      "!.playwright-cli",
+      "!**/.playwright-cli/**",
       "!packages/desktop/src-tauri/target",
       "!packages/desktop/src-tauri/gen",
       "!packages/desktop/src-tauri/binaries"

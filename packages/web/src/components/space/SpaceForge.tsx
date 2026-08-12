@@ -37,6 +37,12 @@ import { Button } from '../ui/Button';
 import { InspectBadge, InspectPanel, InspectPanelHeader } from '../ui/InspectPanel';
 import { Modal } from '../ui/Modal';
 import { SectionCard } from '../ui/SectionCard';
+import {
+  FLAT_SURFACE,
+  GLASS_CONTENT_CONTAINER_CLASS,
+  GLASS_PRIMARY_BUTTON_CLASS,
+  GLASS_SURFACE,
+} from './glass-workspace';
 import { formatGoalMetricSnapshot } from './goal-display-utils';
 import {
   WorkflowModelSelect,
@@ -2056,89 +2062,127 @@ export function SpaceForge({ spaceId }: SpaceForgeProps) {
 
   return (
     <div class="flex h-full min-h-0 flex-col overflow-hidden">
-      <div class="flex h-[88px] flex-shrink-0 items-center justify-between gap-3 border-b border-white/10 px-4">
-        <div>
-          <h2 class="text-sm font-semibold text-gray-100">Evolution scopes</h2>
-          <p class="text-xs text-gray-400">
-            {formatScopeCount(scopes.length)} collecting evidence, metrics, and lessons
-          </p>
-        </div>
-      </div>
-
-      <div class="flex-1 overflow-y-auto p-4">
-        <div class="mb-4 flex">
-          <Button type="button" size="sm" onClick={() => setCreateOpen(true)}>
-            Create scope
-          </Button>
-        </div>
-        {error && (
-          <div class="mb-3 rounded-lg border border-red-800 bg-red-900/20 px-3 py-2 text-xs text-red-400">
-            {error}
-          </div>
-        )}
-        {scopes.length === 0 && loading ? (
-          <p class="text-sm text-gray-400">Loading scopes...</p>
-        ) : scopes.length === 0 ? (
-          <div class="rounded-lg border border-dashed border-white/10 bg-white/[0.02] p-8 text-center">
-            <p class="text-sm text-gray-400">No Evolution scopes yet.</p>
-            <p class="mt-1 text-xs text-gray-400">
-              Create one from a recurring goal to track evidence, metrics, lessons, and follow-up
-              tasks.
-            </p>
-            <Button type="button" size="sm" class="mt-3" onClick={() => setCreateOpen(true)}>
+      <div class="flex-1 overflow-y-auto">
+        <div class={GLASS_CONTENT_CONTAINER_CLASS}>
+          <section
+            class={cn(
+              'mb-5 flex flex-col gap-4 rounded-2xl border p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6',
+              GLASS_SURFACE
+            )}
+            data-testid="space-forge-introduction"
+            aria-label="Evolve workspace summary"
+          >
+            <div class="max-w-2xl">
+              <div class="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-amber-200/80">
+                <span class="h-1.5 w-1.5 rounded-full bg-amber-300" />
+                Continuous evolution
+              </div>
+              <h2 class="mt-2 text-lg font-semibold tracking-tight text-gray-50">
+                Evolution scopes
+              </h2>
+              <p class="mt-1 text-sm leading-5 text-gray-300">
+                {formatScopeCount(scopes.length)} collecting evidence, metrics, lessons, and
+                follow-up tasks from recurring goals.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setCreateOpen(true)}
+              class={GLASS_PRIMARY_BUTTON_CLASS}
+            >
               Create scope
-            </Button>
-          </div>
-        ) : (
-          <div class="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(20rem,1fr))]">
-            {scopes.map((scope) => {
-              const goal = getGoal(scope, goals);
-              const selected = selectedScopeId === scope.id;
-              return (
-                <button
-                  key={scope.id}
+            </button>
+          </section>
+
+          {error && (
+            <div
+              class={cn(
+                'mb-5 rounded-2xl border border-red-300/20 p-4 text-sm text-red-200',
+                FLAT_SURFACE
+              )}
+            >
+              {error}
+            </div>
+          )}
+          {loading && scopes.length === 0 && (
+            <div class={cn('rounded-2xl border p-6 text-sm text-gray-300', FLAT_SURFACE)}>
+              Loading scopes...
+            </div>
+          )}
+          {!loading && scopes.length === 0 && (
+            <div class={cn('rounded-2xl border border-dashed p-10 text-center', FLAT_SURFACE)}>
+              <p class="text-sm font-medium text-gray-200">No Evolution scopes yet.</p>
+              <p class="mt-1 text-xs text-gray-400">
+                Create one from a recurring goal to track evidence, metrics, lessons, and follow-up
+                tasks.
+              </p>
+              <div class="mt-4">
+                <Button
                   type="button"
-                  onClick={() => openScope(scope.id)}
-                  class={cn(
-                    'group flex min-h-[9.5rem] w-full flex-col rounded-lg border p-4 text-left transition-colors',
-                    selected
-                      ? 'border-cyan-500/50 bg-cyan-500/10 shadow-[0_0_0_1px_rgb(6_182_212_/_0.08)]'
-                      : 'border-dark-700 bg-dark-900/60 hover:border-dark-600 hover:bg-dark-850/80'
-                  )}
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setCreateOpen(true)}
                 >
-                  <div class="min-w-0">
-                    <h3 class="line-clamp-2 text-sm font-semibold leading-5 text-gray-100">
-                      {scope.name}
-                    </h3>
-                    <div class="mt-2 flex flex-wrap items-center gap-2">
-                      <span class="rounded-full border border-cyan-500/20 bg-cyan-500/10 px-2 py-0.5 text-[11px] font-medium text-cyan-300">
-                        {formatKind(scope.kind)}
-                      </span>
-                      <span class="rounded-full border border-dark-600 px-2 py-0.5 text-[11px] text-gray-400">
-                        {formatDefinitionCount(scope.metricDefinitions.length)}
-                      </span>
-                    </div>
-                  </div>
-                  <p class="mt-2 line-clamp-2 min-h-8 text-xs leading-4 text-gray-400">
-                    {scope.objective || 'No objective recorded yet'}
-                  </p>
-                  <div class="mt-auto grid grid-cols-2 gap-3 pt-4 text-xs">
+                  Create scope
+                </Button>
+              </div>
+            </div>
+          )}
+          {scopes.length > 0 && (
+            <div class="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(min(21rem,100%),1fr))]">
+              {scopes.map((scope) => {
+                const goal = getGoal(scope, goals);
+                const selected = selectedScopeId === scope.id;
+                return (
+                  <button
+                    key={scope.id}
+                    type="button"
+                    onClick={() => openScope(scope.id)}
+                    aria-pressed={selected}
+                    class={cn(
+                      'group relative flex min-h-[12rem] w-full flex-col overflow-hidden rounded-2xl border border-white/[0.14] p-5 text-left transition duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/70',
+                      FLAT_SURFACE,
+                      selected
+                        ? '!border-[rgba(111,177,255,0.72)] bg-[linear-gradient(145deg,rgba(35,82,137,0.44),rgba(13,20,32,0.96)_62%)] shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_20px_48px_rgba(0,0,0,0.3)]'
+                        : 'hover:-translate-y-0.5 hover:bg-dark-850/95'
+                    )}
+                  >
                     <div class="min-w-0">
-                      <span class="block text-gray-400">Goal</span>
-                      <span class="truncate text-blue-300">
-                        {goal ? `Goal: ${goal.title}` : 'No linked goal'}
-                      </span>
+                      <h3 class="line-clamp-2 text-base font-semibold leading-6 tracking-tight text-gray-50">
+                        {scope.name}
+                      </h3>
+                      <div class="mt-2.5 flex flex-wrap items-center gap-2">
+                        <span class="rounded-full border border-cyan-300/25 bg-cyan-300/[0.08] px-2 py-0.5 text-[11px] font-medium text-cyan-200">
+                          {formatKind(scope.kind)}
+                        </span>
+                        <span class="rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[11px] font-medium text-gray-300">
+                          {formatDefinitionCount(scope.metricDefinitions.length)}
+                        </span>
+                      </div>
+                      <p class="mt-3 line-clamp-2 min-h-10 text-sm leading-5 text-gray-300">
+                        {scope.objective || 'No objective recorded yet'}
+                      </p>
                     </div>
-                    <div>
-                      <span class="block text-gray-400">Updated</span>
-                      <span class="text-gray-300">{getRelativeTime(scope.updatedAt)}</span>
+                    <div class="mt-auto grid grid-cols-2 gap-3 border-t border-white/[0.08] pt-3 text-xs">
+                      <div class="min-w-0">
+                        <span class="block text-gray-500">Goal</span>
+                        <span class="mt-0.5 block truncate text-gray-300">
+                          {goal ? `Goal: ${goal.title}` : 'No linked goal'}
+                        </span>
+                      </div>
+                      <div class="min-w-0">
+                        <span class="block text-gray-500">Updated</span>
+                        <span class="mt-0.5 block text-gray-300">
+                          {getRelativeTime(scope.updatedAt)}
+                        </span>
+                      </div>
                     </div>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
 
       <ScopeCreateDialog

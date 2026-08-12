@@ -13,7 +13,6 @@ import type {
   SpaceWorkerAgent,
   SpaceWorkflow,
   WorkflowChannel,
-  Gate,
   WorkflowNodeAgent,
   PostApprovalRoute,
 } from '@hyperneo/shared';
@@ -37,8 +36,6 @@ export interface WorkflowTemplate {
   steps?: WorkflowTemplateStep[];
   /** Optional workflow-level channels to seed with the template. */
   channels?: WorkflowChannel[];
-  /** Optional first-class workflow gates to seed with the template. */
-  gates?: Gate[];
   /** Optional workflow hooks to seed with the template. */
   hooks?: import('@hyperneo/shared').WorkflowHook[];
   /** Optional tags to seed with the template. */
@@ -68,12 +65,6 @@ export interface WorkflowTemplateStep {
   resetContextPerTurn?: boolean;
   /** Optional post-approval route triggered when this node approves the task. */
   postApproval?: PostApprovalRoute;
-  /** Require codex[bot] approval on outgoing approval gates from this node. */
-  requireCodexApproval?: boolean;
-  /** Custom poll interval (ms) for the codex review bot. */
-  codexPollIntervalMs?: number;
-  /** Custom timeout (seconds) for the codex review bot reaction check. */
-  codexTimeoutSeconds?: number;
   /**
    * Per-agent declarative tool guards for single-agent nodes (e.g. the coder's
    * raw-merge blocker). Preserved through workflowToTemplate → buildTemplateNodes
@@ -230,9 +221,6 @@ export function workflowToTemplate(workflow: SpaceWorkflow): WorkflowTemplate {
           toolGuards: agent.toolGuards?.map((guard) => ({ ...guard })),
         })),
         postApproval: postApproval ? { ...postApproval } : undefined,
-        requireCodexApproval: node.requireCodexApproval,
-        codexPollIntervalMs: node.codexPollIntervalMs,
-        codexTimeoutSeconds: node.codexTimeoutSeconds,
         ...(node.transitions?.length
           ? { handoffTransitions: node.transitions.map((t) => ({ ...t })) }
           : {}),
@@ -249,9 +237,6 @@ export function workflowToTemplate(workflow: SpaceWorkflow): WorkflowTemplate {
       resetContextPerTurn: primary?.resetContextPerTurn,
       toolGuards: primary?.toolGuards?.map((guard) => ({ ...guard })),
       postApproval: postApproval ? { ...postApproval } : undefined,
-      requireCodexApproval: node.requireCodexApproval,
-      codexPollIntervalMs: node.codexPollIntervalMs,
-      codexTimeoutSeconds: node.codexTimeoutSeconds,
       ...(node.transitions?.length
         ? { handoffTransitions: node.transitions.map((t) => ({ ...t })) }
         : {}),
@@ -267,10 +252,6 @@ export function workflowToTemplate(workflow: SpaceWorkflow): WorkflowTemplate {
     channels: (workflow.channels ?? []).map((channel) => ({
       ...channel,
       to: Array.isArray(channel.to) ? [...channel.to] : channel.to,
-    })),
-    gates: (workflow.gates ?? []).map((gate) => ({
-      ...gate,
-      fields: [...(gate.fields ?? [])],
     })),
     hooks: (workflow.hooks ?? []).map((hook) => ({ ...hook })),
     tags: [...(workflow.tags ?? [])],
@@ -334,9 +315,6 @@ export function buildTemplateNodes(
         // Seed the sticky step-level field so the post-approval toggle cannot
         // drop the hidden merge gate on a template-picker draft.
         requirePrMerge: step.postApproval?.requirePrMerge === true ? true : undefined,
-        requireCodexApproval: step.requireCodexApproval,
-        codexPollIntervalMs: step.codexPollIntervalMs,
-        codexTimeoutSeconds: step.codexTimeoutSeconds,
         ...(step.handoffTransitions?.length
           ? { handoffTransitions: step.handoffTransitions.map((t) => ({ ...t })) }
           : {}),
@@ -385,9 +363,6 @@ export function buildTemplateNodes(
       // Seed the sticky step-level field so the post-approval toggle cannot
       // drop the hidden merge gate on a template-picker draft.
       requirePrMerge: step.postApproval?.requirePrMerge === true ? true : undefined,
-      requireCodexApproval: step.requireCodexApproval,
-      codexPollIntervalMs: step.codexPollIntervalMs,
-      codexTimeoutSeconds: step.codexTimeoutSeconds,
       ...(step.handoffTransitions?.length
         ? { handoffTransitions: step.handoffTransitions.map((t) => ({ ...t })) }
         : {}),

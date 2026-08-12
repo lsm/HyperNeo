@@ -8,7 +8,7 @@
 
 import type { WorkflowHookResult } from '@hyperneo/shared';
 import type { HookExecutorContext } from '../hook-executor';
-import { collectWithMaxBuffer, parseJsonStdout } from '../gate-script-executor';
+import { collectWithMaxBuffer, parseJsonStdout } from '../script-utils';
 import { buildGitHubLookupEnv, fetchRateLimitResetEpoch } from '../gh-lookup-helpers';
 import { parsePrUrl } from '../parse-pr-url';
 import {

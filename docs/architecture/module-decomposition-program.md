@@ -392,6 +392,73 @@ reaction-row field decoders from `github-event-extension.ts`.
   `REQUIRED_WEBHOOK_EVENTS` vocabulary used elsewhere in the file; it is a
   candidate for a follow-up that extracts the event vocabulary alongside it.
 
+## Increment 9
+
+**`external-events/github/github-pr-head-ref.ts`** — extracted the
+deployment-webhook head-SHA matcher `pickPrNumbersByHeadSha` into the
+increment-6 leaf and consolidated its behavior-identical private helper into
+the canonical `headShaFromPullRequest`.
+
+- **Family:** selecting which open PRs a deployed commit belongs to.
+  `pickPrNumbersByHeadSha(pulls, sha)` returns the numbers of every OPEN PR
+  whose `head.sha` is exactly `sha` (a commit can be the head of several PRs at
+  once): the `head.sha` filter excludes PRs that merely contain the commit
+  (e.g. the merged PR that introduced a default-branch tip), and the
+  `state === 'open'` filter excludes a finished PR whose retained head.sha
+  still equals the deployed SHA so a deploy never wakes a stale subscription.
+  Pure `(unknown, string) → number[]`. Its sole internal edge was the private
+  `pullHeadSha(row)` reader.
+- **Why it scored highest:**
+  - *Cohesion:* `pickPrNumbersByHeadSha` is exactly the increment-6 leaf's
+    concern — resolving PR identity by head ref ("which PRs point at this head
+    SHA?"). The move also surfaced that its private `pullHeadSha` helper was a
+    **behavior-identical duplicate** of the leaf's already-canonical
+    `headShaFromPullRequest` (both decode `row.head.sha` to the string or `''`
+    for every input, including the non-object / non-string-`sha` edges), so the
+    move consolidates the duplicate behind the canonical leaf — the
+    increments-2-4 consolidation pattern. This is the explicit next candidate
+    named in Increments 6-8; the sharper analysis here is that the doc's
+    four-function "head-sha-by-commit matcher family" is actually **two**
+    concerns — the pure readers (extracted now) and a separate
+    `Map<string, number[]>` multimap index the polling handler maintains under
+    a head-ref *key* (deferred) — so the family is more cohesive split than
+    moved whole.
+  - *Churn / conflict:* isolates a stable pure query out of
+    `github-event-extension.ts` (4542 → 4504 lines; ~31 commits/yr — the
+    largest external-events production module), leaving the class as the
+    imperative shell that polls.
+  - *Coverage:* `pickPrNumbersByHeadSha` had **no** direct unit tests (it was
+    exercised only indirectly through the deployment-webhook handler);
+    characterization tests now pin every branch — non-array / empty /
+    non-object pulls, head.sha mismatch (incl. missing and non-string
+    `head.sha`), the case-sensitive `state === 'open'` filter, non-numeric /
+    non-positive `number` coercion, the multiple-open-PRs-per-commit case,
+    dedup by number, the stale-topic guard (closed + open sharing a head SHA),
+    and the empty-`sha` boundary where a headless row decodes to `''`.
+  - *Regression risk:* low — pure deterministic function; the
+    `pullHeadSha` → `headShaFromPullRequest` substitution is provably
+    behavior-identical (both return the string `sha` iff `head` is an object
+    with a string `sha` field, else `''`), and the consumer suite
+    (`2-handlers/github/`, 666 tests) passes unchanged.
+- **Narrow surface:** `pickPrNumbersByHeadSha` is exported from the leaf (one
+  external caller, the extension's deployment resolver); the private
+  `pullHeadSha` is deleted (it had no other caller).
+- **Dependency direction:** the function joins the increment-6 leaf and reaches
+  only to the co-located `headShaFromPullRequest` (downward, within the leaf);
+  no new direction was introduced. `github-event-extension.ts` already imported
+  downward from this leaf.
+- **Deferred:** `addPullRequestNumberByHeadSha` / `removePullRequestNumberByHeadSha`
+  remain in `github-event-extension.ts`. They are generic
+  `Map<string, number[]>` multimap add/remove operations (the `headSha`
+  parameter name is a misnomer — at the polling call sites the map is keyed by
+  `headRefKey(repoPath, headSha)`, a head-ref *key*, not a raw SHA), so they
+  are a separate index-maintenance concern and stay a later Pattern-B
+  increment. The webhook-event validation family (`missingRequiredEvents`,
+  `validateRemoteHook`, `isOnlyMissingEvents`) remains a larger cohesive pure
+  family entangled with the `WEBHOOK_EVENTS` / `REQUIRED_WEBHOOK_EVENTS`
+  vocabulary used elsewhere; candidate for a follow-up that extracts the event
+  vocabulary alongside it.
+
 ## Increment log
 
 | # | Module extracted | From | PR | Outcome |
@@ -403,4 +470,5 @@ reaction-row field decoders from `github-event-extension.ts`.
 | 5 | `external-events/github/github-check-run-fields.ts` | `external-events/github/github-event-extension.ts` | #2430 | Pure GitHub `check_run` row field decoders extracted behind a 6-function surface; characterization tests added for every branch (previously no direct unit coverage). |
 | 6 | `external-events/github/github-pr-head-ref.ts` | `external-events/github/github-event-extension.ts` | #2449 | Pure GitHub PR head-ref identity family (repo path, PR number, head SHA/repo, head-ref key compose/parse) extracted behind a 6-function surface; characterization tests added for every branch (previously no direct unit coverage). |
 | 7 | `external-events/github/github-pr-row-state.ts` | `external-events/github/github-event-extension.ts` | #2462 | Pure GitHub `/pulls` row-state decoders (`updated_at` watermark + `state` openness) extracted behind a 2-function surface; characterization tests added for every branch (previously no direct unit coverage). |
-| 8 | `external-events/github/github-reaction-fields.ts` | `external-events/github/github-event-extension.ts` | _(this PR)_ | Pure GitHub reaction-row field decoders (`isPositiveReaction`, `reactionIdFrom`) extracted behind a 2-function surface; characterization tests added for every branch (previously no direct unit coverage). |
+| 8 | `external-events/github/github-reaction-fields.ts` | `external-events/github/github-event-extension.ts` | #2467 | Pure GitHub reaction-row field decoders (`isPositiveReaction`, `reactionIdFrom`) extracted behind a 2-function surface; characterization tests added for every branch (previously no direct unit coverage). |
+| 9 | `external-events/github/github-pr-head-ref.ts` (+ consolidate `pullHeadSha`) | `external-events/github/github-event-extension.ts` | _(this PR)_ | Deployment-webhook head-SHA matcher `pickPrNumbersByHeadSha` extracted into the increment-6 leaf; behavior-identical private `pullHeadSha` consolidated into the canonical `headShaFromPullRequest`; characterization tests added for every branch (previously no direct unit coverage). |

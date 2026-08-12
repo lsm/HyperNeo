@@ -1,6 +1,4 @@
 import { describe, expect, it } from 'bun:test';
-import { Database } from '../../../../src/storage/sqlite-compat';
-import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import {
   buildScopeFilter,
   getAccessibleTableNames,
@@ -10,6 +8,8 @@ import {
   getScopeForSession,
   type ScopeTableConfig,
 } from '@/lib/db-query/scope-config';
+import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
+import { Database } from '../../../../src/storage/sqlite-compat';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -66,7 +66,6 @@ describe('scope-config', () => {
         'space_goals',
         'space_goal_events',
         'space_worktrees',
-        'gate_data',
         'workflow_hook_state',
         'workflow_hook_result_artifacts',
         'channel_cycles',
@@ -90,7 +89,7 @@ describe('scope-config', () => {
         'session_groups',
         'session_group_members',
       ]);
-      expect(names).toHaveLength(30);
+      expect(names).toHaveLength(29);
     });
 
     it('all table configs have a description', () => {
@@ -399,21 +398,6 @@ describe('scope-config', () => {
         'workflow_id IN (SELECT id FROM space_workflows WHERE space_id = ?)'
       );
       expect(result.params).toEqual(['space-alpha']);
-    });
-
-    it('produces indirect scope filter for gate_data via space_workflow_runs', () => {
-      const gateData = getScopeConfig('space').find((t) => t.tableName === 'gate_data')!;
-      expect(gateData.scopeJoin).toBeDefined();
-      expect(gateData.scopeJoin!.localColumn).toBe('run_id');
-      expect(gateData.scopeJoin!.joinTable).toBe('space_workflow_runs');
-      expect(gateData.scopeJoin!.joinPkColumn).toBe('id');
-      expect(gateData.scopeJoin!.scopeColumn).toBe('space_id');
-
-      const result = buildScopeFilter(gateData, 'space-beta');
-      expect(result.whereClause).toBe(
-        'run_id IN (SELECT id FROM space_workflow_runs WHERE space_id = ?)'
-      );
-      expect(result.params).toEqual(['space-beta']);
     });
 
     it('produces indirect scope filter for channel_cycles via space_workflow_runs', () => {

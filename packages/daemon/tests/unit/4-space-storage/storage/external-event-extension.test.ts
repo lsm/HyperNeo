@@ -69,8 +69,8 @@ function isRpcExternalEventExtension(
 
 function seedTask(db: BunDatabase): void {
   db.prepare(
-    `INSERT INTO space_workflows (id, space_id, name, description, channels, gates, created_at, updated_at)
-		 VALUES ('wf-1', 'space-1', 'wf', '', '[]', '[]', 1, 1)`
+    `INSERT INTO space_workflows (id, space_id, name, description, channels, created_at, updated_at)
+		 VALUES ('wf-1', 'space-1', 'wf', '', '[]', 1, 1)`
   ).run();
   db.prepare(
     `INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, description, status, created_at, updated_at)

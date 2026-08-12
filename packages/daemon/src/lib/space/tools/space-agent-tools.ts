@@ -51,7 +51,6 @@ import type {
 } from '@hyperneo/shared';
 import { parseAddress } from '../../../../../messaging/src/address';
 import { z } from 'zod';
-import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository';
@@ -494,12 +493,8 @@ export interface SpaceAgentToolsConfig {
    * When provided, enables the `send_message_to_task` and `list_task_members` tools.
    */
   taskAgentManager?: TaskAgentManager;
-  /** Gate data repository for approve_gate tool. */
-  gateDataRepo?: GateDataRepository;
-  /** InternalEventBus<DaemonInternalEventMap> for emitting gate/task events. */
+  /** InternalEventBus<DaemonInternalEventMap> for emitting task events. */
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
-  /** Callback to trigger channel re-evaluation after gate data changes. */
-  onGateChanged?: (runId: string, gateId: string) => void;
   /**
    * Callback to lazily activate a workflow node.
    *
@@ -518,20 +513,18 @@ export interface SpaceAgentToolsConfig {
    */
   pendingMessageQueue?: PendingAgentMessageQueue;
   /**
-   * Resolves the space's current autonomy level.
-   * Required for approve_gate autonomy enforcement: agent approvals are rejected
-   * when space autonomy < gate.requiredLevel (default 5 if gate has no requiredLevel).
+   * Resolves the space's current autonomy level for task-approval autonomy
+   * enforcement (approve_pending_completion / submit_for_approval paths).
    */
   getSpaceAutonomyLevel?: (spaceId: string) => Promise<number>;
   /**
-   * The calling agent's name (e.g., 'space-agent'). Used for gate writer authorization
-   * in approve_gate: the writers path is taken only when writers include this name or '*'.
-   * When omitted, only '*' in writers can match (falls back to autonomy path otherwise).
+   * The calling agent's name (e.g., 'space-agent' or a long-horizon agent handle).
+   * Used for outbound sender attribution and authorization.
    */
   myAgentName?: string;
   /**
    * Optional name aliases for the calling agent. Checked alongside myAgentName during
-   * writer authorization.
+   * authorization.
    */
   myAgentNameAliases?: string[];
   /**
@@ -639,9 +632,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     taskManager,
     spaceAgentManager,
     taskAgentManager,
-    gateDataRepo,
     internalEventBus,
-    onGateChanged,
     activateNode,
     pendingMessageQueue,
     getSpaceAutonomyLevel,
@@ -655,27 +646,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     longTermAgentDelivery,
   } = config;
 
-  // Aliases used to authenticate gate `writers` overrides in approve_gate.
-  // When a calling agent is present (myAgentId set), authenticate only by
-  // immutable identity (the handle aliases) — never the mutable displayName
-  // (myAgentName), which `update_agent` can change and which would otherwise
-  // let a restricted long-horizon agent rename itself to spoof a gate writer
-  // entry and bypass the ceiling. Coordinators / legacy callers (no myAgentId)
-  // keep matching by name.
-  //
-  // Breaking change for long-horizon-agent gate-writer delegation: a gate that
-  // wants to delegate approval to a long-horizon agent must list the agent by
-  // its immutable `@handle` (e.g. `writers: ['@release-manager']`), not by
-  // display name. Display-name matching for LH agents was removed to close the
-  // self-rename spoof above. This does not affect workflow node agents, whose
-  // node-name writers are matched in node-agent-tools against the immutable
-  // node name.
-  const writerAuthAliases = new Set(
-    (myAgentId ? (myAgentNameAliases ?? []) : [myAgentName, ...(myAgentNameAliases ?? [])])
-      .filter((v): v is string => typeof v === 'string')
-      .map((v) => normalizeAgentNameToken(v))
-      .filter((v) => v.length > 0)
-  );
   const outboundSenderName = myAgentName ?? (mySessionId ? 'space-member' : 'space-agent');
   const isCoordinatorAgent =
     !mySessionId ||
@@ -3250,203 +3220,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     },
 
     /**
-     * Approve or reject a workflow gate.
-     * Requires gateDataRepo to be configured.
-     */
-    async approve_gate(args: {
-      run_id: string;
-      gate_id: string;
-      approved: boolean;
-      reason?: string;
-    }): Promise<ToolResult> {
-      if (!gateDataRepo) {
-        return jsonResult({ success: false, error: 'Gate operations are not available' });
-      }
-
-      const run = workflowRunRepo.getRun(args.run_id);
-      if (!run || run.spaceId !== spaceId) {
-        return jsonResult({ success: false, error: `Workflow run not found: ${args.run_id}` });
-      }
-      if (run.status === 'done' || run.status === 'cancelled' || run.status === 'pending') {
-        return jsonResult({
-          success: false,
-          error: `Cannot modify gate on a ${workflowRunAttemptLabel(run.status)} workflow run`,
-        });
-      }
-
-      // Per-field two-path authorization for agent-originated approvals.
-      // Writers path: 'approved' field's writers includes this agent's name or '*' → allow.
-      // Autonomy path: writers don't include this agent (or empty writers) → require
-      // space.autonomyLevel >= gate.requiredLevel (default 5).
-      // Human approval via spaceWorkflowRun.approveGate RPC is not subject to this check.
-      if (args.approved && getSpaceAutonomyLevel) {
-        const workflow = workflowManager.getWorkflowForRun(run);
-        const gateDef = (workflow?.gates ?? []).find((g) => g.id === args.gate_id);
-        const approvedField = (gateDef?.fields ?? []).find((f) => f.name === 'approved');
-        const writers = approvedField?.writers ?? [];
-        const writerMatches = writers.some((w) => {
-          const normalized = normalizeAgentNameToken(w);
-          return normalized === '*' || writerAuthAliases.has(normalized);
-        });
-
-        if (!writerMatches) {
-          // Autonomy path: this agent is not in the writers list. The effective
-          // level is `min(spaceLevel, agentCeiling)` — a low-trust long-term
-          // agent is blocked even when the space is permissive.
-          const effectiveRequiredLevel = gateDef?.requiredLevel ?? 5;
-          const agentLevel = getCallingAgentAutonomyLevel();
-          const spaceLevel = await getSpaceAutonomyLevel(spaceId);
-          const effectiveLevel = agentLevel == null ? spaceLevel : Math.min(spaceLevel, agentLevel);
-          if (effectiveLevel < effectiveRequiredLevel) {
-            if (isAgentCeilingBinding(spaceLevel, agentLevel)) {
-              logAudit('approve_gate', {
-                blocked: true,
-                reason: 'agent_autonomy_ceiling',
-                run_id: args.run_id,
-                gate_id: args.gate_id,
-                agentLevel,
-                spaceLevel,
-                required: effectiveRequiredLevel,
-              });
-              return jsonResult({
-                success: false,
-                error:
-                  `Agent approval blocked: gate "${args.gate_id}" requires autonomy level ` +
-                  `${effectiveRequiredLevel} but agent autonomy ceiling is ${agentLevel} (space ${spaceLevel}). ` +
-                  `Increase the agent's autonomy level or request human approval.`,
-              });
-            }
-            return jsonResult({
-              success: false,
-              error:
-                `Agent approval blocked: gate "${args.gate_id}" requires autonomy level ` +
-                `${effectiveRequiredLevel} but space autonomy is ${spaceLevel}. ` +
-                `Increase space autonomy level or request human approval.`,
-            });
-          }
-        }
-        // Writers path: writerMatches → no autonomy check needed
-      }
-
-      const existing = gateDataRepo.get(args.run_id, args.gate_id);
-
-      if (args.approved) {
-        if (existing?.data?.approved === true) {
-          return jsonResult({
-            success: true,
-            runId: args.run_id,
-            gateId: args.gate_id,
-            gateData: existing.data,
-            message: 'Gate already approved',
-          });
-        }
-
-        const gateData = gateDataRepo.merge(args.run_id, args.gate_id, {
-          approved: true,
-          approvedAt: Date.now(),
-          approvalSource: 'agent',
-        });
-
-        // If previously rejected, transition back to in_progress
-        let currentRun = run;
-        if (run.status === 'blocked' && run.failureReason === 'humanRejected') {
-          currentRun = workflowRunRepo.transitionStatus(args.run_id, 'in_progress');
-          currentRun =
-            workflowRunRepo.updateRun(args.run_id, { failureReason: null }) ?? currentRun;
-          runtime.resetBlockedExecutionsForRun(args.run_id);
-        }
-
-        if (internalEventBus) {
-          void internalEventBus
-            .publish('space.workflowRun.updated', {
-              sessionId: 'global',
-              spaceId: run.spaceId,
-              runId: run.id,
-              run: currentRun,
-            })
-            .catch(() => {});
-          void internalEventBus
-            .publish('space.gateData.updated', {
-              sessionId: 'global',
-              spaceId: run.spaceId,
-              runId: args.run_id,
-              gateId: args.gate_id,
-              data: gateData.data,
-            })
-            .catch(() => {});
-        }
-        onGateChanged?.(args.run_id, args.gate_id);
-
-        return jsonResult({
-          success: true,
-          runId: args.run_id,
-          gateId: args.gate_id,
-          gateData: gateData.data,
-        });
-      } else {
-        if (existing?.data?.approved === false) {
-          return jsonResult({
-            success: true,
-            runId: args.run_id,
-            gateId: args.gate_id,
-            gateData: existing.data,
-            message: 'Gate already rejected',
-          });
-        }
-
-        const gateData = gateDataRepo.merge(args.run_id, args.gate_id, {
-          approved: false,
-          rejectedAt: Date.now(),
-          reason: args.reason ?? null,
-          approvalSource: 'agent',
-        });
-
-        if (run.status !== 'blocked') {
-          workflowRunRepo.transitionStatus(args.run_id, 'blocked');
-        }
-        const updatedRun =
-          workflowRunRepo.updateRun(args.run_id, { failureReason: 'humanRejected' }) ?? run;
-
-        // Block the canonical task with gate_rejected reason
-        const runTasks = taskRepo.listByWorkflowRun(args.run_id);
-        const canonicalTask = runTasks[0];
-        if (canonicalTask && canonicalTask.status !== 'blocked') {
-          await taskManager.setTaskStatus(canonicalTask.id, 'blocked', {
-            result: args.reason ?? 'Gate rejected',
-            blockReason: 'gate_rejected',
-          });
-        }
-
-        if (internalEventBus) {
-          void internalEventBus
-            .publish('space.workflowRun.updated', {
-              sessionId: 'global',
-              spaceId: run.spaceId,
-              runId: run.id,
-              run: updatedRun,
-            })
-            .catch(() => {});
-          void internalEventBus
-            .publish('space.gateData.updated', {
-              sessionId: 'global',
-              spaceId: run.spaceId,
-              runId: args.run_id,
-              gateId: args.gate_id,
-              data: gateData.data,
-            })
-            .catch(() => {});
-        }
-
-        return jsonResult({
-          success: true,
-          runId: args.run_id,
-          gateId: args.gate_id,
-          gateData: gateData.data,
-        });
-      }
-    },
-
-    /**
      * Approve a task that is in 'review' status, transitioning it to 'done'.
      * Records approval audit trail with agent as the source.
      */
@@ -4978,17 +4751,6 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
         task_id: z.string().describe('ID of the task to inspect'),
       },
       (args) => handlers.list_task_members(args)
-    ),
-    tool(
-      'approve_gate',
-      'Approve or reject a workflow gate. Use this to control workflow progression by opening or closing gates on workflow runs.',
-      {
-        run_id: z.string().describe('ID of the workflow run'),
-        gate_id: z.string().describe('ID of the gate to approve or reject'),
-        approved: z.boolean().describe('true to approve (open gate), false to reject (block)'),
-        reason: z.string().optional().describe('Reason for approval or rejection'),
-      },
-      (args) => handlers.approve_gate(args)
     ),
     tool(
       'approve_task',

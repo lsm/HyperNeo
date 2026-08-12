@@ -3,13 +3,12 @@
  *
  * Covers the handoff operation's contract surface with focused, deterministic
  * cases: success delivery, channel authorization, transition resolution,
- * gate commit (open + closed), hook validator (allow + block), cyclic
+ * gate-free (hook-only) commit, hook validator (allow + block), cyclic
  * maxCycles enforcement, queued activation, and terminal run-state rejection.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type {
-  Gate,
   HandoffTransition,
   SpaceWorkflow,
   WorkflowChannel,
@@ -17,7 +16,6 @@ import type {
   WorkflowHookResult,
   WorkflowNode,
 } from '@hyperneo/shared';
-import type { GateScriptExecutorFn } from '../../../../src/lib/space/runtime/gate-evaluator.ts';
 import type { HandoffExecutorConfig } from '../../../../src/lib/space/runtime/handoff-executor.ts';
 import {
   HandoffExecutor,
@@ -25,7 +23,6 @@ import {
   resolveHandoffTargetSlots,
 } from '../../../../src/lib/space/runtime/handoff-executor.ts';
 import type { HookExecutor } from '../../../../src/lib/space/runtime/hook-executor.ts';
-import { GateDataRepository } from '../../../../src/storage/repositories/gate-data-repository.ts';
 import { HandoffCycleRepository } from '../../../../src/storage/repositories/handoff-cycle-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { PendingAgentMessageRepository } from '../../../../src/storage/repositories/pending-agent-message-repository.ts';
@@ -110,7 +107,6 @@ function node(
 function makeWorkflow(opts: {
   nodes: WorkflowNode[];
   channels?: WorkflowChannel[];
-  gates?: Gate[];
   hooks?: WorkflowHook[];
 }): SpaceWorkflow {
   return {
@@ -120,27 +116,11 @@ function makeWorkflow(opts: {
     nodes: opts.nodes,
     startNodeId: opts.nodes[0]?.id ?? '',
     channels: opts.channels,
-    gates: opts.gates,
     hooks: opts.hooks,
     tags: [],
     createdAt: Date.now(),
     updatedAt: Date.now(),
     completionAutonomyLevel: 3,
-  };
-}
-
-function approvedGate(gateId: string, writer: string): Gate {
-  return {
-    id: gateId,
-    resetOnCycle: false,
-    fields: [
-      {
-        name: 'approved',
-        type: 'boolean',
-        writers: [writer],
-        check: { op: '==', value: true },
-      },
-    ],
   };
 }
 
@@ -154,7 +134,6 @@ interface Ctx {
   runId: string;
   nodeExecutionRepo: NodeExecutionRepository;
   workflowRunRepo: SpaceWorkflowRunRepository;
-  gateDataRepo: GateDataRepository;
   handoffCycleRepo: HandoffCycleRepository;
   pendingMessageRepo: PendingAgentMessageRepository;
   injected: Array<{ sessionId: string; message: string }>;
@@ -172,7 +151,6 @@ function makeCtx(): Ctx {
     runId,
     nodeExecutionRepo: new NodeExecutionRepository(db),
     workflowRunRepo: new SpaceWorkflowRunRepository(db),
-    gateDataRepo: new GateDataRepository(db),
     handoffCycleRepo: new HandoffCycleRepository(db),
     pendingMessageRepo: new PendingAgentMessageRepository(db),
     injected: [],
@@ -188,7 +166,6 @@ function makeExecutor(
   return new HandoffExecutor({
     workflowRunRepo: ctx.workflowRunRepo,
     workflow,
-    gateDataRepo: ctx.gateDataRepo,
     handoffCycleRepo: ctx.handoffCycleRepo,
     nodeExecutionRepo: ctx.nodeExecutionRepo,
     workflowRunId: ctx.runId,
@@ -385,7 +362,7 @@ describe('HandoffExecutor: transition resolution', () => {
     expect(result.reason).toContain("sender's own node");
   });
 
-  test('rejects data keys when the transition declares no gate or hook', async () => {
+  test('rejects data keys when the transition declares no hook', async () => {
     const workflow = makeWorkflow({
       nodes: [
         node('n-coding', 'coding', 'coder', [{ id: 'to-review', target: 'review' }]),
@@ -404,7 +381,7 @@ describe('HandoffExecutor: transition resolution', () => {
 
     expect(result.status).toBe('blocked');
     expect(result.stage).toBe('resolve_target');
-    expect(result.reason).toContain('no gate or hook');
+    expect(result.reason).toContain('no hook');
   });
 });
 
@@ -460,236 +437,6 @@ describe('HandoffExecutor: channel authorization', () => {
     });
 
     expect(result.status).toBe('delivered');
-  });
-});
-
-describe('HandoffExecutor: gate commit', () => {
-  let ctx: Ctx;
-  beforeEach(() => {
-    ctx = makeCtx();
-  });
-  afterEach(() => ctx.db.close());
-
-  test('blocks when the declared gate condition is not satisfied', async () => {
-    const workflow = makeWorkflow({
-      nodes: [
-        node('n-coding', 'coding', 'coder', [
-          { id: 'to-review', target: 'review', gateId: 'gate-approved' },
-        ]),
-        node('n-review', 'review', 'reviewer'),
-      ],
-      channels: [{ id: 'ch', from: 'coding', to: 'review' }],
-      gates: [approvedGate('gate-approved', 'coder')],
-    });
-    const executor = makeExecutor(ctx, workflow);
-
-    const result = await executor.execute({
-      fromAgentName: 'coder',
-      fromSessionId: 'session-coder',
-      workflowNodeId: 'n-coding',
-      operation: { target: 'review', summary: 'go', data: { approved: false } },
-    });
-
-    expect(result.status).toBe('blocked');
-    expect(result.stage).toBe('gate');
-    expect(result.gate?.open).toBe(false);
-    // Gate data was still committed (approved=false merged) before evaluation.
-    expect(ctx.gateDataRepo.get(ctx.runId, 'gate-approved')?.data.approved).toBe(false);
-    expect(result.delivered).toHaveLength(0);
-  });
-
-  test('proceeds without re-writing when the gate is already open and no data is supplied', async () => {
-    const workflow = makeWorkflow({
-      nodes: [
-        node('n-coding', 'coding', 'coder', [
-          { id: 'to-review', target: 'review', gateId: 'gate-approved' },
-        ]),
-        node('n-review', 'review', 'reviewer'),
-      ],
-      channels: [{ id: 'ch', from: 'coding', to: 'review' }],
-      gates: [approvedGate('gate-approved', 'coder')],
-    });
-    // Gate already opened by a prior write (e.g. human approval via RPC).
-    ctx.gateDataRepo.merge(ctx.runId, 'gate-approved', { approved: true, approvalSource: 'human' });
-    seedPeer(ctx.db, ctx.runId, 'n-review', 'reviewer', 'session-reviewer');
-    const executor = makeExecutor(ctx, workflow);
-
-    const result = await executor.execute({
-      fromAgentName: 'coder',
-      fromSessionId: 'session-coder',
-      workflowNodeId: 'n-coding',
-      operation: { target: 'review', summary: 'go' },
-    });
-
-    expect(result.status).toBe('delivered');
-    expect(result.gate?.open).toBe(true);
-    // No agent write occurred — the prior human approvalSource is preserved.
-    expect(ctx.gateDataRepo.get(ctx.runId, 'gate-approved')?.data.approvalSource).toBe('human');
-  });
-
-  test('delivers when the declared gate opens after committing the data', async () => {
-    const workflow = makeWorkflow({
-      nodes: [
-        node('n-coding', 'coding', 'coder', [
-          { id: 'to-review', target: 'review', gateId: 'gate-approved' },
-        ]),
-        node('n-review', 'review', 'reviewer'),
-      ],
-      channels: [{ id: 'ch', from: 'coding', to: 'review' }],
-      gates: [approvedGate('gate-approved', 'coder')],
-    });
-    seedPeer(ctx.db, ctx.runId, 'n-review', 'reviewer', 'session-reviewer');
-    const executor = makeExecutor(ctx, workflow);
-
-    const result = await executor.execute({
-      fromAgentName: 'coder',
-      fromSessionId: 'session-coder',
-      workflowNodeId: 'n-coding',
-      operation: { target: 'review', summary: 'go', data: { approved: true } },
-    });
-
-    expect(result.status).toBe('delivered');
-    expect(result.gate?.open).toBe(true);
-    expect(ctx.gateDataRepo.get(ctx.runId, 'gate-approved')?.data.approved).toBe(true);
-  });
-
-  test('rejects data keys outside the gate declared shape', async () => {
-    const workflow = makeWorkflow({
-      nodes: [
-        node('n-coding', 'coding', 'coder', [
-          { id: 'to-review', target: 'review', gateId: 'gate-approved' },
-        ]),
-        node('n-review', 'review', 'reviewer'),
-      ],
-      channels: [{ id: 'ch', from: 'coding', to: 'review' }],
-      gates: [approvedGate('gate-approved', 'coder')],
-    });
-    const executor = makeExecutor(ctx, workflow);
-
-    const result = await executor.execute({
-      fromAgentName: 'coder',
-      fromSessionId: 'session-coder',
-      workflowNodeId: 'n-coding',
-      operation: { target: 'review', summary: 'go', data: { approved: true, rogue: 1 } },
-    });
-
-    expect(result.status).toBe('blocked');
-    expect(result.stage).toBe('gate');
-    expect(result.reason).toContain('rogue');
-  });
-
-  test('propagates a rate-limited scripted gate as a retryable block', async () => {
-    const gate: Gate = {
-      id: 'gate-scripted',
-      resetOnCycle: false,
-      fields: [
-        { name: 'approved', type: 'boolean', writers: ['coder'], check: { op: '==', value: true } },
-      ],
-      script: { interpreter: 'bash', source: 'exit 1' },
-    };
-    const workflow = makeWorkflow({
-      nodes: [
-        node('n-coding', 'coding', 'coder', [
-          { id: 'to-review', target: 'review', gateId: 'gate-scripted' },
-        ]),
-        node('n-review', 'review', 'reviewer'),
-      ],
-      channels: [{ id: 'ch', from: 'coding', to: 'review' }],
-      gates: [gate],
-    });
-    const executor = makeExecutor(ctx, workflow, {
-      scriptExecutor: (async () => ({
-        success: false,
-        rateLimited: true,
-        retryAfterMs: 5000,
-        data: {},
-        error: 'GitHub 403',
-      })) as GateScriptExecutorFn,
-      scriptContext: { workspacePath: '/tmp', runId: ctx.runId },
-    });
-
-    const result = await executor.execute({
-      fromAgentName: 'coder',
-      fromSessionId: 'session-coder',
-      workflowNodeId: 'n-coding',
-      operation: { target: 'review', summary: 'go', data: { approved: true } },
-    });
-
-    expect(result.status).toBe('blocked');
-    expect(result.stage).toBe('gate');
-    expect(result.rateLimited).toBe(true);
-    expect(result.retryAfterMs).toBe(5000);
-    expect(result.gate?.rateLimited).toBe(true);
-  });
-
-  test('autonomy path: a no-writers field is writable at sufficient autonomy', async () => {
-    const gate: Gate = {
-      id: 'gate-autonomy',
-      resetOnCycle: false,
-      requiredLevel: 3,
-      fields: [
-        { name: 'approved', type: 'boolean', writers: [], check: { op: '==', value: true } },
-      ],
-    };
-    const workflow = makeWorkflow({
-      nodes: [
-        node('n-coding', 'coding', 'coder', [
-          { id: 'to-review', target: 'review', gateId: 'gate-autonomy' },
-        ]),
-        node('n-review', 'review', 'reviewer'),
-      ],
-      channels: [{ id: 'ch', from: 'coding', to: 'review' }],
-      gates: [gate],
-    });
-    seedPeer(ctx.db, ctx.runId, 'n-review', 'reviewer', 'session-reviewer');
-    const executor = makeExecutor(ctx, workflow, {
-      getSpaceAutonomyLevel: async () => 5,
-    });
-
-    const result = await executor.execute({
-      fromAgentName: 'coder',
-      fromSessionId: 'session-coder',
-      workflowNodeId: 'n-coding',
-      operation: { target: 'review', summary: 'go', data: { approved: true } },
-    });
-
-    expect(result.status).toBe('delivered');
-    expect(result.gate?.open).toBe(true);
-  });
-
-  test('autonomy path: a no-writers field is rejected below required autonomy', async () => {
-    const gate: Gate = {
-      id: 'gate-autonomy',
-      resetOnCycle: false,
-      requiredLevel: 3,
-      fields: [
-        { name: 'approved', type: 'boolean', writers: [], check: { op: '==', value: true } },
-      ],
-    };
-    const workflow = makeWorkflow({
-      nodes: [
-        node('n-coding', 'coding', 'coder', [
-          { id: 'to-review', target: 'review', gateId: 'gate-autonomy' },
-        ]),
-        node('n-review', 'review', 'reviewer'),
-      ],
-      channels: [{ id: 'ch', from: 'coding', to: 'review' }],
-      gates: [gate],
-    });
-    const executor = makeExecutor(ctx, workflow, {
-      getSpaceAutonomyLevel: async () => 1,
-    });
-
-    const result = await executor.execute({
-      fromAgentName: 'coder',
-      fromSessionId: 'session-coder',
-      workflowNodeId: 'n-coding',
-      operation: { target: 'review', summary: 'go', data: { approved: true } },
-    });
-
-    expect(result.status).toBe('blocked');
-    expect(result.stage).toBe('gate');
-    expect(result.reason).toContain('not authorized');
   });
 });
 
@@ -1112,7 +859,6 @@ describe('HandoffExecutor: run-state validation', () => {
     const executor = new HandoffExecutor({
       workflowRunRepo: ctx.workflowRunRepo,
       workflow,
-      gateDataRepo: ctx.gateDataRepo,
       handoffCycleRepo: ctx.handoffCycleRepo,
       nodeExecutionRepo: ctx.nodeExecutionRepo,
       workflowRunId: 'run-does-not-exist',

@@ -418,119 +418,6 @@ describe('SpaceRuntime', () => {
       expect(recoveredRun.failureReason).toBeUndefined();
     });
 
-    test('reopening a blocked workflow task does not resurrect removed gate polls', async () => {
-      runtime.setTaskAgentManager({
-        isExecutionSpawning: () => false,
-        isSessionAlive: () => true,
-        spawnWorkflowNodeAgentForExecution: async () => 'session-1',
-        cancelBySessionId: () => {},
-        interruptBySessionId: async () => {},
-        rehydrate: async () => {},
-        injectSubSessionMessage: () => {},
-      } as never);
-
-      const workflow = buildLinearWorkflow(
-        SPACE_ID,
-        workflowManager,
-        [
-          { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
-          { id: STEP_B, name: 'Code', agentId: AGENT_CODER },
-        ],
-        [],
-        {
-          channels: [
-            { id: 'recover-polled-channel', from: 'Plan', to: 'Code', gateId: 'recover-gate' },
-          ],
-          gates: [
-            {
-              id: 'recover-gate',
-              resetOnCycle: false,
-              fields: [
-                {
-                  name: 'approved',
-                  type: 'boolean',
-                  writers: [],
-                  check: { op: 'exists' as const },
-                },
-              ],
-              poll: { intervalMs: 60_000, script: 'printf poll', target: 'to' },
-            },
-          ],
-        }
-      );
-      const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Recover poll');
-      const task = tasks[0];
-
-      workflowRunRepo.transitionStatus(run.id, 'blocked');
-      taskRepo.updateTask(task.id, { status: 'blocked', blockReason: 'human_input_requested' });
-      workflowManager.updateWorkflow(workflow.id, { gates: [] });
-
-      await runtime.recoverWorkflowBackedTask(SPACE_ID, task.id, 'open');
-
-      expect(runtime.isGatePollActive(run.id, 'recover-gate')).toBe(false);
-      expect(runtime.getActiveGatePollCount()).toBe(0);
-      await runtime.stop();
-    });
-
-    test('reopening a blocked workflow task does not start legacy gate polls', async () => {
-      runtime.setTaskAgentManager({
-        isExecutionSpawning: () => false,
-        isSessionAlive: () => true,
-        spawnWorkflowNodeAgentForExecution: async () => 'session-1',
-        cancelBySessionId: () => {},
-        interruptBySessionId: async () => {},
-        rehydrate: async () => {},
-        injectSubSessionMessage: () => {},
-      } as never);
-
-      const workflow = buildLinearWorkflow(
-        SPACE_ID,
-        workflowManager,
-        [
-          { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
-          { id: STEP_B, name: 'Code', agentId: AGENT_CODER },
-        ],
-        [],
-        {
-          channels: [
-            { id: 'recover-polled-channel-2', from: 'Plan', to: 'Code', gateId: 'recover-gate-2' },
-          ],
-          gates: [
-            {
-              id: 'recover-gate-2',
-              resetOnCycle: false,
-              fields: [
-                {
-                  name: 'approved',
-                  type: 'boolean',
-                  writers: [],
-                  check: { op: 'exists' as const },
-                },
-              ],
-              poll: { intervalMs: 60_000, script: 'printf poll', target: 'to' },
-            },
-          ],
-        }
-      );
-      const { run, tasks } = await runtime.startWorkflowRun(
-        SPACE_ID,
-        workflow.id,
-        'Recover poll latest'
-      );
-      const task = tasks[0];
-
-      workflowRunRepo.transitionStatus(run.id, 'blocked');
-      taskRepo.updateTask(task.id, { status: 'blocked', blockReason: 'human_input_requested' });
-      runtime.stop();
-      expect(runtime.isGatePollActive(run.id, 'recover-gate-2')).toBe(false);
-
-      await runtime.recoverWorkflowBackedTask(SPACE_ID, task.id, 'open');
-
-      expect(runtime.isGatePollActive(run.id, 'recover-gate-2')).toBe(false);
-      expect(runtime.getActiveGatePollCount()).toBe(0);
-      await runtime.stop();
-    });
-
     test('resuming a blocked workflow task moves task and run in progress', async () => {
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
@@ -2646,9 +2533,10 @@ describe('SpaceRuntime', () => {
         )
       ).not.toThrow();
 
-      // Five built-in workflows should exist (the stable coder-owned set).
+      // Four built-in workflows should exist (the stable coder-owned set,
+      // minus the removed Plan & Decompose workflow).
       const workflows = workflowManager.listWorkflows(newSpaceId);
-      expect(workflows).toHaveLength(5);
+      expect(workflows).toHaveLength(4);
     });
 
     test('seedBuiltInWorkflows is idempotent (calling twice is a no-op)', async () => {
@@ -2670,7 +2558,7 @@ describe('SpaceRuntime', () => {
       seedBuiltInWorkflows(newSpaceId, workflowManager, resolver); // second call is no-op
 
       const workflows = workflowManager.listWorkflows(newSpaceId);
-      expect(workflows).toHaveLength(5); // still 5, not 10
+      expect(workflows).toHaveLength(4); // still 4, not 8
     });
   });
 

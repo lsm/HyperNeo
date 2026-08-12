@@ -429,7 +429,6 @@ export type SpaceBlockReason =
   | 'workflow_invalid'
   | 'execution_failed'
   | 'human_input_requested'
-  | 'gate_rejected'
   | 'dependency_failed'
   | 'dependency_added';
 
@@ -788,10 +787,9 @@ export interface SpaceTask {
   approvedAt: number | null;
   /**
    * Type of checkpoint the task is currently paused at. Null when not paused.
-   * - `gate`: paused at a gate requiring human approval
    * - `task_completion`: paused awaiting human approval of a submit_for_approval request
    */
-  pendingCheckpointType: 'gate' | 'task_completion' | null;
+  pendingCheckpointType: 'task_completion' | null;
   /**
    * Node ID of the end-node agent that called `submit_for_approval`. Set when the
    * task enters `review` status via that tool; cleared on approve/reject.
@@ -1066,7 +1064,7 @@ export interface UpdateSpaceTaskParams {
   /** Timestamp when approval occurred; null to clear */
   approvedAt?: number | null;
   /** Type of checkpoint the task is paused at; null to clear */
-  pendingCheckpointType?: 'gate' | 'task_completion' | null;
+  pendingCheckpointType?: 'task_completion' | null;
   /**
    * Node ID of the agent that called `submit_for_approval`; null to clear.
    * See `SpaceTask.pendingCompletionSubmittedByNodeId`.
@@ -1659,143 +1657,6 @@ export interface SpaceWorkflowSyncPreview {
 // Workflow Types (M3)
 // ============================================================================
 
-// ============================================================================
-// Gate System — field-based schema
-// ============================================================================
-
-/** Field type determines what values are valid and what check ops are available. */
-export type GateFieldType = 'boolean' | 'string' | 'number' | 'map';
-
-/**
- * Check operation for scalar fields (boolean, string, number).
- *
- *   - `'=='`     — passes when `data[field] === value`
- *   - `'!='`     — passes when `data[field] !== value`
- *   - `'exists'` — passes when the field is present in data (not `undefined`)
- */
-export interface GateFieldScalarCheck {
-  op: '==' | '!=' | 'exists';
-  value?: unknown;
-}
-
-/**
- * Check operation for map fields (counts matching entries).
- *
- *   - `op: 'count'` — counts entries whose value equals `match`, passes when count >= `min`
- *
- * Example: require 3 "approved" reviews in a votes map:
- *   `{ op: 'count', match: 'approved', min: 3 }`
- */
-export interface GateFieldMapCheck {
-  op: 'count';
-  /** Value to match in map entries. */
-  match: unknown;
-  /** Minimum count required for this field to be satisfied. */
-  min: number;
-}
-
-/** Union of check operations — scalar or map. */
-export type GateFieldCheck = GateFieldScalarCheck | GateFieldMapCheck;
-
-/**
- * A single declared field in the gate schema.
- *
- * Fields define what data the gate stores, who can write it, and what check
- * must pass for the field to be satisfied. A gate opens when ALL fields pass.
- */
-export interface GateField {
-  /** Field name (key in the gate data store). */
-  name: string;
-  /** Field type. */
-  type: GateFieldType;
-  /** Who can write this field — node names, '*' (any agent), or [] (external-only: human via RPC or auto-approval). */
-  writers: string[];
-  /** Check that must pass for this field to be satisfied. */
-  check: GateFieldCheck;
-}
-
-/**
- * A Gate — a declared data store with typed fields. Opens when ALL fields pass.
- *
- * Gates are referenced by channels via `gateId`. A gate has no back-reference
- * to any channel — the same gate can guard multiple channels.
- *
- * Gate runtime data is a key-value store persisted per `(run_id, gate_id)` in
- * the `gate_data` SQLite table. Default data is computed from the field
- * declarations (empty map `{}` for 'map' type, nothing for others). Agents
- * write to gate data via `write_gate`; the runtime evaluates field checks
- * against current data to decide passage.
- */
-export interface GateScript {
-  /** Script interpreter: 'bash', 'node', or 'python3' */
-  interpreter: 'bash' | 'node' | 'python3';
-  /** Script source code to execute */
-  source: string;
-  /** Timeout in milliseconds (default: 30000) */
-  timeoutMs?: number;
-}
-
-/**
- * Gate Poll — periodic script execution that injects messages into workflow
- * node sessions when script output changes.
- *
- * When a gate has `poll` defined, the runtime starts a timer at `intervalMs`
- * once the workflow run becomes `in_progress`. On each tick, the script is
- * executed in the same sandboxed environment as gate scripts, with additional
- * context variables (TASK_ID, PR_URL, etc.) injected as environment variables.
- *
- * If the script's stdout changes AND is non-empty, a message is injected into
- * the target node's agent session using `TaskAgentManager.injectSubSessionMessage()`.
- * The message is formatted using `messageTemplate` (default: raw output).
- *
- * Polling stops when the workflow run reaches a terminal execution-attempt
- * state (`done`, `cancelled`, or `blocked`).
- */
-export interface GatePoll {
-  /** Poll interval in milliseconds (minimum 10_000 / 10 seconds) */
-  intervalMs: number;
-  /**
-   * Script to execute periodically. Runs in a sandboxed environment using
-   * the same infrastructure as gate scripts (bash interpreter only).
-   * Context is provided via environment variables — never hardcoded.
-   *
-   * Available env vars: TASK_ID, TASK_TITLE, SPACE_ID, PR_URL, PR_NUMBER,
-   * REPO_OWNER, REPO_NAME, WORKFLOW_RUN_ID
-   */
-  script: string;
-  /**
-   * Which side of the gate's channel to inject the message into.
-   * - `'from'` — inject into the source node's agent session
-   * - `'to'` — inject into the target node's agent session
-   */
-  target: 'from' | 'to';
-  /**
-   * Optional template wrapping script output. Use `{{output}}` as placeholder.
-   * When omitted, the raw script stdout is used as the message body.
-   *
-   * Example: `"New PR review comment:\n{{output}}"`
-   */
-  messageTemplate?: string;
-}
-
-export type GateFeatureFlag = boolean | { enabled?: boolean };
-export type GateFeatures = Record<string, GateFeatureFlag>;
-
-export function hasEnabledGateFeature(
-  gate: { features?: GateFeatures } | undefined,
-  featureName: string
-): boolean {
-  const flag = gate?.features?.[featureName];
-  if (flag === true) return true;
-  return !!flag && typeof flag === 'object' && flag.enabled !== false;
-}
-
-export function hasGateFeatures(gate: { features?: GateFeatures } | undefined): boolean {
-  return Object.keys(gate?.features ?? {}).some((featureName) =>
-    hasEnabledGateFeature(gate, featureName)
-  );
-}
-
 export type WorkflowHookMcpMethod =
   | 'send_message'
   | 'save_artifact'
@@ -1977,81 +1838,11 @@ export interface WorkflowHookUserState {
   nextRetryAt?: number;
 }
 
-export interface Gate {
-  /** Unique identifier */
-  id: string;
-  /** Human-readable description of what this gate checks. */
-  description?: string;
-  /** Custom label displayed on the gate badge in the workflow editor. */
-  label?: string;
-  /** Custom badge color (hex format `#rrggbb`). */
-  color?: string;
-  /** Declared fields with schema, permissions, and checks. */
-  fields?: GateField[];
-  /** Optional script-based pre-check executed before field evaluation. */
-  script?: GateScript;
-  /**
-   * Optional declarative reference to a registered built-in validator (the
-   * "gate-on-external-state" primitive, epic #2299 follow-up). When set, the
-   * gate evaluator dispatches the named validator (e.g. `review_posted`, an
-   * `external_state` preset over the github connector) instead of running a
-   * bash script — letting a gate back its check with the same primitive a hook
-   * uses, with no hand-rolled bash. Mutually exclusive with `script`.
-   */
-  validator?: WorkflowHookBuiltInValidator;
-  /** Data-driven gate features compiled into runtime checks/polls. */
-  features?: GateFeatures;
-  /**
-   * When true, gate data is reset to defaults on cyclic channel traversal.
-   * Used for cyclic workflows where gate state should be cleared each loop.
-   */
-  resetOnCycle: boolean;
-  /**
-   * Minimum space autonomy level required to auto-approve this gate.
-   * When `space.autonomyLevel >= requiredLevel`, the gate is auto-approved after
-   * validation (script + fields) passes. When below, the gate blocks for human sign-off.
-   * Undefined = no approval needed beyond validation.
-   */
-  requiredLevel?: SpaceAutonomyLevel;
-  /**
-   * Optional poll configuration for periodic script execution and message injection.
-   * When defined, the runtime starts a timer that executes the script at the
-   * specified interval and injects messages into the target node when output changes.
-   * Undefined = no polling (default, backward compatible).
-   */
-  poll?: GatePoll;
-  /** Legacy custom gate deprecation metadata surfaced by workflow hook migration. */
-  legacyGateMetadata?: {
-    deprecated: true;
-    badge: string;
-    docsUrl: string;
-    deprecationReason: string;
-  };
-}
-
-/**
- * Compute default data for a gate from its field declarations.
- * Map fields get `{}`, others get nothing (no key in defaults).
- */
-export function computeGateDefaults(fields?: GateField[]): Record<string, unknown> {
-  const defaults: Record<string, unknown> = {};
-  for (const field of fields ?? []) {
-    if (field.type === 'map') {
-      defaults[field.name] = {};
-    }
-  }
-  return defaults;
-}
-
 /**
  * A Channel — a simple unidirectional pipe between agents in a workflow.
  *
- * Channels define messaging topology. A channel without a `gateId` is always open.
- * When `gateId` is set, the channel is gated — messages are held until the
- * referenced Gate's condition passes.
- *
- * This is the separated Channel type (M1.1). Uses `gateId` to reference Gate
- * entities rather than inlining gate conditions.
+ * Channels define messaging topology. Delivery is not gated; action-level
+ * policy is enforced by workflow hooks at the MCP-action boundary.
  */
 export interface Channel {
   /** Unique identifier */
@@ -2066,11 +1857,6 @@ export interface Channel {
    * An array enables fan-out or hub-spoke topologies.
    */
   to: string | string[];
-  /**
-   * Optional reference to a Gate entity. When absent, the channel is always open.
-   * When present, message delivery is blocked until the gate's condition passes.
-   */
-  gateId?: string;
   /**
    * Maximum number of times this channel may be traversed in a single workflow run
    * before delivery is blocked. Only meaningful for backward (cyclic) channels —
@@ -2294,12 +2080,6 @@ export interface WorkflowChannel {
   maxCycles?: number;
   /** Optional human-readable label for display in the visual editor */
   label?: string;
-  /**
-   * Optional reference to a Gate entity in `SpaceWorkflow.gates`.
-   * When set, delivery is blocked until the gate's condition passes.
-   * Each gate belongs to exactly one channel.
-   */
-  gateId?: string;
 }
 
 /**
@@ -2329,10 +2109,9 @@ export const HANDOFF_TARGET_WILDCARD = '*' as const;
  * The two coexist: a workflow may declare channels for peer discussion and
  * transitions for round-completing handoffs independently.
  *
- * `gateId` / `hookId` bind a transition to the SAME authorization primitives
- * that channels use. When `gateId` is set, the gate's writable fields are the
- * legal `data` keys for the handoff and the gate must pass for it to complete.
- * When `hookId` is set, the hook's validator must pass.
+ * `hookId` binds a transition to the SAME authorization primitive that
+ * channels use. When `hookId` is set, the hook's validator must pass for the
+ * handoff to complete.
  *
  * Runtime transition EXECUTION is not implemented in this contract phase — this
  * type is declarative, validated, and round-tripped through export/import only.
@@ -2353,13 +2132,6 @@ export interface HandoffTransition {
    * transition per concrete name, at most one `'*'`).
    */
   target: string;
-  /**
-   * Optional gate that authorizes this transition. When set, the gate's
-   * writable fields are the legal keys for the handoff's `data`, and the gate
-   * must pass before the handoff completes. References a gate in
-   * `SpaceWorkflow.gates`.
-   */
-  gateId?: string;
   /**
    * Optional hook whose validator must pass for this transition (e.g.
    * `pr_ready`). References a hook in `SpaceWorkflow.hooks`.
@@ -2393,8 +2165,8 @@ export interface HandoffTransition {
  *   it as an instruction channel, and the sender must not use it to direct the
  *   target's work or reset policy.
  * - **data** supplies the workflow-declared fields for the resolved transition
- *   (the writable fields of its `gateId`, or the template fields of its
- *   `hookId`). Keys outside the declared shape are rejected.
+ *   (the template fields of its `hookId`). Keys outside the declared shape are
+ *   rejected.
  * - A successful handoff COMPLETES the sender's current execution round; the
  *   sender does not continue after issuing one.
  * - Target context/reset policy (e.g. {@link WorkflowNodeAgent.resetContextPerTurn})
@@ -2405,7 +2177,7 @@ export interface HandoffOperation {
   target: string;
   /** Non-authoritative sender note. Not the target's task/input. */
   summary: string;
-  /** Supplies the transition's workflow-declared hook/gate fields. */
+  /** Supplies the transition's workflow-declared hook fields. */
   data?: Record<string, unknown>;
 }
 
@@ -2437,25 +2209,6 @@ export interface WorkflowNode {
    */
   postApproval?: PostApprovalRoute;
   /**
-   * When true, gated channels from this node that have an approval gate will
-   * also require a codex[bot] +1 reaction before opening. Defaults to false.
-   */
-  requireCodexApproval?: boolean;
-  /**
-   * Custom poll interval (ms) for the codex review bot when
-   * `requireCodexApproval` is true. Defaults to 300 000 (5 minutes).
-   */
-  codexPollIntervalMs?: number;
-  /**
-   * Custom timeout (seconds) for the codex review bot reaction check when
-   * `requireCodexApproval` is true. After this many seconds without a +1
-   * reaction since `cycle_start_at`, the gate is allowed to open with a
-   * `codex_bot_reaction: "timeout"` warning. Defaults to 7200 (2 hours) —
-   * Codex reviews on large PRs routinely take 20–30 minutes, so the previous
-   * 600s default timed out before the bot posted its +1.
-   */
-  codexTimeoutSeconds?: number;
-  /**
    * Declared outbound handoff transitions from this node. A first-class
    * `handoff({ target, summary, data? })` issued by an agent in this node must
    * resolve to exactly one of these. Omitting it (or an empty array) means the
@@ -2482,18 +2235,6 @@ export interface WorkflowNodeInput {
   agents: WorkflowNodeAgent[];
   /** Optional node-level post-approval route. See {@link WorkflowNode.postApproval}. */
   postApproval?: PostApprovalRoute;
-  /** Require codex[bot] +1 on approval gates for channels from this node. */
-  requireCodexApproval?: boolean;
-  /**
-   * Custom poll interval (ms) for the codex review bot when
-   * `requireCodexApproval` is true. Defaults to 300 000 (5 minutes).
-   */
-  codexPollIntervalMs?: number;
-  /**
-   * Custom timeout (seconds) for the codex review bot reaction check when
-   * `requireCodexApproval` is true. See {@link WorkflowNode.codexTimeoutSeconds}.
-   */
-  codexTimeoutSeconds?: number;
   /** Declared outbound handoff transitions. See {@link WorkflowNode.transitions}. */
   transitions?: HandoffTransition[];
 }
@@ -2620,12 +2361,6 @@ export interface SpaceWorkflow {
    */
   channels?: WorkflowChannel[];
   /**
-   * Gate definitions for this workflow.
-   * Gates are independent entities referenced by channels via `gateId`.
-   * Persisted as JSON in the `gates` column of `space_workflows`.
-   */
-  gates?: Gate[];
-  /**
    * Hook definitions for MCP action/runtime validation.
    * Persisted as JSON in the `hooks` column of `space_workflows`.
    */
@@ -2718,8 +2453,6 @@ export interface CreateSpaceWorkflowParams {
   endNodeId?: string;
   /** Workflow-level messaging channels. */
   channels?: WorkflowChannel[];
-  /** Gate definitions for this workflow. */
-  gates?: Gate[];
   /** Hook definitions for MCP action/runtime validation. */
   hooks?: WorkflowHook[];
   /** Tags for organizational categorization (default: []). See `SpaceWorkflow.tags` for runtime semantics. */
@@ -2786,10 +2519,6 @@ export interface UpdateSpaceWorkflowParams {
    * Replaces the channel list. Pass `[]` or `null` to clear all channels.
    */
   channels?: WorkflowChannel[] | null;
-  /**
-   * Replaces the gate list. Pass `[]` or `null` to clear all gates.
-   */
-  gates?: Gate[] | null;
   /**
    * Replaces the hook list. Pass `[]` or `null` to clear all hooks.
    */
@@ -2870,7 +2599,6 @@ export interface ExportedWorkflowChannel {
   to: string | string[];
   maxCycles?: number;
   label?: string;
-  gateId?: string;
 }
 
 /**
@@ -2948,16 +2676,14 @@ export interface ExportedWorkflowNodeAgent {
 /**
  * A declarative outbound handoff transition in the portable export format.
  * Mirrors {@link HandoffTransition}. Uses node/agent names (already portable
- * in the export) for `target`. `gateId`/`hookId` are checked against the
- * exported `gates`/`hooks` lists on import; a `gateId` whose gate was filtered
- * out (e.g. a legacy empty gate) is stripped at the export/import boundary so
- * no dangling reference survives.
+ * in the export) for `target`. `hookId` is checked against the exported
+ * `hooks` list on import; a `hookId` whose hook was filtered out is stripped
+ * at the export/import boundary so no dangling reference survives.
  */
 export interface ExportedHandoffTransition {
   id: string;
   label?: string;
   target: string;
-  gateId?: string;
   hookId?: string;
   maxCycles?: number;
 }
@@ -2984,18 +2710,6 @@ export interface ExportedWorkflowNode {
   name: string;
   /** Optional node-level post-approval route. */
   postApproval?: PostApprovalRoute;
-  /** Require codex[bot] +1 on approval gates for channels from this node. */
-  requireCodexApproval?: boolean;
-  /**
-   * Custom poll interval (ms) for the codex review bot when
-   * `requireCodexApproval` is true. Defaults to 300 000 (5 minutes).
-   */
-  codexPollIntervalMs?: number;
-  /**
-   * Custom timeout (seconds) for the codex review bot reaction check when
-   * `requireCodexApproval` is true. See {@link WorkflowNode.codexTimeoutSeconds}.
-   */
-  codexTimeoutSeconds?: number;
   /**
    * Declared outbound handoff transitions for this node.
    * Mirrors {@link WorkflowNode.transitions}. Preserved through round-trip.
@@ -3080,12 +2794,6 @@ export interface ExportedSpaceWorkflow {
   channels?: ExportedWorkflowChannel[];
   /** Workflow hooks in portable form. Node references use node/agent slot names. */
   hooks?: WorkflowHook[];
-  /**
-   * Workflow gates (v3). Exported verbatim so channel and handoff-transition
-   * `gateId` references survive the round-trip — gate `id`s are semantic
-   * identifiers, not space-specific UUIDs. Absent on v1/v2 bundles.
-   */
-  gates?: Gate[];
   /**
    * Minimum autonomy level (1-5) required for end-node agents to self-close
    * the task via `approve_task`. Below this threshold, `approve_task` becomes

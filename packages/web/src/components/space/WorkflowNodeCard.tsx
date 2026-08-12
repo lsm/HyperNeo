@@ -62,12 +62,6 @@ export interface NodeDraft {
    * coder-owned workflow keeps the mark_complete merge gate.
    */
   requirePrMerge?: boolean;
-  /** Require codex[bot] +1 on approval gates for channels from this node. */
-  requireCodexApproval?: boolean;
-  /** Custom poll interval (ms) for the codex review bot. */
-  codexPollIntervalMs?: number;
-  /** Custom timeout (seconds) for the codex review bot reaction check. */
-  codexTimeoutSeconds?: number;
   /**
    * Declared outbound handoff transitions for this node. Carried verbatim
    * through the editor (load → build) so a visual-editor save does NOT drop

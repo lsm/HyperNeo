@@ -69,6 +69,9 @@ packages/desktop/src-tauri/gen/
 
 # Claude Code — ignore everything under .claude/
 .claude/
+# Local tool artifacts (codebase-memory index, Playwright CLI cache)
+.codebase-memory/
+.playwright-cli/
 packages/daemon/.embedded-sdk-cli
 
 # Local research artifacts

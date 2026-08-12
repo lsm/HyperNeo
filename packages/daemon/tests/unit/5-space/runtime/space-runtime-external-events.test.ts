@@ -7,7 +7,6 @@ import { ExternalEventQueueMetrics } from '../../../../src/lib/external-events/q
 import type { ExternalEvent } from '../../../../src/lib/external-events/types';
 import { createInternalCommandBus } from '../../../../src/lib/internal-command-bus';
 import { createDaemonInternalEventBus } from '../../../../src/lib/internal-event-bus';
-import { GateDataRepository } from '../../../../src/storage/repositories/gate-data-repository';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
@@ -227,6 +226,23 @@ describe('SpaceRuntime external event subscriptions', () => {
       runtime.registerSubscription(run.id, task.id, nodeId, 'coder', topic);
     }
     return { workflow, run, task };
+  }
+
+  /**
+   * Stamp a run's reviewed PR URL the way the production `pr_ready` hook does
+   * — as a `link kind:'pr'` artifact, which `CodingArtifactProfile.resolvePrimaryLinkUrl`
+   * reads for external-event PR-to-run coupling. (Replaces the former gate-data
+   * `'pr'` row written by the removed approval gate.)
+   */
+  function stampRunPr(runId: string, url: string): void {
+    artifactRepo.upsert({
+      id: `art-pr-${runId}`,
+      runId,
+      nodeId: 'code',
+      artifactType: 'link',
+      artifactKey: 'pr',
+      data: { kind: 'pr', url },
+    });
   }
 
   beforeEach(() => {
@@ -1258,8 +1274,7 @@ describe('SpaceRuntime external event subscriptions', () => {
   test('delivers a linked-PR event after a matching subscription registers', async () => {
     const { workflow, run, task } = await startRunWithSubscription(DEFAULT_TOPIC);
     await runtime.executeTick();
-    const gateDataRepo = new GateDataRepository(db);
-    gateDataRepo.set(run.id, 'pr', { prUrl: 'https://github.com/lsm/neokai/pull/42' });
+    stampRunPr(run.id, 'https://github.com/lsm/neokai/pull/42');
 
     await runtime.stop();
     eventStore.store(
@@ -1321,8 +1336,7 @@ describe('SpaceRuntime external event subscriptions', () => {
   test('retains unmatched events without PR-to-run coupling until the TTL', async () => {
     const { run } = await startRunWithSubscription(DEFAULT_TOPIC);
     await runtime.executeTick();
-    const gateDataRepo = new GateDataRepository(db);
-    gateDataRepo.set(run.id, 'pr', { prUrl: 'https://github.com/lsm/neokai/pull/99' });
+    stampRunPr(run.id, 'https://github.com/lsm/neokai/pull/99');
 
     const event = makeEvent({ topic: 'github/lsm/neokai/pull_request/42.comment_created' });
     await eventService.publish(event);
@@ -1334,8 +1348,7 @@ describe('SpaceRuntime external event subscriptions', () => {
   test('fails unmatched events that stay unclaimed past the TTL', async () => {
     const { run } = await startRunWithSubscription(DEFAULT_TOPIC);
     await runtime.executeTick();
-    const gateDataRepo = new GateDataRepository(db);
-    gateDataRepo.set(run.id, 'pr', { prUrl: 'https://github.com/lsm/neokai/pull/42' });
+    stampRunPr(run.id, 'https://github.com/lsm/neokai/pull/42');
 
     await runtime.stop();
     eventStore.store(
@@ -1369,52 +1382,6 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     expect(eventStore.listDeliveries('evt-linked-pr-expired')).toHaveLength(0);
     expect(eventStore.getById('evt-linked-pr-expired')?.state).toBe('failed');
-  });
-
-  test('retains a subscribed event when the blocked-run hook fires but opens no gate', async () => {
-    // Rebuild the runtime with a blocked-run hook that reports no gate opened.
-    const hookRunIds: string[] = [];
-    runtime = new SpaceRuntime({
-      db,
-      spaceManager,
-      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
-      spaceWorkflowManager: workflowManager,
-      workflowRunRepo,
-      taskRepo,
-      nodeExecutionRepo,
-      artifactRepo,
-      artifactProfile,
-      internalEventBus: bus,
-      commandBus: createInternalCommandBus(),
-      externalEventStore: eventStore,
-      taskAgentManager: tam as never,
-      onBlockedRunExternalEvent: ({ runId }) => {
-        hookRunIds.push(runId);
-        return false;
-      },
-    });
-    const { run, task } = await startRunWithSubscription(DEFAULT_TOPIC);
-    await runtime.executeTick();
-    const gateDataRepo = new GateDataRepository(db);
-    gateDataRepo.set(run.id, 'pr', { prUrl: 'https://github.com/lsm/neokai/pull/42' });
-
-    // Cancel the only node execution and block the run. The task is still
-    // active, so the matching event must stay accepted — the gate outcome no
-    // longer decides whether a subscription receives the event.
-    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
-    nodeExecutionRepo.update(execution.id, {
-      status: 'cancelled',
-      completedAt: Date.now(),
-    });
-    workflowRunRepo.updateRun(run.id, { status: 'blocked', failureReason: 'agentCrash' });
-
-    const event = makeEvent();
-    await eventService.publish(event);
-
-    expect(hookRunIds).toContain(run.id);
-    expect(eventStore.getById(event.id)?.state).toBe('published');
-    expect(eventStore.listDeliveries(event.id)).toHaveLength(1);
-    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
   });
 
   test('fails queued deliveries when an execution is unregistered', async () => {

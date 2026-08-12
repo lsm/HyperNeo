@@ -25,7 +25,7 @@ import type { PendingAgentMessageRepository } from '../../../storage/repositorie
 import type { WorkflowChannel } from '@hyperneo/shared';
 import { ChannelResolver } from './channel-resolver';
 import { formatAgentMessage } from '../agent-message-envelope';
-import { ActivationError, ChannelGateBlockedError, type ChannelRouter } from './channel-router';
+import { ActivationError, type ChannelRouter } from './channel-router';
 
 export interface AgentMessageRouterConfig {
   /** Node execution repository for looking up agent sessions by workflow run. */
@@ -446,16 +446,6 @@ export class AgentMessageRouter {
           message
         );
       } catch (err) {
-        if (err instanceof ChannelGateBlockedError) {
-          return {
-            success: false,
-            delivered: [],
-            failed: [],
-            reason: err.message,
-            rateLimited: err.rateLimited,
-            retryAfterMs: err.retryAfterMs,
-          };
-        }
         return {
           success: false,
           delivered: [],
@@ -820,16 +810,6 @@ export class AgentMessageRouter {
             activatedTargets.add(agentName);
           }
         } catch (err) {
-          if (err instanceof ChannelGateBlockedError) {
-            return {
-              success: false,
-              delivered: [],
-              failed: [],
-              reason: err.message,
-              rateLimited: err.rateLimited,
-              retryAfterMs: err.retryAfterMs,
-            };
-          }
           if (err instanceof ActivationError) {
             return {
               success: false,

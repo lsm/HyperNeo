@@ -51,7 +51,7 @@
  *   - no-artifact companion: without a `prUrl`-bearing artifact, the
  *     kickoff leaves `{{pr_url}}` as a literal placeholder (the
  *     conditional spread guards against crashing on missing context).
- *   - no-route companion on Plan & Decompose (no postApproval declared)
+ *   - no-route companion on Review-Only (no postApproval declared)
  *   - kill-switch contract on `isPostApprovalRoutingEnabled`
  */
 
@@ -74,7 +74,7 @@ import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space
 import {
   seedBuiltInWorkflows,
   CODING_WORKFLOW,
-  PLAN_AND_DECOMPOSE_WORKFLOW,
+  REVIEW_ONLY_WORKFLOW,
   getBuiltInWorkflows,
 } from '../../../../src/lib/space/workflows/built-in-workflows.ts';
 import {
@@ -480,19 +480,19 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
     expect(h.spawned[0].kickoffMessage).toContain('{{pr_url}}');
   });
 
-  test('approved task with NO postApproval → dispatchPostApproval closes directly (Plan & Decompose path)', async () => {
-    // Plan-and-Decompose is deliberately left without a postApproval route in
-    // PR 3/5 — its end-node is the Task Agent itself, so there is no PR to
-    // merge and no reviewer to dispatch to. This test locks that in against
-    // the real dispatchPostApproval entry point.
-    const planDecompose = h.workflowManager
+  test('approved task with NO postApproval → dispatchPostApproval closes directly (Review-Only path)', async () => {
+    // Review-Only is deliberately left without a postApproval route — its
+    // end-node is the Review Agent itself, so there is no PR to merge and no
+    // reviewer to dispatch to. This test locks that in against the real
+    // dispatchPostApproval entry point.
+    const reviewOnly = h.workflowManager
       .listWorkflows(SPACE_ID)
-      .find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name);
-    expect(planDecompose).toBeDefined();
-    expect(planDecompose!.postApproval).toBeUndefined();
-    expect(planDecompose!.nodes.some((node) => node.postApproval)).toBe(false);
+      .find((w) => w.name === REVIEW_ONLY_WORKFLOW.name);
+    expect(reviewOnly).toBeDefined();
+    expect(reviewOnly!.postApproval).toBeUndefined();
+    expect(reviewOnly!.nodes.some((node) => node.postApproval)).toBe(false);
 
-    const { taskId } = seedRunAndTask(h, planDecompose!.id, 'Plan the work');
+    const { taskId } = seedRunAndTask(h, reviewOnly!.id, 'Review the work');
 
     const result = await h.runtime.dispatchPostApproval(taskId, 'human');
 
