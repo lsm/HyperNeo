@@ -983,6 +983,20 @@ describe('AgentSession', () => {
       expect(cancelDeliverySpy).toHaveBeenCalledWith(mockSession.id, 'uuid-1');
     });
 
+    it('revokePendingDelivery notifies the delivery feeds after defer+cancel (#862 review P2)', async () => {
+      const deferSpy = mock(() => ({ dbId: 'db-1', uuid: 'uuid-1' }));
+      const cancelDeliverySpy = mock(() => true);
+      const notifySpy = mock(() => {});
+      mockDb.deferEnqueuedUserMessage = deferSpy;
+      mockDb.getJobQueueRepo = mock(() => ({ cancelDelivery: cancelDeliverySpy }));
+      mockDb.notifyChange = notifySpy;
+
+      await agentSession.revokePendingDelivery('db-1', 'defer');
+
+      expect(notifySpy).toHaveBeenCalledWith('sdk_messages', { sessionId: mockSession.id });
+      expect(notifySpy).toHaveBeenCalledWith('job_queue', { sessionId: mockSession.id });
+    });
+
     it('deliverChatMessage preserves a legacy-owned processing turn', async () => {
       const jobQueue = {
         enqueue: mock(() => ({ id: 'job' })),

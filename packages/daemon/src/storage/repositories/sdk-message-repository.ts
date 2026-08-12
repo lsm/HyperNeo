@@ -8,9 +8,10 @@
  */
 
 import type { Database as BunDatabase } from '../sqlite-compat';
-import { generateUUID } from '@hyperneo/shared';
+import { generateUUID, sendStatusToDeliveryStatus } from '@hyperneo/shared';
 import type {
   MessageContent,
+  MessageDeliveryStatus,
   MessageOrigin,
   HyperNeoActionMessage,
   ChatMessage,
@@ -673,7 +674,11 @@ export class SDKMessageRepository {
     sinceRowid?: number
   ): {
     messages: Array<
-      ChatMessage & { timestamp: number; origin?: MessageOrigin; sendStatus?: string }
+      ChatMessage & {
+        timestamp: number;
+        origin?: MessageOrigin;
+        deliveryStatus?: MessageDeliveryStatus;
+      }
     >;
     hasMore: boolean;
   } {
@@ -758,7 +763,11 @@ export class SDKMessageRepository {
     sinceRowid?: number
   ): {
     messages: Array<
-      ChatMessage & { timestamp: number; origin?: MessageOrigin; sendStatus?: string }
+      ChatMessage & {
+        timestamp: number;
+        origin?: MessageOrigin;
+        deliveryStatus?: MessageDeliveryStatus;
+      }
     >;
     hasMore: boolean;
   } {
@@ -859,8 +868,16 @@ export class SDKMessageRepository {
         // DB origin wins; undefined explicitly clears any SDK-level origin object.
         origin: r.origin != null ? (r.origin as MessageOrigin) : undefined,
       };
-      if (r.send_status === 'failed') {
-        extra.sendStatus = 'failed';
+      // Task #862: emit the same delivery lifecycle the LiveQuery feed exposes,
+      // so the `messages` RPC / initial-load / pagination / export payloads match
+      // the feed's wire shape. This path has no job_queue join, so the "retrying"
+      // state is not detectable here (the feed covers it); user rows reaching this
+      // path are virtually always settled (consumed/failed) anyway.
+      if (sdkMessage.type === 'user') {
+        const deliveryStatus = sendStatusToDeliveryStatus(
+          r.send_status as string | null | undefined
+        );
+        if (deliveryStatus) extra.deliveryStatus = deliveryStatus;
       }
       messages.push({ ...sdkMessage, ...extra } as SDKMessage & { timestamp: number });
       if (messages.length >= limit) break;
@@ -933,7 +950,11 @@ export class SDKMessageRepository {
     // tracking message provenance in HyperNeo). The runtime values are always correct.
     return {
       messages: [...topLevelMessages, ...subagentMessages] as Array<
-        SDKMessage & { timestamp: number; origin?: MessageOrigin; sendStatus?: string }
+        SDKMessage & {
+          timestamp: number;
+          origin?: MessageOrigin;
+          deliveryStatus?: MessageDeliveryStatus;
+        }
       >,
       hasMore,
     };
@@ -1339,6 +1360,14 @@ export class SDKMessageRepository {
     message: SDKMessage,
     countsTowardsBadge: boolean
   ): void {
+    // Task #862 (review P1): the outbox commits the user row via
+    // `saveUserMessageCore` (raw db, bypassing the reactive proxy) and the badge
+    // notify only fires when the row counts toward the badge — an `enqueued`
+    // row does not. Always notify `sdk_messages` so the widened
+    // `messages.bySession` feed is re-evaluated on the initial commit and the
+    // queued/processing row is surfaced immediately (not after a later status
+    // mutation happens to notify).
+    this.reactiveDb?.notifyChange('sdk_messages', { sessionId });
     if (countsTowardsBadge) this.notifySessionsChanged(sessionId);
     this.upsertMessageSearchRow(id);
   }

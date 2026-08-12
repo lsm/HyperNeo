@@ -123,6 +123,7 @@ export class Database {
   private goalAutomationCursorRepo!: GoalAutomationCursorRepository;
   private providerRepo!: ProviderRepository;
   private shortIdAllocator!: ShortIdAllocator;
+  private reactiveDb?: ReactiveDatabase;
 
   constructor(dbPath: string) {
     this.core = new DatabaseCore(dbPath);
@@ -132,8 +133,19 @@ export class Database {
     return this.core.getDbPath();
   }
 
+  /**
+   * Notify the live-query layer that a table changed, when this facade is
+   * wired to a {@link ReactiveDatabase}. Used by code paths that mutate a table
+   * through the raw db (e.g. `revokePendingDelivery` defer+cancel) so the
+   * widened delivery feed re-evaluates. No-op when not wired.
+   */
+  notifyChange(table: string, scope?: { sessionId?: string; taskId?: string }): void {
+    this.reactiveDb?.notifyChange(table, scope);
+  }
+
   async initialize(reactiveDb: ReactiveDatabase): Promise<void> {
     await this.core.initialize();
+    this.reactiveDb = reactiveDb;
 
     // Initialize repositories with the raw BunDatabase instance
     const db = this.core.getDb();
