@@ -56,7 +56,8 @@ enabled_run_cmd() {
 		/^[[:space:]]{2}[[:alnum:]_-]+:[[:space:]]*$/ { job_disabled=0 }
 		/^[[:space:]]*-[[:space:]]/ { emit(); runval=""; disabled=0; incmd=0 }
 		# if:false|never disables a step (>= 6 indent) or the whole job (<= 4 indent).
-		/if:[[:space:]]*(false|never)([[:space:]]|$)/ { n=0; while (substr($0,n+1,1)==" ") n++; if (n <= 4) job_disabled=1; else disabled=1 }
+		# Accept the optional ${{ }} expression wrapper GitHub allows (if: ${{ false }}).
+		/if:[[:space:]]*(\$\{\{[[:space:]]*)?(false|never)([[:space:]]|\}|$)/ { n=0; while (substr($0,n+1,1)==" ") n++; if (n <= 4) job_disabled=1; else disabled=1 }
 		/^[[:space:]]*#/ { next }
 		incmd { n=0; while (substr($0,n+1,1)==" ") n++; if (n > runindent) { runval=runval" "$0; next }; emit(); runval=""; incmd=0 }
 		/^[[:space:]]*run:[[:space:]]*[>|]/ { incmd=1; n=0; while (substr($0,n+1,1)==" ") n++; runindent=n; runval=$0; next }
