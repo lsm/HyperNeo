@@ -195,7 +195,32 @@ done
 # packages/shared/tests — was silently skipped before being added to the matrix).
 unit_matrix=$(grep -E "^[[:space:]]*shard:[[:space:]]*\[" "$REPO_ROOT/.github/workflows/main.yml" \
 	| head -n1 | sed -E 's/.*\[//; s/\].*//' | tr ',' '\n' | tr -d ' ')
+# matrix.exclude under test-daemon-shared-unit drops combinations GitHub would
+# otherwise schedule. A shard present in the raw `shard:` axis but excluded
+# never runs, so accepting it as covered (it's in the raw axis) is a false
+# positive. Parse the exclude block (a `shard:` value under `exclude:`) so those
+# shards can be treated as absent from CI.
+_unit_excluded=$(awk '
+	/^  test-daemon-shared-unit:[[:space:]]*$/ { injob=1; next }
+	injob && /^  [a-z]/ { injob=0 }
+	injob && /^[[:space:]]*exclude:[[:space:]]*$/ { inexcl=1; next }
+	inexcl && !/^[[:space:]]*#/ && !/^[[:space:]]*$/ {
+		n=0; while (substr($0,n+1,1)==" ") n++
+		if (n <= 8) { inexcl=0 }
+	}
+	injob && inexcl && !/^[[:space:]]*#/ && /shard:/ {
+		v=$0; sub(/.*shard:[[:space:]]*/, "", v); sub(/[[:space:]]*$/, "", v); print v
+	}
+' "$REPO_ROOT/.github/workflows/main.yml")
 for shard in "${SHARDS[@]}"; do
+	# A shard removed by matrix.exclude is dropped by GitHub — its files never
+	# run, so it must be treated as not-in-CI even though it appears in the raw
+	# axis above. (Check before the exactly-once axis test.)
+	if printf '%s\n' "$_unit_excluded" | grep -qxF "$shard"; then
+		err "daemon unit shard '$shard' is in the CI unit matrix but removed by matrix.exclude — GitHub drops the combination, so its files never run while this guard reports them covered"
+		echo "     → remove the exclude entry, or drop the shard from SHARDS in scripts/test-daemon.sh" >&2
+		continue
+	fi
 	# Exactly-once: a shard must appear in the matrix once. Missing = its files
 	# never run; duplicated = GitHub schedules it twice (duplicate test runs +
 	# coverage uploads under the same flag).
@@ -418,6 +443,26 @@ if [ -n "$_dup_axis" ]; then
 	done <<< "$_dup_axis"
 fi
 
+# Every active `include:` module must ALSO be in the `module:` axis. GitHub
+# treats an include row whose module is NOT in the axis as an ADDITIONAL
+# combination (it cannot augment any existing axis entry), so it silently
+# schedules a job this guard never authorized — running a test_path even for a
+# module that was intentionally disabled (e.g. glm, which sits in EXEMPT_DIRS
+# precisely because it is commented out of the axis). The checks above only
+# iterate `_axis_modules`, so such an include-only row is otherwise invisible.
+_include_modules=$(awk '
+	/^[[:space:]]*#/ { next }
+	/^[[:space:]]*- module:[[:space:]]*[a-z0-9-]+/ {
+		m=$0; sub(/^[[:space:]]*- module:[[:space:]]*/, "", m); sub(/[[:space:]]*$/, "", m); print m
+	}
+' "$MAIN_WORKFLOW")
+for _im in $_include_modules; do
+	if ! printf '%s\n' "$_axis_modules" | grep -qxF "$_im"; then
+		err "online include row for module '$_im' is not in the module: axis — GitHub creates an extra matrix combination for it, running its test_path even if the module was intentionally disabled"
+		echo "     → add '$_im' to the module: axis, or comment out / remove the include row" >&2
+	fi
+done
+
 # Every test_path VALUE (inline or folded, either workflow) must resolve to a
 # real file or directory on disk. A typo (e.g. a ".bak" suffix) or stale path
 # makes the shard's `bun test`/`vitest` filter match nothing, so that job exits 0
@@ -428,9 +473,19 @@ fi
 # grep reported it covered.
 while IFS= read -r _tp; do
 	[ -n "$_tp" ] || continue
-	if [ ! -e "$REPO_ROOT/packages/daemon/$_tp" ]; then
+	_full="$REPO_ROOT/packages/daemon/$_tp"
+	if [ ! -e "$_full" ]; then
 		err "online test_path value '$_tp' does not exist on disk — CI would run zero files for that shard"
 		echo "     → fix the path, or remove the matrix row" >&2
+	elif [ -d "$_full" ]; then
+		# Directory-level test_path: Vitest auto-discovers test files under it, so
+		# the directory must contain at least one — otherwise the filter matches
+		# nothing and `bun test`/`vitest` exits 0 having run ZERO tests (a hole the
+		# per-disk-file walk below cannot see, since it has no file to flag).
+		if ! find "$_full" -type f \( -name '*.test.ts' -o -name '*_test.ts' \) -print -quit | grep -q .; then
+			err "online test_path directory '$_tp' contains no test files — CI would run zero files for that shard"
+			echo "     → add a test file under it, point test_path at a specific file, or remove the matrix row" >&2
+		fi
 	fi
 done < <(online_test_path_values "$MAIN_WORKFLOW"; online_test_path_values "$REAL_API_WORKFLOW")
 
