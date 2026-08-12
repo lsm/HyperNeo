@@ -662,6 +662,20 @@ else
 		echo "     → keep the runner as 'bun test \${{ matrix.test_path }}' with no selection flag or extra positional" >&2
 	fi
 fi
+# The real-API runner executes `bun test <test_path>` from the step's working-
+# directory. If it isn't packages/daemon, the tests/online/* patterns match no
+# files (bun exits 0 with "filter matched no test files"). Pin it.
+_real_wd=$(awk '
+	$0 ~ "^  daemon-real-api:" { injob=1; next }
+	injob && /^  [a-z]/ { injob=0; next }
+	!injob { next }
+	/working-directory:/ { wd=$0; sub(/.*working-directory:[[:space:]]*/, "", wd); sub(/[[:space:]]*$/, "", wd) }
+	/run:.*bun test/ { print wd; wd="DEFAULT" }
+' "$REAL_API_WORKFLOW")
+if [ "$_real_wd" != "packages/daemon" ]; then
+	err "daemon-real-api 'bun test' step working-directory is '${_real_wd:-<unset>}' (expected packages/daemon) — tests/online/* patterns would match no files (bun exits 0)"
+	echo "     → keep working-directory: packages/daemon on the bun test step" >&2
+fi
 
 # Every online `module:` axis entry must have an include record with a non-empty
 # test_path. An axis module with no include gets an EMPTY ${{ matrix.test_path }},
@@ -747,6 +761,27 @@ done < <(awk '
 	END { flush() }
 ' "$REAL_API_WORKFLOW")
 
+# daemon-real-api's matrix must be include-only (no sibling axis). A sibling
+# axis (e.g. replica: [a,b]) takes the Cartesian product, running every PAID
+# cross-provider test once per value. Allowed matrix keys: include/exclude only.
+_real_sibling_axes=$(awk '
+	$0 ~ "^  daemon-real-api:" { injob=1; next }
+	injob && /^  [a-z]/ { injob=0; inmatrix=0; next }
+	!injob { next }
+	/^[[:space:]]{6}matrix:[[:space:]]*$/ { inmatrix=1; next }
+	/^[[:space:]]{0,6}[a-z]/ { inmatrix=0 }
+	inmatrix && /^[[:space:]]{8}[a-z][a-z0-9_-]*:/ && $0 !~ /^[[:space:]]{8}(include|exclude):/ {
+		s=$0; sub(/^[[:space:]]+/, "", s); sub(/:.*/, "", s); print s
+	}
+' "$REAL_API_WORKFLOW")
+if [ -n "$_real_sibling_axes" ]; then
+	while IFS= read -r _ax; do
+		[ -n "$_ax" ] || continue
+		err "daemon-real-api matrix has an extra axis '$_ax:' — GitHub takes the Cartesian product, so every paid cross-provider test runs once per value"
+		echo "     → remove the '$_ax:' axis" >&2
+	done <<< "$_real_sibling_axes"
+fi
+
 # Every active module-axis value must occur EXACTLY once. GitHub expands each
 # axis entry into a separate job, so a duplicated value (e.g. two `- components`
 # rows sharing one include) runs the same test_path twice — wasted CI and, for
@@ -782,6 +817,18 @@ for _im in $_include_modules; do
 	if ! printf '%s\n' "$_axis_modules" | grep -qxF "$_im"; then
 		err "online include row for module '$_im' is not in the module: axis — GitHub creates an extra matrix combination for it, running its test_path even if the module was intentionally disabled"
 		echo "     → add '$_im' to the module: axis, or comment out / remove the include row" >&2
+	fi
+done
+# Each axis module must have EXACTLY ONE include record. GitHub applies ALL
+# matching include records to the single axis combination (later test_path
+# REPLACES earlier augmentation, not a second job), so two records for one module
+# leave the earlier record's file uncovered in CI while _module_values reports
+# both paths.
+for _m in $_axis_modules; do
+	_rcount=$(printf '%s\n' "$_include_modules" | grep -xF "$_m" | wc -l | tr -d ' ')
+	if [ "$_rcount" -gt 1 ]; then
+		err "online module '$_m' has $_rcount include records — GitHub applies all to one combination (later test_path replaces earlier), so the earlier record's file would not run while this guard reports it covered"
+		echo "     → merge into one include record, or rename the duplicate module" >&2
 	fi
 done
 
@@ -823,6 +870,18 @@ while IFS= read -r _tp; do
 			err "online test_path directory '$_tp' contains no test files — CI would run zero files for that shard"
 			echo "     → add a test file under it, point test_path at a specific file, or remove the matrix row" >&2
 		fi
+	else
+		# File-level test_path: must be an actual test file under tests/online/
+		# with a recognized suffix. `bun test src/app.ts` matches no test files and
+		# exits 0, so a non-test path would run zero tests while the guard reports
+		# it covered.
+		case "$_tp" in
+			tests/online/*.test.ts|tests/online/*_test.ts) ;;
+			*)
+				err "online test_path file '$_tp' is not a test file under tests/online/ (need a *.test.ts/*_test.ts under tests/online/) — CI would match no test files"
+				echo "     → point test_path at a tests/online/*.test.ts file, or a directory" >&2
+				;;
+		esac
 	fi
 done < <(online_test_path_values "$MAIN_WORKFLOW"; online_test_path_values "$REAL_API_WORKFLOW")
 
