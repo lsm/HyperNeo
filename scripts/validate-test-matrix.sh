@@ -106,6 +106,39 @@ online_test_path_values() {
 	' "$1"
 }
 
+# Print every value for `key:` (e.g. shard / module) that appears under a
+# `matrix.exclude:` block in job $1 of main.yml. Handles BOTH YAML forms:
+#   block:  exclude:        flow:  exclude: [{ shard: shared }, { shard: 1-core }]
+#             - shard: shared
+# Excludes drop GitHub combinations, so a shard/module present in the raw axis
+# but excluded never runs — the callers treat these as absent from CI rather than
+# accept their files as falsely covered.
+matrix_excludes() {
+	local job="$1" key="$2"
+	awk -v job="$1" -v key="$2" '
+		$0 ~ "^  " job ":" { injob=1; next }
+		injob && /^  [a-z]/ { injob=0 }
+		# Flow form: exclude: [ ... ] on one line — pull every "key: <token>" out of it.
+		injob && $0 ~ "^[[:space:]]*exclude:[[:space:]]*\\[" {
+			s=$0
+			while (match(s, key ":[[:space:]]*[a-z0-9-]+")) {
+				v=substr(s, RSTART, RLENGTH); sub(".*" key ":[[:space:]]*", "", v); print v
+				s=substr(s, RSTART + RLENGTH)
+			}
+			next
+		}
+		# Block form: "exclude:" alone, then indented "- key: value" lines.
+		injob && $0 ~ "^[[:space:]]*exclude:[[:space:]]*$" { inblock=1; next }
+		injob && inblock && !/^[[:space:]]*#/ && !/^[[:space:]]*$/ {
+			n=0; while (substr($0,n+1,1)==" ") n++
+			if (n <= 8) { inblock=0; next }
+			if (match($0, key ":[[:space:]]*[a-z0-9-]+")) {
+				v=substr($0, RSTART, RLENGTH); sub(".*" key ":[[:space:]]*", "", v); print v
+			}
+		}
+	' "$REPO_ROOT/.github/workflows/main.yml"
+}
+
 # ===========================================================================
 # 1. DAEMON UNIT TESTS  (source of truth: scripts/test-daemon.sh)
 # ===========================================================================
@@ -198,20 +231,9 @@ unit_matrix=$(grep -E "^[[:space:]]*shard:[[:space:]]*\[" "$REPO_ROOT/.github/wo
 # matrix.exclude under test-daemon-shared-unit drops combinations GitHub would
 # otherwise schedule. A shard present in the raw `shard:` axis but excluded
 # never runs, so accepting it as covered (it's in the raw axis) is a false
-# positive. Parse the exclude block (a `shard:` value under `exclude:`) so those
-# shards can be treated as absent from CI.
-_unit_excluded=$(awk '
-	/^  test-daemon-shared-unit:[[:space:]]*$/ { injob=1; next }
-	injob && /^  [a-z]/ { injob=0 }
-	injob && /^[[:space:]]*exclude:[[:space:]]*$/ { inexcl=1; next }
-	inexcl && !/^[[:space:]]*#/ && !/^[[:space:]]*$/ {
-		n=0; while (substr($0,n+1,1)==" ") n++
-		if (n <= 8) { inexcl=0 }
-	}
-	injob && inexcl && !/^[[:space:]]*#/ && /shard:/ {
-		v=$0; sub(/.*shard:[[:space:]]*/, "", v); sub(/[[:space:]]*$/, "", v); print v
-	}
-' "$REPO_ROOT/.github/workflows/main.yml")
+# positive. Parse excludes (block OR flow form) and treat those shards as
+# absent from CI.
+_unit_excluded=$(matrix_excludes "test-daemon-shared-unit" "shard")
 for shard in "${SHARDS[@]}"; do
 	# A shard removed by matrix.exclude is dropped by GitHub — its files never
 	# run, so it must be treated as not-in-CI even though it appears in the raw
@@ -462,6 +484,21 @@ for _im in $_include_modules; do
 		echo "     → add '$_im' to the module: axis, or comment out / remove the include row" >&2
 	fi
 done
+
+# Symmetric to the unit exclude check: a `matrix.exclude` under
+# test-daemon-online drops a module combination, but `_axis_modules` reads the
+# raw axis, so every downstream ownership check would still treat that module
+# (and its directory's tests) as scheduled. Reject excludes outright — this
+# guard models disabling via EXEMPT_DIRS / commenting out the axis entry, so a
+# matrix.exclude is a configuration it cannot soundly validate.
+_online_excluded=$(matrix_excludes "test-daemon-online" "module")
+if [ -n "$_online_excluded" ]; then
+	while IFS= read -r _em; do
+		[ -n "$_em" ] || continue
+		err "online module '$_em' is excluded via matrix.exclude — GitHub drops the combination, so its tests never run while this guard reports them covered"
+		echo "     → remove the exclude, or disable the module by commenting out its axis entry / listing its dir in EXEMPT_DIRS" >&2
+	done <<< "$_online_excluded"
+fi
 
 # Every test_path VALUE (inline or folded, either workflow) must resolve to a
 # real file or directory on disk. A typo (e.g. a ".bak" suffix) or stale path
