@@ -2368,18 +2368,27 @@ describe('QueryRunner', () => {
     });
 
     it('should not persist turn termination when a rate-limit cooldown is scheduled', async () => {
-      buildSpy.mockRejectedValue(new Error('429 Too Many Requests'));
-      const onRateLimitExhausted = mock(async () => true);
+      for (const errorMessage of [
+        '429 Too Many Requests',
+        'rate limit exceeded',
+        'Request failed: 429',
+      ]) {
+        beginTerminalIdleSpy.mockClear();
+        handleErrorSpy.mockClear();
+        setIdleSpy.mockClear();
+        buildSpy.mockRejectedValueOnce(new Error(errorMessage));
+        const onRateLimitExhausted = mock(async () => true);
 
-      const ctx = createContext({ onRateLimitExhausted });
-      runner = new QueryRunner(ctx);
-      runner.start();
-      await ctx.queryPromise?.catch(() => {});
+        const ctx = createContext({ onRateLimitExhausted });
+        runner = new QueryRunner(ctx);
+        runner.start();
+        await ctx.queryPromise?.catch(() => {});
 
-      expect(onRateLimitExhausted).toHaveBeenCalledTimes(1);
-      expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
-      expect(handleErrorSpy).not.toHaveBeenCalled();
-      expect(setIdleSpy).not.toHaveBeenCalled();
+        expect(onRateLimitExhausted).toHaveBeenCalledTimes(1);
+        expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
+        expect(handleErrorSpy).not.toHaveBeenCalled();
+        expect(setIdleSpy).not.toHaveBeenCalled();
+      }
     });
 
     it('should persist turn termination before awaiting terminal error publication', async () => {

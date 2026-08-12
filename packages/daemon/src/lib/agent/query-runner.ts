@@ -1285,7 +1285,8 @@ export class QueryRunner {
         // Validation errors publish before setIdle, so fence them now. A recoverable
         // 429 is different: its cooldown continues the same turn and must not create
         // durable turn-end evidence unless recovery declines to schedule it.
-        const deferTerminalFence = looksLikeRateLimit429(errorMessage);
+        const deferTerminalFence =
+          errorMessage.includes('429') || errorMessage.toLowerCase().includes('rate limit');
         if (!deferTerminalFence) {
           stateManager.beginTerminalIdle();
         }
