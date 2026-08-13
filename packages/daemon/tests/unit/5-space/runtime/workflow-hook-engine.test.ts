@@ -418,6 +418,7 @@ describe('WorkflowHookEngine.executeAction', () => {
     // The script fails (stop) when it can see the injected secret-ish var,
     // and succeeds (continue) when it cannot; HYPERNEO_* must pass through.
     process.env.ACME_DAEMON_TEST_SECRET = 'super-secret-value';
+    process.env.HYPERNEO_PROVIDER_CREDENTIAL_KEY = 'a'.repeat(64);
     try {
       const ENV_HOOK = {
         id: 'env_probe_hook',
@@ -426,7 +427,7 @@ describe('WorkflowHookEngine.executeAction', () => {
           kind: 'script' as const,
           interpreter: 'bash' as const,
           source:
-            'if env | grep -q "^ACME_DAEMON_TEST_SECRET="; then ' +
+            'if env | grep -qE "^(ACME_DAEMON_TEST_SECRET|HYPERNEO_PROVIDER_CREDENTIAL_KEY)="; then ' +
             'echo \'{"flow":"stop","reason":"secret leaked"}\'; else ' +
             'echo \'{"flow":"continue"}\'; fi',
         },
@@ -450,6 +451,7 @@ describe('WorkflowHookEngine.executeAction', () => {
       expect(outcome.decision).toBe('deliver');
     } finally {
       delete process.env.ACME_DAEMON_TEST_SECRET;
+      delete process.env.HYPERNEO_PROVIDER_CREDENTIAL_KEY;
     }
   });
 

@@ -84,5 +84,9 @@ export async function collectWithMaxBuffer(
     reader.releaseLock();
   }
 
+  // Flush the streaming decoder: a multi-byte UTF-8 sequence split at the
+  // final chunk boundary would otherwise be truncated (fail-closed stop on an
+  // otherwise-valid script).
+  chunks.push(decoder.decode());
   return { text: chunks.join(''), truncated };
 }

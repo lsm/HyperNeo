@@ -74,10 +74,17 @@ function errorMessage(err: unknown): string {
 
 async function readUpTo(
   stream: ReadableStream<Uint8Array> | null,
-  maxBytes: number
+  maxBytes: number,
+  signal?: AbortSignal
 ): Promise<string> {
   if (!stream) return '';
   const reader = stream.getReader();
+  // Parity with the engine's collectWithMaxBuffer: a straggler grandchild
+  // holding an inherited pipe must not block collection past the kill timer.
+  const onAbort = () => {
+    reader.cancel().catch(() => {});
+  };
+  signal?.addEventListener('abort', onAbort);
   const chunks: Uint8Array[] = [];
   let len = 0;
   let capped = false;
@@ -97,6 +104,7 @@ async function readUpTo(
       }
     }
   } finally {
+    signal?.removeEventListener('abort', onAbort);
     try {
       reader.releaseLock();
     } catch {
@@ -130,7 +138,9 @@ async function runGh(opts: {
     return { ok: false, retryable: false, error: `failed to spawn gh: ${errorMessage(err)}` };
   }
 
+  const controller = new AbortController();
   const timer = setTimeout(() => {
+    controller.abort();
     try {
       proc.kill('SIGKILL');
     } catch {
@@ -143,12 +153,13 @@ async function runGh(opts: {
   let exitCode: number | null = null;
   try {
     [stdout, stderr, exitCode] = await Promise.all([
-      readUpTo(proc.stdout, MAX_OUTPUT_BYTES),
-      readUpTo(proc.stderr, MAX_OUTPUT_BYTES),
+      readUpTo(proc.stdout, MAX_OUTPUT_BYTES, controller.signal),
+      readUpTo(proc.stderr, MAX_OUTPUT_BYTES, controller.signal),
       proc.exited,
     ]);
   } finally {
     clearTimeout(timer);
+    controller.abort(); // release collectors if the process exited first
   }
 
   if (exitCode === 0) return { ok: true, data: stdout };
@@ -207,8 +218,14 @@ async function runGhGraphqlImpl(
   if (Array.isArray(errors) && errors.length > 0) {
     // A rate-limit / transient error inside an otherwise-200 GraphQL response
     // must stay retryable (so hooks map it to flow:'retry'), not terminal.
+    // Classify retryability from the error MESSAGES only — stringifying the
+    // whole errors array would let an unrelated "rate limit" substring
+    // anywhere in the payload misclassify a terminal failure.
+    const messages = errors
+      .map((e) => (e && typeof e === 'object' && 'message' in e ? String(e.message) : ''))
+      .join(' | ');
     const text = JSON.stringify(errors);
-    const retryable = isRateLimit(text) || TRANSIENT_FAILURE.test(text);
+    const retryable = isRateLimit(messages) || TRANSIENT_FAILURE.test(messages);
     return { ok: false, retryable, error: `GraphQL errors: ${text}` };
   }
   return { ok: true, data: parsed };

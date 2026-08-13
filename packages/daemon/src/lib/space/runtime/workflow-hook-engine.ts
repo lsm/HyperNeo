@@ -1290,10 +1290,6 @@ export class WorkflowHookEngine {
     const env: Record<string, string> = {};
     for (const [key, value] of Object.entries(process.env)) {
       if (value === undefined) continue;
-      if (key.startsWith('HYPERNEO_')) {
-        env[key] = value;
-        continue;
-      }
       if (WorkflowHookEngine.SCRIPT_ENV_ALLOW.has(key) || key.startsWith('LC_')) {
         env[key] = value;
         continue;
@@ -1301,8 +1297,11 @@ export class WorkflowHookEngine {
       if (key === 'GH_HOST' || key === 'GH_PATH') {
         env[key] = value;
       }
-      // Everything else is dropped (including HOME and XDG_CONFIG_HOME) — see
-      // SCRIPT_ENV_ALLOW's doc comment.
+      // Everything else is dropped — including HOME/XDG_CONFIG_HOME and ALL
+      // inherited HYPERNEO_* variables: the daemon's HYPERNEO_ namespace
+      // carries secrets (e.g. HYPERNEO_PROVIDER_CREDENTIAL_KEY, the AES key
+      // encrypting every stored provider credential). The script's HYPERNEO_*
+      // CONTRACT vars are set explicitly below, never inherited.
     }
     env.HOME = isolatedHome;
     env.HYPERNEO_WORKFLOW_RUN_ID = ctx.runId;
