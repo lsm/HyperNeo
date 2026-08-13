@@ -261,7 +261,12 @@ $_real_module_values" | wc -l | tr -d ' '
 test_prop_has() {
 	local val_re
 	val_re=$(printf '%s' "$3" | sed 's/[][{}.*\\]/\\&/g')
-	grep -qE "^    $2: ${val_re}(,|\$)" "$1"
+	_PROP_VAL_RE="$val_re" awk -v prop="$2" '
+		/^  test:[[:space:]]*\{?[[:space:]]*$/ { intest=1; next }
+		/^  [a-zA-Z]/ { intest=0 }
+		intest && $0 ~ "^    " prop ": " ENVIRON["_PROP_VAL_RE"] "(,|$)" { found=1; exit }
+		END { exit (found ? 0 : 1) }
+	' "$1"
 }
 
 # True (exit 0) if vitest config $1 does NOT set `<prop>` directly under test:
@@ -269,7 +274,12 @@ test_prop_has() {
 # without touching include/exclude (which test_prop_has pins) — a narrowed dir
 # makes files outside it unreachable while the guard still reports them covered.
 test_prop_absent() {
-	! grep -qE "^    $2:" "$1"
+	awk -v prop="$2" '
+		/^  test:[[:space:]]*\{?[[:space:]]*$/ { intest=1; next }
+		/^  [a-zA-Z]/ { intest=0 }
+		intest && $0 ~ "^    " prop ":" { found=1; exit }
+		END { exit (found ? 1 : 0) }
+	' "$1"
 }
 
 # Require vitest config $1 (package label $2) to set NONE of the selection-
@@ -696,7 +706,7 @@ else
 		| sed 's/.*vitest run//' \
 		| sed -E -e 's/\$\{\{[[:space:]]*matrix\.test_path[[:space:]]*\}\}//g' \
 		         -e 's/\$\{\{[[:space:]]*matrix\.module[[:space:]]*\}\}//g' \
-		         -e 's/--config[[:space:]]+[^[:space:]]+//g' \
+		         -e 's/--config vitest\.online\.config\.ts//g' \
 		         -e 's/--reporter[[:space:]]+[^[:space:]]+//g' \
 		         -e 's/--reporter=[^[:space:]]+//g' \
 		         -e 's/--coverage\.[[:alnum:]_.-]+(=[^[:space:]]+)?//g' \
@@ -901,13 +911,26 @@ fi
 # iterate `_axis_modules`, so such an include-only row is otherwise invisible.
 _include_modules=$(awk '
 	$0 ~ "^  test-daemon-online:" { injob=1; next }
-	injob && /^  [a-z]/ { injob=0; next }
+	injob && /^  [a-z]/ { if (mod != "") { print mod; mod="" }; injob=0; next }
 	!injob { next }
 	/^[[:space:]]*#/ { next }
-	# Accept an optional YAML quote around the module name; strip non-token chars.
-	/^[[:space:]]*- module:[[:space:]]*[^[:space:]]/ {
-		m=$0; sub(/^[[:space:]]*- module:[[:space:]]*/, "", m); sub(/[[:space:]]+$/, "", m); gsub(/[^a-z0-9-]/, "", m); if (m != "") print m
+	# Key-order-independent: detect record by any list-item, collect module from
+	# the dash-line key OR a subsequent property at mi+2, regardless of order.
+	/^[[:space:]]*- / {
+		if (mod != "") { print mod; mod="" }
+		mi=0; while (substr($0,mi+1,1)==" ") mi++
+		line=$0; sub(/^[[:space:]]*- [[:space:]]*/, "", line); sub(/^[[:space:]]+/, "", line)
+		if (line ~ /^module:/) { sub(/^module:[[:space:]]*/, "", line); sub(/[[:space:]]*$/, "", line); gsub(/[^a-z0-9-]/, "", line); mod=line }
+		next
 	}
+	{
+		n=0; while (substr($0,n+1,1)==" ") n++
+		if (n <= mi) { if (mod != "") { print mod; mod="" }; next }
+		if (n == mi+2 && $0 ~ /^[[:space:]]*module:/) {
+			v=$0; sub(/.*module:[[:space:]]*/, "", v); sub(/[[:space:]]*$/, "", v); gsub(/[^a-z0-9-]/, "", v); mod=v
+		}
+	}
+	END { if (mod != "") print mod }
 ' "$MAIN_WORKFLOW")
 for _im in $_include_modules; do
 	if ! printf '%s\n' "$_axis_modules" | grep -qxF "$_im"; then
