@@ -186,6 +186,15 @@ const METHOD_PARAM_SCHEMAS: Record<string, import('zod').ZodType<unknown>> = {
 
 const VALID_FLOWS = new Set<HookFlow>(['continue', 'stop', 'retry']);
 
+/**
+ * Prefix marking a stop as an execution/infrastructure FAILURE rather than a
+ * hook decision — thrown built-ins, script timeouts, non-zero exits, malformed
+ * stdout, spawn failures, unknown interpreters. These are
+ * override-INELIGIBLE: the gate never completed, so a human approval must not
+ * deliver through them.
+ */
+const HOOK_EXEC_ERROR_PREFIX = '__hook_exec_error__: ';
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -608,7 +617,7 @@ export class WorkflowHookEngine {
         // approval must not convert this into a delivery (the gate never
         // completed). Track it via the execution-log reason so the wrapper
         // persists __overrideEligible=false.
-        ret = { flow: 'stop', reason: '__hook_internal_error__' };
+        ret = { flow: 'stop', reason: HOOK_EXEC_ERROR_PREFIX + errorMessage(err) };
       }
 
       const flow: HookFlow = VALID_FLOWS.has(ret.flow) ? ret.flow : 'stop';
@@ -624,14 +633,17 @@ export class WorkflowHookEngine {
       for (const followUp of built.queuedFollowUps) followUpRequests.push(followUp);
 
       if (flow === 'stop') {
-        const hookThrew = ret.reason === '__hook_internal_error__';
-        if (hookThrew) {
+        const execFailed =
+          typeof ret.reason === 'string' && ret.reason.startsWith(HOOK_EXEC_ERROR_PREFIX);
+        if (execFailed) {
           // Infrastructure stop — not a hook decision, not overridable.
           terminal = {
             kind: 'stop',
             hookId,
             overrideIneligible: true,
-            reason: `Hook "${hookId}" failed internally on ${methodName}; the action is blocked rather than delivered without a completed gate.`,
+            reason: `Hook "${hookId}" failed to complete on ${methodName} (${
+              (ret.reason as string).slice(HOOK_EXEC_ERROR_PREFIX.length) || 'internal error'
+            }); the action is blocked rather than delivered without a completed gate.`,
           };
           executionLog[executionLog.length - 1] = {
             hookId,
@@ -1252,7 +1264,10 @@ export class WorkflowHookEngine {
   ): Promise<HookReturn> {
     const spec = hook.run;
     if (spec.interpreter !== 'bash') {
-      return { flow: 'stop', reason: `Unknown interpreter: ${spec.interpreter}` };
+      return {
+        flow: 'stop',
+        reason: HOOK_EXEC_ERROR_PREFIX + `Unknown interpreter: ${spec.interpreter}`,
+      };
     }
     const timeoutMs = spec.timeoutMs ?? DEFAULT_SCRIPT_TIMEOUT_MS;
     const args = ['bash', '-c', spec.source];
@@ -1288,7 +1303,10 @@ export class WorkflowHookEngine {
           stdio: ['ignore', 'pipe', 'pipe'],
         });
       } catch (err) {
-        return { flow: 'stop', reason: `Failed to spawn bash: ${errorMessage(err)}` };
+        return {
+          flow: 'stop',
+          reason: HOOK_EXEC_ERROR_PREFIX + `Failed to spawn bash: ${errorMessage(err)}`,
+        };
       }
       proc = {
         stdout: child.stdout ? (Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>) : null,
@@ -1374,22 +1392,34 @@ export class WorkflowHookEngine {
       const [stdoutResult, stderrResult] = await collected;
 
       if (exit.timedOut) {
-        return { flow: 'stop', reason: `Hook script timed out after ${timeoutMs}ms` };
+        return {
+          flow: 'stop',
+          reason: HOOK_EXEC_ERROR_PREFIX + `script timed out after ${timeoutMs}ms`,
+        };
       }
       if (exit.code !== 0) {
         const stderrText = stderrResult.text.trim();
-        return { flow: 'stop', reason: stderrText || `Hook script exited with code ${exit.code}` };
+        return {
+          flow: 'stop',
+          reason:
+            HOOK_EXEC_ERROR_PREFIX + (stderrText || `Hook script exited with code ${exit.code}`),
+        };
       }
 
       const parsed = parseJsonStdout(stdoutResult.text);
       if (!parsed) {
-        return { flow: 'stop', reason: 'Hook script produced empty or non-JSON stdout' };
+        return {
+          flow: 'stop',
+          reason: HOOK_EXEC_ERROR_PREFIX + 'script produced empty or non-JSON stdout',
+        };
       }
       const flow = parsed.flow;
       if (typeof flow !== 'string' || !VALID_FLOWS.has(flow as HookFlow)) {
         return {
           flow: 'stop',
-          reason: `Hook script returned unrecognized flow: ${JSON.stringify(flow)}`,
+          reason:
+            HOOK_EXEC_ERROR_PREFIX +
+            `Hook script returned unrecognized flow: ${JSON.stringify(flow)}`,
         };
       }
       const ret: HookReturn = { flow: flow as HookFlow };
@@ -1797,8 +1827,12 @@ async function replayRetryableAction(options: PendingRetryableHookAction): Promi
         `Failed to notify source session for queued ${options.methodName} retry failure: ${errorMessage(err)}`
       );
     } finally {
-      options.engine.clearQueuedRetryableActionsForKey(options.actionKey);
-      clearRetryableHookActionTimer(options.actionKey);
+      // A failed final clear leaves the DURABLE record: do not also drop the
+      // in-memory dedupe — remove the timer only when the record is gone, so
+      // a restart cannot replay an action already reported terminally blocked.
+      if (options.engine.clearQueuedRetryableActionsForKey(options.actionKey)) {
+        clearRetryableHookActionTimer(options.actionKey);
+      }
     }
   }
 }
@@ -1870,19 +1904,33 @@ export function createLegacyHookGuardEngine(
   reason: string
 ): WorkflowHookEngine {
   return new (class extends WorkflowHookEngine {
-    override async executeAction(): Promise<HookActionOutcome> {
+    override async executeAction(_methodName: string): Promise<HookActionOutcome> {
       return {
         decision: 'stop',
         finalParams: {},
         followUpRequests: [],
         stateUpdates: [],
-        executionLog: [],
-        userState: { status: 'blocked', reason, humanOverrideEligible: false },
-        blockingHookId: '__legacy_hooks__',
+        // Attribute the stop to the synthetic legacy-guard "hook" so the
+        // wrapper persists a state row (lastFlow stop, override-ineligible)
+        // and the task pane's hook banner can surface the cutover block with
+        // its remediation instead of only a bare tool error.
+        executionLog: [
+          { hookId: LEGACY_GUARD_HOOK_ID, flow: 'stop', reason, timestamp: Date.now() },
+        ],
+        userState: {
+          status: 'blocked',
+          reason,
+          humanOverrideEligible: false,
+          hookId: LEGACY_GUARD_HOOK_ID,
+        },
+        blockingHookId: LEGACY_GUARD_HOOK_ID,
       };
     }
   })(config);
 }
+
+/** Synthetic hook id attributing legacy-cutover guard stops. */
+export const LEGACY_GUARD_HOOK_ID = '__legacy_hooks__';
 
 /**
  * Wrap an MCP tool handler with the workflow hook engine. Runs the hook chain
@@ -1994,11 +2042,18 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
       const blockingId = outcome.blockingHookId;
 
       if (methodName === 'send_message') {
-        // Clear a prior queued action for the same hook so its timer is reaped
-        // before we record the new one (a hook queues at most one action).
+        // A hook's durable record holds ONE queued action; when the new
+        // action REPLACES a prior one, reap the old timer. A DIFFERENT action
+        // key means a second gated send while the first is pending — do NOT
+        // reap its timer: the durable record replacement is unavoidable
+        // (single slot per hook, the shared-key limitation), but the in-memory
+        // timer for a distinct action must survive so it is not silently
+        // abandoned (its replay re-evaluates against current state).
         if (blockingId) {
           const existingQueued = engine.getQueuedRetryableAction(blockingId);
-          if (existingQueued) clearRetryableHookActionTimer(existingQueued.actionKey);
+          if (existingQueued && existingQueued.actionKey === actionKey) {
+            clearRetryableHookActionTimer(existingQueued.actionKey);
+          }
         }
 
         if (engine.isRetryableActionCancelled(meta)) {

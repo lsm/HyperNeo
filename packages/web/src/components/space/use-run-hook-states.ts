@@ -143,6 +143,16 @@ export function useRunHookStates(runId: string | null | undefined): {
         });
         setHookBindings(result.hookBindings);
         if (result.hookBindings.some((binding) => binding.enabled)) setEverHadBindings(true);
+        // A legacy-cutover guard stop persists under the synthetic
+        // __legacy_hooks__ id with NO bindings on the pinned definition —
+        // latch presence so its banner still mounts.
+        if (
+          result.hookStates.some(
+            (hs: HookStateSnapshot) => hs.hookId === '__legacy_hooks__' && hs.lastFlow === 'stop'
+          )
+        ) {
+          setEverHadBindings(true);
+        }
       } catch (err: unknown) {
         if (cancelled) return;
         setFetchError(err instanceof Error ? err.message : 'Failed to load hook status');
@@ -158,25 +168,40 @@ export function useRunHookStates(runId: string | null | undefined): {
   const summaries =
     hookStateMap === null
       ? undefined
-      : hookBindings
-          .flatMap((binding): HookBannerSummary[] => {
-            if (!binding.enabled) return [];
-            const state = hookStateMap.get(binding.hookId);
-            if (!state) return [];
-            const summary = evaluateHookStatus(state, binding);
-            // Only emit hooks that have a non-allow result (data row exists and
-            // the hook has actually been evaluated to something meaningful).
-            if (summary.status === 'allowed') return [];
-            return [summary];
-          })
-          // Hook state is keyed (runId, hookId): a hook bound to multiple
-          // routes shares ONE state snapshot, so render it once (labelled by
-          // its first binding) — one stop must not spawn duplicate blocked
-          // banners for every route, whose Approve buttons would all write the
-          // same shared override.
-          .filter((summary, index, all) => {
-            return all.findIndex((other) => other.hookId === summary.hookId) === index;
-          });
+      : [
+          ...hookBindings
+            .flatMap((binding): HookBannerSummary[] => {
+              if (!binding.enabled) return [];
+              const state = hookStateMap.get(binding.hookId);
+              if (!state) return [];
+              const summary = evaluateHookStatus(state, binding);
+              // Only emit hooks that have a non-allow result (data row exists and
+              // the hook has actually been evaluated to something meaningful).
+              if (summary.status === 'allowed') return [];
+              return [summary];
+            })
+            // Hook state is keyed (runId, hookId): a hook bound to multiple
+            // routes shares ONE state snapshot, so render it once (labelled by
+            // its first binding) — one stop must not spawn duplicate blocked
+            // banners for every route, whose Approve buttons would all write the
+            // same shared override.
+            .filter((summary, index, all) => {
+              return all.findIndex((other) => other.hookId === summary.hookId) === index;
+            }),
+          // Synthesize a banner for the legacy-cutover guard stop: it persists
+          // under the __legacy_hooks__ id with no bindings on the pinned
+          // definition, so the binding-driven pass above can never emit it.
+          ...[...hookStateMap.values()]
+            .filter((state) => state.hookId === '__legacy_hooks__' && state.lastFlow === 'stop')
+            .map((state) => ({
+              hookId: state.hookId,
+              status: 'blocked_by_hook' as const,
+              overrideEligible: state.localState?.__overrideEligible !== false,
+              label: 'Legacy workflow hooks',
+              reason: state.lastReason,
+              state,
+            })),
+        ];
 
   return {
     summaries,
