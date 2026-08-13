@@ -1014,6 +1014,52 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(deliveries[0]!.taskId).toBe(task.id);
   });
 
+  test('a shared-PR synchronize (commit push) does NOT stamp any co-subscriber lastActivityAt', async () => {
+    // Regression guard for the commit-push attribution bug (review P1):
+    // pull_request.synchronize is a PR-LEVEL event that fans out to EVERY
+    // subscriber (e.g. a coder run AND a reviewer run watching the same PR).
+    // lastActivityAt must not advance for any of them — a node's OWN push is
+    // already captured by its tool calls (the sdk.toolUse source, which is
+    // node-scoped), and a PR-level event cannot be attributed to one node.
+    // Stamping here would mark an idle co-subscriber active and suppress its
+    // stall nag for a full threshold window.
+    const PR_TOPIC = 'github/lsm/neokai/pull_request/42.*';
+
+    const { run: coderRun } = await startRunWithSubscription(PR_TOPIC, 'code');
+    const coderExec = nodeExecutionRepo.listByNode(coderRun.id, 'code')[0]!;
+    nodeExecutionRepo.update(coderExec.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-shared-coder',
+      startedAt: Date.now(),
+    });
+    tam.alive.add('session-shared-coder');
+
+    const { run: reviewerRun } = await startRunWithSubscription(PR_TOPIC, 'review');
+    const reviewerExec = nodeExecutionRepo.listByNode(reviewerRun.id, 'review')[0]!;
+    nodeExecutionRepo.update(reviewerExec.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-shared-reviewer',
+      startedAt: Date.now(),
+    });
+    tam.alive.add('session-shared-reviewer');
+
+    await eventService.publish(
+      makeEvent({
+        topic: 'github/lsm/neokai/pull_request/42.synchronize',
+        payload: { action: 'synchronize', prNumber: 42, headSha: 'abc123' },
+      })
+    );
+
+    // Sanity: the fan-out reached at least the coder target, so the delivery
+    // path that USED to stamp ran (under the old code coderExec.lastActivityAt
+    // would now be non-null).
+    expect(injected.some((i) => i.sessionId === 'session-shared-coder')).toBe(true);
+    // Neither the pushing node's run NOR the co-subscribed reviewer run is
+    // stamped as active by the PR-level event.
+    expect(nodeExecutionRepo.getById(coderExec.id)!.lastActivityAt).toBeNull();
+    expect(nodeExecutionRepo.getById(reviewerExec.id)!.lastActivityAt).toBeNull();
+  });
+
   test('delivers matching events to an idle node-agent session', async () => {
     const { run } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;

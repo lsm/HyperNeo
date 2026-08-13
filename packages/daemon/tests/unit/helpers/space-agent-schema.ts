@@ -230,7 +230,8 @@ export function createSpaceAgentSchema(db: Database): void {
 			created_at INTEGER NOT NULL,
 			started_at INTEGER,
 			completed_at INTEGER,
-			updated_at INTEGER NOT NULL
+			updated_at INTEGER NOT NULL,
+			last_activity_at INTEGER
 		)
 	`);
 }

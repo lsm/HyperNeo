@@ -244,6 +244,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			started_at INTEGER,
 			completed_at INTEGER,
 			updated_at INTEGER NOT NULL,
+			last_activity_at INTEGER,
 			FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE,
 			FOREIGN KEY (agent_id) REFERENCES space_agents(id) ON DELETE SET NULL
 		)

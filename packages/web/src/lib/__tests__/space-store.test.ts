@@ -2601,6 +2601,7 @@ function makeNodeExecution(overrides: Partial<NodeExecution> = {}): NodeExecutio
     startedAt: overrides.startedAt ?? null,
     completedAt: overrides.completedAt ?? null,
     updatedAt: overrides.updatedAt ?? Date.now(),
+    lastActivityAt: overrides.lastActivityAt ?? null,
   };
 }
 

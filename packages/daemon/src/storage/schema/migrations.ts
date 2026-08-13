@@ -980,9 +980,13 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // gate storage is obsolete. Idempotent via existence guards. Renumbered from
   // 187 (dev shipped M187–M189 for message-delivery-v2, #862).
   run(migrationMarkerKey(190), () => runMigration190(db));
+  // Migration 191: node_executions.last_activity_at — dedicated agent-activity
+  // signal (refreshed by tool calls / message delivery / commit pushes,
+  // independent of updated_at) so stall detection is not keyed off updated_at.
   run(migrationMarkerKey(191), () => runMigration191(db));
   run(migrationMarkerKey(192), () => runMigration192(db));
   run(migrationMarkerKey(193), () => runMigration193(db));
+  run(migrationMarkerKey(194), () => runMigration194(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -12376,14 +12380,42 @@ export function runMigration190(db: BunDatabase): void {
 }
 
 /**
- * Migration 191: add v2 hook-storage columns to space_workflows.
+ * Migration 191: node_executions.last_activity_at — a dedicated agent-activity
+ * signal.
  *
- * `hook_bindings` (HookBinding[]) and `custom_hooks` (CustomHook[]) persist the
- * v2 two-layer hook model alongside the legacy `hooks` column. Idempotent via
- * column-existence guards. The legacy `hooks` column is dropped in a later
- * migration once the v2 engine is the only consumer (step 7).
+ * `updated_at` advances only on runtime state-writes (status / session / data
+ * transitions) and so freezes while an agent is plainly working (pushing
+ * commits, exchanging messages, making tool calls) but no state transition
+ * occurs. That makes it unreliable as a liveness/activity signal, yet the
+ * runtime stall-detector and UI activity displays consume it as one — leading
+ * to misfires (active agents killed, or genuinely-stuck ones missed).
+ *
+ * `last_activity_at` is refreshed independently of `updated_at` by real agent
+ * work (SDK tool events, peer-message delivery, PR commit push) via
+ * `NodeExecutionRepository.touchLastActivity`, which intentionally does NOT
+ * bump `updated_at`. The stall-detector now keys off this column instead.
+ *
+ * Idempotent `ALTER TABLE ADD COLUMN` (no table rebuild). Existing rows are
+ * backfilled NULL; the detector treats NULL via its existing fallback chain, so
+ * pre-migration in-flight executions are not misclassified. Fresh DBs get the
+ * column here too (M74 creates the table without it; all migrations run on a
+ * fresh DB). (task #943.)
  */
 export function runMigration191(db: BunDatabase): void {
+  if (!tableExists(db, 'node_executions')) return;
+  if (!tableHasColumn(db, 'node_executions', 'last_activity_at')) {
+    db.exec(`ALTER TABLE node_executions ADD COLUMN last_activity_at INTEGER`);
+  }
+}
+
+/**
+ * Migration 192: add v2 hook-storage columns to space_workflows.
+ *
+ * `hook_bindings` (HookBinding[]) and `custom_hooks` (CustomHook[]) persist the
+ * v2 two-layer hook model. Idempotent via table/column existence guards.
+ */
+export function runMigration192(db: BunDatabase): void {
+  if (!tableExists(db, 'space_workflows')) return;
   if (!tableHasColumn(db, 'space_workflows', 'hook_bindings')) {
     db.exec(`ALTER TABLE space_workflows ADD COLUMN hook_bindings TEXT`);
   }
@@ -12393,7 +12425,7 @@ export function runMigration191(db: BunDatabase): void {
 }
 
 /**
- * Migration 192 — workflow hooks v2 hook-state columns.
+ * Migration 193 — workflow hooks v2 hook-state columns.
  *
  * The v2 hook-state snapshot carries the last flow decision (`last_flow`) and
  * its reason (`last_reason`) as top-level fields, replacing the old
@@ -12402,7 +12434,7 @@ export function runMigration191(db: BunDatabase): void {
  * (SQLite column drops are intrusive) but dormant. Persisted hook state is
  * per-run and is re-seeded, not migrated.
  */
-export function runMigration192(db: BunDatabase): void {
+export function runMigration193(db: BunDatabase): void {
   if (!tableExists(db, 'workflow_hook_state')) return;
   if (!tableHasColumn(db, 'workflow_hook_state', 'last_flow')) {
     db.exec(`ALTER TABLE workflow_hook_state ADD COLUMN last_flow TEXT`);
@@ -12413,7 +12445,7 @@ export function runMigration192(db: BunDatabase): void {
 }
 
 /**
- * Migration 193 — drop the retired `hooks` column from `space_workflows`.
+ * Migration 194 — drop the retired `hooks` column from space_workflows.
  *
  * The v2 two-layer model stores hook placement in `hook_bindings` (and custom
  * hook definitions in `custom_hooks`); the legacy `hooks` column is no longer
@@ -12421,7 +12453,7 @@ export function runMigration192(db: BunDatabase): void {
  * column is plain TEXT with no index/constraint referencing it, so the drop is
  * safe. Guarded so it is a no-op on DBs without the table or already migrated.
  */
-export function runMigration193(db: BunDatabase): void {
+export function runMigration194(db: BunDatabase): void {
   if (!tableExists(db, 'space_workflows')) return;
   if (tableHasColumn(db, 'space_workflows', 'hooks')) {
     db.exec(`ALTER TABLE space_workflows DROP COLUMN hooks`);

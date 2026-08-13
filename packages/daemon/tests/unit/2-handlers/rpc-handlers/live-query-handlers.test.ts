@@ -12,6 +12,7 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { createTables, runMigration74, runMigrations } from '../../../../src/storage/schema';
+import { runMigration191 } from '../../../../src/storage/schema/migrations';
 import { NAMED_QUERY_REGISTRY } from '../../../../src/lib/rpc-handlers/live-query-handlers';
 import {
   computeIsRenderable,
@@ -135,6 +136,35 @@ describe('NAMED_QUERY_REGISTRY', () => {
     expect([...NAMED_QUERY_REGISTRY.keys()]).not.toContain('goals.byRoom');
     expect([...NAMED_QUERY_REGISTRY.keys()]).not.toContain('mcpEnablement.byRoom');
     expect([...NAMED_QUERY_REGISTRY.keys()]).not.toContain('skills.byRoom');
+  });
+
+  // -------------------------------------------------------------------------
+  // nodeExecutions.byRun — projection includes lastActivityAt (#943)
+  // -------------------------------------------------------------------------
+
+  test('nodeExecutions.byRun projects lastActivityAt alongside updatedAt', () => {
+    // The shared setup (createTables + runMigration74) creates node_executions
+    // at the pre-#943 schema; bring the column up so the projection is real.
+    runMigration191(db);
+    const workflowRunId = 'run-nodeexec-projection';
+    const expectedActivity = now + 12_345;
+    db.exec(`
+      INSERT INTO node_executions (
+        id, workflow_run_id, workflow_node_id, agent_name, agent_id,
+        agent_session_id, status, result, created_at, started_at,
+        completed_at, updated_at, last_activity_at
+      ) VALUES (
+        'exec-projection', '${workflowRunId}', 'node-1', 'coder', NULL,
+        NULL, 'in_progress', NULL, ${now}, ${now}, NULL, ${now}, ${expectedActivity}
+      )
+    `);
+
+    const entry = NAMED_QUERY_REGISTRY.get('nodeExecutions.byRun')!;
+    const rows = db.prepare(entry.sql).all(workflowRunId) as Record<string, unknown>[];
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toHaveProperty('lastActivityAt', expectedActivity);
+    expect(rows[0]).toHaveProperty('updatedAt', now);
   });
 
   // -------------------------------------------------------------------------

@@ -634,7 +634,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   // Not started yet: TaskAgentManager is created next and injected before start().
   // sessionManager and internalEventBus are injected so space:chat:${spaceId} sessions are
   // provisioned with MCP tools and system prompts on startup and on space.created.
-  const nodeExecutionRepo = new NodeExecutionRepository(deps.db.getDatabase());
+  const nodeExecutionRepo = new NodeExecutionRepository(deps.db.getDatabase(), deps.reactiveDb);
   // Reply Routing Registry — shared between space-agent-tools (register)
   // and task-agent-tools / node-agent-tools (lookup).
   const replyRoutingRegistry = new ReplyRoutingRegistry();
