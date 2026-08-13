@@ -227,10 +227,17 @@ export function validateWorkflowHookBindings(
       errors.push(`${loc}.sourceNode: unknown node "${binding.sourceNode}"`);
     }
 
-    // targetNode is required for routed methods (send_message) and optional for
-    // non-routed methods (mark_complete, save_artifact, …) that have no target.
+    // targetNode is required for routed methods (send_message) and FORBIDDEN
+    // for non-routed methods (mark_complete, save_artifact, …): the engine
+    // only matches a targetNode-bearing binding on send_message, so accepting
+    // one elsewhere would persist a gate that silently never runs (e.g.
+    // pr_merged on mark_complete with a stray targetNode).
     if (binding.targetNode !== undefined) {
-      if (typeof binding.targetNode !== 'string' || binding.targetNode.trim().length === 0) {
+      if (binding.method !== 'send_message') {
+        errors.push(
+          `${loc}.targetNode: not allowed for non-routed method ${binding.method} (the binding would never match)`
+        );
+      } else if (typeof binding.targetNode !== 'string' || binding.targetNode.trim().length === 0) {
         errors.push(`${loc}.targetNode: expected non-empty node name when present`);
       } else if (!validNodes.has(binding.targetNode)) {
         errors.push(`${loc}.targetNode: unknown node "${binding.targetNode}"`);

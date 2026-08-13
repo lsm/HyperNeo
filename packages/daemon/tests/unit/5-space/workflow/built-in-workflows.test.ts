@@ -1840,7 +1840,8 @@ describe('seedBuiltInWorkflows()', () => {
     const userBinding: HookBinding = {
       hookId: 'custom-audit-hook',
       sourceNode: 'Coding',
-      targetNode: 'Coding',
+      // No targetNode: save_artifact is non-routed, and the validator now
+      // rejects a targetNode there (the binding would never match).
       method: 'save_artifact',
       order: 0,
       enabled: true,

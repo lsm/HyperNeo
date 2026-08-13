@@ -742,6 +742,14 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
         };
       }
       if (binding.targetNode !== undefined) {
+        // Mirror the runtime rule: targetNode is only meaningful on routed
+        // (send_message) methods — elsewhere the binding would never match.
+        if (binding.method !== 'send_message') {
+          return {
+            ok: false,
+            error: `invalid: ${loc}.targetNode is not allowed for non-routed method ${binding.method}`,
+          };
+        }
         if (!nodeNameSet.has(binding.targetNode)) {
           return {
             ok: false,

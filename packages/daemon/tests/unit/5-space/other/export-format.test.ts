@@ -2849,3 +2849,24 @@ describe('portable own-source caller rule', () => {
     if (!result.ok) expect(result.error).toContain('own sourceNode');
   });
 });
+
+describe('portable non-routed targetNode rule', () => {
+  test('a mark_complete binding with targetNode is rejected at preview', () => {
+    const workflow = makeWorkflow({
+      hookBindings: [
+        {
+          hookId: 'pr_merged',
+          sourceNode: 'Code step',
+          targetNode: 'Review step',
+          method: 'mark_complete',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Code step' }],
+        },
+      ],
+    });
+    const result = validateExportedWorkflow(exportWorkflow(workflow, []));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('not allowed for non-routed method');
+  });
+});

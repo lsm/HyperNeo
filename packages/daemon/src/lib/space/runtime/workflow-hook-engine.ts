@@ -319,17 +319,25 @@ export class WorkflowHookEngine {
       .filter((action): action is QueuedRetryableHookAction => action !== undefined);
   }
 
-  clearQueuedRetryableActionsForKey(actionKey: string): void {
+  /**
+   * Clear the persisted queued actions matching an action key. Returns true
+   * when every clear landed; false means at least one durable replay record
+   * survived (the deliver path fails closed on it).
+   */
+  clearQueuedRetryableActionsForKey(actionKey: string): boolean {
+    let allCleared = true;
     for (const hookId of this.getHookIdsWithQueuedAction(actionKey)) {
       if (!this.clearQueuedRetryableAction(hookId)) {
         // A failed clear leaves the persisted queued action in place — it
-        // re-arms on rehydration and could replay an already-handled action.
+        // re-arms on rehydration and could replay an already-delivered action.
         log.warn(
           `Failed to clear queued retryable action for hook "${hookId}" (key ${actionKey}); ` +
             'it may replay after a restart.'
         );
+        allCleared = false;
       }
     }
+    return allCleared;
   }
 
   clearQueuedRetryableActionsForOwner(hookIds: Iterable<string>, meta: HookActionMeta): string[] {
@@ -338,10 +346,15 @@ export class WorkflowHookEngine {
       const queued = this.getQueuedRetryableAction(hookId);
       if (!queued || !sameRetryableActionOwner(queued.meta, meta)) continue;
       if (!this.clearQueuedRetryableAction(hookId)) {
+        // Do NOT report the key as cleared: the caller cancels the in-memory
+        // timer per returned key, and a persistently-queued action that was
+        // reported cleared would replay after a restart with no timer left
+        // to deduplicate it.
         log.warn(
           `Failed to clear queued retryable action for hook "${hookId}"; ` +
             'it may replay after a restart.'
         );
+        continue;
       }
       clearedActionKeys.push(queued.actionKey);
     }
@@ -1907,6 +1920,27 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
             patch.nextRetryAt = null;
           }
           if (!engine.persistStateUpdate(hookId, patch)) {
+            if (hookId === blockingId) {
+              // The blocking hook's queued record (including the durable
+              // __queuedRetryableAction and the retry count that drives
+              // backoff/ceiling) did not persist: advertising a durable
+              // queued retry would be a lie a restart exposes (the action is
+              // lost) and defeats the ceiling. Fail closed instead.
+              log.error(`Failed to persist queued retry state for hook "${hookId}"; blocking.`);
+              return hookResult(
+                {
+                  success: false,
+                  error:
+                    'Hook retry could not be persisted (state write failed); the action is ' +
+                    'blocked — retry it again.',
+                  retryable: true,
+                  hookStatus: outcome.userState.status,
+                  hookId: outcome.userState.hookId,
+                  hookReason: outcome.userState.reason,
+                },
+                true
+              );
+            }
             log.warn(`Failed to persist hook state for ${hookId} on retry`);
           }
         }
@@ -1988,7 +2022,24 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
     )) {
       clearRetryableHookActionTimer(queuedActionKey);
     }
-    engine.clearQueuedRetryableActionsForKey(actionKey);
+    // Fail closed when THIS action's durable replay record cannot be removed:
+    // delivering while the persisted __queuedRetryableAction survives would
+    // replay the already-delivered action after a restart.
+    if (!engine.clearQueuedRetryableActionsForKey(actionKey)) {
+      clearRetryableHookActionTimer(actionKey);
+      return hookResult(
+        {
+          success: false,
+          error:
+            'Hook retry queue could not be cleared (state persist failed); the action is blocked ' +
+            'rather than delivered with a pending replay record.',
+          hookStatus: 'blocked',
+          hookId: outcome.userState.hookId,
+          hookReason: outcome.userState.reason,
+        },
+        true
+      );
+    }
     clearRetryableHookActionTimer(actionKey);
 
     if (outcome.followUpRequests.length > 0 && isFollowUp) {

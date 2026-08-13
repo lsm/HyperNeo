@@ -149,8 +149,19 @@ describe('validateWorkflowHookBindings', () => {
       'submit_for_approval',
       'approve_task',
     ] as const;
-    const bindings = methods.map((method, i) => validBinding({ method, order: i }));
+    // targetNode is only meaningful on send_message — the non-routed variants
+    // omit it (a targetNode there would never match).
+    const bindings = methods.map((method, i) => {
+      const binding = validBinding({ method, order: i });
+      return method === 'send_message' ? binding : { ...binding, targetNode: undefined };
+    });
     expect(validateWorkflowHookBindings(bindings, undefined, nodes)).toEqual([]);
+  });
+
+  test('rejects targetNode on a non-routed method (the binding would never run)', () => {
+    const binding = validBinding({ method: 'mark_complete', targetNode: 'Review' });
+    const errors = validateWorkflowHookBindings([binding], undefined, nodes);
+    expect(errors.join('\n')).toContain('targetNode: not allowed for non-routed method');
   });
 });
 
