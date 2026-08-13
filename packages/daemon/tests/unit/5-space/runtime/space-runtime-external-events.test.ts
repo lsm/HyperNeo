@@ -1005,13 +1005,81 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     expect(injected).toHaveLength(1);
     expect(injected[0]!.sessionId).toBe('session-live');
-    expect(injected[0]!.deliveryMode).toBe('immediate');
+    // External events always defer to the next idle boundary — never injected
+    // mid-work, even when the live session is actively processing.
+    expect(injected[0]!.deliveryMode).toBe('defer');
     expect(JSON.parse(injected[0]!.message).eventId).toBe(event.id);
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
     const deliveries = eventStore.listDeliveries(event.id);
     expect(deliveries).toHaveLength(1);
     expect(deliveries[0]!.state).toBe('delivered');
     expect(deliveries[0]!.taskId).toBe(task.id);
+  });
+
+  test('defers external events to the next idle boundary for both busy and idle live sessions (never mid-work)', async () => {
+    // Design intent (2026-08-13): an external event to a LIVE session must
+    // ALWAYS be handed to the inject layer in 'defer' mode — insert when idle,
+    // queue and replay at the next idle point when busy. The runtime never
+    // requests 'immediate' (which would inject mid-work and derail an
+    // actively-processing agent). The inject layer (injectMessageIntoSession)
+    // owns the idle→deliver-now vs busy→replay-at-idle decision; here we assert
+    // the runtime always asks for 'defer', for both a busy and an idle session.
+    // This test fails before the change (live-session deliveries defaulted to
+    // 'immediate') and passes after.
+    const BUSY_TOPIC = 'github/lsm/neokai/pull_request/42.review_*';
+    const IDLE_TOPIC = 'github/lsm/neokai/pull_request/43.review_*';
+
+    // Busy live session — actively processing.
+    const { run: busyRun, task: busyTask } = await startRunWithSubscription(
+      BUSY_TOPIC,
+      'code-busy'
+    );
+    const busyExec = nodeExecutionRepo.listByNode(busyRun.id, 'code-busy')[0]!;
+    nodeExecutionRepo.update(busyExec.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-busy-defer',
+      startedAt: Date.now(),
+    });
+    tam.alive.add('session-busy-defer');
+
+    // Idle live session — waiting, not processing.
+    const { run: idleRun, task: idleTask } = await startRunWithSubscription(
+      IDLE_TOPIC,
+      'code-idle'
+    );
+    const idleExec = nodeExecutionRepo.listByNode(idleRun.id, 'code-idle')[0]!;
+    nodeExecutionRepo.update(idleExec.id, {
+      status: 'idle',
+      agentSessionId: 'session-idle-defer',
+      startedAt: Date.now(),
+      completedAt: Date.now(),
+    });
+    tam.alive.add('session-idle-defer');
+
+    const busyEvent = makeEvent({
+      topic: 'github/lsm/neokai/pull_request/42.review_submitted',
+    });
+    const idleEvent = makeEvent({
+      topic: 'github/lsm/neokai/pull_request/43.review_submitted',
+    });
+    await eventService.publish(busyEvent);
+    await eventService.publish(idleEvent);
+
+    const busyInject = injected.find((i) => i.sessionId === 'session-busy-defer')!;
+    const idleInject = injected.find((i) => i.sessionId === 'session-idle-defer')!;
+
+    // Both reach the inject layer in 'defer' mode — never 'immediate'. This is
+    // the assertion that flips from 'immediate' to 'defer' under this change.
+    expect(busyInject.deliveryMode).toBe('defer');
+    expect(idleInject.deliveryMode).toBe('defer');
+
+    // Both are accepted by the inject layer ('delivered' = handed off). For the
+    // busy session the inject layer persists a deferred row for replay at the
+    // next idle point; for the idle session it delivers now.
+    expect(eventStore.getById(busyEvent.id)?.state).toBe('delivered');
+    expect(eventStore.getById(idleEvent.id)?.state).toBe('delivered');
+    expect(eventStore.listDeliveries(busyEvent.id)[0]!.taskId).toBe(busyTask.id);
+    expect(eventStore.listDeliveries(idleEvent.id)[0]!.taskId).toBe(idleTask.id);
   });
 
   test('a shared-PR synchronize (commit push) does NOT stamp any co-subscriber lastActivityAt', async () => {
@@ -1076,7 +1144,8 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     expect(injected).toHaveLength(1);
     expect(injected[0]!.sessionId).toBe('session-idle');
-    expect(injected[0]!.deliveryMode).toBe('immediate');
+    // Still delivered promptly when idle — defer mode delivers now when idle.
+    expect(injected[0]!.deliveryMode).toBe('defer');
     expect(JSON.parse(injected[0]!.message).eventId).toBe(event.id);
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
     expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
@@ -1105,7 +1174,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     expect(injected).toHaveLength(1);
     expect(injected[0]!.sessionId).toBe('session-review-task-idle');
-    expect(injected[0]!.deliveryMode).toBe('immediate');
+    expect(injected[0]!.deliveryMode).toBe('defer');
     expect(JSON.parse(injected[0]!.message).eventId).toBe(event.id);
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
     expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
@@ -1944,7 +2013,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(injected).toHaveLength(10);
     const digestDelivery = eventStore.listDeliveries(events[10]!.id)[0]!;
     expect(digestDelivery.failureReason).toBe(
-      'deliveryMode:immediate; digest; temporary digest target failure'
+      'deliveryMode:defer; digest; temporary digest target failure'
     );
 
     await new Promise((resolve) => setTimeout(resolve, 1100));
@@ -2957,7 +3026,9 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     expect(injected).toHaveLength(1);
     expect(injected[0]!.sessionId).toBe('session-idle-stale');
-    expect(injected[0]!.deliveryMode).toBe('immediate');
+    // Delivered promptly (the inject layer delivers defer-mode input now when
+    // idle); the runtime still always requests 'defer' — never mid-work.
+    expect(injected[0]!.deliveryMode).toBe('defer');
     const delivery = eventStore.listDeliveries(event.id)[0]!;
     expect(delivery.state).toBe('delivered');
     expect(eventStore.listPendingDeliveries()).not.toContainEqual(delivery);
@@ -4312,7 +4383,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(injected).toHaveLength(0);
     expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
     expect(eventStore.listDeliveries(event.id)[0]!.failureReason).toBe(
-      'deliveryMode:immediate; temporary injection failure'
+      'deliveryMode:defer; temporary injection failure'
     );
 
     runtime.flushPendingNodeQueue({

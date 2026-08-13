@@ -2350,14 +2350,16 @@ export class SpaceRuntime {
           return;
         }
         const eventRecord = store.getById(payload.eventId);
+        // External events ALWAYS deliver on the "next" boundary: insert when
+        // idle, defer/queue when busy and deliver at the next idle point — never
+        // inject mid-work. Force 'defer' and let the inject layer
+        // (injectMessageIntoSession) decide idle→deliver-now vs busy→replay-at-
+        // idle. resolveIncludeCurrentDeliveryMode defaulted to 'immediate' for
+        // fresh deliveries, which derailed an actively-processing session.
         await this.flushPendingNodeQueueAsync(preparedTarget, deliveryKey, {
           event: payload,
           deliveryKey,
-          deliveryMode: this.resolveIncludeCurrentDeliveryMode(
-            preparedTarget,
-            payload,
-            deliveryKey
-          ),
+          deliveryMode: 'defer',
           createdAt: eventRecord?.createdAt ?? Date.now(),
         });
       } else if (preparedTarget.sessionId) {
@@ -2421,11 +2423,9 @@ export class SpaceRuntime {
           await this.flushPendingNodeQueueAsync(activatedTarget, deliveryKey, {
             event: payload,
             deliveryKey,
-            deliveryMode: this.resolveIncludeCurrentDeliveryMode(
-              activatedTarget,
-              payload,
-              deliveryKey
-            ),
+            // Always defer to the next idle boundary — see the pre-activation
+            // live-session branch above for rationale (never inject mid-work).
+            deliveryMode: 'defer',
             createdAt: eventRecord?.createdAt ?? Date.now(),
           });
         } else if (activatedTarget?.sessionId) {
@@ -3336,25 +3336,6 @@ export class SpaceRuntime {
     return this.pendingExternalEventQueue
       .get(this.buildQueueKey(target))
       ?.find((item) => item.deliveryKey === deliveryKey);
-  }
-
-  /**
-   * Recover the delivery mode for the current event/deliveryKey when it is
-   * being included in an ordered pending-node drain. The in-memory queued item
-   * is authoritative; otherwise recover from the persisted delivery's failure
-   * reason; default to immediate for fresh deliveries.
-   */
-  private resolveIncludeCurrentDeliveryMode(
-    target: Pick<WorkflowSubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>,
-    event: ExternalEventPublishedPayload,
-    deliveryKey: string
-  ): 'immediate' | 'defer' {
-    const queued = this.getQueuedDelivery(target, deliveryKey);
-    if (queued) return queued.deliveryMode;
-    const store = this.config.externalEventStore;
-    if (!store) return 'immediate';
-    const delivery = store.getDelivery(event.eventId, deliveryKey);
-    return deliveryModeFromFailureReason(delivery?.failureReason);
   }
 
   private clearQueuedDelivery(target: WorkflowSubscriptionTarget, deliveryKey: string): void {
