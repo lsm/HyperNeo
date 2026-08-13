@@ -34,15 +34,6 @@ err() {
 	ERRORS=$((ERRORS + 1))
 }
 
-# Count ACTIVE (non-commented) lines in file $1 containing the fixed string $2.
-# Config/workflow checks use this so a commented-out line can't satisfy them.
-# Filters lines starting with `#` (YAML/JSON), `//` (TS line comment), or `/*`
-# (TS block comment that opens the line). NOTE: we deliberately do NOT strip
-# `/* ... */` spans, because the legitimate include/exclude globs contain `/**/`
-# (e.g. tests/**/*.test.ts) which is textually identical to an empty block
-# comment — a regex strip would mangle the patterns. A mid-line block comment
-# hiding a pattern is a residual requiring a TS-aware parser.
-
 # Print the FOLDED `run:` command of the ENABLED workflow step whose run command
 # contains the literal marker $2 (in file $1). Folds `run: >-`/`|-` blocks AND
 # handles single-line `run:`. Empty if no enabled step matches — i.e. the step is
@@ -176,11 +167,6 @@ runner_continue_on_error() {
 		END { emit() }
 	' "$1" | grep -q '^BAD$'
 }
-
-# Count ACTIVE lines in workflow $1 that are a test_path VALUE for path $2 —
-# either a folded bare-path line (`  tests/online/...`) or a single-line
-# `test_path: tests/online/...`. Excludes a docs `echo tests/online/...` line
-# (which has `echo` before the path) and comments. Dots are escaped.
 
 # Print every ACTIVE test_path VALUE from workflow $1 — both the inline single
 # form (`test_path: <value>`) and the folded multi form (`test_path: >-` / `|-`
@@ -558,7 +544,7 @@ else
 		echo "     → keep '--coverage' on the test-daemon.sh invocation" >&2
 	elif [ -n "$_extra" ]; then
 		err "test-daemon-shared-unit runner has a non-allowlisted arg after \${{ matrix.shard }} (only --coverage is permitted) — a mode flag (--rerun/--verify/--show-failures) would run zero tests, or a bare shard would override matrix.shard"
-		echo "     → keep the runner as 'test-daemon.sh \${{ matrix.shard }} --coverage only" >&2
+		echo "     → keep the runner as 'test-daemon.sh \${{ matrix.shard }} --coverage' only" >&2
 	fi
 fi
 

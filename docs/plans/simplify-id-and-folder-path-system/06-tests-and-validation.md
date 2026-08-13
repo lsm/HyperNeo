@@ -88,7 +88,7 @@ By this milestone, all coding work from Milestones 1–5 is complete. This miles
    g. Clean up rooms via `room.delete`
 3. Add the test module to CI in **two places**:
    - In `.github/workflows/` YAML (the online test matrix), add an entry for the new test file under the `room` module group
-   - In `validate-online-test-matrix.sh` (if it exists), add `short-id-flow.test.ts` to the `ROOM_FILES` array so the validation script doesn't fail
+   - In `scripts/validate-test-matrix.sh` (the universal test-coverage guard, wired into `bun run check` and CI), add `short-id-flow.test.ts` to the `ROOM_FILES` array so the guard recognizes it as covered by the `room` shard — an uncovered file fails the build rather than being silently skipped
    - **Note**: Check whether existing room online tests in the YAML matrix are commented out (they may be disabled due to resource usage). If so, add the new test as commented-out too — consistent with the team's decision to gate those tests. Document this in the test file header comment.
 4. Run with `cd packages/daemon && HYPERNEO_USE_DEV_PROXY=1 bun test ./tests/online/room/short-id-flow.test.ts`
 
