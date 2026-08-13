@@ -27,10 +27,19 @@ export interface WorkflowRunArtifactRecord {
 }
 
 export class WorkflowRunArtifactRepository {
+  /** True when any row's data JSON failed to parse in a prior read — the
+   * caller (hook engine ctx) fails closed on a possibly-partial snapshot. */
+  private lastReadHadCorruptRow: boolean = false;
+
   constructor(
     private db: BunDatabase,
     private reactiveDb?: ReactiveDatabase
   ) {}
+
+  /** Whether the most recent list read encountered a corrupt data row. */
+  get lastReadWasPartial(): boolean {
+    return this.lastReadHadCorruptRow;
+  }
 
   /**
    * Upsert an artifact. On conflict (same run + node + type + key),
@@ -80,6 +89,7 @@ export class WorkflowRunArtifactRepository {
       limit?: number;
     }
   ): WorkflowRunArtifactRecord[] {
+    this.lastReadHadCorruptRow = false;
     let sql = 'SELECT * FROM workflow_run_artifacts WHERE run_id = ?';
     const params: string[] = [runId];
 
@@ -115,6 +125,7 @@ export class WorkflowRunArtifactRepository {
    * Bounded at the SQL level (ORDER BY updated_at DESC LIMIT ?).
    */
   listRecentByRun(runId: string, limit: number): WorkflowRunArtifactRecord[] {
+    this.lastReadHadCorruptRow = false;
     const rows = this.db
       .prepare(
         'SELECT * FROM workflow_run_artifacts WHERE run_id = ? ORDER BY updated_at DESC LIMIT ?'
@@ -174,6 +185,7 @@ export class WorkflowRunArtifactRepository {
         `Corrupted artifact data for id=${row.id} — ` +
           `JSON.parse failed (${err instanceof Error ? err.message : String(err)})`
       );
+      this.lastReadHadCorruptRow = true;
       return null;
     }
   }

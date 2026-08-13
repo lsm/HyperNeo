@@ -126,6 +126,34 @@ describe('WorkflowHookEngine.executeAction', () => {
     expect(outcome.userState.reason).toBe('blocked by script');
   });
 
+  test('a pending approval is consumed on a natural continue (no stale override)', async () => {
+    // Hook PASSES on its own; the operator's earlier approval must be
+    // cleared so a later stop for a NEW violation cannot ride it.
+    const PASS_HOOK = scriptHook('pass_hook', '{"flow":"continue"}');
+    const workflow = makeWorkflow({
+      customHooks: [PASS_HOOK],
+      hookBindings: [
+        {
+          hookId: 'pass_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    hookStateRepo.updateWithRetry('run-1', 'pass_hook', {
+      localState: { humanApproved: true, humanApprovedAt: 1 },
+      lastFlow: 'stop',
+    });
+    const engine = makeEngine(workflow);
+    const outcome = await engine.executeAction('send_message', sendParams(), META);
+    expect(outcome.decision).toBe('deliver');
+    expect(hookStateRepo.get('run-1', 'pass_hook')?.localState.humanApproved).toBeUndefined();
+  });
+
   test('a script-failure stop is a hook DECISION (approval may override it)', async () => {
     // A script exiting non-zero produced an outcome — that is a decision, and
     // an approval legitimately overrides it (run-then-override semantics).

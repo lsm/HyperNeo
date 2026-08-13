@@ -716,7 +716,40 @@ export class WorkflowHookEngine {
         break;
       }
 
-      // flow === 'continue' — apply an optional payload patch.
+      // flow === 'continue' — the hook passed on its own. A PENDING approval
+      // must still be consumed: otherwise it lingers and a later stop for a
+      // NEW violation would ride the stale one-shot. Fail closed if the
+      // consume-write cannot persist (same discipline as the stop-override).
+      if (approvalPending) {
+        const consumed = this.persistStateUpdate(hookId, {
+          localState: {
+            humanApproved: undefined,
+            humanApprovedAt: undefined,
+            humanRejectionReason: undefined,
+          },
+        });
+        if (!consumed) {
+          log.warn(
+            `Failed to consume human approval for hook "${hookId}" after a natural continue; blocking.`
+          );
+          terminal = {
+            kind: 'stop',
+            hookId,
+            reason:
+              'Human approval could not be cleared after the hook passed (state conflict). ' +
+              'The action is blocked — approve it again and retry.',
+          };
+          executionLog.push({
+            hookId,
+            flow: 'stop',
+            reason: terminal.reason,
+            timestamp: Date.now(),
+          });
+          break;
+        }
+      }
+
+      // apply an optional payload patch.
       if (isRecord(ret.payload)) {
         const patch = { ...ret.payload };
         // Disallow routing-field patches to prevent target bypass.
@@ -1128,17 +1161,26 @@ export class WorkflowHookEngine {
       // the engine names no domain keys.
       const repo = this.config.artifactRepo;
       const recent = repo?.listRecentByRun(this.config.workflowRunId, 50) ?? [];
+      const recentPartial = repo?.lastReadWasPartial === true;
       const seenKeys = new Set(recent.map((a) => `${a.nodeId}:${a.artifactType}:${a.artifactKey}`));
       // Reserved (`__`-prefixed) stamps OUTSIDE the bounded window, fetched
       // SQL-side via a key-prefix filter instead of loading every link
       // artifact on the hot path.
-      const reservedOutsideWindow = (
-        repo?.listByRun(this.config.workflowRunId, {
-          artifactType: 'link',
-          artifactKeyPrefix: '__',
-          limit: 200,
-        }) ?? []
-      ).filter((a) => !seenKeys.has(`${a.nodeId}:${a.artifactType}:${a.artifactKey}`));
+      const reservedRows = repo?.listByRun(this.config.workflowRunId, {
+        artifactType: 'link',
+        artifactKeyPrefix: '__',
+        limit: 200,
+      });
+      // A corrupt row in EITHER read means the snapshot may be missing data
+      // (potentially the reserved identity stamp) — fail closed rather than
+      // evaluate against partial state.
+      const reservedPartial = repo ? repo.lastReadWasPartial : false;
+      if (recentPartial || reservedPartial) {
+        throw new Error('artifact read was partial (corrupt row data)');
+      }
+      const reservedOutsideWindow = (reservedRows ?? []).filter(
+        (a) => !seenKeys.has(`${a.nodeId}:${a.artifactType}:${a.artifactKey}`)
+      );
       // Merge each reserved key's rows (from BOTH the recent window and the
       // out-of-window fetch — a re-upsert bumps updatedAt and can pull the
       // oldest stamp back into the freshest-50 while newer stamps of the same
