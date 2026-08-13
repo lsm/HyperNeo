@@ -138,3 +138,35 @@ describe('CodingArtifactProfile PR-identity resolution', () => {
     expect(profile.summarizeRunOutcome('run-1')).toBe('merged and done');
   });
 });
+
+describe('earliest-stamp ordering under upsert (createdAt, not updatedAt)', () => {
+  test('a re-stamped node does not steal earliest from the original identity', () => {
+    // Node A stamped the original identity at t=1 (upserted at t=9 — updatedAt
+    // bumps, createdAt does not); node B stamped a different PR at t=5. The
+    // original (A, earliest createdAt) must win even though its updatedAt is
+    // now the NEWEST — ordering by updatedAt would flip the identity the merge
+    // gate binds to.
+    const profile = makeProfile([
+      row({
+        artifactType: 'link',
+        artifactKey: '__pr_validated__',
+        nodeId: 'node-a',
+        data: { link: 'https://github.com/o/r/pull/ORIGINAL', kind: 'pr' },
+        createdAt: 1,
+        updatedAt: 9,
+      }),
+      row({
+        artifactType: 'link',
+        artifactKey: '__pr_validated__',
+        nodeId: 'node-b',
+        data: { link: 'https://github.com/o/r/pull/LATER', kind: 'pr' },
+        createdAt: 5,
+        updatedAt: 5,
+      }),
+    ]);
+    expect(profile.resolvePrimaryLinkUrl('run-1')).toBe('https://github.com/o/r/pull/ORIGINAL');
+    expect(profile.resolveInitialPrimaryLinkUrl('run-1')).toBe(
+      'https://github.com/o/r/pull/ORIGINAL'
+    );
+  });
+});

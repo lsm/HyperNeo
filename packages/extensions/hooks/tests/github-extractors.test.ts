@@ -342,3 +342,89 @@ describe('extractCodexApproval — pushedDate on the head Commit', () => {
     expect(extractCodexApproval(value, PR_LINK).approved).toBe(false);
   });
 });
+
+describe('extractCodexApproval — review dominance over reactions', () => {
+  const PR_LINK = 'https://github.com/org/repo/pull/42';
+  const HEAD = 'a'.repeat(40);
+  const base = (pr: Record<string, unknown>) => ({ data: { repository: { pullRequest: pr } } });
+  const codexReview = (state: string, submittedAt: string, oid = HEAD) => ({
+    state,
+    submittedAt,
+    commit: { oid },
+    author: { login: 'chatgpt-codex-connector' },
+  });
+  const freshReaction = {
+    createdAt: '2026-08-13T12:00:00Z',
+    user: { login: 'chatgpt-codex-connector[bot]' },
+  };
+
+  test('a head-bound CHANGES_REQUESTED dominates a later-looking fresh +1', () => {
+    const value = base({
+      commits: { nodes: [{ commit: { oid: HEAD, pushedDate: '2026-08-12T00:00:00Z' } }] },
+      reviews: { nodes: [codexReview('CHANGES_REQUESTED', '2026-08-13T11:00:00Z')] },
+      reactions: { nodes: [freshReaction] },
+    });
+    expect(extractCodexApproval(value, PR_LINK).approved).toBe(false);
+  });
+
+  test('a head-bound APPROVED review approves even alongside a stale +1', () => {
+    const value = base({
+      commits: { nodes: [{ commit: { oid: HEAD, pushedDate: '2026-08-13T00:00:00Z' } }] },
+      reviews: { nodes: [codexReview('APPROVED', '2026-08-13T11:00:00Z')] },
+      reactions: { nodes: [freshReaction] },
+    });
+    expect(extractCodexApproval(value, PR_LINK).approved).toBe(true);
+  });
+
+  test('a COMMENTED codex review (no verdict) does not block the fresh-+1 path', () => {
+    const value = base({
+      commits: { nodes: [{ commit: { oid: HEAD, pushedDate: '2026-08-12T00:00:00Z' } }] },
+      reviews: { nodes: [codexReview('COMMENTED', '2026-08-13T11:00:00Z')] },
+      reactions: { nodes: [freshReaction] },
+    });
+    expect(extractCodexApproval(value, PR_LINK).approved).toBe(true);
+  });
+});
+
+describe('extractReviewEvidence — timestamp precision', () => {
+  test('a second-precision timestamp from before the run does not count lexically', () => {
+    // Run started 12:00:00.500Z; the review is stamped 12:00:00Z (before the
+    // run). A raw lexical compare says '...00Z' >= '...00.500Z' (Z sorts after
+    // '.') — the numeric compare must reject it.
+    const evidence = extractReviewEvidence(
+      {
+        data: {
+          viewer: { login: 'reviewer' },
+          repository: {
+            pullRequest: {
+              author: { login: 'coder' },
+              reviews: { nodes: [{ state: 'APPROVED', publishedAt: '2026-08-13T12:00:00Z' }] },
+              comments: { nodes: [] },
+            },
+          },
+        },
+      },
+      '2026-08-13T12:00:00.500Z'
+    );
+    expect(evidence.formalReviewCount).toBe(0);
+  });
+
+  test('a clearly fresh second-precision timestamp counts', () => {
+    const evidence = extractReviewEvidence(
+      {
+        data: {
+          viewer: { login: 'reviewer' },
+          repository: {
+            pullRequest: {
+              author: { login: 'coder' },
+              reviews: { nodes: [{ state: 'APPROVED', publishedAt: '2026-08-13T12:00:01Z' }] },
+              comments: { nodes: [] },
+            },
+          },
+        },
+      },
+      '2026-08-13T12:00:00.500Z'
+    );
+    expect(evidence.formalReviewCount).toBe(1);
+  });
+});

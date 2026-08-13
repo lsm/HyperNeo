@@ -82,10 +82,14 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
       const earliestValidated = validated
         .map((a) => ({
           url: prUrlOf(a.artifactType, a.artifactKey, a.data),
-          updatedAt: a.updatedAt,
+          // createdAt, NOT updatedAt: the stamp is UPSERTED per
+          // (run, node, type, key), so a re-stamp bumps updatedAt — ordering by
+          // it would let a re-stamped node steal "earliest" from the original
+          // identity. createdAt is stable under upsert.
+          createdAt: a.createdAt,
         }))
         .filter((v) => v.url)
-        .sort((a, b) => a.updatedAt - b.updatedAt)[0];
+        .sort((a, b) => a.createdAt - b.createdAt)[0];
       if (earliestValidated) return earliestValidated.url;
       let best: { url: string; updatedAt: number } | null = null;
       for (const a of all) {
@@ -113,12 +117,13 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
         (a) => a.artifactType === 'link' && a.artifactKey === VALIDATED_PR_KEY
       );
       const pool = validated.length > 0 ? validated : all;
-      let earliest: { url: string; updatedAt: number } | null = null;
+      // Order by createdAt (stable under upsert) — see resolvePrimaryLinkUrl.
+      let earliest: { url: string; createdAt: number } | null = null;
       for (const a of pool) {
         const url = prUrlOf(a.artifactType, a.artifactKey, a.data);
         if (!url) continue;
-        if (!earliest || a.updatedAt < earliest.updatedAt)
-          earliest = { url, updatedAt: a.updatedAt };
+        if (!earliest || a.createdAt < earliest.createdAt)
+          earliest = { url, createdAt: a.createdAt };
       }
       return earliest?.url ?? '';
     } catch (err) {

@@ -40,7 +40,7 @@
  */
 
 import type { Database as BunDatabase } from '../../storage/sqlite-compat';
-import { generateUUID } from '@hyperneo/shared';
+import { generateUUID, BUILT_IN_HOOK_IDS } from '@hyperneo/shared';
 import type {
   MessageHub,
   Space,
@@ -403,7 +403,10 @@ function validateWorkflowForPreview(
   // schema; here we surface referential-integrity issues that depend on the
   // bundle's node/agent/hook name sets so the import preview can warn about
   // dangling transition targets and hook refs before createWorkflow runs.
-  const transitionHookIds = new Set<string>();
+  // Seed with the registered built-ins (as the manager's validateTransitions
+  // and the portable validator do): a transition may reference an unbound
+  // built-in hook, which is NOT a dangling ref.
+  const transitionHookIds = new Set<string>(BUILT_IN_HOOK_IDS);
   for (const binding of exported.hookBindings ?? []) {
     if (binding?.hookId) transitionHookIds.add(binding.hookId);
   }

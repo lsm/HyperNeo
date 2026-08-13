@@ -613,10 +613,45 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
   const version = asSupportedVersion((data as Record<string, unknown>).version);
   const legacyError = rejectLegacyV3Hooks(data, version, 'workflow');
   if (legacyError) return { ok: false, error: legacyError };
+  // The opposite direction of the legacy-hooks rejection: hookBindings and
+  // customHooks are version-4 fields. A pre-v4 export carrying either would
+  // be silently stripped by an older client that accepts the file's version —
+  // reject here so the mismatch surfaces at validation, not after a lossy
+  // import (same policy as the transitions/topicFrom feature-version checks).
+  if (version < 4) {
+    const raw = data as Record<string, unknown>;
+    if (Array.isArray(raw.hookBindings) || Array.isArray(raw.customHooks)) {
+      return {
+        ok: false,
+        error:
+          'workflow: hookBindings/customHooks require export version 4; this file declares an ' +
+          'older version and its hook enforcement would be stripped on import. Re-export from ' +
+          'a v4 daemon.',
+      };
+    }
+  }
 
   const result = exportedWorkflowBaseSchema.safeParse(data);
   if (!result.success) {
     return { ok: false, error: `invalid: ${result.error.issues.map((i) => i.message).join('; ')}` };
+  }
+
+  // Every hookBinding.hookId must resolve: a registered built-in or one of the
+  // workflow's declared customHooks. createWorkflow enforces this at import
+  // time — catching it here keeps bundle validation and import preview from
+  // presenting an import as valid that will then roll back.
+  if (result.data.hookBindings && result.data.hookBindings.length > 0) {
+    const resolvableHookIds = new Set<string>(BUILT_IN_HOOK_IDS);
+    for (const custom of result.data.customHooks ?? []) resolvableHookIds.add(custom.id);
+    for (let bi = 0; bi < result.data.hookBindings.length; bi++) {
+      const binding = result.data.hookBindings[bi];
+      if (!resolvableHookIds.has(binding.hookId)) {
+        return {
+          ok: false,
+          error: `invalid: hookBindings[${bi}].hookId "${binding.hookId}" is neither a registered built-in hook nor declared in customHooks`,
+        };
+      }
+    }
   }
 
   // Referential integrity checks — enforce the cross-reference invariants that

@@ -2639,3 +2639,84 @@ describe('legacy v3 hooks rejection (non-empty)', () => {
     if (!result.ok) expect(result.error).toContain('hookBindings');
   });
 });
+
+describe('v4 hook fields — version gating and hookId resolution', () => {
+  test('a pre-v4 export carrying hookBindings is rejected', () => {
+    const workflow = makeWorkflow({
+      hookBindings: [
+        {
+          hookId: 'pr_ready',
+          sourceNode: 'Code',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+        },
+      ],
+    });
+    const exported = exportWorkflow(workflow, []) as Record<string, unknown>;
+    exported.version = 3;
+    const result = validateExportedWorkflow(exported);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('require export version 4');
+  });
+
+  test('a pre-v4 export carrying customHooks is rejected', () => {
+    const workflow = makeWorkflow({
+      customHooks: [
+        {
+          id: 'notify_hook',
+          requiredData: [],
+          run: { kind: 'script', interpreter: 'bash', source: 'exit 0' },
+        },
+      ],
+    });
+    const exported = exportWorkflow(workflow, []) as Record<string, unknown>;
+    exported.version = 3;
+    const result = validateExportedWorkflow(exported);
+    expect(result.ok).toBe(false);
+  });
+
+  test('a v4 binding referencing an unregistered hookId is rejected', () => {
+    const workflow = makeWorkflow({
+      hookBindings: [
+        {
+          hookId: 'no_such_hook',
+          sourceNode: 'Code',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+        },
+      ],
+    });
+    const exported = exportWorkflow(workflow, []);
+    const result = validateExportedWorkflow(exported);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('no_such_hook');
+  });
+
+  test('a v4 binding referencing a declared custom hook passes', () => {
+    const workflow = makeWorkflow({
+      customHooks: [
+        {
+          id: 'notify_hook',
+          requiredData: [],
+          run: { kind: 'script', interpreter: 'bash', source: 'exit 0' },
+        },
+      ],
+      hookBindings: [
+        {
+          hookId: 'notify_hook',
+          sourceNode: 'Code',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+        },
+      ],
+    });
+    const result = validateExportedWorkflow(exportWorkflow(workflow, []));
+    expect(result.ok).toBe(true);
+  });
+});

@@ -429,13 +429,31 @@ export async function ghGetReviewEvidence(
   if (!pr) {
     return { ok: false, retryable: false, error: `unable to parse GitHub PR link: ${link}` };
   }
+  // Query the TAIL of both connections: `first:` returns the EARLIEST page, so
+  // on a PR with >50 reviews/comments the fresh evidence this gate needs would
+  // fall outside the response and block a completed review. The newest 50 of
+  // each is authoritative unless more than 50 landed since the run started —
+  // in which case the gate blocks (fail-closed) until evidence re-checks.
   const query =
     `query { viewer { login } repository(owner:"${pr.owner}",name:"${pr.repo}") { pullRequest(number:${pr.number}) { ` +
-    'author { login } reviews(first: 50) { nodes { state publishedAt } } ' +
-    'comments(first: 50) { nodes { createdAt } } } } }';
+    'author { login } reviews(last: 50) { nodes { state publishedAt } } ' +
+    'comments(last: 50) { nodes { createdAt } } } } }';
   const result = await runGhGraphql(ctx, query, pr.host);
   if (!result.ok) return result;
   return { ok: true, data: extractReviewEvidence(result.data, sinceIso) };
+}
+
+/**
+ * Compare two ISO-8601 timestamps at matching precision. GitHub returns
+ * second-precision timestamps (`12:00:00Z`) while the run-start window may
+ * carry milliseconds (`12:00:00.500Z`) — a raw lexical compare then sorts `Z`
+ * after `.` and counts a PRE-run item as fresh. Parse to epoch millis instead;
+ * an unparseable value never satisfies the window (fail closed).
+ */
+function atOrAfter(iso: string, sinceIso: string): boolean {
+  const at = Date.parse(iso);
+  const since = Date.parse(sinceIso);
+  return Number.isFinite(at) && Number.isFinite(since) && at >= since;
 }
 
 export function extractReviewEvidence(value: unknown, sinceIso: string): GithubReviewEvidence {
@@ -464,7 +482,7 @@ export function extractReviewEvidence(value: unknown, sinceIso: string): GithubR
       if (
         (state === 'APPROVED' || state === 'CHANGES_REQUESTED') &&
         typeof publishedAt === 'string' &&
-        publishedAt >= sinceIso
+        atOrAfter(publishedAt, sinceIso)
       ) {
         formalReviewCount += 1;
       }
@@ -472,7 +490,11 @@ export function extractReviewEvidence(value: unknown, sinceIso: string): GithubR
       // Contract tells the reviewer to submit a COMMENT review instead, which
       // GitHub records as state COMMENTED. Count those like conversation
       // comments so the prescribed own-PR procedure satisfies the gate.
-      if (state === 'COMMENTED' && typeof publishedAt === 'string' && publishedAt >= sinceIso) {
+      if (
+        state === 'COMMENTED' &&
+        typeof publishedAt === 'string' &&
+        atOrAfter(publishedAt, sinceIso)
+      ) {
         commentedReviewEvidence += 1;
       }
     }
@@ -483,7 +505,7 @@ export function extractReviewEvidence(value: unknown, sinceIso: string): GithubR
   if (Array.isArray(commentNodes)) {
     for (const node of commentNodes) {
       const createdAt = asRecord(node)?.createdAt;
-      if (typeof createdAt === 'string' && createdAt >= sinceIso) {
+      if (typeof createdAt === 'string' && atOrAfter(createdAt, sinceIso)) {
         commentEvidenceCount += 1;
       }
     }
@@ -525,17 +547,19 @@ function isCodexActor(author: unknown): boolean {
  * run's authoritative reviewed link (read from the `pr_ready`-stamped artifact),
  * not a branch guess, so a stray `GH_REPO` cannot redirect it. The gate's whole
  * purpose is approval of the CURRENT head, so both pass paths bind to the head:
- *   - the LATEST decisive codex review whose `commit.oid` is the head SHA (or
- *     whose body names the 40-char head SHA) must be APPROVED — a later
- *     CHANGES_REQUESTED on the same head overrides an earlier APPROVED, and a
- *     stale review from a prior head does not count. The reviews connection is
- *     PAGINATED to a bounded cap (a prefix is not authoritative: a later
- *     CHANGES_REQUESTED beyond the first page would flip the verdict), and the
- *     gate fails closed when the cap is exhausted;
- *   - a THUMBS_UP (+1) reaction from the codex bot with `createdAt` newer than
- *     the head commit's `pushedDate` (push time, not commit-authoring time —
- *     selected on the Commit object; the GraphQL schema has no
- *     `PullRequest.pushedDate`, and selecting one errors the whole query).
+ *   - the LATEST head-bound codex review is AUTHORITATIVE when one exists at
+ *     all: it must be APPROVED (a later CHANGES_REQUESTED on the same head
+ *     overrides an earlier APPROVED, and a stale review from a prior head does
+ *     not count). The reviews connection is PAGINATED to a bounded cap (a
+ *     prefix is not authoritative: a later CHANGES_REQUESTED beyond the first
+ *     page would flip the verdict), and the gate fails closed when the cap is
+ *     exhausted;
+ *   - only when NO head-bound codex review exists: a THUMBS_UP (+1) reaction
+ *     from the codex bot with `createdAt` newer than the head commit's
+ *     `pushedDate` (push time, not commit-authoring time — selected on the
+ *     Commit object; the GraphQL schema has no `PullRequest.pushedDate`, and
+ *     selecting one errors the whole query). The reaction connection reads the
+ *     TAIL (last: 50) so a fresh +1 is not pushed out by older reactions.
  * The reaction actor is User-typed with a `[bot]` suffix; the login match covers
  * both forms. Opt-in. Fails closed when the head can't be resolved (the gate
  * can't prove head-specificity, so it retries).
@@ -556,7 +580,9 @@ export async function ghGetCodexApproval(
     `reviews(first: ${CODEX_REVIEWS_PAGE_SIZE}${after ? `, after:"${after}"` : ''}) { ` +
     'pageInfo { hasNextPage endCursor } ' +
     'nodes { state author { login } commit { oid } body submittedAt } } ' +
-    'reactions(first: 50, content: THUMBS_UP) { nodes { createdAt user { login } } } ' +
+    // Reaction TAIL (last: 50, not first:) — `first:` returns the earliest page,
+    // so on a PR with >50 thumbs the fresh codex +1 would fall outside it.
+    'reactions(last: 50, content: THUMBS_UP) { nodes { createdAt user { login } } } ' +
     'commits(last: 1) { nodes { commit { oid pushedDate } } } } } }';
 
   const allReviewNodes: unknown[] = [];
@@ -613,10 +639,14 @@ export function extractCodexApproval(value: unknown, prLink: string): GithubCode
   const headOid = typeof headCommit?.oid === 'string' ? headCommit.oid : undefined;
   const pushedDate = typeof headCommit?.pushedDate === 'string' ? headCommit.pushedDate : undefined;
 
-  // Pass path 1: the LATEST decisive codex review on the current head. A prior
-  // APPROVED must not satisfy the gate if codex later posted CHANGES_REQUESTED
-  // on the same head, so we take the newest head-bound codex review (by
-  // submittedAt) and require it to be APPROVED.
+  // Pass path 1: the LATEST DECISIVE head-bound codex review (APPROVED or
+  // CHANGES_REQUESTED) is AUTHORITATIVE — a prior APPROVED must not satisfy the
+  // gate if codex later posted CHANGES_REQUESTED on the same head, so we take
+  // the newest decisive head-bound codex review (by submittedAt). When one
+  // exists, its state alone decides and the reaction path does not run: an
+  // earlier thumbs-up must not override a later explicit CHANGES_REQUESTED on
+  // the same head. A COMMENTED review carries no verdict and does not block
+  // the reaction path.
   const reviewNodes = asRecord(pr?.reviews)?.nodes;
   if (Array.isArray(reviewNodes) && typeof headOid === 'string') {
     let latest: { submittedAt: string; state: string } | null = null;
@@ -629,20 +659,24 @@ export function extractCodexApproval(value: unknown, prLink: string): GithubCode
       if (!onHead) continue;
       const submittedAt = typeof review?.submittedAt === 'string' ? review.submittedAt : '';
       const state = typeof review?.state === 'string' ? review.state : '';
-      if (!submittedAt) continue;
+      if (!submittedAt || (state !== 'APPROVED' && state !== 'CHANGES_REQUESTED')) continue;
       if (!latest || submittedAt > latest.submittedAt) latest = { submittedAt, state };
     }
-    if (latest?.state === 'APPROVED') return { approved: true, prLink };
+    if (latest) return { approved: latest.state === 'APPROVED', prLink };
   }
 
-  // Pass path 2: a FRESH THUMBS_UP (+1) reaction from the codex bot — createdAt
-  // newer than the head PUSH. A stale +1 from a prior head must not false-pass.
+  // Pass path 2 (no head-bound codex review at all): a FRESH THUMBS_UP (+1)
+  // reaction from the codex bot — createdAt newer than the head PUSH (compared
+  // at matching precision; see atOrAfter). A stale +1 from a prior head must
+  // not false-pass, and this path only runs when path 1 found no codex review
+  // whose verdict could dominate.
   const reactionNodes = asRecord(pr?.reactions)?.nodes;
   if (Array.isArray(reactionNodes) && typeof pushedDate === 'string') {
     for (const node of reactionNodes) {
       const reaction = asRecord(node);
       const createdAt = reaction?.createdAt;
-      if (typeof createdAt !== 'string' || createdAt <= pushedDate) continue;
+      if (typeof createdAt !== 'string' || !atOrAfter(createdAt, pushedDate)) continue;
+      if (createdAt === pushedDate) continue;
       if (isCodexActor(reaction?.user)) {
         return { approved: true, prLink };
       }
