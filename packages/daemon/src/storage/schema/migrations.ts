@@ -980,6 +980,7 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // gate storage is obsolete. Idempotent via existence guards. Renumbered from
   // 187 (dev shipped M187–M189 for message-delivery-v2, #862).
   run(migrationMarkerKey(190), () => runMigration190(db));
+  run(migrationMarkerKey(191), () => runMigration191(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -12369,5 +12370,22 @@ export function runMigration190(db: BunDatabase): void {
   db.exec(`DROP TABLE IF EXISTS gate_data`);
   if (tableHasColumn(db, 'space_workflows', 'gates')) {
     db.exec(`ALTER TABLE space_workflows DROP COLUMN gates`);
+  }
+}
+
+/**
+ * Migration 191: add v2 hook-storage columns to space_workflows.
+ *
+ * `hook_bindings` (HookBinding[]) and `custom_hooks` (CustomHook[]) persist the
+ * v2 two-layer hook model alongside the legacy `hooks` column. Idempotent via
+ * column-existence guards. The legacy `hooks` column is dropped in a later
+ * migration once the v2 engine is the only consumer (step 7).
+ */
+export function runMigration191(db: BunDatabase): void {
+  if (!tableHasColumn(db, 'space_workflows', 'hook_bindings')) {
+    db.exec(`ALTER TABLE space_workflows ADD COLUMN hook_bindings TEXT`);
+  }
+  if (!tableHasColumn(db, 'space_workflows', 'custom_hooks')) {
+    db.exec(`ALTER TABLE space_workflows ADD COLUMN custom_hooks TEXT`);
   }
 }

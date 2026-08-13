@@ -25,6 +25,8 @@ import type {
   WorkflowChannel,
   HandoffTransition,
   WorkflowHook,
+  HookBinding,
+  CustomHook,
   CreateSpaceWorkflowParams,
   PostApprovalRoute,
   UpdateSpaceWorkflowParams,
@@ -56,6 +58,8 @@ interface WorkflowRow {
   tags: string;
   channels: string | null;
   hooks: string | null;
+  hook_bindings: string | null;
+  custom_hooks: string | null;
   layout: string | null;
   template_name: string | null;
   template_hash: string | null;
@@ -163,6 +167,8 @@ function rowToWorkflow(row: WorkflowRow, nodes: WorkflowNode[]): SpaceWorkflow {
   const layout = parseJson<Record<string, { x: number; y: number }> | null>(row.layout, null);
   const channels = parseJson<WorkflowChannel[] | null>(row.channels, null);
   const hooks = parseJson<WorkflowHook[] | null>(row.hooks, null);
+  const hookBindings = parseJson<HookBinding[] | null>(row.hook_bindings, null);
+  const customHooks = parseJson<CustomHook[] | null>(row.custom_hooks, null);
 
   const wf: SpaceWorkflow = {
     id: row.id,
@@ -179,6 +185,8 @@ function rowToWorkflow(row: WorkflowRow, nodes: WorkflowNode[]): SpaceWorkflow {
   if (row.end_node_id) wf.endNodeId = row.end_node_id;
   if (channels && channels.length > 0) wf.channels = channels;
   if (hooks && hooks.length > 0) wf.hooks = hooks;
+  if (hookBindings && hookBindings.length > 0) wf.hookBindings = hookBindings;
+  if (customHooks && customHooks.length > 0) wf.customHooks = customHooks;
   if (layout) wf.layout = layout;
   if (row.template_name) wf.templateName = row.template_name;
   if (row.template_hash) wf.templateHash = row.template_hash;
@@ -236,13 +244,21 @@ export class SpaceWorkflowRepository {
     const channelsJson =
       params.channels && params.channels.length > 0 ? JSON.stringify(params.channels) : null;
     const hooksJson = params.hooks && params.hooks.length > 0 ? JSON.stringify(params.hooks) : null;
+    const hookBindingsJson =
+      params.hookBindings && params.hookBindings.length > 0
+        ? JSON.stringify(params.hookBindings)
+        : null;
+    const customHooksJson =
+      params.customHooks && params.customHooks.length > 0
+        ? JSON.stringify(params.customHooks)
+        : null;
     const layoutJson = params.layout ? JSON.stringify(params.layout) : null;
     const postApprovalJson = params.postApproval ? JSON.stringify(params.postApproval) : null;
 
     this.db
       .prepare(
-        `INSERT INTO space_workflows (id, space_id, name, description, start_node_id, end_node_id, tags, channels, hooks, layout, template_name, template_hash, instructions, completion_autonomy_level, post_approval, disabled, handle, created_at, updated_at)
-	         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO space_workflows (id, space_id, name, description, start_node_id, end_node_id, tags, channels, hooks, layout, template_name, template_hash, instructions, completion_autonomy_level, post_approval, disabled, handle, created_at, updated_at, hook_bindings, custom_hooks)
+	         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         workflowId,
@@ -263,7 +279,9 @@ export class SpaceWorkflowRepository {
         params.disabled ? 1 : 0,
         params.handle ?? null,
         now,
-        now
+        now,
+        hookBindingsJson,
+        customHooksJson
       );
 
     // Insert node rows
@@ -485,6 +503,24 @@ export class SpaceWorkflowRepository {
     if (params.hooks !== undefined) {
       fields.push('hooks = ?');
       values.push(params.hooks && params.hooks.length > 0 ? JSON.stringify(params.hooks) : null);
+    }
+
+    if (params.hookBindings !== undefined) {
+      fields.push('hook_bindings = ?');
+      values.push(
+        params.hookBindings && params.hookBindings.length > 0
+          ? JSON.stringify(params.hookBindings)
+          : null
+      );
+    }
+
+    if (params.customHooks !== undefined) {
+      fields.push('custom_hooks = ?');
+      values.push(
+        params.customHooks && params.customHooks.length > 0
+          ? JSON.stringify(params.customHooks)
+          : null
+      );
     }
 
     if (params.layout !== undefined) {
