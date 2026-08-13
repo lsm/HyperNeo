@@ -1,0 +1,178 @@
+/**
+ * Integration tests for the gh* helpers' pagination loops — the exact code
+ * round-9 hardened (multi-page verdict accumulation and the fail-closed page
+ * caps). The GraphQL transport is substituted via the test seam so no `gh`
+ * process or network is involved.
+ */
+import { afterEach, describe, expect, test } from 'bun:test';
+import type { HookContext } from '@hyperneo/shared/types/workflow-hooks';
+import {
+  ghGetCodexApproval,
+  ghGetUnresolvedReviewThreads,
+  setGraphqlRunnerForTests,
+  isTrustedGitHubHost,
+  type GithubResult,
+} from '../src/github';
+
+const PR_LINK = 'https://github.com/org/repo/pull/42';
+const HEAD = 'a'.repeat(40);
+
+const CTX: HookContext = {
+  runId: 'run-1',
+  workspacePath: '/tmp/ws',
+  taskId: 'task-1',
+  sourceNode: 'Coding',
+  readState: () => undefined,
+  recordState: () => {},
+  queueFollowUp: () => {},
+  writeArtifact: () => {},
+  readArtifacts: () => [],
+};
+
+type Runner = (ctx: HookContext, query: string, host?: string) => Promise<GithubResult<unknown>>;
+
+/** A mock transport serving canned pages in order (keyed by `after:` cursor). */
+function pagedRunner(pages: unknown[], onQuery?: (query: string) => void): Runner {
+  let call = 0;
+  return async (_ctx, query) => {
+    onQuery?.(query);
+    const page = pages[Math.min(call, pages.length - 1)];
+    call += 1;
+    return { ok: true, data: page };
+  };
+}
+
+const codexReview = (state: string, submittedAt: string, oid = HEAD) => ({
+  state,
+  submittedAt,
+  commit: { oid },
+  author: { login: 'chatgpt-codex-connector' },
+});
+
+const codexPage = (
+  reviews: unknown[],
+  opts: { hasNext: boolean; cursor?: string; reactions?: unknown[]; pushedDate?: string } = {
+    hasNext: false,
+  }
+) => ({
+  data: {
+    repository: {
+      pullRequest: {
+        reviews: {
+          nodes: reviews,
+          pageInfo: { hasNextPage: opts.hasNext, endCursor: opts.cursor ?? 'cur' },
+        },
+        reactions: { nodes: opts.reactions ?? [] },
+        commits: {
+          nodes: [{ commit: { oid: HEAD, pushedDate: opts.pushedDate ?? '2026-08-12T00:00:00Z' } }],
+        },
+      },
+    },
+  },
+});
+
+const threadPage = (threads: unknown[], hasNext: boolean) => ({
+  data: {
+    repository: {
+      pullRequest: {
+        reviewThreads: {
+          nodes: threads,
+          pageInfo: { hasNextPage: hasNext, endCursor: 'cur' },
+        },
+      },
+    },
+  },
+});
+
+afterEach(() => setGraphqlRunnerForTests(null));
+
+describe('ghGetCodexApproval — pagination loop', () => {
+  test('a CHANGES_REQUESTED beyond page 1 flips the accumulated verdict', async () => {
+    // Page 1: an older APPROVED on the head. Page 2: a NEWER
+    // CHANGES_REQUESTED on the same head. The first-page prefix would approve;
+    // the accumulated history must decline.
+    setGraphqlRunnerForTests(
+      pagedRunner([
+        codexPage([codexReview('APPROVED', '2026-08-13T10:00:00Z')], {
+          hasNext: true,
+          cursor: 'p1-end',
+        }),
+        codexPage([codexReview('CHANGES_REQUESTED', '2026-08-13T11:00:00Z')]),
+      ])
+    );
+    const result = await ghGetCodexApproval(CTX, PR_LINK);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.approved).toBe(false);
+  });
+
+  test('follows endCursor across pages', async () => {
+    const seenAfters: Array<string | null> = [];
+    setGraphqlRunnerForTests(
+      pagedRunner(
+        [
+          codexPage([], { hasNext: true, cursor: 'cursor-1' }),
+          codexPage([], { hasNext: true, cursor: 'cursor-2' }),
+          codexPage([codexReview('APPROVED', '2026-08-13T10:00:00Z')]),
+        ],
+        (query) => {
+          const match = /after:"([^"]*)"/.exec(query);
+          seenAfters.push(match ? (match[1] as string) : null);
+        }
+      )
+    );
+    const result = await ghGetCodexApproval(CTX, PR_LINK);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.approved).toBe(true);
+    // Page 1 has no after; pages 2+ carry the previous page's endCursor.
+    expect(seenAfters).toEqual([null, 'cursor-1', 'cursor-2']);
+  });
+
+  test('cap exhaustion fails closed with a retryable error', async () => {
+    setGraphqlRunnerForTests(pagedRunner([codexPage([], { hasNext: true, cursor: 'x' })]));
+    const result = await ghGetCodexApproval(CTX, PR_LINK);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.retryable).toBe(true);
+      expect(result.error).toContain('fail closed');
+    }
+  });
+});
+
+describe('ghGetUnresolvedReviewThreads — pagination loop', () => {
+  test('an unresolved thread beyond page 1 is found', async () => {
+    setGraphqlRunnerForTests(
+      pagedRunner([
+        threadPage([{ isResolved: true, comments: { nodes: [{ url: 'u1' }] } }], true),
+        threadPage(
+          [{ isResolved: false, comments: { nodes: [{ url: 'https://gb/threads/9' }] } }],
+          false
+        ),
+      ])
+    );
+    const result = await ghGetUnresolvedReviewThreads(CTX, PR_LINK);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data).toEqual(['https://gb/threads/9']);
+  });
+
+  test('cap exhaustion fails closed with a retryable error', async () => {
+    setGraphqlRunnerForTests(pagedRunner([threadPage([], true)]));
+    const result = await ghGetUnresolvedReviewThreads(CTX, PR_LINK);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.retryable).toBe(true);
+  });
+});
+
+describe('isTrustedGitHubHost — GHE Cloud tenants', () => {
+  test('accepts *.ghe.com data-residency tenants and exact known hosts', () => {
+    expect(isTrustedGitHubHost('mycompany.ghe.com')).toBe(true);
+    expect(isTrustedGitHubHost('ghe.com')).toBe(true);
+    expect(isTrustedGitHubHost('github.com')).toBe(true);
+    expect(isTrustedGitHubHost('GitHub.com'.toLowerCase())).toBe(true);
+  });
+  test('rejects lookalikes and arbitrary hosts', () => {
+    expect(isTrustedGitHubHost('ghe.com.evil.example')).toBe(false);
+    expect(isTrustedGitHubHost('mycompany.ghe.com.evil.example')).toBe(false);
+    expect(isTrustedGitHubHost('evil.example')).toBe(false);
+    expect(isTrustedGitHubHost('notghe.com')).toBe(false);
+  });
+});

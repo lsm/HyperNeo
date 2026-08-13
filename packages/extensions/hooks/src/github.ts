@@ -167,7 +167,7 @@ async function runGh(opts: {
  * attacker-controlled PR link cannot redirect `gh` (and its credentials) at an
  * arbitrary server. Envelopes carrying a top-level `errors` array are rejected.
  */
-async function runGhGraphql(
+async function runGhGraphqlImpl(
   ctx: HookContext,
   query: string,
   host?: string
@@ -207,6 +207,28 @@ async function runGhGraphql(
   return { ok: true, data: parsed };
 }
 
+/**
+ * The GraphQL transport the gh* helpers call. Indirected through this binding
+ * so tests can substitute a mock and exercise the pagination loops (the
+ * fail-closed caps and multi-page verdict accumulation) without spawning `gh`.
+ */
+let graphqlRunner: typeof runGhGraphqlImpl = runGhGraphqlImpl;
+
+/** Test seam: substitute (or restore) the GraphQL transport used by the gh* helpers. */
+export function setGraphqlRunnerForTests(
+  fn: ((ctx: HookContext, query: string, host?: string) => Promise<GithubResult<unknown>>) | null
+): void {
+  graphqlRunner = fn ?? runGhGraphqlImpl;
+}
+
+async function runGhGraphql(
+  ctx: HookContext,
+  query: string,
+  host?: string
+): Promise<GithubResult<unknown>> {
+  return graphqlRunner(ctx, query, host);
+}
+
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -215,14 +237,17 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 const TRUSTED_GITHUB_HOSTS = new Set(['github.com', 'ghe.com']);
 /**
- * A host is trusted if it is a known GitHub host, or matches the daemon's
- * configured Enterprise host (`GH_HOST`). Prevents an attacker-controlled PR
- * link from redirecting `gh` (and its credentials) at an arbitrary server.
+ * A host is trusted if it is a known GitHub host — including any GHE Cloud
+ * data-residency tenant (`*.ghe.com`) — or matches the daemon's configured
+ * Enterprise host (`GH_HOST`). Prevents an attacker-controlled PR link from
+ * redirecting `gh` (and its credentials) at an arbitrary server.
  */
-function isTrustedGitHubHost(host: string): boolean {
-  if (TRUSTED_GITHUB_HOSTS.has(host)) return true;
-  const configured = process.env.GH_HOST;
-  return !!configured && configured === host;
+export function isTrustedGitHubHost(host: string): boolean {
+  const normalized = host.toLowerCase();
+  if (TRUSTED_GITHUB_HOSTS.has(normalized)) return true;
+  if (normalized.endsWith('.ghe.com')) return true;
+  const configured = process.env.GH_HOST?.toLowerCase();
+  return !!configured && configured === normalized;
 }
 
 // ---------------------------------------------------------------------------
@@ -672,11 +697,16 @@ export function extractCodexApproval(value: unknown, prLink: string): GithubCode
   // whose verdict could dominate.
   const reactionNodes = asRecord(pr?.reactions)?.nodes;
   if (Array.isArray(reactionNodes) && typeof pushedDate === 'string') {
+    const pushedMs = Date.parse(pushedDate);
     for (const node of reactionNodes) {
       const reaction = asRecord(node);
       const createdAt = reaction?.createdAt;
-      if (typeof createdAt !== 'string' || !atOrAfter(createdAt, pushedDate)) continue;
-      if (createdAt === pushedDate) continue;
+      // STRICTLY newer than the head push, compared at epoch precision —
+      // second-precision strings never mis-order against millisecond ones.
+      if (typeof createdAt !== 'string') continue;
+      const createdMs = Date.parse(createdAt);
+      if (!Number.isFinite(createdMs) || !Number.isFinite(pushedMs)) continue;
+      if (createdMs <= pushedMs) continue;
       if (isCodexActor(reaction?.user)) {
         return { approved: true, prLink };
       }
