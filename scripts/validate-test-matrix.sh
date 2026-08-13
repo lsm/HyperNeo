@@ -578,7 +578,7 @@ elif [ -n "$(printf '%s' "$_web_cmd" \
 		| sed -E -e 's/--reporter[[:space:]]+[^[:space:]]+//g' \
 		         -e 's/--reporter=[^[:space:]]+//g' \
 		         -e 's/--outputFile\.[[:alnum:]_-]+(=[^[:space:]]+)?//g' \
-		         -e 's/--coverage(=[^[:space:]]+)?//g' \
+		         -e 's/--coverage(=[[:space:]]*true)?//g' \
 		         -e 's/--coverage\.[[:alnum:]_.-]+(=[^[:space:]]+)?//g' \
 		         -e 's/--color//g' -e 's/--no-color//g' \
 		| tr -d "[:space:]'\"")" ]; then
@@ -714,7 +714,7 @@ else
 		         -e 's/--reporter=[^[:space:]]+//g' \
 		         -e 's/--coverage\.[[:alnum:]_.-]+(=[^[:space:]]+)?//g' \
 		         -e 's/--outputFile\.[[:alnum:]_-]+(=[^[:space:]]+)?//g' \
-		         -e 's/--coverage(=[^[:space:]]+)?//g' \
+		         -e 's/--coverage(=[[:space:]]*true)?//g' \
 		         -e 's/--color//g' -e 's/--no-color//g' \
 		| tr -d "[:space:]'")
 	# Coverage disabling: --coverage.enabled=false silently produces no LCOV report,
