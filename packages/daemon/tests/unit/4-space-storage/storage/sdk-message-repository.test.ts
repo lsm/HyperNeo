@@ -2322,6 +2322,8 @@ describe('SDKMessageRepository', () => {
       ).toBe('live');
       // A terminal-idle drain keeps durable turn ownership even with a success
       // result / marker (mirrors the original hasSettledTurnTermination guard).
+      // Covers all remaining idleInFlight=true combos: the drain short-circuits
+      // to 'live' before success/marker are even consulted.
       expect(
         classifyReclaimTermination({
           successResult: true,
@@ -2331,8 +2333,22 @@ describe('SDKMessageRepository', () => {
       ).toBe('live');
       expect(
         classifyReclaimTermination({
+          successResult: true,
+          markerExists: false,
+          terminalIdleInFlight: true,
+        })
+      ).toBe('live');
+      expect(
+        classifyReclaimTermination({
           successResult: false,
           markerExists: true,
+          terminalIdleInFlight: true,
+        })
+      ).toBe('live');
+      expect(
+        classifyReclaimTermination({
+          successResult: false,
+          markerExists: false,
           terminalIdleInFlight: true,
         })
       ).toBe('live');
