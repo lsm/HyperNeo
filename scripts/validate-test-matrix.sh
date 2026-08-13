@@ -67,6 +67,10 @@ enabled_run_cmd() {
 		# if:false|never disables a step (>= 6 indent) or the whole job (<= 4 indent).
 		# Accept the optional ${{ }} expression wrapper GitHub allows (if: ${{ false }}).
 		/if:[[:space:]]*(\$\{\{[[:space:]]*)?(false|never)([[:space:]]|\}|$)/ { n=0; while (substr($0,n+1,1)==" ") n++; if (n <= 4) job_disabled=1; else disabled=1 }
+		# Step-level if: that is NOT always()/success() — a nonliteral always-false
+		# (e.g. github.event_name == 'never') cannot be evaluated, so treat any
+		# unknown step-level condition as potentially disabling (conservative).
+		/if:/ { n=0; while (substr($0,n+1,1)==" ") n++; if (n > 4 && $0 !~ /(always|success)/) disabled=1 }
 		/^[[:space:]]*#/ { next }
 		# Folded run: keep accumulating; on dedent just stop (NO emit — a later
 		# if:false on the same step must be honored, so emit is deferred to the step boundary/END).
@@ -112,8 +116,9 @@ runner_is_data_cmd() {
 		| sed -E 's/^([>|]-)[[:space:]]*//' \
 		| sed -E "s/^[\"']//" \
 		| sed -E 's/.* -- //' \
+		| sed -E 's/^env( [[:alnum:]_]+=[^[:space:]]+)*//' \
 		| awk '{print $1}')
-	case "$tok" in echo|printf|cat|true|false|:) return 0 ;; *) return 1 ;; esac
+	case "$tok" in echo|printf|cat|true|false|:|env) return 0 ;; *) return 1 ;; esac
 }
 
 # Count ACTIVE lines in workflow $1 that are a test_path VALUE for path $2 —
@@ -729,6 +734,9 @@ elif ! marker_executed "$_online_real" 'bun test'; then
 elif [ "$(printf '%s' "$_online_real" | sed -E 's/^[[:space:]]*run:[[:space:]]*//' | sed -E 's/^([>|]-)[[:space:]]*//' | sed -E 's/^[("'"'"')]//' | awk '{print $1}')" != "bun" ]; then
 	err "real-API runner's first command token is not 'bun' — 'bun test' would be an argument to another command (e.g. echo), running zero tests while this guard reports the file covered"
 	echo "     → invoke 'bun test \${{ matrix.test_path }}' as the command" >&2
+elif [ "$(printf '%s' "$_online_real" | grep -oF 'bun test' | wc -l | tr -d ' ')" -gt 1 ]; then
+	err "real-API runner has multiple 'bun test' invocations — the first could run and exit 0 (e.g. --only with no matches), so the \${{ matrix.test_path }} fallback via || never executes"
+	echo "     → use exactly one 'bun test' invocation" >&2
 else
 	# After `bun test`, only ${{ matrix.test_path }} may select. A selection flag
 	# like --only (test.only only) / --grep / --filter would run ZERO tests on a
@@ -821,26 +829,30 @@ done < <(awk '
 	injob && /^  [a-z]/ { flush(); injob=0; mod=""; has_path=0; folding=0; next }
 	!injob { next }
 	/^[[:space:]]*#/ { next }
-	# Accept an optional YAML quote around the module name; strip non-token chars.
-	/^[[:space:]]*- module:[[:space:]]*[^[:space:]]+[[:space:]]*$/ {
+	# Key-order-independent: detect record by any list-item, collect module and
+	# test_path from the dash-line key OR subsequent properties at mi+2.
+	/^[[:space:]]*- / {
 		flush()
 		mi=0; while (substr($0,mi+1,1)==" ") mi++
-		mod=$0; sub(/^[[:space:]]*- module:[[:space:]]*/, "", mod); sub(/[[:space:]]+$/, "", mod); gsub(/[^a-z0-9-]/, "", mod)
-		has_path=0; folding=0; next
+		mod=""; has_path=0; folding=0
+		line=$0; sub(/^[[:space:]]*- [[:space:]]*/, "", line); sub(/^[[:space:]]+/, "", line)
+		if (line ~ /^module:/) { sub(/^module:[[:space:]]*/, "", line); sub(/[[:space:]]*$/, "", line); gsub(/[^a-z0-9-]/, "", line); mod=line }
+		else if (line ~ /^test_path:[[:space:]]*[>|]-[[:space:]]*$/) { folding=1 }
+		else if (line ~ /^test_path:[[:space:]]+[^[:space:]>|-]/) { has_path=1 }
+		next
 	}
-	# A test_path counts ONLY as a DIRECT record property (indent mi+2); a dedent
-	# to/under the record indent flushes+clears mod, so test_path in env/steps/job
-	# scope (which does not populate ${{ matrix.test_path }}) cannot satisfy it.
 	{
 		n=0; while (substr($0,n+1,1)==" ") n++
-		if (mod != "" && n <= mi) { flush(); mod=""; has_path=0; folding=0 }
-		if (mod == "") next
+		if (n <= mi) { flush(); mod=""; has_path=0; folding=0; next }
 		if (folding) {
-			if (n > base) { has_path=1; next }
+			if (n > mi+2) { has_path=1; next }
 			folding=0
 		}
-		if (n == mi+2 && $0 ~ /test_path:[[:space:]]*[>|]-[[:space:]]*$/) { folding=1; base=n; next }
-		if (n == mi+2 && $0 ~ /test_path:[[:space:]]+[^[:space:]>|-]/) { has_path=1 }
+		if (n == mi+2 && $0 ~ /module:/) {
+			v=$0; sub(/.*module:[[:space:]]*/, "", v); sub(/[[:space:]]*$/, "", v); gsub(/[^a-z0-9-]/, "", v); mod=v
+		}
+		else if (n == mi+2 && $0 ~ /test_path:[[:space:]]*[>|]-[[:space:]]*$/) { folding=1 }
+		else if (n == mi+2 && $0 ~ /test_path:[[:space:]]+[^[:space:]>|-]/) { has_path=1 }
 	}
 	END { flush() }
 ' "$REAL_API_WORKFLOW")
