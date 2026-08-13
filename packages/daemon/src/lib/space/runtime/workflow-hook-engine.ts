@@ -553,10 +553,29 @@ export class WorkflowHookEngine {
 
       const hook = resolveHook(hookId, this.config.workflow.customHooks);
       if (!hook) {
-        log.warn(
-          `Binding references hook "${hookId}" (${binding.sourceNode}→${binding.targetNode} ${methodName}) but it is not registered; skipping.`
+        // FAIL CLOSED: an unresolvable hook on a bound route means the gate
+        // cannot run — typically a PINNED definition referencing a built-in
+        // that the running registry no longer has (e.g. after a rollback).
+        // Skipping would deliver the protected action without that binding's
+        // enforcement; block instead so the operator sees it.
+        log.error(
+          `Binding references hook "${hookId}" (${binding.sourceNode}→${binding.targetNode} ${methodName}) but it is not registered; blocking the action (fail closed).`
         );
-        continue;
+        terminal = {
+          kind: 'stop',
+          hookId,
+          reason:
+            `Hook "${hookId}" is bound to this route but not registered in this daemon ` +
+            '(pinned definition referencing an unavailable hook?). The action is blocked ' +
+            'rather than delivered without that gate.',
+        };
+        executionLog.push({
+          hookId,
+          flow: 'stop',
+          reason: terminal.reason,
+          timestamp: Date.now(),
+        });
+        break;
       }
 
       const built = this.buildHookContext(binding, meta, ctxArtifacts);

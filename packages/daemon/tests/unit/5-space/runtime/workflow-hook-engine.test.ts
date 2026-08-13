@@ -126,6 +126,29 @@ describe('WorkflowHookEngine.executeAction', () => {
     expect(outcome.userState.reason).toBe('blocked by script');
   });
 
+  test('a binding whose hook cannot be resolved blocks (fail closed)', async () => {
+    // Pinned definition referencing a hook the running registry lacks (e.g.
+    // after a rollback) must NOT deliver the protected action ungated.
+    const workflow = makeWorkflow({
+      hookBindings: [
+        {
+          hookId: 'missing_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    const engine = makeEngine(workflow);
+    const outcome = await engine.executeAction('send_message', sendParams(), META);
+    expect(outcome.decision).toBe('stop');
+    expect(outcome.blockingHookId).toBe('missing_hook');
+    expect(outcome.userState.reason).toContain('not registered');
+  });
+
   test('an unbound route delivers untouched', async () => {
     const engine = makeEngine(makeWorkflow());
     const outcome = await engine.executeAction('send_message', sendParams(), META);
