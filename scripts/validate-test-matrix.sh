@@ -122,6 +122,25 @@ runner_is_data_cmd() {
 	case "$tok" in echo|printf|cat|true|false|:|env|command) return 0 ;; *) return 1 ;; esac
 }
 
+# True (exit 0 = BAD) if the command after the flaky-runner ` -- ` separator does
+# NOT start with the expected runner prefix ($2). The flaky-test-runner hands the
+# token after `--` to the shell for execution, so for the wrapped runners it must
+# be the actual test runner (`bash -lc '...'` for web/online-main,
+# `./scripts/test-daemon.sh` for unit). A wrapper such as `test -n "<marker>"`
+# (double-quoted, so marker_executed treats the marker as executed), `echo
+# "<marker>"`, or `[ -n "<marker>" ]` makes the step exit 0 while running ZERO
+# tests — and a data-command blacklist cannot enumerate every such wrapper, so
+# pin the prefix instead. marker_executed already rejects a SINGLE-quoted data
+# arg (`echo '<marker>'`); this catches the double-quoted / builtin-wrapper case.
+runner_post_sep_starts_with() {
+	local after
+	after=$(printf '%s' "$1" | sed -E 's/.*[[:space:]]--[[:space:]]//' | sed -E 's/^[[:space:]]+//')
+	case "$after" in
+		"$2"*) return 1 ;; # the expected runner prefix → OK
+		*) return 0 ;;     # any other wrapper/no-op → BAD
+	esac
+}
+
 # True (exit 0 = BAD) if the EXECUTED portion of the runner command places a
 # control-flow `||` or `&&` BEFORE the marker — e.g. `true || <marker>`,
 # `bash -lc 'false && cd ... && <marker>'`, or `bash -lc 'true || ... && <marker>'`.
@@ -388,6 +407,26 @@ cfg_reject_root() {
 	fi
 }
 
+# Reject a `...` spread inside the test: block of a guarded vitest config. A
+# spread placed AFTER the pinned include/exclude literal overrides it (JS object
+# spread is last-wins) — e.g. `...{ include: ['src/__never__/**/*.test.ts'] }`
+# makes Vitest match NO files, yet test_prop_has still finds the earlier pinned
+# line and this guard reports every file covered. The legit guarded configs use
+# no spreads, so any spread under test: is an override risk. (test_prop_has pins
+# a literal LINE; it cannot reason about spreads/computed properties, so ban them.)
+reject_config_spread() {
+	local cfg="$1" pkg="$2"
+	if awk '
+		/^  test:[[:space:]]*\{?[[:space:]]*$/ { intest=1; next }
+		/^  [a-zA-Z]/ { intest=0 }
+		intest && /^[[:space:]]*\.\.\./ { found=1; exit }
+		END { exit (found ? 0 : 1) }
+	' "$cfg"; then
+		err "$pkg/vitest.config.ts has a '...' spread inside test: — a spread after the pinned include/exclude overrides it (JS last-wins), so Vitest may match no files while this guard reports them covered"
+		echo "     → inline the include/exclude literal; no spread/computed property under test:" >&2
+	fi
+}
+
 # Reject matrix `module:` scalars in job (of file) whose value, after stripping
 # optional YAML quotes, does not match the strict [a-z0-9-]+ format. The axis and
 # include parsers normalize values for comparison, which silently maps a typo like
@@ -512,6 +551,8 @@ for _cfg in "$REPO_ROOT/packages/daemon/vitest.config.ts" "$REPO_ROOT/packages/s
 	test_no_select_opts "$_cfg" "$_cfg_pkg"
 	# A non-default root relocates the include base; reject it (see cfg_reject_root).
 	cfg_reject_root "$_cfg" "$_cfg_pkg"
+	# A spread under test: overrides the pinned include/exclude (see reject_config_spread).
+	reject_config_spread "$_cfg" "$_cfg_pkg"
 done
 
 COVERED_TMP="$(mktemp)"
@@ -661,6 +702,9 @@ elif runner_has_noexec_interp "$_unit_run" 'test-daemon.sh ${{ matrix.shard }}';
 elif runner_has_comment_before_marker "$_unit_run" 'test-daemon.sh ${{ matrix.shard }}'; then
 	err "test-daemon-shared-unit runner has a '#' comment before test-daemon.sh (e.g. `true # ... ./scripts/test-daemon.sh`) — the comment blanks out the test command in CI, so the step runs ZERO tests while this guard reports them covered"
 	echo "     → remove the '#' / commented prefix before test-daemon.sh" >&2
+elif runner_post_sep_starts_with "$_unit_run" './scripts/test-daemon.sh'; then
+	err "test-daemon-shared-unit runner's command after the flaky-runner separator is not './scripts/test-daemon.sh' — a wrapper over the marker (test -n, echo, [) exits 0 while running ZERO tests, and a data-command blacklist cannot enumerate every wrapper, while this guard reports them covered"
+	echo "     → keep './scripts/test-daemon.sh ...' as the token after ' -- '" >&2
 elif runner_continue_on_error "$REPO_ROOT/.github/workflows/main.yml" 'test-daemon.sh ${{ matrix.shard }}' 'test-daemon-shared-unit'; then
 	err "test-daemon-shared-unit runner step (or its job) has continue-on-error: true — a FAILED unit run is marked successful, so coverage stays green while tests are broken"
 	echo "     → remove continue-on-error from the test-daemon-shared-unit runner step/job" >&2
@@ -762,6 +806,7 @@ fi
 test_no_select_opts "$WEB_CFG" "packages/web"
 # A non-default root relocates the src/** include base; reject it.
 cfg_reject_root "$WEB_CFG" "packages/web"
+reject_config_spread "$WEB_CFG" "packages/web"
 # The web coverage assumes the test-web CI job runs a bare `vitest run` (no
 # positional target) in an ENABLED step, so the config include/exclude fully
 # determine execution. enabled_run_cmd folds the runner command (a `>-` scalar)
@@ -775,6 +820,9 @@ if [ -z "$_web_cmd" ]; then
 elif ! marker_executed "$_web_cmd" 'cd packages/web && bunx vitest run'; then
 	err "test-web runner contains the marker but does not EXECUTE it (e.g. it is echoed/quoted as data) — zero tests would run while this guard reports them covered"
 	echo "     → invoke 'bunx vitest run' as a command, not as an argument to echo/another command" >&2
+elif runner_post_sep_starts_with "$_web_cmd" 'bash -lc'; then
+	err "test-web runner's command after the flaky-runner separator is not 'bash -lc' — a wrapper over the marker (test -n, echo, [) exits 0 while running ZERO web tests, and a data-command blacklist cannot enumerate every wrapper, while this guard reports them covered"
+	echo "     → keep \"bash -lc 'cd packages/web && bunx vitest run ...'\" as the token after ' -- '" >&2
 elif runner_is_data_cmd "$_web_cmd"; then
 	err "test-web runner's first command token is a data command (echo/printf/cat) — the marker is an argument, not executed"
 	echo "     → invoke 'bunx vitest run' as a command, not via echo" >&2
@@ -879,6 +927,7 @@ fi
 test_no_select_opts "$ONLINE_CFG" "packages/daemon/vitest.online"
 # A non-default root relocates the tests/online/** include base; reject it.
 cfg_reject_root "$ONLINE_CFG" "packages/daemon/vitest.online"
+reject_config_spread "$ONLINE_CFG" "packages/daemon/vitest.online"
 
 # Each guarded test job's job-level if: must EQUAL its pinned predicate (not a
 # substring match). A substring search accepts a gate like
@@ -899,6 +948,20 @@ _check_job_gate() {
 	if [ -n "$raw" ] && [ "$gate" != "$exp" ]; then
 		err "$job job-level if: is not the pinned gate (got: ${gate:-<none>}) — a weakened or compound condition (e.g. an extra && always-false clause) would skip the job in normal CI while this guard reports its files covered"
 		echo "     → restore: if: $exp" >&2
+	fi
+	# A needs: chains this job to another job's result. If that dependency is
+	# skipped on ordinary PRs (e.g. a `discover`-style job), GitHub skips this job
+	# too (its default success() requirement is unmet), so its tests never run
+	# while this guard reports them covered. The guarded jobs have no needs: today;
+	# reject any (validate the explicit if: only, not the whole chain, so ban it).
+	if awk -v j="$job" '
+		$0 ~ "^  " j ":" { injob=1; next }
+		injob && /^  [a-z]/ { injob=0; next }
+		injob && /^[[:space:]]{4}needs:/ { found=1; exit }
+		END { exit !found }
+	' "$file"; then
+		err "$job has a needs: dependency — a skipped dependency (e.g. a job gated off on ordinary PRs) skips this job too, so its tests never run while this guard reports them covered"
+		echo "     → remove needs: from $job (the guarded test jobs must run unconditionally)" >&2
 	fi
 }
 _check_job_gate test-daemon-shared-unit "$MAIN_WORKFLOW" "github.event.inputs.run_e2e_only != 'true'"
@@ -922,6 +985,9 @@ if [ -z "$_online_main" ] || ! printf '%s' "$_online_main" | grep -qF '${{ matri
 elif ! marker_executed "$_online_main" 'vitest.online.config.ts'; then
 	err "main.yml online runner contains the marker but does not EXECUTE it (e.g. it is echoed/quoted as data) — zero tests would run while this guard reports them covered"
 	echo "     → invoke vitest as a command, not as an argument to echo/another command" >&2
+elif runner_post_sep_starts_with "$_online_main" 'bash -lc'; then
+	err "main.yml online runner's command after the flaky-runner separator is not 'bash -lc' — a wrapper over the marker (test -n, echo, [) exits 0 while running ZERO online tests, and a data-command blacklist cannot enumerate every wrapper, while this guard reports them covered"
+	echo "     → keep \"bash -lc '... vitest run ...'\" as the token after ' -- '" >&2
 elif runner_is_data_cmd "$_online_main"; then
 	err "main.yml online runner's first command token is a data command (echo/printf/cat) — the marker is an argument, not executed"
 	echo "     → invoke vitest as a command, not via echo" >&2

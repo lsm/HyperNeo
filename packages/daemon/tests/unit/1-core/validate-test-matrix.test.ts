@@ -302,4 +302,61 @@ describe('validate-test-matrix.sh', () => {
     },
     TIMEOUT
   );
+
+  it(
+    'rejects a data-command wrapper (test -n) over the web marker (P2)',
+    () => {
+      // `test -n "<marker>"` (double-quoted) exits 0 without running Vitest;
+      // marker_executed treats the double-quoted marker as executed, and a
+      // data-command blacklist cannot enumerate `test`/`[`/`[[`. Pin the token
+      // after the flaky-runner separator to the expected `bash -lc` runner.
+      expectGuardRejects(
+        path.join(REPO_ROOT, '.github/workflows/main.yml'),
+        (s) =>
+          s.replace(
+            "bash -lc 'cd packages/web && bunx vitest run",
+            'test -n "cd packages/web && bunx vitest run'
+          ),
+        "after the flaky-runner separator is not 'bash -lc'"
+      );
+    },
+    TIMEOUT
+  );
+
+  it(
+    'rejects a spread override of include in a vitest config (P2)',
+    () => {
+      // A `...{ include: [...] }` AFTER the pinned literal wins in JS, so Vitest
+      // matches none of the files while test_prop_has still finds the pinned line
+      // and the guard reports every file covered.
+      expectGuardRejects(
+        path.join(REPO_ROOT, 'packages/web/vitest.config.ts'),
+        (s) =>
+          s.replace(
+            "include: ['src/**/*.{test,spec}.{ts,tsx}'],",
+            "include: ['src/**/*.{test,spec}.{ts,tsx}'],\n    ...{ include: ['src/__never__/**/*.test.ts'] },"
+          ),
+        "'...' spread inside test:"
+      );
+    },
+    TIMEOUT
+  );
+
+  it(
+    'rejects a needs: dependency on a guarded job (P2)',
+    () => {
+      // A needs: on a conditionally-skipped job (e.g. `discover`) skips this job
+      // too, so its tests never run while the guard reports them covered.
+      expectGuardRejects(
+        path.join(REPO_ROOT, '.github/workflows/main.yml'),
+        (s) =>
+          s.replace(
+            '  test-daemon-shared-unit:\n',
+            '  test-daemon-shared-unit:\n    needs: discover\n'
+          ),
+        'has a needs: dependency'
+      );
+    },
+    TIMEOUT
+  );
 });
