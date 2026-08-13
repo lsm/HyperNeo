@@ -159,10 +159,35 @@ runner_has_noexec_interp() {
 	'
 }
 
-# True (exit 0 = BAD) if the ENABLED runner step (the one whose run command
-# contains marker, in job) of file has `continue-on-error: true` at STEP or JOB
-# scope. With it, GitHub marks a FAILED test step as successful, so failing
-# assertions become green CI while this guard reports coverage. Mirrors
+# True (exit 0 = BAD) if a shell comment (`#`) appears in the EXECUTED text
+# BEFORE the marker. A folded `run: >-` joins lines with spaces into one shell
+# line, so a `#` comments out everything after it: `true # ... <marker>` runs
+# `true` (exit 0) and never reaches the marker — ZERO tests run while EVERY other
+# detector (marker_executed, dead_prefix, noexec_interp, data_cmd) passes. The
+# guard already rejects `#` in test_path values for this reason; this closes the
+# same hole on the runner command. Considers only EXECUTED text (outside single
+# quotes, or inside a -lc/-c body), so a `#` inside a quoted data argument is not
+# misread as a comment. A bare leading `#` (column 1) is a YAML comment, stripped
+# before the runval is assembled, so only a whitespace-preceded `#` matters.
+runner_has_comment_before_marker() {
+	awk -v runval="$1" -v marker="$2" '
+		function executed_text(s,   i,n,c,out,inq,qstart,before,content) {
+			n=length(s); out=""; inq=0
+			for (i=1; i<=n; i++) {
+				c=substr(s,i,1)
+				if (c == "'\''") {
+					if (!inq) { inq=1; qstart=i; before=substr(s,1,i-1) }
+					else { inq=0; content=substr(s,qstart+1,i-qstart-1); if (before ~ /(bash|sh)[[:space:]]+-l?c[[:space:]]*$/) out=out content }
+				} else if (!inq) { out=out c }
+			}
+			return out
+		}
+		BEGIN {
+			txt=executed_text(runval); p=index(txt, marker)
+			exit (p > 0 && substr(txt, 1, p-1) ~ /[[:space:]]#/) ? 0 : 1
+		}
+	'
+}
 # enabled_run_cmd job/step/if scoping so the property is attributed to the runner
 # step itself, not an unrelated sibling in the same job.
 runner_continue_on_error() {
@@ -177,44 +202,17 @@ runner_continue_on_error() {
 		/if:[[:space:]]*(\$\{\{[[:space:]]*)?(false|never)([[:space:]]|\}|$)/ { n=0; while (substr($0,n+1,1)==" ") n++; if (n <= 4) job_disabled=1; else disabled=1 }
 		/if:/ { n=0; while (substr($0,n+1,1)==" ") n++; if (n > 4 && $0 !~ /(always|success)/) disabled=1 }
 		# continue-on-error at job scope (<=4 indent) covers every step; step scope (>4) that step only.
-		/continue-on-error:[[:space:]]*(true|\$\{\{[[:space:]]*true)/ { n=0; while (substr($0,n+1,1)==" ") n++; if (n <= 4) job_conerr=1; else conerr=1 }
+		# Reject ANY value that is not exactly `false` — a truthy expression such as
+		# `${{ 1 == 1 }}` or `${{ true }}` masks failures just like literal `true`.
+		/continue-on-error:[[:space:]]*/ {
+			v=$0; sub(/.*continue-on-error:[[:space:]]*/, "", v); sub(/[[:space:]]*#.*$/, "", v); sub(/[[:space:]]*$/, "", v)
+			if (v != "false") { n=0; while (substr($0,n+1,1)==" ") n++; if (n <= 4) job_conerr=1; else conerr=1 }
+		}
 		incmd { n=0; while (substr($0,n+1,1)==" ") n++; if (n > runindent) { runval=runval" "$0; next }; incmd=0 }
 		/^[[:space:]]*run:[[:space:]]*[>|]/ { incmd=1; n=0; while (substr($0,n+1,1)==" ") n++; runindent=n; runval=$0; next }
 		/^[[:space:]]*run:[[:space:]]+/ { runval=$0; incmd=0; next }
 		END { emit() }
 	' "$1" | grep -q '^BAD$'
-}
-
-# Print every ACTIVE test_path VALUE from workflow $1 — both the inline single
-# form (`test_path: <value>`) and the folded multi form (`test_path: >-` / `|-`
-# followed by indented value lines, which GitHub joins with spaces into one
-# `${{ matrix.test_path }}`). Comments are skipped. Emitting the EXACT values
-# (rather than substring-grepping disk files) lets the caller verify each one
-# resolves to a real file/dir on disk — a typo like ".bak" or a stale path
-# otherwise makes the shard's filter match nothing while this guard, which only
-# checks that real files are referenced, stays green.
-online_test_path_values() {
-	awk '
-		function trim(v) { sub(/^[[:space:]]+/, "", v); sub(/[[:space:]]+$/, "", v); return v }
-		# A `#`-line INSIDE a folded scalar is scalar CONTENT, not a YAML comment —
-		# only skip comment lines when not folding (the caller rejects shell
-		# metacharacters in the captured value).
-		!folding && /^[[:space:]]*#/ { next }
-		# Folded block marker: test_path: >-  or  test_path: |-
-		/^[[:space:]]*test_path:[[:space:]]*[>|]-[[:space:]]*$/ {
-			folding=1; base=0; while (substr($0, base+1, 1)==" ") base++; next
-		}
-		folding {
-			n=0; while (substr($0, n+1, 1)==" ") n++
-			if (n > base) { v=trim($0); if (v != "") print v; next }
-			folding=0
-			# fall through: a dedented line may open a new inline test_path
-		}
-		# Inline single value: the value starts with a non-space, non-fold-marker char
-		/^[[:space:]]*test_path:[[:space:]]+[^[:space:]>|-]/ {
-			v=$0; sub(/^[[:space:]]*test_path:[[:space:]]+/, "", v); v=trim(v); if (v != "") print v
-		}
-	' "$1"
 }
 
 # Print every value for `key:` (e.g. shard / module) that appears under a
@@ -570,8 +568,9 @@ _unit_sibling_axes=$(awk '
 	# (uses:/with:/run:) are also 8-space but live under steps:, NOT matrix:.
 	/^[[:space:]]{6}matrix:[[:space:]]*$/ { inmatrix=1; next }
 	/^[[:space:]]{0,6}[a-z]/ { inmatrix=0 }
-	inmatrix && /^[[:space:]]{8}[a-z][a-z0-9_-]*:/ && $0 !~ /^[[:space:]]{8}(shard|include|exclude):/ {
-		s=$0; sub(/^[[:space:]]+/, "", s); sub(/:.*/, "", s); print s
+	inmatrix && /^[[:space:]]{8}[A-Za-z][A-Za-z0-9_-]*:/ {
+		s=$0; sub(/^[[:space:]]+/, "", s); sub(/:.*/, "", s); k=tolower(s)
+		if (k != "shard" && k != "include" && k != "exclude") print s
 	}
 ' "$REPO_ROOT/.github/workflows/main.yml")
 if [ -n "$_unit_sibling_axes" ]; then
@@ -630,6 +629,9 @@ elif runner_has_dead_prefix "$_unit_run" 'test-daemon.sh ${{ matrix.shard }}'; t
 elif runner_has_noexec_interp "$_unit_run" 'test-daemon.sh ${{ matrix.shard }}'; then
 	err "test-daemon-shared-unit runner invokes a no-exec interpreter (e.g. bash -n) before test-daemon.sh — it would syntax-check the script and exit 0 having run ZERO tests while this guard reports them covered"
 	echo "     → drop the -n / no-exec interpreter; invoke test-daemon.sh directly" >&2
+elif runner_has_comment_before_marker "$_unit_run" 'test-daemon.sh ${{ matrix.shard }}'; then
+	err "test-daemon-shared-unit runner has a '#' comment before test-daemon.sh (e.g. `true # ... ./scripts/test-daemon.sh`) — the comment blanks out the test command in CI, so the step runs ZERO tests while this guard reports them covered"
+	echo "     → remove the '#' / commented prefix before test-daemon.sh" >&2
 elif runner_continue_on_error "$REPO_ROOT/.github/workflows/main.yml" 'test-daemon.sh ${{ matrix.shard }}' 'test-daemon-shared-unit'; then
 	err "test-daemon-shared-unit runner step (or its job) has continue-on-error: true — a FAILED unit run is marked successful, so coverage stays green while tests are broken"
 	echo "     → remove continue-on-error from the test-daemon-shared-unit runner step/job" >&2
@@ -753,6 +755,9 @@ elif runner_has_dead_prefix "$_web_cmd" 'cd packages/web && bunx vitest run'; th
 elif runner_has_noexec_interp "$_web_cmd" 'cd packages/web && bunx vitest run'; then
 	err "test-web runner invokes a no-exec interpreter (e.g. bash -n) before the vitest invocation — it would parse without executing and exit 0 having run ZERO web tests while this guard reports them covered"
 	echo "     → drop the -n / no-exec interpreter; run vitest directly" >&2
+elif runner_has_comment_before_marker "$_web_cmd" 'cd packages/web && bunx vitest run'; then
+	err "test-web runner has a '#' comment before the vitest invocation (e.g. bash -lc 'true # cd packages/web && bunx vitest run') — the comment blanks out vitest in CI, so the step runs ZERO web tests while this guard reports them covered"
+	echo "     → remove the '#' / commented prefix before 'bunx vitest run'" >&2
 elif runner_continue_on_error "$REPO_ROOT/.github/workflows/main.yml" 'cd packages/web && bunx vitest run' 'test-web'; then
 	err "test-web runner step (or its job) has continue-on-error: true — a FAILED web run is marked successful, so coverage stays green while web tests are broken"
 	echo "     → remove continue-on-error from the test-web runner step/job" >&2
@@ -897,6 +902,9 @@ elif runner_has_dead_prefix "$_online_main" 'cd packages/daemon && node_modules/
 elif runner_has_noexec_interp "$_online_main" 'cd packages/daemon && node_modules/.bin/vitest run'; then
 	err "main.yml online runner invokes a no-exec interpreter (e.g. bash -n) before vitest — it would parse without executing and exit 0 having run ZERO online tests while this guard reports them covered"
 	echo "     → drop the -n / no-exec interpreter; run vitest directly" >&2
+elif runner_has_comment_before_marker "$_online_main" 'cd packages/daemon && node_modules/.bin/vitest run'; then
+	err "main.yml online runner has a '#' comment before vitest (e.g. bash -lc 'true # ... vitest run') — the comment blanks out vitest in CI, so the step runs ZERO online tests while this guard reports them covered"
+	echo "     → remove the '#' / commented prefix before 'vitest run'" >&2
 elif runner_continue_on_error "$REPO_ROOT/.github/workflows/main.yml" 'vitest.online.config.ts' 'test-daemon-online'; then
 	err "main.yml online runner step (or its job) has continue-on-error: true — a FAILED online run is marked successful, so coverage stays green while online tests are broken"
 	echo "     → remove continue-on-error from the test-daemon-online runner step/job" >&2
@@ -930,6 +938,9 @@ else
 	elif printf '%s' "$_online_main" | grep -qF 'coverage.enabled=false'; then
 		err "main.yml online runner disables coverage (coverage.enabled=false) — no LCOV report, shard disappears from coverage results without failing CI"
 		echo "     → remove coverage.enabled=false" >&2
+	elif ! printf '%s' "$_online_main" | grep -qE -- '--coverage([[:space:]]|$)'; then
+		err "main.yml online runner lacks a bare --coverage — no lcov.info is produced, so the shard disappears from combined coverage without failing CI (the --coverage.* sub-options alone do not enable it)"
+		echo "     → keep '--coverage' on the vitest invocation" >&2
 	elif [ "$(printf '%s' "$_online_main" | grep -oF 'vitest run' | wc -l | tr -d ' ')" -gt 1 ]; then
 		err "main.yml online runner has multiple 'vitest run' invocations — the first could exit 0 (e.g. --help), so the fallback never executes"
 		echo "     → use exactly one 'vitest run' invocation" >&2
@@ -1089,8 +1100,9 @@ _real_sibling_axes=$(awk '
 	!injob { next }
 	/^[[:space:]]{6}matrix:[[:space:]]*$/ { inmatrix=1; next }
 	/^[[:space:]]{0,6}[a-z]/ { inmatrix=0 }
-	inmatrix && /^[[:space:]]{8}[a-z][a-z0-9_-]*:/ && $0 !~ /^[[:space:]]{8}(include|exclude):/ {
-		s=$0; sub(/^[[:space:]]+/, "", s); sub(/:.*/, "", s); print s
+	inmatrix && /^[[:space:]]{8}[A-Za-z][A-Za-z0-9_-]*:/ {
+		s=$0; sub(/^[[:space:]]+/, "", s); sub(/:.*/, "", s); k=tolower(s)
+		if (k != "include" && k != "exclude") print s
 	}
 ' "$REAL_API_WORKFLOW")
 if [ -n "$_real_sibling_axes" ]; then
@@ -1159,8 +1171,9 @@ _online_sibling_axes=$(awk '
 	!injob { next }
 	/^[[:space:]]{6}matrix:[[:space:]]*$/ { inmatrix=1; next }
 	/^[[:space:]]{0,6}[a-z]/ { inmatrix=0 }
-	inmatrix && /^[[:space:]]{8}[a-z][a-z0-9_-]*:/ && $0 !~ /^[[:space:]]{8}(module|include|exclude):/ {
-		s=$0; sub(/^[[:space:]]+/, "", s); sub(/:.*/, "", s); print s
+	inmatrix && /^[[:space:]]{8}[A-Za-z][A-Za-z0-9_-]*:/ {
+		s=$0; sub(/^[[:space:]]+/, "", s); sub(/:.*/, "", s); k=tolower(s)
+		if (k != "module" && k != "include" && k != "exclude") print s
 	}
 ' "$MAIN_WORKFLOW")
 if [ -n "$_online_sibling_axes" ]; then
@@ -1240,9 +1253,9 @@ fi
 # makes the shard's `bun test`/`vitest` filter match nothing, so that job exits 0
 # having run ZERO files — a coverage hole the per-disk-file walk below cannot
 # see: it only checks that real files are referenced, not that references are
-# real. Exact-value parsing (online_test_path_values) is what makes ".bak"
-# visible — the disk file's path is a substring of ".bak", so the old substring
-# grep reported it covered.
+# real. Exact-value parsing (the job-scoped module→test_path maps) is what makes
+# ".bak" visible — the disk file's path is a substring of ".bak", so the old
+# substring grep reported it covered.
 while IFS= read -r _tp; do
 	[ -n "$_tp" ] || continue
 	_full="$REPO_ROOT/packages/daemon/$_tp"
@@ -1278,7 +1291,11 @@ while IFS= read -r _tp; do
 				;;
 		esac
 	fi
-done < <(online_test_path_values "$MAIN_WORKFLOW"; online_test_path_values "$REAL_API_WORKFLOW")
+# Job-scoped: only test_path values from the guarded jobs' include records
+# (test-daemon-online / daemon-real-api), so an unrelated job reusing the
+# conventional `test_path` matrix key (e.g. an E2E/CLI job) is NOT fed to this
+# online validator.
+done < <(printf '%s\n' "$_module_values" "$_real_module_values" | awk -F'\t' '$2 != "" {print $2}' | sort -u)
 
 # Detect overlapping positional filter prefixes. Vitest treats positional
 # filters as substring matches, so `tests/online/sdk` also matches files under

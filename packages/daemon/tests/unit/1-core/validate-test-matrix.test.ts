@@ -222,4 +222,40 @@ describe('validate-test-matrix.sh', () => {
     },
     TIMEOUT
   );
+
+  it(
+    'rejects a "#" comment that blanks out the unit runner (P0)',
+    () => {
+      // A folded run: >- joins lines; `true # ...` runs `true` (exit 0) and the
+      // `#` comments out the test command — zero tests, job stays green.
+      expectGuardRejects(
+        path.join(REPO_ROOT, '.github/workflows/main.yml'),
+        (s) =>
+          s.replace(
+            'bun run scripts/flaky-test-runner.ts\n          --suite daemon-unit',
+            'true # bun run scripts/flaky-test-runner.ts\n          --suite daemon-unit'
+          ),
+        "has a '#' comment before"
+      );
+    },
+    TIMEOUT
+  );
+
+  it(
+    'rejects a marker that is quoted/echoed as data, not executed',
+    () => {
+      // marker_executed: the marker inside a single-quoted echo arg (not a -lc
+      // body) is data, so the step runs zero tests while the guard sees the text.
+      expectGuardRejects(
+        path.join(REPO_ROOT, '.github/workflows/main.yml'),
+        (s) =>
+          s.replace(
+            "bash -lc 'cd packages/web && bunx vitest run",
+            "echo 'cd packages/web && bunx vitest run"
+          ),
+        'does not EXECUTE'
+      );
+    },
+    TIMEOUT
+  );
 });
