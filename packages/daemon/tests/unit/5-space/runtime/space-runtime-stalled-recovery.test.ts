@@ -49,6 +49,7 @@ import { ChannelCycleRepository } from '../../../../src/storage/repositories/cha
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
+import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { PermanentSpawnError } from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
@@ -1527,6 +1528,66 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
       // Not a dead loop → no dead-loop notification.
       expect(notifications.filter((n) => n.kind === 'workflow_run_dead_loop')).toHaveLength(0);
+    });
+
+    test('done/cancelled are reopenable → rate window retained; archiving the task clears it', async () => {
+      // Regression guard for the reopen/rate-window interaction: a run that
+      // reaches done/cancelled can be reopened by a peer send within the
+      // 5-minute window (ChannelRouter flips it back to `in_progress`), so its
+      // dead-loop history must survive the terminal transition — otherwise a
+      // reopened runaway gets a fresh 15 traversals in the same window. Only the
+      // true tombstone, task archive, may clear it.
+      const workflow = buildLinearWorkflow(
+        SPACE_ID,
+        workflowManager,
+        [
+          { id: STEP_A, name: 'Coding', agentId: AGENT },
+          { id: STEP_B, name: 'Review', agentId: AGENT },
+        ],
+        {
+          channels: [
+            { id: 'coding-to-review', from: 'Coding', to: 'Review' },
+            { id: 'review-to-coding', from: 'Review', to: 'Coding', maxCycles: 1 },
+          ],
+          endNodeId: STEP_B,
+        }
+      );
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Reopen retain',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+      const task = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Reopen retain',
+        description: '',
+        workflowRunId: run.id,
+        workflowNodeId: STEP_A,
+        status: 'in_progress',
+      });
+      const cycleRepo = new ChannelCycleRepository(db);
+      const now = Date.now();
+      for (let i = 0; i < 5; i++) cycleRepo.recordCycleEvent(run.id, 1, now - i * 1000);
+      expect(cycleRepo.countRecentCycleEvents(run.id, 1)).toBe(5);
+
+      const runtime = makeRuntime({
+        pendingMessageRepo: new PendingAgentMessageRepository(db),
+      });
+
+      // Cancel the run. done/cancelled are reopenable, so the rolling-window
+      // history must be retained across the terminal transition.
+      await runtime.cancelWorkflowRun(SPACE_ID, run.id);
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('cancelled');
+      expect(cycleRepo.countRecentCycleEvents(run.id, 1)).toBe(5);
+
+      // Archive the (now cancelled) task — the true tombstone, and the only
+      // status from which ChannelRouter hard-blocks further sends. setTaskStatus
+      // is the chokepoint for tool- and RPC-driven archives; the cleanup lives
+      // there, so archiving clears the retained window.
+      const taskManager = new SpaceTaskManager(db, SPACE_ID);
+      await taskManager.setTaskStatus(task.id, 'archived');
+      expect(cycleRepo.countRecentCycleEvents(run.id, 1)).toBe(0);
     });
 
     test('single-node run with idle execution → run blocked, task blocked, notifications emitted', async () => {

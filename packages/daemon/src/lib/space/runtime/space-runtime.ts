@@ -4684,38 +4684,18 @@ export class SpaceRuntime {
     nextStatus: SpaceWorkflowRun['status']
   ): Promise<SpaceWorkflowRun> {
     const updated = this.config.workflowRunRepo.transitionStatus(runId, nextStatus);
-    // Terminal runs (done/cancelled) never traverse their cyclic channels
-    // again, so clear their dead-loop event history now. This bounds table
-    // growth for runs that complete AFTER startup — the startup
-    // pruneAllOldEvents GC only covers runs that already existed at boot, and
-    // abandoned post-startup runs would otherwise accumulate up to the
-    // threshold rows per cyclic channel with no lazy pruning (their channels
-    // are never traversed again). Blocked runs keep their history: they can be
-    // reopened/retried, and a persisted dead-loop state must keep applying.
-    if (nextStatus === 'done' || nextStatus === 'cancelled') {
-      this.clearRunCycleEvents(runId);
-    }
+    // done/cancelled are NOT cleared here. They are reopenable: a peer
+    // `send_message` flips the run back to `in_progress` (see ChannelRouter's
+    // reopen path and WorkflowRunStatusMachine), so a runaway exchange that
+    // crosses the terminal boundary must keep counting against the rolling
+    // dead-loop window — clearing it would hand a reopened run a fresh 15
+    // traversals within the same 5-minute window. The rate-window history is
+    // retained until the rows age out of the window (pruneAllOldEvents at
+    // startup) or the owning task is archived — the true tombstone and only
+    // status from which ChannelRouter hard-blocks further sends (cleared in
+    // SpaceTaskManager.setTaskStatus).
     await this.safeOnWorkflowRunUpdated(updated.spaceId, updated);
     return updated;
-  }
-
-  /**
-   * Clears a run's cyclic-channel dead-loop event history. Called on every
-   * terminal transition (done/cancelled) routed through
-   * {@link transitionRunStatusAndEmit}, and exposed so callers that cancel runs
-   * by other paths (e.g. `SpaceRuntimeService.stopActiveWork`) can do the same.
-   * Best-effort: a failure is logged, never thrown.
-   */
-  clearRunCycleEvents(runId: string): void {
-    try {
-      this.getCycleRepo().resetAllForRun(runId);
-    } catch (err) {
-      log.warn(
-        `[SpaceRuntime] failed to clear cycle events for terminal run ${runId}: ${
-          err instanceof Error ? err.message : String(err)
-        }`
-      );
-    }
   }
 
   /**

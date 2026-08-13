@@ -1227,11 +1227,11 @@ export class SpaceRuntimeService {
       // Clear run interests explicitly so a later space start (which drops the
       // hold cache) cannot match events against cancelled-run targets.
       this.runtime.clearRunInterests(run.id);
-      // Drop the cancelled run's dead-loop event history — this path bypasses
-      // SpaceRuntime.transitionRunStatusAndEmit (which does this for normal
-      // terminal transitions), so without it stop/cancel on a long-lived
-      // daemon would leak channel_cycle_events rows.
-      this.runtime.clearRunCycleEvents(run.id);
+      // Dead-loop event history is intentionally retained here: `cancelled` is
+      // reopenable, so a resumed run must keep its rolling-window history (a
+      // reopened runaway still has to trip the rate gate). Rows age out of the
+      // window and are pruned at startup; the owning task's archive is the true
+      // tombstone that clears them (SpaceTaskManager.setTaskStatus).
     }
 
     log.info(

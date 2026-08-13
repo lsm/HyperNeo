@@ -19,6 +19,7 @@ import type {
 import { isRateOrUsageLimited } from '@hyperneo/shared';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
+import { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
 import { Logger } from '../../logger';
 import type { EvolutionScopeService } from '../evolution-scope-service';
 import { arraysEqual } from '../../utils/array-utils';
@@ -376,6 +377,29 @@ export class SpaceTaskManager {
         // Best-effort: unblock failures must not roll back the
         // already-committed done transition. The tick loop will
         // re-evaluate blocked dependents on the next cycle.
+      }
+    }
+
+    // Archive is the true task tombstone — ChannelRouter hard-blocks sends to
+    // an archived task, so its workflow run can never reopen. Drop the run's
+    // dead-loop event history now. This is the deliberate counterpart to
+    // keeping done/cancelled history: those are reopenable (a peer send flips
+    // the run back to `in_progress`), so they must retain their rolling-window
+    // state; archive is the one status where retention is pure table growth
+    // with no rate-gate value. This is the chokepoint for tool- and RPC-driven
+    // archives; the duplicate-reconcile archive path runs through
+    // SpaceRuntime.updateTaskAndEmit with `archiveSource: 'system_reconcile'`
+    // and detaches the run before it reaches here (correctly — the canonical
+    // task's run stays active, so it must not be cleared). Best-effort: a
+    // failure is logged, never aborts the already-committed archive.
+    if (newStatus === 'archived' && updated.workflowRunId) {
+      try {
+        new ChannelCycleRepository(this.db).resetAllForRun(updated.workflowRunId);
+      } catch (err) {
+        log.warn(
+          `Failed to clear dead-loop history for archived task "${taskId}" ` +
+            `run "${updated.workflowRunId}": ${err instanceof Error ? err.message : String(err)}`
+        );
       }
     }
 
