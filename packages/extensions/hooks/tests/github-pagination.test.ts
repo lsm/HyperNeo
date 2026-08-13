@@ -8,6 +8,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import type { HookContext } from '@hyperneo/shared/types/workflow-hooks';
 import {
   ghGetCodexApproval,
+  ghGetReviewEvidence,
   ghGetUnresolvedReviewThreads,
   setGraphqlRunnerForTests,
   isTrustedGitHubHost,
@@ -205,5 +206,59 @@ describe('ghGetUnresolvedReviewThreads — structural fail-closed', () => {
     const result = await ghGetUnresolvedReviewThreads(CTX, PR_LINK);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toContain('pageInfo');
+  });
+});
+
+describe('ghGetReviewEvidence — back-pagination past the fresh window', () => {
+  const reviewPage = (reviews: unknown[], hasPrevious: boolean, startCursor?: string) => ({
+    data: {
+      viewer: { login: 'reviewer' },
+      repository: {
+        pullRequest: {
+          author: { login: 'coder' },
+          reviews: {
+            nodes: reviews,
+            pageInfo: { hasPreviousPage: hasPrevious, startCursor: startCursor ?? 'Y3Vy' },
+          },
+          comments: { nodes: [] },
+        },
+      },
+    },
+  });
+
+  test('a formal review under >50 newer COMMENTED reviews is found', async () => {
+    const commented = Array.from({ length: 50 }, (_, i) => ({
+      state: 'COMMENTED',
+      publishedAt: `2026-08-13T12:${String(i).padStart(2, '0')}:00Z`,
+    }));
+    setGraphqlRunnerForTests(
+      pagedRunner([
+        reviewPage(commented, true, 'cGFnZTE'),
+        reviewPage(
+          [
+            { state: 'APPROVED', publishedAt: '2026-08-13T11:00:00Z' },
+            { state: 'CHANGES_REQUESTED', publishedAt: '2026-08-01T00:00:00Z' }, // before window
+          ],
+          false
+        ),
+      ])
+    );
+    const result = await ghGetReviewEvidence(CTX, PR_LINK, '2026-08-12T00:00:00Z');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.formalReviewCount).toBe(1);
+      expect(result.data.ownPr).toBe(false);
+    }
+  });
+
+  test('cap exhaustion inside the fresh window fails closed', async () => {
+    const fresh = Array.from({ length: 50 }, (_, i) => ({
+      state: 'COMMENTED',
+      publishedAt: `2026-08-13T12:${String(i).padStart(2, '0')}:00Z`,
+    }));
+    setGraphqlRunnerForTests(pagedRunner([reviewPage(fresh, true, 'cGFnZTE')]));
+    const result = await ghGetReviewEvidence(CTX, PR_LINK, '2026-08-12T00:00:00Z');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.retryable).toBe(true);
   });
 });

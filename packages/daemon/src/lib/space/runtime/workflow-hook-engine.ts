@@ -950,7 +950,7 @@ export class WorkflowHookEngine {
   private buildHookContext(
     binding: HookBinding,
     meta: HookActionMeta,
-    artifacts: HookArtifact[]
+    artifacts: Array<{ nodeId: string; artifact: HookArtifact }>
   ): {
     ctx: HookContext;
     recordedState: Record<string, unknown>;
@@ -988,32 +988,36 @@ export class WorkflowHookEngine {
         writtenArtifacts.push(artifact);
         // Side effects must compose within one action: a later binding in the
         // same chain sees this write even though the persisted upsert lands
-        // after the loop. Mirror the repo's (run, node, type, key) upsert
-        // semantics on the ctx snapshot — replace an existing same-key entry
-        // in place (preserving its position, so "oldest stamp wins" readers
-        // like getPrimaryLink keep the earliest identity) instead of appending
-        // a duplicate.
+        // after the loop. Mirror the repo's (run, NODE, type, key) upsert key
+        // exactly — replace only the row for THIS node (a same-type/key row on
+        // another node is a distinct persisted row and must survive), in place
+        // so "oldest stamp wins" readers (getPrimaryLink) keep the earliest
+        // identity; a new (node, type, key) is appended.
+        const nodeId = artifact.nodeId ?? meta.nodeId;
         const ctxArtifact: HookArtifact = {
           artifactType: artifact.artifactType,
           artifactKey: artifact.artifactKey,
           data: artifact.data,
         };
         const idx = artifacts.findIndex(
-          (a) => a.artifactType === artifact.artifactType && a.artifactKey === artifact.artifactKey
+          (a) =>
+            a.nodeId === nodeId &&
+            a.artifact.artifactType === artifact.artifactType &&
+            a.artifact.artifactKey === artifact.artifactKey
         );
         if (idx >= 0) {
-          artifacts[idx] = ctxArtifact;
+          artifacts[idx] = { nodeId, artifact: ctxArtifact };
         } else {
-          artifacts.push(ctxArtifact);
+          artifacts.push({ nodeId, artifact: ctxArtifact });
         }
       },
-      readArtifacts: () => artifacts,
+      readArtifacts: () => artifacts.map((entry) => entry.artifact),
     };
 
     return { ctx, recordedState, queuedFollowUps, writtenArtifacts };
   }
 
-  private readArtifactsForCtx(): HookArtifact[] | null {
+  private readArtifactsForCtx(): Array<{ nodeId: string; artifact: HookArtifact }> | null {
     try {
       // Freshest 50 for general context, PLUS every engine-reserved
       // (`__`-prefixed key) artifact — a busy run can accumulate >50 artifacts
@@ -1061,9 +1065,12 @@ export class WorkflowHookEngine {
         .flat();
       const recentNonReserved = recent.filter((a) => !a.artifactKey.startsWith('__'));
       return [...recentNonReserved, ...reservedOrdered].map((a: WorkflowRunArtifact) => ({
-        artifactType: a.artifactType,
-        artifactKey: a.artifactKey,
-        data: this.boundArtifactData(a.data) as Record<string, unknown>,
+        nodeId: a.nodeId,
+        artifact: {
+          artifactType: a.artifactType,
+          artifactKey: a.artifactKey,
+          data: this.boundArtifactData(a.data) as Record<string, unknown>,
+        },
       }));
     } catch (err) {
       // An artifact-read failure must NOT masquerade as an artifact-free run:
@@ -1327,13 +1334,17 @@ export class WorkflowHookEngine {
     // drop the rest — the env window is informational for scripts.
     try {
       const artifacts = ctx.readArtifacts();
+      const encoder = new TextEncoder();
       const kept: HookArtifact[] = [];
       let bytes = 2; // '[]'
       for (const artifact of artifacts) {
-        const entry = JSON.stringify(artifact);
-        if (bytes + entry.length + 1 > MAX_ARTIFACTS_ENV_BYTES && kept.length > 0) break;
+        // Measure ENCODED bytes, not string length: execve limits apply to
+        // UTF-8 bytes, and UTF-16 code-unit counts under-measure multibyte
+        // (CJK/emoji) content.
+        const entryBytes = encoder.encode(JSON.stringify(artifact)).length;
+        if (bytes + entryBytes + 1 > MAX_ARTIFACTS_ENV_BYTES && kept.length > 0) break;
         kept.push(artifact);
-        bytes += entry.length + 1;
+        bytes += entryBytes + 1;
       }
       env.HYPERNEO_CURRENT_ARTIFACTS_JSON = JSON.stringify(kept);
     } catch {

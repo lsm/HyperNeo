@@ -508,18 +508,86 @@ export async function ghGetReviewEvidence(
   if (!pr) {
     return { ok: false, retryable: false, error: `unable to parse GitHub PR link: ${link}` };
   }
-  // Query the TAIL of both connections: `first:` returns the EARLIEST page, so
-  // on a PR with >50 reviews/comments the fresh evidence this gate needs would
-  // fall outside the response and block a completed review. The newest 50 of
-  // each is authoritative unless more than 50 landed since the run started —
-  // in which case the gate blocks (fail-closed) until evidence re-checks.
-  const query =
-    `query { viewer { login } repository(owner:"${pr.owner}",name:"${pr.repo}") { pullRequest(number:${pr.number}) { ` +
-    'author { login } reviews(last: 50) { nodes { state publishedAt } } ' +
-    'comments(last: 50) { nodes { createdAt } } } } }';
-  const result = await runGhGraphql(ctx, query, pr.host);
-  if (!result.ok) return result;
-  return { ok: true, data: extractReviewEvidence(result.data, sinceIso) };
+  // Query the TAIL of both connections (`first:` returns the EARLIEST page,
+  // so fresh evidence on a busy PR would fall outside it), then WALK the
+  // reviews connection BACKWARDS (before-cursor) while its oldest entry is
+  // still fresh: a qualifying formal review can sit under >50 newer COMMENTED
+  // reviews, and on a non-own PR only formal evidence satisfies the gate.
+  // Bounded page cap; exhausting it fails closed.
+  const REVIEWS_PAGE = 50;
+  const MAX_REVIEW_PAGES = 10;
+  const allReviewNodes: unknown[] = [];
+  let lastCommentsPage: unknown = undefined;
+  let before: string | null = null;
+  let reachedBoundary = false;
+  for (let page = 0; page < MAX_REVIEW_PAGES; page++) {
+    const beforeClause = before ? `, before:"${before}"` : '';
+    const query =
+      `query { viewer { login } repository(owner:"${pr.owner}",name:"${pr.repo}") { pullRequest(number:${pr.number}) { ` +
+      `author { login } reviews(last: ${REVIEWS_PAGE}${beforeClause}) { ` +
+      'pageInfo { hasPreviousPage startCursor } nodes { state publishedAt } } ' +
+      'comments(last: 50) { nodes { createdAt } } } } }';
+    const result = await runGhGraphql(ctx, query, pr.host);
+    if (!result.ok) return result;
+    lastCommentsPage = result.data;
+    const prNode = asRecord(
+      asRecord(asRecord(asRecord(result.data)?.data)?.repository)?.pullRequest
+    );
+    const reviewsConnection = asRecord(prNode?.reviews);
+    // Structural fail-closed (mirrors the other connections).
+    if (!Array.isArray(reviewsConnection?.nodes) || !asRecord(reviewsConnection?.pageInfo)) {
+      return {
+        ok: false,
+        retryable: true,
+        error: 'malformed reviews connection (missing nodes/pageInfo); failing closed',
+      };
+    }
+    const nodes = reviewsConnection?.nodes;
+    if (Array.isArray(nodes)) allReviewNodes.unshift(...nodes);
+    const pageInfo = asRecord(reviewsConnection?.pageInfo);
+    // Stop when the page reaches past the run-start window: everything older
+    // cannot contribute fresh evidence.
+    const oldest = Array.isArray(nodes) && nodes.length > 0 ? asRecord(nodes[0]) : undefined;
+    const oldestAt = typeof oldest?.publishedAt === 'string' ? oldest.publishedAt : '';
+    if (!pageInfo?.hasPreviousPage || !oldestAt || oldestAt < sinceIso) {
+      reachedBoundary = true;
+      break;
+    }
+    const startCursor = pageInfo.startCursor;
+    if (typeof startCursor !== 'string' || !CURSOR_RE.test(startCursor)) break;
+    before = startCursor;
+  }
+  if (!reachedBoundary) {
+    // Cap exhausted while still inside the fresh window — the scan cannot
+    // prove absence/presence of formal evidence; fail closed.
+    return {
+      ok: false,
+      retryable: true,
+      error:
+        `PR has more than ${MAX_REVIEW_PAGES * REVIEWS_PAGE} reviews since the run started; ` +
+        'unable to scan the full evidence window (fail closed).',
+    };
+  }
+  // Rebuild the envelope with the merged review history (object spread of a
+  // possibly-undefined value is a no-op, so no fallbacks are needed).
+  const lastRecord = lastCommentsPage as Record<string, unknown> | undefined;
+  const lastData = asRecord(lastRecord?.data);
+  const lastRepository = asRecord(lastData?.repository);
+  const lastPullRequest = asRecord(lastRepository?.pullRequest);
+  const merged = {
+    ...lastRecord,
+    data: {
+      ...lastData,
+      repository: {
+        ...lastRepository,
+        pullRequest: {
+          ...lastPullRequest,
+          reviews: { nodes: allReviewNodes },
+        },
+      },
+    },
+  };
+  return { ok: true, data: extractReviewEvidence(merged, sinceIso) };
 }
 
 /**

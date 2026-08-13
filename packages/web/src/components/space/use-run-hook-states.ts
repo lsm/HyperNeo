@@ -146,16 +146,25 @@ export function useRunHookStates(runId: string | null | undefined): {
   const summaries =
     hookStateMap === null
       ? undefined
-      : hookBindings.flatMap((binding): HookBannerSummary[] => {
-          if (!binding.enabled) return [];
-          const state = hookStateMap.get(binding.hookId);
-          if (!state) return [];
-          const summary = evaluateHookStatus(state, binding);
-          // Only emit hooks that have a non-allow result (data row exists and
-          // the hook has actually been evaluated to something meaningful).
-          if (summary.status === 'allowed') return [];
-          return [summary];
-        });
+      : hookBindings
+          .flatMap((binding): HookBannerSummary[] => {
+            if (!binding.enabled) return [];
+            const state = hookStateMap.get(binding.hookId);
+            if (!state) return [];
+            const summary = evaluateHookStatus(state, binding);
+            // Only emit hooks that have a non-allow result (data row exists and
+            // the hook has actually been evaluated to something meaningful).
+            if (summary.status === 'allowed') return [];
+            return [summary];
+          })
+          // Hook state is keyed (runId, hookId): a hook bound to multiple
+          // routes shares ONE state snapshot, so render it once (labelled by
+          // its first binding) — one stop must not spawn duplicate blocked
+          // banners for every route, whose Approve buttons would all write the
+          // same shared override.
+          .filter((summary, index, all) => {
+            return all.findIndex((other) => other.hookId === summary.hookId) === index;
+          });
 
   return {
     summaries,

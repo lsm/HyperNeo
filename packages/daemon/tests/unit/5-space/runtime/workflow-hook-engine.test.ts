@@ -409,9 +409,12 @@ describe('WorkflowHookEngine.executeAction', () => {
 
     const engine = makeEngine(makeWorkflow());
     const window = engine['readArtifactsForCtx']();
-    const reserved = window.filter((a) => a.artifactKey === '__pr_validated__');
+    expect(window).not.toBeNull();
+    const reserved = (window ?? []).filter((e) => e.artifact.artifactKey === '__pr_validated__');
     expect(reserved.length).toBe(2);
-    expect(reserved[reserved.length - 1]?.data.link).toBe('https://github.com/o/r/pull/OLD');
+    expect(reserved[reserved.length - 1]?.artifact.data.link).toBe(
+      'https://github.com/o/r/pull/OLD'
+    );
   });
 
   test('custom-script env is allow-listed — daemon secrets do not leak', async () => {
@@ -576,10 +579,11 @@ describe('WorkflowHookEngine.executeAction', () => {
     }
     const engine = makeEngine(makeWorkflow());
     const window = engine['readArtifactsForCtx']();
-    const reserved = window.filter((a) => a.artifactKey === '__pr_validated__');
+    expect(window).not.toBeNull();
+    const reserved = (window ?? []).filter((e) => e.artifact.artifactKey === '__pr_validated__');
     expect(reserved.length).toBeGreaterThanOrEqual(2);
     // The LAST reserved entry must be the oldest identity.
-    const last = reserved[reserved.length - 1]?.data.link;
+    const last = reserved[reserved.length - 1]?.artifact.data.link;
     expect(last).toBe('https://github.com/o/r/pull/OLD');
   });
 
@@ -670,7 +674,7 @@ describe('WorkflowHookEngine.executeAction', () => {
 
   test('side effects compose within one action: a later binding sees an earlier write', () => {
     const engine = makeEngine(makeWorkflow());
-    const artifacts: HookArtifact[] = [];
+    const artifacts: Array<{ nodeId: string; artifact: HookArtifact }> = [];
     const binding = {
       hookId: 'pr_ready',
       sourceNode: 'Coding',
@@ -692,16 +696,31 @@ describe('WorkflowHookEngine.executeAction', () => {
     expect(seen).toHaveLength(1);
     expect(seen[0]?.data.link).toBe('https://github.com/o/r/pull/1');
 
-    // Re-writing the same key replaces in place (upsert semantics) instead of
-    // appending a duplicate.
+    // Re-writing the same (node, type, key) replaces in place (upsert
+    // semantics) instead of appending a duplicate.
     first.ctx.writeArtifact({
       artifactType: 'link',
       artifactKey: '__pr_validated__',
       data: { link: 'https://github.com/o/r/pull/2', kind: 'pr' },
     });
-    const after = artifacts.filter((a) => a.artifactKey === '__pr_validated__');
+    const after = artifacts.filter((a) => a.artifact.artifactKey === '__pr_validated__');
     expect(after).toHaveLength(1);
-    expect(after[0]?.data.link).toBe('https://github.com/o/r/pull/2');
+    expect(after[0]?.artifact.data.link).toBe('https://github.com/o/r/pull/2');
+
+    // A write from a DIFFERENT node with the same type/key is a distinct row
+    // (the repo key includes nodeId) and must not replace this node's entry.
+    second.ctx.writeArtifact({
+      artifactType: 'link',
+      artifactKey: '__pr_validated__',
+      nodeId: 'n-review',
+      data: { link: 'https://github.com/o/r/pull/3', kind: 'pr' },
+    });
+    const perNode = artifacts.filter((a) => a.artifact.artifactKey === '__pr_validated__');
+    expect(perNode).toHaveLength(2);
+    expect(perNode.map((a) => a.artifact.data.link).sort()).toEqual([
+      'https://github.com/o/r/pull/2',
+      'https://github.com/o/r/pull/3',
+    ]);
   });
 
   describe('wrapHandlerWithHooks — follow-up dispatch', () => {
