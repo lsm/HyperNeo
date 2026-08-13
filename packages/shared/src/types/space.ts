@@ -2566,8 +2566,8 @@ export interface ExportedWorkflowNode {
  * Space-specific fields (`id`, `spaceId`, `createdAt`, `updatedAt`) are stripped.
  */
 export interface ExportedSpaceWorkerAgent {
-  /** Format version (1, 2, or 3; v2 adds optional `topicFrom` on eventInterests; v3 adds node handoff transitions and workflow gates). */
-  version: 1 | 2 | 3;
+  /** Format version (1–4; v2 adds optional `topicFrom` on eventInterests; v3 adds node handoff transitions and workflow gates; v4 adds v2 hook bindings/custom hooks). */
+  version: 1 | 2 | 3 | 4;
   /** Discriminator for the exported entity type */
   type: 'agent';
   /** Human-readable name */
@@ -2610,8 +2610,8 @@ export interface ExportedSpaceWorkerAgent {
  * Channel IDs are stripped; `from`/`to` use node/agent names.
  */
 export interface ExportedSpaceWorkflow {
-  /** Format version (1, 2, or 3; v2 adds optional `topicFrom` on eventInterests; v3 adds node handoff transitions and workflow gates). */
-  version: 1 | 2 | 3;
+  /** Format version (1–4; v2 adds optional `topicFrom` on eventInterests; v3 adds node handoff transitions and workflow gates; v4 adds v2 hook bindings/custom hooks). */
+  version: 1 | 2 | 3 | 4;
   /** Discriminator for the exported entity type */
   type: 'workflow';
   /** Human-readable name */
@@ -2661,8 +2661,8 @@ export interface ExportedSpaceWorkflow {
  * The bundle is the top-level unit of the export/import file format.
  */
 export interface SpaceExportBundle {
-  /** Format version (1, 2, or 3; v2 adds optional `topicFrom` on eventInterests; v3 adds node handoff transitions and workflow gates). */
-  version: 1 | 2 | 3;
+  /** Format version (1–4; v2 adds optional `topicFrom` on eventInterests; v3 adds node handoff transitions and workflow gates; v4 adds v2 hook bindings/custom hooks). */
+  version: 1 | 2 | 3 | 4;
   /** Discriminator for the top-level type */
   type: 'bundle';
   /** Human-readable bundle name */

@@ -191,7 +191,11 @@ async function runGhGraphql(
   const envelope = asRecord(parsed);
   const errors = envelope?.errors;
   if (Array.isArray(errors) && errors.length > 0) {
-    return { ok: false, retryable: false, error: `GraphQL errors: ${JSON.stringify(errors)}` };
+    // A rate-limit / transient error inside an otherwise-200 GraphQL response
+    // must stay retryable (so hooks map it to flow:'retry'), not terminal.
+    const text = JSON.stringify(errors);
+    const retryable = isRateLimit(text) || TRANSIENT_FAILURE.test(text);
+    return { ok: false, retryable, error: `GraphQL errors: ${text}` };
   }
   return { ok: true, data: parsed };
 }

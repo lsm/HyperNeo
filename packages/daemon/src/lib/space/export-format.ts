@@ -22,6 +22,9 @@
 import { z } from 'zod';
 import { validateGlobPattern } from '../external-events/topic-validator';
 import { MAX_NODE_HANDOFF_TRANSITIONS } from '@hyperneo/shared';
+import { BUILT_IN_HOOKS } from '@hyperneo/extensions-hooks';
+
+const BUILT_IN_HOOK_IDS = new Set(BUILT_IN_HOOKS.map((h) => h.id));
 import type {
   SpaceWorkerAgent,
   SpaceWorkflow,
@@ -182,7 +185,8 @@ const hookMethodSchema = z.enum([
 const hookBindingSchema = z.object({
   hookId: z.string().min(1),
   sourceNode: z.string().min(1),
-  targetNode: z.string().min(1),
+  // Optional for non-routed methods (mark_complete, save_artifact, …).
+  targetNode: z.string().min(1).optional(),
   method: hookMethodSchema,
   order: z.number().optional(),
   enabled: z.boolean(),
@@ -257,9 +261,9 @@ const exportedWorkflowNodeSchema = z.object({
  *   `gates` workflow field), so a v1/v2 bundle carrying either is rejected via
  *   the version path rather than imported lossily.
  */
-export const CURRENT_EXPORT_VERSION = 3 as const;
-const SUPPORTED_EXPORT_VERSIONS: ReadonlySet<number> = new Set<number>([1, 2, 3]);
-export type ExportVersion = 1 | 2 | 3;
+export const CURRENT_EXPORT_VERSION = 4 as const;
+const SUPPORTED_EXPORT_VERSIONS: ReadonlySet<number> = new Set<number>([1, 2, 3, 4]);
+export type ExportVersion = 1 | 2 | 3 | 4;
 
 /**
  * Coerce an already-`checkVersion`-validated value to the supported version
@@ -640,9 +644,10 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
   // Handoff transitions: each declared transition's `target` must reference a
   // known node/agent name or the '*' wildcard; transition ids and targets must
   // be unique within a node (so handoff({ target }) resolves unambiguously);
-  // and `hookId` must reference a known exported hook (a bound hook id or a
-  // declared custom hook id).
-  const transitionHookIds = new Set<string>();
+  // and `hookId` must reference a known hook — a bound hook id, a declared custom
+  // hook id, OR a registered built-in id (a transition may reference a built-in
+  // like `pr_merged` even when no route binding uses it; matches availableHookIds).
+  const transitionHookIds = new Set<string>(BUILT_IN_HOOK_IDS);
   for (const binding of result.data.hookBindings ?? []) {
     if (binding?.hookId) transitionHookIds.add(binding.hookId);
   }

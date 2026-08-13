@@ -112,7 +112,7 @@ describe('exportAgent', () => {
     const agent = makeAgent();
     const exported = exportAgent(agent);
 
-    expect(exported.version).toBe(3);
+    expect(exported.version).toBe(4);
     expect(exported.type).toBe('agent');
     expect(exported.name).toBe('My Coder');
     // role field was removed from SpaceWorkerAgent in M71
@@ -277,7 +277,7 @@ describe('exportWorkflow', () => {
 
   test('has version 1 and type workflow', () => {
     const exported = exportWorkflow(makeWorkflow(), []);
-    expect(exported.version).toBe(3);
+    expect(exported.version).toBe(4);
     expect(exported.type).toBe('workflow');
   });
 });
@@ -295,7 +295,7 @@ describe('exportBundle', () => {
       exportedFrom: '/workspace/foo',
     });
 
-    expect(bundle.version).toBe(3);
+    expect(bundle.version).toBe(4);
     expect(bundle.type).toBe('bundle');
     expect(bundle.name).toBe('My Bundle');
     expect(bundle.description).toBe('A test bundle');
@@ -331,7 +331,7 @@ describe('validateExportedAgent', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.name).toBe('My Coder');
-      expect(result.value.version).toBe(3);
+      expect(result.value.version).toBe(4);
     }
   });
 
@@ -387,13 +387,13 @@ describe('validateExportedAgent', () => {
     }
   });
 
-  test('rejects version > 3 with "requires newer version" message', () => {
-    const data = { version: 4, type: 'agent', name: 'Bot', role: 'general' };
+  test('rejects version > 4 with "requires newer version" message', () => {
+    const data = { version: 5, type: 'agent', name: 'Bot', role: 'general' };
     const result = validateExportedAgent(data);
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error).toContain('requires newer version');
-      expect(result.error).toContain('version 3');
+      expect(result.error).toContain('version 4');
     }
   });
 
@@ -447,7 +447,7 @@ describe('validateExportedWorkflow', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.name).toBe('CI Workflow');
-      expect(result.value.version).toBe(3);
+      expect(result.value.version).toBe(4);
       expect(result.value.startNode).toBe('Code step');
     }
   });
@@ -544,9 +544,9 @@ describe('validateExportedWorkflow', () => {
     }
   });
 
-  test('rejects version > 3 with "requires newer version"', () => {
+  test('rejects version > 4 with "requires newer version"', () => {
     const data = {
-      version: 4,
+      version: 5,
       type: 'workflow',
       name: 'Simple',
       nodes: [],
@@ -711,7 +711,7 @@ describe('validateExportBundle', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.name).toBe('Bundle');
-      expect(result.value.version).toBe(3);
+      expect(result.value.version).toBe(4);
       expect(result.value.agents).toHaveLength(3);
       expect(result.value.workflows).toHaveLength(1);
     }
@@ -738,12 +738,12 @@ describe('validateExportBundle', () => {
     expect(validateExportBundle([]).ok).toBe(false);
   });
 
-  test('rejects bundle whose nested agent has version > 3', () => {
+  test('rejects bundle whose nested agent has version > 4', () => {
     const bundle = exportBundle([makeAgent()], [], 'B') as Record<string, unknown>;
     // Override the nested agent's version to simulate an unsupported agent
-    // embedded in a current (v3) bundle.
+    // embedded in a current (v4) bundle.
     const agents = bundle.agents as Array<Record<string, unknown>>;
-    agents[0] = { ...agents[0], version: 4 };
+    agents[0] = { ...agents[0], version: 5 };
     const result = validateExportBundle(bundle);
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -752,10 +752,10 @@ describe('validateExportBundle', () => {
     }
   });
 
-  test('rejects bundle whose nested workflow has version > 3', () => {
+  test('rejects bundle whose nested workflow has version > 4', () => {
     const bundle = exportBundle([], [makeWorkflow()], 'B') as Record<string, unknown>;
     const workflows = bundle.workflows as Array<Record<string, unknown>>;
-    workflows[0] = { ...workflows[0], version: 4 };
+    workflows[0] = { ...workflows[0], version: 5 };
     const result = validateExportBundle(bundle);
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -883,11 +883,11 @@ describe('round-trip: export → JSON → validate', () => {
 
     // Workflow round-trip.
     const exported = exportWorkflow(workflow, agents);
-    expect(exported.version).toBe(3);
+    expect(exported.version).toBe(4);
     const result = validateExportedWorkflow(JSON.parse(JSON.stringify(exported)) as unknown);
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value.version).toBe(3);
+      expect(result.value.version).toBe(4);
       expect(result.value.nodes[0].agents[0].eventInterests?.[0]?.topicFrom).toEqual({
         source: 'primaryLink',
         pattern: 'github/{owner}/{repo}/pull_request/{number}.*',
@@ -899,7 +899,7 @@ describe('round-trip: export → JSON → validate', () => {
     const bundleResult = validateExportBundle(JSON.parse(JSON.stringify(bundle)) as unknown);
     expect(bundleResult.ok).toBe(true);
     if (bundleResult.ok) {
-      expect(bundleResult.value.version).toBe(3);
+      expect(bundleResult.value.version).toBe(4);
       expect(
         bundleResult.value.workflows[0].nodes[0].agents[0].eventInterests?.[0]?.topicFrom
       ).toBeDefined();
