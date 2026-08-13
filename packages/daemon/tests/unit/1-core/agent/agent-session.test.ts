@@ -18,6 +18,12 @@ import type {
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
 import type { Database } from '../../../../src/storage/database';
 import type { MessageHub } from '@hyperneo/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
+import {
+  createTestDb,
+  createTestInternalEventBus,
+  createTestSession,
+} from '../../../helpers/database';
 
 // Test the AgentSession class indirectly through its components
 // since direct testing with mock.module() causes global mock pollution
@@ -4109,6 +4115,120 @@ describe('AgentSession', () => {
       expect(agentSession.queryObject).toBeNull();
       // Must not throw when there is no queryObject to push to.
       expect(() => agentSession.reconcileEffectiveMcpServers()).not.toThrow();
+    });
+  });
+
+  // Driving a real AgentSession against a real DB to cover the bridge wiring
+  // the pure-helper tests cannot: that reclaimTurnAlreadySucceeded clears the
+  // bare marker on 'redrive' and that driveDeliveryTurn does NOT silently
+  // complete (turn_terminated) over a crash-window marker. (Task #946, PR #2477
+  // review P1.)
+  describe('driveDeliveryTurn — crash-window reclaim (task #946)', () => {
+    let db: Database;
+    let agentSession: AgentSession;
+    const sessionId = 'sess-crash-window';
+    const uuid = 'msg-crash-window';
+
+    async function setupDriverail(opts: {
+      marker: boolean;
+      successResult: boolean;
+    }): Promise<void> {
+      db = await createTestDb();
+      const session = createTestSession(sessionId);
+      db.createSession(session);
+      const repo = db.getSDKMessageRepo();
+      // Order matters for the success case: the kickoff is consumed FIRST
+      // (markDeliveryConsumedByUuid stamps its consumption watermark from the
+      // shared counter), THEN the terminal result is inserted (stamped from the
+      // same counter, so it sorts after consumption). hasTerminalResultAfter
+      // compares counter-to-counter.
+      repo.saveUserMessage(
+        sessionId,
+        { type: 'user', uuid, message: { role: 'user', content: 'hi' } } as unknown as SDKMessage,
+        'enqueued'
+      );
+      repo.markDeliveryConsumedByUuid(sessionId, uuid);
+      if (opts.successResult) {
+        repo.saveSDKMessage(sessionId, {
+          type: 'result',
+          uuid: `${uuid}-result`,
+          session_id: sessionId,
+          parent_tool_use_id: null,
+          subtype: 'success',
+          is_error: false,
+        } as unknown as SDKMessage);
+      }
+      if (opts.marker) {
+        repo.recordDeliveryTurnEnd(sessionId, uuid, '2026-08-13T00:00:42.000Z');
+      }
+      const bus = await createTestInternalEventBus();
+      agentSession = new AgentSession(
+        db.getSession(sessionId) ?? session,
+        db,
+        {} as MessageHub,
+        bus,
+        mock(async () => 'test-api-key')
+      );
+    }
+
+    afterEach(() => {
+      try {
+        db?.close();
+      } catch {
+        // ignore
+      }
+    });
+
+    it('a bare marker (no success result) is cleared and NOT silently completed', async () => {
+      // The crash window: consumed kickoff + bare marker, daemon exited before
+      // the producedResult/retry decision. reclaimTurnAlreadySucceeded must
+      // clear the marker and fall through (re-drive), not return turn_terminated.
+      await setupDriverail({ marker: true, successResult: false });
+      const repo = db.getSDKMessageRepo();
+      expect(repo.hasDeliveryTurnEnd(sessionId, uuid)).toBe(true);
+
+      // The redrive falls through to ensureQueryStarted; mock it to throw so the
+      // outcome is predictable without a real provider. The marker clear happens
+      // BEFORE this call (in the reclaim short-circuit), so it is durable.
+      (agentSession as unknown as Record<string, unknown>).lifecycleManager = {
+        ensureQueryStarted: mock(async () => {
+          throw new Error('test: provider not started');
+        }),
+      };
+
+      let threw = false;
+      let outcome: unknown = undefined;
+      try {
+        outcome = await agentSession.driveDeliveryTurn(uuid, 'hi', null, true);
+      } catch (err) {
+        threw = err instanceof Error && err.message === 'test: provider not started';
+      }
+      // (a) NOT turn_terminated — it did not silently complete.
+      expect(outcome).not.toEqual({ outcome: 'turn_terminated' });
+      expect(threw).toBe(true);
+      // (b) the bare marker was cleared in the DB by reclaimTurnAlreadySucceeded.
+      expect(repo.hasDeliveryTurnEnd(sessionId, uuid)).toBe(false);
+    });
+
+    it('a SUCCESS-terminated reclaim still completes (turn_terminated) without starting a query', async () => {
+      // Regression guard: a turn that genuinely succeeded completes at the
+      // reclaim short-circuit (before ensureQueryStarted — no provider needed).
+      await setupDriverail({ marker: true, successResult: true });
+      const repo = db.getSDKMessageRepo();
+      expect(repo.hasTerminalResultAfter(sessionId, uuid)).toBe(true);
+
+      // ensureQueryStarted must NOT be reached; prove it by mocking it to throw —
+      // if the short-circuit works, the throw never happens.
+      const ensure = mock(async () => {
+        throw new Error('test: should not start a query on a terminated reclaim');
+      });
+      (agentSession as unknown as Record<string, unknown>).lifecycleManager = {
+        ensureQueryStarted: ensure,
+      };
+
+      const outcome = await agentSession.driveDeliveryTurn(uuid, 'hi', null, true);
+      expect(outcome).toEqual({ outcome: 'turn_terminated' });
+      expect(ensure).not.toHaveBeenCalled();
     });
   });
 });
