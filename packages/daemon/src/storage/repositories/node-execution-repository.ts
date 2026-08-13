@@ -21,9 +21,23 @@ import type {
   UpdateNodeExecutionParams,
 } from '@hyperneo/shared';
 import type { SQLiteValue } from '../types';
+import type { ReactiveDatabase } from '../reactive-database';
 
 export class NodeExecutionRepository {
-  constructor(private db: BunDatabase) {}
+  constructor(
+    private db: BunDatabase,
+    private reactiveDb?: ReactiveDatabase
+  ) {}
+
+  /**
+   * Notify the LiveQuery layer that node_executions changed. No-op when no
+   * reactive db is wired (e.g. tests). Called by every write path so
+   * `nodeExecutions.byRun` subscribers — including the lastActivityAt liveness
+   * signal — re-evaluate on activity/state writes, not just on full refetch.
+   */
+  private notify(): void {
+    this.reactiveDb?.notifyChange('node_executions');
+  }
 
   /**
    * Create a new node execution record.
@@ -58,6 +72,7 @@ export class NodeExecutionRepository {
         null
       );
 
+    this.notify();
     return this.getById(id)!;
   }
 
@@ -100,6 +115,7 @@ export class NodeExecutionRepository {
         null
       );
 
+    this.notify();
     // If the insert was ignored (duplicate), return the existing record.
     const inserted = this.getById(id);
     if (inserted) {
@@ -223,6 +239,7 @@ export class NodeExecutionRepository {
       this.db
         .prepare(`UPDATE node_executions SET ${fields.join(', ')} WHERE id = ?`)
         .run(...values);
+      this.notify();
     }
 
     return this.getById(id);
@@ -255,6 +272,7 @@ export class NodeExecutionRepository {
    */
   touchLastActivity(id: string, at: number = Date.now()): void {
     this.db.prepare(`UPDATE node_executions SET last_activity_at = ? WHERE id = ?`).run(at, id);
+    this.notify();
   }
 
   /**
@@ -262,6 +280,7 @@ export class NodeExecutionRepository {
    */
   delete(id: string): boolean {
     const result = this.db.prepare(`DELETE FROM node_executions WHERE id = ?`).run(id);
+    if (result.changes > 0) this.notify();
     return result.changes > 0;
   }
 
@@ -307,6 +326,7 @@ export class NodeExecutionRepository {
    */
   deleteByWorkflowRun(workflowRunId: string): void {
     this.db.prepare(`DELETE FROM node_executions WHERE workflow_run_id = ?`).run(workflowRunId);
+    this.notify();
   }
 
   /**

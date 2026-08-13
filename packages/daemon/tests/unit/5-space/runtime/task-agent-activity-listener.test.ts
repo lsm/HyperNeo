@@ -15,6 +15,7 @@ import { SpaceRepository } from '../../../../src/storage/repositories/space-repo
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
+import { PendingAgentMessageRepository } from '../../../../src/storage/repositories/pending-agent-message-repository';
 import { createDaemonInternalEventBus } from '../../../../src/lib/internal-event-bus';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
@@ -26,6 +27,8 @@ describe('TaskAgentManager agent-activity listener', () => {
   let bus: ReturnType<typeof createDaemonInternalEventBus>;
   let manager: TaskAgentManager;
   let executionId: string;
+  let workflowRunId: string;
+  let spaceId: string;
   const subSessionId = 'worker-session-1';
 
   beforeEach(() => {
@@ -44,6 +47,7 @@ describe('TaskAgentManager agent-activity listener', () => {
       db as unknown as Parameters<typeof SpaceTaskRepository.prototype.constructor>[0]
     );
     const space = spaceRepo.createSpace({ workspacePath: '/w', slug: 's', name: 'S' });
+    spaceId = space.id;
     taskRepo.createTask({ spaceId: space.id, title: 'T', description: '' });
 
     // workflow + run for the node_executions FK.
@@ -54,6 +58,7 @@ describe('TaskAgentManager agent-activity listener', () => {
       )
       .run('wf-1', space.id, 'WF', now, now);
     const run = runRepo.createRun({ spaceId: space.id, workflowId: 'wf-1', title: 'R' });
+    workflowRunId = run.id;
 
     const exec = nodeExecutionRepo.create({
       workflowRunId: run.id,
@@ -139,5 +144,44 @@ describe('TaskAgentManager agent-activity listener', () => {
 
     // The unrelated execution is untouched.
     expect(nodeExecutionRepo.getById(executionId)!.lastActivityAt).toBeNull();
+  });
+
+  it('stamps lastActivityAt when a queued peer message is delivered via flushPendingMessagesForTarget', async () => {
+    // Queued peer messages (the target was unavailable when sent) are later
+    // drained by flushPendingMessagesForTarget, which calls injectSubSessionMessage
+    // directly — bypassing the router's immediate-delivery stamp. That common
+    // activation/rehydration path must also refresh lastActivityAt.
+    const pendingRepo = new PendingAgentMessageRepository(
+      db as unknown as Parameters<typeof PendingAgentMessageRepository.prototype.constructor>[0]
+    );
+    const manager2 = new TaskAgentManager({
+      db: { getDatabase: () => db },
+      taskRepo: { getTask: () => null } as never,
+      workflowRunRepo: { getRun: () => null } as never,
+      nodeExecutionRepo,
+      pendingMessageRepo: pendingRepo,
+      internalEventBus: bus,
+    } as unknown as TaskAgentManagerConfig);
+
+    pendingRepo.enqueue({
+      workflowRunId,
+      spaceId,
+      sourceAgentName: 'reviewer',
+      targetKind: 'node_agent',
+      targetAgentName: 'coder',
+      message: 'queued peer note',
+      workflowNodeId: 'node-1',
+    });
+    expect(nodeExecutionRepo.getById(executionId)!.lastActivityAt).toBeNull();
+
+    // Stub the inject so the queued delivery "succeeds" without a live session —
+    // the activity stamp is what's under test, not the inject mechanism.
+    (
+      manager2 as unknown as { injectSubSessionMessage: () => Promise<string> }
+    ).injectSubSessionMessage = async () => 'flushed-msg-id';
+
+    await manager2.flushPendingMessagesForTarget(workflowRunId, 'coder', subSessionId);
+
+    expect(nodeExecutionRepo.getById(executionId)!.lastActivityAt).not.toBeNull();
   });
 });

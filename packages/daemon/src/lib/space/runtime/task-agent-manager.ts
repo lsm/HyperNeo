@@ -1789,6 +1789,14 @@ export class TaskAgentManager {
           undefined,
           row.id
         );
+        // A queued peer message was just delivered (the target was unavailable
+        // when it was sent, so it went through the pending queue rather than the
+        // router's immediate path). That is inbound activity — refresh
+        // lastActivityAt so peer-message activity is captured on this common
+        // activation/rehydration path too. Runtime recovery nags never reach
+        // here (they use injectRuntimeRecoveryMessage), so this cannot reset the
+        // stall detector's timer on the runtime's own nag.
+        this.recordActivityForSession(sessionId);
         repo.markDelivered(row.id, sessionId);
         this.emitPendingDelivered(row.id, sessionId, row);
       } catch (err) {

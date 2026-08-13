@@ -646,4 +646,49 @@ describe('NodeExecutionRepository', () => {
       expect(fetched.lastActivityAt).toBe(7_777_777);
     });
   });
+
+  describe('LiveQuery notifyChange', () => {
+    function makeReactiveRepo() {
+      const calls: Array<{ table: string; scope?: unknown }> = [];
+      const reactiveDb = {
+        notifyChange: (table: string, scope?: unknown) => calls.push({ table, scope }),
+      };
+      return {
+        repo: new NodeExecutionRepository(
+          db as unknown as Parameters<typeof NodeExecutionRepository.prototype.constructor>[0],
+          reactiveDb as unknown as Parameters<
+            typeof NodeExecutionRepository.prototype.constructor
+          >[1]
+        ),
+        calls,
+      };
+    }
+
+    it('touchLastActivity notifies node_executions so LiveQuery re-evaluates', () => {
+      const { repo: r, calls } = makeReactiveRepo();
+      const exec = createExecution();
+      r.touchLastActivity(exec.id, 1_700_000_000_000);
+      expect(calls).toEqual([{ table: 'node_executions', scope: undefined }]);
+    });
+
+    it('update() notifies node_executions on a real change', () => {
+      const { repo: r, calls } = makeReactiveRepo();
+      const exec = createExecution();
+      r.update(exec.id, { status: 'in_progress' });
+      expect(calls.some((c) => c.table === 'node_executions')).toBe(true);
+    });
+
+    it('create notifies node_executions', () => {
+      const { repo: r, calls } = makeReactiveRepo();
+      r.create({ workflowRunId, workflowNodeId: 'n-notify', agentName: 'coder', agentId });
+      expect(calls.some((c) => c.table === 'node_executions')).toBe(true);
+    });
+
+    it('notify is a silent no-op when no reactive db is wired', () => {
+      // The default `repo` has no reactiveDb — none of these may throw.
+      const exec = createExecution();
+      expect(() => repo.touchLastActivity(exec.id, 1)).not.toThrow();
+      expect(() => repo.update(exec.id, { status: 'idle' })).not.toThrow();
+    });
+  });
 });

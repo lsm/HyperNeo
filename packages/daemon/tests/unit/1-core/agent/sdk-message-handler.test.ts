@@ -434,7 +434,11 @@ describe('SDKMessageHandler', () => {
       const message: SDKMessage = {
         type: 'user',
         uuid: 'tool-result-uuid',
-        session_id: 'test-session-id',
+        // The SDK conversation id (session.sdkSessionId) — deliberately DISTINCT
+        // from the application session.id ('test-session-id'). The consumed event
+        // must carry the app id so execution lookups (node_executions.agent_session_id)
+        // resolve; publishing the SDK conversation id would miss every tool-result.
+        session_id: 'sdk-conversation-id',
         message: {
           role: 'user',
           content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: 'ok' }],
