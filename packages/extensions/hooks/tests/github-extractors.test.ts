@@ -67,9 +67,11 @@ describe('extractUnresolvedThreads', () => {
   });
   test('returns [] when there are no threads (does not throw on arrays)', () => {
     expect(extractUnresolvedThreads(envelope([]))).toEqual([]);
+    // An unresolved thread with no reachable comment URL still COUNTS (with a
+    // placeholder) so the gate stays blocked.
     expect(
       extractUnresolvedThreads(envelope([{ isResolved: false, comments: { nodes: [] } }]))
-    ).toEqual([]);
+    ).toEqual(['<unavailable thread url>']);
   });
   test('returns [] on a malformed envelope', () => {
     expect(extractUnresolvedThreads({ data: { repository: null } })).toEqual([]);
