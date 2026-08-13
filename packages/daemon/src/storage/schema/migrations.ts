@@ -985,6 +985,15 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // signal (refreshed by tool calls / message delivery / commit pushes,
   // independent of updated_at) so stall detection is not keyed off updated_at.
   run(migrationMarkerKey(191), () => runMigration191(db));
+
+  // Migration 192: Add `delivery_mode` to pending_agent_messages so a deferred
+  //   ("queue for next turn") human message that lands in the pending queue
+  //   (target not live yet) retains its mode when flushed after spawn — instead
+  //   of defaulting to immediate and steering the kickoff turn. NULL (legacy
+  //   rows + callers that don't pass it) behaves as before (immediate).
+  //   Idempotent ALTER TABLE ADD COLUMN; new DBs get it via this ALTER since
+  //   M92 creates the table.
+  run(migrationMarkerKey(192), () => runMigration192(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -12403,5 +12412,22 @@ export function runMigration191(db: BunDatabase): void {
   if (!tableExists(db, 'node_executions')) return;
   if (!tableHasColumn(db, 'node_executions', 'last_activity_at')) {
     db.exec(`ALTER TABLE node_executions ADD COLUMN last_activity_at INTEGER`);
+  }
+}
+
+/**
+ * Migration 192: pending_agent_messages.delivery_mode — preserves a deferred
+ * ("queue for next turn") human message's delivery mode across the pending
+ * queue. When such a message targets an agent with no live session yet it is
+ * enqueued; `flushPendingMessagesForTarget` later replays it. Without this
+ * column the flush passes an undefined mode, defaulting to immediate, so a
+ * message the user queued for the next turn instead steers the kickoff turn
+ * if the spawned session is already processing. NULL (legacy rows + callers
+ * that don't pass a mode) keeps the prior immediate behavior. (task #949.)
+ */
+export function runMigration192(db: BunDatabase): void {
+  if (!tableExists(db, 'pending_agent_messages')) return;
+  if (!tableHasColumn(db, 'pending_agent_messages', 'delivery_mode')) {
+    db.exec(`ALTER TABLE pending_agent_messages ADD COLUMN delivery_mode TEXT`);
   }
 }

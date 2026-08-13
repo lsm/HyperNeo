@@ -1785,7 +1785,11 @@ export class TaskAgentManager {
           message,
           isSyntheticMessage,
           undefined,
-          undefined,
+          // Replay a persisted deferred ("queue for next turn") human message
+          // with 'defer' so it lands as a deferred row when the freshly-spawned
+          // session is busy, instead of defaulting to immediate (steering the
+          // kickoff). NULL/legacy rows keep the prior immediate behavior.
+          row.deliveryMode ?? undefined,
           undefined,
           row.id
         );

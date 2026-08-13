@@ -301,7 +301,8 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
           nodeExecutionId: 'exec-coder',
           workflowNodeId: 'node-1',
         },
-        undefined
+        undefined,
+        'immediate'
       )
     );
   });
@@ -332,7 +333,8 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
           nodeExecutionId: 'exec-reviewer',
           workflowNodeId: 'node-1',
         },
-        undefined
+        undefined,
+        'immediate'
       )
     );
     await waitFor(() =>
@@ -403,7 +405,8 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
           agentName: 'Coder',
           workflowNodeId: 'node-1',
         },
-        undefined
+        undefined,
+        'immediate'
       )
     );
   });
@@ -495,7 +498,8 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
           nodeExecutionId: 'exec-qa-one',
           workflowNodeId: 'node-1',
         },
-        undefined
+        undefined,
+        'immediate'
       )
     );
   });
@@ -589,7 +593,8 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
           agentName: 'qa',
           workflowNodeId: 'node-2',
         },
-        undefined
+        undefined,
+        'immediate'
       )
     );
     // Select node-1's Coder (the SUBMITTER node) — it must NOT be marked
@@ -615,7 +620,8 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
           nodeExecutionId: 'exec-coder',
           workflowNodeId: 'node-1',
         },
-        undefined
+        undefined,
+        'immediate'
       )
     );
   });
@@ -730,7 +736,8 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
           nodeExecutionId: 'exec-coder',
           workflowNodeId: 'node-2',
         },
-        undefined
+        undefined,
+        'immediate'
       )
     );
   });

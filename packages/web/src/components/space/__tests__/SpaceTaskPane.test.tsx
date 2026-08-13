@@ -439,7 +439,8 @@ describe('SpaceTaskPane — composer', () => {
         {
           kind: 'node_agent',
         },
-        undefined
+        undefined,
+        'immediate'
       )
     );
     expect(mockEnsureTaskAgentSession).not.toHaveBeenCalled();
@@ -505,7 +506,8 @@ describe('SpaceTaskPane — composer', () => {
         {
           kind: 'node_agent',
         },
-        undefined
+        undefined,
+        'immediate'
       )
     );
     await waitFor(() => expect(textarea.value).toBe(''));
@@ -526,7 +528,8 @@ describe('SpaceTaskPane — composer', () => {
         {
           kind: 'node_agent',
         },
-        undefined
+        undefined,
+        'immediate'
       )
     );
   });
