@@ -279,7 +279,8 @@ export class SpaceRuntimeService {
   constructor(private readonly config: SpaceRuntimeServiceConfig) {
     // Ensure nodeExecutionRepo is available — create from db if not provided.
     this.nodeExecutionRepo =
-      this.config.nodeExecutionRepo ?? new NodeExecutionRepository(this.config.db);
+      this.config.nodeExecutionRepo ??
+      new NodeExecutionRepository(this.config.db, this.config.reactiveDb);
     // Durable workflow event subscription store — single shared instance for
     // the runtime's topic trie to rebuild from on rehydrate. Created here (and
     // passed into the runtime) so the service and runtime share one repo; the

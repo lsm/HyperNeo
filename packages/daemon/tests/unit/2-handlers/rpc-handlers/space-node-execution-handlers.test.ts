@@ -33,6 +33,7 @@ const mockExecutions: NodeExecution[] = [
     startedAt: NOW,
     completedAt: NOW + 5000,
     updatedAt: NOW + 5000,
+    lastActivityAt: NOW + 4000,
   },
   {
     id: 'exec-2',
@@ -47,6 +48,7 @@ const mockExecutions: NodeExecution[] = [
     startedAt: NOW + 6000,
     completedAt: null,
     updatedAt: NOW + 6000,
+    lastActivityAt: NOW + 7000,
   },
 ];
 
@@ -158,6 +160,10 @@ describe('space-node-execution-handlers', () => {
       expect(result.executions).toHaveLength(2);
       expect(result.executions[0].id).toBe('exec-1');
       expect(result.executions[1].id).toBe('exec-2');
+      // lastActivityAt is surfaced so UI liveness displays / external watchdogs
+      // can key off the real activity signal instead of updatedAt.
+      expect(result.executions[0].lastActivityAt).toBe(NOW + 4000);
+      expect(result.executions[1].lastActivityAt).toBe(NOW + 7000);
     });
 
     it('returns only executions matching the given workflowRunId', async () => {

@@ -566,7 +566,8 @@ SELECT
   created_at       AS createdAt,
   started_at       AS startedAt,
   completed_at     AS completedAt,
-  updated_at       AS updatedAt
+  updated_at       AS updatedAt,
+  last_activity_at AS lastActivityAt
 FROM node_executions
 WHERE workflow_run_id = ?
 ORDER BY created_at ASC, id ASC

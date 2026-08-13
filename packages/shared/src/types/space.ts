@@ -1172,8 +1172,19 @@ export interface NodeExecution {
   startedAt: number | null;
   /** Timestamp when execution reached a terminal state; null until completed */
   completedAt: number | null;
-  /** Last update timestamp (milliseconds since epoch) */
+  /** Last update timestamp — advances on every runtime state-write (status/session/data transition). */
   updatedAt: number;
+  /**
+   * Last observed agent activity timestamp (milliseconds since epoch).
+   *
+   * Refreshed independently of `updatedAt` by real agent work — SDK tool-call /
+   * tool-result events, peer messages delivered to the session, and commits pushed
+   * to the node's PR branch — so it stays fresh while an agent is plainly working
+   * even when no runtime state transition occurs. This is the signal stall/timeout
+   * detection and UI liveness displays should key off; `updatedAt` is not a
+   * reliable liveness signal (it freezes at the last state change).
+   */
+  lastActivityAt: number | null;
 }
 
 /**
@@ -1200,6 +1211,12 @@ export interface UpdateNodeExecutionParams {
   data?: Record<string, unknown> | null;
   startedAt?: number | null;
   completedAt?: number | null;
+  /**
+   * Last agent-activity timestamp. Rarely set explicitly through `update()` —
+   * ongoing activity is recorded via the repository's dedicated activity-touch
+   * method so `updatedAt` (state-write) semantics are preserved.
+   */
+  lastActivityAt?: number | null;
 }
 
 // ============================================================================

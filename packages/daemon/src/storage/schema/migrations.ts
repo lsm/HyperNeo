@@ -980,6 +980,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // gate storage is obsolete. Idempotent via existence guards. Renumbered from
   // 187 (dev shipped M187–M189 for message-delivery-v2, #862).
   run(migrationMarkerKey(190), () => runMigration190(db));
+
+  // Migration 191: node_executions.last_activity_at — dedicated agent-activity
+  // signal (refreshed by tool calls / message delivery / commit pushes,
+  // independent of updated_at) so stall detection is not keyed off updated_at.
+  run(migrationMarkerKey(191), () => runMigration191(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -12369,5 +12374,34 @@ export function runMigration190(db: BunDatabase): void {
   db.exec(`DROP TABLE IF EXISTS gate_data`);
   if (tableHasColumn(db, 'space_workflows', 'gates')) {
     db.exec(`ALTER TABLE space_workflows DROP COLUMN gates`);
+  }
+}
+
+/**
+ * Migration 191: node_executions.last_activity_at — a dedicated agent-activity
+ * signal.
+ *
+ * `updated_at` advances only on runtime state-writes (status / session / data
+ * transitions) and so freezes while an agent is plainly working (pushing
+ * commits, exchanging messages, making tool calls) but no state transition
+ * occurs. That makes it unreliable as a liveness/activity signal, yet the
+ * runtime stall-detector and UI activity displays consume it as one — leading
+ * to misfires (active agents killed, or genuinely-stuck ones missed).
+ *
+ * `last_activity_at` is refreshed independently of `updated_at` by real agent
+ * work (SDK tool events, peer-message delivery, PR commit push) via
+ * `NodeExecutionRepository.touchLastActivity`, which intentionally does NOT
+ * bump `updated_at`. The stall-detector now keys off this column instead.
+ *
+ * Idempotent `ALTER TABLE ADD COLUMN` (no table rebuild). Existing rows are
+ * backfilled NULL; the detector treats NULL via its existing fallback chain, so
+ * pre-migration in-flight executions are not misclassified. Fresh DBs get the
+ * column here too (M74 creates the table without it; all migrations run on a
+ * fresh DB). (task #943.)
+ */
+export function runMigration191(db: BunDatabase): void {
+  if (!tableExists(db, 'node_executions')) return;
+  if (!tableHasColumn(db, 'node_executions', 'last_activity_at')) {
+    db.exec(`ALTER TABLE node_executions ADD COLUMN last_activity_at INTEGER`);
   }
 }
