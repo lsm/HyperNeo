@@ -577,4 +577,73 @@ describe('NodeExecutionRepository', () => {
       expect(nodeB.workflowNodeId).toBe('node-B');
     });
   });
+
+  describe('lastActivityAt / touchLastActivity', () => {
+    it('create initializes lastActivityAt to null (no activity yet)', () => {
+      const exec = createExecution();
+      expect(exec.lastActivityAt).toBeNull();
+    });
+
+    it('createOrIgnore initializes lastActivityAt to null', () => {
+      const exec = repo.createOrIgnore({
+        workflowRunId,
+        workflowNodeId: 'node-ci',
+        agentName: 'ci',
+        agentId,
+      });
+      expect(exec.lastActivityAt).toBeNull();
+    });
+
+    it('transition to in_progress does NOT auto-stamp lastActivityAt', () => {
+      // lastActivityAt is refreshed by activity sources (tool/message/commit),
+      // NOT by status transitions — so it must stay null on an in_progress write.
+      const exec = createExecution();
+      const updated = repo.update(exec.id, { status: 'in_progress' });
+      expect(updated!.lastActivityAt).toBeNull();
+    });
+
+    it('touchLastActivity advances last_activity_at', () => {
+      const exec = createExecution();
+      const stampedAt = 1_700_000_000_000;
+      repo.touchLastActivity(exec.id, stampedAt);
+      expect(repo.getById(exec.id)!.lastActivityAt).toBe(stampedAt);
+    });
+
+    it('touchLastActivity does NOT bump updated_at (state-write semantic preserved)', () => {
+      const exec = createExecution();
+      const originalUpdatedAt = exec.updatedAt;
+
+      // touchLastActivity must update only last_activity_at; updated_at stays.
+      repo.touchLastActivity(exec.id, 1_700_000_000_000);
+      const after = repo.getById(exec.id)!;
+      expect(after.lastActivityAt).toBe(1_700_000_000_000);
+      expect(after.updatedAt).toBe(originalUpdatedAt);
+    });
+
+    it('update({ lastActivityAt }) sets the field explicitly', () => {
+      const exec = createExecution();
+      const explicit = 5_000_000;
+      const updated = repo.update(exec.id, { lastActivityAt: explicit });
+      expect(updated!.lastActivityAt).toBe(explicit);
+    });
+
+    it('update({ lastActivityAt: null }) clears the field', () => {
+      const exec = createExecution();
+      repo.touchLastActivity(exec.id, 9_000_000);
+      expect(repo.getById(exec.id)!.lastActivityAt).toBe(9_000_000);
+      const updated = repo.update(exec.id, { lastActivityAt: null });
+      expect(updated!.lastActivityAt).toBeNull();
+    });
+
+    it('touchLastActivity is a silent no-op for an unknown id', () => {
+      expect(() => repo.touchLastActivity('nonexistent', 1_000)).not.toThrow();
+    });
+
+    it('round-trips lastActivityAt through listByWorkflowRun', () => {
+      const exec = createExecution({ agentName: 'coder' });
+      repo.touchLastActivity(exec.id, 7_777_777);
+      const fetched = repo.listByWorkflowRun(workflowRunId).find((e) => e.id === exec.id)!;
+      expect(fetched.lastActivityAt).toBe(7_777_777);
+    });
+  });
 });

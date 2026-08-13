@@ -1476,6 +1476,82 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(state.nudgeCount).toBe(2);
       expect(state.failedNudgeCount).toBe(0);
     });
+
+    // -------------------------------------------------------------------------
+    // lastActivityAt-driven detection (task #943)
+    // -------------------------------------------------------------------------
+
+    test('does NOT nag an actively-working agent whose lastActivityAt is fresh', async () => {
+      // Reproduces the observed false-stall: an in_progress node whose
+      // startedAt and last SDK message are 20min stale (the OLD signals), but
+      // whose lastActivityAt is fresh because the agent is pushing commits /
+      // making tool calls / exchanging messages. The stall detector must key
+      // off lastActivityAt and NOT nag an agent that is plainly working.
+      const nags: Array<{ sessionId: string; message: string }> = [];
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        isSessionAlive: () => true,
+        getAgentSessionById: () => processingState('processing'),
+        injectRuntimeRecoveryMessage: async (sessionId, message) => {
+          nags.push({ sessionId, message });
+          return `runtime-nag:${sessionId}`;
+        },
+      });
+      const rt = new SpaceRuntime(buildConfig(tam, { agentNoProgressThresholdMs: 60_000 }));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session:actively-working',
+        startedAt: Date.now() - 20 * 60_000,
+      });
+      // Old SDK message — under the pre-lastActivityAt logic this alone would nag.
+      saveAssistantMessage('session:actively-working', { minutesAgo: 20, toolUse: true });
+      // Fresh activity signal — agent just tooled/pushed/messaged.
+      nodeExecutionRepo.touchLastActivity(execution.id, Date.now());
+
+      await rt.executeTick();
+
+      expect(nags).toEqual([]);
+      expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('in_progress');
+    });
+
+    test('nags a genuinely-stuck agent whose lastActivityAt is stale', async () => {
+      // Counterpoint: when lastActivityAt IS stale (no tool calls, no messages,
+      // no commits for 20min) the detector must still fire — lastActivityAt is
+      // authoritative precisely because it is the real-activity signal.
+      const nags: Array<{ sessionId: string; message: string }> = [];
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        isSessionAlive: () => true,
+        getAgentSessionById: () => processingState('processing'),
+        injectRuntimeRecoveryMessage: async (sessionId, message) => {
+          nags.push({ sessionId, message });
+          return `runtime-nag:${sessionId}`;
+        },
+      });
+      const rt = new SpaceRuntime(buildConfig(tam, { agentNoProgressThresholdMs: 60_000 }));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session:stuck',
+        startedAt: Date.now() - 20 * 60_000,
+      });
+      saveAssistantMessage('session:stuck', { minutesAgo: 20, toolUse: true });
+      // Stale activity — last genuine work was 20min ago.
+      nodeExecutionRepo.touchLastActivity(execution.id, Date.now() - 20 * 60_000);
+
+      await rt.executeTick();
+
+      expect(nags).toHaveLength(1);
+      expect(nags[0].sessionId).toBe('session:stuck');
+      expect(nags[0].message).toContain('[Runtime recovery notice]');
+    });
   });
 
   // -------------------------------------------------------------------------

@@ -2329,6 +2329,11 @@ export class SpaceRuntime {
 
       const preparedTarget = taskDecision.target;
       const currentExecution = this.getCurrentQueueableOrActiveExecution(preparedTarget);
+      // A `pull_request.synchronize` reaching a subscribed, deliverable target
+      // means a commit was just pushed to this node's PR branch — genuine agent
+      // progress that `updatedAt` would not capture. Refresh `lastActivityAt` so
+      // the stall detector does not misfire on an actively-pushing node.
+      this.stampCommitPushActivity(payload.topic, currentExecution);
       if (preparedTarget.sessionId && this.isTargetSessionLive(preparedTarget.sessionId)) {
         // pauseSpace does not terminate sessions, so a live in_progress session
         // would otherwise be injected now, defeating the pause. Skip injection
@@ -2472,6 +2477,30 @@ export class SpaceRuntime {
       log.warn(
         `SpaceRuntime: failed to process external event ${payload.eventId} for ` +
           `${resolved.workflowRunId}/${resolved.nodeId}/${resolved.agentName}: ${formatCommandError(err)}`
+      );
+    }
+  }
+
+  /**
+   * Refresh `lastActivityAt` when a commit is pushed to a node's PR branch.
+   *
+   * GitHub's `pull_request` webhook with action `synchronize` is the only
+   * reliable "commit pushed to the PR head" signal that flows through the
+   * external-event pipeline (raw `push` webhooks carry no PR signal and are
+   * dropped). Its topic is `github/{owner}/{repo}/pull_request/{number}.synchronize`.
+   * Such an event reaching a subscribed, deliverable target means a commit landed
+   * on this node's PR — genuine progress that `updatedAt` would never capture.
+   * Best-effort: never throws into the delivery path.
+   */
+  private stampCommitPushActivity(topic: string, execution: NodeExecution | undefined): void {
+    if (!execution) return;
+    if (!topic.includes('/pull_request/') || !topic.endsWith('.synchronize')) return;
+    try {
+      this.config.nodeExecutionRepo.touchLastActivity(execution.id);
+    } catch (err) {
+      log.debug(
+        `SpaceRuntime: failed to stamp commit-push activity for execution ${execution.id}:`,
+        err
       );
     }
   }
@@ -7302,8 +7331,17 @@ export class SpaceRuntime {
       const isRuntimeNagMessage =
         lastMessage?.type === 'user' && lastMessage.dbId === state.lastRuntimeNagMessageId;
       const progressMessage = lastMessage && !isRuntimeNagMessage ? lastMessage : null;
+      // Prefer `lastActivityAt` — it advances on real agent work (tool calls,
+      // peer-message delivery, PR commit pushes) that `updatedAt` and even the
+      // last SDK-message timestamp miss. A node actively pushing commits or
+      // exchanging messages must not be misread as stuck. Falls back to the
+      // prior chain when no activity has been recorded yet.
       const observedAt =
-        progressMessage?.timestamp ?? execution.startedAt ?? state.lastActionAt ?? now;
+        execution.lastActivityAt ??
+        progressMessage?.timestamp ??
+        execution.startedAt ??
+        state.lastActionAt ??
+        now;
       const thresholdMs = this.getAgentNoProgressThresholdMs(workflow, execution);
 
       if (state.lastSessionId !== execution.agentSessionId) {
@@ -8747,6 +8785,7 @@ export class SpaceRuntime {
       }
 
       const observedAt =
+        execution.lastActivityAt ??
         state.lastObservedProgressMessageAt ??
         progressMessage?.timestamp ??
         execution.startedAt ??
