@@ -467,7 +467,13 @@ export class WorkflowHookEngine {
       };
     }
 
-    type Terminal = { kind: 'stop'; hookId: string; reason?: string } | null;
+    type Terminal = {
+      kind: 'stop';
+      hookId: string;
+      reason?: string;
+      /** Infrastructure stop — not a hook decision, not human-overridable. */
+      overrideIneligible?: boolean;
+    } | null;
     let terminal: Terminal = null;
     let retry: { hookId: string; reason?: string; retryAfterMs?: number } | null = null;
 
@@ -549,68 +555,21 @@ export class WorkflowHookEngine {
         break;
       }
 
-      // Human override (approveHook RPC): an approval permits the NEXT attempt
-      // through this hook — the flag is consumed on use so later actions are
-      // gated again. A rejection is a standing block until a human approves.
-      // The agent re-issues the blocked action itself; approval does not replay
-      // it. NOTE: state is keyed (runId, hookId), so on a hook bound to
-      // multiple routes the override skips every binding of that hook for one
-      // action — same shared-key limitation as retry state (see step-7 tests).
-      // Runs only once the hook RESOLVES: a stop from an unresolved hook or
-      // another infrastructure failure is not a hook decision and an approval
-      // recorded against it must not deliver the action ungated.
-      if (hookState && hookState.localState.humanApproved !== undefined) {
-        if (hookState.localState.humanApproved !== true) {
-          const rawReason = hookState.localState.humanRejectionReason;
-          const reason =
-            typeof rawReason === 'string' && rawReason.trim().length > 0
-              ? rawReason
-              : 'Rejected by human';
-          terminal = { kind: 'stop', hookId, reason };
-          executionLog.push({ hookId, flow: 'stop', reason, timestamp: Date.now() });
-          break;
-        }
-        // Consume the one-shot approval (undefined values are dropped by JSON
-        // serialization, clearing the keys under the repo's deep-merge). The
-        // consume-write must land BEFORE the gate is skipped: if it loses a
-        // version race (concurrent retry-timer fire or a second approveHook),
-        // the persisted flag would still be set and every later action would
-        // skip the hook — a one-shot approval silently becoming a standing
-        // bypass. Fail closed instead and let the operator re-approve.
-        const consumed = this.persistStateUpdate(hookId, {
-          localState: {
-            humanApproved: undefined,
-            humanApprovedAt: undefined,
-            humanRejectionReason: undefined,
-          },
-        });
-        if (!consumed) {
-          log.warn(
-            `Failed to consume human approval for hook "${hookId}" (state write conflict); blocking.`
-          );
-          terminal = {
-            kind: 'stop',
-            hookId,
-            reason:
-              'Human approval could not be recorded (state conflict). The hook still applies — ' +
-              'approve it again and retry.',
-          };
-          executionLog.push({
-            hookId,
-            flow: 'stop',
-            reason: terminal.reason,
-            timestamp: Date.now(),
-          });
-          break;
-        }
-        executionLog.push({
-          hookId,
-          flow: 'continue',
-          reason: 'Human override: hook skipped by approval',
-          timestamp: Date.now(),
-        });
-        continue;
+      // A standing human REJECTION blocks before the hook runs (it can never
+      // be satisfied). An APPROVAL is handled AFTER the hook runs — see the
+      // stop handling below — so side-effecting gates (pr_ready's identity
+      // stamp) still execute under an override instead of being skipped.
+      if (hookState && hookState.localState.humanApproved === false) {
+        const rawReason = hookState.localState.humanRejectionReason;
+        const reason =
+          typeof rawReason === 'string' && rawReason.trim().length > 0
+            ? rawReason
+            : 'Rejected by human';
+        terminal = { kind: 'stop', hookId, reason };
+        executionLog.push({ hookId, flow: 'stop', reason, timestamp: Date.now() });
+        break;
       }
+      const approvalPending = hookState?.localState.humanApproved === true;
 
       const built = this.buildHookContext(binding, meta, ctxArtifacts);
       const action: HookAction = {
@@ -644,6 +603,46 @@ export class WorkflowHookEngine {
       for (const followUp of built.queuedFollowUps) followUpRequests.push(followUp);
 
       if (flow === 'stop') {
+        if (approvalPending) {
+          // Human override: the hook RAN (side effects — e.g. pr_ready's
+          // identity stamp — landed), and its stop DECISION is overridden for
+          // this one action. Consume the one-shot approval first (undefined
+          // values drop under JSON serialization); if the consume-write loses
+          // a version race, fail closed and let the operator re-approve.
+          const consumed = this.persistStateUpdate(hookId, {
+            localState: {
+              humanApproved: undefined,
+              humanApprovedAt: undefined,
+              humanRejectionReason: undefined,
+            },
+          });
+          if (!consumed) {
+            log.warn(
+              `Failed to consume human approval for hook "${hookId}" (state write conflict); blocking.`
+            );
+            terminal = {
+              kind: 'stop',
+              hookId,
+              reason:
+                'Human approval could not be recorded (state conflict). The hook still applies — ' +
+                'approve it again and retry.',
+            };
+            executionLog.push({
+              hookId,
+              flow: 'stop',
+              reason: terminal.reason,
+              timestamp: Date.now(),
+            });
+            break;
+          }
+          executionLog[executionLog.length - 1] = {
+            hookId,
+            flow: 'continue',
+            reason: 'Human override: hook stop overridden by approval',
+            timestamp: Date.now(),
+          };
+          continue;
+        }
         terminal = { kind: 'stop', hookId, reason: ret.reason };
         break;
       }
@@ -727,6 +726,9 @@ export class WorkflowHookEngine {
         reason:
           'Hook artifact persistence failed (artifact store error); the action is blocked ' +
           'rather than delivered without the hook’s recorded side effects.',
+        // Infrastructure failure — an approval must not deliver without the
+        // hook's side effects (e.g. pr_ready's identity stamp).
+        overrideIneligible: true,
       };
       executionLog.push({
         hookId: failedArtifactWrite.hookId,
@@ -749,7 +751,7 @@ export class WorkflowHookEngine {
         executionLog,
         userState: {
           status: 'blocked',
-          humanOverrideEligible: true,
+          humanOverrideEligible: terminal.overrideIneligible === true ? false : true,
           hookId: terminal.hookId,
           reason: terminal.reason,
           sourceNode,
@@ -947,16 +949,19 @@ export class WorkflowHookEngine {
             for (const resolved of resolvedTargets) {
               actionTargets.add(resolved);
             }
-            // Only a requested target that RESOLVES to a non-routable node
-            // disqualifies target-scoped bindings (the ambiguity the guard
-            // exists for). A generic address that resolves to no node
-            // (e.g. '@coordinator') must not: mixed multicasts deliver the
-            // node-addressed part through the router regardless, and
-            // suppressing the binding here would let that part bypass the
-            // gate entirely.
+            // Only a requested target that RESOLVES to a non-routable
+            // WORKFLOW NODE disqualifies target-scoped bindings (the ambiguity
+            // the guard exists for). Generic addresses (e.g. '@coordinator')
+            // fall through resolveTargetEntries as their raw string — they
+            // name no node, the router delivers them separately, and they
+            // must not suppress the gate on the node-addressed part of a
+            // mixed multicast.
             if (
               resolvedTargets.some(
-                (resolved) => !isBuiltInInterLevelTarget(t) && !isRoutableTarget(resolved)
+                (resolved) =>
+                  nodeNames.has(resolved) &&
+                  !isBuiltInInterLevelTarget(t) &&
+                  !isRoutableTarget(resolved)
               )
             ) {
               allRequestedTargetsRoutable = false;

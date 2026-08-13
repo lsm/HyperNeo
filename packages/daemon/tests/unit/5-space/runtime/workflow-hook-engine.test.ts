@@ -237,11 +237,14 @@ describe('WorkflowHookEngine.executeAction', () => {
     });
     const engine = makeEngine(workflow);
 
-    // First attempt after approval: hook skipped, action delivers.
+    // First attempt after approval: the hook RUNS (side effects land) and its
+    // stop DECISION is overridden — the action delivers.
     const first = await engine.executeAction('send_message', sendParams(), META);
     expect(first.decision).toBe('deliver');
     expect(
-      first.executionLog.some((e) => e.reason === 'Human override: hook skipped by approval')
+      first.executionLog.some(
+        (e) => e.reason === 'Human override: hook stop overridden by approval'
+      )
     ).toBe(true);
     // The one-shot flag was consumed.
     expect(hookStateRepo.get('run-1', 'stop_hook')?.localState.humanApproved).toBeUndefined();
@@ -293,10 +296,10 @@ describe('WorkflowHookEngine.executeAction', () => {
     const outcome = await engine.executeAction('send_message', sendParams(), META);
     expect(outcome.decision).toBe('stop');
     expect(outcome.userState.reason).toContain('approve it again');
-    // The hook itself never ran (its own stop reason is 'blocked by script');
-    // the block is the override-conflict reason.
-    expect(outcome.executionLog).toHaveLength(1);
-    expect(outcome.executionLog[0]?.flow).toBe('stop');
+    // The hook RAN first (its stop record), then the consume-conflict stop.
+    expect(outcome.executionLog.length).toBe(2);
+    expect(outcome.executionLog[1]?.flow).toBe('stop');
+    expect(outcome.executionLog[1]?.reason).toContain('approve it again');
   });
 
   test('a failed retry-bookkeeping persist blocks instead of advertising retryable', async () => {

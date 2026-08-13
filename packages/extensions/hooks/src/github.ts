@@ -480,7 +480,10 @@ export function extractUnresolvedThreads(value: unknown): string[] {
     const commentNodes = asRecord(thread.comments)?.nodes;
     const firstComment = Array.isArray(commentNodes) ? asRecord(commentNodes[0]) : undefined;
     const firstUrl = firstComment?.url;
-    if (typeof firstUrl === 'string') urls.push(firstUrl);
+    // An unresolved thread whose first comment URL is missing (deleted
+    // comment, viewer-restricted) still COUNTS — a placeholder keeps the
+    // gate blocked instead of silently passing it.
+    urls.push(typeof firstUrl === 'string' ? firstUrl : '<unavailable thread url>');
   }
   return urls;
 }
@@ -686,14 +689,19 @@ export interface GithubCodexApproval {
 }
 
 /**
- * The codex review-bot's login slug. The bot surfaces in TWO forms: as a `Bot`
- * `chatgpt-codex-connector` on review comments, and as a `User`
- * `chatgpt-codex-connector[bot]` on reactions. Match EXACTLY the two documented
- * forms (not on `__typename`, which differs between the two) so both count,
- * while a human whose login merely contains the slug (e.g.
+ * The codex review-bot's login slugs. The bot surfaces as a `Bot`
+ * `chatgpt-codex-connector` on review comments, as a `User`
+ * `chatgpt-codex-connector[bot]` on reactions, and as the `codex[bot]`
+ * variant named by the built-in workflow guidance. Match EXACTLY the
+ * documented forms (not on `__typename`, which differs between them) so all
+ * count, while a human whose login merely contains a slug (e.g.
  * `chatgpt-codex-connector-x`) does not.
  */
-const CODEX_BOT_LOGINS = new Set(['chatgpt-codex-connector', 'chatgpt-codex-connector[bot]']);
+const CODEX_BOT_LOGINS = new Set([
+  'chatgpt-codex-connector',
+  'chatgpt-codex-connector[bot]',
+  'codex[bot]',
+]);
 
 function isCodexActor(author: unknown): boolean {
   const login = asRecord(author)?.login;

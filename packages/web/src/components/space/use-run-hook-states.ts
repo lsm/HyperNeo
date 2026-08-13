@@ -92,6 +92,10 @@ export function useRunHookStates(runId: string | null | undefined): {
   // binding) hide or mislabel a blocked hook for the pinned run.
   const [hookBindings, setHookBindings] = useState<HookBinding[]>([]);
   const [hookStateMap, setHookStateMap] = useState<Map<string, HookStateSnapshot> | null>(null);
+  // Set true once ANY successful listHookStates response arrives, so a FAILED
+  // initial fetch still mounts the banner (with its Retry action) instead of
+  // reporting hasHooks:false from data that only the failed request carries.
+  const [everHadBindings, setEverHadBindings] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [fetchAttempt, setFetchAttempt] = useState(0);
 
@@ -138,6 +142,7 @@ export function useRunHookStates(runId: string | null | undefined): {
           return merged;
         });
         setHookBindings(result.hookBindings);
+        if (result.hookBindings.some((binding) => binding.enabled)) setEverHadBindings(true);
       } catch (err: unknown) {
         if (cancelled) return;
         setFetchError(err instanceof Error ? err.message : 'Failed to load hook status');
@@ -177,6 +182,6 @@ export function useRunHookStates(runId: string | null | undefined): {
     summaries,
     fetchError,
     retry: () => setFetchAttempt((n) => n + 1),
-    hasHooks: hookBindings.some((binding) => binding.enabled),
+    hasHooks: everHadBindings || hookBindings.some((binding) => binding.enabled),
   };
 }
