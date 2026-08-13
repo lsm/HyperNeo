@@ -59,7 +59,7 @@ describe('Migration 194 deferred hooks drop', () => {
       // Reset m194's marker so the runner path executes (makeLegacyDb's
       // initial runMigrations saw no hooks column and marked it as applied).
       const keyRow = db
-        .prepare(`SELECT key FROM migration_markers WHERE key LIKE '%194%'`)
+        .prepare(`SELECT key FROM migration_markers WHERE key LIKE '%197%'`)
         .all() as Array<{ key: string }>;
       for (const row of keyRow) {
         db.prepare(`DELETE FROM migration_markers WHERE key = ?`).run(row.key);
@@ -71,7 +71,7 @@ describe('Migration 194 deferred hooks drop', () => {
       expect(
         (
           db
-            .prepare(`SELECT COUNT(*) AS n FROM migration_markers WHERE key LIKE '%194%'`)
+            .prepare(`SELECT COUNT(*) AS n FROM migration_markers WHERE key LIKE '%197%'`)
             .get() as {
             n: number;
           }
@@ -85,7 +85,7 @@ describe('Migration 194 deferred hooks drop', () => {
       expect(
         (
           db
-            .prepare(`SELECT COUNT(*) AS n FROM migration_markers WHERE key LIKE '%194%'`)
+            .prepare(`SELECT COUNT(*) AS n FROM migration_markers WHERE key LIKE '%197%'`)
             .get() as {
             n: number;
           }
