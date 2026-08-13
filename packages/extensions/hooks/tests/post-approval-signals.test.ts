@@ -139,3 +139,21 @@ describe('post_approval_only — merge-template field compatibility', () => {
     expect(ret.flow).toBe('stop');
   });
 });
+
+describe('samePrLink — identity comparison', () => {
+  test('equivalent spellings match (trailing slash, /files suffix, host casing)', async () => {
+    const ret = await postApprovalOnlyHook.run(
+      sendAction({ pr_url: `${REVIEWED_PR}/files`, reason: 'merge_blocked' }),
+      stubCtx({ taskStatus: 'approved', readArtifacts: () => [validatedStamp(REVIEWED_PR)] })
+    );
+    expect(ret.flow).toBe('continue');
+  });
+
+  test('a different PR number on the same repo does not match', async () => {
+    const ret = await postApprovalOnlyHook.run(
+      sendAction({ pr_url: 'https://github.com/org/repo/pull/43', reason: 'merge_blocked' }),
+      stubCtx({ taskStatus: 'approved', readArtifacts: () => [validatedStamp(REVIEWED_PR)] })
+    );
+    expect(ret.flow).toBe('stop');
+  });
+});

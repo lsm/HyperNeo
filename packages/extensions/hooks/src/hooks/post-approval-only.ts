@@ -1,6 +1,6 @@
 import type { Hook, HookAction, HookReturn } from '@hyperneo/shared/types/workflow-hooks';
 import { dataOf, POST_APPROVAL_MERGE_REASONS } from '../action';
-import { getPrimaryLink } from '../primary-link';
+import { getPrimaryLink, samePrLink } from '../primary-link';
 
 /**
  * `post_approval_only` — gates a `send_message` channel so it may carry ONLY a
@@ -65,7 +65,7 @@ export const postApprovalOnlyHook: Hook = {
             'Post-approval blocker handoff carries a pr_link, but this run has no reviewed PR identity to bind it to.',
         };
       }
-      if (supplied !== primary) {
+      if (!samePrLink(supplied, primary)) {
         return {
           flow: 'stop',
           reason: `Post-approval blocker handoff PR ${supplied} does not match this run's reviewed PR ${primary}.`,

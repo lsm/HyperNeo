@@ -145,9 +145,7 @@ describe('PendingHookBanner', () => {
       hookStates: [makeHookState('h1', 'continue')],
       hookBindings: makeWorkflow([{ id: 'h1' }]).hookBindings,
     });
-    const { queryByTestId } = render(
-      <PendingHookBanner runId="r1" spaceId="s1" workflowId="wf-1" />
-    );
+    const { queryByTestId } = render(<PendingHookBanner runId="r1" spaceId="s1" />);
     await waitFor(() =>
       expect(mockRequest).toHaveBeenCalledWith('spaceWorkflowRun.listHookStates', { runId: 'r1' })
     );
@@ -164,7 +162,7 @@ describe('PendingHookBanner', () => {
       hookBindings: makeWorkflow([{ id: 'h1', label: 'Merge Check' }]).hookBindings,
     });
     const { findByTestId, getByTestId, queryByTestId } = render(
-      <PendingHookBanner runId="r1" spaceId="s1" workflowId="wf-1" />
+      <PendingHookBanner runId="r1" spaceId="s1" />
     );
     await findByTestId('pending-hook-banner');
     expect(getByTestId('pending-hook-approve-btn')).toBeTruthy();
@@ -179,7 +177,7 @@ describe('PendingHookBanner', () => {
       hookBindings: makeWorkflow([{ id: 'h1', label: 'Poll Check' }]).hookBindings,
     });
     const { findByTestId, getByTestId, queryByTestId } = render(
-      <PendingHookBanner runId="r1" spaceId="s1" workflowId="wf-1" />
+      <PendingHookBanner runId="r1" spaceId="s1" />
     );
     await findByTestId('pending-hook-banner');
     expect(getByTestId('pending-hook-retry-btn')).toBeTruthy();
@@ -195,9 +193,7 @@ describe('PendingHookBanner', () => {
       hookStates: [makeHookState('h1', 'stop')],
       hookBindings: workflow.hookBindings,
     });
-    const { queryByTestId } = render(
-      <PendingHookBanner runId="r1" spaceId="s1" workflowId="wf-1" />
-    );
+    const { queryByTestId } = render(<PendingHookBanner runId="r1" spaceId="s1" />);
     await waitFor(() =>
       expect(mockRequest).toHaveBeenCalledWith('spaceWorkflowRun.listHookStates', { runId: 'r1' })
     );
@@ -210,7 +206,6 @@ describe('PendingHookBanner', () => {
       <PendingHookBanner
         runId="r1"
         spaceId="s1"
-        workflowId="wf-1"
         summaries={[]}
         fetchError="network down"
         retry={retry}
@@ -235,9 +230,7 @@ describe('PendingHookBanner', () => {
       hookStates: [],
       hookBindings: makeWorkflow([{ id: 'h1' }]).hookBindings,
     });
-    const { findByTestId } = render(
-      <PendingHookBanner runId="r1" spaceId="s1" workflowId="wf-1" />
-    );
+    const { findByTestId } = render(<PendingHookBanner runId="r1" spaceId="s1" />);
     await waitFor(() => expect(onHookStateUpdated).toBeTruthy());
 
     onHookStateUpdated?.({ runId: 'r1', hookId: 'h1', hookState: makeHookState('h1', 'stop') });
@@ -255,9 +248,7 @@ describe('PendingHookBanner', () => {
         });
       return Promise.resolve({});
     });
-    const { findByTestId } = render(
-      <PendingHookBanner runId="r1" spaceId="s1" workflowId="wf-1" />
-    );
+    const { findByTestId } = render(<PendingHookBanner runId="r1" spaceId="s1" />);
     const btn = await findByTestId('pending-hook-approve-btn');
     fireEvent.click(btn);
     await waitFor(() =>
@@ -279,9 +270,7 @@ describe('PendingHookBanner', () => {
         });
       return Promise.resolve({});
     });
-    const { findByTestId } = render(
-      <PendingHookBanner runId="r1" spaceId="s1" workflowId="wf-1" />
-    );
+    const { findByTestId } = render(<PendingHookBanner runId="r1" spaceId="s1" />);
     const btn = await findByTestId('pending-hook-reject-btn');
     fireEvent.click(btn);
     await waitFor(() =>
@@ -303,9 +292,7 @@ describe('PendingHookBanner', () => {
         });
       return Promise.resolve({});
     });
-    const { findByTestId } = render(
-      <PendingHookBanner runId="r1" spaceId="s1" workflowId="wf-1" />
-    );
+    const { findByTestId } = render(<PendingHookBanner runId="r1" spaceId="s1" />);
     const btn = await findByTestId('pending-hook-retry-btn');
     fireEvent.click(btn);
     await waitFor(() =>
@@ -319,9 +306,7 @@ describe('PendingHookBanner', () => {
   it('surfaces fetch errors with a Retry button', async () => {
     workflowsSignal.value = [makeWorkflow([{ id: 'h1' }])];
     mockRequest.mockRejectedValueOnce(new Error('network down'));
-    const { findByTestId, getByTestId } = render(
-      <PendingHookBanner runId="r1" spaceId="s1" workflowId="wf-1" />
-    );
+    const { findByTestId, getByTestId } = render(<PendingHookBanner runId="r1" spaceId="s1" />);
     await findByTestId('pending-hook-fetch-error');
     expect(getByTestId('pending-hook-fetch-error').textContent).toContain('network down');
     mockRequest.mockResolvedValueOnce({ hookStates: [], hookBindings: [] });
@@ -341,9 +326,7 @@ describe('PendingHookBanner', () => {
       ],
       hookBindings: makeWorkflow([{ id: 'h1' }]).hookBindings,
     });
-    const { findByTestId } = render(
-      <PendingHookBanner runId="r1" spaceId="s1" workflowId="wf-1" />
-    );
+    const { findByTestId } = render(<PendingHookBanner runId="r1" spaceId="s1" />);
 
     expect((await findByTestId('pending-hook-remediation')).textContent).toContain(
       'Try again later'
@@ -368,9 +351,7 @@ describe('PendingHookBanner', () => {
       if (method === 'spaceWorkflowRun.retryHook') return pending;
       return Promise.resolve({});
     });
-    const { findByTestId, getAllByTestId } = render(
-      <PendingHookBanner runId="r1" spaceId="s1" workflowId="wf-1" />
-    );
+    const { findByTestId, getAllByTestId } = render(<PendingHookBanner runId="r1" spaceId="s1" />);
     await findByTestId('pending-hook-banner');
     const retryBtns = getAllByTestId('pending-hook-retry-btn') as HTMLButtonElement[];
     fireEvent.click(retryBtns[0]);
@@ -393,7 +374,7 @@ describe('PendingHookBanner', () => {
       return Promise.resolve({});
     });
     const { findByTestId, getAllByTestId, findAllByTestId } = render(
-      <PendingHookBanner runId="r1" spaceId="s1" workflowId="wf-1" />
+      <PendingHookBanner runId="r1" spaceId="s1" />
     );
     await findByTestId('pending-hook-banner');
     const rejectBtns = getAllByTestId('pending-hook-reject-btn') as HTMLButtonElement[];

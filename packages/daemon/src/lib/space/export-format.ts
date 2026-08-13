@@ -298,8 +298,10 @@ function rejectLegacyV3Hooks(
 ): string | null {
   if (version === undefined || version >= 4) return null;
   const raw = data as Record<string, unknown> | null;
+  // Field PRESENCE (even an empty array) marks a hooks-era export; reject it
+  // rather than silently stripping the field.
   const hooks = raw?.hooks;
-  if (Array.isArray(hooks) && hooks.length > 0) {
+  if (Array.isArray(hooks)) {
     return (
       `${label}: legacy v${version} \`hooks\` are not importable (the v2 hook model uses ` +
       `\`hookBindings\`/\`customHooks\`, and old hook definitions are not migrated). ` +

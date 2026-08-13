@@ -75,10 +75,7 @@ export function evaluateHookStatus(
  * loading. Pass null/undefined for either arg to disable the hook —
  * it will always return undefined in that case.
  */
-export function useRunHookStates(
-  runId: string | null | undefined,
-  _workflowId: string | null | undefined
-): {
+export function useRunHookStates(runId: string | null | undefined): {
   summaries: HookBannerSummary[] | undefined;
   fetchError: string | null;
   retry: () => void;

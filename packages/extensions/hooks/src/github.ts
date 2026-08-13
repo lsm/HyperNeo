@@ -322,10 +322,17 @@ export function parsePrLink(link: string): ParsedPrLink | undefined {
 }
 
 /**
- * Unresolved review-conversation URLs on a PR (first page). Drives `pr_ready`'s
- * "no unresolved threads" leg. Owner/repo/number are interpolated into the
- * query after parsing the PR link, so injection is bounded to validated tokens.
+ * Unresolved review-conversation URLs on a PR, PAGINATED to the end of the
+ * connection. Drives `pr_ready`'s "no unresolved threads" leg — a truncated
+ * scan would let a blocker hiding beyond the first page false-pass the gate,
+ * so the connection is followed via `pageInfo.endCursor` and the helper fails
+ * closed (retryable) when the page cap is exhausted. Owner/repo/number are
+ * interpolated into the query after parsing the PR link, and cursors are
+ * GitHub base64 (`[A-Za-z0-9+/=]`), so injection is bounded to safe tokens.
  */
+const THREADS_PAGE_SIZE = 50;
+const MAX_THREAD_PAGES = 10;
+
 export async function ghGetUnresolvedReviewThreads(
   ctx: HookContext,
   link: string
@@ -334,12 +341,43 @@ export async function ghGetUnresolvedReviewThreads(
   if (!pr) {
     return { ok: false, retryable: false, error: `unable to parse GitHub PR link: ${link}` };
   }
-  const query =
-    `query { repository(owner:"${pr.owner}",name:"${pr.repo}") { pullRequest(number:${pr.number}) { ` +
-    'reviewThreads(first: 50) { nodes { isResolved comments(first: 1) { nodes { url } } } } } } }';
-  const result = await runGhGraphql(ctx, query, pr.host);
-  if (!result.ok) return result;
-  return { ok: true, data: extractUnresolvedThreads(result.data) };
+  const urls: string[] = [];
+  let cursor: string | null = null;
+  for (let page = 0; page < MAX_THREAD_PAGES; page++) {
+    const after = cursor ? `after:"${cursor}",` : '';
+    const query =
+      `query { repository(owner:"${pr.owner}",name:"${pr.repo}") { pullRequest(number:${pr.number}) { ` +
+      `reviewThreads(first: ${THREADS_PAGE_SIZE}, ${after}) { pageInfo { hasNextPage endCursor } ` +
+      'nodes { isResolved comments(first: 1) { nodes { url } } } } } } }';
+    const result = await runGhGraphql(ctx, query, pr.host);
+    if (!result.ok) return result;
+    urls.push(...extractUnresolvedThreads(result.data));
+    const info = extractThreadsPageInfo(result.data);
+    if (info?.hasNextPage !== true) return { ok: true, data: urls };
+    if (typeof info?.endCursor !== 'string') break;
+    cursor = info.endCursor;
+  }
+  return {
+    ok: false,
+    retryable: true,
+    error:
+      `PR has more than ${MAX_THREAD_PAGES * THREADS_PAGE_SIZE} review threads; ` +
+      'unable to scan the full history (fail closed).',
+  };
+}
+
+/** Read a reviewThreads connection's `pageInfo` from one page of results. */
+export function extractThreadsPageInfo(
+  value: unknown
+): { hasNextPage?: boolean; endCursor?: string } | undefined {
+  const root = asRecord(value) ?? {};
+  const pr = asRecord(asRecord(asRecord(root.data)?.repository)?.pullRequest);
+  const pageInfo = asRecord(asRecord(pr?.reviewThreads)?.pageInfo);
+  if (!pageInfo) return undefined;
+  return {
+    hasNextPage: pageInfo.hasNextPage === true,
+    endCursor: typeof pageInfo.endCursor === 'string' ? pageInfo.endCursor : undefined,
+  };
 }
 
 export function extractUnresolvedThreads(value: unknown): string[] {
@@ -417,6 +455,7 @@ export function extractReviewEvidence(value: unknown, sinceIso: string): GithubR
   // both counts.
   const reviewNodes = asRecord(pr?.reviews)?.nodes;
   let formalReviewCount = 0;
+  let commentedReviewEvidence = 0;
   if (Array.isArray(reviewNodes)) {
     for (const node of reviewNodes) {
       const review = asRecord(node);
@@ -428,6 +467,13 @@ export function extractReviewEvidence(value: unknown, sinceIso: string): GithubR
         publishedAt >= sinceIso
       ) {
         formalReviewCount += 1;
+      }
+      // Own-PR evidence: GitHub rejects self-approval, and the Reviewer System
+      // Contract tells the reviewer to submit a COMMENT review instead, which
+      // GitHub records as state COMMENTED. Count those like conversation
+      // comments so the prescribed own-PR procedure satisfies the gate.
+      if (state === 'COMMENTED' && typeof publishedAt === 'string' && publishedAt >= sinceIso) {
+        commentedReviewEvidence += 1;
       }
     }
   }
@@ -443,7 +489,11 @@ export function extractReviewEvidence(value: unknown, sinceIso: string): GithubR
     }
   }
 
-  return { formalReviewCount, commentEvidenceCount, ownPr };
+  return {
+    formalReviewCount,
+    commentEvidenceCount: commentEvidenceCount + commentedReviewEvidence,
+    ownPr,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -478,13 +528,21 @@ function isCodexActor(author: unknown): boolean {
  *   - the LATEST decisive codex review whose `commit.oid` is the head SHA (or
  *     whose body names the 40-char head SHA) must be APPROVED — a later
  *     CHANGES_REQUESTED on the same head overrides an earlier APPROVED, and a
- *     stale review from a prior head does not count;
+ *     stale review from a prior head does not count. The reviews connection is
+ *     PAGINATED to a bounded cap (a prefix is not authoritative: a later
+ *     CHANGES_REQUESTED beyond the first page would flip the verdict), and the
+ *     gate fails closed when the cap is exhausted;
  *   - a THUMBS_UP (+1) reaction from the codex bot with `createdAt` newer than
- *     the PR's `pushedDate` (push time, not commit-authoring time).
+ *     the head commit's `pushedDate` (push time, not commit-authoring time —
+ *     selected on the Commit object; the GraphQL schema has no
+ *     `PullRequest.pushedDate`, and selecting one errors the whole query).
  * The reaction actor is User-typed with a `[bot]` suffix; the login match covers
- * both forms. First-page only; opt-in. Fails closed when the head can't be
- * resolved (the gate can't prove head-specificity, so it retries).
+ * both forms. Opt-in. Fails closed when the head can't be resolved (the gate
+ * can't prove head-specificity, so it retries).
  */
+const CODEX_REVIEWS_PAGE_SIZE = 50;
+const MAX_CODEX_REVIEW_PAGES = 10;
+
 export async function ghGetCodexApproval(
   ctx: HookContext,
   link: string
@@ -493,31 +551,67 @@ export async function ghGetCodexApproval(
   if (!pr) {
     return { ok: false, retryable: false, error: `unable to parse GitHub PR link: ${link}` };
   }
-  const query =
+  const headQuery = (after: string | null) =>
     `query { repository(owner:"${pr.owner}",name:"${pr.repo}") { pullRequest(number:${pr.number}) { ` +
-    'pushedDate ' +
-    'reviews(first: 50) { nodes { state author { login } commit { oid } body submittedAt } } ' +
+    `reviews(first: ${CODEX_REVIEWS_PAGE_SIZE}${after ? `, after:"${after}"` : ''}) { ` +
+    'pageInfo { hasNextPage endCursor } ' +
+    'nodes { state author { login } commit { oid } body submittedAt } } ' +
     'reactions(first: 50, content: THUMBS_UP) { nodes { createdAt user { login } } } ' +
-    'commits(last: 1) { nodes { commit { oid } } } } } }';
-  const result = await runGhGraphql(ctx, query, pr.host);
-  if (!result.ok) return result;
-  return { ok: true, data: extractCodexApproval(result.data, link) };
+    'commits(last: 1) { nodes { commit { oid pushedDate } } } } } }';
+
+  const allReviewNodes: unknown[] = [];
+  let lastPage: Record<string, unknown> | undefined;
+  let cursor: string | null = null;
+  for (let page = 0; page < MAX_CODEX_REVIEW_PAGES; page++) {
+    const result = await runGhGraphql(ctx, headQuery(cursor), pr.host);
+    if (!result.ok) return result;
+    lastPage = asRecord(result.data) ?? {};
+    const prNode = asRecord(asRecord(asRecord(lastPage.data)?.repository)?.pullRequest);
+    const nodes = asRecord(prNode?.reviews)?.nodes;
+    if (Array.isArray(nodes)) allReviewNodes.push(...nodes);
+    const pageInfo = asRecord(asRecord(prNode?.reviews)?.pageInfo);
+    if (pageInfo?.hasNextPage !== true) {
+      // Definitive end of the review history — evaluate the merged document.
+      return {
+        ok: true,
+        data: extractCodexApproval(
+          {
+            data: {
+              repository: { pullRequest: { ...prNode, reviews: { nodes: allReviewNodes } } },
+            },
+          },
+          link
+        ),
+      };
+    }
+    if (typeof pageInfo?.endCursor !== 'string') break;
+    cursor = pageInfo.endCursor;
+  }
+  return {
+    ok: false,
+    retryable: true,
+    error:
+      `PR has more than ${MAX_CODEX_REVIEW_PAGES * CODEX_REVIEWS_PAGE_SIZE} reviews; ` +
+      'unable to scan the full codex review history (fail closed).',
+  };
 }
 
 export function extractCodexApproval(value: unknown, prLink: string): GithubCodexApproval {
   const root = asRecord(value) ?? {};
   const pr = asRecord(asRecord(asRecord(root.data)?.repository)?.pullRequest);
 
-  // Head SHA (for review head-binding) + the PR's last push time (for reaction
-  // freshness). Use pushedDate, not commit.committedDate — a locally-created
-  // commit pushed later has an early committedDate but a late push, which would
+  // Head SHA (for review head-binding) + the head commit's push time (for
+  // reaction freshness). `pushedDate` is a Commit field — the schema has no
+  // PullRequest.pushedDate — so it is selected on (and read from) the last
+  // commit. Use pushedDate, not commit.committedDate — a locally-created commit
+  // pushed later has an early committedDate but a late push, which would
   // otherwise let a pre-push +1 false-pass.
   const commitNodes = asRecord(pr?.commits)?.nodes;
   const headCommit = Array.isArray(commitNodes)
     ? asRecord(asRecord(commitNodes[commitNodes.length - 1])?.commit)
     : undefined;
   const headOid = typeof headCommit?.oid === 'string' ? headCommit.oid : undefined;
-  const pushedDate = typeof pr?.pushedDate === 'string' ? pr.pushedDate : undefined;
+  const pushedDate = typeof headCommit?.pushedDate === 'string' ? headCommit.pushedDate : undefined;
 
   // Pass path 1: the LATEST decisive codex review on the current head. A prior
   // APPROVED must not satisfy the gate if codex later posted CHANGES_REQUESTED

@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   extractCodexApproval,
   extractReviewEvidence,
+  extractThreadsPageInfo,
   extractUnresolvedThreads,
   parsePrLink,
   parsePrView,
@@ -98,7 +99,8 @@ describe('extractReviewEvidence', () => {
       since
     );
     expect(ev.formalReviewCount).toBe(2);
-    expect(ev.commentEvidenceCount).toBe(1);
+    // One conversation comment + one fresh COMMENTED review (own-PR evidence).
+    expect(ev.commentEvidenceCount).toBe(2);
     expect(ev.ownPr).toBe(false);
   });
   test('ownPr is true when the viewer authored the PR (enables the comment fallback)', () => {
@@ -126,10 +128,9 @@ describe('extractCodexApproval', () => {
     data: {
       repository: {
         pullRequest: {
-          pushedDate: '2026-02-01T00:00:00Z',
           reviews: { nodes: [] },
           reactions: { nodes: [] },
-          commits: { nodes: [{ commit: { oid: HEAD } }] },
+          commits: { nodes: [{ commit: { oid: HEAD, pushedDate: '2026-02-01T00:00:00Z' } }] },
           ...overrides,
         },
       },
@@ -243,5 +244,101 @@ describe('extractCodexApproval', () => {
       'https://github.com/o/r/pull/1'
     );
     expect(r.approved).toBe(false);
+  });
+});
+
+describe('extractThreadsPageInfo', () => {
+  test('reads hasNextPage/endCursor from a reviewThreads page', () => {
+    expect(
+      extractThreadsPageInfo({
+        data: {
+          repository: {
+            pullRequest: {
+              reviewThreads: {
+                pageInfo: { hasNextPage: true, endCursor: 'Y3Vyc29yOnYyOpK0' },
+                nodes: [],
+              },
+            },
+          },
+        },
+      })
+    ).toEqual({ hasNextPage: true, endCursor: 'Y3Vyc29yOnYyOpK0' });
+  });
+  test('returns undefined for a malformed envelope', () => {
+    expect(extractThreadsPageInfo({ data: {} })).toBeUndefined();
+  });
+});
+
+describe('extractReviewEvidence — COMMENTED own-PR evidence', () => {
+  const envelope = (reviews: unknown[], comments: unknown[] = []) => ({
+    data: {
+      viewer: { login: 'me' },
+      repository: {
+        pullRequest: {
+          author: { login: 'me' },
+          reviews: { nodes: reviews },
+          comments: { nodes: comments },
+        },
+      },
+    },
+  });
+
+  test('a fresh COMMENTED review counts as comment evidence', () => {
+    const evidence = extractReviewEvidence(
+      envelope([{ state: 'COMMENTED', publishedAt: '2026-08-13T00:00:00Z' }]),
+      '2026-08-12T00:00:00Z'
+    );
+    expect(evidence.commentEvidenceCount).toBe(1);
+    expect(evidence.ownPr).toBe(true);
+  });
+
+  test('a stale COMMENTED review does not count', () => {
+    const evidence = extractReviewEvidence(
+      envelope([{ state: 'COMMENTED', publishedAt: '2026-08-01T00:00:00Z' }]),
+      '2026-08-12T00:00:00Z'
+    );
+    expect(evidence.commentEvidenceCount).toBe(0);
+  });
+
+  test('COMMENTED does not inflate formalReviewCount', () => {
+    const evidence = extractReviewEvidence(
+      envelope([{ state: 'COMMENTED', publishedAt: '2026-08-13T00:00:00Z' }]),
+      '2026-08-12T00:00:00Z'
+    );
+    expect(evidence.formalReviewCount).toBe(0);
+  });
+});
+
+describe('extractCodexApproval — pushedDate on the head Commit', () => {
+  const PR_LINK = 'https://github.com/org/repo/pull/42';
+  const HEAD = 'a'.repeat(40);
+  const base = (pr: Record<string, unknown>) => ({
+    data: { repository: { pullRequest: pr } },
+  });
+
+  test('reads pushedDate from the head commit (not a PullRequest field)', () => {
+    const value = base({
+      commits: { nodes: [{ commit: { oid: HEAD, pushedDate: '2026-08-12T00:00:00Z' } }] },
+      reviews: { nodes: [] },
+      reactions: {
+        nodes: [
+          { createdAt: '2026-08-13T00:00:00Z', user: { login: 'chatgpt-codex-connector[bot]' } },
+        ],
+      },
+    });
+    expect(extractCodexApproval(value, PR_LINK).approved).toBe(true);
+  });
+
+  test('a stale +1 older than the head commit push does not pass', () => {
+    const value = base({
+      commits: { nodes: [{ commit: { oid: HEAD, pushedDate: '2026-08-13T00:00:00Z' } }] },
+      reviews: { nodes: [] },
+      reactions: {
+        nodes: [
+          { createdAt: '2026-08-12T00:00:00Z', user: { login: 'chatgpt-codex-connector[bot]' } },
+        ],
+      },
+    });
+    expect(extractCodexApproval(value, PR_LINK).approved).toBe(false);
   });
 });

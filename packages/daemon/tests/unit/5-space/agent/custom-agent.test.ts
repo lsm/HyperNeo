@@ -645,6 +645,45 @@ describe('buildCustomAgentTaskMessage', () => {
     expect(message).toContain('`save_artifact` alone does not deliver this gated handoff');
   });
 
+  it('renders number/boolean required-data placeholders unquoted per declared type', () => {
+    const workflow = structuredClone(CODING_WORKFLOW);
+    const codingNode = workflow.nodes.find((node) => node.name === 'Coding')!;
+    workflow.customHooks = [
+      {
+        id: 'metrics_hook',
+        requiredData: [
+          { key: 'pr_link', type: 'link', required: true },
+          { key: 'attempts', type: 'number', required: true },
+          { key: 'ui_changed', type: 'boolean', required: true },
+        ],
+        run: { kind: 'script', interpreter: 'bash', source: 'exit 0' },
+      },
+    ];
+    workflow.hookBindings = [
+      {
+        hookId: 'metrics_hook',
+        sourceNode: 'Coding',
+        targetNode: 'Review',
+        method: 'send_message',
+        order: 0,
+        enabled: true,
+      },
+    ];
+
+    const message = buildCustomAgentTaskMessage(
+      makeConfig({
+        workflow,
+        workflowRun: makeWorkflowRun({ workflowId: workflow.id }),
+        nodeId: codingNode.id,
+        agentSlotName: 'coder',
+      })
+    );
+
+    expect(message).toContain(
+      'data: { "pr_link": "<pr_link>", "attempts": <attempts: number>, "ui_changed": <ui_changed: true|false> }'
+    );
+  });
+
   it('injects exact handoff even when persisted workflow slot prompt is stale', () => {
     const workflow = structuredClone(CODING_WORKFLOW);
     const codingNode = workflow.nodes.find((node) => node.name === 'Coding')!;

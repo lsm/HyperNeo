@@ -549,7 +549,17 @@ function buildHookValidatedHandoffLines(
         for (const field of hook.requiredData) {
           if (!field.required || seen.has(field.key)) continue;
           seen.add(field.key);
-          requiredFields.push(`"${field.key}": "<${field.key}>"`);
+          // Render the placeholder per the DECLARED type: a quoted example for
+          // strings/links, unquoted for numbers and booleans — the script hook
+          // receives `data` verbatim in HYPERNEO_PARAMS_JSON, and a quoted
+          // number/boolean breaks type-sensitive hooks.
+          if (field.type === 'number') {
+            requiredFields.push(`"${field.key}": <${field.key}: number>`);
+          } else if (field.type === 'boolean') {
+            requiredFields.push(`"${field.key}": <${field.key}: true|false>`);
+          } else {
+            requiredFields.push(`"${field.key}": "<${field.key}>"`);
+          }
         }
       }
       const dataContract =

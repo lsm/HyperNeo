@@ -2604,3 +2604,38 @@ describe('custom hooks — export schema parity with runtime validation', () => 
     expect(result.ok).toBe(false);
   });
 });
+
+describe('legacy v3 hooks rejection', () => {
+  test('a v3 export carrying a legacy hooks array is rejected with an actionable error', () => {
+    const workflow = makeWorkflow();
+    // Legacy hooks array (even EMPTY) on a pre-v4 export must not be silently
+    // stripped by the schema — the operator needs to know the hooks did not
+    // survive the url→binding migration and must be re-created.
+    const exported = exportWorkflow(workflow, []) as Record<string, unknown>;
+    exported.version = 3;
+    exported.hooks = [];
+    const result = validateExportedWorkflow(exported);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('legacy v3');
+  });
+
+  test('a v4 export without a hooks field is unaffected', () => {
+    const workflow = makeWorkflow();
+    const exported = exportWorkflow(workflow, []);
+    expect(exported.version).toBeGreaterThanOrEqual(4);
+    const result = validateExportedWorkflow(exported);
+    expect(result.ok).toBe(true);
+  });
+});
+
+describe('legacy v3 hooks rejection (non-empty)', () => {
+  test('a v3 export carrying populated legacy hooks is rejected', () => {
+    const workflow = makeWorkflow();
+    const exported = exportWorkflow(workflow, []) as Record<string, unknown>;
+    exported.version = 3;
+    exported.hooks = [{ id: 'pr_ready', nodeNames: ['Code'], config: {} }];
+    const result = validateExportedWorkflow(exported);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('hookBindings');
+  });
+});

@@ -259,16 +259,12 @@ export function SpaceTaskPane({
   // Resolve runId/workflowId here (before the early returns) so the hook-state
   // hook is always called — React's Rules of Hooks require a stable call order.
   const _runId = task?.workflowRunId ?? null;
-  const _workflowRunForHook = _runId
-    ? (spaceStore.workflowRuns.value.find((r) => r.id === _runId) ?? null)
-    : null;
-  const _workflowIdForHook = _workflowRunForHook?.workflowId ?? null;
   const {
     summaries: hookSummaries,
     fetchError: hookFetchError,
     retry: retryHookFetch,
     hasHooks: hasWorkflowHooks,
-  } = useRunHookStates(_runId, _workflowIdForHook);
+  } = useRunHookStates(_runId);
   const navigationSpaceIdForTask =
     routeSpaceId ?? currentSpaceIdSignal.value ?? spaceId ?? task?.spaceId;
   const targetSpaceIdForTask = spaceId ?? task?.spaceId ?? navigationSpaceIdForTask;
@@ -1557,7 +1553,6 @@ export function SpaceTaskPane({
             <PendingHookBanner
               runId={banner.runId}
               spaceId={runtimeSpaceId}
-              workflowId={canvasWorkflowId}
               summaries={hookSummaries}
               fetchError={hookFetchError}
               retry={retryHookFetch}

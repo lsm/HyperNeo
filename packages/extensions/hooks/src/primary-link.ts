@@ -1,4 +1,5 @@
 import type { HookContext } from '@hyperneo/shared/types/workflow-hooks';
+import { parsePrLink } from './github';
 
 /**
  * The engine-reserved artifact key the `pr_ready` hook stamps the run's
@@ -35,4 +36,24 @@ export function getPrimaryLink(ctx: HookContext): string | undefined {
     if (typeof link === 'string') value = link;
   }
   return value;
+}
+
+/**
+ * Compare two PR links by identity (host/owner/repo/number) rather than raw
+ * string equality. Raw `!==` is safe against swaps but false-negatives on
+ * equivalent spellings (trailing slash, `/files` suffix, host casing), which
+ * would fail a gate closed on a link the human considers the same PR. Falls
+ * back to raw equality when either side does not parse as a PR link.
+ */
+export function samePrLink(a: string, b: string): boolean {
+  if (a === b) return true;
+  const pa = parsePrLink(a);
+  const pb = parsePrLink(b);
+  if (!pa || !pb) return false;
+  return (
+    pa.host.toLowerCase() === pb.host.toLowerCase() &&
+    pa.owner === pb.owner &&
+    pa.repo === pb.repo &&
+    pa.number === pb.number
+  );
 }

@@ -231,6 +231,53 @@ describe('WorkflowHookEngine.executeAction', () => {
     expect(second.blockingHookId).toBe('stop_hook');
   });
 
+  test('a failed approval-consume write blocks instead of force-skipping the gate', async () => {
+    // The consume-write loses a version race (updateWithRetry returns null).
+    // Skipping anyway would leave the persisted flag set after this action,
+    // turning a one-shot approval into a standing bypass — so the engine must
+    // fail closed. In-memory SQLite always succeeds, so force the conflict.
+    class ConflictedStateRepo extends WorkflowHookStateRepository {
+      updateWithRetry(): null {
+        return null;
+      }
+    }
+    const workflow = makeWorkflow({
+      customHooks: [STOP_HOOK],
+      hookBindings: [
+        {
+          hookId: 'stop_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    const conflictedRepo = new ConflictedStateRepo(db);
+    conflictedRepo.update('run-1', 'stop_hook', {
+      expectedVersion: 0,
+      localState: { humanApproved: true, humanApprovedAt: 123 },
+    });
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: new NodeExecutionRepository(db),
+      artifactRepo,
+      hookStateRepo: conflictedRepo,
+      workspacePath: process.cwd(),
+    });
+
+    const outcome = await engine.executeAction('send_message', sendParams(), META);
+    expect(outcome.decision).toBe('stop');
+    expect(outcome.userState.reason).toContain('approve it again');
+    // The hook itself never ran (its own stop reason is 'blocked by script');
+    // the block is the override-conflict reason.
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(outcome.executionLog[0]?.flow).toBe('stop');
+  });
+
   test('human rejection is a standing block that does not run the hook', async () => {
     const workflow = makeWorkflow({
       customHooks: [STOP_HOOK],
@@ -350,5 +397,61 @@ describe('WorkflowHookEngine.executeAction', () => {
     const after = artifacts.filter((a) => a.artifactKey === '__pr_validated__');
     expect(after).toHaveLength(1);
     expect(after[0]?.data.link).toBe('https://github.com/o/r/pull/2');
+  });
+
+  describe('wrapHandlerWithHooks — non-send_message retry pacing', () => {
+    test('a retrying non-message hook increments its count and keeps a cooldown', async () => {
+      const { wrapHandlerWithHooks } = await import(
+        '../../../../src/lib/space/runtime/workflow-hook-engine'
+      );
+      const RETRY_HOOK = scriptHook(
+        'retry_hook',
+        '{"flow":"retry","reason":"waiting on GitHub","retryAfterMs":60000}'
+      );
+      const workflow = makeWorkflow({
+        customHooks: [RETRY_HOOK],
+        // Non-routed binding (no targetNode) — matches mark_complete actions.
+        hookBindings: [
+          {
+            hookId: 'retry_hook',
+            sourceNode: 'Coding',
+            method: 'mark_complete',
+            order: 0,
+            enabled: true,
+            authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+          },
+        ],
+      });
+      const engine = makeEngine(workflow);
+      let underlyingCalls = 0;
+      const underlying = async (): Promise<{ content: Array<{ type: string; text: string }> }> => {
+        underlyingCalls += 1;
+        return { content: [{ type: 'text', text: 'ok' }] };
+      };
+      const wrapped = wrapHandlerWithHooks('mark_complete', underlying, engine, {}, META);
+
+      const first = await wrapped({ goalUpdate: { summary: 's' } });
+      expect(JSON.parse((first.content?.[0] as { text: string }).text).retryable).toBe(true);
+      // The blocking hook's bookkeeping persisted: count incremented, cooldown set.
+      const state = hookStateRepo.get('run-1', 'retry_hook');
+      expect(state?.retryCount).toBe(1);
+      expect(state?.nextRetryAt).toBeGreaterThan(Date.now() - 1000);
+      // The underlying handler never ran.
+      expect(underlyingCalls).toBe(0);
+
+      // An immediate second attempt is paced by the cooldown pre-check: the
+      // hook does not re-run (the underlying handler stays unreachable), and
+      // the paced attempt still counts toward MAX_RETRY_ATTEMPTS — every paced
+      // response is a real agent attempt, so the ceiling eventually converts a
+      // hopeless loop to a terminal stop.
+      const second = await wrapped({ goalUpdate: { summary: 's' } });
+      const secondParsed = JSON.parse((second.content?.[0] as { text: string }).text);
+      expect(secondParsed.retryable).toBe(true);
+      expect(underlyingCalls).toBe(0);
+      expect(hookStateRepo.get('run-1', 'retry_hook')?.retryCount).toBe(2);
+      expect(hookStateRepo.get('run-1', 'retry_hook')?.nextRetryAt).toBeGreaterThan(
+        Date.now() - 1000
+      );
+    });
   });
 });

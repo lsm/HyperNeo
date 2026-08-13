@@ -1,7 +1,7 @@
 import type { Hook, HookAction, HookReturn } from '@hyperneo/shared/types/workflow-hooks';
 import { isPostApprovalMergeReport, readDataString } from '../action';
 import { ghGetPr, ghGetUnresolvedReviewThreads, githubFailureToFlow } from '../github';
-import { getPrimaryLink, VALIDATED_PR_ARTIFACT_KEY } from '../primary-link';
+import { getPrimaryLink, samePrLink, VALIDATED_PR_ARTIFACT_KEY } from '../primary-link';
 
 /**
  * `pr_ready` — the coder→reviewer handoff gate. The PR must be OPEN, MERGEABLE,
@@ -48,7 +48,7 @@ export const prReadyHook: Hook = {
             'to bind it to.',
         };
       }
-      if (supplied !== primary) {
+      if (supplied === undefined || !samePrLink(supplied, primary)) {
         return {
           flow: 'stop',
           reason:
@@ -114,7 +114,7 @@ export const prReadyHook: Hook = {
     // (a legitimate revision replacing a closed/unmerged PR); if it is still
     // OPEN, the reviewed identity stands — stop.
     const validated = getPrimaryLink(ctx);
-    if (validated && validated !== link) {
+    if (validated && !samePrLink(validated, link)) {
       const prior = await ghGetPr(ctx, validated);
       if (!prior.ok) return githubFailureToFlow(prior);
       if (prior.data.state === 'OPEN') {

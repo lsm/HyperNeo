@@ -357,6 +357,25 @@ export class WorkflowHookEngine {
   }
 
   /**
+   * Next retry bookkeeping for a hook: the incremented attempt count and the
+   * cooldown deadline `retryAfterMs` from now. Used by the wrapper's
+   * non-send_message retry path, where no engine timer paces the agent's
+   * manual re-attempts — the persisted count is what makes MAX_RETRY_ATTEMPTS
+   * eventually convert a retry loop to a terminal stop.
+   */
+  nextRetryBookkeeping(
+    hookId: string,
+    retryAfterMs: number
+  ): {
+    retryCount: number;
+    nextRetryAt: number;
+  } {
+    const current =
+      this.config.hookStateRepo.get(this.config.workflowRunId, hookId)?.retryCount ?? 0;
+    return { retryCount: current + 1, nextRetryAt: Date.now() + retryAfterMs };
+  }
+
+  /**
    * Execute the hook chain for an MCP action.
    */
   async executeAction(
@@ -426,14 +445,38 @@ export class WorkflowHookEngine {
           break;
         }
         // Consume the one-shot approval (undefined values are dropped by JSON
-        // serialization, clearing the keys under the repo's deep-merge).
-        this.persistStateUpdate(hookId, {
+        // serialization, clearing the keys under the repo's deep-merge). The
+        // consume-write must land BEFORE the gate is skipped: if it loses a
+        // version race (concurrent retry-timer fire or a second approveHook),
+        // the persisted flag would still be set and every later action would
+        // skip the hook — a one-shot approval silently becoming a standing
+        // bypass. Fail closed instead and let the operator re-approve.
+        const consumed = this.persistStateUpdate(hookId, {
           localState: {
             humanApproved: undefined,
             humanApprovedAt: undefined,
             humanRejectionReason: undefined,
           },
         });
+        if (!consumed) {
+          log.warn(
+            `Failed to consume human approval for hook "${hookId}" (state write conflict); blocking.`
+          );
+          terminal = {
+            kind: 'stop',
+            hookId,
+            reason:
+              'Human approval could not be recorded (state conflict). The hook still applies — ' +
+              'approve it again and retry.',
+          };
+          executionLog.push({
+            hookId,
+            flow: 'stop',
+            reason: terminal.reason,
+            timestamp: Date.now(),
+          });
+          break;
+        }
         executionLog.push({
           hookId,
           flow: 'continue',
@@ -877,13 +920,14 @@ export class WorkflowHookEngine {
       const repo = this.config.artifactRepo;
       const recent = repo?.listRecentByRun(this.config.workflowRunId, 50) ?? [];
       const seenKeys = new Set(recent.map((a) => `${a.nodeId}:${a.artifactType}:${a.artifactKey}`));
+      // Reserved (`__`-prefixed) stamps, bounded SQL-side via a key-prefix
+      // filter instead of loading every link artifact on the hot path.
       const reserved = (
-        repo?.listByRun(this.config.workflowRunId, { artifactType: 'link' }) ?? []
-      ).filter(
-        (a) =>
-          a.artifactKey.startsWith('__') &&
-          !seenKeys.has(`${a.nodeId}:${a.artifactType}:${a.artifactKey}`)
-      );
+        repo?.listByRun(this.config.workflowRunId, {
+          artifactType: 'link',
+          artifactKeyPrefix: '__',
+        }) ?? []
+      ).filter((a) => !seenKeys.has(`${a.nodeId}:${a.artifactType}:${a.artifactKey}`));
       return [...recent, ...reserved].map((a: WorkflowRunArtifact) => ({
         artifactType: a.artifactType,
         artifactKey: a.artifactKey,
@@ -1532,10 +1576,19 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
         });
       }
 
-      // Non-send_message retry: surface a retryable error to the agent.
+      // Non-send_message retry: surface a retryable error to the agent. Unlike
+      // the queued send_message path there is no engine timer, so the BLOCKING
+      // hook's bookkeeping must persist here — increment the count and keep a
+      // cooldown — or repeated manual attempts hit GitHub immediately forever
+      // and MAX_RETRY_ATTEMPTS never observes a nonzero count.
+      const blockingHookId = outcome.blockingHookId;
       for (const [hookId, patch] of byHook) {
-        patch.retryCount = 0;
-        patch.nextRetryAt = null;
+        if (hookId === blockingHookId) {
+          Object.assign(patch, engine.nextRetryBookkeeping(hookId, retryAfterMs));
+        } else {
+          patch.retryCount = 0;
+          patch.nextRetryAt = null;
+        }
         if (!engine.persistStateUpdate(hookId, patch)) {
           log.warn(`Failed to persist hook state for ${hookId} on retry`);
         }

@@ -72,7 +72,7 @@ export class WorkflowRunArtifactRepository {
   /** List artifacts for a run, optionally filtered by nodeId and/or artifactType. */
   listByRun(
     runId: string,
-    filters?: { nodeId?: string; artifactType?: string }
+    filters?: { nodeId?: string; artifactType?: string; artifactKeyPrefix?: string }
   ): WorkflowRunArtifactRecord[] {
     let sql = 'SELECT * FROM workflow_run_artifacts WHERE run_id = ?';
     const params: string[] = [runId];
@@ -84,6 +84,12 @@ export class WorkflowRunArtifactRepository {
     if (filters?.artifactType) {
       sql += ' AND artifact_type = ?';
       params.push(filters.artifactType);
+    }
+    if (filters?.artifactKeyPrefix !== undefined) {
+      // GLOB (not LIKE) so `_` in the prefix is literal, not a wildcard —
+      // the engine's reserved namespace is exactly `__`-prefixed keys.
+      sql += ' AND artifact_key GLOB ?';
+      params.push(`${filters.artifactKeyPrefix}*`);
     }
     sql += ' ORDER BY created_at ASC';
 

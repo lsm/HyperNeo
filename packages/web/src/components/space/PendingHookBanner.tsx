@@ -17,8 +17,6 @@ import { useRunHookStates, type HookBannerSummary } from './use-run-hook-states'
 interface PendingHookBannerProps {
   runId: string;
   spaceId: string;
-  /** Workflow ID for the run; used to resolve hook definitions. */
-  workflowId: string | null;
   summaries?: HookBannerSummary[];
   fetchError?: string | null;
   retry?: () => void;
@@ -27,14 +25,12 @@ interface PendingHookBannerProps {
 export function PendingHookBanner({
   runId,
   spaceId: _spaceId,
-  workflowId,
   summaries: providedSummaries,
   fetchError: providedFetchError,
   retry: providedRetry,
 }: PendingHookBannerProps) {
   const fallbackHookStates = useRunHookStates(
-    providedSummaries === undefined && providedFetchError === undefined ? runId : null,
-    workflowId
+    providedSummaries === undefined && providedFetchError === undefined ? runId : null
   );
   const summaries = providedSummaries ?? fallbackHookStates.summaries;
   const fetchError = providedFetchError ?? fallbackHookStates.fetchError;
