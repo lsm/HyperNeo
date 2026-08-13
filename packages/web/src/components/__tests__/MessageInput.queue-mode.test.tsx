@@ -428,4 +428,45 @@ describe('MessageInput queue mode', () => {
 
     expect(container.querySelector('[data-testid="queue-overlay"]')).toBeNull();
   });
+
+  it('discards a stale queue refresh that resolves after the target switches', async () => {
+    // Race guard: a previous session's in-flight byStatus must NOT repopulate
+    // the trays after the composer switches targets — otherwise the stale
+    // queue shows under the new target and its actions bind to the empty id.
+    let resolveSession1Refresh: (value: { messages: Array<Record<string, unknown>> }) => void;
+    const session1Pending = new Promise<{ messages: Array<Record<string, unknown>> }>((resolve) => {
+      resolveSession1Refresh = resolve;
+    });
+    mockRequest.mockImplementation(async (_method: string, payload: { sessionId?: string }) => {
+      if (payload?.sessionId === 'session-1') return session1Pending;
+      return { messages: [] }; // session-2 has no queued messages
+    });
+
+    const { container, rerender } = render(<MessageInput sessionId="session-1" onSend={vi.fn()} />);
+    // Let the session-1 refresh dispatch (it stays pending).
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Switch targets before session-1's refresh resolves.
+    rerender(<MessageInput sessionId="session-2" onSend={vi.fn()} />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Now the stale session-1 refresh resolves with a deferred message.
+    await act(async () => {
+      resolveSession1Refresh!({
+        messages: [
+          { dbId: 'stale', uuid: 'u', timestamp: 1, status: 'deferred', text: 'stale next' },
+        ],
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // The stale session-1 queue must NOT surface under session-2.
+    expect(container.querySelector('[data-testid="queue-overlay"]')).toBeNull();
+  });
 });

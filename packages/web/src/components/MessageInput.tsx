@@ -598,19 +598,29 @@ export default function MessageInput({
       return;
     }
 
+    // Capture the targeted session at dispatch time. A previous target's
+    // byStatus requests can still be in flight when the composer switches
+    // sessions (e.g. to a not-yet-started agent); without this guard their
+    // late response repopulates the trays with the wrong session's queue and
+    // their actions bind to the now-empty session id. Discard responses whose
+    // targeted session is no longer current.
+    const targetSessionId = sessionId;
     try {
       const [enqueuedResponse, deferredResponse] = (await Promise.all([
         hub.request('session.messages.byStatus', {
-          sessionId,
+          sessionId: targetSessionId,
           status: 'enqueued',
           limit: 100,
         }),
         hub.request('session.messages.byStatus', {
-          sessionId,
+          sessionId: targetSessionId,
           status: 'deferred',
           limit: 100,
         }),
       ])) as [{ messages?: QueuePreviewMessage[] }, { messages?: QueuePreviewMessage[] }];
+      if (sessionIdRef.current !== targetSessionId) {
+        return;
+      }
       setQueuedForCurrentTurn(enqueuedResponse.messages ?? []);
       setQueuedForNextTurn(deferredResponse.messages ?? []);
     } catch {
