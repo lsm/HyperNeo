@@ -724,7 +724,16 @@ else
 		         -e 's/--coverage(=[^[:space:]]+)?//g' \
 		         -e 's/--color//g' -e 's/--no-color//g' \
 		| tr -d "[:space:]'")
-	if [ -n "$_oextra" ]; then
+	# Coverage disabling: --coverage.enabled=false silently produces no LCOV report,
+	# and the Coveralls upload has fail-on-error:false, so the shard disappears from
+	# coverage results without failing CI.
+	if printf '%s' "$_online_main" | grep -qF 'coverage.enabled=false'; then
+		err "main.yml online runner disables coverage (coverage.enabled=false) — no LCOV report, shard disappears from coverage results without failing CI"
+		echo "     → remove coverage.enabled=false" >&2
+	elif [ "$(printf '%s' "$_online_main" | grep -oF 'vitest run' | wc -l | tr -d ' ')" -gt 1 ]; then
+		err "main.yml online runner has multiple 'vitest run' invocations — the first could exit 0 (e.g. --help), so the fallback never executes"
+		echo "     → use exactly one 'vitest run' invocation" >&2
+	elif [ -n "$_oextra" ]; then
 		err "main.yml online runner has a selection flag or extra arg after 'vitest run' — e.g. --exclude=<glob>/--testNamePattern would omit files while the ownership walk reports them covered"
 		echo "     → keep only \${{ matrix.test_path }} plus --config/--coverage*/--reporter/--outputFile.* flags" >&2
 	fi
@@ -1040,7 +1049,7 @@ _dir_overlap=$(printf '%s\n' "$_module_values" "$_real_module_values" \
 			for (i=1;i<=NR;i++) for (j=1;j<=NR;j++) {
 				if (i==j) continue
 				a=vals[i]; b=vals[j]
-				if (index(b, a "/") == 1 || index(b, a "-") == 1) print a " > " b
+				if (index(b, a) == 1) print a " > " b
 			}
 		}
 	')
