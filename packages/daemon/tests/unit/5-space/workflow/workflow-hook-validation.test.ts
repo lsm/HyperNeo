@@ -153,10 +153,19 @@ describe('validateWorkflowHookBindings', () => {
     // omit it (a targetNode there would never match). Each method uses a
     // DISTINCT hook id (one placement per id).
     const bindings = methods.map((method, i) => {
-      const binding = validBinding({ method, order: i, hookId: `hook-${method}` });
+      const binding = validBinding({
+        method,
+        order: i,
+        // Distinct but RESOLVABLE ids: pr_ready exists; the others are
+        // declared custom hooks below.
+        hookId: method === 'send_message' ? 'pr_ready' : `custom-${method}`,
+      });
       return method === 'send_message' ? binding : { ...binding, targetNode: undefined };
     });
-    expect(validateWorkflowHookBindings(bindings, undefined, nodes)).toEqual([]);
+    const customHooks = methods
+      .filter((m) => m !== 'send_message')
+      .map((m) => ({ ...validCustomHook(), id: `custom-${m}` }));
+    expect(validateWorkflowHookBindings(bindings, customHooks, nodes)).toEqual([]);
   });
 
   test('rejects the same hook id placed on two bindings (shared state row)', () => {
