@@ -279,7 +279,9 @@ export class HandoffExecutor {
       }
     }
 
-    const transitionKey = `${sourceNode.id}/${transition.id}`;
+    // Encode both parts so a literal '/' inside a node/transition id can't
+    // collide with the delimiter (transition ids are free-form strings).
+    const transitionKey = `${encodeURIComponent(sourceNode.id)}/${encodeURIComponent(transition.id)}`;
     const cyclic = isCyclicHandoff(workflow, fromNodeName, targets.nodes);
     const maxCycles = transition.maxCycles;
     const cycleLimited = cyclic && typeof maxCycles === 'number' && maxCycles > 0;
@@ -543,6 +545,7 @@ export class HandoffExecutor {
       hookLocalState: {},
       currentArtifacts: [],
       permittedExternalLookups: [],
+      templateData: hook.templateData,
     };
 
     try {
@@ -605,12 +608,13 @@ export class HandoffExecutor {
           e.agentName === agentName &&
           e.agentSessionId &&
           e.agentSessionId !== fromSessionId &&
-          // Exclude stale executions: a pending/cancelled row can retain a dead
-          // agentSessionId (e.g. after a spawn retry); injecting into it would
-          // skip activation and hit a failed session. Mirrors the production
-          // activation path's status filter.
-          e.status !== 'pending' &&
-          e.status !== 'cancelled'
+          // Only treat genuinely-live execution statuses as having a usable
+          // session. pending/cancelled/done/blocked/waiting_rebind rows may
+          // retain a dead agentSessionId (spawn retry, terminal, etc.);
+          // selecting them would inject into a dead session instead of letting
+          // activation spawn/reactivate a live one. idle agents keep live
+          // sessions (see space-runtime-idle-not-terminal).
+          (e.status === 'in_progress' || e.status === 'idle')
       );
 
     for (const agentName of targetSlots) {
