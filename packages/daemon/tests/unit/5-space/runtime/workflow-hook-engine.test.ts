@@ -9,6 +9,8 @@
  * is ever run — custom hooks are also what user-authored workflows use.
  */
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { spawn as nodeSpawn } from 'node:child_process';
+import { Readable } from 'node:stream';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository';
@@ -17,6 +19,38 @@ import { WorkflowHookEngine } from '../../../../src/lib/space/runtime/workflow-h
 import type { HookActionMeta } from '../../../../src/lib/space/runtime/workflow-hook-engine';
 import { createSpaceTables } from '../../helpers/space-test-db.ts';
 import type { CustomHook, HookArtifact, SpaceWorkflow } from '@hyperneo/shared';
+
+// Under Vitest/Node there is no global `Bun`, and the engine's script-hook
+// runner calls `Bun.spawn` at call time (same situation as the dialog-handlers
+// tests). Install a child_process-backed stand-in exposing the surface the
+// engine touches (stdout/stderr streams, `exited` promise, `kill`); under
+// `bun test` the real global is left untouched.
+if (typeof (globalThis as Record<string, unknown>).Bun === 'undefined') {
+  (globalThis as Record<string, unknown>).Bun = {
+    spawn: (args: string[], opts: { cwd?: string; env?: Record<string, string> }): unknown => {
+      const child = nodeSpawn(args[0], args.slice(1), {
+        cwd: opts?.cwd,
+        env: opts?.env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      return {
+        // The engine collects Bun-style WEB ReadableStreams; convert Node's.
+        stdout: child.stdout ? Readable.toWeb(child.stdout) : null,
+        stderr: child.stderr ? Readable.toWeb(child.stderr) : null,
+        exited: new Promise<number>((resolve) => {
+          child.on('exit', (code) => resolve(code ?? -1));
+        }),
+        kill: (signal?: string) => {
+          try {
+            child.kill(signal ?? 'SIGKILL');
+          } catch {
+            /* already exited */
+          }
+        },
+      };
+    },
+  };
+}
 
 function scriptHook(id: string, body: string, timeoutMs?: number): CustomHook {
   return {
