@@ -7310,22 +7310,23 @@ export class SpaceRuntime {
       const isRuntimeNagMessage =
         lastMessage?.type === 'user' && lastMessage.dbId === state.lastRuntimeNagMessageId;
       const progressMessage = lastMessage && !isRuntimeNagMessage ? lastMessage : null;
-      // Use the NEWEST applicable progress timestamp, not a ??-chain: once
-      // lastActivityAt is set it must not shadow a MORE RECENT SDK message (or
-      // vice versa), or the detector could nag/restart an agent that just made
-      // progress. lastActivityAt captures tool/message/commit activity that the
-      // SDK-message timestamp misses; take the max of every available signal
-      // and fall back to the runtime's last action (or now) only when none is
-      // present.
-      const progressCandidates = [
-        execution.lastActivityAt,
-        progressMessage?.timestamp,
-        execution.startedAt,
-      ].filter((t): t is number => typeof t === 'number');
+      // Use the NEWEST PROGRESS timestamp, not a ??-chain: once lastActivityAt
+      // is set it must not shadow a MORE RECENT SDK message (or vice versa), or
+      // the detector could nag/restart an agent that just made progress.
+      // lastActivityAt captures tool/message/commit activity that the SDK-message
+      // timestamp misses; take the max of the progress signals only.
+      // `startedAt` is deliberately EXCLUDED from the max — it is a session-
+      // lifecycle marker (re-stamped on restart/recovery), not progress, so
+      // including it would let a freshly-(re)started-but-still-stuck agent look
+      // fresh and suppress its restart. It remains a fallback for a brand-new
+      // session that has produced no progress signal yet.
+      const progressSignals = [execution.lastActivityAt, progressMessage?.timestamp].filter(
+        (t): t is number => typeof t === 'number'
+      );
       const observedAt =
-        progressCandidates.length > 0
-          ? Math.max(...progressCandidates)
-          : (state.lastActionAt ?? now);
+        progressSignals.length > 0
+          ? Math.max(...progressSignals)
+          : (execution.startedAt ?? state.lastActionAt ?? now);
       const thresholdMs = this.getAgentNoProgressThresholdMs(workflow, execution);
 
       if (state.lastSessionId !== execution.agentSessionId) {
@@ -8768,17 +8769,19 @@ export class SpaceRuntime {
         }
       }
 
-      // Newest applicable progress timestamp — see handleAliveStuckExecutions
-      // for why this is a max rather than a ??-chain (a stale lastActivityAt
-      // must not shadow a newer SDK message).
-      const progressCandidates = [
+      // Newest PROGRESS timestamp — see handleAliveStuckExecutions for why this
+      // is a max over progress signals only (a stale lastActivityAt must not
+      // shadow a newer SDK message; startedAt is a lifecycle marker excluded
+      // from the max and used only as a fallback).
+      const progressSignals = [
         execution.lastActivityAt,
         state.lastObservedProgressMessageAt,
         progressMessage?.timestamp,
-        execution.startedAt,
       ].filter((t): t is number => typeof t === 'number');
       const observedAt =
-        progressCandidates.length > 0 ? Math.max(...progressCandidates) : Date.now();
+        progressSignals.length > 0
+          ? Math.max(...progressSignals)
+          : (execution.startedAt ?? Date.now());
       const thresholdMs = workflow
         ? this.getAgentNoProgressThresholdMs(workflow, execution)
         : (this.config.agentNoProgressThresholdMs ?? DEFAULT_AGENT_NO_PROGRESS_THRESHOLD_MS);
