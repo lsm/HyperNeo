@@ -16,7 +16,10 @@ import {
   type HookActionMeta,
   type HookActionOutcome,
 } from '../../../../src/lib/space/runtime/workflow-hook-engine';
-import { HookExecutor } from '../../../../src/lib/space/runtime/hook-executor';
+import {
+  HookExecutor,
+  type HookExecutorContext,
+} from '../../../../src/lib/space/runtime/hook-executor';
 import type {
   WorkflowHook,
   WorkflowHookResult,
@@ -2396,6 +2399,121 @@ describe('WorkflowHookEngine.runDeclaredHook', () => {
       (u) => u.hookId === PR_READY_VALIDATED_IDENTITY_HOOK_ID
     );
     expect(identityUpdate?.state.pr_url).toBe('https://github.com/o/r/pull/2');
+  });
+
+  test('builds the rich validator context on the handoff path (#4/#5)', async () => {
+    // Capture the context the engine builds and hands to the executor. This
+    // locks in that runDeclaredHook routes through buildExecutorContext — so
+    // taskStatus / frozenPrUrl / permittedExternalLookups are populated on the
+    // handoff path, not the hardcoded empty values the old direct-HookExecutor
+    // handoff path passed. If runDeclaredHook stopped using buildExecutorContext,
+    // this test fails.
+    const hook = makeHook({
+      id: 'hook-pr-ready',
+      method: 'handoff',
+      sourceNode: 'Coding',
+      validator: { kind: 'built_in', id: 'pr_ready' },
+      authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+    });
+    // Pre-seed the reserved pr_ready-identity row the engine reads for frozenPrUrl.
+    const states = new Map<
+      string,
+      {
+        version: number;
+        localState: Record<string, unknown>;
+        retryCount: number;
+        nextRetryAt: number | null;
+      }
+    >();
+    states.set(`run-1:${PR_READY_VALIDATED_IDENTITY_HOOK_ID}`, {
+      version: 0,
+      localState: { pr_url: 'https://github.com/o/r/pull/9' },
+      retryCount: 0,
+      nextRetryAt: null,
+    });
+    const hookStateRepo = makeMockHookStateRepo(states);
+
+    let captured: HookExecutorContext | undefined;
+    const capturingExecutor = {
+      execute: async (_hook: WorkflowHook, context: HookExecutorContext) => {
+        captured = context;
+        return { result: { type: 'allow' as const } };
+      },
+    } as unknown as HookExecutor;
+
+    const engine = new WorkflowHookEngine({
+      workflow: makeWorkflow([hook]),
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: makeMockNodeExecutionRepo(),
+      artifactRepo: makeMockArtifactRepo(),
+      hookStateRepo,
+      hookExecutor: capturingExecutor,
+      workspacePath: '/tmp',
+      getTaskStatus: () => 'approved',
+    });
+
+    await engine.runDeclaredHook(
+      'hook-pr-ready',
+      'handoff',
+      { target: 'Review', summary: 'go', data: { pr_url: 'https://github.com/o/r/pull/9' } },
+      defaultMeta
+    );
+
+    expect(captured).toBeDefined();
+    // #4: task phase + frozen reviewed-PR identity flow into the context.
+    expect(captured?.taskStatus).toBe('approved');
+    expect(captured?.frozenPrUrl).toBe('https://github.com/o/r/pull/9');
+    // #5: permittedExternalLookups is DERIVED from the pr_ready validator's
+    // connector deps — not the empty list the old handoff path hardcoded.
+    expect(captured?.permittedExternalLookups.length).toBeGreaterThan(0);
+    expect(captured?.workspacePath).toBe('/tmp');
+  });
+
+  test('strips a patched target on the handoff path (no target bypass)', async () => {
+    // methodHasRoutableTarget('handoff') must strip a hook's attempt to redirect
+    // the handoff target. The patch tries to change target AND summary; the
+    // target change is dropped, the summary change applies.
+    const hook = makeHook({ id: 'hook-1', method: 'handoff' });
+    const { engine, mockExecutor } = makeEngine([hook]);
+    mockExecutor.setResult('hook-1', {
+      type: 'patch_params',
+      patch: { target: 'Qa', summary: 'patched' },
+    });
+
+    const outcome = await engine.runDeclaredHook(
+      'hook-1',
+      'handoff',
+      { target: 'Review', summary: 'go' },
+      defaultMeta
+    );
+
+    // The target patch was stripped → target unchanged; summary patched.
+    expect(outcome.finalParams.target).toBe('Review');
+    expect(outcome.finalParams.summary).toBe('patched');
+    // A patch applied (summary) so the decision is still patch_params.
+    expect(outcome.decision).toBe('patch_params');
+  });
+
+  test('validates patched handoff params against HandoffSchema', async () => {
+    // handoff is in METHOD_PARAM_SCHEMAS, so a patch producing invalid handoff
+    // params (empty summary) is rejected — defense-in-depth on top of the
+    // executor's per-field type guards.
+    const hook = makeHook({ id: 'hook-1', method: 'handoff' });
+    const { engine, mockExecutor } = makeEngine([hook]);
+    mockExecutor.setResult('hook-1', {
+      type: 'patch_params',
+      patch: { summary: '' },
+    });
+
+    const outcome = await engine.runDeclaredHook(
+      'hook-1',
+      'handoff',
+      { target: 'Review', summary: 'go' },
+      defaultMeta
+    );
+
+    expect(outcome.decision).toBe('block');
+    expect(outcome.userState.reason).toContain('Patched params invalid');
   });
 });
 

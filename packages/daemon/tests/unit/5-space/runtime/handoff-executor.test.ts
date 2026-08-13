@@ -1033,6 +1033,40 @@ describe('HandoffExecutor: node-scoped delivery', () => {
 
     expect(activations).toEqual([{ agentName: 'reviewer', nodeId: 'n-review' }]);
   });
+
+  test('node-scoped idempotency: two same-named slots across nodes queue as distinct rows', async () => {
+    // A broadcast to two nodes that share the 'reviewer' slot name, both
+    // offline, must produce TWO distinct queued rows — the node id in the
+    // idempotency-key tuple prevents cross-node dedup (same agentName + same
+    // envelope would otherwise collapse to one row, and the survivor would be
+    // drained by whichever node wakes first).
+    const workflow = makeWorkflow({
+      nodes: [
+        node('n-coding', 'coding', 'coder', [{ id: 'broadcast', target: '*' }]),
+        node('n-review', 'review', 'reviewer'),
+        node('n-qa', 'qa', 'reviewer'),
+      ],
+    });
+    const executor = makeExecutor(ctx, workflow, {
+      pendingMessageRepo: ctx.pendingMessageRepo,
+      activateTargetSession: async () => [], // never activates → both queue
+    });
+
+    const result = await executor.execute({
+      fromAgentName: 'coder',
+      fromSessionId: 'session-coder',
+      workflowNodeId: 'n-coding',
+      operation: { target: '*', summary: 'broadcast to reviewers' },
+    });
+
+    expect(result.status).toBe('queued');
+    expect(result.queued).toHaveLength(2);
+    // listPendingForTarget with no nodeId returns rows for the shared slot name
+    // across the whole run — there must be two, one per node.
+    const rows = ctx.pendingMessageRepo.listPendingForTarget(ctx.runId, 'reviewer');
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.workflowNodeId).sort()).toEqual(['n-qa', 'n-review']);
+  });
 });
 
 describe('HandoffExecutor: hook patch_params', () => {

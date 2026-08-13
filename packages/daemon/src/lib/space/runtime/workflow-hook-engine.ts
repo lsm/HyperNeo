@@ -36,6 +36,7 @@ import { Logger } from '../../logger';
 import { parseAddress } from '../../../../../messaging/src/address';
 import {
   SendMessageSchema,
+  HandoffSchema,
   SaveArtifactSchema,
   CreateStandaloneTaskSchema,
 } from '../tools/node-agent-tool-schemas';
@@ -248,6 +249,7 @@ const MAX_ARTIFACTS_ARRAY_BYTES = 65_536;
 
 const METHOD_PARAM_SCHEMAS: Record<string, import('zod').ZodType<unknown>> = {
   send_message: SendMessageSchema,
+  handoff: HandoffSchema,
   save_artifact: SaveArtifactSchema,
   create_standalone_task: CreateStandaloneTaskSchema,
   approve_task: ApproveTaskSchema,
