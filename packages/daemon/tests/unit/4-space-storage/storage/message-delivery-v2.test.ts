@@ -1238,18 +1238,31 @@ describe('message-delivery v2 — steer park bound (dead-letter after MAX_STEER_
     });
 
     let current = steerJob(repo, 'msg-gate-open');
-    // Park well past the budget — every attempt still parks (no dead-letter).
+    // Park well past the budget — every attempt still parks (no dead-letter),
+    // and the gate-open requeue does NOT charge the park budget (plain requeue,
+    // not requeueParked), so the count stays 0 for a fresh window once the gate
+    // resolves (a long-open choice must not dead-letter the first post-
+    // resolution pass).
     for (let i = 0; i < MAX_STEER_PARKS + 5; i++) {
       const result = await handler(current);
       expect(result).toMatchObject({ parked: 'turn_blocked_gate_open' });
       expect(repo.getJob(current.id)?.retryCount).toBe(0);
+      expect(repo.getParkCount(current.id)).toBe(0);
       db.prepare(`UPDATE job_queue SET run_at = 0 WHERE id = ?`).run(current.id);
       const [next] = repo.dequeue(MESSAGE_DELIVERY, 1);
       expect(next).toBeTruthy();
       current = next!;
     }
-    // Once the gate resolves, the bound applies again → dead-letter.
+    // Once the gate resolves, the bound applies again from a clean count → the
+    // steer gets its full park budget before dead-lettering.
     session.waitingForInput = false;
+    for (let i = 0; i < MAX_STEER_PARKS; i++) {
+      const result = await handler(current);
+      expect(result).toMatchObject({ parked: 'turn_blocked' });
+      db.prepare(`UPDATE job_queue SET run_at = 0 WHERE id = ?`).run(current.id);
+      const [next] = repo.dequeue(MESSAGE_DELIVERY, 1);
+      current = next!;
+    }
     await expect(handler(current)).rejects.toThrow(/parked past its budget/);
   });
 });

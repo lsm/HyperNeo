@@ -1970,14 +1970,17 @@ export class SDKMessageRepository {
   }
 
   /**
-   * The subtype of the first NON-success terminal `result` after the message
-   * identified by `uuid` (e.g. `error_max_budget_usd`), or null when none
-   * exists. Companion of {@link hasTerminalResultAfter}: the bridge uses it to
-   * classify a turn that ended in an error result — the SDK persists such
+   * The subtype of the MOST RECENT NON-success terminal `result` after the
+   * message identified by `uuid` (e.g. `error_max_budget_usd`), or null when
+   * none exists. Companion of {@link hasTerminalResultAfter}: the bridge uses
+   * it to classify a turn that ended in an error result — the SDK persists such
    * results WITHOUT emitting `session.error`, so without this lookup a terminal
    * error result (budget/limit exhaustion) would be treated as a recoverable
-   * no-result stall and retried, repeating spend. Ordering semantics are
-   * identical to {@link hasTerminalResultAfter}.
+   * no-result stall and retried, repeating spend. MOST RECENT because retries
+   * do not restamp the user row's consumed_seq, so error results from every
+   * attempt are in range — the latest attempt's outcome is the one to classify
+   * (an initial `error_during_execution` followed by `error_max_budget_usd`
+   * must dead-letter, not keep retrying). (Codex review.)
    */
   getErrorTerminalResultSubtypeAfter(sessionId: string, uuid: string): string | null {
     const row = this.db
@@ -1995,7 +1998,7 @@ export class SDKMessageRepository {
               SELECT m.consumed_seq FROM sdk_messages m
                WHERE m.session_id = ? AND m.sdk_uuid = ? LIMIT 1
             )
-          ORDER BY r.consumed_seq ASC
+          ORDER BY r.consumed_seq DESC
           LIMIT 1`
       )
       .get(sessionId, sessionId, uuid) as { subtype: string | null } | undefined | null;

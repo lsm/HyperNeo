@@ -274,7 +274,15 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
         );
       }
       const retryAt = Date.now() + MESSAGE_DELIVERY_PARK_MS;
-      deps.jobQueue.requeueParked(job.id, retryAt, job.claimToken);
+      if (waitingForInput) {
+        // Gate-open re-park uses plain requeue so the open gate does not CHARGE
+        // the park budget: a long-open choice must not accumulate __parkCount
+        // past the cap (or past the ACP acceptance budget) and dead-letter the
+        // steer on its first post-resolution pass. (Codex review.)
+        deps.jobQueue.requeue(job.id, retryAt, job.claimToken);
+      } else {
+        deps.jobQueue.requeueParked(job.id, retryAt, job.claimToken);
+      }
       return { parked: waitingForInput ? 'turn_blocked_gate_open' : 'turn_blocked', retryAt };
     }
     if (result.outcome === 'awaiting_acceptance') {

@@ -1790,6 +1790,29 @@ describe('SDKMessageRepository', () => {
       expect(repository.getErrorTerminalResultSubtypeAfter('session-1', 'msg-none')).toBeNull();
     });
 
+    it('getErrorTerminalResultSubtypeAfter classifies the LATEST attempt outcome (Codex review)', () => {
+      // Retries do not restamp the user row's consumed_seq, so error results
+      // from every attempt are in range — an initial retryable error followed
+      // by a terminal one must classify terminal, not keep the oldest subtype.
+      insertMessage('session-1', 'user', {
+        uuid: 'msg-multi',
+        timestamp: '2026-08-11T15:28:00.000Z',
+      });
+      insertMessage('session-1', 'result', {
+        timestamp: '2026-08-11T15:28:53.000Z',
+        terminal: true,
+        subtype: 'error_during_execution',
+      });
+      insertMessage('session-1', 'result', {
+        timestamp: '2026-08-11T15:29:53.000Z',
+        terminal: true,
+        subtype: 'error_max_budget_usd',
+      });
+      expect(repository.getErrorTerminalResultSubtypeAfter('session-1', 'msg-multi')).toBe(
+        'error_max_budget_usd'
+      );
+    });
+
     it('ignores NESTED subagent results when detecting turn completion (P1)', () => {
       // A subagent result carries a non-null parent_tool_use_id. If the daemon
       // crashes after the subagent finishes but before the outer turn ends, that

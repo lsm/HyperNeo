@@ -1359,10 +1359,11 @@ export function setupSessionHandlers(
       return { retried: false };
     }
 
-    // Roll the row back to `failed` if creating its new delivery owner throws,
-    // mirroring the ordinary-chat enqueue path's atomicity. Otherwise the row is
-    // left `enqueued` with no active job and no Retry button until an orphan-
-    // reconciler pass repairs it (Codex #6).
+    // Roll the row back to `failed` if anything after the reopen throws — the
+    // status broadcast OR creating the new delivery owner — mirroring the
+    // ordinary-chat enqueue path's atomicity. Otherwise the row is left
+    // `enqueued` with no active job and no Retry button until an orphan-
+    // reconciler pass repairs it (Codex #6 + review).
     const rollbackToFailed = async () => {
       const rolledBack = db
         .getSDKMessageRepo()
@@ -1376,13 +1377,16 @@ export function setupSessionHandlers(
       }
     };
 
-    await internalEventBus.publish('messages.statusChanged', {
-      sessionId: targetSessionId,
-      messageIds: [reopenedId],
-      status: 'enqueued',
-    });
-
     try {
+      // Inside the protected block: a rejecting messages.statusChanged
+      // subscriber throws AFTER the failed→enqueued flip but before the job
+      // exists — it must roll the row back too, not strand it (Codex review).
+      await internalEventBus.publish('messages.statusChanged', {
+        sessionId: targetSessionId,
+        messageIds: [reopenedId],
+        status: 'enqueued',
+      });
+
       if (isMessageDeliveryV2Enabled()) {
         await deliverAndMarkQueued({
           jobQueue: db.getJobQueueRepo(),
