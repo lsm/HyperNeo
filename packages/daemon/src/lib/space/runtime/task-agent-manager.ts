@@ -1661,6 +1661,12 @@ export class TaskAgentManager {
     // be delivered to the merger.
     const drainWorkflowNodeId = execution?.workflowNodeId ?? null;
     const executionless = !execution;
+    // Drain the bare agent name (new bare+workflowNodeId rows and legacy bare
+    // null-node rows) plus the legacy "<nodeName>/<agent>" compound form. The
+    // "<nodeId>/<agent>" alias is intentionally NOT drained here: the router now
+    // emits bare+workflowNodeId (so node-id compounds are no longer produced),
+    // and matching that alias against null-node rows misdelivered messages whose
+    // bare slot name happened to equal "<nodeId>/<agent>".
     const queueTargetNames = [
       targetAgentName,
       ...(workflowNodeName ? [`${workflowNodeName}/${targetAgentName}`] : []),
@@ -1668,7 +1674,7 @@ export class TaskAgentManager {
     const seenIds = new Set<string>();
     const pending = queueTargetNames
       .flatMap((targetName) =>
-        drainWorkflowNodeId
+        drainWorkflowNodeId != null
           ? repo.listPendingForTarget(workflowRunId, targetName, drainWorkflowNodeId)
           : repo.listPendingForTarget(workflowRunId, targetName)
       )
@@ -5113,8 +5119,15 @@ export class TaskAgentManager {
       //      workflow node stranded in `pending` state would otherwise queue
       //      forever. `activateNode` is idempotent so this is safe regardless
       //      of the existing row's status.
-      onMessageQueued: (targetAgentName) => {
-        void this.tryResumeNodeAgentSession(workflowRunId, targetAgentName).catch((err) => {
+      onMessageQueued: (targetAgentName, queuedWorkflowNodeId) => {
+        // The router now passes the BARE slot name (+ resolved node id); the
+        // compound form never matched a declared agent, so lazy activation was a
+        // no-op for @worker queues before.
+        void this.tryResumeNodeAgentSession(
+          workflowRunId,
+          targetAgentName,
+          queuedWorkflowNodeId
+        ).catch((err) => {
           log.warn(
             `AgentMessageRouter.onMessageQueued: tryResumeNodeAgentSession failed for "${targetAgentName}": ${err instanceof Error ? err.message : String(err)}`
           );
@@ -5127,6 +5140,7 @@ export class TaskAgentManager {
           void this.ensureWorkflowNodeActivationForAgent(taskId, targetAgentName, {
             reopenReason: `node-agent send_message to lazily activate "${targetAgentName}"`,
             reopenBy: `agent:${agentName}`,
+            workflowNodeId: queuedWorkflowNodeId,
           }).catch((err) => {
             log.warn(
               `AgentMessageRouter.onMessageQueued: ensureWorkflowNodeActivationForAgent failed for "${targetAgentName}": ${err instanceof Error ? err.message : String(err)}`

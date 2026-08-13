@@ -8303,6 +8303,27 @@ export class SpaceRuntime {
           );
           if (remainingForGroup.length === 0) continue;
 
+          // Resolve the target and rescope legacy compound / null-scoped rows to
+          // the pinned bare form (bare agent + resolved node id) BEFORE the
+          // execution lookup. The rescope must run whether or not an execution
+          // already exists — otherwise an existing execution skips it, the row
+          // keeps its old "<nodeId>/<agent>" key, and the flush (bare agent +
+          // "<nodeName>/<agent>") never sees it, so it expires and blocks the run.
+          const rescopedTarget = this.resolveQueuedHandoffTarget(
+            meta.workflow,
+            targetAgentName,
+            workflowNodeId
+          );
+          if (
+            rescopedTarget &&
+            (targetAgentName !== rescopedTarget.agentName ||
+              (workflowNodeId ?? null) !== rescopedTarget.nodeId)
+          ) {
+            for (const row of remainingForGroup) {
+              repo.rescopeTarget(row.id, rescopedTarget.agentName, rescopedTarget.nodeId);
+            }
+          }
+
           let execution = this.resolveQueuedHandoffExecution(
             runId,
             meta.workflow,
@@ -8311,21 +8332,16 @@ export class SpaceRuntime {
           );
 
           if (!execution) {
-            const resolved = this.resolveQueuedHandoffTarget(
-              meta.workflow,
-              targetAgentName,
-              workflowNodeId
-            );
-            if (!resolved) {
+            if (!rescopedTarget) {
               throw new Error(
                 `Queued workflow handoff target "${targetAgentName}" is not declared in workflow "${meta.workflow.id}"`
               );
             }
             execution = this.createNodeExecutionOrIgnore({
               workflowRunId: runId,
-              workflowNodeId: resolved.nodeId,
-              agentName: resolved.agentName,
-              agentId: resolved.agentId,
+              workflowNodeId: rescopedTarget.nodeId,
+              agentName: rescopedTarget.agentName,
+              agentId: rescopedTarget.agentId,
               status: 'pending',
             });
           }
@@ -8473,6 +8489,13 @@ export class SpaceRuntime {
       if (nodeExecution) return nodeExecution;
     }
 
+    // Legacy fallback for targets the resolver could not map to a declared
+    // node/slot (e.g. a bare slot/node name no longer in the workflow). The raw
+    // comparison is intentional for compound targets: a valid compound is
+    // resolved above, and an invalid one has no matching execution, so comparing
+    // the full "node/agent" string returns undefined and lets the caller surface
+    // it as undeclared. Stripping the prefix here would over-match — e.g.
+    // "WrongNode/reviewer" would bind to another node's reviewer execution.
     return this.config.nodeExecutionRepo
       .listByWorkflowRun(runId)
       .filter(
@@ -8488,11 +8511,61 @@ export class SpaceRuntime {
     targetAgentName: string,
     workflowNodeId?: string
   ): { nodeId: string; agentName: string; agentId: string | null } | null {
+    // Queued handoff rows are addressed two ways:
+    //  - PINNED (workflowNodeId set): the router and enqueueRestartRecoveryMessage
+    //    store the BARE agent slot name + the node id. Slot names may contain "/",
+    //    so match the exact name and never interpret it as a compound.
+    //  - UNPINNED (legacy, workflowNodeId absent): the router stored a compound
+    //    "<nodeId-or-name>/<agent>" so two nodes reusing a slot name don't
+    //    cross-receive. Worker handles encode either the node name or id, and
+    //    node/agent names may contain "/", so match by prefixing each node
+    //    identifier and comparing exactly — never split on the first "/".
+    // Unpinned only, and only for slash-shaped targets: a slot name containing
+    // "/" can resemble another node's compound (e.g. Audit slot "Review/foo" vs
+    // Review's compound "Review/foo"), so an exact bare-slot match must win over
+    // compound parsing. Limit to "/"-containing values so a bare node name like
+    // "Review" still falls through to the bare-node/legacy handling below even
+    // if another node happens to have a slot of that name.
+    if (!workflowNodeId && targetAgentName.includes('/')) {
+      for (const node of workflow.nodes) {
+        const exact = resolveNodeAgents(node).find((slot) => slot.name === targetAgentName);
+        if (exact)
+          return { nodeId: node.id, agentName: exact.name, agentId: exact.agentId ?? null };
+      }
+    }
     for (const node of workflow.nodes) {
       // Node-scoped resolution: only consider the pinned node so two nodes
       // reusing a slot name don't both resolve to the first one.
-      if (workflowNodeId && node.id !== workflowNodeId) continue;
+      if (workflowNodeId != null && node.id !== workflowNodeId) continue;
       const slots = resolveNodeAgents(node);
+
+      if (workflowNodeId != null) {
+        // Pinned row: bare slot name. Match exactly (a slot named
+        // "<node>/reviewer" must not be stripped to "reviewer"). No compound
+        // parsing, no slots[0] fallback — the row is for this node specifically.
+        // Use an explicit null check so an empty-string node id still pins.
+        const direct = slots.find((slot) => slot.name === targetAgentName);
+        if (direct)
+          return { nodeId: node.id, agentName: direct.name, agentId: direct.agentId ?? null };
+        continue;
+      }
+
+      // Unpinned compound "<nodeId-or-name>/<agent>": a precise address. The node
+      // must match by name or id AND the named slot must exist — a non-matching
+      // slot (typo, stale def, wrong node) returns no match instead of falling
+      // back to another slot and misdelivering (e.g. "Review/reveiwer" must fail).
+      let nodeFormMatched = false;
+      for (const nodeForm of [node.name, node.id]) {
+        const prefix = `${nodeForm}/`;
+        if (!targetAgentName.startsWith(prefix)) continue;
+        nodeFormMatched = true;
+        const direct = slots.find((slot) => slot.name === targetAgentName.slice(prefix.length));
+        if (direct)
+          return { nodeId: node.id, agentName: direct.name, agentId: direct.agentId ?? null };
+      }
+      if (nodeFormMatched) continue;
+
+      // Legacy non-compound behavior for bare slot names and node names.
       const nodeNameMatch = node.name === targetAgentName || node.id === targetAgentName;
       const direct = slots.find(
         (slot) => slot.name === targetAgentName || (nodeNameMatch && slot.name === node.name)

@@ -312,6 +312,52 @@ export class PendingAgentMessageRepository {
   }
 
   /**
+   * Rewrite a pending row's target scope to the bare agent name + resolved node
+   * id. Used by the queued-handoff sweep to normalize legacy compound / null-
+   * scoped rows (emitted by the previous router, e.g. actor-registry
+   * "<nodeId>/<agent>" with no workflowNodeId) into the pinned bare form the
+   * flush drains — so they aren't stranded when the compound drain alias is gone.
+   */
+  rescopeTarget(id: string, targetAgentName: string, workflowNodeId: string): void {
+    // Atomic check-then-act: if a bare retry row the new router inserted already
+    // occupies the new (run, target, idempotency_key) — sender retried the same
+    // message after upgrade — rescoping this legacy compound row into that tuple
+    // would violate idx_pending_agent_messages_idem and fail every sweep tick.
+    // Drop the superseded legacy row instead; otherwise rewrite it in place.
+    const tx = this.db.transaction(() => {
+      const row = this.getById(id);
+      if (!row || row.status !== 'pending') return;
+      if (row.idempotencyKey != null) {
+        // The unique index (idx_pending_agent_messages_idem_pending) and enqueue
+        // dedup only cover status = 'pending', so a failed/expired historical
+        // row with the same key is NOT a real conflict — restrict the check to
+        // pending rows or we'd silently drop the only retryable handoff.
+        const conflict = this.db
+          .prepare(
+            `SELECT 1 FROM pending_agent_messages
+					 WHERE workflow_run_id = ? AND target_agent_name = ? AND idempotency_key = ?
+					   AND status = 'pending' AND id != ? LIMIT 1`
+          )
+          .get(row.workflowRunId, targetAgentName, row.idempotencyKey, id);
+        if (conflict) {
+          this.db.prepare(`DELETE FROM pending_agent_messages WHERE id = ?`).run(id);
+          return;
+        }
+      }
+      this.db
+        .prepare(
+          `UPDATE pending_agent_messages
+				 SET target_agent_name = ?,
+				     workflow_node_id = ?
+				 WHERE id = ? AND status = 'pending'`
+        )
+        .run(targetAgentName, workflowNodeId, id);
+    });
+    tx();
+    this.notify();
+  }
+
+  /**
    * Record a failed delivery attempt.
    * Increments `attempts`; if the new count reaches `max_attempts`, the row
    * status is set to `'failed'` so it is no longer drained.
