@@ -175,6 +175,12 @@ export interface PendingAgentMessageQueue {
     /** Persisted workflow node ID the message targets (scopes the drain). */
     workflowNodeId?: string | null;
     idempotencyKey?: string | null;
+    /**
+     * Persisted delivery mode replayed on flush so a deferred ("queue for next
+     * turn") human message to a not-yet-live agent defers after spawn instead
+     * of defaulting to immediate and steering the kickoff turn.
+     */
+    deliveryMode?: 'immediate' | 'defer';
   }): { record: { id: string }; deduped: boolean };
 }
 
@@ -562,6 +568,7 @@ export function setupSpaceTaskMessageHandlers(
           targetAgentName: exec.agentName,
           message,
           workflowNodeId: exec.workflowNodeId ?? target.workflowNodeId,
+          ...(deliveryMode ? { deliveryMode } : {}),
         });
         if (record) queuedNames.push(exec.agentName);
       }

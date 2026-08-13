@@ -764,6 +764,64 @@ describe('setupSpaceTaskMessageHandlers', () => {
           })
         ).rejects.toThrow('Invalid deliveryMode');
       });
+
+      it('persists deliveryMode:"defer" on the pending row when the target is not live yet', async () => {
+        // A deferred message to a not-yet-spawned agent falls through to the
+        // pending-message queue. The mode must be persisted with the row so the
+        // flush replays it as 'defer' after spawn — otherwise it defaults to
+        // immediate and steers the kickoff turn. (Review P2.)
+        const mh = createMockMessageHub();
+        hub = mh.hub;
+        handlers = mh.handlers;
+        const enqueued: Array<{ targetAgentName: string; deliveryMode?: string }> = [];
+        taskAgentManager = {
+          ...createMockTaskAgentManager(null, mockTaskWithWorkflowRun),
+          injectSubSessionMessage: mock(async () => {}),
+        };
+        db = createMockDatabase(mockTaskWithWorkflowRun);
+        internalEventBus = {
+          publish: mock(async () => ({ delivered: 0, failures: [] })),
+          publishAsync: mock(() => {}),
+        } as unknown as InternalEventBus<DaemonInternalEventMap>;
+        setupSpaceTaskMessageHandlers(
+          hub,
+          taskAgentManager,
+          db,
+          internalEventBus,
+          makeNodeExecutionRepo([
+            {
+              id: 'exec-coder',
+              workflowNodeId: 'node-1',
+              agentName: 'Coder',
+              agentSessionId: null, // not spawned yet → pending-queue path
+            },
+          ]),
+          undefined,
+          undefined,
+          {
+            enqueue: mock((input: { targetAgentName: string; deliveryMode?: string }) => {
+              enqueued.push({
+                targetAgentName: input.targetAgentName,
+                deliveryMode: input.deliveryMode,
+              });
+              return { record: { id: 'pending-1' }, deduped: false };
+            }),
+          }
+        );
+
+        const result = (await call('space.task.sendMessage', {
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          message: 'for after spawn',
+          target: { kind: 'node_agent', agentName: 'Coder' },
+          deliveryMode: 'defer',
+        })) as { queued?: boolean };
+
+        expect(result.queued).toBe(true);
+        expect(enqueued).toHaveLength(1);
+        expect(enqueued[0].targetAgentName).toBe('Coder');
+        expect(enqueued[0].deliveryMode).toBe('defer');
+      });
     });
 
     // ─── Post-approval worker routing (task #857 / #864) ───────────────────────
