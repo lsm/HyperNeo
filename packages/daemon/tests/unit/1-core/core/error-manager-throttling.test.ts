@@ -153,7 +153,11 @@ describe('ErrorManager - Error Throttling', () => {
       );
     }
     for (let i = 0; i < 10; i++) {
-      await errorManager.handleError(sessionId, new Error('403 forbidden'), ErrorCategory.PERMISSION);
+      await errorManager.handleError(
+        sessionId,
+        new Error('403 forbidden'),
+        ErrorCategory.PERMISSION
+      );
     }
     for (let i = 0; i < 10; i++) {
       await errorManager.handleError(

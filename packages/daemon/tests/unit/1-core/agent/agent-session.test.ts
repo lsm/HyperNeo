@@ -934,13 +934,7 @@ describe('AgentSession', () => {
       // Live claim: the row is reopened, and the bridge throws recoverable so
       // the job retries (and re-feeds).
       await agentSession.stateManager.setProcessing('uuid-reopen');
-      const live = agentSession.driveDeliveryTurn(
-        'uuid-reopen',
-        'hello',
-        null,
-        true,
-        () => true
-      );
+      const live = agentSession.driveDeliveryTurn('uuid-reopen', 'hello', null, true, () => true);
       await agentSession.stateManager.setIdle();
       await expect(live).rejects.toThrow('Turn ended without a response');
       expect(retrySpy).toHaveBeenCalledTimes(1);
