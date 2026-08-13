@@ -26,7 +26,8 @@ import type {
   WorkflowNode,
   WorkflowChannel,
   SpaceAutonomyLevel,
-  WorkflowHook,
+  HookBinding,
+  CustomHook,
 } from '@hyperneo/shared';
 import { generateUUID, isChannelCyclic } from '@hyperneo/shared';
 import { spaceStore } from '../../../lib/space-store';
@@ -63,29 +64,12 @@ import {
 // Constants
 // ============================================================================
 
-function remapHookCallerAgentSlots(
-  slots: string[] | undefined,
-  previousStep: NodeDraft | undefined,
-  nextStep: NodeDraft
-): string[] | undefined {
-  if (!slots || !previousStep?.agents || !nextStep.agents) return slots;
-
-  const nextSlots = slots.flatMap((slot) => {
-    const index = previousStep.agents?.findIndex((agent) => agent.name === slot) ?? -1;
-    if (index === -1) return [slot];
-    const nextName = nextStep.agents?.[index]?.name?.trim();
-    return nextName ? [nextName] : [];
-  });
-
-  return nextSlots.length > 0 ? nextSlots : undefined;
-}
-
 function buildTemplateCanvasSignature(
   nodes: VisualNode[],
   edges: VisualEdge[],
   channels: WorkflowChannel[],
   startNodeId: string,
-  hooks: WorkflowHook[],
+  hookBindings: HookBinding[],
   endNodeId: string | undefined
 ): string {
   const regularNodes = nodes
@@ -137,20 +121,13 @@ function buildTemplateCanvasSignature(
     }))
     .sort((a, b) => `${a.from}:${String(a.to)}`.localeCompare(`${b.from}:${String(b.to)}`));
 
-  const normalizedHooks = hooks
-    .map((hook) => ({
-      ...hook,
-      targetNode: hook.targetNode ?? null,
-      label: hook.label ?? null,
-      templateData: hook.templateData ?? null,
-      classification: hook.classification ?? null,
-      authorizedCallers: hook.authorizedCallers ?? [],
-      retry: hook.retry ?? null,
-      poll: hook.poll ?? null,
-      order: hook.order ?? null,
-      humanOnly: hook.humanOnly ?? null,
+  const normalizedHookBindings = hookBindings
+    .map((binding) => ({
+      ...binding,
+      targetNode: binding.targetNode ?? '',
+      authorizedCallers: binding.authorizedCallers ?? [],
     }))
-    .sort((a, b) => a.id.localeCompare(b.id));
+    .sort((a, b) => `${a.hookId}:${a.sourceNode}`.localeCompare(`${b.hookId}:${b.sourceNode}`));
 
   return JSON.stringify({
     nodes: regularNodes,
@@ -158,7 +135,7 @@ function buildTemplateCanvasSignature(
     channels: normalizedChannels,
     startNodeId,
     endNodeId,
-    hooks: normalizedHooks,
+    hookBindings: normalizedHookBindings,
   });
 }
 
@@ -236,7 +213,10 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
   const [startNodeId, setStartStepId] = useState<string>(() => initState?.startNodeId ?? '');
   const [endNodeId, setEndNodeId] = useState<string | undefined>(() => initState?.endNodeId);
   const [channels, setChannels] = useState<WorkflowChannel[]>(() => initState?.channels ?? []);
-  const [hooks, setHooks] = useState<WorkflowHook[]>(() => initState?.hooks ?? []);
+  const [hookBindings, setHookBindings] = useState<HookBinding[]>(
+    () => initState?.hookBindings ?? []
+  );
+  const [customHooks, setCustomHooks] = useState<CustomHook[]>(() => initState?.customHooks ?? []);
   const [completionAutonomyLevel, setCompletionAutonomyLevel] = useState<SpaceAutonomyLevel>(
     () =>
       (initState?.completionAutonomyLevel ??
@@ -276,8 +256,9 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
   const nodeExecutionsByNodeId = spaceStore.nodeExecutionsByNodeId.value;
   const regularNodes = nodes;
   const currentTemplateCanvasSignature = useMemo(
-    () => buildTemplateCanvasSignature(nodes, edges, channels, startNodeId, hooks, endNodeId),
-    [nodes, edges, channels, startNodeId, hooks, endNodeId]
+    () =>
+      buildTemplateCanvasSignature(nodes, edges, channels, startNodeId, hookBindings, endNodeId),
+    [nodes, edges, channels, startNodeId, hookBindings, endNodeId]
   );
   const [templateBaselineSignature, setTemplateBaselineSignature] = useState(() =>
     buildTemplateCanvasSignature(
@@ -285,7 +266,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
       initState?.edges ?? [],
       initState?.channels ?? [],
       initState?.startNodeId ?? '',
-      initState?.hooks ?? [],
+      initState?.hookBindings ?? [],
       initState?.endNodeId
     )
   );
@@ -635,15 +616,10 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
       const deletedRefs = new Set(
         [nodeToDelete.step.name, nodeToDelete.step.id, nodeToDelete.step.localId].filter(Boolean)
       );
-      setHooks((prev) =>
-        prev
-          .filter((hook) => !deletedRefs.has(hook.sourceNode) && !deletedRefs.has(hook.targetNode))
-          .map((hook) => ({
-            ...hook,
-            authorizedCallers: hook.authorizedCallers?.filter(
-              (caller) => !deletedRefs.has(caller.sourceNode)
-            ),
-          }))
+      setHookBindings((prev) =>
+        prev.filter(
+          (binding) => !deletedRefs.has(binding.sourceNode) && !deletedRefs.has(binding.targetNode)
+        )
       );
 
       if (wasStart && remaining.length > 0) {
@@ -672,18 +648,11 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 
       setNodes((prev) => prev.map((n) => (n.step.localId === step.localId ? { ...n, step } : n)));
 
-      setHooks((prev) =>
-        prev.map((hook) => ({
-          ...hook,
-          sourceNode: previousRefs.has(hook.sourceNode) ? nextRef : hook.sourceNode,
-          targetNode: previousRefs.has(hook.targetNode) ? nextRef : hook.targetNode,
-          authorizedCallers: hook.authorizedCallers?.map((caller) => ({
-            ...caller,
-            sourceNode: previousRefs.has(caller.sourceNode) ? nextRef : caller.sourceNode,
-            agentSlots: previousRefs.has(caller.sourceNode)
-              ? remapHookCallerAgentSlots(caller.agentSlots, previousNode?.step, step)
-              : caller.agentSlots,
-          })),
+      setHookBindings((prev) =>
+        prev.map((binding) => ({
+          ...binding,
+          sourceNode: previousRefs.has(binding.sourceNode) ? nextRef : binding.sourceNode,
+          targetNode: previousRefs.has(binding.targetNode) ? nextRef : binding.targetNode,
         }))
       );
     },
@@ -990,12 +959,14 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
       ...channel,
       to: Array.isArray(channel.to) ? [...channel.to] : channel.to,
     }));
-    const nextHooks = (template.hooks ?? []).map((hook) => ({ ...hook }));
+    const nextHookBindings = (template.hookBindings ?? []).map((binding) => ({ ...binding }));
+    const nextCustomHooks = (template.customHooks ?? []).map((hook) => ({ ...hook }));
 
     setNodes(nextNodes);
     setEdges(newEdges);
     setChannels(nextChannels);
-    setHooks(nextHooks);
+    setHookBindings(nextHookBindings);
+    setCustomHooks(nextCustomHooks);
     if (template.tags) {
       setTags([...template.tags]);
     }
@@ -1011,7 +982,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
         newEdges,
         nextChannels,
         resolvedStartLocalId,
-        nextHooks,
+        nextHookBindings,
         resolvedEndLocalId
       )
     );
@@ -1091,7 +1062,8 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
       endNodeId: endNodeId || undefined,
       tags,
       channels,
-      hooks,
+      hookBindings,
+      customHooks,
       completionAutonomyLevel,
       disabled,
     };
@@ -1523,16 +1495,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
               setSelectedNodeId(null);
             }}
             onDelete={handleDeleteNode}
-            nodeHooks={hooks.filter(
-              (h) => h.sourceNode === (selectedNode.step.name || selectedNode.step.localId)
-            )}
-            workflowNodeNames={nodes.map((n) => n.step.name || n.step.localId)}
-            onUpdateNodeHooks={(nextHooks) => {
-              // Merge updated node-specific hooks back into the global hooks list
-              const nodeName = selectedNode.step.name || selectedNode.step.localId;
-              const otherHooks = hooks.filter((h) => h.sourceNode !== nodeName);
-              setHooks([...otherHooks, ...nextHooks]);
-            }}
           />
         )}
 

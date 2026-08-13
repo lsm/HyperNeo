@@ -1,7 +1,7 @@
 import type { Hook, HookAction, HookReturn } from '@hyperneo/shared/types/workflow-hooks';
+import { readDataString } from '../action';
 import { ghGetReviewEvidence, githubFailureToFlow } from '../github';
 import { getPrimaryLink } from '../primary-link';
-import { readDataString } from '../action';
 
 /**
  * `review_posted` — the Review→Coding feedback gate. The channel only opens

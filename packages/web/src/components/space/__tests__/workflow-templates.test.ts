@@ -265,32 +265,32 @@ describe('workflowToTemplate', () => {
     expect(template.steps![1].role).toBe('coder');
   });
 
-  it('preserves workflow-level hooks through conversion', () => {
-    // Without preserving hooks, cloning a built-in workflow (e.g. the stable
-    // Coding-with-QA post_approval_only gate) silently drops its runtime
-    // enforcement. Verify hooks survive workflowToTemplate as shallow clones.
+  it('preserves workflow-level hook bindings through conversion', () => {
+    // Without preserving hook bindings, cloning a built-in workflow silently
+    // drops its runtime enforcement. Verify hookBindings survive
+    // workflowToTemplate as shallow clones.
     const wf = makeWorkflow({
-      hooks: [
+      hookBindings: [
         {
-          id: 'coding-to-qa-post-approval',
-          enabled: true,
+          hookId: 'post-approval-gate',
           sourceNode: 'Coding',
           targetNode: 'QA',
           method: 'send_message',
-          validator: { kind: 'built_in', id: 'post_approval_only' },
+          order: 0,
+          enabled: true,
         },
       ],
     });
     const template = workflowToTemplate(wf);
-    expect(template.hooks).toHaveLength(1);
-    expect(template.hooks![0]).toMatchObject({
-      id: 'coding-to-qa-post-approval',
+    expect(template.hookBindings).toHaveLength(1);
+    expect(template.hookBindings![0]).toMatchObject({
+      hookId: 'post-approval-gate',
       sourceNode: 'Coding',
       targetNode: 'QA',
       method: 'send_message',
     });
-    // Shallow clone — not the same reference as the source hook.
-    expect(template.hooks![0]).not.toBe(wf.hooks![0]);
+    // Shallow clone — not the same reference as the source binding.
+    expect(template.hookBindings![0]).not.toBe(wf.hookBindings![0]);
   });
 
   it('preserves per-slot toolGuards on multi-agent nodes', () => {

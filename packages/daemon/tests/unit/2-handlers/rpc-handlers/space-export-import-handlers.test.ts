@@ -90,6 +90,8 @@ function createSchema(db: Database): void {
 			channels TEXT,
 			gates TEXT,
 				hooks TEXT,
+				hook_bindings TEXT,
+				custom_hooks TEXT,
 			layout TEXT,
 			template_name TEXT DEFAULT NULL,
 			template_hash TEXT DEFAULT NULL,
@@ -2300,7 +2302,7 @@ describe('full export→import round-trip', () => {
     expect((wfCreatedEvents[0].data as any).workflow.name).toBe('Code Pipeline');
   });
 
-  it('multi-agent step round-trip: export → import preserves agents array, channels, and hooks', async () => {
+  it('multi-agent step round-trip: export → import preserves agents array, channels, and hook bindings', async () => {
     const coderAgent: SpaceWorkerAgent = {
       id: 'src-coder',
       spaceId: 'other-space',
@@ -2348,14 +2350,21 @@ describe('full export→import round-trip', () => {
         },
       ],
       channels: [{ id: 'ch-1', from: 'coder', to: 'reviewer', label: 'hand-off' }],
-      hooks: [
+      customHooks: [
         {
-          id: 'hook-1',
+          id: 'audit',
+          requiredData: [{ key: 'pr_link', type: 'link', required: true }],
+          run: { kind: 'script', interpreter: 'bash', source: 'echo ok' },
+        },
+      ],
+      hookBindings: [
+        {
+          hookId: 'audit',
           enabled: true,
           sourceNode: 'Code and Review',
           targetNode: 'End',
           method: 'send_message',
-          validator: { kind: 'script', interpreter: 'bash', source: 'echo \'{"type":"allow"}\'' },
+          order: 0,
           authorizedCallers: [{ sourceNode: 'Code and Review', agentSlots: ['coder'] }],
         },
       ],
@@ -2411,7 +2420,8 @@ describe('full export→import round-trip', () => {
     // direction field removed from WorkflowChannel schema
     expect(importedWf.channels![0].label).toBe('hand-off');
 
-    expect(importedWf.hooks).toEqual(workflow.hooks);
+    expect(importedWf.hookBindings).toEqual(workflow.hookBindings);
+    expect(importedWf.customHooks).toEqual(workflow.customHooks);
   });
 
   it('import rejects bundle with empty name in agents[] entry (Zod validation)', async () => {

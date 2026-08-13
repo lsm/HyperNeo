@@ -18,25 +18,26 @@ import { prReadyHook } from './hooks/pr-ready';
 import { reviewPostedHook } from './hooks/review-posted';
 
 export { dataOf, readDataString } from './action';
-export { getPrimaryLink } from './primary-link';
 export {
-  ghGetPr,
-  ghGetUnresolvedReviewThreads,
-  ghGetReviewEvidence,
-  ghGetCodexApproval,
-  githubFailureToFlow,
-  parsePrLink,
-  type GithubResult,
-  type GithubPrView,
-  type GithubReviewEvidence,
+  fetchPrView,
   type GithubCodexApproval,
+  type GithubPrView,
+  type GithubResult,
+  type GithubReviewEvidence,
+  ghGetCodexApproval,
+  ghGetPr,
+  ghGetReviewEvidence,
+  ghGetUnresolvedReviewThreads,
+  githubFailureToFlow,
   type ParsedPrLink,
+  parsePrLink,
 } from './github';
+export { codexReviewApprovedHook } from './hooks/codex-review-approved';
 export { postApprovalOnlyHook } from './hooks/post-approval-only';
 export { prMergedHook } from './hooks/pr-merged';
 export { prReadyHook } from './hooks/pr-ready';
 export { reviewPostedHook } from './hooks/review-posted';
-export { codexReviewApprovedHook } from './hooks/codex-review-approved';
+export { getPrimaryLink } from './primary-link';
 
 /** The built-in hook registry. The daemon loads these by id. */
 export const BUILT_IN_HOOKS: readonly Hook[] = [

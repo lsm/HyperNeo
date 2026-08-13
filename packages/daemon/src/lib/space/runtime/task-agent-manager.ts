@@ -98,7 +98,7 @@ import {
   createPrMergedGate,
 } from '../tools/end-node-handlers';
 import { builtInWorkflowRequiresPrMerge } from '../workflows/built-in-workflows';
-import { createGithubConnector } from './connectors/github-connector';
+import { fetchPrView } from '@hyperneo/extensions-hooks';
 import { collectDispatchablePostApprovalRoutes } from './post-approval-router';
 import { jsonResult } from '../tools/tool-result';
 import {
@@ -119,7 +119,6 @@ import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools';
 import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator';
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import { validateGlobPattern } from '../../external-events/topic-validator';
-import { HookExecutor } from './hook-executor';
 import {
   clearAllRetryableHookActionTimers,
   QUEUED_RETRYABLE_ACTION_STATE_KEY,
@@ -3988,8 +3987,9 @@ export class TaskAgentManager {
     if (!run || run.status === 'done' || run.status === 'cancelled') return false;
     const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
     const hookStateRepo = new WorkflowHookStateRepository(this.config.db.getDatabase());
-    for (const hook of workflow?.hooks ?? []) {
-      const state = hookStateRepo.get(workflowRunId, hook.id)?.localState;
+    const hookIds = new Set((workflow?.hookBindings ?? []).map((b) => b.hookId));
+    for (const hookId of hookIds) {
+      const state = hookStateRepo.get(workflowRunId, hookId)?.localState;
       const queued = state?.[QUEUED_RETRYABLE_ACTION_STATE_KEY];
       if (!queued || typeof queued !== 'object') continue;
       const meta = (queued as Record<string, unknown>).meta;
@@ -5225,13 +5225,9 @@ export class TaskAgentManager {
                   ) ?? '')
                 : '',
             getPrState: async (prUrl) => {
-              const outcome = await createGithubConnector().ops.getPr(
-                { prUrl },
-                { workspacePath: '', params: {}, rawParams: {}, hookLocalState: {} }
-              );
+              const outcome = await fetchPrView(workspacePath, prUrl);
               if (!outcome.ok) throw new Error(outcome.error);
-              const state = (outcome.data as { state?: unknown } | null)?.state;
-              return typeof state === 'string' ? state : 'UNKNOWN';
+              return outcome.data.state;
             },
           })
         : undefined,
@@ -5412,10 +5408,9 @@ export class TaskAgentManager {
       }
     };
 
-    // Build workflow hook engine when the workflow defines hooks.
+    // Build workflow hook engine when the workflow defines hook bindings.
     let hookEngine: WorkflowHookEngine | undefined;
-    if (workflow?.hooks && workflow.hooks.length > 0) {
-      const hookExecutor = new HookExecutor({ workspacePath });
+    if (workflow?.hookBindings && workflow.hookBindings.length > 0) {
       hookEngine = new WorkflowHookEngine({
         workflow,
         workflowRunId,
@@ -5423,7 +5418,6 @@ export class TaskAgentManager {
         nodeExecutionRepo: this.config.nodeExecutionRepo,
         artifactRepo: this.config.artifactRepo,
         hookStateRepo: new WorkflowHookStateRepository(this.config.db.getDatabase()),
-        hookExecutor,
         workspacePath,
         getWorkflowRunStatus: (runId) => this.config.workflowRunRepo.getRun(runId)?.status,
         getTaskStatus: (tid) => this.config.taskRepo.getTask(tid)?.status,

@@ -790,14 +790,14 @@ export function setupSpaceWorkflowRunHandlers(
     const run = workflowRunRepo.getRun(params.runId);
     if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
 
-    // Run-scoped: hook-definition banners must reflect the run's pinned definition, so a
+    // Run-scoped: hook-binding banners must reflect the run's pinned definition, so a
     // live hook edit can't leave a blocked pinned hook without UI resume controls.
     const workflow = spaceWorkflowManager.getWorkflowForRun(run);
     const hookStates = hookStateRepo.listByRun(params.runId);
 
     return {
       hookStates,
-      hooks: workflow?.hooks ?? [],
+      hookBindings: workflow?.hookBindings ?? [],
     };
   });
 
@@ -842,16 +842,8 @@ export function setupSpaceWorkflowRunHandlers(
         humanApprovedAt: Date.now(),
         humanRejectionReason: params.approved ? undefined : rejectionReason,
       },
-      lastResult: params.approved
-        ? {
-            type: 'allow',
-            message: 'Approved by human',
-          }
-        : {
-            type: 'block',
-            reason: rejectionReason,
-            message: 'Rejected by human',
-          },
+      lastFlow: params.approved ? 'continue' : 'stop',
+      lastReason: params.approved ? 'Approved by human' : rejectionReason,
       retryCount: 0,
       nextRetryAt: null,
     });
@@ -877,8 +869,8 @@ export function setupSpaceWorkflowRunHandlers(
 
   // ─── spaceWorkflowRun.retryHook ─────────────────────────────────────────
   //
-  // Clears retry backoff for a retryable_block hook so the next action
-  // re-executes the hook chain immediately.
+  // Clears retry backoff for a retrying hook so the next action re-executes
+  // the hook chain immediately (the UI "retry now" control).
   messageHub.onRequest('spaceWorkflowRun.retryHook', async (data) => {
     const params = data as { runId: string; hookId: string };
 
@@ -905,10 +897,8 @@ export function setupSpaceWorkflowRunHandlers(
         ...existing?.localState,
         [QUEUED_RETRYABLE_ACTION_STATE_KEY]: null,
       },
-      lastResult: {
-        type: 'allow',
-        message: 'Retry requested by human',
-      },
+      lastFlow: 'continue',
+      lastReason: 'Retry requested by human',
       retryCount: 0,
       nextRetryAt: null,
     });

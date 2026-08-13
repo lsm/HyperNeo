@@ -15,6 +15,8 @@ import type {
   WorkflowChannel,
   WorkflowNodeAgent,
   PostApprovalRoute,
+  HookBinding,
+  CustomHook,
 } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { NodeDraft } from './WorkflowNodeCard';
@@ -36,8 +38,10 @@ export interface WorkflowTemplate {
   steps?: WorkflowTemplateStep[];
   /** Optional workflow-level channels to seed with the template. */
   channels?: WorkflowChannel[];
-  /** Optional workflow hooks to seed with the template. */
-  hooks?: import('@hyperneo/shared').WorkflowHook[];
+  /** Optional workflow hook bindings (v2) to seed with the template. */
+  hookBindings?: HookBinding[];
+  /** Optional custom hooks (v2) to seed with the template. */
+  customHooks?: CustomHook[];
   /** Optional tags to seed with the template. */
   tags?: string[];
   /** Legacy workflow-level post-approval route; migrated onto the end node when loaded. */
@@ -253,7 +257,8 @@ export function workflowToTemplate(workflow: SpaceWorkflow): WorkflowTemplate {
       ...channel,
       to: Array.isArray(channel.to) ? [...channel.to] : channel.to,
     })),
-    hooks: (workflow.hooks ?? []).map((hook) => ({ ...hook })),
+    hookBindings: (workflow.hookBindings ?? []).map((binding) => ({ ...binding })),
+    customHooks: (workflow.customHooks ?? []).map((hook) => ({ ...hook })),
     tags: [...(workflow.tags ?? [])],
   };
 }

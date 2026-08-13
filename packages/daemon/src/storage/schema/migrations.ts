@@ -981,6 +981,8 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // 187 (dev shipped M187–M189 for message-delivery-v2, #862).
   run(migrationMarkerKey(190), () => runMigration190(db));
   run(migrationMarkerKey(191), () => runMigration191(db));
+  run(migrationMarkerKey(192), () => runMigration192(db));
+  run(migrationMarkerKey(193), () => runMigration193(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -12387,5 +12389,41 @@ export function runMigration191(db: BunDatabase): void {
   }
   if (!tableHasColumn(db, 'space_workflows', 'custom_hooks')) {
     db.exec(`ALTER TABLE space_workflows ADD COLUMN custom_hooks TEXT`);
+  }
+}
+
+/**
+ * Migration 192 — workflow hooks v2 hook-state columns.
+ *
+ * The v2 hook-state snapshot carries the last flow decision (`last_flow`) and
+ * its reason (`last_reason`) as top-level fields, replacing the old
+ * `last_result` JSON blob (six-variant WorkflowHookResult). `vote_maps` and
+ * `last_result` are no longer read or written; the columns are left in place
+ * (SQLite column drops are intrusive) but dormant. Persisted hook state is
+ * per-run and is re-seeded, not migrated.
+ */
+export function runMigration192(db: BunDatabase): void {
+  if (!tableExists(db, 'workflow_hook_state')) return;
+  if (!tableHasColumn(db, 'workflow_hook_state', 'last_flow')) {
+    db.exec(`ALTER TABLE workflow_hook_state ADD COLUMN last_flow TEXT`);
+  }
+  if (!tableHasColumn(db, 'workflow_hook_state', 'last_reason')) {
+    db.exec(`ALTER TABLE workflow_hook_state ADD COLUMN last_reason TEXT`);
+  }
+}
+
+/**
+ * Migration 193 — drop the retired `hooks` column from `space_workflows`.
+ *
+ * The v2 two-layer model stores hook placement in `hook_bindings` (and custom
+ * hook definitions in `custom_hooks`); the legacy `hooks` column is no longer
+ * read or written. SQLite ≥3.35 supports `ALTER TABLE ... DROP COLUMN`; the
+ * column is plain TEXT with no index/constraint referencing it, so the drop is
+ * safe. Guarded so it is a no-op on DBs without the table or already migrated.
+ */
+export function runMigration193(db: BunDatabase): void {
+  if (!tableExists(db, 'space_workflows')) return;
+  if (tableHasColumn(db, 'space_workflows', 'hooks')) {
+    db.exec(`ALTER TABLE space_workflows DROP COLUMN hooks`);
   }
 }

@@ -29,7 +29,8 @@ import type {
   WorkflowNodeAgent,
   WorkflowChannel,
   SpaceAutonomyLevel,
-  WorkflowHook,
+  HookBinding,
+  CustomHook,
 } from '@hyperneo/shared';
 import type { NodeDraft } from '../WorkflowNodeCard';
 import type { Point, WorkflowCondition } from './types';
@@ -88,8 +89,10 @@ export interface VisualEditorState {
   tags: string[];
   /** Directed messaging channels at the workflow level. */
   channels: WorkflowChannel[];
-  /** Workflow hooks for MCP action validation and side effects. */
-  hooks: WorkflowHook[];
+  /** Workflow hook bindings (v2 — placements of hooks on routes). */
+  hookBindings: HookBinding[];
+  /** User-authored custom hooks (v2 — script hooks defined per-workflow). */
+  customHooks: CustomHook[];
   /**
    * Minimum space autonomy level required to run this workflow without
    * human approval at each task completion. Defaults to 3 when not set.
@@ -179,7 +182,8 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
       id: channel.id ?? generateUUID(),
       to: Array.isArray(channel.to) ? [...channel.to] : channel.to,
     })),
-    hooks: workflow.hooks ?? [],
+    hookBindings: workflow.hookBindings ?? [],
+    customHooks: workflow.customHooks ?? [],
     completionAutonomyLevel: workflow.completionAutonomyLevel ?? (3 as SpaceAutonomyLevel),
     disabled: workflow.disabled,
   };
@@ -204,7 +208,8 @@ interface BuiltWorkflowFields {
   layout: Record<string, { x: number; y: number }>;
   tags: string[];
   channels?: WorkflowChannel[];
-  hooks?: WorkflowHook[];
+  hookBindings?: HookBinding[];
+  customHooks?: CustomHook[];
 }
 
 /**
@@ -242,58 +247,6 @@ function deriveSingleAgentRoleName(node: VisualNode, fallbackIndex: number): str
 function derivePostApprovalTargetAgent(agents: WorkflowNodeAgent[], fallbackIndex: number): string {
   const namedAgent = agents.find((agent) => agent.name?.trim());
   return namedAgent?.name.trim() || `agent-${fallbackIndex + 1}`;
-}
-
-function buildHookNodeNameMap(nodes: VisualNode[]): Map<string, string> {
-  const nodeNames = new Map<string, string>();
-  nodes.forEach((node, i) => {
-    const name = node.step.name || `Step ${i + 1}`;
-    nodeNames.set(node.step.localId, name);
-    if (node.step.id) nodeNames.set(node.step.id, name);
-    if (node.step.name) nodeNames.set(node.step.name, name);
-  });
-  return nodeNames;
-}
-
-function remapHookNodeReference(value: string | undefined, nodeNames: Map<string, string>) {
-  if (!value) return value;
-  return nodeNames.get(value) ?? value;
-}
-
-function serializeHook(hook: WorkflowHook, nodeNames: Map<string, string>): WorkflowHook | null {
-  const {
-    poll: _poll,
-    humanOnly: _humanOnly,
-    retry: _retry,
-    ...hookWithoutUnsupportedFields
-  } = hook;
-  if (hook.humanOnly && (!hook.authorizedCallers || hook.authorizedCallers.length === 0)) {
-    return null;
-  }
-  // pr_ready always polls unbounded. codex_review_approved omits the default
-  // 3-attempt cap (codex reviews take 20–30 min; capping at 3 stops after ~15s
-  // and clears the queued handoff before approval arrives) but supplies a 60s
-  // default delay (no cap) so the polling cadence matches the documented
-  // CODEX_RETRY_INTERVAL_MS without the engine's 30s default — and HONORS an
-  // explicitly-configured hook.retry so an operator can still bound/pace it.
-  const isPrReady = hook.validator.kind === 'built_in' && hook.validator.id === 'pr_ready';
-  const isCodexApproval =
-    hook.validator.kind === 'built_in' && hook.validator.id === 'codex_review_approved';
-  const retry = isPrReady
-    ? undefined
-    : isCodexApproval
-      ? (hook.retry ?? { maxAttempts: 0, delayMs: 60_000, backoffMultiplier: 1 })
-      : (hook.retry ?? { maxAttempts: 3, delayMs: 5000, backoffMultiplier: 1 });
-  return {
-    ...hookWithoutUnsupportedFields,
-    ...(retry ? { retry } : {}),
-    sourceNode: remapHookNodeReference(hook.sourceNode, nodeNames) ?? hook.sourceNode,
-    targetNode: remapHookNodeReference(hook.targetNode, nodeNames),
-    authorizedCallers: hook.authorizedCallers?.map((caller) => ({
-      ...caller,
-      sourceNode: remapHookNodeReference(caller.sourceNode, nodeNames) ?? caller.sourceNode,
-    })),
-  };
 }
 
 /**
@@ -354,7 +307,7 @@ function buildWorkflowFields(state: VisualEditorState): {
   // Current hook ids — a carried transition whose hookId was removed (e.g. the
   // hook's source/target node was deleted) must be dropped, not emitted with a
   // dangling reference that validateTransitions rejects.
-  const currentHookIds = new Set(state.hooks.map((h) => h.id));
+  const currentHookIds = new Set(state.hookBindings.map((b) => b.hookId));
 
   const nodes = persistableNodes.map((node, i) => {
     const key = node.step.id ?? node.step.localId;
@@ -451,10 +404,11 @@ function buildWorkflowFields(state: VisualEditorState): {
     endNodeId = endEntry?.persistedId;
   }
 
-  const hookNodeNames = buildHookNodeNameMap(persistableNodes);
-  const hooks = state.hooks
-    .map((hook) => serializeHook(hook, hookNodeNames))
-    .filter((hook): hook is WorkflowHook => hook !== null);
+  // v2 hooks: carry bindings and custom hooks through verbatim. Node renames
+  // are not remapped here — the editor does not expose hook authoring yet
+  // (step 6), so bindings are round-tripped as-is.
+  const hookBindings = state.hookBindings;
+  const customHooks = state.customHooks;
 
   return {
     fields: {
@@ -464,7 +418,8 @@ function buildWorkflowFields(state: VisualEditorState): {
       layout,
       tags: state.tags,
       channels: state.channels,
-      hooks,
+      hookBindings,
+      customHooks,
     },
     keyToPersistedId,
   };
@@ -496,7 +451,10 @@ export function visualStateToCreateParams(
     layout: fields.layout,
     tags: fields.tags,
     channels: fields.channels && fields.channels.length > 0 ? fields.channels : undefined,
-    hooks: fields.hooks && fields.hooks.length > 0 ? fields.hooks : undefined,
+    hookBindings:
+      fields.hookBindings && fields.hookBindings.length > 0 ? fields.hookBindings : undefined,
+    customHooks:
+      fields.customHooks && fields.customHooks.length > 0 ? fields.customHooks : undefined,
     completionAutonomyLevel: state.completionAutonomyLevel,
     disabled: state.disabled,
   };
@@ -522,7 +480,9 @@ export function visualStateToUpdateParams(
     layout: fields.layout,
     tags: fields.tags,
     channels: fields.channels && fields.channels.length > 0 ? fields.channels : null,
-    hooks: fields.hooks && fields.hooks.length > 0 ? fields.hooks : null,
+    hookBindings:
+      fields.hookBindings && fields.hookBindings.length > 0 ? fields.hookBindings : null,
+    customHooks: fields.customHooks && fields.customHooks.length > 0 ? fields.customHooks : null,
     completionAutonomyLevel: state.completionAutonomyLevel,
     postApproval: null,
     disabled: state.disabled ?? null,

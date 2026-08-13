@@ -11,10 +11,18 @@
     "types": ["bun"],
     "paths": {
       "@/*": ["./src/*"],
+      "@hyperneo/extensions-hooks": ["../extensions/hooks/src/index.ts"],
+      "@hyperneo/extensions-hooks/*": ["../extensions/hooks/src/*"],
       "@hyperneo/shared": ["../shared/src/mod.ts"],
       "@hyperneo/shared/*": ["../shared/src/*"]
     }
   },
-  "include": ["src/**/*", "main.ts", "../shared/src/**/*", "research-context-info.ts"],
+  "include": [
+    "src/**/*",
+    "main.ts",
+    "../shared/src/**/*",
+    "../extensions/hooks/src/**/*",
+    "research-context-info.ts"
+  ],
   "exclude": ["node_modules", "dist", "tests/**/*", "test-*.ts"]
 }

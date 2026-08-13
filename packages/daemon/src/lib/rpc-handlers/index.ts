@@ -639,33 +639,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   // and task-agent-tools / node-agent-tools (lookup).
   const replyRoutingRegistry = new ReplyRoutingRegistry();
   // Domain profile that owns coding-specific artifact semantics (which `link`
-  // is the PR, which `decision` is the terminal outcome, the `review_posted`
-  // hook history). Injected into the runtime services so daemon core never
-  // names domain kinds (`pr` / `review`).
+  // is the PR, which `decision` is the terminal outcome). Injected into the
+  // runtime services so daemon core never names domain kinds (`pr` / `review`).
+  // v2: the pr_ready hook stamps the run's reviewed PR as a `link/pr` artifact,
+  // so the PR-identity resolver reads artifacts only.
   const artifactProfile = new CodingArtifactProfile({
-    db: deps.db.getDatabase(),
     artifactRepo,
-    // Restrict the PR-identity resolver's hook-state fallback to hook ids that
-    // are actually configured with the pr_ready built-in validator for the run's
-    // workflow — closes the colliding-hook-id spoof on runs without a reserved
-    // pr_ready-identity snapshot.
-    resolvePrReadyHookIds: (runId: string) => {
-      const run = spaceWorkflowRunRepo.getRun(runId);
-      if (!run?.workflowId) return undefined;
-      // Run-scoped: resolve PR-ready hook IDs from the run's pinned definition so a live
-      // hook edit can't change which hook output is trusted for PR-identity resolution.
-      const wf = spaceWorkflowManager.getWorkflowForRun(run);
-      // Return undefined ONLY when the workflow can't be resolved (legacy
-      // fallback). When the workflow resolves — even with no pr_ready hooks —
-      // return an (empty) Set so the resolver uses exact-match (fail closed)
-      // rather than the substring legacy fallback.
-      if (!wf) return undefined;
-      const ids = new Set<string>();
-      for (const h of wf.hooks ?? []) {
-        if (h.validator?.kind === 'built_in' && h.validator.id === 'pr_ready') ids.add(h.id);
-      }
-      return ids;
-    },
   });
   const evolutionEpisodeService = new EvolutionEpisodeService({
     evolutionRepo: deps.db.evolution,

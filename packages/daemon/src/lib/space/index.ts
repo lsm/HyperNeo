@@ -16,8 +16,6 @@ export { SpaceWorkflowManager, WorkflowValidationError } from './managers/space-
 export type { SpaceAgentLookup } from './managers/space-workflow-manager';
 export { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
 export { WorkflowHookStateRepository } from '../../storage/repositories/workflow-hook-state-repository';
-export { WorkflowHookRuntimeService } from './workflow-hook-runtime-service';
-export { validateWorkflowHooks } from './workflow-hook-validation';
 export {
   CODING_WORKFLOW,
   RESEARCH_WORKFLOW,

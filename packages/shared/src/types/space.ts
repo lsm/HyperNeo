@@ -1658,187 +1658,6 @@ export interface SpaceWorkflowSyncPreview {
 // Workflow Types (M3)
 // ============================================================================
 
-export type WorkflowHookMcpMethod =
-  | 'send_message'
-  | 'save_artifact'
-  | 'create_standalone_task'
-  | 'mark_complete'
-  | 'submit_for_approval'
-  | 'approve_task';
-
-export type WorkflowHookValidatorId =
-  | 'pr_open'
-  | 'pr_mergeable'
-  | 'pr_ready'
-  | 'pr_merged'
-  | 'review_posted'
-  | 'github_review_approved'
-  | 'codex_review_approved'
-  | 'artifact_exists'
-  | 'task_reported_status'
-  | 'post_approval_only';
-
-/**
- * A connector id named in a script hook's `externalLookups`. The engine admits
- * any id that resolves to a registered connector (L2 registry, epic #2299); the
- * literal `'github'` is no longer special-cased in the type.
- *
- * `string & {}` keeps assignability from string literals while marking the type
- * as a distinct connector-id position (vs an arbitrary string) in signatures
- * and IDE hovers. The registry is the real source of truth; this is a nominal
- * cue, not an enforcement.
- */
-export type WorkflowHookExternalLookup = string & {};
-
-export interface WorkflowHookAuthorizedCaller {
-  /** Source workflow node name authorized to invoke this hook. */
-  sourceNode: string;
-  /** Optional agent slot names within sourceNode. Omitted means any slot in sourceNode. */
-  agentSlots?: string[];
-}
-
-export interface WorkflowHookRetrySettings {
-  maxAttempts: number;
-  delayMs: number;
-  backoffMultiplier?: number;
-}
-
-export interface WorkflowHookPollSettings {
-  intervalMs: number;
-  maxDurationMs?: number;
-}
-
-export interface WorkflowHookScriptValidator {
-  kind: 'script';
-  interpreter: 'bash';
-  source: string;
-  timeoutMs?: number;
-  externalLookups?: WorkflowHookExternalLookup[];
-}
-
-export interface WorkflowHookBuiltInValidator {
-  kind: 'built_in';
-  id: WorkflowHookValidatorId;
-}
-
-export type WorkflowHookValidator = WorkflowHookBuiltInValidator | WorkflowHookScriptValidator;
-
-export interface WorkflowHookStateReference {
-  hookId: string;
-  key: string;
-}
-
-export interface WorkflowHookLocalStateConfig {
-  defaults?: Record<string, unknown>;
-  recentResultRef?: WorkflowHookStateReference;
-}
-
-export interface WorkflowHookBaseResult {
-  message?: string;
-  data?: Record<string, unknown>;
-}
-
-export interface WorkflowHookAllowResult extends WorkflowHookBaseResult {
-  type: 'allow';
-}
-
-export interface WorkflowHookBlockResult extends WorkflowHookBaseResult {
-  type: 'block';
-  reason: string;
-}
-
-export interface WorkflowHookRetryableBlockResult extends WorkflowHookBaseResult {
-  type: 'retryable_block';
-  reason: string;
-  retryAfterMs?: number;
-}
-
-export interface WorkflowHookPatchParamsResult extends WorkflowHookBaseResult {
-  type: 'patch_params';
-  patch: Record<string, unknown>;
-}
-
-export interface WorkflowHookEmitFollowUpResult extends WorkflowHookBaseResult {
-  type: 'emit_follow_up';
-  targetNode: string;
-  message: string;
-}
-
-export interface WorkflowHookRecordStateResult extends WorkflowHookBaseResult {
-  type: 'record_state';
-  state?: Record<string, unknown>;
-  stateForHook?: Record<string, Record<string, unknown>>;
-}
-
-export type WorkflowHookResult =
-  | WorkflowHookAllowResult
-  | WorkflowHookBlockResult
-  | WorkflowHookRetryableBlockResult
-  | WorkflowHookPatchParamsResult
-  | WorkflowHookEmitFollowUpResult
-  | WorkflowHookRecordStateResult;
-
-export interface WorkflowHookStateSnapshot {
-  runId: string;
-  hookId: string;
-  version: number;
-  localState: Record<string, unknown>;
-  lastResult?: WorkflowHookResult;
-  retryCount: number;
-  nextRetryAt?: number;
-  voteMaps: Record<string, Record<string, unknown>>;
-  createdAt: number;
-  updatedAt: number;
-}
-
-export interface WorkflowHook {
-  /** Stable hook identifier, unique inside a workflow. */
-  id: string;
-  enabled: boolean;
-  /** Node whose MCP action or runtime event triggers this hook. */
-  sourceNode: string;
-  /** Optional node affected by this hook result. */
-  targetNode?: string;
-  method: WorkflowHookMcpMethod;
-  templateData?: Record<string, unknown>;
-  validator: WorkflowHookValidator;
-  retry?: WorkflowHookRetrySettings;
-  poll?: WorkflowHookPollSettings;
-  localState?: WorkflowHookLocalStateConfig;
-  /** Agents authorized to invoke this hook. Empty/absent fails closed unless humanOnly is true. */
-  authorizedCallers?: WorkflowHookAuthorizedCaller[];
-  /** Human-only hooks can only run from explicit UI approval/retry actions, never agent MCP sessions. */
-  humanOnly?: boolean;
-  /** Hook classification — determines execution order and failure semantics. Defaults to 'validation'. */
-  classification?: 'validation' | 'side_effect';
-  /** Execution order within classification (lower = earlier). Defaults to 0. */
-  order?: number;
-  /** Human-readable label for debugging and banner messages. */
-  label?: string;
-}
-
-export interface WorkflowHookUserState {
-  status:
-    | 'allowed'
-    | 'blocked_by_hook'
-    | 'waiting_on_hook_retry'
-    | 'patched'
-    | 'follow_up_emitted'
-    | 'state_recorded';
-  hookId?: string;
-  hookLabel?: string;
-  method?: string;
-  reason?: string;
-  remediation?: string;
-  sourceNode?: string;
-  targetNode?: string;
-  patchedKeys?: string[];
-  emittedActionIds?: string[];
-  retryAfterMs?: number;
-  retryCount?: number;
-  nextRetryAt?: number;
-}
-
 /**
  * A Channel — a simple unidirectional pipe between agents in a workflow.
  *
@@ -2362,14 +2181,8 @@ export interface SpaceWorkflow {
    */
   channels?: WorkflowChannel[];
   /**
-   * Hook definitions for MCP action/runtime validation.
-   * Persisted as JSON in the `hooks` column of `space_workflows`.
-   */
-  hooks?: WorkflowHook[];
-  /**
    * v2 hook bindings — placement of a hook (by id) on a workflow route.
-   * Persisted as JSON in the `hook_bindings` column. The v2 engine resolves
-   * these; the legacy `hooks` field above is retired in step 7.
+   * Persisted as JSON in the `hook_bindings` column; resolved by the v2 engine.
    */
   hookBindings?: HookBinding[];
   /**
@@ -2465,8 +2278,6 @@ export interface CreateSpaceWorkflowParams {
   endNodeId?: string;
   /** Workflow-level messaging channels. */
   channels?: WorkflowChannel[];
-  /** Hook definitions for MCP action/runtime validation. */
-  hooks?: WorkflowHook[];
   /** v2 hook bindings (placement of a hook on a route). */
   hookBindings?: HookBinding[];
   /** v2 custom (script) hook definitions authored on this workflow. */
@@ -2535,10 +2346,6 @@ export interface UpdateSpaceWorkflowParams {
    * Replaces the channel list. Pass `[]` or `null` to clear all channels.
    */
   channels?: WorkflowChannel[] | null;
-  /**
-   * Replaces the hook list. Pass `[]` or `null` to clear all hooks.
-   */
-  hooks?: WorkflowHook[] | null;
   /** Replaces the v2 hook bindings. Pass `[]` or `null` to clear. */
   hookBindings?: HookBinding[] | null;
   /** Replaces the v2 custom hooks. Pass `[]` or `null` to clear. */
@@ -2812,8 +2619,10 @@ export interface ExportedSpaceWorkflow {
    * Directed messaging channels. `from`/`to` use node names. Channel `id` is stripped.
    */
   channels?: ExportedWorkflowChannel[];
-  /** Workflow hooks in portable form. Node references use node/agent slot names. */
-  hooks?: WorkflowHook[];
+  /** v2 hook bindings (placement of a hook on a route). Node refs use node/slot names. */
+  hookBindings?: HookBinding[];
+  /** v2 custom (script) hook definitions authored on this workflow. */
+  customHooks?: CustomHook[];
   /**
    * Minimum autonomy level (1-5) required for end-node agents to self-close
    * the task via `approve_task`. Below this threshold, `approve_task` becomes

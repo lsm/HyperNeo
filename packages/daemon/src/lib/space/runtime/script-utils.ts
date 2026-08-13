@@ -1,82 +1,10 @@
 /**
- * Shared script utilities used by hook script execution and GitHub-lookup
- * helpers: prototype-pollution-safe deep merge, JSON stdout parsing, and
- * max-buffer stream collection. These were originally co-located with the
- * retired gate script executor; they are generic and belong to the hook/runtime
- * layer.
+ * Generic script-execution utilities used by the v2 hook engine's custom-script
+ * runner: JSON stdout parsing and max-buffer stream collection.
  */
 
 /** Maximum stdout/stderr buffer size (1 MB). */
 export const MAX_BUFFER_BYTES = 1_048_576;
-
-/** Keys that are rejected during deep-merge to prevent prototype pollution. */
-const PROTO_POLLUTION_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
-
-/**
- * Deep-merges `source` into `target` with a configurable depth limit.
- *
- * Rejects `__proto__`, `constructor`, and `prototype` keys at every level
- * to prevent prototype pollution attacks from malicious script output.
- *
- * @param target  The target object to merge into.
- * @param source  The source object to merge from.
- * @param maxDepth  Maximum recursion depth (default 5).
- * @returns The merged target object.
- */
-export function deepMergeWithDepthLimit(
-  target: Record<string, unknown>,
-  source: unknown,
-  maxDepth = 5
-): Record<string, unknown> {
-  return _deepMerge(target, source, 0, maxDepth);
-}
-
-function _deepMerge(
-  target: Record<string, unknown>,
-  source: unknown,
-  currentDepth: number,
-  maxDepth: number
-): Record<string, unknown> {
-  if (
-    currentDepth >= maxDepth ||
-    source === null ||
-    typeof source !== 'object' ||
-    Array.isArray(source)
-  ) {
-    return target;
-  }
-
-  const sourceRecord = source as Record<string, unknown>;
-
-  for (const [key, value] of Object.entries(sourceRecord)) {
-    // Block prototype pollution keys
-    if (PROTO_POLLUTION_KEYS.has(key)) {
-      continue;
-    }
-
-    const existing = target[key];
-
-    if (
-      value !== null &&
-      typeof value === 'object' &&
-      !Array.isArray(value) &&
-      existing !== null &&
-      typeof existing === 'object' &&
-      !Array.isArray(existing)
-    ) {
-      target[key] = _deepMerge(
-        existing as Record<string, unknown>,
-        value,
-        currentDepth + 1,
-        maxDepth
-      );
-    } else {
-      target[key] = value;
-    }
-  }
-
-  return target;
-}
 
 /**
  * Parses raw stdout from a script as JSON.

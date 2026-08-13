@@ -29,33 +29,29 @@ describe('WorkflowHookStateRepository', () => {
 
   afterEach(() => db.close());
 
-  test('uses compare-and-swap version updates and appends result artifacts', () => {
+  test('uses compare-and-swap version updates and stamps lastFlow/lastReason', () => {
     const initial = repo.ensure('run-1', 'hook-1', { approvals: { coder: 'pending' } });
     expect(initial.version).toBe(0);
 
     const updated = repo.update('run-1', 'hook-1', {
       expectedVersion: 0,
       localState: { approvals: { reviewer: 'approved' } },
-      lastResult: { type: 'allow', data: { ok: true } },
+      lastFlow: 'continue',
+      lastReason: 'pr is ready',
     });
     expect(updated?.version).toBe(1);
     expect(updated?.localState).toEqual({
       approvals: { coder: 'pending', reviewer: 'approved' },
     });
+    expect(updated?.lastFlow).toBe('continue');
+    expect(updated?.lastReason).toBe('pr is ready');
 
+    // A stale expectedVersion does NOT clobber the row.
     const stale = repo.update('run-1', 'hook-1', {
       expectedVersion: 0,
       localState: { approvals: { qa: 'approved' } },
     });
     expect(stale).toBeNull();
-
-    const artifacts = db
-      .prepare(`SELECT hook_id, version, result FROM workflow_hook_result_artifacts`)
-      .all() as Array<{ hook_id: string; version: number; result: string }>;
-    expect(artifacts).toHaveLength(1);
-    expect(artifacts[0].hook_id).toBe('hook-1');
-    expect(artifacts[0].version).toBe(1);
-    expect(JSON.parse(artifacts[0].result)).toEqual({ type: 'allow', data: { ok: true } });
   });
 
   test('does not create missing state rows for stale expected versions', () => {
@@ -68,18 +64,21 @@ describe('WorkflowHookStateRepository', () => {
     expect(repo.get('run-1', 'hook-1')).toBeNull();
   });
 
-  test('deep-merges vote maps within one transaction', () => {
+  test('deep-merges localState within one transaction', () => {
     repo.ensure('run-1', 'hook-1');
     const first = repo.update('run-1', 'hook-1', {
       expectedVersion: 0,
-      voteMaps: { approvals: { coder: 'yes' } },
+      localState: { approvals: { coder: 'yes' } },
     });
     const second = repo.update('run-1', 'hook-1', {
       expectedVersion: first!.version,
-      voteMaps: { approvals: { reviewer: 'yes' } },
+      localState: { approvals: { reviewer: 'yes' } },
     });
 
-    expect(second?.voteMaps).toEqual({ approvals: { coder: 'yes', reviewer: 'yes' } });
+    // Deep-merge: nested approval keys are unioned, not replaced.
+    expect(second?.localState).toEqual({
+      approvals: { coder: 'yes', reviewer: 'yes' },
+    });
   });
 
   test('ensure tolerates concurrent insert races', () => {
@@ -88,5 +87,20 @@ describe('WorkflowHookStateRepository', () => {
 
     expect(second).toEqual(first);
     expect(second.localState).toEqual({ first: true });
+  });
+
+  test('update advances retryCount and nextRetryAt on a retry flow', () => {
+    repo.ensure('run-1', 'hook-1');
+    const retried = repo.update('run-1', 'hook-1', {
+      expectedVersion: 0,
+      lastFlow: 'retry',
+      lastReason: 'transient',
+      retryCount: 1,
+      nextRetryAt: 12345,
+    });
+    expect(retried?.lastFlow).toBe('retry');
+    expect(retried?.lastReason).toBe('transient');
+    expect(retried?.retryCount).toBe(1);
+    expect(retried?.nextRetryAt).toBe(12345);
   });
 });

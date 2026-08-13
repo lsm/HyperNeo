@@ -1,9 +1,10 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import type { CustomHook, HookBinding } from '@hyperneo/shared';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { createSpaceTables } from '../../helpers/space-test-db.ts';
 
-describe('SpaceWorkflowRepository — hooks', () => {
+describe('SpaceWorkflowRepository — hook bindings & custom hooks (v2)', () => {
   let db: Database;
   let repo: SpaceWorkflowRepository;
 
@@ -20,7 +21,27 @@ describe('SpaceWorkflowRepository — hooks', () => {
 
   afterEach(() => db.close());
 
-  test('round-trips persisted workflow hook config', () => {
+  const customHooks: CustomHook[] = [
+    {
+      id: 'audit-hook',
+      requiredData: [{ key: 'pr_link', type: 'link', required: true }],
+      run: { kind: 'script', interpreter: 'bash', source: 'echo hi', timeoutMs: 1000 },
+    },
+  ];
+
+  const hookBindings: HookBinding[] = [
+    {
+      hookId: 'audit-hook',
+      sourceNode: 'Coding',
+      targetNode: 'Review',
+      method: 'send_message',
+      order: 0,
+      enabled: true,
+      authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+    },
+  ];
+
+  test('round-trips persisted hookBindings and customHooks', () => {
     const wf = repo.createWorkflow({
       spaceId: 'sp-1',
       name: 'Hooked',
@@ -28,35 +49,65 @@ describe('SpaceWorkflowRepository — hooks', () => {
         { id: 'n1', name: 'Coding', agents: [{ agentId: 'a1', name: 'coder' }] },
         { id: 'n2', name: 'Review', agents: [{ agentId: 'a2', name: 'reviewer' }] },
       ],
-      hooks: [
-        {
-          id: 'hook-1',
-          enabled: true,
-          sourceNode: 'Coding',
-          targetNode: 'Review',
-          method: 'send_message',
-          validator: { kind: 'script', interpreter: 'bash', source: 'echo \'{"type":"allow"}\'' },
-          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
-          retry: { maxAttempts: 2, delayMs: 1000 },
-        },
-      ],
+      hookBindings,
+      customHooks,
     });
 
     const fetched = repo.getWorkflow(wf.id);
-    expect(fetched?.hooks).toEqual(wf.hooks);
+    expect(fetched?.hookBindings).toEqual(hookBindings);
+    expect(fetched?.customHooks).toEqual(customHooks);
+    // The v2 model does NOT populate a legacy `hooks` field.
+    expect((fetched as unknown as { hooks?: unknown }).hooks).toBeUndefined();
+  });
+
+  test('updateWorkflow replaces hookBindings and customHooks', () => {
+    const wf = repo.createWorkflow({
+      spaceId: 'sp-1',
+      name: 'Hooked',
+      nodes: [
+        { id: 'n1', name: 'Coding', agents: [{ agentId: 'a1', name: 'coder' }] },
+        { id: 'n2', name: 'Review', agents: [{ agentId: 'a2', name: 'reviewer' }] },
+      ],
+      hookBindings,
+      customHooks,
+    });
+
+    const nextBindings: HookBinding[] = [
+      {
+        hookId: 'pr_ready',
+        sourceNode: 'Review',
+        targetNode: 'Coding',
+        method: 'send_message',
+        order: 0,
+        enabled: true,
+        authorizedCallers: [{ sourceNode: 'Review' }],
+      },
+    ];
 
     const updated = repo.updateWorkflow(wf.id, {
-      hooks: [
-        {
-          id: 'hook-2',
-          enabled: true,
-          sourceNode: 'Review',
-          method: 'save_artifact',
-          validator: { kind: 'script', interpreter: 'bash', source: 'echo \'{"type":"allow"}\'' },
-          authorizedCallers: [{ sourceNode: 'Review' }],
-        },
-      ],
+      hookBindings: nextBindings,
+      customHooks: [],
     });
-    expect(updated?.hooks?.map((hook) => hook.id)).toEqual(['hook-2']);
+    expect(updated?.hookBindings?.map((b) => b.hookId)).toEqual(['pr_ready']);
+    // Empty customHooks array is persisted as null (the repository drops empty
+    // arrays), so the field is undefined on read-back.
+    expect(updated?.customHooks).toBeUndefined();
+  });
+
+  test('nulls/empty arrays clear the columns', () => {
+    const wf = repo.createWorkflow({
+      spaceId: 'sp-1',
+      name: 'Hooked',
+      nodes: [
+        { id: 'n1', name: 'Coding', agents: [{ agentId: 'a1', name: 'coder' }] },
+        { id: 'n2', name: 'Review', agents: [{ agentId: 'a2', name: 'reviewer' }] },
+      ],
+      hookBindings,
+      customHooks,
+    });
+
+    const cleared = repo.updateWorkflow(wf.id, { hookBindings: null, customHooks: null });
+    expect(cleared?.hookBindings).toBeUndefined();
+    expect(cleared?.customHooks).toBeUndefined();
   });
 });

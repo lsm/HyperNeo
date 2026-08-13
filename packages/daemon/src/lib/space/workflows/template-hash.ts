@@ -34,10 +34,15 @@ interface WorkflowFingerprint {
    */
   channels: string[];
   /**
-   * Exhaustive JSON serialization of each workflow hook.
+   * Exhaustive JSON serialization of each hook binding (Layer-2 placement).
    * All structurally-meaningful fields are included automatically.
    */
-  hooks: string[];
+  hookBindings: string[];
+  /**
+   * Exhaustive JSON serialization of each custom (script) hook defined on the
+   * workflow, so a change to a custom hook's script/contract is detected as drift.
+   */
+  customHooks: string[];
   /**
    * Per-agent custom prompt entries, sorted. Format:
    * `<nodeName>|<agentName>|<customPrompt>` (empty string when absent).
@@ -105,7 +110,11 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
     })
     .sort();
 
-  const hooks = (workflow.hooks ?? []).map((hook) => JSON.stringify(hook)).sort();
+  const hookBindings = (workflow.hookBindings ?? [])
+    .map((binding) => JSON.stringify(binding))
+    .sort();
+
+  const customHooks = (workflow.customHooks ?? []).map((hook) => JSON.stringify(hook)).sort();
 
   // Serialize per-agent custom prompts.
   // Format: `<nodeName>|<agentName>|<mode>|<customPrompt>` — mode is `replace` when the
@@ -204,7 +213,8 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
     instructions: workflow.instructions ?? '',
     nodeNames,
     channels,
-    hooks,
+    hookBindings,
+    customHooks,
     nodePrompts,
     // Only emitted when non-empty — see the comment on the declaration above.
     ...(nodeAgentResetContextEntries.length > 0

@@ -31,6 +31,7 @@ import { inferProviderForModel } from '../../providers/registry';
 import { Logger } from '../../logger';
 import { SUB_SESSION_FEATURES } from './seed-agents';
 import { deriveWorkerDisallowedTools } from './tool-policy';
+import { resolveHook } from '../runtime/hook-registry';
 import { createHash } from 'node:crypto';
 
 const DEFAULT_CUSTOM_AGENT_MODEL = 'claude-sonnet-4-6';
@@ -487,30 +488,43 @@ function buildHookValidatedHandoffLines(
   workflow: SpaceWorkflow,
   currentNode: WorkflowNode
 ): string[] {
-  // Built-in send_message validators that gate a handoff on the run's PR
-  // identity, which the agent must carry as data.pr_url (the hook resolves it
-  // from there). pr_ready gates the coder→reviewer handoff; review_posted gates
-  // the Review→Coding feedback handoff.
-  const PR_URL_HANDOFF_HOOK_VALIDATORS = new Set(['pr_ready', 'review_posted']);
-  const outboundHookValidatedChannels = (workflow.channels ?? []).filter(
-    (channel) =>
-      isChannelFromNode(channel, currentNode.name) &&
-      (workflow.hooks ?? []).some(
-        (hook) =>
-          hook.enabled !== false &&
-          hook.method === 'send_message' &&
-          hook.sourceNode === currentNode.name &&
-          hook.targetNode === channel.to &&
-          hook.validator?.kind === 'built_in' &&
-          PR_URL_HANDOFF_HOOK_VALIDATORS.has(hook.validator.id)
-      )
-  );
-
+  // For each outbound channel gated by a send_message hook binding, derive the
+  // handoff's data contract generically from the union of the bound hooks'
+  // requiredData — instead of a hardcoded {'pr_ready','review_posted'} set. This
+  // keeps the injected contract in sync with whatever the bound hooks actually
+  // require (e.g. pr_link for pr_ready; pr_link + reason for post_approval_only)
+  // and removes the stale-prompt drift of naming a fixed field set.
   const lines: string[] = [];
-  for (const channel of outboundHookValidatedChannels) {
+  for (const channel of workflow.channels ?? []) {
+    if (!isChannelFromNode(channel, currentNode.name)) continue;
     if (Array.isArray(channel.to)) continue;
+    const target = channel.to;
+
+    const bindings = (workflow.hookBindings ?? []).filter(
+      (binding) =>
+        binding.enabled !== false &&
+        binding.method === 'send_message' &&
+        binding.sourceNode === currentNode.name &&
+        binding.targetNode === target
+    );
+    if (bindings.length === 0) continue;
+
+    const seen = new Set<string>();
+    const requiredFields: string[] = [];
+    for (const binding of bindings) {
+      const hook = resolveHook(binding.hookId, workflow.customHooks);
+      if (!hook) continue;
+      for (const field of hook.requiredData) {
+        if (!field.required || seen.has(field.key)) continue;
+        seen.add(field.key);
+        requiredFields.push(`"${field.key}": "<${field.key}>"`);
+      }
+    }
+    const dataContract =
+      requiredFields.length > 0 ? `, data: { ${requiredFields.join(', ')} }` : '';
+
     lines.push(
-      `  - ${describeChannelTarget(channel, channel.to)}: call \`send_message(target=${JSON.stringify(channel.to)}, message="<short summary>", data: { "pr_url": "<pr_url>" })\`; \`save_artifact\` alone does not deliver this gated handoff.`
+      `  - ${describeChannelTarget(channel, target)}: call \`send_message(target=${JSON.stringify(target)}, message="<short summary>"${dataContract})\`; \`save_artifact\` alone does not deliver this gated handoff.`
     );
   }
   return lines;

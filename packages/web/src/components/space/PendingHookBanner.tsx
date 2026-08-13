@@ -188,7 +188,9 @@ export function PendingHookBanner({
               });
             }
 
-            if (hook.status === 'blocked_by_hook' && hook.allowHumanApproval) {
+            if (hook.status === 'blocked_by_hook') {
+              // v2: a blocked hook always accepts human approval/rejection via
+              // approveHook. The old allowHumanApproval flag has no v2 equivalent.
               actions.push(
                 {
                   label: 'Approve',

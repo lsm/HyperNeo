@@ -157,68 +157,48 @@ const exportedWorkflowChannelSchema = z.object({
   label: z.string().optional(),
 });
 
-const workflowHookValidatorSchema = z.union([
-  z.object({ kind: z.literal('built_in'), id: z.string().min(1) }),
-  z.object({
+const hookDataFieldSchema = z.object({
+  key: z.string().min(1),
+  type: z.enum(['string', 'number', 'boolean', 'link']),
+  required: z.boolean(),
+  description: z.string().optional(),
+});
+
+const hookAuthorizedCallerSchema = z.object({
+  sourceNode: z.string().min(1),
+  agentSlots: z.array(z.string().min(1)).optional(),
+});
+
+const hookMethodSchema = z.enum([
+  'send_message',
+  'save_artifact',
+  'create_standalone_task',
+  'mark_complete',
+  'submit_for_approval',
+  'approve_task',
+]);
+
+/** Zod schema for an exported v2 hook binding (Layer-2 placement). */
+const hookBindingSchema = z.object({
+  hookId: z.string().min(1),
+  sourceNode: z.string().min(1),
+  targetNode: z.string().min(1),
+  method: hookMethodSchema,
+  order: z.number().optional(),
+  enabled: z.boolean(),
+  authorizedCallers: z.array(hookAuthorizedCallerSchema).optional(),
+});
+
+/** Zod schema for an exported v2 custom (script) hook (Layer-1 definition). */
+const customHookSchema = z.object({
+  id: z.string().min(1),
+  requiredData: z.array(hookDataFieldSchema),
+  run: z.object({
     kind: z.literal('script'),
     interpreter: z.literal('bash'),
     source: z.string().min(1),
     timeoutMs: z.number().int().positive().optional(),
-    externalLookups: z.array(z.string().min(1)).optional(),
   }),
-]);
-
-const workflowHookSchema = z.object({
-  id: z.string().min(1),
-  enabled: z.boolean(),
-  sourceNode: z.string().min(1),
-  targetNode: z.string().min(1).optional(),
-  method: z.enum([
-    'send_message',
-    'save_artifact',
-    'create_standalone_task',
-    'mark_complete',
-    'submit_for_approval',
-    'approve_task',
-  ]),
-  classification: z.enum(['validation', 'side_effect']).optional(),
-  order: z.number().optional(),
-  label: z.string().optional(),
-  templateData: z.record(z.string(), z.unknown()).optional(),
-  validator: workflowHookValidatorSchema,
-  retry: z
-    .object({
-      maxAttempts: z.number().int().nonnegative(),
-      delayMs: z.number().int().nonnegative(),
-      backoffMultiplier: z.number().positive().optional(),
-    })
-    .optional(),
-  poll: z
-    .object({
-      intervalMs: z.number().int().positive(),
-      maxDurationMs: z.number().int().positive().optional(),
-    })
-    .optional(),
-  localState: z
-    .object({
-      defaults: z.record(z.string(), z.unknown()).optional(),
-      recentResultRef: z
-        .object({
-          hookId: z.string().min(1),
-          key: z.string().min(1),
-        })
-        .optional(),
-    })
-    .optional(),
-  authorizedCallers: z
-    .array(
-      z.object({
-        sourceNode: z.string().min(1),
-        agentSlots: z.array(z.string().min(1)).optional(),
-      })
-    )
-    .optional(),
-  humanOnly: z.boolean().optional(),
 });
 
 /**
@@ -329,7 +309,8 @@ const exportedWorkflowBaseSchema = z.object({
   endNode: z.string().optional(),
   tags: z.array(z.string()),
   channels: z.array(exportedWorkflowChannelSchema).optional(),
-  hooks: z.array(workflowHookSchema).optional(),
+  hookBindings: z.array(hookBindingSchema).optional(),
+  customHooks: z.array(customHookSchema).optional(),
   // Optional in schema for backward compatibility with v1 exports that predate
   // the completionAutonomyLevel field. Import code falls back to a sensible
   // default when the field is absent.
@@ -516,8 +497,11 @@ export function exportWorkflow(
     });
     result.channels = exportedChannels;
   }
-  if (workflow.hooks && workflow.hooks.length > 0) {
-    result.hooks = workflow.hooks;
+  if (workflow.hookBindings && workflow.hookBindings.length > 0) {
+    result.hookBindings = workflow.hookBindings.map((binding) => ({ ...binding }));
+  }
+  if (workflow.customHooks && workflow.customHooks.length > 0) {
+    result.customHooks = workflow.customHooks.map((hook) => ({ ...hook }));
   }
   return result;
 }
@@ -656,9 +640,13 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
   // Handoff transitions: each declared transition's `target` must reference a
   // known node/agent name or the '*' wildcard; transition ids and targets must
   // be unique within a node (so handoff({ target }) resolves unambiguously);
-  // and `hookId` must reference a known exported hook.
+  // and `hookId` must reference a known exported hook (a bound hook id or a
+  // declared custom hook id).
   const transitionHookIds = new Set<string>();
-  for (const hook of result.data.hooks ?? []) {
+  for (const binding of result.data.hookBindings ?? []) {
+    if (binding?.hookId) transitionHookIds.add(binding.hookId);
+  }
+  for (const hook of result.data.customHooks ?? []) {
     if (hook?.id) transitionHookIds.add(hook.id);
   }
   // Build the destination map ONCE (not per source node) so validation stays

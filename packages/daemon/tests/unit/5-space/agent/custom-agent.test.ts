@@ -640,7 +640,7 @@ describe('buildCustomAgentTaskMessage', () => {
     );
 
     expect(message).toContain(
-      'Review (Coding → Review): call `send_message(target="Review", message="<short summary>", data: { "pr_url": "<pr_url>" })`'
+      'Review (Coding → Review): call `send_message(target="Review", message="<short summary>", data: { "pr_link": "<pr_link>" })`'
     );
     expect(message).toContain('`save_artifact` alone does not deliver this gated handoff');
   });
@@ -662,7 +662,7 @@ describe('buildCustomAgentTaskMessage', () => {
     );
 
     expect(message).toContain(
-      'Review (Coding → Review): call `send_message(target="Review", message="<short summary>", data: { "pr_url": "<pr_url>" })`'
+      'Review (Coding → Review): call `send_message(target="Review", message="<short summary>", data: { "pr_link": "<pr_link>" })`'
     );
     expect(message).toContain('`save_artifact` alone does not deliver this gated handoff');
   });

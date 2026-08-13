@@ -3,205 +3,95 @@
  *
  * The domain implementation of {@link WorkflowArtifactProfile} for coding
  * workflows. This is the ONLY place in the daemon that names coding-specific
- * kinds (`pr`, `review`) and the `pr_url` / `prUrl` / `review_url` identity
- * fields. Generic infra depends on the interface; it never imports this module.
+ * kinds (`pr`, `review`) and the `pr` identity. Generic infra depends on the
+ * interface; it never imports this module.
  *
- * It consolidates the behaviors that previously lived (duplicated and
- * kind-hardcoded) inside daemon core:
- *   - `resolvePrimaryLinkUrl` — the PR URL (a `link kind:'pr'`, or a legacy
- *     `pr_url`/`prUrl` field), resolved across hook state and artifacts by
- *     recency.
- *   - `summarizeRunOutcome` — the kindless terminal `decision` summary.
+ * In the v2 hook model the `pr_ready` hook stamps the run's reviewed PR as a
+ * `link/pr` artifact (via `ctx.writeArtifact`) on a successful handoff. That
+ * artifact is the single authoritative source for the run's PR identity — there
+ * is no longer an engine-reserved hook-state key or a `pr_url` field on hook
+ * state. `resolvePrimaryLinkUrl` reads the freshest such artifact; the immutable
+ * `resolveInitialPrimaryLinkUrl` reads the oldest (so a later artifact cannot
+ * swap the reviewed PR for a different already-merged one).
  */
 
+import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import { Logger } from '../../logger';
 import type { WorkflowArtifactProfile } from '../runtime/artifact-profile';
-import { PR_READY_VALIDATED_IDENTITY_HOOK_ID } from '../runtime/workflow-hook-engine';
-import { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository';
-import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 
 const log = new Logger('coding-artifact-profile');
 
-/**
- * The SQLite database type this profile consumes. Derived structurally from
- * `WorkflowHookStateRepository`'s constructor so it is identical to what every
- * other repo caller passes (and what `getDatabase()` returns) under any Bun type
- * resolution — avoiding a bun:sqlite ↔ node:sqlite type-surface mismatch that
- * only surfaces in CI.
- */
-type ArtifactDb = ConstructorParameters<typeof WorkflowHookStateRepository>[0];
-
 export interface CodingArtifactProfileConfig {
-  db: ArtifactDb;
   artifactRepo?: WorkflowRunArtifactRepository;
-  /**
-   * Resolves the hook ids configured with the actual `pr_ready` built-in
-   * validator for a run's workflow. When provided, the PR-identity resolver's
-   * hook-state fallback trusts ONLY those validator-verified hook ids (not a
-   * `pr-ready` substring), so a custom hook with a colliding id and a different
-   * validator cannot spoof the run PR identity on runs without a reserved
-   * snapshot. Returns undefined when the workflow can't be resolved (the
-   * resolver then falls back to the substring for legacy compatibility).
-   */
-  resolvePrReadyHookIds?: (runId: string) => Set<string> | undefined;
 }
 
 /**
- * Extract a legacy PR URL (`prUrl` / `pr_url`) from a data object. Returns ''
- * when neither field holds a string. A generic `url` field never qualifies —
- * it could be an issue or preview link.
+ * The PR's URL on a `link/pr` artifact (v2: `data.link`, legacy `link kind:'pr'`:
+ * `data.url`), OR a legacy `pr_url`/`prUrl` field carried on any artifact —
+ * post-approval routing records the PR on a kindless `decision` artifact, and
+ * migrated runs carry it on older artifacts. Returns '' when none holds a string.
  */
-function legacyPrUrl(data: Record<string, unknown> | undefined): string {
-  return (
-    (typeof data?.prUrl === 'string' && data.prUrl) ||
-    (typeof data?.pr_url === 'string' && data.pr_url) ||
-    ''
-  );
+function prUrlOf(
+  artifactType: string,
+  artifactKey: string,
+  data: Record<string, unknown> | undefined
+): string {
+  if (artifactType === 'link' && (artifactKey === 'pr' || data?.kind === 'pr')) {
+    const link = typeof data?.link === 'string' ? data.link : '';
+    if (link) return link;
+    const url = typeof data?.url === 'string' ? data.url : '';
+    if (url) return url;
+  }
+  if (typeof data?.prUrl === 'string' && data.prUrl) return data.prUrl;
+  if (typeof data?.pr_url === 'string' && data.pr_url) return data.pr_url;
+  return '';
 }
 
 export class CodingArtifactProfile implements WorkflowArtifactProfile {
-  private readonly db: ArtifactDb;
   private readonly artifactRepo?: WorkflowRunArtifactRepository;
-  private readonly resolvePrReadyHookIds?: (runId: string) => Set<string> | undefined;
 
   constructor(config: CodingArtifactProfileConfig) {
-    this.db = config.db;
     this.artifactRepo = config.artifactRepo;
-    this.resolvePrReadyHookIds = config.resolvePrReadyHookIds;
   }
 
   resolvePrimaryLinkUrl(runId: string): string {
-    // The primary link is the FRESHEST eligible PR URL across hook state and
-    // artifacts, compared by updatedAt — so a newer `link kind:'pr'` artifact
-    // supersedes a stale hook-state `pr_url` (and vice versa). A generic `url`
-    // on a non-pr artifact never qualifies. Legacy `pr_url`/`prUrl` on artifacts
-    // is load-bearing for post-approval routing (which records the PR on a
-    // `decision` artifact) and for migrated runs.
-    type Candidate = { url: string; updatedAt: number };
-    let best: Candidate | null = null;
-    // Pure fresher (no closure mutation) so TS control-flow tracks `best`.
-    const fresher = (prev: Candidate | null, url: string, updatedAt: number): Candidate | null => {
-      if (!url) return prev;
-      if (!prev || updatedAt > prev.updatedAt) return { url, updatedAt };
-      return prev;
-    };
-
-    // 1. Workflow hook state — engine-controlled; `pr_ready` hooks persist
-    //    `pr_url` after a successful send_message.
+    if (!this.artifactRepo) return '';
     try {
-      const hookStateRepo = new WorkflowHookStateRepository(this.db);
-      for (const snapshot of hookStateRepo.listByRun(runId)) {
-        best = fresher(best, legacyPrUrl(snapshot.localState), snapshot.updatedAt ?? 0);
+      let best: { url: string; updatedAt: number } | null = null;
+      for (const a of this.artifactRepo.listByRun(runId)) {
+        const url = prUrlOf(a.artifactType, a.artifactKey, a.data);
+        if (!url) continue;
+        if (!best || a.updatedAt > best.updatedAt) best = { url, updatedAt: a.updatedAt };
       }
+      return best?.url ?? '';
     } catch (err) {
       log.warn(
-        `resolvePrUrl: failed to read hook state for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
+        `resolvePrimaryLinkUrl: failed to read artifacts for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
       );
+      return '';
     }
-
-    // 2. Artifacts — a `link kind:'pr'` (data.url) or a legacy row carrying
-    //    pr_url/prUrl. Legacy artifact pr_url is load-bearing for post-approval
-    //    routing (decision artifacts) and migrated runs.
-    if (this.artifactRepo) {
-      try {
-        for (const a of this.artifactRepo.listByRun(runId)) {
-          const url =
-            a.artifactType === 'link' && a.data.kind === 'pr'
-              ? typeof a.data.url === 'string'
-                ? a.data.url
-                : ''
-              : legacyPrUrl(a.data);
-          best = fresher(best, url, a.updatedAt);
-        }
-      } catch (err) {
-        log.warn(
-          `resolvePrUrl: failed to read artifacts for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
-        );
-      }
-    }
-
-    return best?.url ?? '';
   }
 
   resolveInitialPrimaryLinkUrl(runId: string): string {
-    // Authoritative source FIRST: the engine stamps the pr_ready-validated PR
-    // identity under a RESERVED hook id that no real (user-defined) hook can
-    // write (record_state / stateForHook target a hook's OWN id). Reading it
-    // outright bypasses the user-defined hook-id matching below, closing the
-    // colliding-hook-id / record_state PR-identity spoof for current runs.
+    if (!this.artifactRepo) return '';
     try {
-      const hookStateRepo = new WorkflowHookStateRepository(this.db);
-      const reserved = hookStateRepo.get(runId, PR_READY_VALIDATED_IDENTITY_HOOK_ID);
-      const reservedUrl = legacyPrUrl(reserved?.localState);
-      if (reservedUrl) return reservedUrl;
+      // The OLDEST `link/pr` artifact is the first reviewed-PR identity stamped
+      // for the run — the immutable one completion safety binds to, so a later
+      // stamp cannot substitute a different already-merged PR.
+      let earliest: { url: string; updatedAt: number } | null = null;
+      for (const a of this.artifactRepo.listByRun(runId)) {
+        const url = prUrlOf(a.artifactType, a.artifactKey, a.data);
+        if (!url) continue;
+        if (!earliest || a.updatedAt < earliest.updatedAt)
+          earliest = { url, updatedAt: a.updatedAt };
+      }
+      return earliest?.url ?? '';
     } catch (err) {
       log.warn(
-        `resolveInitialPrimaryLinkUrl: failed to read reserved identity for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
+        `resolveInitialPrimaryLinkUrl: failed to read artifacts for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
       );
+      return '';
     }
-
-    // Approval handoffs persist pr_url in hook state. Choose the latest
-    // validated handoff identity: a revision may legitimately replace a closed
-    // PR before final approval. Deliberately ignore artifacts whenever validated
-    // state exists so agents cannot substitute the PR later.
-    type Candidate = { url: string; updatedAt: number };
-    let approved: Candidate | null = null;
-    const newer = (prev: Candidate | null, url: string, updatedAt: number): Candidate | null => {
-      if (!url) return prev;
-      return !prev || updatedAt > prev.updatedAt ? { url, updatedAt } : prev;
-    };
-
-    try {
-      const hookStateRepo = new WorkflowHookStateRepository(this.db);
-      // When the caller can resolve which hook ids are actually configured with
-      // the pr_ready validator, trust ONLY those — a custom hook with a
-      // `pr-ready` id and a different validator must not be able to spoof the
-      // run PR identity on runs without a reserved snapshot. Fall back to the
-      // substring only when the workflow can't be resolved (legacy compat).
-      const verifiedHookIds = this.resolvePrReadyHookIds?.(runId);
-      const useExact = verifiedHookIds !== undefined;
-      for (const snapshot of hookStateRepo.listByRun(runId)) {
-        const trusted = useExact
-          ? verifiedHookIds.has(snapshot.hookId)
-          : snapshot.hookId.includes('pr-ready');
-        if (!trusted) continue;
-        approved = newer(approved, legacyPrUrl(snapshot.localState), snapshot.updatedAt ?? 0);
-      }
-    } catch (err) {
-      log.warn(
-        `resolveInitialPrimaryLinkUrl: failed to read hook state for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
-      );
-    }
-
-    if (approved) return approved.url;
-
-    // Backward compatibility for runs created before PR-ready hook state was
-    // persisted: bind to the oldest eligible artifact. With no validated
-    // handoff state this is the least-mutable historical identity available.
-    let fallback: Candidate | null = null;
-    const earlier = (prev: Candidate | null, url: string, updatedAt: number): Candidate | null => {
-      if (!url) return prev;
-      return !prev || updatedAt < prev.updatedAt ? { url, updatedAt } : prev;
-    };
-    if (this.artifactRepo) {
-      try {
-        for (const artifact of this.artifactRepo.listByRun(runId)) {
-          const url =
-            artifact.artifactType === 'link' && artifact.data.kind === 'pr'
-              ? typeof artifact.data.url === 'string'
-                ? artifact.data.url
-                : ''
-              : legacyPrUrl(artifact.data);
-          fallback = earlier(fallback, url, artifact.updatedAt);
-        }
-      } catch (err) {
-        log.warn(
-          `resolveInitialPrimaryLinkUrl: failed to read artifacts for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
-        );
-      }
-    }
-
-    return fallback?.url ?? '';
   }
 
   summarizeRunOutcome(runId: string): string | null {

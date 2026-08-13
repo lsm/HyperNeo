@@ -1,5 +1,5 @@
 /**
- * LOCAL-ONLY fixture extractor — epic #2299, P2 #2303.
+ * LOCAL-ONLY fixture extractor — Workflow Hooks v2.
  *
  * Regenerates the `./real-snapshots/*.json` fixtures from a real daemon.db.
  * Not part of any test run (CI has no production DB); run it manually against
@@ -8,9 +8,9 @@
  *   bun packages/daemon/tests/unit/5-space/workflow/fixtures/extract-real-snapshots.ts
  *
  * Reads the DB READ-ONLY, picks one persisted workflow per built-in template
- * that carries hooks, anonymizes UUIDs, trims bulky prompt text, and writes one
- * sanitized fixture per template. See `real-snapshots/README.md` for the
- * sanitization rules and why these snapshots exist.
+ * that carries v2 hook bindings, anonymizes UUIDs, trims bulky prompt text,
+ * and writes one sanitized fixture per template. See `real-snapshots/README.md`
+ * for the sanitization rules and why these snapshots exist.
  *
  * Usage:
  *   DB_PATH=/path/to/daemon.db bun .../extract-real-snapshots.ts [output_dir]
@@ -34,8 +34,8 @@ const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi
 
 /** Keys whose values are bulky prompt/instructions TEXT — irrelevant to the
  *  migration and noisy in a fixture, so trimmed to a marker. Script `source`
- *  is NOT in this set: gate/hook scripts are migration-relevant (equivalence +
- *  isBuiltInGateShape read them) and contain no secrets (generic gh/jq bash). */
+ *  is NOT in this set: custom hook scripts are migration-relevant and contain
+ *  no secrets (generic gh/jq bash). */
 const TRIM_KEYS = new Set(['value', 'instructions']);
 
 function slug(name: string): string {
@@ -66,25 +66,29 @@ function sanitize(value: unknown, key?: string): unknown {
   return value;
 }
 
-function countValidatorKinds(hooks: unknown): Record<string, number> {
-  const counts: Record<string, number> = {};
-  if (!Array.isArray(hooks)) return counts;
-  for (const h of hooks) {
-    const v = (h as { validator?: { kind?: string; id?: string } }).validator;
-    const key = v?.kind === 'built_in' ? `built_in:${v.id}` : (v?.kind ?? 'none');
-    counts[key] = (counts[key] ?? 0) + 1;
-  }
-  return counts;
+/** Summarize the v2 hook layers: how many bindings, which hook ids, how many
+ *  custom hooks, and their run kinds. */
+function summarizeHooks(
+  hookBindings: unknown,
+  customHooks: unknown
+): {
+  bindingCount: number;
+  bindingHookIds: string[];
+  customHookCount: number;
+  customHookIds: string[];
+} {
+  const bindings = Array.isArray(hookBindings) ? hookBindings : [];
+  const customs = Array.isArray(customHooks) ? customHooks : [];
+  return {
+    bindingCount: bindings.length,
+    bindingHookIds: bindings.map((b) => (b as { hookId?: string }).hookId ?? '<missing hookId>'),
+    customHookCount: customs.length,
+    customHookIds: customs.map((h) => (h as { id?: string }).id ?? '<missing id>'),
+  };
 }
 
-function collectGateIds(gates: unknown, channels: unknown): string[] {
+function collectGateIds(channels: unknown): string[] {
   const ids = new Set<string>();
-  if (Array.isArray(gates)) {
-    for (const g of gates) {
-      const id = (g as { id?: string }).id;
-      if (id) ids.add(id);
-    }
-  }
   if (Array.isArray(channels)) {
     for (const c of channels) {
       const gid = (c as { gateId?: string }).gateId;
@@ -102,9 +106,9 @@ for (const templateName of TEMPLATES) {
   const row = db
     .prepare(
       `SELECT id, template_name AS templateName, completion_autonomy_level AS completionAutonomyLevel,
-              template_hash AS templateHash, channels, gates, hooks
+              template_hash AS templateHash, channels, hook_bindings, custom_hooks
        FROM space_workflows
-       WHERE template_name = ? AND hooks IS NOT NULL
+       WHERE template_name = ? AND (hook_bindings IS NOT NULL OR custom_hooks IS NOT NULL)
        LIMIT 1`
     )
     .get(templateName) as {
@@ -113,12 +117,12 @@ for (const templateName of TEMPLATES) {
     completionAutonomyLevel: number;
     templateHash: string | null;
     channels: string | null;
-    gates: string | null;
-    hooks: string | null;
+    hookBindings: string | null;
+    customHooks: string | null;
   } | null;
 
   if (!row) {
-    console.warn(`no row with hooks for ${templateName}, skipping`);
+    console.warn(`no row with v2 hooks for ${templateName}, skipping`);
     continue;
   }
 
@@ -133,19 +137,22 @@ for (const templateName of TEMPLATES) {
     return { id: n.id, name: n.name, ...cfg };
   });
 
+  const hookBindings = row.hookBindings ? JSON.parse(row.hookBindings) : null;
+  const customHooks = row.customHooks ? JSON.parse(row.customHooks) : null;
+
   const snapshot = sanitize({
     templateName: row.templateName,
     completionAutonomyLevel: row.completionAutonomyLevel,
     templateHash: row.templateHash,
     channels: row.channels ? JSON.parse(row.channels) : null,
-    gates: row.gates ? JSON.parse(row.gates) : null,
-    hooks: row.hooks ? JSON.parse(row.hooks) : null,
+    hookBindings,
+    customHooks,
     nodes,
   }) as Record<string, unknown>;
 
   const summary = {
-    hookValidatorKinds: countValidatorKinds(snapshot.hooks),
-    gateIds: collectGateIds(snapshot.gates, snapshot.channels),
+    ...summarizeHooks(snapshot.hookBindings, snapshot.customHooks),
+    gateIds: collectGateIds(snapshot.channels),
     nodeNames: (snapshot.nodes as Array<{ name: string }>).map((n) => n.name),
   };
 

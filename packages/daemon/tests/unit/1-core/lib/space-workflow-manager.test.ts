@@ -1462,19 +1462,11 @@ describe('SpaceWorkflowManager', () => {
       const transitions = [{ id: 'to-review', target: 'Review', hookId: 'h1' }];
       const created = manager.createWorkflow({
         ...twoNodeParams(transitions),
-        hooks: [
+        customHooks: [
           {
             id: 'h1',
-            enabled: true,
-            sourceNode: 'Coder',
-            targetNode: 'Review',
-            method: 'send_message',
-            validator: {
-              kind: 'script',
-              interpreter: 'bash',
-              source: 'jq -n \'{"type":"allow"}\'',
-            },
-            authorizedCallers: [{ sourceNode: 'Coder' }],
+            requiredData: [],
+            run: { kind: 'script', interpreter: 'bash', source: 'echo "{\"flow\":\"continue\"}"' },
           },
         ],
       });
@@ -1487,19 +1479,11 @@ describe('SpaceWorkflowManager', () => {
     it('accepts a hookId that references a known hook', () => {
       const result = manager.createWorkflow({
         ...twoNodeParams([{ id: 'to-review', target: 'Review', hookId: 'h1' }]),
-        hooks: [
+        customHooks: [
           {
             id: 'h1',
-            enabled: true,
-            sourceNode: 'Coder',
-            targetNode: 'Review',
-            method: 'send_message',
-            validator: {
-              kind: 'script',
-              interpreter: 'bash',
-              source: 'jq -n \'{"type":"allow"}\'',
-            },
-            authorizedCallers: [{ sourceNode: 'Coder' }],
+            requiredData: [],
+            run: { kind: 'script', interpreter: 'bash', source: 'echo "{\"flow\":\"continue\"}"' },
           },
         ],
       });

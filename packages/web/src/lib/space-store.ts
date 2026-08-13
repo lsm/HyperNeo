@@ -2590,15 +2590,13 @@ class SpaceStore {
   /**
    * List all hook states for a workflow run.
    */
-  async listHookStates(
-    runId: string
-  ): Promise<import('@hyperneo/shared').WorkflowHookStateSnapshot[]> {
+  async listHookStates(runId: string): Promise<import('@hyperneo/shared').HookStateSnapshot[]> {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
     const result = await hub.request<{
-      hookStates: import('@hyperneo/shared').WorkflowHookStateSnapshot[];
-      hooks: import('@hyperneo/shared').WorkflowHook[];
+      hookStates: import('@hyperneo/shared').HookStateSnapshot[];
+      hookBindings: import('@hyperneo/shared').HookBinding[];
     }>('spaceWorkflowRun.listHookStates', { runId });
     return result?.hookStates ?? [];
   }
@@ -2611,12 +2609,12 @@ class SpaceStore {
     hookId: string,
     approved: boolean,
     reason?: string | null
-  ): Promise<import('@hyperneo/shared').WorkflowHookStateSnapshot> {
+  ): Promise<import('@hyperneo/shared').HookStateSnapshot> {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
     const result = await hub.request<{
-      hookState: import('@hyperneo/shared').WorkflowHookStateSnapshot;
+      hookState: import('@hyperneo/shared').HookStateSnapshot;
     }>('spaceWorkflowRun.approveHook', { runId, hookId, approved, reason: reason ?? null });
     return (
       result?.hookState ?? {
@@ -2627,7 +2625,6 @@ class SpaceStore {
         retryCount: 0,
         createdAt: 0,
         updatedAt: 0,
-        voteMaps: {},
       }
     );
   }
@@ -2638,12 +2635,12 @@ class SpaceStore {
   async retryHook(
     runId: string,
     hookId: string
-  ): Promise<import('@hyperneo/shared').WorkflowHookStateSnapshot> {
+  ): Promise<import('@hyperneo/shared').HookStateSnapshot> {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
     const result = await hub.request<{
-      hookState: import('@hyperneo/shared').WorkflowHookStateSnapshot;
+      hookState: import('@hyperneo/shared').HookStateSnapshot;
     }>('spaceWorkflowRun.retryHook', { runId, hookId });
     return (
       result?.hookState ?? {
@@ -2654,7 +2651,6 @@ class SpaceStore {
         retryCount: 0,
         createdAt: 0,
         updatedAt: 0,
-        voteMaps: {},
       }
     );
   }

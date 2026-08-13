@@ -23,6 +23,7 @@
 import type {
   DeclarativeToolGuard,
   EventInterest,
+  HookBinding,
   SpaceWorkflow,
   WorkflowNode,
   WorkflowNodeAgentOverride,
@@ -248,11 +249,10 @@ const REVIEW_REVIEW_NODE = 'tpl-review-review';
  * changes) belong in the Review-Only workflow, not here.
  */
 // Behavioral only (CLAUDE.md L170): it does NOT name the Review peer or the
-// pr_url handoff field — buildCustomAgentTaskMessage injects those centrally
-// via "Outbound gated handoffs" (buildHookValidatedHandoffLines), since the
-// stable workflows' Coding → Review channel carries the inherited code-pr-ready
-// pr_ready hook. Restating the target/field here would create a second source of
-// truth that drifts (same issue fixed for CODER_OWNED_QA_REVIEW_PROMPT).
+// handoff data fields — buildCustomAgentTaskMessage injects those centrally
+// via "Outbound gated handoffs" (buildHookValidatedHandoffLines), derived from
+// each bound hook's requiredData. Restating the target/fields here would create
+// a second source of truth that drifts (same issue fixed for CODER_OWNED_QA_REVIEW_PROMPT).
 /**
  * Declarative PR-event subscription shared by the implementer slots of the
  * default coding flows (Coding, Research, Coding with QA).
@@ -279,7 +279,7 @@ const IMPLEMENTER_PR_EVENT_INTEREST: EventInterest = {
 const CODER_OWNED_MERGE_PROMPT =
   'You are the Coder. Implement the task, add focused tests, and keep one pull request updated. ' +
   'When the PR is ready for review, hand it off via the gated handoff described in Your Role in This ' +
-  'Workflow — the runtime supplies the target and the pr_url field, so follow that contract exactly ' +
+  'Workflow — the runtime supplies the target and the required data fields, so follow that contract exactly ' +
   'and do not restate or assume it here. Address each valid review comment, reply on the PR, resolve ' +
   'review threads, rerun relevant tests, then resend the PR for review the same way. During ' +
   'implementation and review, do not merge or call task-completion tools. After the task is approved, ' +
@@ -290,10 +290,10 @@ const CODER_OWNED_MERGE_PROMPT =
   'and the post-approval merge procedure (it differs by workflow), so never assume a specific one.';
 
 // Behavioral only (CLAUDE.md L170): does not name the Coding peer or the
-// pr_url/review_url gate fields — buildGatedHandoffLines injects the Review→Coding
-// feedback handoff centrally (the channel is gated by review-posted-gate, whose
-// pr_url/review_url fields are writable by Review). comment_urls is NOT a gate
-// field, so it is kept here as behavioral guidance (which threads to raise).
+// handoff data fields — buildHookValidatedHandoffLines injects the Review→Coding
+// feedback handoff centrally (derived from the bound hook's requiredData).
+// comment_urls is NOT a gate field, so it is kept here as behavioral guidance
+// (which threads to raise).
 const CODER_OWNED_REVIEW_PROMPT =
   'You are the Reviewer. Inspect the pull request and relevant code and post a visible GitHub review ' +
   'per the Reviewer system contract (which specifies the posting procedure). If changes are needed, send the implementer actionable feedback via the gated ' +
@@ -565,29 +565,23 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
   // Default coding loop — reviewer may auto-close when space runs at the
   // standard "trusted but supervised" tier (3).
   completionAutonomyLevel: 3,
-  hooks: [
+  hookBindings: [
     {
-      id: 'code-pr-ready',
-      enabled: true,
-      label: 'PR Ready',
+      hookId: 'pr_ready',
       sourceNode: 'Coding',
       targetNode: 'Review',
       method: 'send_message',
-      classification: 'validation',
       order: 0,
-      validator: { kind: 'built_in', id: 'pr_ready' },
+      enabled: true,
       authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
     },
     {
-      id: 'review-posted',
-      enabled: true,
-      label: 'Review Posted',
+      hookId: 'review_posted',
       sourceNode: 'Review',
       targetNode: 'Coding',
       method: 'send_message',
-      classification: 'validation',
       order: 0,
-      validator: { kind: 'built_in', id: 'review_posted' },
+      enabled: true,
       authorizedCallers: [{ sourceNode: 'Review' }],
     },
   ],
@@ -704,17 +698,14 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
   // Research is low-risk (read-only investigation + PR of findings) — permit
   // auto-close at a more conservative autonomy tier than coding loops.
   completionAutonomyLevel: 2,
-  hooks: [
+  hookBindings: [
     {
-      id: 'research-pr-ready',
-      enabled: true,
-      label: 'PR Ready',
+      hookId: 'pr_ready',
       sourceNode: 'Research',
       targetNode: 'Review',
       method: 'send_message',
-      classification: 'validation',
       order: 0,
-      validator: { kind: 'built_in', id: 'pr_ready' },
+      enabled: true,
       authorizedCallers: [{ sourceNode: 'Research', agentSlots: ['research'] }],
     },
   ],
@@ -933,34 +924,28 @@ export const CODING_WITH_QA_WORKFLOW: SpaceWorkflow = {
       label: 'Coding → QA (post-approval merge blocker)',
     },
   ],
-  hooks: [
+  hookBindings: [
     {
-      id: 'fullstack-code-pr-ready',
-      enabled: true,
-      label: 'PR Ready',
+      hookId: 'pr_ready',
       sourceNode: 'Coding',
       targetNode: 'Review',
       method: 'send_message',
-      classification: 'validation',
       order: 0,
-      validator: { kind: 'built_in', id: 'pr_ready' },
+      enabled: true,
       authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
     },
     // Gate the Coding → QA channel to post-approval only. Without this, an
     // in-progress coder could message QA directly, lazily activating the end
     // node and approving without Review ever running. The post_approval_only
-    // validator allows the send only while task.status === 'approved' AND the
-    // message carries a merge-blocker / fix-push reason.
+    // hook allows the send only while task.status === 'approved' AND the
+    // message carries a merge-blocker / fix-push reason bound to the reviewed PR.
     {
-      id: 'stable-qa-coding-to-qa-post-approval',
-      enabled: true,
-      label: 'Post-Approval Only',
+      hookId: 'post_approval_only',
       sourceNode: 'Coding',
       targetNode: 'QA',
       method: 'send_message',
-      classification: 'validation',
       order: 0,
-      validator: { kind: 'built_in', id: 'post_approval_only' },
+      enabled: true,
       authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
     },
   ],
@@ -1740,7 +1725,7 @@ export const RETIRED_PR_MERGER_SLOT_PROMPT =
  * from a restamped row converging to a stable coder-owned template.
  *
  * The merge helpers (`mergeNodeStructuralFieldsFromTemplate`,
- * `mergeChannelsFromTemplate`, `mergeHooksFromTemplate`) only ever ADD missing
+ * `mergeChannelsFromTemplate`, `mergeHookBindingsFromTemplate`) only ever ADD missing
  * template pieces — they never remove nodes/channels/hooks that exist in the
  * stored row but not in the template. So when the dedicated merger node was
  * removed from the built-in templates, seeded spaces that still carry it (plus
@@ -1769,16 +1754,16 @@ function stripRetiredPostApproval({
   templateName,
   nodes,
   channels,
-  hooks,
+  hookBindings,
 }: {
   templateName: string;
   nodes: WorkflowNode[];
   channels: SpaceWorkflow['channels'];
-  hooks: SpaceWorkflow['hooks'];
+  hookBindings: HookBinding[] | undefined;
 }): {
   nodes: WorkflowNode[];
   channels: SpaceWorkflow['channels'];
-  hooks: SpaceWorkflow['hooks'];
+  hookBindings: HookBinding[] | undefined;
   channelsChanged: boolean;
 } {
   const isStableCoderOwnedTemplate = new Set([
@@ -1787,7 +1772,7 @@ function stripRetiredPostApproval({
     RESEARCH_WORKFLOW.name,
   ]).has(templateName);
   if (!isStableCoderOwnedTemplate) {
-    return { nodes, channels, hooks, channelsChanged: false };
+    return { nodes, channels, hookBindings, channelsChanged: false };
   }
 
   // Only strip when a node named "Post-Approval" still carries the COMPLETE
@@ -1835,7 +1820,7 @@ function stripRetiredPostApproval({
   };
   const hasBuiltInMergerMarker = nodes.some(isPristineMergerNode);
   if (!hasBuiltInMergerMarker) {
-    return { nodes, channels, hooks, channelsChanged: false };
+    return { nodes, channels, hookBindings, channelsChanged: false };
   }
 
   const nodesResult = nodes.filter((node) => node.name !== RETIRED_POST_APPROVAL_NODE);
@@ -1846,17 +1831,17 @@ function stripRetiredPostApproval({
     return !targets.includes(RETIRED_POST_APPROVAL_NODE);
   });
 
-  const hooksResult = hooks?.filter((hook) => {
+  const bindingsResult = hookBindings?.filter((binding) => {
     return (
-      hook.sourceNode !== RETIRED_POST_APPROVAL_NODE &&
-      hook.targetNode !== RETIRED_POST_APPROVAL_NODE
+      binding.sourceNode !== RETIRED_POST_APPROVAL_NODE &&
+      binding.targetNode !== RETIRED_POST_APPROVAL_NODE
     );
   });
 
   return {
     nodes: nodesResult,
     channels: channelsResult,
-    hooks: hooksResult,
+    hookBindings: bindingsResult,
     channelsChanged: (channelsResult?.length ?? 0) !== (channels?.length ?? 0),
   };
 }
@@ -1956,17 +1941,27 @@ function remapTemplateHookAgentSlots(
   return mappedSlots.length === templateSlots.length ? mappedSlots : undefined;
 }
 
-function remapTemplateHook(
-  hook: NonNullable<SpaceWorkflow['hooks']>[number],
+/** Stable identity key for a binding (a binding has no id field). */
+function hookBindingKey(binding: HookBinding): string {
+  return JSON.stringify({
+    hookId: binding.hookId,
+    method: binding.method,
+    sourceNode: binding.sourceNode,
+    targetNode: binding.targetNode,
+  });
+}
+
+function remapTemplateBinding(
+  binding: HookBinding,
   templateNodes: WorkflowNode[],
   existingNodes: WorkflowNode[]
-): NonNullable<SpaceWorkflow['hooks']>[number] {
+): HookBinding {
   const remapRef = (ref: string) => remapTemplateChannelRef(ref, templateNodes, existingNodes);
   return {
-    ...hook,
-    sourceNode: remapRef(hook.sourceNode),
-    targetNode: hook.targetNode ? remapRef(hook.targetNode) : hook.targetNode,
-    authorizedCallers: hook.authorizedCallers?.map((caller) => {
+    ...binding,
+    sourceNode: remapRef(binding.sourceNode),
+    targetNode: binding.targetNode ? remapRef(binding.targetNode) : binding.targetNode,
+    authorizedCallers: binding.authorizedCallers?.map((caller) => {
       const sourceNode = remapRef(caller.sourceNode);
       const agentSlots = remapTemplateHookAgentSlots(
         caller.sourceNode,
@@ -1982,48 +1977,43 @@ function remapTemplateHook(
   };
 }
 
-function equivalentGeneratedHook(
-  existingHook: NonNullable<SpaceWorkflow['hooks']>[number],
-  templateHook: NonNullable<SpaceWorkflow['hooks']>[number]
-): boolean {
+function equivalentGeneratedBinding(existing: HookBinding, template: HookBinding): boolean {
   return (
-    existingHook.method === templateHook.method &&
-    existingHook.sourceNode === templateHook.sourceNode &&
-    existingHook.targetNode === templateHook.targetNode &&
-    existingHook.classification === templateHook.classification &&
-    existingHook.validator.kind === 'script' &&
-    templateHook.validator.kind === 'script' &&
-    existingHook.validator.source === templateHook.validator.source &&
-    JSON.stringify(existingHook.authorizedCallers ?? []) ===
-      JSON.stringify(templateHook.authorizedCallers ?? [])
+    existing.method === template.method &&
+    existing.sourceNode === template.sourceNode &&
+    existing.targetNode === template.targetNode &&
+    existing.hookId === template.hookId &&
+    JSON.stringify(existing.authorizedCallers ?? []) ===
+      JSON.stringify(template.authorizedCallers ?? [])
   );
 }
 
-function mergeHooksFromTemplate(
-  templateHooks: SpaceWorkflow['hooks'],
+function mergeHookBindingsFromTemplate(
+  templateBindings: HookBinding[] | undefined,
   templateNodes: WorkflowNode[],
   existingNodes: WorkflowNode[],
-  existingHooks?: SpaceWorkflow['hooks']
-): SpaceWorkflow['hooks'] {
-  const remappedTemplateHooks =
-    templateHooks?.map((hook) => remapTemplateHook(hook, templateNodes, existingNodes)) ?? [];
-  if (!existingHooks || existingHooks.length === 0) return remappedTemplateHooks;
+  existingBindings?: HookBinding[]
+): HookBinding[] {
+  const remapped =
+    templateBindings?.map((binding) =>
+      remapTemplateBinding(binding, templateNodes, existingNodes)
+    ) ?? [];
+  if (!existingBindings || existingBindings.length === 0) return remapped;
 
-  const templateHookIds = new Set(remappedTemplateHooks.map((hook) => hook.id));
-  const equivalentTemplateHooks = new Set(
-    existingHooks
-      .filter((existingHook) =>
-        remappedTemplateHooks.some((templateHook) =>
-          equivalentGeneratedHook(existingHook, templateHook)
-        )
+  const templateKeys = new Set(remapped.map(hookBindingKey));
+  const equivalentKeys = new Set(
+    existingBindings
+      .filter((existing) =>
+        remapped.some((template) => equivalentGeneratedBinding(existing, template))
       )
-      .map((hook) => hook.id)
+      .map(hookBindingKey)
   );
   return [
-    ...existingHooks.filter(
-      (hook) => !templateHookIds.has(hook.id) && !equivalentTemplateHooks.has(hook.id)
+    ...existingBindings.filter(
+      (binding) =>
+        !templateKeys.has(hookBindingKey(binding)) && !equivalentKeys.has(hookBindingKey(binding))
     ),
-    ...remappedTemplateHooks,
+    ...remapped,
   ];
 }
 
@@ -2064,7 +2054,7 @@ const RESTAMP_FIELDS = [
   'templateHash',
   'nodes(postApproval + toolGuards in-place + missing template nodes)',
   'channels(maxCycles + label in-place on matched channels + missing template channels)',
-  'hooks(template hooks)',
+  'hooks(template hook bindings)',
 ] as const;
 
 /**
@@ -2304,22 +2294,22 @@ export function seedBuiltInWorkflows(
           template.nodes,
           row.nodes
         );
-        const mergedHooks = mergeHooksFromTemplate(
-          template.hooks,
+        const mergedBindings = mergeHookBindingsFromTemplate(
+          template.hookBindings,
           template.nodes,
           mergedNodes,
-          row.hooks
+          row.hookBindings
         );
         // The merge helpers above only ADD missing template pieces — they never
-        // drop nodes/channels/hooks/gates the stored row still has but the
+        // drop nodes/channels/bindings/gates the stored row still has but the
         // template no longer does. Strip the retired Post-Approval merger node,
-        // its channels, and any Post-Approval hooks so restamp converges to the
+        // its channels, and any bindings on it so restamp converges to the
         // stable 2-node / 3-node coder-owned graph.
         const stripped = stripRetiredPostApproval({
           templateName: template.name,
           nodes: mergedNodes,
           channels: mergedChannels,
-          hooks: mergedHooks,
+          hookBindings: mergedBindings,
         });
         // mergeChannelsFromTemplate propagates structural fields (maxCycles,
         // label) in-place on matched channels in addition to appending any
@@ -2334,9 +2324,9 @@ export function seedBuiltInWorkflows(
         // Stamp the hash of the ACTUALLY-merged row, then advance the stored
         // hash ONLY when the merge fully converged the row to the current
         // template (mergedHash === expectedHash). The merge above reconciles
-        // structural fields (nodes, channels, hooks, post-approval, autonomy)
-        // and patches prompts that match known retired template text, but it
-        // deliberately preserves genuine user prompts, description, and
+        // structural fields (nodes, channels, hookBindings, post-approval,
+        // autonomy) and patches prompts that match known retired template text,
+        // but it deliberately preserves genuine user prompts, description, and
         // instructions. If those still differ from the template, stamping
         // `expectedHash` would falsely claim the row is fully up-to-date,
         // collapse `updateAvailable` to false, and permanently hide the
@@ -2351,10 +2341,7 @@ export function seedBuiltInWorkflows(
         const mergedHash = computeWorkflowHash({
           ...row,
           nodes: stripped.nodes,
-          // computeWorkflowHash treats null/undefined identically (?? [], truthy
-          // check), so normalizing to undefined just satisfies the SpaceWorkflow
-          // shape — the hashed value matches the persisted row either way.
-          hooks: stripped.hooks ?? undefined,
+          hookBindings: stripped.hookBindings,
           channels: writeChannels ? stripped.channels : row.channels,
           completionAutonomyLevel: template.completionAutonomyLevel,
           postApproval: undefined,
@@ -2366,7 +2353,7 @@ export function seedBuiltInWorkflows(
           // Built-ins now store routes on terminal nodes. Clear any legacy
           // workflow-level value while the node updater writes node routes.
           postApproval: null,
-          hooks: stripped.hooks ?? null,
+          hookBindings: stripped.hookBindings,
           nodes: stripped.nodes,
           ...(writeChannels ? { channels: stripped.channels } : {}),
           templateHash: stampedHash,
@@ -2487,7 +2474,9 @@ export function seedBuiltInWorkflows(
         channels: template.channels
           ? template.channels.map((ch) => ({ ...ch, id: ch.id ?? generateUUID() }))
           : undefined,
-        hooks: template.hooks ? [...template.hooks] : undefined,
+        hookBindings: template.hookBindings
+          ? template.hookBindings.map((b) => ({ ...b }))
+          : undefined,
         layout: template.layout
           ? Object.fromEntries(
               Object.entries(template.layout).map(([templateNodeId, position]) => [

@@ -19,10 +19,14 @@ import type {
   CreateSpaceWorkflowParams,
   UpdateSpaceWorkflowParams,
   WorkflowChannel,
-  WorkflowHook,
+  CustomHook,
 } from '@hyperneo/shared';
 import { HANDOFF_TARGET_WILDCARD, MAX_NODE_HANDOFF_TRANSITIONS } from '@hyperneo/shared';
-import { validateWorkflowHooks } from '../workflow-hook-validation';
+import {
+  availableHookIds,
+  validateCustomHooks,
+  validateWorkflowHookBindings,
+} from '../workflow-hook-validation';
 import { generateUUID } from '@hyperneo/shared';
 import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository';
 import { validateGlobPattern } from '../../external-events/topic-validator';
@@ -33,9 +37,6 @@ import {
   validatePostApprovalRoutes,
 } from '../workflows/post-approval-validator';
 import { KNOWN_TOPIC_FROM_SOURCES } from '../runtime/parse-pr-url';
-// Side-effect: seed the connector registry before workflow validation runs, so
-// externalLookups are admitted via the registry (see connectors/production.ts).
-import '../runtime/connectors/production';
 import { slugify, validateSlug } from '../slug';
 
 const logger = new Logger('SpaceWorkflowManager');
@@ -109,15 +110,13 @@ export class SpaceWorkflowManager {
     this.validateStartNodeId(startNodeId, nodes);
     this.validateEndNodeId(endNodeId, nodes);
 
-    this.validateNoDuplicateHookIds(params.hooks ?? []);
-
     if (params.channels && params.channels.length > 0) {
       this.validateChannels(params.channels);
     }
 
-    this.validateHooks(params.hooks ?? [], nodes);
+    this.validateHooks(params.hookBindings, params.customHooks, nodes);
 
-    this.validateTransitions(nodes, params.hooks ?? []);
+    this.validateTransitions(nodes, availableHookIds(params.customHooks));
 
     // Hard-reject invalid post-approval routes at create time. Stale routes
     // (target no longer exists) must be caught before the row lands in the DB,
@@ -422,12 +421,14 @@ export class SpaceWorkflowManager {
       this.validateChannels(params.channels);
     }
 
-    this.validateNoDuplicateHookIds(params.hooks ?? []);
-
-    const effectiveHooks =
-      params.hooks === undefined ? (existing.hooks ?? []) : (params.hooks ?? []);
-    this.validateHooks(effectiveHooks, effectiveNodes);
-    this.validateTransitions(effectiveNodes, effectiveHooks);
+    const effectiveBindings =
+      params.hookBindings === undefined
+        ? (existing.hookBindings ?? [])
+        : (params.hookBindings ?? []);
+    const effectiveCustomHooks =
+      params.customHooks === undefined ? (existing.customHooks ?? []) : (params.customHooks ?? []);
+    this.validateHooks(effectiveBindings, effectiveCustomHooks, effectiveNodes);
+    this.validateTransitions(effectiveNodes, availableHookIds(effectiveCustomHooks));
 
     // Validate node-level postApproval plus the legacy workflow-level route
     // against the effective node set so a rename submitted in the same update
@@ -834,8 +835,7 @@ export class SpaceWorkflowManager {
    * Runtime transition EXECUTION is out of scope here; this only enforces the
    * declarative shape and referential integrity.
    */
-  private validateTransitions(nodes: WorkflowNodeInput[], hooks: WorkflowHook[]): void {
-    const hookIds = new Set(hooks.map((h) => h.id));
+  private validateTransitions(nodes: WorkflowNodeInput[], hookIds: Set<string>): void {
     // Valid target names: every node name + every agent slot name (matches
     // channel addressing). The broadcast wildcard is always valid. A name is
     // AMBIGUOUS when a name can address more than one destination — two nodes
@@ -973,24 +973,14 @@ export class SpaceWorkflowManager {
     }
   }
 
-  private validateHooks(hooks: unknown[], nodes: WorkflowNodeInput[]): void {
-    const errors = validateWorkflowHooks(hooks, nodes);
+  private validateHooks(bindings: unknown, customHooks: unknown, nodes: WorkflowNodeInput[]): void {
+    const customHookArray = (customHooks ?? []) as CustomHook[] | undefined;
+    const errors = [
+      ...validateWorkflowHookBindings(bindings, customHookArray, nodes),
+      ...validateCustomHooks(customHooks),
+    ];
     if (errors.length > 0) {
       throw new WorkflowValidationError(errors.join('; '));
-    }
-  }
-
-  private validateNoDuplicateHookIds(hooks: unknown[]): void {
-    const seen = new Set<string>();
-    for (let hi = 0; hi < hooks.length; hi++) {
-      const hook = hooks[hi];
-      if (!hook || typeof hook !== 'object') continue;
-      const id = (hook as { id?: unknown }).id;
-      if (typeof id !== 'string') continue;
-      if (seen.has(id)) {
-        throw new WorkflowValidationError(`hooks[${hi}].id: duplicate hook id "${id}"`);
-      }
-      seen.add(id);
     }
   }
 

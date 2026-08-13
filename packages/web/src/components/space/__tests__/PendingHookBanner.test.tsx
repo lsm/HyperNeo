@@ -16,7 +16,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
 import { signal } from '@preact/signals';
-import type { SpaceWorkflow, WorkflowHookStateSnapshot } from '@hyperneo/shared';
+import type { SpaceWorkflow, HookStateSnapshot, HookBinding } from '@hyperneo/shared';
 
 // ---- Mock hub ----
 const mockRequest: Mock = vi.fn();
@@ -47,30 +47,26 @@ vi.mock('../../../lib/space-store', () => ({
 import { PendingHookBanner } from '../PendingHookBanner';
 import { evaluateHookStatus } from '../use-run-hook-states';
 
+/**
+ * Build a v2 HookStateSnapshot. `flow` maps to `lastFlow`:
+ *   'stop' → blocked, 'retry' → waiting_on_retry, 'continue'/undefined → allowed.
+ */
 function makeHookState(
   hookId: string,
-  status: WorkflowHookStateSnapshot['lastResult']['type'],
-  options: { allowHumanApproval?: boolean } = {}
-): WorkflowHookStateSnapshot {
+  flow: 'stop' | 'retry' | 'continue',
+  options: { reason?: string; retryCount?: number; nextRetryAt?: number } = {}
+): HookStateSnapshot {
   return {
     runId: 'r1',
     hookId,
     version: 1,
     localState: {},
-    lastResult:
-      status === 'block'
-        ? {
-            type: 'block',
-            reason: 'Needs approval',
-            data: options.allowHumanApproval ? { allowHumanApproval: true } : undefined,
-          }
-        : status === 'retryable_block'
-          ? { type: 'retryable_block', reason: 'Retry me' }
-          : { type: 'allow' },
-    retryCount: 0,
+    lastFlow: flow,
+    lastReason: options.reason,
+    retryCount: options.retryCount ?? 0,
+    nextRetryAt: options.nextRetryAt,
     createdAt: 0,
     updatedAt: 0,
-    voteMaps: {},
   };
 }
 
@@ -79,7 +75,6 @@ function makeWorkflow(
     id: string;
     label?: string;
     method?: string;
-    classification?: 'validation' | 'side_effect';
   }>
 ): SpaceWorkflow {
   return {
@@ -88,15 +83,16 @@ function makeWorkflow(
     description: '',
     nodes: [{ id: 'n1', name: 'Plan', agents: [] }],
     channels: [],
-    hooks: hookDefs.map((h) => ({
-      id: h.id,
-      enabled: true,
-      sourceNode: 'Plan',
-      method: h.method || 'send_message',
-      label: h.label,
-      classification: h.classification,
-      validator: { kind: 'built_in', id: 'pr_open' },
-    })),
+    hookBindings: hookDefs.map(
+      (h): HookBinding => ({
+        hookId: h.id,
+        sourceNode: 'Plan',
+        targetNode: '',
+        method: (h.method || 'send_message') as HookBinding['method'],
+        order: 0,
+        enabled: true,
+      })
+    ),
     startNodeId: 'n1',
     endNodeId: null,
     createdAt: Date.now(),
@@ -106,23 +102,25 @@ function makeWorkflow(
 }
 
 describe('evaluateHookStatus', () => {
-  it('maps validation hook block results to pending statuses', () => {
+  it('maps lastFlow=stop to blocked_by_hook', () => {
     expect(
-      evaluateHookStatus(makeHookState('h1', 'block'), makeWorkflow([{ id: 'h1' }]).hooks[0]).status
+      evaluateHookStatus(makeHookState('h1', 'stop'), makeWorkflow([{ id: 'h1' }]).hookBindings[0])
+        .status
     ).toBe('blocked_by_hook');
+  });
+
+  it('maps lastFlow=retry to waiting_on_hook_retry', () => {
     expect(
-      evaluateHookStatus(
-        makeHookState('h1', 'retryable_block'),
-        makeWorkflow([{ id: 'h1' }]).hooks[0]
-      ).status
+      evaluateHookStatus(makeHookState('h1', 'retry'), makeWorkflow([{ id: 'h1' }]).hookBindings[0])
+        .status
     ).toBe('waiting_on_hook_retry');
   });
 
-  it('treats side-effect hook failures as allowed for banners', () => {
+  it('maps lastFlow=continue to allowed', () => {
     expect(
       evaluateHookStatus(
-        makeHookState('h1', 'block'),
-        makeWorkflow([{ id: 'h1', classification: 'side_effect' }]).hooks[0]
+        makeHookState('h1', 'continue'),
+        makeWorkflow([{ id: 'h1' }]).hookBindings[0]
       ).status
     ).toBe('allowed');
   });
@@ -144,8 +142,8 @@ describe('PendingHookBanner', () => {
   it('renders nothing when there are no pending hooks', async () => {
     workflowsSignal.value = [makeWorkflow([{ id: 'h1' }])];
     mockRequest.mockResolvedValue({
-      hookStates: [makeHookState('h1', 'allow')],
-      hooks: makeWorkflow([{ id: 'h1' }]).hooks,
+      hookStates: [makeHookState('h1', 'continue')],
+      hookBindings: makeWorkflow([{ id: 'h1' }]).hookBindings,
     });
     const { queryByTestId } = render(
       <PendingHookBanner runId="r1" spaceId="s1" workflowId="wf-1" />
@@ -157,26 +155,13 @@ describe('PendingHookBanner', () => {
     expect(queryByTestId('pending-hook-fetch-error')).toBeNull();
   });
 
-  it('renders the banner for a blocked_by_hook hook without approval actions by default', async () => {
+  it('renders the banner with approve/reject actions for a blocked_by_hook hook (v2)', async () => {
+    // v2: a blocked hook always offers approve/reject — the old
+    // allowHumanApproval opt-in has no v2 equivalent.
     workflowsSignal.value = [makeWorkflow([{ id: 'h1', label: 'Merge Check' }])];
     mockRequest.mockResolvedValue({
-      hookStates: [makeHookState('h1', 'block')],
-      hooks: makeWorkflow([{ id: 'h1', label: 'Merge Check' }]).hooks,
-    });
-    const { findByTestId, queryByTestId } = render(
-      <PendingHookBanner runId="r1" spaceId="s1" workflowId="wf-1" />
-    );
-    await findByTestId('pending-hook-banner');
-    expect(queryByTestId('pending-hook-approve-btn')).toBeNull();
-    expect(queryByTestId('pending-hook-reject-btn')).toBeNull();
-    expect(queryByTestId('pending-hook-retry-btn')).toBeNull();
-  });
-
-  it('renders approval actions for blocks that opt into human approval', async () => {
-    workflowsSignal.value = [makeWorkflow([{ id: 'h1', label: 'Merge Check' }])];
-    mockRequest.mockResolvedValue({
-      hookStates: [makeHookState('h1', 'block', { allowHumanApproval: true })],
-      hooks: makeWorkflow([{ id: 'h1', label: 'Merge Check' }]).hooks,
+      hookStates: [makeHookState('h1', 'stop')],
+      hookBindings: makeWorkflow([{ id: 'h1', label: 'Merge Check' }]).hookBindings,
     });
     const { findByTestId, getByTestId, queryByTestId } = render(
       <PendingHookBanner runId="r1" spaceId="s1" workflowId="wf-1" />
@@ -190,8 +175,8 @@ describe('PendingHookBanner', () => {
   it('renders the banner for a waiting_on_hook_retry hook', async () => {
     workflowsSignal.value = [makeWorkflow([{ id: 'h1', label: 'Poll Check' }])];
     mockRequest.mockResolvedValue({
-      hookStates: [makeHookState('h1', 'retryable_block')],
-      hooks: makeWorkflow([{ id: 'h1', label: 'Poll Check' }]).hooks,
+      hookStates: [makeHookState('h1', 'retry')],
+      hookBindings: makeWorkflow([{ id: 'h1', label: 'Poll Check' }]).hookBindings,
     });
     const { findByTestId, getByTestId, queryByTestId } = render(
       <PendingHookBanner runId="r1" spaceId="s1" workflowId="wf-1" />
@@ -202,28 +187,13 @@ describe('PendingHookBanner', () => {
     expect(queryByTestId('pending-hook-reject-btn')).toBeNull();
   });
 
-  it('ignores side-effect hook block results', async () => {
-    workflowsSignal.value = [makeWorkflow([{ id: 'h1', classification: 'side_effect' }])];
-    mockRequest.mockResolvedValue({
-      hookStates: [makeHookState('h1', 'block')],
-      hooks: makeWorkflow([{ id: 'h1', classification: 'side_effect' }]).hooks,
-    });
-    const { queryByTestId } = render(
-      <PendingHookBanner runId="r1" spaceId="s1" workflowId="wf-1" />
-    );
-    await waitFor(() =>
-      expect(mockRequest).toHaveBeenCalledWith('spaceWorkflowRun.listHookStates', { runId: 'r1' })
-    );
-    expect(queryByTestId('pending-hook-banner')).toBeNull();
-  });
-
   it('ignores disabled hooks with stale block state', async () => {
     const workflow = makeWorkflow([{ id: 'h1' }]);
-    workflow.hooks![0].enabled = false;
+    workflow.hookBindings![0].enabled = false;
     workflowsSignal.value = [workflow];
     mockRequest.mockResolvedValue({
-      hookStates: [makeHookState('h1', 'block')],
-      hooks: workflow.hooks,
+      hookStates: [makeHookState('h1', 'stop')],
+      hookBindings: workflow.hookBindings,
     });
     const { queryByTestId } = render(
       <PendingHookBanner runId="r1" spaceId="s1" workflowId="wf-1" />
@@ -261,13 +231,16 @@ describe('PendingHookBanner', () => {
       if (eventName === 'space.hookState.updated') onHookStateUpdated = cb;
       return () => {};
     });
-    mockRequest.mockResolvedValue({ hookStates: [], hooks: makeWorkflow([{ id: 'h1' }]).hooks });
+    mockRequest.mockResolvedValue({
+      hookStates: [],
+      hookBindings: makeWorkflow([{ id: 'h1' }]).hookBindings,
+    });
     const { findByTestId } = render(
       <PendingHookBanner runId="r1" spaceId="s1" workflowId="wf-1" />
     );
     await waitFor(() => expect(onHookStateUpdated).toBeTruthy());
 
-    onHookStateUpdated?.({ runId: 'r1', hookId: 'h1', hookState: makeHookState('h1', 'block') });
+    onHookStateUpdated?.({ runId: 'r1', hookId: 'h1', hookState: makeHookState('h1', 'stop') });
 
     await findByTestId('pending-hook-banner');
   });
@@ -277,8 +250,8 @@ describe('PendingHookBanner', () => {
     mockRequest.mockImplementation((method: string) => {
       if (method === 'spaceWorkflowRun.listHookStates')
         return Promise.resolve({
-          hookStates: [makeHookState('h1', 'block', { allowHumanApproval: true })],
-          hooks: makeWorkflow([{ id: 'h1' }]).hooks,
+          hookStates: [makeHookState('h1', 'stop')],
+          hookBindings: makeWorkflow([{ id: 'h1' }]).hookBindings,
         });
       return Promise.resolve({});
     });
@@ -301,8 +274,8 @@ describe('PendingHookBanner', () => {
     mockRequest.mockImplementation((method: string) => {
       if (method === 'spaceWorkflowRun.listHookStates')
         return Promise.resolve({
-          hookStates: [makeHookState('h1', 'block', { allowHumanApproval: true })],
-          hooks: makeWorkflow([{ id: 'h1' }]).hooks,
+          hookStates: [makeHookState('h1', 'stop')],
+          hookBindings: makeWorkflow([{ id: 'h1' }]).hookBindings,
         });
       return Promise.resolve({});
     });
@@ -325,8 +298,8 @@ describe('PendingHookBanner', () => {
     mockRequest.mockImplementation((method: string) => {
       if (method === 'spaceWorkflowRun.listHookStates')
         return Promise.resolve({
-          hookStates: [makeHookState('h1', 'retryable_block')],
-          hooks: makeWorkflow([{ id: 'h1' }]).hooks,
+          hookStates: [makeHookState('h1', 'retry')],
+          hookBindings: makeWorkflow([{ id: 'h1' }]).hookBindings,
         });
       return Promise.resolve({});
     });
@@ -351,7 +324,7 @@ describe('PendingHookBanner', () => {
     );
     await findByTestId('pending-hook-fetch-error');
     expect(getByTestId('pending-hook-fetch-error').textContent).toContain('network down');
-    mockRequest.mockResolvedValueOnce({ hookStates: [], hooks: [] });
+    mockRequest.mockResolvedValueOnce({ hookStates: [], hookBindings: [] });
     fireEvent.click(getByTestId('pending-hook-fetch-retry'));
     await waitFor(() => expect(mockRequest).toHaveBeenCalledTimes(2));
   });
@@ -360,14 +333,13 @@ describe('PendingHookBanner', () => {
     workflowsSignal.value = [makeWorkflow([{ id: 'h1' }])];
     mockRequest.mockResolvedValue({
       hookStates: [
-        {
-          ...makeHookState('h1', 'retryable_block'),
+        makeHookState('h1', 'retry', {
+          reason: 'Try again later',
           retryCount: 2,
           nextRetryAt: Date.now() + 1000,
-          lastResult: { type: 'retryable_block', reason: 'Retry me', message: 'Try again later' },
-        },
+        }),
       ],
-      hooks: makeWorkflow([{ id: 'h1' }]).hooks,
+      hookBindings: makeWorkflow([{ id: 'h1' }]).hookBindings,
     });
     const { findByTestId } = render(
       <PendingHookBanner runId="r1" spaceId="s1" workflowId="wf-1" />
@@ -390,11 +362,8 @@ describe('PendingHookBanner', () => {
     mockRequest.mockImplementation((method: string) => {
       if (method === 'spaceWorkflowRun.listHookStates')
         return Promise.resolve({
-          hookStates: [
-            makeHookState('h1', 'retryable_block'),
-            makeHookState('h2', 'retryable_block'),
-          ],
-          hooks: makeWorkflow([{ id: 'h1' }, { id: 'h2' }]).hooks,
+          hookStates: [makeHookState('h1', 'retry'), makeHookState('h2', 'retry')],
+          hookBindings: makeWorkflow([{ id: 'h1' }, { id: 'h2' }]).hookBindings,
         });
       if (method === 'spaceWorkflowRun.retryHook') return pending;
       return Promise.resolve({});
@@ -415,11 +384,8 @@ describe('PendingHookBanner', () => {
     mockRequest.mockImplementation((method: string, params: { hookId?: string }) => {
       if (method === 'spaceWorkflowRun.listHookStates')
         return Promise.resolve({
-          hookStates: [
-            makeHookState('h1', 'block', { allowHumanApproval: true }),
-            makeHookState('h2', 'block', { allowHumanApproval: true }),
-          ],
-          hooks: makeWorkflow([{ id: 'h1' }, { id: 'h2' }]).hooks,
+          hookStates: [makeHookState('h1', 'stop'), makeHookState('h2', 'stop')],
+          hookBindings: makeWorkflow([{ id: 'h1' }, { id: 'h2' }]).hookBindings,
         });
       if (method === 'spaceWorkflowRun.approveHook' && params.hookId === 'h1') {
         return Promise.reject(new Error('backend exploded'));

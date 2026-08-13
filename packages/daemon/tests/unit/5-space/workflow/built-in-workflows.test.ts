@@ -22,9 +22,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type {
   HandoffTransition,
+  HookBinding,
   SpaceWorkerAgent,
   SpaceWorkflow,
-  WorkflowHook,
   WorkflowNode,
 } from '@hyperneo/shared';
 import {
@@ -256,13 +256,12 @@ describe('stable coding workflow templates', () => {
     // the gate: it allows the send_message only while task.status === 'approved'
     // AND the message carries a merge-blocker / fix-push reason (verified in the
     // post-approval-only-validator unit tests).
-    const hook = (CODING_WITH_QA_WORKFLOW.hooks ?? []).find(
+    const hook = (CODING_WITH_QA_WORKFLOW.hookBindings ?? []).find(
       (h) =>
         h.sourceNode === 'Coding' &&
         h.targetNode === 'QA' &&
         h.method === 'send_message' &&
-        h.validator.kind === 'built_in' &&
-        h.validator.id === 'post_approval_only'
+        h.hookId === 'post_approval_only'
     );
     expect(hook).toBeDefined();
     expect(hook!.enabled).toBe(true);
@@ -272,12 +271,8 @@ describe('stable coding workflow templates', () => {
     // The merger variant's Coding → Review pr_ready hook must still be present,
     // so the primary implementation handoff is unaffected.
     expect(
-      (CODING_WITH_QA_WORKFLOW.hooks ?? []).some(
-        (h) =>
-          h.sourceNode === 'Coding' &&
-          h.targetNode === 'Review' &&
-          h.validator.kind === 'built_in' &&
-          h.validator.id === 'pr_ready'
+      (CODING_WITH_QA_WORKFLOW.hookBindings ?? []).some(
+        (h) => h.sourceNode === 'Coding' && h.targetNode === 'Review' && h.hookId === 'pr_ready'
       )
     ).toBe(true);
   });
@@ -430,30 +425,30 @@ describe('stable CODING_WORKFLOW template structure', () => {
     }
   });
 
-  test('has a send_message hook for Coding → Review using pr_ready validator', () => {
-    const hooks = CODING_WORKFLOW.hooks ?? [];
-    expect(hooks.length).toBeGreaterThanOrEqual(1);
-    const hook = hooks.find((h) => h.id === 'code-pr-ready');
+  test('has a send_message hook binding for Coding → Review using the pr_ready hook', () => {
+    const hookBindings = CODING_WORKFLOW.hookBindings ?? [];
+    expect(hookBindings.length).toBeGreaterThanOrEqual(1);
+    const hook = hookBindings.find(
+      (b) => b.hookId === 'pr_ready' && b.sourceNode === 'Coding' && b.targetNode === 'Review'
+    );
     expect(hook).toBeDefined();
     expect(hook!.sourceNode).toBe('Coding');
     expect(hook!.targetNode).toBe('Review');
     expect(hook!.method).toBe('send_message');
-    expect(hook!.validator).toEqual({ kind: 'built_in', id: 'pr_ready' });
+    expect(hook!.hookId).toBe('pr_ready');
     expect(hook!.enabled).toBe(true);
-    expect(hook!.classification).toBe('validation');
     expect(hook!.authorizedCallers).toEqual([{ sourceNode: 'Coding', agentSlots: ['coder'] }]);
   });
 
-  test('Review → Coding has a review_posted send_message hook', () => {
+  test('Review → Coding has a review_posted send_message hook binding', () => {
     // The former review-posted-gate is now a route-scoped `review_posted`
-    // send_message hook on the Review → Coding channel.
-    const hook = (CODING_WORKFLOW.hooks ?? []).find(
+    // send_message hook binding on the Review → Coding channel.
+    const hook = (CODING_WORKFLOW.hookBindings ?? []).find(
       (h) =>
         h.sourceNode === 'Review' &&
         h.targetNode === 'Coding' &&
         h.method === 'send_message' &&
-        h.validator.kind === 'built_in' &&
-        h.validator.id === 'review_posted'
+        h.hookId === 'review_posted'
     );
     expect(hook).toBeDefined();
     expect(hook!.enabled).toBe(true);
@@ -569,15 +564,17 @@ describe('RESEARCH_WORKFLOW template', () => {
     expect(backChannel!.maxCycles).toBe(5);
   });
 
-  test('has a send_message hook for Research → Review using pr_ready validator', () => {
-    const hooks = RESEARCH_WORKFLOW.hooks ?? [];
-    expect(hooks.length).toBeGreaterThanOrEqual(1);
-    const hook = hooks.find((h) => h.id === 'research-pr-ready');
+  test('has a send_message hook binding for Research → Review using the pr_ready hook', () => {
+    const hookBindings = RESEARCH_WORKFLOW.hookBindings ?? [];
+    expect(hookBindings.length).toBeGreaterThanOrEqual(1);
+    const hook = hookBindings.find(
+      (b) => b.hookId === 'pr_ready' && b.sourceNode === 'Research' && b.targetNode === 'Review'
+    );
     expect(hook).toBeDefined();
     expect(hook!.sourceNode).toBe('Research');
     expect(hook!.targetNode).toBe('Review');
     expect(hook!.method).toBe('send_message');
-    expect(hook!.validator).toEqual({ kind: 'built_in', id: 'pr_ready' });
+    expect(hook!.hookId).toBe('pr_ready');
     expect(hook!.enabled).toBe(true);
   });
 
@@ -771,17 +768,18 @@ describe('getBuiltInWorkflows()', () => {
     const coding = getBuiltInWorkflows().find((w) => w.name === CODING_WORKFLOW.name)!;
     expect(coding.channels?.some((channel) => channel.gateId === 'review-posted-gate')).toBe(false);
     expect(
-      coding.hooks?.some(
+      coding.hookBindings?.some(
         (hook) =>
           hook.sourceNode === 'Review' &&
           hook.targetNode === 'Coding' &&
-          hook.id === 'review-posted'
+          hook.hookId === 'review_posted'
       )
     ).toBe(true);
-    const reviewPostedHook = coding.hooks?.find((hook) => hook.id === 'review-posted');
-    // The review-posted hook references the review_posted built-in
-    // validator (an external_state preset) — no hand-rolled bash script.
-    expect(reviewPostedHook?.validator).toEqual({ kind: 'built_in', id: 'review_posted' });
+    // The review-posted hook binding references the review_posted built-in hook
+    // id (an external_state preset registered by @hyperneo/extensions-hooks) —
+    // no hand-rolled bash script.
+    const reviewPostedBinding = coding.hookBindings?.find((b) => b.hookId === 'review_posted');
+    expect(reviewPostedBinding).toBeDefined();
   });
 });
 
@@ -840,7 +838,7 @@ describe('seedBuiltInWorkflows()', () => {
     }
   });
 
-  test('create rejects duplicate hook ids before migration', () => {
+  test('create rejects duplicate custom hook ids before migration', () => {
     expect(() =>
       manager.createWorkflow({
         spaceId: SPACE_ID,
@@ -850,43 +848,23 @@ describe('seedBuiltInWorkflows()', () => {
           { id: 'node-b', name: 'B', agents: [{ agentId: REVIEWER_ID, name: 'reviewer' }] },
         ],
         channels: [{ id: 'ch-a-b', from: 'A', to: 'B' }],
-        hooks: [
+        customHooks: [
           {
             id: 'dup-hook',
-            enabled: true,
-            sourceNode: 'A',
-            targetNode: 'B',
-            method: 'send_message',
-            classification: 'validation',
-            order: 0,
-            validator: {
-              kind: 'script',
-              interpreter: 'bash',
-              source: 'jq -n \'{"type":"allow"}\'',
-            },
-            authorizedCallers: [{ sourceNode: 'A' }],
+            requiredData: [],
+            run: { kind: 'script', interpreter: 'bash', source: 'echo ok' },
           },
           {
             id: 'dup-hook',
-            enabled: true,
-            sourceNode: 'A',
-            targetNode: 'B',
-            method: 'send_message',
-            classification: 'validation',
-            order: 1,
-            validator: {
-              kind: 'script',
-              interpreter: 'bash',
-              source: 'jq -n \'{"type":"allow"}\'',
-            },
-            authorizedCallers: [{ sourceNode: 'A' }],
+            requiredData: [],
+            run: { kind: 'script', interpreter: 'bash', source: 'echo ok' },
           },
         ],
       })
-    ).toThrow('duplicate hook id "dup-hook"');
+    ).toThrow('duplicate custom hook id "dup-hook"');
   });
 
-  test('update rejects duplicate hook ids before migration', () => {
+  test('update rejects duplicate custom hook ids before migration', () => {
     const workflow = manager.createWorkflow({
       spaceId: SPACE_ID,
       name: 'Update Duplicate Hook Workflow',
@@ -897,25 +875,15 @@ describe('seedBuiltInWorkflows()', () => {
       channels: [{ id: 'ch-a-b', from: 'A', to: 'B' }],
     });
 
-    const hook = {
+    const customHook = {
       id: 'dup-hook',
-      enabled: true,
-      sourceNode: 'A',
-      targetNode: 'B',
-      method: 'send_message' as const,
-      classification: 'validation' as const,
-      order: 0,
-      validator: {
-        kind: 'script' as const,
-        interpreter: 'bash',
-        source: 'jq -n \'{"type":"allow"}\'',
-      },
-      authorizedCallers: [{ sourceNode: 'A' }],
+      requiredData: [],
+      run: { kind: 'script' as const, interpreter: 'bash', source: 'echo ok' },
     };
 
-    expect(() => manager.updateWorkflow(workflow.id, { hooks: [hook, { ...hook }] })).toThrow(
-      'duplicate hook id "dup-hook"'
-    );
+    expect(() =>
+      manager.updateWorkflow(workflow.id, { customHooks: [customHook, { ...customHook }] })
+    ).toThrow('duplicate custom hook id "dup-hook"');
   });
 
   test('seeds all built-in templates for an empty space', async () => {
@@ -984,8 +952,8 @@ describe('seedBuiltInWorkflows()', () => {
     // cap so the review loop stays bounded.
     expect(reviewToCode!.gateId).toBeUndefined();
     expect(reviewToCode!.maxCycles).toBe(5);
-    const reviewPostedHook = (wf.hooks ?? []).find(
-      (h) => h.sourceNode === 'Review' && h.targetNode === 'Coding' && h.id === 'review-posted'
+    const reviewPostedHook = (wf.hookBindings ?? []).find(
+      (h) => h.sourceNode === 'Review' && h.targetNode === 'Coding' && h.hookId === 'review_posted'
     );
     expect(reviewPostedHook).toBeDefined();
   });
@@ -1044,12 +1012,13 @@ describe('seedBuiltInWorkflows()', () => {
     }
   });
 
-  test('RESEARCH_WORKFLOW seeded with a pr_ready hook', async () => {
+  test('RESEARCH_WORKFLOW seeded with a pr_ready hook binding', async () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
-    const hook = wf.hooks?.find((h) => h.id === 'research-pr-ready');
+    const hook = wf.hookBindings?.find(
+      (b) => b.hookId === 'pr_ready' && b.sourceNode === 'Research' && b.targetNode === 'Review'
+    );
     expect(hook).toBeDefined();
-    expect(hook!.validator).toEqual({ kind: 'built_in', id: 'pr_ready' });
   });
 
   test('REVIEW_ONLY_WORKFLOW seeded with no channels', async () => {
@@ -1304,15 +1273,17 @@ describe('seedBuiltInWorkflows()', () => {
     expect(routeNode.postApproval).toBeDefined();
 
     // Bypass manager validation — only rename node, don't touch hooks.
-    // Direct DB update avoids hook validation against renamed nodes.
+    // Direct DB update avoids hook validation against renamed nodes. Also clear
+    // the v2 hook_bindings column so stale bindings referencing the old node
+    // name don't fail restamp validation (the restamp re-stamps fresh template
+    // bindings, remapped to the renamed node).
     db.prepare(`UPDATE space_workflow_nodes SET name = ? WHERE id = ?`).run(
       'Implementation',
       routeNode.id
     );
-    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
-      'stale-hash',
-      coding.id
-    );
+    db.prepare(
+      `UPDATE space_workflows SET hook_bindings = NULL, template_hash = ? WHERE id = ?`
+    ).run('stale-hash', coding.id);
 
     const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     expect(result.restamped).toContain(CODING_WORKFLOW.name);
@@ -1851,27 +1822,40 @@ describe('seedBuiltInWorkflows()', () => {
     expect(result.errors).toHaveLength(0);
 
     const after = manager.getWorkflow(coding.id)!;
-    const hook = after.hooks!.find((h) => h.id === 'code-pr-ready')!;
+    const hook = after.hookBindings!.find(
+      (b) => b.hookId === 'pr_ready' && b.sourceNode === 'Implementation'
+    )!;
     expect(hook.sourceNode).toBe('Implementation');
     expect(hook.targetNode).toBe('Human Review');
     expect(hook.authorizedCallers?.[0]?.sourceNode).toBe('Implementation');
     expect(hook.authorizedCallers?.[0]?.agentSlots).toEqual(['engineer']);
   });
 
-  test('re-stamp preserves user-added custom hooks while updating template hooks', () => {
+  test('re-stamp preserves user-added custom hook bindings while updating template hooks', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
-    const customHook = {
-      id: 'custom-audit-hook',
-      enabled: true,
+    // A user-authored binding that places a custom hook (declared on the same
+    // workflow) on a route the built-in template does not own. The re-stamp
+    // must preserve it while still re-stamping the template's pr_ready binding.
+    const userBinding: HookBinding = {
+      hookId: 'custom-audit-hook',
       sourceNode: 'Coding',
+      targetNode: 'Coding',
       method: 'save_artifact',
-      classification: 'side_effect',
-      validator: { kind: 'script', interpreter: 'bash', source: 'echo \'{"type":"allow"}\'' },
+      order: 0,
+      enabled: true,
       authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
-    } as NonNullable<SpaceWorkflow['hooks']>[number];
+    };
+    const userCustomHook = {
+      id: 'custom-audit-hook',
+      requiredData: [{ key: 'artifact_url', type: 'link', required: true }],
+      run: { kind: 'script' as const, interpreter: 'bash', source: 'echo audited' },
+    };
 
-    repo.updateWorkflow(coding.id, { hooks: [...(coding.hooks ?? []), customHook] });
+    repo.updateWorkflow(coding.id, {
+      hookBindings: [...(coding.hookBindings ?? []), userBinding],
+      customHooks: [...(coding.customHooks ?? []), userCustomHook],
+    });
     db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
       'custom-hook-preservation',
       coding.id
@@ -1882,8 +1866,16 @@ describe('seedBuiltInWorkflows()', () => {
     expect(result.errors).toHaveLength(0);
 
     const after = manager.getWorkflow(coding.id)!;
-    expect(after.hooks?.some((hook) => hook.id === 'custom-audit-hook')).toBe(true);
-    expect(after.hooks?.some((hook) => hook.id === 'code-pr-ready')).toBe(true);
+    // The user-authored custom binding survives the re-stamp.
+    expect(after.hookBindings?.some((b) => b.hookId === 'custom-audit-hook')).toBe(true);
+    // The template's pr_ready binding is re-stamped back onto the row.
+    expect(
+      after.hookBindings?.some(
+        (b) => b.hookId === 'pr_ready' && b.sourceNode === 'Coding' && b.targetNode === 'Review'
+      )
+    ).toBe(true);
+    // The user's custom hook definition is also preserved.
+    expect(after.customHooks?.some((h) => h.id === 'custom-audit-hook')).toBe(true);
   });
 
   test('re-stamp maps appended channels to renamed built-in nodes by agent slot', () => {
@@ -1892,7 +1884,10 @@ describe('seedBuiltInWorkflows()', () => {
     const codingNode = coding.nodes.find((node) => node.name === 'Coding')!;
     const reviewNode = coding.nodes.find((node) => node.name === 'Review')!;
     // Bypass manager validation — direct DB rename + channel removal.
-    // Manager validates hooks against node names; direct DB avoids that.
+    // Manager validates hooks against node names; direct DB avoids that. Also
+    // clear the v2 hook_bindings column so stale bindings referencing the old
+    // node names don't fail restamp validation (the restamp re-stamps fresh
+    // template bindings, remapped to the renamed nodes).
     db.prepare(`UPDATE space_workflow_nodes SET name = ? WHERE id = ?`).run(
       'Implementation',
       codingNode.id
@@ -1906,7 +1901,7 @@ describe('seedBuiltInWorkflows()', () => {
     const legacyChannels = coding.channels!.filter(
       (channel) => !(channel.from === 'Coding' && channel.to === 'Review')
     );
-    db.prepare(`UPDATE space_workflows SET channels = ? WHERE id = ?`).run(
+    db.prepare(`UPDATE space_workflows SET channels = ?, hook_bindings = NULL WHERE id = ?`).run(
       JSON.stringify(legacyChannels),
       coding.id
     );
@@ -3588,15 +3583,17 @@ test('CODING_WITH_QA_WORKFLOW has layout entries for actual template node IDs', 
   }
 });
 
-test('CODING_WITH_QA_WORKFLOW has a send_message hook for Coding → Review using pr_ready validator', () => {
-  const hooks = CODING_WITH_QA_WORKFLOW.hooks ?? [];
-  expect(hooks.length).toBeGreaterThanOrEqual(1);
-  const hook = hooks.find((h) => h.id === 'fullstack-code-pr-ready');
+test('CODING_WITH_QA_WORKFLOW has a send_message hook binding for Coding → Review using the pr_ready hook', () => {
+  const hookBindings = CODING_WITH_QA_WORKFLOW.hookBindings ?? [];
+  expect(hookBindings.length).toBeGreaterThanOrEqual(1);
+  const hook = hookBindings.find(
+    (b) => b.hookId === 'pr_ready' && b.sourceNode === 'Coding' && b.targetNode === 'Review'
+  );
   expect(hook).toBeDefined();
   expect(hook!.sourceNode).toBe('Coding');
   expect(hook!.targetNode).toBe('Review');
   expect(hook!.method).toBe('send_message');
-  expect(hook!.validator).toEqual({ kind: 'built_in', id: 'pr_ready' });
+  expect(hook!.hookId).toBe('pr_ready');
   expect(hook!.enabled).toBe(true);
 });
 

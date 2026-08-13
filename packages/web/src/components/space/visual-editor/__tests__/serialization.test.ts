@@ -255,7 +255,8 @@ describe('visualStateToCreateParams', () => {
       startNodeId: 's1',
       tags: [],
       channels: [],
-      hooks: [],
+      hookBindings: [],
+      customHooks: [],
       ...overrides,
     };
   }
@@ -415,7 +416,8 @@ describe('visualStateToCreateParams', () => {
       startNodeId: 'local-new',
       tags: [],
       channels: [],
-      hooks: [],
+      hookBindings: [],
+      customHooks: [],
     };
     const params = visualStateToCreateParams(state, 'space-1', 'WF');
     expect(params.nodes![0].id).toBeTruthy();
@@ -429,176 +431,12 @@ describe('visualStateToCreateParams', () => {
       startNodeId: '',
       tags: [],
       channels: [],
-      hooks: [],
+      hookBindings: [],
+      customHooks: [],
     };
     const params = visualStateToCreateParams(state, 'space-1', 'WF');
     expect(params.nodes).toHaveLength(0);
     expect(params.startNodeId).toBeUndefined();
-  });
-
-  it('serializes hook node localId references to persisted node names', () => {
-    const params = visualStateToCreateParams(
-      makeState({
-        nodes: [
-          {
-            step: { localId: 'local-unnamed', name: '', agentId: 'a1' },
-            position: { x: 0, y: 0 },
-          },
-          {
-            step: { localId: 'local-review', id: 'review-id', name: 'Review', agentId: 'a2' },
-            position: { x: 300, y: 0 },
-          },
-        ],
-        startNodeId: 'local-unnamed',
-        hooks: [
-          {
-            id: 'hook-1',
-            enabled: true,
-            sourceNode: 'local-unnamed',
-            targetNode: 'local-review',
-            method: 'send_message',
-            validator: { kind: 'script', interpreter: 'bash', source: 'echo ok' },
-            authorizedCallers: [{ sourceNode: 'local-unnamed' }],
-            poll: { intervalMs: 5000 },
-          },
-        ],
-      }),
-      'space-1',
-      'WF'
-    );
-
-    expect(params.hooks).toEqual([
-      expect.objectContaining({
-        sourceNode: 'Step 1',
-        targetNode: 'Review',
-        authorizedCallers: [expect.objectContaining({ sourceNode: 'Step 1' })],
-        retry: { maxAttempts: 3, delayMs: 5000, backoffMultiplier: 1 },
-      }),
-    ]);
-    expect(params.hooks![0].poll).toBeUndefined();
-  });
-
-  it('preserves explicit hook retry settings', () => {
-    const params = visualStateToCreateParams(
-      makeState({
-        hooks: [
-          {
-            id: 'hook-1',
-            enabled: true,
-            sourceNode: 'Step 1',
-            method: 'send_message',
-            validator: { kind: 'script', interpreter: 'bash', source: 'echo ok' },
-            retry: { maxAttempts: 9, delayMs: 1000, backoffMultiplier: 2 },
-          },
-        ],
-      }),
-      'space-1',
-      'WF'
-    );
-
-    expect(params.hooks?.[0].retry).toEqual({
-      maxAttempts: 9,
-      delayMs: 1000,
-      backoffMultiplier: 2,
-    });
-  });
-
-  it('omits retry settings for built-in pr_ready hooks', () => {
-    const params = visualStateToCreateParams(
-      makeState({
-        hooks: [
-          {
-            id: 'hook-1',
-            enabled: true,
-            sourceNode: 'Step 1',
-            method: 'send_message',
-            validator: { kind: 'built_in', id: 'pr_ready' },
-            retry: { maxAttempts: 3, delayMs: 5000, backoffMultiplier: 1 },
-          },
-        ],
-      }),
-      'space-1',
-      'WF'
-    );
-
-    expect(params.hooks?.[0].retry).toBeUndefined();
-  });
-
-  it('drops unsupported human-only hooks without authorized callers', () => {
-    const params = visualStateToCreateParams(
-      makeState({
-        hooks: [
-          {
-            id: 'hook-1',
-            enabled: true,
-            sourceNode: 'Step 1',
-            method: 'send_message',
-            humanOnly: true,
-            validator: { kind: 'script', interpreter: 'bash', source: 'echo ok' },
-          },
-        ],
-      }),
-      'space-1',
-      'WF'
-    );
-
-    expect(params.hooks).toBeUndefined();
-  });
-
-  it('serializes hook result contract fields and strips unsupported humanOnly', () => {
-    const params = visualStateToCreateParams(
-      makeState({
-        hooks: [
-          {
-            id: 'hook-1',
-            enabled: true,
-            sourceNode: 'Step 1',
-            targetNode: 'Step 2',
-            method: 'send_message',
-            label: 'PR ready',
-            classification: 'validation',
-            humanOnly: true,
-            validator: {
-              kind: 'script',
-              interpreter: 'bash',
-              source: 'echo {"type":"allow"}',
-              timeoutMs: 2000,
-              externalLookups: ['github'],
-            },
-            localState: {
-              defaults: { pr_url: null },
-              recentResultRef: { hookId: 'hook-0', key: 'lastResult' },
-            },
-            templateData: { banner: 'needs_pr' },
-            authorizedCallers: [{ sourceNode: 'Step 1', agentSlots: ['coder'] }],
-          },
-        ],
-      }),
-      'space-1',
-      'WF'
-    );
-
-    expect(params.hooks?.[0]).toMatchObject({
-      id: 'hook-1',
-      label: 'PR ready',
-      classification: 'validation',
-      sourceNode: 'Step 1',
-      targetNode: 'Step 2',
-      validator: {
-        kind: 'script',
-        interpreter: 'bash',
-        source: 'echo {"type":"allow"}',
-        timeoutMs: 2000,
-        externalLookups: ['github'],
-      },
-      localState: {
-        defaults: { pr_url: null },
-        recentResultRef: { hookId: 'hook-0', key: 'lastResult' },
-      },
-      templateData: { banner: 'needs_pr' },
-      authorizedCallers: [{ sourceNode: 'Step 1', agentSlots: ['coder'] }],
-    });
-    expect(params.hooks?.[0].humanOnly).toBeUndefined();
   });
 
   it('passes endNodeId through to create params', () => {
@@ -770,7 +608,8 @@ describe('handoff transition preservation', () => {
       startNodeId: 's1',
       tags: [],
       channels: [],
-      hooks: [],
+      hookBindings: [],
+      customHooks: [],
       ...overrides,
     };
   }
@@ -1060,7 +899,8 @@ describe('visualStateToUpdateParams', () => {
       startNodeId: 's1',
       tags: [],
       channels: [],
-      hooks: [],
+      hookBindings: [],
+      customHooks: [],
     };
     const params = visualStateToUpdateParams(state, {
       name: 'Updated Name',
@@ -1087,7 +927,8 @@ describe('visualStateToUpdateParams', () => {
       endNodeId: 's2',
       tags: [],
       channels: [],
-      hooks: [],
+      hookBindings: [],
+      customHooks: [],
     };
     const params = visualStateToUpdateParams(state);
     expect(params.endNodeId).toBe('s2');
@@ -1114,7 +955,8 @@ describe('visualStateToUpdateParams', () => {
       startNodeId: 's1',
       tags: [],
       channels: [],
-      hooks: [],
+      hookBindings: [],
+      customHooks: [],
     };
     const params = visualStateToUpdateParams(state);
     expect(params.nodes?.[0].postApproval).toEqual({
@@ -1136,7 +978,8 @@ describe('visualStateToUpdateParams', () => {
       startNodeId: 's1',
       tags: [],
       channels: [],
-      hooks: [],
+      hookBindings: [],
+      customHooks: [],
     };
     const params = visualStateToUpdateParams(state);
     expect(params.endNodeId).toBeNull();
@@ -1221,7 +1064,8 @@ describe('multi-agent step serialization', () => {
       startNodeId: 's1',
       tags: [],
       channels: [],
-      hooks: [],
+      hookBindings: [],
+      customHooks: [],
     };
     const params = visualStateToCreateParams(state, 'space-1', 'WF');
     const step = params.nodes![0];
@@ -1250,7 +1094,8 @@ describe('multi-agent step serialization', () => {
       startNodeId: 's1',
       tags: [],
       channels: [],
-      hooks: [],
+      hookBindings: [],
+      customHooks: [],
     };
     const params = visualStateToCreateParams(state, 'space-1', 'WF');
     // Channels are not yet supported in visualStateToCreateParams output

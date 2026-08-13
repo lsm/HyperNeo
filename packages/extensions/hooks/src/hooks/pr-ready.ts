@@ -1,7 +1,7 @@
 import type { Hook, HookAction, HookReturn } from '@hyperneo/shared/types/workflow-hooks';
+import { readDataString } from '../action';
 import { ghGetPr, ghGetUnresolvedReviewThreads, githubFailureToFlow } from '../github';
 import { getPrimaryLink } from '../primary-link';
-import { readDataString } from '../action';
 
 /**
  * `pr_ready` — the coder→reviewer handoff gate. The PR must be OPEN, MERGEABLE,

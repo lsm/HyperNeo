@@ -154,31 +154,84 @@ describe('buildWorkflowFingerprint', () => {
     expect(fp.instructions).toBe('');
   });
 
-  it('treats empty channels and hooks as empty arrays', () => {
-    const wf = makeWorkflow({ channels: undefined, gates: undefined, hooks: undefined });
+  it('treats empty channels, hookBindings, and customHooks as empty arrays', () => {
+    const wf = makeWorkflow({
+      channels: undefined,
+      hookBindings: undefined,
+      customHooks: undefined,
+    });
     const fp = buildWorkflowFingerprint(wf);
     expect(fp.channels).toEqual([]);
-    expect(fp.hooks).toEqual([]);
+    expect(fp.hookBindings).toEqual([]);
+    expect(fp.customHooks).toEqual([]);
   });
 
-  it('includes workflow hooks in fingerprint', () => {
+  it('includes hookBindings and customHooks in fingerprint (v2)', () => {
     const wf = makeWorkflow({
-      hooks: [
+      hookBindings: [
         {
-          id: 'hook-1',
-          enabled: true,
+          hookId: 'pr_ready',
           sourceNode: 'Coder',
           targetNode: 'Reviewer',
           method: 'send_message',
-          validator: { kind: 'script', interpreter: 'bash', source: 'echo \'{"type":"allow"}\'' },
+          order: 0,
+          enabled: true,
           authorizedCallers: [{ sourceNode: 'Coder', agentSlots: ['Coder'] }],
+        },
+      ],
+      customHooks: [
+        {
+          id: 'audit',
+          requiredData: [{ key: 'pr_link', type: 'link', required: true }],
+          run: { kind: 'script', interpreter: 'bash', source: 'echo ok' },
         },
       ],
     });
     const fp = buildWorkflowFingerprint(wf);
-    expect(fp.hooks).toHaveLength(1);
-    expect(JSON.parse(fp.hooks[0])).toEqual(wf.hooks![0]);
+    expect(fp.hookBindings).toHaveLength(1);
+    expect(JSON.parse(fp.hookBindings[0])).toEqual(wf.hookBindings![0]);
+    expect(fp.customHooks).toHaveLength(1);
+    expect(JSON.parse(fp.customHooks[0])).toEqual(wf.customHooks![0]);
     expect(computeWorkflowHash(wf)).not.toBe(computeWorkflowHash(makeWorkflow()));
+  });
+
+  it('changing a hookBinding changes the hash', () => {
+    const base = makeWorkflow();
+    const withBinding = makeWorkflow({
+      hookBindings: [
+        {
+          hookId: 'pr_ready',
+          sourceNode: 'Coder',
+          targetNode: 'Reviewer',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+        },
+      ],
+    });
+    expect(computeWorkflowHash(base)).not.toBe(computeWorkflowHash(withBinding));
+  });
+
+  it('changing a customHook script changes the hash', () => {
+    const base = makeWorkflow({
+      customHooks: [
+        {
+          id: 'audit',
+          requiredData: [],
+          run: { kind: 'script', interpreter: 'bash', source: 'echo a' },
+        },
+      ],
+    });
+    const changed = makeWorkflow({
+      customHooks: [
+        {
+          id: 'audit',
+          requiredData: [],
+          run: { kind: 'script', interpreter: 'bash', source: 'echo b' },
+        },
+      ],
+    });
+    expect(computeWorkflowHash(base)).not.toBe(computeWorkflowHash(changed));
   });
 
   it('includes sorted nodePrompts for each node-agent pair', () => {

@@ -1,49 +1,58 @@
 /**
- * Workflow Hook Engine
+ * Workflow Hook Engine v2 — see `docs/features/workflow-hooks-v2.md`.
  *
- * Receives structured action context before selected node-agent MCP handlers
- * execute. Snapshots matching enabled hooks, sorts by classification then order
- * then id, and executes them serially in a single action-scoped pipeline.
+ * Two layers: a {@link HookBinding} places a hook (by id) on a workflow route;
+ * the hook itself is a built-in (from `@hyperneo/extensions-hooks`, loaded via
+ * {@link resolveHook}) or a per-workflow custom script. The engine resolves the
+ * bindings matching an MCP action, runs them in `order`, and honors each hook's
+ * returned {@link HookReturn}:
  *
- * Hook result precedence:
- *   - validation `block` stops the chain and blocks the action
- *   - validation `retryable_block` stops the chain and blocks (retryable)
- *   - `block` takes precedence over `retryable_block`
- *   - side-effect failures are recorded but do not block
- *   - multiple `patch_params` apply sequentially
- *   - `emit_follow_up` dispatches through the handler pipeline (depth capped at 1)
- *   - `record_state` persists hook-local state
+ *   - `continue` — proceed (optionally applying `payload` to the action params);
+ *   - `stop` — block the action and end the chain;
+ *   - `retry` — end the chain and re-run after engine-managed backoff.
+ *
+ * Hooks own their side effects: a hook performs them inside `run` by calling
+ * {@link HookContext} methods (`recordState` / `writeArtifact` /
+ * `queueFollowUp`). The engine collects those and applies them; the return only
+ * signals flow. Follow-ups dispatch only when the chain ultimately delivers.
  */
 
 import type {
-  WorkflowHook,
-  WorkflowHookResult,
-  WorkflowHookUserState,
+  CustomHook,
+  HookAction,
+  HookArtifact,
+  HookArtifactInput,
+  HookBinding,
+  HookContext,
+  HookFlow,
+  HookReturn,
+  HookUserState,
   SpaceWorkflow,
   WorkflowRunArtifact,
   WorkflowRunStatus,
-  WorkflowHookStateSnapshot,
 } from '@hyperneo/shared';
-import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
-import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
-import type { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository';
-import type { HookExecutor, HookExecutorContext } from './hook-executor';
-import { ChannelResolver } from './channel-resolver';
-import { isConnectorsLayerEnabled } from './connectors/connector';
-import { getBuiltInConnectorDeps } from './connectors/production';
-import { isRateLimitError } from './rate-limit-detector';
-import { Logger } from '../../logger';
+import { generateUUID } from '@hyperneo/shared';
 import { parseAddress } from '../../../../../messaging/src/address';
+import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
+import type {
+  WorkflowHookStatePatch,
+  WorkflowHookStateRepository,
+} from '../../../storage/repositories/workflow-hook-state-repository';
+import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
+import { Logger } from '../../logger';
 import {
-  SendMessageSchema,
-  SaveArtifactSchema,
   CreateStandaloneTaskSchema,
+  SaveArtifactSchema,
+  SendMessageSchema,
 } from '../tools/node-agent-tool-schemas';
 import {
   ApproveTaskSchema,
-  SubmitForApprovalSchema,
   MarkCompleteSchema,
+  SubmitForApprovalSchema,
 } from '../tools/task-agent-tool-schemas';
+import { ChannelResolver } from './channel-resolver';
+import { isBuiltInHook, resolveHook } from './hook-registry';
+import { collectWithMaxBuffer, MAX_BUFFER_BYTES, parseJsonStdout } from './script-utils';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -58,46 +67,36 @@ export interface HookActionMeta {
   targetNode?: string;
 }
 
-/** Outcome of running the hook chain for a single MCP action. */
-export interface HookActionOutcome {
-  /** The most significant decision from the hook chain. */
-  decision:
-    | 'allow'
-    | 'block'
-    | 'retryable_block'
-    | 'patch_params'
-    | 'emit_follow_up'
-    | 'record_state';
-  /** Final params after all patch_params applied (or original if none). */
-  finalParams: Record<string, unknown>;
-  /** Follow-up actions to dispatch, if any. */
-  followUpRequests: Array<{ targetNode: string; message: string }>;
-  /** State updates to persist. */
-  stateUpdates: Array<{ hookId: string; state: Record<string, unknown> }>;
-  /** Normalized user-visible state for banners/debug UI. */
-  userState: WorkflowHookUserState;
-  /** Per-hook execution log for auditing. */
-  executionLog: HookExecutionRecord[];
-  /** The hook ID that caused a block, if any. */
-  blockedByHookId?: string;
-}
-
-/** Record of a single hook execution. */
+/** Record of a single hook execution (for audit + persistence). */
 export interface HookExecutionRecord {
   hookId: string;
-  classification: 'validation' | 'side_effect';
-  result: WorkflowHookResult;
+  flow: HookFlow;
+  reason?: string;
   timestamp: number;
 }
 
-/**
- * Reserved hook id under which the engine stamps the run's pr_ready-validated
- * PR identity. Hook `record_state`/`stateForHook` updates target a hook's OWN
- * id, so no real (user-defined) hook can write here; the resolver reads this key
- * directly instead of matching user-defined hook ids by substring, closing the
- * colliding-hook-id / record_state PR-identity spoof.
- */
-export const PR_READY_VALIDATED_IDENTITY_HOOK_ID = '__pr_ready_validated_identity__';
+/** An artifact a hook asked the engine to write via `ctx.writeArtifact`. */
+export interface HookArtifactWrite extends HookArtifactInput {}
+
+/** Outcome of running the hook chain for a single MCP action. */
+export interface HookActionOutcome {
+  /** The chain's final decision. */
+  decision: 'deliver' | 'stop' | 'retry';
+  /** Final params after any `continue`-payload patches (or original). */
+  finalParams: Record<string, unknown>;
+  /** Follow-up send_messages to dispatch (only on `deliver`). */
+  followUpRequests: Array<{ targetNode: string; message: string }>;
+  /** Hook-local state accumulations to persist (always applied). */
+  stateUpdates: Array<{ hookId: string; state: Record<string, unknown> }>;
+  /** Per-hook execution log. */
+  executionLog: HookExecutionRecord[];
+  /** Normalized user-visible state for banners/debug UI. */
+  userState: HookUserState;
+  /** Hook id that caused a `stop` / `retry`, if any. */
+  blockingHookId?: string;
+  /** Backoff hint surfaced from a `retry`. */
+  retryAfterMs?: number;
+}
 
 /** Dependencies for the workflow hook engine. */
 export interface WorkflowHookEngineConfig {
@@ -107,37 +106,84 @@ export interface WorkflowHookEngineConfig {
   nodeExecutionRepo: NodeExecutionRepository;
   artifactRepo?: WorkflowRunArtifactRepository;
   hookStateRepo: WorkflowHookStateRepository;
-  hookExecutor: HookExecutor;
   workspacePath?: string;
   getWorkflowRunStatus?: (runId: string) => WorkflowRunStatus | undefined;
   getTaskStatus?: (taskId: string) => string | undefined;
   getSourceNodeExecutionStatus?: (meta: HookActionMeta) => string | undefined;
   notifySourceSession?: (sessionId: string, message: string) => Promise<void>;
-  onHookStateUpdated?: (hookId: string, hookState: WorkflowHookStateSnapshot) => void;
+  onHookStateUpdated?: (
+    hookId: string,
+    hookState: import('@hyperneo/shared').HookStateSnapshot
+  ) => void;
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Constants & helpers
 // ---------------------------------------------------------------------------
+
+const log = new Logger('workflow-hook-engine');
+
+/** Maximum follow-up execution latency budget (30 seconds default). */
+const DEFAULT_FOLLOW_UP_TIMEOUT_MS = 30_000;
+
+/** Default delay for queued retryable hook actions when a hook omits retryAfterMs. */
+const DEFAULT_RETRY_AFTER_MS = 30_000;
+
+/** Maximum bytes for an artifact data payload injected into a script hook env. */
+const MAX_ARTIFACT_DATA_BYTES = 16_384;
+
+/** Maximum bytes for a param `data` field before it is redacted in hook env. */
+const MAX_PARAM_DATA_BYTES = 4096;
+
+/** Maximum items in an array before truncation in hook env params. */
+const MAX_ARRAY_ITEMS = 100;
+
+/** Maximum keys in an object before truncation in hook env params. */
+const MAX_OBJECT_KEYS = 50;
+
+/** Maximum bytes for the serialized params JSON injected into hook env. */
+const MAX_PARAMS_JSON_BYTES = 32_768;
+
+/** Default timeout for custom hook scripts (30 seconds). */
+const DEFAULT_SCRIPT_TIMEOUT_MS = 30_000;
+
+const METHOD_PARAM_SCHEMAS: Record<string, import('zod').ZodType<unknown>> = {
+  send_message: SendMessageSchema,
+  save_artifact: SaveArtifactSchema,
+  create_standalone_task: CreateStandaloneTaskSchema,
+  approve_task: ApproveTaskSchema,
+  submit_for_approval: SubmitForApprovalSchema,
+  mark_complete: MarkCompleteSchema,
+};
+
+const VALID_FLOWS = new Set<HookFlow>(['continue', 'stop', 'retry']);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 // ---------------------------------------------------------------------------
-// Constants
+// Module-level retry queue (persists across the run; replayed on restart)
 // ---------------------------------------------------------------------------
 
-const log = new Logger('workflow-hook-engine');
+export const QUEUED_RETRYABLE_ACTION_STATE_KEY = '__queuedRetryableAction';
+const RETRYABLE_ACTION_CANCEL_STATUSES = new Set<WorkflowRunStatus>(['done', 'cancelled']);
 
-/** Whitelisted MCP methods that may be used for follow-up actions. */
-const FOLLOW_UP_METHODS = new Set(['send_message']);
-
-/** Maximum follow-up execution latency budget (30 seconds default). */
-const DEFAULT_FOLLOW_UP_TIMEOUT_MS = 30_000;
-
-/** Default delay for queued retryable hook actions when validator omits retryAfterMs. */
-const DEFAULT_RETRYABLE_ACTION_DELAY_MS = 30_000;
+interface QueuedRetryableHookAction {
+  actionKey: string;
+  hookId: string;
+  methodName: string;
+  args: Record<string, unknown>;
+  meta: HookActionMeta;
+  isFollowUp: boolean;
+  nextRetryAt: number;
+  retryAfterMs: number;
+  queuedAt: number;
+}
 
 interface PendingRetryableHookAction {
   actionKey: string;
@@ -155,50 +201,6 @@ const pendingRetryableHookActions = new Map<
   string,
   { timer: ReturnType<typeof setTimeout>; options: PendingRetryableHookAction }
 >();
-export const QUEUED_RETRYABLE_ACTION_STATE_KEY = '__queuedRetryableAction';
-const RETRYABLE_ACTION_CANCEL_STATUSES = new Set<WorkflowRunStatus>(['done', 'cancelled']);
-
-interface QueuedRetryableHookAction {
-  actionKey: string;
-  hookId: string;
-  methodName: string;
-  args: Record<string, unknown>;
-  meta: HookActionMeta;
-  isFollowUp: boolean;
-  nextRetryAt: number;
-  retryAfterMs: number;
-  queuedAt: number;
-}
-
-/** Maximum bytes for an artifact data payload injected into hook context. */
-const MAX_ARTIFACT_DATA_BYTES = 16_384;
-
-/** Maximum bytes for a param `data` field before it is redacted in hook env. */
-const MAX_PARAM_DATA_BYTES = 4096;
-
-/** Maximum bytes for hook-local state serialized into the script env. */
-const MAX_HOOK_LOCAL_STATE_BYTES = 8192;
-
-/** Maximum items in an array before truncation in hook env params. */
-const MAX_ARRAY_ITEMS = 100;
-
-/** Maximum keys in an object before truncation in hook env params. */
-const MAX_OBJECT_KEYS = 50;
-
-/** Maximum bytes for the serialized params JSON injected into hook env. */
-const MAX_PARAMS_JSON_BYTES = 32_768;
-
-/** Maximum bytes for the entire serialized artifacts array injected into hook env. */
-const MAX_ARTIFACTS_ARRAY_BYTES = 65_536;
-
-const METHOD_PARAM_SCHEMAS: Record<string, import('zod').ZodType<unknown>> = {
-  send_message: SendMessageSchema,
-  save_artifact: SaveArtifactSchema,
-  create_standalone_task: CreateStandaloneTaskSchema,
-  approve_task: ApproveTaskSchema,
-  submit_for_approval: SubmitForApprovalSchema,
-  mark_complete: MarkCompleteSchema,
-};
 
 // ---------------------------------------------------------------------------
 // Engine
@@ -234,6 +236,10 @@ export class WorkflowHookEngine {
     await this.config.notifySourceSession?.(sessionId, message);
   }
 
+  /**
+   * Re-arm queued retryable actions for a node session after (re)hydration.
+   * Iterates the distinct hook ids across the workflow's bindings.
+   */
   scheduleQueuedRetryableActions(
     handlersByMethod: Record<
       string,
@@ -264,15 +270,14 @@ export class WorkflowHookEngine {
     }
   }
 
-  persistQueuedRetryableAction(action: QueuedRetryableHookAction): boolean {
-    return this.persistStateUpdate(action.hookId, {
-      [QUEUED_RETRYABLE_ACTION_STATE_KEY]: action,
-    });
+  /** Current persisted retry count for a hook (for backoff bookkeeping). */
+  getRetryCount(hookId: string): number {
+    return this.config.hookStateRepo.get(this.config.workflowRunId, hookId)?.retryCount ?? 0;
   }
 
   clearQueuedRetryableAction(hookId: string): boolean {
     return this.persistStateUpdate(hookId, {
-      [QUEUED_RETRYABLE_ACTION_STATE_KEY]: null,
+      localState: { [QUEUED_RETRYABLE_ACTION_STATE_KEY]: null },
     });
   }
 
@@ -284,21 +289,16 @@ export class WorkflowHookEngine {
   }
 
   getQueuedRetryableActions(): QueuedRetryableHookAction[] {
-    return (this.config.workflow.hooks ?? [])
-      .map((hook) => this.getQueuedRetryableAction(hook.id))
+    const hookIds = new Set((this.config.workflow.hookBindings ?? []).map((b) => b.hookId));
+    return [...hookIds]
+      .map((hookId) => this.getQueuedRetryableAction(hookId))
       .filter((action): action is QueuedRetryableHookAction => action !== undefined);
   }
 
   clearQueuedRetryableActionsForKey(actionKey: string): void {
-    for (const hook of this.getHooksWithQueuedAction(actionKey)) {
-      this.clearQueuedRetryableAction(hook.id);
+    for (const hookId of this.getHookIdsWithQueuedAction(actionKey)) {
+      this.clearQueuedRetryableAction(hookId);
     }
-  }
-
-  clearQueuedRetryableActionForHook(hookId: string): QueuedRetryableHookAction | undefined {
-    const queued = this.getQueuedRetryableAction(hookId);
-    this.clearQueuedRetryableAction(hookId);
-    return queued;
   }
 
   clearQueuedRetryableActionsForOwner(hookIds: Iterable<string>, meta: HookActionMeta): string[] {
@@ -312,30 +312,39 @@ export class WorkflowHookEngine {
     return clearedActionKeys;
   }
 
-  getHooksWithQueuedAction(actionKey: string): WorkflowHook[] {
-    return (this.config.workflow.hooks ?? []).filter(
-      (hook) => this.getQueuedRetryableAction(hook.id)?.actionKey === actionKey
-    );
+  getHookIdsWithQueuedAction(actionKey: string): string[] {
+    return (this.config.workflow.hookBindings ?? [])
+      .map((b) => b.hookId)
+      .filter((hookId) => this.getQueuedRetryableAction(hookId)?.actionKey === actionKey);
   }
 
   /**
-   * Persist a single hook-local state update (and optional last result) through
-   * the repository. Returns true on success, false on version conflict or error.
+   * Persist a single hook-local state patch (and optional last flow/reason)
+   * through the repository, retrying on version conflict. Returns true on
+   * success, false on persistent conflict or error.
    */
   persistStateUpdate(
     hookId: string,
-    state: Record<string, unknown>,
-    lastResult?: WorkflowHookResult
+    patch: {
+      localState?: Record<string, unknown>;
+      lastFlow?: HookFlow;
+      lastReason?: string;
+      retryCount?: number;
+      nextRetryAt?: number | null;
+    }
   ): boolean {
+    const repoPatch: WorkflowHookStatePatch = {
+      expectedVersion: 0,
+      ...patch,
+    };
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         const repoState =
           this.config.hookStateRepo.get(this.config.workflowRunId, hookId) ??
           this.config.hookStateRepo.ensure(this.config.workflowRunId, hookId);
         const result = this.config.hookStateRepo.update(this.config.workflowRunId, hookId, {
+          ...repoPatch,
           expectedVersion: repoState.version,
-          localState: state,
-          lastResult,
         });
         if (result) {
           this.config.onHookStateUpdated?.(hookId, result);
@@ -350,416 +359,227 @@ export class WorkflowHookEngine {
 
   /**
    * Execute the hook chain for an MCP action.
-   *
-   * @param methodName  The MCP method being invoked (e.g. 'send_message')
-   * @param params      The raw params passed to the method
-   * @param meta        Caller identity metadata
-   * @returns           HookActionOutcome with decision, patched params, and user state
    */
   async executeAction(
     methodName: string,
     params: Record<string, unknown>,
     meta: HookActionMeta
   ): Promise<HookActionOutcome> {
-    const hooks = this.resolveMatchingHooks(methodName, params, meta);
+    const bindings = this.resolveMatchingBindings(methodName, params, meta);
 
-    if (hooks.length === 0) {
+    if (bindings.length === 0) {
       return {
-        decision: 'allow',
+        decision: 'deliver',
         finalParams: params,
         followUpRequests: [],
         stateUpdates: [],
-        userState: { status: 'allowed' },
         executionLog: [],
+        userState: { status: 'allowed' },
       };
     }
 
-    const sortedHooks = this.sortHooks(hooks);
+    const sorted = this.sortBindings(bindings);
     const executionLog: HookExecutionRecord[] = [];
-    const originalParams = { ...params };
-    let currentParams = originalParams;
-    const followUpRequests: Array<{ targetNode: string; message: string }> = [];
     const stateUpdates: Array<{ hookId: string; state: Record<string, unknown> }> = [];
-    let blockedByValidation: {
-      hookId: string;
-      result: WorkflowHookResult;
-      isRetryable: boolean;
-    } | null = null;
+    const artifacts: HookArtifactWrite[] = [];
+    const followUpRequests: Array<{ targetNode: string; message: string }> = [];
+    let currentParams = { ...params };
 
-    for (const hook of sortedHooks) {
-      // If a validation hook already returned non-retryable block, skip everything
-      if (blockedByValidation?.isRetryable === false) {
+    type Terminal = { kind: 'stop'; hookId: string; reason?: string } | null;
+    let terminal: Terminal = null;
+    let retry: { hookId: string; reason?: string; retryAfterMs?: number } | null = null;
+
+    for (const binding of sorted) {
+      const hookId = binding.hookId;
+
+      // Retry-cooldown pre-check: if this hook is still in backoff from a prior
+      // retry, re-issue retry without re-running the hook (avoids hammering a
+      // rate-limited / pending-merge lookup on every manual attempt).
+      const hookState = this.config.hookStateRepo.get(this.config.workflowRunId, hookId);
+      const nextRetryAt = hookState?.nextRetryAt;
+      if (nextRetryAt !== undefined && Date.now() < nextRetryAt) {
+        const remaining = Math.max(0, nextRetryAt - Date.now());
+        const reason = hookState?.lastReason ?? 'Retry backoff pending';
+        retry = { hookId, reason, retryAfterMs: remaining };
+        executionLog.push({ hookId, flow: 'retry', reason, timestamp: Date.now() });
         break;
       }
-      // If a validation hook returned retryable_block, skip remaining side-effects
-      // but allow later validation hooks to run (so block can override retryable_block)
-      if (blockedByValidation && (hook.classification ?? 'validation') === 'side_effect') {
-        break;
-      }
 
-      // Pre-check retry backoff / limit for validation hooks so we don't waste
-      // executor runs while a retryable_block cooldown is active. Dynamic
-      // retryAfterMs results also persist nextRetryAt even when hook.retry is
-      // not configured, so repeated manual attempts respect the same cooldown.
-      if ((hook.classification ?? 'validation') === 'validation') {
-        const hookState = this.config.hookStateRepo.get(this.config.workflowRunId, hook.id);
-        const maxAttempts = hook.retry?.maxAttempts ?? 0;
-        const currentRetryCount = hookState?.retryCount ?? 0;
-        const lastResult = hookState?.lastResult;
-
-        if (maxAttempts > 0 && currentRetryCount >= maxAttempts) {
-          const reason =
-            lastResult?.type === 'retryable_block' ? lastResult.reason : 'Retry limit exceeded';
-          blockedByValidation = {
-            hookId: hook.id,
-            result: { type: 'block', reason: reason ?? 'Retry limit exceeded' },
-            isRetryable: false,
-          };
-          executionLog.push({
-            hookId: hook.id,
-            classification: 'validation',
-            result: blockedByValidation.result,
-            timestamp: Date.now(),
-          });
-          continue;
-        }
-
-        const nextRetryAt = hookState?.nextRetryAt;
-        const shouldEnforceRetryBackoff = Boolean(
-          hook.retry ||
-            (lastResult?.type === 'retryable_block' &&
-              typeof lastResult.retryAfterMs === 'number' &&
-              isRateLimitError(lastResult.reason ?? ''))
-        );
-        if (shouldEnforceRetryBackoff && nextRetryAt !== undefined && Date.now() < nextRetryAt) {
-          const remainingRetryAfterMs = Math.max(0, nextRetryAt - Date.now());
-          const result: WorkflowHookResult =
-            lastResult?.type === 'retryable_block'
-              ? { ...lastResult, retryAfterMs: remainingRetryAfterMs }
-              : {
-                  type: 'retryable_block',
-                  reason: 'Retry backoff pending',
-                  retryAfterMs: remainingRetryAfterMs,
-                };
-          blockedByValidation = { hookId: hook.id, result, isRetryable: true };
-          executionLog.push({
-            hookId: hook.id,
-            classification: 'validation',
-            result,
-            timestamp: Date.now(),
-          });
-          continue;
-        }
-      }
-
-      const context = await this.buildExecutorContext(hook, methodName, currentParams, meta);
-
-      let result: WorkflowHookResult;
-      try {
-        const execResult = await this.config.hookExecutor.execute(hook, context);
-        result = execResult.result;
-      } catch (err) {
+      const hook = resolveHook(hookId, this.config.workflow.customHooks);
+      if (!hook) {
         log.warn(
-          `Hook executor threw for hook "${hook.id}" on ${methodName}: ${err instanceof Error ? err.message : String(err)}`
+          `Binding references hook "${hookId}" (${binding.sourceNode}→${binding.targetNode} ${methodName}) but it is not registered; skipping.`
         );
-        result = {
-          type: 'block',
-          reason: 'Hook executor internal error',
-        };
+        continue;
       }
 
-      executionLog.push({
-        hookId: hook.id,
-        classification: hook.classification ?? 'validation',
-        result,
-        timestamp: Date.now(),
-      });
+      const built = this.buildHookContext(binding, meta);
+      const action: HookAction = {
+        method: methodName as HookAction['method'],
+        params: this.boundParams(currentParams),
+        rawParams: currentParams,
+      };
 
-      // Process result
-      switch (result.type) {
-        case 'allow':
-          // Snapshot the run's reviewed PR identity ONLY when the pr_ready
-          // validator allows the handoff. Stamping pr_url into ANY allowed
-          // send_message hook's localState let a custom hook with a colliding
-          // id (e.g. `post-pr-ready-notification`) and a different validator
-          // supply a spoofed pr_url that resolveInitialPrimaryLinkUrl (which
-          // matches hook ids by the `pr-ready` substring) would then trust for
-          // merge-dispatch resolution and the mark_complete merge gate.
-          if (
-            methodName === 'send_message' &&
-            hook.validator.kind === 'built_in' &&
-            hook.validator.id === 'pr_ready'
-          ) {
-            const prUrl = extractPrUrlFromParams(currentParams);
-            if (prUrl) {
-              // The pr_ready hook's own state — used by the validator's frozen-
-              // identity check on later handoffs.
-              stateUpdates.push({ hookId: hook.id, state: { pr_url: prUrl } });
-              // The authoritative run-level identity under a RESERVED hook id.
-              // record_state / stateForHook target a hook's OWN id, so no real
-              // hook can write here — the resolver reads this key directly
-              // instead of matching user-defined hook ids by substring, closing
-              // the colliding-hook-id / record_state spoof.
-              stateUpdates.push({
-                hookId: PR_READY_VALIDATED_IDENTITY_HOOK_ID,
-                state: { pr_url: prUrl },
-              });
-            }
-          }
-          break;
-
-        case 'block':
-          if (
-            result.data &&
-            typeof result.data === 'object' &&
-            hook.id !== PR_READY_VALIDATED_IDENTITY_HOOK_ID
-          ) {
-            stateUpdates.push({ hookId: hook.id, state: result.data as Record<string, unknown> });
-          }
-          if ((hook.classification ?? 'validation') === 'validation') {
-            blockedByValidation = { hookId: hook.id, result, isRetryable: false };
-          }
-          // side_effect block is recorded but does not stop
-          break;
-
-        case 'retryable_block': {
-          if ((hook.classification ?? 'validation') === 'validation') {
-            // block takes precedence over retryable_block
-            if (!blockedByValidation) {
-              const retryConfig = hook.retry;
-              const maxAttempts = retryConfig?.maxAttempts ?? 0;
-              const hookState = this.config.hookStateRepo.get(this.config.workflowRunId, hook.id);
-              const currentRetryCount = hookState?.retryCount ?? 0;
-              const nextRetryAt = hookState?.nextRetryAt;
-
-              if (maxAttempts > 0 && currentRetryCount >= maxAttempts) {
-                blockedByValidation = { hookId: hook.id, result, isRetryable: false };
-              } else if (nextRetryAt !== undefined && Date.now() < nextRetryAt) {
-                // Delay has not elapsed — remain retryable without consuming another attempt.
-                blockedByValidation = { hookId: hook.id, result, isRetryable: true };
-              } else {
-                blockedByValidation = { hookId: hook.id, result, isRetryable: true };
-                const delayMs = result.retryAfterMs ?? retryConfig?.delayMs ?? 0;
-                const backoffMultiplier = result.retryAfterMs
-                  ? 1
-                  : (retryConfig?.backoffMultiplier ?? 1);
-                let updateOk = false;
-                for (let attempt = 0; attempt < 3; attempt++) {
-                  const currentState = this.config.hookStateRepo.get(
-                    this.config.workflowRunId,
-                    hook.id
-                  );
-                  const nextRetryAt =
-                    Date.now() +
-                    delayMs * Math.pow(backoffMultiplier, currentState?.retryCount ?? 0);
-                  try {
-                    const updateResult = this.config.hookStateRepo.update(
-                      this.config.workflowRunId,
-                      hook.id,
-                      {
-                        expectedVersion: currentState?.version ?? 0,
-                        retryCount: (currentState?.retryCount ?? 0) + 1,
-                        nextRetryAt,
-                      }
-                    );
-                    if (updateResult !== null) {
-                      updateOk = true;
-                      break;
-                    }
-                  } catch {
-                    // retry on version conflict or error
-                  }
-                }
-                if (!updateOk) {
-                  log.warn(`Failed to persist retry state for hook "${hook.id}" after 3 attempts`);
-                }
-              }
-            }
-          }
-          break;
+      let ret: HookReturn;
+      try {
+        if (isBuiltInHook(hook)) {
+          ret = await hook.run(action, built.ctx);
+        } else {
+          ret = await this.runCustomHookScript(hook, built.ctx, action);
         }
-
-        case 'patch_params': {
-          const classification = hook.classification ?? 'validation';
-          if (classification === 'side_effect') {
-            log.warn(
-              `Hook "${hook.id}" returned patch_params but is a side_effect; patch ignored.`
-            );
-            break;
-          }
-          if (result.patch && typeof result.patch === 'object') {
-            const patch = { ...result.patch };
-            // Disallow routing field patches to prevent target bypass
-            if (methodName === 'send_message' && 'target' in patch) {
-              log.warn(
-                `Hook "${hook.id}" tried to patch send_message target; target change ignored.`
-              );
-              delete patch.target;
-            }
-            const patchedParams = { ...currentParams, ...patch };
-            const validationErrors = this.validatePatchedParams(methodName, patchedParams);
-            if (validationErrors.length > 0) {
-              blockedByValidation = {
-                hookId: hook.id,
-                result: {
-                  type: 'block',
-                  reason: `Patched params invalid: ${validationErrors.join('; ')}`,
-                },
-                isRetryable: false,
-              };
-            } else {
-              currentParams = patchedParams;
-              // A pr_ready patch_params success (it discovered the PR from
-              // templateData / the current branch because the sender omitted
-              // data.pr_url) is a successful handoff — stamp the frozen
-              // identity (hook-local + reserved key) just like the allow branch,
-              // using the now-patched params. Without this, the common no-pr_url
-              // handoff recorded no frozen identity and later blocker/fix
-              // handoffs failed closed.
-              if (
-                methodName === 'send_message' &&
-                hook.validator.kind === 'built_in' &&
-                hook.validator.id === 'pr_ready'
-              ) {
-                const prUrl = extractPrUrlFromParams(currentParams);
-                if (prUrl) {
-                  stateUpdates.push({ hookId: hook.id, state: { pr_url: prUrl } });
-                  stateUpdates.push({
-                    hookId: PR_READY_VALIDATED_IDENTITY_HOOK_ID,
-                    state: { pr_url: prUrl },
-                  });
-                }
-              }
-            }
-          }
-          break;
-        }
-
-        case 'emit_follow_up':
-          if (result.targetNode && result.message) {
-            followUpRequests.push({ targetNode: result.targetNode, message: result.message });
-          }
-          break;
-
-        case 'record_state':
-          if (
-            result.state &&
-            typeof result.state === 'object' &&
-            hook.id !== PR_READY_VALIDATED_IDENTITY_HOOK_ID
-          ) {
-            stateUpdates.push({ hookId: hook.id, state: result.state as Record<string, unknown> });
-          }
-          if (isRecord(result.stateForHook)) {
-            for (const [hookId, state] of Object.entries(result.stateForHook)) {
-              // Hooks cannot write the reserved pr_ready-identity key — it is
-              // engine-only (stamped on pr_ready allow), so the resolver can
-              // trust it as the authoritative run PR identity. record_state and
-              // stateForHook are user/hook-addressable; reject the reserved id.
-              if (hookId === PR_READY_VALIDATED_IDENTITY_HOOK_ID) continue;
-              if (isRecord(state)) stateUpdates.push({ hookId, state });
-            }
-          }
-          break;
+      } catch (err) {
+        log.warn(`Hook "${hookId}" threw on ${methodName}: ${errorMessage(err)}`);
+        ret = { flow: 'stop', reason: 'Hook internal error' };
       }
 
-      // Reset retry metadata when the hook does not return a retryable_block,
-      // so later unrelated actions start with a fresh attempt budget.
-      if (result.type !== 'retryable_block') {
-        let updateOk = false;
-        for (let attempt = 0; attempt < 3; attempt++) {
-          const currentState = this.config.hookStateRepo.get(this.config.workflowRunId, hook.id);
-          try {
-            const updateResult = this.config.hookStateRepo.update(
-              this.config.workflowRunId,
-              hook.id,
-              {
-                expectedVersion: currentState?.version ?? 0,
-                retryCount: 0,
-                nextRetryAt: null,
-              }
-            );
-            if (updateResult !== null) {
-              updateOk = true;
-              break;
-            }
-          } catch {
-            // retry on version conflict or error
-          }
+      const flow: HookFlow = VALID_FLOWS.has(ret.flow) ? ret.flow : 'stop';
+      executionLog.push({ hookId, flow, reason: ret.reason, timestamp: Date.now() });
+
+      // Collect the hook's accumulated side effects (always — they are owned by
+      // the hook and persist regardless of flow). State + artifacts apply on
+      // every outcome; follow-ups only dispatch on deliver (see outcome below).
+      if (Object.keys(built.recordedState).length > 0) {
+        stateUpdates.push({ hookId, state: built.recordedState });
+      }
+      for (const artifact of built.writtenArtifacts) artifacts.push(artifact);
+      for (const followUp of built.queuedFollowUps) followUpRequests.push(followUp);
+
+      if (flow === 'stop') {
+        terminal = { kind: 'stop', hookId, reason: ret.reason };
+        break;
+      }
+      if (flow === 'retry') {
+        retry = { hookId, reason: ret.reason, retryAfterMs: ret.retryAfterMs };
+        break;
+      }
+
+      // flow === 'continue' — apply an optional payload patch.
+      if (isRecord(ret.payload)) {
+        const patch = { ...ret.payload };
+        // Disallow routing-field patches to prevent target bypass.
+        if (methodName === 'send_message' && 'target' in patch) {
+          log.warn(`Hook "${hookId}" tried to patch send_message target; ignored.`);
+          delete patch.target;
         }
-        if (!updateOk) {
-          log.warn(`Failed to reset retry state for hook "${hook.id}" after 3 attempts`);
+        const patched = { ...currentParams, ...patch };
+        const errors = this.validatePatchedParams(methodName, patched);
+        if (errors.length > 0) {
+          terminal = {
+            kind: 'stop',
+            hookId,
+            reason: `Patched params invalid: ${errors.join('; ')}`,
+          };
+          executionLog[executionLog.length - 1] = {
+            hookId,
+            flow: 'stop',
+            reason: terminal.reason,
+            timestamp: Date.now(),
+          };
+          break;
         }
+        currentParams = patched;
       }
     }
 
-    // Determine final decision
-    if (blockedByValidation) {
-      const hook = sortedHooks.find((h) => h.id === blockedByValidation!.hookId)!;
-      const isRetryable = blockedByValidation.isRetryable;
-      const result = blockedByValidation.result;
+    // Apply artifact side effects immediately (idempotent upserts).
+    for (const artifact of artifacts) {
+      this.writeArtifact(artifact, meta);
+    }
 
+    const sourceNode =
+      this.config.workflow.nodes.find((n) => n.id === meta.nodeId)?.name ?? meta.agentName;
+    const blockingBinding = sorted.find((b) => b.hookId === (terminal?.hookId ?? retry?.hookId));
+
+    if (terminal) {
       return {
-        decision: isRetryable ? 'retryable_block' : 'block',
+        decision: 'stop',
         finalParams: currentParams,
         followUpRequests: [],
         stateUpdates,
-        userState: this.buildBlockUserState(hook, methodName, result, isRetryable, meta),
         executionLog,
-        blockedByHookId: hook.id,
+        userState: {
+          status: 'blocked',
+          hookId: terminal.hookId,
+          reason: terminal.reason,
+          sourceNode,
+          targetNode: blockingBinding?.targetNode,
+        },
+        blockingHookId: terminal.hookId,
       };
     }
 
-    // Determine the most significant non-block decision
-    const hasPatch = !this.shallowEqual(params, currentParams);
-    const hasFollowUp = followUpRequests.length > 0;
-    const hasState = stateUpdates.length > 0;
-
-    let decision: HookActionOutcome['decision'] = 'allow';
-    if (hasPatch) decision = 'patch_params';
-    else if (hasFollowUp) decision = 'emit_follow_up';
-    else if (hasState) decision = 'record_state';
+    if (retry) {
+      const retryAfterMs = retry.retryAfterMs ?? DEFAULT_RETRY_AFTER_MS;
+      return {
+        decision: 'retry',
+        finalParams: currentParams,
+        followUpRequests: [],
+        stateUpdates,
+        executionLog,
+        userState: {
+          status: 'waiting_on_retry',
+          hookId: retry.hookId,
+          reason: retry.reason,
+          retryAfterMs,
+          sourceNode,
+          targetNode: blockingBinding?.targetNode,
+        },
+        blockingHookId: retry.hookId,
+        retryAfterMs,
+      };
+    }
 
     return {
-      decision,
+      decision: 'deliver',
       finalParams: currentParams,
       followUpRequests,
       stateUpdates,
-      userState: this.buildAllowUserState(
-        decision,
-        methodName,
-        originalParams,
-        currentParams,
-        followUpRequests,
-        stateUpdates,
-        executionLog
-      ),
       executionLog,
+      userState: { status: 'allowed' },
     };
   }
 
+  /** Write an artifact a hook requested via `ctx.writeArtifact`. */
+  private writeArtifact(artifact: HookArtifactWrite, meta: HookActionMeta): void {
+    if (!this.config.artifactRepo) return;
+    try {
+      this.config.artifactRepo.upsert({
+        id: generateUUID(),
+        runId: this.config.workflowRunId,
+        nodeId: artifact.nodeId ?? meta.nodeId,
+        artifactType: artifact.artifactType,
+        artifactKey: artifact.artifactKey,
+        data: artifact.data,
+      });
+    } catch (err) {
+      log.warn(
+        `Failed to write hook artifact (${artifact.artifactType}/${artifact.artifactKey}): ${errorMessage(err)}`
+      );
+    }
+  }
+
   // -------------------------------------------------------------------------
-  // Hook resolution
+  // Binding resolution (KEEP: send_message target / channel / slot resolution)
   // -------------------------------------------------------------------------
 
-  private resolveMatchingHooks(
+  private resolveMatchingBindings(
     methodName: string,
     params: Record<string, unknown>,
     meta: HookActionMeta
-  ): WorkflowHook[] {
+  ): HookBinding[] {
     const workflow = this.config.workflow;
-    if (!workflow?.hooks) return [];
+    if (!workflow?.hookBindings) return [];
 
     const nodeName = workflow.nodes.find((n) => n.id === meta.nodeId)?.name ?? meta.agentName;
 
-    // Build slot-to-nodes map so duplicate slot names across nodes are preserved
     const slotToNodes = new Map<string, string[]>();
     for (const node of workflow.nodes) {
       for (const agent of node.agents ?? []) {
         const arr = slotToNodes.get(agent.name) ?? [];
         if (!arr.includes(node.name)) {
           arr.push(node.name);
+          slotToNodes.set(agent.name, arr);
         }
-        slotToNodes.set(agent.name, arr);
       }
     }
 
@@ -768,7 +588,6 @@ export class WorkflowHookEngine {
     const nodeNames = new Set(workflow.nodes.map((n) => n.name));
     const resolver = new ChannelResolver(workflow.channels ?? []);
 
-    // Resolve action target(s) for send_message
     const actionTargets = new Set<string>();
     let allRequestedTargetsRoutable = true;
     const isRoutableTarget = (targetNode: string): boolean =>
@@ -884,26 +703,21 @@ export class WorkflowHookEngine {
       }
     }
 
-    return workflow.hooks.filter((hook) => {
-      if (!hook.enabled) return false;
-      if (hook.method !== methodName) return false;
+    return workflow.hookBindings.filter((binding) => {
+      if (!binding.enabled) return false;
+      if (binding.method !== methodName) return false;
 
-      // Match sourceNode — must be the current workflow node name
-      if (hook.sourceNode !== nodeName) return false;
+      if (binding.sourceNode !== nodeName) return false;
 
-      // Match targetNode when declared — non-send_message methods have no action
-      // target to compare, so a hook with targetNode on those methods is skipped.
-      if (hook.targetNode) {
+      if (binding.targetNode) {
         if (methodName !== 'send_message') return false;
         if (!allRequestedTargetsRoutable) return false;
-        if (!actionTargets.has(hook.targetNode)) return false;
+        if (!actionTargets.has(binding.targetNode)) return false;
       }
 
-      // Authorized callers check
-      if (hook.humanOnly) return false; // agent MCP sessions cannot trigger human-only hooks
-      if (!hook.authorizedCallers || hook.authorizedCallers.length === 0) return false;
+      if (!binding.authorizedCallers || binding.authorizedCallers.length === 0) return false;
 
-      return hook.authorizedCallers.some((caller) => {
+      return binding.authorizedCallers.some((caller) => {
         if (caller.sourceNode !== nodeName) return false;
         if (!caller.agentSlots || caller.agentSlots.length === 0) return true;
         return caller.agentSlots.includes(meta.agentName);
@@ -911,157 +725,203 @@ export class WorkflowHookEngine {
     });
   }
 
-  private sortHooks(hooks: WorkflowHook[]): WorkflowHook[] {
-    return [...hooks].sort((a, b) => {
-      const aClass = a.classification ?? 'validation';
-      const bClass = b.classification ?? 'validation';
-      // Validation hooks first
-      if (aClass !== bClass) {
-        return aClass === 'validation' ? -1 : 1;
-      }
-      // Then by order (lower first)
+  private sortBindings(bindings: HookBinding[]): HookBinding[] {
+    return [...bindings].sort((a, b) => {
       const orderA = a.order ?? 0;
       const orderB = b.order ?? 0;
       if (orderA !== orderB) return orderA - orderB;
-      // Then by id for determinism
-      return a.id.localeCompare(b.id);
+      return a.hookId.localeCompare(b.hookId);
     });
   }
 
   // -------------------------------------------------------------------------
-  // Context building
+  // HookContext
   // -------------------------------------------------------------------------
 
   /**
-   * Resolve the run's frozen reviewed PR URL: the latest `pr_url` stamped by a
-   * `pr_ready` built-in validator's hook. After the engine gated pr_url
-   * stamping on the pr_ready validator, only those hooks carry a frozen pr_url,
-   * so this is the authoritative run-level identity that merge dispatch and the
-   * mark_complete merge gate bind to. Returns undefined when no pr_ready
-   * handoff has frozen an identity yet.
+   * Build the daemon-implemented {@link HookContext} for a binding, plus the
+   * accumulators its side-effecting methods populate. A fresh context per
+   * binding run keeps each hook's effects isolated.
    */
-  private resolveFrozenPrUrl(): string | undefined {
-    // The reserved pr_ready-identity key is the authoritative frozen PR URL —
-    // engine-only (stamped on pr_ready allow; cross-hook writes to it are
-    // blocked), so a script hook cannot pollute it by writing to the ordinary
-    // pr_ready hook id. Reading it here (rather than the ordinary hook state)
-    // means the frozen identity bound to mark_complete / blocker handoffs is
-    // no longer spoofable via cross-hook state writes.
-    try {
-      const st = this.config.hookStateRepo.get(
-        this.config.workflowRunId,
-        PR_READY_VALIDATED_IDENTITY_HOOK_ID
-      );
-      const url =
-        st && typeof st.localState?.pr_url === 'string' ? (st.localState.pr_url as string) : '';
-      return url || undefined;
-    } catch {
-      return undefined;
-    }
-  }
-
-  private async buildExecutorContext(
-    hook: WorkflowHook,
-    methodName: string,
-    params: Record<string, unknown>,
+  private buildHookContext(
+    binding: HookBinding,
     meta: HookActionMeta
-  ): Promise<HookExecutorContext> {
+  ): {
+    ctx: HookContext;
+    recordedState: Record<string, unknown>;
+    queuedFollowUps: Array<{ targetNode: string; message: string }>;
+    writtenArtifacts: HookArtifactWrite[];
+  } {
     const workflow = this.config.workflow;
-    const nodeName = workflow?.nodes.find((n) => n.id === meta.nodeId)?.name ?? meta.agentName;
+    const nodeName = workflow.nodes.find((n) => n.id === meta.nodeId)?.name ?? meta.agentName;
+    const recordedState: Record<string, unknown> = {};
+    const queuedFollowUps: Array<{ targetNode: string; message: string }> = [];
+    const writtenArtifacts: HookArtifactWrite[] = [];
 
-    // Load hook-local state
     const hookState = this.config.hookStateRepo.ensure(
       this.config.workflowRunId,
-      hook.id,
-      hook.localState?.defaults ?? {}
+      binding.hookId,
+      {}
     );
 
-    // Resolve recentResultRef from referenced hook state
-    let hookLocalState = hookState.localState;
-    if (hook.localState?.recentResultRef) {
-      const ref = hook.localState.recentResultRef;
-      const refState = this.config.hookStateRepo.get(this.config.workflowRunId, ref.hookId);
-      if (refState?.lastResult !== undefined) {
-        hookLocalState = { ...hookLocalState, [ref.key]: refState.lastResult };
-      }
-    }
+    const artifacts = this.readArtifactsForCtx();
 
-    // Load current artifacts — most recently updated first, capped at 50
-    let currentArtifacts: WorkflowRunArtifact[] = [];
-    try {
-      const all = this.config.artifactRepo?.listByRun(this.config.workflowRunId) ?? [];
-      currentArtifacts = all
-        .slice()
-        .sort((a, b) => b.updatedAt - a.updatedAt)
-        .slice(0, 50);
-    } catch {
-      // best effort
-    }
-
-    // Built-in validators resolve their connector deps through the registry
-    // (no hardcoded 'github'); the legacy ternary is a fallback when the
-    // connectors layer is disabled. Script validators carry their own list.
-    const permittedExternalLookups: string[] =
-      hook.validator.kind === 'script'
-        ? (hook.validator.externalLookups ?? [])
-        : isConnectorsLayerEnabled()
-          ? [...getBuiltInConnectorDeps(hook.validator.id)]
-          : hook.validator.id === 'pr_ready'
-            ? ['github']
-            : [];
-
-    // Build mapped artifacts with a total-byte budget to avoid exceeding OS env limits.
-    const mappedArtifacts: Array<{
-      id: string;
-      nodeId: string;
-      type: string;
-      key: string;
-      data: unknown;
-      createdAt: number;
-      updatedAt: number;
-    }> = [];
-    for (const a of currentArtifacts) {
-      const item = {
-        id: a.id,
-        nodeId: a.nodeId,
-        type: a.artifactType,
-        key: a.artifactKey,
-        data: this.boundArtifactData(a.data),
-        createdAt: a.createdAt,
-        updatedAt: a.updatedAt,
-      };
-      const candidate = [...mappedArtifacts, item];
-      const bytes = new TextEncoder().encode(JSON.stringify(candidate)).length;
-      if (bytes > MAX_ARTIFACTS_ARRAY_BYTES) break;
-      mappedArtifacts.push(item);
-    }
-
-    return {
-      workspacePath: this.config.workspacePath ?? '',
+    const ctx: HookContext = {
       runId: this.config.workflowRunId,
-      hookId: hook.id,
-      workflowRunCreatedAt: this.config.workflowRunCreatedAt,
-      methodName,
-      params: this.boundParams(params),
-      rawParams: params,
-      nodeId: meta.nodeId,
-      nodeName,
-      sessionId: meta.sessionId,
+      workspacePath: this.config.workspacePath ?? '',
       taskId: meta.taskId,
       taskStatus: this.config.getTaskStatus?.(meta.taskId),
-      targetNode: hook.targetNode ?? meta.targetNode,
-      hookLocalState: this.boundHookLocalState(hookLocalState),
-      frozenPrUrl: this.resolveFrozenPrUrl(),
-      currentArtifacts: mappedArtifacts,
-      permittedExternalLookups,
-      templateData: hook.templateData,
+      runStartedAt: this.config.workflowRunCreatedAt,
+      sourceNode: nodeName,
+      targetNode: binding.targetNode ?? meta.targetNode,
+      readState: (key: string) => hookState.localState[key],
+      recordState: (key: string, value: unknown) => {
+        recordedState[key] = value;
+      },
+      queueFollowUp: (targetNode: string, message: string) => {
+        queuedFollowUps.push({ targetNode, message });
+      },
+      writeArtifact: (artifact: HookArtifactInput) => {
+        writtenArtifacts.push(artifact);
+      },
+      readArtifacts: () => artifacts,
     };
+
+    return { ctx, recordedState, queuedFollowUps, writtenArtifacts };
   }
 
+  private readArtifactsForCtx(): HookArtifact[] {
+    try {
+      const all = this.config.artifactRepo?.listByRun(this.config.workflowRunId) ?? [];
+      return all
+        .slice()
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .slice(0, 50)
+        .map((a: WorkflowRunArtifact) => ({
+          artifactType: a.artifactType,
+          artifactKey: a.artifactKey,
+          data: this.boundArtifactData(a.data) as Record<string, unknown>,
+        }));
+    } catch {
+      return [];
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Custom (script) hook execution — unsandboxed
+  // -------------------------------------------------------------------------
+
   /**
-   * Return a bounded projection of action params to avoid oversized env.
-   * Large `data` fields are replaced with a placeholder; long messages truncated.
+   * Run a custom bash-script hook. Unsandboxed (built-in hooks are trusted
+   * in-process code; a sandbox around scripts was theater — see spec §3/§10).
+   * The script reads context via `HYPERNEO_*` env vars and emits a
+   * {@link HookReturn} JSON on stdout. A non-zero exit, timeout, or malformed
+   * stdout is a `stop` with the error as the reason.
    */
+  private async runCustomHookScript(
+    hook: CustomHook,
+    ctx: HookContext,
+    action: HookAction
+  ): Promise<HookReturn> {
+    const spec = hook.run;
+    if (spec.interpreter !== 'bash') {
+      return { flow: 'stop', reason: `Unknown interpreter: ${spec.interpreter}` };
+    }
+    const timeoutMs = spec.timeoutMs ?? DEFAULT_SCRIPT_TIMEOUT_MS;
+    const args = ['bash', '-c', spec.source];
+    const env = this.buildScriptEnv(ctx, action);
+
+    let proc;
+    try {
+      proc = Bun.spawn(args, {
+        cwd: ctx.workspacePath || undefined,
+        env,
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+    } catch (err) {
+      return { flow: 'stop', reason: `Failed to spawn bash: ${errorMessage(err)}` };
+    }
+
+    const controller = new AbortController();
+    let killed = false;
+    const [stdoutResult, stderrResult, exit] = await Promise.all([
+      collectWithMaxBuffer(proc.stdout, MAX_BUFFER_BYTES, controller.signal),
+      collectWithMaxBuffer(proc.stderr, MAX_BUFFER_BYTES, controller.signal),
+      (async () => {
+        const killTimer = setTimeout(() => {
+          killed = true;
+          try {
+            proc.kill('SIGKILL');
+          } catch {
+            /* already exited */
+          }
+          controller.abort();
+        }, timeoutMs);
+        const code = await proc.exited;
+        clearTimeout(killTimer);
+        return { code, timedOut: killed };
+      })(),
+    ]);
+
+    if (exit.timedOut) {
+      return { flow: 'stop', reason: `Hook script timed out after ${timeoutMs}ms` };
+    }
+    if (exit.code !== 0) {
+      const stderrText = stderrResult.text.trim();
+      return { flow: 'stop', reason: stderrText || `Hook script exited with code ${exit.code}` };
+    }
+
+    const parsed = parseJsonStdout(stdoutResult.text);
+    if (!parsed) {
+      return { flow: 'stop', reason: 'Hook script produced empty or non-JSON stdout' };
+    }
+    const flow = parsed.flow;
+    if (typeof flow !== 'string' || !VALID_FLOWS.has(flow as HookFlow)) {
+      return {
+        flow: 'stop',
+        reason: `Hook script returned unrecognized flow: ${JSON.stringify(flow)}`,
+      };
+    }
+    const ret: HookReturn = { flow: flow as HookFlow };
+    if (typeof parsed.reason === 'string') ret.reason = parsed.reason;
+    if (isRecord(parsed.payload)) ret.payload = parsed.payload;
+    if (typeof parsed.retryAfterMs === 'number') ret.retryAfterMs = parsed.retryAfterMs;
+    ret.result = parsed.result;
+    return ret;
+  }
+
+  private buildScriptEnv(ctx: HookContext, action: HookAction): Record<string, string> {
+    const env: Record<string, string> = { ...(process.env as Record<string, string>) };
+    env.HYPERNEO_WORKFLOW_RUN_ID = ctx.runId;
+    env.HYPERNEO_WORKSPACE_PATH = ctx.workspacePath;
+    env.HYPERNEO_METHOD_NAME = action.method;
+    env.HYPERNEO_NODE_ID =
+      this.config.workflow.nodes.find((n) => n.name === ctx.sourceNode)?.id ?? '';
+    env.HYPERNEO_NODE_NAME = ctx.sourceNode;
+    env.HYPERNEO_TASK_ID = ctx.taskId;
+    if (ctx.taskStatus) env.HYPERNEO_TASK_STATUS = ctx.taskStatus;
+    if (ctx.targetNode) env.HYPERNEO_TARGET_NODE = ctx.targetNode;
+    if (typeof ctx.runStartedAt === 'number' && Number.isFinite(ctx.runStartedAt)) {
+      env.HYPERNEO_WORKFLOW_START_ISO = new Date(ctx.runStartedAt).toISOString();
+    }
+    try {
+      env.HYPERNEO_PARAMS_JSON = JSON.stringify(action.params);
+    } catch {
+      env.HYPERNEO_PARAMS_JSON = '{}';
+    }
+    try {
+      env.HYPERNEO_CURRENT_ARTIFACTS_JSON = JSON.stringify(ctx.readArtifacts());
+    } catch {
+      env.HYPERNEO_CURRENT_ARTIFACTS_JSON = '[]';
+    }
+    return env;
+  }
+
+  // -------------------------------------------------------------------------
+  // Bounding helpers (for script-hook env serialization)
+  // -------------------------------------------------------------------------
+
   private boundParams(params: Record<string, unknown>): Record<string, unknown> {
     const clone = { ...params };
     if (clone.data !== undefined) {
@@ -1077,8 +937,6 @@ export class WorkflowHookEngine {
     for (const key of Object.keys(clone)) {
       clone[key] = this.boundValue(clone[key]);
     }
-    // Fail-safe: if the total serialized params still exceed the budget,
-    // replace the whole object with a placeholder so Bun.spawn doesn't fail.
     try {
       const totalBytes = new TextEncoder().encode(JSON.stringify(clone)).length;
       if (totalBytes > MAX_PARAMS_JSON_BYTES) {
@@ -1090,11 +948,6 @@ export class WorkflowHookEngine {
     return clone;
   }
 
-  /**
-   * Recursively bound values before serializing into hook env vars.
-   * Strings longer than 4096 chars are truncated; objects and arrays
-   * are traversed deeply.
-   */
   private boundValue(value: unknown): unknown {
     if (typeof value === 'string' && value.length > 4096) {
       return value.slice(0, 4096) + '...[truncated]';
@@ -1127,10 +980,6 @@ export class WorkflowHookEngine {
     return value;
   }
 
-  /**
-   * Bound artifact data payloads to avoid oversized hook env vars.
-   * Values that exceed the byte budget are replaced with a placeholder.
-   */
   private boundArtifactData(data: unknown): unknown {
     if (data === null || typeof data !== 'object') return data;
     try {
@@ -1142,24 +991,6 @@ export class WorkflowHookEngine {
     return `[truncated: artifact data exceeds ${MAX_ARTIFACT_DATA_BYTES} bytes]`;
   }
 
-  /**
-   * Bound hook-local state before serializing into script env vars.
-   * Replaces the whole state with a placeholder when it exceeds the byte budget.
-   */
-  private boundHookLocalState(state: Record<string, unknown>): Record<string, unknown> {
-    try {
-      const bytes = new TextEncoder().encode(JSON.stringify(state)).length;
-      if (bytes <= MAX_HOOK_LOCAL_STATE_BYTES) return state;
-    } catch {
-      // Fall through to placeholder on serialization failure.
-    }
-    return { _truncated: `hook local state exceeds ${MAX_HOOK_LOCAL_STATE_BYTES} bytes` };
-  }
-
-  /**
-   * Re-validate patched params against the MCP method schema.
-   * Returns human-readable validation errors, or an empty array when valid.
-   */
   private validatePatchedParams(methodName: string, params: Record<string, unknown>): string[] {
     const schema = METHOD_PARAM_SCHEMAS[methodName];
     if (!schema) return [];
@@ -1174,86 +1005,9 @@ export class WorkflowHookEngine {
   }
 
   // -------------------------------------------------------------------------
-  // User state builders
+  // Target resolution helpers (KEEP)
   // -------------------------------------------------------------------------
 
-  private buildBlockUserState(
-    hook: WorkflowHook,
-    methodName: string,
-    result: WorkflowHookResult,
-    isRetryable: boolean,
-    _meta: HookActionMeta
-  ): WorkflowHookUserState {
-    const base: WorkflowHookUserState = {
-      status: isRetryable ? 'waiting_on_hook_retry' : 'blocked_by_hook',
-      hookId: hook.id,
-      hookLabel: hook.label ?? hook.id,
-      method: methodName,
-      sourceNode: hook.sourceNode,
-      targetNode: hook.targetNode,
-    };
-
-    if (result.type === 'block' || result.type === 'retryable_block') {
-      base.reason = result.reason;
-      base.remediation = result.message;
-      if (result.type === 'retryable_block') {
-        base.retryAfterMs =
-          result.retryAfterMs ?? hook.retry?.delayMs ?? DEFAULT_RETRYABLE_ACTION_DELAY_MS;
-      }
-    }
-
-    return base;
-  }
-
-  private buildAllowUserState(
-    decision: HookActionOutcome['decision'],
-    methodName: string,
-    originalParams: Record<string, unknown>,
-    finalParams: Record<string, unknown>,
-    followUpRequests: Array<{ targetNode: string; message: string }>,
-    _stateUpdates: Array<{ hookId: string; state: Record<string, unknown> }>,
-    _executionLog: HookExecutionRecord[]
-  ): WorkflowHookUserState {
-    const base: WorkflowHookUserState = {
-      status:
-        decision === 'patch_params'
-          ? 'patched'
-          : decision === 'emit_follow_up'
-            ? 'follow_up_emitted'
-            : decision === 'record_state'
-              ? 'state_recorded'
-              : 'allowed',
-      method: methodName,
-    };
-
-    if (decision === 'patch_params') {
-      base.patchedKeys = Object.keys(finalParams).filter(
-        (k) => !(k in originalParams) || finalParams[k] !== originalParams[k]
-      );
-    }
-
-    if (followUpRequests.length > 0) {
-      base.emittedActionIds = followUpRequests.map((r) => r.targetNode);
-    }
-
-    return base;
-  }
-
-  // -------------------------------------------------------------------------
-  // Helpers
-  // -------------------------------------------------------------------------
-
-  /**
-   * Resolve a raw target string into one or more node names.
-   *
-   * Handles:
-   *   - node IDs → node name
-   *   - agent slot names → all matching node names (duplicate slots across nodes)
-   *   - @worker: addresses → decoded node segment
-   *   - bare node names / raw strings → returned as-is
-   *
-   * Target strings are trimmed before resolution.
-   */
   private resolveTargetEntries(
     target: string,
     nodeIdToName: Map<string, string>,
@@ -1264,7 +1018,6 @@ export class WorkflowHookEngine {
     if (nodeIdToName.has(trimmed)) {
       return [nodeIdToName.get(trimmed)!];
     }
-    // Prefer exact workflow node names over slot aliases
     if (nodeNames.has(trimmed)) {
       return [trimmed];
     }
@@ -1292,7 +1045,6 @@ export class WorkflowHookEngine {
     }
     if (trimmed.startsWith('@role:')) {
       const role = trimmed.slice(6);
-      // Decode actor-role:<nodeId|agentName> form used by the messaging adapter
       const actorRolePrefix = 'actor-role:';
       if (role.startsWith(actorRolePrefix)) {
         const actorRoleValue = decodeURIComponent(role.slice(actorRolePrefix.length));
@@ -1303,7 +1055,6 @@ export class WorkflowHookEngine {
         if (actorRoleSlotMatches) {
           return [...actorRoleSlotMatches];
         }
-        // Return the decoded value directly (may be a raw node name)
         return [actorRoleValue];
       }
       if (nodeIdToName.has(role)) {
@@ -1313,130 +1064,15 @@ export class WorkflowHookEngine {
       if (roleSlotMatches) {
         return [...roleSlotMatches];
       }
-      // Raw role may be a workflow node name
       return [role];
     }
     return [trimmed];
   }
-
-  private shallowEqual(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
-    const keysA = Object.keys(a);
-    const keysB = Object.keys(b);
-    if (keysA.length !== keysB.length) return false;
-    for (const key of keysA) {
-      if (a[key] !== b[key]) return false;
-    }
-    return true;
-  }
 }
 
 // ---------------------------------------------------------------------------
-// Handler wrapper
+// Queued-retryable-action helpers
 // ---------------------------------------------------------------------------
-
-/** Symbol stored on wrapped handlers to retrieve the original unwrapped function. */
-const RAW_HANDLER = Symbol('rawHandler');
-
-/** Helper to build a typed ToolResult from inline hook responses. */
-function hookResult(
-  data: Record<string, unknown>,
-  isError = false
-): import('../tools/tool-result').ToolResult {
-  return { content: [{ type: 'text', text: JSON.stringify(data) }], isError };
-}
-
-type AnyToolResult = import('../tools/tool-result').ToolResult;
-
-type WrappedHandler<T extends Record<string, unknown>> = ((args: T) => Promise<AnyToolResult>) & {
-  [RAW_HANDLER]?: (args: T) => Promise<AnyToolResult>;
-};
-
-function extractPrUrlFromParams(params: Record<string, unknown>): string | undefined {
-  const data = params.data;
-  if (
-    typeof data === 'object' &&
-    data !== null &&
-    !Array.isArray(data) &&
-    typeof (data as Record<string, unknown>).pr_url === 'string'
-  ) {
-    return (data as Record<string, unknown>).pr_url as string;
-  }
-  return undefined;
-}
-
-function buildRetryableActionKey(
-  methodName: string,
-  args: Record<string, unknown>,
-  meta: HookActionMeta
-): string {
-  return JSON.stringify({
-    runScopedTaskId: meta.taskId,
-    nodeId: meta.nodeId,
-    sessionId: meta.sessionId,
-    agentName: meta.agentName,
-    methodName,
-    args,
-  });
-}
-
-function scheduleRetryableAction<T extends Record<string, unknown>>(options: {
-  actionKey: string;
-  delayMs: number;
-  methodName: string;
-  args: T;
-  handler: (args: T) => Promise<AnyToolResult>;
-  engine: WorkflowHookEngine;
-  handlers: Record<string, (...args: unknown[]) => Promise<AnyToolResult> | AnyToolResult>;
-  meta: HookActionMeta;
-  isFollowUp: boolean;
-}): void {
-  if (pendingRetryableHookActions.has(options.actionKey)) return;
-
-  const timer = setTimeout(() => {
-    pendingRetryableHookActions.delete(options.actionKey);
-    void replayRetryableAction(options).catch((err) => {
-      log.warn(
-        `Retryable hook action retry failed for ${options.methodName}: ${err instanceof Error ? err.message : String(err)}`
-      );
-    });
-  }, options.delayMs);
-
-  pendingRetryableHookActions.set(options.actionKey, {
-    timer,
-    options: {
-      ...options,
-      args: options.args,
-      handler: async (args) => options.handler(args as T),
-    },
-  });
-}
-
-export function clearRetryableHookActionTimer(actionKey: string): void {
-  const pending = pendingRetryableHookActions.get(actionKey);
-  if (!pending) return;
-  clearTimeout(pending.timer);
-  pendingRetryableHookActions.delete(actionKey);
-}
-
-export function triggerRetryableHookAction(actionKey: string): boolean {
-  const pending = pendingRetryableHookActions.get(actionKey);
-  if (!pending) return false;
-  clearTimeout(pending.timer);
-  pendingRetryableHookActions.delete(actionKey);
-  void replayRetryableAction(pending.options).catch((err) => {
-    log.warn(
-      `Manual retryable hook action retry failed for ${pending.options.methodName}: ${err instanceof Error ? err.message : String(err)}`
-    );
-  });
-  return true;
-}
-
-export function clearAllRetryableHookActionTimers(): void {
-  for (const pending of pendingRetryableHookActions.values()) {
-    clearTimeout(pending.timer);
-  }
-  pendingRetryableHookActions.clear();
-}
 
 function isQueuedRetryableHookAction(value: unknown): value is QueuedRetryableHookAction {
   if (!value || typeof value !== 'object') return false;
@@ -1476,16 +1112,64 @@ function sameRetryableActionOwner(left: HookActionMeta, right: HookActionMeta): 
   );
 }
 
-async function replayRetryableAction<T extends Record<string, unknown>>(options: {
-  actionKey: string;
-  methodName: string;
-  args: T;
-  handler: (args: T) => Promise<AnyToolResult>;
-  engine: WorkflowHookEngine;
-  handlers: Record<string, (...args: unknown[]) => Promise<AnyToolResult> | AnyToolResult>;
-  meta: HookActionMeta;
-  isFollowUp: boolean;
-}): Promise<void> {
+function buildRetryableActionKey(
+  methodName: string,
+  args: Record<string, unknown>,
+  meta: HookActionMeta
+): string {
+  return JSON.stringify({
+    runScopedTaskId: meta.taskId,
+    nodeId: meta.nodeId,
+    sessionId: meta.sessionId,
+    agentName: meta.agentName,
+    methodName,
+    args,
+  });
+}
+
+function scheduleRetryableAction(options: PendingRetryableHookAction): void {
+  if (pendingRetryableHookActions.has(options.actionKey)) return;
+
+  const timer = setTimeout(() => {
+    pendingRetryableHookActions.delete(options.actionKey);
+    void replayRetryableAction(options).catch((err) => {
+      log.warn(
+        `Retryable hook action retry failed for ${options.methodName}: ${errorMessage(err)}`
+      );
+    });
+  }, options.delayMs);
+
+  pendingRetryableHookActions.set(options.actionKey, { timer, options });
+}
+
+export function clearRetryableHookActionTimer(actionKey: string): void {
+  const pending = pendingRetryableHookActions.get(actionKey);
+  if (!pending) return;
+  clearTimeout(pending.timer);
+  pendingRetryableHookActions.delete(actionKey);
+}
+
+export function triggerRetryableHookAction(actionKey: string): boolean {
+  const pending = pendingRetryableHookActions.get(actionKey);
+  if (!pending) return false;
+  clearTimeout(pending.timer);
+  pendingRetryableHookActions.delete(actionKey);
+  void replayRetryableAction(pending.options).catch((err) => {
+    log.warn(
+      `Manual retryable hook action retry failed for ${pending.options.methodName}: ${errorMessage(err)}`
+    );
+  });
+  return true;
+}
+
+export function clearAllRetryableHookActionTimers(): void {
+  for (const pending of pendingRetryableHookActions.values()) {
+    clearTimeout(pending.timer);
+  }
+  pendingRetryableHookActions.clear();
+}
+
+async function replayRetryableAction(options: PendingRetryableHookAction): Promise<void> {
   if (options.engine.isRetryableActionCancelled(options.meta)) {
     options.engine.clearQueuedRetryableActionsForKey(options.actionKey);
     clearRetryableHookActionTimer(options.actionKey);
@@ -1510,7 +1194,7 @@ async function replayRetryableAction<T extends Record<string, unknown>>(options:
       );
     } catch (err) {
       log.warn(
-        `Failed to notify source session for queued ${options.methodName} retry failure: ${err instanceof Error ? err.message : String(err)}`
+        `Failed to notify source session for queued ${options.methodName} retry failure: ${errorMessage(err)}`
       );
     } finally {
       options.engine.clearQueuedRetryableActionsForKey(options.actionKey);
@@ -1553,16 +1237,29 @@ function getToolResultFailure(
   return undefined;
 }
 
+// ---------------------------------------------------------------------------
+// Handler wrapper
+// ---------------------------------------------------------------------------
+
+const RAW_HANDLER = Symbol('rawHandler');
+
+type WrappedHandler<T extends Record<string, unknown>> = ((args: T) => Promise<AnyToolResult>) & {
+  [RAW_HANDLER]?: (args: T) => Promise<AnyToolResult>;
+};
+
+function hookResult(
+  data: Record<string, unknown>,
+  isError = false
+): import('../tools/tool-result').ToolResult {
+  return { content: [{ type: 'text', text: JSON.stringify(data) }], isError };
+}
+
+type AnyToolResult = import('../tools/tool-result').ToolResult;
+
 /**
- * Wrap an MCP tool handler with the workflow hook engine.
- *
- * @param methodName      The MCP method name (e.g. 'send_message')
- * @param handler         The original handler function
- * @param engine          The hook engine (undefined = pass-through)
- * @param handlers        The full handler map for follow-up dispatch
- * @param meta            Caller identity metadata
- * @param isFollowUp      Whether this call is itself a follow-up action
- * @returns               A wrapped handler that runs hooks before the original
+ * Wrap an MCP tool handler with the workflow hook engine. Runs the hook chain
+ * before the original handler; persists hook state + side effects; handles
+ * stop / retry / deliver; dispatches follow-ups on deliver.
  */
 export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
   methodName: string,
@@ -1578,37 +1275,43 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
     const actionKey = buildRetryableActionKey(methodName, args as Record<string, unknown>, meta);
     const outcome = await engine.executeAction(methodName, args as Record<string, unknown>, meta);
 
-    // Batch persist hook state updates and execution results.
-    // Each hook gets at most one repo write to avoid version conflicts.
-    const updatesByHook = new Map<
+    // Consolidate per-hook persistence: localState (recordState + queued-action
+    // key on retry), lastFlow/lastReason, retryCount/nextRetryAt. One write per
+    // hook avoids version races between engine and wrapper.
+    const byHook = new Map<
       string,
-      { state: Record<string, unknown>; result?: WorkflowHookResult }
+      {
+        localState: Record<string, unknown>;
+        lastFlow?: HookFlow;
+        lastReason?: string;
+        retryCount?: number;
+        nextRetryAt?: number | null;
+      }
     >();
-    for (const update of outcome.stateUpdates) {
-      updatesByHook.set(update.hookId, { state: update.state });
-    }
+    const ensure = (hookId: string) => {
+      let entry = byHook.get(hookId);
+      if (!entry) {
+        entry = { localState: {} };
+        byHook.set(hookId, entry);
+      }
+      return entry;
+    };
+
     for (const record of outcome.executionLog) {
-      const existing = updatesByHook.get(record.hookId);
-      if (existing) {
-        existing.result = record.result;
-      } else {
-        updatesByHook.set(record.hookId, { state: {}, result: record.result });
-      }
+      const entry = ensure(record.hookId);
+      entry.lastFlow = record.flow;
+      entry.lastReason = record.reason;
     }
-    for (const [hookId, { state, result }] of updatesByHook) {
-      const ok = engine.persistStateUpdate(hookId, state, result);
-      if (!ok) {
-        log.warn(
-          `Failed to persist hook state/result for ${hookId}: version conflict or repo error`
-        );
-      }
+    for (const update of outcome.stateUpdates) {
+      const entry = ensure(update.hookId);
+      entry.localState = { ...entry.localState, ...update.state };
     }
 
-    // Handle block
-    if (outcome.decision === 'block') {
-      if (outcome.blockedByHookId) {
+    // stop — clear queued retries for this action/owner.
+    if (outcome.decision === 'stop') {
+      if (outcome.blockingHookId) {
         for (const queuedActionKey of engine.clearQueuedRetryableActionsForOwner(
-          [outcome.blockedByHookId],
+          [outcome.blockingHookId],
           meta
         )) {
           clearRetryableHookActionTimer(queuedActionKey);
@@ -1616,89 +1319,124 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
       }
       engine.clearQueuedRetryableActionsForKey(actionKey);
       clearRetryableHookActionTimer(actionKey);
+
+      for (const [hookId, patch] of byHook) {
+        patch.retryCount = 0;
+        patch.nextRetryAt = null;
+        if (!engine.persistStateUpdate(hookId, patch)) {
+          log.warn(`Failed to persist hook state for ${hookId} on stop`);
+        }
+      }
+
       return hookResult(
         {
           success: false,
           error: outcome.userState.reason ?? 'Action blocked by hook.',
           hookStatus: outcome.userState.status,
-          hookLabel: outcome.userState.hookLabel,
-          hookMethod: outcome.userState.method,
+          hookId: outcome.userState.hookId,
           hookReason: outcome.userState.reason,
-          hookRemediation: outcome.userState.remediation,
           sourceNode: outcome.userState.sourceNode,
+          targetNode: outcome.userState.targetNode,
         },
         true
       );
     }
 
-    // Handle retryable block
-    if (outcome.decision === 'retryable_block') {
-      const retryAfterMs = outcome.userState.retryAfterMs ?? DEFAULT_RETRYABLE_ACTION_DELAY_MS;
+    // retry — queue the action (send_message) or surface a retryable error.
+    if (outcome.decision === 'retry') {
+      const retryAfterMs = outcome.retryAfterMs ?? DEFAULT_RETRY_AFTER_MS;
+      const blockingId = outcome.blockingHookId;
+
       if (methodName === 'send_message') {
-        if (outcome.blockedByHookId) {
-          const existingQueued = engine.clearQueuedRetryableActionForHook(outcome.blockedByHookId);
+        // Clear a prior queued action for the same hook so its timer is reaped
+        // before we record the new one (a hook queues at most one action).
+        if (blockingId) {
+          const existingQueued = engine.getQueuedRetryableAction(blockingId);
           if (existingQueued) clearRetryableHookActionTimer(existingQueued.actionKey);
-          const now = Date.now();
-          const persisted = engine.persistQueuedRetryableAction({
-            actionKey,
-            hookId: outcome.blockedByHookId,
-            methodName,
-            args: args as Record<string, unknown>,
-            meta,
-            isFollowUp,
-            nextRetryAt: now + retryAfterMs,
-            retryAfterMs,
-            queuedAt: now,
-          });
-          if (!persisted) {
-            log.warn(
-              `Failed to persist queued retryable hook action for ${methodName}: ${outcome.blockedByHookId}`
-            );
-          }
         }
+
         if (engine.isRetryableActionCancelled(meta)) {
           engine.clearQueuedRetryableActionsForKey(actionKey);
           clearRetryableHookActionTimer(actionKey);
+          for (const [hookId, patch] of byHook) {
+            patch.retryCount = 0;
+            patch.nextRetryAt = null;
+            engine.persistStateUpdate(hookId, patch);
+          }
           return hookResult({
             success: true,
             queued: false,
             cancelled: true,
             retryable: false,
             hookStatus: outcome.userState.status,
-            hookLabel: outcome.userState.hookLabel,
-            hookMethod: outcome.userState.method,
+            hookId: outcome.userState.hookId,
             hookReason: outcome.userState.reason,
-            hookRemediation: outcome.userState.remediation,
             sourceNode: outcome.userState.sourceNode,
+            targetNode: outcome.userState.targetNode,
             message: 'Queued action cancelled because task or workflow run is no longer active.',
           });
         }
+
+        const now = Date.now();
+        for (const [hookId, patch] of byHook) {
+          if (hookId === blockingId) {
+            patch.retryCount = engine.getRetryCount(hookId) + 1;
+            patch.nextRetryAt = now + retryAfterMs;
+            patch.localState[QUEUED_RETRYABLE_ACTION_STATE_KEY] = {
+              actionKey,
+              hookId: blockingId,
+              methodName,
+              args: args as Record<string, unknown>,
+              meta,
+              isFollowUp,
+              nextRetryAt: now + retryAfterMs,
+              retryAfterMs,
+              queuedAt: now,
+            };
+          } else {
+            patch.retryCount = 0;
+            patch.nextRetryAt = null;
+          }
+          if (!engine.persistStateUpdate(hookId, patch)) {
+            log.warn(`Failed to persist hook state for ${hookId} on retry`);
+          }
+        }
+
         scheduleRetryableAction({
           actionKey,
           delayMs: retryAfterMs,
           methodName,
           args,
-          handler,
+          handler: handler as (args: Record<string, unknown>) => Promise<AnyToolResult>,
           engine,
           handlers,
           meta,
           isFollowUp,
         });
+
         return hookResult({
           success: true,
           queued: true,
           retryable: true,
           retryAfterMs,
           hookStatus: outcome.userState.status,
-          hookLabel: outcome.userState.hookLabel,
-          hookMethod: outcome.userState.method,
+          hookId: outcome.userState.hookId,
           hookReason: outcome.userState.reason,
-          hookRemediation: outcome.userState.remediation,
           sourceNode: outcome.userState.sourceNode,
+          targetNode: outcome.userState.targetNode,
           message:
             outcome.userState.reason ??
-            `Action queued until hook "${outcome.userState.hookLabel ?? outcome.blockedByHookId ?? 'unknown'}" allows it.`,
+            `Action queued until hook "${outcome.userState.hookId ?? 'unknown'}" allows it.`,
         });
+      }
+
+      // Non-send_message retry: surface a retryable error to the agent.
+      for (const [hookId, patch] of byHook) {
+        patch.retryCount = 0;
+        patch.nextRetryAt = null;
+        if (!engine.persistStateUpdate(hookId, patch)) {
+          log.warn(`Failed to persist hook state for ${hookId} on retry`);
+        }
       }
       return hookResult(
         {
@@ -1707,14 +1445,22 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
           retryable: true,
           retryAfterMs,
           hookStatus: outcome.userState.status,
-          hookLabel: outcome.userState.hookLabel,
-          hookMethod: outcome.userState.method,
+          hookId: outcome.userState.hookId,
           hookReason: outcome.userState.reason,
-          hookRemediation: outcome.userState.remediation,
           sourceNode: outcome.userState.sourceNode,
+          targetNode: outcome.userState.targetNode,
         },
         true
       );
+    }
+
+    // deliver — clear queued retries, dispatch follow-ups, call handler.
+    for (const [hookId, patch] of byHook) {
+      patch.retryCount = 0;
+      patch.nextRetryAt = null;
+      if (!engine.persistStateUpdate(hookId, patch)) {
+        log.warn(`Failed to persist hook state for ${hookId} on deliver`);
+      }
     }
 
     const successfulHookIds = outcome.executionLog.map((record) => record.hookId);
@@ -1727,78 +1473,50 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
     engine.clearQueuedRetryableActionsForKey(actionKey);
     clearRetryableHookActionTimer(actionKey);
 
-    // Skip nested follow-up emission — only one level of follow-up is allowed
-    const nestedFollowUpSuppressed = outcome.followUpRequests.length > 0 && isFollowUp;
-    if (nestedFollowUpSuppressed) {
+    if (outcome.followUpRequests.length > 0 && isFollowUp) {
       log.warn('Nested follow-up emission suppressed during follow-up dispatch.');
     }
 
-    // Handle follow-up dispatch
-    if (outcome.followUpRequests.length > 0 && !nestedFollowUpSuppressed) {
+    if (outcome.followUpRequests.length > 0 && !isFollowUp) {
       const followUpMethod = 'send_message';
-      if (!FOLLOW_UP_METHODS.has(followUpMethod)) {
-        return hookResult(
-          {
-            success: false,
-            error: `Follow-up method "${followUpMethod}" is not whitelisted.`,
-          },
-          true
-        );
-      }
-
       const followUpHandler = handlers[followUpMethod];
-      if (!followUpHandler) {
-        return hookResult(
-          {
-            success: false,
-            error: `Follow-up handler "${followUpMethod}" not found.`,
-          },
-          true
-        );
-      }
+      if (followUpHandler) {
+        const rawFollowUpHandler =
+          ((followUpHandler as unknown as WrappedHandler<Record<string, unknown>>)[RAW_HANDLER] as
+            | ((args: Record<string, unknown>) => Promise<AnyToolResult>)
+            | undefined) ?? followUpHandler;
 
-      // Unwrap if the handler was already wrapped to avoid double-wrapping
-      const rawFollowUpHandler =
-        ((followUpHandler as unknown as WrappedHandler<Record<string, unknown>>)[RAW_HANDLER] as
-          | ((args: Record<string, unknown>) => Promise<AnyToolResult>)
-          | undefined) ?? followUpHandler;
+        const followUpPromises = outcome.followUpRequests.map((req) => {
+          const dispatchPromise = wrapHandlerWithHooks(
+            followUpMethod,
+            rawFollowUpHandler as (args: Record<string, unknown>) => Promise<AnyToolResult>,
+            engine,
+            handlers,
+            { ...meta, targetNode: req.targetNode },
+            true
+          )({
+            target: req.targetNode,
+            message: req.message,
+          } as unknown as Record<string, unknown>);
 
-      // Dispatch all follow-ups concurrently through the wrapped pipeline with timeout
-      const followUpPromises = outcome.followUpRequests.map((req) => {
-        const dispatchPromise = wrapHandlerWithHooks(
-          followUpMethod,
-          rawFollowUpHandler as (args: Record<string, unknown>) => Promise<AnyToolResult>,
-          engine,
-          handlers,
-          { ...meta, targetNode: req.targetNode },
-          true
-        )({
-          target: req.targetNode,
-          message: req.message,
-        } as unknown as Record<string, unknown>);
+          const timeoutPromise = new Promise<never>((_, reject) => {
+            setTimeout(
+              () => reject(new Error('Follow-up dispatch timed out')),
+              DEFAULT_FOLLOW_UP_TIMEOUT_MS
+            );
+          });
 
-        const timeoutPromise = new Promise<never>((_, reject) => {
-          setTimeout(
-            () => reject(new Error('Follow-up dispatch timed out')),
-            DEFAULT_FOLLOW_UP_TIMEOUT_MS
-          );
+          return Promise.race([dispatchPromise, timeoutPromise]);
         });
 
-        return Promise.race([dispatchPromise, timeoutPromise]);
-      });
-
-      try {
-        await Promise.all(followUpPromises);
-      } catch (err) {
-        log.warn(
-          `Follow-up dispatch timed out or failed: ${err instanceof Error ? err.message : String(err)}`
-        );
-        // Task says "continues only after the follow-up action succeeds or fails"
-        // So we continue regardless, but we log the failure.
+        try {
+          await Promise.all(followUpPromises);
+        } catch (err) {
+          log.warn(`Follow-up dispatch failed: ${errorMessage(err)}`);
+        }
       }
     }
 
-    // Call original handler with final (potentially patched) params
     return handler(outcome.finalParams as T);
   };
 

@@ -698,7 +698,7 @@ interface ClientForwardingEvents {
     spaceId: string;
     runId: string;
     hookId: string;
-    hookState: import('@hyperneo/shared').WorkflowHookStateSnapshot;
+    hookState: import('@hyperneo/shared').HookStateSnapshot;
   };
   'spaceAgent.created': {
     sessionId: string;
