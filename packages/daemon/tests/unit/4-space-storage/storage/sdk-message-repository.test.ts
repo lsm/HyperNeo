@@ -1717,7 +1717,10 @@ describe('SDKMessageRepository', () => {
         crypto.randomUUID(),
         sessionId,
         type,
-        opts.subtype ?? null,
+        // hasTerminalResultAfter counts only `subtype = 'success'` results, so a
+        // terminal result without an explicit subtype defaults to success (the
+        // common case); tests that exercise error results pass subtype explicitly.
+        opts.subtype ?? (type === 'result' && opts.terminal ? 'success' : null),
         '{}',
         opts.timestamp,
         effectiveStatus,
@@ -1727,7 +1730,20 @@ describe('SDKMessageRepository', () => {
       );
     }
 
-    it('is true when a terminal result exists after the message', () => {
+    it('is true when a SUCCESS terminal result exists after the message', () => {
+      insertMessage('session-1', 'user', {
+        uuid: 'msg-uuid',
+        timestamp: '2026-08-11T15:25:00.000Z',
+      });
+      insertMessage('session-1', 'result', {
+        timestamp: '2026-08-11T15:25:53.000Z',
+        terminal: true,
+        subtype: 'success',
+      });
+      expect(repository.hasTerminalResultAfter('session-1', 'msg-uuid')).toBe(true);
+    });
+
+    it('is FALSE for an error result — a failed turn must retry, not complete (Codex #9)', () => {
       insertMessage('session-1', 'user', {
         uuid: 'msg-uuid',
         timestamp: '2026-08-11T15:25:00.000Z',
@@ -1737,7 +1753,7 @@ describe('SDKMessageRepository', () => {
         terminal: true,
         subtype: 'error_during_execution',
       });
-      expect(repository.hasTerminalResultAfter('session-1', 'msg-uuid')).toBe(true);
+      expect(repository.hasTerminalResultAfter('session-1', 'msg-uuid')).toBe(false);
     });
 
     it('ignores NESTED subagent results when detecting turn completion (P1)', () => {
@@ -1829,6 +1845,7 @@ describe('SDKMessageRepository', () => {
       insertMessage('session-1', 'result', {
         timestamp: consumedTs,
         terminal: true,
+        subtype: 'success',
       });
       expect(repository.hasTerminalResultAfter('session-1', 'tie-msg')).toBe(true);
     });

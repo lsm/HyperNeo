@@ -172,8 +172,11 @@ function UserMessageRetryControl({
   }, [sessionId, messageDbId]);
 
   if (deliveryStatus === 'retrying') {
+    // `count` is the active job's retry_count (completed failures), not the
+    // current attempt number — so label it "retry N/Max" (Nth retry of Max
+    // retries), not "attempt N/M", which would read off-by-one.
     const attempt = deliveryRetry
-      ? `attempt ${deliveryRetry.count}${deliveryRetry.maxRetries ? `/${deliveryRetry.maxRetries}` : ''}`
+      ? `retry ${deliveryRetry.count}${deliveryRetry.maxRetries ? `/${deliveryRetry.maxRetries}` : ''}`
       : '';
     return (
       <span

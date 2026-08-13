@@ -1336,6 +1336,16 @@ export function setupSessionHandlers(
     }
 
     const db = sessionManager.getDatabase();
+    // Terminal sessions cannot accept a retry: an `archived` session's worktree
+    // + subprocess are torn down (the delivery handler rejects it), and an
+    // `ended` session would otherwise start another provider turn the UI has
+    // disabled. Reject upfront so the RPC does not report success only to fail
+    // again (Codex #5).
+    const persistedStatus = db.getSession(targetSessionId)?.status;
+    if (persistedStatus === 'archived' || persistedStatus === 'ended') {
+      return { retried: false };
+    }
+
     const message = db
       .getMessagesByStatus(targetSessionId, 'failed')
       .find((queuedMessage) => queuedMessage.dbId === messageDbId);
@@ -1349,25 +1359,47 @@ export function setupSessionHandlers(
       return { retried: false };
     }
 
+    // Roll the row back to `failed` if creating its new delivery owner throws,
+    // mirroring the ordinary-chat enqueue path's atomicity. Otherwise the row is
+    // left `enqueued` with no active job and no Retry button until an orphan-
+    // reconciler pass repairs it (Codex #6).
+    const rollbackToFailed = async () => {
+      const rolledBack = db
+        .getSDKMessageRepo()
+        .markDeliveryFailedByUuid(targetSessionId, message.uuid!);
+      if (rolledBack) {
+        await internalEventBus.publish('messages.statusChanged', {
+          sessionId: targetSessionId,
+          messageIds: [rolledBack],
+          status: 'failed',
+        });
+      }
+    };
+
     await internalEventBus.publish('messages.statusChanged', {
       sessionId: targetSessionId,
       messageIds: [reopenedId],
       status: 'enqueued',
     });
 
-    if (isMessageDeliveryV2Enabled()) {
-      await deliverAndMarkQueued({
-        jobQueue: db.getJobQueueRepo(),
-        stateManager: agentSession.stateManager,
-        sessionId: targetSessionId,
-        messageUuid: message.uuid,
-        origin: 'chat',
-      });
-    } else {
-      const replayContent = toReplayContent(message.message.content);
-      if (replayContent) {
-        await agentSession.startQueryAndEnqueue(message.uuid, replayContent);
+    try {
+      if (isMessageDeliveryV2Enabled()) {
+        await deliverAndMarkQueued({
+          jobQueue: db.getJobQueueRepo(),
+          stateManager: agentSession.stateManager,
+          sessionId: targetSessionId,
+          messageUuid: message.uuid,
+          origin: 'chat',
+        });
+      } else {
+        const replayContent = toReplayContent(message.message.content);
+        if (replayContent) {
+          await agentSession.startQueryAndEnqueue(message.uuid, replayContent);
+        }
       }
+    } catch (err) {
+      await rollbackToFailed();
+      throw err;
     }
 
     return {

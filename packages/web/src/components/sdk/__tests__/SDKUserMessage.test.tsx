@@ -589,10 +589,11 @@ describe('SDKUserMessage', () => {
       });
     });
 
-    it('shows a retry countdown + attempt N/M for a retrying message', () => {
+    it('shows a retry countdown + retry N/Max for a retrying message', () => {
       const message = {
         ...createTextMessage('Hello world'),
         deliveryStatus: 'retrying' as const,
+        // count = retry_count (completed failures); label is "retry N/Max".
         deliveryRetry: { count: 2, runAt: Date.now() + 5000, maxRetries: 8 },
       };
 
@@ -601,7 +602,7 @@ describe('SDKUserMessage', () => {
       const countdown = container.querySelector('[data-testid="user-delivery-retry-countdown"]');
       expect(countdown).toBeTruthy();
       expect(countdown?.textContent).toContain('retrying in');
-      expect(countdown?.textContent).toContain('attempt 2/8');
+      expect(countdown?.textContent).toContain('retry 2/8');
     });
   });
 

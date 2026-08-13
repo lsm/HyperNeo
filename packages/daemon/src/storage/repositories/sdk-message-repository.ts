@@ -1928,13 +1928,17 @@ export class SDKMessageRepository {
   }
 
   /**
-   * True when the session's transcript has a TERMINAL `result` message after the
-   * message identified by `uuid` — i.e. the turn that consumed it has fully ended
-   * (normal completion, `error_during_execution`, or an interrupt). A re-claimed
-   * `consumed` delivery turn in this state has nothing to resume: re-driving it
-   * would start a fresh streaming query that waits for input forever, holding the
-   * active-turn slot and parking every subsequent message as a steer. See
-   * message-delivery-v2.md + the handler's turn_terminated skip.
+   * True when the session's transcript has a SUCCESS terminal `result` message
+   * after the message identified by `uuid` — i.e. the turn that consumed it ran
+   * to a successful completion. Only `subtype = 'success'` matches: an error
+   * result (`error_during_execution`, `error_max_turns`, …) is NOT success, so
+   * it does not match here and the bridge falls through to the retry / dead-
+   * letter path instead of completing the job over a failed turn (Codex #9). A
+   * re-claimed `consumed` delivery turn that ended successfully has nothing to
+   * resume: re-driving it would start a fresh streaming query that waits for
+   * input forever, holding the active-turn slot and parking every subsequent
+   * message as a steer. See message-delivery-v2.md + the handler's
+   * turn_terminated skip.
    *
    * The boundary is the message's CONSUMPTION timestamp (T_consumed, aligned by
    * `markDeliveryConsumedByUuid`), not its original persistence time — a message
@@ -1952,6 +1956,7 @@ export class SDKMessageRepository {
           WHERE r.session_id = ?
             AND r.message_type = 'result'
             AND r.is_terminal = 1
+            AND r.message_subtype = 'success'
             AND r.parent_tool_use_id IS NULL
             AND r.consumed_seq IS NOT NULL
             AND r.consumed_seq >= (

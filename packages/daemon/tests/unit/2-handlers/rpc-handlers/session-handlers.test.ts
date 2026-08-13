@@ -545,12 +545,15 @@ describe('Session RPC Handlers — models.list', () => {
     let db: Database;
     let jobQueue: JobQueueRepository;
     let v2Previous: string | undefined;
+    /** Persisted session status returned by the mock db; defaults to active. */
+    let sessionStatus: string;
 
     beforeEach(async () => {
       messageHubData = createMockMessageHub();
       eventBus = createMockInternalEventBus();
       v2Previous = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
       process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '1';
+      sessionStatus = 'active';
 
       db = new Database(':memory:');
       db.exec(`
@@ -611,6 +614,7 @@ describe('Session RPC Handlers — models.list', () => {
             )
             .run(status, ...ids),
         getJobQueueRepo: () => jobQueue,
+        getSession: (sid: string) => ({ id: sid, status: sessionStatus }),
         getSDKMessageRepo: () => ({
           reopenDeliveryByUuid: (_sid: string, uuid: string) => {
             const row = db
@@ -675,6 +679,22 @@ describe('Session RPC Handlers — models.list', () => {
         {}
       )) as { retried: boolean };
       expect(result.retried).toBe(false);
+    });
+
+    it('rejects retries for a terminal session (archived/ended) without reopening (Codex #5)', async () => {
+      for (const terminalStatus of ['archived', 'ended'] as const) {
+        sessionStatus = terminalStatus;
+        const result = (await messageHubData.handlers.get('session.messages.retry')!(
+          { sessionId: 'sess-1', messageDbId: 'db-failed' },
+          {}
+        )) as { retried: boolean };
+        expect(result.retried).toBe(false);
+        // The failed row was NOT reopened to enqueued.
+        const row = db
+          .prepare(`SELECT send_status FROM sdk_messages WHERE id = ?`)
+          .get('db-failed') as { send_status: string };
+        expect(row.send_status).toBe('failed');
+      }
     });
   });
 });
