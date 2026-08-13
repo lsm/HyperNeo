@@ -4,7 +4,7 @@
  * Unit tests for ACP protocol client lifecycle and request handling.
  */
 
-import { describe, expect, test, mock, beforeEach } from 'bun:test';
+import { describe, expect, test, mock, beforeEach, afterAll } from 'bun:test';
 import type {
   AcpJsonRpcNotification,
   AcpJsonRpcRequest,
@@ -63,16 +63,35 @@ class MockAcpTransport {
   }
 }
 
-// Vitest isolates each test file in its own module registry, so the mock below
-// is scoped to this file automatically — no afterAll restore is needed (the
-// sibling acp-integration.test.ts uses the same pattern). Bun:test's
-// mock.module would otherwise persist across files in one process.
+// Bun:test shares one module registry across all files in a process, so the
+// transport stub below would otherwise leak into sibling suites (e.g.
+// acp-transport.test.ts, which imports the real buildAcpProcessEnv and would get
+// `undefined` from the stub). Capture the real module and re-point the mock at
+// it in afterAll — Bun-only: Vitest scopes vi.mock per file (no leak), its
+// hoisting means a require/import here would capture the stub anyway, and
+// Vitest's require() cannot resolve this relative TS path. Under Bun, require()
+// is synchronous and runs before mock.module registers the stub, so it captures
+// the genuine implementation.
+let originalAcpTransport: typeof import('../../../../src/lib/acp/acp-transport') | undefined;
+if (typeof Bun !== 'undefined') {
+  originalAcpTransport = require('../../../../src/lib/acp/acp-transport');
+}
+
 mock.module('../../../../src/lib/acp/acp-transport', () => ({
   AcpTransport: MockAcpTransport,
 }));
 
 // Import after mock
 const { AcpClient } = await import('../../../../src/lib/acp/acp-client');
+
+afterAll(() => {
+  // Restore the real module so sibling files get the genuine AcpTransport /
+  // buildAcpProcessEnv under Bun's shared module registry. (No-op under Vitest,
+  // where `Bun` is undefined and vi.mock is already file-scoped.)
+  if (originalAcpTransport) {
+    mock.module('../../../../src/lib/acp/acp-transport', () => originalAcpTransport);
+  }
+});
 
 describe('AcpClient', () => {
   beforeEach(() => {
