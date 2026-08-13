@@ -33,27 +33,27 @@
  * registered `onComplete` callbacks are fired.
  */
 
-import { generateUUID, isRateOrUsageLimited, resolveNodeAgents } from '@hyperneo/shared';
 import type {
+  McpServerConfig,
+  MessageContent,
+  MessageHub,
+  MessageImage,
+  MessageInputKind,
+  MessageOrigin,
+  NodeExecution,
+  Session,
   Space,
   SpaceTask,
   SpaceWorkflow,
   SpaceWorkflowRun,
-  NodeExecution,
-  MessageHub,
-  McpServerConfig,
-  MessageContent,
-  MessageImage,
-  MessageInputKind,
-  MessageOrigin,
   WorkflowNode,
   WorkflowNodeAgent,
-  Session,
 } from '@hyperneo/shared';
-import type { SkillsManager } from '../../skills-manager';
-import type { AppMcpServerRepository } from '../../../storage/repositories/app-mcp-server-repository';
-import type { UUID } from 'crypto';
+import { generateUUID, isRateOrUsageLimited, resolveNodeAgents } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
+import type { UUID } from 'crypto';
+import type { ActorResolver } from '../../../../../messaging/src/contracts';
+import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types';
 import type { AgentSessionInit } from '../../../lib/agent/agent-session';
 import { AgentSession } from '../../../lib/agent/agent-session';
 import {
@@ -62,26 +62,26 @@ import {
   deliveryConsumptionTimeoutMs,
   isMessageDeliveryV2Enabled,
 } from '../../../lib/agent/message-delivery';
-import { validateImageSizes } from '../../session/message-persistence';
 import type { Database } from '../../../storage/database';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
-import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
-import type { SessionManager } from '../../session-manager';
-import type { SpaceManager } from '../managers/space-manager';
-import type { SpaceAgentManager } from '../managers/space-agent-manager';
-import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
-import type { SpaceRuntimeService } from './space-runtime-service';
+import type { AppMcpServerRepository } from '../../../storage/repositories/app-mcp-server-repository';
+import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
+import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
+import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
-import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
-import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
-import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
 import type { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository';
-import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types';
-import type { ActorResolver } from '../../../../../messaging/src/contracts';
-import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
-import type { SpaceWorktreeManager } from '../managers/space-worktree-manager';
+import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
+import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
+import { validateImageSizes } from '../../session/message-persistence';
+import type { SessionManager } from '../../session-manager';
+import type { SkillsManager } from '../../skills-manager';
+import type { SpaceAgentManager } from '../managers/space-agent-manager';
+import type { SpaceManager } from '../managers/space-manager';
 import { SpaceTaskManager } from '../managers/space-task-manager';
+import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
+import type { SpaceWorktreeManager } from '../managers/space-worktree-manager';
+import type { SpaceRuntimeService } from './space-runtime-service';
 /** Agent identity metadata for sub-session creation. */
 export interface SubSessionMemberInfo {
   /** ID of the SpaceWorkerAgent config this sub-session uses */
@@ -91,53 +91,54 @@ export interface SubSessionMemberInfo {
   /** Workflow node ID — used to link the sub-session to its NodeExecution record */
   nodeId?: string;
 }
-import { createNodeAgentMcpServer } from '../tools/node-agent-tools';
-import {
-  createEndNodeHandlers,
-  createMarkCompleteHandler,
-  createPrMergedGate,
-} from '../tools/end-node-handlers';
-import { builtInWorkflowRequiresPrMerge } from '../workflows/built-in-workflows';
-import { createGithubConnector } from './connectors/github-connector';
-import { collectDispatchablePostApprovalRoutes } from './post-approval-router';
-import { jsonResult } from '../tools/tool-result';
-import {
-  assertExecutionValidAgainstWorkflow,
-  PermanentSpawnError,
-  validateTaskAllowsSpawn,
-} from './workflow-node-execution-validation';
-import type { DbQueryMcpServer } from '../../db-query/tools';
-import { sanitizeAssistantUsageInSDKSessionFile } from '../../sdk-session-file-manager';
-import { ChannelResolver } from './channel-resolver';
-import { ChannelRouter } from './channel-router';
-import { AgentMessageRouter } from './agent-message-router';
-import type { ReplyRoutingRegistry } from './reply-routing-registry';
-import type { WorkflowArtifactProfile } from './artifact-profile';
+
 import type { AgentMemoryRepository } from '../../../storage/repositories/agent-memory-repository';
-import type { EvolutionScopeService } from '../evolution-scope-service';
-import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools';
-import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator';
-import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
-import { validateGlobPattern } from '../../external-events/topic-validator';
-import { HookExecutor } from './hook-executor';
-import {
-  clearAllRetryableHookActionTimers,
-  QUEUED_RETRYABLE_ACTION_STATE_KEY,
-  WorkflowHookEngine,
-} from './workflow-hook-engine';
+import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository';
+import type { DbQueryMcpServer } from '../../db-query/tools';
+import { validateGlobPattern } from '../../external-events/topic-validator';
+import { Logger } from '../../logger';
+import { sanitizeAssistantUsageInSDKSessionFile } from '../../sdk-session-file-manager';
+import {
+  type AgentMessageLevel,
+  extractReplyToSessionId,
+  formatAgentMessage,
+} from '../agent-message-envelope';
 import {
   buildCustomAgentTaskMessage,
   resolveAgentInit,
   type SlotOverrides,
 } from '../agents/custom-agent';
+import type { EvolutionScopeService } from '../evolution-scope-service';
 import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager';
-import { Logger } from '../../logger';
+import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools';
 import {
-  formatAgentMessage,
-  extractReplyToSessionId,
-  type AgentMessageLevel,
-} from '../agent-message-envelope';
+  createEndNodeHandlers,
+  createMarkCompleteHandler,
+  createPrMergedGate,
+} from '../tools/end-node-handlers';
+import { createNodeAgentMcpServer } from '../tools/node-agent-tools';
+import { jsonResult } from '../tools/tool-result';
+import { builtInWorkflowRequiresPrMerge } from '../workflows/built-in-workflows';
+import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator';
+import { AgentMessageRouter } from './agent-message-router';
+import type { WorkflowArtifactProfile } from './artifact-profile';
+import { ChannelResolver } from './channel-resolver';
+import { ChannelRouter } from './channel-router';
+import { createGithubConnector } from './connectors/github-connector';
+import { HookExecutor } from './hook-executor';
+import { collectDispatchablePostApprovalRoutes } from './post-approval-router';
+import type { ReplyRoutingRegistry } from './reply-routing-registry';
+import {
+  clearAllRetryableHookActionTimers,
+  QUEUED_RETRYABLE_ACTION_STATE_KEY,
+  WorkflowHookEngine,
+} from './workflow-hook-engine';
+import {
+  assertExecutionValidAgainstWorkflow,
+  PermanentSpawnError,
+  validateTaskAllowsSpawn,
+} from './workflow-node-execution-validation';
 
 const log = new Logger('task-agent-manager');
 const AGENT_MESSAGE_ENVELOPE_HEADER = /^─── Message from ([^\n]+) ───\n\n/;
@@ -155,6 +156,27 @@ function pendingSourceLevel(sourceAgentName: string): AgentMessageLevel {
 
 function expectedEnvelopeSenderNames(sourceAgentName: string): string[] {
   return sourceAgentName === 'space-agent' ? ['space-agent', 'Space Agent'] : [sourceAgentName];
+}
+
+/**
+ * Whether a `session.error` event carries a RECOVERABLE provider error (transient
+ * 5xx / connection / timeout) that the durable message_delivery job will retry.
+ *
+ * The QueryRunner broadcasts recoverable errors with a structured `details` whose
+ * `recoverable` flag is `true`. The message_delivery dead-letter settlement, by
+ * contrast, publishes `session.error` with NO `details` (it is the terminal
+ * signal), and a genuinely non-recoverable error carries `recoverable === false`.
+ * TaskAgentManager keys node-blocking off that distinction (task #944): a
+ * recoverable error during the delivery-retry window is invisible to Space —
+ * only the dead-letter blocks the node — so a successful automatic retry can
+ * still complete it.
+ */
+function isRecoverableSessionError(details: unknown): boolean {
+  return (
+    typeof details === 'object' &&
+    details !== null &&
+    (details as { recoverable?: unknown }).recoverable === true
+  );
 }
 
 export function isWorkflowTerminalNode(
@@ -3621,6 +3643,14 @@ export class TaskAgentManager {
 
     // Track whether we've fired (to make callback fire exactly once)
     let fired = false;
+    // True while a recoverable provider error is being retried by the durable
+    // message_delivery job. While set, neither the recoverable `session.error`
+    // nor the subsequent idle is terminal for this node: the delivery layer
+    // (PR #2471) re-drives the turn, and only the job dead-lettering is a real
+    // failure. Without this, one transient 5xx would permanently block the node
+    // even when the automatic retry succeeds. See task #944 +
+    // message-delivery-dead-letter.ts.
+    let deliveryRetryPending = false;
 
     const unsubscribeUpdated = this.config.internalEventBus.subscribe(
       'session.updated',
@@ -3637,6 +3667,16 @@ export class TaskAgentManager {
           // Only fire if the session has actually done some processing
           const sdkCount = session.getSDKMessageCount();
           if (sdkCount === 0) return; // Not started yet
+
+          // A recoverable provider error idles the session before the delivery
+          // retry fires. That idle is NOT a completion — the turn produced no
+          // result and the message_delivery job will re-drive it. Suppress it so
+          // the retry either completes normally on its own idle or dead-letters
+          // (the error path below then marks the node blocked). (Task #944.)
+          if (deliveryRetryPending) {
+            deliveryRetryPending = false;
+            return;
+          }
 
           fired = true;
           // Unsubscribe immediately to prevent double-firing
@@ -3669,6 +3709,23 @@ export class TaskAgentManager {
       'session.error',
       (event) => {
         if (fired) return; // Already handled by completion path
+
+        // A RECOVERABLE error during a delivery-driven turn (transient provider
+        // 5xx / connection / timeout) must be INVISIBLE to Space: the
+        // message_delivery job retries it (PR #2471), and only the job
+        // dead-lettering is terminal. The dead-letter settlement publishes
+        // `session.error` with NO `details`, and a genuinely non-recoverable
+        // error carries `details.recoverable === false` — both fall through to
+        // the terminal handling below. A recoverable error carries
+        // `details.recoverable === true`; arm `deliveryRetryPending` so the
+        // retry's own idle can still complete the node. Gated on delivery v2 so
+        // the legacy inline path keeps its first-error-blocks behavior.
+        // (Task #944.)
+        if (isMessageDeliveryV2Enabled() && isRecoverableSessionError(event.details)) {
+          deliveryRetryPending = true;
+          return;
+        }
+
         fired = true;
 
         // Push an explicit failure event back to the Task Agent so orchestration
