@@ -824,6 +824,12 @@ export class TaskAgentManager {
    * that responds to a nag with tool calls IS genuinely working, so advancing
    * the activity timestamp in that case is correct.
    *
+   * This source also captures a node's OWN commit pushes: a push is a tool call
+   * (`git`/`gh` via Bash) on that node's session, so it refreshes `lastActivityAt`
+   * for exactly the pushing node. A PR-level `pull_request.synchronize` event is
+   * deliberately NOT used — it fans out to every subscribed target and would mark
+   * idle co-subscribers active (see `deliverExternalEventToWorkflowTarget`).
+   *
    * Each event is resolved to its node execution via the session→execution index
    * and the dedicated `touchLastActivity` path is used so `updatedAt` (state-write
    * semantic) is left untouched. Activity tracking must never throw into the
@@ -838,7 +844,7 @@ export class TaskAgentManager {
         (event) => {
           this.recordActivityForSession(event.sessionId, event.timestamp);
         },
-        { subscriberName: 'TaskAgentManager.activity:toolUseCreated' }
+        { subscriberName: 'TaskAgentManager.activityToolUseCreated' }
       )
     );
 
@@ -848,7 +854,7 @@ export class TaskAgentManager {
         (event) => {
           this.recordActivityForSession(event.sessionId, event.timestamp);
         },
-        { subscriberName: 'TaskAgentManager.activity:toolUseConsumed' }
+        { subscriberName: 'TaskAgentManager.activityToolUseConsumed' }
       )
     );
   }

@@ -2329,11 +2329,14 @@ export class SpaceRuntime {
 
       const preparedTarget = taskDecision.target;
       const currentExecution = this.getCurrentQueueableOrActiveExecution(preparedTarget);
-      // A `pull_request.synchronize` reaching a subscribed, deliverable target
-      // means a commit was just pushed to this node's PR branch — genuine agent
-      // progress that `updatedAt` would not capture. Refresh `lastActivityAt` so
-      // the stall detector does not misfire on an actively-pushing node.
-      this.stampCommitPushActivity(payload.topic, currentExecution);
+      // NOTE: a `pull_request.synchronize` event is intentionally NOT used to
+      // refresh lastActivityAt here. It is a PR-level event that fans out to
+      // EVERY subscribed target (coder + reviewer both subscribe to the run's
+      // PR), so stamping on it would mark idle co-subscribers active and
+      // suppress their stall nag. A node's OWN commit push is already captured
+      // — the push is a tool call (`git`/`gh`) on that node's session, which
+      // the sdk.toolUse activity source refreshes, correctly attributed to just
+      // the pushing node. An external push (human/bot) is not agent activity.
       if (preparedTarget.sessionId && this.isTargetSessionLive(preparedTarget.sessionId)) {
         // pauseSpace does not terminate sessions, so a live in_progress session
         // would otherwise be injected now, defeating the pause. Skip injection
@@ -2477,30 +2480,6 @@ export class SpaceRuntime {
       log.warn(
         `SpaceRuntime: failed to process external event ${payload.eventId} for ` +
           `${resolved.workflowRunId}/${resolved.nodeId}/${resolved.agentName}: ${formatCommandError(err)}`
-      );
-    }
-  }
-
-  /**
-   * Refresh `lastActivityAt` when a commit is pushed to a node's PR branch.
-   *
-   * GitHub's `pull_request` webhook with action `synchronize` is the only
-   * reliable "commit pushed to the PR head" signal that flows through the
-   * external-event pipeline (raw `push` webhooks carry no PR signal and are
-   * dropped). Its topic is `github/{owner}/{repo}/pull_request/{number}.synchronize`.
-   * Such an event reaching a subscribed, deliverable target means a commit landed
-   * on this node's PR — genuine progress that `updatedAt` would never capture.
-   * Best-effort: never throws into the delivery path.
-   */
-  private stampCommitPushActivity(topic: string, execution: NodeExecution | undefined): void {
-    if (!execution) return;
-    if (!topic.includes('/pull_request/') || !topic.endsWith('.synchronize')) return;
-    try {
-      this.config.nodeExecutionRepo.touchLastActivity(execution.id);
-    } catch (err) {
-      log.debug(
-        `SpaceRuntime: failed to stamp commit-push activity for execution ${execution.id}:`,
-        err
       );
     }
   }
