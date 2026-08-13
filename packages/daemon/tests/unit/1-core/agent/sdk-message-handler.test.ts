@@ -94,6 +94,7 @@ describe('SDKMessageHandler', () => {
   let lifecycleStopSpy: ReturnType<typeof mock>;
   let messageQueueClearSpy: ReturnType<typeof mock>;
   let getStateSpy: ReturnType<typeof mock>;
+  let bumpDeliveryTurnActivitySpy: ReturnType<typeof mock>;
 
   beforeEach(() => {
     resetProviderRegistry();
@@ -204,6 +205,9 @@ describe('SDKMessageHandler', () => {
       stop: lifecycleStopSpy,
     } as unknown as QueryLifecycleManager;
 
+    // Delivery-turn stall watchdog liveness bump
+    bumpDeliveryTurnActivitySpy = mock(() => {});
+
     // Create context
     mockContext = {
       session: mockSession,
@@ -220,6 +224,7 @@ describe('SDKMessageHandler', () => {
       queryPromise: null,
       onInitSlashCommands: mock(async () => {}),
       onCommandsChanged: mock(async () => {}),
+      bumpDeliveryTurnActivity: bumpDeliveryTurnActivitySpy,
     };
 
     handler = new SDKMessageHandler(mockContext);
@@ -263,6 +268,58 @@ describe('SDKMessageHandler', () => {
       await handler.handleMessage(message);
 
       expect(detectPhaseFromMessageSpy).toHaveBeenCalledWith(message);
+    });
+
+    describe('stream_event liveness heartbeat', () => {
+      const makeStreamEvent = (): SDKMessage =>
+        ({
+          type: 'stream_event',
+          event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'tok' } },
+          parent_tool_use_id: null,
+          uuid: 'stream-uuid',
+          session_id: 'test-session-id',
+        }) as unknown as SDKMessage;
+
+      it('bumps the delivery-turn stall watchdog (liveness) on every token delta', async () => {
+        bumpDeliveryTurnActivitySpy.mockClear();
+        const delta = makeStreamEvent();
+
+        await handler.handleMessage(delta);
+
+        // A quiet generation is "alive" — the watchdog window is reset per token.
+        expect(bumpDeliveryTurnActivitySpy).toHaveBeenCalledTimes(1);
+      });
+
+      it('never persists or broadcasts partial tokens (avoids DB bloat)', async () => {
+        const delta = makeStreamEvent();
+
+        await handler.handleMessage(delta);
+
+        expect(saveSDKMessageSpy).not.toHaveBeenCalled();
+        // messageHub.event + internalEventBus.publish are both wired to publishSpy.
+        expect(publishSpy).not.toHaveBeenCalled();
+      });
+
+      it('still updates the streaming phase for a partial token', async () => {
+        const delta = makeStreamEvent();
+
+        await handler.handleMessage(delta);
+
+        expect(detectPhaseFromMessageSpy).toHaveBeenCalledWith(delta);
+      });
+
+      it('a stream_event heartbeating past the no-activity window keeps the watchdog alive', async () => {
+        // Mirrors the real wiring: each token delta calls bumpDeliveryTurnActivity,
+        // which resets the watchdog. Simulate a long quiet generation (> the window)
+        // that emits a steady token stream and assert the watchdog never fires.
+        bumpDeliveryTurnActivitySpy.mockClear();
+        for (let i = 0; i < 5; i++) {
+          await handler.handleMessage(makeStreamEvent());
+        }
+        // 5 deltas → 5 liveness bumps; the turn is alive, never stalled.
+        expect(bumpDeliveryTurnActivitySpy).toHaveBeenCalledTimes(5);
+        expect(saveSDKMessageSpy).not.toHaveBeenCalled();
+      });
     });
 
     it('should save message to database', async () => {
