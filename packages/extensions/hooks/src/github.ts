@@ -37,6 +37,15 @@ export interface GithubPrView {
   mergeStateStatus: string;
 }
 
+/**
+ * Prefix marking a TERMINAL GitHub lookup failure (auth missing, malformed
+ * response, untrusted host) as an infrastructure error rather than a policy
+ * decision — the hook never completed its lookup, so a human approval must
+ * not deliver through it. The daemon engine recognizes this prefix (and its
+ * own execution-error prefix) as override-ineligible.
+ */
+export const GH_INFRA_ERROR_PREFIX = '__gh_infra_error__: ';
+
 /** Map a retryable/terminal GitHub failure onto a hook flow decision. */
 export function githubFailureToFlow(result: {
   ok: false;
@@ -46,7 +55,7 @@ export function githubFailureToFlow(result: {
 }): HookReturn {
   return result.retryable
     ? { flow: 'retry', reason: result.error, retryAfterMs: result.retryAfterMs }
-    : { flow: 'stop', reason: result.error };
+    : { flow: 'stop', reason: GH_INFRA_ERROR_PREFIX + result.error };
 }
 
 function isRateLimit(stderr: string): boolean {
@@ -774,6 +783,16 @@ export async function ghGetCodexApproval(
   if (!pr) {
     return { ok: false, retryable: false, error: `unable to parse GitHub PR link: ${link}` };
   }
+  // ONE deadline across the whole codex lookup (reviews + reactions + final
+  // head check): each request otherwise gets a fresh command timeout.
+  const deadline = Date.now() + DEFAULT_TIMEOUT_MS;
+  const remainingBudget = () => deadline - Date.now();
+  const deadlineError = () => ({
+    ok: false as const,
+    retryable: true,
+    error: 'codex approval scan exceeded its overall deadline (fail closed)',
+  });
+
   const headQuery = (after: string | null) =>
     `query { repository(owner:"${pr.owner}",name:"${pr.repo}") { pullRequest(number:${pr.number}) { ` +
     `reviews(first: ${CODEX_REVIEWS_PAGE_SIZE}${after ? `, after:"${after}"` : ''}) { ` +
@@ -792,7 +811,11 @@ export async function ghGetCodexApproval(
   let lastPage: Record<string, unknown> | undefined;
   let cursor: string | null = null;
   for (let page = 0; page < MAX_CODEX_REVIEW_PAGES; page++) {
-    const result = await runGhGraphql(ctx, headQuery(cursor), pr.host);
+    const remaining = remainingBudget();
+    if (remaining <= 0) return deadlineError();
+    const result = await runGhGraphql(ctx, headQuery(cursor), pr.host, {
+      timeoutMs: remaining,
+    });
     if (!result.ok) return result;
     lastPage = asRecord(result.data) ?? {};
     const prNode = asRecord(asRecord(asRecord(lastPage.data)?.repository)?.pullRequest);
@@ -841,7 +864,9 @@ export async function ghGetCodexApproval(
           `reactions(last: 50, content: THUMBS_UP, before:"${startCursor}") { ` +
           'pageInfo { hasPreviousPage startCursor } nodes { createdAt user { login } } } ' +
           'commits(last: 1) { nodes { commit { oid pushedDate } } } } } }';
-        const result = await runGhGraphql(ctx, q, pr.host);
+        const remainingR = remainingBudget();
+        if (remainingR <= 0) return deadlineError();
+        const result = await runGhGraphql(ctx, q, pr.host, { timeoutMs: remainingR });
         if (!result.ok) return result;
         const rNode = asRecord(
           asRecord(asRecord(asRecord(result.data)?.data)?.repository)?.pullRequest
@@ -899,11 +924,14 @@ export async function ghGetCodexApproval(
       // pushed after the last page was received would leave this approval
       // computed against a stale head — opening the gate for an unreviewed
       // head. Re-resolve the head now and retry (fail-closed) if it moved.
+      const remainingHead = remainingBudget();
+      if (remainingHead <= 0) return deadlineError();
       const headCheck = await runGhGraphql(
         ctx,
         `query { repository(owner:"${pr.owner}",name:"${pr.repo}") { pullRequest(number:${pr.number}) { ` +
           'commits(last: 1) { nodes { commit { oid } } } } } }',
-        pr.host
+        pr.host,
+        { timeoutMs: remainingHead }
       );
       if (!headCheck.ok) return headCheck;
       const headCheckPr = asRecord(

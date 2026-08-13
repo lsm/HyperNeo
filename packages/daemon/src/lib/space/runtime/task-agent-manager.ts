@@ -4078,17 +4078,22 @@ export class TaskAgentManager {
     const hookIds = new Set((workflow?.hookBindings ?? []).map((b) => b.hookId));
     for (const hookId of hookIds) {
       const state = hookStateRepo.get(workflowRunId, hookId)?.localState;
-      const queued = state?.[QUEUED_RETRYABLE_ACTION_STATE_KEY];
-      if (!queued || typeof queued !== 'object') continue;
-      const meta = (queued as Record<string, unknown>).meta;
-      if (!meta || typeof meta !== 'object') continue;
-      const record = meta as Record<string, unknown>;
-      if (
-        record.sessionId === execution.agentSessionId &&
-        record.agentName === execution.agentName &&
-        record.nodeId === execution.workflowNodeId
-      ) {
-        return true;
+      const queuedMap = state?.[QUEUED_RETRYABLE_ACTION_STATE_KEY];
+      // Queued actions persist as a per-action-key MAP — inspect every entry's
+      // meta (tombstoned entries are null and skipped).
+      if (!queuedMap || typeof queuedMap !== 'object' || Array.isArray(queuedMap)) continue;
+      for (const entry of Object.values(queuedMap as Record<string, unknown>)) {
+        if (!entry || typeof entry !== 'object') continue;
+        const meta = (entry as Record<string, unknown>).meta;
+        if (!meta || typeof meta !== 'object') continue;
+        const record = meta as Record<string, unknown>;
+        if (
+          record.sessionId === execution.agentSessionId &&
+          record.agentName === execution.agentName &&
+          record.nodeId === execution.workflowNodeId
+        ) {
+          return true;
+        }
       }
     }
     return false;
@@ -5527,6 +5532,24 @@ export class TaskAgentManager {
           nodeExecutionRepo: this.config.nodeExecutionRepo,
           hookStateRepo: new WorkflowHookStateRepository(this.config.db.getDatabase()),
           workspacePath,
+          // Same publisher as the v2 branch: the hook-state UI performs one
+          // initial fetch then relies on space.hookState.updated, so without
+          // this the legacy-guard banner stays invisible until a remount.
+          onHookStateUpdated: (hookId, hookState) => {
+            this.config.internalEventBus
+              ?.publish('space.hookState.updated', {
+                sessionId: 'global',
+                spaceId,
+                runId: workflowRunId,
+                hookId,
+                hookState,
+              })
+              .catch((err: unknown) => {
+                log.warn(
+                  `Failed to emit space.hookState.updated for legacy guard ${hookId}: ${err instanceof Error ? err.message : String(err)}`
+                );
+              });
+          },
         },
         'This run pins a pre-v2 workflow whose legacy hooks cannot be enforced after the ' +
           'hooks-v2 cutover. Re-create the hooks as v2 hook bindings on the workflow, then ' +

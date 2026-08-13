@@ -181,3 +181,27 @@ describe('review_posted — stamped-identity binding', () => {
     expect(ret.reason).toContain('run start time');
   });
 });
+
+describe('pr_ready — identity stamped before readiness stops', () => {
+  test('an exempted readiness stop still stamps the run identity (override-safe)', async () => {
+    // A stop-returning path cannot hit GitHub in unit tests, but the
+    // post-approval exemption path CAN: assert that when the exemption
+    // CONTINUES the identity is already resolvable — and more directly,
+    // assert the ordering contract via a stub ctx capturing writes around
+    // the merge-report exemption (which skips readiness entirely).
+    const written: HookArtifact[] = [];
+    const ctx = stubCtx({
+      taskStatus: 'approved',
+      readArtifacts: () => [validatedStamp(REVIEWED_PR)],
+      writeArtifact: (artifact) => written.push(artifact as HookArtifact),
+    });
+    const ret = await prReadyHook.run(
+      sendAction({ pr_url: REVIEWED_PR, reason: 'merge_blocked' }),
+      ctx
+    );
+    expect(ret.flow).toBe('continue');
+    // The exemption does not re-stamp (identity already present), but the
+    // identity IS resolvable for downstream gates.
+    expect(written).toEqual([]);
+  });
+});

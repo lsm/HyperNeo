@@ -54,6 +54,7 @@ import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { ChannelResolver } from './channel-resolver';
 import { isBuiltInHook, resolveHook } from './hook-registry';
+import { GH_INFRA_ERROR_PREFIX } from '@hyperneo/extensions-hooks';
 import { collectWithMaxBuffer, MAX_BUFFER_BYTES, parseJsonStdout } from './script-utils';
 
 // ---------------------------------------------------------------------------
@@ -321,10 +322,17 @@ export class WorkflowHookEngine {
     const state = this.config.hookStateRepo.get(this.config.workflowRunId, hookId)?.localState;
     const map = state?.[QUEUED_RETRYABLE_ACTION_STATE_KEY];
     if (!map || typeof map !== 'object' || Array.isArray(map)) return true;
-    const next: Record<string, unknown> = { ...(map as Record<string, unknown>) };
-    delete next[actionKey];
+    // TOMBSTONE, not an omission: the repo deep-merges localState, and a key
+    // absent from the patch survives the merge — the cleared action would
+    // rehydrate after restart and deliver again. Writing an explicit null
+    // REPLACES the entry (readers skip non-action values).
     return this.persistStateUpdate(hookId, {
-      localState: { [QUEUED_RETRYABLE_ACTION_STATE_KEY]: next },
+      localState: {
+        [QUEUED_RETRYABLE_ACTION_STATE_KEY]: {
+          ...(map as Record<string, unknown>),
+          [actionKey]: null,
+        },
+      },
     });
   }
 
@@ -676,7 +684,8 @@ export class WorkflowHookEngine {
 
       if (flow === 'stop') {
         const execFailed =
-          typeof ret.reason === 'string' && ret.reason.startsWith(HOOK_EXEC_ERROR_PREFIX);
+          (typeof ret.reason === 'string' && ret.reason.startsWith(HOOK_EXEC_ERROR_PREFIX)) ||
+          (typeof ret.reason === 'string' && ret.reason.startsWith(GH_INFRA_ERROR_PREFIX));
         if (execFailed) {
           // Infrastructure stop — not a hook decision, not overridable.
           terminal = {
@@ -754,6 +763,30 @@ export class WorkflowHookEngine {
           attempts >= MAX_RETRY_ATTEMPTS ||
           (firstRetryAt !== undefined && Date.now() - firstRetryAt >= MAX_RETRY_ELAPSED_MS)
         ) {
+          if (approvalPending) {
+            // An operator approved the ceiling stop: consume the one-shot and
+            // let this action through (the hook retried to its ceiling; the
+            // human is the recovery path). Without this, every displayed
+            // approval would convert back to the same terminal stop.
+            const consumed = this.persistStateUpdate(hookId, {
+              localState: {
+                humanApproved: undefined,
+                humanApprovedAt: undefined,
+                humanRejectionReason: undefined,
+              },
+            });
+            if (consumed) {
+              executionLog[executionLog.length - 1] = {
+                hookId,
+                flow: 'continue',
+                reason: 'Human override: retry-ceiling stop overridden by approval',
+                timestamp: Date.now(),
+              };
+              continue;
+            }
+            // Consume-write failed: fall through to the terminal stop (the
+            // approval stays pending for the next attempt).
+          }
           const elapsedCapped =
             firstRetryAt !== undefined && Date.now() - firstRetryAt >= MAX_RETRY_ELAPSED_MS;
           terminal = {
@@ -2304,13 +2337,9 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
       }
     }
 
-    const successfulHookIds = outcome.executionLog.map((record) => record.hookId);
-    for (const queuedActionKey of engine.clearQueuedRetryableActionsForOwner(
-      successfulHookIds,
-      meta
-    )) {
-      clearRetryableHookActionTimer(queuedActionKey);
-    }
+    // NOTE: no owner-wide clear here — queued actions are per-action-key now,
+    // and clearing by OWNER would abandon a sibling send's independent entry.
+    // THIS action's record is cleared by key below.
     // Fail closed when THIS action's durable replay record cannot be removed:
     // delivering while the persisted __queuedRetryableAction survives would
     // replay the already-delivered action after a restart.
