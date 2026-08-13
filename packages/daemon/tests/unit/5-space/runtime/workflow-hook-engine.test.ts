@@ -505,6 +505,37 @@ describe('WorkflowHookEngine.executeAction', () => {
     expect(outcome.userState.reason).toContain('retry limit exceeded');
   });
 
+  test('the ELAPSED ceiling trips on a stale __firstRetryAt (7-day window)', async () => {
+    const RETRY_HOOK = scriptHook('stale_hook', '{"flow":"retry","reason":"still open"}');
+    const workflow = makeWorkflow({
+      customHooks: [RETRY_HOOK],
+      hookBindings: [
+        {
+          hookId: 'stale_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    // A first-retry stamp 8 days ago with NO active cooldown and an attempt
+    // count BELOW the numeric ceiling: the hook runs, returns retry, and the
+    // ELAPSED ceiling (not the attempt count) converts it to a terminal stop.
+    hookStateRepo.updateWithRetry('run-1', 'stale_hook', {
+      localState: { __firstRetryAt: Date.now() - 8 * 24 * 60 * 60 * 1000 },
+      retryCount: 10,
+      lastFlow: 'retry',
+      lastReason: 'still open',
+    });
+    const engine = makeEngine(workflow);
+    const outcome = await engine.executeAction('send_message', sendParams(), META);
+    expect(outcome.decision).toBe('stop');
+    expect(outcome.userState.reason).toContain('elapsed time exceeded');
+  });
+
   test('a hook-run retry converts to stop at the ceiling (send_message path)', async () => {
     const RETRY_HOOK = scriptHook('ceiling_hook', '{"flow":"retry","reason":"still open"}');
     const workflow = makeWorkflow({

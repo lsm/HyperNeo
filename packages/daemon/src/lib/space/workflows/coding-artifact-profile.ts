@@ -76,6 +76,11 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
       // Fall back to the freshest agent-written link/pr only before the first
       // handoff stamps a validated identity.
       const all = this.artifactRepo.listByRun(runId);
+      // Fail closed on a partial read: a corrupt row (possibly the reserved
+      // identity stamp itself) was dropped, so the remaining artifacts are NOT
+      // an authoritative basis — the merge gate must not verify an unrelated
+      // PR against a snapshot that lost the reviewed identity.
+      if (this.artifactRepo.lastReadWasPartial) return '';
       const validated = all.filter(
         (a) => a.artifactType === 'link' && a.artifactKey === VALIDATED_PR_KEY
       );
@@ -113,6 +118,8 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
       // Prefer the engine-stamped validated identity (agent-unwritable) — the
       // immutable one completion safety binds to. Only when no handoff has
       // stamped one yet do we fall back to agent-written link/pr rows.
+      // Partial read (corrupt row dropped): no identity — fail closed.
+      if (this.artifactRepo.lastReadWasPartial) return '';
       const validated = all.filter(
         (a) => a.artifactType === 'link' && a.artifactKey === VALIDATED_PR_KEY
       );

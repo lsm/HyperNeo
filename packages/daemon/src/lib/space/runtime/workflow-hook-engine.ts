@@ -699,10 +699,14 @@ export class WorkflowHookEngine {
           attempts >= MAX_RETRY_ATTEMPTS ||
           (firstRetryAt !== undefined && Date.now() - firstRetryAt >= MAX_RETRY_ELAPSED_MS)
         ) {
+          const elapsedCapped =
+            firstRetryAt !== undefined && Date.now() - firstRetryAt >= MAX_RETRY_ELAPSED_MS;
           terminal = {
             kind: 'stop',
             hookId,
-            reason: `Hook retry limit exceeded (${MAX_RETRY_ATTEMPTS} attempts): ${ret.reason ?? 'retrying'}`,
+            reason: `Hook retry limit exceeded (${
+              elapsedCapped ? 'elapsed time exceeded' : `${MAX_RETRY_ATTEMPTS} attempts`
+            }): ${ret.reason ?? 'retrying'}`,
           };
           executionLog[executionLog.length - 1] = {
             hookId,
@@ -2003,6 +2007,7 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
           for (const [hookId, patch] of byHook) {
             patch.retryCount = 0;
             patch.nextRetryAt = null;
+            patch.localState.__firstRetryAt = undefined; // fresh cycle on re-block
             engine.persistStateUpdate(hookId, patch);
           }
           return hookResult({

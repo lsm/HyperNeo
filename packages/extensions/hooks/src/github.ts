@@ -558,10 +558,12 @@ export async function ghGetReviewEvidence(
     if (Array.isArray(nodes)) allReviewNodes.unshift(...nodes);
     const pageInfo = asRecord(reviewsConnection?.pageInfo);
     // Stop when the page reaches past the run-start window: everything older
-    // cannot contribute fresh evidence.
+    // cannot contribute fresh evidence. A NULL publishedAt (pending/draft
+    // review) proves nothing about the boundary — keep paging (the page cap
+    // fails closed if the window extends beyond it).
     const oldest = Array.isArray(nodes) && nodes.length > 0 ? asRecord(nodes[0]) : undefined;
     const oldestAt = typeof oldest?.publishedAt === 'string' ? oldest.publishedAt : '';
-    if (!pageInfo?.hasPreviousPage || !oldestAt || oldestAt < sinceIso) {
+    if (!pageInfo?.hasPreviousPage || (oldestAt !== '' && oldestAt < sinceIso)) {
       reachedBoundary = true;
       break;
     }
