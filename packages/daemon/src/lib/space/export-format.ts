@@ -636,24 +636,6 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
     return { ok: false, error: `invalid: ${result.error.issues.map((i) => i.message).join('; ')}` };
   }
 
-  // Every hookBinding.hookId must resolve: a registered built-in or one of the
-  // workflow's declared customHooks. createWorkflow enforces this at import
-  // time — catching it here keeps bundle validation and import preview from
-  // presenting an import as valid that will then roll back.
-  if (result.data.hookBindings && result.data.hookBindings.length > 0) {
-    const resolvableHookIds = new Set<string>(BUILT_IN_HOOK_IDS);
-    for (const custom of result.data.customHooks ?? []) resolvableHookIds.add(custom.id);
-    for (let bi = 0; bi < result.data.hookBindings.length; bi++) {
-      const binding = result.data.hookBindings[bi];
-      if (!resolvableHookIds.has(binding.hookId)) {
-        return {
-          ok: false,
-          error: `invalid: hookBindings[${bi}].hookId "${binding.hookId}" is neither a registered built-in hook nor declared in customHooks`,
-        };
-      }
-    }
-  }
-
   // Referential integrity checks — enforce the cross-reference invariants that
   // the rest of the format depends on (node names as stable cross-reference keys).
   const nodeNameSet = new Set<string>();
@@ -663,6 +645,7 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
     }
     nodeNameSet.add(node.name);
   }
+
   // startNode must reference a known node name (skip check when nodes is empty)
   if (result.data.nodes.length > 0 && !nodeNameSet.has(result.data.startNode)) {
     return {
@@ -680,6 +663,77 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
       ok: false,
       error: `invalid: endNode "${result.data.endNode}" does not reference a known node name`,
     };
+  }
+
+  // Mirror the runtime binding validation (validateWorkflowHookBindings) so a
+  // binding that createWorkflow would reject fails HERE — import preview and
+  // bundle validation must not present an import as valid that then rolls
+  // back: hookId resolves (built-in or declared custom), sourceNode and an
+  // optional targetNode reference known node names (targetNode required for
+  // send_message), and authorizedCallers is a non-empty list of known
+  // node/slot callers.
+  if (result.data.hookBindings && result.data.hookBindings.length > 0) {
+    const resolvableHookIds = new Set<string>(BUILT_IN_HOOK_IDS);
+    for (const custom of result.data.customHooks ?? []) resolvableHookIds.add(custom.id);
+    const slotsByNode = new Map<string, Set<string>>();
+    for (const node of result.data.nodes) {
+      slotsByNode.set(node.name, new Set((node.agents ?? []).map((a) => a.name)));
+    }
+    for (let bi = 0; bi < result.data.hookBindings.length; bi++) {
+      const binding = result.data.hookBindings[bi];
+      const loc = `hookBindings[${bi}]`;
+      if (!resolvableHookIds.has(binding.hookId)) {
+        return {
+          ok: false,
+          error: `invalid: ${loc}.hookId "${binding.hookId}" is neither a registered built-in hook nor declared in customHooks`,
+        };
+      }
+      if (!nodeNameSet.has(binding.sourceNode)) {
+        return {
+          ok: false,
+          error: `invalid: ${loc}.sourceNode "${binding.sourceNode}" does not reference a known node name`,
+        };
+      }
+      if (binding.targetNode !== undefined) {
+        if (!nodeNameSet.has(binding.targetNode)) {
+          return {
+            ok: false,
+            error: `invalid: ${loc}.targetNode "${binding.targetNode}" does not reference a known node name`,
+          };
+        }
+      } else if (binding.method === 'send_message') {
+        return {
+          ok: false,
+          error: `invalid: ${loc}.targetNode is required for send_message bindings`,
+        };
+      }
+      if (!binding.authorizedCallers || binding.authorizedCallers.length === 0) {
+        return {
+          ok: false,
+          error: `invalid: ${loc}.authorizedCallers is required and must be non-empty`,
+        };
+      }
+      for (let ci = 0; ci < binding.authorizedCallers.length; ci++) {
+        const caller = binding.authorizedCallers[ci];
+        if (!nodeNameSet.has(caller.sourceNode)) {
+          return {
+            ok: false,
+            error: `invalid: ${loc}.authorizedCallers[${ci}].sourceNode "${caller.sourceNode}" does not reference a known node name`,
+          };
+        }
+        const validSlots = slotsByNode.get(caller.sourceNode) ?? new Set<string>();
+        const slots = caller.agentSlots ?? [];
+        for (let si = 0; si < slots.length; si++) {
+          const slot = slots[si];
+          if (!validSlots.has(slot)) {
+            return {
+              ok: false,
+              error: `invalid: ${loc}.authorizedCallers[${ci}].agentSlots[${si}] "${slot}" is not a slot of node "${caller.sourceNode}"`,
+            };
+          }
+        }
+      }
+    }
   }
 
   // Channel from/to must reference known node names, agent slot names, or '*' wildcard.

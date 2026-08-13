@@ -278,6 +278,126 @@ describe('WorkflowHookEngine.executeAction', () => {
     expect(outcome.executionLog[0]?.flow).toBe('stop');
   });
 
+  test('the cooldown pre-check enforces the retry ceiling (agent-driven loop)', async () => {
+    // Non-send_message methods have no engine timer: every attempt runs the
+    // cooldown pre-check, so the ceiling must convert here — otherwise a
+    // perpetually-retrying gate (pr_merged on an OPEN PR) loops forever.
+    const RETRY_HOOK = scriptHook('ceiling_hook', '{"flow":"retry","reason":"still open"}');
+    const workflow = makeWorkflow({
+      customHooks: [RETRY_HOOK],
+      hookBindings: [
+        {
+          hookId: 'ceiling_hook',
+          sourceNode: 'Coding',
+          method: 'mark_complete',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    hookStateRepo.updateWithRetry('run-1', 'ceiling_hook', {
+      retryCount: 2880,
+      nextRetryAt: Date.now() + 60_000,
+      lastFlow: 'retry',
+      lastReason: 'still open',
+    });
+    const engine = makeEngine(workflow);
+
+    const outcome = await engine.executeAction('mark_complete', {}, META);
+    expect(outcome.decision).toBe('stop');
+    expect(outcome.userState.reason).toContain('retry limit exceeded');
+  });
+
+  test('a hook-run retry converts to stop at the ceiling (send_message path)', async () => {
+    const RETRY_HOOK = scriptHook('ceiling_hook', '{"flow":"retry","reason":"still open"}');
+    const workflow = makeWorkflow({
+      customHooks: [RETRY_HOOK],
+      hookBindings: [
+        {
+          hookId: 'ceiling_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    // At the ceiling with NO active cooldown, so the hook itself runs, returns
+    // retry, and the engine converts it to a terminal stop.
+    hookStateRepo.updateWithRetry('run-1', 'ceiling_hook', {
+      retryCount: 2880,
+      lastFlow: 'retry',
+      lastReason: 'still open',
+    });
+    const engine = makeEngine(workflow);
+
+    const outcome = await engine.executeAction('send_message', sendParams(), META);
+    expect(outcome.decision).toBe('stop');
+    expect(outcome.userState.reason).toContain('retry limit exceeded');
+  });
+
+  test('the legacy-hook guard blocks every gated action (pre-v2 pinned run)', async () => {
+    const { createLegacyHookGuardEngine } = await import(
+      '../../../../src/lib/space/runtime/workflow-hook-engine'
+    );
+    const guard = createLegacyHookGuardEngine(
+      {
+        workflow: makeWorkflow(),
+        workflowRunId: 'run-1',
+        nodeExecutionRepo: new NodeExecutionRepository(db),
+        hookStateRepo,
+        workspacePath: process.cwd(),
+      },
+      'pre-v2 pinned workflow; re-create hooks as v2 bindings'
+    );
+    const outcome = await guard.executeAction('send_message', sendParams(), META);
+    expect(outcome.decision).toBe('stop');
+    expect(outcome.userState.reason).toContain('re-create hooks as v2 bindings');
+  });
+
+  test('reserved stamps outside the recent window stay oldest-last (identity order)', () => {
+    // Push the reserved stamps out of the freshest-50 window with newer
+    // artifacts, then verify the ctx window's LAST reserved stamp is the
+    // OLDEST one (getPrimaryLink takes the last match).
+    const now = Date.now();
+    artifactRepo.upsert({
+      id: 'a-old',
+      runId: 'run-1',
+      nodeId: 'n-review',
+      artifactType: 'link',
+      artifactKey: '__pr_validated__',
+      data: { link: 'https://github.com/o/r/pull/OLD', kind: 'pr' },
+    });
+    artifactRepo.upsert({
+      id: 'a-newer',
+      runId: 'run-1',
+      nodeId: 'n-coding',
+      artifactType: 'link',
+      artifactKey: '__pr_validated__',
+      data: { link: 'https://github.com/o/r/pull/NEWER', kind: 'pr' },
+    });
+    for (let i = 0; i < 55; i++) {
+      artifactRepo.upsert({
+        id: `filler-${i}`,
+        runId: 'run-1',
+        nodeId: 'n-coding',
+        artifactType: 'note',
+        artifactKey: `filler-${i}`,
+        data: { seq: now + i },
+      });
+    }
+    const engine = makeEngine(makeWorkflow());
+    const window = engine['readArtifactsForCtx']();
+    const reserved = window.filter((a) => a.artifactKey === '__pr_validated__');
+    expect(reserved.length).toBeGreaterThanOrEqual(2);
+    // The LAST reserved entry must be the oldest identity.
+    const last = reserved[reserved.length - 1]?.data.link;
+    expect(last).toBe('https://github.com/o/r/pull/OLD');
+  });
+
   test('human rejection is a standing block that does not run the hook', async () => {
     const workflow = makeWorkflow({
       customHooks: [STOP_HOOK],

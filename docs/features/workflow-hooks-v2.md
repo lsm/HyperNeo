@@ -25,7 +25,7 @@ interface Hook {
 
 interface DataField {
   key: string;
-  type: 'string' | 'number' | 'boolean' | 'url';
+  type: 'string' | 'number' | 'boolean' | 'link';
   required: boolean;
   description?: string;
 }

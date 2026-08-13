@@ -121,6 +121,7 @@ import { NodeExecutionRepository } from '../../../storage/repositories/node-exec
 import { validateGlobPattern } from '../../external-events/topic-validator';
 import {
   clearAllRetryableHookActionTimers,
+  createLegacyHookGuardEngine,
   QUEUED_RETRYABLE_ACTION_STATE_KEY,
   WorkflowHookEngine,
 } from './workflow-hook-engine';
@@ -5501,7 +5502,33 @@ export class TaskAgentManager {
 
     // Build workflow hook engine when the workflow defines hook bindings.
     let hookEngine: WorkflowHookEngine | undefined;
-    if (workflow?.hookBindings && workflow.hookBindings.length > 0) {
+    // v2 hard-cut guard: a run pinned before the hooks-v2 cutover rehydrates
+    // its immutable definition with the legacy `hooks` array still present
+    // (extra property on the parsed payload). The v2 engine only enforces
+    // `hookBindings`, so resuming such a run without them would silently
+    // bypass every legacy PR-ready/review gate — block the gated actions with
+    // re-create instructions instead (no legacy translation per the hard cut).
+    const legacyHooks = (workflow as { hooks?: unknown } | null | undefined)?.hooks;
+    const hasLegacyHooks = Array.isArray(legacyHooks) && legacyHooks.length > 0;
+    const hasV2Bindings = !!workflow?.hookBindings && workflow.hookBindings.length > 0;
+    if (workflow && hasLegacyHooks && !hasV2Bindings) {
+      log.error(
+        `Run ${workflowRunId} pins a pre-v2 workflow definition carrying legacy hooks with no v2 hookBindings; ` +
+          'blocking gated actions (fail closed) — re-create the hooks as v2 bindings on the workflow to resume.'
+      );
+      hookEngine = createLegacyHookGuardEngine(
+        {
+          workflow,
+          workflowRunId,
+          nodeExecutionRepo: this.config.nodeExecutionRepo,
+          hookStateRepo: new WorkflowHookStateRepository(this.config.db.getDatabase()),
+          workspacePath,
+        },
+        'This run pins a pre-v2 workflow whose legacy hooks cannot be enforced after the ' +
+          'hooks-v2 cutover. Re-create the hooks as v2 hook bindings on the workflow, then ' +
+          'restart the task — executing without them would bypass the gates.'
+      );
+    } else if (hasV2Bindings && workflow) {
       hookEngine = new WorkflowHookEngine({
         workflow,
         workflowRunId,

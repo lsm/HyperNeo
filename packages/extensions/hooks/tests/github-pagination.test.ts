@@ -167,7 +167,7 @@ describe('isTrustedGitHubHost — GHE Cloud tenants', () => {
     expect(isTrustedGitHubHost('mycompany.ghe.com')).toBe(true);
     expect(isTrustedGitHubHost('ghe.com')).toBe(true);
     expect(isTrustedGitHubHost('github.com')).toBe(true);
-    expect(isTrustedGitHubHost('GitHub.com'.toLowerCase())).toBe(true);
+    expect(isTrustedGitHubHost('GitHub.com')).toBe(true);
   });
   test('rejects lookalikes and arbitrary hosts', () => {
     expect(isTrustedGitHubHost('ghe.com.evil.example')).toBe(false);

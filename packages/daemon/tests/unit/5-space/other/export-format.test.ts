@@ -2572,11 +2572,12 @@ describe('custom hooks — export schema parity with runtime validation', () => 
       hookBindings: [
         {
           hookId: 'notify_hook',
-          sourceNode: 'Code',
-          targetNode: 'Review',
+          sourceNode: 'Code step',
+          targetNode: 'Review step',
           method: 'send_message',
           order: 0,
           enabled: true,
+          authorizedCallers: [{ sourceNode: 'Code step' }],
         },
       ],
     });
@@ -2646,11 +2647,12 @@ describe('v4 hook fields — version gating and hookId resolution', () => {
       hookBindings: [
         {
           hookId: 'pr_ready',
-          sourceNode: 'Code',
-          targetNode: 'Review',
+          sourceNode: 'Code step',
+          targetNode: 'Review step',
           method: 'send_message',
           order: 0,
           enabled: true,
+          authorizedCallers: [{ sourceNode: 'Code step' }],
         },
       ],
     });
@@ -2682,11 +2684,12 @@ describe('v4 hook fields — version gating and hookId resolution', () => {
       hookBindings: [
         {
           hookId: 'no_such_hook',
-          sourceNode: 'Code',
-          targetNode: 'Review',
+          sourceNode: 'Code step',
+          targetNode: 'Review step',
           method: 'send_message',
           order: 0,
           enabled: true,
+          authorizedCallers: [{ sourceNode: 'Code step' }],
         },
       ],
     });
@@ -2708,15 +2711,85 @@ describe('v4 hook fields — version gating and hookId resolution', () => {
       hookBindings: [
         {
           hookId: 'notify_hook',
-          sourceNode: 'Code',
-          targetNode: 'Review',
+          sourceNode: 'Code step',
+          targetNode: 'Review step',
           method: 'send_message',
           order: 0,
           enabled: true,
+          authorizedCallers: [{ sourceNode: 'Code step', agentSlots: ['coder'] }],
         },
       ],
     });
     const result = validateExportedWorkflow(exportWorkflow(workflow, []));
     expect(result.ok).toBe(true);
+  });
+});
+
+describe('v4 binding-route validation (mirrors runtime rules)', () => {
+  function hookedWorkflow(binding: Record<string, unknown>) {
+    const workflow = makeWorkflow();
+    return exportWorkflow({ ...workflow, hookBindings: [binding] } as unknown as SpaceWorkflow, []);
+  }
+
+  test('a binding without authorizedCallers is rejected (engine fails closed on it)', () => {
+    const result = validateExportedWorkflow(
+      hookedWorkflow({
+        hookId: 'pr_ready',
+        sourceNode: 'Code step',
+        targetNode: 'Review step',
+        method: 'send_message',
+        order: 0,
+        enabled: true,
+      })
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('authorizedCallers');
+  });
+
+  test('an unknown sourceNode is rejected', () => {
+    const result = validateExportedWorkflow(
+      hookedWorkflow({
+        hookId: 'pr_ready',
+        sourceNode: 'Ghost',
+        targetNode: 'Review step',
+        method: 'send_message',
+        order: 0,
+        enabled: true,
+        authorizedCallers: [{ sourceNode: 'Ghost' }],
+      })
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('sourceNode');
+  });
+
+  test('a send_message binding without targetNode is rejected', () => {
+    const result = validateExportedWorkflow(
+      hookedWorkflow({
+        hookId: 'pr_ready',
+        sourceNode: 'Code step',
+        method: 'send_message',
+        order: 0,
+        enabled: true,
+        authorizedCallers: [{ sourceNode: 'Code step' }],
+      })
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('targetNode');
+  });
+
+  test('a caller slot not on the caller node is rejected', () => {
+    const result = validateExportedWorkflow(
+      hookedWorkflow({
+        hookId: 'pr_ready',
+        sourceNode: 'Code step',
+        targetNode: 'Review step',
+        method: 'send_message',
+        order: 0,
+        enabled: true,
+        authorizedCallers: [{ sourceNode: 'Code step', agentSlots: ['nonexistent'] }],
+      })
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('nonexistent');
   });
 });

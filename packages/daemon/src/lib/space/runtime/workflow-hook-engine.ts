@@ -156,6 +156,13 @@ const MAX_PARAMS_JSON_BYTES = 32_768;
 /** Default timeout for custom hook scripts (30 seconds). */
 const DEFAULT_SCRIPT_TIMEOUT_MS = 30_000;
 
+/**
+ * Grace period for stdout/stderr collection after the script's parent shell
+ * exits — a background child inheriting the pipes gets this long to close them
+ * before the streams are cancelled (see runCustomHookScript).
+ */
+const SCRIPT_EXIT_GRACE_MS = 2_000;
+
 const METHOD_PARAM_SCHEMAS: Record<string, import('zod').ZodType<unknown>> = {
   send_message: SendMessageSchema,
   save_artifact: SaveArtifactSchema,
@@ -415,10 +422,32 @@ export class WorkflowHookEngine {
 
       // Retry-cooldown pre-check: if this hook is still in backoff from a prior
       // retry, re-issue retry without re-running the hook (avoids hammering a
-      // rate-limited / pending-merge lookup on every manual attempt).
+      // rate-limited / pending-merge lookup on every manual attempt). The
+      // ceiling is enforced HERE too: the hook-run branch's check never fires
+      // on this path (the hook does not run), and for non-send_message methods
+      // the agent drives every attempt through this pre-check — without a cap
+      // here a perpetually-retrying gate (pr_merged on an OPEN PR, codex never
+      // approving) loops forever while the count climbs unbounded.
       const hookState = this.config.hookStateRepo.get(this.config.workflowRunId, hookId);
       const nextRetryAt = hookState?.nextRetryAt;
       if (nextRetryAt !== undefined && Date.now() < nextRetryAt) {
+        const attempts = hookState?.retryCount ?? 0;
+        if (attempts >= MAX_RETRY_ATTEMPTS) {
+          terminal = {
+            kind: 'stop',
+            hookId,
+            reason: `Hook retry limit exceeded (${MAX_RETRY_ATTEMPTS} attempts): ${
+              hookState?.lastReason ?? 'retrying'
+            }`,
+          };
+          executionLog.push({
+            hookId,
+            flow: 'stop',
+            reason: terminal.reason,
+            timestamp: Date.now(),
+          });
+          break;
+        }
         const remaining = Math.max(0, nextRetryAt - Date.now());
         const reason = hookState?.lastReason ?? 'Retry backoff pending';
         retry = { hookId, reason, retryAfterMs: remaining };
@@ -921,13 +950,19 @@ export class WorkflowHookEngine {
       const recent = repo?.listRecentByRun(this.config.workflowRunId, 50) ?? [];
       const seenKeys = new Set(recent.map((a) => `${a.nodeId}:${a.artifactType}:${a.artifactKey}`));
       // Reserved (`__`-prefixed) stamps, bounded SQL-side via a key-prefix
-      // filter instead of loading every link artifact on the hot path.
+      // filter instead of loading every link artifact on the hot path. Reversed
+      // to NEWEST-first: the ctx window is freshest-first throughout, and
+      // "oldest stamp wins" readers (getPrimaryLink takes the LAST match) must
+      // find the earliest reserved stamp last — listByRun's ascending creation
+      // order would otherwise hand them the newest stamp and swap the identity.
       const reserved = (
         repo?.listByRun(this.config.workflowRunId, {
           artifactType: 'link',
           artifactKeyPrefix: '__',
         }) ?? []
-      ).filter((a) => !seenKeys.has(`${a.nodeId}:${a.artifactType}:${a.artifactKey}`));
+      )
+        .filter((a) => !seenKeys.has(`${a.nodeId}:${a.artifactType}:${a.artifactKey}`))
+        .reverse();
       return [...recent, ...reserved].map((a: WorkflowRunArtifact) => ({
         artifactType: a.artifactType,
         artifactKey: a.artifactKey,
@@ -976,24 +1011,40 @@ export class WorkflowHookEngine {
 
     const controller = new AbortController();
     let killed = false;
-    const [stdoutResult, stderrResult, exit] = await Promise.all([
-      collectWithMaxBuffer(proc.stdout, MAX_BUFFER_BYTES, controller.signal),
-      collectWithMaxBuffer(proc.stderr, MAX_BUFFER_BYTES, controller.signal),
-      (async () => {
-        const killTimer = setTimeout(() => {
-          killed = true;
-          try {
-            proc.kill('SIGKILL');
-          } catch {
-            /* already exited */
-          }
-          controller.abort();
-        }, timeoutMs);
-        const code = await proc.exited;
-        clearTimeout(killTimer);
-        return { code, timedOut: killed };
-      })(),
-    ]);
+    // A script may spawn a BACKGROUND process that inherits stdout/stderr and
+    // outlives the parent shell. Waiting for the pipes to close would then
+    // block this hook indefinitely (past timeoutMs) and leak the child, so the
+    // collectors get a short grace period after the parent exits before the
+    // streams are cancelled: the parent's own output is already buffered by
+    // then, and an inherited pipe held open by a straggler can't wedge the
+    // action.
+    const collectStdout = collectWithMaxBuffer(proc.stdout, MAX_BUFFER_BYTES, controller.signal);
+    const collectStderr = collectWithMaxBuffer(proc.stderr, MAX_BUFFER_BYTES, controller.signal);
+    const collected = Promise.all([collectStdout, collectStderr]);
+    const exit = await (async () => {
+      const killTimer = setTimeout(() => {
+        killed = true;
+        try {
+          proc.kill('SIGKILL');
+        } catch {
+          /* already exited */
+        }
+      }, timeoutMs);
+      const code = await proc.exited;
+      clearTimeout(killTimer);
+      if (!killed) {
+        // Grace the collectors past the parent's exit, then cancel: the
+        // parent's output is buffered; a straggler child holding an inherited
+        // pipe cannot wedge the action.
+        const graceDone = new Promise<void>((resolve) => {
+          setTimeout(resolve, SCRIPT_EXIT_GRACE_MS);
+        });
+        await Promise.race([collected, graceDone]);
+      }
+      controller.abort(); // idempotent; releases any blocked collector
+      return { code, timedOut: killed };
+    })();
+    const [stdoutResult, stderrResult] = await collected;
 
     if (exit.timedOut) {
       return { flow: 'stop', reason: `Hook script timed out after ${timeoutMs}ms` };
@@ -1404,6 +1455,34 @@ type AnyToolResult = import('../tools/tool-result').ToolResult;
  * before the original handler; persists hook state + side effects; handles
  * stop / retry / deliver; dispatches follow-ups on deliver.
  */
+/**
+ * Fail-closed engine for a run pinned before the hooks-v2 cutover whose
+ * immutable definition carries the LEGACY `hooks` array (and no v2
+ * `hookBindings`). The v2 engine only enforces bindings — resuming such a run
+ * ungated would silently bypass every legacy PR-ready/review gate. Per the
+ * locked hard-cut there is no legacy translation, so every hookable action
+ * stops with instructions to re-create the hooks as v2 bindings instead of
+ * executing without enforcement.
+ */
+export function createLegacyHookGuardEngine(
+  config: WorkflowHookEngineConfig,
+  reason: string
+): WorkflowHookEngine {
+  return new (class extends WorkflowHookEngine {
+    override async executeAction(): Promise<HookActionOutcome> {
+      return {
+        decision: 'stop',
+        finalParams: {},
+        followUpRequests: [],
+        stateUpdates: [],
+        executionLog: [],
+        userState: { status: 'blocked', reason },
+        blockingHookId: '__legacy_hooks__',
+      };
+    }
+  })(config);
+}
+
 export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
   methodName: string,
   handler: (args: T) => Promise<AnyToolResult>,
