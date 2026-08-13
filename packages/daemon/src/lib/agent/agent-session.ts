@@ -242,6 +242,7 @@ import {
   MessageDeliveryTerminalTurnError,
   deliverMessage,
   isMessageDeliveryV2Enabled,
+  isTerminalTurnError,
   reconcileStrandedDeliveries as reconcileStrandedDeliveriesCore,
   signalDeliveryConsumed,
   withSessionLock,
@@ -2248,7 +2249,10 @@ export class AgentSession
         (this.deliveryTurnStalled
           ? 'No response from the model — resetting and retrying'
           : 'Turn ended without a response');
-      if (turnError && !turnError.recoverable) {
+      // Non-recoverable OR auth (Codex #2): retrying cannot fix a credential/
+      // permission/quota error — dead-letter immediately with a Retry affordance
+      // instead of burning the budget re-invoking a provider that cannot auth.
+      if (turnError && isTerminalTurnError(turnError)) {
         throw new MessageDeliveryTerminalTurnError(detail, turnError.category);
       }
       // Recoverable provider error OR a no-progress stall (turnError null): the
@@ -2414,6 +2418,16 @@ export class AgentSession
     await withSessionLock(this.session.id, () =>
       this.stateManager.clearQueuedIfOwnedBy(messageUuid).then(() => undefined)
     );
+  }
+
+  /**
+   * Human gate open (an unanswered `sdk_resume_choice` / `waiting_for_input`).
+   * The delivery handler keeps a parked steer parked without burning its park
+   * budget while this is true — the choice resolving (or the session leaving
+   * the gate via archive/interrupt/turn-end) re-evaluates. (Codex #11.)
+   */
+  isWaitingForInput(): boolean {
+    return this.stateManager.getState().status === 'waiting_for_input';
   }
 
   async deliverChatMessage(messageUuid: string): Promise<void> {

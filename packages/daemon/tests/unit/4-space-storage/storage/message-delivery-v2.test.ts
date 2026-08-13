@@ -21,6 +21,7 @@ import {
   deliverAndMarkQueued,
   deliverMessage,
   drainDeliveryWaitersOnTerminalSDKMessage,
+  isTerminalTurnError,
   isUniqueConstraintError,
   MAX_STEER_PARKS,
   signalDeliveryConsumed,
@@ -372,6 +373,8 @@ class MockSession implements MessageDeliverySession {
   lastContent?: unknown;
   lastParentToolUseId?: string | null;
   lastAlreadyConsumed = false;
+  /** Toggle for the human-gate-open park exemption (Codex #11). */
+  waitingForInput = false;
 
   async driveDeliveryTurn(
     uuid: string,
@@ -405,6 +408,10 @@ class MockSession implements MessageDeliverySession {
 
   async settleSkippedDelivery(uuid: string): Promise<void> {
     this.settleCalls.push(uuid);
+  }
+
+  isWaitingForInput(): boolean {
+    return this.waitingForInput;
   }
 }
 
@@ -1181,5 +1188,52 @@ describe('message-delivery v2 — steer park bound (dead-letter after MAX_STEER_
     }
     expect(repo.getParkCount(current.id)).toBeGreaterThanOrEqual(MAX_STEER_PARKS);
     await expect(handler(current)).rejects.toThrow(/awaited acceptance past its budget/);
+  });
+
+  it('a steer parked behind an OPEN human gate keeps parking past the budget (Codex #11)', async () => {
+    // An unanswered sdk_resume_choice (waiting_for_input) is a legitimately
+    // blocked turn, not abandonment — the steer must not be dead-lettered while
+    // the gate is open, no matter how many parks have elapsed.
+    const session = new MockSession();
+    session.feedResult = { outcome: 'park' };
+    session.waitingForInput = true;
+    const handler = createMessageDeliveryHandler({
+      jobQueue: repo,
+      getSession: () => session,
+      getMessageContent: () => ({ content: 'steer', sendStatus: 'enqueued' }),
+    });
+
+    let current = steerJob(repo, 'msg-gate-open');
+    // Park well past the budget — every attempt still parks (no dead-letter).
+    for (let i = 0; i < MAX_STEER_PARKS + 5; i++) {
+      const result = await handler(current);
+      expect(result).toMatchObject({ parked: 'turn_blocked_gate_open' });
+      expect(repo.getJob(current.id)?.retryCount).toBe(0);
+      db.prepare(`UPDATE job_queue SET run_at = 0 WHERE id = ?`).run(current.id);
+      const [next] = repo.dequeue(MESSAGE_DELIVERY, 1);
+      expect(next).toBeTruthy();
+      current = next!;
+    }
+    // Once the gate resolves, the bound applies again → dead-letter.
+    session.waitingForInput = false;
+    await expect(handler(current)).rejects.toThrow(/parked past its budget/);
+  });
+});
+
+describe('isTerminalTurnError — auth failures dead-letter immediately (Codex #2)', () => {
+  it('auth categories are terminal even when flagged recoverable', () => {
+    expect(isTerminalTurnError({ recoverable: true, category: 'authentication' })).toBe(true);
+    expect(isTerminalTurnError({ recoverable: true, category: 'provider_auth_error' })).toBe(true);
+  });
+
+  it('non-recoverable is terminal regardless of category', () => {
+    expect(isTerminalTurnError({ recoverable: false, category: 'permission' })).toBe(true);
+    expect(isTerminalTurnError({ recoverable: false })).toBe(true);
+  });
+
+  it('recoverable non-auth errors retry', () => {
+    expect(isTerminalTurnError({ recoverable: true, category: 'system' })).toBe(false);
+    expect(isTerminalTurnError({ recoverable: true, category: 'connection' })).toBe(false);
+    expect(isTerminalTurnError({ recoverable: true })).toBe(false);
   });
 });

@@ -153,6 +153,34 @@ export class MessageDeliveryTerminalTurnError extends DeadLetterImmediatelyError
   }
 }
 
+/**
+ * Categories that are terminal for DELIVERY regardless of the error's
+ * `recoverable` flag. `ErrorManager.isRecoverable` returns true for every
+ * AUTHENTICATION code except `INVALID_API_KEY` and for all
+ * `PROVIDER_AUTH_ERROR` — but a surfaced auth failure (401, expired token,
+ * unavailable credentials) needs a human to fix the credentials; retrying just
+ * re-invokes a provider that cannot authenticate for the full ~4min budget
+ * before dead-lettering. The manual Retry affordance covers the rare transient
+ * case (e.g. a token-refresh window), so auth is classified terminal here,
+ * matching {@link MessageDeliveryTerminalTurnError}'s documented
+ * "auth/permission/quota" intent. Scoped to the delivery bridge — the global
+ * `isRecoverable` is unchanged for every other consumer. (Codex #2.)
+ */
+const TERMINAL_TURN_ERROR_CATEGORIES: ReadonlySet<string> = new Set([
+  'authentication',
+  'provider_auth_error',
+]);
+
+/**
+ * Whether a turn-end error should dead-letter the delivery job immediately
+ * (no retry budget burned): either flagged non-recoverable, or an auth
+ * category per {@link TERMINAL_TURN_ERROR_CATEGORIES}.
+ */
+export function isTerminalTurnError(error: { recoverable: boolean; category?: string }): boolean {
+  if (!error.recoverable) return true;
+  return error.category !== undefined && TERMINAL_TURN_ERROR_CATEGORIES.has(error.category);
+}
+
 export interface DeliverMessageOptions {
   origin: MessageDeliveryOrigin;
   parentToolUseId?: string | null;
@@ -426,6 +454,14 @@ export interface MessageDeliverySession {
     parentToolUseId?: string | null,
     claimGuard?: () => boolean
   ): Promise<FeedSteerOutcome>;
+  /**
+   * True while the session's human gate is open (an unanswered
+   * `sdk_resume_choice` / `waiting_for_input`). Used by the handler to keep a
+   * parked steer parked (without burning its park budget) as long as the owning
+   * turn is legitimately blocked on a live choice — abandonment is based on the
+   * gate resolving, not elapsed parks. (Codex #11.)
+   */
+  isWaitingForInput?(): boolean;
   /** Clear queued state only if this skipped message still owns it. */
   settleSkippedDelivery?(messageUuid: string): Promise<void>;
 }
