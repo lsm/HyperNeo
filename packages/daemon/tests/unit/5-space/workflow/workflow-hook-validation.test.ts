@@ -150,12 +150,22 @@ describe('validateWorkflowHookBindings', () => {
       'approve_task',
     ] as const;
     // targetNode is only meaningful on send_message — the non-routed variants
-    // omit it (a targetNode there would never match).
+    // omit it (a targetNode there would never match). Each method uses a
+    // DISTINCT hook id (one placement per id).
     const bindings = methods.map((method, i) => {
-      const binding = validBinding({ method, order: i });
+      const binding = validBinding({ method, order: i, hookId: `hook-${method}` });
       return method === 'send_message' ? binding : { ...binding, targetNode: undefined };
     });
     expect(validateWorkflowHookBindings(bindings, undefined, nodes)).toEqual([]);
+  });
+
+  test('rejects the same hook id placed on two bindings (shared state row)', () => {
+    const errors = validateWorkflowHookBindings(
+      [validBinding(), validBinding({ targetNode: undefined })],
+      undefined,
+      nodes
+    );
+    expect(errors.join('\n')).toContain('at most one binding');
   });
 
   test('rejects targetNode on a non-routed method (the binding would never run)', () => {

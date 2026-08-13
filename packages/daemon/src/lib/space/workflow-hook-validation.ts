@@ -200,10 +200,29 @@ export function validateWorkflowHookBindings(
   const errors: string[] = [];
   const validNodes = nodeNames(nodes);
   const validSlotsByNode = agentSlotNamesByNode(nodes);
+  // A hook id may appear on at most ONE binding: runtime state (retry
+  // bookkeeping, human approvals) is keyed (runId, hookId), so a duplicate
+  // placement would share one state row across routes — a retry on one route
+  // cools down the other, and an approval recorded for one binding's stop can
+  // be consumed by another's. (Per-binding state keying is the step-7 fix;
+  // until then duplicates are a validation error.)
+  const seenHookIds = new Set<string>();
 
   for (let i = 0; i < bindings.length; i++) {
     const loc = `hookBindings[${i}]`;
     const binding = bindings[i];
+    if (
+      typeof binding.hookId === 'string' &&
+      binding.hookId.trim().length > 0 &&
+      seenHookIds.has(binding.hookId)
+    ) {
+      errors.push(
+        `${loc}.hookId: "${binding.hookId}" is already placed on another binding — a hook id ` +
+          'may appear on at most one binding (hook state is shared per hook id)'
+      );
+    } else if (typeof binding.hookId === 'string') {
+      seenHookIds.add(binding.hookId);
+    }
     if (!isRecord(binding)) {
       errors.push(`${loc}: expected object`);
       continue;

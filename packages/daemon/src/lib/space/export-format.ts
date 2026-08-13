@@ -720,6 +720,19 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
     }
   }
   if (result.data.hookBindings && result.data.hookBindings.length > 0) {
+    // Mirror the runtime rule: a hook id appears on at most ONE binding
+    // (runtime state is keyed (runId, hookId) — duplicates share one row).
+    const placedHookIds = new Set<string>();
+    for (let bi = 0; bi < result.data.hookBindings.length; bi++) {
+      const binding = result.data.hookBindings[bi];
+      if (placedHookIds.has(binding.hookId)) {
+        return {
+          ok: false,
+          error: `invalid: hookBindings[${bi}].hookId "${binding.hookId}" is already placed on another binding (hook state is shared per hook id)`,
+        };
+      }
+      placedHookIds.add(binding.hookId);
+    }
     const resolvableHookIds = new Set<string>(BUILT_IN_HOOK_IDS);
     for (const custom of result.data.customHooks ?? []) resolvableHookIds.add(custom.id);
     const slotsByNode = new Map<string, Set<string>>();

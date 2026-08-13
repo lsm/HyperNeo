@@ -247,6 +247,43 @@ describe('WorkflowHookEngine.executeAction', () => {
     expect(outcome.blockingHookId).toBe('stop_hook');
   });
 
+  test("a non-routable worker in a multicast does not suppress routable parts' gates", async () => {
+    // ['@worker:Review/reviewer', '@worker:Other/other'] — Other is not
+    // channel-reachable; Review's gate must still run.
+    const STOP_HOOK = scriptHook('mixed_hook', '{"flow":"stop","reason":"blocked by script"}');
+    const workflow = makeWorkflow({
+      customHooks: [STOP_HOOK],
+      nodes: [
+        { id: 'n-coding', name: 'Coding', agents: [{ agentId: 'a1', name: 'coder' }] },
+        { id: 'n-review', name: 'Review', agents: [{ agentId: 'a2', name: 'reviewer' }] },
+        { id: 'n-other', name: 'Other', agents: [{ agentId: 'a3', name: 'other' }] },
+      ],
+      channels: [
+        { from: 'Coding', to: 'Review', label: 'Coding → Review' },
+        // NO channel to Other — it is non-routable.
+      ],
+      hookBindings: [
+        {
+          hookId: 'mixed_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    const engine = makeEngine(workflow);
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: ['@worker:n-review/reviewer', '@worker:n-other/other'], message: 'mixed' },
+      META
+    );
+    expect(outcome.decision).toBe('stop');
+    expect(outcome.blockingHookId).toBe('mixed_hook');
+  });
+
   test('a non-string multicast element does not poison the valid parts', async () => {
     const STOP_HOOK = scriptHook('stop_hook', '{"flow":"stop","reason":"blocked by script"}');
     const workflow = makeWorkflow({
@@ -536,6 +573,43 @@ describe('WorkflowHookEngine.executeAction', () => {
     const outcome = await engine.executeAction('send_message', sendParams(), META);
     expect(outcome.decision).toBe('stop');
     expect(outcome.userState.reason).toContain('elapsed time exceeded');
+  });
+
+  test('a ceiling stop preserves its terminal marker — a reissue cannot restart the cycle', async () => {
+    const RETRY_HOOK = scriptHook('ceil_keep_hook', '{"flow":"retry","reason":"still open"}');
+    const workflow = makeWorkflow({
+      customHooks: [RETRY_HOOK],
+      hookBindings: [
+        {
+          hookId: 'ceil_keep_hook',
+          sourceNode: 'Coding',
+          method: 'mark_complete',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    // First cycle: hits the elapsed ceiling (8-day-old stamp).
+    hookStateRepo.updateWithRetry('run-1', 'ceil_keep_hook', {
+      localState: { __firstRetryAt: Date.now() - 8 * 24 * 60 * 60 * 1000 },
+      retryCount: 10,
+      lastFlow: 'retry',
+      lastReason: 'still open',
+    });
+    const engine = makeEngine(workflow);
+    const first = await engine.executeAction('mark_complete', {}, META);
+    expect(first.decision).toBe('stop');
+
+    // The stop path preserved the bookkeeping and stamped the marker.
+    const state = hookStateRepo.get('run-1', 'ceil_keep_hook');
+    expect(state?.localState.__retryCeilingTerminal).toBe(true);
+    expect(state?.retryCount).toBe(10);
+
+    // A reissued action is IMMEDIATELY terminal (no fresh 7-day cycle).
+    const second = await engine.executeAction('mark_complete', {}, META);
+    expect(second.decision).toBe('stop');
+    expect(second.userState.reason).toContain('retry limit exceeded');
   });
 
   test('a hook-run retry converts to stop at the ceiling (send_message path)', async () => {

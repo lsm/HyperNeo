@@ -207,7 +207,7 @@ function errorMessage(err: unknown): string {
 // Module-level retry queue (persists across the run; replayed on restart)
 // ---------------------------------------------------------------------------
 
-export const QUEUED_RETRYABLE_ACTION_STATE_KEY = '__queuedRetryableAction';
+export const QUEUED_RETRYABLE_ACTION_STATE_KEY = '__queuedRetryableActions';
 const RETRYABLE_ACTION_CANCEL_STATUSES = new Set<WorkflowRunStatus>(['done', 'cancelled']);
 
 interface QueuedRetryableHookAction {
@@ -312,24 +312,45 @@ export class WorkflowHookEngine {
     return this.config.hookStateRepo.get(this.config.workflowRunId, hookId)?.retryCount ?? 0;
   }
 
-  clearQueuedRetryableAction(hookId: string): boolean {
+  clearQueuedRetryableAction(hookId: string, actionKey?: string): boolean {
+    if (actionKey === undefined) {
+      return this.persistStateUpdate(hookId, {
+        localState: { [QUEUED_RETRYABLE_ACTION_STATE_KEY]: null },
+      });
+    }
+    const state = this.config.hookStateRepo.get(this.config.workflowRunId, hookId)?.localState;
+    const map = state?.[QUEUED_RETRYABLE_ACTION_STATE_KEY];
+    if (!map || typeof map !== 'object' || Array.isArray(map)) return true;
+    const next: Record<string, unknown> = { ...(map as Record<string, unknown>) };
+    delete next[actionKey];
     return this.persistStateUpdate(hookId, {
-      localState: { [QUEUED_RETRYABLE_ACTION_STATE_KEY]: null },
+      localState: { [QUEUED_RETRYABLE_ACTION_STATE_KEY]: next },
     });
   }
 
-  getQueuedRetryableAction(hookId: string): QueuedRetryableHookAction | undefined {
-    const state = this.config.hookStateRepo.get(this.config.workflowRunId, hookId)?.localState;
-    const value = state?.[QUEUED_RETRYABLE_ACTION_STATE_KEY];
-    if (!isQueuedRetryableHookAction(value)) return undefined;
-    return value;
+  getQueuedRetryableAction(_hookId: string): QueuedRetryableHookAction | undefined {
+    // One entry per action key (a hook can hold SEVERAL distinct queued
+    // actions — e.g. two different gated sends pending simultaneously);
+    // the singular accessor returns the newest for compatibility with
+    // same-key replacement checks.
+    const actions = this.getQueuedRetryableActions();
+    return actions.length > 0
+      ? actions.reduce((a, b) => (a.queuedAt >= b.queuedAt ? a : b))
+      : undefined;
   }
 
   getQueuedRetryableActions(): QueuedRetryableHookAction[] {
     const hookIds = new Set((this.config.workflow.hookBindings ?? []).map((b) => b.hookId));
-    return [...hookIds]
-      .map((hookId) => this.getQueuedRetryableAction(hookId))
-      .filter((action): action is QueuedRetryableHookAction => action !== undefined);
+    const out: QueuedRetryableHookAction[] = [];
+    for (const hookId of hookIds) {
+      const state = this.config.hookStateRepo.get(this.config.workflowRunId, hookId)?.localState;
+      const map = state?.[QUEUED_RETRYABLE_ACTION_STATE_KEY];
+      if (!map || typeof map !== 'object' || Array.isArray(map)) continue;
+      for (const value of Object.values(map as Record<string, unknown>)) {
+        if (isQueuedRetryableHookAction(value)) out.push(value);
+      }
+    }
+    return out;
   }
 
   /**
@@ -340,7 +361,7 @@ export class WorkflowHookEngine {
   clearQueuedRetryableActionsForKey(actionKey: string): boolean {
     let allCleared = true;
     for (const hookId of this.getHookIdsWithQueuedAction(actionKey)) {
-      if (!this.clearQueuedRetryableAction(hookId)) {
+      if (!this.clearQueuedRetryableAction(hookId, actionKey)) {
         // A failed clear leaves the persisted queued action in place — it
         // re-arms on rehydration and could replay an already-delivered action.
         log.warn(
@@ -356,22 +377,33 @@ export class WorkflowHookEngine {
   clearQueuedRetryableActionsForOwner(hookIds: Iterable<string>, meta: HookActionMeta): string[] {
     const clearedActionKeys: string[] = [];
     for (const hookId of hookIds) {
-      const queued = this.getQueuedRetryableAction(hookId);
-      if (!queued || !sameRetryableActionOwner(queued.meta, meta)) continue;
-      if (!this.clearQueuedRetryableAction(hookId)) {
-        // Do NOT report the key as cleared: the caller cancels the in-memory
-        // timer per returned key, and a persistently-queued action that was
-        // reported cleared would replay after a restart with no timer left
-        // to deduplicate it.
-        log.warn(
-          `Failed to clear queued retryable action for hook "${hookId}"; ` +
-            'it may replay after a restart.'
-        );
-        continue;
+      for (const queued of this.getQueuedRetryableActions().filter(
+        (entry) => entry.hookId === hookId && sameRetryableActionOwner(entry.meta, meta)
+      )) {
+        if (!this.clearQueuedRetryableAction(hookId, queued.actionKey)) {
+          // Do NOT report the key as cleared: the caller cancels the in-memory
+          // timer per returned key, and a persistently-queued action that was
+          // reported cleared would replay after a restart with no timer left
+          // to deduplicate it.
+          log.warn(
+            `Failed to clear queued retryable action for hook "${hookId}"; ` +
+              'it may replay after a restart.'
+          );
+          continue;
+        }
+        clearedActionKeys.push(queued.actionKey);
       }
-      clearedActionKeys.push(queued.actionKey);
     }
     return clearedActionKeys;
+  }
+
+  /** Raw per-action-key queued map for a hook (test/merge-site helper). */
+  getQueuedRetryableActionsMap(hookId: string): Record<string, unknown> | undefined {
+    const state = this.config.hookStateRepo.get(this.config.workflowRunId, hookId)?.localState;
+    const raw = state?.[QUEUED_RETRYABLE_ACTION_STATE_KEY];
+    return raw && typeof raw === 'object' && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>)
+      : undefined;
   }
 
   getHookIdsWithQueuedAction(actionKey: string): string[] {
@@ -498,6 +530,8 @@ export class WorkflowHookEngine {
       reason?: string;
       /** Infrastructure stop — not a hook decision, not human-overridable. */
       overrideIneligible?: boolean;
+      /** Retry-ceiling stop — bookkeeping must SURVIVE the reset below. */
+      retryCeilingReached?: boolean;
     } | null;
     let terminal: Terminal = null;
     let retry: { hookId: string; reason?: string; retryAfterMs?: number } | null = null;
@@ -523,18 +557,26 @@ export class WorkflowHookEngine {
             : undefined;
         const elapsed = firstRetryAt !== undefined ? Date.now() - firstRetryAt : 0;
         if (
+          hookState?.localState.__retryCeilingTerminal === true ||
           attempts >= MAX_RETRY_ATTEMPTS ||
           (firstRetryAt !== undefined && elapsed >= MAX_RETRY_ELAPSED_MS)
         ) {
           terminal = {
             kind: 'stop',
             hookId,
+            retryCeilingReached: true,
             reason: `Hook retry limit exceeded (${
               firstRetryAt !== undefined && elapsed >= MAX_RETRY_ELAPSED_MS
                 ? 'elapsed time exceeded'
                 : `${MAX_RETRY_ATTEMPTS} attempts`
             }): ${hookState?.lastReason ?? 'retrying'}`,
           };
+          // Stamp the terminal marker NOW (not only in the wrapper's stop
+          // path): any later ceiling check — this run or a reissued action —
+          // must be immediately terminal rather than restarting the cycle.
+          this.persistStateUpdate(hookId, {
+            localState: { __retryCeilingTerminal: true },
+          });
           executionLog.push({
             hookId,
             flow: 'stop',
@@ -708,6 +750,7 @@ export class WorkflowHookEngine {
             ? (ceilingState.localState.__firstRetryAt as number)
             : undefined;
         if (
+          ceilingState?.localState.__retryCeilingTerminal === true ||
           attempts >= MAX_RETRY_ATTEMPTS ||
           (firstRetryAt !== undefined && Date.now() - firstRetryAt >= MAX_RETRY_ELAPSED_MS)
         ) {
@@ -716,10 +759,15 @@ export class WorkflowHookEngine {
           terminal = {
             kind: 'stop',
             hookId,
+            retryCeilingReached: true,
             reason: `Hook retry limit exceeded (${
               elapsedCapped ? 'elapsed time exceeded' : `${MAX_RETRY_ATTEMPTS} attempts`
             }): ${ret.reason ?? 'retrying'}`,
           };
+          // See the cooldown-path ceiling: stamp the terminal marker now.
+          this.persistStateUpdate(hookId, {
+            localState: { __retryCeilingTerminal: true },
+          });
           executionLog[executionLog.length - 1] = {
             hookId,
             flow: 'stop',
@@ -935,7 +983,9 @@ export class WorkflowHookEngine {
     const resolver = new ChannelResolver(workflow.channels ?? []);
 
     const actionTargets = new Set<string>();
-    let allRequestedTargetsRoutable = true;
+    // Nodes whose requested resolution was NON-ROUTABLE (per-target, not
+    // global: a mixed multicast's routable parts keep their gates).
+    const nonRoutableResolvedNodes = new Set<string>();
     const isRoutableTarget = (targetNode: string): boolean =>
       nodeNames.has(targetNode) &&
       (resolver.canSend(fromNode, targetNode) || resolver.canSend(meta.agentName, targetNode));
@@ -979,15 +1029,14 @@ export class WorkflowHookEngine {
           // only a resolution that IS a workflow node name can disqualify —
           // a generic address resolving to no node adds no targets and must
           // not suppress the gate (the router delivers it separately).
-          if (
-            resolvedTargets.some(
-              (resolved) =>
-                nodeNames.has(resolved) &&
-                !isBuiltInInterLevelTarget(target) &&
-                !isRoutableTarget(resolved)
-            )
-          ) {
-            allRequestedTargetsRoutable = false;
+          for (const resolved of resolvedTargets) {
+            if (
+              nodeNames.has(resolved) &&
+              !isBuiltInInterLevelTarget(target) &&
+              !isRoutableTarget(resolved)
+            ) {
+              nonRoutableResolvedNodes.add(resolved);
+            }
           }
         }
       } else if (Array.isArray(target)) {
@@ -1035,15 +1084,18 @@ export class WorkflowHookEngine {
             // name no node, the router delivers them separately, and they
             // must not suppress the gate on the node-addressed part of a
             // mixed multicast.
-            if (
-              resolvedTargets.some(
-                (resolved) =>
-                  nodeNames.has(resolved) &&
-                  !isBuiltInInterLevelTarget(t) &&
-                  !isRoutableTarget(resolved)
-              )
-            ) {
-              allRequestedTargetsRoutable = false;
+            for (const resolved of resolvedTargets) {
+              if (
+                nodeNames.has(resolved) &&
+                !isBuiltInInterLevelTarget(t) &&
+                !isRoutableTarget(resolved)
+              ) {
+                // Per-target suppression: a non-routable resolution
+                // disqualifies only bindings for THAT node — the router
+                // processes multicast entries sequentially, so unrelated
+                // routable parts must keep their gates.
+                nonRoutableResolvedNodes.add(resolved);
+              }
             }
           }
         }
@@ -1058,7 +1110,7 @@ export class WorkflowHookEngine {
 
       if (binding.targetNode) {
         if (methodName !== 'send_message') return false;
-        if (!allRequestedTargetsRoutable) return false;
+        if (nonRoutableResolvedNodes.has(binding.targetNode)) return false;
         if (!actionTargets.has(binding.targetNode)) return false;
       }
 
@@ -2013,10 +2065,23 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
         clearRetryableHookActionTimer(actionKey);
       }
 
+      const ceilingHookIds = new Set(
+        outcome.executionLog
+          .filter((record) => record.reason?.includes('retry limit exceeded'))
+          .map((record) => record.hookId)
+      );
       for (const [hookId, patch] of byHook) {
-        patch.retryCount = 0;
-        patch.nextRetryAt = null;
-        patch.localState.__firstRetryAt = undefined; // fresh cycle on re-block
+        if (ceilingHookIds.has(hookId)) {
+          // Ceiling-generated stop: PRESERVE the retry bookkeeping and stamp a
+          // terminal marker — resetting would let a reissued action start a
+          // fresh 7-day cycle (repeat indefinitely); the marker makes any
+          // subsequent ceiling check immediately terminal again.
+          patch.localState.__retryCeilingTerminal = true;
+        } else {
+          patch.retryCount = 0;
+          patch.nextRetryAt = null;
+          patch.localState.__firstRetryAt = undefined; // fresh cycle on re-block
+        }
         if (!engine.persistStateUpdate(hookId, patch)) {
           log.warn(`Failed to persist hook state for ${hookId} on stop`);
         }
@@ -2094,7 +2159,10 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
             // Stamp the FIRST retry time once — the elapsed ceiling for
             // timer-driven retries reads it.
             if (blockingAttempts === 0) patch.localState.__firstRetryAt = now;
-            patch.localState[QUEUED_RETRYABLE_ACTION_STATE_KEY] = {
+            const queuedMap: Record<string, unknown> = {
+              ...engine.getQueuedRetryableActionsMap(hookId),
+            };
+            queuedMap[actionKey] = {
               actionKey,
               hookId: blockingId,
               methodName,
@@ -2105,6 +2173,7 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
               retryAfterMs,
               queuedAt: now,
             };
+            patch.localState[QUEUED_RETRYABLE_ACTION_STATE_KEY] = queuedMap;
           } else {
             patch.retryCount = 0;
             patch.nextRetryAt = null;

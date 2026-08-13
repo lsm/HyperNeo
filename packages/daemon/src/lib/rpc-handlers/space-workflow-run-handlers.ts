@@ -898,12 +898,20 @@ export function setupSpaceWorkflowRunHandlers(
       throw new Error(`Cannot retry hook on a ${workflowRunAttemptLabel(run.status)} workflow run`);
     }
 
+    // Queued actions persist as a per-action-key map; surface every key so a
+    // "retry now" re-arms all of this hook's pending actions.
     const existing = hookStateRepo.get(params.runId, params.hookId);
-    const queuedAction = existing?.localState?.[QUEUED_RETRYABLE_ACTION_STATE_KEY];
-    const queuedActionKey =
-      queuedAction && typeof queuedAction === 'object'
-        ? (queuedAction as Record<string, unknown>).actionKey
-        : undefined;
+    const queuedMap = existing?.localState?.[QUEUED_RETRYABLE_ACTION_STATE_KEY];
+    const queuedActionKeys: string[] =
+      queuedMap && typeof queuedMap === 'object' && !Array.isArray(queuedMap)
+        ? Object.values(queuedMap as Record<string, unknown>)
+            .filter(
+              (value): value is Record<string, unknown> =>
+                !!value && typeof value === 'object' && !Array.isArray(value)
+            )
+            .map((entry) => entry.actionKey)
+            .filter((key): key is string => typeof key === 'string')
+        : [];
     // updateWithRetry refreshes the expected version per attempt — a concurrent
     // retry-timer bumping the version must not fail the "retry now" button.
     // Patch ONLY the queued-action key and the scalar decision fields
@@ -927,7 +935,7 @@ export function setupSpaceWorkflowRunHandlers(
       throw new Error('Hook state update failed due to version conflict');
     }
 
-    if (typeof queuedActionKey === 'string') {
+    for (const queuedActionKey of queuedActionKeys) {
       triggerRetryableHookAction(queuedActionKey);
     }
 

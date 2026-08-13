@@ -188,7 +188,8 @@ async function runGh(opts: {
 async function runGhGraphqlImpl(
   ctx: HookContext,
   query: string,
-  host?: string
+  host?: string,
+  opts?: { timeoutMs?: number }
 ): Promise<GithubResult<unknown>> {
   const args = ['api', 'graphql'];
   if (host) {
@@ -205,6 +206,7 @@ async function runGhGraphqlImpl(
   const result = await runGh({
     workspacePath: ctx.workspacePath,
     args,
+    timeoutMs: opts?.timeoutMs,
   });
   if (!result.ok) return result;
   let parsed: unknown;
@@ -240,7 +242,14 @@ let graphqlRunner: typeof runGhGraphqlImpl = runGhGraphqlImpl;
 
 /** Test seam: substitute (or restore) the GraphQL transport used by the gh* helpers. */
 export function setGraphqlRunnerForTests(
-  fn: ((ctx: HookContext, query: string, host?: string) => Promise<GithubResult<unknown>>) | null
+  fn:
+    | ((
+        ctx: HookContext,
+        query: string,
+        host?: string,
+        opts?: { timeoutMs?: number }
+      ) => Promise<GithubResult<unknown>>)
+    | null
 ): void {
   graphqlRunner = fn ?? runGhGraphqlImpl;
 }
@@ -248,9 +257,10 @@ export function setGraphqlRunnerForTests(
 async function runGhGraphql(
   ctx: HookContext,
   query: string,
-  host?: string
+  host?: string,
+  opts?: { timeoutMs?: number }
 ): Promise<GithubResult<unknown>> {
-  return graphqlRunner(ctx, query, host);
+  return graphqlRunner(ctx, query, host, opts);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -398,15 +408,27 @@ export async function ghGetUnresolvedReviewThreads(
   if (!pr) {
     return { ok: false, retryable: false, error: `unable to parse GitHub PR link: ${link}` };
   }
+  // ONE deadline across the whole logical lookup: each page otherwise gets a
+  // fresh command timeout, so a many-page scan can hold one MCP action for
+  // many multiples of it without the engine able to retry/back off.
+  const deadline = Date.now() + DEFAULT_TIMEOUT_MS;
   const urls: string[] = [];
   let cursor: string | null = null;
   for (let page = 0; page < MAX_THREAD_PAGES; page++) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      return {
+        ok: false,
+        retryable: true,
+        error: 'review-thread scan exceeded its overall deadline (fail closed)',
+      };
+    }
     const after = cursor ? `after:"${cursor}",` : '';
     const query =
       `query { repository(owner:"${pr.owner}",name:"${pr.repo}") { pullRequest(number:${pr.number}) { ` +
       `reviewThreads(first: ${THREADS_PAGE_SIZE}, ${after}) { pageInfo { hasNextPage endCursor } ` +
       'nodes { isResolved comments(first: 1) { nodes { url } } } } } } }';
-    const result = await runGhGraphql(ctx, query, pr.host);
+    const result = await runGhGraphql(ctx, query, pr.host, { timeoutMs: remaining });
     if (!result.ok) return result;
     // Structural fail-closed: a successful envelope whose reviewThreads
     // connection is missing `nodes` or `pageInfo` is a malformed/partial
@@ -523,18 +545,27 @@ export async function ghGetReviewEvidence(
   // Bounded page cap; exhausting it fails closed.
   const REVIEWS_PAGE = 50;
   const MAX_REVIEW_PAGES = 10;
+  const deadline = Date.now() + DEFAULT_TIMEOUT_MS;
   const allReviewNodes: unknown[] = [];
   let lastCommentsPage: unknown = undefined;
   let before: string | null = null;
   let reachedBoundary = false;
   for (let page = 0; page < MAX_REVIEW_PAGES; page++) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      return {
+        ok: false,
+        retryable: true,
+        error: 'review-evidence scan exceeded its overall deadline (fail closed)',
+      };
+    }
     const beforeClause = before ? `, before:"${before}"` : '';
     const query =
       `query { viewer { login } repository(owner:"${pr.owner}",name:"${pr.repo}") { pullRequest(number:${pr.number}) { ` +
       `author { login } reviews(last: ${REVIEWS_PAGE}${beforeClause}) { ` +
       'pageInfo { hasPreviousPage startCursor } nodes { state publishedAt } } ' +
       'comments(last: 50) { nodes { createdAt } } } } }';
-    const result = await runGhGraphql(ctx, query, pr.host);
+    const result = await runGhGraphql(ctx, query, pr.host, { timeoutMs: remaining });
     if (!result.ok) return result;
     lastCommentsPage = result.data;
     const prNode = asRecord(
