@@ -258,4 +258,48 @@ describe('validate-test-matrix.sh', () => {
     },
     TIMEOUT
   );
+
+  it(
+    'rejects a compound false step gate containing always() (P2)',
+    () => {
+      // `always() && github.event_name == 'never'` is always false (GitHub skips
+      // the step) yet contains the `always` substring — substring-matching would
+      // bless a disabled runner while the guard reports it covered. Only an exact
+      // always()/success()/true predicate may count as enabled.
+      expectGuardRejects(
+        path.join(REPO_ROOT, '.github/workflows/main.yml'),
+        (s) =>
+          s.replace(
+            '      - name: Run daemon + shared unit tests (${{ matrix.shard }})\n',
+            "      - name: Run daemon + shared unit tests (${{ matrix.shard }})\n        if: always() && github.event_name == 'never'\n"
+          ),
+        'disabled'
+      );
+    },
+    TIMEOUT
+  );
+
+  it(
+    'ignores a defaults.run.shell under an UNRELATED job (P2)',
+    () => {
+      // A job-scoped defaults.run.shell under the unrelated `check` job does not
+      // change the guarded runners' effective shell, so the guard must stay green
+      // (previously it false-rejected the unit/web/online jobs).
+      const wf = path.join(REPO_ROOT, '.github/workflows/main.yml');
+      const original = fs.readFileSync(wf, 'utf-8');
+      const anchor = '  check:\n';
+      expect(original.includes(anchor)).toBe(true);
+      fs.writeFileSync(
+        wf,
+        original.replace(anchor, '  check:\n    defaults:\n      run:\n        shell: bash\n')
+      );
+      try {
+        const { exitCode } = runGuard();
+        expect(exitCode).toBe(0);
+      } finally {
+        fs.writeFileSync(wf, original);
+      }
+    },
+    TIMEOUT
+  );
 });

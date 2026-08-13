@@ -57,10 +57,20 @@ enabled_run_cmd() {
 		# if:false|never disables a step (>= 6 indent) or the whole job (<= 4 indent).
 		# Accept the optional ${{ }} expression wrapper GitHub allows (if: ${{ false }}).
 		/if:[[:space:]]*(\$\{\{[[:space:]]*)?(false|never)([[:space:]]|\}|$)/ { n=0; while (substr($0,n+1,1)==" ") n++; if (n <= 4) job_disabled=1; else disabled=1 }
-		# Step-level if: that is NOT always()/success() — a nonliteral always-false
-		# (e.g. github.event_name == 'never') cannot be evaluated, so treat any
-		# unknown step-level condition as potentially disabling (conservative).
-		/if:/ { n=0; while (substr($0,n+1,1)==" ") n++; if (n > 4 && $0 !~ /(always|success)/) disabled=1 }
+		# Step-level if: (indent > 4). Permit ONLY an exact always()/success()/true
+		# predicate (optionally ${{ }}-wrapped). A compound such as
+		# `always() && github.event_name == 'never'` is skipped by GitHub yet contains
+		# the `always` substring, so substring-matching would bless a disabled runner
+		# while this guard reports it enabled. Any other step-level gate cannot be
+		# evaluated and is treated as potentially disabling (conservative).
+		/if:/ {
+			n=0; while (substr($0,n+1,1)==" ") n++
+			if (n > 4) {
+				v=$0; sub(/^.*if:[[:space:]]*/, "", v); gsub(/[[:space:]]/, "", v)
+				sub(/^\$\{\{/, "", v); sub(/\}\}$/, "", v)
+				if (v != "always()" && v != "success()" && v != "true") disabled=1
+			}
+		}
 		/^[[:space:]]*#/ { next }
 		# Folded run: keep accumulating; on dedent just stop (NO emit — a later
 		# if:false on the same step must be honored, so emit is deferred to the step boundary/END).
@@ -200,7 +210,14 @@ runner_continue_on_error() {
 		/^[[:space:]]*-[[:space:]]/ { emit(); runval=""; disabled=0; incmd=0; conerr=0 }
 		/^[[:space:]]*#/ { next }
 		/if:[[:space:]]*(\$\{\{[[:space:]]*)?(false|never)([[:space:]]|\}|$)/ { n=0; while (substr($0,n+1,1)==" ") n++; if (n <= 4) job_disabled=1; else disabled=1 }
-		/if:/ { n=0; while (substr($0,n+1,1)==" ") n++; if (n > 4 && $0 !~ /(always|success)/) disabled=1 }
+		/if:/ {
+			n=0; while (substr($0,n+1,1)==" ") n++
+			if (n > 4) {
+				v=$0; sub(/^.*if:[[:space:]]*/, "", v); gsub(/[[:space:]]/, "", v)
+				sub(/^\$\{\{/, "", v); sub(/\}\}$/, "", v)
+				if (v != "always()" && v != "success()" && v != "true") disabled=1
+			}
+		}
 		# continue-on-error at job scope (<=4 indent) covers every step; step scope (>4) that step only.
 		# Reject ANY value that is not exactly `false` — a truthy expression such as
 		# `${{ 1 == 1 }}` or `${{ true }}` masks failures just like literal `true`.
@@ -409,19 +426,31 @@ reject_invalid_module_values() {
 # guard reports them covered. The legit workflows set no shell anywhere.
 runner_shell_override() {
 	local file="$1" marker="$2" job="$3"
-	# (a) A defaults.run.shell at workflow OR job scope applies to every step.
-	# Capture the indent of the `defaults:` line and stay in-scope while later
-	# lines indent STRICTLY deeper; a dedent to <= that column closes the block —
-	# so the `run:`/`shell:` children stay in-scope at EITHER scope (a blanket
-	# indent-class reset would miss the workflow-scope `  run:`/`    shell:`).
-	if awk '
-		/^[[:space:]]*defaults:[[:space:]]*$/ {
-			di=0; while (substr($0, di+1, 1)==" ") di++; in_defaults=1; next
-		}
+	# (a) A defaults.run.shell applies to the guarded runner ONLY at workflow
+	# scope (a top-level `defaults:`, which covers every job) or when nested under
+	# the target job. A job-scoped `defaults:` under an UNRELATED job (e.g. `check`)
+	# leaves the runner's effective shell unchanged and must not be reported, so
+	# track ownership: workflow scope (indent 0) is always relevant; a nested
+	# `defaults:` is relevant only when its enclosing job is the target. While
+	# inside a defaults block, consume children at strictly deeper indent so a
+	# workflow-scope `  run:` is not misread as a job key; a dedent closes it.
+	if awk -v job="$job" '
 		in_defaults {
 			n=0; while (substr($0, n+1, 1)==" ") n++
-			if (n <= di) in_defaults=0
-			else if (/shell:/) { found=1; exit }
+			if (n <= di) { in_defaults=0 }
+			else {
+				if (/shell:/ && scope != "other") { found=1; exit }
+				next
+			}
+		}
+		/^[[:space:]]{2}[[:alnum:]_-]+:[[:space:]]*$/ {
+			curjob=$0; sub(/^[[:space:]]+/, "", curjob); sub(/:.*$/, "", curjob); next
+		}
+		/^[[:space:]]*defaults:[[:space:]]*$/ {
+			di=0; while (substr($0, di+1, 1)==" ") di++
+			in_defaults=1
+			scope = (di == 0) ? "wf" : (curjob == job ? "job" : "other")
+			next
 		}
 		END { exit !found }
 	' "$file"; then
