@@ -33,7 +33,8 @@ interface TaskSessionChatComposerProps {
   onSend: (
     message: string,
     target: TaskComposerTarget | null,
-    images?: MessageImage[]
+    images?: MessageImage[],
+    deliveryMode?: MessageDeliveryMode
   ) => Promise<boolean>;
   /** Forwarded to ChatComposer/MessageInput so the thread column can own the drop zone. */
   registerDropTarget?: RegisterFileDropTarget;
@@ -130,9 +131,9 @@ export function TaskSessionChatComposer({
   const handleSend = async (
     content: string,
     images?: MessageImage[],
-    _deliveryMode?: MessageDeliveryMode
+    deliveryMode?: MessageDeliveryMode
   ): Promise<boolean> => {
-    return onSend(content, selectedTarget, images);
+    return onSend(content, selectedTarget, images, deliveryMode);
   };
 
   const handleOpenTools = () => {
@@ -229,9 +230,10 @@ export function TaskSessionChatComposer({
         sessionId={targetSessionId ?? ''}
         readonly={false}
         isProcessing={targetIsProcessing}
-        // Task-thread sends are always delivered immediately (sendThreadMessage
-        // has no deferred/queued delivery), so Queue controls must not appear.
-        supportsQueueDelivery={false}
+        // The task thread now honors deferred (Queue) delivery through
+        // sendThreadMessage → space.task.sendMessage, so Queue controls are
+        // available alongside the Steer button.
+        supportsQueueDelivery
         thinkingLevel={thinkingLevel}
         features={{
           coordinator: false,

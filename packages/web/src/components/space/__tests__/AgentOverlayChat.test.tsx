@@ -162,6 +162,7 @@ describe('AgentOverlayChat', () => {
           agentName: 'coder',
           nodeExecutionId: 'exec-coder-1',
         },
+        undefined,
         undefined
       );
     });
@@ -191,7 +192,8 @@ describe('AgentOverlayChat', () => {
           agentName: 'coder',
           nodeExecutionId: 'exec-coder-1',
         },
-        [{ media_type: 'image/png', data: 'AAAAB' }]
+        [{ media_type: 'image/png', data: 'AAAAB' }],
+        undefined
       );
     });
   });

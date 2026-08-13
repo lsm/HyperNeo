@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
-import { runMigrations, runMigration194 } from '../../../../../src/storage/schema/migrations.ts';
+import { runMigrations, runMigration197 } from '../../../../../src/storage/schema/migrations.ts';
 
 function hasHooksColumn(db: BunDatabase): boolean {
   const row = db
@@ -41,12 +41,12 @@ describe('Migration 194 deferred hooks drop', () => {
   test('defers the drop while an unpinned non-terminal run references legacy hooks', () => {
     const db = makeLegacyDb();
     try {
-      runMigration194(db);
+      runMigration197(db);
       expect(hasHooksColumn(db)).toBe(true);
 
       // Terminal runs no longer block: the drop completes on the next pass.
       db.prepare(`UPDATE space_workflow_runs SET status = 'done' WHERE id = 'run-1'`).run();
-      runMigration194(db);
+      runMigration197(db);
       expect(hasHooksColumn(db)).toBe(false);
     } finally {
       db.close();
@@ -109,11 +109,11 @@ describe('Migration 194 deferred hooks drop', () => {
         `UPDATE space_workflow_runs SET definition_version = 'abc123' WHERE id = 'run-1'`
       ).run();
       db.exec('PRAGMA foreign_keys = ON');
-      runMigration194(db);
+      runMigration197(db);
       expect(hasHooksColumn(db)).toBe(true);
       // All runs terminal: the drop completes.
       db.prepare(`UPDATE space_workflow_runs SET status = 'done' WHERE id = 'run-1'`).run();
-      runMigration194(db);
+      runMigration197(db);
       expect(hasHooksColumn(db)).toBe(false);
     } finally {
       db.close();
@@ -124,7 +124,7 @@ describe('Migration 194 deferred hooks drop', () => {
     const db = makeLegacyDb();
     try {
       db.prepare(`UPDATE space_workflows SET hooks = '[]' WHERE id = 'wf-1'`).run();
-      runMigration194(db);
+      runMigration197(db);
       expect(hasHooksColumn(db)).toBe(false);
     } finally {
       db.close();

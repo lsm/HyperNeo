@@ -1,5 +1,6 @@
 import {
   isWorkflowRecoveryTransition,
+  type MessageDeliveryMode,
   type MessageImage,
   type SpaceTaskActivityMember,
   type SpaceTaskActivityState,
@@ -1160,7 +1161,8 @@ export function SpaceTaskPane({
   const sendThreadMessage = async (
     nextMessage: string,
     target: TaskComposerTarget | null,
-    images?: MessageImage[]
+    images?: MessageImage[],
+    deliveryMode?: MessageDeliveryMode
   ): Promise<boolean> => {
     if (!nextMessage) return false;
     if (!runtimeSpaceId || !task) return false;
@@ -1186,7 +1188,8 @@ export function SpaceTaskPane({
           // multiple nodes reuse the same agent slot name.
           ...(target.nodeId ? { workflowNodeId: target.nodeId } : {}),
         },
-        images
+        images,
+        deliveryMode
       );
 
       // When the daemon queued the message for a not-yet-spawned agent,

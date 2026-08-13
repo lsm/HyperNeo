@@ -514,4 +514,40 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
     expect(session.markDeliveryDeferredByUuid).toHaveBeenCalledTimes(1); // enqueued → deferred
     expect(session.saveUserMessage).not.toHaveBeenCalled(); // row reused, no duplicate
   });
+
+  it('a deferred human message to a busy live session persists as a deferred row (task #949)', async () => {
+    // Full Queue/next-turn path: space.task.sendMessage forwards
+    // deliveryMode:'defer' as injectSubSessionMessage's 5th arg. Against a live,
+    // busy (processing) session it must persist via saveUserMessage('deferred')
+    // — replayed at the next idle boundary, NOT enqueued as an immediate steer.
+    // The rate_limit_cooldown test above enters the deferred branch via the
+    // cooldown clause with the default immediate mode; this guards the explicit
+    // (deliveryMode === 'defer' && isBusy) clause for a human message.
+    const { manager, session } = makeManager({}); // no existing row → fresh persist
+    const live = {
+      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
+      getProcessingState: () => ({ status: 'processing' }),
+      ensureQueryStarted: session.ensureStartedMock,
+      clearConversationContext: session.clearMock,
+      messageQueue: { enqueueWithId: session.enqueueMock },
+    } as unknown as AgentSession;
+    indexSession(manager, live);
+
+    // isSyntheticMessage=false → inputKind='human' (no resetContextPerTurn clear).
+    await manager.injectSubSessionMessage(
+      SESSION_ID,
+      'queue for next turn',
+      false,
+      undefined,
+      'defer'
+    );
+
+    expect(session.saveUserMessage).toHaveBeenCalledTimes(1);
+    const [sid, _sdkMsg, status, origin] = session.saveUserMessage.mock.calls[0];
+    expect(sid).toBe(SESSION_ID);
+    expect(status).toBe('deferred');
+    expect(origin).toBeUndefined();
+    // Not enqueued for an immediate steer — it waits for the next idle boundary.
+    expect(session.enqueueMock).not.toHaveBeenCalled();
+  });
 });

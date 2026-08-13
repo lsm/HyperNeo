@@ -665,6 +665,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			delivered_session_id TEXT,
 			expires_at INTEGER NOT NULL,
 			created_at INTEGER NOT NULL,
+			delivery_mode TEXT,
 			FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
 		)
 	`);

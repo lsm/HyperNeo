@@ -984,9 +984,19 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // signal (refreshed by tool calls / message delivery / commit pushes,
   // independent of updated_at) so stall detection is not keyed off updated_at.
   run(migrationMarkerKey(191), () => runMigration191(db));
+
+  // Migration 192: Add `delivery_mode` to pending_agent_messages so a deferred
+  //   ("queue for next turn") human message that lands in the pending queue
+  //   (target not live yet) retains its mode when flushed after spawn — instead
+  //   of defaulting to immediate and steering the kickoff turn. NULL (legacy
+  //   rows + callers that don't pass it) behaves as before (immediate).
+  //   Idempotent ALTER TABLE ADD COLUMN; new DBs get it via this ALTER since
+  //   M92 creates the table.
   run(migrationMarkerKey(192), () => runMigration192(db));
-  run(migrationMarkerKey(193), () => runMigration193(db));
-  run(migrationMarkerKey(194), () => runMigration194(db));
+  // Hook-v2 migrations renumbered past dev's 192 (delivery_mode).
+  run(migrationMarkerKey(195), () => runMigration195(db));
+  run(migrationMarkerKey(196), () => runMigration196(db));
+  run(migrationMarkerKey(197), () => runMigration197(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -12412,12 +12422,29 @@ export function runMigration191(db: BunDatabase): void {
 }
 
 /**
- * Migration 192: add v2 hook-storage columns to space_workflows.
+ * Migration 192: pending_agent_messages.delivery_mode — preserves a deferred
+ * ("queue for next turn") human message's delivery mode across the pending
+ * queue. When such a message targets an agent with no live session yet it is
+ * enqueued; `flushPendingMessagesForTarget` later replays it. Without this
+ * column the flush passes an undefined mode, defaulting to immediate, so a
+ * message the user queued for the next turn instead steers the kickoff turn
+ * if the spawned session is already processing. NULL (legacy rows + callers
+ * that don't pass a mode) keeps the prior immediate behavior. (task #949.)
+ */
+export function runMigration192(db: BunDatabase): void {
+  if (!tableExists(db, 'pending_agent_messages')) return;
+  if (!tableHasColumn(db, 'pending_agent_messages', 'delivery_mode')) {
+    db.exec(`ALTER TABLE pending_agent_messages ADD COLUMN delivery_mode TEXT`);
+  }
+}
+
+/**
+ * Migration 195: add v2 hook-storage columns to space_workflows.
  *
  * `hook_bindings` (HookBinding[]) and `custom_hooks` (CustomHook[]) persist the
  * v2 two-layer hook model. Idempotent via table/column existence guards.
  */
-export function runMigration192(db: BunDatabase): void {
+export function runMigration195(db: BunDatabase): void {
   if (!tableExists(db, 'space_workflows')) return;
   if (!tableHasColumn(db, 'space_workflows', 'hook_bindings')) {
     db.exec(`ALTER TABLE space_workflows ADD COLUMN hook_bindings TEXT`);
@@ -12428,7 +12455,7 @@ export function runMigration192(db: BunDatabase): void {
 }
 
 /**
- * Migration 193 — workflow hooks v2 hook-state columns.
+ * Migration 196 — workflow hooks v2 hook-state columns.
  *
  * The v2 hook-state snapshot carries the last flow decision (`last_flow`) and
  * its reason (`last_reason`) as top-level fields, replacing the old
@@ -12437,7 +12464,7 @@ export function runMigration192(db: BunDatabase): void {
  * (SQLite column drops are intrusive) but dormant. Persisted hook state is
  * per-run and is re-seeded, not migrated.
  */
-export function runMigration193(db: BunDatabase): void {
+export function runMigration196(db: BunDatabase): void {
   if (!tableExists(db, 'workflow_hook_state')) return;
   if (!tableHasColumn(db, 'workflow_hook_state', 'last_flow')) {
     db.exec(`ALTER TABLE workflow_hook_state ADD COLUMN last_flow TEXT`);
@@ -12448,7 +12475,7 @@ export function runMigration193(db: BunDatabase): void {
 }
 
 /**
- * Migration 194 — drop the retired `hooks` column from space_workflows.
+ * Migration 197 — drop the retired `hooks` column from space_workflows.
  *
  * The v2 two-layer model stores hook placement in `hook_bindings` (and custom
  * hook definitions in `custom_hooks`); the legacy `hooks` column is no longer
@@ -12469,7 +12496,7 @@ export function runMigration193(db: BunDatabase): void {
  * column is harmless (nothing reads it once the workflows have
  * hook_bindings). On the next startup with no such runs, the drop completes.
  */
-export function runMigration194(db: BunDatabase): boolean {
+export function runMigration197(db: BunDatabase): boolean {
   if (!tableExists(db, 'space_workflows')) return true;
   if (tableHasColumn(db, 'space_workflows', 'hooks')) {
     // Any non-terminal run (pinned OR NOT — the restamp also defers while
