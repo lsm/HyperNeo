@@ -1199,6 +1199,31 @@ describe('message-delivery v2 — steer park bound (dead-letter after MAX_STEER_
     await expect(handler(current)).rejects.toThrow(/awaited acceptance past its budget/);
   });
 
+  it('a persisted-submitted ACP steer parks to the same acceptance-sized budget, then dead-letters', async () => {
+    // Companion of the awaiting_acceptance test above: the re-run path where
+    // the row is already `submitted` (onSent fired) uses the same
+    // MAX_ACP_STEER_PARKS bound — covering ACP's acceptance window, not the
+    // generic turn-blocked budget.
+    const session = new MockSession();
+    const handler = createMessageDeliveryHandler({
+      jobQueue: repo,
+      getSession: () => session,
+      getMessageContent: () => ({ content: 'steer', sendStatus: 'submitted' }),
+    });
+
+    let current = steerJob(repo, 'msg-acp-submitted-bound');
+    for (let i = 0; i < MAX_ACP_STEER_PARKS; i++) {
+      const result = await handler(current);
+      expect(result).toMatchObject({ parked: 'acp_awaiting_acceptance' });
+      expect(session.feedCalls).toBe(0); // never re-fed
+      db.prepare(`UPDATE job_queue SET run_at = 0 WHERE id = ?`).run(current.id);
+      const [next] = repo.dequeue(MESSAGE_DELIVERY, 1);
+      current = next!;
+    }
+    expect(repo.getParkCount(current.id)).toBeGreaterThanOrEqual(MAX_ACP_STEER_PARKS);
+    await expect(handler(current)).rejects.toThrow(/awaited acceptance past its budget/);
+  });
+
   it('a steer parked behind an OPEN human gate keeps parking past the budget (Codex #11)', async () => {
     // An unanswered sdk_resume_choice (waiting_for_input) is a legitimately
     // blocked turn, not abandonment — the steer must not be dead-lettered while

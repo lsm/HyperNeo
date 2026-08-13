@@ -181,6 +181,8 @@ function UserMessageRetryControl({
     return (
       <span
         class="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-orange-200"
+        role="status"
+        aria-live="polite"
         data-testid="user-delivery-retry-countdown"
       >
         retrying in {formatRetryCountdown(remaining)}
@@ -195,7 +197,7 @@ function UserMessageRetryControl({
         type="button"
         onClick={handleRetry}
         disabled={retrying}
-        class="text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full border border-red-500/45 bg-red-500/10 text-red-200 hover:bg-red-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        class="text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full border border-red-500/45 bg-red-500/10 text-red-200 hover:bg-red-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 focus-visible:ring-offset-dark-950"
         data-testid="user-delivery-retry-button"
       >
         {retrying ? 'Retrying…' : 'Retry'}

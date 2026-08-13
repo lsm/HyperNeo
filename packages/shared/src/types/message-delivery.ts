@@ -27,8 +27,10 @@ export type MessageDeliveryStatus =
  * Active-job retry detail attached to a user message in the `retrying` state
  * (and, briefly, while a delivery-driven turn is being re-driven after a
  * recoverable provider error). `runAt` is the next attempt time (epoch ms); the
- * UI renders a countdown from `runAt - now` and "attempt N/M" from
- * `count`/`maxRetries`. Omitted when no delivery job is active.
+ * UI renders a countdown from `runAt - now` and "retry N/Max" from
+ * `count`/`maxRetries` (`count` is the job's retry_count — completed failures —
+ * so the label is "retry", not "attempt", which would read off-by-one). Omitted
+ * when no delivery job is active.
  */
 export interface MessageDeliveryRetryInfo {
   count: number;
