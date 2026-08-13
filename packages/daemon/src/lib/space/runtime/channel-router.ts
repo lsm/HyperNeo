@@ -656,6 +656,11 @@ export class ChannelRouter {
         );
         throw new ActivationError(this.deadLoopReason(fromRole, toTarget));
       }
+      // The channel is not in a dead loop right now, so it has recovered —
+      // either the window aged out or a human touch cleared the history. Drop
+      // any stale dedupe entry so a *new* loop after recovery surfaces a fresh
+      // notification rather than being suppressed by the previous incident.
+      this.deadLoopNotifiedAt.delete(`${runId}:${channelIndex}`);
     }
 
     // ── 4. Lazy activation ─────────────────────────────────────────────────

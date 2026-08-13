@@ -12429,10 +12429,14 @@ export function runMigration191(db: BunDatabase): void {
  */
 export function runMigration192(db: BunDatabase): void {
   if (!tableExists(db, 'space_workflow_runs')) return;
-  if (tableExists(db, 'channel_cycle_events')) return;
 
+  // Create the table and its window index independently and idempotently. If
+  // the daemon exited after the CREATE TABLE but before the CREATE INDEX (and
+  // before the migration marker was written), re-running must still create the
+  // index — otherwise rate checks and pruning would scan the full cross-run
+  // event table indefinitely. IF NOT EXISTS makes both safe to re-run.
   db.exec(`
-		CREATE TABLE channel_cycle_events (
+		CREATE TABLE IF NOT EXISTS channel_cycle_events (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			run_id TEXT NOT NULL,
 			channel_index INTEGER NOT NULL,
@@ -12441,7 +12445,7 @@ export function runMigration192(db: BunDatabase): void {
 		)
 	`);
   db.exec(`
-		CREATE INDEX idx_channel_cycle_events_window
+		CREATE INDEX IF NOT EXISTS idx_channel_cycle_events_window
 		ON channel_cycle_events(run_id, channel_index, sent_at)
 	`);
 }

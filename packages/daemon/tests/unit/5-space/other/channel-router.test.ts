@@ -1168,6 +1168,78 @@ describe('ChannelRouter', () => {
       unsub();
     });
 
+    test('cyclic channel: a new loop after a human-touch reset surfaces a fresh notification', async () => {
+      // Dedupe is cleared when a cyclic send is allowed again, so a distinct
+      // second incident after explicit human intervention is still surfaced.
+      const bus = new InternalEventBus<DaemonInternalEventMap>();
+      const deadLoopEvents: DaemonInternalEventMap['space.workflowRun.deadLoop'][] = [];
+      const unsub = bus.subscribe(
+        'space.workflowRun.deadLoop',
+        (e) => {
+          deadLoopEvents.push(e);
+        },
+        { subscriberName: 'test-collector:space.workflowRun.deadLoop:reset-reloop' }
+      );
+
+      const routerWithBus = new ChannelRouter({
+        taskRepo,
+        workflowRunRepo,
+        workflowManager,
+        agentManager,
+        channelCycleRepo,
+        nodeExecutionRepo: new NodeExecutionRepository(db),
+        internalEventBus: bus,
+      });
+
+      const channels: WorkflowChannel[] = [
+        { id: 'ch-fwd', from: 'Sender', to: 'Receiver' },
+        { id: 'ch-bwd', from: 'Receiver', to: 'Sender' },
+      ];
+      const workflow = buildWorkflow(
+        SPACE_ID,
+        workflowManager,
+        [
+          { id: NODE_A, name: 'Sender', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+          { id: NODE_B, name: 'Receiver', agents: [{ agentId: AGENT_PLANNER, name: 'planner' }] },
+        ],
+        channels
+      );
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Reset Reloop Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+      // First incident: block + notify.
+      const t0 = Date.now();
+      for (let i = 0; i < 15; i++) channelCycleRepo.recordCycleEvent(run.id, 1, t0 - i * 1000);
+      await expect(
+        routerWithBus.deliverMessage(run.id, 'planner', 'coder', 'first loop')
+      ).rejects.toThrow(/dead loop/);
+      expect(deadLoopEvents).toHaveLength(1);
+
+      // Human touch clears the loop; the next send is allowed (and drops dedupe).
+      channelCycleRepo.resetAllForRun(run.id);
+      const delivered = await routerWithBus.deliverMessage(
+        run.id,
+        'planner',
+        'coder',
+        'after reset'
+      );
+      expect(delivered.runId).toBe(run.id);
+
+      // A second, distinct rapid loop must surface a FRESH notification.
+      const t1 = Date.now();
+      for (let i = 0; i < 15; i++) channelCycleRepo.recordCycleEvent(run.id, 1, t1 - i * 1000);
+      await expect(
+        routerWithBus.deliverMessage(run.id, 'planner', 'coder', 'second loop')
+      ).rejects.toThrow(/dead loop/);
+      expect(deadLoopEvents).toHaveLength(2);
+
+      unsub();
+    });
+
     test('cyclic channel: human touch (resetAllForRun) lifts a dead-loop block', async () => {
       // Router-level coverage of the reset-on-human-touch contract — the repo
       // layer is covered separately in channel-cycle-repository.test.ts.
