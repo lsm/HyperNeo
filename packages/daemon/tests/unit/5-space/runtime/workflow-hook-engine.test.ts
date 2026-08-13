@@ -358,7 +358,7 @@ describe('WorkflowHookEngine.executeAction', () => {
     expect(outcome.userState.reason).toContain('re-create hooks as v2 bindings');
   });
 
-  test('reserved stamps outside the recent window stay oldest-last (identity order)', () => {
+  test('reserved stamps outside the recent window stay oldest-last (identity order)', async () => {
     // Push the reserved stamps out of the freshest-50 window with newer
     // artifacts, then verify the ctx window's LAST reserved stamp is the
     // OLDEST one (getPrimaryLink takes the last match).
@@ -371,6 +371,10 @@ describe('WorkflowHookEngine.executeAction', () => {
       artifactKey: '__pr_validated__',
       data: { link: 'https://github.com/o/r/pull/OLD', kind: 'pr' },
     });
+    // Distinct createdAt: the repo stamps Date.now(), and two same-millisecond
+    // rows leave the ASC tie order unspecified (the assertion below flipped in
+    // CI on a tie).
+    await new Promise((resolve) => setTimeout(resolve, 5));
     artifactRepo.upsert({
       id: 'a-newer',
       runId: 'run-1',
