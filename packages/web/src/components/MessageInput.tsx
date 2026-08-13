@@ -717,6 +717,18 @@ export default function MessageInput({
     void refreshQueuedMessages();
   }, [refreshQueuedMessages]);
 
+  // The queue trays (current-turn / next-turn) are per-session. Reset them the
+  // moment the targeted session changes so a stale tray from the previous
+  // target never survives — notably when the task composer switches to a
+  // not-yet-started target (sessionId='') whose byStatus refresh fails and is
+  // swallowed, which would otherwise leave the prior agent's queue visible with
+  // its actions bound to the now-empty session id. The refresh effect above
+  // repopulates for a live target; this guarantees the stale case clears.
+  useEffect(() => {
+    setQueuedForCurrentTurn([]);
+    setQueuedForNextTurn([]);
+  }, [sessionId]);
+
   useEffect(() => {
     if (!agentWorking && queuedForCurrentTurn.length === 0 && queuedForNextTurn.length === 0)
       return;

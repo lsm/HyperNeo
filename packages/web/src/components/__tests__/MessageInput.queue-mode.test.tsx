@@ -386,4 +386,46 @@ describe('MessageInput queue mode', () => {
     expect(container.textContent).not.toContain('Show 1 more');
     expect(container.textContent).not.toContain('Show less');
   });
+
+  it('clears the queue trays when the targeted session changes (task-composer target switch)', async () => {
+    // Regression for enabling Queue delivery on the task composer: switching
+    // targets (e.g. to a not-yet-started agent whose sessionId is '') must not
+    // leave the previous agent's queue tray visible. Model the failure case —
+    // the new session's byStatus refresh rejects — and assert the trays reset
+    // anyway (the clear-on-sessionId-change effect), instead of leaving the
+    // prior agent's queue with actions bound to the now-empty session id.
+    setQueueResponses({
+      deferred: [
+        {
+          dbId: 'db-deferred',
+          uuid: 'uuid-deferred',
+          timestamp: 1,
+          status: 'deferred',
+          text: 'send next',
+        },
+      ],
+    });
+
+    const { container, rerender } = render(<MessageInput sessionId="session-1" onSend={vi.fn()} />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[data-testid="queue-overlay"]')).toBeTruthy();
+    expect(
+      container.querySelector('[data-testid="queued-next-turn-bubble"]')?.textContent
+    ).toContain('send next');
+
+    // Switch to a new target whose queue refresh fails.
+    mockRequest.mockImplementation(async () => {
+      throw new Error('session not found');
+    });
+    rerender(<MessageInput sessionId="session-2" onSend={vi.fn()} />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[data-testid="queue-overlay"]')).toBeNull();
+  });
 });
