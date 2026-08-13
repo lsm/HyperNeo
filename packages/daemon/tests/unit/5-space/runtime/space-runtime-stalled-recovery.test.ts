@@ -1421,7 +1421,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
     });
 
-    test('cyclic channel at maxCycles → run blocked', async () => {
+    test('cyclic channel in a dead loop → run blocked', async () => {
       const workflow = buildLinearWorkflow(
         SPACE_ID,
         workflowManager,
@@ -1440,19 +1440,25 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       const run = workflowRunRepo.createRun({
         spaceId: SPACE_ID,
         workflowId: workflow.id,
-        title: 'Cycle cap handoff',
+        title: 'Dead-loop handoff',
       });
       workflowRunRepo.transitionStatus(run.id, 'in_progress');
       const task = taskRepo.createTask({
         spaceId: SPACE_ID,
-        title: 'Cycle cap handoff',
+        title: 'Dead-loop handoff',
         description: '',
         workflowRunId: run.id,
         workflowNodeId: STEP_A,
         status: 'in_progress',
       });
       seedExec(run.id, STEP_B, 'Review', 'idle');
-      new ChannelCycleRepository(db).incrementCycleCount(run.id, 1, 1);
+      // Seed a dead-loop state on the cyclic Review→Coding channel: 15 rapid
+      // traversals within the rate window. Recovery must refuse to re-activate
+      // it. (A single lifetime increment no longer blocks — only a true
+      // runaway rate does.)
+      const cycleRepo = new ChannelCycleRepository(db);
+      const now = Date.now();
+      for (let i = 0; i < 15; i++) cycleRepo.recordCycleEvent(run.id, 1, now - i * 1000);
 
       await makeRuntime({
         pendingMessageRepo: new PendingAgentMessageRepository(db),

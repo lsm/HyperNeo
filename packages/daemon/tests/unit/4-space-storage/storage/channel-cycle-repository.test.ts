@@ -158,3 +158,105 @@ describe('ChannelCycleRepository — resetAllForRun (human touch)', () => {
     expect(after).toBeGreaterThan(before);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Rate-based dead-loop detection (primary gate) — channel_cycle_events
+// ---------------------------------------------------------------------------
+
+describe('ChannelCycleRepository — rate-based dead-loop detection', () => {
+  // A fixed "now" and a 5-minute window keep these tests deterministic without
+  // depending on real wall-clock time.
+  const NOW = 1_700_000_000_000;
+  const WINDOW = 5 * 60 * 1000;
+
+  test('recordCycleEvent stores timestamped traversals', () => {
+    repo.recordCycleEvent(RUN_ID_A, 1, NOW);
+    repo.recordCycleEvent(RUN_ID_A, 1, NOW + 1000);
+    expect(repo.countRecentCycleEvents(RUN_ID_A, 1, NOW + 2000, WINDOW)).toBe(2);
+  });
+
+  test('countRecentCycleEvents only counts traversals inside the window', () => {
+    // Two traversals well outside the window (an hour ago) ...
+    repo.recordCycleEvent(RUN_ID_A, 1, NOW - 60 * 60 * 1000);
+    repo.recordCycleEvent(RUN_ID_A, 1, NOW - 30 * 60 * 1000);
+    // ... and three inside it.
+    repo.recordCycleEvent(RUN_ID_A, 1, NOW - 60_000);
+    repo.recordCycleEvent(RUN_ID_A, 1, NOW - 30_000);
+    repo.recordCycleEvent(RUN_ID_A, 1, NOW - 10_000);
+
+    expect(repo.countRecentCycleEvents(RUN_ID_A, 1, NOW, WINDOW)).toBe(3);
+  });
+
+  test('a genuine extended review spread over hours never trips the threshold', () => {
+    // Simulate 30 review round-trips on the same channel, each an hour apart —
+    // far more than the lifetime cap ever allowed, but spread over a whole day.
+    // The rolling 5-minute window must only ever see at most one at a time.
+    for (let i = 0; i < 30; i++) {
+      const t = NOW + i * 60 * 60 * 1000;
+      repo.recordCycleEvent(RUN_ID_A, 1, t);
+      // At every point in time, the windowed count stays tiny.
+      expect(repo.isDeadLoopReached(RUN_ID_A, 1, t, 15, WINDOW)).toBe(false);
+    }
+  });
+
+  test('a tight ping-pong within the window trips the threshold', () => {
+    // 15 rapid traversals inside the window. After the 15th, the next attempt
+    // is blocked (the threshold is met).
+    for (let i = 0; i < 15; i++) {
+      repo.recordCycleEvent(RUN_ID_A, 1, NOW + i * 1000);
+    }
+    expect(repo.isDeadLoopReached(RUN_ID_A, 1, NOW + 15_000, 15, WINDOW)).toBe(true);
+  });
+
+  test('isDeadLoopReached is false below the threshold', () => {
+    for (let i = 0; i < 14; i++) {
+      repo.recordCycleEvent(RUN_ID_A, 1, NOW + i * 1000);
+    }
+    expect(repo.isDeadLoopReached(RUN_ID_A, 1, NOW + 14_000, 15, WINDOW)).toBe(false);
+  });
+
+  test('counting prunes events older than the window (bounded growth)', () => {
+    for (let i = 0; i < 40; i++) {
+      repo.recordCycleEvent(RUN_ID_A, 1, NOW + i * 1000); // 40s span
+    }
+    // Counting at NOW + 6min prunes everything older than 5min and returns
+    // only the tail of the burst still inside the window.
+    const count = repo.countRecentCycleEvents(RUN_ID_A, 1, NOW + 6 * 60 * 1000, WINDOW);
+    expect(count).toBe(0);
+  });
+
+  test('rate tracking is isolated per channel index', () => {
+    for (let i = 0; i < 15; i++) repo.recordCycleEvent(RUN_ID_A, 1, NOW + i * 1000);
+    expect(repo.isDeadLoopReached(RUN_ID_A, 1, NOW + 15_000, 15, WINDOW)).toBe(true);
+    // A different channel on the same run is unaffected.
+    expect(repo.countRecentCycleEvents(RUN_ID_A, 2, NOW + 15_000, WINDOW)).toBe(0);
+    expect(repo.isDeadLoopReached(RUN_ID_A, 2, NOW + 15_000, 15, WINDOW)).toBe(false);
+  });
+
+  test('rate tracking is isolated per run', () => {
+    for (let i = 0; i < 15; i++) repo.recordCycleEvent(RUN_ID_A, 1, NOW + i * 1000);
+    expect(repo.isDeadLoopReached(RUN_ID_A, 1, NOW + 15_000, 15, WINDOW)).toBe(true);
+    expect(repo.isDeadLoopReached(RUN_ID_B, 1, NOW + 15_000, 15, WINDOW)).toBe(false);
+  });
+
+  test('resetAllForRun (human touch) clears the rate-window history and lifts a dead-loop block', () => {
+    for (let i = 0; i < 15; i++) repo.recordCycleEvent(RUN_ID_A, 1, NOW + i * 1000);
+    expect(repo.isDeadLoopReached(RUN_ID_A, 1, NOW + 15_000, 15, WINDOW)).toBe(true);
+
+    repo.resetAllForRun(RUN_ID_A);
+
+    expect(repo.countRecentCycleEvents(RUN_ID_A, 1, NOW + 15_000, WINDOW)).toBe(0);
+    expect(repo.isDeadLoopReached(RUN_ID_A, 1, NOW + 15_000, 15, WINDOW)).toBe(false);
+    // Other runs are untouched.
+    for (let i = 0; i < 15; i++) repo.recordCycleEvent(RUN_ID_B, 1, NOW + i * 1000);
+    expect(repo.isDeadLoopReached(RUN_ID_B, 1, NOW + 15_000, 15, WINDOW)).toBe(true);
+  });
+
+  test('uses package defaults when threshold/window omitted', () => {
+    // Sanity: defaults are the documented 15 / 5min.
+    for (let i = 0; i < 14; i++) repo.recordCycleEvent(RUN_ID_A, 1, NOW + i * 1000);
+    expect(repo.isDeadLoopReached(RUN_ID_A, 1, NOW + 14_000)).toBe(false);
+    repo.recordCycleEvent(RUN_ID_A, 1, NOW + 14_000);
+    expect(repo.isDeadLoopReached(RUN_ID_A, 1, NOW + 15_000)).toBe(true);
+  });
+});

@@ -225,6 +225,22 @@ export function createSpaceTables(db: BunDatabase): void {
 		)
 	`);
 
+  // One timestamped row per cyclic-channel traversal, used for rate-based
+  // dead-loop detection (rolling window count). See migration 192.
+  db.exec(`
+		CREATE TABLE IF NOT EXISTS channel_cycle_events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			run_id TEXT NOT NULL,
+			channel_index INTEGER NOT NULL,
+			sent_at INTEGER NOT NULL,
+			FOREIGN KEY (run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
+		)
+	`);
+  db.exec(`
+		CREATE INDEX IF NOT EXISTS idx_channel_cycle_events_window
+		ON channel_cycle_events(run_id, channel_index, sent_at)
+	`);
+
   db.exec(`
 		CREATE TABLE IF NOT EXISTS node_executions (
 			id TEXT PRIMARY KEY,

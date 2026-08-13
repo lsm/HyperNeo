@@ -6663,13 +6663,13 @@ export class SpaceRuntime {
     if (!isChannelCyclic(channelIndex, workflow.channels ?? [], workflow.nodes)) {
       return { open: true };
     }
-    const maxCycles = channel.maxCycles ?? 5;
+    // Rate-based dead-loop detection: block only a runaway tight ping-pong,
+    // never a genuine extended review spread over time.
     const cycleRepo = new ChannelCycleRepository(this.config.db);
-    const record = cycleRepo.get(runId, channelIndex);
-    if (record && record.count >= maxCycles) {
+    if (cycleRepo.isDeadLoopReached(runId, channelIndex)) {
       return {
         open: false,
-        reason: `Cyclic channel "${channel.id ?? channelIndex}" has reached the maximum cycle count (${maxCycles}). Increase maxCycles to allow more cycles.`,
+        reason: `Cyclic channel "${channel.id ?? channelIndex}" is in a dead loop (too many round-trips within the rate window).`,
       };
     }
     return { open: true };
@@ -6682,14 +6682,8 @@ export class SpaceRuntime {
     channelIndex: number
   ): void {
     if (!isChannelCyclic(channelIndex, workflow.channels ?? [], workflow.nodes)) return;
-    const maxCycles = channel.maxCycles ?? 5;
     const cycleRepo = new ChannelCycleRepository(this.config.db);
-    const incremented = cycleRepo.incrementCycleCount(runId, channelIndex, maxCycles);
-    if (!incremented) {
-      log.warn(
-        `SpaceRuntime.recoverStalledRuns: cyclic channel "${channel.id ?? channelIndex}" reached maxCycles during recovery activation`
-      );
-    }
+    cycleRepo.recordCycleEvent(runId, channelIndex);
   }
 
   private matchesRestartRecoveryChannelSource(

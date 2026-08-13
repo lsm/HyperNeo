@@ -116,6 +116,16 @@ export class SpaceAgentNotificationService {
         }
       ),
       this.internalEventBus.subscribe(
+        'space.workflowRun.deadLoop',
+        (event) => {
+          if (event.spaceId !== this.spaceId) return;
+          void this.notify(formatWorkflowRunDeadLoop(event, this.autonomyLevel));
+        },
+        {
+          subscriberName: `SpaceAgentNotificationService:${this.spaceId}:space.workflowRun.deadLoop`,
+        }
+      ),
+      this.internalEventBus.subscribe(
         'space.agent.crashed',
         (event) => {
           if (event.spaceId !== this.spaceId) return;
@@ -271,6 +281,45 @@ function formatWorkflowRunReopened(
     autonomyLevel,
   };
   return buildMessage('workflow_run_reopened', humanReadable, payload);
+}
+
+function formatWorkflowRunDeadLoop(
+  event: {
+    spaceId: string;
+    runId: string;
+    fromAgent: string;
+    toTarget: string;
+    channelIndex: number;
+    recentCount: number;
+    threshold: number;
+    windowMs: number;
+    reason: string;
+    timestamp: string;
+  },
+  autonomyLevel: SpaceAutonomyLevel
+): string {
+  const windowMin = Math.round(event.windowMs / 60000);
+  const humanReadable =
+    `Dead loop detected in workflow run ${event.runId} (space ${event.spaceId}): ` +
+    `agent "${event.fromAgent}" → "${event.toTarget}" sent ${event.recentCount} message round-trips ` +
+    `within ${windowMin} minute(s) (threshold ${event.threshold}), so the next send was blocked. ` +
+    `This looks like a runaway agent-to-agent ping-pong, not normal collaboration. ` +
+    `Investigate the two agents and break the loop.`;
+  const payload = {
+    kind: 'workflow_dead_loop',
+    spaceId: event.spaceId,
+    runId: event.runId,
+    fromAgent: event.fromAgent,
+    toTarget: event.toTarget,
+    channelIndex: event.channelIndex,
+    recentCount: event.recentCount,
+    threshold: event.threshold,
+    windowMs: event.windowMs,
+    reason: event.reason,
+    timestamp: event.timestamp,
+    autonomyLevel,
+  };
+  return buildMessage('workflow_dead_loop', humanReadable, payload);
 }
 
 function formatAgentCrash(

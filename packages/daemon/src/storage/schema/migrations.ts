@@ -985,6 +985,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // signal (refreshed by tool calls / message delivery / commit pushes,
   // independent of updated_at) so stall detection is not keyed off updated_at.
   run(migrationMarkerKey(191), () => runMigration191(db));
+
+  // Migration 192: channel_cycle_events — rate-based dead-loop detection.
+  run(migrationMarkerKey(192), () => runMigration192(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -12404,4 +12407,41 @@ export function runMigration191(db: BunDatabase): void {
   if (!tableHasColumn(db, 'node_executions', 'last_activity_at')) {
     db.exec(`ALTER TABLE node_executions ADD COLUMN last_activity_at INTEGER`);
   }
+}
+
+/**
+ * Migration 192: Rate-based dead-loop detection for cyclic workflow channels.
+ *
+ * Creates a `channel_cycle_events` table storing one timestamped row per
+ * traversal of a cyclic (backward) channel. Dead-loop detection counts these
+ * rows over a rolling time window (default >15 traversals per 5 minutes) so it
+ * catches a runaway tight ping-pong between two agents while never blocking a
+ * genuine extended review that is spread out over hours.
+ *
+ * The legacy `channel_cycles` lifetime counter (migration 69) is retained for
+ * observability but is no longer a blocking gate; it must not false-trip on
+ * long reviews. This new table is the primary dead-loop signal.
+ *
+ * Backward-compatible with in-flight runs: existing runs simply have an empty
+ * event history (count 0), so any run previously blocked by the lifetime cap
+ * becomes unblocked — which is correct, since those were overwhelmingly
+ * legitimate extended reviews (see PR #2473 / task #942).
+ */
+export function runMigration192(db: BunDatabase): void {
+  if (!tableExists(db, 'space_workflow_runs')) return;
+  if (tableExists(db, 'channel_cycle_events')) return;
+
+  db.exec(`
+		CREATE TABLE channel_cycle_events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			run_id TEXT NOT NULL,
+			channel_index INTEGER NOT NULL,
+			sent_at INTEGER NOT NULL,
+			FOREIGN KEY (run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
+		)
+	`);
+  db.exec(`
+		CREATE INDEX idx_channel_cycle_events_window
+		ON channel_cycle_events(run_id, channel_index, sent_at)
+	`);
 }

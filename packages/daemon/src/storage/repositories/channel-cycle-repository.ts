@@ -1,12 +1,45 @@
 /**
  * Channel Cycle Repository
  *
- * Persistence layer for per-channel cycle counters, keyed by `(run_id, channel_index)`.
- * Each backward (cyclic) channel in a workflow run has its own counter and cap.
- * The counter is atomically incremented via an UPSERT with a cap guard.
+ * Persistence layer for per-channel cycle tracking, keyed by
+ * `(run_id, channel_index)`. Each backward (cyclic) channel in a workflow run
+ * has its own state.
+ *
+ * ## Dead-loop detection (rate-based, primary gate)
+ *
+ * A runaway tight ping-pong between two agents — the only thing worth blocking
+ * — is detected as a **rate**: more than {@link DEAD_LOOP_THRESHOLD} traversals
+ * of the same cyclic channel within a rolling {@link DEAD_LOOP_WINDOW_MS}
+ * window. This is recorded as one row per traversal in `channel_cycle_events`.
+ * A genuine extended review spread over hours can never accumulate that many
+ * traversals inside a single short window, so it never trips. The per-window
+ * count is recomputed (and old rows pruned) on every check.
+ *
+ * ## Lifetime counter (`channel_cycles`, observability only)
+ *
+ * The legacy `channel_cycles` table keeps a lifetime traversal count per
+ * channel. It is retained for observability and backward-compatibility with
+ * in-flight runs, but it is **no longer a blocking gate** — a long review must
+ * not be blocked merely for doing many rounds over time. Both stores are reset
+ * together on human touch (see {@link resetAllForRun}).
  */
 
 import type { Database as BunDatabase } from '../sqlite-compat';
+
+/**
+ * Maximum cyclic-channel traversals permitted within the rolling window before
+ * the channel is considered in a dead loop. With the default of 15, the 16th
+ * traversal inside the window trips the cap. A real inter-agent round trip
+ * (LLM turn + tool use + reply) takes well over a minute, so no legitimate
+ * exchange can approach this rate; only a runaway loop can.
+ */
+export const DEAD_LOOP_THRESHOLD = 15;
+
+/**
+ * Rolling window (ms) over which traversals are counted for dead-loop
+ * detection. Default 5 minutes.
+ */
+export const DEAD_LOOP_WINDOW_MS = 5 * 60 * 1000;
 
 export interface ChannelCycleRecord {
   runId: string;
@@ -80,18 +113,97 @@ export class ChannelCycleRepository {
   }
 
   /**
-   * Zeros every channel cycle counter for a run in a single statement.
+   * Zeros every channel cycle counter for a run in a single statement, and
+   * clears the rate-window event history for the run.
    *
-   * The cap measures "consecutive autonomous cycles without human oversight", so
-   * all channels reset together whenever the run regains human attention.
+   * Both the lifetime counter and the rate window measure "autonomous agent
+   * cycles without human oversight", so they reset together whenever the run
+   * regains human attention. Clearing the event history is what makes a human
+   * touch lift a dead-loop block: after reset, the per-window count is 0.
    *
-   * @returns Number of rows updated (0 is valid — no cyclic channels yet).
+   * @returns Number of `channel_cycles` rows updated (0 is valid — no cyclic
+   * channels yet). Event-row deletions are not counted here to preserve the
+   * existing return-value contract used for telemetry.
    */
   resetAllForRun(runId: string): number {
     const result = this.db
       .prepare('UPDATE channel_cycles SET count = 0, updated_at = ? WHERE run_id = ?')
       .run(Date.now(), runId);
+    // Clear the rate-window event history so a human touch lifts any active
+    // dead-loop block on this run.
+    this.db.prepare('DELETE FROM channel_cycle_events WHERE run_id = ?').run(runId);
     return result.changes;
+  }
+
+  // -------------------------------------------------------------------------
+  // Rate-based dead-loop detection (primary gate)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Records one cyclic-channel traversal as a timestamped event in
+   * `channel_cycle_events`. Call this AFTER a successful delivery/re-activation
+   * on a cyclic channel so the next traversal's rate check can see it.
+   *
+   * Also opportunistically prunes events older than the window so the table
+   * stays bounded over a long-running run.
+   */
+  recordCycleEvent(runId: string, channelIndex: number, now: number = Date.now()): void {
+    this.pruneCycleEvents(runId, channelIndex, now);
+    this.db
+      .prepare('INSERT INTO channel_cycle_events (run_id, channel_index, sent_at) VALUES (?, ?, ?)')
+      .run(runId, channelIndex, now);
+  }
+
+  /**
+   * Removes cyclic-channel events older than `now - windowMs`. Called as part
+   * of counting so the rate signal always reflects only the current window.
+   */
+  pruneCycleEvents(
+    runId: string,
+    channelIndex: number,
+    now: number = Date.now(),
+    windowMs: number = DEAD_LOOP_WINDOW_MS
+  ): void {
+    this.db
+      .prepare(
+        'DELETE FROM channel_cycle_events WHERE run_id = ? AND channel_index = ? AND sent_at < ?'
+      )
+      .run(runId, channelIndex, now - windowMs);
+  }
+
+  /**
+   * Returns the number of cyclic-channel traversals recorded within the rolling
+   * window `[now - windowMs, now]`, after pruning anything older. This is the
+   * rate-based dead-loop signal.
+   */
+  countRecentCycleEvents(
+    runId: string,
+    channelIndex: number,
+    now: number = Date.now(),
+    windowMs: number = DEAD_LOOP_WINDOW_MS
+  ): number {
+    this.pruneCycleEvents(runId, channelIndex, now, windowMs);
+    const row = this.db
+      .prepare(
+        'SELECT COUNT(*) AS n FROM channel_cycle_events WHERE run_id = ? AND channel_index = ? AND sent_at >= ?'
+      )
+      .get(runId, channelIndex, now - windowMs) as { n: number } | undefined;
+    return row?.n ?? 0;
+  }
+
+  /**
+   * Returns `true` when the cyclic channel is in a dead loop: the number of
+   * traversals within the rolling window has reached `threshold`. The upcoming
+   * traversal (the one that would exceed the threshold) should be blocked.
+   */
+  isDeadLoopReached(
+    runId: string,
+    channelIndex: number,
+    now: number = Date.now(),
+    threshold: number = DEAD_LOOP_THRESHOLD,
+    windowMs: number = DEAD_LOOP_WINDOW_MS
+  ): boolean {
+    return this.countRecentCycleEvents(runId, channelIndex, now, windowMs) >= threshold;
   }
 }
 
