@@ -259,3 +259,48 @@ describe('availableHookIds', () => {
     expect(ids.has('pr_ready')).toBe(true);
   });
 });
+
+describe('authorizedCallers own-source rule', () => {
+  const nodes = [
+    { id: 'n1', name: 'Coding', agents: [{ agentId: 'a1', name: 'coder' }] },
+    { id: 'n2', name: 'Review', agents: [{ agentId: 'a2', name: 'reviewer' }] },
+  ];
+
+  test('callers naming only OTHER nodes are rejected (gate could never match)', () => {
+    const errors = validateWorkflowHookBindings(
+      [
+        {
+          hookId: 'pr_ready',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Review' }],
+        },
+      ],
+      undefined,
+      nodes
+    );
+    expect(errors.some((e) => e.includes("binding's own"))).toBe(true);
+  });
+
+  test('a caller for the binding sourceNode passes', () => {
+    const errors = validateWorkflowHookBindings(
+      [
+        {
+          hookId: 'pr_ready',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+      undefined,
+      nodes
+    );
+    expect(errors).toHaveLength(0);
+  });
+});

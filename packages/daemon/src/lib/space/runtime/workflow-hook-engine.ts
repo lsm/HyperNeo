@@ -48,6 +48,9 @@ import {
   SubmitForApprovalSchema,
 } from '../tools/task-agent-tool-schemas';
 import { spawn as nodeSpawn } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { ChannelResolver } from './channel-resolver';
 import { isBuiltInHook, resolveHook } from './hook-registry';
@@ -423,7 +426,7 @@ export class WorkflowHookEngine {
     const sorted = this.sortBindings(bindings);
     const executionLog: HookExecutionRecord[] = [];
     const stateUpdates: Array<{ hookId: string; state: Record<string, unknown> }> = [];
-    const artifacts: HookArtifactWrite[] = [];
+    const artifacts: Array<{ hookId: string; artifact: HookArtifactWrite }> = [];
     const followUpRequests: Array<{ targetNode: string; message: string }> = [];
     let currentParams = { ...params };
     // The ctx artifact window is identical for every binding in this action —
@@ -584,7 +587,7 @@ export class WorkflowHookEngine {
       if (Object.keys(built.recordedState).length > 0) {
         stateUpdates.push({ hookId, state: built.recordedState });
       }
-      for (const artifact of built.writtenArtifacts) artifacts.push(artifact);
+      for (const artifact of built.writtenArtifacts) artifacts.push({ hookId, artifact });
       for (const followUp of built.queuedFollowUps) followUpRequests.push(followUp);
 
       if (flow === 'stop') {
@@ -644,9 +647,33 @@ export class WorkflowHookEngine {
       }
     }
 
-    // Apply artifact side effects immediately (idempotent upserts).
-    for (const artifact of artifacts) {
-      this.writeArtifact(artifact, meta);
+    // Apply artifact side effects immediately (idempotent upserts). A FAILED
+    // write must block a would-be delivery: the artifacts are the hook's own
+    // side effects (pr_ready's stamp is the run's authoritative identity), so
+    // delivering without them hands off on a decision basis that was never
+    // persisted — downstream gates would lose identity binding. Stop/retry
+    // outcomes keep best-effort semantics (a retry re-runs the hook and its
+    // writes).
+    let failedArtifactWrite: { hookId: string } | null = null;
+    for (const { hookId, artifact } of artifacts) {
+      if (!this.writeArtifact(artifact, meta) && !failedArtifactWrite) {
+        failedArtifactWrite = { hookId };
+      }
+    }
+    if (failedArtifactWrite && !terminal && !retry) {
+      terminal = {
+        kind: 'stop',
+        hookId: failedArtifactWrite.hookId,
+        reason:
+          'Hook artifact persistence failed (artifact store error); the action is blocked ' +
+          'rather than delivered without the hook’s recorded side effects.',
+      };
+      executionLog.push({
+        hookId: failedArtifactWrite.hookId,
+        flow: 'stop',
+        reason: terminal.reason,
+        timestamp: Date.now(),
+      });
     }
 
     const sourceNode =
@@ -702,9 +729,13 @@ export class WorkflowHookEngine {
     };
   }
 
-  /** Write an artifact a hook requested via `ctx.writeArtifact`. */
-  private writeArtifact(artifact: HookArtifactWrite, meta: HookActionMeta): void {
-    if (!this.config.artifactRepo) return;
+  /**
+   * Write an artifact a hook requested via `ctx.writeArtifact`. Returns false
+   * when the persist failed — the caller blocks a would-be delivery on it
+   * (see executeAction).
+   */
+  private writeArtifact(artifact: HookArtifactWrite, meta: HookActionMeta): boolean {
+    if (!this.config.artifactRepo) return true;
     try {
       this.config.artifactRepo.upsert({
         id: generateUUID(),
@@ -714,10 +745,12 @@ export class WorkflowHookEngine {
         artifactKey: artifact.artifactKey,
         data: artifact.data,
       });
+      return true;
     } catch (err) {
       log.warn(
         `Failed to write hook artifact (${artifact.artifactType}/${artifact.artifactKey}): ${errorMessage(err)}`
       );
+      return false;
     }
   }
 
@@ -1068,7 +1101,12 @@ export class WorkflowHookEngine {
     }
     const timeoutMs = spec.timeoutMs ?? DEFAULT_SCRIPT_TIMEOUT_MS;
     const args = ['bash', '-c', spec.source];
-    const env = this.buildScriptEnv(ctx, action);
+    // Isolated scratch HOME: the daemon's real home holds disk-backed
+    // credentials (~/.claude/.credentials.json, gh/SSH config) that
+    // user-authored bash must not read. Removed after the script (and its
+    // process group) terminate.
+    const isolatedHome = mkdtempSync(join(tmpdir(), 'hyperneo-hook-'));
+    const env = this.buildScriptEnv(ctx, action, isolatedHome);
 
     // Spawned via node:child_process with `detached: true` so the script gets
     // its OWN process group — the whole group can then be signaled, which is
@@ -1083,13 +1121,20 @@ export class WorkflowHookEngine {
       killProcessGroup: () => void;
     }
     let proc: ScriptProcess;
+    // Everything below runs under a finally that removes the isolated HOME —
+    // every early return must clean it up.
     try {
-      const child = nodeSpawn(args[0], args.slice(1), {
-        cwd: ctx.workspacePath || undefined,
-        env,
-        detached: true,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
+      let child;
+      try {
+        child = nodeSpawn(args[0], args.slice(1), {
+          cwd: ctx.workspacePath || undefined,
+          env,
+          detached: true,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+      } catch (err) {
+        return { flow: 'stop', reason: `Failed to spawn bash: ${errorMessage(err)}` };
+      }
       proc = {
         stdout: child.stdout ? (Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>) : null,
         stderr: child.stderr ? (Readable.toWeb(child.stderr) as ReadableStream<Uint8Array>) : null,
@@ -1118,125 +1163,130 @@ export class WorkflowHookEngine {
           }
         },
       };
-    } catch (err) {
-      return { flow: 'stop', reason: `Failed to spawn bash: ${errorMessage(err)}` };
-    }
 
-    const controller = new AbortController();
-    let killed = false;
-    // A script may spawn a BACKGROUND process that inherits stdout/stderr and
-    // outlives the parent shell. Waiting for the pipes to close would then
-    // block this hook indefinitely (past timeoutMs) and leak the child, so the
-    // collectors get a short grace period after the parent exits before the
-    // streams are cancelled: the parent's own output is already buffered by
-    // then, and an inherited pipe held open by a straggler can't wedge the
-    // action.
-    const collectStdout = collectWithMaxBuffer(proc.stdout, MAX_BUFFER_BYTES, controller.signal);
-    const collectStderr = collectWithMaxBuffer(proc.stderr, MAX_BUFFER_BYTES, controller.signal);
-    const collected = Promise.all([collectStdout, collectStderr]);
-    const exit = await (async () => {
-      const killTimer = setTimeout(() => {
-        killed = true;
-        proc.killProcessGroup();
-      }, timeoutMs);
-      try {
-        const code = await proc.exited;
-        if (!killed) {
-          // Grace the collectors past the parent's exit, then cancel: the
-          // parent's output is buffered; a straggler child holding an
-          // inherited pipe cannot wedge the action. The timer handle is
-          // captured and cleared when `collected` wins the race (the common
-          // case) — an uncleared handle would leak one orphaned 2s timer per
-          // hook run (same cleanup discipline as killTimer and the follow-up
-          // dispatch timeout's .finally()).
-          let graceTimer: ReturnType<typeof setTimeout> | undefined;
-          const graceDone = new Promise<void>((resolve) => {
-            graceTimer = setTimeout(resolve, SCRIPT_EXIT_GRACE_MS);
-          });
-          try {
-            await Promise.race([collected, graceDone]);
-          } finally {
-            if (graceTimer !== undefined) clearTimeout(graceTimer);
+      const controller = new AbortController();
+      let killed = false;
+      // A script may spawn a BACKGROUND process that inherits stdout/stderr and
+      // outlives the parent shell. Waiting for the pipes to close would then
+      // block this hook indefinitely (past timeoutMs) and leak the child, so the
+      // collectors get a short grace period after the parent exits before the
+      // streams are cancelled: the parent's own output is already buffered by
+      // then, and an inherited pipe held open by a straggler can't wedge the
+      // action.
+      const collectStdout = collectWithMaxBuffer(proc.stdout, MAX_BUFFER_BYTES, controller.signal);
+      const collectStderr = collectWithMaxBuffer(proc.stderr, MAX_BUFFER_BYTES, controller.signal);
+      const collected = Promise.all([collectStdout, collectStderr]);
+      const exit = await (async () => {
+        const killTimer = setTimeout(() => {
+          killed = true;
+          proc.killProcessGroup();
+        }, timeoutMs);
+        try {
+          const code = await proc.exited;
+          if (!killed) {
+            // Grace the collectors past the parent's exit, then cancel: the
+            // parent's output is buffered; a straggler child holding an
+            // inherited pipe cannot wedge the action. The timer handle is
+            // captured and cleared when `collected` wins the race (the common
+            // case) — an uncleared handle would leak one orphaned 2s timer per
+            // hook run (same cleanup discipline as killTimer and the follow-up
+            // dispatch timeout's .finally()).
+            let graceTimer: ReturnType<typeof setTimeout> | undefined;
+            const graceDone = new Promise<void>((resolve) => {
+              graceTimer = setTimeout(resolve, SCRIPT_EXIT_GRACE_MS);
+            });
+            try {
+              await Promise.race([collected, graceDone]);
+            } finally {
+              if (graceTimer !== undefined) clearTimeout(graceTimer);
+            }
           }
+          controller.abort(); // idempotent; releases any blocked collector
+          // Reap the process group unconditionally: on timeout the group kill
+          // has already run, and on a normal exit this terminates any background
+          // children the script left behind (they cannot outlive the hook).
+          proc.killProcessGroup();
+          return { code, timedOut: killed };
+        } finally {
+          // If proc.exited rejects (or any step above throws), the kill timer
+          // must not leak and the collectors must be released — without this,
+          // the awaited `collected` below would hang forever.
+          clearTimeout(killTimer);
+          controller.abort();
+          proc.killProcessGroup();
         }
-        controller.abort(); // idempotent; releases any blocked collector
-        // Reap the process group unconditionally: on timeout the group kill
-        // has already run, and on a normal exit this terminates any background
-        // children the script left behind (they cannot outlive the hook).
-        proc.killProcessGroup();
-        return { code, timedOut: killed };
-      } finally {
-        // If proc.exited rejects (or any step above throws), the kill timer
-        // must not leak and the collectors must be released — without this,
-        // the awaited `collected` below would hang forever.
-        clearTimeout(killTimer);
-        controller.abort();
-        proc.killProcessGroup();
-      }
-    })();
-    const [stdoutResult, stderrResult] = await collected;
+      })();
+      const [stdoutResult, stderrResult] = await collected;
 
-    if (exit.timedOut) {
-      return { flow: 'stop', reason: `Hook script timed out after ${timeoutMs}ms` };
-    }
-    if (exit.code !== 0) {
-      const stderrText = stderrResult.text.trim();
-      return { flow: 'stop', reason: stderrText || `Hook script exited with code ${exit.code}` };
-    }
-
-    const parsed = parseJsonStdout(stdoutResult.text);
-    if (!parsed) {
-      return { flow: 'stop', reason: 'Hook script produced empty or non-JSON stdout' };
-    }
-    const flow = parsed.flow;
-    if (typeof flow !== 'string' || !VALID_FLOWS.has(flow as HookFlow)) {
-      return {
-        flow: 'stop',
-        reason: `Hook script returned unrecognized flow: ${JSON.stringify(flow)}`,
-      };
-    }
-    const ret: HookReturn = { flow: flow as HookFlow };
-    if (typeof parsed.reason === 'string') ret.reason = parsed.reason;
-    if (isRecord(parsed.payload)) ret.payload = parsed.payload;
-    if (typeof parsed.retryAfterMs === 'number') {
-      // Clamp untrusted script retry delays to a sane range so a malformed
-      // (negative / non-finite / huge) value can't spin a rapid replay loop or
-      // starve the timer. Out-of-range values fall back to the engine default.
-      const requested = parsed.retryAfterMs;
-      if (
-        Number.isFinite(requested) &&
-        requested >= MIN_SCRIPT_RETRY_MS &&
-        requested <= MAX_SCRIPT_RETRY_MS
-      ) {
-        ret.retryAfterMs = requested;
+      if (exit.timedOut) {
+        return { flow: 'stop', reason: `Hook script timed out after ${timeoutMs}ms` };
       }
+      if (exit.code !== 0) {
+        const stderrText = stderrResult.text.trim();
+        return { flow: 'stop', reason: stderrText || `Hook script exited with code ${exit.code}` };
+      }
+
+      const parsed = parseJsonStdout(stdoutResult.text);
+      if (!parsed) {
+        return { flow: 'stop', reason: 'Hook script produced empty or non-JSON stdout' };
+      }
+      const flow = parsed.flow;
+      if (typeof flow !== 'string' || !VALID_FLOWS.has(flow as HookFlow)) {
+        return {
+          flow: 'stop',
+          reason: `Hook script returned unrecognized flow: ${JSON.stringify(flow)}`,
+        };
+      }
+      const ret: HookReturn = { flow: flow as HookFlow };
+      if (typeof parsed.reason === 'string') ret.reason = parsed.reason;
+      if (isRecord(parsed.payload)) ret.payload = parsed.payload;
+      if (typeof parsed.retryAfterMs === 'number') {
+        // Clamp untrusted script retry delays to a sane range so a malformed
+        // (negative / non-finite / huge) value can't spin a rapid replay loop or
+        // starve the timer. Out-of-range values fall back to the engine default.
+        const requested = parsed.retryAfterMs;
+        if (
+          Number.isFinite(requested) &&
+          requested >= MIN_SCRIPT_RETRY_MS &&
+          requested <= MAX_SCRIPT_RETRY_MS
+        ) {
+          ret.retryAfterMs = requested;
+        }
+      }
+      ret.result = parsed.result;
+      return ret;
+    } finally {
+      rmSync(isolatedHome, { recursive: true, force: true });
     }
-    ret.result = parsed.result;
-    return ret;
   }
 
   /**
    * Base environment variables a custom script needs to RUN (shell, locale,
    * temp dir) — an allow-list, not a deny-list: user-authored bash must not
    * receive the daemon's live credentials (provider API keys, keychain-promoted
-   * OAuth tokens, GH tokens). Non-token `GH_HOST`/`GH_PATH` are admitted so a
-   * script that shells out to `gh` targets the configured host; token-bearing
-   * GH_* variables are not (gh resolves its own credentials from keyring/config,
-   * as the in-process built-ins rely on). The spec's script sandbox (§3) stays.
+   * OAuth tokens, GH tokens). HOME is NOT forwarded: the daemon's real home
+   * carries disk-backed credentials (~/.claude/.credentials.json, gh config,
+   * SSH keys), so scripts get an isolated temporary HOME (see
+   * runCustomHookScript) — a script that shells out to `gh` therefore fails
+   * auth (terminal, exit 4) rather than silently using the daemon's identity.
+   * Non-token `GH_HOST`/`GH_PATH` are admitted for host routing only. The
+   * spec's script sandbox (§3) stays.
    */
   private static readonly SCRIPT_ENV_ALLOW = new Set([
     'PATH',
-    'HOME',
     'USER',
     'SHELL',
     'TMPDIR',
     'LANG',
     'TERM',
     'TZ',
-    'XDG_CONFIG_HOME',
   ]);
 
-  private buildScriptEnv(ctx: HookContext, action: HookAction): Record<string, string> {
+  private buildScriptEnv(
+    ctx: HookContext,
+    action: HookAction,
+    isolatedHome: string
+  ): Record<string, string> {
     const env: Record<string, string> = {};
     for (const [key, value] of Object.entries(process.env)) {
       if (value === undefined) continue;
@@ -1251,8 +1301,10 @@ export class WorkflowHookEngine {
       if (key === 'GH_HOST' || key === 'GH_PATH') {
         env[key] = value;
       }
-      // Everything else is dropped — see SCRIPT_ENV_ALLOW's doc comment.
+      // Everything else is dropped (including HOME and XDG_CONFIG_HOME) — see
+      // SCRIPT_ENV_ALLOW's doc comment.
     }
+    env.HOME = isolatedHome;
     env.HYPERNEO_WORKFLOW_RUN_ID = ctx.runId;
     env.HYPERNEO_WORKSPACE_PATH = ctx.workspacePath;
     env.HYPERNEO_METHOD_NAME = action.method;

@@ -258,6 +258,19 @@ export function validateWorkflowHookBindings(
       binding.authorizedCallers.forEach((caller, callerIndex) => {
         errors.push(...validateCaller(caller, callerIndex, loc, validNodes, validSlotsByNode));
       });
+      // The engine matches a binding only when the ACTING node equals
+      // binding.sourceNode AND a caller's sourceNode equals that same node —
+      // callers naming only other nodes can never authorize anything, leaving
+      // the gate silently disabled.
+      const hasOwnSourceCaller = binding.authorizedCallers.some(
+        (caller) => caller && (caller as { sourceNode?: unknown }).sourceNode === binding.sourceNode
+      );
+      if (!hasOwnSourceCaller) {
+        errors.push(
+          `${loc}.authorizedCallers: at least one caller must reference the binding's own ` +
+            `sourceNode "${binding.sourceNode}" (callers naming only other nodes can never match)`
+        );
+      }
     }
   }
 

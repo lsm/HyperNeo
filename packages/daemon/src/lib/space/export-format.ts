@@ -760,6 +760,14 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
           error: `invalid: ${loc}.authorizedCallers is required and must be non-empty`,
         };
       }
+      // Mirror the runtime rule: at least one caller must reference the
+      // binding's own sourceNode, or the gate can never match.
+      if (!binding.authorizedCallers.some((caller) => caller.sourceNode === binding.sourceNode)) {
+        return {
+          ok: false,
+          error: `invalid: ${loc}.authorizedCallers must include a caller for the binding's own sourceNode "${binding.sourceNode}"`,
+        };
+      }
       for (let ci = 0; ci < binding.authorizedCallers.length; ci++) {
         const caller = binding.authorizedCallers[ci];
         if (!nodeNameSet.has(caller.sourceNode)) {

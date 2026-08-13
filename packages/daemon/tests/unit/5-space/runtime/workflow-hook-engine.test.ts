@@ -453,6 +453,40 @@ describe('WorkflowHookEngine.executeAction', () => {
     }
   });
 
+  test('custom-script HOME is isolated from the daemon home', async () => {
+    // The script stops when HOME still points at the daemon's real home
+    // (where ~/.claude/.credentials.json and gh config live) and continues
+    // when it is a scratch directory.
+    const daemonHome = process.env.HOME ?? '';
+    const source =
+      `if [ "$HOME" = ${JSON.stringify(daemonHome)} ]; then ` +
+      'echo \'{"flow":"stop","reason":"daemon home leaked"}\'; else ' +
+      'echo \'{"flow":"continue"}\'; fi';
+    const workflow = makeWorkflow({
+      customHooks: [
+        {
+          id: 'home_probe_hook',
+          requiredData: [],
+          run: { kind: 'script', interpreter: 'bash', source },
+        },
+      ],
+      hookBindings: [
+        {
+          hookId: 'home_probe_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    const engine = makeEngine(workflow);
+    const outcome = await engine.executeAction('send_message', sendParams(), META);
+    expect(outcome.decision).toBe('deliver');
+  });
+
   test('a normally-exiting script delivers full stdout (collected-wins path)', async () => {
     // Multi-kilobyte output ensures the collectors genuinely win the race
     // with buffered data rather than relying on stream close timing.

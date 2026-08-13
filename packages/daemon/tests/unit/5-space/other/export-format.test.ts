@@ -2828,3 +2828,24 @@ describe('portable schema parity — whitespace and empty-list rules', () => {
     if (!result.ok) expect(result.error).toContain('whitespace');
   });
 });
+
+describe('portable own-source caller rule', () => {
+  test('callers naming only other nodes are rejected at preview', () => {
+    const workflow = makeWorkflow({
+      hookBindings: [
+        {
+          hookId: 'pr_ready',
+          sourceNode: 'Code step',
+          targetNode: 'Review step',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Review step' }],
+        },
+      ],
+    });
+    const result = validateExportedWorkflow(exportWorkflow(workflow, []));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('own sourceNode');
+  });
+});
