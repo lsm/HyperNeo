@@ -479,7 +479,7 @@ describe('SpaceIsland — overlay inerts the base chat (task #873)', () => {
 
 describe('SpaceIsland — route-driven views', () => {
   it('renders the overview view without the legacy top tab bar', async () => {
-    const { getByTestId, getByText, queryByTestId } = render(
+    const { getByTestId, queryByTestId } = render(
       <SpaceIsland spaceId="space-1" viewMode="overview" />
     );
     // Wait for lazy SpaceOverview to load through Suspense
@@ -495,7 +495,6 @@ describe('SpaceIsland — route-driven views', () => {
       'glass-workspace'
     );
     expect(getByTestId('space-dashboard').getAttribute('data-space-id')).toBe('space-1');
-    expect(getByText('Space operations and recent activity')).toBeTruthy();
     // Legacy tab bar is removed from overview
     expect(queryByTestId('space-tab-bar')).toBeNull();
   });

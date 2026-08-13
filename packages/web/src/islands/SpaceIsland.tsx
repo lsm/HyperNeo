@@ -578,7 +578,7 @@ export default function SpaceIsland({
       {overlay}
       <GlassRouteShell
         pageTitle="Overview"
-        subtitle="Space operations and recent activity"
+        appearance="hero"
         surfaceKey="overview"
         testId="space-overview-view"
         baseLayerProps={baseLayerProps}

@@ -211,13 +211,13 @@ describe('SpaceOverview', () => {
   it('renders the Create Task button', () => {
     mockSpace.value = makeSpace();
     const { getByRole } = render(<SpaceOverview spaceId="space-1" />);
-    expect(getByRole('button', { name: 'Create Task' })).toBeTruthy();
+    expect(getByRole('button', { name: 'Create task' })).toBeTruthy();
   });
 
   it('clicking Create Task button opens the Create Task dialog', () => {
     mockSpace.value = makeSpace();
     const { getByRole } = render(<SpaceOverview spaceId="space-1" />);
-    fireEvent.click(getByRole('button', { name: 'Create Task' }));
+    fireEvent.click(getByRole('button', { name: 'Create task' }));
     const dialog = document.body.querySelector('[role="dialog"]');
     expect(dialog).toBeTruthy();
     expect(dialog?.querySelector('h2')?.textContent).toBe('Create Task');

@@ -30,7 +30,12 @@ import { isActionRequired } from '../../lib/task-filters';
 import { SpaceCreateTaskDialog } from './SpaceCreateTaskDialog';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { AutonomyWorkflowSummary } from './AutonomyWorkflowSummary';
-import { FLAT_SURFACE, GLASS_SURFACE } from './glass-workspace';
+import {
+  FLAT_SURFACE,
+  GLASS_CONTENT_CONTAINER_CLASS,
+  GLASS_PRIMARY_BUTTON_CLASS,
+  GLASS_SURFACE,
+} from './glass-workspace';
 
 // ─── Stat Card ───────────────────────────────────────────────────────────────
 
@@ -54,7 +59,7 @@ function StatCard({
         'flex flex-col items-center gap-1 rounded-xl border px-5 py-4 transition-all duration-200',
         GLASS_SURFACE,
         onClick
-          ? 'cursor-pointer hover:-translate-y-0.5 hover:border-white/25 hover:bg-white/[0.1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70'
+          ? 'cursor-pointer hover:-translate-y-0.5 hover:border-white/25 hover:bg-white/[0.1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/55'
           : 'cursor-default',
         color
       )}
@@ -211,10 +216,10 @@ function AutonomyLevelBar({
             title={`Level ${l}: ${AUTONOMY_LABELS[l]}`}
             aria-label={AUTONOMY_LABELS[l]}
             class={cn(
-              'flex-1 rounded-full transition-colors py-1 focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:outline-none',
+              'flex-1 rounded-full transition-colors py-1 focus-visible:ring-2 focus-visible:ring-amber-200/55 focus-visible:outline-none',
               l <= level
                 ? l <= 2
-                  ? 'bg-blue-500'
+                  ? 'bg-gray-400'
                   : l <= 4
                     ? 'bg-amber-500'
                     : 'bg-red-500'
@@ -249,7 +254,7 @@ function ConcurrencyBar({ limit, onChange }: { limit: number; onChange: (n: numb
         value={limit}
         data-testid="concurrency-slider"
         onChange={(e) => onChange(Number((e.target as HTMLInputElement).value))}
-        class="w-full h-2 rounded-full appearance-none cursor-pointer bg-dark-700 accent-blue-500"
+        class="w-full h-2 rounded-full appearance-none cursor-pointer bg-dark-700 accent-amber-400"
       />
     </div>
   );
@@ -282,7 +287,7 @@ function RecentTaskItem({ task, onClick }: { task: SpaceTask; onClick?: () => vo
     <button
       type="button"
       onClick={onClick}
-      class="flex w-full items-center gap-2.5 px-4 py-3 text-left transition-colors hover:bg-white/[0.055] focus-visible:bg-white/[0.055] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400/60"
+      class="flex w-full items-center gap-2.5 px-4 py-3 text-left transition-colors hover:bg-white/[0.055] focus-visible:bg-white/[0.055] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-200/55"
     >
       <span
         class={cn(
@@ -422,7 +427,7 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
     return (
       <div class="flex h-full items-center justify-center">
         <div class="text-center">
-          <div class="mx-auto mb-3 h-6 w-6 animate-spin rounded-full border-2 border-blue-500 border-t-transparent" />
+          <div class="mx-auto mb-3 h-6 w-6 animate-spin rounded-full border-2 border-amber-300 border-t-transparent" />
           <p class="text-sm text-gray-400">Loading space...</p>
         </div>
       </div>
@@ -441,12 +446,41 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
     onSelectTask ?? ((taskId: string) => navigateToSpaceTask(routeSpaceId, taskId));
 
   return (
-    <div
-      class="flex-1 min-h-0 w-full overflow-y-auto px-4 py-4 sm:px-8 sm:py-6"
-      data-testid="space-overview-dashboard"
-    >
-      <div class="mx-auto min-h-[calc(100%+1px)] max-w-6xl space-y-6">
+    <div class="flex-1 min-h-0 w-full overflow-y-auto" data-testid="space-overview-dashboard">
+      <div class={`${GLASS_CONTENT_CONTAINER_CLASS} min-h-[calc(100%+1px)] space-y-5`}>
         <SpaceCreateTaskDialog isOpen={showCreateTask} onClose={() => setShowCreateTask(false)} />
+
+        {/* Page introduction — amber eyebrow + H2 + primary action. Mirrors the
+            Goals/Agents pattern so Overview no longer reads as a separate
+            (blue) theme; the primary CTA lives here, not as a card link. */}
+        <section
+          class={cn(
+            'flex flex-col gap-4 rounded-2xl border p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6',
+            GLASS_SURFACE
+          )}
+          data-testid="space-overview-introduction"
+          aria-label="Space overview summary"
+        >
+          <div class="max-w-2xl">
+            <div class="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-amber-200/80">
+              <span class="h-1.5 w-1.5 rounded-full bg-amber-300" aria-hidden="true" />
+              Operations
+            </div>
+            <h2 class="mt-2 text-lg font-semibold tracking-tight text-gray-50">
+              Current state · {tasks.length} {tasks.length === 1 ? 'task' : 'tasks'} tracked
+            </h2>
+            <p class="mt-1 text-sm leading-5 text-gray-300">
+              Runtime status, throughput controls, and the latest activity across this Space.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowCreateTask(true)}
+            class={GLASS_PRIMARY_BUTTON_CLASS}
+          >
+            Create task
+          </button>
+        </section>
 
         {/* Runtime state stays visible without delaying the operational summary. */}
         {runtimeState && (
@@ -465,19 +499,19 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
           <StatCard
             label="Active"
             count={activeTasks.length}
-            color="border-blue-800/30 text-blue-400"
+            color="border-amber-800/40 text-amber-300"
             onClick={() => navigateToSpaceTasks(routeSpaceId, 'active')}
           />
           <StatCard
             label="Review"
             count={reviewTasks.length}
-            color="border-purple-800/30 text-purple-400"
+            color="border-purple-800/30 text-purple-300"
             onClick={() => navigateToSpaceTasks(routeSpaceId, 'action')}
           />
           <StatCard
             label="Done"
             count={doneTasks.length}
-            color="border-green-800/30 text-green-400"
+            color="border-emerald-800/40 text-emerald-300"
             onClick={() => navigateToSpaceTasks(routeSpaceId, 'completed')}
           />
         </div>
@@ -510,13 +544,6 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
                 <h3 class="text-base font-semibold tracking-tight text-gray-50">Recent Tasks</h3>
                 <p class="mt-0.5 text-[11px] text-gray-500">Latest work across this Space</p>
               </div>
-              <button
-                type="button"
-                onClick={() => setShowCreateTask(true)}
-                class="text-xs font-medium text-blue-300/85 underline-offset-4 transition-colors hover:text-blue-200 hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70"
-              >
-                Create Task
-              </button>
             </div>
             {recentTasks.length === 0 ? (
               <div class="flex flex-col items-center justify-center px-4 py-10 text-center">
@@ -565,7 +592,7 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
                 <button
                   type="button"
                   onClick={() => void handleNewSession()}
-                  class="text-xs font-medium text-indigo-300/85 underline-offset-4 transition-colors hover:text-indigo-200 hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70"
+                  class="text-xs font-medium text-amber-300/85 underline-offset-4 transition-colors hover:text-amber-200 hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/55"
                 >
                   New Session
                 </button>
@@ -608,7 +635,7 @@ function RecentSessionRow({
   return (
     <button
       type="button"
-      class="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-white/[0.055] focus-visible:bg-white/[0.055] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-400/60"
+      class="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-white/[0.055] focus-visible:bg-white/[0.055] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-200/55"
       onClick={onOpen}
     >
       <span class="min-w-0 flex-1 truncate text-sm font-medium text-gray-100">
