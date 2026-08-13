@@ -225,6 +225,12 @@ export interface SpaceRuntimeConfig {
    */
   externalEventDeliveryCooldownMs?: number;
   /**
+   * Soft cap on the per-delivery cool-down map size; once exceeded, expired
+   * entries are swept on arm. Defaults to
+   * {@link EXTERNAL_EVENT_DELIVERY_COOLDOWN_MAP_CAP}. Exposed for tests.
+   */
+  externalEventDeliveryCooldownMapCap?: number;
+  /**
    * Completion detector — inspects the canonical `SpaceTask` to decide whether
    * a workflow run is complete or ready for runtime resolution.
    *
@@ -569,6 +575,19 @@ const EXTERNAL_EVENT_RATE_LIMIT_PER_MIN = parsePositiveIntegerEnv(
 const EXTERNAL_EVENT_DELIVERY_COOLDOWN_MS = parsePositiveIntegerEnv(
   'HYPERNEO_EXTERNAL_EVENT_DELIVERY_COOLDOWN_MS',
   30_000
+);
+/**
+ * Soft cap on the per-delivery cool-down map. Entries are reaped lazily on re-
+ * query, so a delivery that fails once and is never republished would otherwise
+ * linger until runtime stop; in a long-running daemon a provider-error storm
+ * targeting many distinct deliveries could grow the map without bound. On arm,
+ * once the map exceeds this cap, expired entries are swept (amortized over
+ * arms). A still-oversized map after the sweep means a genuinely large set of
+ * live (in-window) failing deliveries — itself a bounded, observable signal.
+ */
+const EXTERNAL_EVENT_DELIVERY_COOLDOWN_MAP_CAP = parsePositiveIntegerEnv(
+  'HYPERNEO_EXTERNAL_EVENT_DELIVERY_COOLDOWN_MAP_CAP',
+  4096
 );
 /**
  * TTL for pending external-event deliveries that are waiting for their target
@@ -1015,6 +1034,8 @@ export class SpaceRuntime {
    * shrink it; production uses {@link EXTERNAL_EVENT_DELIVERY_COOLDOWN_MS}.
    */
   private readonly deliveryCooldownMs: number;
+  /** Soft cap on {@link externalEventDeliveryCooldowns}; sweeps expired on arm. */
+  private readonly deliveryCooldownMapCap: number;
   /**
    * Pending external-event queue health counters. Defaults to a fresh
    * in-memory instance; the service wires the store's delivery-terminal hook
@@ -1085,6 +1106,8 @@ export class SpaceRuntime {
     this.queueHealthMetrics = config.queueHealthMetrics ?? new ExternalEventQueueMetrics();
     this.deliveryCooldownMs =
       config.externalEventDeliveryCooldownMs ?? EXTERNAL_EVENT_DELIVERY_COOLDOWN_MS;
+    this.deliveryCooldownMapCap =
+      config.externalEventDeliveryCooldownMapCap ?? EXTERNAL_EVENT_DELIVERY_COOLDOWN_MAP_CAP;
     this.subscribeExternalEventPublished();
     this.subscribeSdkToolUseCreated();
     this.unsubscribeSpaceResumed = this.config.spaceManager.onSpaceResumedRegister?.((spaceId) =>
@@ -3922,7 +3945,19 @@ export class SpaceRuntime {
    * the event stays `published` and re-evaluates once the window lifts.
    */
   private armDeliveryCooldown(deliveryKey: string): void {
-    this.externalEventDeliveryCooldowns.set(deliveryKey, Date.now());
+    const map = this.externalEventDeliveryCooldowns;
+    map.set(deliveryKey, Date.now());
+    // Bound growth: stale entries (a delivery that failed once and is never
+    // republished) are only reaped lazily on re-query, so sweep expired entries
+    // once the map exceeds its cap. Amortized over arms; a still-oversized map
+    // after the sweep is a genuinely large live-storm (bounded by distinct
+    // in-window failing deliveries).
+    if (map.size > this.deliveryCooldownMapCap) {
+      const now = Date.now();
+      for (const [key, lastFailureAt] of map) {
+        if (now - lastFailureAt >= this.deliveryCooldownMs) map.delete(key);
+      }
+    }
   }
 
   private getExternalEventRateLimitState(rateLimitKey: string): ExternalEventRateLimitState {

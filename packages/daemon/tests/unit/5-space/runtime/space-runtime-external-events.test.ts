@@ -2192,6 +2192,34 @@ describe('SpaceRuntime external event subscriptions', () => {
     }
   });
 
+  test('bounds the delivery cool-down map — sweeps expired entries on arm', () => {
+    // A delivery that fails once and is never republished is only reaped lazily
+    // on re-query, so a long-running daemon could grow the map without bound.
+    // Once the map exceeds its cap, arming sweeps expired entries. White-box:
+    // the map + arm helper are private.
+    const rt = runtime as unknown as {
+      armDeliveryCooldown(key: string): void;
+      externalEventDeliveryCooldowns: Map<string, number>;
+      deliveryCooldownMs: number;
+      deliveryCooldownMapCap: number;
+    };
+    const cap = rt.deliveryCooldownMapCap;
+    expect(cap).toBeGreaterThan(0);
+    // Arm cap+1 distinct LIVE entries — the sweep runs but finds none expired.
+    for (let i = 0; i <= cap; i++) rt.armDeliveryCooldown(`dk-${i}`);
+    expect(rt.externalEventDeliveryCooldowns.size).toBe(cap + 1);
+    // Backdate every entry so they are all past the window.
+    const stale = Date.now() - rt.deliveryCooldownMs - 1;
+    for (const key of rt.externalEventDeliveryCooldowns.keys()) {
+      rt.externalEventDeliveryCooldowns.set(key, stale);
+    }
+    // One more arm triggers the sweep → all expired entries drop, only the new
+    // live entry remains.
+    rt.armDeliveryCooldown('dk-fresh');
+    expect(rt.externalEventDeliveryCooldowns.size).toBe(1);
+    expect(rt.externalEventDeliveryCooldowns.has('dk-fresh')).toBe(true);
+  });
+
   test('drops queued deliveries older than ttl instead of delivering them', async () => {
     const { workflow, run, task } = await startRunWithSubscription();
     const event = makeEvent({ id: 'evt-expired-queued', dedupeKey: 'dedupe-expired-queued' });
