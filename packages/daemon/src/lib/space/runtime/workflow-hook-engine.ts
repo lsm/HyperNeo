@@ -129,6 +129,10 @@ const DEFAULT_FOLLOW_UP_TIMEOUT_MS = 30_000;
 /** Default delay for queued retryable hook actions when a hook omits retryAfterMs. */
 const DEFAULT_RETRY_AFTER_MS = 30_000;
 
+/** Bounds for an untrusted custom-script retry delay (clamped before scheduling). */
+const MIN_SCRIPT_RETRY_MS = 1_000;
+const MAX_SCRIPT_RETRY_MS = 86_400_000;
+
 /** Maximum bytes for an artifact data payload injected into a script hook env. */
 const MAX_ARTIFACT_DATA_BYTES = 16_384;
 
@@ -886,7 +890,19 @@ export class WorkflowHookEngine {
     const ret: HookReturn = { flow: flow as HookFlow };
     if (typeof parsed.reason === 'string') ret.reason = parsed.reason;
     if (isRecord(parsed.payload)) ret.payload = parsed.payload;
-    if (typeof parsed.retryAfterMs === 'number') ret.retryAfterMs = parsed.retryAfterMs;
+    if (typeof parsed.retryAfterMs === 'number') {
+      // Clamp untrusted script retry delays to a sane range so a malformed
+      // (negative / non-finite / huge) value can't spin a rapid replay loop or
+      // starve the timer. Out-of-range values fall back to the engine default.
+      const requested = parsed.retryAfterMs;
+      if (
+        Number.isFinite(requested) &&
+        requested >= MIN_SCRIPT_RETRY_MS &&
+        requested <= MAX_SCRIPT_RETRY_MS
+      ) {
+        ret.retryAfterMs = requested;
+      }
+    }
     ret.result = parsed.result;
     return ret;
   }

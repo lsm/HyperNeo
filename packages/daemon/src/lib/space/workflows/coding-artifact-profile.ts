@@ -26,6 +26,14 @@ export interface CodingArtifactProfileConfig {
 }
 
 /**
+ * The engine-reserved key the `pr_ready` hook stamps the run's authoritative
+ * reviewed-PR identity under. `save_artifact` rejects `__`-prefixed keys, so
+ * only the engine (via `ctx.writeArtifact`) can write this — a same-node agent
+ * cannot overwrite it to swap the PR the merge gate binds to.
+ */
+const VALIDATED_PR_KEY = '__pr_validated__';
+
+/**
  * The PR's URL on a `link/pr` artifact (v2: `data.link`, legacy `link kind:'pr'`:
  * `data.url`), OR a legacy `pr_url`/`prUrl` field carried on any artifact —
  * post-approval routing records the PR on a kindless `decision` artifact, and
@@ -75,11 +83,16 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
   resolveInitialPrimaryLinkUrl(runId: string): string {
     if (!this.artifactRepo) return '';
     try {
-      // The OLDEST `link/pr` artifact is the first reviewed-PR identity stamped
-      // for the run — the immutable one completion safety binds to, so a later
-      // stamp cannot substitute a different already-merged PR.
+      const all = this.artifactRepo.listByRun(runId);
+      // Prefer the engine-stamped validated identity (agent-unwritable) — the
+      // immutable one completion safety binds to. Only when no handoff has
+      // stamped one yet do we fall back to agent-written link/pr rows.
+      const validated = all.filter(
+        (a) => a.artifactType === 'link' && a.artifactKey === VALIDATED_PR_KEY
+      );
+      const pool = validated.length > 0 ? validated : all;
       let earliest: { url: string; updatedAt: number } | null = null;
-      for (const a of this.artifactRepo.listByRun(runId)) {
+      for (const a of pool) {
         const url = prUrlOf(a.artifactType, a.artifactKey, a.data);
         if (!url) continue;
         if (!earliest || a.updatedAt < earliest.updatedAt)

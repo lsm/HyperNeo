@@ -820,6 +820,17 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       try {
         const artifactKey = deriveArtifactKey(shape, normalized, keyArg);
 
+        // `__`-prefixed keys are an engine-reserved namespace (e.g. the
+        // `pr_ready` hook stamps the run's authoritative PR identity under
+        // `__pr_validated__`). Reject them so an agent cannot forge or overwrite
+        // engine-stamped identity artifacts via save_artifact.
+        if (artifactKey.startsWith('__')) {
+          return jsonResult({
+            success: false,
+            error: `Artifact key "${artifactKey}" is reserved and cannot be written via save_artifact.`,
+          });
+        }
+
         const record = artifactRepo.upsert({
           id: crypto.randomUUID(),
           runId: workflowRunId,

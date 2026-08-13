@@ -137,6 +137,10 @@ export function validateCustomHooks(customHooks: unknown): string[] {
     }
     if (typeof hook.id !== 'string' || hook.id.trim().length === 0) {
       errors.push(`${loc}.id: expected non-empty string`);
+    } else if (BUILT_IN_HOOK_IDS.has(hook.id)) {
+      // Bindings resolve built-ins first, so a custom hook shadowing a built-in
+      // id is silently ignored — reject it so the author's script isn't dead.
+      errors.push(`${loc}.id: custom hook id "${hook.id}" shadows a built-in hook`);
     } else if (ids.has(hook.id)) {
       errors.push(`${loc}.id: duplicate custom hook id "${hook.id}"`);
     } else {
@@ -213,10 +217,16 @@ export function validateWorkflowHookBindings(
       errors.push(`${loc}.sourceNode: unknown node "${binding.sourceNode}"`);
     }
 
-    if (typeof binding.targetNode !== 'string' || binding.targetNode.trim().length === 0) {
-      errors.push(`${loc}.targetNode: expected non-empty node name`);
-    } else if (!validNodes.has(binding.targetNode)) {
-      errors.push(`${loc}.targetNode: unknown node "${binding.targetNode}"`);
+    // targetNode is required for routed methods (send_message) and optional for
+    // non-routed methods (mark_complete, save_artifact, …) that have no target.
+    if (binding.targetNode !== undefined) {
+      if (typeof binding.targetNode !== 'string' || binding.targetNode.trim().length === 0) {
+        errors.push(`${loc}.targetNode: expected non-empty node name when present`);
+      } else if (!validNodes.has(binding.targetNode)) {
+        errors.push(`${loc}.targetNode: unknown node "${binding.targetNode}"`);
+      }
+    } else if (binding.method === 'send_message') {
+      errors.push(`${loc}.targetNode: required for send_message bindings`);
     }
 
     if (typeof binding.method !== 'string' || !VALID_METHODS.has(binding.method as HookMethod)) {

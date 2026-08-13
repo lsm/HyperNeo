@@ -154,7 +154,12 @@ export interface HookAuthorizedCaller {
 export interface HookBinding {
   hookId: string;
   sourceNode: string;
-  targetNode: string;
+  /**
+   * Target node for routed methods (`send_message`). Optional for non-routed
+   * methods (e.g. `mark_complete`, `save_artifact`) that have no destination —
+   * a binding without a targetNode matches any such action from `sourceNode`.
+   */
+  targetNode?: string;
   method: HookMethod;
   order: number;
   enabled: boolean;

@@ -497,35 +497,35 @@ function buildHookValidatedHandoffLines(
   const lines: string[] = [];
   for (const channel of workflow.channels ?? []) {
     if (!isChannelFromNode(channel, currentNode.name)) continue;
-    if (Array.isArray(channel.to)) continue;
-    const target = channel.to;
+    const targets = Array.isArray(channel.to) ? channel.to : [channel.to];
+    for (const target of targets) {
+      const bindings = (workflow.hookBindings ?? []).filter(
+        (binding) =>
+          binding.enabled !== false &&
+          binding.method === 'send_message' &&
+          binding.sourceNode === currentNode.name &&
+          binding.targetNode === target
+      );
+      if (bindings.length === 0) continue;
 
-    const bindings = (workflow.hookBindings ?? []).filter(
-      (binding) =>
-        binding.enabled !== false &&
-        binding.method === 'send_message' &&
-        binding.sourceNode === currentNode.name &&
-        binding.targetNode === target
-    );
-    if (bindings.length === 0) continue;
-
-    const seen = new Set<string>();
-    const requiredFields: string[] = [];
-    for (const binding of bindings) {
-      const hook = resolveHook(binding.hookId, workflow.customHooks);
-      if (!hook) continue;
-      for (const field of hook.requiredData) {
-        if (!field.required || seen.has(field.key)) continue;
-        seen.add(field.key);
-        requiredFields.push(`"${field.key}": "<${field.key}>"`);
+      const seen = new Set<string>();
+      const requiredFields: string[] = [];
+      for (const binding of bindings) {
+        const hook = resolveHook(binding.hookId, workflow.customHooks);
+        if (!hook) continue;
+        for (const field of hook.requiredData) {
+          if (!field.required || seen.has(field.key)) continue;
+          seen.add(field.key);
+          requiredFields.push(`"${field.key}": "<${field.key}>"`);
+        }
       }
-    }
-    const dataContract =
-      requiredFields.length > 0 ? `, data: { ${requiredFields.join(', ')} }` : '';
+      const dataContract =
+        requiredFields.length > 0 ? `, data: { ${requiredFields.join(', ')} }` : '';
 
-    lines.push(
-      `  - ${describeChannelTarget(channel, target)}: call \`send_message(target=${JSON.stringify(target)}, message="<short summary>"${dataContract})\`; \`save_artifact\` alone does not deliver this gated handoff.`
-    );
+      lines.push(
+        `  - ${describeChannelTarget(channel, target)}: call \`send_message(target=${JSON.stringify(target)}, message="<short summary>"${dataContract})\`; \`save_artifact\` alone does not deliver this gated handoff.`
+      );
+    }
   }
   return lines;
 }
