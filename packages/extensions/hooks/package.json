@@ -3,6 +3,9 @@
   "version": "0.39.5",
   "type": "module",
   "license": "Apache-2.0",
+  "scripts": {
+    "test": "bun test tests"
+  },
   "main": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
