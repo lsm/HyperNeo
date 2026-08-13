@@ -121,6 +121,59 @@ runner_is_data_cmd() {
 	case "$tok" in echo|printf|cat|true|false|:|env|command) return 0 ;; *) return 1 ;; esac
 }
 
+# True (exit 0 = BAD) if the EXECUTED portion of the runner command places a
+# control-flow `||` BEFORE the marker — e.g. `true || <marker>` or
+# `bash -lc 'true || cd ... && <marker>'`. Bash short-circuits `||` the instant
+# the left operand succeeds, so a no-op left (`true`/`:`) deadens the marker:
+# the step runs zero tests yet marker_executed (purely textual) still reports it
+# run. Considers only EXECUTED text (outside single quotes, or inside a -lc/-c
+# body), so an `||` inside a quoted data argument is not misread as control flow.
+runner_has_dead_prefix() {
+	awk -v runval="$1" -v marker="$2" '
+		function executed_text(s,   i,n,c,out,inq,qstart,before,content) {
+			n=length(s); out=""; inq=0
+			for (i=1; i<=n; i++) {
+				c=substr(s,i,1)
+				if (c == "'\''") {
+					if (!inq) { inq=1; qstart=i; before=substr(s,1,i-1) }
+					else { inq=0; content=substr(s,qstart+1,i-qstart-1); if (before ~ /(bash|sh)[[:space:]]+-l?c[[:space:]]*$/) out=out content }
+				} else if (!inq) { out=out c }
+			}
+			return out
+		}
+		BEGIN {
+			txt=executed_text(runval); p=index(txt, marker)
+			exit (p > 0 && substr(txt, 1, p-1) ~ /\|\|/) ? 0 : 1
+		}
+	'
+}
+
+# True (exit 0 = BAD) if the ENABLED runner step (the one whose run command
+# contains marker, in job) of file has `continue-on-error: true` at STEP or JOB
+# scope. With it, GitHub marks a FAILED test step as successful, so failing
+# assertions become green CI while this guard reports coverage. Mirrors
+# enabled_run_cmd job/step/if scoping so the property is attributed to the runner
+# step itself, not an unrelated sibling in the same job.
+runner_continue_on_error() {
+	awk -v marker="$2" -v job="$3" '
+		function emit() { if (runval != "" && index(runval, marker) > 0 && !disabled && !job_disabled && done == 0 && curjob == job) { print ((conerr || job_conerr) ? "BAD" : "OK"); done=1 } }
+		/^[[:space:]]{2}[[:alnum:]_-]+:[[:space:]]*$/ {
+			emit(); runval=""; disabled=0; incmd=0; job_disabled=0; conerr=0; job_conerr=0
+			curjob=$0; sub(/^[[:space:]]+/, "", curjob); sub(/:.*$/, "", curjob); next
+		}
+		/^[[:space:]]*-[[:space:]]/ { emit(); runval=""; disabled=0; incmd=0; conerr=0 }
+		/^[[:space:]]*#/ { next }
+		/if:[[:space:]]*(\$\{\{[[:space:]]*)?(false|never)([[:space:]]|\}|$)/ { n=0; while (substr($0,n+1,1)==" ") n++; if (n <= 4) job_disabled=1; else disabled=1 }
+		/if:/ { n=0; while (substr($0,n+1,1)==" ") n++; if (n > 4 && $0 !~ /(always|success)/) disabled=1 }
+		# continue-on-error at job scope (<=4 indent) covers every step; step scope (>4) that step only.
+		/continue-on-error:[[:space:]]*(true|\$\{\{[[:space:]]*true)/ { n=0; while (substr($0,n+1,1)==" ") n++; if (n <= 4) job_conerr=1; else conerr=1 }
+		incmd { n=0; while (substr($0,n+1,1)==" ") n++; if (n > runindent) { runval=runval" "$0; next }; incmd=0 }
+		/^[[:space:]]*run:[[:space:]]*[>|]/ { incmd=1; n=0; while (substr($0,n+1,1)==" ") n++; runindent=n; runval=$0; next }
+		/^[[:space:]]*run:[[:space:]]+/ { runval=$0; incmd=0; next }
+		END { emit() }
+	' "$1" | grep -q '^BAD$'
+}
+
 # Count ACTIVE lines in workflow $1 that are a test_path VALUE for path $2 —
 # either a folded bare-path line (`  tests/online/...`) or a single-line
 # `test_path: tests/online/...`. Excludes a docs `echo tests/online/...` line
@@ -472,6 +525,12 @@ elif ! marker_executed "$_unit_run" 'test-daemon.sh ${{ matrix.shard }}'; then
 elif runner_is_data_cmd "$_unit_run"; then
 	err "test-daemon-shared-unit runner's first command token is a data command (echo/printf/cat) — the marker is an argument, not executed"
 	echo "     → invoke test-daemon.sh as a command, not via echo" >&2
+elif runner_has_dead_prefix "$_unit_run" 'test-daemon.sh ${{ matrix.shard }}'; then
+	err "test-daemon-shared-unit runner places a '||' before test-daemon.sh (e.g. true || ...) — Bash short-circuits, so the marker is never reached and zero tests run while this guard reports them covered"
+	echo "     → remove the '||' prefix / dead branch before test-daemon.sh" >&2
+elif runner_continue_on_error "$REPO_ROOT/.github/workflows/main.yml" 'test-daemon.sh ${{ matrix.shard }}' 'test-daemon-shared-unit'; then
+	err "test-daemon-shared-unit runner step (or its job) has continue-on-error: true — a FAILED unit run is marked successful, so coverage stays green while tests are broken"
+	echo "     → remove continue-on-error from the test-daemon-shared-unit runner step/job" >&2
 else
 	# Inspect ONLY the args after `test-daemon.sh` (there is another
 	# ${{ matrix.shard }} earlier, inside the --report ...json name). Allowlist
@@ -486,9 +545,17 @@ else
 		| sed -E -e 's/\$\{\{[[:space:]]*matrix\.shard[[:space:]]*\}\}//g' \
 		         -e 's/--coverage//g' \
 		| tr -d "[:space:]'")
-	if [ -n "$_extra" ]; then
+	# REQUIRE one affirmative --coverage: without it the shard produces no
+	# coverage/lcov.info, the lcov-fix step exits success on a missing file, and
+	# the Coveralls upload has fail-on-error:false — so the shard can vanish from
+	# combined coverage without failing CI. Bare --coverage (space/EOL-terminated)
+	# is the affirmative form; --coverage=false does not satisfy it.
+	if ! printf '%s' "$_unit_run" | grep -qE -- '--coverage([[:space:]]|$)'; then
+		err "test-daemon-shared-unit runner lacks --coverage — no lcov.info is produced, so the shard disappears from combined coverage without failing CI"
+		echo "     → keep '--coverage' on the test-daemon.sh invocation" >&2
+	elif [ -n "$_extra" ]; then
 		err "test-daemon-shared-unit runner has a non-allowlisted arg after \${{ matrix.shard }} (only --coverage is permitted) — a mode flag (--rerun/--verify/--show-failures) would run zero tests, or a bare shard would override matrix.shard"
-		echo "     → keep the runner as 'test-daemon.sh \${{ matrix.shard }} [--coverage] only" >&2
+		echo "     → keep the runner as 'test-daemon.sh \${{ matrix.shard }} --coverage only" >&2
 	fi
 fi
 
@@ -573,6 +640,12 @@ elif ! marker_executed "$_web_cmd" 'cd packages/web && bunx vitest run'; then
 elif runner_is_data_cmd "$_web_cmd"; then
 	err "test-web runner's first command token is a data command (echo/printf/cat) — the marker is an argument, not executed"
 	echo "     → invoke 'bunx vitest run' as a command, not via echo" >&2
+elif runner_has_dead_prefix "$_web_cmd" 'cd packages/web && bunx vitest run'; then
+	err "test-web runner places a '||' before the vitest invocation (e.g. bash -lc 'true || cd packages/web && bunx vitest run') — Bash short-circuits, so the marker is never reached and zero web tests run while this guard reports them covered"
+	echo "     → remove the '||' prefix / dead branch before 'bunx vitest run'" >&2
+elif runner_continue_on_error "$REPO_ROOT/.github/workflows/main.yml" 'cd packages/web && bunx vitest run' 'test-web'; then
+	err "test-web runner step (or its job) has continue-on-error: true — a FAILED web run is marked successful, so coverage stays green while web tests are broken"
+	echo "     → remove continue-on-error from the test-web runner step/job" >&2
 elif [ -n "$(printf '%s' "$_web_cmd" \
 		| sed 's/.*bunx vitest run//' \
 		| sed -E -e 's/--reporter[[:space:]]+[^[:space:]]+//g' \
@@ -699,6 +772,12 @@ elif ! marker_executed "$_online_main" 'vitest.online.config.ts'; then
 elif runner_is_data_cmd "$_online_main"; then
 	err "main.yml online runner's first command token is a data command (echo/printf/cat) — the marker is an argument, not executed"
 	echo "     → invoke vitest as a command, not via echo" >&2
+elif runner_has_dead_prefix "$_online_main" 'vitest run'; then
+	err "main.yml online runner places a '||' before vitest (e.g. bash -lc 'true || ... && vitest run') — Bash short-circuits, so the marker is never reached and zero online tests run while this guard reports them covered"
+	echo "     → remove the '||' prefix / dead branch before 'vitest run'" >&2
+elif runner_continue_on_error "$REPO_ROOT/.github/workflows/main.yml" 'vitest.online.config.ts' 'test-daemon-online'; then
+	err "main.yml online runner step (or its job) has continue-on-error: true — a FAILED online run is marked successful, so coverage stays green while online tests are broken"
+	echo "     → remove continue-on-error from the test-daemon-online runner step/job" >&2
 else
 	# After `vitest run`, only ${{ matrix.test_path }} (the one selector) and
 	# coverage-neutral flags (--config, --coverage*, --reporter, --outputFile.*,
@@ -720,7 +799,10 @@ else
 	# Coverage disabling: --coverage.enabled=false silently produces no LCOV report,
 	# and the Coveralls upload has fail-on-error:false, so the shard disappears from
 	# coverage results without failing CI.
-	if printf '%s' "$_online_main" | grep -qF 'coverage.enabled=false'; then
+	if ! printf '%s' "$_online_main" | sed 's/.*vitest run//' | grep -qF '${{ matrix.test_path }}'; then
+		err "main.yml online runner has \${{ matrix.test_path }} only BEFORE 'vitest run' (e.g. in a MATRIX_PATH= assignment) — vitest would receive no positional and run the entire online suite unfiltered while this guard reports each module covered"
+		echo "     → place \${{ matrix.test_path }} as a positional AFTER 'vitest run'" >&2
+	elif printf '%s' "$_online_main" | grep -qF 'coverage.enabled=false'; then
 		err "main.yml online runner disables coverage (coverage.enabled=false) — no LCOV report, shard disappears from coverage results without failing CI"
 		echo "     → remove coverage.enabled=false" >&2
 	elif [ "$(printf '%s' "$_online_main" | grep -oF 'vitest run' | wc -l | tr -d ' ')" -gt 1 ]; then
@@ -744,6 +826,9 @@ elif [ "$(printf '%s' "$_online_real" | sed -E 's/^[[:space:]]*run:[[:space:]]*/
 elif [ "$(printf '%s' "$_online_real" | grep -oF 'bun test' | wc -l | tr -d ' ')" -gt 1 ]; then
 	err "real-API runner has multiple 'bun test' invocations — the first could run and exit 0 (e.g. --only with no matches), so the \${{ matrix.test_path }} fallback via || never executes"
 	echo "     → use exactly one 'bun test' invocation" >&2
+elif runner_continue_on_error "$REPO_ROOT/.github/workflows/real-api-tests.yml" 'bun test' 'daemon-real-api'; then
+	err "real-API runner step (or its job) has continue-on-error: true — a FAILED real-API run is marked successful, so CI stays green while paid cross-provider tests are broken"
+	echo "     → remove continue-on-error from the daemon-real-api runner step/job" >&2
 else
 	# After `bun test`, only ${{ matrix.test_path }} may select. A selection flag
 	# like --only (test.only only) / --grep / --filter would run ZERO tests on a
@@ -753,7 +838,10 @@ else
 		| sed 's/.*bun test//' \
 		| sed -E -e 's/\$\{\{[[:space:]]*matrix\.test_path[[:space:]]*\}\}//g' \
 		| tr -d "[:space:]'")
-	if [ -n "$_bextra" ]; then
+	if ! printf '%s' "$_online_real" | sed 's/.*bun test//' | grep -qF '${{ matrix.test_path }}'; then
+		err "real-api-tests.yml runner has \${{ matrix.test_path }} only BEFORE 'bun test' (e.g. in a MATRIX_PATH= assignment) — bun test would receive no positional and run the entire online suite while this guard reports the file covered"
+		echo "     → place \${{ matrix.test_path }} as a positional AFTER 'bun test'" >&2
+	elif [ -n "$_bextra" ]; then
 		err "real-api-tests.yml runner has an extra arg after 'bun test \${{ matrix.test_path }}' — a selection flag like --only/--grep would run zero tests while this guard reports the file covered"
 		echo "     → keep the runner as 'bun test \${{ matrix.test_path }}' with no selection flag or extra positional" >&2
 	fi

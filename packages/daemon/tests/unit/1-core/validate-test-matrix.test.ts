@@ -3,9 +3,9 @@
  */
 
 import { describe, expect, it } from 'bun:test';
-import { spawnSync } from 'child_process';
-import path from 'path';
-import fs from 'fs';
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
 
 const REPO_ROOT = path.resolve(__dirname, '../../../../..');
 const SCRIPT = path.join(REPO_ROOT, 'scripts/validate-test-matrix.sh');
@@ -66,6 +66,51 @@ describe('validate-test-matrix.sh', () => {
         const { exitCode, stderr } = runGuard();
         expect(exitCode).toBe(1);
         expect(stderr).toContain('matrix.exclude');
+      } finally {
+        fs.writeFileSync(wf, original);
+      }
+    },
+    TIMEOUT
+  );
+
+  it(
+    'rejects a dead "||" prefix on the web runner',
+    () => {
+      const wf = path.join(REPO_ROOT, '.github/workflows/main.yml');
+      const original = fs.readFileSync(wf, 'utf-8');
+      const anchor = "bash -lc 'cd packages/web && bunx vitest run";
+      expect(original.includes(anchor)).toBe(true);
+      // Bash short-circuits `||`, so `true || ... && vitest run` never reaches vitest.
+      fs.writeFileSync(
+        wf,
+        original.replace(anchor, "bash -lc 'true || cd packages/web && bunx vitest run")
+      );
+      try {
+        const { exitCode, stderr } = runGuard();
+        expect(exitCode).toBe(1);
+        expect(stderr).toContain("places a '||' before");
+      } finally {
+        fs.writeFileSync(wf, original);
+      }
+    },
+    TIMEOUT
+  );
+
+  it(
+    'rejects continue-on-error on the web runner',
+    () => {
+      const wf = path.join(REPO_ROOT, '.github/workflows/main.yml');
+      const original = fs.readFileSync(wf, 'utf-8');
+      const anchor = '  test-web:\n    name: Web Tests';
+      expect(original.includes(anchor)).toBe(true);
+      fs.writeFileSync(
+        wf,
+        original.replace(anchor, '  test-web:\n    continue-on-error: true\n    name: Web Tests')
+      );
+      try {
+        const { exitCode, stderr } = runGuard();
+        expect(exitCode).toBe(1);
+        expect(stderr).toContain('continue-on-error: true');
       } finally {
         fs.writeFileSync(wf, original);
       }
