@@ -174,6 +174,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
     'space.workflowRun.retry': 'task_retry',
     'space.workflowRun.needsAttention': 'workflow_run_needs_attention',
     'space.task.awaitingApproval': 'task_awaiting_approval',
+    'space.workflowRun.deadLoop': 'workflow_run_dead_loop',
   };
 
   const SPACE_ID = 'space-recovery-1';
@@ -1468,6 +1469,64 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       expect(findExec(run.id, STEP_B).status).toBe('idle');
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
       expect(taskRepo.getTask(task.id)?.blockReason).toBe('execution_failed');
+
+      // The dead loop is surfaced to the UI (not just logged as a generic stall).
+      const deadLoopNotes = notifications.filter((n) => n.kind === 'workflow_run_dead_loop');
+      expect(deadLoopNotes).toHaveLength(1);
+      expect(deadLoopNotes[0].payload.runId).toBe(run.id);
+      expect(deadLoopNotes[0].payload.recentCount).toBe(15);
+    });
+
+    test('cyclic channel one short of the dead-loop threshold → recovery activates and records exactly one traversal', async () => {
+      // Pins the recovery off-by-one: at 14 in-window traversals the channel is
+      // still open, so recovery activates the downstream node and records
+      // exactly one more traversal (14 → 15). At 15 it is closed — recorded 0,
+      // run blocked — covered by the test above.
+      const workflow = buildLinearWorkflow(
+        SPACE_ID,
+        workflowManager,
+        [
+          { id: STEP_A, name: 'Coding', agentId: AGENT },
+          { id: STEP_B, name: 'Review', agentId: AGENT },
+        ],
+        {
+          channels: [
+            { id: 'coding-to-review', from: 'Coding', to: 'Review' },
+            { id: 'review-to-coding', from: 'Review', to: 'Coding', maxCycles: 1 },
+          ],
+          endNodeId: STEP_B,
+        }
+      );
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Boundary Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+      taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Boundary Run',
+        description: '',
+        workflowRunId: run.id,
+        workflowNodeId: STEP_A,
+        status: 'in_progress',
+      });
+      seedExec(run.id, STEP_B, 'Review', 'idle');
+      const cycleRepo = new ChannelCycleRepository(db);
+      const now = Date.now();
+      for (let i = 0; i < 14; i++) cycleRepo.recordCycleEvent(run.id, 1, now - i * 1000);
+
+      await makeRuntime({
+        pendingMessageRepo: new PendingAgentMessageRepository(db),
+      }).recoverStalledRuns();
+
+      // Channel was open → recovery activated Coding and recorded exactly one
+      // traversal (14 → 15). The run is recovered, not blocked.
+      expect(findExec(run.id, STEP_A)).toBeDefined();
+      expect(cycleRepo.countRecentCycleEvents(run.id, 1)).toBe(15);
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+      // Not a dead loop → no dead-loop notification.
+      expect(notifications.filter((n) => n.kind === 'workflow_run_dead_loop')).toHaveLength(0);
     });
 
     test('single-node run with idle execution → run blocked, task blocked, notifications emitted', async () => {

@@ -108,14 +108,16 @@ describe('ChannelCycleRepository — windowed counting & pruning', () => {
     expect(repo.countRecentCycleEvents(RUN_ID_A, 1, NOW + 6 * 60 * 1000, WINDOW)).toBe(0);
   });
 
-  test('isDeadLoopReached flips at the threshold', () => {
+  test('isDeadLoopReached flips at the threshold (explicit threshold/window)', () => {
     for (let i = 0; i < 14; i++) repo.recordCycleEvent(RUN_ID_A, 1, NOW + i * 1000);
-    expect(repo.isDeadLoopReached(RUN_ID_A, 1, NOW + 14_000)).toBe(false);
+    expect(repo.isDeadLoopReached(RUN_ID_A, 1, NOW + 14_000, 15, WINDOW)).toBe(false);
     repo.recordCycleEvent(RUN_ID_A, 1, NOW + 14_000);
-    expect(repo.isDeadLoopReached(RUN_ID_A, 1, NOW + 15_000)).toBe(true);
+    expect(repo.isDeadLoopReached(RUN_ID_A, 1, NOW + 15_000, 15, WINDOW)).toBe(true);
   });
 
   test('uses package defaults (15 / 5min) when threshold/window omitted', () => {
+    // Omits threshold/window args to exercise the DEAD_LOOP_THRESHOLD /
+    // DEAD_LOOP_WINDOW_MS defaults (distinct from the explicit-args test above).
     for (let i = 0; i < 14; i++) repo.recordCycleEvent(RUN_ID_A, 1, NOW + i * 1000);
     expect(repo.isDeadLoopReached(RUN_ID_A, 1, NOW + 14_000)).toBe(false);
     repo.recordCycleEvent(RUN_ID_A, 1, NOW + 14_000);

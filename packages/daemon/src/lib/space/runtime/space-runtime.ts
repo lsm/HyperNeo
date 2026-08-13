@@ -57,7 +57,11 @@ import type { ExternalEvent } from '../../external-events/types';
 import { validateGlobPattern } from '../../external-events/topic-validator';
 import { legacyGitHubTopic } from '../../external-events/github-subscription-pattern';
 import { composeLongHorizonSubscriptionPattern } from '../../external-events/long-horizon-subscription-pattern';
-import { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
+import {
+  ChannelCycleRepository,
+  DEAD_LOOP_THRESHOLD,
+  DEAD_LOOP_WINDOW_MS,
+} from '../../../storage/repositories/channel-cycle-repository';
 import { normalizeMeaningfulTaskResult } from '../task-result-utils';
 import type { WorkflowArtifactProfile } from './artifact-profile';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
@@ -6577,6 +6581,18 @@ export class SpaceRuntime {
       );
       if (!cycleResult.open) {
         blockedReasons.push(cycleResult.reason);
+        // Surface a recovery-detected dead loop to the UI (mirrors the live
+        // ChannelRouter surfacing) so it is not mistaken for a generic stall.
+        if (cycleResult.deadLoop) {
+          await this.notifyRecoveryDeadLoop(
+            run,
+            channel,
+            channelIndex,
+            sourceExecution.agentName,
+            targetNames,
+            cycleResult.recentCount
+          );
+        }
         continue;
       }
       let activatedOnChannel = false;
@@ -6674,20 +6690,62 @@ export class SpaceRuntime {
     workflow: SpaceWorkflow,
     channel: WorkflowChannel,
     channelIndex: number
-  ): { open: true } | { open: false; reason: string } {
+  ): { open: true } | { open: false; deadLoop: true; reason: string; recentCount: number } {
     if (!isChannelCyclic(channelIndex, workflow.channels ?? [], workflow.nodes)) {
       return { open: true };
     }
     // Rate-based dead-loop detection: block only a runaway tight ping-pong,
     // never a genuine extended review spread over time.
     const cycleRepo = new ChannelCycleRepository(this.config.db);
-    if (cycleRepo.isDeadLoopReached(runId, channelIndex)) {
+    const recentCount = cycleRepo.countRecentCycleEvents(runId, channelIndex);
+    if (recentCount >= DEAD_LOOP_THRESHOLD) {
       return {
         open: false,
+        deadLoop: true,
+        recentCount,
         reason: `Cyclic channel "${channel.id ?? channelIndex}" is in a dead loop (too many round-trips within the rate window).`,
       };
     }
     return { open: true };
+  }
+
+  /**
+   * Best-effort: publish a `space.workflowRun.deadLoop` event when restart
+   * recovery finds a cyclic channel already in a dead loop, so the human sees
+   * the block in the UI rather than a generic stall. Mirrors the live
+   * `ChannelRouter.notifyDeadLoop` surfacing. Failures are swallowed.
+   */
+  private async notifyRecoveryDeadLoop(
+    run: SpaceWorkflowRun,
+    channel: WorkflowChannel,
+    channelIndex: number,
+    fromAgent: string,
+    toTargets: string[],
+    recentCount: number
+  ): Promise<void> {
+    if (!this.internalEventBus) return;
+    const channelLabel = channel.id ?? channelIndex;
+    try {
+      await this.internalEventBus.publish('space.workflowRun.deadLoop', {
+        namespaceId: 'global',
+        spaceId: run.spaceId,
+        runId: run.id,
+        fromAgent,
+        toTarget: toTargets.length > 0 ? toTargets.join(',') : String(channelLabel),
+        channelIndex,
+        recentCount,
+        threshold: DEAD_LOOP_THRESHOLD,
+        windowMs: DEAD_LOOP_WINDOW_MS,
+        reason: `Cyclic channel "${channelLabel}" is in a dead loop (detected during restart recovery): ${recentCount} message round-trips within the rate window.`,
+        timestamp: new Date().toISOString(),
+      } satisfies DaemonInternalEventMap['space.workflowRun.deadLoop'] & InternalEventPayload);
+    } catch (err) {
+      log.warn(
+        `[SpaceRuntime] deadLoop notify threw during recovery: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+    }
   }
 
   private recordRestartRecoveryCycleTraversal(

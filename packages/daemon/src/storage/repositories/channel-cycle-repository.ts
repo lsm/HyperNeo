@@ -153,6 +153,11 @@ export class ChannelCycleRepository {
    * Called periodically (e.g. from `recoverStalledRuns`) so abandoned/stalled
    * runs whose channels are never traversed again still have their history
    * bounded. Returns the number of rows deleted.
+   *
+   * The DELETE filters on `sent_at` alone (a full scan of `channel_cycle_events`
+   * without the `(run_id, channel_index, sent_at)` index). That is intentional:
+   * the table is bounded to ~`threshold` rows per active channel per window by
+   * the lazy pruning on every traversal, so the scan stays cheap.
    */
   pruneAllOldEvents(now: number = Date.now(), retentionMs: number = DEAD_LOOP_WINDOW_MS): number {
     const result = this.db

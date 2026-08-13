@@ -1435,6 +1435,48 @@ describe('ChannelRouter', () => {
       expect(result.allowed).toBe(true);
     });
 
+    test('canDeliver is read-only: it never records a traversal event', async () => {
+      // Locks the documented contract: canDeliver is a non-mutating query that
+      // may prune out-of-window rows but must never INSERT. Seeds straddle the
+      // window boundary so a regression that recorded on the query path would
+      // shift the in-window count.
+      const channels: WorkflowChannel[] = [
+        { id: 'ch-fwd', from: 'Node A', to: 'Node B' },
+        { id: 'ch-bwd', from: 'Node B', to: 'Node A' },
+      ];
+      const workflow = buildWorkflow(
+        SPACE_ID,
+        workflowManager,
+        [
+          { id: NODE_A, name: 'Node A', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+          { id: NODE_B, name: 'Node B', agents: [{ agentId: AGENT_PLANNER, name: 'planner' }] },
+        ],
+        channels
+      );
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Read-only canDeliver Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+      const now = Date.now();
+      const WINDOW = 5 * 60 * 1000;
+      channelCycleRepo.recordCycleEvent(run.id, 1, now - 10_000); // well inside
+      channelCycleRepo.recordCycleEvent(run.id, 1, now - (WINDOW - 1000)); // just inside the boundary
+      channelCycleRepo.recordCycleEvent(run.id, 1, now - (WINDOW + 1000)); // just outside (pruned)
+      const before = channelCycleRepo.countRecentCycleEvents(run.id, 1);
+      expect(before).toBe(2); // the two in-window events
+
+      // Repeated queries must not insert any new traversal.
+      for (let i = 0; i < 5; i++) {
+        const result = await router.canDeliver(run.id, 'planner', 'coder');
+        expect(result.allowed).toBe(true);
+      }
+
+      expect(channelCycleRepo.countRecentCycleEvents(run.id, 1)).toBe(before);
+    });
+
     test('non-cyclic channel: cycle count does not block delivery', async () => {
       const channels: WorkflowChannel[] = [
         {
