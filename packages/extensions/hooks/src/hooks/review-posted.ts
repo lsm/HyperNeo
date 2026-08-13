@@ -19,6 +19,7 @@ export const reviewPostedHook: Hook = {
   run: async (action: HookAction, ctx): Promise<HookReturn> => {
     const link =
       readDataString(action, 'pr_link') ??
+      readDataString(action, 'pr_url') ??
       readDataString(action, 'review_link') ??
       getPrimaryLink(ctx);
     if (!link) {

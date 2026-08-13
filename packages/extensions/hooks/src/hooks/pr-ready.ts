@@ -25,7 +25,11 @@ export const prReadyHook: Hook = {
   id: 'pr_ready',
   requiredData: [{ key: 'pr_link', type: 'link', required: true }],
   run: async (action: HookAction, ctx): Promise<HookReturn> => {
-    const link = readDataString(action, 'pr_link') ?? getPrimaryLink(ctx);
+    // requiredData declares `pr_link`, but several preserved built-in prompts
+    // instruct the agent to send `pr_url`; accept both so the first handoff
+    // isn't blocked on the field name. Falls back to the run's stamped identity.
+    const link =
+      readDataString(action, 'pr_link') ?? readDataString(action, 'pr_url') ?? getPrimaryLink(ctx);
     if (!link) {
       return { flow: 'stop', reason: 'PR is not ready for Review: no PR link supplied.' };
     }

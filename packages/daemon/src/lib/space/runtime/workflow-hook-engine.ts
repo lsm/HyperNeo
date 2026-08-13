@@ -824,10 +824,21 @@ export class WorkflowHookEngine {
 
   private readArtifactsForCtx(): HookArtifact[] {
     try {
-      // Bounded at the SQL level (freshest 50) so each hook run does not load
-      // every run artifact into memory.
-      const recent = this.config.artifactRepo?.listRecentByRun(this.config.workflowRunId, 50) ?? [];
-      return recent.map((a: WorkflowRunArtifact) => ({
+      // Freshest 50 for general context, PLUS every __pr_validated__ row (the
+      // authoritative PR identity downstream hooks bind to) — a busy run can
+      // accumulate >50 artifacts and push the validated stamp out of the
+      // bounded window, which would make getPrimaryLink miss it.
+      const repo = this.config.artifactRepo;
+      const recent = repo?.listRecentByRun(this.config.workflowRunId, 50) ?? [];
+      const seenKeys = new Set(recent.map((a) => `${a.nodeId}:${a.artifactType}:${a.artifactKey}`));
+      const validated = (
+        repo?.listByRun(this.config.workflowRunId, { artifactType: 'link' }) ?? []
+      ).filter(
+        (a) =>
+          a.artifactKey === '__pr_validated__' &&
+          !seenKeys.has(`${a.nodeId}:${a.artifactType}:${a.artifactKey}`)
+      );
+      return [...recent, ...validated].map((a: WorkflowRunArtifact) => ({
         artifactType: a.artifactType,
         artifactKey: a.artifactKey,
         data: this.boundArtifactData(a.data) as Record<string, unknown>,

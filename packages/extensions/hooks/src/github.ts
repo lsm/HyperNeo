@@ -73,14 +73,21 @@ async function readUpTo(
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
   let len = 0;
+  let capped = false;
   try {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
       if (!value) continue;
-      if (len + value.byteLength > maxBytes) break;
-      chunks.push(value);
-      len += value.byteLength;
+      // Keep DRAINING past the cap so the child doesn't block on a full pipe
+      // buffer (which would prevent it from exiting until the kill timer) —
+      // just stop appending once the budget is reached.
+      if (!capped && len + value.byteLength <= maxBytes) {
+        chunks.push(value);
+        len += value.byteLength;
+      } else {
+        capped = true;
+      }
     }
   } finally {
     try {
@@ -236,6 +243,20 @@ export async function fetchPrView(
   workspacePath: string,
   link: string
 ): Promise<GithubResult<GithubPrView>> {
+  // `gh pr view <url>` resolves the host from the URL, so validate it before
+  // invoking gh — an attacker-controlled link must not direct gh (and its
+  // credentials) at an arbitrary server.
+  const parsedLink = parsePrLink(link);
+  if (!parsedLink) {
+    return { ok: false, retryable: false, error: `unable to parse GitHub PR link: ${link}` };
+  }
+  if (!isTrustedGitHubHost(parsedLink.host)) {
+    return {
+      ok: false,
+      retryable: false,
+      error: `refusing gh pr view on untrusted host: ${parsedLink.host}`,
+    };
+  }
   const result = await runGh({
     workspacePath,
     args: ['pr', 'view', link, '--json', 'state,mergeable,mergeStateStatus'],
