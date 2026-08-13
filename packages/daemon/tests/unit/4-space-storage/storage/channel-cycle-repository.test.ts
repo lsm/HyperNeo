@@ -1,14 +1,16 @@
 /**
  * ChannelCycleRepository Unit Tests
  *
- * Covers:
- *   - incrementCycleCount: insert, update, cap-guard (existing behavior)
- *   - reset: per-channel reset (existing behavior)
- *   - resetAllForRun: new human-touch reset that zeroes every channel counter
- *     for a workflow run in a single statement (Task #101)
+ * Covers the rate-based dead-loop detection API:
+ *   - reserveCycleEvent: authoritative atomic gate (prune + count + conditional insert)
+ *   - recordCycleEvent: unconditional traversal record (recovery path)
+ *   - countRecentCycleEvents / isDeadLoopReached: read-only windowed count
+ *   - resetAllForRun: human-touch reset (clears event history, lifts a block)
+ *   - pruneAllOldEvents: cross-run GC for abandoned/stalled runs
  *
  * Uses an in-memory SQLite DB seeded with the full migration chain so FK
- * constraints (channel_cycles.run_id → space_workflow_runs.id) match production.
+ * constraints (channel_cycle_events.run_id → space_workflow_runs.id) match
+ * production.
  */
 
 import { describe, test, expect, beforeEach } from 'bun:test';
@@ -46,217 +48,125 @@ beforeEach(() => {
   repo = new ChannelCycleRepository(db);
 });
 
-describe('ChannelCycleRepository — incrementCycleCount', () => {
-  test('inserts a new row with count=1 on first call', () => {
-    const ok = repo.incrementCycleCount(RUN_ID_A, 0, 5);
-    expect(ok).toBe(true);
-    const rec = repo.get(RUN_ID_A, 0);
-    expect(rec).not.toBeNull();
-    expect(rec!.count).toBe(1);
-    expect(rec!.maxCycles).toBe(5);
+// A fixed "now" and a 5-minute window keep the rate tests deterministic without
+// depending on real wall-clock time.
+const NOW = 1_700_000_000_000;
+const WINDOW = 5 * 60 * 1000;
+
+describe('ChannelCycleRepository — reserveCycleEvent (authoritative gate)', () => {
+  test('allows and records traversals below the threshold', () => {
+    let reservation;
+    for (let i = 0; i < 15; i++) {
+      reservation = repo.reserveCycleEvent(RUN_ID_A, 1, NOW + i * 1000);
+      expect(reservation.allowed).toBe(true);
+    }
+    expect(reservation!.recentCount).toBe(15);
   });
 
-  test('increments existing row while under cap', () => {
-    repo.incrementCycleCount(RUN_ID_A, 0, 5);
-    repo.incrementCycleCount(RUN_ID_A, 0, 5);
-    expect(repo.get(RUN_ID_A, 0)!.count).toBe(2);
+  test('blocks the traversal that would exceed the threshold (no insert)', () => {
+    for (let i = 0; i < 15; i++) repo.reserveCycleEvent(RUN_ID_A, 1, NOW + i * 1000);
+    // The 16th attempt within the window is blocked and records nothing.
+    const blocked = repo.reserveCycleEvent(RUN_ID_A, 1, NOW + 15_000);
+    expect(blocked.allowed).toBe(false);
+    expect(blocked.recentCount).toBe(15);
+    // Still exactly 15 recorded — the blocked attempt inserted no row.
+    expect(repo.countRecentCycleEvents(RUN_ID_A, 1, NOW + 15_000, WINDOW)).toBe(15);
   });
 
-  test('returns false and does not increment when cap is reached', () => {
-    repo.incrementCycleCount(RUN_ID_A, 0, 2);
-    repo.incrementCycleCount(RUN_ID_A, 0, 2);
-    const third = repo.incrementCycleCount(RUN_ID_A, 0, 2);
-    expect(third).toBe(false);
-    expect(repo.get(RUN_ID_A, 0)!.count).toBe(2);
-  });
-
-  test('unblocks a capped run when the supplied cap is raised above the persisted one', () => {
-    // Drive a channel to its cap of 6 (persisted max_cycles = 6).
-    for (let i = 0; i < 6; i++) repo.incrementCycleCount(RUN_ID_A, 0, 6);
-    expect(repo.get(RUN_ID_A, 0)).toEqual(expect.objectContaining({ count: 6, maxCycles: 6 }));
-
-    // At the old cap, further increments at cap=6 are rejected.
-    expect(repo.incrementCycleCount(RUN_ID_A, 0, 6)).toBe(false);
-
-    // Cap raised 6 → 50 (e.g. a template re-stamp). The increment guard must
-    // compare against the SUPPLIED cap, not the stale persisted max_cycles —
-    // otherwise an in-flight run blocked at the old limit can never resume.
-    // This is the motivating case for raising the Fullstack QA Loop cap.
-    expect(repo.incrementCycleCount(RUN_ID_A, 0, 50)).toBe(true);
-    expect(repo.get(RUN_ID_A, 0)).toEqual(expect.objectContaining({ count: 7, maxCycles: 50 }));
-  });
-});
-
-describe('ChannelCycleRepository — reset (single channel)', () => {
-  test('zeros count for a specific (run, channel) pair only', () => {
-    repo.incrementCycleCount(RUN_ID_A, 0, 5);
-    repo.incrementCycleCount(RUN_ID_A, 0, 5);
-    repo.incrementCycleCount(RUN_ID_A, 1, 5);
-
-    repo.reset(RUN_ID_A, 0);
-
-    expect(repo.get(RUN_ID_A, 0)!.count).toBe(0);
-    expect(repo.get(RUN_ID_A, 1)!.count).toBe(1); // untouched
-  });
-});
-
-describe('ChannelCycleRepository — resetAllForRun (human touch)', () => {
-  test('zeros count for every channel in the given run', () => {
-    repo.incrementCycleCount(RUN_ID_A, 0, 5);
-    repo.incrementCycleCount(RUN_ID_A, 0, 5);
-    repo.incrementCycleCount(RUN_ID_A, 1, 5);
-    repo.incrementCycleCount(RUN_ID_A, 2, 5);
-
-    const rowsReset = repo.resetAllForRun(RUN_ID_A);
-
-    expect(rowsReset).toBe(3);
-    expect(repo.get(RUN_ID_A, 0)!.count).toBe(0);
-    expect(repo.get(RUN_ID_A, 1)!.count).toBe(0);
-    expect(repo.get(RUN_ID_A, 2)!.count).toBe(0);
-  });
-
-  test('allows subsequent increments after reset (budget is refreshed)', () => {
-    repo.incrementCycleCount(RUN_ID_A, 0, 2);
-    repo.incrementCycleCount(RUN_ID_A, 0, 2);
-    // Cap reached — next increment would return false.
-    expect(repo.incrementCycleCount(RUN_ID_A, 0, 2)).toBe(false);
-
-    repo.resetAllForRun(RUN_ID_A);
-
-    // After reset, the cap guard allows more increments.
-    expect(repo.incrementCycleCount(RUN_ID_A, 0, 2)).toBe(true);
-    expect(repo.incrementCycleCount(RUN_ID_A, 0, 2)).toBe(true);
-    expect(repo.get(RUN_ID_A, 0)!.count).toBe(2);
-  });
-
-  test('does not affect other workflow runs', () => {
-    repo.incrementCycleCount(RUN_ID_A, 0, 5);
-    repo.incrementCycleCount(RUN_ID_B, 0, 5);
-    repo.incrementCycleCount(RUN_ID_B, 0, 5);
-
-    repo.resetAllForRun(RUN_ID_A);
-
-    expect(repo.get(RUN_ID_A, 0)!.count).toBe(0);
-    expect(repo.get(RUN_ID_B, 0)!.count).toBe(2); // untouched
-  });
-
-  test('returns 0 when no channel rows exist for the run (human touch before any cyclic traversal)', () => {
-    const rowsReset = repo.resetAllForRun(RUN_ID_A);
-    expect(rowsReset).toBe(0);
-  });
-
-  test('updates updated_at when a row is reset', async () => {
-    repo.incrementCycleCount(RUN_ID_A, 0, 5);
-    const before = repo.get(RUN_ID_A, 0)!.updatedAt;
-
-    // Yield so Date.now() has a chance to advance (1ms resolution on most platforms).
-    await new Promise((resolve) => setTimeout(resolve, 2));
-
-    repo.resetAllForRun(RUN_ID_A);
-
-    const after = repo.get(RUN_ID_A, 0)!.updatedAt;
-    expect(after).toBeGreaterThan(before);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Rate-based dead-loop detection (primary gate) — channel_cycle_events
-// ---------------------------------------------------------------------------
-
-describe('ChannelCycleRepository — rate-based dead-loop detection', () => {
-  // A fixed "now" and a 5-minute window keep these tests deterministic without
-  // depending on real wall-clock time.
-  const NOW = 1_700_000_000_000;
-  const WINDOW = 5 * 60 * 1000;
-
-  test('recordCycleEvent stores timestamped traversals', () => {
-    repo.recordCycleEvent(RUN_ID_A, 1, NOW);
-    repo.recordCycleEvent(RUN_ID_A, 1, NOW + 1000);
-    expect(repo.countRecentCycleEvents(RUN_ID_A, 1, NOW + 2000, WINDOW)).toBe(2);
-  });
-
-  test('countRecentCycleEvents only counts traversals inside the window', () => {
-    // Two traversals well outside the window (an hour ago) ...
-    repo.recordCycleEvent(RUN_ID_A, 1, NOW - 60 * 60 * 1000);
-    repo.recordCycleEvent(RUN_ID_A, 1, NOW - 30 * 60 * 1000);
-    // ... and three inside it.
-    repo.recordCycleEvent(RUN_ID_A, 1, NOW - 60_000);
-    repo.recordCycleEvent(RUN_ID_A, 1, NOW - 30_000);
-    repo.recordCycleEvent(RUN_ID_A, 1, NOW - 10_000);
-
-    expect(repo.countRecentCycleEvents(RUN_ID_A, 1, NOW, WINDOW)).toBe(3);
-  });
-
-  test('a genuine extended review spread over hours never trips the threshold', () => {
-    // Simulate 30 review round-trips on the same channel, each an hour apart —
-    // far more than the lifetime cap ever allowed, but spread over a whole day.
-    // The rolling 5-minute window must only ever see at most one at a time.
+  test('a genuine extended review spread over hours never trips', () => {
+    // 30 review round-trips on the same channel, each an hour apart — far more
+    // than any lifetime cap allowed, but spread over a whole day. The rolling
+    // 5-minute window must only ever see one at a time.
     for (let i = 0; i < 30; i++) {
       const t = NOW + i * 60 * 60 * 1000;
-      repo.recordCycleEvent(RUN_ID_A, 1, t);
-      // At every point in time, the windowed count stays tiny.
-      expect(repo.isDeadLoopReached(RUN_ID_A, 1, t, 15, WINDOW)).toBe(false);
+      expect(repo.reserveCycleEvent(RUN_ID_A, 1, t).allowed).toBe(true);
     }
   });
 
-  test('a tight ping-pong within the window trips the threshold', () => {
-    // 15 rapid traversals inside the window. After the 15th, the next attempt
-    // is blocked (the threshold is met).
-    for (let i = 0; i < 15; i++) {
-      repo.recordCycleEvent(RUN_ID_A, 1, NOW + i * 1000);
-    }
-    expect(repo.isDeadLoopReached(RUN_ID_A, 1, NOW + 15_000, 15, WINDOW)).toBe(true);
+  test('is isolated per channel index and per run', () => {
+    for (let i = 0; i < 15; i++) repo.reserveCycleEvent(RUN_ID_A, 1, NOW + i * 1000);
+    expect(repo.reserveCycleEvent(RUN_ID_A, 1, NOW + 15_000).allowed).toBe(false);
+    // Different channel on the same run, and the same channel on a different
+    // run, are both still allowed.
+    expect(repo.reserveCycleEvent(RUN_ID_A, 2, NOW + 15_000).allowed).toBe(true);
+    expect(repo.reserveCycleEvent(RUN_ID_B, 1, NOW + 15_000).allowed).toBe(true);
   });
+});
 
-  test('isDeadLoopReached is false below the threshold', () => {
-    for (let i = 0; i < 14; i++) {
-      repo.recordCycleEvent(RUN_ID_A, 1, NOW + i * 1000);
-    }
-    expect(repo.isDeadLoopReached(RUN_ID_A, 1, NOW + 14_000, 15, WINDOW)).toBe(false);
+describe('ChannelCycleRepository — windowed counting & pruning', () => {
+  test('countRecentCycleEvents only counts traversals inside the window', () => {
+    repo.recordCycleEvent(RUN_ID_A, 1, NOW - 60 * 60 * 1000); // an hour ago
+    repo.recordCycleEvent(RUN_ID_A, 1, NOW - 30 * 60 * 1000); // 30 min ago
+    repo.recordCycleEvent(RUN_ID_A, 1, NOW - 60_000); // inside
+    repo.recordCycleEvent(RUN_ID_A, 1, NOW - 10_000); // inside
+    expect(repo.countRecentCycleEvents(RUN_ID_A, 1, NOW, WINDOW)).toBe(2);
   });
 
   test('counting prunes events older than the window (bounded growth)', () => {
-    for (let i = 0; i < 40; i++) {
-      repo.recordCycleEvent(RUN_ID_A, 1, NOW + i * 1000); // 40s span
-    }
-    // Counting at NOW + 6min prunes everything older than 5min and returns
-    // only the tail of the burst still inside the window.
-    const count = repo.countRecentCycleEvents(RUN_ID_A, 1, NOW + 6 * 60 * 1000, WINDOW);
-    expect(count).toBe(0);
+    for (let i = 0; i < 40; i++) repo.recordCycleEvent(RUN_ID_A, 1, NOW + i * 1000); // 40s span
+    // Counting 6 minutes later prunes the whole burst (all older than 5 min).
+    expect(repo.countRecentCycleEvents(RUN_ID_A, 1, NOW + 6 * 60 * 1000, WINDOW)).toBe(0);
   });
 
-  test('rate tracking is isolated per channel index', () => {
-    for (let i = 0; i < 15; i++) repo.recordCycleEvent(RUN_ID_A, 1, NOW + i * 1000);
-    expect(repo.isDeadLoopReached(RUN_ID_A, 1, NOW + 15_000, 15, WINDOW)).toBe(true);
-    // A different channel on the same run is unaffected.
-    expect(repo.countRecentCycleEvents(RUN_ID_A, 2, NOW + 15_000, WINDOW)).toBe(0);
-    expect(repo.isDeadLoopReached(RUN_ID_A, 2, NOW + 15_000, 15, WINDOW)).toBe(false);
-  });
-
-  test('rate tracking is isolated per run', () => {
-    for (let i = 0; i < 15; i++) repo.recordCycleEvent(RUN_ID_A, 1, NOW + i * 1000);
-    expect(repo.isDeadLoopReached(RUN_ID_A, 1, NOW + 15_000, 15, WINDOW)).toBe(true);
-    expect(repo.isDeadLoopReached(RUN_ID_B, 1, NOW + 15_000, 15, WINDOW)).toBe(false);
-  });
-
-  test('resetAllForRun (human touch) clears the rate-window history and lifts a dead-loop block', () => {
-    for (let i = 0; i < 15; i++) repo.recordCycleEvent(RUN_ID_A, 1, NOW + i * 1000);
-    expect(repo.isDeadLoopReached(RUN_ID_A, 1, NOW + 15_000, 15, WINDOW)).toBe(true);
-
-    repo.resetAllForRun(RUN_ID_A);
-
-    expect(repo.countRecentCycleEvents(RUN_ID_A, 1, NOW + 15_000, WINDOW)).toBe(0);
-    expect(repo.isDeadLoopReached(RUN_ID_A, 1, NOW + 15_000, 15, WINDOW)).toBe(false);
-    // Other runs are untouched.
-    for (let i = 0; i < 15; i++) repo.recordCycleEvent(RUN_ID_B, 1, NOW + i * 1000);
-    expect(repo.isDeadLoopReached(RUN_ID_B, 1, NOW + 15_000, 15, WINDOW)).toBe(true);
-  });
-
-  test('uses package defaults when threshold/window omitted', () => {
-    // Sanity: defaults are the documented 15 / 5min.
+  test('isDeadLoopReached flips at the threshold', () => {
     for (let i = 0; i < 14; i++) repo.recordCycleEvent(RUN_ID_A, 1, NOW + i * 1000);
     expect(repo.isDeadLoopReached(RUN_ID_A, 1, NOW + 14_000)).toBe(false);
     repo.recordCycleEvent(RUN_ID_A, 1, NOW + 14_000);
     expect(repo.isDeadLoopReached(RUN_ID_A, 1, NOW + 15_000)).toBe(true);
+  });
+
+  test('uses package defaults (15 / 5min) when threshold/window omitted', () => {
+    for (let i = 0; i < 14; i++) repo.recordCycleEvent(RUN_ID_A, 1, NOW + i * 1000);
+    expect(repo.isDeadLoopReached(RUN_ID_A, 1, NOW + 14_000)).toBe(false);
+    repo.recordCycleEvent(RUN_ID_A, 1, NOW + 14_000);
+    expect(repo.isDeadLoopReached(RUN_ID_A, 1, NOW + 15_000)).toBe(true);
+  });
+});
+
+describe('ChannelCycleRepository — resetAllForRun (human touch)', () => {
+  test('clears the rate-window history and lifts a dead-loop block', () => {
+    for (let i = 0; i < 15; i++) repo.recordCycleEvent(RUN_ID_A, 1, NOW + i * 1000);
+    expect(repo.isDeadLoopReached(RUN_ID_A, 1, NOW + 15_000)).toBe(true);
+
+    const deleted = repo.resetAllForRun(RUN_ID_A);
+    expect(deleted).toBe(15);
+    expect(repo.countRecentCycleEvents(RUN_ID_A, 1, NOW + 15_000, WINDOW)).toBe(0);
+    expect(repo.isDeadLoopReached(RUN_ID_A, 1, NOW + 15_000)).toBe(false);
+    // The channel is deliverable again after the reset.
+    expect(repo.reserveCycleEvent(RUN_ID_A, 1, NOW + 15_000).allowed).toBe(true);
+  });
+
+  test('does not affect other workflow runs', () => {
+    for (let i = 0; i < 15; i++) repo.recordCycleEvent(RUN_ID_A, 1, NOW + i * 1000);
+    for (let i = 0; i < 15; i++) repo.recordCycleEvent(RUN_ID_B, 1, NOW + i * 1000);
+
+    repo.resetAllForRun(RUN_ID_A);
+
+    expect(repo.isDeadLoopReached(RUN_ID_A, 1, NOW + 15_000)).toBe(false);
+    expect(repo.isDeadLoopReached(RUN_ID_B, 1, NOW + 15_000)).toBe(true);
+  });
+
+  test('returns 0 when nothing is recorded for the run', () => {
+    expect(repo.resetAllForRun(RUN_ID_A)).toBe(0);
+  });
+});
+
+describe('ChannelCycleRepository — pruneAllOldEvents (cross-run GC)', () => {
+  test('deletes events older than the retention cutoff across all runs', () => {
+    // Run A: recent events (kept). Run B: stale events (GC'd).
+    repo.recordCycleEvent(RUN_ID_A, 1, NOW - 60_000);
+    repo.recordCycleEvent(RUN_ID_B, 1, NOW - 2 * WINDOW); // 10 min ago
+    repo.recordCycleEvent(RUN_ID_B, 2, NOW - 3 * WINDOW); // 15 min ago
+
+    const deleted = repo.pruneAllOldEvents(NOW);
+    expect(deleted).toBe(2);
+    expect(repo.countRecentCycleEvents(RUN_ID_A, 1, NOW, WINDOW)).toBe(1);
+    expect(repo.countRecentCycleEvents(RUN_ID_B, 1, NOW, WINDOW)).toBe(0);
+    expect(repo.countRecentCycleEvents(RUN_ID_B, 2, NOW, WINDOW)).toBe(0);
+  });
+
+  test('returns 0 when nothing is stale', () => {
+    repo.recordCycleEvent(RUN_ID_A, 1, NOW - 60_000);
+    expect(repo.pruneAllOldEvents(NOW)).toBe(0);
   });
 });

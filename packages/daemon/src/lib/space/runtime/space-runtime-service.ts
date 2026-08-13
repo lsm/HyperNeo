@@ -2297,7 +2297,6 @@ export class SpaceRuntimeService {
       agentManager: this.config.spaceAgentManager,
       nodeExecutionRepo: this.nodeExecutionRepo,
       channelCycleRepo: this.config.channelCycleRepo,
-      db: this.config.db,
       isSessionAlive: taskAgentManager ? (sid) => taskAgentManager.isSessionAlive(sid) : undefined,
       cancelSessionById: taskAgentManager
         ? (sid) => taskAgentManager.cancelBySessionId(sid)

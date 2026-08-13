@@ -202,7 +202,6 @@ describe('ChannelRouter', () => {
       workflowManager,
       agentManager,
       channelCycleRepo,
-      db,
       nodeExecutionRepo: new NodeExecutionRepository(db),
     });
   });
@@ -617,7 +616,6 @@ describe('ChannelRouter', () => {
         workflowManager,
         agentManager,
         channelCycleRepo,
-        db,
         nodeExecutionRepo,
         cancelSessionById: (sessionId) => cancelledSessions.push(sessionId),
       });
@@ -1070,7 +1068,6 @@ describe('ChannelRouter', () => {
         workflowManager,
         agentManager,
         channelCycleRepo,
-        db,
         nodeExecutionRepo: new NodeExecutionRepository(db),
         internalEventBus: bus,
       });
@@ -1104,6 +1101,7 @@ describe('ChannelRouter', () => {
 
       expect(deadLoopEvents).toHaveLength(1);
       const evt = deadLoopEvents[0];
+      expect(evt.spaceId).toBe(SPACE_ID);
       expect(evt.fromAgent).toBe('planner');
       expect(evt.toTarget).toBe('coder');
       expect(evt.channelIndex).toBe(1);
@@ -1130,7 +1128,6 @@ describe('ChannelRouter', () => {
         workflowManager,
         agentManager,
         channelCycleRepo,
-        db,
         nodeExecutionRepo: new NodeExecutionRepository(db),
         internalEventBus: bus,
       });
@@ -1171,6 +1168,45 @@ describe('ChannelRouter', () => {
       unsub();
     });
 
+    test('cyclic channel: human touch (resetAllForRun) lifts a dead-loop block', async () => {
+      // Router-level coverage of the reset-on-human-touch contract — the repo
+      // layer is covered separately in channel-cycle-repository.test.ts.
+      const channels: WorkflowChannel[] = [
+        { id: 'ch-fwd', from: 'Sender', to: 'Receiver' },
+        { id: 'ch-bwd', from: 'Receiver', to: 'Sender' },
+      ];
+      const workflow = buildWorkflow(
+        SPACE_ID,
+        workflowManager,
+        [
+          { id: NODE_A, name: 'Sender', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+          { id: NODE_B, name: 'Receiver', agents: [{ agentId: AGENT_PLANNER, name: 'planner' }] },
+        ],
+        channels
+      );
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Reset Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+      const now = Date.now();
+      for (let i = 0; i < 15; i++) channelCycleRepo.recordCycleEvent(run.id, 1, now - i * 1000);
+
+      // Blocked before the human touch.
+      await expect(router.deliverMessage(run.id, 'planner', 'coder', 'blocked')).rejects.toThrow(
+        /dead loop/
+      );
+
+      // Human touch resets the run's cycle state.
+      channelCycleRepo.resetAllForRun(run.id);
+
+      // After reset, delivery succeeds again (the block is lifted).
+      const delivered = await router.deliverMessage(run.id, 'planner', 'coder', 'after reset');
+      expect(delivered.runId).toBe(run.id);
+    });
+
     test('non-cyclic channel: records no traversal event', async () => {
       const channels: WorkflowChannel[] = [
         {
@@ -1197,7 +1233,6 @@ describe('ChannelRouter', () => {
 
       await router.deliverMessage(run.id, 'coder', 'planner', 'non-cyclic message');
 
-      expect(channelCycleRepo.get(run.id, 0)).toBeNull();
       expect(channelCycleRepo.countRecentCycleEvents(run.id, 0)).toBe(0);
     });
   });

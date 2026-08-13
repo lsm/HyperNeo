@@ -19,7 +19,6 @@
  *   ChannelRouter only mutates node_executions and cycle state.
  */
 
-import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
 import type { SpaceTask, SpaceWorkflow, WorkflowChannel, WorkflowNode } from '@hyperneo/shared';
 import { resolveNodeAgents, isChannelCyclic } from '@hyperneo/shared';
 import type { NodeExecution } from '@hyperneo/shared';
@@ -167,31 +166,6 @@ export interface ChannelRouterConfig {
    */
   channelCycleRepo?: ChannelCycleRepository;
   /**
-   * Max cyclic-channel traversals permitted within the rolling dead-loop
-   * window before the channel is considered in a runaway loop. Defaults to
-   * {@link DEAD_LOOP_THRESHOLD} (15). A genuine long review spread over hours
-   * can never reach this rate; only a tight agent-to-agent ping-pong can.
-   */
-  deadLoopThreshold?: number;
-  /**
-   * Rolling window (ms) over which traversals are counted for dead-loop
-   * detection. Defaults to {@link DEAD_LOOP_WINDOW_MS} (5 minutes).
-   */
-  deadLoopWindowMs?: number;
-  /**
-   * Clock used for dead-loop windowing. Defaults to `Date.now`. Exposed so
-   * tests can simulate messages spread over hours versus a tight burst.
-   */
-  now?: () => number;
-  /**
-   * Raw SQLite database handle. Retained for configuration compatibility with
-   * the legacy lifetime-counter path; the rate-based dead-loop path uses plain
-   * SELECT/INSERT on the cycle repository (no transaction wrap is needed — an
-   * agent session processes one `send_message` at a time, so the check-then-
-   * record sequence is not racy in practice).
-   */
-  db?: BunDatabase;
-  /**
    * Optional liveness probe for an agent session ID.
    *
    * Used during cyclic re-entry: when an existing terminal node_execution is
@@ -262,18 +236,6 @@ export class ChannelRouter {
    * window. Transient (in-memory); the router is rebuilt per agent session.
    */
   private readonly deadLoopNotifiedAt = new Map<string, number>();
-
-  private get deadLoopThreshold(): number {
-    return this.config.deadLoopThreshold ?? DEAD_LOOP_THRESHOLD;
-  }
-
-  private get deadLoopWindowMs(): number {
-    return this.config.deadLoopWindowMs ?? DEAD_LOOP_WINDOW_MS;
-  }
-
-  private now(): number {
-    return this.config.now ? this.config.now() : Date.now();
-  }
 
   // -------------------------------------------------------------------------
   // Public API
@@ -667,12 +629,21 @@ export class ChannelRouter {
       }
     }
 
-    // Dead-loop (rate) detection rejects the send itself, so it is enforced
-    // before activation. Unlike the retired lifetime cap, this only trips on a
-    // runaway tight ping-pong — a long review spread over hours never will.
+    // ── 3. Dead-loop gate (reserve the cyclic traversal before activation) ──
+    // Rate-based detection rejects the send itself, so it is enforced before
+    // any activation work. Unlike the retired lifetime cap, this only trips on
+    // a runaway tight ping-pong — a long review spread over hours never will.
+    // `reserveCycleEvent` prunes + counts + conditionally inserts in one
+    // synchronous sequence, so two concurrent agent sessions sharing this
+    // channel cannot both pass the threshold. The reservation is made before
+    // (not after) activation so the gate is authoritative; on the rare path
+    // where activation then fails, one extra reserved event biases safely
+    // toward blocking and prunes out after the window.
     if (channelIsCyclic && channel) {
-      const recentCount = this.recentCycleCount(runId, channelIndex);
-      if (recentCount >= this.deadLoopThreshold) {
+      const reservation = this.config.channelCycleRepo
+        ? this.config.channelCycleRepo.reserveCycleEvent(runId, channelIndex)
+        : { allowed: true, recentCount: 0 };
+      if (!reservation.allowed) {
         // Surface the block to the human (UI) instead of failing silently,
         // then reject the send.
         await this.notifyDeadLoop(
@@ -681,13 +652,13 @@ export class ChannelRouter {
           fromRole,
           toTarget,
           channelIndex,
-          recentCount
+          reservation.recentCount
         );
         throw new ActivationError(this.deadLoopReason(fromRole, toTarget));
       }
     }
 
-    // ── 3. Lazy activation ─────────────────────────────────────────────────
+    // ── 4. Lazy activation ─────────────────────────────────────────────────
     const activeTasks = this.getActiveTasksForNode(runId, targetNode.id);
     let activatedTasks: SpaceTask[] | undefined;
 
@@ -712,11 +683,6 @@ export class ChannelRouter {
         reopenBy: `agent:${fromRole}`,
         reopenReason: `peer send_message from "${fromRole}" to "${toTarget}"`,
       });
-    }
-
-    // ── 5. Record the cyclic traversal for rate-based dead-loop detection ─
-    if (channelIsCyclic && channel) {
-      this.recordCyclicTraversal(runId, channelIndex);
     }
 
     return {
@@ -827,35 +793,14 @@ export class ChannelRouter {
   }
 
   /**
-   * Number of cyclic-channel traversals recorded within the rolling dead-loop
-   * window for this (run, channel). Returns 0 when no cycle repository is
-   * configured (dead-loop detection disabled — e.g. standalone tests).
-   */
-  private recentCycleCount(runId: string, channelIndex: number): number {
-    if (!this.config.channelCycleRepo) return 0;
-    return this.config.channelCycleRepo.countRecentCycleEvents(
-      runId,
-      channelIndex,
-      this.now(),
-      this.deadLoopWindowMs
-    );
-  }
-
-  /**
-   * `true` when the cyclic channel has reached the dead-loop threshold within
-   * the rolling window. The upcoming traversal should be blocked.
+   * `true` when the cyclic channel is currently in a dead loop. Read-only check
+   * for `canDeliver` (a non-mutating query). Delivery itself must gate via
+   * `reserveCycleEvent` so the traversal is recorded atomically. Returns `false`
+   * when no cycle repository is configured (dead-loop detection disabled).
    */
   private isDeadLoopReached(runId: string, channelIndex: number): boolean {
-    return this.recentCycleCount(runId, channelIndex) >= this.deadLoopThreshold;
-  }
-
-  /**
-   * Records one cyclic-channel traversal (timestamped event) after a successful
-   * delivery, so subsequent traversals' rate checks can see it. No-op when no
-   * cycle repository is configured.
-   */
-  private recordCyclicTraversal(runId: string, channelIndex: number): void {
-    this.config.channelCycleRepo?.recordCycleEvent(runId, channelIndex, this.now());
+    if (!this.config.channelCycleRepo) return false;
+    return this.config.channelCycleRepo.isDeadLoopReached(runId, channelIndex);
   }
 
   /**
@@ -863,11 +808,10 @@ export class ChannelRouter {
    * `deliverMessage`.
    */
   private deadLoopReason(fromRole: string, toTarget: string): string {
-    const threshold = this.deadLoopThreshold;
-    const windowMin = Math.round(this.deadLoopWindowMs / 60000);
+    const windowMin = Math.round(DEAD_LOOP_WINDOW_MS / 60000);
     return (
       `Cyclic channel from "${fromRole}" to "${toTarget}" is in a dead loop: ` +
-      `${threshold} message round-trips within ${windowMin} minute(s). ` +
+      `${DEAD_LOOP_THRESHOLD} message round-trips within ${windowMin} minute(s). ` +
       `Spread the exchange out or break the loop.`
     );
   }
@@ -876,8 +820,20 @@ export class ChannelRouter {
    * Publish a `space.workflowRun.deadLoop` event so the human sees the blocked
    * send in the UI (`SpaceAgentNotificationService` injects it into the Space
    * Agent session). Deduped per (run, channel) within the window so a retrying
-   * agent does not spam the UI. Failures are swallowed — notification must not
-   * break delivery. No-op when no event bus is configured.
+   * agent does not spam the UI. No-op when no event bus is configured.
+   *
+   * The dedupe timestamp is recorded ONLY after a successful publish: if a
+   * subscriber handler throws, `publish` rethrows, we swallow it here, and —
+   * because we did not record dedupe — the next blocked send retries the
+   * notification. Recording dedupe before the publish would silently drop the
+   * block from the UI on any handler failure, which is exactly the silent
+   * failure this surfacing exists to prevent.
+   *
+   * Note: `publish` is awaited (consistent with `reopenRun`'s `safeNotify`),
+   * which couples `deliverMessage` to subscriber latency; a misbehaving handler
+   * could delay the send. Migrating to fire-and-forget `publishAsync` is a
+   * broader change that also affects `safeNotify` and is intentionally left out
+   * of scope here.
    */
   private async notifyDeadLoop(
     spaceId: string,
@@ -889,10 +845,9 @@ export class ChannelRouter {
   ): Promise<void> {
     if (!this.config.internalEventBus) return;
     const key = `${runId}:${channelIndex}`;
-    const now = this.now();
+    const now = Date.now();
     const last = this.deadLoopNotifiedAt.get(key);
-    if (last !== undefined && now - last < this.deadLoopWindowMs) return;
-    this.deadLoopNotifiedAt.set(key, now);
+    if (last !== undefined && now - last < DEAD_LOOP_WINDOW_MS) return;
     try {
       await this.config.internalEventBus.publish('space.workflowRun.deadLoop', {
         namespaceId: 'global',
@@ -902,13 +857,16 @@ export class ChannelRouter {
         toTarget,
         channelIndex,
         recentCount,
-        threshold: this.deadLoopThreshold,
-        windowMs: this.deadLoopWindowMs,
+        threshold: DEAD_LOOP_THRESHOLD,
+        windowMs: DEAD_LOOP_WINDOW_MS,
         reason: this.deadLoopReason(fromRole, toTarget),
         timestamp: new Date(now).toISOString(),
       } satisfies DaemonInternalEventMap['space.workflowRun.deadLoop'] & InternalEventPayload);
+      // Record dedupe only after the publish succeeded — see method doc.
+      this.deadLoopNotifiedAt.set(key, now);
     } catch {
-      // Swallow — surfacing must not break the delivery path.
+      // Swallow — surfacing must not break the delivery path. Dedupe is NOT
+      // recorded, so the next blocked send retries the notification.
     }
   }
 

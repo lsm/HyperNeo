@@ -6206,6 +6206,21 @@ export class SpaceRuntime {
     if (this.recoveryDone) return;
     this.recoveryDone = true;
 
+    // Garbage-collect dead-loop event history older than the rolling window
+    // across all runs. Active cyclic channels are pruned lazily on every
+    // traversal; this bounds history for abandoned/stalled runs that are never
+    // traversed again. Once per daemon start is sufficient — abandoned-run
+    // events are static (no further traversals add rows).
+    try {
+      new ChannelCycleRepository(this.config.db).pruneAllOldEvents();
+    } catch (err) {
+      log.warn(
+        `SpaceRuntime.recoverStalledRuns: failed to prune old cycle events: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+    }
+
     const spaces = await this.config.spaceManager.listSpaces(false);
     let blockedCount = 0;
     let completionPendingCount = 0;

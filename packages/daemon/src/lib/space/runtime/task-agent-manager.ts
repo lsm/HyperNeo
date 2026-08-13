@@ -2937,7 +2937,6 @@ export class TaskAgentManager {
         agentManager: this.config.spaceAgentManager,
         nodeExecutionRepo: this.config.nodeExecutionRepo,
         channelCycleRepo: this.config.channelCycleRepo,
-        db: this.config.db.getDatabase(),
         isSessionAlive: (sid) => this.isSessionAlive(sid),
         cancelSessionById: (sid) => this.cancelBySessionId(sid),
         internalEventBus: this.config.internalEventBus,
@@ -5114,7 +5113,6 @@ export class TaskAgentManager {
       agentManager: this.config.spaceAgentManager,
       nodeExecutionRepo: this.config.nodeExecutionRepo,
       channelCycleRepo: this.config.channelCycleRepo,
-      db: this.config.db.getDatabase(),
       isSessionAlive: (sid) => this.isSessionAlive(sid),
       cancelSessionById: (sid) => this.cancelBySessionId(sid),
       // The merger sub-session has no node_execution row, so this router's
