@@ -1979,6 +1979,7 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
       // cooldown — or repeated manual attempts hit GitHub immediately forever
       // and MAX_RETRY_ATTEMPTS never observes a nonzero count.
       const blockingHookId = outcome.blockingHookId;
+      let blockingPersistFailed = false;
       for (const [hookId, patch] of byHook) {
         if (hookId === blockingHookId) {
           Object.assign(patch, engine.nextRetryBookkeeping(hookId, retryAfterMs));
@@ -1987,8 +1988,31 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
           patch.nextRetryAt = null;
         }
         if (!engine.persistStateUpdate(hookId, patch)) {
+          // The agent drives retries on this path with no engine timer: an
+          // unpersisted count/cooldown means immediate re-attempts with no
+          // backoff and a ceiling that never fires. Advertise a blocking
+          // state error instead of a plain retryable one (mirroring the
+          // queued send_message path).
+          if (hookId === blockingHookId) blockingPersistFailed = true;
           log.warn(`Failed to persist hook state for ${hookId} on retry`);
         }
+      }
+      if (blockingPersistFailed) {
+        log.error(`Failed to persist retry bookkeeping for hook "${blockingHookId}"; blocking.`);
+        return hookResult(
+          {
+            success: false,
+            error:
+              'Hook retry bookkeeping could not be persisted (state write failed); the ' +
+              'action is blocked — retry it again.',
+            hookStatus: outcome.userState.status,
+            hookId: outcome.userState.hookId,
+            hookReason: outcome.userState.reason,
+            sourceNode: outcome.userState.sourceNode,
+            targetNode: outcome.userState.targetNode,
+          },
+          true
+        );
       }
       return hookResult(
         {

@@ -272,6 +272,61 @@ describe('WorkflowHookEngine.executeAction', () => {
     expect(outcome.executionLog[0]?.flow).toBe('stop');
   });
 
+  test('a failed retry-bookkeeping persist blocks instead of advertising retryable', async () => {
+    // The wrapper-level path; drive it through wrapHandlerWithHooks with a
+    // repo whose updateWithRetry fails, mirroring a locked SQLite.
+    class FailingUpdateRepo extends WorkflowHookStateRepository {
+      updateWithRetry(): null {
+        return null;
+      }
+    }
+    const RETRY_HOOK = scriptHook(
+      'persist_hook',
+      '{"flow":"retry","reason":"waiting on GitHub","retryAfterMs":60000}'
+    );
+    const workflow = makeWorkflow({
+      customHooks: [RETRY_HOOK],
+      hookBindings: [
+        {
+          hookId: 'persist_hook',
+          sourceNode: 'Coding',
+          method: 'mark_complete',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    const failingRepo = new FailingUpdateRepo(db);
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: new NodeExecutionRepository(db),
+      artifactRepo,
+      hookStateRepo: failingRepo,
+      workspacePath: process.cwd(),
+    });
+    let delivered = 0;
+    const wrapped = wrapHandlerWithHooks(
+      'mark_complete',
+      async () => {
+        delivered += 1;
+        return { content: [{ type: 'text', text: 'ok' }] };
+      },
+      engine,
+      {},
+      META
+    );
+    const result = await wrapped({ goalUpdate: { summary: 's' } });
+    const parsed = JSON.parse((result.content?.[0] as { text: string }).text);
+    // A blocking state error, NOT advertised as retryable-with-backoff (the
+    // bookkeeping that would pace it failed to persist).
+    expect(parsed.success).toBe(false);
+    expect(parsed.retryable).toBeUndefined();
+    expect(parsed.error).toContain('could not be persisted');
+    expect(delivered).toBe(0);
+  });
+
   test('the cooldown pre-check enforces the retry ceiling (agent-driven loop)', async () => {
     // Non-send_message methods have no engine timer: every attempt runs the
     // cooldown pre-check, so the ceiling must convert here — otherwise a
