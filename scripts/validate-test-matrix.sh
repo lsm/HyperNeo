@@ -202,36 +202,42 @@ matrix_excludes() {
 module_values() {
 	awk -v job="$2" '
 		function trim(v) { sub(/^[[:space:]]+/, "", v); sub(/[[:space:]]+$/, "", v); return v }
-		# Scope to the target job only: a `- module:`/`test_path:` pair in an
-		# UNRELATED job must not satisfy the orphan/ownership checks of THIS job.
-		$0 ~ "^  " job ":" { injob=1; next }
-		injob && /^  [a-z]/ { injob=0; mod=""; folding=0; next }
-		!injob { next }
-		# A `#`-line INSIDE a folded scalar is content, not a comment — only skip
-		# comment lines when not folding (the caller rejects shell metachars).
-		!folding && /^[[:space:]]*#/ { next }
-		# New include record: capture module name + its indent (mi).
-		/^[[:space:]]*- module:[[:space:]]*[^[:space:]]/ {
-			mi=0; while (substr($0,mi+1,1)==" ") mi++
-			mod=$0; sub(/^[[:space:]]*- module:[[:space:]]*/, "", mod); sub(/[[:space:]]*$/, "", mod); gsub(/[^a-z0-9-]/, "", mod)
-			folding=0; next
+		function flush_rec(   i) {
+			if (rmod != "") for (i = 0; i < rpath_n; i++) if (rpaths[i] != "") print rmod "\t" rpaths[i]
+			rmod=""; rpath_n=0; folding=0
 		}
-		# Any other line in the job: dispatch by indent. test_path counts ONLY as a
-		# DIRECT record property (indent mi+2); a dedent to/under the record
-		# `- module:` indent ends the record, so test_path in env/steps/job scope
-		# (which does NOT populate ${{ matrix.test_path }}) cannot pose as a value.
+		function handle_key(line,   v) {
+			sub(/^[[:space:]]+/, "", line)
+			if (line ~ /^module:[[:space:]]*[^[:space:]]/) {
+				sub(/^module:[[:space:]]*/, "", line); line=trim(line); gsub(/[^a-z0-9-]/, "", line); rmod=line
+			} else if (line ~ /^test_path:[[:space:]]*[>|]-[[:space:]]*$/) {
+				folding=1
+			} else if (line ~ /^test_path:[[:space:]]+[^[:space:]>|-]/) {
+				sub(/^test_path:[[:space:]]+/, "", line); line=trim(line); if (line != "") rpaths[rpath_n++]=line
+			}
+		}
+		$0 ~ "^  " job ":" { injob=1; next }
+		injob && /^  [a-z]/ { flush_rec(); injob=0; next }
+		!injob { next }
+		!folding && /^[[:space:]]*#/ { next }
+		# List item: new record. Parse the dash-line key regardless of key ORDER
+		# (module: or test_path: or mock_sdk: — any can be first on the dash line).
+		/^[[:space:]]*- / {
+			if (rmod != "" || rpath_n > 0) flush_rec()
+			mi=0; while (substr($0,mi+1,1)==" ") mi++
+			line=$0; sub(/^[[:space:]]*- [[:space:]]*/, "", line); handle_key(line)
+			next
+		}
+		# Property lines: collect module/test_path at indent mi+2 in ANY order;
+		# dedent to mi or below flushes the record.
 		{
 			n=0; while (substr($0,n+1,1)==" ") n++
-			if (mod != "" && n <= mi) { mod=""; folding=0 }
-			if (mod == "") next
+			if (n <= mi) { flush_rec(); next }
 			if (folding) {
-				if (n > base) { v=trim($0); if (v != "") print mod "\t" v; next }
+				if (n > mi+2) { v=trim($0); if (v != "") rpaths[rpath_n++]=v; next }
 				folding=0
 			}
-			if (n == mi+2 && $0 ~ /test_path:[[:space:]]*[>|]-[[:space:]]*$/) { folding=1; base=n; next }
-			if (n == mi+2 && $0 ~ /test_path:[[:space:]]+[^[:space:]>|-]/) {
-				v=$0; sub(/^.*test_path:[[:space:]]+/, "", v); v=trim(v); if (v != "") print mod "\t" v
-			}
+			if (n == mi+2) handle_key($0)
 		}
 	' "$1"
 }
@@ -497,6 +503,17 @@ done < <(find "$UNIT_ROOT" "$SHARED_ROOT" -type f \( -name '*.test.ts' -o -name 
 unit_covered=$(sort -u "$COVERED_TMP" | wc -l | tr -d ' ')
 echo "daemon unit: $unit_disk file(s) on disk, $unit_covered covered"
 
+# Scan the WHOLE daemon package for test-shaped files outside tests/unit and
+# tests/online — the daemon Vitest config includes only tests/**, so a test file
+# under packages/daemon/src/ (or anywhere outside tests/) is invisible to CI.
+while IFS= read -r _orphan; do
+	[ -n "$_orphan" ] || continue
+	err "daemon test file outside tests/unit/ or tests/online/ (CI config includes only tests/**, so this file never runs): ${_orphan#"$REPO_ROOT"/}"
+	echo "     → move it under tests/unit/ or tests/online/" >&2
+done < <(find "$REPO_ROOT/packages/daemon" -type f \( -name '*.test.ts' -o -name '*_test.ts' \) \
+	-not -path '*/tests/unit/*' -not -path '*/tests/online/*' \
+	-not -path '*/node_modules/*' -not -path '*/dist/*' | sort)
+
 # ===========================================================================
 # 2. WEB TESTS  (packages/web/src/** — single directory glob, one CI job)
 # ===========================================================================
@@ -627,6 +644,32 @@ fi
 # Selection-changing test options (dir, shard) narrow which files run without
 # touching include/exclude — reject them.
 test_no_select_opts "$ONLINE_CFG" "packages/daemon/vitest.online"
+
+# Each test job must have a job-level if: that references the expected gate
+# (github.event.inputs.run_e2e_only). The enabled_run_cmd parser catches only
+# literal if:false/never, so a non-literal always-false condition (e.g.
+# if: github.event_name == 'never') would bypass it and disable the whole job
+# while this guard reports its files covered.
+for _tj_job in test-daemon-online test-daemon-shared-unit test-web; do
+	_tj_if=$(awk -v j="$_tj_job" '
+		$0 ~ "^  " j ":" { injob=1; next }
+		injob && /^  [a-z]/ { injob=0; next }
+		injob && /^[[:space:]]{4}if:/ { print; exit }
+	' "$MAIN_WORKFLOW")
+	if [ -n "$_tj_if" ] && ! printf '%s' "$_tj_if" | grep -qF 'run_e2e_only'; then
+		err "$_tj_job has a job-level if: that does not reference the expected gate (run_e2e_only) — a non-literal always-false condition would disable the job while this guard reports its files covered"
+		echo "     → keep the if: condition referencing github.event.inputs.run_e2e_only" >&2
+	fi
+done
+_tj_if=$(awk '
+	$0 ~ "^  daemon-real-api:" { injob=1; next }
+	injob && /^  [a-z]/ { injob=0; next }
+	injob && /^[[:space:]]{4}if:/ { print; exit }
+' "$REAL_API_WORKFLOW")
+if [ -n "$_tj_if" ] && ! printf '%s' "$_tj_if" | grep -qF 'run_e2e_only'; then
+	err "daemon-real-api has a job-level if: that does not reference the expected gate (run_e2e_only) — a non-literal always-false condition would disable the job"
+	echo "     → keep the if: condition referencing github.event.inputs.run_e2e_only" >&2
+fi
 
 # Online matrix test_path values must reach an ENABLED runner that forwards
 # ${{ matrix.test_path }}. The marker picks the runner step itself
@@ -944,6 +987,30 @@ while IFS= read -r _tp; do
 		esac
 	fi
 done < <(online_test_path_values "$MAIN_WORKFLOW"; online_test_path_values "$REAL_API_WORKFLOW")
+
+# Detect overlapping directory filter prefixes. Vitest treats positional filters
+# as substring matches, so `tests/online/sdk` also matches files under
+# `tests/online/sdk-extra` — those tests run twice.
+_dir_overlap=$(printf '%s\n' "$_module_values" "$_real_module_values" \
+	| awk -F'\t' '$2 !~ /\.(test|_test)\.ts$/ {print $2}' \
+	| sort -u \
+	| awk '
+		{ vals[NR]=$0 }
+		END {
+			for (i=1;i<=NR;i++) for (j=1;j<=NR;j++) {
+				if (i==j) continue
+				a=vals[i]; b=vals[j]
+				if (index(b, a "/") == 1 || index(b, a "-") == 1) print a " > " b
+			}
+		}
+	')
+if [ -n "$_dir_overlap" ]; then
+	while IFS= read -r _line; do
+		[ -n "$_line" ] || continue
+		err "overlapping directory test_path filters: $_line — Vitest treats positional filters as substring matches, so files match both shards (duplicate runs)"
+		echo "     → rename to avoid prefix overlap, or merge into one shard" >&2
+	done <<< "$_dir_overlap"
+fi
 
 RPC_FILES=(
 	rpc-agent-handlers.test.ts
