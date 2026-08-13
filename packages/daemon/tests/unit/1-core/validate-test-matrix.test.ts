@@ -48,4 +48,28 @@ describe('validate-test-matrix.sh', () => {
     },
     TIMEOUT
   );
+
+  it(
+    'rejects a matrix.exclude in the real-API workflow',
+    () => {
+      const wf = path.join(REPO_ROOT, '.github/workflows/real-api-tests.yml');
+      const original = fs.readFileSync(wf, 'utf-8');
+      const anchor = '        include:\n';
+      expect(original.includes(anchor)).toBe(true);
+      // A flow-form exclude as a sibling of include silently drops the row in CI
+      // while the guard still reports its test_path covered.
+      fs.writeFileSync(
+        wf,
+        original.replace(anchor, `        exclude: [{ module: cross-provider-2 }]\n${anchor}`)
+      );
+      try {
+        const { exitCode, stderr } = runGuard();
+        expect(exitCode).toBe(1);
+        expect(stderr).toContain('matrix.exclude');
+      } finally {
+        fs.writeFileSync(wf, original);
+      }
+    },
+    TIMEOUT
+  );
 });

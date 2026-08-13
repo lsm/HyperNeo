@@ -885,6 +885,40 @@ if [ -n "$_real_sibling_axes" ]; then
 	done <<< "$_real_sibling_axes"
 fi
 
+# Symmetric to the unit and mocked-online exclude checks: a `matrix.exclude`
+# under daemon-real-api drops an include row, but `_real_module_values` reads
+# the include block raw, so every downstream ownership check would still treat
+# that row (and its test_path) as scheduled. Reject excludes outright — this
+# guard models disabling a real-API shard by commenting out its include row, so
+# a matrix.exclude (keyed on module, test_path, or any other field) is a silent
+# drop this guard cannot soundly model. Detect ANY non-empty exclude (block or
+# flow form, regardless of key) rather than a single key, so a test_path-keyed
+# exclude cannot slip past a module-only check.
+_real_excluded=$(awk '
+	$0 ~ "^  daemon-real-api:" { injob=1; next }
+	injob && /^  [a-z]/ { injob=0; inmatrix=0; inexclude=0; next }
+	!injob { next }
+	/^[[:space:]]{6}matrix:[[:space:]]*$/ { inmatrix=1; next }
+	/^[[:space:]]{0,6}[a-z]/ { inmatrix=0; inexclude=0 }
+	# Flow form: exclude: [ ... ] with at least one non-whitespace entry.
+	inmatrix && $0 ~ "^[[:space:]]*exclude:[[:space:]]*\\[[^]]*\\]" {
+		body=$0; sub(/^[^[]*\[/, "", body); sub(/\][^]]*$/, "", body); gsub(/[[:space:]]/, "", body)
+		if (body != "") { print "flow"; exit }
+		next
+	}
+	# Block form: "exclude:" alone, then any indented "- ..." list item.
+	inmatrix && $0 ~ "^[[:space:]]*exclude:[[:space:]]*$" { inexclude=1; next }
+	inmatrix && inexclude {
+		n=0; while (substr($0,n+1,1)==" ") n++
+		if (n <= 8) { inexclude=0; next }
+		if ($0 ~ /^[[:space:]]*-[[:space:]]/) { print "block"; exit }
+	}
+' "$REAL_API_WORKFLOW")
+if [ -n "$_real_excluded" ]; then
+	err "daemon-real-api matrix has a matrix.exclude — GitHub drops those include rows, so their test_path values never run while this guard reports them covered"
+	echo "     → remove the exclude, or disable the module by commenting out its include row in $REAL_API_WORKFLOW" >&2
+fi
+
 # Every active module-axis value must occur EXACTLY once. GitHub expands each
 # axis entry into a separate job, so a duplicated value (e.g. two `- components`
 # rows sharing one include) runs the same test_path twice — wasted CI and, for
