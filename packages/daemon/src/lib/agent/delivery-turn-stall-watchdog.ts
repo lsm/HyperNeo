@@ -15,6 +15,10 @@
  *   - on each fire attempt, if a tool is mid-execution (`hasOutstandingTool`),
  *     the fire is deferred (re-armed) — a quiet window during a tool run is the
  *     tool executing, not a stall.
+ *   - likewise if `isPaused` reports a scheduled rate-limit cooldown: the query
+ *     intentionally emits nothing while the provider's reset window elapses, and
+ *     firing would `resetQuery()` → cancel the cooldown timer and re-drive the
+ *     provider early. Silence there is scheduled, not a stall. (Codex P1.)
  *
  * `arm()` returns a promise that resolves when a TRUE stall fires (after running
  * `onFire`, e.g. resetting the zombie query). Extracted from AgentSession so the
@@ -27,7 +31,8 @@ export class DeliveryTurnStallWatchdog {
   constructor(
     private readonly timeoutMs: number,
     private readonly hasOutstandingTool: () => boolean,
-    private readonly onFire?: () => void | Promise<void>
+    private readonly onFire?: () => void | Promise<void>,
+    private readonly isPaused?: () => boolean
   ) {}
 
   /** Arm the watchdog. Resolves on a true (no-activity, no-tool) stall fire. */
@@ -65,7 +70,8 @@ export class DeliveryTurnStallWatchdog {
 
   private async onTick(): Promise<void> {
     // A tool is mid-execution — the turn is quiet but active, not stalled.
-    if (this.hasOutstandingTool()) {
+    // A scheduled rate-limit cooldown likewise silences the query on purpose.
+    if (this.hasOutstandingTool() || this.isPaused?.()) {
       this.schedule();
       return;
     }

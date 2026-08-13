@@ -1682,6 +1682,45 @@ describe('SDKMessageRepository', () => {
     });
   });
 
+  describe('markDeliveryRetryableByUuid (recoverable no-result turn → retry re-feed)', () => {
+    it('flips a consumed row back to enqueued and returns its db id', () => {
+      const id = repository.saveUserMessage(
+        'session-1',
+        createUserMessage('retry me', 'uuid-retry'),
+        'enqueued'
+      );
+      expect(repository.markDeliveryConsumedByUuid('session-1', 'uuid-retry')).toBe(id);
+
+      const reopened = repository.markDeliveryRetryableByUuid('session-1', 'uuid-retry');
+
+      expect(reopened).toBe(id);
+      expect(repository.getMessagesByStatus('session-1', 'enqueued').length).toBe(1);
+      expect(repository.getMessagesByStatus('session-1', 'consumed').length).toBe(0);
+    });
+
+    it('leaves submitted (ACP, pending acceptance) and failed rows alone', () => {
+      repository.saveUserMessage(
+        'session-1',
+        createUserMessage('acp prompt', 'uuid-submitted'),
+        'submitted'
+      );
+      repository.saveUserMessage(
+        'session-1',
+        createUserMessage('already dead', 'uuid-failed'),
+        'failed'
+      );
+
+      expect(repository.markDeliveryRetryableByUuid('session-1', 'uuid-submitted')).toBeNull();
+      expect(repository.markDeliveryRetryableByUuid('session-1', 'uuid-failed')).toBeNull();
+      expect(repository.getMessagesByStatus('session-1', 'submitted').length).toBe(1);
+      expect(repository.getMessagesByStatus('session-1', 'failed').length).toBe(1);
+    });
+
+    it('returns null when the uuid is unknown', () => {
+      expect(repository.markDeliveryRetryableByUuid('session-1', 'no-such-uuid')).toBeNull();
+    });
+  });
+
   describe('hasTerminalResultAfter', () => {
     function insertMessage(
       sessionId: string,

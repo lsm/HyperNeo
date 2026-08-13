@@ -2274,7 +2274,15 @@ export class AgentSession
         throw new MessageDeliveryTerminalTurnError(detail, errorResultSubtype);
       }
       // Recoverable provider error OR a no-progress stall (turnError null): the
-      // turn consumed the kickoff but produced no result — reset+retry.
+      // turn consumed the kickoff but produced no result — reset+retry. Reopen
+      // the row to `enqueued` so the retry RE-FEEDS the prompt: a resumed SDK
+      // query only loads history, it does not continue an incomplete trailing
+      // user turn, so a no-feed re-drive would sit silent until this watchdog
+      // fires again and burn the budget without another provider attempt. (The
+      // crash-reclaim path is different: there the SDK may still be
+      // mid-execution, so `consumed` rows are NOT re-fed on reclaim — this flip
+      // happens only after we confirmed the turn produced nothing.) (Codex P1.)
+      this.reopenDeliveryForRetry(messageUuid);
       throw new MessageDeliveryRecoverableTurnError(detail, turnError?.category);
     }
     return { outcome: 'completed' };
@@ -2286,10 +2294,14 @@ export class AgentSession
    * outstanding tool) for {@link DELIVERY_TURN_NO_ACTIVITY_MS}. Every incoming
    * SDK message calls {@link bumpDeliveryTurnActivity} to reset the window; a
    * firing is deferred while a tool is outstanding (so a long build is not a
-   * stall). On a true fire it flags {@link deliveryTurnStalled} and resets the
+   * stall) or while the session sits in a scheduled `rate_limit_cooldown` (the
+   * query is intentionally silent for the provider's reset window — firing here
+   * would cancel the cooldown timer via `resetQuery()` and re-drive the provider
+   * early, burning the delivery retry budget against a 429-ing provider).
+   * On a true fire it flags {@link deliveryTurnStalled} and resets the
    * zombie query so the bridge throws a recoverable error and the job retries on
    * a clean query. The reset publishes the idle transition, which also resolves
-   * the turn-end waiter raced in {@link driveDeliveryTurn}.
+   * the turn-end waiter raced in {@link driveDeliveryTurn}. (Codex P1.)
    */
   private armDeliveryTurnStall(): Promise<void> {
     this.clearDeliveryTurnStall();
@@ -2304,7 +2316,8 @@ export class AgentSession
         } catch {
           // best-effort — the flag is set; the bridge will throw + retry
         }
-      }
+      },
+      () => this.stateManager.getState().status === 'rate_limit_cooldown'
     );
     return this.deliveryTurnStall.arm();
   }
@@ -2574,6 +2587,28 @@ export class AgentSession
           sessionId: this.session.id,
           messageIds: [dbId],
           status: 'consumed',
+        })
+        .catch(() => {});
+    }
+  }
+
+  /**
+   * Reopen a delivery row whose turn was confirmed to have produced no result,
+   * so the job's automatic retry re-feeds it (see
+   * {@link SDKMessageRepository.markDeliveryRetryableByUuid}). Fire-and-forget
+   * the publish: a rejecting statusChanged subscriber must not surface as an
+   * unhandled rejection here.
+   */
+  private reopenDeliveryForRetry(messageUuid: string): void {
+    const dbId = this.db
+      .getSDKMessageRepo()
+      ?.markDeliveryRetryableByUuid(this.session.id, messageUuid);
+    if (dbId) {
+      void this.internalEventBus
+        .publish('messages.statusChanged', {
+          sessionId: this.session.id,
+          messageIds: [dbId],
+          status: 'enqueued',
         })
         .catch(() => {});
     }

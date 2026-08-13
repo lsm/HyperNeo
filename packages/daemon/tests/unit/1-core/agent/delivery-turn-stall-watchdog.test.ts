@@ -68,6 +68,30 @@ describe('DeliveryTurnStallWatchdog (no-progress stall detector)', () => {
     expect(fired).toBe(true);
   });
 
+  it('defers while a rate-limit cooldown is scheduled, then fires once it lifts', async () => {
+    // A 429 cooldown silences the query on purpose for the provider's reset
+    // window; firing there would cancel the cooldown timer and re-drive the
+    // provider early. Silence is scheduled, not a stall. (Codex P1.)
+    let cooldown = true;
+    let fired = false;
+    const wd = new DeliveryTurnStallWatchdog(
+      40,
+      () => false,
+      async () => {
+        fired = true;
+      },
+      () => cooldown
+    );
+    const promise = wd.arm();
+    // At 40ms the watchdog ticks but the cooldown holds → defer (re-arm).
+    await sleep(60);
+    expect(fired).toBe(false);
+    // Cooldown lifts; the next tick finds a genuinely silent turn → fires.
+    cooldown = false;
+    await promise;
+    expect(fired).toBe(true);
+  });
+
   it('cancel() prevents the fire', async () => {
     let fired = false;
     const wd = new DeliveryTurnStallWatchdog(

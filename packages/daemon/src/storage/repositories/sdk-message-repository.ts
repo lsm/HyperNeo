@@ -2212,6 +2212,34 @@ export class SDKMessageRepository {
    * would leave SDKMessageHandler unable to match its acceptance, so the row
    * replays later and the handoff executes twice. (Codex P1.)
    */
+  /**
+   * Flip a `consumed` delivery row back to `enqueued` after its turn was
+   * CONFIRMED to have produced no result (the delivery bridge's recoverable
+   * no-result path). The automatic retry must re-feed the prompt: a resumed SDK
+   * query only LOADS the conversation history — it does not continue an
+   * incomplete trailing user turn — so a no-feed re-drive would sit silent
+   * until the stall watchdog fires again and burn the retry budget without ever
+   * making another provider attempt. The rate-limit recovery path re-enqueues
+   * the saved message for exactly this reason. Contrast the crash-reclaim path,
+   * which leaves `consumed` alone (the SDK may already be mid-execution there;
+   * re-feeding could duplicate the prompt). Only flips `consumed` rows —
+   * `submitted` (ACP, still pending acceptance) and terminal states are left
+   * to their own paths. Returns the flipped db id, else null.
+   */
+  markDeliveryRetryableByUuid(sessionId: string, uuid: string): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT id FROM sdk_messages
+           WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
+             AND send_status = 'consumed'
+           ORDER BY timestamp ASC LIMIT 1`
+      )
+      .get(sessionId, uuid) as { id: string } | undefined;
+    if (!row) return null;
+    this.updateMessageStatus([row.id], 'enqueued');
+    return row.id;
+  }
+
   markDeliveryDeferredByUuid(sessionId: string, uuid: string): string | null {
     const row = this.db
       .prepare(
