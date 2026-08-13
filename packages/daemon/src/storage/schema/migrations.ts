@@ -986,8 +986,17 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // independent of updated_at) so stall detection is not keyed off updated_at.
   run(migrationMarkerKey(191), () => runMigration191(db));
 
-  // Migration 192: channel_cycle_events — rate-based dead-loop detection.
+  // Migration 192: Add `delivery_mode` to pending_agent_messages so a deferred
+  //   ("queue for next turn") human message that lands in the pending queue
+  //   (target not live yet) retains its mode when flushed after spawn — instead
+  //   of defaulting to immediate and steering the kickoff turn. NULL (legacy
+  //   rows + callers that don't pass it) behaves as before (immediate).
+  //   Idempotent ALTER TABLE ADD COLUMN; new DBs get it via this ALTER since
+  //   M92 creates the table.
   run(migrationMarkerKey(192), () => runMigration192(db));
+
+  // Migration 193: channel_cycle_events — rate-based dead-loop detection.
+  run(migrationMarkerKey(193), () => runMigration193(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -12410,7 +12419,24 @@ export function runMigration191(db: BunDatabase): void {
 }
 
 /**
- * Migration 192: Rate-based dead-loop detection for cyclic workflow channels.
+ * Migration 192: pending_agent_messages.delivery_mode — preserves a deferred
+ * ("queue for next turn") human message's delivery mode across the pending
+ * queue. When such a message targets an agent with no live session yet it is
+ * enqueued; `flushPendingMessagesForTarget` later replays it. Without this
+ * column the flush passes an undefined mode, defaulting to immediate, so a
+ * message the user queued for the next turn instead steers the kickoff turn
+ * if the spawned session is already processing. NULL (legacy rows + callers
+ * that don't pass a mode) keeps the prior immediate behavior. (task #949.)
+ */
+export function runMigration192(db: BunDatabase): void {
+  if (!tableExists(db, 'pending_agent_messages')) return;
+  if (!tableHasColumn(db, 'pending_agent_messages', 'delivery_mode')) {
+    db.exec(`ALTER TABLE pending_agent_messages ADD COLUMN delivery_mode TEXT`);
+  }
+}
+
+/**
+ * Migration 193: Rate-based dead-loop detection for cyclic workflow channels.
  *
  * Creates a `channel_cycle_events` table storing one timestamped row per
  * traversal of a cyclic (backward) channel. Dead-loop detection counts these
@@ -12427,7 +12453,7 @@ export function runMigration191(db: BunDatabase): void {
  * becomes unblocked — which is correct, since those were overwhelmingly
  * legitimate extended reviews (see PR #2473 / task #942).
  */
-export function runMigration192(db: BunDatabase): void {
+export function runMigration193(db: BunDatabase): void {
   if (!tableExists(db, 'space_workflow_runs')) return;
 
   // Create the table and its window index independently and idempotently. If
