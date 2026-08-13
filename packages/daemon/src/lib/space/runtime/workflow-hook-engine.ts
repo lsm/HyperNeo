@@ -337,7 +337,7 @@ export class WorkflowHookEngine {
     patch: {
       localState?: Record<string, unknown>;
       lastFlow?: HookFlow;
-      lastReason?: string;
+      lastReason?: string | null;
       retryCount?: number;
       nextRetryAt?: number | null;
     }
@@ -1382,7 +1382,7 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
       {
         localState: Record<string, unknown>;
         lastFlow?: HookFlow;
-        lastReason?: string;
+        lastReason?: string | null;
         retryCount?: number;
         nextRetryAt?: number | null;
       }
@@ -1399,7 +1399,10 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
     for (const record of outcome.executionLog) {
       const entry = ensure(record.hookId);
       entry.lastFlow = record.flow;
-      entry.lastReason = record.reason;
+      // Persist an explicit clear when the decision carries no reason —
+      // otherwise the banner would keep the PREVIOUS decision's remediation
+      // (e.g. "Retry requested by human" over a later reasonless script stop).
+      entry.lastReason = record.reason ?? null;
     }
     for (const update of outcome.stateUpdates) {
       const entry = ensure(update.hookId);

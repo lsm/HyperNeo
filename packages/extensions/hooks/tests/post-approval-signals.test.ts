@@ -38,28 +38,44 @@ function validatedStamp(link: string): HookArtifact {
 }
 
 describe('pr_ready — post-approval merge-report exemption', () => {
-  test('allows an approved merge_blocked report without a readiness check', async () => {
-    // No PR link is supplied at all — without the exemption the hook would stop
-    // (and any readiness check would need live GitHub access).
+  test('allows an approved merge_blocked report bound to the reviewed PR', async () => {
     const ret = await prReadyHook.run(
-      sendAction({ reason: 'merge_blocked' }),
-      stubCtx({ taskStatus: 'approved' })
+      sendAction({ reason: 'merge_blocked', pr_link: REVIEWED_PR }),
+      stubCtx({ taskStatus: 'approved', readArtifacts: () => [validatedStamp(REVIEWED_PR)] })
     );
     expect(ret.flow).toBe('continue');
   });
 
-  test('allows an approved merge_fix_pushed report', async () => {
+  test('allows an approved merge_fix_pushed report (pr_url spelling)', async () => {
     const ret = await prReadyHook.run(
       sendAction({ pr_url: REVIEWED_PR, reason: 'merge_fix_pushed' }),
-      stubCtx({ taskStatus: 'approved' })
+      stubCtx({ taskStatus: 'approved', readArtifacts: () => [validatedStamp(REVIEWED_PR)] })
     );
     expect(ret.flow).toBe('continue');
+  });
+
+  test('an exempted report naming a DIFFERENT PR is stopped (identity binding)', async () => {
+    const ret = await prReadyHook.run(
+      sendAction({ pr_url: 'https://github.com/org/repo/pull/999', reason: 'merge_blocked' }),
+      stubCtx({ taskStatus: 'approved', readArtifacts: () => [validatedStamp(REVIEWED_PR)] })
+    );
+    expect(ret.flow).toBe('stop');
+    expect(ret.reason).toContain('999');
+  });
+
+  test('an exempted report with no run identity fails closed', async () => {
+    const ret = await prReadyHook.run(
+      sendAction({ pr_url: REVIEWED_PR, reason: 'merge_blocked' }),
+      stubCtx({ taskStatus: 'approved' })
+    );
+    expect(ret.flow).toBe('stop');
   });
 
   test('does not stamp the run identity for an exempted report', async () => {
     const written: HookArtifact[] = [];
     const ctx = stubCtx({
       taskStatus: 'approved',
+      readArtifacts: () => [validatedStamp(REVIEWED_PR)],
       writeArtifact: (artifact) => written.push(artifact as HookArtifact),
     });
     await prReadyHook.run(sendAction({ pr_url: REVIEWED_PR, reason: 'merge_blocked' }), ctx);

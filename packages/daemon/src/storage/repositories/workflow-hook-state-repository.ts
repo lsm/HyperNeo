@@ -22,7 +22,8 @@ export interface WorkflowHookStatePatch {
   expectedVersion: number;
   localState?: Record<string, unknown>;
   lastFlow?: HookFlow;
-  lastReason?: string;
+  /** `null` explicitly clears the reason (an absent `reason` keeps the current one). */
+  lastReason?: string | null;
   retryCount?: number;
   nextRetryAt?: number | null;
 }
@@ -144,7 +145,11 @@ export class WorkflowHookStateRepository {
       const nextRetryAt =
         patch.nextRetryAt === undefined ? (current.nextRetryAt ?? null) : patch.nextRetryAt;
       const nextLastFlow = patch.lastFlow ?? current.lastFlow;
-      const nextLastReason = patch.lastReason !== undefined ? patch.lastReason : current.lastReason;
+      // An explicit null clears the reason so a reasonless decision does not
+      // leave the PREVIOUS decision's remediation on the banner; an absent
+      // field (partial patches) keeps the current value.
+      const nextLastReason =
+        patch.lastReason === undefined ? current.lastReason : (patch.lastReason ?? undefined);
 
       const result = this.db
         .prepare(

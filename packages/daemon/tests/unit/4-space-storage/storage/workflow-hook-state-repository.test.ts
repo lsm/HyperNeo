@@ -104,3 +104,43 @@ describe('WorkflowHookStateRepository', () => {
     expect(retried?.nextRetryAt).toBe(12345);
   });
 });
+
+describe('lastReason clear semantics', () => {
+  let repo: WorkflowHookStateRepository;
+  let db: InstanceType<typeof Database>;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    createSpaceTables(db);
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run('sp-1', 'sp-1', '/tmp/sp-1', 'Space', now, now);
+    db.prepare(
+      `INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run('run-1', 'sp-1', 'wf-1', 'Run', 'in_progress', now, now);
+    repo = new WorkflowHookStateRepository(db);
+  });
+
+  afterEach(() => db.close());
+
+  test('an explicit null clears the reason; an absent field keeps it', () => {
+    repo.updateWithRetry('run-1', 'hook-1', {
+      lastFlow: 'stop',
+      lastReason: 'first block reason',
+    });
+    expect(repo.get('run-1', 'hook-1')?.lastReason).toBe('first block reason');
+
+    // A decision with no reason must not leave the previous decision's
+    // remediation on the banner.
+    repo.updateWithRetry('run-1', 'hook-1', { lastFlow: 'stop', lastReason: null });
+    expect(repo.get('run-1', 'hook-1')?.lastReason).toBeUndefined();
+
+    repo.updateWithRetry('run-1', 'hook-1', { lastFlow: 'retry', lastReason: 'waiting' });
+    // A partial patch without lastReason keeps the current value.
+    repo.updateWithRetry('run-1', 'hook-1', { retryCount: 3 });
+    expect(repo.get('run-1', 'hook-1')?.lastReason).toBe('waiting');
+  });
+});

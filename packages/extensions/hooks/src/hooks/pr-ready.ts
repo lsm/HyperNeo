@@ -15,13 +15,15 @@ import { getPrimaryLink, VALIDATED_PR_ARTIFACT_KEY } from '../primary-link';
  *
  * Post-approval exemption: when the owning task is already `approved` and the
  * send carries a merge-blocker / fix-push report reason, the send is allowed
- * through without a readiness check. Such a report reaches this gate only on
- * workflows without a dedicated post-approval channel (Coding, Research —
- * whose sole implementer→reviewer route is this one), and it describes a PR
- * that is by definition not ready; blocking it would strand the approved task
- * with no way to reach its approval authority. Where a dedicated route exists
- * (Coding with QA), `post_approval_only` gates it instead and additionally
- * binds the report to the run's reviewed PR.
+ * through without a readiness check — but only when the supplied PR link
+ * matches the run's reviewed identity (`getPrimaryLink`), so the re-approval
+ * authority cannot be redirected to an unrelated PR. Such a report reaches
+ * this gate only on workflows without a dedicated post-approval channel
+ * (Coding, Research — whose sole implementer→reviewer route is this one), and
+ * it describes a PR that is by definition not ready; blocking it outright
+ * would strand the approved task with no way to reach its approval authority.
+ * Where a dedicated route exists (Coding with QA), `post_approval_only` gates
+ * it with the same identity binding.
  */
 const READY_MERGE_STATES = new Set(['CLEAN', 'HAS_HOOKS', 'BLOCKED']);
 const WAIT_MS = 30_000;
@@ -30,10 +32,30 @@ export const prReadyHook: Hook = {
   id: 'pr_ready',
   requiredData: [{ key: 'pr_link', type: 'link', required: true }],
   run: async (action: HookAction, ctx): Promise<HookReturn> => {
-    // Post-approval merge-blocker / fix-push report — allow without a readiness
-    // check (see the exemption note above). No identity stamp: the reported PR
-    // may already be closed/merged, and the run's reviewed identity stands.
+    // Post-approval merge-blocker / fix-push report — skip the readiness check
+    // (the reported PR is by definition not ready) but still bind it to the
+    // run's reviewed identity: the re-approval authority must not be redirected
+    // to an unrelated PR by a prompt-injected sender. Fails closed when the
+    // run has no validated identity or the supplied link names another PR.
     if (isPostApprovalMergeReport(action, ctx)) {
+      const supplied = readDataString(action, 'pr_link') ?? readDataString(action, 'pr_url');
+      const primary = getPrimaryLink(ctx);
+      if (!primary) {
+        return {
+          flow: 'stop',
+          reason:
+            'Post-approval merge report cannot be verified: this run has no reviewed PR identity ' +
+            'to bind it to.',
+        };
+      }
+      if (supplied !== primary) {
+        return {
+          flow: 'stop',
+          reason:
+            `Post-approval merge report PR ${supplied ?? '(none supplied)'} does not match this ` +
+            `run's reviewed PR ${primary}.`,
+        };
+      }
       return { flow: 'continue' };
     }
 

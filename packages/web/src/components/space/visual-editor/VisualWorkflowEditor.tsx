@@ -617,9 +617,26 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
         [nodeToDelete.step.name, nodeToDelete.step.id, nodeToDelete.step.localId].filter(Boolean)
       );
       setHookBindings((prev) =>
-        prev.filter(
-          (binding) => !deletedRefs.has(binding.sourceNode) && !deletedRefs.has(binding.targetNode)
-        )
+        prev
+          .filter(
+            (binding) =>
+              !deletedRefs.has(binding.sourceNode) && !deletedRefs.has(binding.targetNode)
+          )
+          .map((binding) => {
+            // The deleted node may also appear only as an authorized CALLER on
+            // a binding between other nodes — strip those callers so the save
+            // is not rejected for an unknown caller node. A binding whose
+            // caller list empties can never match (the engine authorizes
+            // nothing without callers, and backend validation requires a
+            // non-empty list), so drop it.
+            if (!binding.authorizedCallers) return binding;
+            const callers = binding.authorizedCallers.filter(
+              (caller) => !deletedRefs.has(caller.sourceNode)
+            );
+            if (callers.length === binding.authorizedCallers.length) return binding;
+            return callers.length > 0 ? { ...binding, authorizedCallers: callers } : null;
+          })
+          .filter((binding): binding is HookBinding => binding !== null)
       );
 
       if (wasStart && remaining.length > 0) {
@@ -665,9 +682,10 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 
       setHookBindings((prev) =>
         prev.map((binding) => {
-          if (!previousRefs.has(binding.sourceNode) && !previousRefs.has(binding.targetNode)) {
-            return binding;
-          }
+          // Callers are remapped independently of the endpoints: the renamed
+          // node may authorize a binding between OTHER nodes (e.g. a B→C
+          // binding authorized by this node), and a stale caller name fails
+          // backend hook validation on save just like a stale endpoint.
           const remapped = {
             ...binding,
             sourceNode: previousRefs.has(binding.sourceNode) ? nextRef : binding.sourceNode,

@@ -692,6 +692,123 @@ describe('VisualWorkflowEditor', () => {
       expect(binding?.authorizedCallers?.[0]?.agentSlots).toEqual(['planner']);
     });
 
+    it('a rename remaps callers on bindings between OTHER nodes', async () => {
+      // The renamed node (Plan) appears only as an authorized caller of a
+      // Code→Review binding — endpoints must stay untouched while the caller
+      // follows the rename.
+      const workflow = makeHookedWorkflow();
+      workflow.hookBindings = [
+        {
+          hookId: 'pr_ready',
+          sourceNode: 'Code',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Plan', agentSlots: ['planner'] }],
+        },
+      ];
+      workflow.nodes = [
+        workflow.nodes[0],
+        workflow.nodes[1],
+        { id: 'step-3', name: 'Review', agents: [{ agentId: 'agent-4', name: 'reviewer' }] },
+      ];
+      const { getByTestId, getAllByTestId } = render(
+        <VisualWorkflowEditor {...makeProps({ workflow })} />
+      );
+      fireEvent.click(getAllByTestId(/^workflow-node-/)[0]);
+      fireEvent.input(getByTestId('step-name-input'), { target: { value: 'Planning' } });
+      await act(async () => {
+        fireEvent.click(getByTestId('save-button'));
+      });
+      await waitFor(() => expect(mockUpdateWorkflow).toHaveBeenCalledOnce());
+
+      const binding = mockUpdateWorkflow.mock.calls[0][1].hookBindings?.[0];
+      expect(binding?.sourceNode).toBe('Code');
+      expect(binding?.targetNode).toBe('Review');
+      expect(binding?.authorizedCallers?.[0]?.sourceNode).toBe('Planning');
+    });
+
+    it('deleting a node strips it from surviving bindings’ callers', async () => {
+      const workflow = makeHookedWorkflow();
+      workflow.hookBindings = [
+        {
+          hookId: 'pr_ready',
+          sourceNode: 'Code',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [
+            { sourceNode: 'Plan', agentSlots: ['planner'] },
+            { sourceNode: 'Code' },
+          ],
+        },
+      ];
+      workflow.nodes = [
+        workflow.nodes[0],
+        workflow.nodes[1],
+        { id: 'step-3', name: 'Review', agents: [{ agentId: 'agent-4', name: 'reviewer' }] },
+      ];
+      // Plan cannot be the start node (panel delete is start-guarded) —
+      // start from Code and delete Plan, which is only a CALLER on the binding.
+      workflow.startNodeId = STEP_2_ID;
+      const { getByTestId, getAllByTestId } = render(
+        <VisualWorkflowEditor {...makeProps({ workflow })} />
+      );
+      const planNode = getAllByTestId(/^workflow-node-/).find(
+        (n) => !n.querySelector('[data-testid="start-badge"]')
+      )!;
+      fireEvent.click(planNode);
+      fireEvent.click(getByTestId('delete-step-button'));
+      fireEvent.click(getByTestId('delete-confirm-button'));
+      await act(async () => {
+        fireEvent.click(getByTestId('save-button'));
+      });
+      await waitFor(() => expect(mockUpdateWorkflow).toHaveBeenCalledOnce());
+
+      const binding = mockUpdateWorkflow.mock.calls[0][1].hookBindings?.[0];
+      expect(binding).toBeDefined();
+      expect(binding?.authorizedCallers).toEqual([{ sourceNode: 'Code' }]);
+    });
+
+    it('deleting a node drops bindings whose callers ALL referenced it', async () => {
+      const workflow = makeHookedWorkflow();
+      workflow.hookBindings = [
+        {
+          hookId: 'pr_ready',
+          sourceNode: 'Code',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Plan', agentSlots: ['planner'] }],
+        },
+      ];
+      workflow.nodes = [
+        workflow.nodes[0],
+        workflow.nodes[1],
+        { id: 'step-3', name: 'Review', agents: [{ agentId: 'agent-4', name: 'reviewer' }] },
+      ];
+      workflow.startNodeId = STEP_2_ID;
+      const { getByTestId, getAllByTestId } = render(
+        <VisualWorkflowEditor {...makeProps({ workflow })} />
+      );
+      const planNode = getAllByTestId(/^workflow-node-/).find(
+        (n) => !n.querySelector('[data-testid="start-badge"]')
+      )!;
+      fireEvent.click(planNode);
+      fireEvent.click(getByTestId('delete-step-button'));
+      fireEvent.click(getByTestId('delete-confirm-button'));
+      await act(async () => {
+        fireEvent.click(getByTestId('save-button'));
+      });
+      await waitFor(() => expect(mockUpdateWorkflow).toHaveBeenCalledOnce());
+
+      const params = mockUpdateWorkflow.mock.calls[0][1];
+      expect(params.hookBindings ?? []).toHaveLength(0);
+    });
+
     it('a slot rename remaps authorizedCallers agentSlots', async () => {
       // Two agents on the node so the multi-agent list (with editable slot
       // names) renders instead of the single-slot view.
