@@ -1369,7 +1369,11 @@ describe('SpaceRuntime', () => {
       workflowRunRepo.transitionStatus(pendingRun.id, 'in_progress');
 
       // Delete the workflow
-      workflowManager.deleteWorkflow(workflow.id);
+      // Simulate a workflow deleted out from under an active run — a legacy
+      // orphan the deletion guard (RFC §4 #3) now prevents in normal operation,
+      // but which rehydration must still tolerate. Bypass the manager guard by
+      // deleting at the repo level (no active-run check).
+      new SpaceWorkflowRepository(db).deleteWorkflow(workflow.id);
 
       // Fresh runtime — should not throw, should skip the orphaned run
       const freshRuntime = new SpaceRuntime({

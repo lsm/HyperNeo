@@ -150,9 +150,9 @@ describe('ClientEventBridge', () => {
       bridge.start();
       bridge.start();
 
-      // 23 space + 4 session + 2 conn/auth + 1 config + 2 error = 32 unique events
+      // 24 space + 4 session + 2 conn/auth + 1 config + 2 error = 33 unique events
       // (context.updated has 2 handlers but is 1 unique event key)
-      expect(eventHandlers.size).toBe(32);
+      expect(eventHandlers.size).toBe(33);
     });
   });
 
@@ -163,8 +163,8 @@ describe('ClientEventBridge', () => {
       bridge.start();
       bridge.stop();
 
-      // 33 internalEventBus.subscribe calls total (context.updated has 2 handlers)
-      expect(unsubscribers.length).toBe(33);
+      // 34 internalEventBus.subscribe calls total (context.updated has 2 handlers)
+      expect(unsubscribers.length).toBe(34);
     });
   });
 

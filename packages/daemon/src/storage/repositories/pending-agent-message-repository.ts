@@ -60,6 +60,14 @@ export interface PendingAgentMessageRecord {
   deliveredSessionId: string | null;
   expiresAt: number;
   createdAt: number;
+  /**
+   * Delivery mode persisted with the row so `flushPendingMessagesForTarget`
+   * replays a deferred ("queue for next turn") human message with `'defer'`
+   * instead of defaulting to immediate and steering the kickoff turn. `null`
+   * for legacy rows and callers that don't pass it (immediate, the prior
+   * behavior).
+   */
+  deliveryMode: 'immediate' | 'defer' | null;
 }
 
 export interface EnqueuePendingMessageInput {
@@ -86,6 +94,13 @@ export interface EnqueuePendingMessageInput {
   expiresAt?: number;
   /** Optional max attempts cap (defaults to DEFAULT_PENDING_MESSAGE_MAX_ATTEMPTS). */
   maxAttempts?: number;
+  /**
+   * Optional delivery mode persisted with the row and replayed on flush. Pass
+   * `'defer'` for a "queue for next turn" human message so the spawned session
+   * defers it (instead of steering the kickoff). Omitted/`'immediate'` keeps
+   * the prior behavior.
+   */
+  deliveryMode?: 'immediate' | 'defer';
 }
 
 export interface EnqueueResult {
@@ -143,6 +158,7 @@ export class PendingAgentMessageRepository {
     const id = generateUUID();
     const sourceAgentName = input.sourceAgentName ?? 'task-agent';
     const maxAttempts = input.maxAttempts ?? DEFAULT_PENDING_MESSAGE_MAX_ATTEMPTS;
+    const deliveryMode = input.deliveryMode ?? null;
 
     this.db
       .prepare(
@@ -153,8 +169,8 @@ export class PendingAgentMessageRepository {
 					attempts, max_attempts,
 					last_attempt_at, last_error,
 					status, delivered_at, delivered_session_id,
-					expires_at, created_at
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NULL, NULL, 'pending', NULL, NULL, ?, ?)`
+					expires_at, created_at, delivery_mode
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NULL, NULL, 'pending', NULL, NULL, ?, ?, ?)`
       )
       .run(
         id,
@@ -169,7 +185,8 @@ export class PendingAgentMessageRepository {
         idempotencyKey,
         maxAttempts,
         expiresAt,
-        now
+        now,
+        deliveryMode
       );
     this.notify();
 
@@ -580,6 +597,7 @@ interface PendingMessageRow {
   delivered_session_id: string | null;
   expires_at: number;
   created_at: number;
+  delivery_mode: 'immediate' | 'defer' | null;
 }
 
 function rowToRecord(row: PendingMessageRow): PendingAgentMessageRecord {
@@ -603,5 +621,6 @@ function rowToRecord(row: PendingMessageRow): PendingAgentMessageRecord {
     deliveredSessionId: row.delivered_session_id,
     expiresAt: row.expires_at,
     createdAt: row.created_at,
+    deliveryMode: row.delivery_mode ?? null,
   };
 }

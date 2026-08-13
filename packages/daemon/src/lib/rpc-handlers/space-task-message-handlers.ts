@@ -16,16 +16,17 @@ import { Logger } from '../logger';
 const log = new Logger('space-task-message-handlers');
 
 /**
- * Minimal interface for resetting per-channel cycle counters on a workflow run.
- * Implemented by `ChannelCycleRepository.resetAllForRun`.
+ * Minimal interface for resetting per-channel cycle state on a workflow run.
+ * Implemented by `ChannelCycleRepository.resetAllForRun`, which clears the
+ * rate-window event history for the run (lifting any active dead-loop block).
  *
  * Extracted so the RPC handler stays decoupled from the concrete repository
  * class and can be unit-tested with a lightweight mock.
  */
 export interface ChannelCycleResetter {
   /**
-   * Zero out `count` for every `channel_cycles` row belonging to `runId`.
-   * Returns the number of rows updated.
+   * Clear cyclic-channel dead-loop state for every channel in `runId`.
+   * Returns the number of event rows deleted (0 is valid — nothing to reset).
    */
   resetAllForRun(runId: string): number;
 }
@@ -80,12 +81,19 @@ export interface TaskAgentManagerInterface {
   /**
    * Optional: inject a message directly into a node agent sub-session by its session ID.
    * Required for @mention routing to specific agents.
+   *
+   * `deliveryMode` ('defer') is forwarded from `space.task.sendMessage` so a
+   * human message can be persisted as `deferred` and replayed at the next idle
+   * boundary instead of steering the current turn. This interface declares only
+   * the params this handler uses; the real `TaskAgentManager.injectSubSessionMessage`
+   * additionally accepts `inputKindOverride` and `messageId`.
    */
   injectSubSessionMessage?(
     subSessionId: string,
     message: string,
     isSyntheticMessage?: boolean,
-    images?: MessageImage[]
+    images?: MessageImage[],
+    deliveryMode?: 'immediate' | 'defer'
   ): Promise<string | void>;
   /**
    * Optional: lazy-activate a workflow-declared node agent for a given task.
@@ -168,6 +176,12 @@ export interface PendingAgentMessageQueue {
     /** Persisted workflow node ID the message targets (scopes the drain). */
     workflowNodeId?: string | null;
     idempotencyKey?: string | null;
+    /**
+     * Persisted delivery mode replayed on flush so a deferred ("queue for next
+     * turn") human message to a not-yet-live agent defers after spawn instead
+     * of defaulting to immediate and steering the kickoff turn.
+     */
+    deliveryMode?: 'immediate' | 'defer';
   }): { record: { id: string }; deduped: boolean };
 }
 
@@ -297,7 +311,13 @@ export function setupSpaceTaskMessageHandlers(
     taskId: string,
     message: string,
     target: ResolvedTaskMessageTarget,
-    images?: MessageImage[]
+    images?: MessageImage[],
+    /**
+     * Delivery hint forwarded to `injectSubSessionMessage` so a human message
+     * can be deferred to the next idle boundary instead of steering the current
+     * turn. `undefined` falls back to the inject default (`'immediate'`).
+     */
+    deliveryMode?: 'immediate' | 'defer'
   ): Promise<{
     ok: true;
     routedTo: string[];
@@ -348,7 +368,7 @@ export function setupSpaceTaskMessageHandlers(
         // queued reply would expire undelivered while the RPC reported success.
         // Restoring (or failing honestly) keeps the contract truthful.
         const deliver = async (sid: string) =>
-          taskAgentManager.injectSubSessionMessage!(sid, message, false, images);
+          taskAgentManager.injectSubSessionMessage!(sid, message, false, images, deliveryMode);
         try {
           await deliver(postApproval.sessionId);
           return { ok: true, routedTo: [postApproval.agentName] };
@@ -508,7 +528,13 @@ export function setupSpaceTaskMessageHandlers(
     if (deliverable.length > 0) {
       await Promise.all(
         deliverable.map((exec) =>
-          taskAgentManager.injectSubSessionMessage!(exec.agentSessionId!, message, false, images)
+          taskAgentManager.injectSubSessionMessage!(
+            exec.agentSessionId!,
+            message,
+            false,
+            images,
+            deliveryMode
+          )
         )
       );
       return {
@@ -543,6 +569,7 @@ export function setupSpaceTaskMessageHandlers(
           targetAgentName: exec.agentName,
           message,
           workflowNodeId: exec.workflowNodeId ?? target.workflowNodeId,
+          ...(deliveryMode ? { deliveryMode } : {}),
         });
         if (record) queuedNames.push(exec.agentName);
       }
@@ -573,6 +600,13 @@ export function setupSpaceTaskMessageHandlers(
       message: string;
       images?: MessageImage[];
       target?: SpaceTaskMessageTarget | null;
+      /**
+       * `'defer'` persists the message as `deferred` for replay at the next idle
+       * boundary (handled by `injectSubSessionMessage`); omitted / `'immediate'`
+       * delivers/steers now. Reuses the already-shipped sub-session defer
+       * machinery — no new delivery semantics here.
+       */
+      deliveryMode?: 'immediate' | 'defer';
     };
 
     if (!params.spaceId) {
@@ -586,6 +620,17 @@ export function setupSpaceTaskMessageHandlers(
     }
     if (params.message.length > 100_000) {
       throw new Error('Message is too long (max 100,000 characters)');
+    }
+    // Validate deliveryMode at the RPC boundary — the cast above trusts the
+    // shape, but a non-TS caller can pass an arbitrary string. Mirrors the
+    // `message.send` guard in session-handlers.ts. Fail-safe downstream (only
+    // `=== 'defer'` matters), but rejected explicitly for a clear error.
+    if (
+      params.deliveryMode !== undefined &&
+      params.deliveryMode !== 'immediate' &&
+      params.deliveryMode !== 'defer'
+    ) {
+      throw new Error('Invalid deliveryMode');
     }
     // Defensive: collapse `images: []` (which the web client may send) to
     // undefined so downstream code can use `images && images.length > 0`
@@ -607,7 +652,14 @@ export function setupSpaceTaskMessageHandlers(
         params.target.kind === 'generic'
           ? resolveGenericTarget(task, params.target.target)
           : params.target;
-      const result = await routeToNodeAgents(task, params.taskId, params.message, target, images);
+      const result = await routeToNodeAgents(
+        task,
+        params.taskId,
+        params.message,
+        target,
+        images,
+        params.deliveryMode
+      );
       log.info(
         `space.task.sendMessage: explicit target routing to [${result.routedTo.join(', ')}] for task ${params.taskId}`
       );
@@ -643,7 +695,13 @@ export function setupSpaceTaskMessageHandlers(
       // match mentions against it when no execution-backed agent matches.
       const postApproval = taskAgentManager.getPostApprovalWorkerSession?.(params.taskId) ?? null;
       const injectInto = (sid: string) =>
-        taskAgentManager.injectSubSessionMessage!(sid, params.message, false, images);
+        taskAgentManager.injectSubSessionMessage!(
+          sid,
+          params.message,
+          false,
+          images,
+          params.deliveryMode
+        );
 
       for (const mention of mentions) {
         // Worker first (consistent with the explicit-target path): a slot name

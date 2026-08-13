@@ -1227,6 +1227,11 @@ export class SpaceRuntimeService {
       // Clear run interests explicitly so a later space start (which drops the
       // hold cache) cannot match events against cancelled-run targets.
       this.runtime.clearRunInterests(run.id);
+      // Dead-loop event history is intentionally retained here: `cancelled` is
+      // reopenable, so a resumed run must keep its rolling-window history (a
+      // reopened runaway still has to trip the rate gate). Rows age out of the
+      // window and are pruned at startup; the owning task's archive is the true
+      // tombstone that clears them (SpaceTaskManager.setTaskStatus).
     }
 
     log.info(
@@ -1262,6 +1267,16 @@ export class SpaceRuntimeService {
    * best-effort — whichever path wins the race fires first. Correctness is
    * enforced by `SpaceRuntime.recoveryDone`, which guarantees recovery runs
    * exactly once regardless of caller order.
+   *
+   * Known limitation: if the pre-provisioning first tick wins and recovery
+   * detects a dead-looped cyclic channel, the `space.workflowRun.deadLoop`
+   * event publishes before any `SpaceAgentNotificationService` subscriber
+   * exists and is dropped (the event is non-durable). The run is still
+   * surfaced as `blocked` via status polling + `workflow_run_blocked`, so the
+   * human sees the block; only the dead-loop-specific `[TASK_EVENT]` message
+   * can be lost in this narrow startup race. An earlier catch-up scan that
+   * re-emitted post-provisioning was removed — it was post-approval
+   * complexity for this rare edge and itself generated duplicate/retry issues.
    */
   start(): void {
     if (this.started) return;
@@ -2297,7 +2312,6 @@ export class SpaceRuntimeService {
       agentManager: this.config.spaceAgentManager,
       nodeExecutionRepo: this.nodeExecutionRepo,
       channelCycleRepo: this.config.channelCycleRepo,
-      db: this.config.db,
       isSessionAlive: taskAgentManager ? (sid) => taskAgentManager.isSessionAlive(sid) : undefined,
       cancelSessionById: taskAgentManager
         ? (sid) => taskAgentManager.cancelBySessionId(sid)

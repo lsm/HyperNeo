@@ -57,7 +57,11 @@ import type { ExternalEvent } from '../../external-events/types';
 import { validateGlobPattern } from '../../external-events/topic-validator';
 import { legacyGitHubTopic } from '../../external-events/github-subscription-pattern';
 import { composeLongHorizonSubscriptionPattern } from '../../external-events/long-horizon-subscription-pattern';
-import { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
+import {
+  ChannelCycleRepository,
+  DEAD_LOOP_THRESHOLD,
+  DEAD_LOOP_WINDOW_MS,
+} from '../../../storage/repositories/channel-cycle-repository';
 import { normalizeMeaningfulTaskResult } from '../task-result-utils';
 import type { WorkflowArtifactProfile } from './artifact-profile';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
@@ -156,6 +160,13 @@ export interface SpaceRuntimeConfig {
    * that need DB access from injected helpers.
    */
   dbPath?: string;
+  /**
+   * Channel cycle repository for rate-based dead-loop detection on cyclic
+   * channels. Injected (mirroring ChannelRouter / TaskAgentManager) so the repo
+   * can be mocked in recovery tests and a single instance is shared. Auto-built
+   * from `db` when not supplied.
+   */
+  channelCycleRepo?: ChannelCycleRepository;
   /** Space manager for listing spaces and fetching workspace paths */
   spaceManager: SpaceManager;
   /** Agent manager for resolving agents */
@@ -863,6 +874,14 @@ export class SpaceRuntime {
   private tickTimer: ReturnType<typeof setInterval> | null = null;
   /** Single-flight guard to prevent overlapping executeTick() runs. */
   private tickInFlight = false;
+  /**
+   * Timestamp (ms) of the last periodic `channel_cycle_events` prune. Rows are
+   * pruned at most once per `DEAD_LOOP_WINDOW_MS` from `executeTick` so that
+   * history retained on reopenable done/cancelled runs (which are no longer
+   * traversed, so lazy per-channel pruning never runs) cannot grow the table
+   * without bound on a long-lived daemon. See {@link pruneExpiredCycleEvents}.
+   */
+  private lastGlobalCyclePruneAt = 0;
 
   /**
    * InternalEventBus for publishing typed Space domain events.
@@ -4654,6 +4673,16 @@ export class SpaceRuntime {
     nextStatus: SpaceWorkflowRun['status']
   ): Promise<SpaceWorkflowRun> {
     const updated = this.config.workflowRunRepo.transitionStatus(runId, nextStatus);
+    // done/cancelled are NOT cleared here. They are reopenable: a peer
+    // `send_message` flips the run back to `in_progress` (see ChannelRouter's
+    // reopen path and WorkflowRunStatusMachine), so a runaway exchange that
+    // crosses the terminal boundary must keep counting against the rolling
+    // dead-loop window — clearing it would hand a reopened run a fresh 15
+    // traversals within the same 5-minute window. The rate-window history is
+    // retained until the rows age out of the window (pruneAllOldEvents at
+    // startup) or the owning task is archived — the true tombstone and only
+    // status from which ChannelRouter hard-blocks further sends (cleared in
+    // SpaceTaskManager.setTaskStatus).
     await this.safeOnWorkflowRunUpdated(updated.spaceId, updated);
     return updated;
   }
@@ -5079,6 +5108,13 @@ export class SpaceRuntime {
       // for a subscription) so they do not last forever when no matching
       // subscription, duplicate webhook, or restart occurs.
       this.expirePublishedExternalEventsPastTtl();
+
+      // Physically prune dead-loop event history older than the rolling window
+      // across ALL runs. Active runs lazy-prune their own channels on each
+      // traversal, but done/cancelled (reopenable) runs are never traversed
+      // again — without this periodic sweep their retained rows would accumulate
+      // until the next daemon restart. Throttled to once per window.
+      this.pruneExpiredCycleEvents();
     } finally {
       this.tickInFlight = false;
     }
@@ -6187,6 +6223,21 @@ export class SpaceRuntime {
     if (this.recoveryDone) return;
     this.recoveryDone = true;
 
+    // Garbage-collect dead-loop event history older than the rolling window
+    // across all runs. Active cyclic channels are pruned lazily on every
+    // traversal; this bounds history for abandoned/stalled runs that are never
+    // traversed again. Once per daemon start is sufficient — abandoned-run
+    // events are static (no further traversals add rows).
+    try {
+      this.getCycleRepo().pruneAllOldEvents();
+    } catch (err) {
+      log.warn(
+        `SpaceRuntime.recoverStalledRuns: failed to prune old cycle events: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+    }
+
     const spaces = await this.config.spaceManager.listSpaces(false);
     let blockedCount = 0;
     let completionPendingCount = 0;
@@ -6527,6 +6578,11 @@ export class SpaceRuntime {
 
     const createdOrReset: string[] = [];
     const blockedReasons: string[] = [];
+    // A single persisted (run, channel) dead-loop incident must surface at most
+    // one recovery notification, even when multiple idle source executions or a
+    // wildcard source channel yield several stalled transitions for the same
+    // channel in one pass.
+    const notifiedDeadLoopChannels = new Set<number>();
 
     for (const {
       sourceExecution,
@@ -6543,6 +6599,22 @@ export class SpaceRuntime {
       );
       if (!cycleResult.open) {
         blockedReasons.push(cycleResult.reason);
+        // Surface a recovery-detected dead loop to the UI (mirrors the live
+        // ChannelRouter surfacing) so it is not mistaken for a generic stall —
+        // once per (run, channel) incident.
+        if (cycleResult.deadLoop && !notifiedDeadLoopChannels.has(channelIndex)) {
+          // Record dedup only on a successful publish — a failed publish must
+          // remain retryable on the next stalled transition in this pass.
+          const notified = await this.notifyRecoveryDeadLoop(
+            run,
+            channel,
+            channelIndex,
+            sourceExecution.agentName,
+            targetNames,
+            cycleResult.recentCount
+          );
+          if (notified) notifiedDeadLoopChannels.add(channelIndex);
+        }
         continue;
       }
       let activatedOnChannel = false;
@@ -6635,25 +6707,108 @@ export class SpaceRuntime {
     return false;
   }
 
+  /**
+   * Resolves the channel cycle repository, preferring the injected instance
+   * (mockable, shared) and falling back to one built from `db` for callers that
+   * don't wire it (e.g. lightweight tests).
+   */
+  private getCycleRepo(): ChannelCycleRepository {
+    return this.config.channelCycleRepo ?? new ChannelCycleRepository(this.config.db);
+  }
+
+  /**
+   * Periodically prunes `channel_cycle_events` rows older than the rolling
+   * dead-loop window across every run. Active runs already lazy-prune their own
+   * (run, channel) on each traversal, but done/cancelled runs are reopenable and
+   * therefore retain their history while never being traversed again — so
+   * without this sweep they would leak rows until the next daemon restart (the
+   * one-shot startup prune only covers runs that existed at boot).
+   *
+   * Throttled to one pass per `DEAD_LOOP_WINDOW_MS`: rows older than the window
+   * are already excluded from the rate count, so deferring their physical
+   * deletion by up to a window is harmless and keeps the (full-scan) prune off
+   * the hot path. Best-effort — a failure is logged, never thrown.
+   */
+  pruneExpiredCycleEvents(now: number = Date.now()): void {
+    if (now - this.lastGlobalCyclePruneAt < DEAD_LOOP_WINDOW_MS) return;
+    this.lastGlobalCyclePruneAt = now;
+    try {
+      this.getCycleRepo().pruneAllOldEvents(now);
+    } catch (err) {
+      log.warn(
+        `[SpaceRuntime] periodic channel_cycle_events prune failed: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+    }
+  }
+
   private evaluateRestartRecoveryCycle(
     runId: string,
     workflow: SpaceWorkflow,
     channel: WorkflowChannel,
     channelIndex: number
-  ): { open: true } | { open: false; reason: string } {
+  ): { open: true } | { open: false; deadLoop: true; reason: string; recentCount: number } {
     if (!isChannelCyclic(channelIndex, workflow.channels ?? [], workflow.nodes)) {
       return { open: true };
     }
-    const maxCycles = channel.maxCycles ?? 5;
-    const cycleRepo = new ChannelCycleRepository(this.config.db);
-    const record = cycleRepo.get(runId, channelIndex);
-    if (record && record.count >= maxCycles) {
+    // Rate-based dead-loop detection: block only a runaway tight ping-pong,
+    // never a genuine extended review spread over time.
+    const cycleRepo = this.getCycleRepo();
+    const recentCount = cycleRepo.countRecentCycleEvents(runId, channelIndex);
+    if (recentCount >= DEAD_LOOP_THRESHOLD) {
       return {
         open: false,
-        reason: `Cyclic channel "${channel.id ?? channelIndex}" has reached the maximum cycle count (${maxCycles}). Increase maxCycles to allow more cycles.`,
+        deadLoop: true,
+        recentCount,
+        reason: `Cyclic channel "${channel.id ?? channelIndex}" is in a dead loop (too many round-trips within the rate window).`,
       };
     }
     return { open: true };
+  }
+
+  /**
+   * Best-effort: publish a `space.workflowRun.deadLoop` event when restart
+   * recovery finds a cyclic channel already in a dead loop, so the human sees
+   * the block in the UI rather than a generic stall. Mirrors the live
+   * `ChannelRouter.notifyDeadLoop` surfacing. Returns `true` on a successful
+   * publish, `false` when no bus is configured or the publish threw — callers
+   * use that to record dedup only on success (a failed publish must be
+   * retryable on the next pass, not permanently suppressed).
+   */
+  private async notifyRecoveryDeadLoop(
+    run: SpaceWorkflowRun,
+    channel: WorkflowChannel,
+    channelIndex: number,
+    fromAgent: string,
+    toTargets: string[],
+    recentCount: number
+  ): Promise<boolean> {
+    if (!this.internalEventBus) return false;
+    const channelLabel = channel.id ?? channelIndex;
+    try {
+      await this.internalEventBus.publish('space.workflowRun.deadLoop', {
+        namespaceId: 'global',
+        spaceId: run.spaceId,
+        runId: run.id,
+        fromAgent,
+        toTarget: toTargets.length > 0 ? toTargets.join(',') : String(channelLabel),
+        channelIndex,
+        recentCount,
+        threshold: DEAD_LOOP_THRESHOLD,
+        windowMs: DEAD_LOOP_WINDOW_MS,
+        reason: `Cyclic channel "${channelLabel}" is in a dead loop (detected during restart recovery): ${recentCount} message round-trips within the rate window.`,
+        timestamp: new Date().toISOString(),
+      } satisfies DaemonInternalEventMap['space.workflowRun.deadLoop'] & InternalEventPayload);
+      return true;
+    } catch (err) {
+      log.warn(
+        `[SpaceRuntime] deadLoop notify threw during recovery: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+      return false;
+    }
   }
 
   private recordRestartRecoveryCycleTraversal(
@@ -6663,14 +6818,8 @@ export class SpaceRuntime {
     channelIndex: number
   ): void {
     if (!isChannelCyclic(channelIndex, workflow.channels ?? [], workflow.nodes)) return;
-    const maxCycles = channel.maxCycles ?? 5;
-    const cycleRepo = new ChannelCycleRepository(this.config.db);
-    const incremented = cycleRepo.incrementCycleCount(runId, channelIndex, maxCycles);
-    if (!incremented) {
-      log.warn(
-        `SpaceRuntime.recoverStalledRuns: cyclic channel "${channel.id ?? channelIndex}" reached maxCycles during recovery activation`
-      );
-    }
+    const cycleRepo = this.getCycleRepo();
+    cycleRepo.recordCycleEvent(runId, channelIndex);
   }
 
   private matchesRestartRecoveryChannelSource(

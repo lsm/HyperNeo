@@ -346,6 +346,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
           'session-reviewer-1',
           'direct to session',
           false,
+          undefined,
           undefined
         );
       });
@@ -377,12 +378,14 @@ describe('setupSpaceTaskMessageHandlers', () => {
           'session-reviewer-a',
           'direct to worker',
           false,
+          undefined,
           undefined
         );
         expect(injectSubSession).not.toHaveBeenCalledWith(
           'session-reviewer-b',
           'direct to worker',
           false,
+          undefined,
           undefined
         );
       });
@@ -485,7 +488,8 @@ describe('setupSpaceTaskMessageHandlers', () => {
           'session-coder-1',
           '@Coder check this screenshot',
           false,
-          [sampleImage]
+          [sampleImage],
+          undefined
         );
       });
 
@@ -535,7 +539,8 @@ describe('setupSpaceTaskMessageHandlers', () => {
           'session-reviewer-1',
           'Please review the attached design',
           false,
-          [sampleImage]
+          [sampleImage],
+          undefined
         );
       });
 
@@ -593,6 +598,229 @@ describe('setupSpaceTaskMessageHandlers', () => {
         // Did not silently fall through to the text-only pending queue.
         expect(pendingMessageQueue.enqueue).not.toHaveBeenCalled();
         expect(injectSubSession).not.toHaveBeenCalled();
+      });
+    });
+
+    // ─── delivery mode forwarding (task #949) ─────────────────────────────────
+    // space.task.sendMessage threads `deliveryMode` ('defer' → persisted as
+    // `deferred`, replayed at the next idle boundary) into injectSubSessionMessage
+    // as its 5th positional arg on every direct-delivery path (explicit
+    // node-agent target, @mention, and the execution-less post-approval worker).
+    // Omitted / 'immediate' forwards `undefined` (the inject default). The
+    // defer→deferred-row persistence itself is covered by the task-agent-manager
+    // tests; here we only assert the handler forwards the mode end-to-end.
+    describe('delivery mode forwarding', () => {
+      const mockTaskWithWorkflowRun: SpaceTask = {
+        ...mockTaskWithSession,
+        workflowRunId: 'run-dm-1',
+      };
+
+      function setupDeliveryMode() {
+        const mh = createMockMessageHub();
+        hub = mh.hub;
+        handlers = mh.handlers;
+        const injectSubSession = mock(async () => {});
+        taskAgentManager = {
+          ...createMockTaskAgentManager(null, mockTaskWithWorkflowRun),
+          injectSubSessionMessage: injectSubSession,
+        };
+        db = createMockDatabase(mockTaskWithWorkflowRun);
+        internalEventBus = {
+          publish: mock(async () => ({ delivered: 0, failures: [] })),
+          publishAsync: mock(() => {}),
+        } as unknown as InternalEventBus<DaemonInternalEventMap>;
+        setupSpaceTaskMessageHandlers(
+          hub,
+          taskAgentManager,
+          db,
+          internalEventBus,
+          makeNodeExecutionRepo([
+            {
+              id: 'exec-coder',
+              workflowNodeId: 'node-1',
+              agentName: 'Coder',
+              agentSessionId: 'session-coder-1',
+            },
+          ])
+        );
+        return { injectSubSession };
+      }
+
+      it('forwards deliveryMode:"defer" as the 5th arg on an explicit node-agent target', async () => {
+        const { injectSubSession } = setupDeliveryMode();
+
+        await call('space.task.sendMessage', {
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          message: 'for next turn',
+          target: { kind: 'node_agent', agentName: 'Coder' },
+          deliveryMode: 'defer',
+        });
+
+        expect(injectSubSession).toHaveBeenCalledWith(
+          'session-coder-1',
+          'for next turn',
+          false,
+          undefined,
+          'defer'
+        );
+      });
+
+      it('forwards deliveryMode:"defer" on @mention routing', async () => {
+        const { injectSubSession } = setupDeliveryMode();
+
+        await call('space.task.sendMessage', {
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          message: '@Coder see this next',
+          deliveryMode: 'defer',
+        });
+
+        expect(injectSubSession).toHaveBeenCalledWith(
+          'session-coder-1',
+          '@Coder see this next',
+          false,
+          undefined,
+          'defer'
+        );
+      });
+
+      it('forwards undefined (immediate) when deliveryMode is omitted', async () => {
+        const { injectSubSession } = setupDeliveryMode();
+
+        await call('space.task.sendMessage', {
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          message: 'steer now',
+          target: { kind: 'node_agent', agentName: 'Coder' },
+        });
+
+        expect(injectSubSession).toHaveBeenCalledWith(
+          'session-coder-1',
+          'steer now',
+          false,
+          undefined,
+          undefined
+        );
+      });
+
+      it('forwards deliveryMode:"defer" to the execution-less post-approval worker', async () => {
+        // The worker direct-delivery path must also honor defer so a queued
+        // reply to a busy merger lands as a deferred row, not a steer.
+        const mh = createMockMessageHub();
+        hub = mh.hub;
+        handlers = mh.handlers;
+        const injectSubSession = mock(async () => {});
+        taskAgentManager = {
+          ...createMockTaskAgentManager(null, mockTaskWithWorkflowRun),
+          injectSubSessionMessage: injectSubSession,
+          getPostApprovalWorkerSession: mock(() => ({
+            sessionId: 'worker-session',
+            agentName: 'merger',
+          })),
+        } as TaskAgentManagerInterface;
+        db = createMockDatabase(mockTaskWithWorkflowRun);
+        internalEventBus = {
+          publish: mock(async () => ({ delivered: 0, failures: [] })),
+          publishAsync: mock(() => {}),
+        } as unknown as InternalEventBus<DaemonInternalEventMap>;
+        setupSpaceTaskMessageHandlers(
+          hub,
+          taskAgentManager,
+          db,
+          internalEventBus,
+          makeNodeExecutionRepo([])
+        );
+
+        await call('space.task.sendMessage', {
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          message: 'merge after idle',
+          target: { kind: 'node_agent', agentName: 'merger' },
+          deliveryMode: 'defer',
+        });
+
+        expect(injectSubSession).toHaveBeenCalledWith(
+          'worker-session',
+          'merge after idle',
+          false,
+          undefined,
+          'defer'
+        );
+      });
+
+      it('rejects an invalid deliveryMode at the RPC boundary', async () => {
+        // Mirrors the `message.send` guard in session-handlers.ts — a non-TS
+        // caller can pass an arbitrary string, so validate before forwarding.
+        setupDeliveryMode();
+
+        await expect(
+          call('space.task.sendMessage', {
+            spaceId: 'space-1',
+            taskId: 'task-1',
+            message: 'bad mode',
+            target: { kind: 'node_agent', agentName: 'Coder' },
+            deliveryMode: 'later' as 'defer',
+          })
+        ).rejects.toThrow('Invalid deliveryMode');
+      });
+
+      it('persists deliveryMode:"defer" on the pending row when the target is not live yet', async () => {
+        // A deferred message to a not-yet-spawned agent falls through to the
+        // pending-message queue. The mode must be persisted with the row so the
+        // flush replays it as 'defer' after spawn — otherwise it defaults to
+        // immediate and steers the kickoff turn. (Review P2.)
+        const mh = createMockMessageHub();
+        hub = mh.hub;
+        handlers = mh.handlers;
+        const enqueued: Array<{ targetAgentName: string; deliveryMode?: string }> = [];
+        taskAgentManager = {
+          ...createMockTaskAgentManager(null, mockTaskWithWorkflowRun),
+          injectSubSessionMessage: mock(async () => {}),
+        };
+        db = createMockDatabase(mockTaskWithWorkflowRun);
+        internalEventBus = {
+          publish: mock(async () => ({ delivered: 0, failures: [] })),
+          publishAsync: mock(() => {}),
+        } as unknown as InternalEventBus<DaemonInternalEventMap>;
+        setupSpaceTaskMessageHandlers(
+          hub,
+          taskAgentManager,
+          db,
+          internalEventBus,
+          makeNodeExecutionRepo([
+            {
+              id: 'exec-coder',
+              workflowNodeId: 'node-1',
+              agentName: 'Coder',
+              agentSessionId: null, // not spawned yet → pending-queue path
+            },
+          ]),
+          undefined,
+          undefined,
+          {
+            enqueue: mock((input: { targetAgentName: string; deliveryMode?: string }) => {
+              enqueued.push({
+                targetAgentName: input.targetAgentName,
+                deliveryMode: input.deliveryMode,
+              });
+              return { record: { id: 'pending-1' }, deduped: false };
+            }),
+          }
+        );
+
+        const result = (await call('space.task.sendMessage', {
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          message: 'for after spawn',
+          target: { kind: 'node_agent', agentName: 'Coder' },
+          deliveryMode: 'defer',
+        })) as { queued?: boolean };
+
+        expect(result.queued).toBe(true);
+        expect(enqueued).toHaveLength(1);
+        expect(enqueued[0].targetAgentName).toBe('Coder');
+        expect(enqueued[0].deliveryMode).toBe('defer');
       });
     });
 
@@ -868,6 +1096,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
         'session-coder-1',
         '@Coder please fix the bug',
         false,
+        undefined,
         undefined
       );
     });
@@ -897,6 +1126,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
         'session-reviewer-dead',
         '@Reviewer please review',
         false,
+        undefined,
         undefined
       );
     });
@@ -964,12 +1194,14 @@ describe('setupSpaceTaskMessageHandlers', () => {
         'session-coder-1',
         '@Coder please check both',
         false,
+        undefined,
         undefined
       );
       expect(injectSubSession).toHaveBeenCalledWith(
         'session-coder-2',
         '@Coder please check both',
         false,
+        undefined,
         undefined
       );
     });
@@ -1007,6 +1239,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
         'session-coder-1',
         '@coder please fix',
         false,
+        undefined,
         undefined
       );
     });
@@ -1044,6 +1277,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
         'session-reviewer-1',
         'Please review this',
         false,
+        undefined,
         undefined
       );
     });
@@ -1067,6 +1301,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
         'session-reviewer-idle',
         '@Reviewer please review',
         false,
+        undefined,
         undefined
       );
     });
@@ -1094,24 +1329,28 @@ describe('setupSpaceTaskMessageHandlers', () => {
         'session-coder-cancelled',
         expect.anything(),
         false,
+        undefined,
         undefined
       );
       expect(injectSubSession).toHaveBeenCalledWith(
         'session-coder-idle',
         '@Coder please check',
         false,
+        undefined,
         undefined
       );
       expect(injectSubSession).toHaveBeenCalledWith(
         'session-coder-blocked',
         '@Coder please check',
         false,
+        undefined,
         undefined
       );
       expect(injectSubSession).toHaveBeenCalledWith(
         'session-coder-active',
         '@Coder please check',
         false,
+        undefined,
         undefined
       );
     });
@@ -1402,12 +1641,14 @@ describe('setupSpaceTaskMessageHandlers', () => {
         'session-coder-a',
         'Please check both',
         false,
+        undefined,
         undefined
       );
       expect(injectSubSession).toHaveBeenCalledWith(
         'session-coder-b',
         'Please check both',
         false,
+        undefined,
         undefined
       );
     });
@@ -1446,12 +1687,14 @@ describe('setupSpaceTaskMessageHandlers', () => {
         'session-coder-b',
         'just node two',
         false,
+        undefined,
         undefined
       );
       expect(injectSubSession).not.toHaveBeenCalledWith(
         'session-coder-a',
         'just node two',
         false,
+        undefined,
         undefined
       );
     });
@@ -1581,11 +1824,18 @@ describe('setupSpaceTaskMessageHandlers', () => {
 
       expect(activateCalls).toEqual(['node-2']);
       expect(injectSub).toHaveBeenCalledTimes(1);
-      expect(injectSub).toHaveBeenCalledWith('session-coder-b', 'just node two', false, undefined);
+      expect(injectSub).toHaveBeenCalledWith(
+        'session-coder-b',
+        'just node two',
+        false,
+        undefined,
+        undefined
+      );
       expect(injectSub).not.toHaveBeenCalledWith(
         'session-coder-a',
         'just node two',
         false,
+        undefined,
         undefined
       );
       expect(result).toMatchObject({ ok: true, routedTo: ['Coder'], activated: true });
@@ -1667,8 +1917,20 @@ describe('setupSpaceTaskMessageHandlers', () => {
       })) as Record<string, unknown>;
 
       // Delivered to the sibling node's freshly-activated session, never the worker.
-      expect(injectSub).toHaveBeenCalledWith('sibling-session', 'hi sibling', false, undefined);
-      expect(injectSub).not.toHaveBeenCalledWith('legacy-worker', 'hi sibling', false, undefined);
+      expect(injectSub).toHaveBeenCalledWith(
+        'sibling-session',
+        'hi sibling',
+        false,
+        undefined,
+        undefined
+      );
+      expect(injectSub).not.toHaveBeenCalledWith(
+        'legacy-worker',
+        'hi sibling',
+        false,
+        undefined,
+        undefined
+      );
       expect(ensureCalls).toContainEqual({ agentName: 'merger', workflowNodeId: 'node-sibling' });
       expect(result).toMatchObject({ ok: true, routedTo: ['merger'] });
     });
@@ -1786,6 +2048,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
         'session-reviewer-live',
         'Please review',
         false,
+        undefined,
         undefined
       );
       expect(result).toMatchObject({
@@ -2158,16 +2421,14 @@ describe('setupSpaceTaskMessageHandlers', () => {
       );
       const cycleRepo = new ChannelCycleRepository(sqlite);
 
-      // Simulate 4 autonomous Review→Coding cycles against the backward channel
-      // (channel index 1, maxCycles = 5). At this point the cap is 4/5 — one
-      // more cycle would hit the cap on the next call.
-      const MAX_CYCLES = 5;
+      // Simulate 4 autonomous Review→Coding traversals against the backward
+      // channel (channel index 1). The rate-based detector counts these in a
+      // rolling window; 4 is well below the threshold (15).
       const CHANNEL_INDEX = 1;
       for (let i = 0; i < 4; i++) {
-        const ok = cycleRepo.incrementCycleCount('run-cyc-1', CHANNEL_INDEX, MAX_CYCLES);
-        expect(ok).toBe(true);
+        cycleRepo.recordCycleEvent('run-cyc-1', CHANNEL_INDEX, now - i * 1000);
       }
-      expect(cycleRepo.get('run-cyc-1', CHANNEL_INDEX)!.count).toBe(4);
+      expect(cycleRepo.countRecentCycleEvents('run-cyc-1', CHANNEL_INDEX)).toBe(4);
 
       // Wire handlers with the real repo as the ChannelCycleResetter.
       const mh = createMockMessageHub();
@@ -2207,13 +2468,12 @@ describe('setupSpaceTaskMessageHandlers', () => {
       });
       expect(result).toMatchObject({ ok: true });
 
-      // Cycle count must now be 0.
-      expect(cycleRepo.get('run-cyc-1', CHANNEL_INDEX)!.count).toBe(0);
+      // The rate-window history must now be cleared.
+      expect(cycleRepo.countRecentCycleEvents('run-cyc-1', CHANNEL_INDEX)).toBe(0);
 
-      // A 5th autonomous cycle is now allowed — the cap guard succeeds again.
-      const fifth = cycleRepo.incrementCycleCount('run-cyc-1', CHANNEL_INDEX, MAX_CYCLES);
-      expect(fifth).toBe(true);
-      expect(cycleRepo.get('run-cyc-1', CHANNEL_INDEX)!.count).toBe(1);
+      // A further autonomous traversal is recorded fresh after the reset.
+      cycleRepo.recordCycleEvent('run-cyc-1', CHANNEL_INDEX, now);
+      expect(cycleRepo.countRecentCycleEvents('run-cyc-1', CHANNEL_INDEX)).toBe(1);
 
       sqlite.close();
     });
@@ -2237,9 +2497,9 @@ describe('setupSpaceTaskMessageHandlers', () => {
         `INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at, updated_at) VALUES ('run-a2a', 'sp1', 'wf1', 'Run', 'in_progress', ${now}, ${now})`
       );
       const cycleRepo = new ChannelCycleRepository(sqlite);
-      cycleRepo.incrementCycleCount('run-a2a', 0, 5);
-      cycleRepo.incrementCycleCount('run-a2a', 0, 5);
-      const before = cycleRepo.get('run-a2a', 0)!.count;
+      cycleRepo.recordCycleEvent('run-a2a', 0, now);
+      cycleRepo.recordCycleEvent('run-a2a', 0, now);
+      const before = cycleRepo.countRecentCycleEvents('run-a2a', 0);
       expect(before).toBe(2);
 
       // Simulate the agent-to-agent path: the TaskAgentManager's
@@ -2254,7 +2514,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
       await taskAgent.injectSubSessionMessage!('sess-some-agent', 'hello from an agent');
 
       // The counter must be UNCHANGED — the RPC reset path was never invoked.
-      expect(cycleRepo.get('run-a2a', 0)!.count).toBe(before);
+      expect(cycleRepo.countRecentCycleEvents('run-a2a', 0)).toBe(before);
 
       sqlite.close();
     });

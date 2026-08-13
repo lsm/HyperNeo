@@ -789,7 +789,28 @@ export function setupSpaceExportImportHandlers(
           const strategy: ConflictResolutionStrategy =
             res.workflows?.[exportedWorkflow.name] ?? 'skip';
           if (strategy === 'replace') {
-            workflowRepo.deleteWorkflow(existing.id);
+            // Deletion-safe (RFC §4 #3): a workflow with a non-archived
+            // (executable) run cannot be replaced — deleting it would orphan the
+            // run's pinned version. Skip the replacement (keep the existing
+            // workflow and its name/handle slot). Phase 2 detects the missing
+            // replacedIdByName entry and records the workflow as skipped rather
+            // than failing the whole import.
+            if (workflowManager.hasExecutableRuns(existing.id)) {
+              allWarnings.push(
+                `Workflow "${exportedWorkflow.name}": replace skipped — existing ` +
+                  `workflow has executable run(s) (in progress or not archived); ` +
+                  `archive the task(s) and re-import to replace`
+              );
+              continue;
+            }
+            // Route through the manager (not the repo) so the deletion-safety
+            // guard is the fence even if the pre-check above is ever dropped —
+            // defense in depth mirroring the resync path. The pre-check already
+            // proved the workflow is deletable, so this does not throw here; if
+            // it ever did (e.g. a run appeared between the check and the delete)
+            // the WorkflowDeletionBlockedError propagates and rolls back the
+            // whole import transaction rather than orphaning the run.
+            workflowManager.deleteWorkflow(existing.id);
             replacedIdByName.set(exportedWorkflow.name, existing.id);
             usedWorkflowNames.delete(exportedWorkflow.name);
             if (existing.handle) usedWorkflowHandles.delete(existing.handle);
@@ -822,6 +843,17 @@ export function setupSpaceExportImportHandlers(
             }
 
             if (strategy === 'replace') {
+              if (!replacedIdByName.has(exportedWorkflow.name)) {
+                // Blocked in the pre-step: the existing workflow had a
+                // non-archived run, so it was kept rather than deleted. Keep it
+                // and skip creating the imported copy (already warned above).
+                workflowResults.push({
+                  name: exportedWorkflow.name,
+                  id: existing.id,
+                  action: 'skipped',
+                });
+                continue;
+              }
               // Already deleted in the pre-step above.
               replacedOldId = replacedIdByName.get(exportedWorkflow.name);
               action = 'replaced';

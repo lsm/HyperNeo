@@ -52,6 +52,7 @@ vi.mock('../export-import-utils.ts', () => ({
 }));
 
 import { WorkflowList } from '../WorkflowList';
+import { toast } from '../../../lib/toast.ts';
 
 function makeWorkflow(overrides: Partial<SpaceWorkflowSummary> = {}): SpaceWorkflowSummary {
   return {
@@ -464,6 +465,45 @@ describe('WorkflowList', () => {
           })
         );
       });
+    });
+
+    it('warns about duplicates kept due to active runs (partial resync)', async () => {
+      vi.mocked(toast.success).mockClear();
+      vi.mocked(toast.warning).mockClear();
+      mockHubRequest.mockImplementation(async (method: string) => {
+        if (method === 'spaceWorkflow.detectDuplicateDrift') {
+          return {
+            reports: [
+              driftReport('Coding Workflow', [
+                { id: 'wf-newer', templateHash: 'new', createdAt: 200 },
+                { id: 'wf-older', templateHash: 'old', createdAt: 100 },
+              ]),
+            ],
+          };
+        }
+        if (method === 'spaceWorkflow.detectDrift')
+          return { updateAvailable: false, customized: false };
+        if (method === 'spaceWorkflow.resyncDuplicates') {
+          // The older duplicate was kept — it still has an executable run.
+          return { deletedIds: [], skippedDueToExecutableRuns: ['wf-older'] };
+        }
+        return undefined;
+      });
+
+      const props = {
+        ...defaultProps,
+        workflows: [
+          makeWorkflow({ id: 'wf-newer', name: 'Newer', templateName: 'Coding Workflow' }),
+          makeWorkflow({ id: 'wf-older', name: 'Older', templateName: 'Coding Workflow' }),
+        ],
+      };
+      const { findByText, getByText } = render(<WorkflowList {...props} />);
+      fireEvent.click(await findByText('Resync duplicates'));
+      fireEvent.click(getByText('Delete older rows & resync'));
+      await waitFor(() => {
+        expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('kept 1 duplicate'));
+      });
+      expect(toast.success).not.toHaveBeenCalled();
     });
 
     it('renders no Duplicate badge when the RPC returns no reports', async () => {
