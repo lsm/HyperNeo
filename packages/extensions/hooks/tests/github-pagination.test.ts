@@ -95,7 +95,7 @@ describe('ghGetCodexApproval — pagination loop', () => {
       pagedRunner([
         codexPage([codexReview('APPROVED', '2026-08-13T10:00:00Z')], {
           hasNext: true,
-          cursor: 'p1-end',
+          cursor: 'cDFlbmQ',
         }),
         codexPage([codexReview('CHANGES_REQUESTED', '2026-08-13T11:00:00Z')]),
       ])
@@ -110,8 +110,8 @@ describe('ghGetCodexApproval — pagination loop', () => {
     setGraphqlRunnerForTests(
       pagedRunner(
         [
-          codexPage([], { hasNext: true, cursor: 'cursor-1' }),
-          codexPage([], { hasNext: true, cursor: 'cursor-2' }),
+          codexPage([], { hasNext: true, cursor: 'Y3Vyc29yXzE' }),
+          codexPage([], { hasNext: true, cursor: 'Y3Vyc29yXzI' }),
           codexPage([codexReview('APPROVED', '2026-08-13T10:00:00Z')]),
         ],
         (query) => {
@@ -124,11 +124,11 @@ describe('ghGetCodexApproval — pagination loop', () => {
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.data.approved).toBe(true);
     // Page 1 has no after; pages 2+ carry the previous page's endCursor.
-    expect(seenAfters).toEqual([null, 'cursor-1', 'cursor-2']);
+    expect(seenAfters).toEqual([null, 'Y3Vyc29yXzE', 'Y3Vyc29yXzI']);
   });
 
   test('cap exhaustion fails closed with a retryable error', async () => {
-    setGraphqlRunnerForTests(pagedRunner([codexPage([], { hasNext: true, cursor: 'x' })]));
+    setGraphqlRunnerForTests(pagedRunner([codexPage([], { hasNext: true, cursor: 'eA' })]));
     const result = await ghGetCodexApproval(CTX, PR_LINK);
     expect(result.ok).toBe(false);
     if (!result.ok) {
