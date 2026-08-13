@@ -153,6 +153,62 @@ describe('WorkflowHookEngine.executeAction', () => {
     expect(hookStateRepo.get('run-1', 'missing_hook')?.localState.humanApproved).toBe(true);
   });
 
+  test('a mixed multicast gates the node-addressed part (generic address does not suppress)', async () => {
+    const STOP_HOOK = scriptHook('stop_hook', '{"flow":"stop","reason":"blocked by script"}');
+    const workflow = makeWorkflow({
+      customHooks: [STOP_HOOK],
+      hookBindings: [
+        {
+          hookId: 'stop_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    const engine = makeEngine(workflow);
+    // A worker address resolving to Review PLUS a generic '@coordinator'
+    // address: the gate must run for the node-addressed part.
+    const outcome = await engine.executeAction(
+      'send_message',
+      {
+        target: ['@worker:n-review/reviewer', '@coordinator'],
+        message: 'mixed',
+      },
+      META
+    );
+    expect(outcome.decision).toBe('stop');
+    expect(outcome.blockingHookId).toBe('stop_hook');
+  });
+
+  test('a non-string multicast element does not poison the valid parts', async () => {
+    const STOP_HOOK = scriptHook('stop_hook', '{"flow":"stop","reason":"blocked by script"}');
+    const workflow = makeWorkflow({
+      customHooks: [STOP_HOOK],
+      hookBindings: [
+        {
+          hookId: 'stop_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    const engine = makeEngine(workflow);
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: [123 as unknown as string, 'Review'], message: 'mixed' },
+      META
+    );
+    expect(outcome.decision).toBe('stop');
+  });
+
   test('a binding whose hook cannot be resolved blocks (fail closed)', async () => {
     // Pinned definition referencing a hook the running registry lacks (e.g.
     // after a rollback) must NOT deliver the protected action ungated.

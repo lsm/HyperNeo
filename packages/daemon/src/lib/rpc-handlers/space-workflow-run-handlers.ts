@@ -831,6 +831,17 @@ export function setupSpaceWorkflowRunHandlers(
       );
     }
 
+    // An approval may not be recorded against a fail-closed/infrastructure
+    // block (unresolved hook, artifact-store failure): the gate never ran, so
+    // overriding would deliver without it. The engine also refuses to consume
+    // such approvals — reject here so the UI gets an actionable error.
+    const existingState = hookStateRepo.get(params.runId, params.hookId);
+    if (params.approved === true && existingState?.localState.__overrideEligible === false) {
+      throw new Error(
+        'This block is a fail-closed infrastructure failure, not a hook decision — it cannot be approved. Resolve the underlying error and retry.'
+      );
+    }
+
     const rejectionReason = params.reason?.trim() || 'Rejected by human';
     // updateWithRetry refreshes the expected version per attempt, so a
     // concurrent retry-timer write doesn't surface as a version conflict here.
@@ -842,6 +853,8 @@ export function setupSpaceWorkflowRunHandlers(
         humanApproved: params.approved,
         humanApprovedAt: Date.now(),
         humanRejectionReason: params.approved ? undefined : rejectionReason,
+        // Reset the elapsed-ceiling cycle stamp alongside the count.
+        __firstRetryAt: undefined,
       },
       lastFlow: params.approved ? 'continue' : 'stop',
       lastReason: params.approved ? 'Approved by human' : rejectionReason,
@@ -901,6 +914,8 @@ export function setupSpaceWorkflowRunHandlers(
     const updateResult = hookStateRepo.updateWithRetry(params.runId, params.hookId, {
       localState: {
         [QUEUED_RETRYABLE_ACTION_STATE_KEY]: null,
+        // Reset the elapsed-ceiling cycle stamp alongside the count.
+        __firstRetryAt: undefined,
       },
       lastFlow: 'continue',
       lastReason: 'Retry requested by human',

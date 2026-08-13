@@ -541,6 +541,7 @@ export class WorkflowHookEngine {
         terminal = {
           kind: 'stop',
           hookId,
+          overrideIneligible: true,
           reason:
             `Hook "${hookId}" is bound to this route but not registered in this daemon ` +
             '(pinned definition referencing an unavailable hook?). The action is blocked ' +
@@ -854,27 +855,6 @@ export class WorkflowHookEngine {
       (resolver.canSend(fromNode, targetNode) || resolver.canSend(meta.agentName, targetNode));
     const isBuiltInInterLevelTarget = (targetValue: string): boolean =>
       targetValue.trim() === 'space-agent';
-    const hasValidAddressTarget = (targetValue: string): boolean => {
-      const trimmed = targetValue.trim();
-      if (isBuiltInInterLevelTarget(trimmed)) return true;
-      if (!trimmed.startsWith('@')) return true;
-      try {
-        const address = parseAddress(trimmed);
-        if (address.kind === 'worker') {
-          return (
-            (address.workflowRunId === undefined ||
-              address.workflowRunId === this.config.workflowRunId) &&
-            !!address.agentName
-          );
-        }
-        if (address.kind === 'role') {
-          return address.role.startsWith('actor-role:');
-        }
-        return false;
-      } catch {
-        return false;
-      }
-    };
 
     if (methodName === 'send_message') {
       const target = params.target;
@@ -909,14 +889,27 @@ export class WorkflowHookEngine {
           for (const resolved of resolvedTargets) {
             actionTargets.add(resolved);
           }
-          if (!hasValidAddressTarget(target)) {
+          // Resolved-node routability criterion (mirrors the array branch):
+          // only a resolution that IS a workflow node name can disqualify —
+          // a generic address resolving to no node adds no targets and must
+          // not suppress the gate (the router delivers it separately).
+          if (
+            resolvedTargets.some(
+              (resolved) =>
+                nodeNames.has(resolved) &&
+                !isBuiltInInterLevelTarget(target) &&
+                !isRoutableTarget(resolved)
+            )
+          ) {
             allRequestedTargetsRoutable = false;
           }
         }
       } else if (Array.isArray(target)) {
         for (const t of target) {
           if (typeof t !== 'string') {
-            allRequestedTargetsRoutable = false;
+            // A non-string entry contributes no resolvable node target — the
+            // schema layer rejects it, and it must not suppress the gates on
+            // the valid parts of the multicast.
             continue;
           }
           if (t.trim() === '*') {
@@ -1859,10 +1852,10 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
       entry.lastReason = record.reason ?? null;
       // Engine-reserved: whether a subsequent block of this hook is a HOOK
       // DECISION (human may override) or a fail-closed/infrastructure stop
-      // (banner must not offer Approve). Infrastructure stops carry no
-      // executionLog records, so their entries keep the flag unset — but a
-      // prior eligible decision must not linger as eligible after a later
-      // infrastructure stop either; the flag is written on every decision.
+      // (banner must not offer Approve). The outcome's userState carries the
+      // verdict (overrideIneligible terminals map to false); infrastructure
+      // stops that push executionLog records (unresolved hook, artifact
+      // write) stamp false so a stale eligible flag cannot linger.
       entry.localState.__overrideEligible = overrideEligible;
     }
     for (const update of outcome.stateUpdates) {
@@ -1886,6 +1879,7 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
       for (const [hookId, patch] of byHook) {
         patch.retryCount = 0;
         patch.nextRetryAt = null;
+        patch.localState.__firstRetryAt = undefined; // fresh cycle on re-block
         if (!engine.persistStateUpdate(hookId, patch)) {
           log.warn(`Failed to persist hook state for ${hookId} on stop`);
         }
@@ -1969,6 +1963,7 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
           } else {
             patch.retryCount = 0;
             patch.nextRetryAt = null;
+            patch.localState.__firstRetryAt = undefined;
           }
           if (!engine.persistStateUpdate(hookId, patch)) {
             if (hookId === blockingId) {
@@ -2037,6 +2032,7 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
       for (const [hookId, patch] of byHook) {
         if (hookId === blockingHookId) {
           Object.assign(patch, engine.nextRetryBookkeeping(hookId, retryAfterMs));
+          if (engine.getRetryCount(hookId) === 0) patch.localState.__firstRetryAt = Date.now();
         } else {
           patch.retryCount = 0;
           patch.nextRetryAt = null;
@@ -2088,6 +2084,7 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
     for (const [hookId, patch] of byHook) {
       patch.retryCount = 0;
       patch.nextRetryAt = null;
+      patch.localState.__firstRetryAt = undefined; // fresh cycle on re-block
       if (!engine.persistStateUpdate(hookId, patch)) {
         log.warn(`Failed to persist hook state for ${hookId} on deliver`);
       }
