@@ -12452,10 +12452,38 @@ export function runMigration193(db: BunDatabase): void {
  * read or written. SQLite ≥3.35 supports `ALTER TABLE ... DROP COLUMN`; the
  * column is plain TEXT with no index/constraint referencing it, so the drop is
  * safe. Guarded so it is a no-op on DBs without the table or already migrated.
+ *
+ * ORDERING GUARD: migrations run during DB construction, but definition pins
+ * are backfilled later in startup (setupRpcHandlers). Dropping the column NOW
+ * would leave an executable run without a pin backfilled from the post-drop
+ * live head — a pin carrying neither `hooks` nor `hookBindings`, invisible to
+ * the legacy-hook guard, resuming ungated. So while any NON-TERMINAL unpinned
+ * run exists on a workflow that still carries legacy hooks, the drop is
+ * deferred to a later startup (after those runs complete or get pins); the
+ * dormant column is harmless (nothing reads it once the workflows have
+ * hook_bindings). On the next startup with no such runs, the drop completes.
  */
 export function runMigration194(db: BunDatabase): void {
   if (!tableExists(db, 'space_workflows')) return;
   if (tableHasColumn(db, 'space_workflows', 'hooks')) {
+    // Any non-terminal run lacking a definition pin, on a workflow whose
+    // legacy hooks JSON is non-empty?
+    const risky = db
+      .prepare(
+        `SELECT COUNT(*) AS n
+           FROM space_workflow_runs r
+           JOIN space_workflows w ON w.id = r.workflow_id
+          WHERE r.definition_version IS NULL
+            AND r.status NOT IN ('done', 'cancelled', 'archived')
+            AND w.hooks IS NOT NULL
+            AND w.hooks != '[]'
+            AND w.hooks != ''`
+      )
+      .get() as { n: number } | undefined;
+    // Silently deferred (no logger exists at migration time): the dormant
+    // column is inert, and the drop completes on a later startup once the
+    // blocking runs are terminal or pinned.
+    if (risky && risky.n > 0) return;
     db.exec(`ALTER TABLE space_workflows DROP COLUMN hooks`);
   }
 }

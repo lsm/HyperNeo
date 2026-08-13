@@ -339,6 +339,79 @@ describe('WorkflowHookEngine.executeAction', () => {
     expect(outcome.userState.reason).toContain('retry limit exceeded');
   });
 
+  test('a backgrounded child inheriting stdout cannot wedge the hook (grace path)', async () => {
+    // The parent shell prints its HookReturn and exits immediately, but a
+    // backgrounded `sleep` inherits stdout and holds the pipe open. The
+    // collectors must be cancelled after the grace period (not wait out the
+    // child), and the parent's buffered output must survive.
+    const BG_HOOK = scriptHook('bg_hook', '{"flow":"continue"}');
+    const workflow = makeWorkflow({
+      customHooks: [
+        {
+          ...BG_HOOK,
+          run: {
+            kind: 'script',
+            interpreter: 'bash',
+            source: 'sleep 30 & echo \'{"flow":"continue"}\'',
+          },
+        },
+      ],
+      hookBindings: [
+        {
+          hookId: 'bg_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    const engine = makeEngine(workflow);
+    const startedAt = Date.now();
+    const outcome = await engine.executeAction('send_message', sendParams(), META);
+    const elapsed = Date.now() - startedAt;
+    expect(outcome.decision).toBe('deliver');
+    // The 30s child must NOT be waited out: well under its sleep, with slack
+    // for the 2s grace plus spawn overhead.
+    expect(elapsed).toBeLessThan(10_000);
+  });
+
+  test('a normally-exiting script delivers full stdout (collected-wins path)', async () => {
+    // Multi-kilobyte output ensures the collectors genuinely win the race
+    // with buffered data rather than relying on stream close timing.
+    const BIG_HOOK = {
+      id: 'big_hook',
+      requiredData: [],
+      run: {
+        kind: 'script' as const,
+        interpreter: 'bash' as const,
+        source:
+          'for i in $(seq 1 200); do echo "// filler line $i of the hook script output padding" >&2; done; ' +
+          'echo \'{"flow":"stop","reason":"seen full output"}\'',
+      },
+    };
+    const workflow = makeWorkflow({
+      customHooks: [BIG_HOOK],
+      hookBindings: [
+        {
+          hookId: 'big_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    const engine = makeEngine(workflow);
+    const outcome = await engine.executeAction('send_message', sendParams(), META);
+    expect(outcome.decision).toBe('stop');
+    expect(outcome.userState.reason).toBe('seen full output');
+  });
+
   test('the legacy-hook guard blocks every gated action (pre-v2 pinned run)', async () => {
     const { createLegacyHookGuardEngine } = await import(
       '../../../../src/lib/space/runtime/workflow-hook-engine'

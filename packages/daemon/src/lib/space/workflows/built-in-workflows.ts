@@ -73,12 +73,11 @@ const RETIRED_CODER_NO_MERGE_GUARD: DeclarativeToolGuard = {
  * channel: the runtime refuses to deliver a "changes requested" message until
  * a formal review or at least one PR comment is visible on GitHub.
  *
- * The check is a declarative reference to the `review_posted` built-in
- * validator — an `external_state` preset over the github connector's
- * `getReviewEvidence` op (see runtime/connectors/presets.ts). The preset
- * encodes: a formal review (APPROVED/CHANGES_REQUESTED) since workflow start as
- * primary evidence, with an own-PR fallback (COMMENTED review / PR comment)
- * since GitHub blocks self-APPROVE. No hand-rolled bash.
+ * The check is the `review_posted` built-in hook (extensions/hooks): its `run`
+ * reads fresh review evidence via `ghGetReviewEvidence` — a formal review
+ * (APPROVED/CHANGES_REQUESTED) since workflow start as primary evidence, with
+ * an own-PR fallback (COMMENTED review / PR comment) since GitHub blocks
+ * self-APPROVE. In-process `gh`/GraphQL, no hand-rolled bash.
  */
 
 /**

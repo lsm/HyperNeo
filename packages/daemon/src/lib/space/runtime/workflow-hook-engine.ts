@@ -959,6 +959,7 @@ export class WorkflowHookEngine {
         repo?.listByRun(this.config.workflowRunId, {
           artifactType: 'link',
           artifactKeyPrefix: '__',
+          limit: 200,
         }) ?? []
       )
         .filter((a) => !seenKeys.has(`${a.nodeId}:${a.artifactType}:${a.artifactKey}`))
@@ -1035,11 +1036,20 @@ export class WorkflowHookEngine {
       if (!killed) {
         // Grace the collectors past the parent's exit, then cancel: the
         // parent's output is buffered; a straggler child holding an inherited
-        // pipe cannot wedge the action.
+        // pipe cannot wedge the action. The timer handle is captured and
+        // cleared when `collected` wins the race (the common case) — an
+        // uncleared handle would leak one orphaned 2s timer per hook run
+        // (same cleanup discipline as killTimer above and the follow-up
+        // dispatch timeout's .finally()).
+        let graceTimer: ReturnType<typeof setTimeout> | undefined;
         const graceDone = new Promise<void>((resolve) => {
-          setTimeout(resolve, SCRIPT_EXIT_GRACE_MS);
+          graceTimer = setTimeout(resolve, SCRIPT_EXIT_GRACE_MS);
         });
-        await Promise.race([collected, graceDone]);
+        try {
+          await Promise.race([collected, graceDone]);
+        } finally {
+          if (graceTimer !== undefined) clearTimeout(graceTimer);
+        }
       }
       controller.abort(); // idempotent; releases any blocked collector
       return { code, timedOut: killed };
@@ -1451,11 +1461,6 @@ function hookResult(
 type AnyToolResult = import('../tools/tool-result').ToolResult;
 
 /**
- * Wrap an MCP tool handler with the workflow hook engine. Runs the hook chain
- * before the original handler; persists hook state + side effects; handles
- * stop / retry / deliver; dispatches follow-ups on deliver.
- */
-/**
  * Fail-closed engine for a run pinned before the hooks-v2 cutover whose
  * immutable definition carries the LEGACY `hooks` array (and no v2
  * `hookBindings`). The v2 engine only enforces bindings — resuming such a run
@@ -1483,6 +1488,11 @@ export function createLegacyHookGuardEngine(
   })(config);
 }
 
+/**
+ * Wrap an MCP tool handler with the workflow hook engine. Runs the hook chain
+ * before the original handler; persists hook state + side effects; handles
+ * stop / retry / deliver; dispatches follow-ups on deliver.
+ */
 export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
   methodName: string,
   handler: (args: T) => Promise<AnyToolResult>,

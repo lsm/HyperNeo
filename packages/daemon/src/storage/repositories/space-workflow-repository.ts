@@ -50,6 +50,14 @@ const log = new Logger('space-workflow-repository');
 interface WorkflowRow {
   id: string;
   space_id: string;
+  /**
+   * Legacy pre-v2 hooks JSON — present only while migration 194's ordering
+   * guard has DEFERRED the column drop (unpinned non-terminal runs still
+   * reference it). Surfaced as an extra `hooks` property so the runtime
+   * legacy-hook guard can detect ungated resumption for those runs; otherwise
+   * unread.
+   */
+  hooks?: string | null;
   name: string;
   description: string;
   start_node_id: string | null;
@@ -196,6 +204,13 @@ function rowToWorkflow(row: WorkflowRow, nodes: WorkflowNode[]): SpaceWorkflow {
   }
   if (row.handle) {
     wf.handle = row.handle;
+  }
+  // Legacy pre-v2 hooks (column present only while migration 194 deferred its
+  // drop): surface non-empty definitions so task-agent-manager's legacy-hook
+  // guard fails the run closed instead of resuming without its gates.
+  const legacyHooks = parseJson<unknown[] | null>(row.hooks ?? null, null);
+  if (legacyHooks && legacyHooks.length > 0) {
+    (wf as { hooks?: unknown[] }).hooks = legacyHooks;
   }
   return wf;
 }

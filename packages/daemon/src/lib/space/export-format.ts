@@ -672,6 +672,28 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
   // optional targetNode reference known node names (targetNode required for
   // send_message), and authorizedCallers is a non-empty list of known
   // node/slot callers.
+  // Custom-hook collection rules (mirroring validateCustomHooks): duplicate
+  // ids and built-in shadowing are rejected at createWorkflow time — catch
+  // them here so preview does not advertise an import that rolls back.
+  if (result.data.customHooks && result.data.customHooks.length > 0) {
+    const seenCustomIds = new Set<string>();
+    for (let ci = 0; ci < result.data.customHooks.length; ci++) {
+      const custom = result.data.customHooks[ci];
+      if (BUILT_IN_HOOK_IDS.has(custom.id)) {
+        return {
+          ok: false,
+          error: `invalid: customHooks[${ci}].id "${custom.id}" shadows a registered built-in hook`,
+        };
+      }
+      if (seenCustomIds.has(custom.id)) {
+        return {
+          ok: false,
+          error: `invalid: customHooks[${ci}].id "${custom.id}" is declared more than once`,
+        };
+      }
+      seenCustomIds.add(custom.id);
+    }
+  }
   if (result.data.hookBindings && result.data.hookBindings.length > 0) {
     const resolvableHookIds = new Set<string>(BUILT_IN_HOOK_IDS);
     for (const custom of result.data.customHooks ?? []) resolvableHookIds.add(custom.id);

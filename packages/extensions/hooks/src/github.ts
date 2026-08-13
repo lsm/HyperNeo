@@ -56,8 +56,15 @@ function isRateLimit(stderr: string): boolean {
 /** Transient gh CLI failures worth retrying (network blips, 5xx, DNS). */
 const TRANSIENT_FAILURE =
   /network|timeout|timed out|connection|econnreset|enotfound|ehostunreach|temporar|try again|\b5\d{2}\b|bad gateway|service unavailable|gateway timeout/i;
+/** gh's documented exit code for "authentication required" — needs user action, never retry. */
+const GH_EXIT_AUTH_REQUIRED = 4;
 function isTransientFailure(stderr: string, exitCode: number | null): boolean {
-  if (exitCode !== null && exitCode !== 0 && exitCode !== 1) return true; // gh uses 1 for most errors; ≥2 is often a crash/infra failure
+  // gh uses 1 for most errors; ≥2 is often a crash/infra failure — EXCEPT 4,
+  // which `gh help exit-codes` documents as missing/expired credentials.
+  // Retrying an auth failure would burn the retry ceiling on an error only
+  // the operator can fix, so it is terminal.
+  if (exitCode === GH_EXIT_AUTH_REQUIRED) return false;
+  if (exitCode !== null && exitCode !== 0 && exitCode !== 1) return true;
   return TRANSIENT_FAILURE.test(stderr);
 }
 

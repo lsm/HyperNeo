@@ -72,7 +72,13 @@ export class WorkflowRunArtifactRepository {
   /** List artifacts for a run, optionally filtered by nodeId and/or artifactType. */
   listByRun(
     runId: string,
-    filters?: { nodeId?: string; artifactType?: string; artifactKeyPrefix?: string }
+    filters?: {
+      nodeId?: string;
+      artifactType?: string;
+      artifactKeyPrefix?: string;
+      /** Bounds the scan on hot paths (e.g. the hook engine's reserved-stamp read). */
+      limit?: number;
+    }
   ): WorkflowRunArtifactRecord[] {
     let sql = 'SELECT * FROM workflow_run_artifacts WHERE run_id = ?';
     const params: string[] = [runId];
@@ -92,6 +98,10 @@ export class WorkflowRunArtifactRepository {
       params.push(`${filters.artifactKeyPrefix}*`);
     }
     sql += ' ORDER BY created_at ASC';
+    if (filters?.limit !== undefined) {
+      sql += ' LIMIT ?';
+      params.push(String(filters.limit));
+    }
 
     const rows = this.db.prepare(sql).all(...params) as Record<string, unknown>[];
     return rows
