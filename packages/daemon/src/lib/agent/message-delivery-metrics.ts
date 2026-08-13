@@ -57,6 +57,14 @@ export interface DeliveryMetricsSnapshot {
   residualWindowP50: number | null;
   residualWindowP99: number | null;
   residualWindowSamples: number;
+  /**
+   * Cumulative `message_delivery` jobs that exhausted their retry budget and
+   * dead-lettered (→ the persisted message flipped to `failed`). A sustained
+   * rise is the retry-storm signal: a session or provider stuck in a recoverable
+   * error loop, burning the full retry budget per message. Counted from the
+   * lane's `onDead` hook — one increment per terminal `dead` job.
+   */
+  deadLetters: number;
 }
 
 /**
@@ -97,6 +105,7 @@ export class DeliveryMetrics {
     turn_terminated: 0,
   };
   private residualWindows: number[] = [];
+  private deadLetters = 0;
 
   /**
    * Record one SDK handoff of `messageUuid`. Call from the bridge at the point
@@ -150,6 +159,15 @@ export class DeliveryMetrics {
     }
   }
 
+  /**
+   * Record a `message_delivery` job that dead-lettered (exhausted its retry
+   * budget). Call from the lane's `onDead` hook. A sustained rise is the
+   * retry-storm signal.
+   */
+  recordDeadLetter(): void {
+    this.deadLetters++;
+  }
+
   snapshot(): DeliveryMetricsSnapshot {
     return {
       feedsObserved: this.feedsObserved,
@@ -159,6 +177,7 @@ export class DeliveryMetrics {
       residualWindowP50: percentile(this.residualWindows, 0.5),
       residualWindowP99: percentile(this.residualWindows, 0.99),
       residualWindowSamples: this.residualWindows.length,
+      deadLetters: this.deadLetters,
     };
   }
 }

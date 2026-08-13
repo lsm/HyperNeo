@@ -81,6 +81,24 @@ export function isMessageDeliveryV2Enabled(): boolean {
 }
 
 /**
+ * Retry budget for `message_delivery` jobs (shared by {@link deliverMessage} and
+ * the transactional outbox). Generous by default: a delivery job can span a full
+ * SDK turn (seconds→minutes), and a recoverable provider error (transient 5xx /
+ * "unexpected error") should retry the turn rather than dead-lettering a user
+ * message prematurely. This composes with the QueryRunner's own internal retry.
+ *
+ * Operator-tunable via `HYPERNEO_MESSAGE_DELIVERY_MAX_RETRIES` rather than
+ * reduced: the per-delivery cool-down in the external-event layer now caps
+ * re-injection storms at the source, so shrinking this mainly trades recovery
+ * headroom for faster `failed` surfacing — an operator decision, not a default.
+ * Read once at module load.
+ */
+export const MESSAGE_DELIVERY_MAX_RETRIES = (() => {
+  const raw = Number.parseInt(process.env.HYPERNEO_MESSAGE_DELIVERY_MAX_RETRIES ?? '', 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : 8;
+})();
+
+/**
  * Detect a SQLite UNIQUE-constraint failure. `deliverMessage` relies on the
  * `uq_message_delivery_active_turn` partial unique index as the atomic
  * turn-vs-steer arbiter: a `role:'turn'` insert either succeeds or hits this
@@ -192,7 +210,7 @@ export function deliverMessage(
       // awaiting onSent). Give them ample retry budget so a transient failure
       // doesn't dead-letter a user message prematurely; `reclaimStale` covers
       // crashes. §15 measures actual pressure.
-      maxRetries: 8,
+      maxRetries: MESSAGE_DELIVERY_MAX_RETRIES,
     });
     return options.role;
   }
@@ -201,7 +219,7 @@ export function deliverMessage(
     jobQueue.enqueue({
       queue: MESSAGE_DELIVERY,
       payload: basePayload,
-      maxRetries: 8,
+      maxRetries: MESSAGE_DELIVERY_MAX_RETRIES,
     });
     return 'turn';
   } catch (err) {
@@ -211,7 +229,7 @@ export function deliverMessage(
     jobQueue.enqueue({
       queue: MESSAGE_DELIVERY,
       payload: { ...basePayload, role: 'steer' },
-      maxRetries: 8,
+      maxRetries: MESSAGE_DELIVERY_MAX_RETRIES,
     });
     return 'steer';
   }

@@ -107,6 +107,15 @@ describe('DeliveryMetrics (task #861 item 13)', () => {
     });
   });
 
+  describe('dead-letter counter (retry-storm signal)', () => {
+    it('counts dead-lettered deliveries cumulatively in the snapshot', () => {
+      expect(metrics.snapshot().deadLetters).toBe(0);
+      metrics.recordDeadLetter();
+      metrics.recordDeadLetter();
+      expect(metrics.snapshot().deadLetters).toBe(2);
+    });
+  });
+
   describe('bounded memory (review: bound the per-message feed history)', () => {
     it('caps the recent-feed window so memory does not grow with total message volume', () => {
       for (let i = 0; i < 10_000; i++) metrics.recordFeed(`uuid-${i}`);
