@@ -902,6 +902,71 @@ describe('AgentSession', () => {
       );
     });
 
+    it('driveDeliveryTurn reopens a no-result consumed row for retry only while the claim is current', async () => {
+      // A turn that consumed its kickoff but produced no result must flip the
+      // row back to `enqueued` so the retry RE-FEEDS it (resume alone does not
+      // continue an incomplete trailing user turn) — but ONLY while this
+      // attempt's job claim is still current. An interrupt (Stop) deletes the
+      // delivery job FIRST and leaves the consumed row by design; the unwind's
+      // idle transition then lands in the no-result branch with a dead claim.
+      // Reopening there would strand an `enqueued` orphan that the reconciler
+      // replays, undoing the user's Stop. (Codex P1.)
+      const retrySpy = mock(() => 'db-1');
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock(() => ({ content: 'x', sendStatus: 'consumed' })),
+        hasTerminalResultAfter: mock(() => false),
+        hasDeliveryTurnEnd: mock(() => false),
+        clearDeliveryTurnEnd: mock(() => {}),
+        getErrorTerminalResultSubtypeAfter: mock(() => null),
+        recordDeliveryTurnEnd: mock(() => {}),
+        markDeliveryRetryableByUuid: retrySpy,
+      }));
+      mockDb.getJobQueueRepo = mock(() => ({
+        isProcessingDelivery: mock(() => true),
+      }));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+      // A query that never settles on its own — the turn-end waiter drives the
+      // outcome, like a real long turn.
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+
+      // Live claim: the row is reopened, and the bridge throws recoverable so
+      // the job retries (and re-feeds).
+      await agentSession.stateManager.setProcessing('uuid-reopen');
+      const live = agentSession.driveDeliveryTurn(
+        'uuid-reopen',
+        'hello',
+        null,
+        true,
+        () => true
+      );
+      await agentSession.stateManager.setIdle();
+      await expect(live).rejects.toThrow('Turn ended without a response');
+      expect(retrySpy).toHaveBeenCalledTimes(1);
+
+      // Dead claim (interrupt deleted the job mid-turn): the row must stay
+      // `consumed`. The claim was live when the turn started — the interrupt
+      // deletes the job while the turn is being awaited, so the idle transition
+      // lands in the no-result branch with a dead claim.
+      let claimAlive = true;
+      await agentSession.stateManager.setProcessing('uuid-reopen-2');
+      const cancelled = agentSession.driveDeliveryTurn(
+        'uuid-reopen-2',
+        'hello',
+        null,
+        true,
+        () => claimAlive
+      );
+      // Let the drive pass its locked start section, then kill the claim
+      // (InterruptHandler deletes the delivery job before unwinding the query).
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      claimAlive = false;
+      await agentSession.stateManager.setIdle();
+      await expect(cancelled).rejects.toThrow();
+      expect(retrySpy).toHaveBeenCalledTimes(1); // no additional reopen
+    });
+
     it('handleModelSwitch should delegate to modelSwitchHandler', async () => {
       const mockResult = { success: true, model: 'claude-opus-4-20250514' };
       const switchModelSpy = mock(() => mockResult);

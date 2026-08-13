@@ -2282,7 +2282,17 @@ export class AgentSession
       // crash-reclaim path is different: there the SDK may still be
       // mid-execution, so `consumed` rows are NOT re-fed on reclaim — this flip
       // happens only after we confirmed the turn produced nothing.) (Codex P1.)
-      this.reopenDeliveryForRetry(messageUuid);
+      //
+      // Gated on the claim still being current: an interrupt (Stop) deletes the
+      // delivery job FIRST and leaves the consumed row untouched by design, then
+      // the query unwind's idle transition lands HERE. Reopening in that state
+      // would strand an `enqueued` row with no job, which the periodic orphan
+      // reconciler re-enqueues — replaying a prompt the user just cancelled
+      // (potentially re-running tools). A dead/replaced claim means this attempt
+      // no longer owns the retry, so it must not mutate the row. (Codex P1.)
+      if (!claimGuard || claimGuard()) {
+        this.reopenDeliveryForRetry(messageUuid);
+      }
       throw new MessageDeliveryRecoverableTurnError(detail, turnError?.category);
     }
     return { outcome: 'completed' };
