@@ -6178,13 +6178,6 @@ export class SpaceRuntime {
   private recoveryDone = false;
 
   /**
-   * Per-daemon `(runId, channelIndex)` keys of dead-loop notifications already
-   * re-surfaced by {@link surfaceDeadLoopedRuns}, so the post-provisioning
-   * catch-up pass emits each incident at most once even if called repeatedly.
-   */
-  private readonly surfacedDeadLoopChannels = new Set<string>();
-
-  /**
    * Scan every active space for `in_progress` workflow runs whose in-flight
    * state was orphaned by a daemon restart, and re-drive them so the tick loop
    * can finalize the run on its next pass.
@@ -6812,51 +6805,6 @@ export class SpaceRuntime {
         }`
       );
       return false;
-    }
-  }
-
-  /**
-   * Best-effort catch-up: re-emit `space.workflowRun.deadLoop` for every
-   * currently-dead-looped cyclic channel across active (in_progress/blocked)
-   * runs. Called once from `SpaceRuntimeService.start()` AFTER the per-space
-   * `SpaceAgentNotificationService` subscribers are wired, because the
-   * runtime's first recovery tick can win the documented startup race and
-   * publish the event before any subscriber exists (the event is non-durable,
-   * and `recoveryDone` would otherwise prevent a second recovery from
-   * re-emitting). Deduped per `(run, channel)` for the daemon lifetime.
-   */
-  async surfaceDeadLoopedRuns(): Promise<void> {
-    if (!this.internalEventBus) return;
-    const cycleRepo = this.getCycleRepo();
-    const spaces = await this.config.spaceManager.listSpaces(false);
-    for (const space of spaces) {
-      if (space.paused || space.stopped) continue;
-      for (const run of this.config.workflowRunRepo.getRehydratableRuns(space.id)) {
-        const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
-        const channels = workflow?.channels;
-        if (!channels) continue;
-        for (let i = 0; i < channels.length; i++) {
-          if (!isChannelCyclic(i, channels, workflow.nodes)) continue;
-          const key = `${run.id}:${i}`;
-          if (this.surfacedDeadLoopChannels.has(key)) continue;
-          const recentCount = cycleRepo.countRecentCycleEvents(run.id, i);
-          if (recentCount < DEAD_LOOP_THRESHOLD) continue;
-          const channel = channels[i];
-          const toTargets = Array.isArray(channel.to) ? channel.to : [channel.to];
-          // Record dedup only on a successful publish — a failed publish (e.g.
-          // session temporarily unavailable) must stay retryable on the next
-          // catch-up pass instead of being permanently suppressed.
-          const notified = await this.notifyRecoveryDeadLoop(
-            run,
-            channel,
-            i,
-            channel.from,
-            toTargets,
-            recentCount
-          );
-          if (notified) this.surfacedDeadLoopChannels.add(key);
-        }
-      }
     }
   }
 
