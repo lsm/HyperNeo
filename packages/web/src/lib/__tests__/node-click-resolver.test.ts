@@ -19,6 +19,7 @@ function nodeExec(overrides: Partial<NodeExecution> = {}): NodeExecution {
     startedAt: null,
     completedAt: null,
     updatedAt: 0,
+    lastActivityAt: null,
     ...overrides,
   };
 }

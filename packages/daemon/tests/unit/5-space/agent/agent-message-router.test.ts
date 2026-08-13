@@ -1129,6 +1129,279 @@ describe('AgentMessageRouter: queue message for declared-but-inactive target', (
   });
 });
 
+describe('AgentMessageRouter: persist workflowNodeId on queued @worker targets', () => {
+  let ctx: TestCtx;
+
+  beforeEach(() => {
+    ctx = makeCtx();
+  });
+
+  afterEach(() => {
+    ctx.db.close();
+  });
+
+  test('scoped compound row carries the resolved node id (node-name worker handle)', async () => {
+    // @worker targets scope the queued row with a compound "<node>/<agent>" so two
+    // nodes reusing a slot name don't cross-drain. The router also persists the
+    // resolved workflowNodeId so the handoff resolver pins the exact node instead
+    // of parsing the concatenated string (ambiguous when a component has "/").
+    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+      makeChannel('coder', 'Review'),
+    ]);
+    // Coder has an active session; reviewer is declared but inactive → queues.
+    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+    ctx.nodeExecutionRepo.createOrIgnore({
+      workflowRunId,
+      workflowNodeId: 'review-node-id',
+      agentName: 'reviewer',
+      status: 'pending',
+    });
+
+    const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
+    const router = new AgentMessageRouter({
+      nodeExecutionRepo: ctx.nodeExecutionRepo,
+      workflowRunId,
+      workflowChannels: [makeChannel('coder', 'Review')],
+      messageInjector: async () => {},
+      pendingMessageRepo,
+      spaceId: ctx.spaceId,
+      taskId: null,
+      workflowNodeNameById: { 'review-node-id': 'Review' },
+    });
+
+    const result = await router.deliverMessage({
+      fromAgentName: 'coder',
+      fromSessionId: ctx.coderSessionId,
+      target: '@worker:Review/reviewer',
+      message: 'please review',
+    });
+
+    expect(result.queued).toBeDefined();
+    expect(result.queued).toHaveLength(1);
+    // The compound is reported to the caller; the row stores the BARE agent name
+    // pinned to the canonical node id, so the resolver never parses the string.
+    expect(result.queued![0].agentName).toBe('Review/reviewer');
+    const pending = pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer');
+    expect(pending).toHaveLength(1);
+    expect(pending[0].targetAgentName).toBe('reviewer');
+    expect(pending[0].workflowNodeId).toBe('review-node-id');
+  });
+
+  test('scoped compound row carries the resolved node id (node-id worker handle)', async () => {
+    // actor-registry worker handles encode the node id directly; the router
+    // recognizes an id ref and persists it unchanged.
+    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+      makeChannel('coder', 'review-node-id'),
+    ]);
+    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+    ctx.nodeExecutionRepo.createOrIgnore({
+      workflowRunId,
+      workflowNodeId: 'review-node-id',
+      agentName: 'reviewer',
+      status: 'pending',
+    });
+
+    const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
+    const router = new AgentMessageRouter({
+      nodeExecutionRepo: ctx.nodeExecutionRepo,
+      workflowRunId,
+      workflowChannels: [makeChannel('coder', 'review-node-id')],
+      messageInjector: async () => {},
+      pendingMessageRepo,
+      spaceId: ctx.spaceId,
+      taskId: null,
+      workflowNodeNameById: { 'review-node-id': 'Review' },
+    });
+
+    const result = await router.deliverMessage({
+      fromAgentName: 'coder',
+      fromSessionId: ctx.coderSessionId,
+      target: '@worker:review-node-id/reviewer',
+      message: 'please review',
+    });
+
+    expect(result.queued).toBeDefined();
+    expect(result.queued).toHaveLength(1);
+    expect(result.queued![0].agentName).toBe('review-node-id/reviewer');
+    const pending = pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer');
+    expect(pending).toHaveLength(1);
+    expect(pending[0].targetAgentName).toBe('reviewer');
+    expect(pending[0].workflowNodeId).toBe('review-node-id');
+  });
+
+  test('a node named like an inherited Object.prototype key still resolves to its id', async () => {
+    // "constructor"/"toString"/etc. are on Object.prototype, so an `in`-based id
+    // lookup would falsely treat the name as an existing node id and pin the row
+    // to a nonexistent workflowNodeId. The resolver must use own properties only.
+    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+      makeChannel('coder', 'constructor'),
+    ]);
+    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+    ctx.nodeExecutionRepo.createOrIgnore({
+      workflowRunId,
+      workflowNodeId: 'ctor-node-id',
+      agentName: 'ctor-agent',
+      status: 'pending',
+    });
+
+    const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
+    const router = new AgentMessageRouter({
+      nodeExecutionRepo: ctx.nodeExecutionRepo,
+      workflowRunId,
+      workflowChannels: [makeChannel('coder', 'constructor')],
+      messageInjector: async () => {},
+      pendingMessageRepo,
+      spaceId: ctx.spaceId,
+      taskId: null,
+      workflowNodeNameById: { 'ctor-node-id': 'constructor' },
+    });
+
+    const result = await router.deliverMessage({
+      fromAgentName: 'coder',
+      fromSessionId: ctx.coderSessionId,
+      target: '@worker:constructor/ctor-agent',
+      message: 'please review',
+    });
+
+    expect(result.queued).toBeDefined();
+    expect(result.queued).toHaveLength(1);
+    expect(result.queued![0].agentName).toBe('constructor/ctor-agent');
+    const pending = pendingMessageRepo.listPendingForTarget(workflowRunId, 'ctor-agent');
+    expect(pending).toHaveLength(1);
+    expect(pending[0].targetAgentName).toBe('ctor-agent');
+    // The real node id — NOT the inherited-key name "constructor".
+    expect(pending[0].workflowNodeId).toBe('ctor-node-id');
+  });
+
+  test('a node id that collides with another node name resolves to the id (ids authoritative)', async () => {
+    // Node id "x" is named "Review"; a different node has caller-supplied id
+    // "Review". An @worker address using the id "Review" must pin to that id,
+    // not to node "x" (whose name matches first in insertion order).
+    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+      makeChannel('coder', 'Review'),
+    ]);
+    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+    ctx.nodeExecutionRepo.createOrIgnore({
+      workflowRunId,
+      workflowNodeId: 'Review',
+      agentName: 'other-agent',
+      status: 'pending',
+    });
+
+    const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
+    const router = new AgentMessageRouter({
+      nodeExecutionRepo: ctx.nodeExecutionRepo,
+      workflowRunId,
+      workflowChannels: [makeChannel('coder', 'Review')],
+      messageInjector: async () => {},
+      pendingMessageRepo,
+      spaceId: ctx.spaceId,
+      taskId: null,
+      // node id "x" has name "Review"; node id "Review" has name "other".
+      workflowNodeNameById: { x: 'Review', Review: 'other' },
+    });
+
+    const result = await router.deliverMessage({
+      fromAgentName: 'coder',
+      fromSessionId: ctx.coderSessionId,
+      target: '@worker:Review/other-agent',
+      message: 'please review',
+    });
+
+    expect(result.queued).toBeDefined();
+    expect(result.queued).toHaveLength(1);
+    const pending = pendingMessageRepo.listPendingForTarget(workflowRunId, 'other-agent');
+    expect(pending).toHaveLength(1);
+    // Pinned to the id "Review" (the second node), NOT node "x" whose name is "Review".
+    expect(pending[0].workflowNodeId).toBe('Review');
+  });
+
+  test('a name/id ref collision resolves by the agent slot, not by namespace precedence', async () => {
+    // Node id "x" is named "Review" (slot "reviewer"); another node has id
+    // "Review" (slot "other-agent"). An @worker address "Review/reviewer" is
+    // ambiguous as a string — "Review" is node-x's NAME and the other node's ID —
+    // so neither name-first nor id-first is always right. Resolve the pair: only
+    // node-x declares "reviewer".
+    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+      makeChannel('coder', 'Review'),
+    ]);
+    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+    ctx.nodeExecutionRepo.createOrIgnore({
+      workflowRunId,
+      workflowNodeId: 'x',
+      agentName: 'reviewer',
+      status: 'pending',
+    });
+    const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
+    const router = new AgentMessageRouter({
+      nodeExecutionRepo: ctx.nodeExecutionRepo,
+      workflowRunId,
+      workflowChannels: [makeChannel('coder', 'Review')],
+      messageInjector: async () => {},
+      pendingMessageRepo,
+      spaceId: ctx.spaceId,
+      taskId: null,
+      workflowNodeNameById: { x: 'Review', Review: 'Other' },
+      nodeGroups: { Review: ['reviewer'], Other: ['other-agent'] },
+    });
+
+    const result = await router.deliverMessage({
+      fromAgentName: 'coder',
+      fromSessionId: ctx.coderSessionId,
+      target: '@worker:Review/reviewer',
+      message: 'please review',
+    });
+
+    expect(result.queued).toBeDefined();
+    expect(result.queued).toHaveLength(1);
+    const pending = pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer');
+    expect(pending).toHaveLength(1);
+    // Pinned to node id "x" (name "Review", declares "reviewer") — NOT the node
+    // whose id is "Review", which an id-first lookup would wrongly select.
+    expect(pending[0].workflowNodeId).toBe('x');
+  });
+
+  test('does not fire the activation callback for an unknown worker node ref', async () => {
+    // @worker:WrongNode/reviewer — WrongNode is unknown, so resolveWorkflowNodeId
+    // returns undefined. The activation callback must NOT fire, or it would
+    // activate an unrelated node that happens to declare 'reviewer'.
+    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+      makeChannel('coder', 'reviewer'),
+    ]);
+    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+    ctx.nodeExecutionRepo.createOrIgnore({
+      workflowRunId,
+      workflowNodeId: 'review-node',
+      agentName: 'reviewer',
+      status: 'pending',
+    });
+    const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
+    const queuedAgents: string[] = [];
+    const router = new AgentMessageRouter({
+      nodeExecutionRepo: ctx.nodeExecutionRepo,
+      workflowRunId,
+      workflowChannels: [makeChannel('coder', 'reviewer')],
+      messageInjector: async () => {},
+      pendingMessageRepo,
+      spaceId: ctx.spaceId,
+      taskId: null,
+      workflowNodeNameById: { 'review-node': 'Review' },
+      nodeGroups: { Review: ['reviewer'] },
+      onMessageQueued: (agentName) => queuedAgents.push(agentName),
+    });
+
+    await router.deliverMessage({
+      fromAgentName: 'coder',
+      fromSessionId: ctx.coderSessionId,
+      target: '@worker:WrongNode/reviewer',
+      message: 'please review',
+    });
+
+    // Row queued (compound, unresolved node), but activation callback NOT fired.
+    expect(queuedAgents).toEqual([]);
+  });
+});
+
 describe('AgentMessageRouter: broadcast * with mixed active/inactive targets', () => {
   // Tests gap: broadcast with pendingMessageRepo where some targets have sessions
   // (deliver) and others are declared-but-inactive (queue).
@@ -1523,12 +1796,16 @@ describe('AgentMessageRouter: generic address targets', () => {
     });
     const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
     const queuedAgents: string[] = [];
+    const queuedNodeIds: string[] = [];
     const router = makeRouter(ctx, workflowRunId, [], [makeChannel('Coding', 'Review')], {
       nodeGroups: { Coding: ['coder'], Review: ['reviewer'] },
       workflowNodeNameById: { 'node-coding': 'Coding', 'node-review': 'Review' },
       pendingMessageRepo,
       spaceId: ctx.spaceId,
-      onMessageQueued: (agentName) => queuedAgents.push(agentName),
+      onMessageQueued: (agentName, workflowNodeId) => {
+        queuedAgents.push(agentName);
+        queuedNodeIds.push(workflowNodeId ?? '');
+      },
     });
 
     const result = await router.deliverMessage({
@@ -1540,11 +1817,15 @@ describe('AgentMessageRouter: generic address targets', () => {
 
     expect(result.success).toBe(false);
     expect(result.queued).toHaveLength(1);
-    expect(queuedAgents).toEqual(['Review/reviewer']);
-    expect(pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer')).toHaveLength(0);
-    expect(pendingMessageRepo.listPendingForTarget(workflowRunId, 'Review/reviewer')).toHaveLength(
-      1
-    );
+    // onMessageQueued now receives the BARE slot name (+ resolved node id) so the
+    // activation callback can match declared agents; the compound is for reporting only.
+    expect(queuedAgents).toEqual(['reviewer']);
+    expect(queuedNodeIds).toEqual(['node-review']);
+    // The row stores the bare agent name pinned to the node id.
+    const pending = pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer');
+    expect(pending).toHaveLength(1);
+    expect(pending[0].targetAgentName).toBe('reviewer');
+    expect(pending[0].workflowNodeId).toBe('node-review');
   });
 
   test('keeps queued @worker targets scoped by node name when agent names repeat', async () => {
@@ -1586,10 +1867,12 @@ describe('AgentMessageRouter: generic address targets', () => {
     });
 
     expect(result.success).toBe(false);
-    expect(pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer')).toHaveLength(0);
-    expect(
-      pendingMessageRepo.listPendingForTarget(workflowRunId, 'Review A/reviewer')
-    ).toHaveLength(1);
+    // Scoped by workflowNodeId: the row pins to Review A's node id, so it won't
+    // drain to Review B even though both reuse the 'reviewer' slot.
+    const pending = pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer');
+    expect(pending).toHaveLength(1);
+    expect(pending[0].targetAgentName).toBe('reviewer');
+    expect(pending[0].workflowNodeId).toBe('node-review-a');
   });
 
   test('preserves earlier generic deliveries when a later @session target is unauthorized', async () => {

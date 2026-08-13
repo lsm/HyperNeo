@@ -159,7 +159,7 @@ export class Database {
     this.goalRepo = new GoalRepository(db, reactiveDb, shortIdAllocator);
     this.taskRepo = new TaskRepository(db, reactiveDb, shortIdAllocator);
     this.spaceTaskRepo = new SpaceTaskRepository(db, reactiveDb);
-    this.nodeExecutionRepo = new NodeExecutionRepository(db);
+    this.nodeExecutionRepo = new NodeExecutionRepository(db, reactiveDb);
     this.jobQueueRepo = new JobQueueRepository(db);
     this.appMcpServerRepo = new AppMcpServerRepository(db, reactiveDb);
     this.mcpEnablementRepo = new McpEnablementRepository(db, reactiveDb);

@@ -1176,7 +1176,12 @@ export class SDKMessageHandler {
     for (const block of content) {
       if (block.type !== 'tool_result') continue;
       await internalEventBus.publish('sdk.toolUse.consumed', {
-        sessionId: message.session_id ?? this.ctx.session.id,
+        // Use the application session.id (as sdk.toolUse.created does), NOT
+        // message.session_id (the SDK conversation ID, a.k.a. session.sdkSessionId):
+        // node_executions.agent_session_id stores the app id, so consumers that
+        // resolve the event to an execution (e.g. lastActivityAt tracking) would
+        // otherwise miss every tool-result event.
+        sessionId: this.ctx.session.id,
         toolUseId: block.tool_use_id,
         timestamp: Date.now(),
       });

@@ -266,14 +266,18 @@ function sendRetryableUpstreamError(normalized: {
 function stableStringify(value: unknown): string {
   if (typeof value === 'string') return value;
   try {
-    return JSON.stringify(value);
+    // JSON.stringify returns undefined (not a string, and without throwing) for
+    // top-level undefined/functions/symbols; coerce those to a string.
+    return JSON.stringify(value) ?? String(value);
   } catch {
     return String(value);
   }
 }
 
-function estimateTextTokens(text: string): number {
-  if (text.length === 0) return 0;
+function estimateTextTokens(text: string | undefined): number {
+  // Token estimation runs over unvalidated request bodies; guard against fields
+  // (e.g. tool.parameters, function_call_output.output) that may be missing.
+  if (!text || text.length === 0) return 0;
 
   const characterEstimate = Math.ceil(text.length / 4);
   const lexicalPieces = text.match(/[\p{L}\p{N}_]+|[^\s\p{L}\p{N}_]/gu)?.length ?? 0;

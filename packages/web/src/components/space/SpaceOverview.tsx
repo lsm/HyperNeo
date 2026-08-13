@@ -30,11 +30,7 @@ import { isActionRequired } from '../../lib/task-filters';
 import { SpaceCreateTaskDialog } from './SpaceCreateTaskDialog';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { AutonomyWorkflowSummary } from './AutonomyWorkflowSummary';
-
-const GLASS_SURFACE =
-  'border-white/15 bg-white/[0.07] shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_16px_40px_rgba(0,0,0,0.18)] backdrop-blur-xl';
-const FLAT_SURFACE =
-  'border-white/15 bg-dark-900/95 shadow-[inset_0_1px_0_rgba(255,255,255,0.07),0_18px_44px_rgba(0,0,0,0.26)]';
+import { FLAT_SURFACE, GLASS_SURFACE } from './glass-workspace';
 
 // ─── Stat Card ───────────────────────────────────────────────────────────────
 

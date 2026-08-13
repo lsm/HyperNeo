@@ -630,6 +630,11 @@ export class TaskAgentManager {
    */
   private rateLimitListenerUnsubs: Array<() => void> = [];
   /**
+   * Unsubs for the agent-activity listeners (SDK toolUse created/consumed) that
+   * refresh `NodeExecution.lastActivityAt`. Torn down in `cleanupAll()`.
+   */
+  private activityListenerUnsubs: Array<() => void> = [];
+  /**
    * Sub-sessions currently in a rate/usage-limit cooldown, keyed by parent
    * taskId → (sessionId → the session's own limit entry). A task with multiple
    * parallel node-agent sessions can have several limited at once; the task is
@@ -648,6 +653,7 @@ export class TaskAgentManager {
     this.auditLogRepo = new McpAuditLogRepository(this.config.db.getDatabase());
     this.subscribeToTaskArchiveEvents();
     this.subscribeToRateLimitEvents();
+    this.subscribeToActivityTracking();
   }
 
   *getTrackedAgentRootPids(): Iterable<number> {
@@ -805,6 +811,72 @@ export class TaskAgentManager {
         { subscriberName: 'TaskAgentManager.rateLimitResume' }
       )
     );
+  }
+
+  /**
+   * Subscribe to SDK tool-call/tool-result events to refresh
+   * `NodeExecution.lastActivityAt`.
+   *
+   * Tool activity is the strongest, most frequent "the agent is plainly working"
+   * signal and — crucially — it is never produced by the runtime's own recovery
+   * machinery (runtime nags are user messages with no tool_use), so subscribing
+   * here cannot create a feedback loop that defeats stall detection. An agent
+   * that responds to a nag with tool calls IS genuinely working, so advancing
+   * the activity timestamp in that case is correct.
+   *
+   * This source also captures a node's OWN commit pushes: a push is a tool call
+   * (`git`/`gh` via Bash) on that node's session, so it refreshes `lastActivityAt`
+   * for exactly the pushing node. A PR-level `pull_request.synchronize` event is
+   * deliberately NOT used — it fans out to every subscribed target and would mark
+   * idle co-subscribers active (see `deliverExternalEventToWorkflowTarget`).
+   *
+   * Each event is resolved to its node execution via the session→execution index
+   * and the dedicated `touchLastActivity` path is used so `updatedAt` (state-write
+   * semantic) is left untouched. Activity tracking must never throw into the
+   * caller; failures are logged at debug and swallowed.
+   */
+  private subscribeToActivityTracking(): void {
+    if (this.activityListenerUnsubs.length > 0) return;
+
+    this.activityListenerUnsubs.push(
+      this.config.internalEventBus.subscribe(
+        'sdk.toolUse.created',
+        (event) => {
+          this.recordActivityForSession(event.sessionId, event.timestamp);
+        },
+        { subscriberName: 'TaskAgentManager.activityToolUseCreated' }
+      )
+    );
+
+    this.activityListenerUnsubs.push(
+      this.config.internalEventBus.subscribe(
+        'sdk.toolUse.consumed',
+        (event) => {
+          this.recordActivityForSession(event.sessionId, event.timestamp);
+        },
+        { subscriberName: 'TaskAgentManager.activityToolUseConsumed' }
+      )
+    );
+  }
+
+  /**
+   * Advance `lastActivityAt` for whatever node execution owns `sessionId`.
+   *
+   * Shared by the SDK tool-event subscribers and the peer-message-delivery
+   * wrapper. Silent no-op when the session has no execution row (e.g. the
+   * post-approval merger session, or a session that was already torn down).
+   * Never throws — activity tracking is best-effort and must not break the
+   * surrounding delivery/event path.
+   */
+  private recordActivityForSession(sessionId: string, at: number = Date.now()): void {
+    try {
+      const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
+      if (execution) {
+        this.config.nodeExecutionRepo.touchLastActivity(execution.id, at);
+      }
+    } catch (err) {
+      log.debug(`TaskAgentManager: failed to record activity for session ${sessionId}:`, err);
+    }
   }
 
   /**
@@ -1350,6 +1422,7 @@ export class TaskAgentManager {
             startedAt: null,
             completedAt: null,
             updatedAt: 0,
+            lastActivityAt: null,
           };
         }
         if (prevExec?.agentSessionId) {
@@ -1661,6 +1734,12 @@ export class TaskAgentManager {
     // be delivered to the merger.
     const drainWorkflowNodeId = execution?.workflowNodeId ?? null;
     const executionless = !execution;
+    // Drain the bare agent name (new bare+workflowNodeId rows and legacy bare
+    // null-node rows) plus the legacy "<nodeName>/<agent>" compound form. The
+    // "<nodeId>/<agent>" alias is intentionally NOT drained here: the router now
+    // emits bare+workflowNodeId (so node-id compounds are no longer produced),
+    // and matching that alias against null-node rows misdelivered messages whose
+    // bare slot name happened to equal "<nodeId>/<agent>".
     const queueTargetNames = [
       targetAgentName,
       ...(workflowNodeName ? [`${workflowNodeName}/${targetAgentName}`] : []),
@@ -1668,7 +1747,7 @@ export class TaskAgentManager {
     const seenIds = new Set<string>();
     const pending = queueTargetNames
       .flatMap((targetName) =>
-        drainWorkflowNodeId
+        drainWorkflowNodeId != null
           ? repo.listPendingForTarget(workflowRunId, targetName, drainWorkflowNodeId)
           : repo.listPendingForTarget(workflowRunId, targetName)
       )
@@ -1710,6 +1789,14 @@ export class TaskAgentManager {
           undefined,
           row.id
         );
+        // A queued peer message was just delivered (the target was unavailable
+        // when it was sent, so it went through the pending queue rather than the
+        // router's immediate path). That is inbound activity — refresh
+        // lastActivityAt so peer-message activity is captured on this common
+        // activation/rehydration path too. Runtime recovery nags never reach
+        // here (they use injectRuntimeRecoveryMessage), so this cannot reset the
+        // stall detector's timer on the runtime's own nag.
+        this.recordActivityForSession(sessionId);
         repo.markDelivered(row.id, sessionId);
         this.emitPendingDelivered(row.id, sessionId, row);
       } catch (err) {
@@ -3377,6 +3464,8 @@ export class TaskAgentManager {
     }
     for (const unsub of this.rateLimitListenerUnsubs) unsub();
     this.rateLimitListenerUnsubs = [];
+    for (const unsub of this.activityListenerUnsubs) unsub();
+    this.activityListenerUnsubs = [];
     const taskIds = Array.from(this.subSessions.keys());
     await Promise.allSettled(taskIds.map((taskId) => this.shutdownTask(taskId)));
     log.info(`TaskAgentManager: cleanupAll complete (${taskIds.length} tasks shut down)`);
@@ -5052,6 +5141,14 @@ export class TaskAgentManager {
       workflowChannels: channels,
       messageInjector: async (targetSessionId, message) => {
         await this.injectSubSessionMessage(targetSessionId, message, true);
+        // A peer message was just delivered to this node-agent session — that is
+        // inbound activity, so refresh lastActivityAt. Runtime recovery nags do
+        // NOT take this path (they call injectSubSessionMessageWithOrigin
+        // directly, bypassing the router), so this cannot reset the stall
+        // detector's timer on the runtime's own nag. Stamped only after a
+        // successful inject; a throw above skips this so a failed delivery does
+        // not register as activity.
+        this.recordActivityForSession(targetSessionId);
       },
       activateTargetSession: (targetAgentName) =>
         this.activateTargetSessionsForMessage(taskId, workflowRunId, targetAgentName, {
@@ -5113,8 +5210,15 @@ export class TaskAgentManager {
       //      workflow node stranded in `pending` state would otherwise queue
       //      forever. `activateNode` is idempotent so this is safe regardless
       //      of the existing row's status.
-      onMessageQueued: (targetAgentName) => {
-        void this.tryResumeNodeAgentSession(workflowRunId, targetAgentName).catch((err) => {
+      onMessageQueued: (targetAgentName, queuedWorkflowNodeId) => {
+        // The router now passes the BARE slot name (+ resolved node id); the
+        // compound form never matched a declared agent, so lazy activation was a
+        // no-op for @worker queues before.
+        void this.tryResumeNodeAgentSession(
+          workflowRunId,
+          targetAgentName,
+          queuedWorkflowNodeId
+        ).catch((err) => {
           log.warn(
             `AgentMessageRouter.onMessageQueued: tryResumeNodeAgentSession failed for "${targetAgentName}": ${err instanceof Error ? err.message : String(err)}`
           );
@@ -5127,6 +5231,7 @@ export class TaskAgentManager {
           void this.ensureWorkflowNodeActivationForAgent(taskId, targetAgentName, {
             reopenReason: `node-agent send_message to lazily activate "${targetAgentName}"`,
             reopenBy: `agent:${agentName}`,
+            workflowNodeId: queuedWorkflowNodeId,
           }).catch((err) => {
             log.warn(
               `AgentMessageRouter.onMessageQueued: ensureWorkflowNodeActivationForAgent failed for "${targetAgentName}": ${err instanceof Error ? err.message : String(err)}`
