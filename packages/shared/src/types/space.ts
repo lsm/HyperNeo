@@ -2520,9 +2520,10 @@ export interface ExportedWorkflowNodeAgent {
 /**
  * A declarative outbound handoff transition in the portable export format.
  * Mirrors {@link HandoffTransition}. Uses node/agent names (already portable
- * in the export) for `target`. `hookId` is checked against the exported
- * `hooks` list on import; a `hookId` whose hook was filtered out is stripped
- * at the export/import boundary so no dangling reference survives.
+ * in the export) for `target`. `hookId` is resolved against the registered
+ * built-ins plus the workflow's custom hooks on import; a `hookId` that no
+ * longer resolves is stripped at the export/import boundary so no dangling
+ * reference survives.
  */
 export interface ExportedHandoffTransition {
   id: string;

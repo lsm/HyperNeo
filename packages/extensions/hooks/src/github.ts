@@ -11,9 +11,9 @@
  * credential handling here: built-in hooks are trusted code with full daemon
  * access, and pretending otherwise (the old restricted-env sandbox) was theater.
  *
- * NOTE: the GraphQL ops (review threads, review evidence, codex approval) are
- * first-page-only and need online validation in step 7. They are faithful in
- * intent to the retired validators; field details may need real-GitHub tuning.
+ * NOTE: the GraphQL ops (review threads, review evidence, codex approval)
+ * paginate with fail-closed caps and are covered by extractor/pagination
+ * tests; live-GitHub validation of field shapes remains outstanding.
  */
 
 import type { HookContext, HookReturn } from '@hyperneo/shared/types/workflow-hooks';
@@ -335,6 +335,14 @@ export interface ParsedPrLink {
 const SLUG_RE = /^[A-Za-z0-9._-]+$/;
 
 /**
+ * GitHub pagination cursors are base64 (`[A-Za-z0-9+/=]`). Validating the
+ * charset before interpolating a cursor into a query is defense-in-depth: the
+ * values come from GitHub's own pageInfo, but a malformed/hostile value must
+ * not reach the GraphQL string.
+ */
+const CURSOR_RE = /^[A-Za-z0-9+/=]+$/;
+
+/**
  * Parse owner/repo/number from a GitHub PR link (any host, including Enterprise).
  * Returns undefined when the link doesn't match the PR shape OR owner/repo
  * contain characters outside the GitHub slug charset (injection guard).
@@ -408,7 +416,7 @@ export async function ghGetUnresolvedReviewThreads(
     }
     urls.push(...extractUnresolvedThreads(result.data));
     if (info.hasNextPage !== true) return { ok: true, data: urls };
-    if (typeof info.endCursor !== 'string') break;
+    if (typeof info.endCursor !== 'string' || !CURSOR_RE.test(info.endCursor)) break;
     cursor = info.endCursor;
   }
   return {
@@ -647,9 +655,20 @@ export async function ghGetCodexApproval(
     if (!result.ok) return result;
     lastPage = asRecord(result.data) ?? {};
     const prNode = asRecord(asRecord(asRecord(lastPage.data)?.repository)?.pullRequest);
-    const nodes = asRecord(prNode?.reviews)?.nodes;
+    const reviewsConnection = asRecord(prNode?.reviews);
+    // Structural fail-closed: a malformed reviews connection (missing nodes
+    // or pageInfo) must not be treated as a complete scan — an omitted
+    // decisive CHANGES_REQUESTED could otherwise approve via the reaction path.
+    if (!Array.isArray(reviewsConnection?.nodes) || !asRecord(reviewsConnection?.pageInfo)) {
+      return {
+        ok: false,
+        retryable: true,
+        error: 'malformed reviews connection (missing nodes/pageInfo); failing closed',
+      };
+    }
+    const nodes = reviewsConnection?.nodes;
     if (Array.isArray(nodes)) allReviewNodes.push(...nodes);
-    const pageInfo = asRecord(asRecord(prNode?.reviews)?.pageInfo);
+    const pageInfo = asRecord(reviewsConnection?.pageInfo);
     if (pageInfo?.hasNextPage !== true) {
       // Definitive end of the review history — evaluate the merged document.
       return {
@@ -664,7 +683,7 @@ export async function ghGetCodexApproval(
         ),
       };
     }
-    if (typeof pageInfo?.endCursor !== 'string') break;
+    if (typeof pageInfo?.endCursor !== 'string' || !CURSOR_RE.test(pageInfo.endCursor)) break;
     cursor = pageInfo.endCursor;
   }
   return {

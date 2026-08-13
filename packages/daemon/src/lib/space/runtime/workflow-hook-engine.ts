@@ -143,6 +143,9 @@ const MAX_RETRY_ATTEMPTS = 2880;
 /** Maximum bytes for an artifact data payload injected into a script hook env. */
 const MAX_ARTIFACT_DATA_BYTES = 16_384;
 
+/** Aggregate byte budget for HYPERNEO_CURRENT_ARTIFACTS_JSON (see buildScriptEnv). */
+const MAX_ARTIFACTS_ENV_BYTES = 65_536;
+
 /** Maximum bytes for a param `data` field before it is redacted in hook env. */
 const MAX_PARAM_DATA_BYTES = 4096;
 
@@ -315,7 +318,14 @@ export class WorkflowHookEngine {
 
   clearQueuedRetryableActionsForKey(actionKey: string): void {
     for (const hookId of this.getHookIdsWithQueuedAction(actionKey)) {
-      this.clearQueuedRetryableAction(hookId);
+      if (!this.clearQueuedRetryableAction(hookId)) {
+        // A failed clear leaves the persisted queued action in place — it
+        // re-arms on rehydration and could replay an already-handled action.
+        log.warn(
+          `Failed to clear queued retryable action for hook "${hookId}" (key ${actionKey}); ` +
+            'it may replay after a restart.'
+        );
+      }
     }
   }
 
@@ -324,7 +334,12 @@ export class WorkflowHookEngine {
     for (const hookId of hookIds) {
       const queued = this.getQueuedRetryableAction(hookId);
       if (!queued || !sameRetryableActionOwner(queued.meta, meta)) continue;
-      this.clearQueuedRetryableAction(hookId);
+      if (!this.clearQueuedRetryableAction(hookId)) {
+        log.warn(
+          `Failed to clear queued retryable action for hook "${hookId}"; ` +
+            'it may replay after a restart.'
+        );
+      }
       clearedActionKeys.push(queued.actionKey);
     }
     return clearedActionKeys;
@@ -412,8 +427,24 @@ export class WorkflowHookEngine {
     const followUpRequests: Array<{ targetNode: string; message: string }> = [];
     let currentParams = { ...params };
     // The ctx artifact window is identical for every binding in this action —
-    // compute it once instead of 2 SQL round-trips per binding.
+    // compute it once instead of 2 SQL round-trips per binding. A read
+    // failure blocks the whole chain (fail closed — see readArtifactsForCtx).
     const ctxArtifacts = this.readArtifactsForCtx();
+    if (ctxArtifacts === null) {
+      return {
+        decision: 'stop',
+        finalParams: params,
+        followUpRequests: [],
+        stateUpdates: [],
+        executionLog: [],
+        userState: {
+          status: 'blocked',
+          reason:
+            'Hook context could not be read (artifact store failure); the action is blocked ' +
+            'rather than evaluated without the run’s recorded artifacts.',
+        },
+      };
+    }
 
     type Terminal = { kind: 'stop'; hookId: string; reason?: string } | null;
     let terminal: Terminal = null;
@@ -847,7 +878,15 @@ export class WorkflowHookEngine {
         if (!actionTargets.has(binding.targetNode)) return false;
       }
 
-      if (!binding.authorizedCallers || binding.authorizedCallers.length === 0) return false;
+      if (!binding.authorizedCallers || binding.authorizedCallers.length === 0) {
+        // Fail-open-by-skip is silent and looks like a missing gate: surface
+        // it so a mis-authored binding is debuggable.
+        log.warn(
+          `Hook binding "${binding.hookId}" on ${binding.sourceNode} ${methodName} has no ` +
+            'authorizedCallers and can never match; it is ignored.'
+        );
+        return false;
+      }
 
       return binding.authorizedCallers.some((caller) => {
         if (caller.sourceNode !== nodeName) return false;
@@ -941,7 +980,7 @@ export class WorkflowHookEngine {
     return { ctx, recordedState, queuedFollowUps, writtenArtifacts };
   }
 
-  private readArtifactsForCtx(): HookArtifact[] {
+  private readArtifactsForCtx(): HookArtifact[] | null {
     try {
       // Freshest 50 for general context, PLUS every engine-reserved
       // (`__`-prefixed key) artifact — a busy run can accumulate >50 artifacts
@@ -993,8 +1032,15 @@ export class WorkflowHookEngine {
         artifactKey: a.artifactKey,
         data: this.boundArtifactData(a.data) as Record<string, unknown>,
       }));
-    } catch {
-      return [];
+    } catch (err) {
+      // An artifact-read failure must NOT masquerade as an artifact-free run:
+      // hooks like pr_ready treat "no stamped identity" as "nothing to bind
+      // to", and a handoff could then overwrite the run's reserved identity.
+      // Null signals the caller to block the action instead.
+      log.warn(
+        `Failed to read hook-context artifacts for run ${this.config.workflowRunId}: ${errorMessage(err)}`
+      );
+      return null;
     }
   }
 
@@ -1003,8 +1049,10 @@ export class WorkflowHookEngine {
   // -------------------------------------------------------------------------
 
   /**
-   * Run a custom bash-script hook. Unsandboxed (built-in hooks are trusted
-   * in-process code; a sandbox around scripts was theater — see spec §3/§10).
+   * Run a custom bash-script hook. Built-in hooks are trusted in-process code
+   * (full daemon env); custom scripts are user-authored bash and get a
+   * RESTRICTED env — an allow-list without the daemon's credentials (spec §3:
+   * the script sandbox stays; see buildScriptEnv).
    * The script reads context via `HYPERNEO_*` env vars and emits a
    * {@link HookReturn} JSON on stdout. A non-zero exit, timeout, or malformed
    * stdout is a `stop` with the error as the reason.
@@ -1167,8 +1215,44 @@ export class WorkflowHookEngine {
     return ret;
   }
 
+  /**
+   * Base environment variables a custom script needs to RUN (shell, locale,
+   * temp dir) — an allow-list, not a deny-list: user-authored bash must not
+   * receive the daemon's live credentials (provider API keys, keychain-promoted
+   * OAuth tokens, GH tokens). Non-token `GH_HOST`/`GH_PATH` are admitted so a
+   * script that shells out to `gh` targets the configured host; token-bearing
+   * GH_* variables are not (gh resolves its own credentials from keyring/config,
+   * as the in-process built-ins rely on). The spec's script sandbox (§3) stays.
+   */
+  private static readonly SCRIPT_ENV_ALLOW = new Set([
+    'PATH',
+    'HOME',
+    'USER',
+    'SHELL',
+    'TMPDIR',
+    'LANG',
+    'TERM',
+    'TZ',
+    'XDG_CONFIG_HOME',
+  ]);
+
   private buildScriptEnv(ctx: HookContext, action: HookAction): Record<string, string> {
-    const env: Record<string, string> = { ...(process.env as Record<string, string>) };
+    const env: Record<string, string> = {};
+    for (const [key, value] of Object.entries(process.env)) {
+      if (value === undefined) continue;
+      if (key.startsWith('HYPERNEO_')) {
+        env[key] = value;
+        continue;
+      }
+      if (WorkflowHookEngine.SCRIPT_ENV_ALLOW.has(key) || key.startsWith('LC_')) {
+        env[key] = value;
+        continue;
+      }
+      if (key === 'GH_HOST' || key === 'GH_PATH') {
+        env[key] = value;
+      }
+      // Everything else is dropped — see SCRIPT_ENV_ALLOW's doc comment.
+    }
     env.HYPERNEO_WORKFLOW_RUN_ID = ctx.runId;
     env.HYPERNEO_WORKSPACE_PATH = ctx.workspacePath;
     env.HYPERNEO_METHOD_NAME = action.method;
@@ -1186,8 +1270,21 @@ export class WorkflowHookEngine {
     } catch {
       env.HYPERNEO_PARAMS_JSON = '{}';
     }
+    // Aggregate budget: each artifact is individually bounded, but up to 50
+    // of them in ONE env entry can exceed execve's per-entry/total limits
+    // (E2BIG fails the whole spawn). Serialize until the budget is spent and
+    // drop the rest — the env window is informational for scripts.
     try {
-      env.HYPERNEO_CURRENT_ARTIFACTS_JSON = JSON.stringify(ctx.readArtifacts());
+      const artifacts = ctx.readArtifacts();
+      const kept: HookArtifact[] = [];
+      let bytes = 2; // '[]'
+      for (const artifact of artifacts) {
+        const entry = JSON.stringify(artifact);
+        if (bytes + entry.length + 1 > MAX_ARTIFACTS_ENV_BYTES && kept.length > 0) break;
+        kept.push(artifact);
+        bytes += entry.length + 1;
+      }
+      env.HYPERNEO_CURRENT_ARTIFACTS_JSON = JSON.stringify(kept);
     } catch {
       env.HYPERNEO_CURRENT_ARTIFACTS_JSON = '[]';
     }
@@ -1401,6 +1498,23 @@ function buildRetryableActionKey(
     methodName,
     args,
   });
+}
+
+/** Backoff ceiling for the retry timer path (see scheduleRetryableAction). */
+const MAX_RETRY_BACKOFF_MS = 3_600_000;
+
+/**
+ * Exponential backoff with jitter for timer-driven hook retries: base *
+ * 2^min(attempts, 6) capped at 1h, then ±25% jitter. The base comes from the
+ * hook's retryAfterMs (or the engine default), so GitHub-advertised
+ * rate-limit delays are still respected as a floor.
+ */
+function backoffDelayMs(baseMs: number, attempts: number): number {
+  const safeBase = Number.isFinite(baseMs) && baseMs > 0 ? baseMs : DEFAULT_RETRY_AFTER_MS;
+  const exponent = Math.min(Math.max(attempts, 0), 6);
+  const scaled = Math.min(safeBase * 2 ** exponent, MAX_RETRY_BACKOFF_MS);
+  const jitter = scaled * 0.25;
+  return Math.round(scaled + (Math.random() * 2 - 1) * jitter);
 }
 
 function scheduleRetryableAction(options: PendingRetryableHookAction): void {
@@ -1711,7 +1825,12 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
 
         scheduleRetryableAction({
           actionKey,
-          delayMs: retryAfterMs,
+          // Exponential backoff with jitter on the TIMER path: a long-lived
+          // gate (pr_merged on an OPEN PR) would otherwise fire ~2880
+          // constant-rate callbacks over 24h. The hook's retryAfterMs is the
+          // BASE; each subsequent attempt scales it by 2^attempts (capped at
+          // 1h) with ±25% jitter so concurrent runs don't synchronize.
+          delayMs: backoffDelayMs(retryAfterMs, engine.getRetryCount(outcome.blockingHookId ?? '')),
           methodName,
           args,
           handler: handler as (args: Record<string, unknown>) => Promise<AnyToolResult>,

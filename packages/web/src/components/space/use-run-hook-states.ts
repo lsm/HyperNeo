@@ -27,8 +27,6 @@ export interface HookBannerSummary {
   targetNode?: string;
   method?: string;
   reason?: string;
-  remediation?: string;
-  retryAfterMs?: number;
   retryCount?: number;
   nextRetryAt?: number;
   /** Raw hook state — callers rendering details use this. */
@@ -63,7 +61,6 @@ export function evaluateHookStatus(
     targetNode: binding?.targetNode,
     method: binding?.method,
     reason: state.lastReason,
-    remediation: state.lastReason,
     retryCount: state.retryCount,
     nextRetryAt: state.nextRetryAt,
     state,

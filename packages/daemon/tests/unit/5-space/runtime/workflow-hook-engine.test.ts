@@ -414,6 +414,45 @@ describe('WorkflowHookEngine.executeAction', () => {
     expect(reserved[reserved.length - 1]?.data.link).toBe('https://github.com/o/r/pull/OLD');
   });
 
+  test('custom-script env is allow-listed — daemon secrets do not leak', async () => {
+    // The script fails (stop) when it can see the injected secret-ish var,
+    // and succeeds (continue) when it cannot; HYPERNEO_* must pass through.
+    process.env.ACME_DAEMON_TEST_SECRET = 'super-secret-value';
+    try {
+      const ENV_HOOK = {
+        id: 'env_probe_hook',
+        requiredData: [],
+        run: {
+          kind: 'script' as const,
+          interpreter: 'bash' as const,
+          source:
+            'if env | grep -q "^ACME_DAEMON_TEST_SECRET="; then ' +
+            'echo \'{"flow":"stop","reason":"secret leaked"}\'; else ' +
+            'echo \'{"flow":"continue"}\'; fi',
+        },
+      };
+      const workflow = makeWorkflow({
+        customHooks: [ENV_HOOK],
+        hookBindings: [
+          {
+            hookId: 'env_probe_hook',
+            sourceNode: 'Coding',
+            targetNode: 'Review',
+            method: 'send_message',
+            order: 0,
+            enabled: true,
+            authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+          },
+        ],
+      });
+      const engine = makeEngine(workflow);
+      const outcome = await engine.executeAction('send_message', sendParams(), META);
+      expect(outcome.decision).toBe('deliver');
+    } finally {
+      delete process.env.ACME_DAEMON_TEST_SECRET;
+    }
+  });
+
   test('a normally-exiting script delivers full stdout (collected-wins path)', async () => {
     // Multi-kilobyte output ensures the collectors genuinely win the race
     // with buffered data rather than relying on stream close timing.

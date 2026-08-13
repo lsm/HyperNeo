@@ -54,8 +54,6 @@ export function PendingHookBanner({
     };
   }, []);
 
-  const bannerRef = useRef<HTMLDivElement | null>(null);
-
   const handleApprove = useCallback(
     async (hookId: string, approved: boolean) => {
       setBusyHookIds((prev) => {
@@ -164,7 +162,6 @@ export function PendingHookBanner({
       {fetchErrorBanner}
       {pendingHooks.length > 0 && (
         <div
-          ref={bannerRef}
           tabIndex={-1}
           class="focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-400/70"
           data-testid="pending-hook-banner"
@@ -223,14 +220,6 @@ export function PendingHookBanner({
                 {error && (
                   <p class="mx-4 -mt-1 mb-2 text-xs text-red-400" data-testid="pending-hook-error">
                     {error}
-                  </p>
-                )}
-                {hook.remediation && (
-                  <p
-                    class="mx-4 -mt-1 mb-2 text-xs text-gray-400"
-                    data-testid="pending-hook-remediation"
-                  >
-                    {hook.remediation}
                   </p>
                 )}
                 {hook.retryCount !== undefined && hook.retryCount > 0 && (

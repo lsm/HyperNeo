@@ -328,9 +328,9 @@ describe('PendingHookBanner', () => {
     });
     const { findByTestId } = render(<PendingHookBanner runId="r1" spaceId="s1" />);
 
-    expect((await findByTestId('pending-hook-remediation')).textContent).toContain(
-      'Try again later'
-    );
+    // The reason is surfaced in the row label (the old duplicate
+    // remediation block was removed).
+    expect((await findByTestId('pending-hook-row')).textContent).toContain('Try again later');
     expect((await findByTestId('pending-hook-retry-count')).textContent).toContain(
       'Retry attempt 2'
     );

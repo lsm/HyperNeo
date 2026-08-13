@@ -50,10 +50,13 @@ export function samePrLink(a: string, b: string): boolean {
   const pa = parsePrLink(a);
   const pb = parsePrLink(b);
   if (!pa || !pb) return false;
+  // GitHub routes owner/repository slugs case-insensitively — normalize all
+  // components so a casing-only difference is not reported as an identity
+  // swap (which would fail the post-approval/replacement gates closed).
   return (
     pa.host.toLowerCase() === pb.host.toLowerCase() &&
-    pa.owner === pb.owner &&
-    pa.repo === pb.repo &&
+    pa.owner.toLowerCase() === pb.owner.toLowerCase() &&
+    pa.repo.toLowerCase() === pb.repo.toLowerCase() &&
     pa.number === pb.number
   );
 }

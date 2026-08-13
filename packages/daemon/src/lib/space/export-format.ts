@@ -162,7 +162,10 @@ const exportedWorkflowChannelSchema = z.object({
 });
 
 const hookDataFieldSchema = z.object({
-  key: z.string().min(1),
+  // Non-whitespace (runtime rule) — rejected, not silently trimmed.
+  key: z.string().refine((value) => value.trim().length > 0, {
+    message: 'must not be whitespace-only',
+  }),
   type: z.enum(['string', 'number', 'boolean', 'link']),
   required: z.boolean(),
   description: z.string().optional(),
@@ -291,18 +294,19 @@ function asSupportedVersionOrUndefined(version: unknown): ExportVersion | undefi
 }
 
 /**
- * Reject a pre-v4 workflow export that carries a legacy `hooks` array. The v4
- * schema no longer declares that field, so accepting a v3 export with hooks
- * would silently strip them and import the workflow with no hook enforcement
- * (the hard-cut: old hook definitions are not migrated). Surface an actionable
- * error instead of a lossy import.
+ * Reject a workflow export that carries a legacy `hooks` array — at ANY
+ * declared version. The v4 schema does not declare the field, so accepting it
+ * (a v3 export, or a version-bumped/mixed-exporter file) would silently strip
+ * it and import the workflow with no hook enforcement (the hard-cut: old hook
+ * definitions are not migrated). Surface an actionable error instead of a
+ * lossy import.
  */
 function rejectLegacyV3Hooks(
   data: unknown,
   version: ExportVersion | undefined,
   label: string
 ): string | null {
-  if (version === undefined || version >= 4) return null;
+  if (version === undefined) return null;
   const raw = data as Record<string, unknown> | null;
   // Field PRESENCE (even an empty array) marks a hooks-era export; reject it
   // rather than silently stripping the field.
