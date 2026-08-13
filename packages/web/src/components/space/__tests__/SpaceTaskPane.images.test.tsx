@@ -187,7 +187,8 @@ describe('SpaceTaskPane — image passthrough', () => {
       'task-1',
       'check this screenshot',
       { kind: 'node_agent', agentName: 'coder' },
-      [sampleImage]
+      [sampleImage],
+      undefined
     );
   });
 
@@ -208,6 +209,7 @@ describe('SpaceTaskPane — image passthrough', () => {
       'task-1',
       'plain text',
       { kind: 'node_agent', agentName: 'coder' },
+      undefined,
       undefined
     );
   });

@@ -21,9 +21,23 @@ import type {
   UpdateNodeExecutionParams,
 } from '@hyperneo/shared';
 import type { SQLiteValue } from '../types';
+import type { ReactiveDatabase } from '../reactive-database';
 
 export class NodeExecutionRepository {
-  constructor(private db: BunDatabase) {}
+  constructor(
+    private db: BunDatabase,
+    private reactiveDb?: ReactiveDatabase
+  ) {}
+
+  /**
+   * Notify the LiveQuery layer that node_executions changed. No-op when no
+   * reactive db is wired (e.g. tests). Called by every write path so
+   * `nodeExecutions.byRun` subscribers — including the lastActivityAt liveness
+   * signal — re-evaluate on activity/state writes, not just on full refetch.
+   */
+  private notify(): void {
+    this.reactiveDb?.notifyChange('node_executions');
+  }
 
   /**
    * Create a new node execution record.
@@ -38,8 +52,8 @@ export class NodeExecutionRepository {
         `INSERT INTO node_executions
 				    (id, workflow_run_id, workflow_node_id, agent_name, agent_id,
 				     agent_session_id, status, result, data, created_at, started_at,
-				     completed_at, updated_at)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				     completed_at, updated_at, last_activity_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -54,9 +68,11 @@ export class NodeExecutionRepository {
         now,
         null,
         null,
-        now
+        now,
+        null
       );
 
+    this.notify();
     return this.getById(id)!;
   }
 
@@ -79,8 +95,8 @@ export class NodeExecutionRepository {
         `INSERT OR IGNORE INTO node_executions
 					    (id, workflow_run_id, workflow_node_id, agent_name, agent_id,
 					     agent_session_id, status, result, data, created_at, started_at,
-					     completed_at, updated_at)
-					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+					     completed_at, updated_at, last_activity_at)
+					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -95,9 +111,11 @@ export class NodeExecutionRepository {
         now,
         null,
         null,
-        now
+        now,
+        null
       );
 
+    this.notify();
     // If the insert was ignored (duplicate), return the existing record.
     const inserted = this.getById(id);
     if (inserted) {
@@ -209,6 +227,10 @@ export class NodeExecutionRepository {
       fields.push('completed_at = ?');
       values.push(params.completedAt ?? null);
     }
+    if (params.lastActivityAt !== undefined) {
+      fields.push('last_activity_at = ?');
+      values.push(params.lastActivityAt ?? null);
+    }
 
     if (fields.length > 0) {
       fields.push('updated_at = ?');
@@ -217,6 +239,7 @@ export class NodeExecutionRepository {
       this.db
         .prepare(`UPDATE node_executions SET ${fields.join(', ')} WHERE id = ?`)
         .run(...values);
+      this.notify();
     }
 
     return this.getById(id);
@@ -238,10 +261,26 @@ export class NodeExecutionRepository {
   }
 
   /**
+   * Record observed agent activity by advancing `last_activity_at` ONLY.
+   *
+   * This is the high-frequency path used by the agent-activity signal sources
+   * (SDK tool-call/tool-result, peer-message delivery, PR commit push). It
+   * deliberately does NOT touch `updated_at`, which retains its "last runtime
+   * state-write" semantic — the two columns measure different things and must
+   * not be coupled. Silent no-op for an unknown id (activity for a torn-down or
+   * not-yet-created row is dropped rather than thrown).
+   */
+  touchLastActivity(id: string, at: number = Date.now()): void {
+    this.db.prepare(`UPDATE node_executions SET last_activity_at = ? WHERE id = ?`).run(at, id);
+    this.notify();
+  }
+
+  /**
    * Delete a node execution by ID
    */
   delete(id: string): boolean {
     const result = this.db.prepare(`DELETE FROM node_executions WHERE id = ?`).run(id);
+    if (result.changes > 0) this.notify();
     return result.changes > 0;
   }
 
@@ -287,6 +326,7 @@ export class NodeExecutionRepository {
    */
   deleteByWorkflowRun(workflowRunId: string): void {
     this.db.prepare(`DELETE FROM node_executions WHERE workflow_run_id = ?`).run(workflowRunId);
+    this.notify();
   }
 
   /**
@@ -316,6 +356,7 @@ export class NodeExecutionRepository {
       startedAt: (row.started_at as number | null) ?? null,
       completedAt: (row.completed_at as number | null) ?? null,
       updatedAt: row.updated_at as number,
+      lastActivityAt: (row.last_activity_at as number | null) ?? null,
     };
   }
 }

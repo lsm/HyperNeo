@@ -191,7 +191,11 @@ export async function sendChatContainerMessage({
   content: string;
   images?: MessageImage[];
   deliveryMode: MessageDeliveryMode;
-  onSendOverride?: (content: string, images?: MessageImage[]) => Promise<boolean>;
+  onSendOverride?: (
+    content: string,
+    images?: MessageImage[],
+    deliveryMode?: MessageDeliveryMode
+  ) => Promise<boolean>;
   sendMessage: (
     content: string,
     images?: MessageImage[],
@@ -206,18 +210,14 @@ export async function sendChatContainerMessage({
   store?: SessionStore;
 }): Promise<boolean> {
   if (onSendOverride) {
-    // Task-agent overlays don't support deferred / queued sends yet — those are
-    // scoped to the regular session path, where the daemon owns the
-    // "deferred until idle" replay logic. Fail loudly so the caller's draft
-    // is preserved instead of silently dropping the user's message.
-    if (deliveryMode !== 'immediate') {
-      toast.error('Queued sends are not supported for task agent messages yet.');
-      return false;
-    }
+    // Task-agent overlays route through `sendTaskMessage`, which now honors a
+    // `deliveryMode` of `'defer'` (persisted as `deferred`, replayed at the
+    // next idle boundary) just like the regular session path. Forward the mode
+    // through instead of rejecting it.
     try {
       setLocalError(null);
       store.clearError();
-      return await onSendOverride(content, images);
+      return await onSendOverride(content, images, deliveryMode);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setLocalError(message);
@@ -259,7 +259,11 @@ interface ChatContainerProps {
    */
   pendingAgent?: { taskId: string; agentName: string; workflowNodeId?: string | null } | null;
   /** Optional send override used by workflow node-agent overlays. */
-  onSendOverride?: (content: string, images?: MessageImage[]) => Promise<boolean>;
+  onSendOverride?: (
+    content: string,
+    images?: MessageImage[],
+    deliveryMode?: MessageDeliveryMode
+  ) => Promise<boolean>;
   /**
    * SessionStore instance that owns this view's session state and
    * subscriptions. Defaults to the process-wide singleton (correct for the
@@ -1800,10 +1804,10 @@ export default function ChatContainer({
         onCoordinatorModeChange={handleCoordinatorModeChange}
         onSandboxModeChange={handleSandboxModeChange}
         onSend={handleSendMessage}
-        // Override sends (workflow node-agent overlays) reject every
-        // non-immediate delivery — hide the Queue controls there instead of
-        // letting users record/type into an action that errors out.
-        supportsQueueDelivery={!onSendOverride}
+        // Task-agent overlays now honor deferred (Queue) delivery through
+        // sendTaskMessage, so Queue controls are always available — same as
+        // the main chat.
+        supportsQueueDelivery
         onOpenTools={toolsModal.open}
         registerDropTarget={registerDropTarget}
         store={store}

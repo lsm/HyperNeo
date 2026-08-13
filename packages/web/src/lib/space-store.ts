@@ -33,6 +33,7 @@ import type {
   LiveQueryDeltaEvent,
   LiveQuerySnapshotEvent,
   MessageImage,
+  MessageDeliveryMode,
   NodeExecution,
   PaginatedSpaceTaskResult,
   RuntimeState,
@@ -2451,7 +2452,8 @@ class SpaceStore {
       workflowNodeId?: string;
       sessionId?: string;
     },
-    images?: MessageImage[]
+    images?: MessageImage[],
+    deliveryMode?: MessageDeliveryMode
   ): Promise<{
     ok: boolean;
     routedTo?: string[];
@@ -2471,6 +2473,7 @@ class SpaceStore {
       message,
       ...(target ? { target } : {}),
       ...(images && images.length > 0 ? { images } : {}),
+      ...(deliveryMode ? { deliveryMode } : {}),
     });
   }
 

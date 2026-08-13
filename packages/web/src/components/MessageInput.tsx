@@ -134,9 +134,8 @@ interface MessageInputProps {
   /**
    * Whether the backing send path honors 'defer' (queue for next turn). When
    * false, the Queue controls (typed-text button, voice Queue button) and the
-   * Tab-to-queue shortcut are suppressed — e.g. the task-session composer
-   * delivers every message immediately, so a Queue affordance there would
-   * silently steer the live agent instead of deferring.
+   * Tab-to-queue shortcut are suppressed. Forwarded from ChatComposer; defaults
+   * to true (the task-session composers honor defer via `space.task.sendMessage`).
    */
   supportsQueueDelivery?: boolean;
   /**
@@ -599,19 +598,29 @@ export default function MessageInput({
       return;
     }
 
+    // Capture the targeted session at dispatch time. A previous target's
+    // byStatus requests can still be in flight when the composer switches
+    // sessions (e.g. to a not-yet-started agent); without this guard their
+    // late response repopulates the trays with the wrong session's queue and
+    // their actions bind to the now-empty session id. Discard responses whose
+    // targeted session is no longer current.
+    const targetSessionId = sessionId;
     try {
       const [enqueuedResponse, deferredResponse] = (await Promise.all([
         hub.request('session.messages.byStatus', {
-          sessionId,
+          sessionId: targetSessionId,
           status: 'enqueued',
           limit: 100,
         }),
         hub.request('session.messages.byStatus', {
-          sessionId,
+          sessionId: targetSessionId,
           status: 'deferred',
           limit: 100,
         }),
       ])) as [{ messages?: QueuePreviewMessage[] }, { messages?: QueuePreviewMessage[] }];
+      if (sessionIdRef.current !== targetSessionId) {
+        return;
+      }
       setQueuedForCurrentTurn(enqueuedResponse.messages ?? []);
       setQueuedForNextTurn(deferredResponse.messages ?? []);
     } catch {
@@ -717,6 +726,18 @@ export default function MessageInput({
   useEffect(() => {
     void refreshQueuedMessages();
   }, [refreshQueuedMessages]);
+
+  // The queue trays (current-turn / next-turn) are per-session. Reset them the
+  // moment the targeted session changes so a stale tray from the previous
+  // target never survives — notably when the task composer switches to a
+  // not-yet-started target (sessionId='') whose byStatus refresh fails and is
+  // swallowed, which would otherwise leave the prior agent's queue visible with
+  // its actions bound to the now-empty session id. The refresh effect above
+  // repopulates for a live target; this guarantees the stale case clears.
+  useEffect(() => {
+    setQueuedForCurrentTurn([]);
+    setQueuedForNextTurn([]);
+  }, [sessionId]);
 
   useEffect(() => {
     if (!agentWorking && queuedForCurrentTurn.length === 0 && queuedForNextTurn.length === 0)

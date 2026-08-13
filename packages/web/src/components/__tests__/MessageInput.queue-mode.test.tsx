@@ -177,6 +177,27 @@ describe('MessageInput queue mode', () => {
     expect(onSend).toHaveBeenCalledWith('queue this', undefined, 'defer');
   });
 
+  it('renders the Queue button only when supportsQueueDelivery is true', async () => {
+    // Regression guard for the task-agent composer wiring gap: the overlay
+    // and inline task composers used to hard-code supportsQueueDelivery=false,
+    // hiding the Queue ("next turn") button so a human could only Steer. The
+    // gate that controls the button is supportsQueueDelivery → onQueue.
+    mockDraftContent = 'defer me';
+    mockAgentWorking.value = true;
+    const onSend = vi.fn(async () => true);
+
+    // supportsQueueDelivery defaults to true → Queue button present.
+    const { container, unmount } = render(<MessageInput sessionId="session-1" onSend={onSend} />);
+    expect(container.querySelector('[data-testid="queue-button"]')).toBeTruthy();
+    unmount();
+
+    // supportsQueueDelivery=false → Queue button hidden.
+    const { container: gated } = render(
+      <MessageInput sessionId="session-1" onSend={onSend} supportsQueueDelivery={false} />
+    );
+    expect(gated.querySelector('[data-testid="queue-button"]')).toBeNull();
+  });
+
   it('sends immediate delivery mode with Enter while agent is working', async () => {
     mockDraftContent = 'inject now';
     mockAgentWorking.value = true;
@@ -364,5 +385,88 @@ describe('MessageInput queue mode', () => {
     expect(container.textContent).toContain('third');
     expect(container.textContent).not.toContain('Show 1 more');
     expect(container.textContent).not.toContain('Show less');
+  });
+
+  it('clears the queue trays when the targeted session changes (task-composer target switch)', async () => {
+    // Regression for enabling Queue delivery on the task composer: switching
+    // targets (e.g. to a not-yet-started agent whose sessionId is '') must not
+    // leave the previous agent's queue tray visible. Model the failure case —
+    // the new session's byStatus refresh rejects — and assert the trays reset
+    // anyway (the clear-on-sessionId-change effect), instead of leaving the
+    // prior agent's queue with actions bound to the now-empty session id.
+    setQueueResponses({
+      deferred: [
+        {
+          dbId: 'db-deferred',
+          uuid: 'uuid-deferred',
+          timestamp: 1,
+          status: 'deferred',
+          text: 'send next',
+        },
+      ],
+    });
+
+    const { container, rerender } = render(<MessageInput sessionId="session-1" onSend={vi.fn()} />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[data-testid="queue-overlay"]')).toBeTruthy();
+    expect(
+      container.querySelector('[data-testid="queued-next-turn-bubble"]')?.textContent
+    ).toContain('send next');
+
+    // Switch to a new target whose queue refresh fails.
+    mockRequest.mockImplementation(async () => {
+      throw new Error('session not found');
+    });
+    rerender(<MessageInput sessionId="session-2" onSend={vi.fn()} />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[data-testid="queue-overlay"]')).toBeNull();
+  });
+
+  it('discards a stale queue refresh that resolves after the target switches', async () => {
+    // Race guard: a previous session's in-flight byStatus must NOT repopulate
+    // the trays after the composer switches targets — otherwise the stale
+    // queue shows under the new target and its actions bind to the empty id.
+    let resolveSession1Refresh: (value: { messages: Array<Record<string, unknown>> }) => void;
+    const session1Pending = new Promise<{ messages: Array<Record<string, unknown>> }>((resolve) => {
+      resolveSession1Refresh = resolve;
+    });
+    mockRequest.mockImplementation(async (_method: string, payload: { sessionId?: string }) => {
+      if (payload?.sessionId === 'session-1') return session1Pending;
+      return { messages: [] }; // session-2 has no queued messages
+    });
+
+    const { container, rerender } = render(<MessageInput sessionId="session-1" onSend={vi.fn()} />);
+    // Let the session-1 refresh dispatch (it stays pending).
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Switch targets before session-1's refresh resolves.
+    rerender(<MessageInput sessionId="session-2" onSend={vi.fn()} />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Now the stale session-1 refresh resolves with a deferred message.
+    await act(async () => {
+      resolveSession1Refresh!({
+        messages: [
+          { dbId: 'stale', uuid: 'u', timestamp: 1, status: 'deferred', text: 'stale next' },
+        ],
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // The stale session-1 queue must NOT surface under session-2.
+    expect(container.querySelector('[data-testid="queue-overlay"]')).toBeNull();
   });
 });

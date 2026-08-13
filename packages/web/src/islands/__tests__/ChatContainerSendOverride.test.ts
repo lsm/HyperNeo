@@ -38,7 +38,7 @@ describe('sendChatContainerMessage override path', () => {
     });
 
     expect(result).toBe(false);
-    expect(onSendOverride).toHaveBeenCalledWith('hello', undefined);
+    expect(onSendOverride).toHaveBeenCalledWith('hello', undefined, 'immediate');
     expect(sendMessage).not.toHaveBeenCalled();
     expect(sessionStore.clearError).toHaveBeenCalled();
     expect(setLocalError).toHaveBeenCalledWith(null);
@@ -56,12 +56,16 @@ describe('sendChatContainerMessage override path', () => {
     });
 
     expect(result).toBe(true);
-    expect(onSendOverride).toHaveBeenCalledWith('hello', images);
+    expect(onSendOverride).toHaveBeenCalledWith('hello', images, 'immediate');
     expect(sendMessage).not.toHaveBeenCalled();
     expect(toast.error).not.toHaveBeenCalled();
   });
 
-  it('rejects queued delivery before calling the override', async () => {
+  it('forwards deferred (Queue) delivery to the override instead of rejecting', async () => {
+    // Regression: task-agent overlays used to reject `deliveryMode: 'defer'`
+    // with a toast. The override now honors defer so a human message lands as
+    // a `deferred` row replayed at the next idle boundary (handled downstream
+    // by injectSubSessionMessage).
     const result = await sendChatContainerMessage({
       content: 'hello',
       deliveryMode: 'defer',
@@ -70,12 +74,10 @@ describe('sendChatContainerMessage override path', () => {
       setLocalError,
     });
 
-    expect(result).toBe(false);
-    expect(onSendOverride).not.toHaveBeenCalled();
+    expect(result).toBe(true);
+    expect(onSendOverride).toHaveBeenCalledWith('hello', undefined, 'defer');
     expect(sendMessage).not.toHaveBeenCalled();
-    expect(toast.error).toHaveBeenCalledWith(
-      'Queued sends are not supported for task agent messages yet.'
-    );
+    expect(toast.error).not.toHaveBeenCalled();
   });
 
   it('surfaces override errors as local errors', async () => {
