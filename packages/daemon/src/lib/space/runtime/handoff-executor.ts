@@ -13,23 +13,30 @@
  *
  *   1. Validate task/run state (terminal runs reject handoffs).
  *   2. Resolve the sender's node + the declared transition (`resolveHandoffTransition`).
- *   3. Resolve target node(s) + agent slot(s) from the transition target.
+ *   3. Resolve target node/slot PAIRS from the transition target, carrying the
+ *      node id so delivery is node-scoped (a shared slot name across nodes can't
+ *      leak — see {@link resolveHandoffTargets}).
  *   4. Authorize the declared channel topology (`ChannelResolver`) — when channels
  *      are declared, the source→target delivery must be permitted, mirroring
  *      `send_message`. Open topology (no channels) permits all handoffs.
  *   5. Enforce cyclic transition `maxCycles` (`HandoffCycleRepository`).
- *   6. Authorize + commit the transition's declared gate fields (`GateDataRepository`
- *      + `evaluateGate`), rejecting `data` keys outside the gate's writable shape.
- *   7. Execute the transition's hook validator (`HookExecutor`).
- *   8. Activate or reuse the target worker session (`activateTargetSession`) and
- *      deliver the existing peer-message shape (`formatAgentMessage`), queueing
- *      when the target session is not yet live.
- *   9. Return a structured `delivered` / `queued` / `blocked` / `failed` result.
+ *   6. Execute the transition's declared hook validator through
+ *      `WorkflowHookEngine.runDeclaredHook` (NOT `HookExecutor` directly), so the
+ *      validator gets the SAME rich context (taskStatus / frozenPrUrl /
+ *      hookLocalState / permittedExternalLookups / artifacts / templateData) and
+ *      patch_params / pr_ready-identity handling as a send_message hook. A
+ *      successful `patch_params` (e.g. pr_ready discovering `data.pr_url`) is
+ *      applied to the payload before delivery.
+ *   7. Activate or reuse the target worker session (`activateTargetSession`,
+ *      node-scoped) and deliver the existing peer-message shape
+ *      (`formatAgentMessage`), queueing (node-scoped) when the target session is
+ *      not yet live.
+ *   8. Return a structured `delivered` / `queued` / `blocked` / `failed` result.
  *
- * Reuse, not duplication: gate evaluation, the hook engine, channel
- * authorization, and target activation are the SAME primitives `send_message`
- * and the channel router use. Only the transition-specific resolve/cycle/gate-
- * binding/hook-binding logic is new — it lives here.
+ * Reuse, not duplication: the hook engine, channel authorization, and target
+ * activation are the SAME primitives `send_message` and the channel router use.
+ * Only the transition-specific resolve/cycle/hook-binding logic is new — it
+ * lives here.
  *
  * Scope (initial phase): this delivers the EXISTING peer-message envelope.
  * Authoritative fresh-turn packet construction (and the sender round-completion
@@ -42,7 +49,6 @@ import type {
   HandoffOperation,
   HandoffTransition,
   SpaceWorkflow,
-  WorkflowHook,
   WorkflowHookResult,
   WorkflowNode,
 } from '@hyperneo/shared';
@@ -58,7 +64,7 @@ import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/s
 import { Logger } from '../../logger';
 import { formatAgentMessage } from '../agent-message-envelope';
 import { ChannelResolver } from './channel-resolver';
-import type { HookExecutor, HookExecutorContext } from './hook-executor';
+import type { HookActionMeta, HookActionOutcome, WorkflowHookEngine } from './workflow-hook-engine';
 
 const log = new Logger('handoff-executor');
 
@@ -138,30 +144,45 @@ export interface HandoffExecutorConfig {
   taskId?: string;
   taskNumber?: number | null;
   /**
-   * The run's workspace path (the task worktree). Passed into hook context so
-   * hook validators/script hooks resolve the correct repository (built-ins like
-   * `pr_ready` run `gh` here; script hooks use it as spawn cwd).
+   * The run's workspace path (the task worktree). Passed into the hook engine
+   * so hook validators/script hooks resolve the correct repository (built-ins
+   * like `pr_ready` run `gh` here; script hooks use it as spawn cwd).
    */
   workspacePath?: string;
 
-  /** Hook validator engine. Required for transitions that bind a hookId. */
-  hookExecutor?: HookExecutor;
+  /**
+   * Workflow hook engine. A transition that binds a hookId is validated through
+   * this engine (runDeclaredHook) rather than HookExecutor directly, so the
+   * transition's validator gets the SAME rich context (taskStatus / frozenPrUrl
+   * / hookLocalState / permittedExternalLookups / artifacts / templateData) and
+   * patch_params / pr_ready-identity handling as a send_message hook.
+   */
+  hookEngine?: WorkflowHookEngine;
 
   /** node name → agent slot names (fan-out / slot→node resolution). */
   nodeGroups?: Record<string, string[]>;
   /** node id → node name (peer nodeName hydration after activation). */
   workflowNodeNameById?: Record<string, string>;
 
-  /** Existing target-activation callback (the SAME primitive send_message uses). */
+  /**
+   * Existing target-activation callback (the SAME primitive send_message uses).
+   * Carries the resolved target node id so activation, lookup, and enqueue can
+   * be scoped by node — a shared slot name across two nodes must not leak.
+   */
   activateTargetSession?: (
-    agentName: string
+    agentName: string,
+    workflowNodeId?: string
   ) => Promise<Array<{ agentName: string; sessionId: string }>>;
   /** Injects the peer-message envelope into a live target session. */
   messageInjector: (sessionId: string, message: string) => Promise<void>;
   /** Persistent queue for declared-but-inactive targets (mirrors send_message). */
   pendingMessageRepo?: PendingAgentMessageRepository;
-  /** Fired after a non-deduped enqueue (auto-resume backstop, mirrors send_message). */
-  onMessageQueued?: (agentName: string) => void;
+  /**
+   * Fired after a non-deduped enqueue (auto-resume backstop, mirrors
+   * send_message). Carries the resolved node id so the resume/activation is
+   * node-scoped (a shared slot name across nodes must not resume the wrong one).
+   */
+  onMessageQueued?: (agentName: string, workflowNodeId?: string) => void;
 }
 
 export interface HandoffExecutionParams {
@@ -234,19 +255,25 @@ export class HandoffExecutor {
     }
     const transition = resolved.transition;
 
-    // 3. Resolve target node(s) + agent slot(s).
-    const targets = resolveHandoffTargetSlots(workflow, sourceNode, transition);
-    if (targets.slots.length === 0) {
+    // 3. Resolve target node(s) + agent slot(s) as node/slot PAIRS. Carrying
+    //    the resolved node id through delivery scopes activation, live-session
+    //    lookup, and enqueue by node so a shared slot name across two nodes
+    //    can't leak — a handoff to one node must not deliver to (or be drained
+    //    by) the same-named slot in another node.
+    const targets = resolveHandoffTargets(workflow, sourceNode, transition);
+    if (targets.length === 0) {
       return this.blocked(
         'resolve_target',
         `Handoff target "${operation.target}" resolves to no active agent slot.`
       );
     }
+    const targetNodeNames = uniqueStrings(targets.map((t) => t.nodeName));
+    const targetSlots = targets.map((t) => t.slot);
     // A self-targeted handoff (transition back to the sender's own node) would
     // queue back into the sender's live session and violate the contract that a
     // handoff ends the current round. The complete-then-reactivate path for
     // self-loops is deferred with the fresh-turn packet work; reject until then.
-    if (targets.nodes.includes(fromNodeName)) {
+    if (targetNodeNames.includes(fromNodeName)) {
       return this.blocked(
         'resolve_target',
         `Handoff target "${operation.target}" resolves to the sender's own node "${fromNodeName}"; self-targeted handoffs are not supported yet.`
@@ -267,7 +294,7 @@ export class HandoffExecutor {
     // 4. Authorize the declared channel topology (when declared).
     const resolver = new ChannelResolver(workflow.channels ?? []);
     if (!resolver.isEmpty()) {
-      const unauthorized = targets.nodes.filter(
+      const unauthorized = targetNodeNames.filter(
         (nodeName) => !resolver.canSend(fromNodeName, nodeName)
       );
       if (unauthorized.length > 0) {
@@ -282,7 +309,7 @@ export class HandoffExecutor {
     // Encode both parts so a literal '/' inside a node/transition id can't
     // collide with the delimiter (transition ids are free-form strings).
     const transitionKey = `${encodeURIComponent(sourceNode.id)}/${encodeURIComponent(transition.id)}`;
-    const cyclic = isCyclicHandoff(workflow, fromNodeName, targets.nodes);
+    const cyclic = isCyclicHandoff(workflow, fromNodeName, targetNodeNames);
     const maxCycles = transition.maxCycles;
     const cycleLimited = cyclic && typeof maxCycles === 'number' && maxCycles > 0;
 
@@ -298,36 +325,40 @@ export class HandoffExecutor {
         status: 'blocked',
         stage: 'cycle_limit',
         transition,
-        targetNodes: targets.nodes,
-        targetSlots: targets.slots,
+        targetNodes: targetNodeNames,
+        targetSlots,
         delivered: [],
         queued: [],
         reason: `Cyclic handoff "${transition.id}" from "${fromNodeName}" has reached its maxCycles cap (${maxCycles}).`,
       };
     }
 
-    // 5. Execute the transition's hook validator (the sole authorization
-    //    primitive now that the legacy gate subsystem is gone). A hook may
-    //    block, retryable-block, or allow the handoff.
+    // 5. Execute the transition's hook validator through WorkflowHookEngine
+    //    (the sole authorization primitive now that the legacy gate subsystem
+    //    is gone). A hook may block, retryable-block, allow, or patch the
+    //    payload (e.g. pr_ready discovers data.pr_url); a successful patch is
+    //    applied to the payload before delivery.
     let hookOutcome: HandoffHookOutcome | undefined;
+    let deliveredOperation = operation;
     if (transition.hookId) {
-      hookOutcome = await this.runHook({
+      const hookRun = await this.runHook({
         sourceNode,
-        fromNodeName,
         fromAgentName,
         fromSessionId,
         hookId: transition.hookId,
-        targetNodeNames: targets.nodes,
+        targetNodeNames,
         operation,
       });
+      hookOutcome = hookRun.outcome;
+      deliveredOperation = hookRun.patchedOperation;
       const resultType = hookOutcome.result.type;
       if (resultType === 'block' || resultType === 'retryable_block') {
         return {
           status: 'blocked',
           stage: 'hook',
           transition,
-          targetNodes: targets.nodes,
-          targetSlots: targets.slots,
+          targetNodes: targetNodeNames,
+          targetSlots,
           delivered: [],
           queued: [],
           reason: hookOutcome.result.reason ?? `Hook "${transition.hookId}" blocked the handoff.`,
@@ -360,8 +391,8 @@ export class HandoffExecutor {
           status: 'blocked',
           stage: 'cycle_limit',
           transition,
-          targetNodes: targets.nodes,
-          targetSlots: targets.slots,
+          targetNodes: targetNodeNames,
+          targetSlots,
           delivered: [],
           queued: [],
           reason: `Cyclic handoff "${transition.id}" from "${fromNodeName}" has reached its maxCycles cap (${maxCycles}).`,
@@ -389,9 +420,9 @@ export class HandoffExecutor {
     const delivery = await this.deliver({
       fromAgentName,
       fromSessionId,
-      targetSlots: targets.slots,
-      summary: operation.summary,
-      data: operation.data,
+      targets,
+      summary: deliveredOperation.summary,
+      data: deliveredOperation.data,
     });
 
     // 9. Refund the reservation when the handoff was NOT taken. "Taken" means a
@@ -412,8 +443,8 @@ export class HandoffExecutor {
         status: 'delivered',
         stage: 'deliver',
         transition,
-        targetNodes: targets.nodes,
-        targetSlots: targets.slots,
+        targetNodes: targetNodeNames,
+        targetSlots,
         delivered: delivery.delivered,
         queued: delivery.queued,
         // Surface partial-delivery diagnostics (e.g. a broadcast target that
@@ -427,8 +458,8 @@ export class HandoffExecutor {
         status: 'queued',
         stage: 'deliver',
         transition,
-        targetNodes: targets.nodes,
-        targetSlots: targets.slots,
+        targetNodes: targetNodeNames,
+        targetSlots,
         delivered: [],
         queued: delivery.queued,
         reason:
@@ -442,8 +473,8 @@ export class HandoffExecutor {
       status: 'failed',
       stage: 'deliver',
       transition,
-      targetNodes: targets.nodes,
-      targetSlots: targets.slots,
+      targetNodes: targetNodeNames,
+      targetSlots,
       delivered: [],
       queued: [],
       reason: delivery.reason ?? 'Handoff delivery failed: no live or queueable target.',
@@ -464,93 +495,59 @@ export class HandoffExecutor {
   }
 
   // -------------------------------------------------------------------------
-  // Hook validator (the sole authorization primitive; mirrors the validation
-  // classification hooks run before send)
+  // Hook validator — routed through WorkflowHookEngine so the transition's
+  // declared validator gets the SAME context + patch_params / pr_ready-identity
+  // / connector-auth handling as a send_message hook (not HookExecutor direct).
   // -------------------------------------------------------------------------
 
   private async runHook(args: {
     sourceNode: WorkflowNode;
-    fromNodeName: string;
     fromAgentName: string;
     fromSessionId: string;
     hookId: string;
     targetNodeNames: string[];
     operation: HandoffOperation;
-  }): Promise<HandoffHookOutcome> {
-    const {
-      sourceNode,
-      fromNodeName,
-      fromAgentName,
-      fromSessionId,
-      hookId,
-      targetNodeNames,
-      operation,
-    } = args;
-    const hook = (this.config.workflow.hooks ?? []).find((h) => h.id === hookId);
-    if (!hook) {
+  }): Promise<{ outcome: HandoffHookOutcome; patchedOperation: HandoffOperation }> {
+    const { sourceNode, fromAgentName, fromSessionId, hookId, targetNodeNames, operation } = args;
+    if (!this.config.hookEngine) {
       return {
-        hookId,
-        result: { type: 'block', reason: `Transition references unknown hook "${hookId}".` },
-      };
-    }
-    if (!this.config.hookExecutor) {
-      return {
-        hookId,
-        result: {
-          type: 'block',
-          reason: `Hook "${hookId}" is bound to this transition but no hook executor is configured.`,
+        outcome: {
+          hookId,
+          result: {
+            type: 'block',
+            reason: `Hook "${hookId}" is bound to this transition but no hook engine is configured.`,
+          },
         },
+        patchedOperation: operation,
       };
-    }
-    // Enforce the same caller-authorization WorkflowHookEngine applies before
-    // invoking a hook: enabled, not human-only, source-node match, optional
-    // target-node match, and a matching authorizedCaller entry (empty/absent
-    // fails closed). Without this, an agent-triggered transition could run a
-    // hook that was not authorized for it.
-    const authReason = hookAuthorizationReason(hook, fromNodeName, fromAgentName, targetNodeNames);
-    if (authReason) {
-      return { hookId, result: { type: 'block', reason: authReason } };
     }
 
-    const context: HookExecutorContext = {
-      // Carry the run's actual workspace so hook validators (e.g. pr_ready's
-      // `gh`) and script hooks (spawn cwd) resolve the task worktree, not the
-      // daemon's cwd.
-      workspacePath: this.config.workspacePath ?? '',
-      runId: this.config.workflowRunId,
-      hookId,
-      methodName: 'handoff',
-      params: {
-        target: operation.target,
-        summary: operation.summary,
-        data: operation.data ?? {},
-        targetNodes: targetNodeNames,
-      },
-      // Built-in validators read (rawParams ?? params).data — populate rawParams
-      // with the full payload (including data) so they see the supplied fields
-      // (e.g. pr_url) instead of only the sender identity.
-      rawParams: {
-        target: operation.target,
-        summary: operation.summary,
-        data: operation.data ?? {},
-        targetNodes: targetNodeNames,
-        fromAgentName,
-        fromNodeName,
-      },
-      nodeId: sourceNode.id,
-      nodeName: fromNodeName,
+    const meta: HookActionMeta = {
       sessionId: fromSessionId,
+      agentName: fromAgentName,
+      nodeId: sourceNode.id,
       taskId: this.config.taskId ?? '',
       targetNode: targetNodeNames[0],
-      hookLocalState: {},
-      currentArtifacts: [],
-      permittedExternalLookups: [],
-      templateData: hook.templateData,
+    };
+    // The engine builds the full validator context (workspacePath, taskStatus,
+    // frozenPrUrl, hookLocalState, currentArtifacts, permittedExternalLookups,
+    // templateData), authorizes the declared hook, applies any patch_params,
+    // stamps the pr_ready frozen identity, and returns the reduced outcome.
+    const params = {
+      target: operation.target,
+      summary: operation.summary,
+      data: operation.data ?? {},
+      targetNodes: targetNodeNames,
+      // Built-in validators read (rawParams ?? params).data — carry the sender
+      // identity under rawParams-only keys so a pr_ready / post_approval_only
+      // validator sees both the payload (data.pr_url) and who is handshaking.
+      fromAgentName,
+      fromNodeName: sourceNode.name,
     };
 
+    let hookOutcome: HookActionOutcome;
     try {
-      const { result } = await this.config.hookExecutor.execute(hook, context);
-      return { hookId, result };
+      hookOutcome = await this.config.hookEngine.runDeclaredHook(hookId, 'handoff', params, meta);
     } catch (err) {
       if (err instanceof HandoffExecutionError) throw err;
       throw new HandoffExecutionError(
@@ -558,6 +555,29 @@ export class HandoffExecutor {
         `Hook "${hookId}" execution failed: ${err instanceof Error ? err.message : String(err)}`
       );
     }
+    // Persist hook state + last-result (retry counters, pr_ready identity) —
+    // runDeclaredHook runs outside the MCP wrapper, so the executor owns the
+    // post-action persist the wrapper normally performs.
+    this.config.hookEngine.persistHookOutcome(hookOutcome);
+
+    const result: WorkflowHookResult =
+      hookOutcome.executionLog[0]?.result ??
+      ({ type: 'block', reason: `Hook "${hookId}" produced no result.` } as WorkflowHookResult);
+
+    // Apply a successful patch to the handoff payload before delivery. pr_ready
+    // returns patch_params when it discovers the PR (the sender omitted
+    // data.pr_url); the engine merged the patch into finalParams, preserving
+    // the sender's other data keys (extractDataRecord) and adding pr_url. The
+    // engine strips any `target` patch, so finalParams.target is unchanged.
+    const fp = hookOutcome.finalParams;
+    const mergedData = isRecord(fp.data) ? { ...operation.data, ...fp.data } : operation.data;
+    const patchedOperation: HandoffOperation = {
+      target: typeof fp.target === 'string' ? fp.target : operation.target,
+      summary: typeof fp.summary === 'string' ? fp.summary : operation.summary,
+      data: mergedData,
+    };
+
+    return { outcome: { hookId, result }, patchedOperation };
   }
 
   // -------------------------------------------------------------------------
@@ -567,7 +587,8 @@ export class HandoffExecutor {
   private async deliver(args: {
     fromAgentName: string;
     fromSessionId: string;
-    targetSlots: string[];
+    /** Resolved node/slot pairs — delivery is scoped by node id (see runHandoff). */
+    targets: HandoffTarget[];
     summary: string;
     data?: Record<string, unknown>;
   }): Promise<{
@@ -576,7 +597,7 @@ export class HandoffExecutor {
     dedupedCount: number;
     reason?: string;
   }> {
-    const { fromAgentName, fromSessionId, targetSlots, summary, data } = args;
+    const { fromAgentName, fromSessionId, targets, summary, data } = args;
     const { workflowRunId, spaceId, taskId, taskNumber } = this.config;
     const dataAppendix =
       data && Object.keys(data).length > 0
@@ -599,13 +620,18 @@ export class HandoffExecutor {
     const notFound: string[] = [];
 
     // Hoist the execution read: listByWorkflowRun once up front, then once more
-    // only after an activation actually spawns a session (avoids the per-slot
-    // N+1 the prior liveSessionsFor-per-call shape had in the broadcast loop).
+    // only after an activation actually spawns a session (avoids the per-target
+    // N+1 a per-call read would cause in the broadcast loop).
     let executions = this.readLiveExecutions();
-    const sessionsFor = (agentName: string) =>
+    // Match a target by BOTH slot name AND resolved node id, so two nodes that
+    // reuse a slot name don't select each other's live session. Without the
+    // node-id filter, a handoff to node A's "reviewer" would inject into node
+    // B's "reviewer" session when both are live.
+    const sessionsFor = (agentName: string, workflowNodeId: string) =>
       executions.filter(
         (e) =>
           e.agentName === agentName &&
+          e.workflowNodeId === workflowNodeId &&
           e.agentSessionId &&
           e.agentSessionId !== fromSessionId &&
           // Only treat genuinely-live execution statuses as having a usable
@@ -617,19 +643,20 @@ export class HandoffExecutor {
           (e.status === 'in_progress' || e.status === 'idle')
       );
 
-    for (const agentName of targetSlots) {
-      // Activate the target worker session (reuse if already live). This is the
-      // SAME activation primitive send_message uses; it is intentionally
-      // separate from gate evaluation.
-      let sessions = sessionsFor(agentName);
+    for (const target of targets) {
+      const { slot: agentName, nodeId } = target;
+      // Activate the target worker session (reuse if already live). The node id
+      // scopes activation so a shared slot name resolves to THIS node's session.
+      // This is the SAME activation primitive send_message uses.
+      let sessions = sessionsFor(agentName, nodeId);
       if (sessions.length === 0 && this.config.activateTargetSession) {
         try {
-          await this.config.activateTargetSession(agentName);
+          await this.config.activateTargetSession(agentName, nodeId);
           executions = this.readLiveExecutions();
-          sessions = sessionsFor(agentName);
+          sessions = sessionsFor(agentName, nodeId);
         } catch (err) {
           log.warn(
-            `[HandoffExecutor] failed to activate target "${agentName}": ${err instanceof Error ? err.message : String(err)}`
+            `[HandoffExecutor] failed to activate target "${agentName}" on node "${nodeId}": ${err instanceof Error ? err.message : String(err)}`
           );
         }
       }
@@ -651,11 +678,15 @@ export class HandoffExecutor {
       }
 
       // No live session — queue for later delivery if a persistent queue is
-      // configured (mirrors send_message's declared-but-inactive path). A
-      // DEDUPED enqueue (same message already pending from a prior attempt) is
-      // tracked separately: the message is still queued (status), but it does
-      // NOT count as a newly-taken handoff for cycle accounting — the prior
-      // attempt already charged (or refunded) the cycle.
+      // configured (mirrors send_message's declared-but-inactive path). The
+      // node id is persisted on the row so the queue drain
+      // (flushPendingMessagesForTarget) only delivers it to THIS node's session
+      // and the idempotency key is node-scoped so two same-named slots across
+      // nodes don't dedupe each other. A DEDUPED enqueue (same message already
+      // pending from a prior attempt) is tracked separately: the message is
+      // still queued (status), but it does NOT count as a newly-taken handoff
+      // for cycle accounting — the prior attempt already charged (or refunded)
+      // the cycle.
       if (this.config.pendingMessageRepo && spaceId) {
         const rawMessage = envelope();
         try {
@@ -666,8 +697,9 @@ export class HandoffExecutor {
             sourceAgentName: fromAgentName,
             targetKind: 'node_agent',
             targetAgentName: agentName,
+            workflowNodeId: nodeId,
             message: rawMessage,
-            idempotencyKey: JSON.stringify([fromSessionId, agentName, rawMessage]),
+            idempotencyKey: JSON.stringify([fromSessionId, nodeId, agentName, rawMessage]),
             ttlMs: 60_000,
             maxAttempts: 3,
           });
@@ -675,11 +707,11 @@ export class HandoffExecutor {
             dedupedCount += 1;
           } else {
             queued.push({ agentName, messageId: record.id });
-            this.config.onMessageQueued?.(agentName);
+            this.config.onMessageQueued?.(agentName, nodeId);
           }
         } catch (err) {
           log.warn(
-            `[HandoffExecutor] failed to queue for "${agentName}": ${err instanceof Error ? err.message : String(err)}`
+            `[HandoffExecutor] failed to queue for "${agentName}" on node "${nodeId}": ${err instanceof Error ? err.message : String(err)}`
           );
           notFound.push(agentName);
         }
@@ -744,8 +776,20 @@ export class HandoffExecutor {
 // ---------------------------------------------------------------------------
 
 /**
- * Resolve a transition's target to the concrete node name(s) and agent slot(s)
- * the runtime must activate/deliver to.
+ * A resolved handoff destination: the concrete agent slot plus the node that
+ * declares it. The node id travels through delivery so activation, live-session
+ * lookup, and queue enqueue/drain are all scoped by node — a slot name reused
+ * across two nodes cannot leak from one to the other.
+ */
+export interface HandoffTarget {
+  nodeId: string;
+  nodeName: string;
+  slot: string;
+}
+
+/**
+ * Resolve a transition's target to the concrete node/slot pairs the runtime
+ * must activate/deliver to.
  *
  * - `'*'` (broadcast) → every node except the sender's, and every slot in them.
  * - node name → that node and all its slots.
@@ -754,38 +798,44 @@ export class HandoffExecutor {
  * Validation guarantees a named target resolves to exactly one destination, so
  * the slot-name branch selects a single node.
  */
-export function resolveHandoffTargetSlots(
+export function resolveHandoffTargets(
   workflow: SpaceWorkflow,
   sourceNode: WorkflowNode,
   transition: HandoffTransition
-): { nodes: string[]; slots: string[] } {
+): HandoffTarget[] {
   const allNodeNames = workflow.nodes.map((n) => n.name);
   const slotToNode = buildSlotToNodeMap(workflow);
 
   if (transition.target === HANDOFF_TARGET_WILDCARD) {
-    const nodes: string[] = [];
-    const slots: string[] = [];
+    const targets: HandoffTarget[] = [];
     for (const node of workflow.nodes) {
       if (node.id === sourceNode.id) continue; // broadcast excludes the sender
-      nodes.push(node.name);
-      for (const agent of safeResolveAgents(node)) slots.push(agent.name);
+      for (const agent of safeResolveAgents(node)) {
+        targets.push({ nodeId: node.id, nodeName: node.name, slot: agent.name });
+      }
     }
-    return { nodes, slots };
+    return targets;
   }
 
   // Node-name target → fan out to every slot in the node.
   if (allNodeNames.includes(transition.target)) {
     const node = workflow.nodes.find((n) => n.name === transition.target)!;
-    return { nodes: [node.name], slots: safeResolveAgents(node).map((a) => a.name) };
+    return safeResolveAgents(node).map((agent) => ({
+      nodeId: node.id,
+      nodeName: node.name,
+      slot: agent.name,
+    }));
   }
 
-  // Agent-slot target → the single node declaring that slot.
+  // Agent-slot target → the single node declaring that slot (first-declared
+  // wins; validation rejects ambiguous slot names).
   const nodeName = slotToNode.get(transition.target);
   if (nodeName) {
-    return { nodes: [nodeName], slots: [transition.target] };
+    const node = workflow.nodes.find((n) => n.name === nodeName);
+    if (node) return [{ nodeId: node.id, nodeName, slot: transition.target }];
   }
 
-  return { nodes: [], slots: [] };
+  return [];
 }
 
 /**
@@ -886,40 +936,22 @@ function safeResolveAgents(node: WorkflowNode): { name: string }[] {
   }
 }
 
-/**
- * Caller-authorization for a transition-bound hook, mirroring the checks
- * `WorkflowHookEngine` applies: enabled, not human-only, source-node match,
- * optional target-node match, and a matching `authorizedCallers` entry (empty/
- * absent fails closed). Returns a block reason when unauthorized, else undefined.
- */
-function hookAuthorizationReason(
-  hook: WorkflowHook,
-  fromNodeName: string,
-  fromAgentName: string,
-  targetNodeNames: string[]
-): string | undefined {
-  if (!hook.enabled) return `Hook "${hook.id}" is disabled.`;
-  if (hook.humanOnly) {
-    return `Hook "${hook.id}" is human-only and cannot run from an agent handoff.`;
+/** De-duplicate a string list preserving first-seen order. */
+function uniqueStrings(values: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const v of values) {
+    if (!seen.has(v)) {
+      seen.add(v);
+      out.push(v);
+    }
   }
-  if (hook.sourceNode !== fromNodeName) {
-    return `Hook "${hook.id}" sourceNode "${hook.sourceNode}" does not match handoff source "${fromNodeName}".`;
-  }
-  if (hook.targetNode && !targetNodeNames.includes(hook.targetNode)) {
-    return `Hook "${hook.id}" targetNode "${hook.targetNode}" is not a target of this handoff.`;
-  }
-  if (!hook.authorizedCallers || hook.authorizedCallers.length === 0) {
-    return `Hook "${hook.id}" has no authorizedCallers; agent handoffs fail closed.`;
-  }
-  const allowed = hook.authorizedCallers.some((caller) => {
-    if (caller.sourceNode !== fromNodeName) return false;
-    if (!caller.agentSlots || caller.agentSlots.length === 0) return true;
-    return caller.agentSlots.includes(fromAgentName);
-  });
-  if (!allowed) {
-    return `Agent "${fromAgentName}" is not an authorized caller for hook "${hook.id}".`;
-  }
-  return undefined;
+  return out;
+}
+
+/** Narrow an unknown value to a plain record (not an array or null). */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function reasonForResolveFailure(

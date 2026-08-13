@@ -57,6 +57,7 @@ import type { ToolResult } from './tool-result';
 import {
   ListPeersSchema,
   SendMessageSchema,
+  HandoffSchema,
   SaveArtifactSchema,
   CreateStandaloneTaskSchema,
   ListArtifactsSchema,
@@ -78,6 +79,7 @@ import {
 import type {
   ListPeersInput,
   SendMessageInput,
+  HandoffInput,
   SaveArtifactInput,
   CreateStandaloneTaskInput,
   ListArtifactsInput,
@@ -105,6 +107,7 @@ import { buildPrEventTopicPattern, parsePrUrl } from '../runtime/parse-pr-url';
 import type { WorkflowArtifactProfile } from '../runtime/artifact-profile';
 import type { WorkflowHookEngine } from '../runtime/workflow-hook-engine';
 import { wrapHandlerWithHooks } from '../runtime/workflow-hook-engine';
+import type { HandoffExecutor } from '../runtime/handoff-executor';
 
 /**
  * Decode the JSON payload from a ToolResult created by jsonResult().
@@ -277,6 +280,13 @@ export interface NodeAgentToolsConfig {
    * `submit_for_approval`, `approve_task`, and `mark_complete` handlers.
    */
   hookEngine?: WorkflowHookEngine;
+  /**
+   * Optional handoff executor backing the `handoff` tool. When omitted, the
+   * `handoff` tool is not registered (the agent cannot invoke formal ownership
+   * transfers). The executor is constructed by TaskAgentManager where the heavy
+   * runtime deps live, mirroring how `agentMessageRouter` is injected.
+   */
+  handoffExecutor?: HandoffExecutor;
 }
 
 // ---------------------------------------------------------------------------
@@ -647,6 +657,53 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         notFoundAgentNames: result.notFoundAgentNames,
         message: summaryParts.length > 0 ? `Message ${summaryParts.join('; ')}.` : 'No action.',
       });
+    },
+
+    /**
+     * Formal workflow ownership transfer via a declared outbound handoff
+     * transition on the sender's node. Unlike `send_message`, the target MUST
+     * resolve to a declared transition; the transition's bound hook validator
+     * runs through the workflow hook engine (inside the executor), and a
+     * successful handoff ends the sender's execution round.
+     *
+     * This handler is intentionally NOT wrapped with `wrapHandlerWithHooks`:
+     * the transition's hook is transition-specific (resolved by id after the
+     * transition resolves), so it runs inside the executor's `runDeclaredHook`
+     * path, not as a generic pre-handler method hook.
+     *
+     * Requires `handoffExecutor` in the config.
+     */
+    async handoff(args: HandoffInput): Promise<ToolResult> {
+      const { handoffExecutor } = config;
+      if (!handoffExecutor) {
+        return jsonResult({ success: false, error: 'Handoff is not available in this workflow.' });
+      }
+      const result = await handoffExecutor.execute({
+        fromAgentName: myAgentName,
+        fromSessionId: mySessionId,
+        workflowNodeId,
+        operation: { target: args.target, summary: args.summary, data: args.data },
+      });
+      const payload: Record<string, unknown> = {
+        status: result.status,
+        transitionId: result.transition?.id,
+        targetNodes: result.targetNodes,
+        targetSlots: result.targetSlots,
+        delivered: result.delivered,
+        queued: result.queued,
+      };
+      if (result.reason) payload.reason = result.reason;
+      if (result.stage) payload.stage = result.stage;
+      if (result.retryAfterMs !== undefined) payload.retryAfterMs = result.retryAfterMs;
+      if (result.hook) payload.hookResultType = result.hook.result.type;
+      const success = result.status === 'delivered' || result.status === 'queued';
+      const message =
+        result.status === 'delivered'
+          ? `Handoff delivered to ${result.delivered.length} target(s).`
+          : result.status === 'queued'
+            ? `Handoff queued for ${result.queued.length} target(s) pending activation.`
+            : (result.reason ?? `Handoff ${result.status}.`);
+      return jsonResult({ success, ...payload, message });
     },
 
     /**
@@ -1405,6 +1462,20 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
       SendMessageSchema.shape,
       (args) => handlers.send_message(args)
     ),
+    ...(config.handoffExecutor
+      ? [
+          tool(
+            'handoff',
+            'Formally hand off workflow ownership to a declared outbound transition target (node name, agent slot ' +
+              "name, or '*' for broadcast to every other node). Unlike send_message, the target MUST resolve to a " +
+              "transition declared on your node; a successful handoff ends your execution round. The transition's " +
+              'bound hook validator (e.g. pr_ready) runs before delivery and may require/patch `data` (such as pr_url). ' +
+              'Returns delivered / queued / blocked / failed.',
+            HandoffSchema.shape,
+            (args) => handlers.handoff(args)
+          ),
+        ]
+      : []),
     ...(config.onSubscribeExternalEvent && config.onUnsubscribeExternalEvent
       ? [
           tool(

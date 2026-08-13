@@ -20,9 +20,14 @@ import type { HandoffExecutorConfig } from '../../../../src/lib/space/runtime/ha
 import {
   HandoffExecutor,
   isCyclicHandoff,
-  resolveHandoffTargetSlots,
+  resolveHandoffTargets,
 } from '../../../../src/lib/space/runtime/handoff-executor.ts';
-import type { HookExecutor } from '../../../../src/lib/space/runtime/hook-executor.ts';
+import {
+  WorkflowHookEngine,
+  type HookActionOutcome,
+} from '../../../../src/lib/space/runtime/workflow-hook-engine.ts';
+import { HookExecutor } from '../../../../src/lib/space/runtime/hook-executor.ts';
+import { WorkflowHookStateRepository } from '../../../../src/storage/repositories/workflow-hook-state-repository.ts';
 import { HandoffCycleRepository } from '../../../../src/storage/repositories/handoff-cycle-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { PendingAgentMessageRepository } from '../../../../src/storage/repositories/pending-agent-message-repository.ts';
@@ -181,9 +186,59 @@ function makeExecutor(
   });
 }
 
-/** Stub HookExecutor that returns a fixed validator result. */
-function stubHookExecutor(result: WorkflowHookResult): HookExecutor {
-  return { execute: async () => ({ result }) } as unknown as HookExecutor;
+/**
+ * Stub WorkflowHookEngine whose runDeclaredHook returns a fixed outcome built
+ * from a validator result (+ optional patch). The executor reads
+ * outcome.executionLog[0].result for diagnostics and outcome.finalParams for the
+ * (possibly patched) payload, so this stub shapes both. persistHookOutcome is a
+ * no-op (the executor calls it after runDeclaredHook).
+ */
+function stubHookEngine(
+  result: WorkflowHookResult,
+  opts?: { patch?: Record<string, unknown>; hookId?: string }
+): WorkflowHookEngine {
+  const hookId = opts?.hookId ?? 'hook-pr-ready';
+  const isBlock = result.type === 'block' || result.type === 'retryable_block';
+  const decision: HookActionOutcome['decision'] = isBlock
+    ? result.type === 'retryable_block'
+      ? 'retryable_block'
+      : 'block'
+    : opts?.patch
+      ? 'patch_params'
+      : 'allow';
+  const baseParams = { target: 'review', summary: 'go', data: {}, targetNodes: ['review'] };
+  const finalParams = opts?.patch ? { ...baseParams, ...opts.patch } : baseParams;
+  const outcome: HookActionOutcome = {
+    decision,
+    finalParams,
+    followUpRequests: [],
+    stateUpdates: [],
+    userState: { status: 'allowed' },
+    executionLog: [{ hookId, classification: 'validation', result, timestamp: 0 }],
+    ...(isBlock ? { blockedByHookId: hookId } : {}),
+  };
+  return {
+    runDeclaredHook: async () => outcome,
+    persistHookOutcome: () => {},
+  } as unknown as WorkflowHookEngine;
+}
+
+/**
+ * Build a REAL WorkflowHookEngine over the test DB so the full
+ * runDeclaredHook path runs — including declared-hook authorization
+ * (enabled / sourceNode / authorizedCallers) and context construction. The
+ * hookExecutor is a no-op stub since these tests exercise resolution/auth, not
+ * a specific validator's behavior.
+ */
+function makeHookEngine(ctx: Ctx, workflow: SpaceWorkflow): WorkflowHookEngine {
+  return new WorkflowHookEngine({
+    workflow,
+    workflowRunId: ctx.runId,
+    nodeExecutionRepo: ctx.nodeExecutionRepo,
+    hookStateRepo: new WorkflowHookStateRepository(ctx.db),
+    hookExecutor: new HookExecutor({ workspacePath: '' }),
+    workspacePath: '',
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -471,7 +526,7 @@ describe('HandoffExecutor: hook validator', () => {
 
   test('blocks when the hook validator returns block', async () => {
     const executor = makeExecutor(ctx, workflowWithHook(), {
-      hookExecutor: stubHookExecutor({ type: 'block', reason: 'PR not ready' }),
+      hookEngine: stubHookEngine({ type: 'block', reason: 'PR not ready' }),
     });
 
     const result = await executor.execute({
@@ -491,7 +546,7 @@ describe('HandoffExecutor: hook validator', () => {
   test('delivers when the hook validator allows', async () => {
     seedPeer(ctx.db, ctx.runId, 'n-review', 'reviewer', 'session-reviewer');
     const executor = makeExecutor(ctx, workflowWithHook(), {
-      hookExecutor: stubHookExecutor({ type: 'allow' }),
+      hookEngine: stubHookEngine({ type: 'allow' }),
     });
 
     const result = await executor.execute({
@@ -507,7 +562,7 @@ describe('HandoffExecutor: hook validator', () => {
 
   test('propagates a retryable_block hook as a retryable block', async () => {
     const executor = makeExecutor(ctx, workflowWithHook(), {
-      hookExecutor: stubHookExecutor({
+      hookEngine: stubHookEngine({
         type: 'retryable_block',
         reason: 'review not posted yet',
         retryAfterMs: 30_000,
@@ -529,12 +584,13 @@ describe('HandoffExecutor: hook validator', () => {
   });
 
   test('a throwing validator maps to a failed result (never throws)', async () => {
-    const throwingHook = {
-      execute: async () => {
+    const throwingEngine = {
+      runDeclaredHook: async () => {
         throw new Error('validator crashed');
       },
-    } as unknown as HookExecutor;
-    const executor = makeExecutor(ctx, workflowWithHook(), { hookExecutor: throwingHook });
+      persistHookOutcome: () => {},
+    } as unknown as WorkflowHookEngine;
+    const executor = makeExecutor(ctx, workflowWithHook(), { hookEngine: throwingEngine });
 
     const result = await executor.execute({
       fromAgentName: 'coder',
@@ -549,7 +605,9 @@ describe('HandoffExecutor: hook validator', () => {
   });
 
   test('blocks when the hook is not authorized for the sending slot', async () => {
-    // Hook authorizes a different slot than the sender.
+    // Hook authorizes a different slot than the sender. Uses a REAL hook engine
+    // so the declared-hook authorization (now in WorkflowHookEngine.runDeclaredHook,
+    // not the executor) runs and rejects before the validator executes.
     const workflow = makeWorkflow({
       nodes: [
         node('n-coding', 'coding', 'coder', [
@@ -563,14 +621,14 @@ describe('HandoffExecutor: hook validator', () => {
           id: 'hook-pr-ready',
           enabled: true,
           sourceNode: 'coding',
-          method: 'send_message',
+          method: 'handoff',
           validator: { kind: 'built_in', id: 'pr_ready' },
           authorizedCallers: [{ sourceNode: 'coding', agentSlots: ['someone-else'] }],
         },
       ],
     });
     const executor = makeExecutor(ctx, workflow, {
-      hookExecutor: stubHookExecutor({ type: 'allow' }),
+      hookEngine: makeHookEngine(ctx, workflow),
     });
 
     const result = await executor.execute({
@@ -878,6 +936,188 @@ describe('HandoffExecutor: run-state validation', () => {
   });
 });
 
+describe('HandoffExecutor: node-scoped delivery', () => {
+  let ctx: Ctx;
+  beforeEach(() => {
+    ctx = makeCtx();
+  });
+  afterEach(() => ctx.db.close());
+
+  test('a shared slot name across two nodes does not cross-deliver', async () => {
+    // Both 'review' and 'qa' declare a 'reviewer' slot. A handoff to the
+    // 'review' NODE must reach only review's reviewer session, never qa's — the
+    // live-session lookup is scoped by the resolved node id, not just slot name.
+    const workflow = makeWorkflow({
+      nodes: [
+        node('n-coding', 'coding', 'coder', [{ id: 'to-review', target: 'review' }]),
+        node('n-review', 'review', 'reviewer'),
+        node('n-qa', 'qa', 'reviewer'),
+      ],
+      channels: [{ id: 'ch', from: 'coding', to: 'review' }],
+    });
+    seedPeer(ctx.db, ctx.runId, 'n-review', 'reviewer', 'session-review-reviewer');
+    seedPeer(ctx.db, ctx.runId, 'n-qa', 'reviewer', 'session-qa-reviewer');
+    const executor = makeExecutor(ctx, workflow);
+
+    const result = await executor.execute({
+      fromAgentName: 'coder',
+      fromSessionId: 'session-coder',
+      workflowNodeId: 'n-coding',
+      operation: { target: 'review', summary: 'for your node only' },
+    });
+
+    expect(result.status).toBe('delivered');
+    expect(result.delivered).toEqual([
+      { agentName: 'reviewer', sessionId: 'session-review-reviewer' },
+    ]);
+    expect(ctx.injected).toHaveLength(1);
+    expect(ctx.injected[0].sessionId).toBe('session-review-reviewer');
+  });
+
+  test('enqueue is node-scoped: a queued row carries the resolved node id', async () => {
+    // No live target → handoff queues. The pending row must carry the resolved
+    // review node id so the queue drain delivers it only to review's reviewer,
+    // not qa's same-named slot.
+    const workflow = makeWorkflow({
+      nodes: [
+        node('n-coding', 'coding', 'coder', [{ id: 'to-review', target: 'review' }]),
+        node('n-review', 'review', 'reviewer'),
+        node('n-qa', 'qa', 'reviewer'),
+      ],
+      channels: [{ id: 'ch', from: 'coding', to: 'review' }],
+    });
+    const executor = makeExecutor(ctx, workflow, {
+      pendingMessageRepo: ctx.pendingMessageRepo,
+      activateTargetSession: async () => [], // never activates → stays queued
+    });
+
+    const result = await executor.execute({
+      fromAgentName: 'coder',
+      fromSessionId: 'session-coder',
+      workflowNodeId: 'n-coding',
+      operation: { target: 'review', summary: 'queued for the review node' },
+    });
+
+    expect(result.status).toBe('queued');
+    expect(result.queued).toHaveLength(1);
+    const rows = ctx.pendingMessageRepo.listPendingForTarget(ctx.runId, 'reviewer');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].workflowNodeId).toBe('n-review');
+  });
+
+  test('activation is node-scoped: the resolved node id is forwarded', async () => {
+    // The activateTargetSession callback receives the resolved node id so it can
+    // activate THIS node's session, not a same-named slot in another node.
+    const workflow = makeWorkflow({
+      nodes: [
+        node('n-coding', 'coding', 'coder', [{ id: 'to-review', target: 'review' }]),
+        node('n-review', 'review', 'reviewer'),
+      ],
+      channels: [{ id: 'ch', from: 'coding', to: 'review' }],
+    });
+    const activations: Array<{ agentName: string; nodeId: string | undefined }> = [];
+    const executor = makeExecutor(ctx, workflow, {
+      activateTargetSession: async (agentName, nodeId) => {
+        activations.push({ agentName, nodeId });
+        return [];
+      },
+      pendingMessageRepo: ctx.pendingMessageRepo,
+    });
+
+    await executor.execute({
+      fromAgentName: 'coder',
+      fromSessionId: 'session-coder',
+      workflowNodeId: 'n-coding',
+      operation: { target: 'review', summary: 'activate review' },
+    });
+
+    expect(activations).toEqual([{ agentName: 'reviewer', nodeId: 'n-review' }]);
+  });
+});
+
+describe('HandoffExecutor: hook patch_params', () => {
+  let ctx: Ctx;
+  beforeEach(() => {
+    ctx = makeCtx();
+  });
+  afterEach(() => ctx.db.close());
+
+  function workflowWithHook(): SpaceWorkflow {
+    return makeWorkflow({
+      nodes: [
+        node('n-coding', 'coding', 'coder', [
+          { id: 'to-review', target: 'review', hookId: 'hook-pr-ready' },
+        ]),
+        node('n-review', 'review', 'reviewer'),
+      ],
+      channels: [{ id: 'ch', from: 'coding', to: 'review' }],
+      hooks: [
+        {
+          id: 'hook-pr-ready',
+          enabled: true,
+          sourceNode: 'coding',
+          method: 'handoff',
+          validator: { kind: 'built_in', id: 'pr_ready' },
+          authorizedCallers: [{ sourceNode: 'coding' }],
+        },
+      ],
+    });
+  }
+
+  test('a successful patch_params result patches the delivered payload', async () => {
+    // pr_ready discovers the PR URL and returns patch_params; the patch must be
+    // applied to the handoff payload before delivery so the target sees the
+    // resolved data.pr_url.
+    seedPeer(ctx.db, ctx.runId, 'n-review', 'reviewer', 'session-reviewer');
+    const executor = makeExecutor(ctx, workflowWithHook(), {
+      hookEngine: stubHookEngine(
+        { type: 'patch_params' },
+        { patch: { data: { pr_url: 'https://github.com/o/r/pull/1' } } }
+      ),
+    });
+
+    const result = await executor.execute({
+      fromAgentName: 'coder',
+      fromSessionId: 'session-coder',
+      workflowNodeId: 'n-coding',
+      operation: { target: 'review', summary: 'ready' },
+    });
+
+    expect(result.status).toBe('delivered');
+    expect(result.hook?.result.type).toBe('patch_params');
+    // The patched pr_url is carried into the delivered envelope's structured-data.
+    expect(ctx.injected[0].message).toContain('https://github.com/o/r/pull/1');
+  });
+
+  test('a patch_params result preserves sender-supplied data keys', async () => {
+    // The engine's shallow merge keeps the sender's other data keys (the pr_ready
+    // patch is built from extractDataRecord), and the executor merges sender data
+    // under the patched keys — so a sender-supplied field survives the patch.
+    seedPeer(ctx.db, ctx.runId, 'n-review', 'reviewer', 'session-reviewer');
+    const executor = makeExecutor(ctx, workflowWithHook(), {
+      hookEngine: stubHookEngine(
+        { type: 'patch_params' },
+        { patch: { data: { pr_url: 'https://github.com/o/r/pull/2' } } }
+      ),
+    });
+
+    const result = await executor.execute({
+      fromAgentName: 'coder',
+      fromSessionId: 'session-coder',
+      workflowNodeId: 'n-coding',
+      operation: {
+        target: 'review',
+        summary: 'ready',
+        data: { kind: 'review-request' },
+      },
+    });
+
+    expect(result.status).toBe('delivered');
+    expect(ctx.injected[0].message).toContain('https://github.com/o/r/pull/2');
+    expect(ctx.injected[0].message).toContain('review-request');
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Pure helpers
 // ---------------------------------------------------------------------------
@@ -887,28 +1127,25 @@ describe('HandoffExecutor pure helpers', () => {
   const review = node('n-review', 'review', 'reviewer');
   const workflow = makeWorkflow({ nodes: [coding, review] });
 
-  test('resolveHandoffTargetSlots: node name fans out to all slots', () => {
+  test('resolveHandoffTargets: node name fans out to all slots', () => {
     const t: HandoffTransition = { id: 't', target: 'review' };
-    expect(resolveHandoffTargetSlots(workflow, coding, t)).toEqual({
-      nodes: ['review'],
-      slots: ['reviewer'],
-    });
+    expect(resolveHandoffTargets(workflow, coding, t)).toEqual([
+      { nodeId: 'n-review', nodeName: 'review', slot: 'reviewer' },
+    ]);
   });
 
-  test('resolveHandoffTargetSlots: slot name targets a single slot', () => {
+  test('resolveHandoffTargets: slot name targets a single slot', () => {
     const t: HandoffTransition = { id: 't', target: 'reviewer' };
-    expect(resolveHandoffTargetSlots(workflow, coding, t)).toEqual({
-      nodes: ['review'],
-      slots: ['reviewer'],
-    });
+    expect(resolveHandoffTargets(workflow, coding, t)).toEqual([
+      { nodeId: 'n-review', nodeName: 'review', slot: 'reviewer' },
+    ]);
   });
 
-  test('resolveHandoffTargetSlots: broadcast excludes the sender node', () => {
+  test('resolveHandoffTargets: broadcast excludes the sender node', () => {
     const t: HandoffTransition = { id: 't', target: '*' };
-    expect(resolveHandoffTargetSlots(workflow, coding, t)).toEqual({
-      nodes: ['review'],
-      slots: ['reviewer'],
-    });
+    expect(resolveHandoffTargets(workflow, coding, t)).toEqual([
+      { nodeId: 'n-review', nodeName: 'review', slot: 'reviewer' },
+    ]);
   });
 
   test('isCyclicHandoff: a back-edge is cyclic', () => {

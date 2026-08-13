@@ -80,6 +80,43 @@ export const SendMessageSchema = z.object({
 
 export type SendMessageInput = z.infer<typeof SendMessageSchema>;
 
+/**
+ * `handoff({ target, summary, data? })` — formal workflow ownership transfer.
+ *
+ * Unlike `send_message`, a handoff target MUST resolve to a declared outbound
+ * `HandoffTransition` on the sender's node; a successful handoff ends the
+ * sender's execution round. The transition's bound hook validator (if any) runs
+ * through the workflow hook engine before delivery, and may patch the payload
+ * (e.g. pr_ready stamps `data.pr_url`).
+ */
+export const HandoffSchema = z.object({
+  /**
+   * The handoff target: a node name, an agent slot name, or '*' (broadcast to
+   * every other node). Must resolve to a declared outbound transition on the
+   * sender's node.
+   */
+  target: z
+    .string()
+    .describe(
+      "Handoff target: a declared outbound transition's target — node name, agent slot name, or '*' (broadcast to every other node)"
+    ),
+  /** Non-authoritative sender note delivered with the handoff. */
+  summary: z.string().min(1).describe('A short summary of what is being handed off and why'),
+  /**
+   * Optional structured data payload. Keys must be declared by the transition's
+   * bound hook template fields; a transition with no hook accepts no data keys.
+   * Passed to the transition's hook validator and delivered with the handoff.
+   */
+  data: z
+    .record(z.string(), z.unknown())
+    .describe(
+      "Optional structured data payload. Keys must come from the transition's bound hook template fields. Passed to the transition hook validator and the target agent."
+    )
+    .optional(),
+});
+
+export type HandoffInput = z.infer<typeof HandoffSchema>;
+
 // ---------------------------------------------------------------------------
 // external event subscriptions
 // ---------------------------------------------------------------------------
@@ -573,6 +610,7 @@ export type ArchiveTaskInput = z.infer<typeof ArchiveTaskSchema>;
 export const NODE_AGENT_TOOL_SCHEMAS = {
   list_peers: ListPeersSchema,
   send_message: SendMessageSchema,
+  handoff: HandoffSchema,
   save_artifact: SaveArtifactSchema,
   create_standalone_task: CreateStandaloneTaskSchema,
   list_artifacts: ListArtifactsSchema,

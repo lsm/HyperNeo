@@ -125,6 +125,8 @@ import {
   QUEUED_RETRYABLE_ACTION_STATE_KEY,
   WorkflowHookEngine,
 } from './workflow-hook-engine';
+import { HandoffExecutor } from './handoff-executor';
+import { HandoffCycleRepository } from '../../../storage/repositories/handoff-cycle-repository';
 import { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository';
 import {
   buildCustomAgentTaskMessage,
@@ -5452,6 +5454,64 @@ export class TaskAgentManager {
       });
     }
 
+    // Handoff executor backs the `handoff` tool. A handoff requires a workflow
+    // (transitions live on workflow nodes), so the tool is registered only when
+    // a workflow is present. It reuses the SAME delivery primitives as
+    // send_message (activateTargetSession / messageInjector / pendingMessageRepo
+    // / auto-resume) plus the run's hook engine so the transition's declared
+    // validator runs through WorkflowHookEngine. Activation, lookup, enqueue,
+    // and auto-resume all carry the resolved node id so a shared slot name
+    // across two nodes cannot leak.
+    const handoffExecutor = workflow
+      ? new HandoffExecutor({
+          workflowRunRepo: this.config.workflowRunRepo,
+          workflow,
+          handoffCycleRepo: new HandoffCycleRepository(this.config.db.getDatabase()),
+          nodeExecutionRepo: this.config.nodeExecutionRepo,
+          workflowRunId,
+          spaceId,
+          taskId,
+          taskNumber: this.config.taskRepo.getTask(taskId)?.taskNumber ?? null,
+          workspacePath,
+          hookEngine,
+          nodeGroups,
+          workflowNodeNameById: Object.fromEntries(
+            (workflow.nodes ?? []).map((node) => [node.id, node.name])
+          ),
+          activateTargetSession: (targetAgentName, targetNodeId) =>
+            this.activateTargetSessionsForMessage(taskId, workflowRunId, targetAgentName, {
+              workflowNodeId: targetNodeId,
+              reopenReason: `node-agent handoff to activate "${targetAgentName}"`,
+              reopenBy: `agent:${agentName}`,
+            }),
+          messageInjector: async (targetSessionId, message) => {
+            await this.injectSubSessionMessage(targetSessionId, message, true);
+          },
+          pendingMessageRepo: this.config.pendingMessageRepo,
+          onMessageQueued: (targetAgentName, targetNodeId) => {
+            void this.tryResumeNodeAgentSession(workflowRunId, targetAgentName, targetNodeId).catch(
+              (err) => {
+                log.warn(
+                  `HandoffExecutor.onMessageQueued: tryResumeNodeAgentSession failed for "${targetAgentName}": ${err instanceof Error ? err.message : String(err)}`
+                );
+              }
+            );
+            const declaredAgentNames = this.getWorkflowDeclaredAgentNamesForTask(taskId);
+            if (declaredAgentNames.includes(targetAgentName)) {
+              void this.ensureWorkflowNodeActivationForAgent(taskId, targetAgentName, {
+                workflowNodeId: targetNodeId,
+                reopenReason: `node-agent handoff to lazily activate "${targetAgentName}"`,
+                reopenBy: `agent:${agentName}`,
+              }).catch((err) => {
+                log.warn(
+                  `HandoffExecutor.onMessageQueued: ensureWorkflowNodeActivationForAgent failed for "${targetAgentName}": ${err instanceof Error ? err.message : String(err)}`
+                );
+              });
+            }
+          },
+        })
+      : undefined;
+
     return createNodeAgentMcpServer({
       mySessionId: subSessionId,
       myAgentName: agentName,
@@ -5485,6 +5545,7 @@ export class TaskAgentManager {
         return registry ? registry.get(taskId, fromAgentName) : null;
       },
       hookEngine,
+      handoffExecutor,
     });
   }
 

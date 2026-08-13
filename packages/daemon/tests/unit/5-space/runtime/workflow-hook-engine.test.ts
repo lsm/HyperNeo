@@ -2284,3 +2284,164 @@ describe.skipIf(!isBun)('HookExecutor script execution', () => {
     expect(killCalls.some((c) => c.pid < 0 && c.signal === 'SIGKILL')).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Tests: runDeclaredHook (transition-bound hook, resolved by id) — the entry
+// point the HandoffExecutor uses so a transition's declared validator runs
+// through the engine (rich context + patch_params + auth) instead of the
+// HookExecutor directly.
+// ---------------------------------------------------------------------------
+
+describe('WorkflowHookEngine.runDeclaredHook', () => {
+  test('runs a transition-bound hook resolved by id, regardless of method matching', async () => {
+    // Hook's method is 'handoff'; executeAction('send_message') would NOT match
+    // it, but runDeclaredHook runs it because the caller resolved it by id.
+    const hook = makeHook({ id: 'hook-declared', method: 'handoff' });
+    const { engine, mockExecutor } = makeEngine([hook]);
+    mockExecutor.setResult('hook-declared', { type: 'allow' });
+
+    const outcome = await engine.runDeclaredHook(
+      'hook-declared',
+      'handoff',
+      { target: 'Review', summary: 'go' },
+      defaultMeta
+    );
+
+    expect(outcome.decision).toBe('allow');
+    expect(outcome.executionLog).toHaveLength(1);
+    expect(outcome.executionLog[0].hookId).toBe('hook-declared');
+    expect(outcome.executionLog[0].result.type).toBe('allow');
+  });
+
+  test('authorizes the declared hook and blocks an unauthorized sender', async () => {
+    const hook = makeHook({
+      id: 'hook-declared',
+      method: 'handoff',
+      authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['someone-else'] }],
+    });
+    const { engine } = makeEngine([hook]);
+
+    const outcome = await engine.runDeclaredHook(
+      'hook-declared',
+      'handoff',
+      { target: 'Review' },
+      defaultMeta
+    );
+
+    expect(outcome.decision).toBe('block');
+    expect(outcome.executionLog[0].result.type).toBe('block');
+    expect(outcome.executionLog[0].result.reason).toContain('authorized caller');
+    expect(outcome.blockedByHookId).toBe('hook-declared');
+  });
+
+  test('blocks when the declared hook id is not defined on the workflow', async () => {
+    const { engine } = makeEngine([]);
+
+    const outcome = await engine.runDeclaredHook(
+      'missing-hook',
+      'handoff',
+      { target: 'Review' },
+      defaultMeta
+    );
+
+    expect(outcome.decision).toBe('block');
+    expect(outcome.executionLog[0].result.type).toBe('block');
+    expect(outcome.executionLog[0].result.reason).toContain('not defined');
+  });
+
+  test('applies a patch_params result to finalParams (handoff path)', async () => {
+    const hook = makeHook({ id: 'hook-pr', method: 'handoff' });
+    const { engine, mockExecutor } = makeEngine([hook]);
+    mockExecutor.setResult('hook-pr', {
+      type: 'patch_params',
+      patch: { data: { pr_url: 'https://github.com/o/r/pull/1' } },
+    });
+
+    const outcome = await engine.runDeclaredHook(
+      'hook-pr',
+      'handoff',
+      { target: 'Review', summary: 'go', data: {} },
+      defaultMeta
+    );
+
+    expect(outcome.decision).toBe('patch_params');
+    expect((outcome.finalParams.data as Record<string, unknown>).pr_url).toBe(
+      'https://github.com/o/r/pull/1'
+    );
+  });
+
+  test('stamps the pr_ready frozen identity on a handoff allow', async () => {
+    // A pr_ready validator that allows on the handoff path must stamp the
+    // reserved run-level identity key (generalized from send_message-only).
+    const hook = makeHook({
+      id: 'hook-pr-ready',
+      method: 'handoff',
+      validator: { kind: 'built_in', id: 'pr_ready' },
+    });
+    const states = new Map();
+    const hookStateRepo = makeMockHookStateRepo(states);
+    const { engine, mockExecutor } = makeEngine([hook], { hookStateRepo });
+    mockExecutor.setResult('hook-pr-ready', { type: 'allow' });
+
+    const outcome = await engine.runDeclaredHook(
+      'hook-pr-ready',
+      'handoff',
+      { target: 'Review', summary: 'go', data: { pr_url: 'https://github.com/o/r/pull/2' } },
+      defaultMeta
+    );
+
+    // The state update targeting the reserved identity key is part of the outcome;
+    // persistHookOutcome (or the wrapper) writes it. Verify it was queued.
+    const identityUpdate = outcome.stateUpdates.find(
+      (u) => u.hookId === PR_READY_VALIDATED_IDENTITY_HOOK_ID
+    );
+    expect(identityUpdate?.state.pr_url).toBe('https://github.com/o/r/pull/2');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: persistHookOutcome (the shared post-action persist used by both the
+// MCP wrapper and the HandoffExecutor).
+// ---------------------------------------------------------------------------
+
+describe('WorkflowHookEngine.persistHookOutcome', () => {
+  test('persists state updates and last result with one write per hook', () => {
+    const states = new Map();
+    const hookStateRepo = makeMockHookStateRepo(states);
+    const { engine } = makeEngine([makeHook({ id: 'hook-a' })], { hookStateRepo });
+    hookStateRepo.ensure('run-1', 'hook-a');
+
+    const result: WorkflowHookResult = { type: 'allow' };
+    const outcome: HookActionOutcome = {
+      decision: 'record_state',
+      finalParams: {},
+      followUpRequests: [],
+      stateUpdates: [{ hookId: 'hook-a', state: { approvals: { x: 'ok' } } }],
+      userState: { status: 'state_recorded' },
+      executionLog: [{ hookId: 'hook-a', classification: 'validation', result, timestamp: 0 }],
+    };
+
+    engine.persistHookOutcome(outcome);
+
+    const persisted = hookStateRepo.get('run-1', 'hook-a');
+    expect(persisted?.localState.approvals).toEqual({ x: 'ok' });
+    expect(persisted?.lastResult).toEqual(result);
+  });
+
+  test('is a no-op for an outcome with no state updates or execution log', () => {
+    const hookStateRepo = makeMockHookStateRepo();
+    const { engine } = makeEngine([makeHook({ id: 'hook-a' })], { hookStateRepo });
+
+    engine.persistHookOutcome({
+      decision: 'allow',
+      finalParams: {},
+      followUpRequests: [],
+      stateUpdates: [],
+      userState: { status: 'allowed' },
+      executionLog: [],
+    });
+
+    // Nothing was persisted: no state row exists for the hook.
+    expect(hookStateRepo.get('run-1', 'hook-a')).toBeNull();
+  });
+});

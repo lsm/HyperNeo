@@ -124,6 +124,61 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/**
+ * Action methods whose `target` field is routable (selects a peer destination)
+ * and therefore must NOT be patchable by a hook — otherwise a validator could
+ * redirect a send_message or handoff to an unauthorized target. `send_message`
+ * (peer messaging) and `handoff` (formal ownership transfer) both carry a
+ * routable `target`.
+ */
+function methodHasRoutableTarget(methodName: string): boolean {
+  return methodName === 'send_message' || methodName === 'handoff';
+}
+
+/**
+ * Action methods whose `pr_ready` validator stamps the run's frozen PR identity
+ * (the hook's own state + the reserved run-level key). A handoff bound to
+ * pr_ready is a successful PR validation exactly like a send_message handoff,
+ * so it must freeze the identity for later merge/blocker handoffs.
+ */
+function methodStampsPrReadyIdentity(methodName: string): boolean {
+  return methodName === 'send_message' || methodName === 'handoff';
+}
+
+/**
+ * Caller-authorization for a transition-bound declared hook, mirroring the
+ * enabled / human-only / source-node / authorized-caller checks
+ * {@link WorkflowHookEngine.resolveMatchingHooks} applies to discovered hooks.
+ * Returns a block reason when unauthorized, else undefined. The transition
+ * contract names the hook by id, so method/targetNode matching is NOT applied
+ * here — only the authorization checks that fail closed.
+ */
+function declaredHookBlockReason(
+  hook: WorkflowHook,
+  fromNodeName: string,
+  fromAgentName: string
+): string | undefined {
+  if (!hook.enabled) return `Hook "${hook.id}" is disabled.`;
+  if (hook.humanOnly) {
+    return `Hook "${hook.id}" is human-only and cannot run from an agent handoff.`;
+  }
+  if (hook.sourceNode !== fromNodeName) {
+    return `Hook "${hook.id}" sourceNode "${hook.sourceNode}" does not match handoff source "${fromNodeName}".`;
+  }
+  if (!hook.authorizedCallers || hook.authorizedCallers.length === 0) {
+    return `Hook "${hook.id}" has no authorizedCallers; agent handoffs fail closed.`;
+  }
+  const allowed = hook.authorizedCallers.some((caller) => {
+    if (caller.sourceNode !== fromNodeName) return false;
+    if (!caller.agentSlots || caller.agentSlots.length === 0) return true;
+    return caller.agentSlots.includes(fromAgentName);
+  });
+  if (!allowed) {
+    return `Agent "${fromAgentName}" is not an authorized caller for hook "${hook.id}".`;
+  }
+  return undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -374,7 +429,132 @@ export class WorkflowHookEngine {
       };
     }
 
-    const sortedHooks = this.sortHooks(hooks);
+    return this.runHookPipeline(this.sortHooks(hooks), methodName, params, meta);
+  }
+
+  /**
+   * Run a single transition-bound hook (resolved explicitly by id) for a handoff
+   * action, through the SAME pipeline as {@link executeAction}: the rich
+   * executor context (taskStatus / frozenPrUrl / hookLocalState /
+   * permittedExternalLookups / artifacts / templateData), patch_params
+   * application, pr_ready identity stamping, and retry handling.
+   *
+   * The HandoffExecutor uses this so a transition's declared validator runs
+   * through the hook engine rather than {@link HookExecutor} directly. A
+   * transition's hook is transition-specific (the transition contract names it
+   * by id), so it is NOT discoverable by method matching the way send_message
+   * hooks are — the caller supplies the hookId it resolved from the transition.
+   *
+   * Authorizes the hook (enabled / not human-only / sourceNode / authorized
+   * callers) exactly as {@link resolveMatchingHooks} would, failing closed with
+   * a block outcome when the hook is missing or unauthorized. Does NOT persist —
+   * the caller persists the outcome via {@link persistHookOutcome}.
+   */
+  async runDeclaredHook(
+    hookId: string,
+    methodName: string,
+    params: Record<string, unknown>,
+    meta: HookActionMeta
+  ): Promise<HookActionOutcome> {
+    const workflow = this.config.workflow;
+    const nodeName = workflow?.nodes.find((n) => n.id === meta.nodeId)?.name ?? meta.agentName;
+    const hook = (workflow?.hooks ?? []).find((h) => h.id === hookId);
+    if (!hook) {
+      return this.declaredBlockOutcome(methodName, nodeName, hookId, {
+        type: 'block',
+        reason: `Hook "${hookId}" is not defined on this workflow.`,
+      });
+    }
+    const authReason = declaredHookBlockReason(hook, nodeName, meta.agentName);
+    if (authReason) {
+      return this.declaredBlockOutcome(methodName, nodeName, hook.id, {
+        type: 'block',
+        reason: authReason,
+      });
+    }
+    return this.runHookPipeline([hook], methodName, params, meta);
+  }
+
+  /**
+   * Persist the hook state + last-result captured in an outcome. Each hook gets
+   * at most one repo write (state merged with its execution-log result) to
+   * avoid version conflicts. Used by the MCP wrapper (after {@link executeAction})
+   * and by the HandoffExecutor (after {@link runDeclaredHook}) so state/retry
+   * counters/pr_ready identity stamps always land regardless of which entry
+   * point ran the hook.
+   */
+  persistHookOutcome(outcome: HookActionOutcome): void {
+    const updatesByHook = new Map<
+      string,
+      { state: Record<string, unknown>; result?: WorkflowHookResult }
+    >();
+    for (const update of outcome.stateUpdates) {
+      updatesByHook.set(update.hookId, { state: update.state });
+    }
+    for (const record of outcome.executionLog) {
+      const existing = updatesByHook.get(record.hookId);
+      if (existing) {
+        existing.result = record.result;
+      } else {
+        updatesByHook.set(record.hookId, { state: {}, result: record.result });
+      }
+    }
+    for (const [hookId, { state, result }] of updatesByHook) {
+      const ok = this.persistStateUpdate(hookId, state, result);
+      if (!ok) {
+        log.warn(
+          `Failed to persist hook state/result for ${hookId}: version conflict or repo error`
+        );
+      }
+    }
+  }
+
+  /**
+   * Build a block outcome for a declared-hook resolution failure (missing or
+   * unauthorized hook) — there is no hook execution to log, so this constructs
+   * the outcome directly with a `blocked_by_hook` user state.
+   */
+  private declaredBlockOutcome(
+    methodName: string,
+    nodeName: string,
+    hookId: string,
+    result: WorkflowHookResult
+  ): HookActionOutcome {
+    return {
+      decision: 'block',
+      finalParams: {},
+      followUpRequests: [],
+      stateUpdates: [],
+      userState: {
+        status: 'blocked_by_hook',
+        hookId,
+        method: methodName,
+        sourceNode: nodeName,
+        reason: result.type === 'block' ? result.reason : undefined,
+      },
+      executionLog: [{ hookId, classification: 'validation', result, timestamp: Date.now() }],
+      blockedByHookId: hookId,
+    };
+  }
+
+  /**
+   * Run an already-resolved + sorted hook chain for a single action and reduce
+   * the per-hook results into one {@link HookActionOutcome}. Shared by
+   * {@link executeAction} (hooks discovered by method matching) and
+   * {@link runDeclaredHook} (a single transition-bound hook resolved by id) so
+   * the patch_params / pr_ready-identity / retry handling is identical across
+   * the peer-message and handoff paths.
+   *
+   * Does NOT persist hook state — the caller persists the returned outcome via
+   * {@link persistHookOutcome}, mirroring how the MCP wrapper batches state
+   * writes after the action resolves.
+   */
+  private async runHookPipeline(
+    sortedHooks: WorkflowHook[],
+    methodName: string,
+    params: Record<string, unknown>,
+    meta: HookActionMeta
+  ): Promise<HookActionOutcome> {
     const executionLog: HookExecutionRecord[] = [];
     const originalParams = { ...params };
     let currentParams = originalParams;
@@ -486,7 +666,7 @@ export class WorkflowHookEngine {
           // matches hook ids by the `pr-ready` substring) would then trust for
           // merge-dispatch resolution and the mark_complete merge gate.
           if (
-            methodName === 'send_message' &&
+            methodStampsPrReadyIdentity(methodName) &&
             hook.validator.kind === 'built_in' &&
             hook.validator.id === 'pr_ready'
           ) {
@@ -590,9 +770,9 @@ export class WorkflowHookEngine {
           if (result.patch && typeof result.patch === 'object') {
             const patch = { ...result.patch };
             // Disallow routing field patches to prevent target bypass
-            if (methodName === 'send_message' && 'target' in patch) {
+            if (methodHasRoutableTarget(methodName) && 'target' in patch) {
               log.warn(
-                `Hook "${hook.id}" tried to patch send_message target; target change ignored.`
+                `Hook "${hook.id}" tried to patch ${methodName} target; target change ignored.`
               );
               delete patch.target;
             }
@@ -617,7 +797,7 @@ export class WorkflowHookEngine {
               // handoff recorded no frozen identity and later blocker/fix
               // handoffs failed closed.
               if (
-                methodName === 'send_message' &&
+                methodStampsPrReadyIdentity(methodName) &&
                 hook.validator.kind === 'built_in' &&
                 hook.validator.id === 'pr_ready'
               ) {
@@ -1578,31 +1758,8 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
     const actionKey = buildRetryableActionKey(methodName, args as Record<string, unknown>, meta);
     const outcome = await engine.executeAction(methodName, args as Record<string, unknown>, meta);
 
-    // Batch persist hook state updates and execution results.
-    // Each hook gets at most one repo write to avoid version conflicts.
-    const updatesByHook = new Map<
-      string,
-      { state: Record<string, unknown>; result?: WorkflowHookResult }
-    >();
-    for (const update of outcome.stateUpdates) {
-      updatesByHook.set(update.hookId, { state: update.state });
-    }
-    for (const record of outcome.executionLog) {
-      const existing = updatesByHook.get(record.hookId);
-      if (existing) {
-        existing.result = record.result;
-      } else {
-        updatesByHook.set(record.hookId, { state: {}, result: record.result });
-      }
-    }
-    for (const [hookId, { state, result }] of updatesByHook) {
-      const ok = engine.persistStateUpdate(hookId, state, result);
-      if (!ok) {
-        log.warn(
-          `Failed to persist hook state/result for ${hookId}: version conflict or repo error`
-        );
-      }
-    }
+    // Batch persist hook state updates and execution results (one write per hook).
+    engine.persistHookOutcome(outcome);
 
     // Handle block
     if (outcome.decision === 'block') {

@@ -26,6 +26,7 @@ import {
 } from '../../../../src/lib/space/tools/node-agent-tools.ts';
 import { AgentMessageRouter } from '../../../../src/lib/space/runtime/agent-message-router.ts';
 import { ChannelResolver } from '../../../../src/lib/space/runtime/channel-resolver.ts';
+import type { HandoffExecutor } from '../../../../src/lib/space/runtime/handoff-executor.ts';
 import { PendingAgentMessageRepository } from '../../../../src/storage/repositories/pending-agent-message-repository.ts';
 import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
 import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store.ts';
@@ -876,6 +877,136 @@ describe('node-agent-tools: send_message', () => {
     expect(data.success).toBe(false);
     expect(data.delivered).toBeUndefined();
     expect(data.failed).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: handoff
+// ---------------------------------------------------------------------------
+
+describe('node-agent-tools: handoff', () => {
+  let ctx: TestCtx;
+
+  beforeEach(() => {
+    ctx = makeCtx();
+  });
+
+  afterEach(() => {
+    ctx.db.close();
+  });
+
+  /** Minimal HandoffExecutor stub that records the call and returns a fixed result. */
+  function stubHandoffExecutor(
+    execute: (params: {
+      fromAgentName: string;
+      fromSessionId: string;
+      workflowNodeId: string;
+      operation: Record<string, unknown>;
+    }) => Promise<Record<string, unknown>>
+  ): HandoffExecutor {
+    return { execute } as unknown as HandoffExecutor;
+  }
+
+  test('delegates to the handoff executor with sender identity + operation', async () => {
+    const calls: Array<{
+      fromAgentName: string;
+      fromSessionId: string;
+      workflowNodeId: string;
+      operation: unknown;
+    }> = [];
+    const handoffExecutor = stubHandoffExecutor(async (params) => {
+      calls.push(params);
+      return {
+        status: 'delivered',
+        transition: { id: 'to-review', target: 'review' },
+        targetNodes: ['review'],
+        targetSlots: ['reviewer'],
+        delivered: [{ agentName: 'reviewer', sessionId: 'session-reviewer' }],
+        queued: [],
+      };
+    });
+    const config = makeConfig(ctx, { handoffExecutor });
+    const handlers = createNodeAgentToolHandlers(config);
+
+    const result = await handlers.handoff({
+      target: 'review',
+      summary: 'ready for review',
+      data: { pr_url: 'https://github.com/o/r/pull/1' },
+    });
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.success).toBe(true);
+    expect(data.status).toBe('delivered');
+    expect(data.transitionId).toBe('to-review');
+    expect(calls).toHaveLength(1);
+    expect(calls[0].fromAgentName).toBe('coder');
+    expect(calls[0].fromSessionId).toBe(ctx.coderSessionId);
+    expect(calls[0].workflowNodeId).toBe(ctx.nodeId);
+    expect(calls[0].operation).toEqual({
+      target: 'review',
+      summary: 'ready for review',
+      data: { pr_url: 'https://github.com/o/r/pull/1' },
+    });
+  });
+
+  test('reports a blocked handoff as not-success with the hook reason', async () => {
+    const handoffExecutor = stubHandoffExecutor(async () => ({
+      status: 'blocked',
+      stage: 'hook',
+      targetNodes: ['review'],
+      targetSlots: ['reviewer'],
+      delivered: [],
+      queued: [],
+      reason: 'PR not ready',
+      hook: { hookId: 'hook-pr-ready', result: { type: 'block' } },
+    }));
+    const config = makeConfig(ctx, { handoffExecutor });
+    const handlers = createNodeAgentToolHandlers(config);
+
+    const result = await handlers.handoff({ target: 'review', summary: 'go' });
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.success).toBe(false);
+    expect(data.status).toBe('blocked');
+    expect(data.reason).toBe('PR not ready');
+    expect(data.hookResultType).toBe('block');
+  });
+
+  test('returns an error when no handoff executor is configured', async () => {
+    const config = makeConfig(ctx); // no handoffExecutor
+    const handlers = createNodeAgentToolHandlers(config);
+
+    const result = await handlers.handoff({ target: 'review', summary: 'go' });
+    const data = JSON.parse(result.content[0].text);
+
+    expect(data.success).toBe(false);
+    expect(data.error).toContain('not available');
+  });
+
+  test('createNodeAgentMcpServer registers the handoff tool only when an executor is wired', () => {
+    const withoutExecutor = createNodeAgentMcpServer(makeConfig(ctx));
+    const withoutRegistered = Object.keys(
+      (
+        withoutExecutor as unknown as {
+          instance: { _registeredTools: Record<string, unknown> };
+        }
+      ).instance._registeredTools
+    );
+    expect(withoutRegistered).not.toContain('handoff');
+
+    const withExecutor = createNodeAgentMcpServer(
+      makeConfig(ctx, {
+        handoffExecutor: stubHandoffExecutor(async () => ({ status: 'delivered' })),
+      })
+    );
+    const withRegistered = Object.keys(
+      (
+        withExecutor as unknown as {
+          instance: { _registeredTools: Record<string, unknown> };
+        }
+      ).instance._registeredTools
+    );
+    expect(withRegistered).toContain('handoff');
   });
 });
 
