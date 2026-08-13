@@ -1933,7 +1933,10 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
                   error:
                     'Hook retry could not be persisted (state write failed); the action is ' +
                     'blocked — retry it again.',
-                  retryable: true,
+                  // NOT marked retryable: a timer-driven replay that lands here
+                  // has already had its timer consumed, and replayRetryableAction
+                  // only notifies/cleans non-retryable failures — a retryable
+                  // marker would stall the action silently until restart.
                   hookStatus: outcome.userState.status,
                   hookId: outcome.userState.hookId,
                   hookReason: outcome.userState.reason,

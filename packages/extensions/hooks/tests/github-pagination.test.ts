@@ -334,3 +334,23 @@ describe('ghGetCodexApproval — reaction back-pagination', () => {
     if (!result.ok) expect(result.retryable).toBe(true);
   });
 });
+
+describe('reviewThreads pageInfo completeness', () => {
+  test('a pageInfo object missing hasNextPage fails closed', async () => {
+    setGraphqlRunnerForTests(async () => ({
+      ok: true,
+      data: {
+        data: {
+          repository: {
+            pullRequest: {
+              reviewThreads: { nodes: [], pageInfo: { endCursor: 'Y3Vy' } },
+            },
+          },
+        },
+      },
+    }));
+    const result = await ghGetUnresolvedReviewThreads(CTX, PR_LINK);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('hasNextPage');
+  });
+});

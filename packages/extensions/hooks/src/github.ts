@@ -424,11 +424,12 @@ export async function ghGetUnresolvedReviewThreads(
       };
     }
     const info = extractThreadsPageInfo(result.data);
-    if (!info) {
+    if (!info || info.hasNextPage === undefined) {
       return {
         ok: false,
         retryable: true,
-        error: 'malformed reviewThreads connection (missing pageInfo); failing closed',
+        error:
+          'malformed reviewThreads connection (missing/corrupt pageInfo.hasNextPage); failing closed',
       };
     }
     urls.push(...extractUnresolvedThreads(result.data));
@@ -453,8 +454,11 @@ export function extractThreadsPageInfo(
   const pr = asRecord(asRecord(asRecord(root.data)?.repository)?.pullRequest);
   const pageInfo = asRecord(asRecord(pr?.reviewThreads)?.pageInfo);
   if (!pageInfo) return undefined;
+  // hasNextPage only when it is a real boolean: coercing a missing/corrupt
+  // value to `false` would make the caller treat a partial page as a
+  // complete scan.
   return {
-    hasNextPage: pageInfo.hasNextPage === true,
+    hasNextPage: typeof pageInfo.hasNextPage === 'boolean' ? pageInfo.hasNextPage : undefined,
     endCursor: typeof pageInfo.endCursor === 'string' ? pageInfo.endCursor : undefined,
   };
 }
@@ -535,7 +539,12 @@ export async function ghGetReviewEvidence(
     );
     const reviewsConnection = asRecord(prNode?.reviews);
     // Structural fail-closed (mirrors the other connections).
-    if (!Array.isArray(reviewsConnection?.nodes) || !asRecord(reviewsConnection?.pageInfo)) {
+    const evidencePageInfo = asRecord(reviewsConnection?.pageInfo);
+    if (
+      !Array.isArray(reviewsConnection?.nodes) ||
+      !evidencePageInfo ||
+      typeof evidencePageInfo.hasPreviousPage !== 'boolean'
+    ) {
       return {
         ok: false,
         retryable: true,
@@ -748,7 +757,12 @@ export async function ghGetCodexApproval(
     // Structural fail-closed: a malformed reviews connection (missing nodes
     // or pageInfo) must not be treated as a complete scan — an omitted
     // decisive CHANGES_REQUESTED could otherwise approve via the reaction path.
-    if (!Array.isArray(reviewsConnection?.nodes) || !asRecord(reviewsConnection?.pageInfo)) {
+    const codexPageInfo = asRecord(reviewsConnection?.pageInfo);
+    if (
+      !Array.isArray(reviewsConnection?.nodes) ||
+      !codexPageInfo ||
+      typeof codexPageInfo.hasNextPage !== 'boolean'
+    ) {
       return {
         ok: false,
         retryable: true,
