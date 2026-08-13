@@ -7310,17 +7310,22 @@ export class SpaceRuntime {
       const isRuntimeNagMessage =
         lastMessage?.type === 'user' && lastMessage.dbId === state.lastRuntimeNagMessageId;
       const progressMessage = lastMessage && !isRuntimeNagMessage ? lastMessage : null;
-      // Prefer `lastActivityAt` — it advances on real agent work (tool calls,
-      // peer-message delivery, PR commit pushes) that `updatedAt` and even the
-      // last SDK-message timestamp miss. A node actively pushing commits or
-      // exchanging messages must not be misread as stuck. Falls back to the
-      // prior chain when no activity has been recorded yet.
+      // Use the NEWEST applicable progress timestamp, not a ??-chain: once
+      // lastActivityAt is set it must not shadow a MORE RECENT SDK message (or
+      // vice versa), or the detector could nag/restart an agent that just made
+      // progress. lastActivityAt captures tool/message/commit activity that the
+      // SDK-message timestamp misses; take the max of every available signal
+      // and fall back to the runtime's last action (or now) only when none is
+      // present.
+      const progressCandidates = [
+        execution.lastActivityAt,
+        progressMessage?.timestamp,
+        execution.startedAt,
+      ].filter((t): t is number => typeof t === 'number');
       const observedAt =
-        execution.lastActivityAt ??
-        progressMessage?.timestamp ??
-        execution.startedAt ??
-        state.lastActionAt ??
-        now;
+        progressCandidates.length > 0
+          ? Math.max(...progressCandidates)
+          : (state.lastActionAt ?? now);
       const thresholdMs = this.getAgentNoProgressThresholdMs(workflow, execution);
 
       if (state.lastSessionId !== execution.agentSessionId) {
@@ -8763,12 +8768,17 @@ export class SpaceRuntime {
         }
       }
 
+      // Newest applicable progress timestamp — see handleAliveStuckExecutions
+      // for why this is a max rather than a ??-chain (a stale lastActivityAt
+      // must not shadow a newer SDK message).
+      const progressCandidates = [
+        execution.lastActivityAt,
+        state.lastObservedProgressMessageAt,
+        progressMessage?.timestamp,
+        execution.startedAt,
+      ].filter((t): t is number => typeof t === 'number');
       const observedAt =
-        execution.lastActivityAt ??
-        state.lastObservedProgressMessageAt ??
-        progressMessage?.timestamp ??
-        execution.startedAt ??
-        Date.now();
+        progressCandidates.length > 0 ? Math.max(...progressCandidates) : Date.now();
       const thresholdMs = workflow
         ? this.getAgentNoProgressThresholdMs(workflow, execution)
         : (this.config.agentNoProgressThresholdMs ?? DEFAULT_AGENT_NO_PROGRESS_THRESHOLD_MS);

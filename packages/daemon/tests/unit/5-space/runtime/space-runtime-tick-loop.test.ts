@@ -1552,6 +1552,42 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(nags[0].sessionId).toBe('session:stuck');
       expect(nags[0].message).toContain('[Runtime recovery notice]');
     });
+
+    test('does NOT nag when a recent SDK message is newer than a stale lastActivityAt', async () => {
+      // lastActivityAt is stale (an old tool call 20min ago) but a fresh SDK
+      // message shows the agent just made progress. The detector must take the
+      // NEWEST applicable timestamp — a stale lastActivityAt must not shadow a
+      // newer SDK message, or the agent gets nagged/restarted despite just
+      // having produced output. (Regression guard for the ??-chain ordering bug.)
+      const nags: Array<{ sessionId: string; message: string }> = [];
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        isSessionAlive: () => true,
+        getAgentSessionById: () => processingState('processing'),
+        injectRuntimeRecoveryMessage: async (sessionId, message) => {
+          nags.push({ sessionId, message });
+          return `runtime-nag:${sessionId}`;
+        },
+      });
+      const rt = new SpaceRuntime(buildConfig(tam, { agentNoProgressThresholdMs: 60_000 }));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session:recent-sdk',
+        startedAt: Date.now() - 20 * 60_000,
+      });
+      // Stale activity, fresh SDK message.
+      nodeExecutionRepo.touchLastActivity(execution.id, Date.now() - 20 * 60_000);
+      saveAssistantMessage('session:recent-sdk', { minutesAgo: 0, toolUse: true });
+
+      await rt.executeTick();
+
+      expect(nags).toEqual([]);
+      expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('in_progress');
+    });
   });
 
   // -------------------------------------------------------------------------
