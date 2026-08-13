@@ -1307,6 +1307,41 @@ describe('ChannelRouter', () => {
 
       expect(channelCycleRepo.countRecentCycleEvents(run.id, 0)).toBe(0);
     });
+
+    test('cyclic channel: a reservation persists when activation throws after reserve (self-healing)', async () => {
+      // Reserve-before-activation: if activation fails AFTER the reservation
+      // commits, one extra row remains. It biases safely toward blocking and
+      // ages out after the window — pin this documented edge.
+      const channels: WorkflowChannel[] = [
+        { id: 'ch-fwd', from: 'Coding', to: 'Review' },
+        { id: 'ch-bwd', from: 'Review', to: 'Coding' },
+      ];
+      const workflow = buildWorkflow(
+        SPACE_ID,
+        workflowManager,
+        [
+          { id: NODE_A, name: 'Coding', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+          { id: NODE_B, name: 'Review', agents: [{ agentId: AGENT_PLANNER, name: 'planner' }] },
+        ],
+        channels
+      );
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Orphan Reservation Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+      // Delete the target agent so activation throws AFTER the cyclic
+      // reservation has already committed (target resolution still succeeds
+      // because resolveNodeAgents does not validate agent existence).
+      db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(AGENT_CODER);
+
+      expect(channelCycleRepo.countRecentCycleEvents(run.id, 1)).toBe(0);
+      await expect(router.deliverMessage(run.id, 'planner', 'coder', 'orphan')).rejects.toThrow();
+      // The reservation row persisted despite the activation failure.
+      expect(channelCycleRepo.countRecentCycleEvents(run.id, 1)).toBe(1);
+    });
   });
 
   // -------------------------------------------------------------------------

@@ -118,6 +118,16 @@ describe('ChannelCycleRepository — windowed counting & pruning', () => {
     expect(repo.isDeadLoopReached(RUN_ID_A, 1, NOW)).toBe(false);
   });
 
+  test('exact window boundaries are inclusive on both ends', () => {
+    // sent_at == now - windowMs is counted (>= lower bound, survives prune via
+    // strict `<`); sent_at == now is counted (<= upper bound); one ms older than
+    // the lower bound is excluded.
+    repo.recordCycleEvent(RUN_ID_A, 1, NOW - WINDOW); // exactly on the lower edge
+    repo.recordCycleEvent(RUN_ID_A, 1, NOW); // exactly on the upper edge
+    repo.recordCycleEvent(RUN_ID_A, 1, NOW - WINDOW - 1); // one ms too old (pruned)
+    expect(repo.countRecentCycleEvents(RUN_ID_A, 1, NOW, WINDOW)).toBe(2);
+  });
+
   test('isDeadLoopReached flips at the threshold (explicit threshold/window)', () => {
     for (let i = 0; i < 14; i++) repo.recordCycleEvent(RUN_ID_A, 1, NOW + i * 1000);
     expect(repo.isDeadLoopReached(RUN_ID_A, 1, NOW + 14_000, 15, WINDOW)).toBe(false);

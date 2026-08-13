@@ -160,6 +160,13 @@ export interface SpaceRuntimeConfig {
    * that need DB access from injected helpers.
    */
   dbPath?: string;
+  /**
+   * Channel cycle repository for rate-based dead-loop detection on cyclic
+   * channels. Injected (mirroring ChannelRouter / TaskAgentManager) so the repo
+   * can be mocked in recovery tests and a single instance is shared. Auto-built
+   * from `db` when not supplied.
+   */
+  channelCycleRepo?: ChannelCycleRepository;
   /** Space manager for listing spaces and fetching workspace paths */
   spaceManager: SpaceManager;
   /** Agent manager for resolving agents */
@@ -6216,7 +6223,7 @@ export class SpaceRuntime {
     // traversed again. Once per daemon start is sufficient — abandoned-run
     // events are static (no further traversals add rows).
     try {
-      new ChannelCycleRepository(this.config.db).pruneAllOldEvents();
+      this.getCycleRepo().pruneAllOldEvents();
     } catch (err) {
       log.warn(
         `SpaceRuntime.recoverStalledRuns: failed to prune old cycle events: ${
@@ -6692,6 +6699,15 @@ export class SpaceRuntime {
     return false;
   }
 
+  /**
+   * Resolves the channel cycle repository, preferring the injected instance
+   * (mockable, shared) and falling back to one built from `db` for callers that
+   * don't wire it (e.g. lightweight tests).
+   */
+  private getCycleRepo(): ChannelCycleRepository {
+    return this.config.channelCycleRepo ?? new ChannelCycleRepository(this.config.db);
+  }
+
   private evaluateRestartRecoveryCycle(
     runId: string,
     workflow: SpaceWorkflow,
@@ -6703,7 +6719,7 @@ export class SpaceRuntime {
     }
     // Rate-based dead-loop detection: block only a runaway tight ping-pong,
     // never a genuine extended review spread over time.
-    const cycleRepo = new ChannelCycleRepository(this.config.db);
+    const cycleRepo = this.getCycleRepo();
     const recentCount = cycleRepo.countRecentCycleEvents(runId, channelIndex);
     if (recentCount >= DEAD_LOOP_THRESHOLD) {
       return {
@@ -6762,7 +6778,7 @@ export class SpaceRuntime {
     channelIndex: number
   ): void {
     if (!isChannelCyclic(channelIndex, workflow.channels ?? [], workflow.nodes)) return;
-    const cycleRepo = new ChannelCycleRepository(this.config.db);
+    const cycleRepo = this.getCycleRepo();
     cycleRepo.recordCycleEvent(runId, channelIndex);
   }
 
