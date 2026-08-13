@@ -21,7 +21,7 @@
  *   same state and expect the generated IDs to match.
  */
 
-import { generateUUID, normalizeThinkingLevel } from '@hyperneo/shared';
+import { BUILT_IN_HOOK_IDS, generateUUID, normalizeThinkingLevel } from '@hyperneo/shared';
 import type {
   SpaceWorkflow,
   CreateSpaceWorkflowParams,
@@ -306,8 +306,15 @@ function buildWorkflowFields(state: VisualEditorState): {
   }
   // Current hook ids — a carried transition whose hookId was removed (e.g. the
   // hook's source/target node was deleted) must be dropped, not emitted with a
-  // dangling reference that validateTransitions rejects.
-  const currentHookIds = new Set(state.hookBindings.map((b) => b.hookId));
+  // dangling reference that validateTransitions rejects. Registered built-in
+  // ids are always valid references (a transition may target one with no route
+  // binding — the backend manager and portable validator both admit that), so
+  // seed the set from the shared contract list as well.
+  const currentHookIds = new Set<string>([
+    ...BUILT_IN_HOOK_IDS,
+    ...state.hookBindings.map((b) => b.hookId),
+    ...state.customHooks.map((h) => h.id),
+  ]);
 
   const nodes = persistableNodes.map((node, i) => {
     const key = node.step.id ?? node.step.localId;

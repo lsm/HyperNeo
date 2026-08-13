@@ -458,15 +458,16 @@ export interface GithubCodexApproval {
 /**
  * The codex review-bot's login slug. The bot surfaces in TWO forms: as a `Bot`
  * `chatgpt-codex-connector` on review comments, and as a `User`
- * `chatgpt-codex-connector[bot]` on reactions. Match on the slug (not on
- * `__typename`, which differs between the two) so both count, and so a human
- * merely named "codex" does not.
+ * `chatgpt-codex-connector[bot]` on reactions. Match EXACTLY the two documented
+ * forms (not on `__typename`, which differs between the two) so both count,
+ * while a human whose login merely contains the slug (e.g.
+ * `chatgpt-codex-connector-x`) does not.
  */
-const CODEX_BOT_LOGIN = /chatgpt-codex-connector/i;
+const CODEX_BOT_LOGINS = new Set(['chatgpt-codex-connector', 'chatgpt-codex-connector[bot]']);
 
 function isCodexActor(author: unknown): boolean {
   const login = asRecord(author)?.login;
-  return typeof login === 'string' && CODEX_BOT_LOGIN.test(login);
+  return typeof login === 'string' && CODEX_BOT_LOGINS.has(login);
 }
 
 /**

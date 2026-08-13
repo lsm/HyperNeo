@@ -16,7 +16,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import type { HookBinding, HookStateSnapshot } from '@hyperneo/shared';
 import { connectionManager } from '../../lib/connection-manager';
-import { spaceStore } from '../../lib/space-store';
 
 export type HookBannerStatus = 'allowed' | 'blocked_by_hook' | 'waiting_on_hook_retry';
 
@@ -78,7 +77,7 @@ export function evaluateHookStatus(
  */
 export function useRunHookStates(
   runId: string | null | undefined,
-  workflowId: string | null | undefined
+  _workflowId: string | null | undefined
 ): {
   summaries: HookBannerSummary[] | undefined;
   fetchError: string | null;
@@ -86,25 +85,11 @@ export function useRunHookStates(
   /** True once the workflow definition contains hook bindings, even if none are pending. */
   hasHooks: boolean;
 } {
+  // Bindings come ONLY from the run-scoped listHookStates RPC, which the daemon
+  // deliberately answers with the run's PINNED definition. Sourcing them from
+  // the live workflow detail instead would let a mid-run edit (removed/renamed
+  // binding) hide or mislabel a blocked hook for the pinned run.
   const [hookBindings, setHookBindings] = useState<HookBinding[]>([]);
-  const workflowVersion = spaceStore.workflowVersions.value.get(workflowId ?? '') ?? 0;
-
-  useEffect(() => {
-    if (!workflowId) {
-      setHookBindings([]);
-      return;
-    }
-    let cancelled = false;
-    setHookBindings([]);
-    spaceStore.fetchWorkflowDetail(workflowId).then((wf) => {
-      if (cancelled) return;
-      if (wf) setHookBindings(wf.hookBindings ?? []);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [workflowId, workflowVersion]);
-
   const [hookStateMap, setHookStateMap] = useState<Map<string, HookStateSnapshot> | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [fetchAttempt, setFetchAttempt] = useState(0);
@@ -112,6 +97,7 @@ export function useRunHookStates(
   useEffect(() => {
     if (!runId) {
       setHookStateMap(null);
+      setHookBindings([]);
       setFetchError(null);
       return;
     }
@@ -150,9 +136,7 @@ export function useRunHookStates(
           for (const [hookId, data] of prev ?? []) merged.set(hookId, data);
           return merged;
         });
-        if (result.hookBindings.length > 0) {
-          setHookBindings(result.hookBindings);
-        }
+        setHookBindings(result.hookBindings);
       } catch (err: unknown) {
         if (cancelled) return;
         setFetchError(err instanceof Error ? err.message : 'Failed to load hook status');

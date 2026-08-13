@@ -37,5 +37,9 @@ export function resolveHook(
 ): ResolvedHook | undefined {
   const builtIn = BUILT_IN_HOOK_BY_ID.get(hookId);
   if (builtIn) return builtIn;
-  return customHooks?.find((hook) => hook.id === hookId);
+  // Defensive against malformed entries (e.g. a null element) reaching here
+  // despite validation — skip non-records instead of throwing.
+  return customHooks?.find((hook) => !!hook && typeof hook === 'object' && hook.id === hookId) as
+    | ResolvedHook
+    | undefined;
 }

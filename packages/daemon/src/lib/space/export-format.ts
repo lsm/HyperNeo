@@ -273,6 +273,38 @@ function asSupportedVersion(version: unknown): ExportVersion {
   return version as ExportVersion;
 }
 
+function asSupportedVersionOrUndefined(version: unknown): ExportVersion | undefined {
+  if (typeof version === 'number' && SUPPORTED_EXPORT_VERSIONS.has(version)) {
+    return version as ExportVersion;
+  }
+  return undefined;
+}
+
+/**
+ * Reject a pre-v4 workflow export that carries a legacy `hooks` array. The v4
+ * schema no longer declares that field, so accepting a v3 export with hooks
+ * would silently strip them and import the workflow with no hook enforcement
+ * (the hard-cut: old hook definitions are not migrated). Surface an actionable
+ * error instead of a lossy import.
+ */
+function rejectLegacyV3Hooks(
+  data: unknown,
+  version: ExportVersion | undefined,
+  label: string
+): string | null {
+  if (version === undefined || version >= 4) return null;
+  const raw = data as Record<string, unknown> | null;
+  const hooks = raw?.hooks;
+  if (Array.isArray(hooks) && hooks.length > 0) {
+    return (
+      `${label}: legacy v${version} \`hooks\` are not importable (the v2 hook model uses ` +
+      `\`hookBindings\`/\`customHooks\`, and old hook definitions are not migrated). ` +
+      `Re-export from a v4 daemon, or re-create the hooks as v2 bindings.`
+    );
+  }
+  return null;
+}
+
 /** Validates the version field; returns an error string or null. */
 function checkVersion(version: unknown): string | null {
   if (version === null || version === undefined) return 'invalid: version is required';
@@ -573,6 +605,8 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
   const versionError = checkVersion((data as Record<string, unknown>).version);
   if (versionError) return { ok: false, error: versionError };
   const version = asSupportedVersion((data as Record<string, unknown>).version);
+  const legacyError = rejectLegacyV3Hooks(data, version, 'workflow');
+  if (legacyError) return { ok: false, error: legacyError };
 
   const result = exportedWorkflowBaseSchema.safeParse(data);
   if (!result.success) {
@@ -777,6 +811,21 @@ export function validateExportBundle(data: unknown): ValidationResult<SpaceExpor
   const versionError = checkVersion((data as Record<string, unknown>).version);
   if (versionError) return { ok: false, error: versionError };
   const version = asSupportedVersion((data as Record<string, unknown>).version);
+  // Nested workflows may carry legacy v3 hooks even when the bundle root is v4
+  // (a hand-assembled bundle) — reject those too instead of stripping them.
+  const rawPeek = data as Record<string, unknown>;
+  const nestedRawWorkflows = Array.isArray(rawPeek.workflows) ? rawPeek.workflows : [];
+  for (let i = 0; i < nestedRawWorkflows.length; i++) {
+    const wf = nestedRawWorkflows[i];
+    const wfVersion =
+      typeof wf === 'object' && wf !== null ? (wf as Record<string, unknown>).version : undefined;
+    const legacyError = rejectLegacyV3Hooks(
+      wf,
+      asSupportedVersionOrUndefined(wfVersion),
+      `workflows[${i}]`
+    );
+    if (legacyError) return { ok: false, error: legacyError };
+  }
 
   const result = exportBundleBaseSchema.safeParse(data);
   if (!result.success) {

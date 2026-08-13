@@ -142,6 +142,21 @@ export interface CustomHook {
 // Layer 2 — the binding (placement on a workflow route)
 // ---------------------------------------------------------------------------
 
+/**
+ * The ids of the built-in hooks registered in `@hyperneo/extensions-hooks`.
+ * Part of the cross-package contract: consumers that cannot depend on the
+ * extensions package (the web client, portable validators) resolve binding and
+ * transition hookId references against this list. The extensions registry must
+ * keep it in sync.
+ */
+export const BUILT_IN_HOOK_IDS: readonly string[] = [
+  'pr_ready',
+  'review_posted',
+  'post_approval_only',
+  'pr_merged',
+  'codex_review_approved',
+];
+
 export interface HookAuthorizedCaller {
   sourceNode: string;
   agentSlots?: string[];

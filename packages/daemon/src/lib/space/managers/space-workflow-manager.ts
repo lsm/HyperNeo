@@ -974,15 +974,16 @@ export class SpaceWorkflowManager {
   }
 
   private validateHooks(bindings: unknown, customHooks: unknown, nodes: WorkflowNodeInput[]): void {
-    // Validate custom hooks first: validateWorkflowHookBindings calls resolveHook,
-    // whose `.find` would throw on a malformed (non-array / null-element)
-    // customHooks before returning the intended validation errors.
+    // Validate custom hooks FIRST, and do not resolve bindings when they are
+    // malformed: validateWorkflowHookBindings calls resolveHook, whose `.find`
+    // dereferences entries, so a non-array or null-element customHooks would
+    // throw a TypeError instead of surfacing the validation errors.
     const customErrors = validateCustomHooks(customHooks);
+    if (customErrors.length > 0) {
+      throw new WorkflowValidationError(customErrors.join('; '));
+    }
     const customHookArray = Array.isArray(customHooks) ? (customHooks as CustomHook[]) : undefined;
-    const errors = [
-      ...validateWorkflowHookBindings(bindings, customHookArray, nodes),
-      ...customErrors,
-    ];
+    const errors = validateWorkflowHookBindings(bindings, customHookArray, nodes);
     if (errors.length > 0) {
       throw new WorkflowValidationError(errors.join('; '));
     }

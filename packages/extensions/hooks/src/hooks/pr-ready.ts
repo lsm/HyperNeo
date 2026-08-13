@@ -72,6 +72,28 @@ export const prReadyHook: Hook = {
       };
     }
 
+    // Identity-immutability check: the reserved stamp is upserted per
+    // (run, node, type, key), so a re-run of pr_ready on the same node WOULD
+    // overwrite it. Downstream gates (post_approval_only, pr_merged) bind to
+    // that identity, so a swap to a different PR must not happen silently.
+    // Allow a re-stamp only when the previously reviewed PR is no longer open
+    // (a legitimate revision replacing a closed/unmerged PR); if it is still
+    // OPEN, the reviewed identity stands — stop.
+    const validated = getPrimaryLink(ctx);
+    if (validated && validated !== link) {
+      const prior = await ghGetPr(ctx, validated);
+      if (!prior.ok) return githubFailureToFlow(prior);
+      if (prior.data.state === 'OPEN') {
+        return {
+          flow: 'stop',
+          reason:
+            `PR is not ready for Review: this run's reviewed PR identity is already bound to ${validated} ` +
+            `(still OPEN). A different PR cannot replace it mid-run; continue with the reviewed PR, ` +
+            `or close it first if it genuinely needs replacing.`,
+        };
+      }
+    }
+
     // Stamp the run's authoritative PR identity under an ENGINE-RESERVED key.
     // `save_artifact` rejects `__`-prefixed keys, so a same-node agent (e.g. a
     // post-approval coder reused as the merger) cannot overwrite this with a
