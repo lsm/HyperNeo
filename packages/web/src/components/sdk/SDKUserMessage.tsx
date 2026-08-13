@@ -162,10 +162,10 @@ function UserMessageRetryControl({
     try {
       const result = await retryMessageDelivery(sessionId, messageDbId);
       if (!result.retried) {
-        toast('Message could not be retried — it may no longer be in a failed state.');
+        toast.error('Message could not be retried — it may no longer be in a failed state.');
       }
     } catch {
-      toast('Failed to retry message. Please try again.');
+      toast.error('Failed to retry message. Please try again.');
     } finally {
       setRetrying(false);
     }
