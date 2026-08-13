@@ -672,13 +672,22 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
       // dropped (a caller with no slots left authorizes the whole node).
       const previousAgents = previousNode?.step.agents ?? [];
       const nextAgents = step.agents ?? [];
-      const slotRename = new Map<string, string>();
-      for (let i = 0; i < Math.min(previousAgents.length, nextAgents.length); i++) {
-        const before = previousAgents[i]?.name;
-        const after = nextAgents[i]?.name;
-        if (before && after && before !== after) slotRename.set(before, after);
-      }
       const nextSlotNames = new Set(nextAgents.map((agent) => agent.name));
+      // Pair slots by NAME survival, not array index: deleting the first slot
+      // shifts indices, which an index pairing would misread as the deleted
+      // slot being "renamed" to the next one — silently re-scoping a caller
+      // to an unrelated agent. A rename is inferred only when exactly one old
+      // name vanished and exactly one new name appeared (the single-edit
+      // shape); anything else is treated as add/remove, and callers naming
+      // removed slots are dropped by the filter below.
+      const previousNames = previousAgents.map((agent) => agent.name);
+      const nextNames = nextAgents.map((agent) => agent.name);
+      const removedSlots = previousNames.filter((name) => !nextSlotNames.has(name));
+      const addedSlots = nextNames.filter((name) => !previousNames.includes(name));
+      const slotRename = new Map<string, string>();
+      if (removedSlots.length === 1 && addedSlots.length === 1) {
+        slotRename.set(removedSlots[0]!, addedSlots[0]!);
+      }
 
       setHookBindings((prev) =>
         prev

@@ -451,19 +451,35 @@ export class WorkflowHookEngine {
     // failure blocks the whole chain (fail closed — see readArtifactsForCtx).
     const ctxArtifacts = this.readArtifactsForCtx();
     if (ctxArtifacts === null) {
+      // Attribute the stop to the first matching binding so the wrapper has a
+      // per-hook entry to persist/publish — otherwise listHookStates shows no
+      // blocked hook and the task pane offers no banner for the failure.
+      const attributedHookId = sorted[0]?.hookId;
+      const reason =
+        'Hook context could not be read (artifact store failure); the action is blocked ' +
+        'rather than evaluated without the run’s recorded artifacts.';
       return {
         decision: 'stop',
         finalParams: params,
         followUpRequests: [],
         stateUpdates: [],
-        executionLog: [],
+        executionLog: attributedHookId
+          ? [
+              {
+                hookId: attributedHookId,
+                flow: 'stop' as HookFlow,
+                reason,
+                timestamp: Date.now(),
+              },
+            ]
+          : [],
         userState: {
           status: 'blocked',
           humanOverrideEligible: false,
-          reason:
-            'Hook context could not be read (artifact store failure); the action is blocked ' +
-            'rather than evaluated without the run’s recorded artifacts.',
+          hookId: attributedHookId,
+          reason,
         },
+        blockingHookId: attributedHookId,
       };
     }
 
@@ -588,7 +604,11 @@ export class WorkflowHookEngine {
         }
       } catch (err) {
         log.warn(`Hook "${hookId}" threw on ${methodName}: ${errorMessage(err)}`);
-        ret = { flow: 'stop', reason: 'Hook internal error' };
+        // Override-INELIGIBLE: the hook failed to produce a decision, so an
+        // approval must not convert this into a delivery (the gate never
+        // completed). Track it via the execution-log reason so the wrapper
+        // persists __overrideEligible=false.
+        ret = { flow: 'stop', reason: '__hook_internal_error__' };
       }
 
       const flow: HookFlow = VALID_FLOWS.has(ret.flow) ? ret.flow : 'stop';
@@ -604,6 +624,23 @@ export class WorkflowHookEngine {
       for (const followUp of built.queuedFollowUps) followUpRequests.push(followUp);
 
       if (flow === 'stop') {
+        const hookThrew = ret.reason === '__hook_internal_error__';
+        if (hookThrew) {
+          // Infrastructure stop — not a hook decision, not overridable.
+          terminal = {
+            kind: 'stop',
+            hookId,
+            overrideIneligible: true,
+            reason: `Hook "${hookId}" failed internally on ${methodName}; the action is blocked rather than delivered without a completed gate.`,
+          };
+          executionLog[executionLog.length - 1] = {
+            hookId,
+            flow: 'stop',
+            reason: terminal.reason,
+            timestamp: Date.now(),
+          };
+          break;
+        }
         if (approvalPending) {
           // Human override: the hook RAN (side effects — e.g. pr_ready's
           // identity stamp — landed), and its stop DECISION is overridden for
@@ -1873,8 +1910,14 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
           clearRetryableHookActionTimer(queuedActionKey);
         }
       }
-      engine.clearQueuedRetryableActionsForKey(actionKey);
-      clearRetryableHookActionTimer(actionKey);
+      // If this action's durable replay record survived the clear, KEEP the
+      // in-memory timer: it is the only thing preventing the rehydrated
+      // record from replaying an action already reported terminally blocked.
+      // (Removing the timer while the record persists would let a restart
+      // re-run it; the timer's replay re-evaluates the now-terminal gate.)
+      if (engine.clearQueuedRetryableActionsForKey(actionKey)) {
+        clearRetryableHookActionTimer(actionKey);
+      }
 
       for (const [hookId, patch] of byHook) {
         patch.retryCount = 0;

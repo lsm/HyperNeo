@@ -126,6 +126,39 @@ describe('WorkflowHookEngine.executeAction', () => {
     expect(outcome.userState.reason).toBe('blocked by script');
   });
 
+  test('a script-failure stop is a hook DECISION (approval may override it)', async () => {
+    // A script exiting non-zero produced an outcome — that is a decision, and
+    // an approval legitimately overrides it (run-then-override semantics).
+    const FAIL_HOOK = {
+      id: 'fail_hook',
+      requiredData: [],
+      run: { kind: 'script' as const, interpreter: 'bash' as const, source: 'exit 3' },
+    };
+    const workflow = makeWorkflow({
+      customHooks: [FAIL_HOOK],
+      hookBindings: [
+        {
+          hookId: 'fail_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    hookStateRepo.updateWithRetry('run-1', 'fail_hook', {
+      localState: { humanApproved: true, humanApprovedAt: 1 },
+      lastFlow: 'stop',
+    });
+    const engine = makeEngine(workflow);
+    const outcome = await engine.executeAction('send_message', sendParams(), META);
+    expect(outcome.decision).toBe('deliver');
+    // The one-shot approval was consumed by the override.
+    expect(hookStateRepo.get('run-1', 'fail_hook')?.localState.humanApproved).toBeUndefined();
+  });
+
   test('a human approval recorded against an unresolved hook does not bypass it', async () => {
     const workflow = makeWorkflow({
       hookBindings: [

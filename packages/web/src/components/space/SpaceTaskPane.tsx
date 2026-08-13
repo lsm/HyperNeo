@@ -263,7 +263,6 @@ export function SpaceTaskPane({
     summaries: hookSummaries,
     fetchError: hookFetchError,
     retry: retryHookFetch,
-    hasHooks: hasWorkflowHooks,
   } = useRunHookStates(_runId);
   const navigationSpaceIdForTask =
     routeSpaceId ?? currentSpaceIdSignal.value ?? spaceId ?? task?.spaceId;
@@ -705,7 +704,10 @@ export function SpaceTaskPane({
     hookSummaries as unknown as import('../../lib/task-banner').HookBannerSummary[]
   );
   const activeBanner =
-    hasWorkflowHooks && hookFetchError && _runId && resolvedBanner === null
+    // The fetch-error banner renders independently of hasHooks: on a FAILED
+    // initial listHookStates there is no binding data to gate on, and hiding
+    // the error (with its Retry) leaves hook status silently unknown.
+    hookFetchError && _runId && resolvedBanner === null
       ? ({ kind: 'hook_pending', runId: _runId } as const)
       : resolvedBanner;
   const showHeaderStatusBadge = activeBanner === null;
