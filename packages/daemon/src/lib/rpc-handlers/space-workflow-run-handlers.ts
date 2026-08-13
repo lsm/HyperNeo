@@ -841,6 +841,16 @@ export function setupSpaceWorkflowRunHandlers(
         'This block is a fail-closed infrastructure failure, not a hook decision — it cannot be approved. Resolve the underlying error and retry.'
       );
     }
+    // Compare-and-swap on the observed state: if the hook re-evaluated between
+    // the banner render and this approval (e.g. it naturally continued, or a
+    // NEW violation replaced the one the operator saw), the approval must not
+    // be recorded against the changed decision — a stale approval would later
+    // bypass an unrelated violation.
+    if (params.approved === true && existingState && existingState.lastFlow !== 'stop') {
+      throw new Error(
+        `Hook state changed since the block was displayed (lastFlow is now "${existingState.lastFlow ?? 'unset'}") — approve the current state, not the stale one.`
+      );
+    }
 
     const rejectionReason = params.reason?.trim() || 'Rejected by human';
     // updateWithRetry refreshes the expected version per attempt, so a

@@ -211,6 +211,12 @@ export function validateWorkflowHookBindings(
   for (let i = 0; i < bindings.length; i++) {
     const loc = `hookBindings[${i}]`;
     const binding = bindings[i];
+    // Shape guard FIRST: a non-object entry must produce the structured
+    // error below, not a TypeError reading .hookId off null.
+    if (!isRecord(binding)) {
+      errors.push(`${loc}: expected object`);
+      continue;
+    }
     if (
       typeof binding.hookId === 'string' &&
       binding.hookId.trim().length > 0 &&
@@ -222,10 +228,6 @@ export function validateWorkflowHookBindings(
       );
     } else if (typeof binding.hookId === 'string') {
       seenHookIds.add(binding.hookId);
-    }
-    if (!isRecord(binding)) {
-      errors.push(`${loc}: expected object`);
-      continue;
     }
 
     if (typeof binding.hookId !== 'string' || binding.hookId.trim().length === 0) {

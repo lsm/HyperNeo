@@ -336,15 +336,18 @@ export class WorkflowHookEngine {
     });
   }
 
-  getQueuedRetryableAction(_hookId: string): QueuedRetryableHookAction | undefined {
-    // One entry per action key (a hook can hold SEVERAL distinct queued
-    // actions — e.g. two different gated sends pending simultaneously);
-    // the singular accessor returns the newest for compatibility with
-    // same-key replacement checks.
-    const actions = this.getQueuedRetryableActions();
-    return actions.length > 0
-      ? actions.reduce((a, b) => (a.queuedAt >= b.queuedAt ? a : b))
-      : undefined;
+  getQueuedRetryableAction(hookId: string): QueuedRetryableHookAction | undefined {
+    // Scoped to the REQUESTED hook: a newer action under a DIFFERENT hook must
+    // not shadow this hook's entry (getHookIdsWithQueuedAction depends on it).
+    const state = this.config.hookStateRepo.get(this.config.workflowRunId, hookId)?.localState;
+    const map = state?.[QUEUED_RETRYABLE_ACTION_STATE_KEY];
+    if (!map || typeof map !== 'object' || Array.isArray(map)) return undefined;
+    let newest: QueuedRetryableHookAction | undefined;
+    for (const value of Object.values(map as Record<string, unknown>)) {
+      if (!isQueuedRetryableHookAction(value)) continue;
+      if (!newest || value.queuedAt >= newest.queuedAt) newest = value;
+    }
+    return newest;
   }
 
   getQueuedRetryableActions(): QueuedRetryableHookAction[] {
@@ -569,6 +572,27 @@ export class WorkflowHookEngine {
           attempts >= MAX_RETRY_ATTEMPTS ||
           (firstRetryAt !== undefined && elapsed >= MAX_RETRY_ELAPSED_MS)
         ) {
+          if (hookState?.localState.humanApproved === true) {
+            // Operator approved the terminal ceiling stop: consume and let the
+            // hook run (the approval must not wait out the remaining backoff).
+            const consumed = this.persistStateUpdate(hookId, {
+              localState: {
+                humanApproved: undefined,
+                humanApprovedAt: undefined,
+                humanRejectionReason: undefined,
+              },
+            });
+            if (consumed) {
+              executionLog.push({
+                hookId,
+                flow: 'continue',
+                reason: 'Human override: retry-ceiling stop overridden by approval',
+                timestamp: Date.now(),
+              });
+              continue;
+            }
+            // Consume-write failed: fall through to the terminal stop.
+          }
           terminal = {
             kind: 'stop',
             hookId,
@@ -857,9 +881,13 @@ export class WorkflowHookEngine {
         const patched = { ...currentParams, ...patch };
         const errors = this.validatePatchedParams(methodName, patched);
         if (errors.length > 0) {
+          // Protocol failure (the hook emitted a schema-invalid payload), not
+          // a policy decision — override-ineligible so a displayed approval
+          // is not silently burned re-creating the same stop.
           terminal = {
             kind: 'stop',
             hookId,
+            overrideIneligible: true,
             reason: `Patched params invalid: ${errors.join('; ')}`,
           };
           executionLog[executionLog.length - 1] = {

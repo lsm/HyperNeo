@@ -882,8 +882,8 @@ export async function ghGetCodexApproval(
         const rNodes = rConn?.nodes;
         if (Array.isArray(rNodes)) allReactionNodes.unshift(...rNodes);
         reactionPageInfo = asRecord(rConn?.pageInfo);
-        // Stop once the page reaches the head-push boundary: older reactions
-        // can never be fresh.
+        // Stop once the page reaches the head-push boundary (epoch compare —
+        // lexical ISO strings mis-order fractional vs whole seconds).
         const oldestR =
           Array.isArray(rNodes) && rNodes.length > 0 ? asRecord(rNodes[0]) : undefined;
         const oldestRAt = typeof oldestR?.createdAt === 'string' ? oldestR.createdAt : '';
@@ -891,7 +891,9 @@ export async function ghGetCodexApproval(
         const pushed = Array.isArray(commitNodes)
           ? asRecord(asRecord(commitNodes[0])?.commit)?.pushedDate
           : undefined;
-        if (!oldestRAt || typeof pushed !== 'string' || oldestRAt <= pushed) {
+        const oldestRMs = oldestRAt ? Date.parse(oldestRAt) : NaN;
+        const pushedMs = typeof pushed === 'string' ? Date.parse(pushed) : NaN;
+        if (!Number.isFinite(oldestRMs) || !Number.isFinite(pushedMs) || oldestRMs <= pushedMs) {
           reactionsComplete = true;
           break;
         }
