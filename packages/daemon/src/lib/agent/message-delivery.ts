@@ -361,6 +361,15 @@ export type DriveTurnOutcome =
 /**
  * Outcome of feeding a steer.
  * - `consumed` ⇒ the SDK consumed it (steered into the live turn).
+ * - `awaiting_acceptance` ⇒ (ACP only) the prompt reached the subprocess (onSent
+ *   ≡ onSubmitted), but the consume boundary is acceptance, which fires async
+ *   from the ACP runner. The handler parks the job (bounded) so it stays alive
+ *   rather than auto-completing at submission — if acceptance never comes the
+ *   job dead-letters → `failed` (surfaces) instead of stranding the row with no
+ *   job to retry it. On re-run the row is `submitted`/`consumed` (settled by the
+ *   handler's skip/alreadyConsumed paths) or still `enqueued` with the message
+ *   already admitted (the bridge suppresses the re-admit), so this never
+ *   re-feeds.
  * - `promote` ⇒ no live turn; re-enqueue as a turn.
  * - `park` ⇒ the owning turn is BLOCKED (sdk_resume_choice, session `queued`),
  *   not actively processing — the steer can neither feed (no live generator) nor
@@ -370,6 +379,7 @@ export type DriveTurnOutcome =
  */
 export type FeedSteerOutcome =
   | { outcome: 'consumed' }
+  | { outcome: 'awaiting_acceptance' }
   | { outcome: 'promote' }
   | { outcome: 'park' }
   | { outcome: 'aborted' };

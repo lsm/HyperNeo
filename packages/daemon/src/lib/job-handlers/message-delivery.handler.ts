@@ -255,6 +255,25 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       deps.jobQueue.requeueParked(job.id, retryAt, job.claimToken);
       return { parked: 'turn_blocked', retryAt };
     }
+    if (result.outcome === 'awaiting_acceptance') {
+      // ACP steer: the prompt reached the subprocess (onSent ≡ onSubmitted) but
+      // the consume boundary is acceptance, which fires async from the ACP
+      // runner. Park bounded so the job stays alive instead of auto-completing
+      // at submission — if acceptance never comes this dead-letters → `failed`
+      // (surfaces) rather than stranding the row with no job to retry it. On
+      // re-run the row is `submitted`/`consumed` (settled by the skip /
+      // alreadyConsumed paths above) or still `enqueued` with the message
+      // already admitted (the bridge suppresses the re-admit), so this path
+      // never re-feeds. Same bound as a turn-blocked park.
+      if (deps.jobQueue.getParkCount(job.id) >= MAX_STEER_PARKS) {
+        throw new DeadLetterImmediatelyError(
+          'ACP steer awaited acceptance past its budget — subprocess never accepted'
+        );
+      }
+      const retryAt = Date.now() + MESSAGE_DELIVERY_PARK_MS;
+      deps.jobQueue.requeueParked(job.id, retryAt, job.claimToken);
+      return { parked: 'acp_awaiting_acceptance', retryAt };
+    }
     if (result.outcome === 'promote') {
       // The turn ended between enqueue and claim — convert THIS job to a turn
       // in place (requeueAs) rather than completing it + enqueuing a second.

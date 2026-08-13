@@ -763,6 +763,29 @@ describe('handler — status-aware delivery (§8)', () => {
     expect(after?.runAt ?? 0).toBeGreaterThan(before);
   });
 
+  it('an ACP steer awaiting acceptance is PARKED (kept alive), not auto-completed', async () => {
+    // ACP's consume boundary is acceptance (markMessageAccepted), which fires
+    // async from the runner — so the bridge reports awaiting-acceptance instead
+    // of consumed. The handler must park (keep the job alive) rather than
+    // auto-completing at submission, or the row strands if acceptance never
+    // comes. See feedDeliverySteer / message-delivery.handler.
+    const session = new MockSession();
+    session.feedResult = { outcome: 'awaiting_acceptance' };
+    const job = steerJob(repo, 'msg-acp-accept');
+    const handler = createMessageDeliveryHandler({
+      jobQueue: repo,
+      getSession: () => session,
+      getMessageContent: () => ({ content: 'steer', sendStatus: 'enqueued' }),
+    });
+    const before = Date.now();
+    const result = await handler(job);
+    expect(result).toMatchObject({ parked: 'acp_awaiting_acceptance' });
+    const after = repo.getJob(job.id);
+    expect(after?.status).toBe('pending'); // parked (alive), not completed
+    expect(after?.runAt ?? 0).toBeGreaterThan(before);
+    expect(session.feedCalls).toBe(1);
+  });
+
   it('turn aborted (archive/removePending at feed time) → completes without feeding (#3742774841/#3696)', async () => {
     const session = new MockSession();
     session.driveResult = { outcome: 'aborted' };
@@ -1111,5 +1134,31 @@ describe('message-delivery v2 — steer park bound (dead-letter after MAX_STEER_
     // The next attempt exceeds the budget → the handler throws so the processor
     // dead-letters the job (→ message flipped to `failed` with a Retry affordance).
     await expect(handler(current)).rejects.toThrow(/parked past its budget/);
+  });
+
+  it('ACP awaiting-acceptance parks up to the budget, then dead-letters', async () => {
+    // Same bound as a turn-blocked park: an ACP steer whose acceptance never
+    // comes must surface as `failed` (Retry affordance) instead of parking
+    // silently forever or stranding the row with no job to retry it.
+    const session = new MockSession();
+    session.feedResult = { outcome: 'awaiting_acceptance' };
+    const handler = createMessageDeliveryHandler({
+      jobQueue: repo,
+      getSession: () => session,
+      getMessageContent: () => ({ content: 'steer', sendStatus: 'enqueued' }),
+    });
+
+    let current = steerJob(repo, 'msg-acp-accept-bound');
+    for (let i = 0; i < MAX_STEER_PARKS; i++) {
+      const result = await handler(current);
+      expect(result).toMatchObject({ parked: 'acp_awaiting_acceptance' });
+      expect(repo.getJob(current.id)?.retryCount).toBe(0); // parking is not a retry
+      db.prepare(`UPDATE job_queue SET run_at = 0 WHERE id = ?`).run(current.id);
+      const [next] = repo.dequeue(MESSAGE_DELIVERY, 1);
+      expect(next).toBeTruthy();
+      current = next!;
+    }
+    expect(repo.getParkCount(current.id)).toBeGreaterThanOrEqual(MAX_STEER_PARKS);
+    await expect(handler(current)).rejects.toThrow(/awaited acceptance past its budget/);
   });
 });

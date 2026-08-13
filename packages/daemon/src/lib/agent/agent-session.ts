@@ -2344,6 +2344,17 @@ export class AgentSession
       // excluded by this same lock. 'queued' → parked owner, so park this steer.
       if (status === 'processing') {
         if (!this.messageDeliveryValid(messageUuid)) return { kind: 'aborted' as const };
+        // ACP: if this steer was already admitted and is still pending subprocess
+        // acceptance (a parked re-run), do NOT re-admit — admitWithId is not
+        // idempotent, so a second push would duplicate the prompt. Keep awaiting
+        // acceptance (the handler parks again). The non-ACP path never reaches a
+        // re-admit: a consumed steer short-circuits via alreadyConsumed upstream.
+        if (
+          this.session.config.provider === 'acp' &&
+          this.messageQueue.hasPendingOrInFlight(messageUuid)
+        ) {
+          return { kind: 'awaiting_acceptance' as const };
+        }
         const acknowledgment = this.messageQueue.admitWithId(messageUuid, content, false, {
           durable: true,
         });
@@ -2362,6 +2373,10 @@ export class AgentSession
     if (action.kind === 'aborted') {
       return { outcome: 'aborted' };
     }
+    if (action.kind === 'awaiting_acceptance') {
+      // ACP re-run while the already-admitted steer is still pending acceptance.
+      return { outcome: 'awaiting_acceptance' };
+    }
     // Admission happened atomically under the lock; only the provider
     // acknowledgment is awaited here.
     await action.acknowledgment;
@@ -2374,15 +2389,18 @@ export class AgentSession
     if (this.session.config.provider !== 'acp') {
       this.markDeliveryConsumed(messageUuid);
       signalDeliveryConsumed(this.session.id, messageUuid);
+      return { outcome: 'consumed' };
     }
-    // NOTE (ACP gap): for ACP the row stays `enqueued` until `markMessageAccepted`
-    // fires from the ACP runner, yet we return `consumed` here — the job auto-
-    // completes and, if acceptance never comes, the row is stranded `enqueued`
-    // with no job to retry it. A proper fix needs an acceptance-aware steer
-    // outcome (park-until-accepted) rather than auto-completing at submission.
-    // Deferred: ACP is a niche provider and the common case (Claude SDK / glm)
-    // is unaffected. Tracked as a follow-up.
-    return { outcome: 'consumed' };
+    // ACP: onSent fired (≡ onSubmitted → the row is now `submitted`), but the
+    // consume boundary is acceptance (markMessageAccepted), which fires async
+    // from the ACP runner. Report awaiting-acceptance instead of `consumed` so
+    // the handler parks the job (keeps it alive) rather than auto-completing at
+    // submission — if acceptance never comes the job dead-letters → `failed`
+    // (surfaces) instead of stranding the row. On re-run the row is
+    // `submitted`/`consumed` (settled by the handler's skip/alreadyConsumed
+    // paths) or still `enqueued` with the message already admitted (the
+    // re-admit guard above suppresses a duplicate feed).
+    return { outcome: 'awaiting_acceptance' };
   }
 
   /**
