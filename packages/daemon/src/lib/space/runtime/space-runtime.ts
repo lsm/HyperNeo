@@ -4693,18 +4693,29 @@ export class SpaceRuntime {
     // are never traversed again). Blocked runs keep their history: they can be
     // reopened/retried, and a persisted dead-loop state must keep applying.
     if (nextStatus === 'done' || nextStatus === 'cancelled') {
-      try {
-        this.getCycleRepo().resetAllForRun(runId);
-      } catch (err) {
-        log.warn(
-          `[SpaceRuntime] failed to clear cycle events for terminal run ${runId}: ${
-            err instanceof Error ? err.message : String(err)
-          }`
-        );
-      }
+      this.clearRunCycleEvents(runId);
     }
     await this.safeOnWorkflowRunUpdated(updated.spaceId, updated);
     return updated;
+  }
+
+  /**
+   * Clears a run's cyclic-channel dead-loop event history. Called on every
+   * terminal transition (done/cancelled) routed through
+   * {@link transitionRunStatusAndEmit}, and exposed so callers that cancel runs
+   * by other paths (e.g. `SpaceRuntimeService.stopActiveWork`) can do the same.
+   * Best-effort: a failure is logged, never thrown.
+   */
+  clearRunCycleEvents(runId: string): void {
+    try {
+      this.getCycleRepo().resetAllForRun(runId);
+    } catch (err) {
+      log.warn(
+        `[SpaceRuntime] failed to clear cycle events for terminal run ${runId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+    }
   }
 
   /**
@@ -6623,8 +6634,9 @@ export class SpaceRuntime {
         // ChannelRouter surfacing) so it is not mistaken for a generic stall —
         // once per (run, channel) incident.
         if (cycleResult.deadLoop && !notifiedDeadLoopChannels.has(channelIndex)) {
-          notifiedDeadLoopChannels.add(channelIndex);
-          await this.notifyRecoveryDeadLoop(
+          // Record dedup only on a successful publish — a failed publish must
+          // remain retryable on the next stalled transition in this pass.
+          const notified = await this.notifyRecoveryDeadLoop(
             run,
             channel,
             channelIndex,
@@ -6632,6 +6644,7 @@ export class SpaceRuntime {
             targetNames,
             cycleResult.recentCount
           );
+          if (notified) notifiedDeadLoopChannels.add(channelIndex);
         }
         continue;
       }
@@ -6762,7 +6775,10 @@ export class SpaceRuntime {
    * Best-effort: publish a `space.workflowRun.deadLoop` event when restart
    * recovery finds a cyclic channel already in a dead loop, so the human sees
    * the block in the UI rather than a generic stall. Mirrors the live
-   * `ChannelRouter.notifyDeadLoop` surfacing. Failures are swallowed.
+   * `ChannelRouter.notifyDeadLoop` surfacing. Returns `true` on a successful
+   * publish, `false` when no bus is configured or the publish threw — callers
+   * use that to record dedup only on success (a failed publish must be
+   * retryable on the next pass, not permanently suppressed).
    */
   private async notifyRecoveryDeadLoop(
     run: SpaceWorkflowRun,
@@ -6771,8 +6787,8 @@ export class SpaceRuntime {
     fromAgent: string,
     toTargets: string[],
     recentCount: number
-  ): Promise<void> {
-    if (!this.internalEventBus) return;
+  ): Promise<boolean> {
+    if (!this.internalEventBus) return false;
     const channelLabel = channel.id ?? channelIndex;
     try {
       await this.internalEventBus.publish('space.workflowRun.deadLoop', {
@@ -6788,12 +6804,14 @@ export class SpaceRuntime {
         reason: `Cyclic channel "${channelLabel}" is in a dead loop (detected during restart recovery): ${recentCount} message round-trips within the rate window.`,
         timestamp: new Date().toISOString(),
       } satisfies DaemonInternalEventMap['space.workflowRun.deadLoop'] & InternalEventPayload);
+      return true;
     } catch (err) {
       log.warn(
         `[SpaceRuntime] deadLoop notify threw during recovery: ${
           err instanceof Error ? err.message : String(err)
         }`
       );
+      return false;
     }
   }
 
@@ -6823,10 +6841,20 @@ export class SpaceRuntime {
           if (this.surfacedDeadLoopChannels.has(key)) continue;
           const recentCount = cycleRepo.countRecentCycleEvents(run.id, i);
           if (recentCount < DEAD_LOOP_THRESHOLD) continue;
-          this.surfacedDeadLoopChannels.add(key);
           const channel = channels[i];
           const toTargets = Array.isArray(channel.to) ? channel.to : [channel.to];
-          await this.notifyRecoveryDeadLoop(run, channel, i, channel.from, toTargets, recentCount);
+          // Record dedup only on a successful publish — a failed publish (e.g.
+          // session temporarily unavailable) must stay retryable on the next
+          // catch-up pass instead of being permanently suppressed.
+          const notified = await this.notifyRecoveryDeadLoop(
+            run,
+            channel,
+            i,
+            channel.from,
+            toTargets,
+            recentCount
+          );
+          if (notified) this.surfacedDeadLoopChannels.add(key);
         }
       }
     }

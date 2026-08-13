@@ -1227,6 +1227,11 @@ export class SpaceRuntimeService {
       // Clear run interests explicitly so a later space start (which drops the
       // hold cache) cannot match events against cancelled-run targets.
       this.runtime.clearRunInterests(run.id);
+      // Drop the cancelled run's dead-loop event history — this path bypasses
+      // SpaceRuntime.transitionRunStatusAndEmit (which does this for normal
+      // terminal transitions), so without it stop/cancel on a long-lived
+      // daemon would leak channel_cycle_events rows.
+      this.runtime.clearRunCycleEvents(run.id);
     }
 
     log.info(
