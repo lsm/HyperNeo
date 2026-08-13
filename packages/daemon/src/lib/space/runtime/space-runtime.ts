@@ -218,6 +218,13 @@ export interface SpaceRuntimeConfig {
    */
   queueHealthMetrics?: ExternalEventQueueMetrics;
   /**
+   * Per-target recoverable-failure cool-down window for external-event
+   * injection (ms). Defaults to {@link EXTERNAL_EVENT_DELIVERY_COOLDOWN_MS}
+   * (env `HYPERNEO_EXTERNAL_EVENT_DELIVERY_COOLDOWN_MS`, default 30s). Exposed
+   * primarily for tests; production omits it to use the env default.
+   */
+  externalEventDeliveryCooldownMs?: number;
+  /**
    * Completion detector — inspects the canonical `SpaceTask` to decide whether
    * a workflow run is complete or ready for runtime resolution.
    *
@@ -546,6 +553,22 @@ const EXTERNAL_EVENT_RATE_WINDOW_MS = 60_000;
 const EXTERNAL_EVENT_RATE_LIMIT_PER_MIN = parsePositiveIntegerEnv(
   'EXTERNAL_EVENT_RATE_LIMIT_PER_MIN',
   10
+);
+/**
+ * Per-target cool-down applied after a RECOVERABLE external-event delivery
+ * failure (the dispatch threw non-terminally). While a target is within this
+ * window of its last recoverable failure, new injections for it are SKIPPED —
+ * the event stays `published` and re-evaluates on the next source re-poll — so a
+ * target session stuck in a provider-error loop no longer mints a fresh
+ * `failed` user-message row (fresh UUID) on every re-poll. The cool-down lifts
+ * after the window; the core turn-recovery fix (this PR) recovers the session
+ * within it. Terminal failures (subscription gone, task terminal, missing
+ * command handler) do NOT arm the cool-down — they are done. Bounded by
+ * {@link SpaceRuntime.externalEventDeliveryCooldowns}.
+ */
+const EXTERNAL_EVENT_DELIVERY_COOLDOWN_MS = parsePositiveIntegerEnv(
+  'HYPERNEO_EXTERNAL_EVENT_DELIVERY_COOLDOWN_MS',
+  30_000
 );
 /**
  * TTL for pending external-event deliveries that are waiting for their target
@@ -974,6 +997,25 @@ export class SpaceRuntime {
   private readonly longHorizonSubscriptionPatterns = new Map<string, string>();
   private readonly externalEventRateLimits = new Map<string, ExternalEventRateLimitState>();
   /**
+   * Per-delivery cool-down: maps a delivery key (event + target — see
+   * {@link buildDeliveryKey}) to the epoch ms of its last RECOVERABLE delivery
+   * failure. While `now - lastFailureAt < {@link deliveryCooldownMs}`, a FRESH
+   * dispatch (publish / re-poll) of that same delivery is skipped in
+   * {@link handleExternalEventImpl} so a session stuck in a provider-error loop
+   * does not mint a fresh `failed` user-message row on every source re-poll of
+   * the same event. Distinct events and the bounded retry path
+   * ({@link scheduleExternalEventRetry}, which bypasses
+   * {@link handleExternalEventImpl}) are unaffected. Entries hold only a
+   * timestamp (no timers) and expire lazily in
+   * {@link isDeliveryInDeliveryCooldown}.
+   */
+  private readonly externalEventDeliveryCooldowns = new Map<string, number>();
+  /**
+   * Active cool-down window (ms). Bound from config at construction so tests can
+   * shrink it; production uses {@link EXTERNAL_EVENT_DELIVERY_COOLDOWN_MS}.
+   */
+  private readonly deliveryCooldownMs: number;
+  /**
    * Pending external-event queue health counters. Defaults to a fresh
    * in-memory instance; the service wires the store's delivery-terminal hook
    * to the same instance (when shared) so terminal outcomes are counted once.
@@ -1041,6 +1083,8 @@ export class SpaceRuntime {
       this.workflowEventSubscriptionRepo.ensureSchema();
     }
     this.queueHealthMetrics = config.queueHealthMetrics ?? new ExternalEventQueueMetrics();
+    this.deliveryCooldownMs =
+      config.externalEventDeliveryCooldownMs ?? EXTERNAL_EVENT_DELIVERY_COOLDOWN_MS;
     this.subscribeExternalEventPublished();
     this.subscribeSdkToolUseCreated();
     this.unsubscribeSpaceResumed = this.config.spaceManager.onSpaceResumedRegister?.((spaceId) =>
@@ -2262,6 +2306,23 @@ export class SpaceRuntime {
     }
 
     for (const { target, deliveryKey } of workflowDeliveries.values()) {
+      // Failure-aware cool-down: a delivery whose last dispatch failed
+      // RECOVERABLY is skipped for a bounded window on FRESH dispatches (a newly
+      // published or re-polled event). Without this, a session stuck in a
+      // provider-error loop mints a fresh `failed` user-message row on every
+      // source re-poll of the same event (each injection generates a new UUID).
+      // The event stays `published` (delivery pending) and re-evaluates once the
+      // window lifts; the core turn-recovery fix recovers the session in the
+      // meantime. Keyed per-delivery so distinct events still flow (the burst
+      // rate-limit / digest coalesces them) and only re-dispatches of an
+      // already-failed delivery are gated. The bounded retry path
+      // (scheduleExternalEventRetry) does NOT pass through here, so legitimate
+      // transient-failure retries are unaffected. Terminal failures never arm
+      // the cool-down.
+      if (this.isDeliveryInDeliveryCooldown(deliveryKey)) {
+        this.queueHealthMetrics.recordCooldownSkip();
+        continue;
+      }
       await this.deliverExternalEventToWorkflowTarget(target, payload, deliveryKey);
     }
   }
@@ -3142,6 +3203,10 @@ export class SpaceRuntime {
         store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
         return;
       }
+      // Recoverable dispatch failure — arm the per-delivery cool-down so a
+      // source re-poll of this same event skips re-injection (no fresh `failed`
+      // row) while the bounded retry path below still drives recovery.
+      this.armDeliveryCooldown(deliveryKey);
       const queued = this.getQueuedDelivery(target, deliveryKey);
       this.queueForRetry(
         target,
@@ -3832,6 +3897,32 @@ export class SpaceRuntime {
     target: Pick<WorkflowSubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>
   ): string {
     return JSON.stringify([target.workflowRunId, target.taskId, target.nodeId, target.agentName]);
+  }
+
+  /**
+   * Whether the delivery identified by `deliveryKey` is within its
+   * recoverable-failure cool-down window. Entries past the window are reaped
+   * lazily. The arm ({@link deliverToSession}) and the gate
+   * ({@link handleExternalEventImpl}) share the same delivery key, so a
+   * re-published event whose delivery already failed recoverably is skipped
+   * while distinct events and the bounded retry path proceed.
+   */
+  private isDeliveryInDeliveryCooldown(deliveryKey: string): boolean {
+    const lastFailureAt = this.externalEventDeliveryCooldowns.get(deliveryKey);
+    if (lastFailureAt === undefined) return false;
+    if (Date.now() - lastFailureAt < this.deliveryCooldownMs) return true;
+    this.externalEventDeliveryCooldowns.delete(deliveryKey);
+    return false;
+  }
+
+  /**
+   * Arm (or refresh) the recoverable-failure cool-down for a delivery.
+   * Subsequent FRESH dispatches (publish / re-poll) of the same delivery within
+   * {@link deliveryCooldownMs} are skipped by {@link handleExternalEventImpl};
+   * the event stays `published` and re-evaluates once the window lifts.
+   */
+  private armDeliveryCooldown(deliveryKey: string): void {
+    this.externalEventDeliveryCooldowns.set(deliveryKey, Date.now());
   }
 
   private getExternalEventRateLimitState(rateLimitKey: string): ExternalEventRateLimitState {
@@ -4999,6 +5090,7 @@ export class SpaceRuntime {
       }
     }
     this.externalEventRateLimits.clear();
+    this.externalEventDeliveryCooldowns.clear();
     this.acceptingExternalEvents = false;
     if (this.tickTimer !== null) {
       clearInterval(this.tickTimer);

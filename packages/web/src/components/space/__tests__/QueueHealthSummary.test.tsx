@@ -36,6 +36,7 @@ const sampleSnapshot = {
     claimConflicts: 1,
     staleSessionSkips: 2,
     pausedSpaceSkips: 0,
+    cooldownSkips: 0,
   },
   failuresByCategory: {
     ttl_expired: 1,

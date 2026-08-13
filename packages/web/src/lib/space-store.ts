@@ -130,6 +130,7 @@ export interface QueueHealthCounters {
   claimConflicts: number;
   staleSessionSkips: number;
   pausedSpaceSkips: number;
+  cooldownSkips: number;
 }
 
 /** Live queue gauges computed at read time. */
