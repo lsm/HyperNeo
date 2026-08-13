@@ -124,8 +124,9 @@ describe('ghGetCodexApproval — pagination loop', () => {
     const result = await ghGetCodexApproval(CTX, PR_LINK);
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.data.approved).toBe(true);
-    // Page 1 has no after; pages 2+ carry the previous page's endCursor.
-    expect(seenAfters).toEqual([null, 'Y3Vyc29yXzE', 'Y3Vyc29yXzI']);
+    // Page 1 has no after; pages 2+ carry the previous page's endCursor; the
+    // final entry is the post-scan HEAD RECHECK query (no reviews cursor).
+    expect(seenAfters).toEqual([null, 'Y3Vyc29yXzE', 'Y3Vyc29yXzI', null]);
   });
 
   test('cap exhaustion fails closed with a retryable error', async () => {
