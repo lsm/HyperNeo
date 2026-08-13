@@ -45,7 +45,10 @@ import {
   PendingAgentMessageRepository,
   DEFAULT_PENDING_MESSAGE_RETENTION_MS,
 } from '../../../../src/storage/repositories/pending-agent-message-repository.ts';
-import { ChannelCycleRepository } from '../../../../src/storage/repositories/channel-cycle-repository.ts';
+import {
+  ChannelCycleRepository,
+  DEAD_LOOP_WINDOW_MS,
+} from '../../../../src/storage/repositories/channel-cycle-repository.ts';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
@@ -1588,6 +1591,119 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       const taskManager = new SpaceTaskManager(db, SPACE_ID);
       await taskManager.setTaskStatus(task.id, 'archived');
       expect(cycleRepo.countRecentCycleEvents(run.id, 1)).toBe(0);
+    });
+
+    test('clearing run dead-loop history waits until ALL its tasks are archived', async () => {
+      // A legacy/inconsistent run can carry more than one task. ChannelRouter
+      // keeps the run reopenable until every task is archived, so the dead-loop
+      // cleanup must wait for the last task too — otherwise a still-live sibling
+      // could resume a runaway with a fresh budget.
+      const workflow = buildLinearWorkflow(
+        SPACE_ID,
+        workflowManager,
+        [
+          { id: STEP_A, name: 'Coding', agentId: AGENT },
+          { id: STEP_B, name: 'Review', agentId: AGENT },
+        ],
+        {
+          channels: [
+            { id: 'coding-to-review', from: 'Coding', to: 'Review' },
+            { id: 'review-to-coding', from: 'Review', to: 'Coding', maxCycles: 1 },
+          ],
+          endNodeId: STEP_B,
+        }
+      );
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Multi-task run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+      const taskA = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Multi-task A',
+        description: '',
+        workflowRunId: run.id,
+        workflowNodeId: STEP_A,
+        status: 'open',
+      });
+      const taskB = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Multi-task B',
+        description: '',
+        workflowRunId: run.id,
+        workflowNodeId: STEP_B,
+        status: 'open',
+      });
+      const cycleRepo = new ChannelCycleRepository(db);
+      const now = Date.now();
+      for (let i = 0; i < 3; i++) cycleRepo.recordCycleEvent(run.id, 1, now - i * 1000);
+      expect(cycleRepo.countRecentCycleEvents(run.id, 1)).toBe(3);
+
+      const taskManager = new SpaceTaskManager(db, SPACE_ID);
+      // Archive one of two tasks → a live sibling remains → history retained.
+      await taskManager.setTaskStatus(taskA.id, 'archived');
+      expect(cycleRepo.countRecentCycleEvents(run.id, 1)).toBe(3);
+      // Archive the remaining task → all archived (true tombstone) → cleared.
+      await taskManager.setTaskStatus(taskB.id, 'archived');
+      expect(cycleRepo.countRecentCycleEvents(run.id, 1)).toBe(0);
+    });
+
+    test('pruneExpiredCycleEvents drops window-aged retained history (throttled)', async () => {
+      // Reopenable done/cancelled runs are never traversed again, so their
+      // retained rows are never lazy-pruned. The periodic tick sweep must
+      // physically delete window-aged rows so the table cannot grow unbounded
+      // between restarts — without touching in-window rows.
+      const workflow = buildLinearWorkflow(
+        SPACE_ID,
+        workflowManager,
+        [
+          { id: STEP_A, name: 'Coding', agentId: AGENT },
+          { id: STEP_B, name: 'Review', agentId: AGENT },
+        ],
+        {
+          channels: [
+            { id: 'coding-to-review', from: 'Coding', to: 'Review' },
+            { id: 'review-to-coding', from: 'Review', to: 'Coding', maxCycles: 1 },
+          ],
+          endNodeId: STEP_B,
+        }
+      );
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Prune sweep',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+      taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Prune sweep',
+        description: '',
+        workflowRunId: run.id,
+        workflowNodeId: STEP_A,
+        status: 'in_progress',
+      });
+      const cycleRepo = new ChannelCycleRepository(db);
+      const now = Date.now();
+      cycleRepo.recordCycleEvent(run.id, 1, now - 1000); // in-window (fresh)
+      cycleRepo.recordCycleEvent(run.id, 1, now - DEAD_LOOP_WINDOW_MS - 60_000); // stale
+
+      const runtime = makeRuntime({
+        pendingMessageRepo: new PendingAgentMessageRepository(db),
+      });
+      // Cancel the run (reopenable) → both rows retained.
+      await runtime.cancelWorkflowRun(SPACE_ID, run.id);
+
+      // First sweep drops only the stale row; the fresh row stays.
+      runtime.pruneExpiredCycleEvents(now);
+      expect(cycleRepo.countRecentCycleEvents(run.id, 1)).toBe(1);
+
+      // Throttle: a second sweep inside the window is a no-op, so a newly
+      // seeded stale row survives until the next window. resetAllForRun returns
+      // the total deleted (fresh + the new stale row = 2), proving no prune.
+      cycleRepo.recordCycleEvent(run.id, 1, now - DEAD_LOOP_WINDOW_MS - 60_000);
+      runtime.pruneExpiredCycleEvents(now + 1000);
+      expect(cycleRepo.resetAllForRun(run.id)).toBe(2);
     });
 
     test('single-node run with idle execution → run blocked, task blocked, notifications emitted', async () => {

@@ -874,6 +874,14 @@ export class SpaceRuntime {
   private tickTimer: ReturnType<typeof setInterval> | null = null;
   /** Single-flight guard to prevent overlapping executeTick() runs. */
   private tickInFlight = false;
+  /**
+   * Timestamp (ms) of the last periodic `channel_cycle_events` prune. Rows are
+   * pruned at most once per `DEAD_LOOP_WINDOW_MS` from `executeTick` so that
+   * history retained on reopenable done/cancelled runs (which are no longer
+   * traversed, so lazy per-channel pruning never runs) cannot grow the table
+   * without bound on a long-lived daemon. See {@link pruneExpiredCycleEvents}.
+   */
+  private lastGlobalCyclePruneAt = 0;
 
   /**
    * InternalEventBus for publishing typed Space domain events.
@@ -5119,6 +5127,13 @@ export class SpaceRuntime {
       // for a subscription) so they do not last forever when no matching
       // subscription, duplicate webhook, or restart occurs.
       this.expirePublishedExternalEventsPastTtl();
+
+      // Physically prune dead-loop event history older than the rolling window
+      // across ALL runs. Active runs lazy-prune their own channels on each
+      // traversal, but done/cancelled (reopenable) runs are never traversed
+      // again — without this periodic sweep their retained rows would accumulate
+      // until the next daemon restart. Throttled to once per window.
+      this.pruneExpiredCycleEvents();
     } finally {
       this.tickInFlight = false;
     }
@@ -6718,6 +6733,33 @@ export class SpaceRuntime {
    */
   private getCycleRepo(): ChannelCycleRepository {
     return this.config.channelCycleRepo ?? new ChannelCycleRepository(this.config.db);
+  }
+
+  /**
+   * Periodically prunes `channel_cycle_events` rows older than the rolling
+   * dead-loop window across every run. Active runs already lazy-prune their own
+   * (run, channel) on each traversal, but done/cancelled runs are reopenable and
+   * therefore retain their history while never being traversed again — so
+   * without this sweep they would leak rows until the next daemon restart (the
+   * one-shot startup prune only covers runs that existed at boot).
+   *
+   * Throttled to one pass per `DEAD_LOOP_WINDOW_MS`: rows older than the window
+   * are already excluded from the rate count, so deferring their physical
+   * deletion by up to a window is harmless and keeps the (full-scan) prune off
+   * the hot path. Best-effort — a failure is logged, never thrown.
+   */
+  pruneExpiredCycleEvents(now: number = Date.now()): void {
+    if (now - this.lastGlobalCyclePruneAt < DEAD_LOOP_WINDOW_MS) return;
+    this.lastGlobalCyclePruneAt = now;
+    try {
+      this.getCycleRepo().pruneAllOldEvents(now);
+    } catch (err) {
+      log.warn(
+        `[SpaceRuntime] periodic channel_cycle_events prune failed: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+    }
   }
 
   private evaluateRestartRecoveryCycle(

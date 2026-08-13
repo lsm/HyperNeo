@@ -390,16 +390,26 @@ export class SpaceTaskManager {
     // archives; the duplicate-reconcile archive path runs through
     // SpaceRuntime.updateTaskAndEmit with `archiveSource: 'system_reconcile'`
     // and detaches the run before it reaches here (correctly — the canonical
-    // task's run stays active, so it must not be cleared). Best-effort: a
-    // failure is logged, never aborts the already-committed archive.
+    // task's run stays active, so it must not be cleared).
+    //
+    // Clear only when EVERY task for the run is archived, mirroring
+    // ChannelRouter.isParentTaskArchived (a run is dead only when all its
+    // tasks are tombstoned). In one-task-per-run this is the first archive;
+    // for a legacy/inconsistent run with several tasks, clearing on the first
+    // archive would let a still-live sibling resume a runaway exchange with a
+    // fresh dead-loop budget. A run with zero tasks is left alone (no
+    // tombstone evidence — same as the router's empty-list rule). Best-effort:
+    // a failure is logged, never aborts the already-committed archive.
     if (newStatus === 'archived' && updated.workflowRunId) {
-      try {
-        new ChannelCycleRepository(this.db).resetAllForRun(updated.workflowRunId);
-      } catch (err) {
-        log.warn(
-          `Failed to clear dead-loop history for archived task "${taskId}" ` +
-            `run "${updated.workflowRunId}": ${err instanceof Error ? err.message : String(err)}`
-        );
+      const runTasks = this.taskRepo.listByWorkflowRunIncludingArchived(updated.workflowRunId);
+      if (runTasks.length > 0 && runTasks.every((t) => t.archivedAt != null)) {
+        try {
+          new ChannelCycleRepository(this.db).resetAllForRun(updated.workflowRunId);
+        } catch (err) {
+          log.warn(
+            `Failed to clear dead-loop history for archived run "${updated.workflowRunId}": ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
       }
     }
 
