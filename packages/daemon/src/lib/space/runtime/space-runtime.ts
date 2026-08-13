@@ -4684,6 +4684,25 @@ export class SpaceRuntime {
     nextStatus: SpaceWorkflowRun['status']
   ): Promise<SpaceWorkflowRun> {
     const updated = this.config.workflowRunRepo.transitionStatus(runId, nextStatus);
+    // Terminal runs (done/cancelled) never traverse their cyclic channels
+    // again, so clear their dead-loop event history now. This bounds table
+    // growth for runs that complete AFTER startup — the startup
+    // pruneAllOldEvents GC only covers runs that already existed at boot, and
+    // abandoned post-startup runs would otherwise accumulate up to the
+    // threshold rows per cyclic channel with no lazy pruning (their channels
+    // are never traversed again). Blocked runs keep their history: they can be
+    // reopened/retried, and a persisted dead-loop state must keep applying.
+    if (nextStatus === 'done' || nextStatus === 'cancelled') {
+      try {
+        this.getCycleRepo().resetAllForRun(runId);
+      } catch (err) {
+        log.warn(
+          `[SpaceRuntime] failed to clear cycle events for terminal run ${runId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+      }
+    }
     await this.safeOnWorkflowRunUpdated(updated.spaceId, updated);
     return updated;
   }
@@ -6148,6 +6167,13 @@ export class SpaceRuntime {
   private recoveryDone = false;
 
   /**
+   * Per-daemon `(runId, channelIndex)` keys of dead-loop notifications already
+   * re-surfaced by {@link surfaceDeadLoopedRuns}, so the post-provisioning
+   * catch-up pass emits each incident at most once even if called repeatedly.
+   */
+  private readonly surfacedDeadLoopChannels = new Set<string>();
+
+  /**
    * Scan every active space for `in_progress` workflow runs whose in-flight
    * state was orphaned by a daemon restart, and re-drive them so the tick loop
    * can finalize the run on its next pass.
@@ -6768,6 +6794,41 @@ export class SpaceRuntime {
           err instanceof Error ? err.message : String(err)
         }`
       );
+    }
+  }
+
+  /**
+   * Best-effort catch-up: re-emit `space.workflowRun.deadLoop` for every
+   * currently-dead-looped cyclic channel across active (in_progress/blocked)
+   * runs. Called once from `SpaceRuntimeService.start()` AFTER the per-space
+   * `SpaceAgentNotificationService` subscribers are wired, because the
+   * runtime's first recovery tick can win the documented startup race and
+   * publish the event before any subscriber exists (the event is non-durable,
+   * and `recoveryDone` would otherwise prevent a second recovery from
+   * re-emitting). Deduped per `(run, channel)` for the daemon lifetime.
+   */
+  async surfaceDeadLoopedRuns(): Promise<void> {
+    if (!this.internalEventBus) return;
+    const cycleRepo = this.getCycleRepo();
+    const spaces = await this.config.spaceManager.listSpaces(false);
+    for (const space of spaces) {
+      if (space.paused || space.stopped) continue;
+      for (const run of this.config.workflowRunRepo.getRehydratableRuns(space.id)) {
+        const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
+        const channels = workflow?.channels;
+        if (!channels) continue;
+        for (let i = 0; i < channels.length; i++) {
+          if (!isChannelCyclic(i, channels, workflow.nodes)) continue;
+          const key = `${run.id}:${i}`;
+          if (this.surfacedDeadLoopChannels.has(key)) continue;
+          const recentCount = cycleRepo.countRecentCycleEvents(run.id, i);
+          if (recentCount < DEAD_LOOP_THRESHOLD) continue;
+          this.surfacedDeadLoopChannels.add(key);
+          const channel = channels[i];
+          const toTargets = Array.isArray(channel.to) ? channel.to : [channel.to];
+          await this.notifyRecoveryDeadLoop(run, channel, i, channel.from, toTargets, recentCount);
+        }
+      }
     }
   }
 

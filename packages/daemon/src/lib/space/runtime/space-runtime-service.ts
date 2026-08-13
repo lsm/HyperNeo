@@ -1261,7 +1261,10 @@ export class SpaceRuntimeService {
    * after rehydrate. The "after provisioning" sequencing is therefore
    * best-effort — whichever path wins the race fires first. Correctness is
    * enforced by `SpaceRuntime.recoveryDone`, which guarantees recovery runs
-   * exactly once regardless of caller order.
+   * exactly once regardless of caller order. The one observable gap — a
+   * `space.workflowRun.deadLoop` notification published by the pre-provisioning
+   * first tick reaching no subscriber — is closed by a post-provisioning
+   * `surfaceDeadLoopedRuns()` catch-up pass below.
    */
   start(): void {
     if (this.started) return;
@@ -1276,6 +1279,11 @@ export class SpaceRuntimeService {
     // comes from `SpaceRuntime.recoveryDone`, not this sequencing.
     this.provisioningPromise = (async () => {
       await this.provisionExistingSpaces();
+      // Re-surface dead-looped runs now that the per-space notification
+      // subscribers are wired — the runtime's first recovery tick may have
+      // fired before provisioning and published `space.workflowRun.deadLoop`
+      // with no subscriber (the event is non-durable).
+      await this.runtime.surfaceDeadLoopedRuns();
       await this.recoverLongTermAgentInbox();
       await this.recoverStalledWorkflowRuns();
     })().catch((err) => {

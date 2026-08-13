@@ -1529,6 +1529,49 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       expect(notifications.filter((n) => n.kind === 'workflow_run_dead_loop')).toHaveLength(0);
     });
 
+    test('surfaceDeadLoopedRuns re-surfaces currently-dead-looped runs (post-provisioning catch-up)', async () => {
+      // The runtime's first recovery tick can fire before the SpaceAgent
+      // notification subscribers are wired; surfaceDeadLoopedRuns is the
+      // post-provisioning catch-up. It scans active runs and re-emits, deduped.
+      const workflow = buildLinearWorkflow(
+        SPACE_ID,
+        workflowManager,
+        [
+          { id: STEP_A, name: 'Coding', agentId: AGENT },
+          { id: STEP_B, name: 'Review', agentId: AGENT },
+        ],
+        {
+          channels: [
+            { id: 'coding-to-review', from: 'Coding', to: 'Review' },
+            { id: 'review-to-coding', from: 'Review', to: 'Coding' },
+          ],
+          endNodeId: STEP_B,
+        }
+      );
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Surface Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+      const cycleRepo = new ChannelCycleRepository(db);
+      const now = Date.now();
+      for (let i = 0; i < 15; i++) cycleRepo.recordCycleEvent(run.id, 1, now - i * 1000);
+
+      const runtime = makeRuntime({ pendingMessageRepo: new PendingAgentMessageRepository(db) });
+      notifications = [];
+      await runtime.surfaceDeadLoopedRuns();
+
+      const deadLoopNotes = notifications.filter((n) => n.kind === 'workflow_run_dead_loop');
+      expect(deadLoopNotes).toHaveLength(1);
+      expect(deadLoopNotes[0].payload.runId).toBe(run.id);
+      expect(deadLoopNotes[0].payload.channelIndex).toBe(1);
+
+      // Deduped across calls for the daemon lifetime.
+      await runtime.surfaceDeadLoopedRuns();
+      expect(notifications.filter((n) => n.kind === 'workflow_run_dead_loop')).toHaveLength(1);
+    });
+
     test('single-node run with idle execution → run blocked, task blocked, notifications emitted', async () => {
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Step A', agentId: AGENT },
