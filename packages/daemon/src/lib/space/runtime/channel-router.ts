@@ -8,7 +8,8 @@
  *
  * Action-level policy (validation, blocking, patching) is enforced by workflow
  * hooks at the MCP-action boundary before `send_message` reaches the router;
- * channels themselves are always open subject to topology and cycle caps.
+ * channels themselves are always open subject to topology and rate-based
+ * dead-loop detection on cyclic channels.
  *
  * Lazy node activation:
  * - activateNode() is idempotent: if active node_executions already exist for
@@ -18,7 +19,6 @@
  *   ChannelRouter only mutates node_executions and cycle state.
  */
 
-import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
 import type { SpaceTask, SpaceWorkflow, WorkflowChannel, WorkflowNode } from '@hyperneo/shared';
 import { resolveNodeAgents, isChannelCyclic } from '@hyperneo/shared';
 import type { NodeExecution } from '@hyperneo/shared';
@@ -26,6 +26,10 @@ import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-vali
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
+import {
+  DEAD_LOOP_THRESHOLD,
+  DEAD_LOOP_WINDOW_MS,
+} from '../../../storage/repositories/channel-cycle-repository';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import {
   isReservedWorkflowAgentName,
@@ -117,8 +121,8 @@ export interface DeliveredMessage {
  * or workflow, a node that does not exist, or an attempted activation on a
  * run whose parent task has been archived.
  *
- * Also thrown by deliverMessage() when the iteration cap is exceeded on a
- * cyclic channel (an unrecoverable limit).
+ * Also thrown by deliverMessage() when a cyclic channel trips the rate-based
+ * dead-loop detector (a runaway tight ping-pong between two agents).
  */
 export class ActivationError extends Error {
   constructor(
@@ -161,14 +165,6 @@ export interface ChannelRouterConfig {
    * Required when workflows contain cyclic (backward) channels.
    */
   channelCycleRepo?: ChannelCycleRepository;
-  /**
-   * Raw SQLite database handle.
-   * When provided, cycle counter increments on cyclic channels are performed
-   * in a single atomic transaction (`db.transaction()`).
-   * When omitted, operations are performed sequentially (still safe for most
-   * single-process use cases but not ACID-atomic on crash).
-   */
-  db?: BunDatabase;
   /**
    * Optional liveness probe for an agent session ID.
    *
@@ -232,6 +228,14 @@ export interface ChannelRouterConfig {
 
 export class ChannelRouter {
   constructor(private readonly config: ChannelRouterConfig) {}
+
+  /**
+   * Per-(run, channel) timestamp of the most recent dead-loop notification
+   * emitted from this router instance. Suppresses duplicate UI notifications
+   * when a blocked agent retries `send_message` repeatedly within the same
+   * window. Transient (in-memory); the router is rebuilt per agent session.
+   */
+  private readonly deadLoopNotifiedAt = new Map<string, number>();
 
   // -------------------------------------------------------------------------
   // Public API
@@ -458,7 +462,8 @@ export class ChannelRouter {
    * Evaluation order:
    * 1. **Open topology** — when no channel is declared for the pair, delivery is
    *    always allowed (no restriction).
-   * 2. **Cycle cap** — for cyclic channels, blocks when the per-channel cap is reached.
+   * 2. **Dead-loop (rate) check** — for cyclic channels, blocks when the rolling
+   *    per-channel traversal rate has reached the dead-loop threshold.
    *
    * @param runId     - Workflow run ID
    * @param fromRole  - Sending agent name
@@ -478,19 +483,13 @@ export class ChannelRouter {
       // Open topology — no declared channel for this pair; delivery is unrestricted
       return { allowed: true };
     }
-    const { channel, index } = match;
+    const { index } = match;
 
     const channelIsCyclic = this.isChannelCyclicByIndex(index, workflow);
 
-    // ── Per-channel cycle cap check ──────────────────────────────────────
-    if (channelIsCyclic) {
-      const maxCycles = channel.maxCycles ?? 5;
-      if (this.isCycleCapReached(runId, index, maxCycles)) {
-        return {
-          allowed: false,
-          reason: `Cyclic channel from "${fromRole}" to "${toTarget}" has reached the maximum cycle count (${maxCycles}). Increase maxCycles to allow more cycles.`,
-        };
-      }
+    // ── Rate-based dead-loop check ───────────────────────────────────────
+    if (channelIsCyclic && this.isDeadLoopReached(runId, index)) {
+      return { allowed: false, reason: this.deadLoopReason(fromRole, toTarget) };
     }
 
     return { allowed: true };
@@ -564,10 +563,13 @@ export class ChannelRouter {
    * - `toTarget` is a node name → fan-out to the node; all agent slots are
    *   activated (lazy-activated if not already active)
    *
-   * **Cyclic tracking:**
-   * - For cyclic channels, the per-channel cycle counter is incremented after
-   *   successful delivery.
-   * - If the cycle cap has been reached, throws `ActivationError`.
+   * **Cyclic tracking (rate-based dead-loop detection):**
+   * - For cyclic channels, each successful delivery is recorded as a
+   *   timestamped event.
+   * - If the rolling per-channel traversal rate has reached the dead-loop
+   *   threshold (a runaway tight ping-pong), throws `ActivationError` and
+   *   surfaces a `workflowRun.deadLoop` event so the human sees the block.
+   *   A genuine long review spread over hours never trips this.
    *
    * @param runId    - Workflow run ID
    * @param fromRole - Agent name of the sending agent (WorkflowNodeAgent.name)
@@ -576,7 +578,7 @@ export class ChannelRouter {
    * @returns DeliveredMessage descriptor; `activatedTasks` is set when the
    *   target node was lazily activated, undefined when it was already active
    * @throws ActivationError when the run, workflow, or target agent/node is not
-   *   found, or the cyclic cap is exceeded
+   *   found, or a cyclic channel trips the rate-based dead-loop detector
    */
   async deliverMessage(
     runId: string,
@@ -627,17 +629,41 @@ export class ChannelRouter {
       }
     }
 
-    // Cycle caps reject the send itself, so they are enforced before activation.
+    // ── 3. Dead-loop gate (reserve the cyclic traversal before activation) ──
+    // Rate-based detection rejects the send itself, so it is enforced before
+    // any activation work. Unlike the retired lifetime cap, this only trips on
+    // a runaway tight ping-pong — a long review spread over hours never will.
+    // `reserveCycleEvent` prunes + counts + conditionally inserts in one
+    // synchronous sequence, so two concurrent agent sessions sharing this
+    // channel cannot both pass the threshold. The reservation is made before
+    // (not after) activation so the gate is authoritative; on the rare path
+    // where activation then fails, one extra reserved event biases safely
+    // toward blocking and prunes out after the window.
     if (channelIsCyclic && channel) {
-      const maxCycles = channel.maxCycles ?? 5;
-      if (this.isCycleCapReached(runId, channelIndex, maxCycles)) {
-        throw new ActivationError(
-          `Cyclic channel from "${fromRole}" to "${toTarget}" has reached the maximum cycle count (${maxCycles}). Increase maxCycles to allow more cycles.`
+      const reservation = this.config.channelCycleRepo
+        ? this.config.channelCycleRepo.reserveCycleEvent(runId, channelIndex)
+        : { allowed: true, recentCount: 0 };
+      if (!reservation.allowed) {
+        // Surface the block to the human (UI) instead of failing silently,
+        // then reject the send.
+        await this.notifyDeadLoop(
+          run.spaceId,
+          runId,
+          fromRole,
+          toTarget,
+          channelIndex,
+          reservation.recentCount
         );
+        throw new ActivationError(this.deadLoopReason(fromRole, toTarget));
       }
+      // The channel is not in a dead loop right now, so it has recovered —
+      // either the window aged out or a human touch cleared the history. Drop
+      // any stale dedupe entry so a *new* loop after recovery surfaces a fresh
+      // notification rather than being suppressed by the previous incident.
+      this.deadLoopNotifiedAt.delete(`${runId}:${channelIndex}`);
     }
 
-    // ── 3. Lazy activation ─────────────────────────────────────────────────
+    // ── 4. Lazy activation ─────────────────────────────────────────────────
     const activeTasks = this.getActiveTasksForNode(runId, targetNode.id);
     let activatedTasks: SpaceTask[] | undefined;
 
@@ -662,11 +688,6 @@ export class ChannelRouter {
         reopenBy: `agent:${fromRole}`,
         reopenReason: `peer send_message from "${fromRole}" to "${toTarget}"`,
       });
-    }
-
-    // ── 5. Increment per-channel cycle count ─────────────────────────────
-    if (channelIsCyclic && channel) {
-      this.incrementCyclicChannel(runId, channelIndex, channel.maxCycles ?? 5);
     }
 
     return {
@@ -777,47 +798,80 @@ export class ChannelRouter {
   }
 
   /**
-   * Checks whether a cyclic channel has reached its per-channel cycle cap.
+   * `true` when the cyclic channel is currently in a dead loop. Read-only check
+   * for `canDeliver` (a non-mutating query). Delivery itself must gate via
+   * `reserveCycleEvent` so the traversal is recorded atomically. Returns `false`
+   * when no cycle repository is configured (dead-loop detection disabled).
    */
-  private isCycleCapReached(runId: string, channelIndex: number, maxCycles: number): boolean {
+  private isDeadLoopReached(runId: string, channelIndex: number): boolean {
     if (!this.config.channelCycleRepo) return false;
-    const record = this.config.channelCycleRepo.get(runId, channelIndex);
-    return record ? record.count >= maxCycles : false;
+    return this.config.channelCycleRepo.isDeadLoopReached(runId, channelIndex);
   }
 
   /**
-   * Atomically increments the per-channel cycle counter.
-   *
-   * When `db` is in config: the increment runs in a single SQLite transaction.
-   * When `db` is absent: runs sequentially (safe for single-process).
-   *
-   * Throws `ActivationError` if the cycle cap was already reached at the time
-   * of the atomic increment (concurrent TOCTOU race).
+   * Human-readable dead-loop block reason shared by `canDeliver` and
+   * `deliverMessage`.
    */
-  private incrementCyclicChannel(runId: string, channelIndex: number, maxCycles: number): void {
-    if (!this.config.channelCycleRepo) return;
+  private deadLoopReason(fromRole: string, toTarget: string): string {
+    const windowMin = Math.round(DEAD_LOOP_WINDOW_MS / 60000);
+    return (
+      `Cyclic channel from "${fromRole}" to "${toTarget}" is in a dead loop: ` +
+      `${DEAD_LOOP_THRESHOLD} message round-trips within ${windowMin} minute(s). ` +
+      `Spread the exchange out or break the loop.`
+    );
+  }
 
-    if (this.config.db) {
-      const transaction = this.config.db.transaction(() =>
-        this.config.channelCycleRepo!.incrementCycleCount(runId, channelIndex, maxCycles)
-      );
-      const incremented = transaction();
-      if (!incremented) {
-        throw new ActivationError(
-          `Cyclic channel (index ${channelIndex}) reached the maximum cycle count (${maxCycles}) during delivery.`
-        );
-      }
-    } else {
-      const incremented = this.config.channelCycleRepo.incrementCycleCount(
+  /**
+   * Publish a `space.workflowRun.deadLoop` event so the human sees the blocked
+   * send in the UI (`SpaceAgentNotificationService` injects it into the Space
+   * Agent session). Deduped per (run, channel) within the window so a retrying
+   * agent does not spam the UI. No-op when no event bus is configured.
+   *
+   * The dedupe timestamp is recorded ONLY after a successful publish: if a
+   * subscriber handler throws, `publish` rethrows, we swallow it here, and —
+   * because we did not record dedupe — the next blocked send retries the
+   * notification. Recording dedupe before the publish would silently drop the
+   * block from the UI on any handler failure, which is exactly the silent
+   * failure this surfacing exists to prevent.
+   *
+   * Note: `publish` is awaited (consistent with `reopenRun`'s `safeNotify`),
+   * which couples `deliverMessage` to subscriber latency; a misbehaving handler
+   * could delay the send. Migrating to fire-and-forget `publishAsync` is a
+   * broader change that also affects `safeNotify` and is intentionally left out
+   * of scope here.
+   */
+  private async notifyDeadLoop(
+    spaceId: string,
+    runId: string,
+    fromRole: string,
+    toTarget: string,
+    channelIndex: number,
+    recentCount: number
+  ): Promise<void> {
+    if (!this.config.internalEventBus) return;
+    const key = `${runId}:${channelIndex}`;
+    const now = Date.now();
+    const last = this.deadLoopNotifiedAt.get(key);
+    if (last !== undefined && now - last < DEAD_LOOP_WINDOW_MS) return;
+    try {
+      await this.config.internalEventBus.publish('space.workflowRun.deadLoop', {
+        namespaceId: 'global',
+        spaceId,
         runId,
+        fromAgent: fromRole,
+        toTarget,
         channelIndex,
-        maxCycles
-      );
-      if (!incremented) {
-        throw new ActivationError(
-          `Cyclic channel (index ${channelIndex}) reached the maximum cycle count (${maxCycles}) during delivery.`
-        );
-      }
+        recentCount,
+        threshold: DEAD_LOOP_THRESHOLD,
+        windowMs: DEAD_LOOP_WINDOW_MS,
+        reason: this.deadLoopReason(fromRole, toTarget),
+        timestamp: new Date(now).toISOString(),
+      } satisfies DaemonInternalEventMap['space.workflowRun.deadLoop'] & InternalEventPayload);
+      // Record dedupe only after the publish succeeded — see method doc.
+      this.deadLoopNotifiedAt.set(key, now);
+    } catch {
+      // Swallow — surfacing must not break the delivery path. Dedupe is NOT
+      // recorded, so the next blocked send retries the notification.
     }
   }
 

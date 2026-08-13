@@ -994,6 +994,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   //   Idempotent ALTER TABLE ADD COLUMN; new DBs get it via this ALTER since
   //   M92 creates the table.
   run(migrationMarkerKey(192), () => runMigration192(db));
+
+  // Migration 193: channel_cycle_events — rate-based dead-loop detection.
+  run(migrationMarkerKey(193), () => runMigration193(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -12430,4 +12433,45 @@ export function runMigration192(db: BunDatabase): void {
   if (!tableHasColumn(db, 'pending_agent_messages', 'delivery_mode')) {
     db.exec(`ALTER TABLE pending_agent_messages ADD COLUMN delivery_mode TEXT`);
   }
+}
+
+/**
+ * Migration 193: Rate-based dead-loop detection for cyclic workflow channels.
+ *
+ * Creates a `channel_cycle_events` table storing one timestamped row per
+ * traversal of a cyclic (backward) channel. Dead-loop detection counts these
+ * rows over a rolling time window (default >15 traversals per 5 minutes) so it
+ * catches a runaway tight ping-pong between two agents while never blocking a
+ * genuine extended review that is spread out over hours.
+ *
+ * The legacy `channel_cycles` lifetime counter (migration 69) is retained for
+ * observability but is no longer a blocking gate; it must not false-trip on
+ * long reviews. This new table is the primary dead-loop signal.
+ *
+ * Backward-compatible with in-flight runs: existing runs simply have an empty
+ * event history (count 0), so any run previously blocked by the lifetime cap
+ * becomes unblocked — which is correct, since those were overwhelmingly
+ * legitimate extended reviews (see PR #2473 / task #942).
+ */
+export function runMigration193(db: BunDatabase): void {
+  if (!tableExists(db, 'space_workflow_runs')) return;
+
+  // Create the table and its window index independently and idempotently. If
+  // the daemon exited after the CREATE TABLE but before the CREATE INDEX (and
+  // before the migration marker was written), re-running must still create the
+  // index — otherwise rate checks and pruning would scan the full cross-run
+  // event table indefinitely. IF NOT EXISTS makes both safe to re-run.
+  db.exec(`
+		CREATE TABLE IF NOT EXISTS channel_cycle_events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			run_id TEXT NOT NULL,
+			channel_index INTEGER NOT NULL,
+			sent_at INTEGER NOT NULL,
+			FOREIGN KEY (run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
+		)
+	`);
+  db.exec(`
+		CREATE INDEX IF NOT EXISTS idx_channel_cycle_events_window
+		ON channel_cycle_events(run_id, channel_index, sent_at)
+	`);
 }

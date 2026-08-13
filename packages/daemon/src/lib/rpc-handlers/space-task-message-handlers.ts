@@ -16,16 +16,17 @@ import { Logger } from '../logger';
 const log = new Logger('space-task-message-handlers');
 
 /**
- * Minimal interface for resetting per-channel cycle counters on a workflow run.
- * Implemented by `ChannelCycleRepository.resetAllForRun`.
+ * Minimal interface for resetting per-channel cycle state on a workflow run.
+ * Implemented by `ChannelCycleRepository.resetAllForRun`, which clears the
+ * rate-window event history for the run (lifting any active dead-loop block).
  *
  * Extracted so the RPC handler stays decoupled from the concrete repository
  * class and can be unit-tested with a lightweight mock.
  */
 export interface ChannelCycleResetter {
   /**
-   * Zero out `count` for every `channel_cycles` row belonging to `runId`.
-   * Returns the number of rows updated.
+   * Clear cyclic-channel dead-loop state for every channel in `runId`.
+   * Returns the number of event rows deleted (0 is valid — nothing to reset).
    */
   resetAllForRun(runId: string): number;
 }
