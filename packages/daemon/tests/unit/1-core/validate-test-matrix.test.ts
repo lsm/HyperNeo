@@ -74,21 +74,22 @@ describe('validate-test-matrix.sh', () => {
   );
 
   it(
-    'rejects a dead "||" prefix on the web runner',
+    'rejects a dead "&&" prefix on the web runner',
     () => {
       const wf = path.join(REPO_ROOT, '.github/workflows/main.yml');
       const original = fs.readFileSync(wf, 'utf-8');
       const anchor = "bash -lc 'cd packages/web && bunx vitest run";
       expect(original.includes(anchor)).toBe(true);
-      // Bash short-circuits `||`, so `true || ... && vitest run` never reaches vitest.
+      // Bash short-circuits `&&` when the left fails, so `false && ... && vitest run`
+      // never reaches vitest (the `||` vector is the same code path).
       fs.writeFileSync(
         wf,
-        original.replace(anchor, "bash -lc 'true || cd packages/web && bunx vitest run")
+        original.replace(anchor, "bash -lc 'false && cd packages/web && bunx vitest run")
       );
       try {
         const { exitCode, stderr } = runGuard();
         expect(exitCode).toBe(1);
-        expect(stderr).toContain("places a '||' before");
+        expect(stderr).toContain("places a '||'/'&&' before");
       } finally {
         fs.writeFileSync(wf, original);
       }

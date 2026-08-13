@@ -122,12 +122,15 @@ runner_is_data_cmd() {
 }
 
 # True (exit 0 = BAD) if the EXECUTED portion of the runner command places a
-# control-flow `||` BEFORE the marker — e.g. `true || <marker>` or
-# `bash -lc 'true || cd ... && <marker>'`. Bash short-circuits `||` the instant
-# the left operand succeeds, so a no-op left (`true`/`:`) deadens the marker:
-# the step runs zero tests yet marker_executed (purely textual) still reports it
-# run. Considers only EXECUTED text (outside single quotes, or inside a -lc/-c
-# body), so an `||` inside a quoted data argument is not misread as control flow.
+# control-flow `||` or `&&` BEFORE the marker — e.g. `true || <marker>`,
+# `bash -lc 'false && cd ... && <marker>'`, or `bash -lc 'true || ... && <marker>'`.
+# Bash short-circuits both: `||` skips the right side when the left SUCCEEDS
+# (a no-op `true`/`:`), and `&&` skips it when the left FAILS (a no-op `false`),
+# so either deadens the marker — the step runs zero tests yet marker_executed
+# (purely textual) still reports it run. Callers pass a marker that INCLUDES any
+# legit `cd <dir> && ` prefix (so that prefix's `&&` sits INSIDE the marker, not
+# before it). Considers only EXECUTED text (outside single quotes, or inside a
+# -lc/-c body), so an operator inside a quoted data argument is not misread.
 runner_has_dead_prefix() {
 	awk -v runval="$1" -v marker="$2" '
 		function executed_text(s,   i,n,c,out,inq,qstart,before,content) {
@@ -143,7 +146,7 @@ runner_has_dead_prefix() {
 		}
 		BEGIN {
 			txt=executed_text(runval); p=index(txt, marker)
-			exit (p > 0 && substr(txt, 1, p-1) ~ /\|\|/) ? 0 : 1
+			exit (p > 0 && substr(txt, 1, p-1) ~ /(\|\||&&)/) ? 0 : 1
 		}
 	'
 }
@@ -526,7 +529,7 @@ elif runner_is_data_cmd "$_unit_run"; then
 	err "test-daemon-shared-unit runner's first command token is a data command (echo/printf/cat) — the marker is an argument, not executed"
 	echo "     → invoke test-daemon.sh as a command, not via echo" >&2
 elif runner_has_dead_prefix "$_unit_run" 'test-daemon.sh ${{ matrix.shard }}'; then
-	err "test-daemon-shared-unit runner places a '||' before test-daemon.sh (e.g. true || ...) — Bash short-circuits, so the marker is never reached and zero tests run while this guard reports them covered"
+	err "test-daemon-shared-unit runner places a '||'/'&&' before test-daemon.sh (e.g. false && ... or true || ...) — Bash short-circuits, so the marker is never reached and zero tests run while this guard reports them covered"
 	echo "     → remove the '||' prefix / dead branch before test-daemon.sh" >&2
 elif runner_continue_on_error "$REPO_ROOT/.github/workflows/main.yml" 'test-daemon.sh ${{ matrix.shard }}' 'test-daemon-shared-unit'; then
 	err "test-daemon-shared-unit runner step (or its job) has continue-on-error: true — a FAILED unit run is marked successful, so coverage stays green while tests are broken"
@@ -641,7 +644,7 @@ elif runner_is_data_cmd "$_web_cmd"; then
 	err "test-web runner's first command token is a data command (echo/printf/cat) — the marker is an argument, not executed"
 	echo "     → invoke 'bunx vitest run' as a command, not via echo" >&2
 elif runner_has_dead_prefix "$_web_cmd" 'cd packages/web && bunx vitest run'; then
-	err "test-web runner places a '||' before the vitest invocation (e.g. bash -lc 'true || cd packages/web && bunx vitest run') — Bash short-circuits, so the marker is never reached and zero web tests run while this guard reports them covered"
+	err "test-web runner places a '||'/'&&' before the vitest invocation (e.g. bash -lc 'false && cd packages/web && bunx vitest run' or 'true || ...') — Bash short-circuits, so the marker is never reached and zero web tests run while this guard reports them covered"
 	echo "     → remove the '||' prefix / dead branch before 'bunx vitest run'" >&2
 elif runner_continue_on_error "$REPO_ROOT/.github/workflows/main.yml" 'cd packages/web && bunx vitest run' 'test-web'; then
 	err "test-web runner step (or its job) has continue-on-error: true — a FAILED web run is marked successful, so coverage stays green while web tests are broken"
@@ -772,8 +775,8 @@ elif ! marker_executed "$_online_main" 'vitest.online.config.ts'; then
 elif runner_is_data_cmd "$_online_main"; then
 	err "main.yml online runner's first command token is a data command (echo/printf/cat) — the marker is an argument, not executed"
 	echo "     → invoke vitest as a command, not via echo" >&2
-elif runner_has_dead_prefix "$_online_main" 'vitest run'; then
-	err "main.yml online runner places a '||' before vitest (e.g. bash -lc 'true || ... && vitest run') — Bash short-circuits, so the marker is never reached and zero online tests run while this guard reports them covered"
+elif runner_has_dead_prefix "$_online_main" 'cd packages/daemon && node_modules/.bin/vitest run'; then
+	err "main.yml online runner places a '||'/'&&' before vitest (e.g. bash -lc 'false && ... && vitest run' or 'true || ...') — Bash short-circuits, so the marker is never reached and zero online tests run while this guard reports them covered"
 	echo "     → remove the '||' prefix / dead branch before 'vitest run'" >&2
 elif runner_continue_on_error "$REPO_ROOT/.github/workflows/main.yml" 'vitest.online.config.ts' 'test-daemon-online'; then
 	err "main.yml online runner step (or its job) has continue-on-error: true — a FAILED online run is marked successful, so coverage stays green while online tests are broken"
