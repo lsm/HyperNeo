@@ -337,6 +337,58 @@ test_no_select_opts() {
 	done
 }
 
+# Reject a non-default `root` in a guarded vitest config. Include globs resolve
+# relative to root, so an explicit top-level `root:` (the Vite root Vitest
+# inherits) or `test.root` relocates the discovery base — the pinned src/**
+# include would then describe files the disk walk no longer reports covered. The
+# configs use the default (the config-file dir); reject any explicit root.
+cfg_reject_root() {
+	local cfg="$1" pkg="$2"
+	# Top-level root: (2-space indent — a sibling of test:/resolve:).
+	if awk 'BEGIN{f=0} /^  root:[[:space:]]/{f=1; exit} END{exit !f}' "$cfg"; then
+		err "$pkg config sets a top-level root: — include globs resolve under it instead of the package dir, so the pinned include no longer describes the covered files"
+		echo "     → remove root: (use the default), or update this validator" >&2
+	fi
+	# test.root (4-space, the Vitest test option) — same relocation risk.
+	if ! test_prop_absent "$cfg" root; then
+		err "$pkg config sets test.root — it relocates the discovery base, so the pinned include no longer describes the covered files"
+		echo "     → remove test.root (use the default), or update this validator" >&2
+	fi
+}
+
+# True (exit 0 = BAD) if the guarded runner step (run contains marker, in job)
+# of file would run under a NON-DEFAULT shell — a step-level `shell:`, or a
+# job/workflow `defaults.run.shell`. enabled_run_cmd/marker_executed assume the
+# run command is executed by the default shell; a no-exec override such as
+# `shell: bash -n {0}` makes the step succeed having run ZERO tests while this
+# guard reports them covered. The legit workflows set no shell anywhere.
+runner_shell_override() {
+	local file="$1" marker="$2" job="$3"
+	# (a) A defaults.run.shell at workflow OR job scope applies to every step.
+	if awk '
+		/^[[:space:]]*defaults:[[:space:]]*$/ { in_defaults=1; next }
+		/^[[:space:]]{0,4}[a-zA-Z][a-zA-Z0-9_-]*:[[:space:]]*$/ && $0 !~ /defaults:/ { in_defaults=0 }
+		in_defaults && /shell:/ { found=1; exit }
+		END { exit !found }
+	' "$file"; then
+		return 0
+	fi
+	# (b) A step-level shell: on the runner step itself (run contains marker, in
+	# job), mirroring enabled_run_cmd job/step scoping so it is attributed to the
+	# runner step, not an unrelated sibling.
+	awk -v marker="$marker" -v job="$job" '
+		function emit() { if (runval != "" && index(runval, marker) > 0 && curjob == job && !done) { print (step_shell ? "BAD" : "OK"); done=1 } }
+		/^[[:space:]]{2}[[:alnum:]_-]+:[[:space:]]*$/ { emit(); runval=""; step_shell=0; curjob=$0; sub(/^[[:space:]]+/, "", curjob); sub(/:.*$/, "", curjob); next }
+		/^[[:space:]]*-[[:space:]]/ { emit(); runval=""; step_shell=0 }
+		/^[[:space:]]*#/ { next }
+		/^[[:space:]]*shell:/ { step_shell=1 }
+		incmd { n=0; while (substr($0,n+1,1)==" ") n++; if (n > runindent) { runval=runval" "$0; next }; incmd=0 }
+		/^[[:space:]]*run:[[:space:]]*[>|]/ { incmd=1; n=0; while (substr($0,n+1,1)==" ") n++; runindent=n; runval=$0; next }
+		/^[[:space:]]*run:[[:space:]]+/ { runval=$0; incmd=0; next }
+		END { emit() }
+	' "$file" | grep -q '^BAD$'
+}
+
 # ===========================================================================
 # 1. DAEMON UNIT TESTS  (source of truth: scripts/test-daemon.sh)
 # ===========================================================================
@@ -375,6 +427,8 @@ for _cfg in "$REPO_ROOT/packages/daemon/vitest.config.ts" "$REPO_ROOT/packages/s
 	# Selection-changing test options (dir, shard) narrow which files run without
 	# touching include/exclude — reject them.
 	test_no_select_opts "$_cfg" "$_cfg_pkg"
+	# A non-default root relocates the include base; reject it (see cfg_reject_root).
+	cfg_reject_root "$_cfg" "$_cfg_pkg"
 done
 
 COVERED_TMP="$(mktemp)"
@@ -520,6 +574,9 @@ elif runner_has_dead_prefix "$_unit_run" 'test-daemon.sh ${{ matrix.shard }}'; t
 elif runner_continue_on_error "$REPO_ROOT/.github/workflows/main.yml" 'test-daemon.sh ${{ matrix.shard }}' 'test-daemon-shared-unit'; then
 	err "test-daemon-shared-unit runner step (or its job) has continue-on-error: true — a FAILED unit run is marked successful, so coverage stays green while tests are broken"
 	echo "     → remove continue-on-error from the test-daemon-shared-unit runner step/job" >&2
+elif runner_shell_override "$REPO_ROOT/.github/workflows/main.yml" 'test-daemon.sh ${{ matrix.shard }}' 'test-daemon-shared-unit'; then
+	err "test-daemon-shared-unit runner step (or its job) sets a non-default shell — a no-exec shell (e.g. bash -n {0}) would make the step succeed having run ZERO tests while this guard reports them covered"
+	echo "     → remove the shell: override (use the default shell)" >&2
 else
 	# Inspect ONLY the args after `test-daemon.sh` (there is another
 	# ${{ matrix.shard }} earlier, inside the --report ...json name). Allowlist
@@ -613,6 +670,8 @@ fi
 # Selection-changing test options (dir, shard) narrow which files run without
 # touching include/exclude — reject them.
 test_no_select_opts "$WEB_CFG" "packages/web"
+# A non-default root relocates the src/** include base; reject it.
+cfg_reject_root "$WEB_CFG" "packages/web"
 # The web coverage assumes the test-web CI job runs a bare `vitest run` (no
 # positional target) in an ENABLED step, so the config include/exclude fully
 # determine execution. enabled_run_cmd folds the runner command (a `>-` scalar)
@@ -635,6 +694,9 @@ elif runner_has_dead_prefix "$_web_cmd" 'cd packages/web && bunx vitest run'; th
 elif runner_continue_on_error "$REPO_ROOT/.github/workflows/main.yml" 'cd packages/web && bunx vitest run' 'test-web'; then
 	err "test-web runner step (or its job) has continue-on-error: true — a FAILED web run is marked successful, so coverage stays green while web tests are broken"
 	echo "     → remove continue-on-error from the test-web runner step/job" >&2
+elif runner_shell_override "$REPO_ROOT/.github/workflows/main.yml" 'cd packages/web && bunx vitest run' 'test-web'; then
+	err "test-web runner step (or its job) sets a non-default shell — a no-exec shell (e.g. bash -n {0}) would make the step succeed having run ZERO web tests while this guard reports them covered"
+	echo "     → remove the shell: override (use the default shell)" >&2
 elif [ -n "$(printf '%s' "$_web_cmd" \
 		| sed 's/.*bunx vitest run//' \
 		| sed -E -e 's/--reporter[[:space:]]+[^[:space:]]+//g' \
@@ -719,32 +781,34 @@ fi
 # Selection-changing test options (dir, shard) narrow which files run without
 # touching include/exclude — reject them.
 test_no_select_opts "$ONLINE_CFG" "packages/daemon/vitest.online"
+# A non-default root relocates the tests/online/** include base; reject it.
+cfg_reject_root "$ONLINE_CFG" "packages/daemon/vitest.online"
 
-# Each test job must have a job-level if: that references the expected gate
-# (github.event.inputs.run_e2e_only). The enabled_run_cmd parser catches only
-# literal if:false/never, so a non-literal always-false condition (e.g.
-# if: github.event_name == 'never') would bypass it and disable the whole job
-# while this guard reports its files covered.
-for _tj_job in test-daemon-online test-daemon-shared-unit test-web; do
-	_tj_if=$(awk -v j="$_tj_job" '
+# Each guarded test job's job-level if: must EQUAL its pinned predicate (not a
+# substring match). A substring search accepts a gate like
+# `github.event.inputs.run_e2e_only != 'true' && github.event_name == 'never'`,
+# which GitHub evaluates FALSE in normal CI — silently skipping every shard
+# while this guard reports its files covered. enabled_run_cmd only catches
+# literal if:false/never, so pinning the FULL predicate is what blocks a compound
+# always-false gate. (A missing if: is not flagged: it runs the job
+# unconditionally, which does not drop coverage.)
+_check_job_gate() {
+	local job="$1" file="$2" exp="$3" raw gate
+	raw=$(awk -v j="$job" '
 		$0 ~ "^  " j ":" { injob=1; next }
 		injob && /^  [a-z]/ { injob=0; next }
 		injob && /^[[:space:]]{4}if:/ { print; exit }
-	' "$MAIN_WORKFLOW")
-	if [ -n "$_tj_if" ] && ! printf '%s' "$_tj_if" | grep -qF "run_e2e_only != 'true'"; then
-		err "$_tj_job has a job-level if: that does not reference the expected gate (run_e2e_only) — a non-literal always-false condition would disable the job while this guard reports its files covered"
-		echo "     → keep the if: condition referencing github.event.inputs.run_e2e_only" >&2
+	' "$file")
+	gate=$(printf '%s' "$raw" | sed -E "s/^[[:space:]]*if:[[:space:]]*//; s/[[:space:]]*$//")
+	if [ -n "$raw" ] && [ "$gate" != "$exp" ]; then
+		err "$job job-level if: is not the pinned gate (got: ${gate:-<none>}) — a weakened or compound condition (e.g. an extra && always-false clause) would skip the job in normal CI while this guard reports its files covered"
+		echo "     → restore: if: $exp" >&2
 	fi
-done
-_tj_if=$(awk '
-	$0 ~ "^  daemon-real-api:" { injob=1; next }
-	injob && /^  [a-z]/ { injob=0; next }
-	injob && /^[[:space:]]{4}if:/ { print; exit }
-' "$REAL_API_WORKFLOW")
-if [ -n "$_tj_if" ] && ! printf '%s' "$_tj_if" | grep -qF "run_e2e_only != 'true'"; then
-	err "daemon-real-api has a job-level if: that does not reference the expected gate (run_e2e_only) — a non-literal always-false condition would disable the job"
-	echo "     → keep the if: condition referencing github.event.inputs.run_e2e_only" >&2
-fi
+}
+_check_job_gate test-daemon-shared-unit "$MAIN_WORKFLOW" "github.event.inputs.run_e2e_only != 'true'"
+_check_job_gate test-web "$MAIN_WORKFLOW" "(github.event_name == 'pull_request' && github.base_ref == 'dev' || github.event_name == 'push' && github.ref == 'refs/heads/dev' || github.event_name == 'workflow_dispatch') && github.event.inputs.run_e2e_only != 'true'"
+_check_job_gate test-daemon-online "$MAIN_WORKFLOW" "github.ref_type != 'tag' && github.event.inputs.run_e2e_only != 'true'"
+_check_job_gate daemon-real-api "$REAL_API_WORKFLOW" "github.event.inputs.run_e2e_only != 'true'"
 
 # Online matrix test_path values must reach an ENABLED runner that forwards
 # ${{ matrix.test_path }}. The marker picks the runner step itself
@@ -767,6 +831,9 @@ elif runner_has_dead_prefix "$_online_main" 'cd packages/daemon && node_modules/
 elif runner_continue_on_error "$REPO_ROOT/.github/workflows/main.yml" 'vitest.online.config.ts' 'test-daemon-online'; then
 	err "main.yml online runner step (or its job) has continue-on-error: true — a FAILED online run is marked successful, so coverage stays green while online tests are broken"
 	echo "     → remove continue-on-error from the test-daemon-online runner step/job" >&2
+elif runner_shell_override "$REPO_ROOT/.github/workflows/main.yml" 'vitest.online.config.ts' 'test-daemon-online'; then
+	err "main.yml online runner step (or its job) sets a non-default shell — a no-exec shell (e.g. bash -n {0}) would make the step succeed having run ZERO online tests while this guard reports them covered"
+	echo "     → remove the shell: override (use the default shell)" >&2
 else
 	# After `vitest run`, only ${{ matrix.test_path }} (the one selector) and
 	# coverage-neutral flags (--config, --coverage*, --reporter, --outputFile.*,
@@ -818,6 +885,9 @@ elif [ "$(printf '%s' "$_online_real" | grep -oF 'bun test' | wc -l | tr -d ' ')
 elif runner_continue_on_error "$REPO_ROOT/.github/workflows/real-api-tests.yml" 'bun test' 'daemon-real-api'; then
 	err "real-API runner step (or its job) has continue-on-error: true — a FAILED real-API run is marked successful, so CI stays green while paid cross-provider tests are broken"
 	echo "     → remove continue-on-error from the daemon-real-api runner step/job" >&2
+elif runner_shell_override "$REPO_ROOT/.github/workflows/real-api-tests.yml" 'bun test' 'daemon-real-api'; then
+	err "real-API runner step (or its job) sets a non-default shell — a no-exec shell (e.g. bash -n {0}) would make the step succeed having run ZERO real-API tests while this guard reports them covered"
+	echo "     → remove the shell: override (use the default shell)" >&2
 else
 	# After `bun test`, only ${{ matrix.test_path }} may select. A selection flag
 	# like --only (test.only only) / --grep / --filter would run ZERO tests on a
