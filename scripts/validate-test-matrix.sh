@@ -42,7 +42,6 @@ err() {
 # (e.g. tests/**/*.test.ts) which is textually identical to an empty block
 # comment — a regex strip would mangle the patterns. A mid-line block comment
 # hiding a pattern is a residual requiring a TS-aware parser.
-active_hits() { grep -hF "$2" "$1" 2>/dev/null | grep -cvE '^[[:space:]]*(#|//|/\*)'; }
 
 # Print the FOLDED `run:` command of the ENABLED workflow step whose run command
 # contains the literal marker $2 (in file $1). Folds `run: >-`/`|-` blocks AND
@@ -126,12 +125,6 @@ runner_is_data_cmd() {
 # either a folded bare-path line (`  tests/online/...`) or a single-line
 # `test_path: tests/online/...`. Excludes a docs `echo tests/online/...` line
 # (which has `echo` before the path) and comments. Dots are escaped.
-test_path_value_hits() {
-	local re
-	re=$(printf '%s' "$2" | sed 's/[.]/\\&/g')
-	grep -hE "(^[[:space:]]*${re}([[:space:]]|$))|(test_path:[[:space:]]*${re}([[:space:]]|$))" "$1" 2>/dev/null \
-		| grep -cvE '^[[:space:]]*(#|//)'
-}
 
 # Print every ACTIVE test_path VALUE from workflow $1 — both the inline single
 # form (`test_path: <value>`) and the folded multi form (`test_path: >-` / `|-`
@@ -262,7 +255,7 @@ $_real_module_values" | wc -l | tr -d ' '
 # test: (4-space indent) with <value> the COMPLETE property — the closing `]` of
 # the array must be followed by `,` or EOL, so a `.map()`/expression appended
 # after the array (which would narrow execution) is rejected. Regex-escapes the
-# value, so a whole-file substring check (active_hits) can no longer be satisfied
+# value, so a whole-file substring check can no longer be satisfied
 # by the same value placed in a nested coverage.<prop> while test.<prop> narrows.
 test_prop_has() {
 	local val_re
@@ -544,7 +537,7 @@ WEB_CFG="$REPO_ROOT/packages/web/vitest.config.ts"
 # dropping files while this guard reports full coverage. A substring/fragment
 # check is not enough — only the exact glob is.
 # Scope the glob to `test.include` specifically (4-space indent, directly under
-# test:) — NOT a nested coverage.include. active_hits searches the whole file,
+# test:) — NOT a nested coverage.include. A whole-file search can mask a
 # so a glob placed in coverage.include would mask a narrowed test.include and
 # the guard would still report all files covered while the runner executes only
 # the narrowed set. Anchoring the exact indent + glob pins it to test.include.
@@ -1229,7 +1222,7 @@ check_split_module "space" "$MAIN_WORKFLOW" "${SPACE_FILES[@]}"
 EXEMPT_DIRS="benchmark glm providers sandbox"
 # Split modules are checked file-by-file above via check_split_module (explicit
 # file lists); skip them here so a directory isn't double-judged.
-SPLIT_DIRS="rpc room features providers cross-provider rewind space"
+SPLIT_DIRS="rpc room features cross-provider rewind space"
 for dir in "$ONLINE_DIR"/*/; do
 	[ -d "$dir" ] || continue
 	dirname=$(basename "$dir")
