@@ -893,9 +893,13 @@ export function setupSpaceWorkflowRunHandlers(
         : undefined;
     // updateWithRetry refreshes the expected version per attempt — a concurrent
     // retry-timer bumping the version must not fail the "retry now" button.
+    // Patch ONLY the queued-action key and the scalar decision fields
+    // (mirroring approveHook): spreading a stale full localState snapshot
+    // would deep-merge over concurrent writes — e.g. clobbering hook state
+    // recorded between the read above and this write, or restoring a queued
+    // action a timer just cleared and replaying an obsolete actionKey.
     const updateResult = hookStateRepo.updateWithRetry(params.runId, params.hookId, {
       localState: {
-        ...existing?.localState,
         [QUEUED_RETRYABLE_ACTION_STATE_KEY]: null,
       },
       lastFlow: 'continue',

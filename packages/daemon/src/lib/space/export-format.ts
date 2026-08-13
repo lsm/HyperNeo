@@ -170,7 +170,9 @@ const hookDataFieldSchema = z.object({
 
 const hookAuthorizedCallerSchema = z.object({
   sourceNode: z.string().min(1),
-  agentSlots: z.array(z.string().min(1)).optional(),
+  // Non-empty when present (runtime validateCaller rejects an empty list as
+  // malformed rather than treating it as whole-node authorization).
+  agentSlots: z.array(z.string().min(1)).min(1).optional(),
 });
 
 const hookMethodSchema = z.enum([
@@ -196,7 +198,11 @@ const hookBindingSchema = z.object({
 
 /** Zod schema for an exported v2 custom (script) hook (Layer-1 definition). */
 const customHookSchema = z.object({
-  id: z.string().min(1),
+  // Non-whitespace (runtime rule) — rejected here, not silently trimmed, so
+  // references stay byte-exact.
+  id: z.string().refine((value) => value.trim().length > 0, {
+    message: 'must not be whitespace-only',
+  }),
   requiredData: z.array(hookDataFieldSchema),
   run: z.object({
     kind: z.literal('script'),

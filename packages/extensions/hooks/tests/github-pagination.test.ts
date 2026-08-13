@@ -176,3 +176,34 @@ describe('isTrustedGitHubHost — GHE Cloud tenants', () => {
     expect(isTrustedGitHubHost('notghe.com')).toBe(false);
   });
 });
+
+describe('ghGetUnresolvedReviewThreads — structural fail-closed', () => {
+  test('a successful envelope missing the threads connection fails closed', async () => {
+    setGraphqlRunnerForTests(async () => ({
+      ok: true,
+      data: { data: { repository: { pullRequest: {} } } },
+    }));
+    const result = await ghGetUnresolvedReviewThreads(CTX, PR_LINK);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.retryable).toBe(true);
+      expect(result.error).toContain('failing closed');
+    }
+  });
+
+  test('a connection missing pageInfo fails closed', async () => {
+    setGraphqlRunnerForTests(async () => ({
+      ok: true,
+      data: {
+        data: {
+          repository: {
+            pullRequest: { reviewThreads: { nodes: [] } },
+          },
+        },
+      },
+    }));
+    const result = await ghGetUnresolvedReviewThreads(CTX, PR_LINK);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('pageInfo');
+  });
+});

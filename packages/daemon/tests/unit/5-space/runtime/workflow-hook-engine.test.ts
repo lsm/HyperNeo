@@ -363,6 +363,57 @@ describe('WorkflowHookEngine.executeAction', () => {
     expect(alive).toBe(false);
   });
 
+  test('re-upserted oldest stamp still wins when newer stamps fall outside the window', async () => {
+    // The OLDEST stamp is re-upserted late (updatedAt bumps it back into the
+    // freshest-50) while a NEWER stamp stays outside the window. The merged
+    // snapshot must still surface the oldest identity LAST — a split
+    // recent/reserved concatenation would flip it.
+    artifactRepo.upsert({
+      id: 'a-old',
+      runId: 'run-1',
+      nodeId: 'n-review',
+      artifactType: 'link',
+      artifactKey: '__pr_validated__',
+      data: { link: 'https://github.com/o/r/pull/OLD', kind: 'pr' },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    artifactRepo.upsert({
+      id: 'a-newer',
+      runId: 'run-1',
+      nodeId: 'n-coding',
+      artifactType: 'link',
+      artifactKey: '__pr_validated__',
+      data: { link: 'https://github.com/o/r/pull/NEWER', kind: 'pr' },
+    });
+    for (let i = 0; i < 55; i++) {
+      artifactRepo.upsert({
+        id: `filler-${i}`,
+        runId: 'run-1',
+        nodeId: 'n-coding',
+        artifactType: 'note',
+        artifactKey: `filler-${i}`,
+        data: { seq: i },
+      });
+    }
+    // Re-upsert the OLD stamp: updatedAt jumps to now (into the recent
+    // window); its createdAt is unchanged and still the earliest.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    artifactRepo.upsert({
+      id: 'a-old',
+      runId: 'run-1',
+      nodeId: 'n-review',
+      artifactType: 'link',
+      artifactKey: '__pr_validated__',
+      data: { link: 'https://github.com/o/r/pull/OLD', kind: 'pr' },
+    });
+
+    const engine = makeEngine(makeWorkflow());
+    const window = engine['readArtifactsForCtx']();
+    const reserved = window.filter((a) => a.artifactKey === '__pr_validated__');
+    expect(reserved.length).toBe(2);
+    expect(reserved[reserved.length - 1]?.data.link).toBe('https://github.com/o/r/pull/OLD');
+  });
+
   test('a normally-exiting script delivers full stdout (collected-wins path)', async () => {
     // Multi-kilobyte output ensures the collectors genuinely win the race
     // with buffered data rather than relying on stream close timing.

@@ -2793,3 +2793,38 @@ describe('v4 binding-route validation (mirrors runtime rules)', () => {
     if (!result.ok) expect(result.error).toContain('nonexistent');
   });
 });
+
+describe('portable schema parity — whitespace and empty-list rules', () => {
+  test('an explicitly empty agentSlots list is rejected', () => {
+    const workflow = makeWorkflow({
+      hookBindings: [
+        {
+          hookId: 'pr_ready',
+          sourceNode: 'Code step',
+          targetNode: 'Review step',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Code step', agentSlots: [] }],
+        },
+      ],
+    });
+    const result = validateExportedWorkflow(exportWorkflow(workflow, []));
+    expect(result.ok).toBe(false);
+  });
+
+  test('a whitespace-only custom hook id is rejected', () => {
+    const workflow = makeWorkflow({
+      customHooks: [
+        {
+          id: '   ',
+          requiredData: [],
+          run: { kind: 'script', interpreter: 'bash', source: 'exit 0' },
+        },
+      ],
+    });
+    const result = validateExportedWorkflow(exportWorkflow(workflow, []));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('whitespace');
+  });
+});

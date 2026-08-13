@@ -383,10 +383,32 @@ export async function ghGetUnresolvedReviewThreads(
       'nodes { isResolved comments(first: 1) { nodes { url } } } } } } }';
     const result = await runGhGraphql(ctx, query, pr.host);
     if (!result.ok) return result;
-    urls.push(...extractUnresolvedThreads(result.data));
+    // Structural fail-closed: a successful envelope whose reviewThreads
+    // connection is missing `nodes` or `pageInfo` is a malformed/partial
+    // response — treating it as a complete empty scan would let pr_ready
+    // hand off with no evidence the conversations were checked.
+    const prNode = asRecord(
+      asRecord(asRecord(asRecord(result.data)?.data)?.repository)?.pullRequest
+    );
+    const threadsConnection = asRecord(prNode?.reviewThreads);
+    if (!Array.isArray(threadsConnection?.nodes)) {
+      return {
+        ok: false,
+        retryable: true,
+        error: 'malformed reviewThreads connection (missing nodes); failing closed',
+      };
+    }
     const info = extractThreadsPageInfo(result.data);
-    if (info?.hasNextPage !== true) return { ok: true, data: urls };
-    if (typeof info?.endCursor !== 'string') break;
+    if (!info) {
+      return {
+        ok: false,
+        retryable: true,
+        error: 'malformed reviewThreads connection (missing pageInfo); failing closed',
+      };
+    }
+    urls.push(...extractUnresolvedThreads(result.data));
+    if (info.hasNextPage !== true) return { ok: true, data: urls };
+    if (typeof info.endCursor !== 'string') break;
     cursor = info.endCursor;
   }
   return {

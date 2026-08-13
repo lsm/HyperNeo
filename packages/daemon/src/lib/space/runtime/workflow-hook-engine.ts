@@ -951,22 +951,44 @@ export class WorkflowHookEngine {
       const repo = this.config.artifactRepo;
       const recent = repo?.listRecentByRun(this.config.workflowRunId, 50) ?? [];
       const seenKeys = new Set(recent.map((a) => `${a.nodeId}:${a.artifactType}:${a.artifactKey}`));
-      // Reserved (`__`-prefixed) stamps, bounded SQL-side via a key-prefix
-      // filter instead of loading every link artifact on the hot path. Reversed
-      // to NEWEST-first: the ctx window is freshest-first throughout, and
-      // "oldest stamp wins" readers (getPrimaryLink takes the LAST match) must
-      // find the earliest reserved stamp last — listByRun's ascending creation
-      // order would otherwise hand them the newest stamp and swap the identity.
-      const reserved = (
+      // Reserved (`__`-prefixed) stamps OUTSIDE the bounded window, fetched
+      // SQL-side via a key-prefix filter instead of loading every link
+      // artifact on the hot path.
+      const reservedOutsideWindow = (
         repo?.listByRun(this.config.workflowRunId, {
           artifactType: 'link',
           artifactKeyPrefix: '__',
           limit: 200,
         }) ?? []
-      )
-        .filter((a) => !seenKeys.has(`${a.nodeId}:${a.artifactType}:${a.artifactKey}`))
-        .reverse();
-      return [...recent, ...reserved].map((a: WorkflowRunArtifact) => ({
+      ).filter((a) => !seenKeys.has(`${a.nodeId}:${a.artifactType}:${a.artifactKey}`));
+      // Merge each reserved key's rows (from BOTH the recent window and the
+      // out-of-window fetch — a re-upsert bumps updatedAt and can pull the
+      // oldest stamp back into the freshest-50 while newer stamps of the same
+      // key stay outside) into ONE globally creation-ordered group, newest
+      // first, appended after the non-reserved rows. "Oldest stamp wins"
+      // readers (getPrimaryLink takes the LAST match) must find the globally
+      // earliest stamp of each reserved key last; concatenating recent and
+      // reserved blocks separately would instead hand them whichever block
+      // happened to sit later and swap the identity.
+      const reservedByKey = new Map<string, WorkflowRunArtifact[]>();
+      for (const row of recent) {
+        if (!row.artifactKey.startsWith('__')) continue;
+        const key = `${row.artifactType}:${row.artifactKey}`;
+        const list = reservedByKey.get(key) ?? [];
+        list.push(row);
+        reservedByKey.set(key, list);
+      }
+      for (const row of reservedOutsideWindow) {
+        const key = `${row.artifactType}:${row.artifactKey}`;
+        const list = reservedByKey.get(key) ?? [];
+        list.push(row);
+        reservedByKey.set(key, list);
+      }
+      const reservedOrdered = [...reservedByKey.values()]
+        .map((rows) => rows.sort((a, b) => b.createdAt - a.createdAt))
+        .flat();
+      const recentNonReserved = recent.filter((a) => !a.artifactKey.startsWith('__'));
+      return [...recentNonReserved, ...reservedOrdered].map((a: WorkflowRunArtifact) => ({
         artifactType: a.artifactType,
         artifactKey: a.artifactKey,
         data: this.boundArtifactData(a.data) as Record<string, unknown>,
