@@ -122,7 +122,8 @@ jobs:
       # in CI executes it (tsc only type-checks the package).
       - name: Run extensions/hooks unit tests
         id: extensions-hooks-tests
-        run: bun test packages/extensions/hooks/tests
+        run: bun test tests
+        working-directory: packages/extensions/hooks
         continue-on-error: true
 
       - name: Verify exact version pins
