@@ -484,6 +484,30 @@ function buildRoleSection(
   return lines;
 }
 
+/**
+ * Resolve a channel endpoint (`to`/`from` entry) to the node names it can
+ * address, mirroring how the runtime expands endpoints before matching hook
+ * bindings: a node name addresses itself, an agent-slot name addresses every
+ * node declaring that slot, and `*` addresses every node. Bindings record
+ * resolved NODE names in `targetNode`, so an exact string comparison against
+ * the raw endpoint would miss gated handoffs authored with slot or wildcard
+ * endpoints — the agent would never be told the data contract its hook
+ * requires, then be blocked for not supplying it.
+ */
+function resolveChannelEndpointNodeNames(workflow: SpaceWorkflow, endpoint: string): Set<string> {
+  const names = new Set<string>([endpoint]);
+  if (endpoint === '*') {
+    for (const node of workflow.nodes) names.add(node.name);
+    return names;
+  }
+  for (const node of workflow.nodes) {
+    for (const agent of node.agents ?? []) {
+      if (agent.name === endpoint) names.add(node.name);
+    }
+  }
+  return names;
+}
+
 function buildHookValidatedHandoffLines(
   workflow: SpaceWorkflow,
   currentNode: WorkflowNode
@@ -495,16 +519,25 @@ function buildHookValidatedHandoffLines(
   // require (e.g. pr_link for pr_ready; pr_link + reason for post_approval_only)
   // and removes the stale-prompt drift of naming a fixed field set.
   const lines: string[] = [];
+  // The runtime matches a channel's `from` against BOTH the node name and its
+  // agent-slot names — include both here so a slot-authored channel still
+  // surfaces its contract.
+  const fromNames = new Set<string>([
+    currentNode.name,
+    ...(currentNode.agents ?? []).map((agent) => agent.name),
+  ]);
   for (const channel of workflow.channels ?? []) {
-    if (!isChannelFromNode(channel, currentNode.name)) continue;
+    if (channel.from !== '*' && !fromNames.has(channel.from)) continue;
     const targets = Array.isArray(channel.to) ? channel.to : [channel.to];
     for (const target of targets) {
+      const targetNodeNames = resolveChannelEndpointNodeNames(workflow, target);
       const bindings = (workflow.hookBindings ?? []).filter(
         (binding) =>
           binding.enabled !== false &&
           binding.method === 'send_message' &&
           binding.sourceNode === currentNode.name &&
-          binding.targetNode === target
+          binding.targetNode !== undefined &&
+          targetNodeNames.has(binding.targetNode)
       );
       if (bindings.length === 0) continue;
 

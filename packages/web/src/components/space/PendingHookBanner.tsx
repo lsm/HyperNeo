@@ -189,8 +189,9 @@ export function PendingHookBanner({
             }
 
             if (hook.status === 'blocked_by_hook') {
-              // v2: a blocked hook always accepts human approval/rejection via
-              // approveHook. The old allowHumanApproval flag has no v2 equivalent.
+              // v2: Approve permits the agent's NEXT attempt through the hook
+              // (one-shot engine override — the blocked action is not replayed,
+              // the agent re-issues it); Reject is a standing block.
               actions.push(
                 {
                   label: 'Approve',

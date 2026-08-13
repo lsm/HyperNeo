@@ -803,9 +803,11 @@ export function setupSpaceWorkflowRunHandlers(
 
   // ─── spaceWorkflowRun.approveHook ───────────────────────────────────────
   //
-  // Writes a human approval decision into a hook's local state.
-  // Idempotent: repeated approvals are no-ops. Rejection stamps
-  // `humanApproved: false` so validators can surface the reason.
+  // Writes a human approval decision into a hook's local state; the engine
+  // honors it on the next evaluated action (see WorkflowHookEngine.executeAction):
+  // approval skips the hook once (one-shot — later actions are gated again),
+  // rejection is a standing block until approved. The blocked action itself is
+  // not replayed; the agent re-issues it.
   messageHub.onRequest('spaceWorkflowRun.approveHook', async (data) => {
     const params = data as {
       runId: string;

@@ -31,7 +31,14 @@ const VALID_METHODS = new Set<HookMethod>([
 const VALID_DATA_FIELD_TYPES = new Set<HookDataFieldType>(['string', 'number', 'boolean', 'link']);
 
 const MAX_SCRIPT_BYTES = 32_768;
-const MAX_TIMEOUT_MS = 120_000;
+
+/**
+ * Upper bound for a custom hook's `run.timeoutMs`. Exported so the portable
+ * export schema accepts exactly the values runtime validation admits (the
+ * runtime check allows any positive number up to this bound — fractional
+ * values included — so the export schema must not require integers).
+ */
+export const MAX_CUSTOM_HOOK_TIMEOUT_MS = 120_000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -164,9 +171,11 @@ export function validateCustomHooks(customHooks: unknown): string[] {
         if (
           typeof run.timeoutMs !== 'number' ||
           run.timeoutMs <= 0 ||
-          run.timeoutMs > MAX_TIMEOUT_MS
+          run.timeoutMs > MAX_CUSTOM_HOOK_TIMEOUT_MS
         ) {
-          errors.push(`${loc}.run.timeoutMs: expected positive number <= ${MAX_TIMEOUT_MS}`);
+          errors.push(
+            `${loc}.run.timeoutMs: expected positive number <= ${MAX_CUSTOM_HOOK_TIMEOUT_MS}`
+          );
         }
       }
     }

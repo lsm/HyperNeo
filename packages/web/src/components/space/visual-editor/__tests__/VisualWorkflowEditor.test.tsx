@@ -651,6 +651,79 @@ describe('VisualWorkflowEditor', () => {
   });
 
   // -------------------------------------------------------------------------
+  // Hook bindings — rename remap
+  // -------------------------------------------------------------------------
+
+  describe('Hook bindings — rename remap', () => {
+    function makeHookedWorkflow(): SpaceWorkflow {
+      return makeWorkflow({
+        hookBindings: [
+          {
+            hookId: 'pr_ready',
+            sourceNode: 'Plan',
+            targetNode: 'Code',
+            method: 'send_message',
+            order: 0,
+            enabled: true,
+            authorizedCallers: [{ sourceNode: 'Plan', agentSlots: ['planner'] }],
+          },
+        ],
+      });
+    }
+
+    it('a node rename remaps binding source/target AND authorizedCallers', async () => {
+      const { getByTestId, getAllByTestId } = render(
+        <VisualWorkflowEditor {...makeProps({ workflow: makeHookedWorkflow() })} />
+      );
+      // Select the start node (Plan) and rename it.
+      fireEvent.click(getAllByTestId(/^workflow-node-/)[0]);
+      fireEvent.input(getByTestId('step-name-input'), { target: { value: 'Planning' } });
+      await act(async () => {
+        fireEvent.click(getByTestId('save-button'));
+      });
+      await waitFor(() => expect(mockUpdateWorkflow).toHaveBeenCalledOnce());
+
+      const params = mockUpdateWorkflow.mock.calls[0][1];
+      const binding = params.hookBindings?.[0];
+      expect(binding).toBeDefined();
+      expect(binding?.sourceNode).toBe('Planning');
+      expect(binding?.targetNode).toBe('Code');
+      expect(binding?.authorizedCallers?.[0]?.sourceNode).toBe('Planning');
+      expect(binding?.authorizedCallers?.[0]?.agentSlots).toEqual(['planner']);
+    });
+
+    it('a slot rename remaps authorizedCallers agentSlots', async () => {
+      // Two agents on the node so the multi-agent list (with editable slot
+      // names) renders instead of the single-slot view.
+      const workflow = makeHookedWorkflow();
+      workflow.nodes = [
+        {
+          id: STEP_1_ID,
+          name: 'Plan',
+          agents: [
+            { agentId: 'agent-1', name: 'planner' },
+            { agentId: 'agent-3', name: 'scribe' },
+          ],
+        },
+        workflow.nodes[1],
+      ];
+      const { getByTestId, getAllByTestId } = render(
+        <VisualWorkflowEditor {...makeProps({ workflow })} />
+      );
+      fireEvent.click(getAllByTestId(/^workflow-node-/)[0]);
+      fireEvent.input(getAllByTestId('agent-role-input')[0], { target: { value: 'architect' } });
+      await act(async () => {
+        fireEvent.click(getByTestId('save-button'));
+      });
+      await waitFor(() => expect(mockUpdateWorkflow).toHaveBeenCalledOnce());
+
+      const binding = mockUpdateWorkflow.mock.calls[0][1].hookBindings?.[0];
+      expect(binding?.authorizedCallers?.[0]?.sourceNode).toBe('Plan');
+      expect(binding?.authorizedCallers?.[0]?.agentSlots).toEqual(['architect']);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // Autonomy level selector
   // -------------------------------------------------------------------------
 

@@ -2554,3 +2554,53 @@ describe('export format — v3 version gating (transitions)', () => {
     if (!result.ok) expect(result.error).toContain('require version 3');
   });
 });
+
+describe('custom hooks — export schema parity with runtime validation', () => {
+  // Runtime validation accepts any positive timeoutMs up to the bound
+  // (fractional included), so an exported workflow must round-trip through
+  // validateExportedWorkflow without rejection — the portable schema must not
+  // be stricter than what create/update persists.
+  test('a fractional custom-hook timeoutMs survives export → validate', () => {
+    const workflow = makeWorkflow({
+      customHooks: [
+        {
+          id: 'notify_hook',
+          requiredData: [{ key: 'pr_link', type: 'link', required: true }],
+          run: { kind: 'script', interpreter: 'bash', source: 'exit 0', timeoutMs: 1500.5 },
+        },
+      ],
+      hookBindings: [
+        {
+          hookId: 'notify_hook',
+          sourceNode: 'Code',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+        },
+      ],
+    });
+    const exported = exportWorkflow(workflow, []);
+    expect(exported.customHooks?.[0]?.run.timeoutMs).toBe(1500.5);
+
+    const result = validateExportedWorkflow(exported);
+    expect(result.ok).toBe(true);
+  });
+
+  test('a custom-hook timeoutMs above the shared bound is still rejected on import', () => {
+    const workflow = makeWorkflow({
+      customHooks: [
+        {
+          id: 'notify_hook',
+          requiredData: [],
+          run: { kind: 'script', interpreter: 'bash', source: 'exit 0', timeoutMs: 500_000 },
+        },
+      ],
+    });
+    const exported = exportWorkflow(workflow, []) as Record<string, unknown> & {
+      customHooks: Array<Record<string, unknown>>;
+    };
+    const result = validateExportedWorkflow(exported);
+    expect(result.ok).toBe(false);
+  });
+});

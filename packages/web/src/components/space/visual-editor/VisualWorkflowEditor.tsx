@@ -648,12 +648,47 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 
       setNodes((prev) => prev.map((n) => (n.step.localId === step.localId ? { ...n, step } : n)));
 
+      // A rename must also remap the binding callers: `authorizedCallers`
+      // references node and slot names, and leaving them stale fails backend
+      // hook validation ("unknown caller node/slot") on save. Slot renames are
+      // paired by index; slots that no longer exist on the renamed node are
+      // dropped (a caller with no slots left authorizes the whole node).
+      const previousAgents = previousNode?.step.agents ?? [];
+      const nextAgents = step.agents ?? [];
+      const slotRename = new Map<string, string>();
+      for (let i = 0; i < Math.min(previousAgents.length, nextAgents.length); i++) {
+        const before = previousAgents[i]?.name;
+        const after = nextAgents[i]?.name;
+        if (before && after && before !== after) slotRename.set(before, after);
+      }
+      const nextSlotNames = new Set(nextAgents.map((agent) => agent.name));
+
       setHookBindings((prev) =>
-        prev.map((binding) => ({
-          ...binding,
-          sourceNode: previousRefs.has(binding.sourceNode) ? nextRef : binding.sourceNode,
-          targetNode: previousRefs.has(binding.targetNode) ? nextRef : binding.targetNode,
-        }))
+        prev.map((binding) => {
+          if (!previousRefs.has(binding.sourceNode) && !previousRefs.has(binding.targetNode)) {
+            return binding;
+          }
+          const remapped = {
+            ...binding,
+            sourceNode: previousRefs.has(binding.sourceNode) ? nextRef : binding.sourceNode,
+            targetNode: previousRefs.has(binding.targetNode) ? nextRef : binding.targetNode,
+          };
+          if (!binding.authorizedCallers) return remapped;
+          return {
+            ...remapped,
+            authorizedCallers: binding.authorizedCallers.map((caller) => {
+              if (!previousRefs.has(caller.sourceNode)) return caller;
+              if (!caller.agentSlots) return { ...caller, sourceNode: nextRef };
+              const mappedSlots = caller.agentSlots
+                .map((slot) => slotRename.get(slot) ?? slot)
+                .filter((slot) => nextSlotNames.has(slot));
+              // Empty (or omitted) agentSlots authorizes the whole node.
+              return mappedSlots.length > 0
+                ? { sourceNode: nextRef, agentSlots: mappedSlots }
+                : { sourceNode: nextRef };
+            }),
+          };
+        })
       );
     },
     [nodes]

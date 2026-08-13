@@ -37,6 +37,7 @@ import type {
   SpaceExportBundle,
 } from '@hyperneo/shared';
 import { validateSlug } from './slug';
+import { MAX_CUSTOM_HOOK_TIMEOUT_MS } from './workflow-hook-validation';
 
 // ============================================================================
 // Zod schemas
@@ -201,7 +202,10 @@ const customHookSchema = z.object({
     kind: z.literal('script'),
     interpreter: z.literal('bash'),
     source: z.string().min(1),
-    timeoutMs: z.number().int().positive().optional(),
+    // Mirror runtime validation (not `.int()`): a fractional positive timeout
+    // passes workflow create/update, and an export must round-trip through
+    // this schema without rejection.
+    timeoutMs: z.number().positive().max(MAX_CUSTOM_HOOK_TIMEOUT_MS).optional(),
   }),
 });
 

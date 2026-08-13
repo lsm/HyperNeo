@@ -1,12 +1,13 @@
 import type { Hook, HookAction, HookReturn } from '@hyperneo/shared/types/workflow-hooks';
-import { dataOf } from '../action';
+import { dataOf, POST_APPROVAL_MERGE_REASONS } from '../action';
 import { getPrimaryLink } from '../primary-link';
 
 /**
  * `post_approval_only` — gates a `send_message` channel so it may carry ONLY a
  * post-approval merge-blocker / fix-push report: the send is allowed only while
  * the owning task is `approved` AND the message carries a post-approval merge
- * signal in `data.reason`, with `data.pr_link` bound to the run's reviewed PR.
+ * signal in `data.reason`, with the supplied PR link (`data.pr_link`, or the
+ * merge template's `data.pr_url` spelling) bound to the run's reviewed PR.
  *
  * Deployed on the stable `Coding with QA` workflow's `Coding → QA` channel. That
  * route exists so the coder — reused as the merger on the Coding node — can
@@ -18,15 +19,17 @@ import { getPrimaryLink } from '../primary-link';
  * so the route is never spoofable from an in-progress task.
  */
 
-const POST_APPROVAL_MERGE_REASONS = new Set(['merge_blocked', 'merge_fix_pushed']);
-
 function readReason(action: HookAction): string | undefined {
   const value = dataOf(action)?.reason;
   return typeof value === 'string' ? value : undefined;
 }
 
 function readSuppliedLink(action: HookAction): string | undefined {
-  const value = dataOf(action)?.pr_link;
+  // `pr_link` is the declared contract, but the post-approval merge template
+  // (`CODER_OWNED_MERGE_INSTRUCTIONS`) emits `data.pr_url` on its blocker /
+  // fix-push sends — accept both so the report is not stopped on field name.
+  const data = dataOf(action);
+  const value = data?.pr_link ?? data?.pr_url;
   return typeof value === 'string' ? value : undefined;
 }
 
@@ -51,7 +54,7 @@ export const postApprovalOnlyHook: Hook = {
         return {
           flow: 'stop',
           reason:
-            'Post-approval blocker/fix handoff must carry data.pr_link bound to the reviewed PR (omission is not safe).',
+            'Post-approval blocker/fix handoff must carry data.pr_link (or data.pr_url) bound to the reviewed PR (omission is not safe).',
         };
       }
       const primary = getPrimaryLink(ctx);

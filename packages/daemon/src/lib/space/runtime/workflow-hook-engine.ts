@@ -407,6 +407,42 @@ export class WorkflowHookEngine {
         break;
       }
 
+      // Human override (approveHook RPC): an approval permits the NEXT attempt
+      // through this hook — the flag is consumed on use so later actions are
+      // gated again. A rejection is a standing block until a human approves.
+      // The agent re-issues the blocked action itself; approval does not replay
+      // it. NOTE: state is keyed (runId, hookId), so on a hook bound to
+      // multiple routes the override skips every binding of that hook for one
+      // action — same shared-key limitation as retry state (see step-7 tests).
+      if (hookState && hookState.localState.humanApproved !== undefined) {
+        if (hookState.localState.humanApproved !== true) {
+          const rawReason = hookState.localState.humanRejectionReason;
+          const reason =
+            typeof rawReason === 'string' && rawReason.trim().length > 0
+              ? rawReason
+              : 'Rejected by human';
+          terminal = { kind: 'stop', hookId, reason };
+          executionLog.push({ hookId, flow: 'stop', reason, timestamp: Date.now() });
+          break;
+        }
+        // Consume the one-shot approval (undefined values are dropped by JSON
+        // serialization, clearing the keys under the repo's deep-merge).
+        this.persistStateUpdate(hookId, {
+          localState: {
+            humanApproved: undefined,
+            humanApprovedAt: undefined,
+            humanRejectionReason: undefined,
+          },
+        });
+        executionLog.push({
+          hookId,
+          flow: 'continue',
+          reason: 'Human override: hook skipped by approval',
+          timestamp: Date.now(),
+        });
+        continue;
+      }
+
       const hook = resolveHook(hookId, this.config.workflow.customHooks);
       if (!hook) {
         log.warn(
@@ -804,6 +840,26 @@ export class WorkflowHookEngine {
       },
       writeArtifact: (artifact: HookArtifactInput) => {
         writtenArtifacts.push(artifact);
+        // Side effects must compose within one action: a later binding in the
+        // same chain sees this write even though the persisted upsert lands
+        // after the loop. Mirror the repo's (run, node, type, key) upsert
+        // semantics on the ctx snapshot — replace an existing same-key entry
+        // in place (preserving its position, so "oldest stamp wins" readers
+        // like getPrimaryLink keep the earliest identity) instead of appending
+        // a duplicate.
+        const ctxArtifact: HookArtifact = {
+          artifactType: artifact.artifactType,
+          artifactKey: artifact.artifactKey,
+          data: artifact.data,
+        };
+        const idx = artifacts.findIndex(
+          (a) => a.artifactType === artifact.artifactType && a.artifactKey === artifact.artifactKey
+        );
+        if (idx >= 0) {
+          artifacts[idx] = ctxArtifact;
+        } else {
+          artifacts.push(ctxArtifact);
+        }
       },
       readArtifacts: () => artifacts,
     };
