@@ -133,6 +133,14 @@ const DEFAULT_RETRY_AFTER_MS = 30_000;
 const MIN_SCRIPT_RETRY_MS = 1_000;
 const MAX_SCRIPT_RETRY_MS = 86_400_000;
 
+/**
+ * Ceiling on hook retries. Past this a retrying hook converts to a terminal
+ * stop (the run is not wedged forever on e.g. a PR left OPEN indefinitely).
+ * ~24h at the 30s default cadence; cancellation on task/run completion is the
+ * primary backstop.
+ */
+const MAX_RETRY_ATTEMPTS = 2880;
+
 /** Maximum bytes for an artifact data payload injected into a script hook env. */
 const MAX_ARTIFACT_DATA_BYTES = 16_384;
 
@@ -453,7 +461,27 @@ export class WorkflowHookEngine {
         break;
       }
       if (flow === 'retry') {
-        retry = { hookId, reason: ret.reason, retryAfterMs: ret.retryAfterMs };
+        // Retry ceiling: a perpetually-retrying hook (e.g. pr_merged on a PR left
+        // OPEN indefinitely) would otherwise loop forever. Past the cap, convert
+        // the retry to a terminal stop so the run isn't wedged and the source is
+        // notified (the wrapper notifies on terminal blocks).
+        const attempts =
+          this.config.hookStateRepo.get(this.config.workflowRunId, hookId)?.retryCount ?? 0;
+        if (attempts >= MAX_RETRY_ATTEMPTS) {
+          terminal = {
+            kind: 'stop',
+            hookId,
+            reason: `Hook retry limit exceeded (${MAX_RETRY_ATTEMPTS} attempts): ${ret.reason ?? 'retrying'}`,
+          };
+          executionLog[executionLog.length - 1] = {
+            hookId,
+            flow: 'stop',
+            reason: terminal.reason,
+            timestamp: Date.now(),
+          };
+        } else {
+          retry = { hookId, reason: ret.reason, retryAfterMs: ret.retryAfterMs };
+        }
         break;
       }
 
@@ -796,16 +824,14 @@ export class WorkflowHookEngine {
 
   private readArtifactsForCtx(): HookArtifact[] {
     try {
-      const all = this.config.artifactRepo?.listByRun(this.config.workflowRunId) ?? [];
-      return all
-        .slice()
-        .sort((a, b) => b.updatedAt - a.updatedAt)
-        .slice(0, 50)
-        .map((a: WorkflowRunArtifact) => ({
-          artifactType: a.artifactType,
-          artifactKey: a.artifactKey,
-          data: this.boundArtifactData(a.data) as Record<string, unknown>,
-        }));
+      // Bounded at the SQL level (freshest 50) so each hook run does not load
+      // every run artifact into memory.
+      const recent = this.config.artifactRepo?.listRecentByRun(this.config.workflowRunId, 50) ?? [];
+      return recent.map((a: WorkflowRunArtifact) => ({
+        artifactType: a.artifactType,
+        artifactKey: a.artifactKey,
+        data: this.boundArtifactData(a.data) as Record<string, unknown>,
+      }));
     } catch {
       return [];
     }

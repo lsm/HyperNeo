@@ -14,11 +14,15 @@ import type { HookContext } from '@hyperneo/shared/types/workflow-hooks';
  * rename finishes (steps 4–5).
  */
 export function getPrimaryLink(ctx: HookContext): string | undefined {
+  // ctx.readArtifacts() is freshest-first; the OLDEST validated stamp is the
+  // immutable identity (a later same-key stamp from another node must not swap
+  // it), so take the last match rather than the first.
+  let value: string | undefined;
   for (const artifact of ctx.readArtifacts()) {
     if (artifact.artifactType !== 'link' || artifact.artifactKey !== '__pr_validated__') continue;
     const data = artifact.data as Record<string, unknown> | undefined;
-    const value = data?.link ?? data?.url;
-    if (typeof value === 'string') return value;
+    const link = data?.link ?? data?.url;
+    if (typeof link === 'string') value = link;
   }
-  return undefined;
+  return value;
 }

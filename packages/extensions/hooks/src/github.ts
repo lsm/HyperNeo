@@ -246,7 +246,7 @@ export async function fetchPrView(
   return { ok: true, data: parsePrView(parsed) };
 }
 
-function parsePrView(value: unknown): GithubPrView {
+export function parsePrView(value: unknown): GithubPrView {
   const v = asRecord(value) ?? {};
   return {
     state: (typeof v.state === 'string' ? v.state : 'CLOSED') as GithubPrView['state'],
@@ -268,14 +268,30 @@ export interface ParsedPrLink {
   number: number;
 }
 
-/** Parse owner/repo/number from a GitHub PR link (any host, including Enterprise). */
+/**
+ * GitHub owner/repo slug charset. Restricting the parsed tokens to this set
+ * prevents GraphQL injection — owner/repo are interpolated raw into the query
+ * string, and the link is agent-supplied (prompt-injectable), so a crafted
+ * owner/repo containing `"`/`\` could otherwise break out of the GraphQL string
+ * and run arbitrary fields with the daemon's gh token.
+ */
+const SLUG_RE = /^[A-Za-z0-9._-]+$/;
+
+/**
+ * Parse owner/repo/number from a GitHub PR link (any host, including Enterprise).
+ * Returns undefined when the link doesn't match the PR shape OR owner/repo
+ * contain characters outside the GitHub slug charset (injection guard).
+ */
 export function parsePrLink(link: string): ParsedPrLink | undefined {
   const match = /^https?:\/\/([^/]+)\/([^/]+)\/([^/]+)\/pull\/(\d+)\/?/.exec(link);
   if (!match) return undefined;
+  const owner = match[2] as string;
+  const repo = match[3] as string;
+  if (!SLUG_RE.test(owner) || !SLUG_RE.test(repo)) return undefined;
   return {
     host: match[1] as string,
-    owner: match[2] as string,
-    repo: match[3] as string,
+    owner,
+    repo,
     number: Number(match[4]),
   };
 }
@@ -301,7 +317,7 @@ export async function ghGetUnresolvedReviewThreads(
   return { ok: true, data: extractUnresolvedThreads(result.data) };
 }
 
-function extractUnresolvedThreads(value: unknown): string[] {
+export function extractUnresolvedThreads(value: unknown): string[] {
   const root = asRecord(value) ?? {};
   const repo = asRecord(asRecord(root.data)?.repository);
   const pr = asRecord(repo?.pullRequest);
@@ -359,7 +375,7 @@ export async function ghGetReviewEvidence(
   return { ok: true, data: extractReviewEvidence(result.data, sinceIso) };
 }
 
-function extractReviewEvidence(value: unknown, sinceIso: string): GithubReviewEvidence {
+export function extractReviewEvidence(value: unknown, sinceIso: string): GithubReviewEvidence {
   const root = asRecord(value) ?? {};
   // GraphQL response: { data: { viewer, repository: { pullRequest } } }. Both
   // `viewer` and `repository` live under `data` — reading `viewer` from the
@@ -462,7 +478,7 @@ export async function ghGetCodexApproval(
   return { ok: true, data: extractCodexApproval(result.data, link) };
 }
 
-function extractCodexApproval(value: unknown, prLink: string): GithubCodexApproval {
+export function extractCodexApproval(value: unknown, prLink: string): GithubCodexApproval {
   const root = asRecord(value) ?? {};
   const pr = asRecord(asRecord(asRecord(root.data)?.repository)?.pullRequest);
 

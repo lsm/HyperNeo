@@ -44,7 +44,10 @@ function prUrlOf(
   artifactKey: string,
   data: Record<string, unknown> | undefined
 ): string {
-  if (artifactType === 'link' && (artifactKey === 'pr' || data?.kind === 'pr')) {
+  if (
+    artifactType === 'link' &&
+    (artifactKey === 'pr' || artifactKey === VALIDATED_PR_KEY || data?.kind === 'pr')
+  ) {
     const link = typeof data?.link === 'string' ? data.link : '';
     if (link) return link;
     const url = typeof data?.url === 'string' ? data.url : '';
@@ -65,8 +68,24 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
   resolvePrimaryLinkUrl(runId: string): string {
     if (!this.artifactRepo) return '';
     try {
+      // Prefer the engine-stamped validated identity (earliest = the immutable
+      // first stamp, so a later same-key stamp from another node can't swap it).
+      // Fall back to the freshest agent-written link/pr only before the first
+      // handoff stamps a validated identity.
+      const all = this.artifactRepo.listByRun(runId);
+      const validated = all.filter(
+        (a) => a.artifactType === 'link' && a.artifactKey === VALIDATED_PR_KEY
+      );
+      const earliestValidated = validated
+        .map((a) => ({
+          url: prUrlOf(a.artifactType, a.artifactKey, a.data),
+          updatedAt: a.updatedAt,
+        }))
+        .filter((v) => v.url)
+        .sort((a, b) => a.updatedAt - b.updatedAt)[0];
+      if (earliestValidated) return earliestValidated.url;
       let best: { url: string; updatedAt: number } | null = null;
-      for (const a of this.artifactRepo.listByRun(runId)) {
+      for (const a of all) {
         const url = prUrlOf(a.artifactType, a.artifactKey, a.data);
         if (!url) continue;
         if (!best || a.updatedAt > best.updatedAt) best = { url, updatedAt: a.updatedAt };

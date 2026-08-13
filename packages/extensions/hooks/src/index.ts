@@ -19,6 +19,9 @@ import { reviewPostedHook } from './hooks/review-posted';
 
 export { dataOf, readDataString } from './action';
 export {
+  extractCodexApproval,
+  extractReviewEvidence,
+  extractUnresolvedThreads,
   fetchPrView,
   type GithubCodexApproval,
   type GithubPrView,
@@ -31,6 +34,7 @@ export {
   githubFailureToFlow,
   type ParsedPrLink,
   parsePrLink,
+  parsePrView,
 } from './github';
 export { codexReviewApprovedHook } from './hooks/codex-review-approved';
 export { postApprovalOnlyHook } from './hooks/post-approval-only';

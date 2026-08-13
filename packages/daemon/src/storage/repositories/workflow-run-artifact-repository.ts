@@ -94,6 +94,22 @@ export class WorkflowRunArtifactRepository {
   }
 
   /**
+   * The most-recently-updated `limit` artifacts for a run, for hot-path readers
+   * (e.g. hook context) that must not load every artifact on each invocation.
+   * Bounded at the SQL level (ORDER BY updated_at DESC LIMIT ?).
+   */
+  listRecentByRun(runId: string, limit: number): WorkflowRunArtifactRecord[] {
+    const rows = this.db
+      .prepare(
+        'SELECT * FROM workflow_run_artifacts WHERE run_id = ? ORDER BY updated_at DESC LIMIT ?'
+      )
+      .all(runId, limit) as Record<string, unknown>[];
+    return rows
+      .map((r) => this.rowToRecord(r))
+      .filter((r): r is WorkflowRunArtifactRecord => r !== null);
+  }
+
+  /**
    * List artifacts for many runs in a single round-trip. Artifacts are ordered
    * by created_at ASC globally, so grouping by run_id preserves each run's
    * within-run ordering (matching listByRun). Missing run ids contribute no

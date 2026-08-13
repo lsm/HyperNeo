@@ -11,6 +11,7 @@
     "**/packages/e2e/tests/**",
     "**/packages/shared/tests/**",
     "**/packages/messaging/tests/**",
+    "**/packages/extensions/hooks/tests/**",
     "**/packages/ui/tests/**",
     "**/packages/ui/demo/**",
     "packages/shared/src/neo-prompt/**",

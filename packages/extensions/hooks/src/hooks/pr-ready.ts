@@ -72,7 +72,11 @@ export const prReadyHook: Hook = {
     // `save_artifact` rejects `__`-prefixed keys, so a same-node agent (e.g. a
     // post-approval coder reused as the merger) cannot overwrite this with a
     // different already-merged PR and swap the identity the merge gate binds to.
-    ctx.writeArtifact({ artifactType: 'link', artifactKey: '__pr_validated__', data: { link } });
+    ctx.writeArtifact({
+      artifactType: 'link',
+      artifactKey: '__pr_validated__',
+      data: { link, kind: 'pr' },
+    });
     return { flow: 'continue' };
   },
 };

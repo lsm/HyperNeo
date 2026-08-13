@@ -1970,8 +1970,8 @@ export interface HandoffTransition {
    */
   target: string;
   /**
-   * Optional hook whose validator must pass for this transition (e.g.
-   * `pr_ready`). References a hook in `SpaceWorkflow.hooks`.
+   * Optional hook whose run must pass for this transition (e.g.
+   * `pr_ready`). References a built-in hook id or a `SpaceWorkflow.customHooks` id.
    */
   hookId?: string;
   /**
