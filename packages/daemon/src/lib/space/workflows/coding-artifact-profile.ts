@@ -18,6 +18,8 @@
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import { Logger } from '../../logger';
 import type { WorkflowArtifactProfile } from '../runtime/artifact-profile';
+// The validated-PR key is PR-domain knowledge owned by the extensions layer.
+import { VALIDATED_PR_ARTIFACT_KEY } from '@hyperneo/extensions-hooks';
 
 const log = new Logger('coding-artifact-profile');
 
@@ -26,12 +28,13 @@ export interface CodingArtifactProfileConfig {
 }
 
 /**
- * The engine-reserved key the `pr_ready` hook stamps the run's authoritative
- * reviewed-PR identity under. `save_artifact` rejects `__`-prefixed keys, so
- * only the engine (via `ctx.writeArtifact`) can write this — a same-node agent
- * cannot overwrite it to swap the PR the merge gate binds to.
+ * Alias for the extensions-owned engine-reserved key the `pr_ready` hook stamps
+ * the run's authoritative reviewed-PR identity under. `save_artifact` rejects
+ * `__`-prefixed keys, so only the engine (via `ctx.writeArtifact`) can write
+ * this — a same-node agent cannot overwrite it to swap the PR the merge gate
+ * binds to.
  */
-const VALIDATED_PR_KEY = '__pr_validated__';
+const VALIDATED_PR_KEY = VALIDATED_PR_ARTIFACT_KEY;
 
 /**
  * The PR's URL on a `link/pr` artifact (v2: `data.link`, legacy `link kind:'pr'`:

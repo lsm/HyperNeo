@@ -830,12 +830,12 @@ export function setupSpaceWorkflowRunHandlers(
     }
 
     const existing = hookStateRepo.get(params.runId, params.hookId);
-    const baseVersion = existing?.version ?? 0;
     const baseLocalState = existing?.localState ?? {};
 
     const rejectionReason = params.reason?.trim() || 'Rejected by human';
-    const updateResult = hookStateRepo.update(params.runId, params.hookId, {
-      expectedVersion: baseVersion,
+    // updateWithRetry refreshes the expected version per attempt, so a
+    // concurrent retry-timer write doesn't surface as a version conflict here.
+    const updateResult = hookStateRepo.updateWithRetry(params.runId, params.hookId, {
       localState: {
         ...baseLocalState,
         humanApproved: params.approved,
@@ -885,14 +885,14 @@ export function setupSpaceWorkflowRunHandlers(
     }
 
     const existing = hookStateRepo.get(params.runId, params.hookId);
-    const baseVersion = existing?.version ?? 0;
     const queuedAction = existing?.localState?.[QUEUED_RETRYABLE_ACTION_STATE_KEY];
     const queuedActionKey =
       queuedAction && typeof queuedAction === 'object'
         ? (queuedAction as Record<string, unknown>).actionKey
         : undefined;
-    const updateResult = hookStateRepo.update(params.runId, params.hookId, {
-      expectedVersion: baseVersion,
+    // updateWithRetry refreshes the expected version per attempt — a concurrent
+    // retry-timer bumping the version must not fail the "retry now" button.
+    const updateResult = hookStateRepo.updateWithRetry(params.runId, params.hookId, {
       localState: {
         ...existing?.localState,
         [QUEUED_RETRYABLE_ACTION_STATE_KEY]: null,

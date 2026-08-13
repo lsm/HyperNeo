@@ -1,4 +1,5 @@
 import type { Hook, HookAction, HookReturn } from '@hyperneo/shared/types/workflow-hooks';
+import { dataOf } from '../action';
 import { getPrimaryLink } from '../primary-link';
 
 /**
@@ -18,13 +19,6 @@ import { getPrimaryLink } from '../primary-link';
  */
 
 const POST_APPROVAL_MERGE_REASONS = new Set(['merge_blocked', 'merge_fix_pushed']);
-
-function dataOf(action: HookAction): Record<string, unknown> | undefined {
-  const data = action.rawParams?.data ?? action.params.data;
-  return data && typeof data === 'object' && !Array.isArray(data)
-    ? (data as Record<string, unknown>)
-    : undefined;
-}
 
 function readReason(action: HookAction): string | undefined {
   const value = dataOf(action)?.reason;

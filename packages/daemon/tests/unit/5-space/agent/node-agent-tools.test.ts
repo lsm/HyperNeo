@@ -35,10 +35,6 @@ import type {
   SaveArtifactInput,
   SubscribeExternalEventInput,
 } from '../../../../src/lib/space/tools/node-agent-tool-schemas.ts';
-import {
-  clearBuiltInValidatorRegistry,
-  registerBuiltInValidator,
-} from '../../../../src/lib/space/runtime/built-in-validator-registry.ts';
 import type { SpaceWorkflow, WorkflowChannel } from '@hyperneo/shared';
 import type {
   DaemonInternalEventMap,

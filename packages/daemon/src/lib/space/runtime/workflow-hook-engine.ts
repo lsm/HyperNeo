@@ -34,10 +34,7 @@ import type {
 import { generateUUID } from '@hyperneo/shared';
 import { parseAddress } from '../../../../../messaging/src/address';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
-import type {
-  WorkflowHookStatePatch,
-  WorkflowHookStateRepository,
-} from '../../../storage/repositories/workflow-hook-state-repository';
+import type { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import { Logger } from '../../logger';
 import {
@@ -345,26 +342,16 @@ export class WorkflowHookEngine {
       nextRetryAt?: number | null;
     }
   ): boolean {
-    const repoPatch: WorkflowHookStatePatch = {
-      expectedVersion: 0,
-      ...patch,
-    };
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        const repoState =
-          this.config.hookStateRepo.get(this.config.workflowRunId, hookId) ??
-          this.config.hookStateRepo.ensure(this.config.workflowRunId, hookId);
-        const result = this.config.hookStateRepo.update(this.config.workflowRunId, hookId, {
-          ...repoPatch,
-          expectedVersion: repoState.version,
-        });
-        if (result) {
-          this.config.onHookStateUpdated?.(hookId, result);
-          return true;
-        }
-      } catch {
-        // retry on version conflict or transient repo error
-      }
+    // updateWithRetry refreshes the expected version per attempt; the engine
+    // adds the state-updated event on top.
+    const result = this.config.hookStateRepo.updateWithRetry(
+      this.config.workflowRunId,
+      hookId,
+      patch
+    );
+    if (result) {
+      this.config.onHookStateUpdated?.(hookId, result);
+      return true;
     }
     return false;
   }
@@ -396,6 +383,9 @@ export class WorkflowHookEngine {
     const artifacts: HookArtifactWrite[] = [];
     const followUpRequests: Array<{ targetNode: string; message: string }> = [];
     let currentParams = { ...params };
+    // The ctx artifact window is identical for every binding in this action —
+    // compute it once instead of 2 SQL round-trips per binding.
+    const ctxArtifacts = this.readArtifactsForCtx();
 
     type Terminal = { kind: 'stop'; hookId: string; reason?: string } | null;
     let terminal: Terminal = null;
@@ -425,7 +415,7 @@ export class WorkflowHookEngine {
         continue;
       }
 
-      const built = this.buildHookContext(binding, meta);
+      const built = this.buildHookContext(binding, meta, ctxArtifacts);
       const action: HookAction = {
         method: methodName as HookAction['method'],
         params: this.boundParams(currentParams),
@@ -777,7 +767,8 @@ export class WorkflowHookEngine {
    */
   private buildHookContext(
     binding: HookBinding,
-    meta: HookActionMeta
+    meta: HookActionMeta,
+    artifacts: HookArtifact[]
   ): {
     ctx: HookContext;
     recordedState: Record<string, unknown>;
@@ -795,8 +786,6 @@ export class WorkflowHookEngine {
       binding.hookId,
       {}
     );
-
-    const artifacts = this.readArtifactsForCtx();
 
     const ctx: HookContext = {
       runId: this.config.workflowRunId,
@@ -824,21 +813,22 @@ export class WorkflowHookEngine {
 
   private readArtifactsForCtx(): HookArtifact[] {
     try {
-      // Freshest 50 for general context, PLUS every __pr_validated__ row (the
-      // authoritative PR identity downstream hooks bind to) — a busy run can
-      // accumulate >50 artifacts and push the validated stamp out of the
-      // bounded window, which would make getPrimaryLink miss it.
+      // Freshest 50 for general context, PLUS every engine-reserved
+      // (`__`-prefixed key) artifact — a busy run can accumulate >50 artifacts
+      // and push a reserved stamp (e.g. a hook-stamped identity another hook
+      // binds to) out of the bounded window. Generic on the reserved namespace;
+      // the engine names no domain keys.
       const repo = this.config.artifactRepo;
       const recent = repo?.listRecentByRun(this.config.workflowRunId, 50) ?? [];
       const seenKeys = new Set(recent.map((a) => `${a.nodeId}:${a.artifactType}:${a.artifactKey}`));
-      const validated = (
+      const reserved = (
         repo?.listByRun(this.config.workflowRunId, { artifactType: 'link' }) ?? []
       ).filter(
         (a) =>
-          a.artifactKey === '__pr_validated__' &&
+          a.artifactKey.startsWith('__') &&
           !seenKeys.has(`${a.nodeId}:${a.artifactType}:${a.artifactKey}`)
       );
-      return [...recent, ...validated].map((a: WorkflowRunArtifact) => ({
+      return [...recent, ...reserved].map((a: WorkflowRunArtifact) => ({
         artifactType: a.artifactType,
         artifactKey: a.artifactKey,
         data: this.boundArtifactData(a.data) as Record<string, unknown>,
@@ -1552,14 +1542,20 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
             message: req.message,
           } as unknown as Record<string, unknown>);
 
+          // Race a timeout, but CLEAR the timer when the dispatch settles first —
+          // otherwise the orphaned timer rejects the already-settled promise ~30s
+          // later with nothing awaiting it (unhandled rejection on every fast
+          // dispatch).
+          let timer: ReturnType<typeof setTimeout> | undefined;
           const timeoutPromise = new Promise<never>((_, reject) => {
-            setTimeout(
+            timer = setTimeout(
               () => reject(new Error('Follow-up dispatch timed out')),
               DEFAULT_FOLLOW_UP_TIMEOUT_MS
             );
           });
-
-          return Promise.race([dispatchPromise, timeoutPromise]);
+          return Promise.race([dispatchPromise, timeoutPromise]).finally(() => {
+            if (timer !== undefined) clearTimeout(timer);
+          });
         });
 
         try {

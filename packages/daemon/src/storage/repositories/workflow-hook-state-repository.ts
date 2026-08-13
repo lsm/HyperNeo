@@ -103,6 +103,30 @@ export class WorkflowHookStateRepository {
     return rows.map(rowToSnapshot);
   }
 
+  /**
+   * Optimistic-version update with a bounded retry loop (the caller's
+   * `expectedVersion` is refreshed from the current row each attempt), so a
+   * concurrent writer bumping the version does not surface as a conflict to
+   * callers like the retryHook/approveHook RPCs. Returns the updated snapshot,
+   * or null when every attempt conflicted/erred.
+   */
+  updateWithRetry(
+    runId: string,
+    hookId: string,
+    patch: Omit<WorkflowHookStatePatch, 'expectedVersion'>
+  ): HookStateSnapshot | null {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const current = this.get(runId, hookId) ?? this.ensure(runId, hookId);
+        const result = this.update(runId, hookId, { ...patch, expectedVersion: current.version });
+        if (result) return result;
+      } catch {
+        // retry on version conflict or transient repo error
+      }
+    }
+    return null;
+  }
+
   update(runId: string, hookId: string, patch: WorkflowHookStatePatch): HookStateSnapshot | null {
     const tx = this.db.transaction(() => {
       let current = this.get(runId, hookId);

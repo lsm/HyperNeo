@@ -1,7 +1,7 @@
 import type { Hook, HookAction, HookReturn } from '@hyperneo/shared/types/workflow-hooks';
 import { readDataString } from '../action';
 import { ghGetPr, ghGetUnresolvedReviewThreads, githubFailureToFlow } from '../github';
-import { getPrimaryLink } from '../primary-link';
+import { getPrimaryLink, VALIDATED_PR_ARTIFACT_KEY } from '../primary-link';
 
 /**
  * `pr_ready` — the coder→reviewer handoff gate. The PR must be OPEN, MERGEABLE,
@@ -78,7 +78,7 @@ export const prReadyHook: Hook = {
     // different already-merged PR and swap the identity the merge gate binds to.
     ctx.writeArtifact({
       artifactType: 'link',
-      artifactKey: '__pr_validated__',
+      artifactKey: VALIDATED_PR_ARTIFACT_KEY,
       data: { link, kind: 'pr' },
     });
     return { flow: 'continue' };

@@ -1,6 +1,15 @@
 import type { HookContext } from '@hyperneo/shared/types/workflow-hooks';
 
 /**
+ * The engine-reserved artifact key the `pr_ready` hook stamps the run's
+ * authoritative reviewed-PR identity under. `save_artifact` rejects `__`-prefixed
+ * keys, so only the engine can write this. Exported so every reader/writer of
+ * the validated identity (pr-ready, this module, the daemon's
+ * coding-artifact-profile) shares one literal instead of scattering it.
+ */
+export const VALIDATED_PR_ARTIFACT_KEY = '__pr_validated__';
+
+/**
  * Read the run's authoritative primary link from its artifacts.
  *
  * This is the v2 replacement for the old engine-injected `frozenPrUrl`. which
@@ -19,7 +28,8 @@ export function getPrimaryLink(ctx: HookContext): string | undefined {
   // it), so take the last match rather than the first.
   let value: string | undefined;
   for (const artifact of ctx.readArtifacts()) {
-    if (artifact.artifactType !== 'link' || artifact.artifactKey !== '__pr_validated__') continue;
+    if (artifact.artifactType !== 'link' || artifact.artifactKey !== VALIDATED_PR_ARTIFACT_KEY)
+      continue;
     const data = artifact.data as Record<string, unknown> | undefined;
     const link = data?.link ?? data?.url;
     if (typeof link === 'string') value = link;
