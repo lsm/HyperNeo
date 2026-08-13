@@ -547,6 +547,8 @@ describe('Session RPC Handlers — models.list', () => {
     let v2Previous: string | undefined;
     /** Persisted session status returned by the mock db; defaults to active. */
     let sessionStatus: string;
+    /** Hydration spy — terminal statuses must reject BEFORE hydrating (Codex P2). */
+    let hydrateSpy: ReturnType<typeof mock>;
 
     beforeEach(async () => {
       messageHubData = createMockMessageHub();
@@ -629,10 +631,12 @@ describe('Session RPC Handlers — models.list', () => {
         }),
       };
       const sessionManager = {
-        getSessionAsync: mock(async () => ({
+        // biome-ignore lint: test mock assignment — hydrateSpy captured for the
+        // terminal-status assertion (hydration must not happen at all there).
+        getSessionAsync: (hydrateSpy = mock(async () => ({
           getSessionData: () => ({ id: 'sess-1', status: 'active' }),
           startQueryAndEnqueue: mock(async () => {}),
-        })),
+        }))),
         getDatabase: () => dbFacade,
       } as unknown as SessionManager;
 
@@ -681,14 +685,20 @@ describe('Session RPC Handlers — models.list', () => {
       expect(result.retried).toBe(false);
     });
 
-    it('rejects retries for a terminal session (archived/ended) without reopening (Codex #5)', async () => {
+    it('rejects retries for a terminal session (archived/ended) without reopening or hydrating (Codex #5 + P2)', async () => {
       for (const terminalStatus of ['archived', 'ended'] as const) {
         sessionStatus = terminalStatus;
+        hydrateSpy.mockClear();
         const result = (await messageHubData.handlers.get('session.messages.retry')!(
           { sessionId: 'sess-1', messageDbId: 'db-failed' },
           {}
         )) as { retried: boolean };
         expect(result.retried).toBe(false);
+        // The session was never hydrated: constructing an AgentSession for an
+        // evicted terminal session schedules the pending-message replay, which
+        // enqueues delivery jobs for OTHER pending prompts (the archived
+        // barrier does not cover `ended`). (Codex P2.)
+        expect(hydrateSpy).not.toHaveBeenCalled();
         // The failed row was NOT reopened to enqueued.
         const row = db
           .prepare(`SELECT send_status FROM sdk_messages WHERE id = ?`)

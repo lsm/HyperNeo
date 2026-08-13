@@ -133,6 +133,20 @@ export class DeliveryMetrics {
   }
 
   /**
+   * Declare the prior feed of `messageUuid` void: its turn was confirmed to
+   * have produced no result and the delivery bridge reopened the row, so the
+   * NEXT feed of this UUID is an intentional recovery re-drive — not the
+   * exactly-once breach `duplicateUuids` exists to flag. Drops the UUID from
+   * the recent-feed window (a feed whose first attempt aged out needs no
+   * forget; the next feed reads as first either way). `feedsObserved` still
+   * counts every handoff — only duplicate attribution is reset. Call at the
+   * reopen, before the retry can feed again. (Codex P2.)
+   */
+  forgetFeed(messageUuid: string): void {
+    this.recentFeeds.delete(messageUuid);
+  }
+
+  /**
    * Record a claim that did NOT feed — a reclaim-skip (alreadyConsumed /
    * alreadySubmitted) or noContent. These are the duplicates-PREVENTED signal.
    * NOT called for the normal fresh-feed path (an `enqueued` row that feeds),

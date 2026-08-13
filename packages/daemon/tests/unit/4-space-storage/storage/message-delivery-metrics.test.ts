@@ -43,6 +43,27 @@ describe('DeliveryMetrics (task #861 item 13)', () => {
       expect(snap.duplicateFeedCount).toBe(1);
       expect(snap.feedsObserved).toBe(3);
     });
+
+    it('forgetFeed exempts an intentional recovery re-drive from duplicate attribution', () => {
+      // The recovery reopen path (confirmed no-result turn) declares the prior
+      // feed void: the retry's re-feed is by design, not an exactly-once breach.
+      metrics.recordFeed('recover');
+      metrics.forgetFeed('recover');
+      metrics.recordFeed('recover'); // the retry's re-feed
+      const snap = metrics.snapshot();
+      expect(snap.duplicateFeedCount).toBe(0);
+      expect(snap.duplicateUuids).not.toContain('recover');
+      // feedsObserved still counts every handoff — only attribution resets.
+      expect(snap.feedsObserved).toBe(2);
+    });
+
+    it('forgetFeed does not un-flag an already-recorded true duplicate', () => {
+      metrics.recordFeed('dup');
+      metrics.recordFeed('dup'); // a genuine double-feed — recorded
+      metrics.forgetFeed('dup');
+      const snap = metrics.snapshot();
+      expect(snap.duplicateFeedCount).toBe(1); // history is not rewritten
+    });
   });
 
   describe('reclaim-skip outcomes (duplicates prevented)', () => {

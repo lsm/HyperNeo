@@ -961,6 +961,22 @@ describe('AgentSession', () => {
       expect(retrySpy).toHaveBeenCalledTimes(1); // no additional reopen
     });
 
+    it('isWaitingForInput sees an unresolved sdk_resume_choice even while parked as queued', async () => {
+      // A resume-blocked startup persists the sdk_resume_choice action and
+      // parks the session as `queued` — `waiting_for_input` belongs to
+      // AskUserQuestion, so the state alone can't see this gate. Steers parked
+      // behind an unanswered resume card must not charge their park budget.
+      // (Codex P2.)
+      let unresolved = true;
+      mockDb.getSDKMessageRepo = mock(() => ({
+        hasUnresolvedHyperNeoAction: mock(() => unresolved),
+      }));
+      await agentSession.stateManager.setQueued('msg-gate');
+      expect(agentSession.isWaitingForInput()).toBe(true);
+      unresolved = false;
+      expect(agentSession.isWaitingForInput()).toBe(false);
+    });
+
     it('handleModelSwitch should delegate to modelSwitchHandler', async () => {
       const mockResult = { success: true, model: 'claude-opus-4-20250514' };
       const switchModelSpy = mock(() => mockResult);

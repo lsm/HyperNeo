@@ -2462,13 +2462,27 @@ export class AgentSession
   }
 
   /**
-   * Human gate open (an unanswered `sdk_resume_choice` / `waiting_for_input`).
+   * Human gate open (an unanswered `sdk_resume_choice` OR `waiting_for_input`).
    * The delivery handler keeps a parked steer parked without burning its park
    * budget while this is true — the choice resolving (or the session leaving
    * the gate via archive/interrupt/turn-end) re-evaluates. (Codex #11.)
+   *
+   * The state check alone cannot see the resume gate: a blocked startup only
+   * persists the `sdk_resume_choice` action and parks the session as `queued`
+   * (`waiting_for_input` belongs to AskUserQuestion), so without the action
+   * check a steer parked behind an unanswered resume card would charge
+   * `__parkCount` every cycle and dead-letter after ~5 minutes while the gate
+   * is legitimately open. (Codex P2.)
    */
   isWaitingForInput(): boolean {
-    return this.stateManager.getState().status === 'waiting_for_input';
+    if (this.stateManager.getState().status === 'waiting_for_input') return true;
+    try {
+      return !!this.db
+        .getSDKMessageRepo()
+        ?.hasUnresolvedHyperNeoAction(this.session.id, 'sdk_resume_choice');
+    } catch {
+      return false;
+    }
   }
 
   async deliverChatMessage(messageUuid: string): Promise<void> {
@@ -2610,6 +2624,11 @@ export class AgentSession
    * unhandled rejection here.
    */
   private reopenDeliveryForRetry(messageUuid: string): void {
+    // The prior feed's outcome is void (the turn produced nothing), so the
+    // retry's re-feed is an intentional recovery — not the exactly-once breach
+    // duplicateFeedCount exists to flag. Drop it from the recent-feed window
+    // BEFORE the retry can feed again. (Codex P2.)
+    deliveryMetrics.forgetFeed(messageUuid);
     const dbId = this.db
       .getSDKMessageRepo()
       ?.markDeliveryRetryableByUuid(this.session.id, messageUuid);
