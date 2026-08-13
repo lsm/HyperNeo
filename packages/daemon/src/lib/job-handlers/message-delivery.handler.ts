@@ -148,9 +148,25 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
     // NOT re-fed (see the module doc + §8). `deferred`/`failed` skip outright;
     // a `consumed` turn is re-driven without the feed (below). `submitted`
     // (ACP) means the prompt already reached the subprocess; a reclaimed attempt
-    // must NOT re-feed it (the subprocess may already be executing it). Skip —
-    // the live runner's finally (markACPDeliveryFailed) or cold recovery settles
-    // it. See Codex (#3744971821).
+    // must NOT re-feed it (the subprocess may already be executing it).
+    //
+    // For a `submitted` ACP STEER, the job is mid-await-acceptance: onSent fired
+    // (≡ onSubmitted → row `submitted`) but acceptance (markMessageAccepted) is
+    // async. Skip-completing here would strand the row as `submitted` with no job
+    // if acceptance never comes, defeating the awaiting-acceptance park. So keep
+    // parking (bounded by MAX_STEER_PARKS) until it flips to `consumed` (accepted
+    // → alreadyConsumed) or the budget exhausts (→ failed). A `submitted` TURN is
+    // left to the live runner / cold recovery as before. See Codex (#3744971821).
+    if (sendStatus === 'submitted' && payload.role === 'steer') {
+      if (deps.jobQueue.getParkCount(job.id) >= MAX_STEER_PARKS) {
+        throw new DeadLetterImmediatelyError(
+          'ACP steer awaited acceptance past its budget — subprocess never accepted'
+        );
+      }
+      const retryAt = Date.now() + MESSAGE_DELIVERY_PARK_MS;
+      deps.jobQueue.requeueParked(job.id, retryAt, job.claimToken);
+      return { parked: 'acp_awaiting_acceptance', retryAt };
+    }
     if (sendStatus === 'deferred' || sendStatus === 'failed' || sendStatus === 'submitted') {
       await session.settleSkippedDelivery?.(payload.messageUuid);
       return { outcome: 'skipped', sendStatus };

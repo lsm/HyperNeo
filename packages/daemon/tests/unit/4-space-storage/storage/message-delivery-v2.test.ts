@@ -689,6 +689,27 @@ describe('handler — status-aware delivery (§8)', () => {
     expect(metrics.snapshot().reclaimSkips.alreadySubmitted).toBe(1);
   });
 
+  it('a submitted ACP STEER keeps parking until accepted (not skip-completed)', async () => {
+    // onSent fired (≡ onSubmitted → row `submitted`) but acceptance is async.
+    // Skip-completing would strand the row as `submitted` with no job; instead
+    // the handler re-parks (bounded by MAX_STEER_PARKS) until the row flips to
+    // `consumed` (accepted) or the budget exhausts. A submitted TURN still skips.
+    const session = new MockSession();
+    const job = steerJob(repo, 'msg-submitted-steer');
+    const handler = createMessageDeliveryHandler({
+      jobQueue: repo,
+      getSession: () => session,
+      getMessageContent: () => ({ content: 'steer', sendStatus: 'submitted' }),
+    });
+    const before = Date.now();
+    const result = await handler(job);
+    expect(result).toMatchObject({ parked: 'acp_awaiting_acceptance' });
+    const after = repo.getJob(job.id);
+    expect(after?.status).toBe('pending'); // re-parked, not completed
+    expect(after?.runAt ?? 0).toBeGreaterThan(before);
+    expect(session.feedCalls).toBe(0); // not re-fed
+  });
+
   it('deferred message is skipped, not force-fed into the turn (#2597)', async () => {
     const session = new MockSession();
     const job = turnJob(repo, 'msg-deferred');
