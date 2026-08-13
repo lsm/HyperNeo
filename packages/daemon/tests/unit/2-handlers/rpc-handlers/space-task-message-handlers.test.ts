@@ -2421,16 +2421,14 @@ describe('setupSpaceTaskMessageHandlers', () => {
       );
       const cycleRepo = new ChannelCycleRepository(sqlite);
 
-      // Simulate 4 autonomous Review→Coding cycles against the backward channel
-      // (channel index 1, maxCycles = 5). At this point the cap is 4/5 — one
-      // more cycle would hit the cap on the next call.
-      const MAX_CYCLES = 5;
+      // Simulate 4 autonomous Review→Coding traversals against the backward
+      // channel (channel index 1). The rate-based detector counts these in a
+      // rolling window; 4 is well below the threshold (15).
       const CHANNEL_INDEX = 1;
       for (let i = 0; i < 4; i++) {
-        const ok = cycleRepo.incrementCycleCount('run-cyc-1', CHANNEL_INDEX, MAX_CYCLES);
-        expect(ok).toBe(true);
+        cycleRepo.recordCycleEvent('run-cyc-1', CHANNEL_INDEX, now - i * 1000);
       }
-      expect(cycleRepo.get('run-cyc-1', CHANNEL_INDEX)!.count).toBe(4);
+      expect(cycleRepo.countRecentCycleEvents('run-cyc-1', CHANNEL_INDEX)).toBe(4);
 
       // Wire handlers with the real repo as the ChannelCycleResetter.
       const mh = createMockMessageHub();
@@ -2470,13 +2468,12 @@ describe('setupSpaceTaskMessageHandlers', () => {
       });
       expect(result).toMatchObject({ ok: true });
 
-      // Cycle count must now be 0.
-      expect(cycleRepo.get('run-cyc-1', CHANNEL_INDEX)!.count).toBe(0);
+      // The rate-window history must now be cleared.
+      expect(cycleRepo.countRecentCycleEvents('run-cyc-1', CHANNEL_INDEX)).toBe(0);
 
-      // A 5th autonomous cycle is now allowed — the cap guard succeeds again.
-      const fifth = cycleRepo.incrementCycleCount('run-cyc-1', CHANNEL_INDEX, MAX_CYCLES);
-      expect(fifth).toBe(true);
-      expect(cycleRepo.get('run-cyc-1', CHANNEL_INDEX)!.count).toBe(1);
+      // A further autonomous traversal is recorded fresh after the reset.
+      cycleRepo.recordCycleEvent('run-cyc-1', CHANNEL_INDEX, now);
+      expect(cycleRepo.countRecentCycleEvents('run-cyc-1', CHANNEL_INDEX)).toBe(1);
 
       sqlite.close();
     });
@@ -2500,9 +2497,9 @@ describe('setupSpaceTaskMessageHandlers', () => {
         `INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at, updated_at) VALUES ('run-a2a', 'sp1', 'wf1', 'Run', 'in_progress', ${now}, ${now})`
       );
       const cycleRepo = new ChannelCycleRepository(sqlite);
-      cycleRepo.incrementCycleCount('run-a2a', 0, 5);
-      cycleRepo.incrementCycleCount('run-a2a', 0, 5);
-      const before = cycleRepo.get('run-a2a', 0)!.count;
+      cycleRepo.recordCycleEvent('run-a2a', 0, now);
+      cycleRepo.recordCycleEvent('run-a2a', 0, now);
+      const before = cycleRepo.countRecentCycleEvents('run-a2a', 0);
       expect(before).toBe(2);
 
       // Simulate the agent-to-agent path: the TaskAgentManager's
@@ -2517,7 +2514,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
       await taskAgent.injectSubSessionMessage!('sess-some-agent', 'hello from an agent');
 
       // The counter must be UNCHANGED — the RPC reset path was never invoked.
-      expect(cycleRepo.get('run-a2a', 0)!.count).toBe(before);
+      expect(cycleRepo.countRecentCycleEvents('run-a2a', 0)).toBe(before);
 
       sqlite.close();
     });

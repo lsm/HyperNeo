@@ -853,8 +853,12 @@ export function setupSpaceWorkflowRunHandlers(
         humanApproved: params.approved,
         humanApprovedAt: Date.now(),
         humanRejectionReason: params.approved ? undefined : rejectionReason,
-        // Reset the elapsed-ceiling cycle stamp alongside the count.
+        // Reset the elapsed-ceiling cycle stamp AND the terminal marker: an
+        // operator decision is the recovery path for a ceiling stop — the
+        // next attempt must be able to run (and re-approve/re-retry) rather
+        // than short-circuiting on the stale marker forever.
         __firstRetryAt: undefined,
+        __retryCeilingTerminal: undefined,
       },
       lastFlow: params.approved ? 'continue' : 'stop',
       lastReason: params.approved ? 'Approved by human' : rejectionReason,
@@ -922,8 +926,10 @@ export function setupSpaceWorkflowRunHandlers(
     const updateResult = hookStateRepo.updateWithRetry(params.runId, params.hookId, {
       localState: {
         [QUEUED_RETRYABLE_ACTION_STATE_KEY]: null,
-        // Reset the elapsed-ceiling cycle stamp alongside the count.
+        // Reset the elapsed-ceiling cycle stamp AND the terminal marker (see
+        // approveHook — "retry now" is an operator recovery event).
         __firstRetryAt: undefined,
+        __retryCeilingTerminal: undefined,
       },
       lastFlow: 'continue',
       lastReason: 'Retry requested by human',

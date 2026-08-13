@@ -308,6 +308,17 @@ const SPACE_SCOPE_TABLES: ScopeTableConfig[] = [
     description: 'Cycle counters for workflow channels to prevent infinite loop execution.',
   },
   {
+    tableName: 'channel_cycle_events',
+    scopeJoin: {
+      localColumn: 'run_id',
+      joinTable: 'space_workflow_runs',
+      joinPkColumn: 'id',
+      scopeColumn: 'space_id',
+    },
+    blacklistedColumns: [],
+    description: 'Timestamped cyclic-channel traversal events for rate-based dead-loop detection.',
+  },
+  {
     tableName: 'workflow_run_artifacts',
     scopeJoin: {
       localColumn: 'run_id',

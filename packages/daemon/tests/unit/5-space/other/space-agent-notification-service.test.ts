@@ -276,6 +276,64 @@ describe('SpaceAgentNotificationService', () => {
     });
   });
 
+  describe('space.workflowRun.deadLoop event', () => {
+    it('formats a dead-loop block with the agent pair and rate details', async () => {
+      const { factory, bus } = makeService();
+      await bus.publish('space.workflowRun.deadLoop', {
+        sessionId: 'global',
+        spaceId: SPACE_ID,
+        runId: 'run-dl',
+        fromAgent: 'reviewer',
+        toTarget: 'coder',
+        channelIndex: 1,
+        recentCount: 15,
+        threshold: 15,
+        windowMs: 5 * 60 * 1000,
+        reason: 'Cyclic channel from "reviewer" to "coder" is in a dead loop',
+        timestamp: TIMESTAMP,
+      });
+
+      const { message } = factory.calls[0];
+      expect(message).toContain('[TASK_EVENT] workflow_dead_loop');
+      expect(message).toContain('run-dl');
+      expect(message).toContain('"reviewer" → "coder"');
+      expect(message).toContain('15 message round-trips');
+      expect(message).toContain('within 5 minute(s)');
+      expect(message).toContain('next send was blocked');
+
+      const json = extractJson(message);
+      expect(json.kind).toBe('workflow_dead_loop');
+      expect(json.runId).toBe('run-dl');
+      expect(json.fromAgent).toBe('reviewer');
+      expect(json.toTarget).toBe('coder');
+      expect(json.recentCount).toBe(15);
+      expect(json.threshold).toBe(15);
+      expect(json.autonomyLevel).toBe(1);
+    });
+
+    it('propagates injection failure so the router can retry (unlike fire-and-forget events)', async () => {
+      // The dead-loop subscriber uses notifyStrict: a failed injection must
+      // surface as a publish rejection so ChannelRouter.notifyDeadLoop skips its
+      // dedupe timestamp and retries on the next blocked send.
+      const { bus } = makeService({ injectError: new Error('session unavailable') });
+      await expect(
+        bus.publish('space.workflowRun.deadLoop', {
+          sessionId: 'global',
+          spaceId: SPACE_ID,
+          runId: 'run-dl',
+          fromAgent: 'reviewer',
+          toTarget: 'coder',
+          channelIndex: 1,
+          recentCount: 15,
+          threshold: 15,
+          windowMs: 5 * 60 * 1000,
+          reason: 'dead loop',
+          timestamp: TIMESTAMP,
+        })
+      ).rejects.toThrow(/failed with 1 handler failure/);
+    });
+  });
+
   describe('space.agent.crashed event', () => {
     it('formats agent crash with [TASK_EVENT] prefix', async () => {
       const { factory, bus } = makeService();

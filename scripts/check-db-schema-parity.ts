@@ -44,6 +44,7 @@ type IndexInfoRow = {
 };
 
 export const HELPER_SCHEMA_TABLES = [
+  'channel_cycle_events',
   'channel_cycles',
   'delivery_consumed_seq',
   'evolution_episodes',

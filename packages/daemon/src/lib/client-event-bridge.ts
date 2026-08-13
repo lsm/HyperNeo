@@ -142,6 +142,11 @@ const SPACE_BRIDGE_MAPPINGS: BridgeMapping[] = [
     clientEvent: 'space.workflowRun.cyclesReset',
     channel: () => Channels.global(),
   },
+  {
+    event: 'space.workflowRun.deadLoop',
+    clientEvent: 'space.workflowRun.deadLoop',
+    channel: () => Channels.global(),
+  },
   // Space agent events → space-scoped
   {
     event: 'spaceAgent.created',

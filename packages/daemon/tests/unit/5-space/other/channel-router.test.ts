@@ -47,6 +47,8 @@ import {
   PermanentSpawnError,
 } from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
 import type { SpaceWorkflow, WorkflowChannel } from '@hyperneo/shared';
+import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
+import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
 
 // ---------------------------------------------------------------------------
 // DB helpers
@@ -200,7 +202,6 @@ describe('ChannelRouter', () => {
       workflowManager,
       agentManager,
       channelCycleRepo,
-      db,
       nodeExecutionRepo: new NodeExecutionRepository(db),
     });
   });
@@ -615,7 +616,6 @@ describe('ChannelRouter', () => {
         workflowManager,
         agentManager,
         channelCycleRepo,
-        db,
         nodeExecutionRepo,
         cancelSessionById: (sessionId) => cancelledSessions.push(sessionId),
       });
@@ -942,10 +942,10 @@ describe('ChannelRouter', () => {
     });
 
     // -----------------------------------------------------------------------
-    // Cyclic channels — iteration tracking
+    // Cyclic channels — rate-based dead-loop detection
     // -----------------------------------------------------------------------
 
-    test('cyclic channel: increments cycle count on successful delivery', async () => {
+    test('cyclic channel: records a traversal event on successful delivery', async () => {
       const channels: WorkflowChannel[] = [
         { id: 'ch-fwd', from: 'Sender', to: 'Receiver' },
         { id: 'ch-bwd', from: 'Receiver', to: 'Sender' },
@@ -968,20 +968,24 @@ describe('ChannelRouter', () => {
       workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
       await router.deliverMessage(run.id, 'planner', 'coder', 'message 1');
-      expect(channelCycleRepo.get(run.id, 1)!.count).toBe(1);
+      expect(channelCycleRepo.countRecentCycleEvents(run.id, 1)).toBe(1);
 
       for (const t of taskRepo.listByWorkflowRun(run.id)) {
         taskRepo.updateTask(t.id, { status: 'cancelled' });
       }
 
       await router.deliverMessage(run.id, 'planner', 'coder', 'message 2');
-      expect(channelCycleRepo.get(run.id, 1)!.count).toBe(2);
+      expect(channelCycleRepo.countRecentCycleEvents(run.id, 1)).toBe(2);
     });
 
-    test('cyclic channel: throws ActivationError when cycle cap is reached', async () => {
+    test('cyclic channel: a long review spread over time never trips (lifetime cap no longer blocks)', async () => {
+      // Reproduces the PR #2473 / task #942 false-block: many review rounds on
+      // the same cyclic channel (here 11 — over the old maxCycles of 5), but
+      // spread out over hours. The retired lifetime cap blocked this; the
+      // rate-based detector must allow it.
       const channels: WorkflowChannel[] = [
         { id: 'ch-fwd', from: 'Sender', to: 'Receiver' },
-        { id: 'ch-bwd', from: 'Receiver', to: 'Sender', maxCycles: 2 },
+        { id: 'ch-bwd', from: 'Receiver', to: 'Sender', maxCycles: 5 },
       ];
       const workflow = buildWorkflow(
         SPACE_ID,
@@ -996,22 +1000,286 @@ describe('ChannelRouter', () => {
       const run = workflowRunRepo.createRun({
         spaceId: SPACE_ID,
         workflowId: workflow.id,
-        title: 'Cycle Cap Run',
+        title: 'Long Review Run',
       });
       workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
-      channelCycleRepo.incrementCycleCount(run.id, 1, 2);
-      channelCycleRepo.incrementCycleCount(run.id, 1, 2);
+      // 11 round-trips, 20 minutes apart. None cluster inside any 5-minute
+      // window, so the rolling rate stays well below the threshold (15).
+      const now = Date.now();
+      for (let i = 1; i <= 11; i++) {
+        channelCycleRepo.recordCycleEvent(run.id, 1, now - i * 20 * 60 * 1000);
+      }
+      expect(channelCycleRepo.countRecentCycleEvents(run.id, 1, now)).toBe(0);
 
-      await expect(
-        router.deliverMessage(run.id, 'planner', 'coder', 'over the limit')
-      ).rejects.toBeInstanceOf(ActivationError);
-      await expect(
-        router.deliverMessage(run.id, 'planner', 'coder', 'over the limit')
-      ).rejects.toThrow(/maximum cycle count/);
+      // Delivery proceeds — no false block.
+      const delivered = await router.deliverMessage(run.id, 'planner', 'coder', 'round 12');
+      expect(delivered.runId).toBe(run.id);
     });
 
-    test('non-cyclic channel: cycle count stays unchanged', async () => {
+    test('cyclic channel: throws ActivationError when a tight ping-pong trips the dead-loop threshold', async () => {
+      const channels: WorkflowChannel[] = [
+        { id: 'ch-fwd', from: 'Sender', to: 'Receiver' },
+        { id: 'ch-bwd', from: 'Receiver', to: 'Sender' },
+      ];
+      const workflow = buildWorkflow(
+        SPACE_ID,
+        workflowManager,
+        [
+          { id: NODE_A, name: 'Sender', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+          { id: NODE_B, name: 'Receiver', agents: [{ agentId: AGENT_PLANNER, name: 'planner' }] },
+        ],
+        channels
+      );
+
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Dead-Loop Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+      // 15 rapid traversals within the window → the next send trips.
+      const now = Date.now();
+      for (let i = 0; i < 15; i++) channelCycleRepo.recordCycleEvent(run.id, 1, now - i * 1000);
+
+      await expect(
+        router.deliverMessage(run.id, 'planner', 'coder', 'runaway ping-pong')
+      ).rejects.toBeInstanceOf(ActivationError);
+      await expect(
+        router.deliverMessage(run.id, 'planner', 'coder', 'runaway ping-pong')
+      ).rejects.toThrow(/dead loop/);
+    });
+
+    test('cyclic channel: dead-loop trip surfaces a space.workflowRun.deadLoop event', async () => {
+      const bus = new InternalEventBus<DaemonInternalEventMap>();
+      const deadLoopEvents: DaemonInternalEventMap['space.workflowRun.deadLoop'][] = [];
+      const unsub = bus.subscribe(
+        'space.workflowRun.deadLoop',
+        (e) => {
+          deadLoopEvents.push(e);
+        },
+        { subscriberName: 'test-collector:space.workflowRun.deadLoop' }
+      );
+
+      const routerWithBus = new ChannelRouter({
+        taskRepo,
+        workflowRunRepo,
+        workflowManager,
+        agentManager,
+        channelCycleRepo,
+        nodeExecutionRepo: new NodeExecutionRepository(db),
+        internalEventBus: bus,
+      });
+
+      const channels: WorkflowChannel[] = [
+        { id: 'ch-fwd', from: 'Sender', to: 'Receiver' },
+        { id: 'ch-bwd', from: 'Receiver', to: 'Sender' },
+      ];
+      const workflow = buildWorkflow(
+        SPACE_ID,
+        workflowManager,
+        [
+          { id: NODE_A, name: 'Sender', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+          { id: NODE_B, name: 'Receiver', agents: [{ agentId: AGENT_PLANNER, name: 'planner' }] },
+        ],
+        channels
+      );
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Surfacing Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+      const now = Date.now();
+      for (let i = 0; i < 15; i++) channelCycleRepo.recordCycleEvent(run.id, 1, now - i * 1000);
+
+      await expect(
+        routerWithBus.deliverMessage(run.id, 'planner', 'coder', 'runaway')
+      ).rejects.toThrow(/dead loop/);
+
+      expect(deadLoopEvents).toHaveLength(1);
+      const evt = deadLoopEvents[0];
+      expect(evt.spaceId).toBe(SPACE_ID);
+      expect(evt.fromAgent).toBe('planner');
+      expect(evt.toTarget).toBe('coder');
+      expect(evt.channelIndex).toBe(1);
+      expect(evt.recentCount).toBe(15);
+      expect(evt.threshold).toBe(15);
+
+      unsub();
+    });
+
+    test('cyclic channel: repeated blocked sends dedupe the dead-loop event within the window', async () => {
+      const bus = new InternalEventBus<DaemonInternalEventMap>();
+      const deadLoopEvents: DaemonInternalEventMap['space.workflowRun.deadLoop'][] = [];
+      const unsub = bus.subscribe(
+        'space.workflowRun.deadLoop',
+        (e) => {
+          deadLoopEvents.push(e);
+        },
+        { subscriberName: 'test-collector:space.workflowRun.deadLoop:dedupe' }
+      );
+
+      const routerWithBus = new ChannelRouter({
+        taskRepo,
+        workflowRunRepo,
+        workflowManager,
+        agentManager,
+        channelCycleRepo,
+        nodeExecutionRepo: new NodeExecutionRepository(db),
+        internalEventBus: bus,
+      });
+
+      const channels: WorkflowChannel[] = [
+        { id: 'ch-fwd', from: 'Sender', to: 'Receiver' },
+        { id: 'ch-bwd', from: 'Receiver', to: 'Sender' },
+      ];
+      const workflow = buildWorkflow(
+        SPACE_ID,
+        workflowManager,
+        [
+          { id: NODE_A, name: 'Sender', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+          { id: NODE_B, name: 'Receiver', agents: [{ agentId: AGENT_PLANNER, name: 'planner' }] },
+        ],
+        channels
+      );
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Dedupe Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+      const now = Date.now();
+      for (let i = 0; i < 15; i++) channelCycleRepo.recordCycleEvent(run.id, 1, now - i * 1000);
+
+      // A retrying agent attempts the blocked send several times in a row.
+      for (let i = 0; i < 3; i++) {
+        await expect(
+          routerWithBus.deliverMessage(run.id, 'planner', 'coder', 'retry')
+        ).rejects.toThrow(/dead loop/);
+      }
+
+      // Only the first trip surfaces — the UI is not spammed.
+      expect(deadLoopEvents).toHaveLength(1);
+
+      unsub();
+    });
+
+    test('cyclic channel: a new loop after a human-touch reset surfaces a fresh notification', async () => {
+      // Dedupe is cleared when a cyclic send is allowed again, so a distinct
+      // second incident after explicit human intervention is still surfaced.
+      const bus = new InternalEventBus<DaemonInternalEventMap>();
+      const deadLoopEvents: DaemonInternalEventMap['space.workflowRun.deadLoop'][] = [];
+      const unsub = bus.subscribe(
+        'space.workflowRun.deadLoop',
+        (e) => {
+          deadLoopEvents.push(e);
+        },
+        { subscriberName: 'test-collector:space.workflowRun.deadLoop:reset-reloop' }
+      );
+
+      const routerWithBus = new ChannelRouter({
+        taskRepo,
+        workflowRunRepo,
+        workflowManager,
+        agentManager,
+        channelCycleRepo,
+        nodeExecutionRepo: new NodeExecutionRepository(db),
+        internalEventBus: bus,
+      });
+
+      const channels: WorkflowChannel[] = [
+        { id: 'ch-fwd', from: 'Sender', to: 'Receiver' },
+        { id: 'ch-bwd', from: 'Receiver', to: 'Sender' },
+      ];
+      const workflow = buildWorkflow(
+        SPACE_ID,
+        workflowManager,
+        [
+          { id: NODE_A, name: 'Sender', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+          { id: NODE_B, name: 'Receiver', agents: [{ agentId: AGENT_PLANNER, name: 'planner' }] },
+        ],
+        channels
+      );
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Reset Reloop Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+      // First incident: block + notify.
+      const t0 = Date.now();
+      for (let i = 0; i < 15; i++) channelCycleRepo.recordCycleEvent(run.id, 1, t0 - i * 1000);
+      await expect(
+        routerWithBus.deliverMessage(run.id, 'planner', 'coder', 'first loop')
+      ).rejects.toThrow(/dead loop/);
+      expect(deadLoopEvents).toHaveLength(1);
+
+      // Human touch clears the loop; the next send is allowed (and drops dedupe).
+      channelCycleRepo.resetAllForRun(run.id);
+      const delivered = await routerWithBus.deliverMessage(
+        run.id,
+        'planner',
+        'coder',
+        'after reset'
+      );
+      expect(delivered.runId).toBe(run.id);
+
+      // A second, distinct rapid loop must surface a FRESH notification.
+      const t1 = Date.now();
+      for (let i = 0; i < 15; i++) channelCycleRepo.recordCycleEvent(run.id, 1, t1 - i * 1000);
+      await expect(
+        routerWithBus.deliverMessage(run.id, 'planner', 'coder', 'second loop')
+      ).rejects.toThrow(/dead loop/);
+      expect(deadLoopEvents).toHaveLength(2);
+
+      unsub();
+    });
+
+    test('cyclic channel: human touch (resetAllForRun) lifts a dead-loop block', async () => {
+      // Router-level coverage of the reset-on-human-touch contract — the repo
+      // layer is covered separately in channel-cycle-repository.test.ts.
+      const channels: WorkflowChannel[] = [
+        { id: 'ch-fwd', from: 'Sender', to: 'Receiver' },
+        { id: 'ch-bwd', from: 'Receiver', to: 'Sender' },
+      ];
+      const workflow = buildWorkflow(
+        SPACE_ID,
+        workflowManager,
+        [
+          { id: NODE_A, name: 'Sender', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+          { id: NODE_B, name: 'Receiver', agents: [{ agentId: AGENT_PLANNER, name: 'planner' }] },
+        ],
+        channels
+      );
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Reset Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+      const now = Date.now();
+      for (let i = 0; i < 15; i++) channelCycleRepo.recordCycleEvent(run.id, 1, now - i * 1000);
+
+      // Blocked before the human touch.
+      await expect(router.deliverMessage(run.id, 'planner', 'coder', 'blocked')).rejects.toThrow(
+        /dead loop/
+      );
+
+      // Human touch resets the run's cycle state.
+      channelCycleRepo.resetAllForRun(run.id);
+
+      // After reset, delivery succeeds again (the block is lifted).
+      const delivered = await router.deliverMessage(run.id, 'planner', 'coder', 'after reset');
+      expect(delivered.runId).toBe(run.id);
+    });
+
+    test('non-cyclic channel: records no traversal event', async () => {
       const channels: WorkflowChannel[] = [
         {
           from: 'coder',
@@ -1037,7 +1305,42 @@ describe('ChannelRouter', () => {
 
       await router.deliverMessage(run.id, 'coder', 'planner', 'non-cyclic message');
 
-      expect(channelCycleRepo.get(run.id, 0)).toBeNull();
+      expect(channelCycleRepo.countRecentCycleEvents(run.id, 0)).toBe(0);
+    });
+
+    test('cyclic channel: a reservation persists when activation throws after reserve (self-healing)', async () => {
+      // Reserve-before-activation: if activation fails AFTER the reservation
+      // commits, one extra row remains. It biases safely toward blocking and
+      // ages out after the window — pin this documented edge.
+      const channels: WorkflowChannel[] = [
+        { id: 'ch-fwd', from: 'Coding', to: 'Review' },
+        { id: 'ch-bwd', from: 'Review', to: 'Coding' },
+      ];
+      const workflow = buildWorkflow(
+        SPACE_ID,
+        workflowManager,
+        [
+          { id: NODE_A, name: 'Coding', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+          { id: NODE_B, name: 'Review', agents: [{ agentId: AGENT_PLANNER, name: 'planner' }] },
+        ],
+        channels
+      );
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Orphan Reservation Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+      // Delete the target agent so activation throws AFTER the cyclic
+      // reservation has already committed (target resolution still succeeds
+      // because resolveNodeAgents does not validate agent existence).
+      db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(AGENT_CODER);
+
+      expect(channelCycleRepo.countRecentCycleEvents(run.id, 1)).toBe(0);
+      await expect(router.deliverMessage(run.id, 'planner', 'coder', 'orphan')).rejects.toThrow();
+      // The reservation row persisted despite the activation failure.
+      expect(channelCycleRepo.countRecentCycleEvents(run.id, 1)).toBe(1);
     });
   });
 
@@ -1109,7 +1412,7 @@ describe('ChannelRouter', () => {
       expect(result.allowed).toBe(true);
     });
 
-    test('cyclic channel: blocked when cycle count >= maxCycles', async () => {
+    test('cyclic channel: blocked when a tight ping-pong trips the dead-loop threshold', async () => {
       const channels: WorkflowChannel[] = [
         { id: 'ch-fwd', from: 'Node A', to: 'Node B' },
         { id: 'ch-bwd', from: 'Node B', to: 'Node A', maxCycles: 3 },
@@ -1127,20 +1430,22 @@ describe('ChannelRouter', () => {
       const run = workflowRunRepo.createRun({
         spaceId: SPACE_ID,
         workflowId: workflow.id,
-        title: 'Cycle Cap Run',
+        title: 'Dead-Loop canDeliver Run',
       });
       workflowRunRepo.transitionStatus(run.id, 'in_progress');
-      channelCycleRepo.incrementCycleCount(run.id, 1, 3);
-      channelCycleRepo.incrementCycleCount(run.id, 1, 3);
-      channelCycleRepo.incrementCycleCount(run.id, 1, 3);
+      const now = Date.now();
+      for (let i = 0; i < 15; i++) channelCycleRepo.recordCycleEvent(run.id, 1, now - i * 1000);
 
       const result = await router.canDeliver(run.id, 'planner', 'coder');
       expect(result.allowed).toBe(false);
-      expect(result.reason).toMatch(/maximum cycle count/);
+      expect(result.reason).toMatch(/dead loop/);
     });
 
-    test('cyclic channel: allowed when below the cap', async () => {
-      const channels: WorkflowChannel[] = [];
+    test('cyclic channel: allowed below the dead-loop threshold', async () => {
+      const channels: WorkflowChannel[] = [
+        { id: 'ch-fwd', from: 'Node A', to: 'Node B' },
+        { id: 'ch-bwd', from: 'Node B', to: 'Node A' },
+      ];
       const workflow = buildWorkflow(
         SPACE_ID,
         workflowManager,
@@ -1154,14 +1459,57 @@ describe('ChannelRouter', () => {
       const run = workflowRunRepo.createRun({
         spaceId: SPACE_ID,
         workflowId: workflow.id,
-        title: 'Below Cap Run',
+        title: 'Below Threshold Run',
       });
       workflowRunRepo.transitionStatus(run.id, 'in_progress');
-      channelCycleRepo.incrementCycleCount(run.id, 1, 5);
-      channelCycleRepo.incrementCycleCount(run.id, 1, 5);
+      const now = Date.now();
+      // 14 recent traversals — one short of the threshold.
+      for (let i = 0; i < 14; i++) channelCycleRepo.recordCycleEvent(run.id, 1, now - i * 1000);
 
       const result = await router.canDeliver(run.id, 'planner', 'coder');
       expect(result.allowed).toBe(true);
+    });
+
+    test('canDeliver is read-only: it never records a traversal event', async () => {
+      // Locks the documented contract: canDeliver is a non-mutating query that
+      // may prune out-of-window rows but must never INSERT. Seeds straddle the
+      // window boundary so a regression that recorded on the query path would
+      // shift the in-window count.
+      const channels: WorkflowChannel[] = [
+        { id: 'ch-fwd', from: 'Node A', to: 'Node B' },
+        { id: 'ch-bwd', from: 'Node B', to: 'Node A' },
+      ];
+      const workflow = buildWorkflow(
+        SPACE_ID,
+        workflowManager,
+        [
+          { id: NODE_A, name: 'Node A', agents: [{ agentId: AGENT_CODER, name: 'coder' }] },
+          { id: NODE_B, name: 'Node B', agents: [{ agentId: AGENT_PLANNER, name: 'planner' }] },
+        ],
+        channels
+      );
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Read-only canDeliver Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+      const now = Date.now();
+      const WINDOW = 5 * 60 * 1000;
+      channelCycleRepo.recordCycleEvent(run.id, 1, now - 10_000); // well inside
+      channelCycleRepo.recordCycleEvent(run.id, 1, now - (WINDOW - 1000)); // just inside the boundary
+      channelCycleRepo.recordCycleEvent(run.id, 1, now - (WINDOW + 1000)); // just outside (pruned)
+      const before = channelCycleRepo.countRecentCycleEvents(run.id, 1);
+      expect(before).toBe(2); // the two in-window events
+
+      // Repeated queries must not insert any new traversal.
+      for (let i = 0; i < 5; i++) {
+        const result = await router.canDeliver(run.id, 'planner', 'coder');
+        expect(result.allowed).toBe(true);
+      }
+
+      expect(channelCycleRepo.countRecentCycleEvents(run.id, 1)).toBe(before);
     });
 
     test('non-cyclic channel: cycle count does not block delivery', async () => {

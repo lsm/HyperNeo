@@ -1695,10 +1695,18 @@ export interface Channel {
    */
   to: string | string[];
   /**
-   * Maximum number of times this channel may be traversed in a single workflow run
-   * before delivery is blocked. Only meaningful for backward (cyclic) channels —
-   * cyclicity is inferred from graph topology, not stored.
-   * Defaults to 5 at runtime when the channel is cyclic and this field is absent.
+   * Formerly the maximum number of times this cyclic channel could be traversed
+   * per run before delivery was blocked.
+   *
+   * @deprecated Vestigial — no longer a blocking gate. Cyclic channels are now
+   *   protected by rate-based dead-loop detection (`DEAD_LOOP_THRESHOLD`
+   *   traversals within a rolling `DEAD_LOOP_WINDOW_MS` window), which catches a
+   *   runaway tight ping-pong without false-tripping on a genuine extended
+   *   review the way a lifetime cap did (see PR #2479 / task #942). A configured
+   *   `maxCycles` value is **ignored** at runtime. The field is retained only so
+   *   saved workflow configurations, template hashes, and imports stay
+   *   backward-compatible; retiring it from the type and visual editor is a
+   *   separate follow-up.
    */
   maxCycles?: number;
   /** Optional human-readable label for display in the visual editor. */
@@ -1910,9 +1918,19 @@ export interface WorkflowChannel {
    */
   to: string | string[];
   /**
-   * Maximum number of times this channel may be traversed in a single workflow run
-   * before delivery is blocked. Only meaningful for back-channels (cyclic edges).
-   * Defaults to 5 at runtime when the channel is cyclic and this field is absent.
+   * Formerly the maximum number of times this cyclic channel could be traversed
+   * per run before delivery was blocked.
+   *
+   * @deprecated Vestigial — no longer a blocking gate. This is the field
+   *   persisted on workflow definitions and surfaced in the visual editor, but
+   *   the runtime now ignores it: cyclic channels are protected by rate-based
+   *   dead-loop detection (`DEAD_LOOP_THRESHOLD` traversals within a rolling
+   *   `DEAD_LOOP_WINDOW_MS` window), which catches a runaway tight ping-pong
+   *   without false-tripping on a genuine extended review the way a lifetime
+   *   cap did (see PR #2479 / task #942). A configured `maxCycles` value has no
+   *   effect. The field is retained only for backward-compatibility with saved
+   *   configurations, template hashes, and imports; retiring it from the type
+   *   and editor is a separate follow-up.
    */
   maxCycles?: number;
   /** Optional human-readable label for display in the visual editor */
