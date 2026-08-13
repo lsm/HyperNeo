@@ -826,7 +826,7 @@ while IFS= read -r _bad; do
 	[ -n "$_bad" ] || continue
 	err "online test_path value contains shell metacharacters (the bash -lc runner would reinterpret them — e.g. # comments out the rest): $_bad"
 	echo "     → keep test_path a plain path (no # ; & | < >)" >&2
-done < <(printf '%s\n' "$_module_values" "$_real_module_values" | awk -F'\t' '{print $2}' | grep -E '[#;&|<>]' | sort -u)
+done < <(printf '%s\n' "$_module_values" "$_real_module_values" | awk -F'\t' '{print $2}' | grep -vE '^[a-zA-Z0-9./_-]+$' | sort -u)
 # Per-RECORD validation (not grouped by module name): each daemon-real-api
 # include row IS a combination running `bun test ${{ matrix.test_path }}`, so a
 # row without a non-empty test_path expands to a bare `bun test` (which
@@ -1037,11 +1037,13 @@ while IFS= read -r _tp; do
 	fi
 done < <(online_test_path_values "$MAIN_WORKFLOW"; online_test_path_values "$REAL_API_WORKFLOW")
 
-# Detect overlapping directory filter prefixes. Vitest treats positional filters
-# as substring matches, so `tests/online/sdk` also matches files under
-# `tests/online/sdk-extra` — those tests run twice.
+# Detect overlapping positional filter prefixes. Vitest treats positional
+# filters as substring matches, so `tests/online/sdk` also matches files under
+# `tests/online/sdk-extra`, and `rpc-agent.test.ts` matches
+# `rpc-agent.test.ts.bak` — those tests run twice. Compare ALL values (files
+# and directories).
 _dir_overlap=$(printf '%s\n' "$_module_values" "$_real_module_values" \
-	| awk -F'\t' '$2 !~ /\.(test|_test)\.ts$/ {print $2}' \
+	| awk -F'\t' '{print $2}' \
 	| sort -u \
 	| awk '
 		{ vals[NR]=$0 }
