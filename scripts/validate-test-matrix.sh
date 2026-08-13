@@ -117,8 +117,9 @@ runner_is_data_cmd() {
 		| sed -E "s/^[\"']//" \
 		| sed -E 's/.* -- //' \
 		| sed -E 's/^env( [[:alnum:]_]+=[^[:space:]]+)*//' \
+		| sed -E 's/^command[[:space:]]+//' \
 		| awk '{print $1}')
-	case "$tok" in echo|printf|cat|true|false|:|env) return 0 ;; *) return 1 ;; esac
+	case "$tok" in echo|printf|cat|true|false|:|env|command) return 0 ;; *) return 1 ;; esac
 }
 
 # Count ACTIVE lines in workflow $1 that are a test_path VALUE for path $2 —
@@ -595,6 +596,10 @@ elif [ -n "$(printf '%s' "$_web_cmd" \
 	# unknown flag) fails.
 	err "test-web runner passes a positional filter or non-allowlisted flag to 'vitest run' — web coverage assumption broken (e.g. --changed/--testNamePattern would narrow discovery while this guard reports all files covered)"
 	echo "     → keep 'vitest run' bare (only --reporter/--coverage*/--color flags, no positional or selection-changing flag)" >&2
+elif [ "$(printf '%s' "$_web_cmd" | grep -oF 'bunx vitest run' | wc -l | tr -d ' ')" -gt 1 ]; then
+	err "test-web runner has multiple 'bunx vitest run' invocations — the first could exit 0 (e.g. --testNamePattern __never__), so the fallback via || never executes"
+	echo "     → use exactly one 'bunx vitest run' invocation" >&2
+	echo "     → keep 'vitest run' bare (only --reporter/--coverage*/--color flags, no positional or selection-changing flag)" >&2
 fi
 
 # Web test files outside the src/** include are not run by web CI. Each must be
@@ -671,7 +676,7 @@ for _tj_job in test-daemon-online test-daemon-shared-unit test-web; do
 		injob && /^  [a-z]/ { injob=0; next }
 		injob && /^[[:space:]]{4}if:/ { print; exit }
 	' "$MAIN_WORKFLOW")
-	if [ -n "$_tj_if" ] && ! printf '%s' "$_tj_if" | grep -qF 'run_e2e_only'; then
+	if [ -n "$_tj_if" ] && ! printf '%s' "$_tj_if" | grep -qF "run_e2e_only != 'true'"; then
 		err "$_tj_job has a job-level if: that does not reference the expected gate (run_e2e_only) — a non-literal always-false condition would disable the job while this guard reports its files covered"
 		echo "     → keep the if: condition referencing github.event.inputs.run_e2e_only" >&2
 	fi
@@ -681,7 +686,7 @@ _tj_if=$(awk '
 	injob && /^  [a-z]/ { injob=0; next }
 	injob && /^[[:space:]]{4}if:/ { print; exit }
 ' "$REAL_API_WORKFLOW")
-if [ -n "$_tj_if" ] && ! printf '%s' "$_tj_if" | grep -qF 'run_e2e_only'; then
+if [ -n "$_tj_if" ] && ! printf '%s' "$_tj_if" | grep -qF "run_e2e_only != 'true'"; then
 	err "daemon-real-api has a job-level if: that does not reference the expected gate (run_e2e_only) — a non-literal always-false condition would disable the job"
 	echo "     → keep the if: condition referencing github.event.inputs.run_e2e_only" >&2
 fi
@@ -731,8 +736,8 @@ if [ -z "$_online_real" ] || ! printf '%s' "$_online_real" | grep -qF '${{ matri
 elif ! marker_executed "$_online_real" 'bun test'; then
 	err "real-api-tests.yml runner contains the marker but does not EXECUTE it (e.g. it is echoed/quoted as data) — zero tests would run while this guard reports them covered"
 	echo "     → invoke 'bun test' as a command, not as an argument to echo/another command" >&2
-elif [ "$(printf '%s' "$_online_real" | sed -E 's/^[[:space:]]*run:[[:space:]]*//' | sed -E 's/^([>|]-)[[:space:]]*//' | sed -E 's/^[("'"'"')]//' | awk '{print $1}')" != "bun" ]; then
-	err "real-API runner's first command token is not 'bun' — 'bun test' would be an argument to another command (e.g. echo), running zero tests while this guard reports the file covered"
+elif [ "$(printf '%s' "$_online_real" | sed -E 's/^[[:space:]]*run:[[:space:]]*//' | sed -E 's/^([>|]-)[[:space:]]*//' | sed -E 's/^[ "'"'"']//' | awk '{print $1, $2}')" != "bun test" ]; then
+	err "real-API runner's first two tokens are not 'bun test' — 'test' must be Bun's subcommand (e.g. bun -e 'void 0' bun test ... bypasses)"
 	echo "     → invoke 'bun test \${{ matrix.test_path }}' as the command" >&2
 elif [ "$(printf '%s' "$_online_real" | grep -oF 'bun test' | wc -l | tr -d ' ')" -gt 1 ]; then
 	err "real-API runner has multiple 'bun test' invocations — the first could run and exit 0 (e.g. --only with no matches), so the \${{ matrix.test_path }} fallback via || never executes"
