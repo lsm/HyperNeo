@@ -1861,10 +1861,17 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
         }
 
         const now = Date.now();
+        // Compute the backoff ONCE and use the SAME deadline everywhere: the
+        // scheduled timer, the persisted cooldown (nextRetryAt — which the
+        // cooldown pre-check and rehydration read), and the queued action's
+        // replay time. Persisting the raw base deadline would let a manual
+        // resend (or a restart) bypass the exponential backoff.
+        const blockingAttempts = engine.getRetryCount(blockingId ?? '');
+        const delayMs = backoffDelayMs(retryAfterMs, blockingAttempts);
         for (const [hookId, patch] of byHook) {
           if (hookId === blockingId) {
-            patch.retryCount = engine.getRetryCount(hookId) + 1;
-            patch.nextRetryAt = now + retryAfterMs;
+            patch.retryCount = blockingAttempts + 1;
+            patch.nextRetryAt = now + delayMs;
             patch.localState[QUEUED_RETRYABLE_ACTION_STATE_KEY] = {
               actionKey,
               hookId: blockingId,
@@ -1872,7 +1879,7 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
               args: args as Record<string, unknown>,
               meta,
               isFollowUp,
-              nextRetryAt: now + retryAfterMs,
+              nextRetryAt: now + delayMs,
               retryAfterMs,
               queuedAt: now,
             };
@@ -1887,12 +1894,7 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
 
         scheduleRetryableAction({
           actionKey,
-          // Exponential backoff with jitter on the TIMER path: a long-lived
-          // gate (pr_merged on an OPEN PR) would otherwise fire ~2880
-          // constant-rate callbacks over 24h. The hook's retryAfterMs is the
-          // BASE; each subsequent attempt scales it by 2^attempts (capped at
-          // 1h) with ±25% jitter so concurrent runs don't synchronize.
-          delayMs: backoffDelayMs(retryAfterMs, engine.getRetryCount(outcome.blockingHookId ?? '')),
+          delayMs, // same computed backoff that was persisted above
           methodName,
           args,
           handler: handler as (args: Record<string, unknown>) => Promise<AnyToolResult>,

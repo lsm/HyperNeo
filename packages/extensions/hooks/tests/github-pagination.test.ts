@@ -304,6 +304,28 @@ describe('ghGetCodexApproval — reaction back-pagination', () => {
     if (result.ok) expect(result.data.approved).toBe(true);
   });
 
+  test('a fresh codex +1 in the INITIAL tail page approves without any walk', async () => {
+    // <=50 reactions: no back-pagination happens, so the initial page must
+    // be the one evaluated (an asRecord-on-array bug once dropped it).
+    setGraphqlRunnerForTests(
+      pagedRunner([
+        reactionsPage(
+          [
+            {
+              createdAt: '2026-08-13T12:00:00Z',
+              user: { login: 'chatgpt-codex-connector[bot]' },
+            },
+          ],
+          false,
+          'cGFnZQ'
+        ),
+      ])
+    );
+    const result = await ghGetCodexApproval(CTX, PR_LINK);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.approved).toBe(true);
+  });
+
   test('reaction cap exhaustion inside the fresh window fails closed', async () => {
     const newer = Array.from({ length: 50 }, (_, i) => freshReaction(i, 'someone-else'));
     setGraphqlRunnerForTests(pagedRunner([reactionsPage(newer, true, 'cmVhY3Rpb24tMQ')]));

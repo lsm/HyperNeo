@@ -757,7 +757,9 @@ export async function ghGetCodexApproval(
     }
     const nodes = reviewsConnection?.nodes;
     if (Array.isArray(nodes)) allReviewNodes.push(...nodes);
-    const reactionNodes = asRecord(asRecord(prNode?.reactions)?.nodes);
+    // `nodes` is a GraphQL connection ARRAY — index it directly (asRecord
+    // rejects arrays, which would silently drop the initial tail page).
+    const reactionNodes = asRecord(prNode?.reactions)?.nodes;
     if (Array.isArray(reactionNodes)) allReactionNodes.unshift(...reactionNodes);
     let reactionPageInfo: Record<string, unknown> | undefined = asRecord(
       asRecord(prNode?.reactions)?.pageInfo
