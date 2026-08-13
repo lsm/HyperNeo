@@ -37,7 +37,7 @@ import type {
   SpaceExportBundle,
 } from '@hyperneo/shared';
 import { validateSlug } from './slug';
-import { MAX_CUSTOM_HOOK_TIMEOUT_MS } from './workflow-hook-validation';
+import { MAX_CUSTOM_HOOK_TIMEOUT_MS, MAX_SCRIPT_BYTES } from './workflow-hook-validation';
 
 // ============================================================================
 // Zod schemas
@@ -679,6 +679,21 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
     const seenCustomIds = new Set<string>();
     for (let ci = 0; ci < result.data.customHooks.length; ci++) {
       const custom = result.data.customHooks[ci];
+      // Runtime source limits (mirroring validateCustomHooks): whitespace-only
+      // sources and sources over the UTF-8 byte cap are rejected at
+      // createWorkflow time — catch them at preview.
+      if (!custom.run.source.trim()) {
+        return {
+          ok: false,
+          error: `invalid: customHooks[${ci}].run.source must not be whitespace-only`,
+        };
+      }
+      if (new TextEncoder().encode(custom.run.source).length > MAX_SCRIPT_BYTES) {
+        return {
+          ok: false,
+          error: `invalid: customHooks[${ci}].run.source exceeds ${MAX_SCRIPT_BYTES} bytes`,
+        };
+      }
       if (BUILT_IN_HOOK_IDS.has(custom.id)) {
         return {
           ok: false,

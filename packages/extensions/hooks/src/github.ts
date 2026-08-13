@@ -692,7 +692,11 @@ export function extractCodexApproval(value: unknown, prLink: string): GithubCode
       const submittedAt = typeof review?.submittedAt === 'string' ? review.submittedAt : '';
       const state = typeof review?.state === 'string' ? review.state : '';
       if (!submittedAt || (state !== 'APPROVED' && state !== 'CHANGES_REQUESTED')) continue;
-      if (!latest || submittedAt > latest.submittedAt) latest = { submittedAt, state };
+      // `>=` keeps connection order as the tie-breaker: two decisive reviews
+      // in the same timestamp second are ordered by their position in the
+      // (chronological, pagination-merged) connection, so a later
+      // CHANGES_REQUESTED correctly supersedes an earlier APPROVED.
+      if (!latest || submittedAt >= latest.submittedAt) latest = { submittedAt, state };
     }
     if (latest) return { approved: latest.state === 'APPROVED', prLink };
   }

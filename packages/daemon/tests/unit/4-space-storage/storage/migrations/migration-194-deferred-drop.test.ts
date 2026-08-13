@@ -53,6 +53,49 @@ describe('Migration 194 deferred hooks drop', () => {
     }
   });
 
+  test('the runner leaves the migration UNMARKED while deferred, and marks it on completion', () => {
+    const db = makeLegacyDb();
+    try {
+      // Reset m194's marker so the runner path executes (makeLegacyDb's
+      // initial runMigrations saw no hooks column and marked it as applied).
+      const keyRow = db
+        .prepare(`SELECT key FROM migration_markers WHERE key LIKE '%194%'`)
+        .all() as Array<{ key: string }>;
+      for (const row of keyRow) {
+        db.prepare(`DELETE FROM migration_markers WHERE key = ?`).run(row.key);
+      }
+
+      // Deferred: column kept AND marker unset (so it retries next startup).
+      runMigrations(db, () => {});
+      expect(hasHooksColumn(db)).toBe(true);
+      expect(
+        (
+          db
+            .prepare(`SELECT COUNT(*) AS n FROM migration_markers WHERE key LIKE '%194%'`)
+            .get() as {
+            n: number;
+          }
+        ).n
+      ).toBe(0);
+
+      // Blocking run terminal: the retried migration completes and is marked.
+      db.prepare(`UPDATE space_workflow_runs SET status = 'done' WHERE id = 'run-1'`).run();
+      runMigrations(db, () => {});
+      expect(hasHooksColumn(db)).toBe(false);
+      expect(
+        (
+          db
+            .prepare(`SELECT COUNT(*) AS n FROM migration_markers WHERE key LIKE '%194%'`)
+            .get() as {
+            n: number;
+          }
+        ).n
+      ).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+
   test('a pinned non-terminal run does not block the drop (its payload retains hooks)', () => {
     const db = makeLegacyDb();
     try {

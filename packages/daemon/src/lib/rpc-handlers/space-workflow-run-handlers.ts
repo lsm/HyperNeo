@@ -831,15 +831,14 @@ export function setupSpaceWorkflowRunHandlers(
       );
     }
 
-    const existing = hookStateRepo.get(params.runId, params.hookId);
-    const baseLocalState = existing?.localState ?? {};
-
     const rejectionReason = params.reason?.trim() || 'Rejected by human';
     // updateWithRetry refreshes the expected version per attempt, so a
     // concurrent retry-timer write doesn't surface as a version conflict here.
+    // Patch ONLY the decision keys: spreading a stale full localState snapshot
+    // would deep-merge over concurrent writes (e.g. restore a queued action a
+    // retry timer just cleared, replaying an already-delivered handoff).
     const updateResult = hookStateRepo.updateWithRetry(params.runId, params.hookId, {
       localState: {
-        ...baseLocalState,
         humanApproved: params.approved,
         humanApprovedAt: Date.now(),
         humanRejectionReason: params.approved ? undefined : rejectionReason,

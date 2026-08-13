@@ -30,7 +30,8 @@ const VALID_METHODS = new Set<HookMethod>([
 
 const VALID_DATA_FIELD_TYPES = new Set<HookDataFieldType>(['string', 'number', 'boolean', 'link']);
 
-const MAX_SCRIPT_BYTES = 32_768;
+/** UTF-8 byte cap for a custom hook's script source. Exported so the portable export schema enforces the same bound (import preview must fail what createWorkflow rejects). */
+export const MAX_SCRIPT_BYTES = 32_768;
 
 /**
  * Upper bound for a custom hook's `run.timeoutMs`. Exported so the portable

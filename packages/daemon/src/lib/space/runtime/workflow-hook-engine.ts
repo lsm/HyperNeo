@@ -47,6 +47,8 @@ import {
   MarkCompleteSchema,
   SubmitForApprovalSchema,
 } from '../tools/task-agent-tool-schemas';
+import { spawn as nodeSpawn } from 'node:child_process';
+import { Readable } from 'node:stream';
 import { ChannelResolver } from './channel-resolver';
 import { isBuiltInHook, resolveHook } from './hook-registry';
 import { collectWithMaxBuffer, MAX_BUFFER_BYTES, parseJsonStdout } from './script-utils';
@@ -998,14 +1000,54 @@ export class WorkflowHookEngine {
     const args = ['bash', '-c', spec.source];
     const env = this.buildScriptEnv(ctx, action);
 
-    let proc;
+    // Spawned via node:child_process with `detached: true` so the script gets
+    // its OWN process group — the whole group can then be signaled, which is
+    // the only reliable way to reap background children the script spawned
+    // (Bun.spawn has no detached/group support). The group is killed both on
+    // timeout AND after a normal parent exit: a hook's contract is to finish
+    // within timeoutMs; lingering children are leaks, not features.
+    interface ScriptProcess {
+      stdout: ReadableStream<Uint8Array> | null;
+      stderr: ReadableStream<Uint8Array> | null;
+      exited: Promise<number>;
+      killProcessGroup: () => void;
+    }
+    let proc: ScriptProcess;
     try {
-      proc = Bun.spawn(args, {
+      const child = nodeSpawn(args[0], args.slice(1), {
         cwd: ctx.workspacePath || undefined,
         env,
-        stdout: 'pipe',
-        stderr: 'pipe',
+        detached: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
       });
+      proc = {
+        stdout: child.stdout ? (Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>) : null,
+        stderr: child.stderr ? (Readable.toWeb(child.stderr) as ReadableStream<Uint8Array>) : null,
+        exited: new Promise<number>((resolve) => {
+          child.on('exit', (code) => resolve(code ?? -1));
+          // A spawn failure (e.g. missing binary) fires 'error' and may not
+          // fire 'exit' — resolve rather than leave the promise pending, or
+          // the kill timer and collectors below would leak.
+          child.on('error', () => resolve(-1));
+        }),
+        killProcessGroup: () => {
+          // Negative pid signals the process GROUP (the detached child is its
+          // leader); fall back to the child alone if the group is already gone.
+          if (typeof child.pid === 'number') {
+            try {
+              process.kill(-child.pid, 'SIGKILL');
+              return;
+            } catch {
+              /* group already reaped */
+            }
+          }
+          try {
+            child.kill('SIGKILL');
+          } catch {
+            /* already exited */
+          }
+        },
+      };
     } catch (err) {
       return { flow: 'stop', reason: `Failed to spawn bash: ${errorMessage(err)}` };
     }
@@ -1025,34 +1067,42 @@ export class WorkflowHookEngine {
     const exit = await (async () => {
       const killTimer = setTimeout(() => {
         killed = true;
-        try {
-          proc.kill('SIGKILL');
-        } catch {
-          /* already exited */
-        }
+        proc.killProcessGroup();
       }, timeoutMs);
-      const code = await proc.exited;
-      clearTimeout(killTimer);
-      if (!killed) {
-        // Grace the collectors past the parent's exit, then cancel: the
-        // parent's output is buffered; a straggler child holding an inherited
-        // pipe cannot wedge the action. The timer handle is captured and
-        // cleared when `collected` wins the race (the common case) — an
-        // uncleared handle would leak one orphaned 2s timer per hook run
-        // (same cleanup discipline as killTimer above and the follow-up
-        // dispatch timeout's .finally()).
-        let graceTimer: ReturnType<typeof setTimeout> | undefined;
-        const graceDone = new Promise<void>((resolve) => {
-          graceTimer = setTimeout(resolve, SCRIPT_EXIT_GRACE_MS);
-        });
-        try {
-          await Promise.race([collected, graceDone]);
-        } finally {
-          if (graceTimer !== undefined) clearTimeout(graceTimer);
+      try {
+        const code = await proc.exited;
+        if (!killed) {
+          // Grace the collectors past the parent's exit, then cancel: the
+          // parent's output is buffered; a straggler child holding an
+          // inherited pipe cannot wedge the action. The timer handle is
+          // captured and cleared when `collected` wins the race (the common
+          // case) — an uncleared handle would leak one orphaned 2s timer per
+          // hook run (same cleanup discipline as killTimer and the follow-up
+          // dispatch timeout's .finally()).
+          let graceTimer: ReturnType<typeof setTimeout> | undefined;
+          const graceDone = new Promise<void>((resolve) => {
+            graceTimer = setTimeout(resolve, SCRIPT_EXIT_GRACE_MS);
+          });
+          try {
+            await Promise.race([collected, graceDone]);
+          } finally {
+            if (graceTimer !== undefined) clearTimeout(graceTimer);
+          }
         }
+        controller.abort(); // idempotent; releases any blocked collector
+        // Reap the process group unconditionally: on timeout the group kill
+        // has already run, and on a normal exit this terminates any background
+        // children the script left behind (they cannot outlive the hook).
+        proc.killProcessGroup();
+        return { code, timedOut: killed };
+      } finally {
+        // If proc.exited rejects (or any step above throws), the kill timer
+        // must not leak and the collectors must be released — without this,
+        // the awaited `collected` below would hang forever.
+        clearTimeout(killTimer);
+        controller.abort();
+        proc.killProcessGroup();
       }
-      controller.abort(); // idempotent; releases any blocked collector
-      return { code, timedOut: killed };
     })();
     const [stdoutResult, stderrResult] = await collected;
 

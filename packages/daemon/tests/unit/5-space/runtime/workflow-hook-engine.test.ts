@@ -9,48 +9,19 @@
  * is ever run — custom hooks are also what user-authored workflows use.
  */
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { spawn as nodeSpawn } from 'node:child_process';
-import { Readable } from 'node:stream';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository';
 import { WorkflowHookStateRepository } from '../../../../src/storage/repositories/workflow-hook-state-repository';
-import { WorkflowHookEngine } from '../../../../src/lib/space/runtime/workflow-hook-engine';
-import type { HookActionMeta } from '../../../../src/lib/space/runtime/workflow-hook-engine';
+import {
+  createLegacyHookGuardEngine,
+  WorkflowHookEngine,
+  wrapHandlerWithHooks,
+  type HookActionOutcome,
+  type HookActionMeta,
+} from '../../../../src/lib/space/runtime/workflow-hook-engine';
 import { createSpaceTables } from '../../helpers/space-test-db.ts';
 import type { CustomHook, HookArtifact, SpaceWorkflow } from '@hyperneo/shared';
-
-// Under Vitest/Node there is no global `Bun`, and the engine's script-hook
-// runner calls `Bun.spawn` at call time (same situation as the dialog-handlers
-// tests). Install a child_process-backed stand-in exposing the surface the
-// engine touches (stdout/stderr streams, `exited` promise, `kill`); under
-// `bun test` the real global is left untouched.
-if (typeof (globalThis as Record<string, unknown>).Bun === 'undefined') {
-  (globalThis as Record<string, unknown>).Bun = {
-    spawn: (args: string[], opts: { cwd?: string; env?: Record<string, string> }): unknown => {
-      const child = nodeSpawn(args[0], args.slice(1), {
-        cwd: opts?.cwd,
-        env: opts?.env,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      return {
-        // The engine collects Bun-style WEB ReadableStreams; convert Node's.
-        stdout: child.stdout ? Readable.toWeb(child.stdout) : null,
-        stderr: child.stderr ? Readable.toWeb(child.stderr) : null,
-        exited: new Promise<number>((resolve) => {
-          child.on('exit', (code) => resolve(code ?? -1));
-        }),
-        kill: (signal?: string) => {
-          try {
-            child.kill(signal ?? 'SIGKILL');
-          } catch {
-            /* already exited */
-          }
-        },
-      };
-    },
-  };
-}
 
 function scriptHook(id: string, body: string, timeoutMs?: number): CustomHook {
   return {
@@ -352,7 +323,7 @@ describe('WorkflowHookEngine.executeAction', () => {
           run: {
             kind: 'script',
             interpreter: 'bash',
-            source: 'sleep 30 & echo \'{"flow":"continue"}\'',
+            source: 'sleep 30 & echo $! > .hook-grace-child-pid; echo \'{"flow":"continue"}\'',
           },
         },
       ],
@@ -376,6 +347,20 @@ describe('WorkflowHookEngine.executeAction', () => {
     // The 30s child must NOT be waited out: well under its sleep, with slack
     // for the 2s grace plus spawn overhead.
     expect(elapsed).toBeLessThan(10_000);
+    // And the background child is terminated, not merely abandoned — the
+    // script writes its own PID group marker; after the action, that process
+    // must be gone (process-group kill, not just pipe cancellation).
+    const marker = `${process.cwd()}/.hook-grace-child-pid`;
+    const childPid = Number(require('node:fs').readFileSync(marker, 'utf8').trim());
+    require('node:fs').rmSync(marker, { force: true });
+    expect(Number.isFinite(childPid)).toBe(true);
+    let alive = true;
+    try {
+      process.kill(childPid, 0);
+    } catch {
+      alive = false;
+    }
+    expect(alive).toBe(false);
   });
 
   test('a normally-exiting script delivers full stdout (collected-wins path)', async () => {
@@ -413,9 +398,6 @@ describe('WorkflowHookEngine.executeAction', () => {
   });
 
   test('the legacy-hook guard blocks every gated action (pre-v2 pinned run)', async () => {
-    const { createLegacyHookGuardEngine } = await import(
-      '../../../../src/lib/space/runtime/workflow-hook-engine'
-    );
     const guard = createLegacyHookGuardEngine(
       {
         workflow: makeWorkflow(),
@@ -594,6 +576,147 @@ describe('WorkflowHookEngine.executeAction', () => {
     const after = artifacts.filter((a) => a.artifactKey === '__pr_validated__');
     expect(after).toHaveLength(1);
     expect(after[0]?.data.link).toBe('https://github.com/o/r/pull/2');
+  });
+
+  describe('wrapHandlerWithHooks — follow-up dispatch', () => {
+    test('a follow-up queued by a delivered hook dispatches through the wrapped send_message', async () => {
+      // The hook continues AND queues a follow-up to Review; the delivered
+      // send_message handler records every raw invocation, and the follow-up
+      // must be dispatched with the queued message + target.
+      const FOLLOW_HOOK = scriptHook('follow_hook', '{"flow":"continue","result":null}');
+      const workflow = makeWorkflow({
+        customHooks: [FOLLOW_HOOK],
+        hookBindings: [
+          {
+            hookId: 'follow_hook',
+            sourceNode: 'Coding',
+            targetNode: 'Review',
+            method: 'send_message',
+            order: 0,
+            enabled: true,
+            authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+          },
+        ],
+      });
+      const engine = makeEngine(workflow);
+      const dispatched: Array<Record<string, unknown>> = [];
+      const sendHandler = async (args: Record<string, unknown>) => {
+        dispatched.push(args);
+        return { content: [{ type: 'text', text: 'ok' }] };
+      };
+      const wrappedSend = wrapHandlerWithHooks(
+        'send_message',
+        sendHandler,
+        engine,
+        {},
+        { ...META, targetNode: 'Review' }
+      );
+      const handlers = { send_message: wrappedSend };
+
+      // Drive a delivered action whose hook queues a follow-up: emulate by
+      // running a second action after recording a queued follow-up via the
+      // engine's public queueing surface — simplest is a hook script that
+      // echoes a follow-up request through its result; the wrapper only
+      // dispatches outcome.followUpRequests, which come from ctx
+      // .queueFollowUp. Use a custom hook whose script signals a follow-up is
+      // impossible (scripts cannot call ctx), so drive it directly instead:
+      // executeAction is not the wrapper — patch the engine outcome via a
+      // stub engine subclass.
+      class FollowUpEngine extends WorkflowHookEngine {
+        override async executeAction(
+          _method: string,
+          params: Record<string, unknown>
+        ): Promise<HookActionOutcome> {
+          return {
+            decision: 'deliver',
+            finalParams: params,
+            followUpRequests: [{ targetNode: 'Review', message: 'queued follow-up' }],
+            stateUpdates: [],
+            executionLog: [],
+            userState: { status: 'allowed' },
+          };
+        }
+      }
+      const followEngine = new FollowUpEngine({
+        workflow,
+        workflowRunId: 'run-1',
+        nodeExecutionRepo: new NodeExecutionRepository(db),
+        artifactRepo,
+        hookStateRepo,
+        workspacePath: process.cwd(),
+      });
+      const wrappedWithFollowUps = wrapHandlerWithHooks(
+        'send_message',
+        sendHandler,
+        followEngine,
+        handlers,
+        META
+      );
+
+      await wrappedWithFollowUps({ target: 'Review', message: 'primary' });
+      // Primary delivered, and the queued follow-up dispatched through the
+      // REAL wrapped send_message (whose bindings run — outcome from the real
+      // engine: the follow_hook script continues, so it delivers too).
+      expect(dispatched.length).toBe(2);
+      // The wrapper awaits follow-up dispatches before invoking the primary
+      // handler, but completion order is runtime-dependent — assert both
+      // payloads landed, not their sequence.
+      expect(dispatched.map((d) => d.message).sort()).toEqual(['primary', 'queued follow-up']);
+    });
+
+    test('nested follow-up emission is suppressed during follow-up dispatch', async () => {
+      // The follow-up dispatch re-enters the wrapper with isFollowUp=true; a
+      // nested outcome carrying followUpRequests must NOT dispatch again.
+      let calls = 0;
+      class NestedFollowUpEngine extends WorkflowHookEngine {
+        override async executeAction(
+          _method: string,
+          params: Record<string, unknown>
+        ): Promise<HookActionOutcome> {
+          calls += 1;
+          return {
+            decision: 'deliver',
+            finalParams: params,
+            // ALWAYS carries a follow-up: on the nested (isFollowUp) call the
+            // wrapper must suppress it instead of dispatching recursively.
+            followUpRequests: [{ targetNode: 'Review', message: 'nested' }],
+            stateUpdates: [],
+            executionLog: [],
+            userState: { status: 'allowed' },
+          };
+        }
+      }
+      const workflow = makeWorkflow();
+      const engine = new NestedFollowUpEngine({
+        workflow,
+        workflowRunId: 'run-1',
+        nodeExecutionRepo: new NodeExecutionRepository(db),
+        artifactRepo,
+        hookStateRepo,
+        workspacePath: process.cwd(),
+      });
+      const dispatched: Array<Record<string, unknown>> = [];
+      const sendHandler = async (args: Record<string, unknown>) => {
+        dispatched.push(args);
+        return { content: [{ type: 'text', text: 'ok' }] };
+      };
+      const wrapped = wrapHandlerWithHooks('send_message', sendHandler, engine, {}, META);
+      // handlers map resolves on the second (follow-up) invocation via the
+      // RAW_HANDLER on `wrapped` itself — pass wrapped's own map.
+      const handlers = { send_message: wrapped };
+
+      await (
+        wrapHandlerWithHooks('send_message', sendHandler, engine, handlers, META) as unknown as (
+          args: Record<string, unknown>
+        ) => Promise<unknown>
+      )({
+        target: 'Review',
+        message: 'primary',
+      });
+      // Primary + one follow-up only: the nested request was suppressed.
+      expect(dispatched.length).toBe(2);
+      expect(dispatched.map((d) => d.message).sort()).toEqual(['nested', 'primary'].sort());
+    });
   });
 
   describe('wrapHandlerWithHooks — non-send_message retry pacing', () => {
