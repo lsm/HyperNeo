@@ -727,12 +727,16 @@ export async function ghGetCodexApproval(
     `reviews(first: ${CODEX_REVIEWS_PAGE_SIZE}${after ? `, after:"${after}"` : ''}) { ` +
     'pageInfo { hasNextPage endCursor } ' +
     'nodes { state author { login } commit { oid } body submittedAt } } ' +
-    // Reaction TAIL (last: 50, not first:) — `first:` returns the earliest page,
-    // so on a PR with >50 thumbs the fresh codex +1 would fall outside it.
-    'reactions(last: 50, content: THUMBS_UP) { nodes { createdAt user { login } } } ' +
+    // Reaction connection: walked BACKWARD from the tail while the oldest
+    // entry is still newer than the head push (bounded cap, fail-closed) —
+    // `first:` returns the earliest page, and a fixed tail can omit the codex
+    // +1 under >50 newer reactions.
+    'reactions(last: 50, content: THUMBS_UP) { pageInfo { hasPreviousPage startCursor } ' +
+    'nodes { createdAt user { login } } } ' +
     'commits(last: 1) { nodes { commit { oid pushedDate } } } } } }';
 
   const allReviewNodes: unknown[] = [];
+  const allReactionNodes: unknown[] = [];
   let lastPage: Record<string, unknown> | undefined;
   let cursor: string | null = null;
   for (let page = 0; page < MAX_CODEX_REVIEW_PAGES; page++) {
@@ -753,15 +757,82 @@ export async function ghGetCodexApproval(
     }
     const nodes = reviewsConnection?.nodes;
     if (Array.isArray(nodes)) allReviewNodes.push(...nodes);
+    const reactionNodes = asRecord(asRecord(prNode?.reactions)?.nodes);
+    if (Array.isArray(reactionNodes)) allReactionNodes.unshift(...reactionNodes);
+    let reactionPageInfo: Record<string, unknown> | undefined = asRecord(
+      asRecord(prNode?.reactions)?.pageInfo
+    );
     const pageInfo = asRecord(reviewsConnection?.pageInfo);
     if (pageInfo?.hasNextPage !== true) {
       // Definitive end of the review history — evaluate the merged document.
+      // Walk the reactions connection backward while its oldest entry is
+      // still newer than the head push: a valid codex +1 can sit under >50
+      // newer thumbs. Bounded cap; exhaustion fails closed.
+      let reactionsComplete = false;
+      for (let page = 0; page < MAX_CODEX_REVIEW_PAGES; page++) {
+        if (reactionPageInfo?.hasPreviousPage !== true) {
+          reactionsComplete = true;
+          break;
+        }
+        const startCursor = reactionPageInfo.startCursor;
+        if (typeof startCursor !== 'string' || !CURSOR_RE.test(startCursor)) break;
+        // Re-query with a before-cursor on the reactions connection only.
+        const q =
+          `query { repository(owner:"${pr.owner}",name:"${pr.repo}") { pullRequest(number:${pr.number}) { ` +
+          `reactions(last: 50, content: THUMBS_UP, before:"${startCursor}") { ` +
+          'pageInfo { hasPreviousPage startCursor } nodes { createdAt user { login } } } ' +
+          'commits(last: 1) { nodes { commit { oid pushedDate } } } } } }';
+        const result = await runGhGraphql(ctx, q, pr.host);
+        if (!result.ok) return result;
+        const rNode = asRecord(
+          asRecord(asRecord(asRecord(result.data)?.data)?.repository)?.pullRequest
+        );
+        const rConn = asRecord(rNode?.reactions);
+        if (!Array.isArray(rConn?.nodes) || !asRecord(rConn?.pageInfo)) {
+          return {
+            ok: false,
+            retryable: true,
+            error: 'malformed reactions connection (missing nodes/pageInfo); failing closed',
+          };
+        }
+        const rNodes = rConn?.nodes;
+        if (Array.isArray(rNodes)) allReactionNodes.unshift(...rNodes);
+        reactionPageInfo = asRecord(rConn?.pageInfo);
+        // Stop once the page reaches the head-push boundary: older reactions
+        // can never be fresh.
+        const oldestR =
+          Array.isArray(rNodes) && rNodes.length > 0 ? asRecord(rNodes[0]) : undefined;
+        const oldestRAt = typeof oldestR?.createdAt === 'string' ? oldestR.createdAt : '';
+        const commitNodes = asRecord(rNode?.commits)?.nodes;
+        const pushed = Array.isArray(commitNodes)
+          ? asRecord(asRecord(commitNodes[0])?.commit)?.pushedDate
+          : undefined;
+        if (!oldestRAt || typeof pushed !== 'string' || oldestRAt <= pushed) {
+          reactionsComplete = true;
+          break;
+        }
+      }
+      if (!reactionsComplete) {
+        return {
+          ok: false,
+          retryable: true,
+          error:
+            `PR has more than ${MAX_CODEX_REVIEW_PAGES * CODEX_REVIEWS_PAGE_SIZE} fresh reactions; ` +
+            'unable to scan the full reaction window (fail closed).',
+        };
+      }
       return {
         ok: true,
         data: extractCodexApproval(
           {
             data: {
-              repository: { pullRequest: { ...prNode, reviews: { nodes: allReviewNodes } } },
+              repository: {
+                pullRequest: {
+                  ...prNode,
+                  reviews: { nodes: allReviewNodes },
+                  reactions: { nodes: allReactionNodes },
+                },
+              },
             },
           },
           link

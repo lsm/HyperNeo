@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type { HookAction, HookContext, HookArtifact } from '@hyperneo/shared/types/workflow-hooks';
 import { postApprovalOnlyHook } from '../src/hooks/post-approval-only';
 import { prReadyHook } from '../src/hooks/pr-ready';
+import { reviewPostedHook } from '../src/hooks/review-posted';
 import { VALIDATED_PR_ARTIFACT_KEY } from '../src/primary-link';
 
 const REVIEWED_PR = 'https://github.com/org/repo/pull/42';
@@ -155,5 +156,28 @@ describe('samePrLink — identity comparison', () => {
       stubCtx({ taskStatus: 'approved', readArtifacts: () => [validatedStamp(REVIEWED_PR)] })
     );
     expect(ret.flow).toBe('stop');
+  });
+});
+
+describe('review_posted — stamped-identity binding', () => {
+  const stubReviewCtx = (stamp?: string) =>
+    stubCtx({ readArtifacts: () => (stamp ? [validatedStamp(stamp)] : []) });
+
+  test('a supplied link naming a different PR than the stamp is stopped', async () => {
+    const ret = await reviewPostedHook.run(
+      sendAction({ pr_link: 'https://github.com/org/repo/pull/999', reason: 'changes' }),
+      stubReviewCtx(REVIEWED_PR)
+    );
+    expect(ret.flow).toBe('stop');
+    expect(ret.reason).toContain('999');
+  });
+
+  test('a supplied link matching the stamp proceeds to the evidence check (no stamp → supplied trusted)', async () => {
+    // No stamped identity yet: the supplied link is trusted, and the hook
+    // proceeds to the evidence check — with no runStartedAt it stops there
+    // (fail closed) rather than at link resolution.
+    const ret = await reviewPostedHook.run(sendAction({ pr_link: REVIEWED_PR }), stubCtx());
+    expect(ret.flow).toBe('stop');
+    expect(ret.reason).toContain('run start time');
   });
 });

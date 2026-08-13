@@ -262,3 +262,53 @@ describe('ghGetReviewEvidence — back-pagination past the fresh window', () => 
     if (!result.ok) expect(result.retryable).toBe(true);
   });
 });
+
+describe('ghGetCodexApproval — reaction back-pagination', () => {
+  const reactionsPage = (
+    reactions: unknown[],
+    hasPrevious: boolean,
+    startCursor: string,
+    pushedDate = '2026-08-12T00:00:00Z'
+  ) => ({
+    data: {
+      repository: {
+        pullRequest: {
+          reviews: { nodes: [], pageInfo: { hasNextPage: false, endCursor: 'cGFnZQ' } },
+          reactions: {
+            nodes: reactions,
+            pageInfo: { hasPreviousPage: hasPrevious, startCursor },
+          },
+          commits: { nodes: [{ commit: { oid: HEAD, pushedDate } }] },
+        },
+      },
+    },
+  });
+  const freshReaction = (minuteOfHour: number, login = 'chatgpt-codex-connector[bot]') => ({
+    createdAt: `2026-08-13T12:${String(minuteOfHour).padStart(2, '0')}:00Z`,
+    user: { login },
+  });
+
+  test('a codex +1 under >50 newer reactions is found via before-cursor walk', async () => {
+    // Tail page: 50 newer non-codex thumbs; previous page holds the codex +1
+    // (12:00 vs the pushedDate of 2026-08-12 — both fresh, but the walk must
+    // reach it).
+    const newer = Array.from({ length: 50 }, (_, i) => freshReaction(i, 'someone-else'));
+    setGraphqlRunnerForTests(
+      pagedRunner([
+        reactionsPage(newer, true, 'cmVhY3Rpb24tMQ'),
+        reactionsPage([freshReaction(0)], false, 'cGFnZTI'),
+      ])
+    );
+    const result = await ghGetCodexApproval(CTX, PR_LINK);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.approved).toBe(true);
+  });
+
+  test('reaction cap exhaustion inside the fresh window fails closed', async () => {
+    const newer = Array.from({ length: 50 }, (_, i) => freshReaction(i, 'someone-else'));
+    setGraphqlRunnerForTests(pagedRunner([reactionsPage(newer, true, 'cmVhY3Rpb24tMQ')]));
+    const result = await ghGetCodexApproval(CTX, PR_LINK);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.retryable).toBe(true);
+  });
+});
