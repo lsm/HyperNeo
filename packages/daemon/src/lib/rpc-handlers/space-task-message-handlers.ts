@@ -83,8 +83,9 @@ export interface TaskAgentManagerInterface {
    *
    * `deliveryMode` ('defer') is forwarded from `space.task.sendMessage` so a
    * human message can be persisted as `deferred` and replayed at the next idle
-   * boundary instead of steering the current turn. Mirrors the real
-   * `TaskAgentManager.injectSubSessionMessage` signature.
+   * boundary instead of steering the current turn. This interface declares only
+   * the params this handler uses; the real `TaskAgentManager.injectSubSessionMessage`
+   * additionally accepts `inputKindOverride` and `messageId`.
    */
   injectSubSessionMessage?(
     subSessionId: string,
@@ -611,6 +612,17 @@ export function setupSpaceTaskMessageHandlers(
     }
     if (params.message.length > 100_000) {
       throw new Error('Message is too long (max 100,000 characters)');
+    }
+    // Validate deliveryMode at the RPC boundary — the cast above trusts the
+    // shape, but a non-TS caller can pass an arbitrary string. Mirrors the
+    // `message.send` guard in session-handlers.ts. Fail-safe downstream (only
+    // `=== 'defer'` matters), but rejected explicitly for a clear error.
+    if (
+      params.deliveryMode !== undefined &&
+      params.deliveryMode !== 'immediate' &&
+      params.deliveryMode !== 'defer'
+    ) {
+      throw new Error('Invalid deliveryMode');
     }
     // Defensive: collapse `images: []` (which the web client may send) to
     // undefined so downstream code can use `images && images.length > 0`

@@ -134,9 +134,8 @@ interface MessageInputProps {
   /**
    * Whether the backing send path honors 'defer' (queue for next turn). When
    * false, the Queue controls (typed-text button, voice Queue button) and the
-   * Tab-to-queue shortcut are suppressed — e.g. the task-session composer
-   * delivers every message immediately, so a Queue affordance there would
-   * silently steer the live agent instead of deferring.
+   * Tab-to-queue shortcut are suppressed. Forwarded from ChatComposer; defaults
+   * to true (the task-session composers honor defer via `space.task.sendMessage`).
    */
   supportsQueueDelivery?: boolean;
   /**

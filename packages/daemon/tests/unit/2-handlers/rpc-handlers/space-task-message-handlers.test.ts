@@ -748,6 +748,22 @@ describe('setupSpaceTaskMessageHandlers', () => {
           'defer'
         );
       });
+
+      it('rejects an invalid deliveryMode at the RPC boundary', async () => {
+        // Mirrors the `message.send` guard in session-handlers.ts — a non-TS
+        // caller can pass an arbitrary string, so validate before forwarding.
+        setupDeliveryMode();
+
+        await expect(
+          call('space.task.sendMessage', {
+            spaceId: 'space-1',
+            taskId: 'task-1',
+            message: 'bad mode',
+            target: { kind: 'node_agent', agentName: 'Coder' },
+            deliveryMode: 'later' as 'defer',
+          })
+        ).rejects.toThrow('Invalid deliveryMode');
+      });
     });
 
     // ─── Post-approval worker routing (task #857 / #864) ───────────────────────
