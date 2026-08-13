@@ -177,6 +177,27 @@ describe('MessageInput queue mode', () => {
     expect(onSend).toHaveBeenCalledWith('queue this', undefined, 'defer');
   });
 
+  it('renders the Queue button only when supportsQueueDelivery is true', async () => {
+    // Regression guard for the task-agent composer wiring gap: the overlay
+    // and inline task composers used to hard-code supportsQueueDelivery=false,
+    // hiding the Queue ("next turn") button so a human could only Steer. The
+    // gate that controls the button is supportsQueueDelivery → onQueue.
+    mockDraftContent = 'defer me';
+    mockAgentWorking.value = true;
+    const onSend = vi.fn(async () => true);
+
+    // supportsQueueDelivery defaults to true → Queue button present.
+    const { container, unmount } = render(<MessageInput sessionId="session-1" onSend={onSend} />);
+    expect(container.querySelector('[data-testid="queue-button"]')).toBeTruthy();
+    unmount();
+
+    // supportsQueueDelivery=false → Queue button hidden.
+    const { container: gated } = render(
+      <MessageInput sessionId="session-1" onSend={onSend} supportsQueueDelivery={false} />
+    );
+    expect(gated.querySelector('[data-testid="queue-button"]')).toBeNull();
+  });
+
   it('sends immediate delivery mode with Enter while agent is working', async () => {
     mockDraftContent = 'inject now';
     mockAgentWorking.value = true;
