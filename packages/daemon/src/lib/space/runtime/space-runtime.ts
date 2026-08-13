@@ -6565,6 +6565,11 @@ export class SpaceRuntime {
 
     const createdOrReset: string[] = [];
     const blockedReasons: string[] = [];
+    // A single persisted (run, channel) dead-loop incident must surface at most
+    // one recovery notification, even when multiple idle source executions or a
+    // wildcard source channel yield several stalled transitions for the same
+    // channel in one pass.
+    const notifiedDeadLoopChannels = new Set<number>();
 
     for (const {
       sourceExecution,
@@ -6582,8 +6587,10 @@ export class SpaceRuntime {
       if (!cycleResult.open) {
         blockedReasons.push(cycleResult.reason);
         // Surface a recovery-detected dead loop to the UI (mirrors the live
-        // ChannelRouter surfacing) so it is not mistaken for a generic stall.
-        if (cycleResult.deadLoop) {
+        // ChannelRouter surfacing) so it is not mistaken for a generic stall —
+        // once per (run, channel) incident.
+        if (cycleResult.deadLoop && !notifiedDeadLoopChannels.has(channelIndex)) {
+          notifiedDeadLoopChannels.add(channelIndex);
           await this.notifyRecoveryDeadLoop(
             run,
             channel,

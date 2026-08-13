@@ -108,6 +108,16 @@ describe('ChannelCycleRepository — windowed counting & pruning', () => {
     expect(repo.countRecentCycleEvents(RUN_ID_A, 1, NOW + 6 * 60 * 1000, WINDOW)).toBe(0);
   });
 
+  test('future-dated events are excluded from the window (clock-skew safe)', () => {
+    // Simulate a backward clock jump across a restart: 15 events recorded
+    // "in the future" relative to the current `now`. The upper window bound
+    // excludes them, so the channel is not falsely dead-looped and recovers
+    // as the clock advances (instead of blocking until the clock catches up).
+    for (let i = 1; i <= 15; i++) repo.recordCycleEvent(RUN_ID_A, 1, NOW + i * 60_000);
+    expect(repo.countRecentCycleEvents(RUN_ID_A, 1, NOW)).toBe(0);
+    expect(repo.isDeadLoopReached(RUN_ID_A, 1, NOW)).toBe(false);
+  });
+
   test('isDeadLoopReached flips at the threshold (explicit threshold/window)', () => {
     for (let i = 0; i < 14; i++) repo.recordCycleEvent(RUN_ID_A, 1, NOW + i * 1000);
     expect(repo.isDeadLoopReached(RUN_ID_A, 1, NOW + 14_000, 15, WINDOW)).toBe(false);

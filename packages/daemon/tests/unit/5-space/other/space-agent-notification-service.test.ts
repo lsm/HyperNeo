@@ -310,6 +310,28 @@ describe('SpaceAgentNotificationService', () => {
       expect(json.threshold).toBe(15);
       expect(json.autonomyLevel).toBe(1);
     });
+
+    it('propagates injection failure so the router can retry (unlike fire-and-forget events)', async () => {
+      // The dead-loop subscriber uses notifyStrict: a failed injection must
+      // surface as a publish rejection so ChannelRouter.notifyDeadLoop skips its
+      // dedupe timestamp and retries on the next blocked send.
+      const { bus } = makeService({ injectError: new Error('session unavailable') });
+      await expect(
+        bus.publish('space.workflowRun.deadLoop', {
+          sessionId: 'global',
+          spaceId: SPACE_ID,
+          runId: 'run-dl',
+          fromAgent: 'reviewer',
+          toTarget: 'coder',
+          channelIndex: 1,
+          recentCount: 15,
+          threshold: 15,
+          windowMs: 5 * 60 * 1000,
+          reason: 'dead loop',
+          timestamp: TIMESTAMP,
+        })
+      ).rejects.toThrow(/failed with 1 handler failure/);
+    });
   });
 
   describe('space.agent.crashed event', () => {

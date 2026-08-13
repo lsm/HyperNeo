@@ -117,9 +117,11 @@ export class SpaceAgentNotificationService {
       ),
       this.internalEventBus.subscribe(
         'space.workflowRun.deadLoop',
-        (event) => {
+        async (event) => {
           if (event.spaceId !== this.spaceId) return;
-          void this.notify(formatWorkflowRunDeadLoop(event, this.autonomyLevel));
+          // Await + propagate failures so the router's dedupe-after-success
+          // retry contract holds when the Space Agent session is unavailable.
+          await this.notifyStrict(formatWorkflowRunDeadLoop(event, this.autonomyLevel));
         },
         {
           subscriberName: `SpaceAgentNotificationService:${this.spaceId}:space.workflowRun.deadLoop`,
@@ -184,6 +186,22 @@ export class SpaceAgentNotificationService {
         `[SpaceAgentNotificationService] Failed to inject notification into session ${this.sessionId}: ${err instanceof Error ? err.message : String(err)}`
       );
     }
+  }
+
+  /**
+   * Like {@link notify} but PROPAGATES injection failures instead of swallowing
+   * them. Used by the dead-loop subscriber: a failed injection must surface as
+   * a publish failure to `ChannelRouter.notifyDeadLoop` so its dedupe timestamp
+   * is NOT recorded (dedupe is set only after a successful publish), letting the
+   * next blocked send retry the notification once the Space Agent session
+   * recovers. Other notifications stay fire-and-forget — their publishers don't
+   * gate on delivery success.
+   */
+  private async notifyStrict(message: string): Promise<void> {
+    await this.sessionFactory.injectMessage(this.sessionId, message, {
+      deliveryMode: 'defer',
+      origin: 'system',
+    });
   }
 }
 

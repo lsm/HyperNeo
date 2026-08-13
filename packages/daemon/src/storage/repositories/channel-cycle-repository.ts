@@ -73,7 +73,7 @@ export class ChannelCycleRepository {
   ): CycleReservation {
     const reserve = (): CycleReservation => {
       this.pruneOlder(runId, channelIndex, now - windowMs);
-      const recentCount = this.countSince(runId, channelIndex, now - windowMs);
+      const recentCount = this.countInWindow(runId, channelIndex, now - windowMs, now);
       if (recentCount >= threshold) return { allowed: false, recentCount };
       this.db
         .prepare(
@@ -134,7 +134,7 @@ export class ChannelCycleRepository {
     windowMs: number = DEAD_LOOP_WINDOW_MS
   ): number {
     this.pruneOlder(runId, channelIndex, now - windowMs);
-    return this.countSince(runId, channelIndex, now - windowMs);
+    return this.countInWindow(runId, channelIndex, now - windowMs, now);
   }
 
   /**
@@ -179,13 +179,18 @@ export class ChannelCycleRepository {
       .run(runId, channelIndex, cutoff);
   }
 
-  /** Counts events for a (run, channel) at or after `since` (no pruning). */
-  private countSince(runId: string, channelIndex: number, since: number): number {
+  /**
+   * Counts events for a (run, channel) within `[since, now]` (no pruning). The
+   * upper bound excludes future-dated rows (host clock moving backward across a
+   * restart, or events written under a later clock) so the channel recovers
+   * after the window instead of staying blocked until the clock catches up.
+   */
+  private countInWindow(runId: string, channelIndex: number, since: number, now: number): number {
     const row = this.db
       .prepare(
-        'SELECT COUNT(*) AS n FROM channel_cycle_events WHERE run_id = ? AND channel_index = ? AND sent_at >= ?'
+        'SELECT COUNT(*) AS n FROM channel_cycle_events WHERE run_id = ? AND channel_index = ? AND sent_at >= ? AND sent_at <= ?'
       )
-      .get(runId, channelIndex, since) as { n: number } | undefined;
+      .get(runId, channelIndex, since, now) as { n: number } | undefined;
     return row?.n ?? 0;
   }
 }
