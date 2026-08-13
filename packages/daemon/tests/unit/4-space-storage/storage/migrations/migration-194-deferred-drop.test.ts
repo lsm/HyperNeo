@@ -96,16 +96,23 @@ describe('Migration 194 deferred hooks drop', () => {
     }
   });
 
-  test('a pinned non-terminal run does not block the drop (its payload retains hooks)', () => {
+  test('a PINNED non-terminal run also blocks the drop (the restamp defers too)', () => {
+    // The built-in restamp defers adding v2 hookBindings while any run is
+    // active, so a pinned run's workflow head can be equally ungated — the
+    // drop must wait regardless of pin state.
     const db = makeLegacyDb();
     try {
       // definition_version carries an FK into definition_versions; bypass it —
-      // this test only exercises the migration's NULL check, not pin integrity.
+      // this test only exercises the migration's predicate, not pin integrity.
       db.exec('PRAGMA foreign_keys = OFF');
       db.prepare(
         `UPDATE space_workflow_runs SET definition_version = 'abc123' WHERE id = 'run-1'`
       ).run();
       db.exec('PRAGMA foreign_keys = ON');
+      runMigration194(db);
+      expect(hasHooksColumn(db)).toBe(true);
+      // All runs terminal: the drop completes.
+      db.prepare(`UPDATE space_workflow_runs SET status = 'done' WHERE id = 'run-1'`).run();
       runMigration194(db);
       expect(hasHooksColumn(db)).toBe(false);
     } finally {

@@ -681,6 +681,8 @@ export function extractReviewEvidence(value: unknown, sinceIso: string): GithubR
 export interface GithubCodexApproval {
   approved: boolean;
   prLink?: string;
+  /** The head SHA the verdict was computed against (for the final recheck). */
+  evaluatedHeadOid?: string;
 }
 
 /**
@@ -837,23 +839,53 @@ export async function ghGetCodexApproval(
             'unable to scan the full reaction window (fail closed).',
         };
       }
-      return {
-        ok: true,
-        data: extractCodexApproval(
-          {
-            data: {
-              repository: {
-                pullRequest: {
-                  ...prNode,
-                  reviews: { nodes: allReviewNodes },
-                  reactions: { nodes: allReactionNodes },
-                },
+      const approval = extractCodexApproval(
+        {
+          data: {
+            repository: {
+              pullRequest: {
+                ...prNode,
+                reviews: { nodes: allReviewNodes },
+                reactions: { nodes: allReactionNodes },
               },
             },
           },
-          link
-        ),
-      };
+        },
+        link
+      );
+      if (!approval.approved) return { ok: true, data: approval };
+      // FINAL HEAD RECHECK: the multi-page scan takes time, and a commit
+      // pushed after the last page was received would leave this approval
+      // computed against a stale head — opening the gate for an unreviewed
+      // head. Re-resolve the head now and retry (fail-closed) if it moved.
+      const headCheck = await runGhGraphql(
+        ctx,
+        `query { repository(owner:"${pr.owner}",name:"${pr.repo}") { pullRequest(number:${pr.number}) { ` +
+          'commits(last: 1) { nodes { commit { oid } } } } } }',
+        pr.host
+      );
+      if (!headCheck.ok) return headCheck;
+      const headCheckPr = asRecord(
+        asRecord(asRecord(asRecord(headCheck.data)?.data)?.repository)?.pullRequest
+      );
+      const headCheckNodes = asRecord(headCheckPr?.commits)?.nodes;
+      const currentOid = Array.isArray(headCheckNodes)
+        ? asRecord(asRecord(headCheckNodes[headCheckNodes.length - 1])?.commit)?.oid
+        : undefined;
+      if (
+        typeof currentOid !== 'string' ||
+        typeof approval.evaluatedHeadOid !== 'string' ||
+        currentOid !== approval.evaluatedHeadOid
+      ) {
+        return {
+          ok: false,
+          retryable: true,
+          error:
+            'PR head changed while the codex approval was being evaluated; re-evaluating ' +
+            '(fail closed against the stale-head approval).',
+        };
+      }
+      return { ok: true, data: approval };
     }
     if (typeof pageInfo?.endCursor !== 'string' || !CURSOR_RE.test(pageInfo.endCursor)) break;
     cursor = pageInfo.endCursor;
@@ -911,7 +943,7 @@ export function extractCodexApproval(value: unknown, prLink: string): GithubCode
       // CHANGES_REQUESTED correctly supersedes an earlier APPROVED.
       if (!latest || submittedAt >= latest.submittedAt) latest = { submittedAt, state };
     }
-    if (latest) return { approved: latest.state === 'APPROVED', prLink };
+    if (latest) return { approved: latest.state === 'APPROVED', prLink, evaluatedHeadOid: headOid };
   }
 
   // Pass path 2 (no head-bound codex review at all): a FRESH THUMBS_UP (+1)
@@ -932,7 +964,7 @@ export function extractCodexApproval(value: unknown, prLink: string): GithubCode
       if (!Number.isFinite(createdMs) || !Number.isFinite(pushedMs)) continue;
       if (createdMs <= pushedMs) continue;
       if (isCodexActor(reaction?.user)) {
-        return { approved: true, prLink };
+        return { approved: true, prLink, evaluatedHeadOid: headOid };
       }
     }
   }

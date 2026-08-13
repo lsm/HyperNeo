@@ -809,6 +809,49 @@ describe('VisualWorkflowEditor', () => {
       expect(params.hookBindings ?? []).toHaveLength(0);
     });
 
+    it('removing the last authorized slot drops the caller, not widens to the node', async () => {
+      // Node has slots [planner, scribe]; the caller authorizes only
+      // 'scribe'. Removing the scribe slot must drop the caller (and the
+      // now-caller-less binding), NOT emit an omitted agentSlots list —
+      // which runtime treats as whole-node authorization.
+      const workflow = makeHookedWorkflow();
+      workflow.nodes = [
+        {
+          id: STEP_1_ID,
+          name: 'Plan',
+          agents: [
+            { agentId: 'agent-1', name: 'planner' },
+            { agentId: 'agent-3', name: 'scribe' },
+          ],
+        },
+        workflow.nodes[1],
+      ];
+      workflow.hookBindings = [
+        {
+          hookId: 'pr_ready',
+          sourceNode: 'Plan',
+          targetNode: 'Code',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Plan', agentSlots: ['scribe'] }],
+        },
+      ];
+      const { getByTestId, getAllByTestId } = render(
+        <VisualWorkflowEditor {...makeProps({ workflow })} />
+      );
+      fireEvent.click(getAllByTestId(/^workflow-node-/)[0]);
+      // Remove the second agent (the scribe).
+      fireEvent.click(getAllByTestId('remove-agent-button')[1]);
+      await act(async () => {
+        fireEvent.click(getByTestId('save-button'));
+      });
+      await waitFor(() => expect(mockUpdateWorkflow).toHaveBeenCalledOnce());
+
+      const params = mockUpdateWorkflow.mock.calls[0][1];
+      expect(params.hookBindings ?? []).toHaveLength(0);
+    });
+
     it('a slot rename remaps authorizedCallers agentSlots', async () => {
       // Two agents on the node so the multi-agent list (with editable slot
       // names) renders instead of the single-slot view.

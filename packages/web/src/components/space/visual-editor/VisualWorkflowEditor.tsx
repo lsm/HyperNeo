@@ -681,32 +681,38 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
       const nextSlotNames = new Set(nextAgents.map((agent) => agent.name));
 
       setHookBindings((prev) =>
-        prev.map((binding) => {
-          // Callers are remapped independently of the endpoints: the renamed
-          // node may authorize a binding between OTHER nodes (e.g. a B→C
-          // binding authorized by this node), and a stale caller name fails
-          // backend hook validation on save just like a stale endpoint.
-          const remapped = {
-            ...binding,
-            sourceNode: previousRefs.has(binding.sourceNode) ? nextRef : binding.sourceNode,
-            targetNode: previousRefs.has(binding.targetNode) ? nextRef : binding.targetNode,
-          };
-          if (!binding.authorizedCallers) return remapped;
-          return {
-            ...remapped,
-            authorizedCallers: binding.authorizedCallers.map((caller) => {
-              if (!previousRefs.has(caller.sourceNode)) return caller;
-              if (!caller.agentSlots) return { ...caller, sourceNode: nextRef };
-              const mappedSlots = caller.agentSlots
-                .map((slot) => slotRename.get(slot) ?? slot)
-                .filter((slot) => nextSlotNames.has(slot));
-              // Empty (or omitted) agentSlots authorizes the whole node.
-              return mappedSlots.length > 0
-                ? { sourceNode: nextRef, agentSlots: mappedSlots }
-                : { sourceNode: nextRef };
-            }),
-          };
-        })
+        prev
+          .map((binding): HookBinding | null => {
+            // Callers are remapped independently of the endpoints: the renamed
+            // node may authorize a binding between OTHER nodes (e.g. a B→C
+            // binding authorized by this node), and a stale caller name fails
+            // backend hook validation on save just like a stale endpoint.
+            const remapped = {
+              ...binding,
+              sourceNode: previousRefs.has(binding.sourceNode) ? nextRef : binding.sourceNode,
+              targetNode: previousRefs.has(binding.targetNode) ? nextRef : binding.targetNode,
+            };
+            if (!binding.authorizedCallers) return remapped;
+            const authorizedCallers = binding.authorizedCallers
+              .map((caller) => {
+                if (!previousRefs.has(caller.sourceNode)) return caller;
+                if (!caller.agentSlots) return { ...caller, sourceNode: nextRef };
+                const mappedSlots = caller.agentSlots
+                  .map((slot) => slotRename.get(slot) ?? slot)
+                  .filter((slot) => nextSlotNames.has(slot));
+                // An EMPTY agentSlots list would authorize the WHOLE node —
+                // silently widening slot-scoped authorization when the last
+                // listed slot is removed. Drop the caller instead; the binding
+                // filter below drops the binding if nothing remains.
+                return mappedSlots.length > 0
+                  ? { sourceNode: nextRef, agentSlots: mappedSlots }
+                  : null;
+              })
+              .filter((caller): caller is NonNullable<typeof caller> => caller !== null);
+            if (authorizedCallers.length === 0) return null;
+            return { ...remapped, authorizedCallers };
+          })
+          .filter((binding): binding is HookBinding => binding !== null)
       );
     },
     [nodes]

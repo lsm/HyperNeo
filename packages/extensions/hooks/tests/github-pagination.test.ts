@@ -354,3 +354,52 @@ describe('reviewThreads pageInfo completeness', () => {
     if (!result.ok) expect(result.error).toContain('hasNextPage');
   });
 });
+
+describe('ghGetCodexApproval — final head recheck', () => {
+  const approvalPage = (headOid: string) => ({
+    data: {
+      repository: {
+        pullRequest: {
+          reviews: {
+            nodes: [
+              {
+                state: 'APPROVED',
+                submittedAt: '2026-08-13T10:00:00Z',
+                commit: { oid: headOid },
+                author: { login: 'chatgpt-codex-connector' },
+              },
+            ],
+            pageInfo: { hasNextPage: false, endCursor: 'cGFnZQ' },
+          },
+          reactions: { nodes: [], pageInfo: { hasPreviousPage: false, startCursor: 'Y3Vy' } },
+          commits: { nodes: [{ commit: { oid: headOid, pushedDate: '2026-08-12T00:00:00Z' } }] },
+        },
+      },
+    },
+  });
+
+  test('an approval against a head that moved during the scan retries (fail closed)', async () => {
+    let call = 0;
+    setGraphqlRunnerForTests(async () => {
+      call += 1;
+      // Page 1 approves against HEAD; the head-recheck query (call 2) sees a
+      // NEW head — the push landed mid-scan.
+      return call === 1
+        ? { ok: true, data: approvalPage(HEAD) }
+        : { ok: true, data: approvalPage(`${'b'.repeat(40)}`) };
+    });
+    const result = await ghGetCodexApproval(CTX, PR_LINK);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.retryable).toBe(true);
+      expect(result.error).toContain('head changed');
+    }
+  });
+
+  test('an approval against the still-current head is returned', async () => {
+    setGraphqlRunnerForTests(async () => ({ ok: true, data: approvalPage(HEAD) }));
+    const result = await ghGetCodexApproval(CTX, PR_LINK);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.approved).toBe(true);
+  });
+});

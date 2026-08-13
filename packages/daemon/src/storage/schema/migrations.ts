@@ -12456,28 +12456,31 @@ export function runMigration193(db: BunDatabase): void {
  * column is plain TEXT with no index/constraint referencing it, so the drop is
  * safe. Guarded so it is a no-op on DBs without the table or already migrated.
  *
- * ORDERING GUARD: migrations run during DB construction, but definition pins
- * are backfilled later in startup (setupRpcHandlers). Dropping the column NOW
- * would leave an executable run without a pin backfilled from the post-drop
- * live head — a pin carrying neither `hooks` nor `hookBindings`, invisible to
- * the legacy-hook guard, resuming ungated. So while any NON-TERMINAL unpinned
- * run exists on a workflow that still carries legacy hooks, the drop is
- * deferred to a later startup (after those runs complete or get pins); the
- * dormant column is harmless (nothing reads it once the workflows have
+ * ORDERING GUARD: migrations run during DB construction, but BOTH the
+ * definition-pin backfill (setupRpcHandlers) and the built-in restamp
+ * (restampBuiltInWorkflowsOnStartup — which defers adding v2 hookBindings
+ * while any run on the workflow is active) happen later in startup. Dropping
+ * the column NOW would therefore leave the live head with NEITHER legacy
+ * hooks NOR v2 bindings while a run is active: an unpinned run's backfilled
+ * pin would carry neither (invisible to the legacy-hook guard), and a NEW run
+ * started from the ungated head would be pinned without its gates. So while
+ * ANY non-terminal run exists — pinned or not — on a workflow that still
+ * carries legacy hooks, the drop is deferred to a later startup; the dormant
+ * column is harmless (nothing reads it once the workflows have
  * hook_bindings). On the next startup with no such runs, the drop completes.
  */
 export function runMigration194(db: BunDatabase): boolean {
   if (!tableExists(db, 'space_workflows')) return true;
   if (tableHasColumn(db, 'space_workflows', 'hooks')) {
-    // Any non-terminal run lacking a definition pin, on a workflow whose
-    // legacy hooks JSON is non-empty?
+    // Any non-terminal run (pinned OR NOT — the restamp also defers while
+    // runs are active, so a pinned run's workflow head can be equally
+    // ungated), on a workflow whose legacy hooks JSON is non-empty?
     const risky = db
       .prepare(
         `SELECT COUNT(*) AS n
            FROM space_workflow_runs r
            JOIN space_workflows w ON w.id = r.workflow_id
-          WHERE r.definition_version IS NULL
-            AND r.status NOT IN ('done', 'cancelled', 'archived')
+          WHERE r.status NOT IN ('done', 'cancelled', 'archived')
             AND w.hooks IS NOT NULL
             AND w.hooks != '[]'
             AND w.hooks != ''`
