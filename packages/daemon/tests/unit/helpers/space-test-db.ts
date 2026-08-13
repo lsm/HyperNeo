@@ -92,6 +92,8 @@ export function createSpaceTables(db: BunDatabase): void {
 			tags TEXT NOT NULL DEFAULT '[]',
 			channels TEXT,
 				hooks TEXT,
+				hook_bindings TEXT,
+				custom_hooks TEXT,
 			layout TEXT,
 			template_name TEXT DEFAULT NULL,
 			template_hash TEXT DEFAULT NULL,

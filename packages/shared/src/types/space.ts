@@ -10,6 +10,7 @@ import type { ThinkingLevel } from '../types';
 import type { TaskRestriction } from './neo';
 import type { McpServerConfig } from './sdk-config';
 import type { SettingSource } from './settings';
+import type { HookBinding, CustomHook } from './workflow-hooks';
 
 // ============================================================================
 // Space Types
@@ -2366,6 +2367,17 @@ export interface SpaceWorkflow {
    */
   hooks?: WorkflowHook[];
   /**
+   * v2 hook bindings — placement of a hook (by id) on a workflow route.
+   * Persisted as JSON in the `hook_bindings` column. The v2 engine resolves
+   * these; the legacy `hooks` field above is retired in step 7.
+   */
+  hookBindings?: HookBinding[];
+  /**
+   * v2 custom (script) hook definitions authored on this workflow, referenced
+   * by `hookBindings[].hookId`. Persisted as JSON in the `custom_hooks` column.
+   */
+  customHooks?: CustomHook[];
+  /**
    * Tags for organizational categorization.
    *
    * Primary workflow selection for standalone tasks is LLM-driven; tags are
@@ -2455,6 +2467,10 @@ export interface CreateSpaceWorkflowParams {
   channels?: WorkflowChannel[];
   /** Hook definitions for MCP action/runtime validation. */
   hooks?: WorkflowHook[];
+  /** v2 hook bindings (placement of a hook on a route). */
+  hookBindings?: HookBinding[];
+  /** v2 custom (script) hook definitions authored on this workflow. */
+  customHooks?: CustomHook[];
   /** Tags for organizational categorization (default: []). See `SpaceWorkflow.tags` for runtime semantics. */
   tags?: string[];
   /** Visual editor node positions: maps node ID to {x, y} canvas coordinates */
@@ -2523,6 +2539,10 @@ export interface UpdateSpaceWorkflowParams {
    * Replaces the hook list. Pass `[]` or `null` to clear all hooks.
    */
   hooks?: WorkflowHook[] | null;
+  /** Replaces the v2 hook bindings. Pass `[]` or `null` to clear. */
+  hookBindings?: HookBinding[] | null;
+  /** Replaces the v2 custom hooks. Pass `[]` or `null` to clear. */
+  customHooks?: CustomHook[] | null;
   /**
    * Replaces the tag list. Pass `[]` or `null` to clear all tags.
    * See `SpaceWorkflow.tags` for runtime semantics (used by the deterministic fallback selector).
