@@ -22,6 +22,8 @@ export type HookBannerStatus = 'allowed' | 'blocked_by_hook' | 'waiting_on_hook_
 export interface HookBannerSummary {
   hookId: string;
   status: HookBannerStatus;
+  /** False for fail-closed/infrastructure stops — no Approve action is offered. */
+  overrideEligible: boolean;
   label?: string;
   sourceNode?: string;
   targetNode?: string;
@@ -56,6 +58,11 @@ export function evaluateHookStatus(
   return {
     hookId: state.hookId,
     status,
+    // Engine-reserved flag: false marks fail-closed/infrastructure stops
+    // (unresolved hook, unreadable artifacts, persistence failures) where an
+    // approval must NOT be offered — overriding would deliver without the
+    // gate ever having run. Absent defaults to eligible (a hook decision).
+    overrideEligible: state.localState?.__overrideEligible !== false,
     label: binding?.hookId ?? state.hookId,
     sourceNode: binding?.sourceNode,
     targetNode: binding?.targetNode,

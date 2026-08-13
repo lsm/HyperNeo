@@ -710,6 +710,12 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
               })
               .filter((caller): caller is NonNullable<typeof caller> => caller !== null);
             if (authorizedCallers.length === 0) return null;
+            // Backend validation requires a caller for the binding's OWN
+            // sourceNode — a caller list that no longer includes it would
+            // fail the next save, so drop the binding instead of persisting
+            // a dead one.
+            if (!authorizedCallers.some((caller) => caller.sourceNode === remapped.sourceNode))
+              return null;
             return { ...remapped, authorizedCallers };
           })
           .filter((binding): binding is HookBinding => binding !== null)

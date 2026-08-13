@@ -705,7 +705,12 @@ describe('VisualWorkflowEditor', () => {
           method: 'send_message',
           order: 0,
           enabled: true,
-          authorizedCallers: [{ sourceNode: 'Plan', agentSlots: ['planner'] }],
+          // Includes the binding's OWN source (required by validation) plus
+          // the renamed node's caller — the remap must touch only the latter.
+          authorizedCallers: [
+            { sourceNode: 'Plan', agentSlots: ['planner'] },
+            { sourceNode: 'Code' },
+          ],
         },
       ];
       workflow.nodes = [
@@ -726,7 +731,10 @@ describe('VisualWorkflowEditor', () => {
       const binding = mockUpdateWorkflow.mock.calls[0][1].hookBindings?.[0];
       expect(binding?.sourceNode).toBe('Code');
       expect(binding?.targetNode).toBe('Review');
-      expect(binding?.authorizedCallers?.[0]?.sourceNode).toBe('Planning');
+      expect(binding?.authorizedCallers?.map((c: { sourceNode: string }) => c.sourceNode)).toEqual([
+        'Planning',
+        'Code',
+      ]);
     });
 
     it('deleting a node strips it from surviving bindings’ callers', async () => {

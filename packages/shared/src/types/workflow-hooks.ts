@@ -200,6 +200,14 @@ export interface HookStateSnapshot {
 
 export interface HookUserState {
   status: 'allowed' | 'blocked' | 'waiting_on_retry';
+  /**
+   * True when the block is a HOOK DECISION a human may override (the hook ran
+   * and returned stop). False (or absent) for fail-closed/infrastructure
+   * failures — unresolved hook, unreadable artifacts, persistence errors —
+   * where an approval must NOT bypass the gate (the underlying enforcement
+   * never ran, so overriding would deliver without it).
+   */
+  humanOverrideEligible?: boolean;
   hookId?: string;
   reason?: string;
   sourceNode?: string;

@@ -126,6 +126,33 @@ describe('WorkflowHookEngine.executeAction', () => {
     expect(outcome.userState.reason).toBe('blocked by script');
   });
 
+  test('a human approval recorded against an unresolved hook does not bypass it', async () => {
+    const workflow = makeWorkflow({
+      hookBindings: [
+        {
+          hookId: 'missing_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    // An operator approves the (infrastructure) blocked banner...
+    hookStateRepo.updateWithRetry('run-1', 'missing_hook', {
+      localState: { humanApproved: true, humanApprovedAt: 1 },
+      lastFlow: 'stop',
+    });
+    const engine = makeEngine(workflow);
+    const outcome = await engine.executeAction('send_message', sendParams(), META);
+    // ...but the gate never ran, so the override is not consumed and the
+    // action stays blocked.
+    expect(outcome.decision).toBe('stop');
+    expect(hookStateRepo.get('run-1', 'missing_hook')?.localState.humanApproved).toBe(true);
+  });
+
   test('a binding whose hook cannot be resolved blocks (fail closed)', async () => {
     // Pinned definition referencing a hook the running registry lacks (e.g.
     // after a rollback) must NOT deliver the protected action ungated.

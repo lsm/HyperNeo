@@ -184,23 +184,27 @@ export function PendingHookBanner({
             if (hook.status === 'blocked_by_hook') {
               // v2: Approve permits the agent's NEXT attempt through the hook
               // (one-shot engine override — the blocked action is not replayed,
-              // the agent re-issues it); Reject is a standing block.
-              actions.push(
-                {
-                  label: 'Approve',
-                  onClick: () => void handleApprove(hook.hookId, true),
-                  variant: 'primary',
-                  disabled: busy,
-                  testId: 'pending-hook-approve-btn',
-                },
-                {
-                  label: 'Reject',
-                  onClick: () => void handleApprove(hook.hookId, false),
-                  variant: 'danger',
-                  disabled: busy,
-                  testId: 'pending-hook-reject-btn',
-                }
-              );
+              // the agent re-issues it); Reject is a standing block. Offered
+              // ONLY for hook-decision stops: fail-closed/infrastructure
+              // blocks (overrideEligible false) cannot be approved past — the
+              // gate never ran, so overriding would deliver ungated.
+              if (hook.overrideEligible)
+                actions.push(
+                  {
+                    label: 'Approve',
+                    onClick: () => void handleApprove(hook.hookId, true),
+                    variant: 'primary',
+                    disabled: busy,
+                    testId: 'pending-hook-approve-btn',
+                  },
+                  {
+                    label: 'Reject',
+                    onClick: () => void handleApprove(hook.hookId, false),
+                    variant: 'danger',
+                    disabled: busy,
+                    testId: 'pending-hook-reject-btn',
+                  }
+                );
             }
 
             const sourceTarget = [hook.sourceNode, hook.targetNode].filter(Boolean).join(' → ');

@@ -136,12 +136,16 @@ const MIN_SCRIPT_RETRY_MS = 1_000;
 const MAX_SCRIPT_RETRY_MS = 86_400_000;
 
 /**
- * Ceiling on hook retries. Past this a retrying hook converts to a terminal
+ * Ceilings on hook retries. Past these a retrying hook converts to a terminal
  * stop (the run is not wedged forever on e.g. a PR left OPEN indefinitely).
- * ~24h at the 30s default cadence; cancellation on task/run completion is the
- * primary backstop.
+ * ATTEMPTS bounds agent-driven retries (no timer; ~2880 manual attempts);
+ * ELAPSED bounds timer-driven retries, whose exponential backoff raises the
+ * cadence far above the 30s default — an attempt count alone would leave a
+ * queued pr_merged/Codex gate pending for months. 7 days of cumulative
+ * retrying; cancellation on task/run completion is the primary backstop.
  */
 const MAX_RETRY_ATTEMPTS = 2880;
+const MAX_RETRY_ELAPSED_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** Maximum bytes for an artifact data payload injected into a script hook env. */
 const MAX_ARTIFACT_DATA_BYTES = 16_384;
@@ -455,6 +459,7 @@ export class WorkflowHookEngine {
         executionLog: [],
         userState: {
           status: 'blocked',
+          humanOverrideEligible: false,
           reason:
             'Hook context could not be read (artifact store failure); the action is blocked ' +
             'rather than evaluated without the run’s recorded artifacts.',
@@ -481,13 +486,23 @@ export class WorkflowHookEngine {
       const nextRetryAt = hookState?.nextRetryAt;
       if (nextRetryAt !== undefined && Date.now() < nextRetryAt) {
         const attempts = hookState?.retryCount ?? 0;
-        if (attempts >= MAX_RETRY_ATTEMPTS) {
+        const firstRetryAt =
+          typeof hookState?.localState.__firstRetryAt === 'number'
+            ? (hookState.localState.__firstRetryAt as number)
+            : undefined;
+        const elapsed = firstRetryAt !== undefined ? Date.now() - firstRetryAt : 0;
+        if (
+          attempts >= MAX_RETRY_ATTEMPTS ||
+          (firstRetryAt !== undefined && elapsed >= MAX_RETRY_ELAPSED_MS)
+        ) {
           terminal = {
             kind: 'stop',
             hookId,
-            reason: `Hook retry limit exceeded (${MAX_RETRY_ATTEMPTS} attempts): ${
-              hookState?.lastReason ?? 'retrying'
-            }`,
+            reason: `Hook retry limit exceeded (${
+              firstRetryAt !== undefined && elapsed >= MAX_RETRY_ELAPSED_MS
+                ? 'elapsed time exceeded'
+                : `${MAX_RETRY_ATTEMPTS} attempts`
+            }): ${hookState?.lastReason ?? 'retrying'}`,
           };
           executionLog.push({
             hookId,
@@ -504,6 +519,36 @@ export class WorkflowHookEngine {
         break;
       }
 
+      const hook = resolveHook(hookId, this.config.workflow.customHooks);
+      if (!hook) {
+        // Override-INELIGIBLE stop: the gate never ran, so a human approval
+        // recorded against the banner must not bypass it (the override check
+        // below only runs once the hook resolves).
+        // FAIL CLOSED: an unresolvable hook on a bound route means the gate
+        // cannot run — typically a PINNED definition referencing a built-in
+        // that the running registry no longer has (e.g. after a rollback).
+        // Skipping would deliver the protected action without that binding's
+        // enforcement; block instead so the operator sees it.
+        log.error(
+          `Binding references hook "${hookId}" (${binding.sourceNode}→${binding.targetNode} ${methodName}) but it is not registered; blocking the action (fail closed).`
+        );
+        terminal = {
+          kind: 'stop',
+          hookId,
+          reason:
+            `Hook "${hookId}" is bound to this route but not registered in this daemon ` +
+            '(pinned definition referencing an unavailable hook?). The action is blocked ' +
+            'rather than delivered without that gate.',
+        };
+        executionLog.push({
+          hookId,
+          flow: 'stop',
+          reason: terminal.reason,
+          timestamp: Date.now(),
+        });
+        break;
+      }
+
       // Human override (approveHook RPC): an approval permits the NEXT attempt
       // through this hook — the flag is consumed on use so later actions are
       // gated again. A rejection is a standing block until a human approves.
@@ -511,6 +556,9 @@ export class WorkflowHookEngine {
       // it. NOTE: state is keyed (runId, hookId), so on a hook bound to
       // multiple routes the override skips every binding of that hook for one
       // action — same shared-key limitation as retry state (see step-7 tests).
+      // Runs only once the hook RESOLVES: a stop from an unresolved hook or
+      // another infrastructure failure is not a hook decision and an approval
+      // recorded against it must not deliver the action ungated.
       if (hookState && hookState.localState.humanApproved !== undefined) {
         if (hookState.localState.humanApproved !== true) {
           const rawReason = hookState.localState.humanRejectionReason;
@@ -564,33 +612,6 @@ export class WorkflowHookEngine {
         continue;
       }
 
-      const hook = resolveHook(hookId, this.config.workflow.customHooks);
-      if (!hook) {
-        // FAIL CLOSED: an unresolvable hook on a bound route means the gate
-        // cannot run — typically a PINNED definition referencing a built-in
-        // that the running registry no longer has (e.g. after a rollback).
-        // Skipping would deliver the protected action without that binding's
-        // enforcement; block instead so the operator sees it.
-        log.error(
-          `Binding references hook "${hookId}" (${binding.sourceNode}→${binding.targetNode} ${methodName}) but it is not registered; blocking the action (fail closed).`
-        );
-        terminal = {
-          kind: 'stop',
-          hookId,
-          reason:
-            `Hook "${hookId}" is bound to this route but not registered in this daemon ` +
-            '(pinned definition referencing an unavailable hook?). The action is blocked ' +
-            'rather than delivered without that gate.',
-        };
-        executionLog.push({
-          hookId,
-          flow: 'stop',
-          reason: terminal.reason,
-          timestamp: Date.now(),
-        });
-        break;
-      }
-
       const built = this.buildHookContext(binding, meta, ctxArtifacts);
       const action: HookAction = {
         method: methodName as HookAction['method'],
@@ -631,9 +652,16 @@ export class WorkflowHookEngine {
         // OPEN indefinitely) would otherwise loop forever. Past the cap, convert
         // the retry to a terminal stop so the run isn't wedged and the source is
         // notified (the wrapper notifies on terminal blocks).
-        const attempts =
-          this.config.hookStateRepo.get(this.config.workflowRunId, hookId)?.retryCount ?? 0;
-        if (attempts >= MAX_RETRY_ATTEMPTS) {
+        const ceilingState = this.config.hookStateRepo.get(this.config.workflowRunId, hookId);
+        const attempts = ceilingState?.retryCount ?? 0;
+        const firstRetryAt =
+          typeof ceilingState?.localState.__firstRetryAt === 'number'
+            ? (ceilingState.localState.__firstRetryAt as number)
+            : undefined;
+        if (
+          attempts >= MAX_RETRY_ATTEMPTS ||
+          (firstRetryAt !== undefined && Date.now() - firstRetryAt >= MAX_RETRY_ELAPSED_MS)
+        ) {
           terminal = {
             kind: 'stop',
             hookId,
@@ -721,6 +749,7 @@ export class WorkflowHookEngine {
         executionLog,
         userState: {
           status: 'blocked',
+          humanOverrideEligible: true,
           hookId: terminal.hookId,
           reason: terminal.reason,
           sourceNode,
@@ -918,8 +947,14 @@ export class WorkflowHookEngine {
             for (const resolved of resolvedTargets) {
               actionTargets.add(resolved);
             }
+            // Only a requested target that RESOLVES to a non-routable node
+            // disqualifies target-scoped bindings (the ambiguity the guard
+            // exists for). A generic address that resolves to no node
+            // (e.g. '@coordinator') must not: mixed multicasts deliver the
+            // node-addressed part through the router regardless, and
+            // suppressing the binding here would let that part bypass the
+            // gate entirely.
             if (
-              (!isBuiltInInterLevelTarget(t) && !hasValidAddressTarget(t)) ||
               resolvedTargets.some(
                 (resolved) => !isBuiltInInterLevelTarget(t) && !isRoutableTarget(resolved)
               )
@@ -1761,7 +1796,7 @@ export function createLegacyHookGuardEngine(
         followUpRequests: [],
         stateUpdates: [],
         executionLog: [],
-        userState: { status: 'blocked', reason },
+        userState: { status: 'blocked', reason, humanOverrideEligible: false },
         blockingHookId: '__legacy_hooks__',
       };
     }
@@ -1809,6 +1844,7 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
       return entry;
     };
 
+    const overrideEligible = outcome.userState.humanOverrideEligible !== false;
     for (const record of outcome.executionLog) {
       const entry = ensure(record.hookId);
       entry.lastFlow = record.flow;
@@ -1816,6 +1852,13 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
       // otherwise the banner would keep the PREVIOUS decision's remediation
       // (e.g. "Retry requested by human" over a later reasonless script stop).
       entry.lastReason = record.reason ?? null;
+      // Engine-reserved: whether a subsequent block of this hook is a HOOK
+      // DECISION (human may override) or a fail-closed/infrastructure stop
+      // (banner must not offer Approve). Infrastructure stops carry no
+      // executionLog records, so their entries keep the flag unset — but a
+      // prior eligible decision must not linger as eligible after a later
+      // infrastructure stop either; the flag is written on every decision.
+      entry.localState.__overrideEligible = overrideEligible;
     }
     for (const update of outcome.stateUpdates) {
       const entry = ensure(update.hookId);
@@ -1904,6 +1947,9 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
           if (hookId === blockingId) {
             patch.retryCount = blockingAttempts + 1;
             patch.nextRetryAt = now + delayMs;
+            // Stamp the FIRST retry time once — the elapsed ceiling for
+            // timer-driven retries reads it.
+            if (blockingAttempts === 0) patch.localState.__firstRetryAt = now;
             patch.localState[QUEUED_RETRYABLE_ACTION_STATE_KEY] = {
               actionKey,
               hookId: blockingId,
