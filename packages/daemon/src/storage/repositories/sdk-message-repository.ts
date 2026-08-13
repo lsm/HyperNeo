@@ -1970,6 +1970,39 @@ export class SDKMessageRepository {
   }
 
   /**
+   * The subtype of the first NON-success terminal `result` after the message
+   * identified by `uuid` (e.g. `error_max_budget_usd`), or null when none
+   * exists. Companion of {@link hasTerminalResultAfter}: the bridge uses it to
+   * classify a turn that ended in an error result — the SDK persists such
+   * results WITHOUT emitting `session.error`, so without this lookup a terminal
+   * error result (budget/limit exhaustion) would be treated as a recoverable
+   * no-result stall and retried, repeating spend. Ordering semantics are
+   * identical to {@link hasTerminalResultAfter}.
+   */
+  getErrorTerminalResultSubtypeAfter(sessionId: string, uuid: string): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT r.message_subtype AS subtype
+           FROM sdk_messages r
+          WHERE r.session_id = ?
+            AND r.message_type = 'result'
+            AND r.is_terminal = 1
+            AND r.message_subtype IS NOT NULL
+            AND r.message_subtype != 'success'
+            AND r.parent_tool_use_id IS NULL
+            AND r.consumed_seq IS NOT NULL
+            AND r.consumed_seq >= (
+              SELECT m.consumed_seq FROM sdk_messages m
+               WHERE m.session_id = ? AND m.sdk_uuid = ? LIMIT 1
+            )
+          ORDER BY r.consumed_seq ASC
+          LIMIT 1`
+      )
+      .get(sessionId, sessionId, uuid) as { subtype: string | null } | undefined | null;
+    return row?.subtype ?? null;
+  }
+
+  /**
    * Atomically draw the next value from the shared monotonic consumption
    * counter (delivery_consumed_seq). Used to stamp both consumed messages (at
    * the consumed-flip) and terminal results (at insert) so

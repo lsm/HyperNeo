@@ -17,13 +17,17 @@ import { JobQueueRepository } from '../../../../src/storage/repositories/job-que
 import { runMigration182 } from '../../../../src/storage/schema/migrations';
 import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants';
 import {
+  ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS,
   awaitDeliveryConsumption,
   deliverAndMarkQueued,
   deliverMessage,
   drainDeliveryWaitersOnTerminalSDKMessage,
+  isRetryableErrorResultSubtype,
   isTerminalTurnError,
   isUniqueConstraintError,
+  MAX_ACP_STEER_PARKS,
   MAX_STEER_PARKS,
+  MESSAGE_DELIVERY_PARK_MS,
   signalDeliveryConsumed,
   waitForDeliveryConsumption,
   type MessageDeliverySession,
@@ -1165,9 +1169,14 @@ describe('message-delivery v2 — steer park bound (dead-letter after MAX_STEER_
   });
 
   it('ACP awaiting-acceptance parks up to the budget, then dead-letters', async () => {
-    // Same bound as a turn-blocked park: an ACP steer whose acceptance never
-    // comes must surface as `failed` (Retry affordance) instead of parking
-    // silently forever or stranding the row with no job to retry it.
+    // Bounded by the acceptance-sized budget (MAX_ACP_STEER_PARKS, covering
+    // ACP's 12min acceptance window at the 5s park cadence — NOT the generic
+    // turn-blocked bound, which would dead-letter a still-executing request):
+    // an ACP steer whose acceptance never comes must surface as `failed` (Retry
+    // affordance) instead of parking silently forever or stranding the row.
+    expect(MAX_ACP_STEER_PARKS * MESSAGE_DELIVERY_PARK_MS).toBeGreaterThanOrEqual(
+      ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS
+    );
     const session = new MockSession();
     session.feedResult = { outcome: 'awaiting_acceptance' };
     const handler = createMessageDeliveryHandler({
@@ -1177,7 +1186,7 @@ describe('message-delivery v2 — steer park bound (dead-letter after MAX_STEER_
     });
 
     let current = steerJob(repo, 'msg-acp-accept-bound');
-    for (let i = 0; i < MAX_STEER_PARKS; i++) {
+    for (let i = 0; i < MAX_ACP_STEER_PARKS; i++) {
       const result = await handler(current);
       expect(result).toMatchObject({ parked: 'acp_awaiting_acceptance' });
       expect(repo.getJob(current.id)?.retryCount).toBe(0); // parking is not a retry
@@ -1186,7 +1195,7 @@ describe('message-delivery v2 — steer park bound (dead-letter after MAX_STEER_
       expect(next).toBeTruthy();
       current = next!;
     }
-    expect(repo.getParkCount(current.id)).toBeGreaterThanOrEqual(MAX_STEER_PARKS);
+    expect(repo.getParkCount(current.id)).toBeGreaterThanOrEqual(MAX_ACP_STEER_PARKS);
     await expect(handler(current)).rejects.toThrow(/awaited acceptance past its budget/);
   });
 
@@ -1235,5 +1244,18 @@ describe('isTerminalTurnError — auth failures dead-letter immediately (Codex #
     expect(isTerminalTurnError({ recoverable: true, category: 'system' })).toBe(false);
     expect(isTerminalTurnError({ recoverable: true, category: 'connection' })).toBe(false);
     expect(isTerminalTurnError({ recoverable: true })).toBe(false);
+  });
+});
+
+describe('isRetryableErrorResultSubtype — persisted error-result classification', () => {
+  it('transient execution failures and turn-cap exhaustion retry', () => {
+    expect(isRetryableErrorResultSubtype('error_during_execution')).toBe(true);
+    expect(isRetryableErrorResultSubtype('error_max_turns')).toBe(true);
+  });
+
+  it('cost / structured-output exhaustion dead-letter (retrying repeats spend)', () => {
+    expect(isRetryableErrorResultSubtype('error_max_budget_usd')).toBe(false);
+    expect(isRetryableErrorResultSubtype('error_max_structured_output_retries')).toBe(false);
+    expect(isRetryableErrorResultSubtype(null)).toBe(false);
   });
 });

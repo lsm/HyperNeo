@@ -43,6 +43,7 @@ import { DeadLetterImmediatelyError, type JobHandler } from '../../storage/job-q
 import {
   asMessageDeliveryPayload,
   isUniqueConstraintError,
+  MAX_ACP_STEER_PARKS,
   MAX_STEER_PARKS,
   MESSAGE_DELIVERY_PARK_MS,
   type DeliveryLoadResult,
@@ -154,11 +155,12 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
     // (≡ onSubmitted → row `submitted`) but acceptance (markMessageAccepted) is
     // async. Skip-completing here would strand the row as `submitted` with no job
     // if acceptance never comes, defeating the awaiting-acceptance park. So keep
-    // parking (bounded by MAX_STEER_PARKS) until it flips to `consumed` (accepted
+    // parking (bounded by MAX_ACP_STEER_PARKS — sized to ACP's acceptance
+    // window, not the generic turn-blocked budget) until it flips to `consumed` (accepted
     // → alreadyConsumed) or the budget exhausts (→ failed). A `submitted` TURN is
     // left to the live runner / cold recovery as before. See Codex (#3744971821).
     if (sendStatus === 'submitted' && payload.role === 'steer') {
-      if (deps.jobQueue.getParkCount(job.id) >= MAX_STEER_PARKS) {
+      if (deps.jobQueue.getParkCount(job.id) >= MAX_ACP_STEER_PARKS) {
         throw new DeadLetterImmediatelyError(
           'ACP steer awaited acceptance past its budget — subprocess never accepted'
         );
@@ -285,7 +287,7 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       // alreadyConsumed paths above) or still `enqueued` with the message
       // already admitted (the bridge suppresses the re-admit), so this path
       // never re-feeds. Same bound as a turn-blocked park.
-      if (deps.jobQueue.getParkCount(job.id) >= MAX_STEER_PARKS) {
+      if (deps.jobQueue.getParkCount(job.id) >= MAX_ACP_STEER_PARKS) {
         throw new DeadLetterImmediatelyError(
           'ACP steer awaited acceptance past its budget — subprocess never accepted'
         );

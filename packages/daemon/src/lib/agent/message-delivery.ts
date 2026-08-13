@@ -181,6 +181,27 @@ export function isTerminalTurnError(error: { recoverable: boolean; category?: st
   return error.category !== undefined && TERMINAL_TURN_ERROR_CATEGORIES.has(error.category);
 }
 
+/**
+ * SDK terminal-result error subtypes where a retry can plausibly succeed —
+ * mirrors the Space runtime's retryable-subtype taxonomy (space-runtime
+ * terminal-error-continue): transient execution failures and turn-cap
+ * exhaustion. Cost exhaustion (`error_max_budget_usd`) and structured-output
+ * exhaustion are NOT retryable: re-driving repeats spend for a deterministic
+ * limit. The SDK persists error results WITHOUT emitting `session.error`, so
+ * the bridge consults the persisted subtype directly (see
+ * `getErrorTerminalResultSubtypeAfter`). (Codex review.)
+ */
+const RETRYABLE_ERROR_RESULT_SUBTYPES: ReadonlySet<string> = new Set([
+  'error_during_execution',
+  'error_max_turns',
+]);
+
+/** Whether a persisted terminal-result error subtype is worth retrying. */
+export function isRetryableErrorResultSubtype(subtype: string | null): boolean {
+  if (!subtype) return false;
+  return RETRYABLE_ERROR_RESULT_SUBTYPES.has(subtype);
+}
+
 export interface DeliverMessageOptions {
   origin: MessageDeliveryOrigin;
   parentToolUseId?: string | null;
@@ -539,6 +560,21 @@ export function signalDeliveryConsumed(sessionId: string, messageUuid: string): 
  * timeout. (Codex review, P1.)
  */
 export const ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS = 12 * 60 * 1000;
+
+/**
+ * Park budget for an ACP steer awaiting subprocess acceptance. Valid ACP
+ * acceptance can lag submission by up to {@link ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS}
+ * (12min) while the subprocess executes, so the shared {@link MAX_STEER_PARKS}
+ * (~5min at the 5s park cadence) would dead-letter a still-executing request →
+ * `failed`, and a later markMessageAccepted cannot consume a failed row — the
+ * injector then times out and re-runs work the subprocess already accepted
+ * (duplicate execution). Sized to cover the full acceptance window at the park
+ * cadence PLUS a MAX_STEER_PARKS headroom for parks burned earlier in the
+ * job's lifetime (e.g. parked behind a blocked turn before submission).
+ * (Codex review.)
+ */
+export const MAX_ACP_STEER_PARKS =
+  Math.ceil(ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS / MESSAGE_DELIVERY_PARK_MS) + MAX_STEER_PARKS;
 
 /** Acceptance-sized consume timeout for ACP sessions; undefined → default. */
 export function deliveryConsumptionTimeoutMs(provider?: string): number | undefined {

@@ -242,6 +242,7 @@ import {
   MessageDeliveryTerminalTurnError,
   deliverMessage,
   isMessageDeliveryV2Enabled,
+  isRetryableErrorResultSubtype,
   isTerminalTurnError,
   reconcileStrandedDeliveries as reconcileStrandedDeliveriesCore,
   signalDeliveryConsumed,
@@ -2243,17 +2244,34 @@ export class AgentSession
     if (!producedResult) {
       const turnError = this.consumeTerminalTurnError(turnStartedAt);
       this.db.getSDKMessageRepo()?.clearDeliveryTurnEnd(this.session.id, messageUuid);
+      // The SDK persists terminal error results (error_max_budget_usd, …)
+      // WITHOUT emitting session.error, so a turnError-null no-result can still
+      // be a classified failure: consult the persisted error subtype and treat
+      // non-retryable subtypes (cost/structured-output exhaustion) as terminal —
+      // retrying those repeats spend for a deterministic limit. Retryable
+      // subtypes (error_during_execution / error_max_turns) fall through to the
+      // normal recoverable retry. (Codex review.)
+      const errorResultSubtype = this.db
+        .getSDKMessageRepo()
+        ?.getErrorTerminalResultSubtypeAfter(this.session.id, messageUuid);
       const detail =
         turnError?.userMessage ||
         turnError?.message ||
-        (this.deliveryTurnStalled
-          ? 'No response from the model — resetting and retrying'
-          : 'Turn ended without a response');
+        (errorResultSubtype
+          ? `Turn ended with a terminal error (${errorResultSubtype})`
+          : this.deliveryTurnStalled
+            ? 'No response from the model — resetting and retrying'
+            : 'Turn ended without a response');
       // Non-recoverable OR auth (Codex #2): retrying cannot fix a credential/
       // permission/quota error — dead-letter immediately with a Retry affordance
       // instead of burning the budget re-invoking a provider that cannot auth.
       if (turnError && isTerminalTurnError(turnError)) {
         throw new MessageDeliveryTerminalTurnError(detail, turnError.category);
+      }
+      // A non-retryable persisted error result is equally terminal (Codex
+      // review): budget/limit exhaustion will not succeed on re-drive.
+      if (!turnError && errorResultSubtype && !isRetryableErrorResultSubtype(errorResultSubtype)) {
+        throw new MessageDeliveryTerminalTurnError(detail, errorResultSubtype);
       }
       // Recoverable provider error OR a no-progress stall (turnError null): the
       // turn consumed the kickoff but produced no result — reset+retry.

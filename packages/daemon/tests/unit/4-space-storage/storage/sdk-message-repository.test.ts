@@ -1756,6 +1756,40 @@ describe('SDKMessageRepository', () => {
       expect(repository.hasTerminalResultAfter('session-1', 'msg-uuid')).toBe(false);
     });
 
+    it('getErrorTerminalResultSubtypeAfter returns the error subtype (null for success/none)', () => {
+      insertMessage('session-1', 'user', {
+        uuid: 'msg-budget',
+        timestamp: '2026-08-11T15:25:00.000Z',
+      });
+      insertMessage('session-1', 'result', {
+        timestamp: '2026-08-11T15:25:53.000Z',
+        terminal: true,
+        subtype: 'error_max_budget_usd',
+      });
+      // The SDK persists error results WITHOUT emitting session.error — the
+      // bridge uses this lookup to classify budget exhaustion as terminal.
+      expect(repository.getErrorTerminalResultSubtypeAfter('session-1', 'msg-budget')).toBe(
+        'error_max_budget_usd'
+      );
+
+      insertMessage('session-1', 'user', {
+        uuid: 'msg-ok',
+        timestamp: '2026-08-11T15:26:00.000Z',
+      });
+      insertMessage('session-1', 'result', {
+        timestamp: '2026-08-11T15:26:53.000Z',
+        terminal: true,
+        subtype: 'success',
+      });
+      expect(repository.getErrorTerminalResultSubtypeAfter('session-1', 'msg-ok')).toBeNull();
+
+      insertMessage('session-1', 'user', {
+        uuid: 'msg-none',
+        timestamp: '2026-08-11T15:27:00.000Z',
+      });
+      expect(repository.getErrorTerminalResultSubtypeAfter('session-1', 'msg-none')).toBeNull();
+    });
+
     it('ignores NESTED subagent results when detecting turn completion (P1)', () => {
       // A subagent result carries a non-null parent_tool_use_id. If the daemon
       // crashes after the subagent finishes but before the outer turn ends, that
