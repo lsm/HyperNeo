@@ -223,7 +223,7 @@ describe('image passthrough', () => {
     await lastChatComposerProps?.onSend?.('look at this', [sampleImage], 'immediate');
 
     expect(onSend).toHaveBeenCalledTimes(1);
-    expect(onSend).toHaveBeenCalledWith('look at this', targets[0], [sampleImage]);
+    expect(onSend).toHaveBeenCalledWith('look at this', targets[0], [sampleImage], 'immediate');
   });
 
   it('forwards undefined when ChatComposer.onSend fires without images', async () => {
@@ -232,6 +232,18 @@ describe('image passthrough', () => {
     await lastChatComposerProps?.onSend?.('plain text', undefined, 'immediate');
 
     expect(onSend).toHaveBeenCalledTimes(1);
-    expect(onSend).toHaveBeenCalledWith('plain text', targets[0], undefined);
+    expect(onSend).toHaveBeenCalledWith('plain text', targets[0], undefined, 'immediate');
+  });
+
+  it("forwards deliveryMode:'defer' (Queue) through to the parent onSend alongside the selected target", async () => {
+    // Closes the web-level gap for the Queue button: a 'defer' send threads
+    // handleSend → SpaceTaskPane.sendThreadMessage → sendTaskMessage(defer),
+    // so the composer must carry deliveryMode as the 4th positional arg.
+    const { onSend } = renderComposer();
+
+    await lastChatComposerProps?.onSend?.('for next turn', undefined, 'defer');
+
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(onSend).toHaveBeenCalledWith('for next turn', targets[0], undefined, 'defer');
   });
 });
