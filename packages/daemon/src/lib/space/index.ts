@@ -12,7 +12,11 @@ export {
   VALID_SPACE_TASK_TRANSITIONS,
   isValidSpaceTaskTransition,
 } from './managers/space-task-manager';
-export { SpaceWorkflowManager, WorkflowValidationError } from './managers/space-workflow-manager';
+export {
+  SpaceWorkflowManager,
+  WorkflowValidationError,
+  WorkflowDeletionBlockedError,
+} from './managers/space-workflow-manager';
 export type { SpaceAgentLookup } from './managers/space-workflow-manager';
 export { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
 export { WorkflowHookStateRepository } from '../../storage/repositories/workflow-hook-state-repository';

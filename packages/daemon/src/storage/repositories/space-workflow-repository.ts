@@ -658,9 +658,73 @@ export class SpaceWorkflowRepository {
   // Delete
   // -------------------------------------------------------------------------
 
+  /**
+   * Delete a workflow definition row. NO deletion-safety guard: this does not
+   * check for executable runs, so calling it directly can orphan in-flight runs
+   * (there is no `workflow_id` FK on `space_workflow_runs`). Production callers
+   * MUST go through `SpaceWorkflowManager.deleteWorkflow`, which refuses when
+   * `hasExecutableRuns` is true. Direct repo use is reserved for internal
+   * fixtures that intentionally simulate a legacy orphan (e.g. recovery tests).
+   */
   deleteWorkflow(id: string): boolean {
     const result = this.db.prepare(`DELETE FROM space_workflows WHERE id = ?`).run(id);
     return result.changes > 0;
+  }
+
+  /**
+   * Does this workflow have at least one EXECUTABLE run that must not be orphaned?
+   *
+   * RFC §4 #3 deletion-safety predicate. A run is protected (deletion must be
+   * refused) unless it is a provable tombstone. The predicate is task-based and
+   * mirrors `ChannelRouter.isParentTaskArchived` exactly: a run is a tombstone
+   * iff it has ≥1 task and every one of them is archived. So a run is EXECUTABLE
+   * (protected) when:
+   *   - it has NO task attached — the `startWorkflowRun` startup window (the run
+   *     is inserted and promoted before its canonical task lands) and the failed-
+   *     task-creation catch path (run cancelled with no task). Zero tasks is NOT
+   *     a tombstone (the work was never provably finished);
+   *   - OR it has a non-archived task — `done`/`cancelled` REOPEN, so only an
+   *     archived task is a non-reopenable tombstone.
+   * Run status is deliberately NOT consulted: a non-terminal run whose tasks are
+   * all archived is a stale tombstone (legacy runs left stranded because archiving
+   * used to leave an `in_progress` run behind — see space-task-handlers.ts:515-524),
+   * and the active-run archive guard now prevents creating new ones, so treating
+   * such rows as cleanable is correct and unblocks the user instead of demanding
+   * they "archive tasks" that are already archived.
+   */
+  hasExecutableRuns(workflowId: string): boolean {
+    // Minimal-schema safe-guard: some test fixtures and partial schemas create
+    // `space_workflows` without the runs/tasks tables. No runs table ⇒ no runs
+    // can exist ⇒ nothing to orphan ⇒ deletion is safe. Mirrors the best-effort
+    // tolerance of `recordDefinitionVersion` (which swallows "no such table" on
+    // the version-history append). In production both tables always exist.
+    const runsTable = this.db
+      .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='space_workflow_runs'`)
+      .get();
+    const tasksTable = this.db
+      .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='space_tasks'`)
+      .get();
+    if (!runsTable || !tasksTable) return false;
+
+    const row = this.db
+      .prepare(
+        `SELECT 1 FROM space_workflow_runs r
+         WHERE r.workflow_id = ?
+           AND (
+             NOT EXISTS (
+               SELECT 1 FROM space_tasks t WHERE t.workflow_run_id = r.id
+             )
+             OR EXISTS (
+               SELECT 1 FROM space_tasks t
+               WHERE t.workflow_run_id = r.id AND t.archived_at IS NULL
+             )
+           )
+         LIMIT 1`
+      )
+      .get(workflowId) as { '1': number } | null | undefined;
+    // Loose null check: Bun's sqlite `.get()` returns `null` for no rows while
+    // better-sqlite3 returns `undefined` — `!= null` treats both as "no match".
+    return row != null;
   }
 
   // -------------------------------------------------------------------------
