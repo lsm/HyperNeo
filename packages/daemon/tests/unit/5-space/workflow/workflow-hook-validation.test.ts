@@ -35,6 +35,12 @@ describe('workflow hook validation', () => {
     expect(validateWorkflowHooks([validHook()], nodes)).toEqual([]);
   });
 
+  test('accepts the handoff method (transition-bound hooks)', () => {
+    // A transition's declared validator uses method 'handoff'; admission must
+    // accept it so users can save/import a handoff hook.
+    expect(validateWorkflowHooks([validHook({ method: 'handoff' })], nodes)).toEqual([]);
+  });
+
   test('rejects unknown MCP methods and invalid node references', () => {
     const errors = validateWorkflowHooks(
       [validHook({ method: 'unknown' as never, sourceNode: 'Missing', targetNode: 'Gone' })],

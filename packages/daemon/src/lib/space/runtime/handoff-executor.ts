@@ -269,14 +269,21 @@ export class HandoffExecutor {
     }
     const targetNodeNames = uniqueStrings(targets.map((t) => t.nodeName));
     const targetSlots = targets.map((t) => t.slot);
-    // A self-targeted handoff (transition back to the sender's own node) would
-    // queue back into the sender's live session and violate the contract that a
-    // handoff ends the current round. The complete-then-reactivate path for
-    // self-loops is deferred with the fresh-turn packet work; reject until then.
-    if (targetNodeNames.includes(fromNodeName)) {
+    // A self-targeted handoff (a target that resolves back to the SENDER'S OWN
+    // slot/session) would queue into the sender's live session and violate the
+    // contract that a handoff ends the current round. The complete-then-
+    // reactivate path for self-loops is deferred with the fresh-turn packet
+    // work; reject until then. NB: this is scoped to the sender's own slot, not
+    // the whole node — a transition to a DISTINCT sibling slot in the same node
+    // (e.g. coder → reviewer in a multi-agent node) routes to a different
+    // session and is a valid handoff.
+    const selfTargeted = targets.some(
+      (t) => t.nodeId === sourceNode.id && t.slot === fromAgentName
+    );
+    if (selfTargeted) {
       return this.blocked(
         'resolve_target',
-        `Handoff target "${operation.target}" resolves to the sender's own node "${fromNodeName}"; self-targeted handoffs are not supported yet.`
+        `Handoff target "${operation.target}" resolves back to the sender's own slot "${fromAgentName}"; self-targeted handoffs are not supported yet.`
       );
     }
 
@@ -351,8 +358,18 @@ export class HandoffExecutor {
       });
       hookOutcome = hookRun.outcome;
       deliveredOperation = hookRun.patchedOperation;
-      const resultType = hookOutcome.result.type;
-      if (resultType === 'block' || resultType === 'retryable_block') {
+      // Key the block/retry decision off the engine's reduced HookActionOutcome,
+      // not the raw per-hook result: a side_effect hook that returns block is
+      // intentionally non-blocking in the engine (its failure is recorded but
+      // does not stop the action), so the handoff path must honor the same
+      // semantics as send_message rather than inspecting result.type directly.
+      const decision = hookRun.decision;
+      if (decision === 'block' || decision === 'retryable_block') {
+        const hookResult = hookOutcome.result;
+        const blockReason =
+          hookResult.type === 'block' || hookResult.type === 'retryable_block'
+            ? hookResult.reason
+            : undefined;
         return {
           status: 'blocked',
           stage: 'hook',
@@ -361,10 +378,12 @@ export class HandoffExecutor {
           targetSlots,
           delivered: [],
           queued: [],
-          reason: hookOutcome.result.reason ?? `Hook "${transition.hookId}" blocked the handoff.`,
+          reason: blockReason ?? `Hook "${transition.hookId}" blocked the handoff.`,
           hook: hookOutcome,
           retryAfterMs:
-            resultType === 'retryable_block' ? hookOutcome.result.retryAfterMs : undefined,
+            decision === 'retryable_block' && hookResult.type === 'retryable_block'
+              ? hookResult.retryAfterMs
+              : undefined,
         };
       }
     }
@@ -507,7 +526,11 @@ export class HandoffExecutor {
     hookId: string;
     targetNodeNames: string[];
     operation: HandoffOperation;
-  }): Promise<{ outcome: HandoffHookOutcome; patchedOperation: HandoffOperation }> {
+  }): Promise<{
+    outcome: HandoffHookOutcome;
+    decision: HookActionOutcome['decision'];
+    patchedOperation: HandoffOperation;
+  }> {
     const { sourceNode, fromAgentName, fromSessionId, hookId, targetNodeNames, operation } = args;
     if (!this.config.hookEngine) {
       return {
@@ -518,6 +541,7 @@ export class HandoffExecutor {
             reason: `Hook "${hookId}" is bound to this transition but no hook engine is configured.`,
           },
         },
+        decision: 'block',
         patchedOperation: operation,
       };
     }
@@ -577,7 +601,7 @@ export class HandoffExecutor {
       data: mergedData,
     };
 
-    return { outcome: { hookId, result }, patchedOperation };
+    return { outcome: { hookId, result }, decision: hookOutcome.decision, patchedOperation };
   }
 
   // -------------------------------------------------------------------------
@@ -840,10 +864,16 @@ export function resolveHandoffTargets(
 
 /**
  * Whether taking `transition` (from `fromNodeName` toward `targetNodeNames`)
- * closes a loop in the workflow graph — i.e. a target node is the source itself
- * or can reach the source via directed channel/transition edges. Cyclicity is
- * inferred from topology at runtime (not stored); only cyclic transitions are
- * subject to `maxCycles`.
+ * closes a loop in the workflow's CONTROL-FLOW graph — i.e. a target node is
+ * the source itself or can reach the source via directed HANDOFF TRANSITION
+ * edges. Cyclicity is inferred from topology at runtime (not stored); only
+ * cyclic transitions are subject to `maxCycles`.
+ *
+ * Messaging channels are deliberately excluded: a channel is peer-message
+ * topology (with its own cycle accounting), not control flow, so a one-way
+ * handoff `A → B` must not be classified as cyclic just because B has a
+ * discussion channel back to A — ownership cannot return to A through a
+ * message.
  */
 export function isCyclicHandoff(
   workflow: SpaceWorkflow,
@@ -874,7 +904,10 @@ export function isCyclicHandoff(
   );
 }
 
-/** Build node-name → node-name directed edges from channels + transitions. */
+/**
+ * Build node-name → node-name directed edges from HANDOFF TRANSITIONS only
+ * (control flow), NOT from messaging channels — see {@link isCyclicHandoff}.
+ */
 function buildNodeGraph(
   workflow: SpaceWorkflow,
   allNodeNames: Set<string>
@@ -894,16 +927,6 @@ function buildNodeGraph(
     const node = slotToNode.get(target);
     return node ? [node] : [];
   };
-
-  for (const channel of workflow.channels ?? []) {
-    const froms = channel.from === HANDOFF_TARGET_WILDCARD ? [...allNodeNames] : [channel.from];
-    const toList = Array.isArray(channel.to) ? channel.to : [channel.to];
-    for (const from of froms) {
-      for (const to of toList) {
-        for (const resolved of resolveTargetNodes(to)) addEdge(from, resolved);
-      }
-    }
-  }
 
   for (const node of workflow.nodes) {
     for (const transition of node.transitions ?? []) {

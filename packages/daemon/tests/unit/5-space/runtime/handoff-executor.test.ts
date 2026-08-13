@@ -195,17 +195,24 @@ function makeExecutor(
  */
 function stubHookEngine(
   result: WorkflowHookResult,
-  opts?: { patch?: Record<string, unknown>; hookId?: string }
+  opts?: {
+    patch?: Record<string, unknown>;
+    hookId?: string;
+    /** Override the engine's reduced decision (e.g. a side_effect block → 'allow'). */
+    decision?: HookActionOutcome['decision'];
+  }
 ): WorkflowHookEngine {
   const hookId = opts?.hookId ?? 'hook-pr-ready';
   const isBlock = result.type === 'block' || result.type === 'retryable_block';
-  const decision: HookActionOutcome['decision'] = isBlock
-    ? result.type === 'retryable_block'
-      ? 'retryable_block'
-      : 'block'
-    : opts?.patch
-      ? 'patch_params'
-      : 'allow';
+  const decision: HookActionOutcome['decision'] =
+    opts?.decision ??
+    (isBlock
+      ? result.type === 'retryable_block'
+        ? 'retryable_block'
+        : 'block'
+      : opts?.patch
+        ? 'patch_params'
+        : 'allow');
   const baseParams = { target: 'review', summary: 'go', data: {}, targetNodes: ['review'] };
   const finalParams = opts?.patch ? { ...baseParams, ...opts.patch } : baseParams;
   const outcome: HookActionOutcome = {
@@ -215,7 +222,7 @@ function stubHookEngine(
     stateUpdates: [],
     userState: { status: 'allowed' },
     executionLog: [{ hookId, classification: 'validation', result, timestamp: 0 }],
-    ...(isBlock ? { blockedByHookId: hookId } : {}),
+    ...(isBlock && decision !== 'allow' ? { blockedByHookId: hookId } : {}),
   };
   return {
     runDeclaredHook: async () => outcome,
@@ -414,7 +421,40 @@ describe('HandoffExecutor: transition resolution', () => {
 
     expect(result.status).toBe('blocked');
     expect(result.stage).toBe('resolve_target');
-    expect(result.reason).toContain("sender's own node");
+    expect(result.reason).toContain("sender's own slot");
+  });
+
+  test('allows a handoff to a distinct sibling slot in the same node', async () => {
+    // A multi-agent node: handing off from coder to a DIFFERENT slot (reviewer)
+    // in the same node routes to a different session and is valid — the self-
+    // target check is scoped to the sender's OWN slot, not the whole node.
+    const workflow = makeWorkflow({
+      nodes: [
+        {
+          id: 'n-dev',
+          name: 'dev',
+          agents: [
+            { agentId: 'coder-agent', name: 'coder' },
+            { agentId: 'reviewer-agent', name: 'reviewer' },
+          ],
+          transitions: [{ id: 'to-reviewer', target: 'reviewer' }],
+        },
+      ],
+    });
+    seedPeer(ctx.db, ctx.runId, 'n-dev', 'reviewer', 'session-dev-reviewer');
+    const executor = makeExecutor(ctx, workflow);
+
+    const result = await executor.execute({
+      fromAgentName: 'coder',
+      fromSessionId: 'session-coder',
+      workflowNodeId: 'n-dev',
+      operation: { target: 'reviewer', summary: 'over to you' },
+    });
+
+    expect(result.status).toBe('delivered');
+    expect(result.delivered).toEqual([
+      { agentName: 'reviewer', sessionId: 'session-dev-reviewer' },
+    ]);
   });
 
   test('rejects data keys when the transition declares no hook', async () => {
@@ -642,6 +682,31 @@ describe('HandoffExecutor: hook validator', () => {
     expect(result.stage).toBe('hook');
     expect(result.hook?.result.type).toBe('block');
     expect(result.reason).toContain('authorized caller');
+  });
+
+  test('a side_effect hook that returns block does NOT block (engine decision wins)', async () => {
+    // The executor keys the block decision off the engine's reduced
+    // HookActionOutcome.decision, not the raw result.type: a side_effect hook's
+    // block is recorded but non-blocking in the engine, so the handoff path must
+    // honor the same semantics as send_message.
+    seedPeer(ctx.db, ctx.runId, 'n-review', 'reviewer', 'session-reviewer');
+    const executor = makeExecutor(ctx, workflowWithHook(), {
+      hookEngine: stubHookEngine(
+        { type: 'block', reason: 'side-effect failure' },
+        { decision: 'allow' }
+      ),
+    });
+
+    const result = await executor.execute({
+      fromAgentName: 'coder',
+      fromSessionId: 'session-coder',
+      workflowNodeId: 'n-coding',
+      operation: { target: 'review', summary: 'go' },
+    });
+
+    expect(result.status).toBe('delivered');
+    // The raw result is still surfaced for diagnostics.
+    expect(result.hook?.result.type).toBe('block');
   });
 });
 
@@ -1201,6 +1266,21 @@ describe('HandoffExecutor pure helpers', () => {
         node('n-coding', 'coding', 'coder', [{ id: 't1', target: 'review' }]),
         node('n-review', 'review', 'reviewer'),
       ],
+    });
+    expect(isCyclicHandoff(wf, 'coding', ['review'])).toBe(false);
+  });
+
+  test('isCyclicHandoff: a messaging channel back to the source is NOT cyclic', () => {
+    // A one-way handoff transition coding→review plus a discussion-only channel
+    // review→coding must not be classified as cyclic: channels are peer-message
+    // topology, not control flow, so ownership cannot return to coding through a
+    // message. (maxCycles must not apply to the forward transition.)
+    const wf = makeWorkflow({
+      nodes: [
+        node('n-coding', 'coding', 'coder', [{ id: 't1', target: 'review', maxCycles: 3 }]),
+        node('n-review', 'review', 'reviewer'),
+      ],
+      channels: [{ id: 'ch-back', from: 'review', to: 'coding' }],
     });
     expect(isCyclicHandoff(wf, 'coding', ['review'])).toBe(false);
   });

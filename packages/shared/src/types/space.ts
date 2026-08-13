@@ -1659,6 +1659,7 @@ export interface SpaceWorkflowSyncPreview {
 
 export type WorkflowHookMcpMethod =
   | 'send_message'
+  | 'handoff'
   | 'save_artifact'
   | 'create_standalone_task'
   | 'mark_complete'

@@ -175,6 +175,7 @@ const workflowHookSchema = z.object({
   targetNode: z.string().min(1).optional(),
   method: z.enum([
     'send_message',
+    'handoff',
     'save_artifact',
     'create_standalone_task',
     'mark_complete',

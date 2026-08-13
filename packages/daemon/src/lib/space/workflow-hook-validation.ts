@@ -20,6 +20,7 @@ import {
 
 const VALID_METHODS = new Set([
   'send_message',
+  'handoff',
   'save_artifact',
   'create_standalone_task',
   'mark_complete',

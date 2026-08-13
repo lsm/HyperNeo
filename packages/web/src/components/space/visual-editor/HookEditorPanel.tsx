@@ -18,6 +18,7 @@ export interface HookEditorPanelProps {
 
 const MCP_METHODS: WorkflowHookMcpMethod[] = [
   'send_message',
+  'handoff',
   'save_artifact',
   'create_standalone_task',
   'mark_complete',
