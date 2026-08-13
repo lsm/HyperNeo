@@ -20,6 +20,27 @@ function runGuard(): { exitCode: number; stdout: string; stderr: string } {
   return { exitCode: r.status ?? -1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
 }
 
+// Inject a mutation into file, run the guard, assert it rejects (exit 1 +
+// expected substring), and always restore the original. Regression guard for
+// the bypass detectors so a silent reintroduction fails CI.
+function expectGuardRejects(
+  file: string,
+  mutate: (original: string) => string,
+  expected: string
+): void {
+  const original = fs.readFileSync(file, 'utf-8');
+  const mutated = mutate(original);
+  expect(mutated).not.toBe(original);
+  fs.writeFileSync(file, mutated);
+  try {
+    const { exitCode, stderr } = runGuard();
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain(expected);
+  } finally {
+    fs.writeFileSync(file, original);
+  }
+}
+
 describe('validate-test-matrix.sh', () => {
   it(
     'exits 0 on the real repo (the guard is green)',
@@ -115,6 +136,89 @@ describe('validate-test-matrix.sh', () => {
       } finally {
         fs.writeFileSync(wf, original);
       }
+    },
+    TIMEOUT
+  );
+
+  it(
+    'rejects a workflow-scope defaults.run.shell (P1)',
+    () => {
+      // A top-level defaults.run.shell: bash -n {0} turns every step into a
+      // no-op (parse, do not execute) while the guard reports all covered.
+      expectGuardRejects(
+        path.join(REPO_ROOT, '.github/workflows/main.yml'),
+        (s) => s.replace('on:\n', 'on:\ndefaults:\n  run:\n    shell: bash -n {0}\n'),
+        'non-default shell'
+      );
+    },
+    TIMEOUT
+  );
+
+  it(
+    'rejects a non-default vitest root',
+    () => {
+      expectGuardRejects(
+        path.join(REPO_ROOT, 'packages/web/vitest.config.ts'),
+        (s) =>
+          s.replace(
+            'export default defineConfig({\n',
+            "export default defineConfig({\n  root: 'src',\n"
+          ),
+        'top-level root'
+      );
+    },
+    TIMEOUT
+  );
+
+  it(
+    'rejects a compound job-level if: gate',
+    () => {
+      // Appending `&& github.event_name == 'never'` disables the job in normal CI
+      // while the guard stays green (was a substring match).
+      expectGuardRejects(
+        path.join(REPO_ROOT, '.github/workflows/main.yml'),
+        (s) => {
+          const i = s.indexOf('  test-daemon-shared-unit:\n');
+          const gate = "    if: github.event.inputs.run_e2e_only != 'true'\n";
+          const j = s.indexOf(gate, i);
+          return (
+            s.slice(0, j) +
+            "    if: github.event.inputs.run_e2e_only != 'true' && github.event_name == 'never'\n" +
+            s.slice(j + gate.length)
+          );
+        },
+        'is not the pinned gate'
+      );
+    },
+    TIMEOUT
+  );
+
+  it(
+    'rejects a no-exec interpreter prefix',
+    () => {
+      expectGuardRejects(
+        path.join(REPO_ROOT, '.github/workflows/main.yml'),
+        (s) =>
+          s.replace(
+            './scripts/test-daemon.sh ${{ matrix.shard }} --coverage',
+            'bash -n ./scripts/test-daemon.sh ${{ matrix.shard }} --coverage'
+          ),
+        'no-exec interpreter'
+      );
+    },
+    TIMEOUT
+  );
+
+  it(
+    'rejects a module value with invalid characters',
+    () => {
+      // `comp_onents` is a distinct module to GitHub; silent normalization to
+      // `components` would mask the split combination.
+      expectGuardRejects(
+        path.join(REPO_ROOT, '.github/workflows/main.yml'),
+        (s) => s.replace('  - module: components\n', '  - module: comp_onents\n'),
+        'invalid characters'
+      );
     },
     TIMEOUT
   );

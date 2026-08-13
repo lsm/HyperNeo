@@ -142,6 +142,23 @@ runner_has_dead_prefix() {
 	'
 }
 
+# True (exit 0 = BAD) if a no-exec interpreter prefix (bash/sh/zsh/dash -n)
+# appears before the marker in the RAW run command. Bash documents -n as "read
+# commands but do not execute", so `bash -n ./scripts/test-daemon.sh ...` (or the
+# same after the flaky-runner `--`) makes the step exit 0 having run ZERO tests
+# while marker_executed (textual) still reports the marker run. The legit runners
+# use `bash -lc` (which executes) or invoke the test command directly, so a real
+# `-n` flag before the marker is always a bypass. Uses the RAW runval (no quote
+# arithmetic): `bash -lc` never carries `-n`, so it cannot false-positive.
+runner_has_noexec_interp() {
+	awk -v runval="$1" -v marker="$2" '
+		BEGIN {
+			p = index(runval, marker)
+			exit (p > 0 && substr(runval, 1, p-1) ~ /(bash|sh|zsh|dash)[[:space:]]+-n([[:space:]]|$)/) ? 0 : 1
+		}
+	'
+}
+
 # True (exit 0 = BAD) if the ENABLED runner step (the one whose run command
 # contains marker, in job) of file has `continue-on-error: true` at STEP or JOB
 # scope. With it, GitHub marks a FAILED test step as successful, so failing
@@ -356,6 +373,36 @@ cfg_reject_root() {
 	fi
 }
 
+# Reject matrix `module:` scalars in job (of file) whose value, after stripping
+# optional YAML quotes, does not match the strict [a-z0-9-]+ format. The axis and
+# include parsers normalize values for comparison, which silently maps a typo like
+# `comp_onents` to `components`; GitHub treats them as DISTINCT modules, so the
+# real `components` runs with an empty test_path (the whole online suite) while
+# the typo becomes an extra combination — and this guard cannot soundly match it.
+reject_invalid_module_values() {
+	local file="$1" job="$2" _bad_modules
+	_bad_modules=$(awk -v job="$job" '
+		$0 ~ "^  " job ":" { injob=1; next }
+		injob && /^  [a-z]/ { injob=0; next }
+		!injob { next }
+		# A module: scalar with a value on the line (skips the bare `module:` axis
+		# header, whose values are list items handled by the axis parser format check).
+		/[[:space:]]module:[[:space:]]*[^[:space:],}]/ {
+			v=$0; sub(/.*module:[[:space:]]*/, "", v); sub(/[[:space:],}]*$/, "", v)
+			gsub(/^['"'"'"]+|['"'"'"]+$/, "", v)
+			if (v != "" && v !~ /^[a-z0-9][a-z0-9-]*$/) print v
+		}
+	' "$file" | sort -u)
+	# Iterate in the CURRENT shell (here-string, not a pipeline) so err()'s
+	# ERRORS counter increments — a `| while read` subshell would print but not
+	# count, leaving the guard green (exit 0) despite the printed error.
+	while IFS= read -r bad; do
+		[ -n "$bad" ] || continue
+		err "$job matrix has a module value '$bad' with invalid characters — GitHub treats it as a distinct module, so a typo here splits a combination (one side runs with an empty test_path) while this guard cannot match it"
+		echo "     → use only lowercase letters, digits, and hyphens in module names" >&2
+	done <<< "$_bad_modules"
+}
+
 # True (exit 0 = BAD) if the guarded runner step (run contains marker, in job)
 # of file would run under a NON-DEFAULT shell — a step-level `shell:`, or a
 # job/workflow `defaults.run.shell`. enabled_run_cmd/marker_executed assume the
@@ -365,10 +412,19 @@ cfg_reject_root() {
 runner_shell_override() {
 	local file="$1" marker="$2" job="$3"
 	# (a) A defaults.run.shell at workflow OR job scope applies to every step.
+	# Capture the indent of the `defaults:` line and stay in-scope while later
+	# lines indent STRICTLY deeper; a dedent to <= that column closes the block —
+	# so the `run:`/`shell:` children stay in-scope at EITHER scope (a blanket
+	# indent-class reset would miss the workflow-scope `  run:`/`    shell:`).
 	if awk '
-		/^[[:space:]]*defaults:[[:space:]]*$/ { in_defaults=1; next }
-		/^[[:space:]]{0,4}[a-zA-Z][a-zA-Z0-9_-]*:[[:space:]]*$/ && $0 !~ /defaults:/ { in_defaults=0 }
-		in_defaults && /shell:/ { found=1; exit }
+		/^[[:space:]]*defaults:[[:space:]]*$/ {
+			di=0; while (substr($0, di+1, 1)==" ") di++; in_defaults=1; next
+		}
+		in_defaults {
+			n=0; while (substr($0, n+1, 1)==" ") n++
+			if (n <= di) in_defaults=0
+			else if (/shell:/) { found=1; exit }
+		}
 		END { exit !found }
 	' "$file"; then
 		return 0
@@ -571,6 +627,9 @@ elif runner_is_data_cmd "$_unit_run"; then
 elif runner_has_dead_prefix "$_unit_run" 'test-daemon.sh ${{ matrix.shard }}'; then
 	err "test-daemon-shared-unit runner places a '||'/'&&' before test-daemon.sh (e.g. false && ... or true || ...) — Bash short-circuits, so the marker is never reached and zero tests run while this guard reports them covered"
 	echo "     → remove the '||' prefix / dead branch before test-daemon.sh" >&2
+elif runner_has_noexec_interp "$_unit_run" 'test-daemon.sh ${{ matrix.shard }}'; then
+	err "test-daemon-shared-unit runner invokes a no-exec interpreter (e.g. bash -n) before test-daemon.sh — it would syntax-check the script and exit 0 having run ZERO tests while this guard reports them covered"
+	echo "     → drop the -n / no-exec interpreter; invoke test-daemon.sh directly" >&2
 elif runner_continue_on_error "$REPO_ROOT/.github/workflows/main.yml" 'test-daemon.sh ${{ matrix.shard }}' 'test-daemon-shared-unit'; then
 	err "test-daemon-shared-unit runner step (or its job) has continue-on-error: true — a FAILED unit run is marked successful, so coverage stays green while tests are broken"
 	echo "     → remove continue-on-error from the test-daemon-shared-unit runner step/job" >&2
@@ -691,6 +750,9 @@ elif runner_is_data_cmd "$_web_cmd"; then
 elif runner_has_dead_prefix "$_web_cmd" 'cd packages/web && bunx vitest run'; then
 	err "test-web runner places a '||'/'&&' before the vitest invocation (e.g. bash -lc 'false && cd packages/web && bunx vitest run' or 'true || ...') — Bash short-circuits, so the marker is never reached and zero web tests run while this guard reports them covered"
 	echo "     → remove the '||' prefix / dead branch before 'bunx vitest run'" >&2
+elif runner_has_noexec_interp "$_web_cmd" 'cd packages/web && bunx vitest run'; then
+	err "test-web runner invokes a no-exec interpreter (e.g. bash -n) before the vitest invocation — it would parse without executing and exit 0 having run ZERO web tests while this guard reports them covered"
+	echo "     → drop the -n / no-exec interpreter; run vitest directly" >&2
 elif runner_continue_on_error "$REPO_ROOT/.github/workflows/main.yml" 'cd packages/web && bunx vitest run' 'test-web'; then
 	err "test-web runner step (or its job) has continue-on-error: true — a FAILED web run is marked successful, so coverage stays green while web tests are broken"
 	echo "     → remove continue-on-error from the test-web runner step/job" >&2
@@ -809,6 +871,10 @@ _check_job_gate test-daemon-shared-unit "$MAIN_WORKFLOW" "github.event.inputs.ru
 _check_job_gate test-web "$MAIN_WORKFLOW" "(github.event_name == 'pull_request' && github.base_ref == 'dev' || github.event_name == 'push' && github.ref == 'refs/heads/dev' || github.event_name == 'workflow_dispatch') && github.event.inputs.run_e2e_only != 'true'"
 _check_job_gate test-daemon-online "$MAIN_WORKFLOW" "github.ref_type != 'tag' && github.event.inputs.run_e2e_only != 'true'"
 _check_job_gate daemon-real-api "$REAL_API_WORKFLOW" "github.event.inputs.run_e2e_only != 'true'"
+# Reject module: scalars with invalid characters (a typo like `comp_onents` is a
+# distinct module to GitHub — splits a combination while this guard cannot match).
+reject_invalid_module_values "$MAIN_WORKFLOW" test-daemon-online
+reject_invalid_module_values "$REAL_API_WORKFLOW" daemon-real-api
 
 # Online matrix test_path values must reach an ENABLED runner that forwards
 # ${{ matrix.test_path }}. The marker picks the runner step itself
@@ -828,6 +894,9 @@ elif runner_is_data_cmd "$_online_main"; then
 elif runner_has_dead_prefix "$_online_main" 'cd packages/daemon && node_modules/.bin/vitest run'; then
 	err "main.yml online runner places a '||'/'&&' before vitest (e.g. bash -lc 'false && ... && vitest run' or 'true || ...') — Bash short-circuits, so the marker is never reached and zero online tests run while this guard reports them covered"
 	echo "     → remove the '||' prefix / dead branch before 'vitest run'" >&2
+elif runner_has_noexec_interp "$_online_main" 'cd packages/daemon && node_modules/.bin/vitest run'; then
+	err "main.yml online runner invokes a no-exec interpreter (e.g. bash -n) before vitest — it would parse without executing and exit 0 having run ZERO online tests while this guard reports them covered"
+	echo "     → drop the -n / no-exec interpreter; run vitest directly" >&2
 elif runner_continue_on_error "$REPO_ROOT/.github/workflows/main.yml" 'vitest.online.config.ts' 'test-daemon-online'; then
 	err "main.yml online runner step (or its job) has continue-on-error: true — a FAILED online run is marked successful, so coverage stays green while online tests are broken"
 	echo "     → remove continue-on-error from the test-daemon-online runner step/job" >&2
