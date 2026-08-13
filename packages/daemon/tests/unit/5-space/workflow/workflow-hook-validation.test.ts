@@ -120,7 +120,13 @@ describe('validateWorkflowHookBindings', () => {
   test('rejects authorizedCallers set to an empty array', () => {
     const binding = { ...validBinding(), authorizedCallers: [] };
     const errors = validateWorkflowHookBindings([binding], undefined, nodes);
-    expect(errors.join('\n')).toContain('authorizedCallers: expected non-empty array');
+    expect(errors.join('\n')).toContain('authorizedCallers: required non-empty array');
+  });
+
+  test('rejects a binding missing authorizedCallers (the engine would never match it)', () => {
+    const { authorizedCallers: _omit, ...withoutCallers } = validBinding();
+    const errors = validateWorkflowHookBindings([withoutCallers], undefined, nodes);
+    expect(errors.join('\n')).toContain('authorizedCallers: required non-empty array');
   });
 
   test('treats undefined / null bindings as no-op', () => {

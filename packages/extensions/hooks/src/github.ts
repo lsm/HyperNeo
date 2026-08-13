@@ -156,7 +156,9 @@ async function runGh(opts: {
  * Run a GraphQL query via `gh api graphql` and parse the JSON envelope. `host`
  * routes the request to the PR's GitHub host (github.com or an Enterprise
  * instance); without it `gh` targets its configured default host, which is wrong
- * for Enterprise PRs.
+ * for Enterprise PRs. The host is validated against a trusted set so an
+ * attacker-controlled PR link cannot redirect `gh` (and its credentials) at an
+ * arbitrary server. Envelopes carrying a top-level `errors` array are rejected.
  */
 async function runGhGraphql(
   ctx: HookContext,
@@ -165,6 +167,13 @@ async function runGhGraphql(
 ): Promise<GithubResult<unknown>> {
   const args = ['api', 'graphql'];
   if (host) {
+    if (!isTrustedGitHubHost(host)) {
+      return {
+        ok: false,
+        retryable: false,
+        error: `refusing GraphQL call to untrusted host: ${host}`,
+      };
+    }
     args.push('--hostname', host);
   }
   args.push('-f', `query=${query}`);
@@ -173,17 +182,36 @@ async function runGhGraphql(
     args,
   });
   if (!result.ok) return result;
+  let parsed: unknown;
   try {
-    return { ok: true, data: JSON.parse(result.data) };
+    parsed = JSON.parse(result.data);
   } catch {
     return { ok: false, retryable: false, error: 'gh api graphql returned non-JSON output' };
   }
+  const envelope = asRecord(parsed);
+  const errors = envelope?.errors;
+  if (Array.isArray(errors) && errors.length > 0) {
+    return { ok: false, retryable: false, error: `GraphQL errors: ${JSON.stringify(errors)}` };
+  }
+  return { ok: true, data: parsed };
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
+}
+
+const TRUSTED_GITHUB_HOSTS = new Set(['github.com', 'ghe.com']);
+/**
+ * A host is trusted if it is a known GitHub host, or matches the daemon's
+ * configured Enterprise host (`GH_HOST`). Prevents an attacker-controlled PR
+ * link from redirecting `gh` (and its credentials) at an arbitrary server.
+ */
+function isTrustedGitHubHost(host: string): boolean {
+  if (TRUSTED_GITHUB_HOSTS.has(host)) return true;
+  const configured = process.env.GH_HOST;
+  return !!configured && configured === host;
 }
 
 // ---------------------------------------------------------------------------
@@ -405,14 +433,15 @@ function isCodexActor(author: unknown): boolean {
  * run's authoritative reviewed link (read from the `pr_ready`-stamped artifact),
  * not a branch guess, so a stray `GH_REPO` cannot redirect it. The gate's whole
  * purpose is approval of the CURRENT head, so both pass paths bind to the head:
- *   - an APPROVED review from the codex bot whose `commit.oid` is the head SHA
- *     (or whose body names the 40-char head SHA) — a stale APPROVED from a prior
- *     head does not count;
+ *   - the LATEST decisive codex review whose `commit.oid` is the head SHA (or
+ *     whose body names the 40-char head SHA) must be APPROVED — a later
+ *     CHANGES_REQUESTED on the same head overrides an earlier APPROVED, and a
+ *     stale review from a prior head does not count;
  *   - a THUMBS_UP (+1) reaction from the codex bot with `createdAt` newer than
- *     the head commit's `committedDate`.
+ *     the PR's `pushedDate` (push time, not commit-authoring time).
  * The reaction actor is User-typed with a `[bot]` suffix; the login match covers
- * both forms. First-page only; opt-in. Fails closed when the head commit can't
- * be resolved (the gate can't prove head-specificity, so it retries).
+ * both forms. First-page only; opt-in. Fails closed when the head can't be
+ * resolved (the gate can't prove head-specificity, so it retries).
  */
 export async function ghGetCodexApproval(
   ctx: HookContext,
@@ -424,9 +453,10 @@ export async function ghGetCodexApproval(
   }
   const query =
     `query { repository(owner:"${pr.owner}",name:"${pr.repo}") { pullRequest(number:${pr.number}) { ` +
-    'reviews(first: 50) { nodes { state author { login } commit { oid } body } } ' +
+    'pushedDate ' +
+    'reviews(first: 50) { nodes { state author { login } commit { oid } body submittedAt } } ' +
     'reactions(first: 50, content: THUMBS_UP) { nodes { createdAt user { login } } } ' +
-    'commits(last: 1) { nodes { commit { oid committedDate } } } } } }';
+    'commits(last: 1) { nodes { commit { oid } } } } } }';
   const result = await runGhGraphql(ctx, query, pr.host);
   if (!result.ok) return result;
   return { ok: true, data: extractCodexApproval(result.data, link) };
@@ -436,39 +466,47 @@ function extractCodexApproval(value: unknown, prLink: string): GithubCodexApprov
   const root = asRecord(value) ?? {};
   const pr = asRecord(asRecord(asRecord(root.data)?.repository)?.pullRequest);
 
-  // Head commit: oid (40-char SHA) + committedDate (push time). Both pass paths
-  // are head-specific, so bail to "not approved" when it can't be resolved.
+  // Head SHA (for review head-binding) + the PR's last push time (for reaction
+  // freshness). Use pushedDate, not commit.committedDate — a locally-created
+  // commit pushed later has an early committedDate but a late push, which would
+  // otherwise let a pre-push +1 false-pass.
   const commitNodes = asRecord(pr?.commits)?.nodes;
   const headCommit = Array.isArray(commitNodes)
     ? asRecord(asRecord(commitNodes[commitNodes.length - 1])?.commit)
     : undefined;
   const headOid = typeof headCommit?.oid === 'string' ? headCommit.oid : undefined;
-  const headCommittedDate =
-    typeof headCommit?.committedDate === 'string' ? headCommit.committedDate : undefined;
+  const pushedDate = typeof pr?.pushedDate === 'string' ? pr.pushedDate : undefined;
 
-  // Pass path 1: an APPROVED review from the codex bot bound to the current head
-  // — the review's commit is the head, or its body names the 40-char head SHA.
+  // Pass path 1: the LATEST decisive codex review on the current head. A prior
+  // APPROVED must not satisfy the gate if codex later posted CHANGES_REQUESTED
+  // on the same head, so we take the newest head-bound codex review (by
+  // submittedAt) and require it to be APPROVED.
   const reviewNodes = asRecord(pr?.reviews)?.nodes;
   if (Array.isArray(reviewNodes) && typeof headOid === 'string') {
+    let latest: { submittedAt: string; state: string } | null = null;
     for (const node of reviewNodes) {
       const review = asRecord(node);
-      if (review?.state !== 'APPROVED' || !isCodexActor(review?.author)) continue;
+      if (!isCodexActor(review?.author)) continue;
       const reviewOid = asRecord(review?.commit)?.oid;
       const body = typeof review?.body === 'string' ? review.body : '';
-      if (reviewOid === headOid || body.includes(headOid)) {
-        return { approved: true, prLink };
-      }
+      const onHead = reviewOid === headOid || body.includes(headOid);
+      if (!onHead) continue;
+      const submittedAt = typeof review?.submittedAt === 'string' ? review.submittedAt : '';
+      const state = typeof review?.state === 'string' ? review.state : '';
+      if (!submittedAt) continue;
+      if (!latest || submittedAt > latest.submittedAt) latest = { submittedAt, state };
     }
+    if (latest?.state === 'APPROVED') return { approved: true, prLink };
   }
 
   // Pass path 2: a FRESH THUMBS_UP (+1) reaction from the codex bot — createdAt
-  // newer than the head push. A stale +1 from a prior head must not false-pass.
+  // newer than the head PUSH. A stale +1 from a prior head must not false-pass.
   const reactionNodes = asRecord(pr?.reactions)?.nodes;
-  if (Array.isArray(reactionNodes) && typeof headCommittedDate === 'string') {
+  if (Array.isArray(reactionNodes) && typeof pushedDate === 'string') {
     for (const node of reactionNodes) {
       const reaction = asRecord(node);
       const createdAt = reaction?.createdAt;
-      if (typeof createdAt !== 'string' || createdAt <= headCommittedDate) continue;
+      if (typeof createdAt !== 'string' || createdAt <= pushedDate) continue;
       if (isCodexActor(reaction?.user)) {
         return { approved: true, prLink };
       }

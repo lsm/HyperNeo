@@ -239,14 +239,15 @@ export function validateWorkflowHookBindings(
       }
     }
 
-    if (binding.authorizedCallers !== undefined) {
-      if (!Array.isArray(binding.authorizedCallers) || binding.authorizedCallers.length === 0) {
-        errors.push(`${loc}.authorizedCallers: expected non-empty array`);
-      } else {
-        binding.authorizedCallers.forEach((caller, callerIndex) => {
-          errors.push(...validateCaller(caller, callerIndex, loc, validNodes, validSlotsByNode));
-        });
-      }
+    // The engine fails closed on a binding with no authorizedCallers (it never
+    // matches), so require a non-empty array — otherwise the binding is silently
+    // dead.
+    if (!Array.isArray(binding.authorizedCallers) || binding.authorizedCallers.length === 0) {
+      errors.push(`${loc}.authorizedCallers: required non-empty array`);
+    } else {
+      binding.authorizedCallers.forEach((caller, callerIndex) => {
+        errors.push(...validateCaller(caller, callerIndex, loc, validNodes, validSlotsByNode));
+      });
     }
   }
 
