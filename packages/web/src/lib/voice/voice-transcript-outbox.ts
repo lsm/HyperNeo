@@ -58,10 +58,15 @@ export const voiceTranscriptLandedSignal = signal<ReadonlyMap<string, number>>(n
  * localStorage marker lets OTHER tabs learn of the landing via the `storage`
  * event, since the signal itself is process-local.
  */
+let markerCounter = 0;
+
 export function markVoiceTranscriptLanded(sessionId: string): void {
   markVoiceTranscriptLandedLocal(sessionId);
   try {
-    localStorage.setItem(`${LANDED_PREFIX}${sessionId}`, String(Date.now()));
+    // Timestamp + monotonic counter so two landings within the same Date.now()
+    // tick still change the value — a same-value write would not emit a
+    // storage event in other tabs, which would then never learn of the second.
+    localStorage.setItem(`${LANDED_PREFIX}${sessionId}`, `${Date.now()}.${++markerCounter}`);
   } catch {
     /* mirror-only — this tab still refreshes via the signal */
   }

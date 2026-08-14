@@ -281,6 +281,17 @@ describe('voice transcript outbox', () => {
     expect(getPendingTranscripts().map((e) => e.text)).toEqual(['older', 'newer']);
   });
 
+  it('writes distinct landed-marker values for repeated landings (cross-tab storage events)', () => {
+    markVoiceTranscriptLanded('s1');
+    const first = localStorage.getItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s1');
+    markVoiceTranscriptLanded('s1');
+    const second = localStorage.getItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s1');
+    // A same-value write would not emit a storage event in other tabs, which
+    // would then never learn of the second landing.
+    expect(first).not.toBe(second);
+    expect(first).toMatch(/\d+\.\d+/);
+  });
+
   it('hydrates existing landed markers into the signal at startup', () => {
     localStorage.setItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s9', String(Date.now()));
     startVoiceTranscriptOutboxFlush();

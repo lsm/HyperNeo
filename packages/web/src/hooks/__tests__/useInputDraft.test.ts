@@ -582,6 +582,43 @@ describe('useInputDraft', () => {
       expect(after).toBeGreaterThan(before);
     });
 
+    it('does not merge until the clear commits when a send/clear happened', async () => {
+      mockHub.request
+        .mockResolvedValueOnce({ session: { metadata: { inputDraft: '' } } }) // initial
+        .mockRejectedValueOnce(new Error('socket closed')) // the clear fails
+        .mockResolvedValueOnce({ acknowledged: true }) // retry clear succeeds
+        .mockResolvedValue({ session: { metadata: { inputDraft: 'transcript' } } }); // merge get
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      result.current.setContent('text to send');
+      voiceTranscriptLandedSignal.value = new Map([['session-1', 1]]);
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      // The user clears; the clear FAILS — the merge must NOT run (it would
+      // resurrect the sent text onto the stale draft), and the landing stays.
+      result.current.clear();
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(voiceTranscriptLandedSignal.value.has('session-1')).toBe(true);
+      expect(mockHub.request.mock.calls.filter(([m]) => m === 'session.get')).toHaveLength(1);
+
+      // A reconnect retries the clear, and only then merges.
+      connectionState.value = 'connected';
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(voiceTranscriptLandedSignal.value.has('session-1')).toBe(false);
+      expect(result.current.content).toBe('transcript');
+    });
+
     it('cancels a scheduled save when a landing arrives before it fires', async () => {
       mockHub.request.mockResolvedValue({ session: { metadata: { inputDraft: '' } } });
       vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);

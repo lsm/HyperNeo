@@ -170,6 +170,11 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     sessionId: null,
     content: '',
   });
+  // A session awaiting a COMMITTED clear before its landing can be merged.
+  // While set, the refresh must not run: merging the pending onto the old
+  // draft would resurrect text the user already sent or cleared. The clear is
+  // retried on the next effect run (reconnect / content change).
+  const pendingClearRef = useRef<string | null>(null);
   useSignalEffect(() => {
     const generation = voiceTranscriptLandedSignal.value.get(sessionId);
     if (generation === undefined) return;
@@ -196,21 +201,25 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         }
       );
     };
-    if (justCleared) {
+    if (justCleared || pendingClearRef.current === sessionId) {
+      // A clear is owed (just detected, or still owed from a failed attempt).
       const hub = connectionManager.getHubIfConnected();
-      if (hub) {
-        hub
-          .request('session.update', { sessionId, metadata: { inputDraft: null } })
-          .catch(() => {
-            /* the get still runs — a failed clear just leaves the old text */
-          })
-          .then(refresh);
-      } else {
-        refresh();
+      if (!hub) {
+        pendingClearRef.current = sessionId; // no socket — retry on reconnect
+        return;
       }
-    } else {
-      refresh();
+      pendingClearRef.current = null;
+      hub
+        .request('session.update', { sessionId, metadata: { inputDraft: null } })
+        .then(refresh)
+        .catch(() => {
+          // The clear did not commit — merge must wait, or the pending would
+          // land on top of the stale draft and resurrect already-sent text.
+          pendingClearRef.current = sessionId;
+        });
+      return;
     }
+    refresh();
     return () => {
       cancelled = true;
     };
