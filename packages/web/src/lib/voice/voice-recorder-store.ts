@@ -82,8 +82,17 @@ class VoiceRecorderStore {
    * recording.
    */
   readonly start = async (ownerId: string, ownerSessionId: string): Promise<void> => {
-    if (this.isRecording.value || this.starting || this.stopping || this.stoppedByLimit)
+    if (this.isRecording.value || this.starting || this.stopping)
       throw new Error('Voice recorder is busy');
+    if (this.stoppedByLimit) {
+      // Capped audio awaiting its owner's stop(). An OWNED buffer stays busy;
+      // an ORPHANED one (owner unmounted — temporary navigation or a terminal
+      // session end, which the store cannot distinguish) is evicted: it stays
+      // recoverable for an adopter for as long as nobody else needs the mic,
+      // and can never wedge the recorder busy forever.
+      if (this.recordingOwnerId.value !== null) throw new Error('Voice recorder is busy');
+      await this.cancel();
+    }
     this.starting = true;
     this.isStarting.value = true;
     this.stoppedByLimit = false;
@@ -180,15 +189,6 @@ class VoiceRecorderStore {
 
       const hitLimit = () => {
         if (this.stoppedByLimit) return;
-        // A recording with NO owner (its composer unmounted with no possible
-        // same-session adopter — e.g. the session was archived mid-recording)
-        // must not buffer capped audio forever: nobody can stop or adopt it,
-        // which would wedge the recorder busy for every other session. Discard
-        // it at the cap instead.
-        if (this.recordingOwnerId.value === null) {
-          void this.cancel();
-          return;
-        }
         this.stoppedByLimit = true;
         this.durationLimitHit.value = true;
         this.isRecording.value = false;

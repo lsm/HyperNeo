@@ -378,6 +378,19 @@ export default function MessageInput({
     agentMentionQuery !== null && filteredAgentMentionCandidates.length > 0;
 
   // Wrap setContent to detect @-mentions
+  // Continuous caret/selection tracking: the textarea's `select` event fires
+  // for every caret move (arrow keys, mouse clicks, drags), keeping the cursor
+  // refs current even for changes that never emit an input event. Voice
+  // delivery relies on these refs whenever the textarea is (or is about to be)
+  // gone — recording, mid-transcription unmount, or an ADOPTED recording whose
+  // startRecording() snapshot never ran in this composer.
+  const handleSelect = useCallback(() => {
+    const textarea = textareaInputRef.current;
+    if (!textarea) return;
+    lastCursorRef.current = textarea.selectionStart ?? textarea.value.length;
+    lastSelectionEndRef.current = textarea.selectionEnd ?? lastCursorRef.current;
+  }, []);
+
   const handleContentChange = useCallback(
     (value: string) => {
       // Drop stale onInput events that race with submit/clear
@@ -499,11 +512,15 @@ export default function MessageInput({
   const recordingSessionRef = useRef<string | null>(null);
   // Keep the pinned delivery target synchronized with an ADOPTED recording:
   // this composer never called startRecording for it, so the pin is either
-  // null (fresh mount) or stale from an earlier recording. Ownership is
-  // relinquished on retarget, so this never overrides the intentional
-  // retarget-discard safeguard.
+  // null (fresh mount) or stale from an earlier recording. Covers BOTH an
+  // active adoption and a limit-hit one (isRecording false, audio buffered).
+  // Ownership is relinquished on retarget, so this never overrides the
+  // intentional retarget-discard safeguard.
   useEffect(() => {
-    if (voiceRecorder.isRecording && voiceRecorder.recordingSessionId) {
+    if (
+      (voiceRecorder.isRecording || voiceRecorder.durationLimitHit) &&
+      voiceRecorder.recordingSessionId
+    ) {
       recordingSessionRef.current = voiceRecorder.recordingSessionId;
     }
   });
@@ -1215,6 +1232,7 @@ export default function MessageInput({
             <InputTextarea
               content={content}
               onContentChange={handleContentChange}
+              onSelect={handleSelect}
               onKeyDown={handleKeyDown}
               onSubmit={() => {
                 void handleSubmit('immediate');

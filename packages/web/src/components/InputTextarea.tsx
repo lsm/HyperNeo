@@ -60,6 +60,8 @@ export interface InputTextareaProps {
   agentMentionCandidates?: Array<{ id: string; name: string }>;
   selectedAgentMentionIndex?: number;
   onAgentMentionSelect?: (name: string) => void;
+  /** Fires on every caret/selection change (the textarea's `select` event). */
+  onSelect?: () => void;
   onAgentMentionClose?: () => void;
   // Agent state - passed as prop to avoid direct signal reads that cause re-renders
   isAgentWorking?: boolean;
@@ -95,6 +97,7 @@ export function InputTextarea({
   agentMentionCandidates = [],
   selectedAgentMentionIndex = 0,
   onAgentMentionSelect,
+  onSelect,
   onAgentMentionClose,
   showCommandAutocomplete = false,
   filteredCommands = [],
@@ -292,6 +295,7 @@ export function InputTextarea({
           <textarea
             ref={textareaRef}
             onInput={(e) => onContentChange((e.target as HTMLTextAreaElement).value)}
+            onSelect={onSelect}
             onKeyDown={onKeyDown}
             onPaste={onPaste}
             disabled={disabled}
