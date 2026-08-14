@@ -6937,6 +6937,185 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(watchDeliveries).toHaveLength(1);
   });
 
+  test('requeues a pending late-target delivery whose source event already terminalized to delivered', async () => {
+    // R19-1 regression: the late-target replay can register a pending delivery on
+    // a source that already terminalized via the first target's settled
+    // delivery. A daemon restart before the late delivery settles must requeue
+    // it — previously requeue accepted only `published` sources and the pending
+    // row stranded permanently.
+    const { run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+
+    const event = makeEvent({
+      id: 'evt-delivered-source-requeue',
+      dedupeKey: 'dedupe-delivered-source-requeue',
+    });
+    eventStore.store(event);
+    const deliveryKey = JSON.stringify([
+      'github',
+      event.dedupeKey,
+      task.id,
+      'code',
+      'coder',
+      run.id,
+    ]);
+    eventStore.registerExpectedDelivery(event.id, deliveryKey, {
+      workflowRunId: run.id,
+      taskId: task.id,
+      nodeId: 'code',
+      agentName: 'coder',
+    });
+    // Terminalize the SOURCE via its first delivery (the direct-delivery path
+    // markEventDelivered documents), leaving the late row pending — exactly the
+    // state the late-target replay leaves behind.
+    eventStore.markDeliveryDelivered(event.id, deliveryKey);
+    eventStore.registerExpectedDelivery(event.id, `${deliveryKey}-late`, {
+      workflowRunId: run.id,
+      taskId: task.id,
+      nodeId: 'code',
+      agentName: 'coder',
+    });
+    eventStore.markEventDelivered(event.id);
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
+    expect(eventStore.getDelivery(event.id, `${deliveryKey}-late`)!.state).toBe('pending');
+
+    // Crash + restart: rebuild the runtime over the same DB and rehydrate (which
+    // runs requeuePersistedPendingDeliveries). The delivered-source pending row
+    // must be recovered, not skipped.
+    await runtime.stop();
+    const commandBus = createInternalCommandBus();
+    commandBus.register('agent.message.inject', async (command) => {
+      injected.push({
+        sessionId: command.sessionId,
+        message: command.message,
+        deliveryMode: command.deliveryMode,
+      });
+      return { ok: true };
+    });
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      commandBus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+    });
+    runtime.registerSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC);
+    await runtime.rehydrateExecutors();
+
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-delivered-source-requeue',
+      completedAt: null,
+    });
+    tam.alive.add('session-delivered-source-requeue');
+    runtime.flushPendingNodeQueue({
+      workflowRunId: run.id,
+      taskId: task.id,
+      nodeId: 'code',
+      agentName: 'coder',
+      sessionId: 'session-delivered-source-requeue',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // The recovered late delivery reached the live session.
+    expect(injected.length).toBeGreaterThanOrEqual(1);
+    expect(injected.some((item) => item.sessionId === 'session-delivered-source-requeue')).toBe(
+      true
+    );
+  });
+
+  test('delivers a recently failed (per-target) event to a late topicFrom target', async () => {
+    // R19-2 regression: when the FIRST target fails per-target delivery handling
+    // (terminalizing the source via markEventFailedIfAllDeliveriesTerminal — which
+    // requires delivery rows), a topicFrom target that materializes moments later
+    // must still receive the event. Pre-routing failures (no delivery rows) stay
+    // excluded via the EXISTS clause.
+    const workflow = workflowManager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: `Workflow ${Math.random()}`,
+      description: '',
+      nodes: [
+        {
+          id: 'code',
+          name: 'Code',
+          agents: [
+            {
+              agentId: AGENT_ID,
+              name: 'coder',
+              eventInterests: [
+                { topicFrom: { source: 'primaryLink', pattern: TOPIC_FROM_PATTERN } },
+              ],
+            },
+          ],
+        },
+        {
+          id: 'watch',
+          name: 'Watch',
+          agents: [
+            {
+              agentId: `${AGENT_ID}-watcher`,
+              name: 'watcher',
+              eventInterests: [{ topic: 'github/lsm/neokai/pull_request/*' }],
+            },
+          ],
+        },
+      ],
+      transitions: [],
+      startNodeId: 'code',
+      rules: [],
+      tags: [],
+    });
+    const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    const task = tasks[0]!;
+    runtime.registerRunInterests(run.id, task.id, workflow.nodes);
+    markCoderLive(run.id, 'session-coder-failed-src');
+    // The watch node's delivery will terminally FAIL (execution cancelled), so
+    // the source terminalizes to `failed` via the per-target path.
+    const watchExecution = nodeExecutionRepo.createOrIgnore({
+      workflowRunId: run.id,
+      workflowNodeId: 'watch',
+      agentName: 'watcher',
+      status: 'cancelled',
+      agentSessionId: 'session-watcher-dead',
+      startedAt: Date.now(),
+      completedAt: Date.now(),
+    });
+    nodeExecutionRepo.update(watchExecution.id, { status: 'cancelled' });
+
+    const event = makeEvent();
+    await eventService.publish(event);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // The watcher's delivery terminally failed → the source event failed via
+    // the per-target path (markEventFailedIfAllDeliveriesTerminal: delivery
+    // rows exist, all terminal, at least one failed).
+    const watchDelivery = eventStore
+      .listDeliveries(event.id)
+      .find((d) => d.agentName === 'watcher');
+    expect(watchDelivery).toBeDefined();
+    eventStore.markDeliveryFailed(event.id, watchDelivery!.deliveryKey, {
+      terminal: true,
+      reason: 'subscription_no_longer_active',
+    });
+    eventStore.markEventFailedIfAllDeliveriesTerminal(event.id);
+    expect(eventStore.getById(event.id)?.state).toBe('failed');
+
+    // The coder records its PR link: the late-target replay includes the recent
+    // per-target failed source and delivers to the materialized target.
+    recordPrLinkArtifact(run.id, 'code', PR_URL);
+    materializeAndReplay(run.id);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(injected.some((item) => item.sessionId === 'session-coder-failed-src')).toBe(true);
+    const coderDelivery = eventStore.listDeliveries(event.id).find((d) => d.agentName === 'coder');
+    expect(coderDelivery?.state).toBe('delivered');
+  });
+
   test('delivers a recently terminalized (delivered) event to a late topicFrom target', async () => {
     // R18 regression: when the FIRST target is live, its delivery settles and
     // markEventDeliveredIfAllDeliveriesDelivered terminalizes the source event

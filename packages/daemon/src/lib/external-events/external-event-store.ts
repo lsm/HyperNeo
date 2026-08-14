@@ -710,25 +710,32 @@ export class ExternalEventStore {
    * re-checks expiry in JS regardless, but this keeps expired-but-not-terminalized
    * rows out of the result set so the scoped index scan doesn't fetch them).
    *
-   * When `createdAfterMs` is provided, RECENT `delivered` rows are also included:
-   * an event that matched a live target before a topicFrom target materialized
-   * terminalizes to `delivered` once that delivery settles, and a PR link
-   * recorded moments later must still be able to register + deliver the event to
-   * the late target within the retention window. Publishing-only scans would
-   * silently drop it. Without the cutoff (unbounded global flush) delivered rows
-   * are excluded — replaying the full delivered history is both unbounded and
-   * redundant with restart requeue.
+   * When `createdAfterMs` is provided, RECENT terminal rows are also included —
+   * both `delivered` and `failed`:
+   * - `delivered`: an event that matched a live target before a topicFrom target
+   *   materialized terminalizes once that delivery settles; a PR link recorded
+   *   moments later must still reach the late target within the window.
+   * - `failed`: an event whose FIRST target failed per-target delivery handling
+   *   (terminalized via markEventFailedIfAllDeliveriesTerminal, which requires
+   *   delivery rows) misses the late target otherwise. Pre-routing failures
+   *   (markEventFailed / markEventIgnored) never created delivery rows, so the
+   *   EXISTS clause below excludes them — replaying those is a retry of a
+   *   routing-time decision, not a late subscription.
+   * Without the cutoff (unbounded global flush) terminal rows are excluded —
+   * replaying the full terminal history is both unbounded and redundant with
+   * restart requeue.
    */
   listPublishedEventsWithDeliveries(
     spaceId?: string,
     createdAfterMs?: number
   ): ExternalEventRecord[] {
     const cutoff = typeof createdAfterMs === 'number' ? createdAfterMs : null;
-    // Delivered rows are eligible only inside the TTL window; published rows
-    // scan as before (the JS expiry guard still applies to them).
+    // Terminal rows (delivered, or failed via per-target delivery handling)
+    // are eligible only inside the TTL window; published rows scan as before
+    // (the JS expiry guard still applies to them).
     const stateFilter =
       cutoff !== null
-        ? `(e.state = 'published' OR (e.state = 'delivered' AND e.created_at > ?))`
+        ? `(e.state = 'published' OR (e.state IN ('delivered','failed') AND e.created_at > ?))`
         : `e.state = 'published'`;
     const rows = spaceId
       ? (this.db

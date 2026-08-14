@@ -62,6 +62,7 @@ import type { WorkflowRunArtifactRepository } from '../../../storage/repositorie
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
 import { formatExternalEventEssence } from '../../external-events/event-essence';
 import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service';
+import type { ExternalEventRecord } from '../../external-events/types';
 import type { ExternalEventStore } from '../../external-events/external-event-store';
 import { legacyGitHubTopic } from '../../external-events/github-subscription-pattern';
 import { composeLongHorizonSubscriptionPattern } from '../../external-events/long-horizon-subscription-pattern';
@@ -2551,7 +2552,9 @@ export class SpaceRuntime {
         return eventRecord ? { delivery, eventRecord } : null;
       })
       .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
-      .filter(({ eventRecord }) => eventRecord.state === 'published')
+      .filter(({ eventRecord, delivery }) =>
+        this.isSourceEventRequeueable(eventRecord, delivery.eventId, delivery.deliveryKey)
+      )
       .sort(
         (a, b) =>
           a.eventRecord.createdAt - b.eventRecord.createdAt ||
@@ -6181,13 +6184,45 @@ export class SpaceRuntime {
    *
    * Runs that reference a missing workflow are skipped silently.
    */
+  /**
+   * Whether a persisted pending delivery's source event may be requeued.
+   *
+   * `published` sources always qualify (the normal retained case). A `delivered`
+   * source also qualifies while it still has pending deliveries AND is inside
+   * the retention window: the late-target replay can register a pending delivery
+   * on a source that already terminalized via its earlier target's settled
+   * delivery (listPublishedEventsWithDeliveries includes recent delivered rows).
+   * Without this, a pause/daemon-restart before that late delivery settles
+   * strands it permanently — requeue would skip the non-published source. The
+   * callers' event-age TTL check still applies, so a stale delivered event fails
+   * as ttl_expired rather than being injected.
+   */
+  private isSourceEventRequeueable(
+    eventRecord: ExternalEventRecord | null,
+    eventId: string,
+    deliveryKey: string
+  ): eventRecord is ExternalEventRecord {
+    if (!eventRecord) return false;
+    if (eventRecord.state === 'published') return true;
+    if (eventRecord.state !== 'delivered') return false;
+    // Terminalized with a still-pending delivery: eligible only within the TTL
+    // window (mirrors the queued-item expiry the delivery will re-undergo).
+    if (Date.now() - eventRecord.createdAt > EXTERNAL_EVENT_QUEUE_TTL_MS) return false;
+    // Belt-and-braces: the delivery row itself must actually still be pending
+    // (callers iterate pending rows, but guard a concurrent transition between
+    // the list and this read).
+    const current = this.config.externalEventStore?.getDelivery(eventId, deliveryKey);
+    return current == null || current.state === 'pending';
+  }
+
   private requeuePersistedPendingDeliveries(pausedSpaceIds: Set<string> = new Set()): void {
     const store = this.config.externalEventStore;
     if (!store) return;
 
     for (const delivery of store.listPendingDeliveries()) {
       const eventRecord = store.getById(delivery.eventId);
-      if (!eventRecord || eventRecord.state !== 'published') continue;
+      if (!this.isSourceEventRequeueable(eventRecord, delivery.eventId, delivery.deliveryKey))
+        continue;
       const longHorizonSpaceId = longHorizonSpaceIdFromWorkflowRunId(delivery.workflowRunId);
       if (longHorizonSpaceId) {
         const eventPayload = this.externalEventPayloadFromRecord(eventRecord.event);
@@ -6367,7 +6402,8 @@ export class SpaceRuntime {
         agentName: delivery.agentName,
       };
       const eventRecord = store.getById(delivery.eventId);
-      if (!eventRecord || eventRecord.state !== 'published') continue;
+      if (!this.isSourceEventRequeueable(eventRecord, delivery.eventId, delivery.deliveryKey))
+        continue;
       // A deferred delivery may have sat paused longer than the queue TTL.
       // Apply the same event-age TTL guard as requeuePersistedPendingDeliveries
       // before scheduling a retry so stale events are failed as ttl_expired
