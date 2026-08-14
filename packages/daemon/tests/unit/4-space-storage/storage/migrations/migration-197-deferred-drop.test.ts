@@ -96,6 +96,30 @@ describe('Migration 194 deferred hooks drop', () => {
     }
   });
 
+  test('a DONE run with any non-archived (reopenable) task blocks the drop', () => {
+    // The repository's executable-run predicate: a done/cancelled run with a
+    // non-archived task is reopenable and later pinned by
+    // backfillDefinitionPins — the pin would snapshot an ungated head.
+    const db = makeLegacyDb();
+    try {
+      db.prepare(`UPDATE space_workflow_runs SET status = 'done' WHERE id = 'run-1'`).run();
+      db.prepare(
+        `INSERT INTO space_tasks (id, space_id, task_number, title, description, status, priority, labels, workflow_run_id, depends_on, created_at, updated_at)
+         VALUES ('task-open', 'sp-1', 1, 'T', '', 'open', 'normal', '[]', 'run-1', '[]', 1, 1)`
+      ).run();
+
+      runMigration197(db);
+      expect(hasHooksColumn(db)).toBe(true);
+
+      // Archiving the task (no longer reopenable) lets the drop complete.
+      db.prepare(`UPDATE space_tasks SET status = 'archived' WHERE id = 'task-open'`).run();
+      runMigration197(db);
+      expect(hasHooksColumn(db)).toBe(false);
+    } finally {
+      db.close();
+    }
+  });
+
   test('an APPROVED post-approval task on a DONE run blocks the drop', () => {
     // The runtime marks the run `done` before dispatching post-approval work;
     // the startup restamp defers on hasApprovedTaskForWorkflow, and the drop

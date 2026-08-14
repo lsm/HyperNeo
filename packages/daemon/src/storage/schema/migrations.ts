@@ -12563,9 +12563,15 @@ export function runMigration197(db: BunDatabase): boolean {
            JOIN space_workflows w ON w.id = r.workflow_id
           WHERE (r.status NOT IN ('done', 'cancelled', 'archived')
                  OR EXISTS (
+                   -- Any NON-ARCHIVED task: the repository's executable-run
+                   -- predicate. A done/cancelled run with a reopenable task
+                   -- is later selected by listPinnableRuns, whose backfill
+                   -- would snapshot this already-ungated head — reopening the
+                   -- task would then execute with neither legacy hooks nor
+                   -- v2 bindings. (Approved post-approval work is a subset.)
                    SELECT 1 FROM space_tasks t
                     WHERE t.workflow_run_id = r.id
-                      AND t.status = 'approved'
+                      AND t.status != 'archived'
                  ))
             AND w.hooks IS NOT NULL
             AND w.hooks != '[]'

@@ -1239,9 +1239,24 @@ export class WorkflowHookEngine {
           // A '@role:' string target resolving to a workflow node must be
           // channel-authorized (the role resolver only delivers to permitted
           // workers); an unauthorized role reaches no worker.
+          // The role resolver authorizes via canSendToWorkerTarget: the
+          // cross-product of {fromNode, fromAgentSlot} x {targetNode,
+          // targetAgentSlot} — a slot-authored channel on EITHER side
+          // authorizes. Mirroring only node-to-node routes would suppress
+          // the binding for a slot-authored role send the router delivers.
           const roleUnauthorized =
             target.startsWith('@role:') &&
-            !resolvedTargets.some((r) => nodeNames.has(r) && isRoutableTarget(r));
+            !resolvedTargets.some((r) => {
+              if (!nodeNames.has(r)) return false;
+              const slots = nodeSlots.get(r) ?? [];
+              return (
+                isRoutableTarget(r) ||
+                slots.some(
+                  (sl) => resolver.canSend(fromNode, sl) || resolver.canSend(meta.agentName, sl)
+                ) ||
+                resolver.canSend(meta.agentName, r)
+              );
+            });
           for (const resolved of resolvedTargets) {
             const workerSlotOk =
               !foreignWorkerMiss &&
@@ -1382,9 +1397,17 @@ export class WorkflowHookEngine {
           // reaches no worker — its node is non-routable (suppressed without
           // aborting later entries; role delivery is not a sequential abort).
           if (t.startsWith('@role:')) {
-            const roleAuthorized = resolvedTargets.some(
-              (r) => nodeNames.has(r) && isRoutableTarget(r)
-            );
+            const roleAuthorized = resolvedTargets.some((r) => {
+              if (!nodeNames.has(r)) return false;
+              const slots = nodeSlots.get(r) ?? [];
+              return (
+                isRoutableTarget(r) ||
+                slots.some(
+                  (sl) => resolver.canSend(fromNode, sl) || resolver.canSend(meta.agentName, sl)
+                ) ||
+                resolver.canSend(meta.agentName, r)
+              );
+            });
             if (!roleAuthorized) {
               for (const resolved of resolvedTargets) {
                 if (!nodeNames.has(resolved)) continue;

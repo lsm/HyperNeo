@@ -846,14 +846,15 @@ export function setupSpaceWorkflowRunHandlers(
         'This block is a fail-closed infrastructure failure, not a hook decision — it cannot be approved. Resolve the underlying error and retry.'
       );
     }
-    // Compare-and-swap on the observed state: if the hook re-evaluated between
-    // the banner render and this approval (e.g. it naturally continued, or a
-    // NEW violation replaced the one the operator saw), the approval must not
-    // be recorded against the changed decision — a stale approval would later
-    // bypass an unrelated violation.
-    if (params.approved === true && existingState && existingState.lastFlow !== 'stop') {
+    // Require an EXISTING stopped snapshot for an approval: with no snapshot
+    // the update below would `ensure` a version-0 row pre-armed with
+    // humanApproved — a client could approve before the hook has ever run,
+    // and the first later stop would deliver on the pre-armed approval.
+    if (params.approved === true && (!existingState || existingState.lastFlow !== 'stop')) {
       throw new Error(
-        `Hook state changed since the block was displayed (lastFlow is now "${existingState.lastFlow ?? 'unset'}") — approve the current state, not the stale one.`
+        !existingState
+          ? 'Cannot approve a hook that has not run yet — no hook state exists for this run/hook.'
+          : `Hook state changed since the block was displayed (lastFlow is now "${existingState.lastFlow ?? 'unset'}") — approve the current state, not the stale one.`
       );
     }
 
