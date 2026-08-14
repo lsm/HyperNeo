@@ -389,6 +389,32 @@ describe('validate-test-matrix.sh', () => {
   );
 
   it(
+    'rejects a post-construction mutation of the effective config (P2)',
+    () => {
+      // `const c = defineConfig({...}); c.test!.include = ['one/file']; export
+      // default c;` leaves the source literal intact (so text checks pass) while
+      // Vitest resolves the mutated include. The guard loads the config via bun
+      // and compares the EFFECTIVE include/exclude to the pinned literals.
+      expectGuardRejects(
+        path.join(REPO_ROOT, 'packages/web/vitest.config.ts'),
+        (s) => {
+          const reassigned = s.replace(
+            'export default defineConfig({',
+            'const config = defineConfig({',
+            1
+          );
+          return (
+            reassigned.trimEnd() +
+            "\nconfig.test!.include = ['src/lib/task-status.test.ts'];\nexport default config;\n"
+          );
+        },
+        'effective test config does not match'
+      );
+    },
+    TIMEOUT
+  );
+
+  it(
     'rejects a needs: dependency on a guarded job (P2)',
     () => {
       // A needs: on a conditionally-skipped job (e.g. `discover`) skips this job

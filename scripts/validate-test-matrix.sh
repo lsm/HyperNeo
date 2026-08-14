@@ -451,6 +451,37 @@ reject_config_spread() {
 	fi
 }
 
+# The text checks above (test_prop_has, reject_config_spread, …) see only the
+# literal in the SOURCE. A post-construction mutation — `const c = defineConfig
+# ({...}); c.test!.include = ['one/file']; export default c;` — leaves the source
+# literal intact (so they pass) while Vitest resolves the mutated value and runs
+# only that file. The only sound defense is to LOAD the config and compare the
+# EFFECTIVE test.include/exclude (and absence of dir/shard/testNamePattern) to
+# the pinned literals. Uses bun (a hard repo dependency; available in `bun run
+# check` and CI). Skipped silently if bun is absent so the guard still runs.
+reject_effective_config_drift() {
+	local cfg="$1" pkg="$2" exp_inc="$3" exp_exc="$4" detail rc
+	command -v bun >/dev/null 2>&1 || return 0
+	detail=$(CFG_PATH="$cfg" EXP_INC="$exp_inc" EXP_EXC="$exp_exc" bun -e '
+		const INC = process.env.EXP_INC, EXC = process.env.EXP_EXC;
+		import(process.env.CFG_PATH).then(m => {
+			const t = (m.default || m).test || {};
+			const j = JSON.stringify.bind(JSON);
+			const drift = [];
+			if (j(t.include) !== INC) drift.push("include resolved to " + j(t.include));
+			if (j(t.exclude) !== EXC) drift.push("exclude resolved to " + j(t.exclude));
+			if (t.dir) drift.push("test.dir=" + t.dir);
+			if (t.shard) drift.push("test.shard=" + t.shard);
+			if (t.testNamePattern) drift.push("test.testNamePattern set");
+			if (drift.length) { console.error(drift.join("; ")); process.exit(1); }
+			process.exit(0);
+		}).catch(e => { console.error("could not load config (" + (e.message.split("\n")[0]) + ")"); process.exit(1); });
+	' 2>&1); rc=$?
+	[ "$rc" -eq 0 ] && return 0
+	err "$pkg/vitest.config.ts effective test config does not match the pinned include/exclude: $detail"
+	echo "     → Vitest's resolved config differs from the source literal (post-construction mutation, spread, or computed override); restore a literal 'export default defineConfig({...})'" >&2
+}
+
 # Reject matrix `module:` scalars in job (of file) whose value, after stripping
 # optional YAML quotes, does not match the strict [a-z0-9-]+ format. The axis and
 # include parsers normalize values for comparison, which silently maps a typo like
@@ -673,6 +704,14 @@ for _cfg in "$REPO_ROOT/packages/daemon/vitest.config.ts" "$REPO_ROOT/packages/s
 	cfg_reject_root "$_cfg" "$_cfg_pkg"
 	# A spread under test: overrides the pinned include/exclude (see reject_config_spread).
 	reject_config_spread "$_cfg" "$_cfg_pkg"
+	# Effective (resolved) config must match the pinned literal — catches post-
+	# construction mutation/spread/computed overrides the text checks can't see.
+	case "$_cfg_pkg" in
+		daemon) reject_effective_config_drift "$_cfg" "$_cfg_pkg" \
+			'["tests/**/*.test.ts","tests/**/*_test.ts"]' '["node_modules","dist","tests/online/**"]' ;;
+		shared) reject_effective_config_drift "$_cfg" "$_cfg_pkg" \
+			'["tests/**/*.test.ts","tests/**/*_test.ts"]' '["node_modules","dist"]' ;;
+	esac
 done
 
 COVERED_TMP="$(mktemp)"
@@ -959,6 +998,8 @@ test_no_select_opts "$WEB_CFG" "packages/web"
 # A non-default root relocates the src/** include base; reject it.
 cfg_reject_root "$WEB_CFG" "packages/web"
 reject_config_spread "$WEB_CFG" "packages/web"
+reject_effective_config_drift "$WEB_CFG" "packages/web" \
+	'["src/**/*.{test,spec}.{ts,tsx}"]' '["node_modules","dist"]'
 # The web coverage assumes the test-web CI job runs a bare `vitest run` (no
 # positional target) in an ENABLED step, so the config include/exclude fully
 # determine execution. enabled_run_cmd folds the runner command (a `>-` scalar)
@@ -1080,6 +1121,8 @@ test_no_select_opts "$ONLINE_CFG" "packages/daemon/vitest.online"
 # A non-default root relocates the tests/online/** include base; reject it.
 cfg_reject_root "$ONLINE_CFG" "packages/daemon/vitest.online"
 reject_config_spread "$ONLINE_CFG" "packages/daemon/vitest.online"
+reject_effective_config_drift "$ONLINE_CFG" "packages/daemon/vitest.online" \
+	'["tests/online/**/*.test.ts","tests/online/**/*_test.ts"]' '["node_modules","dist","tests/unit/**"]'
 
 # Each guarded test job's job-level if: must EQUAL its pinned predicate (not a
 # substring match). A substring search accepts a gate like
