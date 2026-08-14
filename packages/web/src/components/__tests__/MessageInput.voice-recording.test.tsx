@@ -112,10 +112,11 @@ vi.mock('../../hooks', () => ({
 }));
 
 vi.mock('../../lib/connection-manager', () => ({
-  connectionManager: { getHubIfConnected: () => ({ request: hubRequest }) },
+  connectionManager: { getHubIfConnected: vi.fn(() => ({ request: hubRequest })) },
 }));
 
 import { toast } from '../../lib/toast.ts';
+import { connectionManager } from '../../lib/connection-manager.ts';
 import MessageInput from '../MessageInput';
 
 describe('MessageInput — recording UI', () => {
@@ -136,6 +137,11 @@ describe('MessageInput — recording UI', () => {
       setTimeout(() => cb(0), 0)
     );
     vi.stubGlobal('cancelAnimationFrame', (id: ReturnType<typeof setTimeout>) => clearTimeout(id));
+    // Default: hub connected. Individual tests may override (e.g. disconnect);
+    // mockReset drops any leaked override from a previous test.
+    vi.mocked(connectionManager.getHubIfConnected)
+      .mockReset()
+      .mockImplementation(() => ({ request: hubRequest }));
     Object.defineProperty(window, 'matchMedia', {
       writable: true,
       value: vi.fn().mockReturnValue({ matches: false }),
@@ -315,6 +321,35 @@ describe('MessageInput — recording UI', () => {
     // The draft is NOT cleared when the send failed — the text is still staged.
     const clearCall = hubRequest.mock.calls.find(([m]) => m === 'session.clearInputDraftIf');
     expect(clearCall).toBeFalsy();
+  });
+
+  it('still delivers through the captured onSend when the hub is disconnected', async () => {
+    // The socket drops AFTER the transcription response arrives but BEFORE
+    // delivery runs — the captured onSend owns offline queueing
+    // (useSendMessage), so delivery must still be attempted rather than
+    // reported as lost.
+    let resolveTranscribe!: (value: { text: string }) => void;
+    transcribeRequest.mockReturnValueOnce(
+      new Promise<{ text: string }>((resolve) => {
+        resolveTranscribe = resolve;
+      })
+    );
+
+    const onSend = vi.fn(async () => true);
+    const { unmount } = render(<MessageInput sessionId="s1" onSend={onSend} />);
+
+    fireEvent.click(screen.getByLabelText('Stop, transcribe and send'));
+    await waitFor(() => expect(transcribeRequest).toHaveBeenCalledTimes(1));
+    unmount();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // Disconnect only now — transcription already completed over the wire.
+    vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(null);
+    resolveTranscribe({ text: 'hello world' });
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('hello world', undefined, 'immediate'));
+    await waitFor(() => expect(toast.info).toHaveBeenCalledWith('Voice transcript sent'));
+    // No draft to consume (snapshot was empty) and no hub anyway — no clear RPC.
+    expect(hubRequest.mock.calls.find(([m]) => m === 'session.clearInputDraftIf')).toBeFalsy();
   });
 
   it('Cancel discards the recording without transcribing', async () => {

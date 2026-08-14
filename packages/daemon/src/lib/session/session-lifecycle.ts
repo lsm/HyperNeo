@@ -618,8 +618,14 @@ export class SessionLifecycle {
         source: 'update',
         session: updates,
       })
-      .catch(() => {
-        // Subscriber failures are logged by the bus; persistence already succeeded.
+      .catch((err: unknown) => {
+        // Persistence already succeeded — the write stays valid. Log the failed
+        // subscriber though: the bus collects and throws without logging, and a
+        // silently failed state projection would leave consumers stale with no
+        // diagnostic trail.
+        this.logger.warn(
+          `session.updated publication failed after commit for ${sessionId}: ${err instanceof Error ? err.message : String(err)}`
+        );
       });
   }
 

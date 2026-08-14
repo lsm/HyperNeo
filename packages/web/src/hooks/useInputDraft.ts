@@ -180,6 +180,14 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
               inputDraft: null,
             },
           })
+          .then(() => {
+            // Deletion CONFIRMED server-side: drop the retry marker so a later
+            // switch flush cannot null a NEWER draft another client saved in
+            // the meantime. A rejected clear keeps the marker and retries.
+            if (lastSeenContentRef.current.sessionId === sessionId) {
+              lastSeenContentRef.current = { sessionId, content: '' };
+            }
+          })
           .catch(() => {
             /* ignore clear errors */
           });

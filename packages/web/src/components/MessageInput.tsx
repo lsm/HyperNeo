@@ -525,9 +525,13 @@ export default function MessageInput({
         send: MessageInputProps['onSend'];
       }
     ): Promise<{ ok: boolean; message: string }> => {
-      const hub = connectionManager.getHubIfConnected();
-      if (!hub) return { ok: false, message: '' };
+      // NOTE: no upfront hub gate here. The captured `payload.send` owns its
+      // offline delivery (useSendMessage queues disconnected sends for retry),
+      // so a missing hub must not prevent attempting it — only the staging and
+      // clearing RPCs below require a connection.
       const stageToDraft = async () => {
+        const hub = connectionManager.getHubIfConnected();
+        if (!hub) throw new Error('Not connected');
         await hub.request('session.appendVoiceDraft', {
           sessionId: targetSessionId,
           text: transcript,
@@ -585,13 +589,16 @@ export default function MessageInput({
       // edits saved after the snapshot win. Best-effort: a failure here doesn't
       // undo the send.
       if (payload.full.trim().length > 0) {
-        try {
-          await hub.request('session.clearInputDraftIf', {
-            sessionId: targetSessionId,
-            expected: payload.full,
-          });
-        } catch {
-          /* ignore — the send already succeeded */
+        const hub = connectionManager.getHubIfConnected();
+        if (hub) {
+          try {
+            await hub.request('session.clearInputDraftIf', {
+              sessionId: targetSessionId,
+              expected: payload.full,
+            });
+          } catch {
+            /* ignore — the send already succeeded */
+          }
         }
       }
       return {
