@@ -858,6 +858,16 @@ export async function ghGetReviewEvidence(
         commentsComplete = true;
         break;
       }
+      // Positive-only evidence: re-evaluate the accumulated comments after
+      // EVERY page — a fresh qualifying comment already proves the gate, and
+      // continuing to page older history would let a later GitHub error,
+      // deadline expiry, or the cap convert the proven positive into a
+      // retryable error.
+      const cProbe = extractReviewEvidence(buildMerged(allCommentNodes), sinceIso);
+      if (cProbe.commentEvidenceCount > 0) {
+        commentsComplete = true;
+        break;
+      }
     }
     if (!commentsComplete) {
       // Cap exhausted while still inside the fresh window — the scan cannot
@@ -1288,6 +1298,33 @@ export async function ghGetCodexApproval(
             };
           }
           if (oldestRMs <= pushedMs) {
+            reactionsComplete = true;
+            break;
+          }
+          // Positive-only evidence: evaluate the accumulated window after
+          // EVERY page — a fresh codex +1 already collected is a proven
+          // approval, and continuing to page would let a later GitHub
+          // error, deadline expiry, or the cap turn it into a retryable
+          // error instead of the established verdict (mirroring the
+          // boundary walk's per-page check).
+          const probe = extractCodexApproval(
+            {
+              data: {
+                repository: {
+                  pullRequest: {
+                    ...rNode,
+                    reviews: { nodes: allReviewNodes },
+                    reactions: { nodes: allReactionNodes },
+                  },
+                },
+              },
+            },
+            link
+          );
+          if (probe.failClosedReason) {
+            return { ok: false, retryable: true, error: probe.failClosedReason };
+          }
+          if (probe.approved) {
             reactionsComplete = true;
             break;
           }

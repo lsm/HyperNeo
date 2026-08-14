@@ -1465,36 +1465,60 @@ export class WorkflowHookEngine {
           // include an unauthorized worker — the adapter expands every slot
           // and the router aborts there, so no entry AFTER this node ever
           // delivers (this node itself still does).
+          // PER-NODE tracking: a plain entry (typically a bare slot shared by
+          // several nodes) expands to one worker per node IN ORDER, and the
+          // router hard-returns at the first unauthorized worker — nodes
+          // after the abort (and the aborting node itself, if its own worker
+          // never delivered) must have their gates suppressed individually,
+          // while nodes the router reached first keep theirs.
           let authorized = false;
           let suffixAborts = false;
+          const undeliveredNodes = new Set<string>();
+          let entryAborted = false;
           for (const r of resolvedTargets) {
             if (!nodeNames.has(r)) continue;
+            if (entryAborted) {
+              // The router already returned at an earlier node's worker —
+              // this resolution was never reached.
+              undeliveredNodes.add(r);
+              continue;
+            }
+            let nodeDelivered = false;
+            let nodeAborted = false;
             if (isRoutableTarget(r)) {
-              authorized = true;
-              continue;
-            }
-            if (isWorker) {
+              nodeDelivered = true;
+            } else if (isWorker) {
               const agent = workerAgentOf(t);
-              if (agent !== undefined && resolver.canSend(fromNode, agent)) authorized = true;
-              continue;
-            }
-            const slots = nodeSlots.get(r) ?? [];
-            if (resolver.canSend(fromNode, t) && !nodeNames.has(t)) {
-              authorized = true;
-              continue;
-            }
-            // Bare slot entry OR plain node entry: the adapter expands the
-            // node's slots in declaration order; walk them.
-            const orderedSlots = nodeNames.has(t) || !isAddress ? slots : [t];
-            for (let si = 0; si < orderedSlots.length; si++) {
-              const slotOk = resolver.canSend(fromNode, orderedSlots[si]);
-              if (si === 0 && slotOk) authorized = true;
-              if (!slotOk) {
-                // An unauthorized slot after a delivered one: the router
-                // aborts here — later ARRAY entries never deliver.
-                suffixAborts = true;
-                break;
+              if (agent !== undefined && resolver.canSend(fromNode, agent)) nodeDelivered = true;
+              else nodeAborted = true;
+            } else {
+              const slots = nodeSlots.get(r) ?? [];
+              if (resolver.canSend(fromNode, t) && !nodeNames.has(t)) {
+                nodeDelivered = true;
+              } else {
+                // Bare slot entry OR plain node entry: the adapter expands
+                // the node's slots in declaration order; walk them.
+                const orderedSlots = nodeNames.has(t) || !isAddress ? slots : [t];
+                for (let si = 0; si < orderedSlots.length; si++) {
+                  const slotOk = resolver.canSend(fromNode, orderedSlots[si]);
+                  if (si === 0 && slotOk) nodeDelivered = true;
+                  if (!slotOk) {
+                    // An unauthorized slot after a delivered one: the router
+                    // aborts here — later ARRAY entries never deliver.
+                    nodeAborted = true;
+                    break;
+                  }
+                }
               }
+            }
+            if (nodeDelivered) authorized = true;
+            if (nodeAborted) {
+              // The router returns at this node's unauthorized worker: the
+              // node keeps its gate only if an earlier slot already
+              // delivered to it.
+              suffixAborts = true;
+              entryAborted = true;
+              if (!nodeDelivered) undeliveredNodes.add(r);
             }
           }
           const resolvable = resolvedTargets.some((r) => nodeNames.has(r));
@@ -1515,12 +1539,16 @@ export class WorkflowHookEngine {
               }
             }
           } else if (suffixAborts && authorized) {
-            // This node delivered (first slot authorized) but a LATER slot
-            // of it aborted the router — entries AFTER this node never
-            // deliver. Mark the block WITHOUT suppressing this node (a node
-            // with an earlier DELIVERED occurrence keeps its gate even when
-            // a later entry of the same node fails).
+            // This entry delivered to at least one node but an unauthorized
+            // worker aborted the router — entries AFTER this entry never
+            // deliver. The aborting NODE ITSELF keeps its gate only when its
+            // own worker delivered first; otherwise (a shared bare slot
+            // resolving to an unauthorized node) it is suppressed
+            // individually.
             sequentialBlocked = true;
+            for (const undelivered of undeliveredNodes) {
+              if (!deliveredBefore.has(undelivered)) postFailureNodes.add(undelivered);
+            }
           }
         }
         // Post-failure nodes (never delivered) are suppressed. Under

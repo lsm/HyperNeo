@@ -839,6 +839,57 @@ describe('WorkflowHookEngine.executeAction', () => {
     expect(multi.executionLog[0]?.hookId).toBe('role_hook');
   });
 
+  test('a shared bare slot suppresses the unauthorized node individually', async () => {
+    // ['reviewer'] where BOTH Review and Other declare the 'reviewer' slot,
+    // but only Review has a node-level channel: the adapter expands the bare
+    // slot to @worker:Review/reviewer + @worker:Other/reviewer, the router
+    // delivers Review then ABORTS at Other's unauthorized worker. Review's
+    // gate runs; Other NEVER received the message, so its gate must be
+    // suppressed — distinct hook ids + log length pin the suppression.
+    const workflow = makeWorkflow({
+      customHooks: [
+        scriptHook('review_hook', '{"flow":"stop","reason":"review"}'),
+        scriptHook('other_hook', '{"flow":"stop","reason":"other"}'),
+      ],
+      nodes: [
+        { id: 'n-coding', name: 'Coding', agents: [{ agentId: 'a1', name: 'coder' }] },
+        { id: 'n-review', name: 'Review', agents: [{ agentId: 'a2', name: 'reviewer' }] },
+        { id: 'n-other', name: 'Other', agents: [{ agentId: 'a3', name: 'reviewer' }] },
+      ],
+      channels: [{ from: 'Coding', to: 'Review', label: 'Coding → Review' }],
+      hookBindings: [
+        {
+          hookId: 'review_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+        {
+          hookId: 'other_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Other',
+          method: 'send_message',
+          order: 1,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    const engine = makeEngine(workflow);
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: ['reviewer'], message: 'shared slot' },
+      META
+    );
+    expect(outcome.decision).toBe('stop');
+    expect(outcome.blockingHookId).toBe('review_hook');
+    expect(outcome.executionLog.length).toBe(1);
+    expect(outcome.executionLog[0]?.hookId).toBe('review_hook');
+  });
+
   test('a duplicate failing worker does not suppress the earlier delivered node', async () => {
     // ['@worker:Review/good', '@worker:Review/bad'] with a channel to 'good'
     // only: the router delivers good BEFORE aborting at bad — Review received

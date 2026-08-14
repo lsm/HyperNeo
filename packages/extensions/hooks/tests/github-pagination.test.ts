@@ -149,6 +149,96 @@ describe('ghGetCodexApproval — pagination loop', () => {
   });
 });
 
+// ─── normal-path reaction walk early stop ───────────────────────────────────
+//
+// The normal (non-boundary) reaction back-walk evaluates the accumulated
+// window after every page too: a fresh codex +1 already collected is a
+// proven approval, and paging on would let a later error/cap convert it
+// into a retryable error.
+
+describe('ghGetCodexApproval — reaction walk early stop', () => {
+  test('stops normal-path reaction paging once approval is proven', async () => {
+    // No decisive review (COMMENTED only) and an empty seed reaction tail
+    // with more history: the walk pages back; page 2 carries the fresh
+    // codex +1 but claims MORE history; page 3 errors. The approval must
+    // be established at page 2 — page 3 is never requested; only the head
+    // recheck follows.
+    let calls = 0;
+    setGraphqlRunnerForTests(async () => {
+      calls += 1;
+      if (calls === 1) {
+        return {
+          ok: true,
+          data: {
+            data: {
+              repository: {
+                pullRequest: {
+                  reviews: {
+                    nodes: [codexReview('COMMENTED', '2026-08-13T11:00:00Z')],
+                    pageInfo: { hasPreviousPage: false },
+                  },
+                  // Empty tail but more history behind it — the walk starts.
+                  reactions: {
+                    nodes: [],
+                    pageInfo: { hasPreviousPage: true, startCursor: 'Y3Vyc29yXzE' },
+                  },
+                  commits: {
+                    nodes: [{ commit: { oid: HEAD, pushedDate: '2026-08-12T00:00:00Z' } }],
+                  },
+                },
+              },
+            },
+          },
+        };
+      }
+      if (calls === 2) {
+        return {
+          ok: true,
+          data: {
+            data: {
+              repository: {
+                pullRequest: {
+                  reactions: {
+                    nodes: [
+                      {
+                        createdAt: '2026-08-13T12:00:00Z',
+                        user: { login: 'chatgpt-codex-connector[bot]' },
+                      },
+                    ],
+                    pageInfo: { hasPreviousPage: true, startCursor: 'Y3Vyc29yXzI' },
+                  },
+                  commits: {
+                    nodes: [{ commit: { oid: HEAD, pushedDate: '2026-08-12T00:00:00Z' } }],
+                  },
+                },
+              },
+            },
+          },
+        };
+      }
+      if (calls === 3) {
+        // The post-approval head recheck — serve the unmoved head.
+        return {
+          ok: true,
+          data: {
+            data: {
+              repository: {
+                pullRequest: { commits: { nodes: [{ commit: { oid: HEAD } }] } },
+              },
+            },
+          },
+        };
+      }
+      return { ok: false, retryable: true, error: 'unexpected extra page request' };
+    });
+    const result = await ghGetCodexApproval(CTX, PR_LINK);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.approved).toBe(true);
+    // Page 1 (reviews+seed) + page 2 (walk, proven) + head recheck = 3.
+    expect(calls).toBe(3);
+  });
+});
+
 // ─── boundary path ──────────────────────────────────────────────────────────
 //
 // The reviews loop can break at the HEAD-PUSH WINDOW (a page whose oldest
@@ -572,6 +662,62 @@ describe('ghGetReviewEvidence — back-pagination past the fresh window', () => 
     // (its outcome cannot change a positive result), so the count is the
     // tail's 50, not 50 + the buried one.
     if (result.ok) expect(result.data.commentEvidenceCount).toBe(50);
+  });
+
+  test('stops comment paging once positive evidence is fetched', async () => {
+    // Page 2 carries the first fresh qualifying comment but claims MORE
+    // history behind it; page 3 errors. The accumulated comments are
+    // re-evaluated after every page, so the proven positive must stop the
+    // walk before page 3 can convert it into a retryable error.
+    let calls = 0;
+    setGraphqlRunnerForTests(async () => {
+      calls += 1;
+      if (calls === 1) {
+        return {
+          ok: true,
+          data: {
+            data: {
+              viewer: { login: 'reviewer' },
+              repository: {
+                pullRequest: {
+                  author: { login: 'reviewer' },
+                  reviews: { nodes: [], pageInfo: { hasPreviousPage: false } },
+                  comments: {
+                    nodes: [],
+                    pageInfo: { hasPreviousPage: true, startCursor: 'cGFnZTE' },
+                  },
+                },
+              },
+            },
+          },
+        };
+      }
+      if (calls === 2) {
+        return {
+          ok: true,
+          data: {
+            data: {
+              repository: {
+                pullRequest: {
+                  comments: {
+                    // Fresh (after since 2026-08-13T11:00) and still more
+                    // history claimed behind a valid cursor.
+                    nodes: [{ createdAt: '2026-08-13T11:30:00Z' }],
+                    pageInfo: { hasPreviousPage: true, startCursor: 'cGFnZTI' },
+                  },
+                },
+              },
+            },
+          },
+        };
+      }
+      return { ok: false, retryable: true, error: 'unexpected extra page request' };
+    });
+    const result = await ghGetReviewEvidence(CTX, PR_LINK, '2026-08-13T11:00:00Z');
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.commentEvidenceCount).toBe(1);
+    // Page 1 (reviews+comments seed) + page 2 (positive found) = 2 calls.
+    expect(calls).toBe(2);
   });
 
   test('an own-PR comments connection without a boolean hasPreviousPage fails closed', async () => {
