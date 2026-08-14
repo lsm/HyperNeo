@@ -118,9 +118,12 @@ class VoiceRecorderStore {
     this.isStarting.value = true;
     this.stoppedByLimit = false;
     this.durationLimitHit.value = false;
+    // Claim ownership UP FRONT (before any await, including the eviction
+    // teardown above): a composer that unmounts or retargets mid-start must
+    // find its ownerId here so orphan() actually hands the recording off,
+    // instead of leaving a departed instance as owner after the awaits.
     this.recordingOwnerId.value = ownerId;
     this.recordingSessionId.value = ownerSessionId;
-    this.recordingStartedAt.value = Date.now();
     const generation = ++this.startGeneration;
     const discarded = () => this.startGeneration !== generation;
     // Cleanup for a DISCARDED start. If the shared fields still belong to this
@@ -264,6 +267,10 @@ class VoiceRecorderStore {
       this.chunks = chunks;
       this.sampleRate = context.sampleRate;
       this.maxDurationTimer = setTimeout(hitLimit, MAX_RECORDING_MS);
+      // Record the timestamp when capture is actually wired (beside the cap
+      // deadline it mirrors), not at request time — a slow permission prompt
+      // or worklet setup must not eat into the displayed 5-minute budget.
+      this.recordingStartedAt.value = Date.now();
       this.isRecording.value = true;
     } catch (error) {
       // A cancelled/discarded start fails silently — the user already moved on.

@@ -23,11 +23,15 @@ import { voiceRecorderStore } from '../lib/voice/voice-recorder-store.ts';
 export { isVoiceRecordingSupported } from '../lib/voice/voice-recorder-store.ts';
 export type { VoiceRecording } from '../lib/voice/voice-recorder-store.ts';
 
-export function useVoiceRecorder(sessionId: string) {
+export function useVoiceRecorder(sessionId: string, options?: { autoAdopt?: boolean }) {
   // Stable per-instance owner token (survives re-renders, unique per mount).
   const ownerIdRef = useRef(`voice-owner-${Math.random().toString(36).slice(2)}`);
   const ownerId = ownerIdRef.current;
   const owns = () => voiceRecorderStore.recordingOwnerId.value === ownerId;
+  // Mid-transcription composers pass false: the in-flight request's error
+  // path cancels "its" recording, which would destroy an unrelated capture
+  // adopted in that window.
+  const autoAdopt = options?.autoAdopt !== false;
 
   // Session changes (mount + retarget) drive both the retarget guard and
   // adoption; ownership transitions re-trigger adoption so a recording freed
@@ -46,15 +50,19 @@ export function useVoiceRecorder(sessionId: string) {
     prevSessionIdRef.current = sessionId;
     // Adopt: a recording for THIS session with no live owner becomes ours.
     // adopt() refuses owned recordings, so concurrently-mounted composers are
-    // never disturbed.
-    voiceRecorderStore.adopt(ownerId, sessionId);
-  }, [ownerId, sessionId]);
+    // never disturbed. Deferred while mid-transcription for the same reason
+    // as the reactive adoption below.
+    if (autoAdopt) voiceRecorderStore.adopt(ownerId, sessionId);
+  }, [ownerId, sessionId, autoAdopt]);
 
   // Re-attempt adoption whenever ownership frees up (the ownerId signal
   // transitions to orphaned while this composer stays bound to its session).
+  // Skipped while this composer is mid-transcription (autoAdopt=false): the
+  // in-flight request's error path cancels "its" recording, and adopting an
+  // unrelated new capture in that window would let that cancel destroy it.
   useSignalEffect(() => {
     void voiceRecorderStore.recordingOwnerId.value;
-    voiceRecorderStore.adopt(ownerId, sessionId);
+    if (autoAdopt) voiceRecorderStore.adopt(ownerId, sessionId);
   });
 
   // Reading these signals during render subscribes through @preact/signals —

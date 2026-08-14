@@ -279,8 +279,11 @@ export default function MessageInput({
     handlePaste,
   } = useFileAttachments();
   const { handleInterrupt } = useInterrupt({ sessionId });
-  const voiceRecorder = useVoiceRecorder(sessionId);
   const [isTranscribing, setIsTranscribing] = useState(false);
+  // Mid-transcription, do NOT auto-adopt an orphaned same-session recording:
+  // the in-flight request's error path cancels "its" recording, which would
+  // destroy an unrelated capture adopted in that window.
+  const voiceRecorder = useVoiceRecorder(sessionId, { autoAdopt: !isTranscribing });
   const voiceSettings = globalSettings.value?.voice;
   const voiceEnabled = voiceSettings?.enabled ?? false;
   const voiceConfigured = (() => {
