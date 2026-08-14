@@ -73,7 +73,6 @@ import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import type { SpaceRuntimeService } from './space-runtime-service';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
-import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
 import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
@@ -117,11 +116,9 @@ import type { WorkflowArtifactProfile } from './artifact-profile';
 import type { AgentMemoryRepository } from '../../../storage/repositories/agent-memory-repository';
 import type { EvolutionScopeService } from '../evolution-scope-service';
 import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools';
-import { RUNTIME_ESCALATION_REASONS } from './escalation-reasons';
 import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator';
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import { validateGlobPattern } from '../../external-events/topic-validator';
-import { executeGateScript } from './gate-script-executor';
 import { HookExecutor } from './hook-executor';
 import {
   clearAllRetryableHookActionTimers,
@@ -135,7 +132,6 @@ import {
   type SlotOverrides,
 } from '../agents/custom-agent';
 import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager';
-import { formatGatedHandoffCall, getSendMessageTargets } from './gated-handoff-guidance';
 import { Logger } from '../../logger';
 import {
   formatAgentMessage,
@@ -265,10 +261,6 @@ export interface TaskAgentManagerConfig {
   taskRepo: SpaceTaskRepository;
   /** Workflow run repository — reading and updating runs */
   workflowRunRepo: SpaceWorkflowRunRepository;
-  /** Gate data repository — for reading and writing gate runtime data in node agent tools */
-  gateDataRepo: GateDataRepository;
-  /** Gate open state repository — for persisting gate-open cache across daemon restarts */
-  gateOpenStateRepo?: import('../../../storage/repositories/gate-open-state-repository').GateOpenStateRepository;
   /** Channel cycle repository — for per-channel cycle tracking in cyclic workflows */
   channelCycleRepo: ChannelCycleRepository;
   /** InternalEventBus<DaemonInternalEventMap> — event bus for session state change subscriptions */
@@ -638,6 +630,11 @@ export class TaskAgentManager {
    */
   private rateLimitListenerUnsubs: Array<() => void> = [];
   /**
+   * Unsubs for the agent-activity listeners (SDK toolUse created/consumed) that
+   * refresh `NodeExecution.lastActivityAt`. Torn down in `cleanupAll()`.
+   */
+  private activityListenerUnsubs: Array<() => void> = [];
+  /**
    * Sub-sessions currently in a rate/usage-limit cooldown, keyed by parent
    * taskId → (sessionId → the session's own limit entry). A task with multiple
    * parallel node-agent sessions can have several limited at once; the task is
@@ -656,6 +653,7 @@ export class TaskAgentManager {
     this.auditLogRepo = new McpAuditLogRepository(this.config.db.getDatabase());
     this.subscribeToTaskArchiveEvents();
     this.subscribeToRateLimitEvents();
+    this.subscribeToActivityTracking();
   }
 
   *getTrackedAgentRootPids(): Iterable<number> {
@@ -813,6 +811,72 @@ export class TaskAgentManager {
         { subscriberName: 'TaskAgentManager.rateLimitResume' }
       )
     );
+  }
+
+  /**
+   * Subscribe to SDK tool-call/tool-result events to refresh
+   * `NodeExecution.lastActivityAt`.
+   *
+   * Tool activity is the strongest, most frequent "the agent is plainly working"
+   * signal and — crucially — it is never produced by the runtime's own recovery
+   * machinery (runtime nags are user messages with no tool_use), so subscribing
+   * here cannot create a feedback loop that defeats stall detection. An agent
+   * that responds to a nag with tool calls IS genuinely working, so advancing
+   * the activity timestamp in that case is correct.
+   *
+   * This source also captures a node's OWN commit pushes: a push is a tool call
+   * (`git`/`gh` via Bash) on that node's session, so it refreshes `lastActivityAt`
+   * for exactly the pushing node. A PR-level `pull_request.synchronize` event is
+   * deliberately NOT used — it fans out to every subscribed target and would mark
+   * idle co-subscribers active (see `deliverExternalEventToWorkflowTarget`).
+   *
+   * Each event is resolved to its node execution via the session→execution index
+   * and the dedicated `touchLastActivity` path is used so `updatedAt` (state-write
+   * semantic) is left untouched. Activity tracking must never throw into the
+   * caller; failures are logged at debug and swallowed.
+   */
+  private subscribeToActivityTracking(): void {
+    if (this.activityListenerUnsubs.length > 0) return;
+
+    this.activityListenerUnsubs.push(
+      this.config.internalEventBus.subscribe(
+        'sdk.toolUse.created',
+        (event) => {
+          this.recordActivityForSession(event.sessionId, event.timestamp);
+        },
+        { subscriberName: 'TaskAgentManager.activityToolUseCreated' }
+      )
+    );
+
+    this.activityListenerUnsubs.push(
+      this.config.internalEventBus.subscribe(
+        'sdk.toolUse.consumed',
+        (event) => {
+          this.recordActivityForSession(event.sessionId, event.timestamp);
+        },
+        { subscriberName: 'TaskAgentManager.activityToolUseConsumed' }
+      )
+    );
+  }
+
+  /**
+   * Advance `lastActivityAt` for whatever node execution owns `sessionId`.
+   *
+   * Shared by the SDK tool-event subscribers and the peer-message-delivery
+   * wrapper. Silent no-op when the session has no execution row (e.g. the
+   * post-approval merger session, or a session that was already torn down).
+   * Never throws — activity tracking is best-effort and must not break the
+   * surrounding delivery/event path.
+   */
+  private recordActivityForSession(sessionId: string, at: number = Date.now()): void {
+    try {
+      const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
+      if (execution) {
+        this.config.nodeExecutionRepo.touchLastActivity(execution.id, at);
+      }
+    } catch (err) {
+      log.debug(`TaskAgentManager: failed to record activity for session ${sessionId}:`, err);
+    }
   }
 
   /**
@@ -1220,16 +1284,6 @@ export class TaskAgentManager {
       });
 
       if (shouldKickoff) {
-        // Snapshot gate data for this workflow run so the builder can render the
-        // current PR URL (and any other derived runtime fields) in the user
-        // message. Safe to call even on fresh runs — returns [] when empty.
-        const gateDataSnapshot = this.config.gateDataRepo
-          .listByRun(workflowRun.id)
-          .map((record) => ({
-            gateId: record.gateId,
-            data: record.data,
-            updatedAt: record.updatedAt,
-          }));
         const goal = task.goalId ? this.config.goalService?.getGoal(task.goalId) : null;
         const linkedGoal = goal?.spaceId === task.spaceId ? goal : null;
 
@@ -1259,7 +1313,6 @@ export class TaskAgentManager {
           slotOverrides,
           nodeId: execution.workflowNodeId,
           agentSlotName: execution.agentName,
-          gateData: gateDataSnapshot,
           coreMemories,
           relevantMemories,
         });
@@ -1369,6 +1422,7 @@ export class TaskAgentManager {
             startedAt: null,
             completedAt: null,
             updatedAt: 0,
+            lastActivityAt: null,
           };
         }
         if (prevExec?.agentSessionId) {
@@ -1680,6 +1734,12 @@ export class TaskAgentManager {
     // be delivered to the merger.
     const drainWorkflowNodeId = execution?.workflowNodeId ?? null;
     const executionless = !execution;
+    // Drain the bare agent name (new bare+workflowNodeId rows and legacy bare
+    // null-node rows) plus the legacy "<nodeName>/<agent>" compound form. The
+    // "<nodeId>/<agent>" alias is intentionally NOT drained here: the router now
+    // emits bare+workflowNodeId (so node-id compounds are no longer produced),
+    // and matching that alias against null-node rows misdelivered messages whose
+    // bare slot name happened to equal "<nodeId>/<agent>".
     const queueTargetNames = [
       targetAgentName,
       ...(workflowNodeName ? [`${workflowNodeName}/${targetAgentName}`] : []),
@@ -1687,7 +1747,7 @@ export class TaskAgentManager {
     const seenIds = new Set<string>();
     const pending = queueTargetNames
       .flatMap((targetName) =>
-        drainWorkflowNodeId
+        drainWorkflowNodeId != null
           ? repo.listPendingForTarget(workflowRunId, targetName, drainWorkflowNodeId)
           : repo.listPendingForTarget(workflowRunId, targetName)
       )
@@ -1725,10 +1785,22 @@ export class TaskAgentManager {
           message,
           isSyntheticMessage,
           undefined,
-          undefined,
+          // Replay a persisted deferred ("queue for next turn") human message
+          // with 'defer' so it lands as a deferred row when the freshly-spawned
+          // session is busy, instead of defaulting to immediate (steering the
+          // kickoff). NULL/legacy rows keep the prior immediate behavior.
+          row.deliveryMode ?? undefined,
           undefined,
           row.id
         );
+        // A queued peer message was just delivered (the target was unavailable
+        // when it was sent, so it went through the pending queue rather than the
+        // router's immediate path). That is inbound activity — refresh
+        // lastActivityAt so peer-message activity is captured on this common
+        // activation/rehydration path too. Runtime recovery nags never reach
+        // here (they use injectRuntimeRecoveryMessage), so this cannot reset the
+        // stall detector's timer on the runtime's own nag.
+        this.recordActivityForSession(sessionId);
         repo.markDelivered(row.id, sessionId);
         this.emitPendingDelivered(row.id, sessionId, row);
       } catch (err) {
@@ -2842,8 +2914,7 @@ export class TaskAgentManager {
       if (!run?.workflowId) return false;
       const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
       if (!workflow) return false;
-      const spaceManager = this.config.spaceManager;
-      const space = await spaceManager.getSpace(task.spaceId);
+      const space = await this.config.spaceManager.getSpace(task.spaceId);
       if (!space) return false;
 
       // Find the node whose declared agent slots include `agentName`.
@@ -2869,36 +2940,10 @@ export class TaskAgentManager {
         workflowManager: this.config.spaceWorkflowManager,
         agentManager: this.config.spaceAgentManager,
         nodeExecutionRepo: this.config.nodeExecutionRepo,
-        gateDataRepo: this.config.gateDataRepo,
-        gateOpenStateRepo: this.config.gateOpenStateRepo,
         channelCycleRepo: this.config.channelCycleRepo,
-        db: this.config.db.getDatabase(),
-        // Mirror the canonical resolution used by spawn/rehydrate paths:
-        // prefer the cached worktree path (with DB-sync fallback inside
-        // `getTaskWorktreePath`), and fall back to the space root if no
-        // worktree exists yet for this task.
-        workspacePath: this.getTaskWorktreePath(taskId) ?? space.workspacePath,
-        gateRetryScheduler: this.config.spaceRuntimeService.getGateRetryScheduler(),
-        getSpaceAutonomyLevel: async (spaceId) => {
-          const s = await spaceManager.getSpace(spaceId);
-          return s?.autonomyLevel ?? 1;
-        },
         isSessionAlive: (sid) => this.isSessionAlive(sid),
         cancelSessionById: (sid) => this.cancelBySessionId(sid),
         internalEventBus: this.config.internalEventBus,
-        onGatePendingApproval: (runId, gateId) =>
-          this.config.spaceRuntimeService.handleGatePendingApproval(runId, gateId),
-        onGateDataChangedComplete: (runId, _gateId, activatedTasks, gateOpened) => {
-          // Same full post-eval chain as the service-level notifyGateDataChanged
-          // (sync + resume when gate opened) so the deferred-retry path picks
-          // up gate openings the same way as immediate invocations.
-          void this.config.spaceRuntimeService.handleGateDataChangedComplete(
-            runId,
-            activatedTasks,
-            gateOpened
-          );
-        },
-        getPrUrlForRun: (runId) => this.resolvePrUrlForRun(runId),
       });
 
       await channelRouter.activateNode(run.id, targetNodeId, {
@@ -3422,6 +3467,8 @@ export class TaskAgentManager {
     }
     for (const unsub of this.rateLimitListenerUnsubs) unsub();
     this.rateLimitListenerUnsubs = [];
+    for (const unsub of this.activityListenerUnsubs) unsub();
+    this.activityListenerUnsubs = [];
     const taskIds = Array.from(this.subSessions.keys());
     await Promise.allSettled(taskIds.map((taskId) => this.shutdownTask(taskId)));
     log.info(`TaskAgentManager: cleanupAll complete (${taskIds.length} tasks shut down)`);
@@ -3768,7 +3815,7 @@ export class TaskAgentManager {
       '## Runtime Execution Contract',
       `Role: "${execution.agentName}"`,
       'Tools available:',
-      '  - send_message({ target, message, data? }) — communicate with peers; data is automatically written to the gate when the channel is gated',
+      '  - send_message({ target, message, data? }) — communicate with peers; `data` is passed through to the target agent',
       '  - save_artifact({ shape, kind?, key?, summary?, data? }) — persist a STRUCTURED FACT as a generic shape (link/commit_set/check/metric/decision/note) with a freeform `kind` hint. Use shape="note" for rolling status, shape="decision" for verdicts/outcomes. Do not re-narrate the chat thread into artifacts.',
       ...endNodeContractLines('  '),
       '  - list_artifacts({ nodeId?, type? }) — list artifacts for the current workflow run',
@@ -3786,78 +3833,17 @@ export class TaskAgentManager {
       return fallback;
     }
 
-    const fromRefs = new Set<string>([
-      execution.agentName,
-      node.name,
-      node.id,
-      `${node.id}/${execution.agentName}`,
-    ]);
-
-    const outboundGatedChannels = (workflow.channels ?? []).filter(
-      (channel) => !!channel.gateId && (channel.from === '*' || fromRefs.has(channel.from))
-    );
-
     const lines: string[] = [
       '## Runtime Execution Contract',
       `Node: "${node.name}" (${node.id})`,
       `Agent: "${execution.agentName}"`,
       'Tools available:',
-      '  - send_message({ target, message, data? }) — communicate with peers; when a channel is gated, `data` is automatically merged into the gate',
+      '  - send_message({ target, message, data? }) — communicate with peers; `data` is passed through to the target agent',
       '  - save_artifact({ shape, kind?, key?, summary?, data? }) — persist a STRUCTURED FACT as a generic shape (link/commit_set/check/metric/decision/note) with a freeform `kind` hint. Use shape="note" for rolling status, shape="decision" for verdicts/outcomes.',
-      ...endNodeContractLines('  '),
-      '  - list_artifacts({ nodeId?, type? }) — list artifacts for the current workflow run',
-      '  - list_peers / list_reachable_agents / list_channels / list_gates / read_gate — discovery',
+      '  - list_artifacts ({ nodeId?, type? }) — list artifacts for the current workflow run',
+      '  - list_peers / list_reachable_agents — discovery',
       '  - restore_node_agent({ reason? }) — self-heal fallback: if a previous mcp__node-agent__* call ever returned "No such tool available", call this once and then retry the original tool',
     ];
-
-    if (outboundGatedChannels.length === 0) {
-      lines.push('No outbound gated channels are currently mapped from this agent/node.');
-    } else {
-      const gateById = new Map((workflow.gates ?? []).map((gate) => [gate.id, gate]));
-      const agentNameAliases = this.buildAgentNameAliasesForExecution(workflow, execution);
-      lines.push('Outbound gated channels (data in send_message satisfies these gates):');
-
-      for (const channel of outboundGatedChannels) {
-        const gateId = channel.gateId!;
-        const target = Array.isArray(channel.to) ? channel.to.join(', ') : channel.to;
-        lines.push(`- Gate "${gateId}" for channel "${channel.from}" -> "${target}"`);
-
-        const gate = gateById.get(gateId);
-        if (!gate) {
-          lines.push(
-            `  - Gate definition not found in workflow (treat as blocked until fixed). Escalation reason: ${RUNTIME_ESCALATION_REASONS.AMBIGUOUS_GATE}.`
-          );
-          continue;
-        }
-
-        const writableFields = (gate.fields ?? []).filter((field) =>
-          this.isWriterAuthorizedForAgentNameAliases(field.writers, agentNameAliases)
-        );
-        if (writableFields.length === 0) {
-          const aliasSuffix =
-            agentNameAliases.length > 1 ? ` (aliases: ${agentNameAliases.join(', ')})` : '';
-          lines.push(
-            `  - No gate fields are writable by agent "${execution.agentName}"${aliasSuffix}; ensure required artifacts/checks are ready.`
-          );
-          continue;
-        }
-
-        for (const target of getSendMessageTargets(
-          channel.to,
-          this.getBroadcastTargets(workflow, node, execution.agentName)
-        )) {
-          lines.push(
-            `  - When ready, call \`${formatGatedHandoffCall(target, writableFields)}\`; this is required to activate the target. \`save_artifact\` alone does not deliver gated handoffs.`
-          );
-        }
-        lines.push(`  - Include in send_message data:`);
-        for (const field of writableFields) {
-          lines.push(
-            `    • ${field.name} (${field.type}) — check: ${this.describeGateCheck(field.check)}`
-          );
-        }
-      }
-    }
 
     lines.push(
       `Escalation: send_message({ target: "${WORKFLOW_ESCALATION_TARGET}", message }) requests human/space-level judgment (use for misrouted no-code tasks or hard blockers).`
@@ -3877,42 +3863,6 @@ export class TaskAgentManager {
       }
     }
     return lines.join('\n');
-  }
-
-  private describeGateCheck(check: {
-    op: string;
-    value?: unknown;
-    match?: unknown;
-    min?: number;
-  }): string {
-    if (check.op === 'exists') return 'exists';
-    if (check.op === 'count') {
-      return `count(${JSON.stringify(check.match)}) >= ${check.min ?? 0}`;
-    }
-    if (check.op === '==') return `== ${JSON.stringify(check.value)}`;
-    if (check.op === '!=') return `!= ${JSON.stringify(check.value)}`;
-    return check.op;
-  }
-
-  private getBroadcastTargets(
-    workflow: SpaceWorkflow,
-    currentNode: WorkflowNode,
-    agentName: string
-  ): string[] {
-    const targets = new Set<string>();
-    for (const node of workflow.nodes) {
-      if (node.id !== currentNode.id) targets.add(node.name);
-      for (const agent of node.agents ?? []) {
-        if (node.id === currentNode.id && agent.name === agentName) continue;
-        targets.add(agent.name);
-      }
-    }
-    targets.delete(currentNode.name);
-    return [...targets];
-  }
-
-  private normalizeAgentNameToken(value: string): string {
-    return value.trim().toLowerCase();
   }
 
   private agentNameVariants(value: string): string[] {
@@ -4012,21 +3962,6 @@ export class TaskAgentManager {
     }
 
     return [...aliases];
-  }
-
-  private isWriterAuthorizedForAgentNameAliases(
-    writers: string[],
-    agentNameAliases: string[]
-  ): boolean {
-    const normalizedAliases = new Set(
-      agentNameAliases
-        .map((alias) => this.normalizeAgentNameToken(alias))
-        .filter((alias) => alias.length > 0)
-    );
-    return writers.some((writer) => {
-      const normalizedWriter = this.normalizeAgentNameToken(writer);
-      return normalizedWriter === '*' || normalizedAliases.has(normalizedWriter);
-    });
   }
 
   // -------------------------------------------------------------------------
@@ -5174,25 +5109,14 @@ export class TaskAgentManager {
         )
       : undefined;
 
-    // Build a ChannelRouter so write_gate can trigger onGateDataChanged, which
-    // re-evaluates gated channels and lazily activates target nodes when a gate opens.
-    const spaceManager = this.config.spaceManager;
+    // Build a ChannelRouter so node messaging can lazily activate target nodes.
     const nodeAgentChannelRouter = new ChannelRouter({
       taskRepo: this.config.taskRepo,
       workflowRunRepo: this.config.workflowRunRepo,
       workflowManager: this.config.spaceWorkflowManager,
       agentManager: this.config.spaceAgentManager,
       nodeExecutionRepo: this.config.nodeExecutionRepo,
-      gateDataRepo: this.config.gateDataRepo,
-      gateOpenStateRepo: this.config.gateOpenStateRepo,
       channelCycleRepo: this.config.channelCycleRepo,
-      db: this.config.db.getDatabase(),
-      workspacePath,
-      gateRetryScheduler: this.config.spaceRuntimeService.getGateRetryScheduler(),
-      getSpaceAutonomyLevel: async (spaceId) => {
-        const s = await spaceManager.getSpace(spaceId);
-        return s?.autonomyLevel ?? 1;
-      },
       isSessionAlive: (sid) => this.isSessionAlive(sid),
       cancelSessionById: (sid) => this.cancelBySessionId(sid),
       // The merger sub-session has no node_execution row, so this router's
@@ -5212,23 +5136,6 @@ export class TaskAgentManager {
       // that auto-reopens a terminal run still emits `workflow_run_reopened`
       // into the Space Agent session.
       internalEventBus: this.config.internalEventBus,
-      onGatePendingApproval: (runId, gateId) =>
-        this.config.spaceRuntimeService.handleGatePendingApproval(runId, gateId),
-      onGateDataChangedComplete: (runId, _gateId, activatedTasks, gateOpened) => {
-        // Catches the deferred retry path: when a rate-limited gate eval
-        // schedules a refresh via gateRetryScheduler, the retry fires
-        // router.onGateDataChanged directly and bypasses the service-level
-        // post-hook wired in onGateDataChanged above. Route those retry
-        // completions through the same full post-eval chain (sync + resume
-        // when gate opened) so a deferred gate opening does not leave the
-        // workflow stuck in `blocked`.
-        void this.config.spaceRuntimeService.handleGateDataChangedComplete(
-          runId,
-          activatedTasks,
-          gateOpened
-        );
-      },
-      getPrUrlForRun: (runId) => this.resolvePrUrlForRun(runId),
     });
     const agentMessageRouter = new AgentMessageRouter({
       nodeExecutionRepo: this.config.nodeExecutionRepo,
@@ -5236,6 +5143,14 @@ export class TaskAgentManager {
       workflowChannels: channels,
       messageInjector: async (targetSessionId, message) => {
         await this.injectSubSessionMessage(targetSessionId, message, true);
+        // A peer message was just delivered to this node-agent session — that is
+        // inbound activity, so refresh lastActivityAt. Runtime recovery nags do
+        // NOT take this path (they call injectSubSessionMessageWithOrigin
+        // directly, bypassing the router), so this cannot reset the stall
+        // detector's timer on the runtime's own nag. Stamped only after a
+        // successful inject; a throw above skips this so a failed delivery does
+        // not register as activity.
+        this.recordActivityForSession(targetSessionId);
       },
       activateTargetSession: (targetAgentName) =>
         this.activateTargetSessionsForMessage(taskId, workflowRunId, targetAgentName, {
@@ -5297,8 +5212,15 @@ export class TaskAgentManager {
       //      workflow node stranded in `pending` state would otherwise queue
       //      forever. `activateNode` is idempotent so this is safe regardless
       //      of the existing row's status.
-      onMessageQueued: (targetAgentName) => {
-        void this.tryResumeNodeAgentSession(workflowRunId, targetAgentName).catch((err) => {
+      onMessageQueued: (targetAgentName, queuedWorkflowNodeId) => {
+        // The router now passes the BARE slot name (+ resolved node id); the
+        // compound form never matched a declared agent, so lazy activation was a
+        // no-op for @worker queues before.
+        void this.tryResumeNodeAgentSession(
+          workflowRunId,
+          targetAgentName,
+          queuedWorkflowNodeId
+        ).catch((err) => {
           log.warn(
             `AgentMessageRouter.onMessageQueued: tryResumeNodeAgentSession failed for "${targetAgentName}": ${err instanceof Error ? err.message : String(err)}`
           );
@@ -5311,6 +5233,7 @@ export class TaskAgentManager {
           void this.ensureWorkflowNodeActivationForAgent(taskId, targetAgentName, {
             reopenReason: `node-agent send_message to lazily activate "${targetAgentName}"`,
             reopenBy: `agent:${agentName}`,
+            workflowNodeId: queuedWorkflowNodeId,
           }).catch((err) => {
             log.warn(
               `AgentMessageRouter.onMessageQueued: ensureWorkflowNodeActivationForAgent failed for "${targetAgentName}": ${err instanceof Error ? err.message : String(err)}`
@@ -5478,6 +5401,19 @@ export class TaskAgentManager {
       );
       return jsonResult(result);
     };
+    const onListSubscriptions = async (args: { workflowRunId?: string; nodeId?: string }) => {
+      try {
+        const result = this.config.spaceRuntimeService.listSubscriptions(
+          args.workflowRunId ?? workflowRunId,
+          spaceId,
+          args.nodeId
+        );
+        return jsonResult(result);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return jsonResult({ success: false, error: message });
+      }
+    };
     const onCreateStandaloneTask = async (args: {
       title: string;
       description: string;
@@ -5636,23 +5572,6 @@ export class TaskAgentManager {
       agentMessageRouter,
       internalEventBus: this.config.internalEventBus,
       workflow,
-      gateDataRepo: this.config.gateDataRepo,
-      onGateDataChanged: async (runId, gateId) => {
-        const activated = await nodeAgentChannelRouter.onGateDataChanged(runId, gateId);
-        return activated;
-      },
-      gateRetryScheduler: this.config.spaceRuntimeService.getGateRetryScheduler(),
-      scriptExecutor: executeGateScript,
-      // gateId is overridden per-gate by the handler ({ ...scriptContext, gateId }).
-      // workflowStartIso is sourced from the run's createdAt so gate scripts can
-      // filter activity by "since workflow start" (e.g. review-posted-gate).
-      scriptContext: {
-        workspacePath,
-        runId: workflowRunId,
-        gateId: '',
-        workflowStartIso: run ? new Date(run.createdAt).toISOString() : undefined,
-        prUrl: this.resolvePrUrlForRun(workflowRunId) || undefined,
-      },
       onApproveTask,
       onSubmitForApproval,
       onMarkComplete,
@@ -5661,15 +5580,12 @@ export class TaskAgentManager {
       onArchiveTask,
       onSubscribeExternalEvent,
       onUnsubscribeExternalEvent,
+      onListSubscriptions,
       artifactRepo: this.config.artifactRepo,
       artifactProfile: this.config.artifactProfile,
       taskRepo: this.config.taskRepo,
       auditLogRepo: this.auditLogRepo,
       externalEventStore: this.config.externalEventStore,
-      getSpaceAutonomyLevel: async (sid) => {
-        const s = await spaceManager.getSpace(sid);
-        return s?.autonomyLevel ?? 1;
-      },
       onRestoreNodeAgent,
       replyRoutingLookup: (fromAgentName) => {
         const registry = this.config.replyRoutingRegistry;
@@ -5903,11 +5819,5 @@ export class TaskAgentManager {
     const candidateId = prevExec?.agentSessionId ?? null;
     if (!candidateId) return null;
     return this.getSubSession(candidateId) ? candidateId : null;
-  }
-
-  private resolvePrUrlForRun(runId: string): string {
-    // Delegated to the domain artifact profile (coding: resolves the PR URL
-    // across gate data, hook state, and artifacts by recency).
-    return this.config.artifactProfile?.resolvePrimaryLinkUrl(runId) ?? '';
   }
 }

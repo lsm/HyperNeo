@@ -105,7 +105,6 @@ vi.mock('../../../lib/space-store', () => ({
       unsubscribeTaskActivity: vi.fn(),
       ensureConfigData: vi.fn().mockResolvedValue(undefined),
       ensureNodeExecutions: vi.fn().mockResolvedValue(undefined),
-      listGateData: vi.fn().mockResolvedValue([]),
       workflowVersions: signal(new Map()),
     };
   },
@@ -188,7 +187,8 @@ describe('SpaceTaskPane — image passthrough', () => {
       'task-1',
       'check this screenshot',
       { kind: 'node_agent', agentName: 'coder' },
-      [sampleImage]
+      [sampleImage],
+      undefined
     );
   });
 
@@ -209,6 +209,7 @@ describe('SpaceTaskPane — image passthrough', () => {
       'task-1',
       'plain text',
       { kind: 'node_agent', agentName: 'coder' },
+      undefined,
       undefined
     );
   });

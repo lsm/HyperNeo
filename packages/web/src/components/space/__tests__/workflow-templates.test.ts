@@ -232,6 +232,31 @@ describe('workflowToTemplate', () => {
     expect(template.tags).toEqual(['coding', 'review']);
   });
 
+  it('carries handoff transitions through to template steps and built nodes', () => {
+    // A workflow cloned via the template picker must keep its handoff contract:
+    // workflowToTemplate copies node transitions onto the step, and
+    // buildTemplateNodes copies them onto the NodeDraft so the save serializer
+    // can re-emit them.
+    const transitions = [{ id: 'to-code', target: 'Code' }];
+    const wf = makeWorkflow({
+      nodes: [
+        {
+          id: 'step-1',
+          name: 'Plan',
+          agents: [{ agentId: 'agent-1', name: 'planner' }],
+          transitions,
+        },
+        { id: 'step-2', name: 'Code', agents: [{ agentId: 'agent-2', name: 'coder' }] },
+      ],
+    });
+    const template = workflowToTemplate(wf);
+    expect(template.steps![0].handoffTransitions).toEqual(transitions);
+
+    const agents = [makeAgent('agent-1', 'planner'), makeAgent('agent-2', 'coder')];
+    const [node] = buildTemplateNodes(template, agents);
+    expect(node.handoffTransitions).toEqual(transitions);
+  });
+
   it('maps single-agent nodes to steps with role', () => {
     const wf = makeWorkflow();
     const template = workflowToTemplate(wf);

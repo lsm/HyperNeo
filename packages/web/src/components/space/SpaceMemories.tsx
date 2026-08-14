@@ -15,6 +15,13 @@ import { Button } from '../ui/Button';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { memoryStore } from '../../lib/memory-store';
 import { toast } from '../../lib/toast';
+import { cn } from '../../lib/utils';
+import {
+  FLAT_SURFACE,
+  GLASS_CONTENT_CONTAINER_CLASS,
+  GLASS_PRIMARY_BUTTON_CLASS,
+  GLASS_SURFACE,
+} from './glass-workspace';
 import { SpaceMemoryEditor } from './SpaceMemoryEditor';
 
 const SEARCH_DEBOUNCE_MS = 250;
@@ -41,30 +48,38 @@ interface MemoryCardProps {
 
 function MemoryCard({ memory, onEdit, onDelete }: MemoryCardProps) {
   return (
-    <div class="group border-b border-white/10 py-3 last:border-b-0">
+    <div
+      class={cn(
+        'group relative flex min-h-[12rem] flex-col rounded-2xl border p-5 transition duration-200 hover:-translate-y-0.5 hover:border-white/25',
+        FLAT_SURFACE
+      )}
+    >
       <div class="flex items-start justify-between gap-3">
         <div class="min-w-0 flex-1">
-          <span class="block truncate font-mono text-sm font-medium text-gray-100">
+          <span class="block truncate font-mono text-sm font-semibold text-gray-100">
             {memory.key}
           </span>
-          <p class="mt-1 line-clamp-3 whitespace-pre-wrap break-words text-xs leading-5 text-gray-400">
+          <p class="mt-1.5 line-clamp-3 whitespace-pre-wrap break-words text-sm leading-5 text-gray-300">
             {memory.content}
           </p>
-          <div class="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-gray-600">
+          <div class="mt-2.5 flex flex-wrap items-center gap-1.5 text-[11px] text-gray-500">
             <span>Updated {formatDate(memory.updatedAt)}</span>
             {memory.accessCount > 0 && <span>· {memory.accessCount} reads</span>}
             {memory.tags.map((tag) => (
-              <span key={tag} class="rounded border border-white/10 px-1.5 py-0.5 text-gray-500">
+              <span
+                key={tag}
+                class="rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-gray-400"
+              >
                 {tag}
               </span>
             ))}
           </div>
         </div>
-        <div class="flex flex-shrink-0 items-center gap-1 opacity-70 transition-opacity group-hover:opacity-100">
+        <div class="flex flex-shrink-0 items-center gap-1 opacity-60 transition-opacity group-hover:opacity-100">
           <button
             type="button"
             onClick={() => onEdit(memory)}
-            class="rounded-md p-1.5 text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-300"
+            class="rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-white/5 hover:text-gray-200"
             aria-label={`Edit memory ${memory.key}`}
             data-testid={`memory-edit-${memory.key}`}
           >
@@ -80,7 +95,7 @@ function MemoryCard({ memory, onEdit, onDelete }: MemoryCardProps) {
           <button
             type="button"
             onClick={() => onDelete(memory)}
-            class="rounded-md p-1.5 text-gray-500 transition-colors hover:bg-white/5 hover:text-red-400"
+            class="rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-white/5 hover:text-red-400"
             aria-label={`Delete memory ${memory.key}`}
             data-testid={`memory-delete-${memory.key}`}
           >
@@ -99,17 +114,9 @@ function MemoryCard({ memory, onEdit, onDelete }: MemoryCardProps) {
   );
 }
 
-function PlusIcon() {
-  return (
-    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M12 4v16m8-8H4" />
-    </svg>
-  );
-}
-
 function MemoryIcon() {
   return (
-    <svg class="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+    <svg class="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
       <path
         stroke-linecap="round"
         stroke-linejoin="round"
@@ -232,8 +239,15 @@ export function SpaceMemories({ spaceId }: SpaceMemoriesProps) {
   if (!loaded && !error) {
     return (
       <div class="h-full overflow-y-auto">
-        <div class="min-h-[calc(100%+1px)] flex items-center justify-center">
-          <span class="text-xs text-gray-600 animate-pulse">Loading memories...</span>
+        <div class="mx-auto w-full max-w-6xl px-4 pb-10 pt-4 sm:px-8">
+          <div
+            class={cn(
+              'flex min-h-[12rem] items-center justify-center rounded-2xl border p-6',
+              FLAT_SURFACE
+            )}
+          >
+            <span class="text-xs text-gray-400 animate-pulse">Loading memories...</span>
+          </div>
         </div>
       </div>
     );
@@ -242,136 +256,159 @@ export function SpaceMemories({ spaceId }: SpaceMemoriesProps) {
   const trimmedSearch = searchInput.trim();
 
   return (
-    <div class="flex h-full min-h-0 flex-col">
-      <div class="mb-3 flex flex-shrink-0 flex-col gap-3 rounded-lg border border-white/10 bg-white/[0.035] px-3 py-3">
-        <div class="flex items-center justify-between gap-3">
-          <div class="flex min-w-0 items-start gap-3">
-            <div class="mt-0.5 h-8 w-1 flex-shrink-0 rounded-full bg-pink-400/70" />
-            <div class="min-w-0">
-              <p class="text-xs font-semibold uppercase tracking-wider text-gray-300">
+    <div class="flex h-full min-h-0 flex-col overflow-hidden">
+      <div class="flex-1 overflow-y-auto">
+        <div class={GLASS_CONTENT_CONTAINER_CLASS}>
+          <section
+            class={cn(
+              'mb-5 flex flex-col gap-4 rounded-2xl border p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6',
+              GLASS_SURFACE
+            )}
+            data-testid="space-memories-introduction"
+            aria-label="Memories workspace summary"
+          >
+            <div class="max-w-2xl">
+              <div class="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-amber-200/80">
+                <span class="h-1.5 w-1.5 rounded-full bg-amber-300" />
+                Persistent recall
+              </div>
+              <h2 class="mt-2 text-lg font-semibold tracking-tight text-gray-50">
                 Memories · {memories.length}
                 {hasMore ? '+' : ''} {searchActive ? 'results' : 'stored'}
-              </p>
-              <p class="mt-1 text-xs text-gray-500">
+              </h2>
+              <p class="mt-1 text-sm leading-5 text-gray-300">
                 Persistent facts, conventions, and decisions this space's agents can recall. Search
                 uses the hybrid keyword + semantic backend.
               </p>
             </div>
-          </div>
-          <Button
-            size="sm"
-            onClick={handleCreate}
-            icon={<PlusIcon />}
-            data-testid="memory-create-button"
-          >
-            New Memory
-          </Button>
-        </div>
-
-        <div class="relative">
-          <svg
-            class="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-600"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            aria-hidden="true"
-          >
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width={2}
-              d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-            />
-          </svg>
-          <input
-            type="text"
-            value={searchInput}
-            onInput={(e) => handleSearchInput((e.target as HTMLInputElement).value)}
-            placeholder="Search memories…"
-            class="w-full rounded-lg border border-white/10 bg-dark-950 py-1.5 pl-8 pr-8 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
-            aria-label="Search memories"
-            data-testid="memory-search-input"
-          />
-          {searchInput && (
             <button
               type="button"
-              onClick={() => handleSearchInput('')}
-              class="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-gray-500 hover:text-gray-300"
-              aria-label="Clear search"
+              onClick={handleCreate}
+              class={GLASS_PRIMARY_BUTTON_CLASS}
+              data-testid="memory-create-button"
             >
-              <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width={2}
-                  d="M6 18L18 6M6 6l12 12"
-                />
-              </svg>
+              New Memory
             </button>
+          </section>
+
+          <div class={cn('relative mb-4 rounded-2xl border p-1.5', GLASS_SURFACE)}>
+            <svg
+              class="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              aria-hidden="true"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width={2}
+                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+              />
+            </svg>
+            <input
+              type="text"
+              value={searchInput}
+              onInput={(e) => handleSearchInput((e.target as HTMLInputElement).value)}
+              placeholder="Search memories…"
+              class="w-full rounded-xl border border-white/10 bg-dark-950/80 py-2.5 pl-10 pr-9 text-sm text-gray-100 placeholder-gray-500 transition focus:border-blue-500/60 focus:outline-none"
+              aria-label="Search memories"
+              data-testid="memory-search-input"
+            />
+            {searchInput && (
+              <button
+                type="button"
+                onClick={() => handleSearchInput('')}
+                class="absolute right-3 top-1/2 -translate-y-1/2 rounded p-0.5 text-gray-500 transition hover:text-gray-300"
+                aria-label="Clear search"
+              >
+                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width={2}
+                    d="M6 18L18 6M6 6l12 12"
+                  />
+                </svg>
+              </button>
+            )}
+          </div>
+
+          {error && (
+            <div
+              class={cn(
+                'mb-5 flex flex-shrink-0 items-center justify-between gap-3 rounded-2xl border border-red-300/20 p-4 text-sm text-red-200',
+                FLAT_SURFACE
+              )}
+            >
+              <span>{error}</span>
+              <Button size="xs" variant="ghost" onClick={handleRetry}>
+                Retry
+              </Button>
+            </div>
+          )}
+
+          {memories.length === 0 ? (
+            <div
+              class={cn(
+                'flex flex-1 flex-col items-center justify-center rounded-2xl border border-dashed p-12 text-center',
+                FLAT_SURFACE
+              )}
+            >
+              <div class="mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-white/[0.05]">
+                <MemoryIcon />
+              </div>
+              {trimmedSearch ? (
+                <>
+                  <p class="text-sm font-medium text-gray-200">
+                    No memories match "{trimmedSearch}".
+                  </p>
+                  <p class="mt-1 text-xs text-gray-400">
+                    Try a different query or clear the search.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p class="text-sm font-medium text-gray-200">No memories stored yet.</p>
+                  <p class="mt-1 text-xs text-gray-400">
+                    Create a memory your agents can recall during sessions.
+                  </p>
+                  <div class="mt-4">
+                    <Button size="sm" variant="secondary" onClick={handleCreate}>
+                      New Memory
+                    </Button>
+                  </div>
+                </>
+              )}
+            </div>
+          ) : (
+            <div class="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(min(22rem,100%),1fr))]">
+              {memories.map((memory) => (
+                <MemoryCard
+                  key={memory.key}
+                  memory={memory}
+                  onEdit={handleEdit}
+                  onDelete={handleDeleteClick}
+                />
+              ))}
+            </div>
+          )}
+
+          {hasMore && (
+            <div class="mt-5 flex justify-center">
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => memoryStore.loadMore().catch(() => {})}
+                loading={loadingMore}
+                data-testid="memory-load-more"
+              >
+                Load more
+              </Button>
+            </div>
           )}
         </div>
       </div>
-
-      {error && (
-        <div class="mb-3 flex flex-shrink-0 items-center justify-between gap-3 rounded-lg border border-red-800/50 bg-red-900/20 px-3 py-2">
-          <span class="text-xs text-red-400">{error}</span>
-          <Button size="xs" variant="ghost" onClick={handleRetry}>
-            Retry
-          </Button>
-        </div>
-      )}
-
-      {memories.length === 0 ? (
-        <div class="flex flex-1 flex-col items-center justify-center py-12 text-center">
-          <div class="mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-dark-800">
-            <MemoryIcon />
-          </div>
-          {trimmedSearch ? (
-            <>
-              <p class="text-sm font-medium text-gray-400">No memories match "{trimmedSearch}".</p>
-              <p class="mt-1 text-xs text-gray-600">Try a different query or clear the search.</p>
-            </>
-          ) : (
-            <>
-              <p class="text-sm font-medium text-gray-400">No memories stored yet.</p>
-              <p class="mt-1 text-xs text-gray-600">
-                Create a memory your agents can recall during sessions.
-              </p>
-              <div class="mt-4">
-                <Button size="sm" variant="secondary" onClick={handleCreate}>
-                  New Memory
-                </Button>
-              </div>
-            </>
-          )}
-        </div>
-      ) : (
-        <div class="scrollbar-dark min-h-0 flex-1 overflow-y-auto pr-3">
-          <div class="min-h-[calc(100%+1px)]">
-            {memories.map((memory) => (
-              <MemoryCard
-                key={memory.key}
-                memory={memory}
-                onEdit={handleEdit}
-                onDelete={handleDeleteClick}
-              />
-            ))}
-            {hasMore && (
-              <div class="flex justify-center py-4">
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={() => memoryStore.loadMore().catch(() => {})}
-                  loading={loadingMore}
-                  data-testid="memory-load-more"
-                >
-                  Load more
-                </Button>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
 
       {editorOpen && (
         <SpaceMemoryEditor

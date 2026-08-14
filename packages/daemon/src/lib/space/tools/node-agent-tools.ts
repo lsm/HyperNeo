@@ -2,7 +2,7 @@
  * Node Agent Tools — MCP tool handlers for node agent sub-sessions.
  *
  * Action tools:
- *   send_message            — channel-validated direct messaging; auto-writes gate data on gated channels
+ *   send_message            — channel-validated direct messaging
  *   save_artifact           — persist typed data to the workflow run artifact store
  *   create_standalone_task  — create a new task in the same Space
  *
@@ -11,13 +11,9 @@
  *   list_peers            — discover other group members with agent names and permitted channels
  *   list_reachable_agents — list all reachable agents/nodes grouped by proximity
  *   list_channels         — list all channels declared in the workflow
- *   list_gates            — list all gates with current runtime data
- *   read_gate             — read current data for a specific gate
  *
  * Communication model:
  * - Node agents communicate via declared channel topology (`send_message`).
- * - When a channel is gated, the `data` payload in `send_message` is automatically
- *   merged into the gate's data store — no separate write_gate call needed.
  * - `save_artifact` stores artifacts in the workflow run table as a generic
  *   SHAPE from a closed vocabulary (link/commit_set/check/metric/decision/note)
  *   with a freeform `kind` semantic hint. Save STRUCTURED FACTS as the matching
@@ -28,7 +24,7 @@
  * Design:
  * - Handlers are pure functions tested independently of any MCP server layer.
  * - Dependencies are injected via `NodeAgentToolsConfig`.
- * - Message delivery is delegated to AgentMessageRouter for topology/gate validation.
+ * - Message delivery is delegated to AgentMessageRouter for topology validation.
  */
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
@@ -46,19 +42,11 @@ import type {
 import { Logger } from '../../logger';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import { ChannelResolver } from '../runtime/channel-resolver';
-import {
-  evaluateGate,
-  type GateScriptExecutorFn,
-  type GateScriptExecutorContext,
-} from '../runtime/gate-evaluator';
-import { RATE_LIMIT_MIN_BACKOFF_MS } from '../runtime/rate-limit-detector';
 import type { AgentMessageRouter } from '../runtime/agent-message-router';
-import type { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 import type { SpaceWorkflow } from '@hyperneo/shared';
 import {
   ARTIFACT_SHAPES,
-  computeGateDefaults,
   deriveArtifactKey,
   normalizeLinkData,
   resolveNodeAgents,
@@ -74,8 +62,6 @@ import {
   ListArtifactsSchema,
   ListReachableAgentsSchema,
   ListChannelsSchema,
-  ListGatesSchema,
-  ReadGateSchema,
   RestoreNodeAgentSchema,
   ListTasksSchema,
   GetTaskSchema,
@@ -87,6 +73,7 @@ import {
   SubscribePrEventsSchema,
   GetExternalEventSchema,
   ListDeliveriesSchema,
+  ListSubscriptionsSchema,
 } from './node-agent-tool-schemas';
 import type {
   ListPeersInput,
@@ -96,8 +83,6 @@ import type {
   ListArtifactsInput,
   ListReachableAgentsInput,
   ListChannelsInput,
-  ListGatesInput,
-  ReadGateInput,
   RestoreNodeAgentInput,
   ListTasksInput,
   GetTaskInput,
@@ -109,19 +94,17 @@ import type {
   SubscribePrEventsInput,
   GetExternalEventInput,
   ListDeliveriesInput,
+  ListSubscriptionsInput,
 } from './node-agent-tool-schemas';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceTask } from '@hyperneo/shared';
 import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
 import type { ExternalEventStore } from '../../external-events/external-event-store';
-import { parseAddress } from '../../../../../messaging/src/address';
 import { translateLegacyNodeTargets } from '../messaging-adapter';
-import { getEffectiveGate, hasInjectedGateFeature } from '../runtime/gate-features';
 import { buildPrEventTopicPattern, parsePrUrl } from '../runtime/parse-pr-url';
 import type { WorkflowArtifactProfile } from '../runtime/artifact-profile';
 import type { WorkflowHookEngine } from '../runtime/workflow-hook-engine';
 import { wrapHandlerWithHooks } from '../runtime/workflow-hook-engine';
-import { normalizeAgentNameToken } from '../agent-handle';
 
 /**
  * Decode the JSON payload from a ToolResult created by jsonResult().
@@ -143,120 +126,6 @@ function decodeToolResultPayload(result: ToolResult): Record<string, unknown> | 
 export type { ToolResult };
 
 const log = new Logger('node-agent-tools');
-
-export async function evaluateTerminalGateFeatures(
-  workflow: SpaceWorkflow | null,
-  gateDataRepo: GateDataRepository,
-  workflowRunId: string,
-  scriptExecutor?: GateScriptExecutorFn,
-  scriptContext?: GateScriptExecutorContext,
-  currentNodeId?: string,
-  artifactProfile?: WorkflowArtifactProfile
-): Promise<ToolResult | null> {
-  if (!workflow || !scriptExecutor || !scriptContext) return null;
-
-  // Resolve freshest primary link URL for this run so terminal checks evaluate
-  // against the correct PR even when it was written after the MCP server was
-  // created. Delegated to the domain profile (coding: the PR URL).
-  const freshPrUrl = artifactProfile?.resolvePrimaryLinkUrl(workflowRunId) ?? '';
-
-  // Scope terminal checks to gates on channels connected to the current node.
-  // Outgoing channels (from current node) are always included. Incoming channels
-  // (to current node) are only included when there is exactly one incoming
-  // channel total, so we do not falsely treat an unrelated incoming gate as the
-  // traversed path when multiple paths converge on a shared terminal node.
-  // Maps gateId → all channel `from` values that matched, so source-scoped Codex
-  // injection uses the actual sender names (node name or agent slot) rather than
-  // the current node name. Multiple sources for the same gate are all evaluated.
-  const relevantGateSources = new Map<string, Set<string>>();
-  let scopingComputed = false;
-  if (currentNodeId && workflow.channels) {
-    const currentNodeName = workflow.nodes.find((n) => n.id === currentNodeId)?.name;
-    if (currentNodeName) {
-      scopingComputed = true;
-      const currentNode = workflow.nodes.find((n) => n.id === currentNodeId);
-      const currentNodeAgentNames = new Set<string>();
-      if (currentNode) {
-        try {
-          for (const a of resolveNodeAgents(currentNode)) {
-            currentNodeAgentNames.add(a.name);
-          }
-        } catch {
-          // skip malformed node
-        }
-      }
-      const incomingChannels = workflow.channels.filter((ch) => {
-        const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
-        if (toList.includes(currentNodeName) || toList.includes('*')) return true;
-        return currentNodeAgentNames.size > 0 && toList.some((t) => currentNodeAgentNames.has(t));
-      });
-      const includeIncoming = incomingChannels.length === 1;
-      for (const ch of workflow.channels) {
-        if (!ch.gateId) continue;
-        const isOutgoing =
-          ch.from === currentNodeName || ch.from === '*' || currentNodeAgentNames.has(ch.from);
-        let isIncoming = false;
-        if (includeIncoming) {
-          const toList = Array.isArray(ch.to) ? ch.to : [ch.to];
-          isIncoming =
-            toList.includes(currentNodeName) ||
-            toList.includes('*') ||
-            (currentNodeAgentNames.size > 0 && toList.some((t) => currentNodeAgentNames.has(t)));
-        }
-        if (isOutgoing || isIncoming) {
-          const set = relevantGateSources.get(ch.gateId) ?? new Set<string>();
-          set.add(ch.from === '*' ? currentNodeName : ch.from);
-          relevantGateSources.set(ch.gateId, set);
-        }
-      }
-    }
-  }
-
-  for (const gate of workflow.gates ?? []) {
-    const sources = relevantGateSources.get(gate.id);
-    if (scopingComputed && !sources) continue;
-    for (const sourceName of sources ?? [undefined]) {
-      // Admit feature/codex-injected gates (hasInjectedGateFeature) OR built-in
-      // validator gates — a validator-backed terminal channel must be rechecked
-      // before the terminal action too, since its external state can flip closed
-      // after activation. Without the `!gate.validator` leg a validator terminal
-      // gate is skipped here and the action proceeds on a closed validator.
-      if (!hasInjectedGateFeature(gate, workflow, sourceName) && !gate.validator) continue;
-      const effectiveGate = getEffectiveGate(gate, workflow, sourceName);
-      if (!effectiveGate.script && !effectiveGate.validator) continue;
-
-      const gateDataRecord = gateDataRepo.get(workflowRunId, gate.id);
-      const data = gateDataRecord?.data ?? computeGateDefaults(gate.fields);
-      const result = await evaluateGate(effectiveGate, data, scriptExecutor, {
-        ...scriptContext,
-        gateId: gate.id,
-        gateData: data,
-        gateDataUpdatedIso: gateDataRecord
-          ? new Date(gateDataRecord.updatedAt).toISOString()
-          : undefined,
-        prUrl: freshPrUrl || scriptContext.prUrl,
-      });
-      if (!result.open) {
-        const rateLimited = result.rateLimited ?? false;
-        const retryAfterMs = rateLimited
-          ? (result.retryAfterMs ?? RATE_LIMIT_MIN_BACKOFF_MS)
-          : undefined;
-        const baseReason = result.reason ?? `Gate "${gate.id}" blocked terminal action.`;
-        return jsonResult({
-          success: false,
-          error: rateLimited
-            ? `${baseReason} (rate-limited: retry after ${retryAfterMs}ms)`
-            : baseReason,
-          gateId: gate.id,
-          rateLimited,
-          retryAfterMs,
-        });
-      }
-    }
-  }
-
-  return null;
-}
 
 // ---------------------------------------------------------------------------
 // Config
@@ -306,46 +175,10 @@ export interface NodeAgentToolsConfig {
   agentMessageRouter: AgentMessageRouter;
   /**
    * Workflow definition for this task.
-   * Used by list_channels, list_gates, read_gate, write_gate to access channel and
-   * gate definitions. Null when the task has no workflow assigned.
+   * Used by list_channels to access channel definitions. Null when the task has
+   * no workflow assigned.
    */
   workflow: SpaceWorkflow | null;
-  /**
-   * Gate data repository for reading and writing gate runtime data.
-   * Used by list_gates, read_gate, write_gate.
-   */
-  gateDataRepo: GateDataRepository;
-  /**
-   * Callback invoked after a gate data write to trigger re-evaluation and
-   * potential lazy node activation for any channels referencing the changed gate.
-   *
-   * Called by `send_message` after a successful gated message delivery. The
-   * handler awaits and serializes notifications per gate so cyclic reset-on-
-   * delivery cannot race ahead of the in-flight send and make the same call
-   * validate against freshly reset data.
-   * When provided, blocked target nodes are auto-activated the moment their gate
-   * condition is satisfied — enabling vote-counting and push-on-write semantics.
-   * When absent, nodes are activated at the next `deliverMessage` call instead.
-   */
-  onGateDataChanged?: (runId: string, gateId: string) => Promise<unknown>;
-  /**
-   * Optional shared retry scheduler for deferred gate-data refreshes after
-   * rate-limited gate writes/delivery. When provided, `send_message` schedules
-   * refreshes through this scheduler so retries are coalesced across all
-   * node-agent sessions for the same run/gate.
-   */
-  gateRetryScheduler?: import('../runtime/gate-retry-scheduler').GateRetryScheduler;
-  /**
-   * Optional script executor for async gate evaluation.
-   * When provided, `read_gate` and the gate-write path in `send_message` run
-   * gate scripts before field evaluation.
-   */
-  scriptExecutor?: GateScriptExecutorFn;
-  /**
-   * Context for gate script execution (workspace path, gate/run IDs).
-   * Required when `scriptExecutor` is provided.
-   */
-  scriptContext?: GateScriptExecutorContext;
   /**
    * Optional callback for the `approve_task` tool. When provided, `approve_task`
    * is added to the MCP server. Intended for the end node when
@@ -381,6 +214,12 @@ export interface NodeAgentToolsConfig {
   /** Optional callback for dynamic external-event unsubscription requests. */
   onUnsubscribeExternalEvent?: (args: UnsubscribeExternalEventInput) => Promise<ToolResult>;
   /**
+   * Optional callback for the read-only `list_subscriptions` diagnostic. Returns
+   * the declared / persisted / active subscription layers for a run. Read-only —
+   * never mutates subscription state.
+   */
+  onListSubscriptions?: (args: ListSubscriptionsInput) => Promise<ToolResult>;
+  /**
    * Optional callback for \`publish_task\`. When provided, node agents can
    * publish draft tasks (transition draft → open) without the broader
    * space-agent-tools namespace.
@@ -394,19 +233,13 @@ export interface NodeAgentToolsConfig {
   /** Optional lookup callback for symmetric reply routing to Space sessions. */
   replyRoutingLookup?: (agentName?: string | null) => string | null;
   /**
-   * Resolves the space's current autonomy level.
-   * When provided, agent gate writes via send_message are blocked when
-   * space autonomy < gate.requiredLevel (default 5 if gate has no requiredLevel).
-   */
-  getSpaceAutonomyLevel?: (spaceId: string) => Promise<number>;
-  /**
    * Workflow run artifact repository for save_artifact / list_artifacts tools.
    * Optional — when absent, artifact tools are not registered.
    */
   artifactRepo?: WorkflowRunArtifactRepository;
   /**
    * Domain artifact profile. Owns coding-specific semantics (primary-link
-   * resolution, terminal outcome summary, gate-keyed side-artifact history) so
+   * resolution, terminal outcome summary) so
    * these handlers never name domain kinds. Threaded from TaskAgentManager.
    */
   artifactProfile?: WorkflowArtifactProfile;
@@ -458,145 +291,14 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
   const {
     mySessionId,
     myAgentName,
-    myAgentNameAliases,
     spaceId,
     channelResolver,
     workflowRunId,
     workflowNodeId,
     nodeExecutionRepo,
-    internalEventBus,
     agentMessageRouter,
     workflow,
-    gateDataRepo,
-    scriptExecutor,
-    scriptContext,
-    getSpaceAutonomyLevel,
   } = config;
-
-  const myNodeName = workflow
-    ? (workflow.nodes.find((node) => node.id === workflowNodeId)?.name ?? myAgentName)
-    : myAgentName;
-
-  // Build a slot-to-node map so we can resolve agent names to node names when
-  // matching channels for gate data writes. Channels use node names as addresses,
-  // but agents often send to other agents by their slot/agent name.
-  const slotToNode = new Map<string, string>();
-  if (workflow) {
-    for (const node of workflow.nodes) {
-      try {
-        for (const agent of resolveNodeAgents(node)) {
-          slotToNode.set(agent.name, node.name);
-        }
-      } catch {
-        // If resolveNodeAgents throws (e.g. empty agents array with no legacy
-        // agentId), skip this node — there are no agent slots to map anyway.
-      }
-    }
-  }
-  const resolveNodeName = (slotOrNode: string) => slotToNode.get(slotOrNode) ?? slotOrNode;
-  const genericWorkerTargetNodes = (targetRef: string): string[] => {
-    if (!targetRef.startsWith('@worker:')) return [];
-    try {
-      const address = parseAddress(targetRef);
-      if (address.kind !== 'worker') return [];
-      const nodeRef = decodeURIComponent(address.nodeId);
-      return [nodeRef, resolveNodeName(nodeRef)];
-    } catch {
-      return [];
-    }
-  };
-  const uniqueTargetRefs = (values: string[]): string[] => [...new Set(values)];
-  const resolveCurrentGateSource = (gateId: string): string => {
-    if (!workflow) return myAgentName;
-    const fromRefs = new Set([myAgentName, myNodeName]);
-    const channel = (workflow.channels ?? []).find(
-      (ch) => ch.gateId === gateId && (ch.from === '*' || fromRefs.has(ch.from))
-    );
-    if (channel?.from === '*') return myNodeName;
-    return channel?.from ?? myNodeName;
-  };
-
-  const agentNameAliases = new Set(
-    [myAgentName, myNodeName, ...(myAgentNameAliases ?? [])]
-      .map((value) => normalizeAgentNameToken(value))
-      .filter((value) => value.length > 0)
-  );
-
-  const pendingGateChangeNotifications = new Map<string, Promise<unknown>>();
-  /** Deferred onGateDataChanged retry timers for rate-limited gate writes. */
-  const pendingGateChangeRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  const pendingGateChangeRetryFireAt = new Map<string, number>();
-
-  async function notifyGateDataChanged(gateId: string): Promise<void> {
-    if (!config.onGateDataChanged) return;
-
-    const previous = pendingGateChangeNotifications.get(gateId);
-    const current = (async () => {
-      if (previous) {
-        try {
-          await previous;
-        } catch {
-          // Prior notification failures are already logged by their owner.
-        }
-      }
-      return config.onGateDataChanged!(workflowRunId, gateId);
-    })();
-
-    pendingGateChangeNotifications.set(gateId, current);
-    try {
-      await current;
-    } finally {
-      if (pendingGateChangeNotifications.get(gateId) === current) {
-        pendingGateChangeNotifications.delete(gateId);
-      }
-    }
-  }
-
-  /**
-   * Schedules a deferred gate-data refresh after a rate-limited evaluation.
-   *
-   * The shared `GateRetryScheduler` inside `ChannelRouter.onGateDataChanged`
-   * only sees refreshes that actually run; when a `send_message` aborts early
-   * because a gate script hit a GitHub rate limit, we must still re-evaluate
-   * the gate after the cooldown so downstream activation is not stuck.
-   *
-   * Uses the shared scheduler from config when available so retries are
-   * coalesced across all node-agent sessions for the same run/gate.
-   */
-  function deferGateDataChanged(gateId: string, retryAfterMs: number): void {
-    const callback = () => {
-      void notifyGateDataChanged(gateId).catch((err) => {
-        log.warn(
-          `Deferred gate-data refresh failed for gate "${gateId}" in run "${workflowRunId}": ` +
-            (err instanceof Error ? err.message : String(err))
-        );
-      });
-    };
-
-    if (config.gateRetryScheduler) {
-      config.gateRetryScheduler.schedule(workflowRunId, gateId, retryAfterMs, callback);
-      return;
-    }
-
-    // Fallback for tests/contexts without a shared scheduler.
-    const newFireAt = Date.now() + retryAfterMs;
-    const existingFireAt = pendingGateChangeRetryFireAt.get(gateId);
-    if (existingFireAt !== undefined && newFireAt <= existingFireAt) {
-      return;
-    }
-    const existingTimer = pendingGateChangeRetryTimers.get(gateId);
-    if (existingTimer) {
-      clearTimeout(existingTimer);
-    }
-    const timer = setTimeout(() => {
-      pendingGateChangeRetryTimers.delete(gateId);
-      pendingGateChangeRetryFireAt.delete(gateId);
-      callback();
-    }, retryAfterMs);
-    timer.unref?.();
-    pendingGateChangeRetryTimers.set(gateId, timer);
-    pendingGateChangeRetryFireAt.set(gateId, newFireAt);
-  }
 
   /** Helper to log MCP write operations to the audit log. */
   function logAudit(
@@ -856,11 +558,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
      *
      * Validates against declared channel topology — returns an error with
      * available targets if not permitted.
-     *
-     * When `data` is provided and the target channel is gated, the data is
-     * automatically merged into the gate's data store before delivery.
-     * Gate re-evaluation fires after the merge — if the gate opens the message
-     * is delivered immediately; otherwise it is held until the condition passes.
      */
     async send_message(args: SendMessageInput): Promise<ToolResult> {
       const { target, message, data } = args;
@@ -889,226 +586,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         }
       }
 
-      // Auto gate-write: if data is provided and the outbound channel to this
-      // target is gated, merge the data into the gate before delivery.
-      // This allows agents to satisfy gate conditions as part of a single send call.
-      let gateWriteResult: { gateId: string; gateOpen: boolean } | null = null;
-      if (data && workflow) {
-        const targetName = Array.isArray(target) ? null : target;
-        const routedTargetNames = uniqueTargetRefs([
-          ...(targetName ? [targetName] : []),
-          ...translatedTargets,
-          ...(targetName ? genericWorkerTargetNodes(targetName) : []),
-        ]);
-        if (
-          targetName &&
-          targetName !== '*' &&
-          targetName !== 'task-agent' &&
-          targetName !== 'space-agent'
-        ) {
-          const node = workflow.nodes.find((n) => n.id === workflowNodeId);
-          const myNodeName = node?.name ?? myAgentName;
-          const fromRefs = new Set([myAgentName, myNodeName]);
-
-          const channelsFromCurrentNode = (workflow.channels ?? []).filter((ch) => {
-            if (!ch.gateId) return false;
-            if (ch.from !== '*' && !fromRefs.has(ch.from)) return false;
-            return true;
-          });
-          const candidateTargets = uniqueTargetRefs([
-            ...routedTargetNames,
-            ...routedTargetNames.map(resolveNodeName),
-          ]);
-          const broadcastTargetRefs = new Set<string>();
-          for (const targetNode of workflow.nodes) {
-            broadcastTargetRefs.add(targetNode.name);
-            try {
-              for (const agent of resolveNodeAgents(targetNode)) {
-                if (targetNode.id === workflowNodeId && agent.name === myAgentName) continue;
-                broadcastTargetRefs.add(agent.name);
-              }
-            } catch {
-              // Malformed node definitions have no resolvable agent slots to include.
-            }
-          }
-          const targetIsBroadcastRecipient = candidateTargets.some((targetRef) =>
-            broadcastTargetRefs.has(targetRef)
-          );
-          const gatedChannel =
-            channelsFromCurrentNode.find((ch) => {
-              const tos = Array.isArray(ch.to) ? ch.to : [ch.to];
-              return tos.some(
-                (to) => candidateTargets.includes(to) || to === myNodeName || to === myAgentName
-              );
-            }) ??
-            channelsFromCurrentNode.find((ch) => {
-              const tos = Array.isArray(ch.to) ? ch.to : [ch.to];
-              return targetIsBroadcastRecipient && tos.includes('*');
-            });
-
-          if (gatedChannel?.gateId) {
-            const gateId = gatedChannel.gateId;
-            const gates = workflow.gates ?? [];
-            const gateDef = gates.find((g) => g.id === gateId);
-
-            if (gateDef) {
-              // Per-field two-path authorization for agent gate writes:
-              //   Writers path: field has a non-empty writers list and this agent matches one
-              //     (including '*' wildcard) → workflow author made an explicit trust decision → allow,
-              //     no autonomy check.
-              //   Autonomy path: field has no writers or an empty writers list
-              //     → require space.autonomyLevel >= gate.requiredLevel (default 5 when unset).
-              // Human approval via spaceWorkflowRun.approveGate RPC is not affected.
-              const effectiveRequiredLevel = gateDef.requiredLevel ?? 5;
-              const spaceLevel = getSpaceAutonomyLevel ? await getSpaceAutonomyLevel(spaceId) : 0;
-
-              const fieldMap = new Map((gateDef.fields ?? []).map((f) => [f.name, f]));
-              const authorizedData: Record<string, unknown> = {};
-              for (const [key, value] of Object.entries(data)) {
-                const fieldDef = fieldMap.get(key);
-                if (!fieldDef) continue;
-
-                let fieldAllowed = false;
-                if (fieldDef.writers.length > 0) {
-                  // Writers path: check if this agent matches a declared writer
-                  fieldAllowed = fieldDef.writers.some((writer) => {
-                    const normalized = normalizeAgentNameToken(writer);
-                    return normalized === '*' || agentNameAliases.has(normalized);
-                  });
-                } else if (getSpaceAutonomyLevel) {
-                  // Autonomy path: no writers declared — require sufficient space autonomy
-                  fieldAllowed = spaceLevel >= effectiveRequiredLevel;
-                }
-
-                if (fieldAllowed) authorizedData[key] = value;
-              }
-
-              if (Object.keys(authorizedData).length > 0) {
-                // Deep-merge map-type fields atomically: each reviewer in a
-                // vote-counting gate (e.g. plan-approval-gate `approvals: map`)
-                // writes a partial map keyed by their lens/identity. A naive
-                // shallow merge would replace the whole map with the latest
-                // writer's entry, losing prior votes. Doing the read-merge-write
-                // in JS would also race with `incrementAndResetCyclicChannel`
-                // (which clears the gate on revision feedback) — if a stale
-                // snapshot was read before the reset and written back after,
-                // cleared votes would resurrect. Push the deep-merge into the
-                // repository so it runs inside a single SQLite transaction.
-                const mapFields = new Set<string>();
-                for (const key of Object.keys(authorizedData)) {
-                  const fieldDef = fieldMap.get(key);
-                  if (fieldDef?.type === 'map') mapFields.add(key);
-                }
-                const partialToMerge: Record<string, unknown> = {
-                  ...authorizedData,
-                  approvalSource: 'agent',
-                };
-                const updated =
-                  mapFields.size > 0
-                    ? gateDataRepo.mergeWithMapFields(
-                        workflowRunId,
-                        gateId,
-                        partialToMerge,
-                        mapFields
-                      )
-                    : gateDataRepo.merge(workflowRunId, gateId, partialToMerge);
-                const updatedRecord = gateDataRepo.get(workflowRunId, gateId);
-                const freshPrUrl =
-                  config.artifactProfile?.resolvePrimaryLinkUrl(workflowRunId) ?? '';
-                const evalResult = await evaluateGate(
-                  getEffectiveGate(gateDef, workflow, gatedChannel.from),
-                  updated.data,
-                  scriptExecutor,
-                  scriptContext
-                    ? {
-                        ...scriptContext,
-                        gateId,
-                        gateData: updated.data,
-                        gateDataUpdatedIso: updatedRecord
-                          ? new Date(updatedRecord.updatedAt).toISOString()
-                          : undefined,
-                        prUrl: freshPrUrl || scriptContext.prUrl,
-                      }
-                    : undefined
-                );
-                gateWriteResult = { gateId, gateOpen: evalResult.open };
-
-                // Domain profile hook: let the coding layer persist any
-                // gate-keyed side-artifacts (e.g. a multi-round review decision
-                // when a review gate fires). Fired before any rate-limited early
-                // return so the record is not lost when the gate script is
-                // blocked. Infra knows neither the gate id nor the kind — only
-                // the profile does.
-                if (config.artifactProfile?.onGateDataCommitted) {
-                  try {
-                    await config.artifactProfile.onGateDataCommitted({
-                      runId: workflowRunId,
-                      nodeId: workflowNodeId,
-                      gateId,
-                      gateData: updated.data,
-                      // The gate-declared fields the sender was authorized to
-                      // write in this send — the committed write, not the raw
-                      // payload, so a non-authorizable field can't trigger a
-                      // domain side-artifact.
-                      committedData: authorizedData,
-                      messageData: data,
-                    });
-                  } catch (err) {
-                    log.warn(
-                      `onGateDataCommitted failed for gate "${gateId}" in run "${workflowRunId}":`,
-                      err instanceof Error ? err.message : String(err)
-                    );
-                  }
-                }
-
-                // Audit log + publish the gate data update immediately. Even if the
-                // subsequent gate evaluation is rate-limited, the write itself succeeded
-                // and must be visible to the canvas and recorded.
-                logAudit('send_message', {
-                  target,
-                  gateId: gateWriteResult.gateId,
-                  gateOpen: gateWriteResult.gateOpen,
-                  dataKeys: data ? Object.keys(data) : undefined,
-                });
-                if (internalEventBus) {
-                  void internalEventBus
-                    .publish('space.gateData.updated', {
-                      sessionId: 'global',
-                      spaceId,
-                      runId: workflowRunId,
-                      gateId,
-                      data: updated.data,
-                    })
-                    .catch((err) => {
-                      log.warn(`Failed to emit space.gateData.updated for gate "${gateId}":`, err);
-                    });
-                }
-
-                // If gate evaluation hit a rate limit, surface the retryable error
-                // immediately instead of proceeding to delivery (which would re-evaluate
-                // the same gate script and make another GitHub call during the cooldown).
-                // Schedule a deferred gate-data refresh so the shared retry scheduler
-                // inside ChannelRouter can re-evaluate after the cooldown.
-                if (evalResult.rateLimited) {
-                  const retryAfterMs = evalResult.retryAfterMs ?? RATE_LIMIT_MIN_BACKOFF_MS;
-                  deferGateDataChanged(gateId, retryAfterMs);
-                  const reason = evalResult.reason ?? `Gate "${gateId}" rate-limited`;
-                  return jsonResult({
-                    success: false,
-                    error: `${reason} (rate-limited: retry after ${retryAfterMs}ms)`,
-                    gateWrite: gateWriteResult,
-                    rateLimited: true,
-                    retryAfterMs,
-                  });
-                }
-              }
-            }
-          }
-        }
-      }
-
-      const gateIdToNotify = gateWriteResult?.gateId;
-
       const routedTarget =
         translatedTargets.length > 0
           ? translatedTargets.length === 1
@@ -1123,49 +600,17 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         data,
       });
 
-      // Fire gate-data-changed callback for non-rate-limited cases (even queued
-      // or failed delivery). When rate-limited, defer the refresh instead of
-      // running it immediately, so the shared retry scheduler re-evaluates after
-      // the cooldown without burning another GitHub call.
-      if (gateIdToNotify) {
-        if (result.rateLimited === true) {
-          deferGateDataChanged(gateIdToNotify, result.retryAfterMs ?? RATE_LIMIT_MIN_BACKOFF_MS);
-        } else {
-          try {
-            await notifyGateDataChanged(gateIdToNotify);
-          } catch (err) {
-            log.warn(
-              `onGateDataChanged failed for gate "${gateIdToNotify}" in run "${workflowRunId}":`,
-              err instanceof Error ? err.message : String(err)
-            );
-          }
-        }
-      }
-
       if (!result.success) {
-        // Rate-limited gate block: surface explicit retry guidance so the
-        // agent does not re-dispatch on the next tick. The error message is
-        // prefixed so callers parsing reason text still see a clear signal.
-        const rateLimited = result.rateLimited === true;
-        const retryAfterMs = rateLimited
-          ? (result.retryAfterMs ?? RATE_LIMIT_MIN_BACKOFF_MS)
-          : undefined;
         const reason = result.reason ?? 'Message delivery failed.';
-        const error = rateLimited
-          ? `${reason} (rate-limited: retry after ${retryAfterMs}ms)`
-          : reason;
         return jsonResult({
           success: false,
-          error,
+          error: reason,
           delivered: result.delivered.length > 0 ? result.delivered : undefined,
           failed: result.failed.length > 0 ? result.failed : undefined,
           queued: result.queued,
           unauthorizedAgentNames: result.unauthorizedAgentNames,
           permittedTargets: result.permittedTargets,
           notFoundAgentNames: result.notFoundAgentNames,
-          gateWrite: gateWriteResult ?? undefined,
-          rateLimited,
-          retryAfterMs,
         });
       }
 
@@ -1176,7 +621,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
           failed: result.failed,
           queued: result.queued,
           notFoundAgentNames: result.notFoundAgentNames,
-          gateWrite: gateWriteResult ?? undefined,
           message: `Message delivered to ${result.delivered.length} peer(s) but failed for ${result.failed.length} peer(s).`,
         });
       }
@@ -1201,7 +645,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         delivered: result.delivered,
         queued: result.queued,
         notFoundAgentNames: result.notFoundAgentNames,
-        gateWrite: gateWriteResult ?? undefined,
         message: summaryParts.length > 0 ? `Message ${summaryParts.join('; ')}.` : 'No action.',
       });
     },
@@ -1212,8 +655,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
      *   - crossNodeTargets: agents/nodes reachable via declared cross-node paths
      *
      * Uses agent-friendly terminology — no mention of channels or policies.
-     * Gate status is included for cross-node targets so agents know whether
-     * a target may require conditions to be met before delivery is permitted.
      */
     async list_reachable_agents(_args: ListReachableAgentsInput): Promise<ToolResult> {
       // Determine this agent's node name from the workflow definition.
@@ -1253,12 +694,10 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       // Cross-node targets: channels where FROM node is this agent's node
       type CrossNodeTarget = {
         nodeName: string;
-        gate: { type: string; isGated: boolean; description?: string };
       };
       const crossNodeTargets: CrossNodeTarget[] = [];
 
       if (reachabilityDeclared && myNodeName) {
-        const gatesById = new Map((workflow?.gates ?? []).map((g) => [g.id, g]));
         const seen = new Set<string>();
 
         // Track within-node agent names to exclude them from cross-node targets
@@ -1274,18 +713,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
             if (seen.has(toNode)) continue;
             if (withinNodeAgentNames.has(toNode)) continue; // within-node agent → not cross-node
             seen.add(toNode);
-            const gateEntity = ch.gateId ? gatesById.get(ch.gateId) : undefined;
-            const gateType = gateEntity
-              ? (gateEntity.fields ?? []).some((f) => f.type === 'map' && f.check.op === 'count')
-                ? 'count'
-                : 'check'
-              : 'none';
-            const entry: CrossNodeTarget = {
-              nodeName: toNode,
-              gate: { type: gateType, isGated: gateEntity !== undefined },
-            };
-            if (gateEntity?.description) entry.gate.description = gateEntity.description;
-            crossNodeTargets.push(entry);
+            crossNodeTargets.push({ nodeName: toNode });
           }
         }
       }
@@ -1319,13 +747,8 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
      * List all channels declared in this workflow.
      *
      * Returns the messaging topology for the current workflow run —
-     * channels define which agents can communicate and whether a gate
-     * guards the channel. Use this to understand the full channel map
-     * before calling list_reachable_agents or send_message.
-     *
-     * A channel can be gated via `gateId`, which references a Gate entity
-     * in `workflow.gates`; use `list_gates` to see current gate data and status.
-     * `hasGate` is true when a gateId is set.
+     * channels define which agents can communicate. Use this to understand the
+     * full channel map before calling list_reachable_agents or send_message.
      */
     async list_channels(_args: ListChannelsInput): Promise<ToolResult> {
       const channels = workflow?.channels ?? [];
@@ -1335,104 +758,12 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         to: ch.to,
         maxCycles: ch.maxCycles ?? null,
         label: ch.label ?? null,
-        hasGate: ch.gateId !== undefined,
-        gateId: ch.gateId ?? null,
       }));
       return jsonResult({
         success: true,
         channels: result,
         total: result.length,
         message: `Found ${result.length} channel(s) in workflow "${workflow?.name ?? 'unknown'}".`,
-      });
-    },
-
-    /**
-     * List all gates declared in this workflow with their current runtime data.
-     *
-     * Gates guard channels — a message on a gated channel is held until the
-     * gate condition passes. Use this to understand what conditions are
-     * currently evaluated and what data has been written to each gate.
-     *
-     * Your nodeId is included in the response — use it as the map key when
-     * writing to count-condition gates (vote gates) so each node's vote
-     * counts exactly once.
-     */
-    async list_gates(_args: ListGatesInput): Promise<ToolResult> {
-      const gates = workflow?.gates ?? [];
-      const gateResults = gates.map((gate) => {
-        const record = gateDataRepo.get(workflowRunId, gate.id);
-        return {
-          gateId: gate.id,
-          fields: gate.fields ?? [],
-          description: gate.description ?? null,
-          currentData: record?.data ?? computeGateDefaults(gate.fields ?? []),
-        };
-      });
-      return jsonResult({
-        success: true,
-        gates: gateResults,
-        total: gateResults.length,
-        nodeId: workflowNodeId,
-        message:
-          `Found ${gateResults.length} gate(s). ` +
-          `Your nodeId is "${workflowNodeId}" — use it as the map key for vote-counting (map field) gates.`,
-      });
-    },
-
-    /**
-     * Read the current runtime data for a specific gate.
-     *
-     * Returns the live data from the gate_data table for this workflow run.
-     * Use this to inspect the current state of a gate before deciding
-     * whether to write to it.
-     */
-    async read_gate(args: ReadGateInput): Promise<ToolResult> {
-      const { gateId } = args;
-
-      // Verify gate exists in this workflow
-      const gates = workflow?.gates ?? [];
-      const gateDef = gates.find((g) => g.id === gateId);
-      if (!gateDef) {
-        return jsonResult({
-          success: false,
-          error: `Gate "${gateId}" not found in this workflow.`,
-          availableGateIds: gates.map((g) => g.id),
-        });
-      }
-
-      const record = gateDataRepo.get(workflowRunId, gateId);
-      const currentData = record?.data ?? computeGateDefaults(gateDef.fields ?? []);
-
-      // Evaluate current gate status. Uses scriptExecutor when available for
-      // async script-based gates; otherwise falls back to field-only evaluation.
-      const freshPrUrl = config.artifactProfile?.resolvePrimaryLinkUrl(workflowRunId) ?? '';
-      const sourceName = resolveCurrentGateSource(gateId);
-      const evalResult = await evaluateGate(
-        getEffectiveGate(gateDef, workflow ?? undefined, sourceName),
-        currentData,
-        scriptExecutor,
-        scriptContext
-          ? {
-              ...scriptContext,
-              gateId,
-              gateData: currentData,
-              gateDataUpdatedIso: record ? new Date(record.updatedAt).toISOString() : undefined,
-              prUrl: freshPrUrl || scriptContext.prUrl,
-            }
-          : undefined
-      );
-
-      return jsonResult({
-        success: true,
-        gateId,
-        fields: gateDef.fields ?? [],
-        data: currentData,
-        gateOpen: evalResult.open,
-        reason: evalResult.reason ?? null,
-        updatedAt: record?.updatedAt ?? null,
-        message: evalResult.open
-          ? `Gate "${gateId}" is currently OPEN.`
-          : `Gate "${gateId}" is currently CLOSED: ${evalResult.reason ?? 'condition not met'}.`,
       });
     },
 
@@ -1756,6 +1087,28 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       return jsonResult({ success: true, deliveries });
     },
 
+    /**
+     * Read-only diagnostic: snapshot a workflow run's external-event
+     * subscriptions across three layers — declared (workflow definition),
+     * persisted (PR 5 table), and active (in-memory trie, cross-check only) —
+     * so an agent can confirm whether a node is actually wired to receive a
+     * class of events from durable state alone. Durable layers are the source of
+     * truth; the trie is a sanity check, with declared-vs-active drift surfaced
+     * via per-entry `source`/`active` flags and a `mismatches` summary.
+     */
+    async list_subscriptions(args: ListSubscriptionsInput): Promise<ToolResult> {
+      if (!config.onListSubscriptions) {
+        return jsonResult({
+          success: false,
+          error: 'Subscription diagnostics are not available.',
+        });
+      }
+      return config.onListSubscriptions({
+        workflowRunId: args.workflowRunId,
+        nodeId: args.nodeId,
+      });
+    },
+
     async approve_task(args: ApproveTaskInput): Promise<ToolResult> {
       if (!config.onApproveTask) {
         return jsonResult({
@@ -1763,17 +1116,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
           error: 'approve_task is not available in this node-agent session.',
         });
       }
-      const gateBlock = await evaluateTerminalGateFeatures(
-        workflow,
-        gateDataRepo,
-        workflowRunId,
-        scriptExecutor,
-        scriptContext,
-        workflowNodeId,
-        config.artifactProfile
-      );
-      if (gateBlock) return gateBlock;
-
       const result = await config.onApproveTask(args);
       const payload = decodeToolResultPayload(result);
       if (payload?.success) {
@@ -1995,16 +1337,6 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
   const handlers = createNodeAgentToolHandlers(config);
 
   async function submitForApproval(args: SubmitForApprovalInput): Promise<ToolResult> {
-    const gateBlock = await evaluateTerminalGateFeatures(
-      config.workflow,
-      config.gateDataRepo,
-      config.workflowRunId,
-      config.scriptExecutor,
-      config.scriptContext,
-      config.workflowNodeId,
-      config.artifactProfile
-    );
-    if (gateBlock) return gateBlock;
     return config.onSubmitForApproval!(args);
   }
 
@@ -2052,44 +1384,24 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
       'list_reachable_agents',
       'List all agents and nodes this agent can reach, grouped as within-node peers ' +
         '(agents in the same workflow node) and cross-node targets (agents/nodes on other nodes). ' +
-        'Gate status is included for each cross-node target so you know whether a condition ' +
-        'must pass before delivery is permitted. ' +
-        'Use this before sending a message to understand who you can reach and whether any gates apply.',
+        'Use this before sending a message to understand who you can reach.',
       ListReachableAgentsSchema.shape,
       (args) => handlers.list_reachable_agents(args)
     ),
     tool(
       'list_channels',
       'List all channels declared in this workflow. ' +
-        'Channels define the messaging topology — which agents can communicate and whether a gate ' +
-        'guards the channel. Use this to understand the full channel map for this workflow run. ' +
-        'Each entry includes `hasGate` (true when a gate guards the channel) and `gateId`.',
+        'Channels define the messaging topology — which agents can communicate. Use this to ' +
+        'understand the full channel map for this workflow run.',
       ListChannelsSchema.shape,
       (args) => handlers.list_channels(args)
-    ),
-    tool(
-      'list_gates',
-      'List all gates declared in this workflow with their field schemas and current runtime data. ' +
-        'Gates guard channels — a message on a gated channel is held until all gate fields pass their checks. ' +
-        'Use this to see what data each gate currently holds and whether any gate is open. ' +
-        'Your nodeId is included — use it as the map key when writing to map-type (vote) fields.',
-      ListGatesSchema.shape,
-      (args) => handlers.list_gates(args)
-    ),
-    tool(
-      'read_gate',
-      'Read the current runtime data for a specific gate. ' +
-        'Returns the live data from the gate_data table and whether the gate is currently open.',
-      ReadGateSchema.shape,
-      (args) => handlers.read_gate(args)
     ),
     tool(
       'send_message',
       'Send a message to a peer agent by name (DM), a node by name (fan-out), or broadcast to all permitted targets. ' +
         "Use agent name for DM (e.g. 'coder'), node name for fan-out, or '*' for broadcast. " +
         'Validates against declared channel topology — returns an error with available targets if not permitted. ' +
-        'When the target channel is gated, the optional `data` payload is automatically merged into the gate ' +
-        "and gate re-evaluation fires — no separate gate write needed. Use target 'space-agent' to escalate blockers or request human/space-level judgment.",
+        "The optional `data` payload is passed to any send_message hooks for validation. Use target 'space-agent' to escalate blockers or request human/space-level judgment.",
       SendMessageSchema.shape,
       (args) => handlers.send_message(args)
     ),
@@ -2115,6 +1427,21 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
               'Events are delivered to this node-agent session as messages. The coder node typically calls this.',
             SubscribePrEventsSchema.shape,
             (args) => handlers.subscribe_pr_events(args)
+          ),
+        ]
+      : []),
+    ...(config.onListSubscriptions
+      ? [
+          tool(
+            'list_subscriptions',
+            "Read-only diagnostic: snapshot this workflow run's external-event subscriptions across three layers — " +
+              'declared (static interests in the workflow definition, durable), persisted (the dynamic subscription ' +
+              'table, durable), and active (in-memory trie, a live cross-check only). Use this to confirm whether ' +
+              'a node is actually wired to receive a class of events, and to surface declared-vs-active drift. ' +
+              'The durable layers are the source of truth; the trie is never the answer. Defaults to this ' +
+              'workflow run; pass `nodeId` to scope to one node.',
+            ListSubscriptionsSchema.shape,
+            (args) => handlers.list_subscriptions(args)
           ),
         ]
       : []),

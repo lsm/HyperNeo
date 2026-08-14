@@ -60,9 +60,6 @@ import { SpaceWorkflowManager } from '../space/managers/space-workflow-manager';
 import type { SpaceAgentLookup } from '../space/managers/space-workflow-manager';
 import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
 import { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
-import { GateDataRepository } from '../../storage/repositories/gate-data-repository';
-import { GateOpenStateRepository } from '../../storage/repositories/gate-open-state-repository';
-import { rekeyPinnedGateOpenCaches } from '../../lib/space/workflows/gate-cache-rekey';
 import { WorkflowRunArtifactRepository } from '../../storage/repositories/workflow-run-artifact-repository';
 import { WorkflowRunArtifactCacheRepository } from '../../storage/repositories/workflow-run-artifact-cache-repository';
 import { WorkflowHookStateRepository } from '../../storage/repositories/workflow-hook-state-repository';
@@ -453,12 +450,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
   // Space handlers (spaceManager injected from deps — single instance shared with DaemonAppContext)
   const spaceTaskRepo = new SpaceTaskRepository(deps.db.getDatabase(), deps.reactiveDb);
-  const gateDataRepo = new GateDataRepository(deps.db.getDatabase());
-  const gateOpenStateRepo = new GateOpenStateRepository(deps.db.getDatabase());
-  const spaceWorkflowRunRepo = new SpaceWorkflowRunRepository(
-    deps.db.getDatabase(),
-    gateOpenStateRepo
-  );
+  const spaceWorkflowRunRepo = new SpaceWorkflowRunRepository(deps.db.getDatabase());
   const artifactRepo = new WorkflowRunArtifactRepository(deps.db.getDatabase(), deps.reactiveDb);
   const artifactCacheRepo = new WorkflowRunArtifactCacheRepository(deps.db.getDatabase());
   const channelCycleRepo = new ChannelCycleRepository(deps.db.getDatabase());
@@ -575,14 +567,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     },
   };
   const spaceWorkflowManager = new SpaceWorkflowManager(spaceWorkflowRepo, agentLookup);
-  // Phase-1 read-cutover gate-open cache sweep: re-key persisted gate-open entries for pinned
-  // runs to the version-stable fingerprint basis (preserving backfilled in-flight runs' caches
-  // across the cutover). Idempotent + every boot → crash-safe. See gate-cache-rekey.ts.
-  rekeyPinnedGateOpenCaches({
-    gateOpenStateRepo,
-    runRepo: spaceWorkflowRunRepo,
-    manager: spaceWorkflowManager,
-  });
 
   const spaceTaskManagerFactory: SpaceTaskManagerFactory = (spaceId: string) => {
     return new SpaceTaskManager(
@@ -648,22 +632,19 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
   // Space Runtime Service — wraps SpaceRuntime with per-space lifecycle API.
   // Not started yet: TaskAgentManager is created next and injected before start().
-  // gateDataRepo is injected so notifyGateDataChanged() can trigger lazy node activation
-  // after gate data is written externally (e.g. approveGate RPC, writeGateData RPC).
   // sessionManager and internalEventBus are injected so space:chat:${spaceId} sessions are
   // provisioned with MCP tools and system prompts on startup and on space.created.
-  const nodeExecutionRepo = new NodeExecutionRepository(deps.db.getDatabase());
+  const nodeExecutionRepo = new NodeExecutionRepository(deps.db.getDatabase(), deps.reactiveDb);
   // Reply Routing Registry — shared between space-agent-tools (register)
   // and task-agent-tools / node-agent-tools (lookup).
   const replyRoutingRegistry = new ReplyRoutingRegistry();
   // Domain profile that owns coding-specific artifact semantics (which `link`
-  // is the PR, which `decision` is the terminal outcome, the review-posted-gate
-  // history). Injected into the runtime services so daemon core never names
-  // domain kinds (`pr` / `review`).
+  // is the PR, which `decision` is the terminal outcome, the `review_posted`
+  // hook history). Injected into the runtime services so daemon core never
+  // names domain kinds (`pr` / `review`).
   const artifactProfile = new CodingArtifactProfile({
     db: deps.db.getDatabase(),
     artifactRepo,
-    gateDataRepo,
     // Restrict the PR-identity resolver's hook-state fallback to hook ids that
     // are actually configured with the pr_ready built-in validator for the run's
     // workflow — closes the colliding-hook-id spoof on runs without a reserved
@@ -754,8 +735,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     taskRepo: spaceTaskRepo,
     nodeExecutionRepo,
     reactiveDb: deps.reactiveDb,
-    gateDataRepo,
-    gateOpenStateRepo,
     channelCycleRepo,
     sessionManager: deps.sessionManager,
     internalEventBus: deps.internalEventBus,
@@ -1010,8 +989,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     spaceRuntimeService,
     taskRepo: spaceTaskRepo,
     workflowRunRepo: spaceWorkflowRunRepo,
-    gateDataRepo,
-    gateOpenStateRepo,
     channelCycleRepo,
     messageHub: deps.messageHub,
     getApiKey: () => deps.authManager.getCurrentApiKey(),
@@ -1113,7 +1090,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.spaceManager,
     spaceWorkflowManager,
     spaceWorkflowRunRepo,
-    gateDataRepo,
     spaceRuntimeService,
     spaceWorkflowRunTaskManagerFactory,
     deps.internalEventBus,

@@ -26,9 +26,11 @@ import {
   headRepoFromPullRequest,
   headShaFromPullRequest,
   parseHeadRefKey,
+  pickPrNumbersByHeadSha,
   pullRequestNumberFrom,
 } from './github-pr-head-ref';
 import { isPullRequestOpen, pullRequestUpdatedAt } from './github-pr-row-state';
+import { isPositiveReaction, reactionIdFrom } from './github-reaction-fields';
 import {
   normalizeGitHubCheckRun,
   normalizeGitHubDeployment,
@@ -4345,45 +4347,6 @@ function validateGitHubTokenFormat(token: string): void {
   }
 }
 
-/** Reads `head.sha` from a `/pulls` row (the commit the PR HEAD points at). */
-function pullHeadSha(entry: Record<string, unknown>): string {
-  const head = entry.head;
-  if (head && typeof head === 'object') {
-    const sha = (head as Record<string, unknown>).sha;
-    if (typeof sha === 'string') return sha;
-  }
-  return '';
-}
-
-/**
- * Returns the numbers of all OPEN PRs whose HEAD (`head.sha`) is exactly `sha`
- * — every open match is published, because a commit can be the head of several
- * PRs at once. The head.sha filter excludes PRs that merely contain the commit
- * (e.g. the merged PR that introduced a default-branch tip), so a default-branch
- * or stale-SHA deploy resolves to nothing and drops; the `state === 'open'`
- * filter additionally excludes a closed/merged PR whose retained head.sha still
- * equals the deployed SHA, so a deploy never publishes under a finished PR's
- * topic and wakes a stale subscription. Dedupes by PR number. Mirrors the
- * filter in `resolvePullRequestNumbersForCommit` (status webhook).
- */
-function pickPrNumbersByHeadSha(pulls: unknown, sha: string): number[] {
-  if (!Array.isArray(pulls)) return [];
-  const seen = new Set<number>();
-  const numbers: number[] = [];
-  for (const entry of pulls) {
-    if (!entry || typeof entry !== 'object') continue;
-    const row = entry as Record<string, unknown>;
-    if (pullHeadSha(row) !== sha) continue;
-    if (row.state !== 'open') continue;
-    const number = typeof row.number === 'number' ? row.number : 0;
-    if (number > 0 && !seen.has(number)) {
-      seen.add(number);
-      numbers.push(number);
-    }
-  }
-  return numbers;
-}
-
 /**
  * Extracts the commit SHA from a `status` webhook payload root. The SHA lives at
  * `payload.sha` (with `payload.commit.sha` as a fallback for older payloads).
@@ -4500,18 +4463,6 @@ function pullRequestNumbersFromCheckRun(
     }
   }
   return numbers.length > 0 ? numbers : fallbackPrNumbers;
-}
-
-function isPositiveReaction(row: unknown): boolean {
-  if (!row || typeof row !== 'object') return false;
-  const content = (row as { content?: unknown }).content;
-  return content === '+1' || content === 'thumbs_up';
-}
-
-function reactionIdFrom(row: unknown): string {
-  if (!row || typeof row !== 'object') return '';
-  const id = (row as { id?: unknown }).id;
-  return typeof id === 'number' ? String(id) : '';
 }
 
 function getConfiguredWebhookUrl(): string {

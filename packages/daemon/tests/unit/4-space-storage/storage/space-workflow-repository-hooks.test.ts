@@ -20,22 +20,13 @@ describe('SpaceWorkflowRepository — hooks', () => {
 
   afterEach(() => db.close());
 
-  test('round-trips persisted workflow hook config while preserving legacy gates', () => {
+  test('round-trips persisted workflow hook config', () => {
     const wf = repo.createWorkflow({
       spaceId: 'sp-1',
       name: 'Hooked',
       nodes: [
         { id: 'n1', name: 'Coding', agents: [{ agentId: 'a1', name: 'coder' }] },
         { id: 'n2', name: 'Review', agents: [{ agentId: 'a2', name: 'reviewer' }] },
-      ],
-      gates: [
-        {
-          id: 'legacy-gate',
-          fields: [
-            { name: 'ok', type: 'boolean', writers: ['Coding'], check: { op: '==', value: true } },
-          ],
-          resetOnCycle: false,
-        },
       ],
       hooks: [
         {
@@ -53,7 +44,6 @@ describe('SpaceWorkflowRepository — hooks', () => {
 
     const fetched = repo.getWorkflow(wf.id);
     expect(fetched?.hooks).toEqual(wf.hooks);
-    expect(fetched?.gates?.[0].id).toBe('legacy-gate');
 
     const updated = repo.updateWorkflow(wf.id, {
       hooks: [
@@ -68,6 +58,5 @@ describe('SpaceWorkflowRepository — hooks', () => {
       ],
     });
     expect(updated?.hooks?.map((hook) => hook.id)).toEqual(['hook-2']);
-    expect(updated?.gates?.[0].id).toBe('legacy-gate');
   });
 });

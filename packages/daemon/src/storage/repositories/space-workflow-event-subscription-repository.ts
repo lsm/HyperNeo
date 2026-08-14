@@ -140,6 +140,21 @@ export class SpaceWorkflowEventSubscriptionRepository {
     this.db.prepare(`DELETE FROM space_workflow_event_subscriptions WHERE task_id = ?`).run(taskId);
   }
 
+  /**
+   * All dynamic subscriptions for a single run. Backs the `list_subscriptions`
+   * diagnostic tool's durable layer (the per-space rebuild uses
+   * {@link listBySpace}). Ordered by `created_at` for stable output.
+   */
+  listByRun(workflowRunId: string): SpaceWorkflowEventSubscription[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM space_workflow_event_subscriptions
+		 WHERE workflow_run_id = ? ORDER BY created_at ASC`
+      )
+      .all(workflowRunId) as Record<string, unknown>[];
+    return rows.map(rowToSubscription);
+  }
+
   /** All subscriptions for a space — drives the per-space trie rebuild. */
   listBySpace(spaceId: string): SpaceWorkflowEventSubscription[] {
     const rows = this.db

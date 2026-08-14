@@ -68,8 +68,9 @@ export interface ChatComposerProps {
   errorMessage?: string | null;
   /**
    * Whether this composer's send path honors 'defer' (queue for next turn).
-   * Defaults to true; task-session composers pass false because they deliver
-   * immediately. Forwarded to MessageInput, which hides the Queue controls.
+   * Defaults to true. Forwarded to MessageInput, which hides the Queue controls
+   * when false. Both the main chat and the task-session composers (agent
+   * slide-over + inline pane) honor defer through `space.task.sendMessage`.
    */
   supportsQueueDelivery?: boolean;
   /**

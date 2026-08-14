@@ -17,11 +17,17 @@ import { JobQueueRepository } from '../../../../src/storage/repositories/job-que
 import { runMigration182 } from '../../../../src/storage/schema/migrations';
 import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants';
 import {
+  ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS,
   awaitDeliveryConsumption,
   deliverAndMarkQueued,
   deliverMessage,
   drainDeliveryWaitersOnTerminalSDKMessage,
+  isRetryableErrorResultSubtype,
+  isTerminalTurnError,
   isUniqueConstraintError,
+  MAX_ACP_STEER_PARKS,
+  MAX_STEER_PARKS,
+  MESSAGE_DELIVERY_PARK_MS,
   signalDeliveryConsumed,
   waitForDeliveryConsumption,
   type MessageDeliverySession,
@@ -341,6 +347,18 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
       expect(repo.activeDeliveryMessageUuids(SESSION)).toEqual(new Set(['msg-b']));
     });
   });
+
+  describe('isProcessingDelivery — terminal-idle turn-end marker gate', () => {
+    it('true only for a job currently processing; false when pending or absent', () => {
+      deliverMessage(repo, SESSION, 'proc', { origin: 'chat' });
+      const [job] = repo.dequeue(MESSAGE_DELIVERY, 1); // → processing
+      expect(repo.isProcessingDelivery(SESSION, 'proc')).toBe(true);
+      // Requeue to pending (graceful shutdown) → no longer processing.
+      repo.requeue(job.id, Date.now(), job.claimToken);
+      expect(repo.isProcessingDelivery(SESSION, 'proc')).toBe(false);
+      expect(repo.isProcessingDelivery(SESSION, 'absent')).toBe(false);
+    });
+  });
 });
 
 // ── Handler-level conformance ──────────────────────────────────────────────
@@ -349,6 +367,8 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
 class MockSession implements MessageDeliverySession {
   driveResult: DriveTurnOutcome = { outcome: 'completed' };
   feedResult: FeedSteerOutcome = { outcome: 'consumed' };
+  /** Per-UUID override — the mock stands in for the bridge's in-lock check. */
+  driveOutcomeByUuid?: Record<string, DriveTurnOutcome>;
   shouldThrow = false;
   driveCalls = 0;
   feedCalls = 0;
@@ -357,6 +377,8 @@ class MockSession implements MessageDeliverySession {
   lastContent?: unknown;
   lastParentToolUseId?: string | null;
   lastAlreadyConsumed = false;
+  /** Toggle for the human-gate-open park exemption (Codex #11). */
+  waitingForInput = false;
 
   async driveDeliveryTurn(
     uuid: string,
@@ -370,6 +392,9 @@ class MockSession implements MessageDeliverySession {
     this.lastParentToolUseId = parentToolUseId;
     this.lastAlreadyConsumed = alreadyConsumed;
     if (this.shouldThrow) throw new Error('turn exploded');
+    if (this.driveOutcomeByUuid && uuid in this.driveOutcomeByUuid) {
+      return this.driveOutcomeByUuid[uuid];
+    }
     return this.driveResult;
   }
 
@@ -387,6 +412,10 @@ class MockSession implements MessageDeliverySession {
 
   async settleSkippedDelivery(uuid: string): Promise<void> {
     this.settleCalls.push(uuid);
+  }
+
+  isWaitingForInput(): boolean {
+    return this.waitingForInput;
   }
 }
 
@@ -547,6 +576,97 @@ describe('handler — status-aware delivery (§8)', () => {
     expect(session.lastAlreadyConsumed).toBe(true); // ← the guard: no re-feed
   });
 
+  it('a consumed turn whose turn already terminated is completed, not re-driven', async () => {
+    // The zombie-reclaim shape: the message was consumed but its turn produced a
+    // terminal result AFTER it (error/interrupt). The bridge (mocked here)
+    // detects this under the per-session lock and returns turn_terminated;
+    // the handler completes the job so the active-turn slot is freed.
+    const session = new MockSession();
+    session.driveResult = { outcome: 'turn_terminated' };
+    const metrics = new DeliveryMetrics();
+    const job = turnJob(repo, 'msg-terminated');
+    const handler = createMessageDeliveryHandler({
+      jobQueue: repo,
+      getSession: () => session,
+      getMessageContent: () => ({ content: 'hello', sendStatus: 'consumed' }),
+      metrics,
+    });
+    const result = await handler(job);
+    expect(result).toEqual({ outcome: 'completed', skipped: 'turn_terminated' });
+    expect(session.driveCalls).toBe(1); // bridge consulted; it declined to re-drive
+    expect(session.settleCalls).toEqual(['msg-terminated']);
+    // Observable: the zombie self-heal is counted as a reclaim skip so the
+    // diagnostics RPC can flag a rising turn_terminated rate.
+    expect(metrics.snapshot().reclaimSkips.turn_terminated).toBe(1);
+  });
+
+  it('end-to-end: stale reclaimed consumed-turn with terminal result unblocks a parked steer', async () => {
+    // The exact stuck-session shape: a turn was delivered + consumed, its job
+    // went stale (processing past the reclaim window), and a new message arrived
+    // while the zombie still held the active-turn slot → inserted as a steer.
+    // Recovery: reclaimStale → the re-claimed turn completes (turn_terminated) →
+    // the freed slot lets the parked steer promote into a real turn and drive.
+    const session = new MockSession();
+    session.feedResult = { outcome: 'promote' }; // steer sees no active turn once freed
+    const statuses: Record<string, string> = { 'zombie-turn': 'consumed' };
+    // The bridge (mocked here) detects the zombie's terminated turn in-lock and
+    // declines to re-drive it; the promoted message drives normally.
+    session.driveOutcomeByUuid = { 'zombie-turn': { outcome: 'turn_terminated' } };
+    const handler = createMessageDeliveryHandler({
+      jobQueue: repo,
+      getSession: () => session,
+      getMessageContent: (_s, uuid) => ({
+        content: 'hi',
+        sendStatus: statuses[uuid] ?? 'enqueued',
+      }),
+    });
+
+    // 1) A turn was delivered + consumed, but its job went stale.
+    deliverMessage(repo, SESSION, 'zombie-turn', { origin: 'chat' }); // role turn
+    const [zombie] = repo.dequeue(MESSAGE_DELIVERY, 1); // claimed → processing
+    db.prepare(`UPDATE job_queue SET started_at = ? WHERE id = ?`).run(
+      Date.now() - 10 * 60 * 1000,
+      zombie.id
+    );
+
+    // 2) A new message arrives while the zombie still occupies the slot → steer.
+    deliverMessage(repo, SESSION, 'new-msg', { origin: 'chat' });
+    const steerRow = repo
+      .listJobs({ queue: MESSAGE_DELIVERY, limit: 50 })
+      .find((j) => (j.payload as { messageUuid: string }).messageUuid === 'new-msg');
+    expect((steerRow?.payload as { role: string }).role).toBe('steer');
+
+    // 3) reclaimStale resets the zombie to pending (the durable redelivery seam).
+    expect(repo.reclaimStale(Date.now() - 5 * 60 * 1000)).toBe(1);
+
+    // 4) Re-claim + handle the zombie: turn_terminated → completed, no re-drive.
+    const [reclaimed] = repo.dequeue(MESSAGE_DELIVERY, 1);
+    expect((reclaimed.payload as { role: string }).role).toBe('turn');
+    const zombieResult = await handler(reclaimed);
+    expect(zombieResult).toEqual({ outcome: 'completed', skipped: 'turn_terminated' });
+    expect(session.driveCalls).toBe(1); // bridge consulted; declined to re-drive
+    expect(session.settleCalls).toContain('zombie-turn');
+    repo.complete(reclaimed.id, { ok: true }); // what the processor does on return → slot freed
+
+    // 5) The parked steer is now unblocked: sees no active turn → promotes in place.
+    const [steer] = repo.dequeue(MESSAGE_DELIVERY, 1);
+    expect((steer.payload as { role: string }).role).toBe('steer');
+    const steerResult = await handler(steer);
+    expect(steerResult).toMatchObject({ outcome: 'superseded', promoted: 'turn' });
+    expect(repo.getJob(steer.id)?.status).toBe('pending');
+    expect((repo.getJob(steer.id)?.payload as { role: string }).role).toBe('turn');
+    // The zombie no longer owns the active-turn slot; the promoted message does.
+    const active = repo.activeDeliveryMessageUuids(SESSION);
+    expect(active.has('zombie-turn')).toBe(false);
+    expect(active.has('new-msg')).toBe(true);
+
+    // 6) The promoted turn is claimable and drives normally — the message delivers.
+    const [promoted] = repo.dequeue(MESSAGE_DELIVERY, 1);
+    const promotedResult = await handler(promoted);
+    expect(promotedResult).toEqual({ outcome: 'completed' });
+    expect(session.driveCalls).toBe(2); // zombie (declined) + promoted (driven)
+  });
+
   it('records reclaim-skip counters via the injected metrics sink (review P2.2a)', async () => {
     // The handler accepts an injectable DeliveryMetrics so a test can assert the
     // reclaim-skip wiring (alreadyConsumed / alreadySubmitted / noContent) at the
@@ -578,6 +698,27 @@ describe('handler — status-aware delivery (§8)', () => {
     const result = await handler(job);
     expect(result).toMatchObject({ outcome: 'skipped', sendStatus: 'submitted' });
     expect(metrics.snapshot().reclaimSkips.alreadySubmitted).toBe(1);
+  });
+
+  it('a submitted ACP STEER keeps parking until accepted (not skip-completed)', async () => {
+    // onSent fired (≡ onSubmitted → row `submitted`) but acceptance is async.
+    // Skip-completing would strand the row as `submitted` with no job; instead
+    // the handler re-parks (bounded by MAX_STEER_PARKS) until the row flips to
+    // `consumed` (accepted) or the budget exhausts. A submitted TURN still skips.
+    const session = new MockSession();
+    const job = steerJob(repo, 'msg-submitted-steer');
+    const handler = createMessageDeliveryHandler({
+      jobQueue: repo,
+      getSession: () => session,
+      getMessageContent: () => ({ content: 'steer', sendStatus: 'submitted' }),
+    });
+    const before = Date.now();
+    const result = await handler(job);
+    expect(result).toMatchObject({ parked: 'acp_awaiting_acceptance' });
+    const after = repo.getJob(job.id);
+    expect(after?.status).toBe('pending'); // re-parked, not completed
+    expect(after?.runAt ?? 0).toBeGreaterThan(before);
+    expect(session.feedCalls).toBe(0); // not re-fed
   });
 
   it('deferred message is skipped, not force-fed into the turn (#2597)', async () => {
@@ -652,6 +793,29 @@ describe('handler — status-aware delivery (§8)', () => {
     expect(after?.status).toBe('pending'); // parked, not completed
     // Delayed runAt (not Date.now()) — this is what breaks the every-poll hot loop.
     expect(after?.runAt ?? 0).toBeGreaterThan(before);
+  });
+
+  it('an ACP steer awaiting acceptance is PARKED (kept alive), not auto-completed', async () => {
+    // ACP's consume boundary is acceptance (markMessageAccepted), which fires
+    // async from the runner — so the bridge reports awaiting-acceptance instead
+    // of consumed. The handler must park (keep the job alive) rather than
+    // auto-completing at submission, or the row strands if acceptance never
+    // comes. See feedDeliverySteer / message-delivery.handler.
+    const session = new MockSession();
+    session.feedResult = { outcome: 'awaiting_acceptance' };
+    const job = steerJob(repo, 'msg-acp-accept');
+    const handler = createMessageDeliveryHandler({
+      jobQueue: repo,
+      getSession: () => session,
+      getMessageContent: () => ({ content: 'steer', sendStatus: 'enqueued' }),
+    });
+    const before = Date.now();
+    const result = await handler(job);
+    expect(result).toMatchObject({ parked: 'acp_awaiting_acceptance' });
+    const after = repo.getJob(job.id);
+    expect(after?.status).toBe('pending'); // parked (alive), not completed
+    expect(after?.runAt ?? 0).toBeGreaterThan(before);
+    expect(session.feedCalls).toBe(1);
   });
 
   it('turn aborted (archive/removePending at feed time) → completes without feeding (#3742774841/#3696)', async () => {
@@ -899,6 +1063,15 @@ describe('drainDeliveryWaitersOnTerminalSDKMessage (handleSDKMessage-catch gatin
     expect(setIdle).toHaveBeenCalledTimes(1);
   });
 
+  it('does NOT call setIdle for a nested subagent result throw', async () => {
+    const setIdle = mock(async () => {});
+    await drainDeliveryWaitersOnTerminalSDKMessage({ setIdle }, {
+      type: 'result',
+      parent_tool_use_id: 'outer-agent-tool-use',
+    } as SDKMessage);
+    expect(setIdle).not.toHaveBeenCalled();
+  });
+
   it('does NOT call setIdle for a non-terminal (assistant) message throw', async () => {
     const setIdle = mock(async () => {});
     await drainDeliveryWaitersOnTerminalSDKMessage({ setIdle }, {
@@ -953,5 +1126,174 @@ describe('awaitDeliveryConsumption — terminalize a fresh job on timeout (no-st
       terminalizeOnTimeout: terminalize,
     });
     expect(terminalize).not.toHaveBeenCalled();
+  });
+});
+
+describe('message-delivery v2 — steer park bound (dead-letter after MAX_STEER_PARKS)', () => {
+  let db: Database;
+  let repo: JobQueueRepository;
+
+  beforeEach(() => {
+    ({ db, repo } = setupRepo());
+  });
+  afterEach(() => db.close());
+
+  it('parks up to the budget, then throws DeadLetterImmediatelyError', async () => {
+    const session = new MockSession();
+    session.feedResult = { outcome: 'park' };
+    const handler = createMessageDeliveryHandler({
+      jobQueue: repo,
+      getSession: () => session,
+      getMessageContent: () => ({ content: 'steer', sendStatus: 'enqueued' }),
+    });
+
+    let current = steerJob(repo, 'msg-park-bound');
+
+    // Park exactly MAX_STEER_PARKS times — each returns {parked} and re-queues
+    // (bumping __parkCount) without burning the retry budget. Re-claim each
+    // iteration (the park sets run_at into the future; reset it to re-claim).
+    for (let i = 0; i < MAX_STEER_PARKS; i++) {
+      const result = await handler(current);
+      expect(result).toMatchObject({ parked: 'turn_blocked' });
+      expect(repo.getJob(current.id)?.retryCount).toBe(0); // parking is not a retry
+      db.prepare(`UPDATE job_queue SET run_at = 0 WHERE id = ?`).run(current.id);
+      const [next] = repo.dequeue(MESSAGE_DELIVERY, 1);
+      expect(next).toBeTruthy();
+      current = next!;
+    }
+    expect(repo.getParkCount(current.id)).toBeGreaterThanOrEqual(MAX_STEER_PARKS);
+
+    // The next attempt exceeds the budget → the handler throws so the processor
+    // dead-letters the job (→ message flipped to `failed` with a Retry affordance).
+    await expect(handler(current)).rejects.toThrow(/parked past its budget/);
+  });
+
+  it('ACP awaiting-acceptance parks up to the budget, then dead-letters', async () => {
+    // Bounded by the acceptance-sized budget (MAX_ACP_STEER_PARKS, covering
+    // ACP's 12min acceptance window at the 5s park cadence — NOT the generic
+    // turn-blocked bound, which would dead-letter a still-executing request):
+    // an ACP steer whose acceptance never comes must surface as `failed` (Retry
+    // affordance) instead of parking silently forever or stranding the row.
+    expect(MAX_ACP_STEER_PARKS * MESSAGE_DELIVERY_PARK_MS).toBeGreaterThanOrEqual(
+      ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS
+    );
+    const session = new MockSession();
+    session.feedResult = { outcome: 'awaiting_acceptance' };
+    const handler = createMessageDeliveryHandler({
+      jobQueue: repo,
+      getSession: () => session,
+      getMessageContent: () => ({ content: 'steer', sendStatus: 'enqueued' }),
+    });
+
+    let current = steerJob(repo, 'msg-acp-accept-bound');
+    for (let i = 0; i < MAX_ACP_STEER_PARKS; i++) {
+      const result = await handler(current);
+      expect(result).toMatchObject({ parked: 'acp_awaiting_acceptance' });
+      expect(repo.getJob(current.id)?.retryCount).toBe(0); // parking is not a retry
+      db.prepare(`UPDATE job_queue SET run_at = 0 WHERE id = ?`).run(current.id);
+      const [next] = repo.dequeue(MESSAGE_DELIVERY, 1);
+      expect(next).toBeTruthy();
+      current = next!;
+    }
+    expect(repo.getParkCount(current.id)).toBeGreaterThanOrEqual(MAX_ACP_STEER_PARKS);
+    await expect(handler(current)).rejects.toThrow(/awaited acceptance past its budget/);
+  });
+
+  it('a persisted-submitted ACP steer parks to the same acceptance-sized budget, then dead-letters', async () => {
+    // Companion of the awaiting_acceptance test above: the re-run path where
+    // the row is already `submitted` (onSent fired) uses the same
+    // MAX_ACP_STEER_PARKS bound — covering ACP's acceptance window, not the
+    // generic turn-blocked budget.
+    const session = new MockSession();
+    const handler = createMessageDeliveryHandler({
+      jobQueue: repo,
+      getSession: () => session,
+      getMessageContent: () => ({ content: 'steer', sendStatus: 'submitted' }),
+    });
+
+    let current = steerJob(repo, 'msg-acp-submitted-bound');
+    for (let i = 0; i < MAX_ACP_STEER_PARKS; i++) {
+      const result = await handler(current);
+      expect(result).toMatchObject({ parked: 'acp_awaiting_acceptance' });
+      expect(session.feedCalls).toBe(0); // never re-fed
+      db.prepare(`UPDATE job_queue SET run_at = 0 WHERE id = ?`).run(current.id);
+      const [next] = repo.dequeue(MESSAGE_DELIVERY, 1);
+      current = next!;
+    }
+    expect(repo.getParkCount(current.id)).toBeGreaterThanOrEqual(MAX_ACP_STEER_PARKS);
+    await expect(handler(current)).rejects.toThrow(/awaited acceptance past its budget/);
+  });
+
+  it('a steer parked behind an OPEN human gate keeps parking past the budget (Codex #11)', async () => {
+    // An unanswered sdk_resume_choice (waiting_for_input) is a legitimately
+    // blocked turn, not abandonment — the steer must not be dead-lettered while
+    // the gate is open, no matter how many parks have elapsed.
+    const session = new MockSession();
+    session.feedResult = { outcome: 'park' };
+    session.waitingForInput = true;
+    const handler = createMessageDeliveryHandler({
+      jobQueue: repo,
+      getSession: () => session,
+      getMessageContent: () => ({ content: 'steer', sendStatus: 'enqueued' }),
+    });
+
+    let current = steerJob(repo, 'msg-gate-open');
+    // Park well past the budget — every attempt still parks (no dead-letter),
+    // and the gate-open requeue does NOT charge the park budget (plain requeue,
+    // not requeueParked), so the count stays 0 for a fresh window once the gate
+    // resolves (a long-open choice must not dead-letter the first post-
+    // resolution pass).
+    for (let i = 0; i < MAX_STEER_PARKS + 5; i++) {
+      const result = await handler(current);
+      expect(result).toMatchObject({ parked: 'turn_blocked_gate_open' });
+      expect(repo.getJob(current.id)?.retryCount).toBe(0);
+      expect(repo.getParkCount(current.id)).toBe(0);
+      db.prepare(`UPDATE job_queue SET run_at = 0 WHERE id = ?`).run(current.id);
+      const [next] = repo.dequeue(MESSAGE_DELIVERY, 1);
+      expect(next).toBeTruthy();
+      current = next!;
+    }
+    // Once the gate resolves, the bound applies again from a clean count → the
+    // steer gets its full park budget before dead-lettering.
+    session.waitingForInput = false;
+    for (let i = 0; i < MAX_STEER_PARKS; i++) {
+      const result = await handler(current);
+      expect(result).toMatchObject({ parked: 'turn_blocked' });
+      db.prepare(`UPDATE job_queue SET run_at = 0 WHERE id = ?`).run(current.id);
+      const [next] = repo.dequeue(MESSAGE_DELIVERY, 1);
+      current = next!;
+    }
+    await expect(handler(current)).rejects.toThrow(/parked past its budget/);
+  });
+});
+
+describe('isTerminalTurnError — auth failures dead-letter immediately (Codex #2)', () => {
+  it('auth categories are terminal even when flagged recoverable', () => {
+    expect(isTerminalTurnError({ recoverable: true, category: 'authentication' })).toBe(true);
+    expect(isTerminalTurnError({ recoverable: true, category: 'provider_auth_error' })).toBe(true);
+  });
+
+  it('non-recoverable is terminal regardless of category', () => {
+    expect(isTerminalTurnError({ recoverable: false, category: 'permission' })).toBe(true);
+    expect(isTerminalTurnError({ recoverable: false })).toBe(true);
+  });
+
+  it('recoverable non-auth errors retry', () => {
+    expect(isTerminalTurnError({ recoverable: true, category: 'system' })).toBe(false);
+    expect(isTerminalTurnError({ recoverable: true, category: 'connection' })).toBe(false);
+    expect(isTerminalTurnError({ recoverable: true })).toBe(false);
+  });
+});
+
+describe('isRetryableErrorResultSubtype — persisted error-result classification', () => {
+  it('transient execution failures and turn-cap exhaustion retry', () => {
+    expect(isRetryableErrorResultSubtype('error_during_execution')).toBe(true);
+    expect(isRetryableErrorResultSubtype('error_max_turns')).toBe(true);
+  });
+
+  it('cost / structured-output exhaustion dead-letter (retrying repeats spend)', () => {
+    expect(isRetryableErrorResultSubtype('error_max_budget_usd')).toBe(false);
+    expect(isRetryableErrorResultSubtype('error_max_structured_output_retries')).toBe(false);
+    expect(isRetryableErrorResultSubtype(null)).toBe(false);
   });
 });

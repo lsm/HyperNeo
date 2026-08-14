@@ -137,9 +137,10 @@ function buildTemplateUpdateParams(
       name: node.name,
       agents: resolvedAgents,
       ...(node.postApproval ? { postApproval: { ...node.postApproval } } : {}),
-      ...(node.requireCodexApproval ? { requireCodexApproval: true } : {}),
-      ...(node.codexPollIntervalMs ? { codexPollIntervalMs: node.codexPollIntervalMs } : {}),
-      ...(node.codexTimeoutSeconds ? { codexTimeoutSeconds: node.codexTimeoutSeconds } : {}),
+      // Carry declared handoff transitions (template is authoritative; node
+      // names are mapped 1:1 so targets resolve) so syncFromTemplate/resync
+      // don't silently strip a template's handoff contract.
+      ...(node.transitions?.length ? { transitions: node.transitions.map((t) => ({ ...t })) } : {}),
     };
   });
 
@@ -151,7 +152,6 @@ function buildTemplateUpdateParams(
   const newChannels = template.channels
     ? template.channels.map((ch) => ({ ...ch, id: ch.id ?? generateUUID() }))
     : null;
-  const newGates = template.gates ? [...template.gates] : null;
   const templateHash = computeWorkflowHash(template);
 
   return {
@@ -162,7 +162,6 @@ function buildTemplateUpdateParams(
     startNodeId: newStartNodeId,
     endNodeId: newEndNodeId ?? null,
     channels: newChannels,
-    gates: newGates,
     hooks: template.hooks ? [...template.hooks] : null,
     tags: [...template.tags],
     completionAutonomyLevel: template.completionAutonomyLevel,
@@ -178,7 +177,7 @@ function buildTemplateUpdateParams(
  * instructions, and the node set (by name). Returned by
  * {@link spaceWorkflow.previewTemplateSync}. Kept concise so the preview modal
  * can render a readable delta; the modal always states the full structure is
- * overwritten on sync, so fields not enumerated here (channels/gates/hooks)
+ * overwritten on sync, so fields not enumerated here (channels/hooks)
  * are not silently hidden from the user.
  */
 function buildWorkflowSyncDiff(
@@ -323,7 +322,7 @@ export async function checkBuiltInWorkflowDriftOnStartup(
  * `completionAutonomyLevel`, and `templateHash` — see the seeder's
  * `RESTAMP_FIELDS` constant for the full list and rationale.
  *
- * Full structural re-sync (nodes/channels/gates/prompts) still requires the
+ * Full structural re-sync (nodes/channels/prompts) still requires the
  * user to click "Sync" in the Workflow List UI, because that path regenerates
  * node UUIDs and would invalidate any live workflow-run references.
  *
@@ -488,9 +487,9 @@ export function setupSpaceWorkflowHandlers(
       throw new Error(`Space not found: ${params.spaceId}`);
     }
 
-    // Built-in templates are a small fixed set (5 workflows). Return full
-    // workflows so the visual editor template picker can use nodes/channels/gates
-    // without an extra round-trip per template.
+    // Built-in templates are a small fixed set. Return full workflows so the
+    // visual editor template picker can use nodes/channels/hooks without an
+    // extra round-trip per template.
     const workflows: SpaceWorkflow[] = getBuiltInWorkflows();
     return { workflows };
   });
@@ -884,11 +883,16 @@ export function setupSpaceWorkflowHandlers(
     const reports: DuplicateDriftReport[] = [];
     for (const [templateName, rows] of byTemplate) {
       if (rows.length < 2) continue;
-      // Drift = hash values diverge across rows. Rows with identical hashes
-      // aren't considered drift (even though they're still technically
-      // duplicates — left for separate cleanup).
-      const distinctHashes = new Set(rows.map((r) => r.templateHash ?? null));
-      if (distinctHashes.size < 2) continue;
+      // Report EVERY >1-row built-in group as a duplicate warranting
+      // consolidation (resync keeps the newest, deletes the rest), not only
+      // hash-divergent ones. This keeps the "Resync duplicates" badge DURABLE:
+      // it stays until the group is actually consolidated down to one row, so a
+      // partial resync (a duplicate skipped because it has an executable run)
+      // never leaves the user without a cleanup path — after they archive the
+      // blocking task and remount, the badge is still there to retry. Built-in
+      // templates should have exactly one row, so any duplicate is unwanted and
+      // surfacing it for cleanup is on-mission (the previous hash-only rule hid
+      // uniform-hash duplicates indefinitely, which is what created the dead-end).
       const sortedRows = [...rows].sort((a, b) => b.createdAt - a.createdAt);
       reports.push({
         templateName,
@@ -974,11 +978,29 @@ export function setupSpaceWorkflowHandlers(
     }
 
     // Only now — after the kept row is safely resynced — remove the duplicates.
-    // Runs are deleted explicitly because the space_workflow_runs FK is not
-    // ON DELETE CASCADE (migration 60 dropped it). Without this the rows
-    // would orphan and show up in no UI but still consume disk.
+    // Archived runs are deleted explicitly because the space_workflow_runs FK is
+    // not ON DELETE CASCADE (migration 60 dropped it). Without this the tombstoned
+    // rows would orphan and show up in no UI but still consume disk.
+    //
+    // Deletion-safe (RFC §4 #3): check hasExecutableRuns BEFORE cleanup so a
+    // skipped duplicate is left untouched. deleteByWorkflowId is itself guarded
+    // (it only removes tombstoned runs), but running it first would still strip a
+    // mixed-status duplicate's archived runs — and FK-cascade their tasks — before
+    // the guard fires, mangling a workflow we then report as "kept." The pre-check
+    // and the cleanup/delete below are synchronous with no await between them, so
+    // no interleaving; a duplicate with any executable run is kept whole.
     const deletedIds: string[] = [];
+    const skippedDueToExecutableRuns: string[] = [];
     for (const wf of toDelete) {
+      if (workflowManager.hasExecutableRuns(wf.id)) {
+        skippedDueToExecutableRuns.push(wf.id);
+        log.warn(
+          `[resync] Kept duplicate workflow "${wf.name}" (${wf.id}): ` +
+            `it has executable run(s) (in progress or not archived) — archive the task(s) and re-resync`
+        );
+        continue;
+      }
+      // Only tombstoned runs remain; safe to clean up and delete.
       workflowRunRepo.deleteByWorkflowId(wf.id);
       const ok = workflowManager.deleteWorkflow(wf.id);
       if (ok) {
@@ -1005,6 +1027,6 @@ export function setupSpaceWorkflowHandlers(
         log.warn('Failed to emit spaceWorkflow.updated:', err);
       });
 
-    return { workflow: updated, keptWorkflowId: kept.id, deletedIds };
+    return { workflow: updated, keptWorkflowId: kept.id, deletedIds, skippedDueToExecutableRuns };
   });
 }

@@ -264,23 +264,5 @@ describe('TaskStatusActions component', () => {
       expect(getByTestId('task-action-in_progress')).toBeTruthy();
       expect(getByTestId('task-action-archived')).toBeTruthy();
     });
-
-    it('hides Approve (done) and Cancel (cancelled) when paused at gate approval', () => {
-      const onTransition = vi.fn();
-      const { queryByTestId, getByTestId } = render(
-        <TaskStatusActions
-          status="review"
-          onTransition={onTransition}
-          pendingCheckpointType="gate"
-        />
-      );
-      // PendingGateBanner owns the approval UX for gate-pending tasks;
-      // the generic buttons must not be visible to prevent bypassing the gate.
-      expect(queryByTestId('task-action-done')).toBeNull();
-      expect(queryByTestId('task-action-cancelled')).toBeNull();
-      // Non-approval transitions stay visible.
-      expect(getByTestId('task-action-in_progress')).toBeTruthy();
-      expect(getByTestId('task-action-archived')).toBeTruthy();
-    });
   });
 });

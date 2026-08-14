@@ -6,8 +6,7 @@
  * evaluated status is `blocked_by_hook` (human approval) or
  * `waiting_on_hook_retry` (retryable block).
  *
- * Distinct from PendingGateBanner (legacy gate UI). Replaces the gate-driven
- * human approval flow for workflows that use hooks.
+ * Provides the human approval flow for workflows that use hooks.
  */
 
 import { useState, useEffect, useRef, useCallback } from 'preact/hooks';

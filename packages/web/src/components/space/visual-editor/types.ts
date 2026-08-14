@@ -17,8 +17,10 @@ export interface WorkflowCondition {
 }
 
 /**
- * A directed edge used internally by the visual editor canvas.
- * This replaces the removed backend `WorkflowTransition` type for UI-only use.
+ * A directed edge used internally by the visual editor canvas — the UI-only
+ * edge/transition concept used for drawing connections between nodes. This is
+ * distinct from the backend `HandoffTransition` type (declared node handoffs):
+ * edges are a canvas rendering concern, handoffs are a workflow contract.
  */
 export interface VisualTransition {
   id: string;

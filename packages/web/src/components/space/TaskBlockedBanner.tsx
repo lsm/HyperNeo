@@ -8,22 +8,18 @@
  *     space-task-thread-events.ts), so we don't duplicate it here. The hint
  *     is a safety net: if the thread transformation ever fails to render the
  *     question, the user still sees that input is required.
- *   - gate_rejected: purple — shows gate info + "Review & Approve" expanding to GateArtifactsView
  *   - execution_failed / agent_crashed: red — shows error + Resume button
  *   - dependency_failed / dependency_added: gray — informational
  *   - workflow_invalid: red — informational
  *   - (null / unknown): amber fallback — matches previous behavior
  *
  * Composes `InlineStatusBanner` for the one-line status row so blocked tasks
- * share the thin-banner shape with all other task-pane banners (gate,
+ * share the thin-banner shape with all other task-pane banners (hook,
  * task-completion, post-approval). The blocked-task reason text from
  * `task.result` is surfaced as banner `meta` when present.
  */
 
-import { useState, useEffect } from 'preact/hooks';
 import type { SpaceBlockReason, SpaceTask, SpaceTaskStatus } from '@hyperneo/shared';
-import { spaceStore } from '../../lib/space-store';
-import { GateArtifactsView } from './GateArtifactsView';
 import {
   InlineStatusBanner,
   type InlineStatusBannerAction,
@@ -37,11 +33,6 @@ interface TaskBlockedBannerProps {
   onStatusTransition?: (newStatus: SpaceTaskStatus) => void;
 }
 
-interface PendingGate {
-  gateId: string;
-  data: Record<string, unknown>;
-}
-
 interface ReasonConfig {
   label: string;
   tone: InlineStatusBannerTone;
@@ -49,7 +40,6 @@ interface ReasonConfig {
 }
 
 const REASON_CONFIG: Partial<Record<SpaceBlockReason, ReasonConfig>> = {
-  gate_rejected: { label: 'Gate Pending Approval', tone: 'purple', icon: '🔒' },
   execution_failed: { label: 'Execution Failed', tone: 'red', icon: '⚠️' },
   agent_crashed: { label: 'Agent Crashed', tone: 'red', icon: '⚠️' },
   dependency_failed: { label: 'Blocked by Dependency', tone: 'gray', icon: '⛓️' },
@@ -59,39 +49,12 @@ const REASON_CONFIG: Partial<Record<SpaceBlockReason, ReasonConfig>> = {
 
 const FALLBACK_CONFIG: ReasonConfig = { label: 'Blocked', tone: 'amber', icon: '⚠️' };
 
-export function TaskBlockedBanner({ task, spaceId, onStatusTransition }: TaskBlockedBannerProps) {
+export function TaskBlockedBanner({
+  task,
+  spaceId: _spaceId,
+  onStatusTransition,
+}: TaskBlockedBannerProps) {
   const reason = task.blockReason;
-
-  const [showGateReview, setShowGateReview] = useState(false);
-  const [pendingGate, setPendingGate] = useState<PendingGate | null>(null);
-
-  // For gate_rejected tasks, fetch the pending gate data on mount
-  useEffect(() => {
-    if (reason !== 'gate_rejected' || !task.workflowRunId) return;
-
-    let cancelled = false;
-    spaceStore
-      .listGateData(task.workflowRunId)
-      .then((records) => {
-        if (cancelled) return;
-        // Pick the first rejected/waiting gate. Note: in multi-gate workflows
-        // this may not be the gate that actually blocked the task. A future
-        // improvement would store `blockingGateId` on SpaceTask to remove
-        // ambiguity.
-        const rejected = records.find(
-          (r) => r.data?.approved === false || r.data?.waiting === true
-        );
-        if (rejected) {
-          setPendingGate({ gateId: rejected.gateId, data: rejected.data });
-        }
-      })
-      .catch(() => {
-        // Gate data fetch is best-effort
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [reason, task.workflowRunId]);
 
   const actions: InlineStatusBannerAction[] = [
     {
@@ -125,30 +88,7 @@ export function TaskBlockedBanner({ task, spaceId, onStatusTransition }: TaskBlo
     );
   }
 
-  // If showing full gate review, render GateArtifactsView
-  if (showGateReview && pendingGate && task.workflowRunId) {
-    return (
-      <GateArtifactsView
-        runId={task.workflowRunId}
-        gateId={pendingGate.gateId}
-        spaceId={spaceId}
-        gateData={pendingGate.data}
-        onClose={() => setShowGateReview(false)}
-        onDecision={() => setShowGateReview(false)}
-      />
-    );
-  }
-
   const config = (reason && REASON_CONFIG[reason]) || FALLBACK_CONFIG;
-
-  if (reason === 'gate_rejected' && pendingGate) {
-    actions.unshift({
-      label: 'Review & Approve',
-      onClick: () => setShowGateReview(true),
-      variant: 'secondary',
-      testId: 'gate-review-btn',
-    });
-  }
 
   const result = task.result?.trim();
 

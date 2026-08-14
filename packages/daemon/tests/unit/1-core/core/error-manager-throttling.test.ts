@@ -126,6 +126,72 @@ describe('ErrorManager - Error Throttling', () => {
     expect(broadcastedErrors.length).toBe(3); // Still only 3
   });
 
+  it('should NEVER throttle delivery-terminal errors (auth/permission/quota)', async () => {
+    // The message-delivery bridge classifies a turn from `session.error`; a
+    // throttled 4th rapid auth failure would misclassify as recoverable and
+    // burn the retry budget against a credential that cannot succeed. Terminal
+    // turns dead-letter on the first occurrence, so there is no storm to damp.
+    // (Codex P2.)
+    const sessionId = 'test-session';
+
+    // provider_auth_error (expired token — recoverable flag is true, but the
+    // delivery classifier treats the category as terminal).
+    for (let i = 0; i < 10; i++) {
+      await errorManager.handleError(
+        sessionId,
+        new Error('OAuth token expired'),
+        ErrorCategory.PROVIDER_AUTH_ERROR
+      );
+    }
+
+    // Non-recoverable: invalid API key / permission / quota.
+    for (let i = 0; i < 10; i++) {
+      await errorManager.handleError(
+        sessionId,
+        new Error('invalid_api_key'),
+        ErrorCategory.AUTHENTICATION
+      );
+    }
+    for (let i = 0; i < 10; i++) {
+      await errorManager.handleError(
+        sessionId,
+        new Error('403 forbidden'),
+        ErrorCategory.PERMISSION
+      );
+    }
+    for (let i = 0; i < 10; i++) {
+      await errorManager.handleError(
+        sessionId,
+        new Error('insufficient_quota'),
+        ErrorCategory.RATE_LIMIT
+      );
+    }
+
+    expect(broadcastedErrors.length).toBe(40);
+  });
+
+  it('should still throttle recoverable errors after a terminal error was broadcast', async () => {
+    const sessionId = 'test-session';
+
+    await errorManager.handleError(
+      sessionId,
+      new Error('OAuth token expired'),
+      ErrorCategory.PROVIDER_AUTH_ERROR
+    );
+
+    // Recoverable connection errors keep their own throttle budget — the
+    // terminal exemption does not open the floodgate for recoverable storms.
+    for (let i = 0; i < 10; i++) {
+      await errorManager.handleError(
+        sessionId,
+        new Error('ENOTFOUND api.anthropic.com'),
+        ErrorCategory.CONNECTION
+      );
+    }
+
+    expect(broadcastedErrors.length).toBe(4); // 1 terminal + 3 connection
+  });
+
   it('should throttle per-session (different sessions get separate limits)', async () => {
     const session1 = 'session-1';
     const session2 = 'session-2';

@@ -263,6 +263,25 @@ export class MessageQueue {
   }
 
   /**
+   * True when `messageId` is currently in the queue, claimed by a generator, or
+   * yielded to the SDK but not yet acknowledged — i.e. it was admitted and is
+   * still in flight. Used by the ACP steer path to avoid re-admitting (and thus
+   * duplicating) a steer that is already pending subprocess acceptance:
+   * {@link MessageQueue.admitWithId} is NOT idempotent (each call pushes a fresh
+   * message), so a parked re-run must not feed twice.
+   */
+  hasPendingOrInFlight(messageId: string): boolean {
+    if (this.queue.some((message) => message.id === messageId)) return true;
+    for (const message of this.claimed) {
+      if (message.id === messageId) return true;
+    }
+    for (const message of this.yielded) {
+      if (message.id === messageId) return true;
+    }
+    return false;
+  }
+
+  /**
    * Start the message queue (allows messages to be yielded)
    * Increments generation to invalidate old generators
    */

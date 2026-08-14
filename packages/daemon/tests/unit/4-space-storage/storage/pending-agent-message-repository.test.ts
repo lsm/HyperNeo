@@ -87,6 +87,24 @@ describe('PendingAgentMessageRepository — enqueue', () => {
     expect(record.lastError).toBeNull();
     expect(record.expiresAt).toBeGreaterThan(Date.now());
     expect(typeof record.createdAt).toBe('number');
+    expect(record.deliveryMode).toBeNull(); // omitted → immediate (legacy behavior)
+  });
+
+  test('persists deliveryMode and reads it back (defer survives the queue)', () => {
+    // A deferred ("queue for next turn") human message must retain its mode so
+    // the flush replays it as 'defer' instead of defaulting to immediate.
+    const { record } = repo.enqueue({
+      workflowRunId: RUN_ID,
+      spaceId: SPACE_ID,
+      targetKind: 'node_agent',
+      targetAgentName: 'coder',
+      message: 'for next turn',
+      deliveryMode: 'defer',
+    });
+    expect(record.deliveryMode).toBe('defer');
+    // Round-trips through the DB on read-back too.
+    expect(repo.getById(record.id)?.deliveryMode).toBe('defer');
+    expect(repo.listPendingForTarget(RUN_ID, 'coder')[0].deliveryMode).toBe('defer');
   });
 
   test('honours ttlMs by setting expiresAt = now + ttl', () => {

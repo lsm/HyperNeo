@@ -87,7 +87,6 @@ describe('ClientEventBridge', () => {
       expect(eventHandlers.has('space.schedule.updated')).toBe(true);
       expect(eventHandlers.has('space.workflowRun.created')).toBe(true);
       expect(eventHandlers.has('space.workflowRun.updated')).toBe(true);
-      expect(eventHandlers.has('space.gateData.updated')).toBe(true);
       expect(eventHandlers.has('space.hookState.updated')).toBe(true);
       expect(eventHandlers.has('space.artifactCache.updated')).toBe(true);
       expect(eventHandlers.has('space.pendingMessage.queued')).toBe(true);
@@ -286,22 +285,6 @@ describe('ClientEventBridge', () => {
         run: { status: 'running' },
       };
       eventHandlers.get('space.workflowRun.updated')![0](data);
-
-      expect(published[0].channel).toEqual({ kind: 'global' });
-    });
-
-    it('forwards space.gateData.updated to global channel', () => {
-      const { internalEventBus, gateway, eventHandlers, published } = buildFixture();
-      createClientEventBridge(internalEventBus, gateway).start();
-
-      const data = {
-        sessionId: 'global',
-        spaceId: 's-1',
-        runId: 'run-1',
-        gateId: 'g-1',
-        data: { votes: 3 },
-      };
-      eventHandlers.get('space.gateData.updated')![0](data);
 
       expect(published[0].channel).toEqual({ kind: 'global' });
     });

@@ -6,6 +6,7 @@ import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
+import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { createSpaceTables } from '../../helpers/space-test-db';
 import { computeDefinitionVersion } from '../../../../src/lib/space/workflows/definition-version';
 import type { SpaceWorkflow } from '@hyperneo/shared';
@@ -455,5 +456,120 @@ describe('SpaceWorkflowRunRepository', () => {
     // hash the SANITIZED gate via the manager, and be idempotent across boots for crash
     // recovery). It is covered end-to-end by the "backfill re-key round-trips against the
     // runtime sanitized read path" test in channel-router.test.ts.
+  });
+
+  // -------------------------------------------------------------------------
+  // Deletion-safety (RFC §4 #3): deleting a workflow (or its runs) must not
+  // orphan a run whose canonical task is not archived — done/cancelled runs
+  // REOPEN, so only an archived task is a non-reopenable tombstone.
+  // -------------------------------------------------------------------------
+  describe('deletion-safety (RFC §4 #3)', () => {
+    let workflowRepo: SpaceWorkflowRepository;
+
+    beforeEach(() => {
+      workflowRepo = new SpaceWorkflowRepository(db as any);
+    });
+
+    it('hasExecutableRuns is false when there are no runs', () => {
+      expect(workflowRepo.hasExecutableRuns(WORKFLOW_ID)).toBe(false);
+    });
+
+    it('hasExecutableRuns is false for a terminal run whose task is archived (tombstone)', () => {
+      const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'R' });
+      repo.updateStatusUnchecked(run.id, 'cancelled'); // terminal
+      seedTaskForRun(run.id, spaceId, { archived: true });
+      expect(workflowRepo.hasExecutableRuns(WORKFLOW_ID)).toBe(false);
+    });
+
+    it('hasExecutableRuns is true when the run task is not archived', () => {
+      const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'R' });
+      seedTaskForRun(run.id, spaceId); // not archived
+      expect(workflowRepo.hasExecutableRuns(WORKFLOW_ID)).toBe(true);
+    });
+
+    it('hasExecutableRuns protects a reopenable done/cancelled run (task not archived)', () => {
+      // A finished run is NOT a tombstone — done/cancelled reopen — so it must
+      // block deletion as long as its task is not archived.
+      const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'R' });
+      repo.updateStatusUnchecked(run.id, 'done');
+      seedTaskForRun(run.id, spaceId); // not archived → still reopenable/executable
+      expect(workflowRepo.hasExecutableRuns(WORKFLOW_ID)).toBe(true);
+    });
+
+    it('hasExecutableRuns protects a non-terminal run with NO task yet (startup window)', () => {
+      // startWorkflowRun inserts the run and promotes it to in_progress BEFORE
+      // attaching its canonical task; during that gap the run has no task, yet
+      // it must not be orphaned by a concurrent delete/resync/import.
+      const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'R' });
+      // status defaults to 'pending' (non-terminal); no task seeded.
+      expect(workflowRepo.hasExecutableRuns(WORKFLOW_ID)).toBe(true);
+    });
+
+    it('hasExecutableRuns protects a TERMINAL run with no task (failure-cleanup case)', () => {
+      // If task creation fails, startWorkflowRun's catch path cancels the run
+      // with no task attached. A terminal run with no task is NOT a tombstone
+      // (mirrors ChannelRouter.isParentTaskArchived: zero tasks ⇒ not archived).
+      const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'R' });
+      repo.updateStatusUnchecked(run.id, 'cancelled'); // terminal, no task seeded
+      expect(workflowRepo.hasExecutableRuns(WORKFLOW_ID)).toBe(true);
+    });
+
+    it('hasExecutableRuns treats a non-terminal run with ALL tasks archived as a tombstone', () => {
+      // Legacy stale state: archiving used to leave an in_progress run stranded
+      // (space-task-handlers.ts:515-524). Such a run is non-terminal but its
+      // task(s) are all archived, so it is a provable tombstone (isParentTaskArchived
+      // is true) and must NOT block deletion — otherwise the user is told to
+      // "archive the task" for a task that is already archived.
+      const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'stale' });
+      // status defaults to 'pending' (non-terminal); task is archived.
+      seedTaskForRun(run.id, spaceId, { archived: true });
+      expect(workflowRepo.hasExecutableRuns(WORKFLOW_ID)).toBe(false);
+    });
+
+    it('deleteByWorkflowId removes only tombstoned runs and protects executable ones', () => {
+      const tombstoned = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'tomb' });
+      repo.updateStatusUnchecked(tombstoned.id, 'cancelled'); // terminal
+      seedTaskForRun(tombstoned.id, spaceId, { archived: true });
+
+      const liveRun = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'live' });
+      seedTaskForRun(liveRun.id, spaceId); // not archived (and non-terminal)
+
+      // Assert the invariant by which runs survive, not the returned count:
+      // under FK enforcement changes() includes cascade effects (space_tasks
+      // ... ON DELETE SET NULL on the tombstoned run's task), so the count
+      // over-reports relative to run rows deleted. No caller uses the count.
+      repo.deleteByWorkflowId(WORKFLOW_ID);
+      expect(repo.getRun(tombstoned.id)).toBeNull(); // tombstone → removed
+      expect(repo.getRun(liveRun.id)).not.toBeNull(); // executable → protected
+    });
+
+    it('deleteByWorkflowId cleans up a non-terminal run whose tasks are all archived', () => {
+      // The legacy stale state (above) is cleanable on run-cleanup too.
+      const stale = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'stale' });
+      seedTaskForRun(stale.id, spaceId, { archived: true }); // non-terminal + all archived
+      repo.deleteByWorkflowId(WORKFLOW_ID);
+      expect(repo.getRun(stale.id)).toBeNull();
+    });
+
+    it('deleteByWorkflowId protects a non-terminal run that has no task yet (startup window)', () => {
+      const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'starting' });
+      // non-terminal, no task — must survive run-cleanup during the attach gap.
+      repo.deleteByWorkflowId(WORKFLOW_ID);
+      expect(repo.getRun(run.id)).not.toBeNull();
+    });
+
+    it('deleteByWorkflowId protects a terminal run with no task (failure-cleanup case)', () => {
+      const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'cancelled-notask' });
+      repo.updateStatusUnchecked(run.id, 'cancelled'); // terminal, no task
+      repo.deleteByWorkflowId(WORKFLOW_ID);
+      expect(repo.getRun(run.id)).not.toBeNull();
+    });
+
+    it('deleteByWorkflowId is a no-op when every run is still executable', () => {
+      const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'live' });
+      seedTaskForRun(run.id, spaceId); // not archived
+      expect(repo.deleteByWorkflowId(WORKFLOW_ID)).toBe(0);
+      expect(repo.getRun(run.id)).not.toBeNull();
+    });
   });
 });

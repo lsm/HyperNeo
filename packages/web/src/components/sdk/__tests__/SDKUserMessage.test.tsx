@@ -46,8 +46,14 @@ vi.mock('../../../lib/toast.ts', () => ({
   },
 }));
 
+// Mock the api-helpers retry call (backs the per-message Retry button).
+vi.mock('../../../lib/api-helpers.ts', () => ({
+  retryMessageDelivery: vi.fn().mockResolvedValue({ retried: true }),
+}));
+
 import { copyToClipboard } from '../../../lib/utils.ts';
 import { toast } from '../../../lib/toast.ts';
+import { retryMessageDelivery } from '../../../lib/api-helpers.ts';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -489,11 +495,11 @@ describe('SDKUserMessage', () => {
     });
   });
 
-  describe('Send Status', () => {
-    it('should show "not delivered" badge when sendStatus is failed', () => {
+  describe('Delivery Status', () => {
+    it('should show "not delivered" badge when deliveryStatus is failed', () => {
       const message = {
         ...createTextMessage('Hello world'),
-        sendStatus: 'failed',
+        deliveryStatus: 'failed' as const,
       };
 
       const { container } = render(<SDKUserMessage message={message} />);
@@ -501,12 +507,140 @@ describe('SDKUserMessage', () => {
       expect(container.textContent).toContain('not delivered');
     });
 
-    it('should not show "not delivered" badge when sendStatus is absent', () => {
+    it('should show "queued" badge when deliveryStatus is queued', () => {
+      const message = {
+        ...createTextMessage('Hello world'),
+        deliveryStatus: 'queued' as const,
+      };
+
+      const { container } = render(<SDKUserMessage message={message} />);
+
+      expect(container.textContent).toContain('queued');
+    });
+
+    it('should show "sending" badge when deliveryStatus is processing', () => {
+      const message = {
+        ...createTextMessage('Hello world'),
+        deliveryStatus: 'processing' as const,
+      };
+
+      const { container } = render(<SDKUserMessage message={message} />);
+
+      expect(container.textContent).toContain('sending');
+    });
+
+    it('should show "retrying" badge with stalled-delivery copy when deliveryStatus is retrying', async () => {
+      const message = {
+        ...createTextMessage('Hello world'),
+        deliveryStatus: 'retrying' as const,
+      };
+
+      const { container } = render(<SDKUserMessage message={message} />);
+
+      const badge = container.querySelector('[data-testid="user-delivery-state"]');
+      expect(badge).toBeTruthy();
+      expect(badge?.textContent).toContain('retrying');
+
+      // The stalled-delivery hint lives in the badge's hover tooltip. mouseenter
+      // is non-bubbling, so fire it on the Tooltip wrapper (the badge's parent).
+      fireEvent.mouseEnter(badge!.parentElement!);
+      await waitFor(() => {
+        expect(container.textContent).toContain('Delivery stalled — retrying');
+      });
+    });
+
+    it('should NOT show a badge when deliveryStatus is delivered (avoid noise)', () => {
+      const message = {
+        ...createTextMessage('Hello world'),
+        deliveryStatus: 'delivered' as const,
+      };
+
+      const { container } = render(<SDKUserMessage message={message} />);
+
+      expect(container.textContent).not.toContain('delivered');
+      expect(container.textContent).not.toContain('not delivered');
+    });
+
+    it('should not show a badge when deliveryStatus is absent', () => {
       const message = createTextMessage('Hello world');
 
       const { container } = render(<SDKUserMessage message={message} />);
 
       expect(container.textContent).not.toContain('not delivered');
+      expect(container.textContent).not.toContain('queued');
+    });
+
+    it('shows a Retry button for a failed message and re-enqueues on click', async () => {
+      vi.mocked(retryMessageDelivery).mockResolvedValue({ retried: true });
+      const message = {
+        ...createTextMessage('Hello world'),
+        id: 'db-1',
+        deliveryStatus: 'failed' as const,
+      };
+
+      const { container } = render(<SDKUserMessage message={message} sessionId="sess-1" />);
+
+      const retryButton = container.querySelector('[data-testid="user-delivery-retry-button"]');
+      expect(retryButton).toBeTruthy();
+      fireEvent.click(retryButton!);
+
+      await waitFor(() => {
+        expect(retryMessageDelivery).toHaveBeenCalledWith('sess-1', 'db-1');
+      });
+    });
+
+    it('shows a retry countdown + retry N/Max for a retrying message', () => {
+      const message = {
+        ...createTextMessage('Hello world'),
+        deliveryStatus: 'retrying' as const,
+        // count = retry_count (completed failures); label is "retry N/Max".
+        deliveryRetry: { count: 2, runAt: Date.now() + 5000, maxRetries: 8 },
+      };
+
+      const { container } = render(<SDKUserMessage message={message} />);
+
+      const countdown = container.querySelector('[data-testid="user-delivery-retry-countdown"]');
+      expect(countdown).toBeTruthy();
+      expect(countdown?.textContent).toContain('retrying in');
+      expect(countdown?.textContent).toContain('retry 2/8');
+    });
+  });
+
+  describe('Rewind gating', () => {
+    const renderWithRewind = (deliveryStatus?: string) =>
+      render(
+        <SDKUserMessage
+          message={{
+            ...createTextMessage('Hello world'),
+            ...(deliveryStatus ? { deliveryStatus } : {}),
+          }}
+          onRewind={() => {}}
+          sessionId="s1"
+        />
+      );
+
+    it('shows the rewind button for terminal delivered messages', () => {
+      const { container } = renderWithRewind('delivered');
+      expect(container.querySelector('[title="Rewind to here"]')).toBeTruthy();
+    });
+
+    it('shows the rewind button for terminal failed messages', () => {
+      const { container } = renderWithRewind('failed');
+      expect(container.querySelector('[title="Rewind to here"]')).toBeTruthy();
+    });
+
+    it('shows the rewind button when deliveryStatus is absent (legacy settled row)', () => {
+      const { container } = renderWithRewind();
+      expect(container.querySelector('[title="Rewind to here"]')).toBeTruthy();
+    });
+
+    it.each([
+      'queued',
+      'processing',
+      'retrying',
+    ])('hides the rewind button for nonterminal %s delivery', (status) => {
+      const { container } = renderWithRewind(status);
+      expect(container.querySelector('[title="Rewind to here"]')).toBeFalsy();
     });
   });
 

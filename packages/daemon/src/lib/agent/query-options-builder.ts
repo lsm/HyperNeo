@@ -70,6 +70,7 @@ import {
 } from './builtin-skill-plugin-wrapper';
 import { getCoordinatorAgents } from './coordinator-agents';
 import { createLoopDetectorHooks } from './loop-detector-hook';
+import { isMessageDeliveryV2Enabled } from './message-delivery';
 import {
   createOutputLimiterPostHook,
   createOutputLimiterPreHook,
@@ -629,7 +630,17 @@ export class QueryOptionsBuilder {
       ),
 
       // ============ Streaming ============
-      includePartialMessages: config.includePartialMessages,
+      // Partial/streaming messages (`stream_event`) double as a LIVENESS
+      // heartbeat for the delivery-turn stall watchdog. A model that thinks or
+      // generates for longer than the no-activity window (default 3min) without
+      // emitting a COMPLETE message would otherwise look like a hang and trip
+      // the watchdog; with partials on, each token delta bumps it so an
+      // alive-but-quiet turn is never mistaken for a stall. Enabled when durable
+      // delivery v2 is on (the only path that arms the watchdog); an explicit
+      // per-session override still wins. Partials are intercepted in
+      // SDKMessageHandler.handleMessage and never persisted/broadcast, so this
+      // does not bloat the DB.
+      includePartialMessages: config.includePartialMessages ?? isMessageDeliveryV2Enabled(),
 
       // ============ File Checkpointing ============
       // Enable file change tracking for rewind capability

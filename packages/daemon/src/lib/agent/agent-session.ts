@@ -92,7 +92,7 @@ import type {
 } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import { Database } from '../../storage/database';
-import { ErrorManager } from '../error-manager';
+import { ErrorManager, type StructuredError } from '../error-manager';
 import { Logger } from '../logger';
 import { SettingsManager } from '../settings-manager';
 import { DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@hyperneo/shared';
@@ -105,6 +105,21 @@ export const RECENTLY_EXITED_ROOT_PID_RETENTION_MS = 15 * 60 * 1000;
  * slow cadence is fine. Aligned with the job-queue stale-reclamation window.
  */
 const SESSION_RECONCILE_INTERVAL_MS = 60_000;
+
+/**
+ * No-progress window for the delivery turn stall watchdog. A healthy turn —
+ * even a multi-hour agentic one — emits SDK messages (assistant output, tool
+ * events, system events) continuously; the watchdog resets on EVERY incoming
+ * message (and defers while a tool is outstanding, so a long build is never
+ * mistaken for a stall). It fires only when there is NO activity of any kind
+ * — no SDK message AND no outstanding tool — for this whole window, which is a
+ * true query hang. Tunable via `HYPERNEO_DELIVERY_NO_ACTIVITY_MS`. See
+ * {@link AgentSession.armDeliveryTurnStall}.
+ */
+const DELIVERY_TURN_NO_ACTIVITY_MS = (() => {
+  const env = Number(process.env.HYPERNEO_DELIVERY_NO_ACTIVITY_MS);
+  return Number.isFinite(env) && env >= 30_000 ? env : 3 * 60 * 1000;
+})();
 
 /**
  * AgentSessionInit - Configuration for creating a new AgentSession
@@ -223,8 +238,13 @@ export interface AgentSessionRuntimeOptions {
 import { MessageQueue } from './message-queue';
 import {
   MESSAGE_DELIVERY_PARK_MS,
+  MessageDeliveryRecoverableTurnError,
+  MessageDeliveryTerminalTurnError,
+  classifyReclaimTermination,
   deliverMessage,
   isMessageDeliveryV2Enabled,
+  isRetryableErrorResultSubtype,
+  isTerminalTurnError,
   reconcileStrandedDeliveries as reconcileStrandedDeliveriesCore,
   signalDeliveryConsumed,
   withSessionLock,
@@ -232,6 +252,7 @@ import {
   type FeedSteerOutcome,
 } from './message-delivery';
 import { deliveryMetrics } from './message-delivery-metrics';
+import { DeliveryTurnStallWatchdog } from './delivery-turn-stall-watchdog';
 import { ProcessingStateManager } from './processing-state-manager';
 import { ContextTracker } from './context-tracker';
 import { SDKMessageHandler, type SDKMessageHandlerContext } from './sdk-message-handler';
@@ -325,6 +346,44 @@ export class AgentSession
   queryAbortController: AbortController | null = null;
   firstMessageReceived = false;
   startupTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /**
+   * The most recent terminal SDK error for this session, captured from the
+   * `session.error` broadcast. The delivery layer reads this at turn-end to
+   * detect that a driven turn died on a provider error (the query-runner HANDLES
+   * such errors inline — `queryPromise` resolves, it does not reject — so the
+   * delivery bridge cannot see the failure any other way). Gated to "occurred
+   * during this turn" by `at` vs. the turn-start timestamp, and cleared on the
+   * next successful `ensureQueryStarted` (and `session.errorClear`) so a later
+   * success isn't mistaken for a retryable failure. See
+   * {@link driveDeliveryTurn} + docs/features/message-delivery-v2.md.
+   */
+  private lastTerminalError: { error: StructuredError; at: number } | null = null;
+
+  /**
+   * Stall watchdog for the in-flight delivery turn: a NO-PROGRESS timer armed
+   * once the SDK consumes the kickoff, raced against the turn-end await. It
+   * resets on EVERY incoming SDK message ({@link bumpDeliveryTurnActivity}) and
+   * defers while a tool is outstanding ({@link outstandingToolUseIds}), so a
+   * healthy multi-hour turn is never mistaken for a stall. It fires only when
+   * there is no activity of any kind — no message AND no outstanding tool — for
+   * {@link DELIVERY_TURN_NO_ACTIVITY_MS}, a true query hang; on fire it resets
+   * the zombie query so the bridge throws a recoverable error and the job
+   * retries. See {@link driveDeliveryTurn}.
+   */
+  private deliveryTurnStall: DeliveryTurnStallWatchdog | null = null;
+  private deliveryTurnStalled = false;
+
+  /**
+   * Outstanding `tool_use` IDs for this session (added on `sdk.toolUse.created`,
+   * removed on `sdk.toolUse.consumed`). Non-empty means a tool is mid-execution,
+   * so a quiet window is the tool running — NOT a stall. Cleared per turn. Used
+   * only by {@link scheduleStallFire}'s defer check.
+   */
+  private outstandingToolUseIds = new Set<string>();
+
+  /** Unsubscribers for the delivery terminal-error capture (freed in cleanup). */
+  private readonly deliveryErrorSubs: Array<() => void> = [];
   originalEnvVars: OriginalEnvVars = {};
   processExitedPromise: Promise<void> | null = null;
   private trackedAgentProcesses = new Map<number, TrackedAgentProcess>();
@@ -404,6 +463,57 @@ export class AgentSession
   ) {
     this.errorManager = new ErrorManager(this.messageHub, this.internalEventBus);
     this.logger = new Logger(`AgentSession ${session.id}`);
+
+    // Capture terminal SDK errors so the delivery layer can detect a driven
+    // turn that died on a recoverable/non-recoverable provider error (the
+    // query-runner resolves queryPromise on handled errors, so the bridge has
+    // no other signal). Cleared on successful query (re)start / errorClear.
+    this.deliveryErrorSubs.push(
+      this.internalEventBus.subscribe(
+        'session.error',
+        (data) => {
+          if (data.sessionId !== this.session.id) return;
+          const details = data.details as StructuredError | undefined;
+          if (!details) return;
+          this.lastTerminalError = { error: details, at: Date.now() };
+        },
+        { subscriberName: 'AgentSession.deliveryTurnError' }
+      )
+    );
+    this.deliveryErrorSubs.push(
+      this.internalEventBus.subscribe(
+        'session.errorClear',
+        (data) => {
+          if (data.sessionId !== this.session.id) return;
+          this.lastTerminalError = null;
+        },
+        { subscriberName: 'AgentSession.deliveryTurnErrorClear' }
+      )
+    );
+    // Track outstanding tool_use IDs so the no-progress stall watchdog can tell
+    // "a tool is mid-execution (quiet but active)" from "the query hung (no
+    // activity)". Added on tool_use, removed on tool_result. See
+    // scheduleStallFire.
+    this.deliveryErrorSubs.push(
+      this.internalEventBus.subscribe(
+        'sdk.toolUse.created',
+        (data) => {
+          if (data.sessionId !== this.session.id) return;
+          this.outstandingToolUseIds.add(data.toolUseId);
+        },
+        { subscriberName: 'AgentSession.stallWatchdogToolUse' }
+      )
+    );
+    this.deliveryErrorSubs.push(
+      this.internalEventBus.subscribe(
+        'sdk.toolUse.consumed',
+        (data) => {
+          if (data.sessionId !== this.session.id) return;
+          this.outstandingToolUseIds.delete(data.toolUseId);
+        },
+        { subscriberName: 'AgentSession.stallWatchdogToolResult' }
+      )
+    );
     this.settingsManager = new SettingsManager(
       this.db,
       this.session.worktree?.worktreePath ?? this.session.workspacePath ?? undefined
@@ -947,6 +1057,14 @@ export class AgentSession
       this.db.getJobQueueRepo().cancelDelivery(this.session.id, result.uuid);
       const removedFromMemory = this.messageQueue.remove(result.uuid);
       await this.stateManager.clearQueuedIfOwnedBy(result.uuid);
+      // Task #862 (review P2): both `deferEnqueuedUserMessage` (enqueued →
+      // deferred) and `cancelDelivery` (deletes the active job) write through
+      // the raw db with no notify, so the widened feed would keep showing
+      // "retrying" (deliveryRetry stays 1) after Move to Next. Notify both
+      // tables so `sdk_messages` (the new deferred status) and `job_queue` (the
+      // gone active job) re-evaluate.
+      this.db.notifyChange?.('sdk_messages', { sessionId: this.session.id });
+      this.db.notifyChange?.('job_queue', { sessionId: this.session.id });
       return {
         changed: true as const,
         dbId: result.dbId,
@@ -1902,11 +2020,20 @@ export class AgentSession
    * runQuery promise settling). The job stays `processing` across the await, so
    * a crash before the turn ends is redelivered by reclaimStale.
    *
-   * Step-1 (transitional): the QueryRunner still owns in-process retry/error
-   * handling, so this completes the job when the turn ENDS (success or handled
-   * error) rather than fail-on-error — otherwise the job's backoff would
-   * double-retry what QueryRunner already retried. Step 4 (decommission)
-   * removes QueryRunner retry, making the job's fail/backoff the sole retry.
+   * On a turn that ENDS IN AN ERROR: the QueryRunner handles provider errors
+   * inline (it classifies + displays them, publishes `session.error`, and
+   * resolves `queryPromise`), so the bridge cannot see the failure from the
+   * promise. Instead it reads the terminal error captured from `session.error`
+   * (gated to this turn). A RECOVERABLE error (e.g. a transient provider 5xx /
+   * "unexpected error", category SYSTEM) THROWS so the job's `fail`/backoff
+   * retries the turn — each retry re-drives via `ensureQueryStarted`, which
+   * restarts the query (the "send a new message and it works" recovery, now
+   * automatic). A NON-recoverable error (auth/permission/quota) throws a
+   * `MessageDeliveryTerminalTurnError` so the job dead-letters immediately. The
+   * durable turn-end marker is cleared before throwing so a retry's reclaim
+   * re-drives instead of short-circuiting on `turn_terminated`. The job's
+   * backoff composes with the QueryRunner's own bounded retry; the total is
+   * bounded by `maxRetries`.
    */
   async driveDeliveryTurn(
     messageUuid: string,
@@ -1915,6 +2042,9 @@ export class AgentSession
     alreadyConsumed = false,
     claimGuard?: () => boolean
   ): Promise<DriveTurnOutcome> {
+    // Timestamp gates the terminal-error read to "fired during THIS turn" — a
+    // stale error from a prior turn must not turn a clean turn into a retry.
+    const turnStartedAt = Date.now();
     // Brief critical section (per-session lock): start the query + feed the
     // kickoff so it is the FIRST message the generator yields (a steer grabbing
     // the lock next can't jump ahead). The lock also serializes ensureQueryStarted
@@ -1935,6 +2065,17 @@ export class AgentSession
       if (claimGuard && !claimGuard()) {
         return { kind: 'aborted' as const };
       }
+      // A re-claimed consumed turn whose turn already ended has nothing to
+      // resume — but only an ended-and-SUCCEEDED turn is safe to complete
+      // silently (see reclaimTurnAlreadySucceeded). A bare delivery_turn_end
+      // marker (the turn ended via a result-less path) is cleared and re-driven
+      // so the producedResult/stall-retry path decides; this check still runs
+      // BEFORE provider startup so a SUCCESS-terminated reclaim does not start a
+      // fresh query that would idle waiting for input forever. See Codex
+      // (PR #2463, P1/P2) + task #946 (PR #2471 review r3772035811).
+      if (alreadyConsumed && this.reclaimTurnAlreadySucceeded(messageUuid)) {
+        return { kind: 'turn_terminated' as const };
+      }
       const queryStartResult = await this.lifecycleManager.ensureQueryStarted();
       if (queryStartResult === 'blocked') {
         return { kind: 'blocked' as const };
@@ -1942,6 +2083,17 @@ export class AgentSession
       const queryPromise = this.queryPromise;
       if (!queryPromise) {
         throw new Error('message_delivery: query did not start; cannot drive turn');
+      }
+      // Re-check termination AFTER startup, immediately before arming the
+      // turn-end waiter — the two statements are adjacent (no await between), so
+      // a turn that terminates in the check→arm window cannot be missed: if it
+      // ended before the check, we abort here (on success) or clear+re-drive
+      // (bare marker); if it ends after the waiter is armed, the waiter resolves
+      // it. Without this, a live-but-stale consumed turn that finishes during
+      // ensureQueryStarted's await would leak a query waiting for input and hold
+      // the active-turn slot forever. See Codex (PR #2463, P2) + task #946.
+      if (alreadyConsumed && this.reclaimTurnAlreadySucceeded(messageUuid)) {
+        return { kind: 'turn_terminated' as const };
       }
       // Arm the turn-end wait AFTER ensureQueryStarted: ensureQueryStarted awaits
       // a preceding interrupt's completion, and that interrupt's terminal
@@ -1959,7 +2111,34 @@ export class AgentSession
       // captures as episodeGeneration (its own supersession guard keeps the
       // generation stable at this value through the 429'd turn's life).
       const turnEnd = this.stateManager.waitForIdleTransition(
-        this.rateLimitWatchdog.getGeneration()
+        this.rateLimitWatchdog.getGeneration(),
+        // Waiter-owned turn-end marker: fire on ANY release path (terminal idle
+        // drain, direct releaseIdleWaiters from restart/reset/answer-reinjection
+        // failures, or this waiter's cancel) — the kickoff UUID is the durable
+        // turn owner, so it isn't corrupted by a steer overwriting the
+        // processing messageId or waiting_for_input dropping it. Gated on the
+        // message having been CONSUMED and the job still being `processing`
+        // (a graceful-shutdown requeue, or a pre-consumption transient idle,
+        // records nothing). See Codex (PR #2463, P2).
+        () => {
+          try {
+            // Scope completion to the durable delivery UUID, not this transient
+            // claim. A lease handoff can invalidate the predecessor claim before a
+            // result-less terminal idle fires; that genuine completion still belongs
+            // to the same consumed message and must survive until the replacement
+            // handler observes it. The processing+UUID+consumed checks below prevent
+            // an old waiter from marking a different or already-settled turn.
+            const repo = this.db.getSDKMessageRepo();
+            const jobQueue = this.db.getJobQueueRepo?.();
+            if (!repo || !jobQueue) return;
+            if (!jobQueue.isProcessingDelivery(this.session.id, messageUuid)) return;
+            const loaded = repo.getDeliveryContent(this.session.id, messageUuid);
+            if (!loaded || loaded.sendStatus !== 'consumed') return;
+            this.recordDeliveryTurnEnd(messageUuid);
+          } catch (error) {
+            this.logger.warn('Failed to record delivery turn-end marker at turn end:', error);
+          }
+        }
       );
       // Feed the kickoff (resolves on onSent = the SDK consumed it) UNLESS a
       // prior attempt already did (alreadyConsumed = reclaim after a crash): the
@@ -1992,6 +2171,11 @@ export class AgentSession
       await this.stateManager.setQueued(messageUuid);
       return { outcome: 'blocked', retryAt: Date.now() + MESSAGE_DELIVERY_PARK_MS };
     }
+    if (started.kind === 'turn_terminated') {
+      // Nothing to resume — the handler completes the job, freeing the
+      // active-turn slot so the next steer promotes into a real turn.
+      return { outcome: 'turn_terminated' };
+    }
     if (started.kind === 'aborted') {
       return { outcome: 'aborted' };
     }
@@ -2001,6 +2185,10 @@ export class AgentSession
     // a safety net for a query that closes without an idle (e.g. a hard crash);
     // in streaming-input mode queryPromise never resolves at turn-end, so
     // turnEnd wins and the job completes promptly when the SDK finishes the turn.
+    this.deliveryTurnStalled = false;
+    this.outstandingToolUseIds.clear();
+    // Stall watchdog placeholder; armed once we begin awaiting the turn (below).
+    let stallPromise: Promise<void> = new Promise<void>(() => {});
     try {
       // An alreadyConsumed reclaim skips the feed (admitWithId not called), so
       // `started.acknowledgment` is null — `await null` resolves immediately.
@@ -2030,13 +2218,154 @@ export class AgentSession
           signalDeliveryConsumed(this.session.id, messageUuid);
         }
       }
-      await Promise.race([started.turnEnd.promise, started.queryPromise.catch(() => {})]);
+      // Arm the stall watchdog now that the kickoff is consumed (or this is a
+      // consumed reclaim): a live-but-silent turn (no result, no error) would
+      // otherwise pin the job via the lease heartbeat forever. Raced against the
+      // turn-end await; cleared in `finally`.
+      stallPromise = this.armDeliveryTurnStall();
+      await Promise.race([
+        started.turnEnd.promise,
+        started.queryPromise.catch(() => {}),
+        stallPromise,
+      ]);
     } finally {
       // Cancel the waiter if it didn't win the race (e.g. queryPromise resolved
       // on query-close, or acknowledgment rejected) so it isn't left in the map.
       started.turnEnd.cancel();
+      this.clearDeliveryTurnStall();
+    }
+    // The turn ended (or the stall watchdog fired). Determine whether it
+    // actually produced output: a terminal `result` row after consumption is the
+    // "processed" signal. If one exists, the turn SUCCEEDED — return completed
+    // even if a `session.error` happened to fire during the window (it came
+    // from an unrelated subsystem; this avoids a false-positive retry). If NOT,
+    // the turn failed to produce a response — clear the turn-end marker (so a
+    // retry's reclaim re-drives instead of short-circuiting on `turn_terminated`)
+    // and throw so the job retries (recoverable error OR stall) or dead-letters
+    // (non-recoverable). See message-delivery-v2.md.
+    const producedResult = !!this.db
+      .getSDKMessageRepo()
+      ?.hasTerminalResultAfter(this.session.id, messageUuid);
+    if (!producedResult) {
+      const turnError = this.consumeTerminalTurnError(turnStartedAt);
+      this.db.getSDKMessageRepo()?.clearDeliveryTurnEnd(this.session.id, messageUuid);
+      // The SDK persists terminal error results (error_max_budget_usd, …)
+      // WITHOUT emitting session.error, so a turnError-null no-result can still
+      // be a classified failure: consult the persisted error subtype and treat
+      // non-retryable subtypes (cost/structured-output exhaustion) as terminal —
+      // retrying those repeats spend for a deterministic limit. Retryable
+      // subtypes (error_during_execution / error_max_turns) fall through to the
+      // normal recoverable retry. (Codex review.)
+      const errorResultSubtype = this.db
+        .getSDKMessageRepo()
+        ?.getErrorTerminalResultSubtypeAfter(this.session.id, messageUuid);
+      const detail =
+        turnError?.userMessage ||
+        turnError?.message ||
+        (errorResultSubtype
+          ? `Turn ended with a terminal error (${errorResultSubtype})`
+          : this.deliveryTurnStalled
+            ? 'No response from the model — resetting and retrying'
+            : 'Turn ended without a response');
+      // Non-recoverable OR auth (Codex #2): retrying cannot fix a credential/
+      // permission/quota error — dead-letter immediately with a Retry affordance
+      // instead of burning the budget re-invoking a provider that cannot auth.
+      if (turnError && isTerminalTurnError(turnError)) {
+        throw new MessageDeliveryTerminalTurnError(detail, turnError.category);
+      }
+      // A non-retryable persisted error result is equally terminal (Codex
+      // review): budget/limit exhaustion will not succeed on re-drive.
+      if (!turnError && errorResultSubtype && !isRetryableErrorResultSubtype(errorResultSubtype)) {
+        throw new MessageDeliveryTerminalTurnError(detail, errorResultSubtype);
+      }
+      // Recoverable provider error OR a no-progress stall (turnError null): the
+      // turn consumed the kickoff but produced no result — reset+retry. Reopen
+      // the row to `enqueued` so the retry RE-FEEDS the prompt: a resumed SDK
+      // query only loads history, it does not continue an incomplete trailing
+      // user turn, so a no-feed re-drive would sit silent until this watchdog
+      // fires again and burn the budget without another provider attempt. (The
+      // crash-reclaim path is different: there the SDK may still be
+      // mid-execution, so `consumed` rows are NOT re-fed on reclaim — this flip
+      // happens only after we confirmed the turn produced nothing.) (Codex P1.)
+      //
+      // Gated on the claim still being current: an interrupt (Stop) deletes the
+      // delivery job FIRST and leaves the consumed row untouched by design, then
+      // the query unwind's idle transition lands HERE. Reopening in that state
+      // would strand an `enqueued` row with no job, which the periodic orphan
+      // reconciler re-enqueues — replaying a prompt the user just cancelled
+      // (potentially re-running tools). A dead/replaced claim means this attempt
+      // no longer owns the retry, so it must not mutate the row. (Codex P1.)
+      if (!claimGuard || claimGuard()) {
+        this.reopenDeliveryForRetry(messageUuid);
+      }
+      throw new MessageDeliveryRecoverableTurnError(detail, turnError?.category);
     }
     return { outcome: 'completed' };
+  }
+
+  /**
+   * Arm the delivery-turn no-progress stall watchdog. Returns a promise that
+   * resolves when the turn has had NO activity (no SDK message AND no
+   * outstanding tool) for {@link DELIVERY_TURN_NO_ACTIVITY_MS}. Every incoming
+   * SDK message calls {@link bumpDeliveryTurnActivity} to reset the window; a
+   * firing is deferred while a tool is outstanding (so a long build is not a
+   * stall) or while the session sits in a scheduled `rate_limit_cooldown` (the
+   * query is intentionally silent for the provider's reset window — firing here
+   * would cancel the cooldown timer via `resetQuery()` and re-drive the provider
+   * early, burning the delivery retry budget against a 429-ing provider).
+   * On a true fire it flags {@link deliveryTurnStalled} and resets the
+   * zombie query so the bridge throws a recoverable error and the job retries on
+   * a clean query. The reset publishes the idle transition, which also resolves
+   * the turn-end waiter raced in {@link driveDeliveryTurn}. (Codex P1.)
+   */
+  private armDeliveryTurnStall(): Promise<void> {
+    this.clearDeliveryTurnStall();
+    this.deliveryTurnStalled = false;
+    this.deliveryTurnStall = new DeliveryTurnStallWatchdog(
+      DELIVERY_TURN_NO_ACTIVITY_MS,
+      () => this.outstandingToolUseIds.size > 0,
+      async () => {
+        this.deliveryTurnStalled = true;
+        try {
+          await this.resetQuery({ restartQuery: false });
+        } catch {
+          // best-effort — the flag is set; the bridge will throw + retry
+        }
+      },
+      () => this.stateManager.getState().status === 'rate_limit_cooldown'
+    );
+    return this.deliveryTurnStall.arm();
+  }
+
+  /**
+   * Reset the no-progress stall window — called on EVERY incoming SDK message
+   * (via {@link SDKMessageHandler.handleMessage}). A healthy turn streams
+   * messages continuously, so this keeps the watchdog from firing on a live
+   * turn. No-op when no delivery turn is in flight. Exposed on
+   * {@link SDKMessageHandlerContext} for the message handler.
+   */
+  bumpDeliveryTurnActivity(): void {
+    this.deliveryTurnStall?.bump();
+  }
+
+  /** Cancel the in-flight stall watchdog (no-op if none armed). */
+  private clearDeliveryTurnStall(): void {
+    this.deliveryTurnStall?.cancel();
+    this.deliveryTurnStall = null;
+  }
+
+  /**
+   * Return the terminal SDK error captured for this session iff it fired during
+   * the turn that started at `turnStartedAt`, then clear it (consume-on-read) so
+   * it cannot leak to a later turn. Null when the turn ended cleanly (or the
+   * error predated this turn). The companion of {@link lastTerminalError}; see
+   * {@link driveDeliveryTurn} for why the bridge needs this signal.
+   */
+  private consumeTerminalTurnError(turnStartedAt: number): StructuredError | null {
+    const entry = this.lastTerminalError;
+    if (!entry || entry.at < turnStartedAt) return null;
+    this.lastTerminalError = null;
+    return entry.error;
   }
 
   /**
@@ -2065,6 +2394,17 @@ export class AgentSession
       // excluded by this same lock. 'queued' → parked owner, so park this steer.
       if (status === 'processing') {
         if (!this.messageDeliveryValid(messageUuid)) return { kind: 'aborted' as const };
+        // ACP: if this steer was already admitted and is still pending subprocess
+        // acceptance (a parked re-run), do NOT re-admit — admitWithId is not
+        // idempotent, so a second push would duplicate the prompt. Keep awaiting
+        // acceptance (the handler parks again). The non-ACP path never reaches a
+        // re-admit: a consumed steer short-circuits via alreadyConsumed upstream.
+        if (
+          this.session.config.provider === 'acp' &&
+          this.messageQueue.hasPendingOrInFlight(messageUuid)
+        ) {
+          return { kind: 'awaiting_acceptance' as const };
+        }
         const acknowledgment = this.messageQueue.admitWithId(messageUuid, content, false, {
           durable: true,
         });
@@ -2083,6 +2423,10 @@ export class AgentSession
     if (action.kind === 'aborted') {
       return { outcome: 'aborted' };
     }
+    if (action.kind === 'awaiting_acceptance') {
+      // ACP re-run while the already-admitted steer is still pending acceptance.
+      return { outcome: 'awaiting_acceptance' };
+    }
     // Admission happened atomically under the lock; only the provider
     // acknowledgment is awaited here.
     await action.acknowledgment;
@@ -2095,8 +2439,18 @@ export class AgentSession
     if (this.session.config.provider !== 'acp') {
       this.markDeliveryConsumed(messageUuid);
       signalDeliveryConsumed(this.session.id, messageUuid);
+      return { outcome: 'consumed' };
     }
-    return { outcome: 'consumed' };
+    // ACP: onSent fired (≡ onSubmitted → the row is now `submitted`), but the
+    // consume boundary is acceptance (markMessageAccepted), which fires async
+    // from the ACP runner. Report awaiting-acceptance instead of `consumed` so
+    // the handler parks the job (keeps it alive) rather than auto-completing at
+    // submission — if acceptance never comes the job dead-letters → `failed`
+    // (surfaces) instead of stranding the row. On re-run the row is
+    // `submitted`/`consumed` (settled by the handler's skip/alreadyConsumed
+    // paths) or still `enqueued` with the message already admitted (the
+    // re-admit guard above suppresses a duplicate feed).
+    return { outcome: 'awaiting_acceptance' };
   }
 
   /**
@@ -2110,6 +2464,30 @@ export class AgentSession
     await withSessionLock(this.session.id, () =>
       this.stateManager.clearQueuedIfOwnedBy(messageUuid).then(() => undefined)
     );
+  }
+
+  /**
+   * Human gate open (an unanswered `sdk_resume_choice` OR `waiting_for_input`).
+   * The delivery handler keeps a parked steer parked without burning its park
+   * budget while this is true — the choice resolving (or the session leaving
+   * the gate via archive/interrupt/turn-end) re-evaluates. (Codex #11.)
+   *
+   * The state check alone cannot see the resume gate: a blocked startup only
+   * persists the `sdk_resume_choice` action and parks the session as `queued`
+   * (`waiting_for_input` belongs to AskUserQuestion), so without the action
+   * check a steer parked behind an unanswered resume card would charge
+   * `__parkCount` every cycle and dead-letter after ~5 minutes while the gate
+   * is legitimately open. (Codex P2.)
+   */
+  isWaitingForInput(): boolean {
+    if (this.stateManager.getState().status === 'waiting_for_input') return true;
+    try {
+      return !!this.db
+        .getSDKMessageRepo()
+        ?.hasUnresolvedHyperNeoAction(this.session.id, 'sdk_resume_choice');
+    } catch {
+      return false;
+    }
   }
 
   async deliverChatMessage(messageUuid: string): Promise<void> {
@@ -2185,6 +2563,52 @@ export class AgentSession
   }
 
   /**
+   * Reclaim decision for an already-consumed turn whose turn may have already
+   * ended. Delegates to the pure {@link classifyReclaimTermination}: only a turn
+   * that ended AND succeeded (`'terminated'`) completes silently; a bare
+   * `delivery_turn_end` marker with no success result (`'redrive'`) is cleared
+   * here and the caller falls through to re-drive so the producedResult /
+   * stall-retry path decides. Returns `true` only for `'terminated'`.
+   *
+   * Why the success gate: a bare marker proves the turn ENDED, not that it
+   * SUCCEEDED. On a restart reclaim such a marker is the tell-tale of the crash
+   * window — the daemon exited AFTER the idle waiter recorded the marker but
+   * BEFORE the producedResult/retry decision ran (and cleared it). Completing on
+   * the marker alone would silently drop a recoverable failure (never retried)
+   * and bury a non-recoverable one (never surfaced as `failed`). (Task #946,
+   * PR #2471 review r3772035811.)
+   */
+  private reclaimTurnAlreadySucceeded(messageUuid: string): boolean {
+    const repo = this.db.getSDKMessageRepo();
+    if (!repo) return false;
+    const decision = classifyReclaimTermination({
+      successResult: repo.hasTerminalResultAfter(this.session.id, messageUuid),
+      markerExists: repo.hasDeliveryTurnEnd(this.session.id, messageUuid),
+      terminalIdleInFlight: this.stateManager.isTerminalIdleInFlight(),
+    });
+    if (decision === 'redrive') {
+      // Clear the stale marker so the re-drive's own reclaim (if it re-crashes)
+      // does not loop on `turn_terminated`; the producedResult check below is
+      // the single retry/dead-letter authority.
+      repo.clearDeliveryTurnEnd(this.session.id, messageUuid);
+    }
+    return decision === 'terminated';
+  }
+
+  /**
+   * Persist a durable delivery-turn completion marker for a consumed message
+   * whose turn ended via a result-less terminal path. Called by the delivery
+   * handler when a driven turn completes while its job is still `processing`
+   * (gated there so a graceful-shutdown requeue — where resume is desired —
+   * does not mark it). See `MessageDeliverySession.recordDeliveryTurnEnd`.
+   */
+  recordDeliveryTurnEnd(messageUuid: string): void {
+    this.db
+      .getSDKMessageRepo()
+      .recordDeliveryTurnEnd(this.session.id, messageUuid, new Date().toISOString());
+  }
+
+  /**
    * Flip a delivery row to `consumed` at the earliest SDK-consume signal
    * (onSent) and broadcast the status change. At-least-once quality hardening
    * (task #861 item 12): shrinking the [SDK yield, persisted consumed-flip]
@@ -2204,6 +2628,33 @@ export class AgentSession
           sessionId: this.session.id,
           messageIds: [dbId],
           status: 'consumed',
+        })
+        .catch(() => {});
+    }
+  }
+
+  /**
+   * Reopen a delivery row whose turn was confirmed to have produced no result,
+   * so the job's automatic retry re-feeds it (see
+   * {@link SDKMessageRepository.markDeliveryRetryableByUuid}). Fire-and-forget
+   * the publish: a rejecting statusChanged subscriber must not surface as an
+   * unhandled rejection here.
+   */
+  private reopenDeliveryForRetry(messageUuid: string): void {
+    // The prior feed's outcome is void (the turn produced nothing), so the
+    // retry's re-feed is an intentional recovery — not the exactly-once breach
+    // duplicateFeedCount exists to flag. Drop it from the recent-feed window
+    // BEFORE the retry can feed again. (Codex P2.)
+    deliveryMetrics.forgetFeed(messageUuid);
+    const dbId = this.db
+      .getSDKMessageRepo()
+      ?.markDeliveryRetryableByUuid(this.session.id, messageUuid);
+    if (dbId) {
+      void this.internalEventBus
+        .publish('messages.statusChanged', {
+          sessionId: this.session.id,
+          messageIds: [dbId],
+          status: 'enqueued',
         })
         .catch(() => {});
     }
@@ -2474,6 +2925,15 @@ export class AgentSession
       clearInterval(this.reconcileTimer);
       this.reconcileTimer = null;
     }
+    this.clearDeliveryTurnStall();
+    for (const unsub of this.deliveryErrorSubs) {
+      try {
+        unsub();
+      } catch {
+        // best-effort — cleanup must not throw
+      }
+    }
+    this.deliveryErrorSubs.length = 0;
     this.rateLimitWatchdog.destroy();
     await this.lifecycleManager.cleanup();
   }

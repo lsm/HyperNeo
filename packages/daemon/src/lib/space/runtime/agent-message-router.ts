@@ -25,7 +25,7 @@ import type { PendingAgentMessageRepository } from '../../../storage/repositorie
 import type { WorkflowChannel } from '@hyperneo/shared';
 import { ChannelResolver } from './channel-resolver';
 import { formatAgentMessage } from '../agent-message-envelope';
-import { ActivationError, ChannelGateBlockedError, type ChannelRouter } from './channel-router';
+import { ActivationError, type ChannelRouter } from './channel-router';
 
 export interface AgentMessageRouterConfig {
   /** Node execution repository for looking up agent sessions by workflow run. */
@@ -107,7 +107,7 @@ export interface AgentMessageRouterConfig {
    *
    * Fires only for non-deduped enqueues (deduped = message already in queue).
    */
-  onMessageQueued?: (agentName: string) => void;
+  onMessageQueued?: (agentName: string, workflowNodeId?: string) => void;
   /**
    * Optional lookup callback for reply-to-session routing.
    * When a node agent sends to `space-agent`, this callback is invoked to
@@ -224,6 +224,7 @@ export class AgentMessageRouter {
       workflowNodeNameById,
       messageResolver,
       longTermAgentDelivery,
+      nodeGroups,
     } = this.config;
     const resolver = new ChannelResolver(workflowChannels);
     const fromNodeName = slotToNode.get(fromAgentName) ?? fromAgentName;
@@ -244,6 +245,33 @@ export class AgentMessageRouter {
     }
     const hasNodeNameMap = workflowNodeNameById && Object.keys(workflowNodeNameById).length > 0;
     const scopedAgentName = (nodeName: string, agentName: string) => `${nodeName}/${agentName}`;
+    // Resolve a worker target's node ref — a node id (actor-registry worker
+    // handle) or a node name (messaging-adapter worker handle) — to the canonical
+    // workflow node id, paired with the agent slot. Persisting the id on the
+    // queued row lets the handoff resolver pin the exact node instead of parsing
+    // the concatenated "node/agent" string. The ref alone is ambiguous when a
+    // name collides with another node's id, so the agent slot is used to
+    // disambiguate (only the intended node declares that slot).
+    const resolveWorkflowNodeId = (nodeRef: string, agentName: string): string | undefined => {
+      if (!workflowNodeNameById) return undefined;
+      const entries = Object.entries(workflowNodeNameById);
+      // Object.entries yields own enumerable properties only — never inherited
+      // ones, so a node named "constructor"/"toString"/etc. can't fool the id
+      // lookup the way the `in` operator would. A node ref is a name OR an id,
+      // and a name can collide with another node's id (or vice versa), so the
+      // string alone is ambiguous. Disambiguate by the agent slot: the intended
+      // node is the one matching the ref by name or id AND declaring that slot.
+      // nodeGroups (name -> slots) is wired in production whenever there is a
+      // workflow; when it's absent, fall back to id-authoritative then name.
+      const hasSlot = (nodeName: string) =>
+        nodeGroups ? nodeGroups[nodeName]?.includes(agentName) === true : false;
+      const slotMatch = entries.find(
+        ([nodeId, name]) => (nodeId === nodeRef || name === nodeRef) && hasSlot(name)
+      );
+      if (slotMatch) return slotMatch[0];
+      if (entries.some(([nodeId]) => nodeId === nodeRef)) return nodeRef;
+      return entries.find(([, name]) => name === nodeRef)?.[0];
+    };
     const allExecutions = nodeExecutionRepo.listByWorkflowRun(workflowRunId);
     let peers: Array<{
       sessionId: string;
@@ -446,16 +474,6 @@ export class AgentMessageRouter {
           message
         );
       } catch (err) {
-        if (err instanceof ChannelGateBlockedError) {
-          return {
-            success: false,
-            delivered: [],
-            failed: [],
-            reason: err.message,
-            rateLimited: err.rateLimited,
-            retryAfterMs: err.retryAfterMs,
-          };
-        }
         return {
           success: false,
           delivered: [],
@@ -503,21 +521,38 @@ export class AgentMessageRouter {
             taskNumber,
             nodeId: fromAgentName,
           });
+          const queueWorkflowNodeId = hasNodeNameMap
+            ? resolveWorkflowNodeId(nodeName, agentName)
+            : undefined;
+          // queueTargetName (compound) is reported to the caller and the
+          // onMessageQueued activation callback — keep it stable. But persist the
+          // BARE agent name on the row when the node is pinned: the
+          // (workflowNodeId, agent) pair is unambiguous and spares the resolver
+          // from parsing the "node/agent" string, which cannot tell two slots
+          // apart within one node when the node's id extends its name with "/".
           const queueTargetName = hasNodeNameMap ? scopedAgentName(nodeName, agentName) : agentName;
+          const storedTargetName = queueWorkflowNodeId != null ? agentName : queueTargetName;
           const { record, deduped } = pendingMessageRepo.enqueue({
             workflowRunId,
             spaceId,
             taskId: taskId ?? null,
             sourceAgentName: fromAgentName,
             targetKind: 'node_agent',
-            targetAgentName: queueTargetName,
+            targetAgentName: storedTargetName,
+            workflowNodeId: queueWorkflowNodeId,
             message: rawMessage,
             idempotencyKey: JSON.stringify([fromSessionId, target, rawMessage]),
             ttlMs: 60_000,
             maxAttempts: 3,
           });
           queued.push({ agentName: queueTargetName, messageId: record.id });
-          if (!deduped) onMessageQueued?.(queueTargetName);
+          // The activation callback consumes bare slot names (and the resolved
+          // node id) — not the compound. Only fire it when the worker node
+          // resolved (or there's no node map to resolve against); an unknown
+          // node ref (@worker:WrongNode/...) must not activate an unrelated node
+          // that happens to declare the slot.
+          const nodeResolved = !hasNodeNameMap || queueWorkflowNodeId != null;
+          if (!deduped && nodeResolved) onMessageQueued?.(agentName, queueWorkflowNodeId);
         }
         notFound.push(agentName);
         continue;
@@ -820,16 +855,6 @@ export class AgentMessageRouter {
             activatedTargets.add(agentName);
           }
         } catch (err) {
-          if (err instanceof ChannelGateBlockedError) {
-            return {
-              success: false,
-              delivered: [],
-              failed: [],
-              reason: err.message,
-              rateLimited: err.rateLimited,
-              retryAfterMs: err.retryAfterMs,
-            };
-          }
           if (err instanceof ActivationError) {
             return {
               success: false,

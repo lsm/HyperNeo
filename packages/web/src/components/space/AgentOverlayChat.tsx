@@ -10,7 +10,7 @@
  */
 
 import { useEffect, useRef } from 'preact/hooks';
-import type { MessageImage } from '@hyperneo/shared';
+import type { MessageDeliveryMode, MessageImage } from '@hyperneo/shared';
 import { Portal } from '../ui/Portal';
 import { setupFocusTrap } from '../ui/Modal';
 import ChatContainer from '../../islands/ChatContainer';
@@ -84,7 +84,7 @@ export function AgentOverlayChat({
     };
   }, []);
   const handleTaskContextSend = taskContext
-    ? async (message: string, images?: MessageImage[]) => {
+    ? async (message: string, images?: MessageImage[], deliveryMode?: MessageDeliveryMode) => {
         const trimmed = message.trim();
         if (!trimmed) return false;
         const result = await spaceStore.sendTaskMessage(
@@ -101,7 +101,8 @@ export function AgentOverlayChat({
             ...(taskContext.workflowNodeId ? { workflowNodeId: taskContext.workflowNodeId } : {}),
             ...(taskContext.sessionId ? { sessionId: taskContext.sessionId } : {}),
           },
-          images
+          images,
+          deliveryMode
         );
         if (result?.delivered === false && !result?.queued) {
           throw new Error(

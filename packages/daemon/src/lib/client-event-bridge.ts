@@ -116,12 +116,7 @@ const SPACE_BRIDGE_MAPPINGS: BridgeMapping[] = [
     clientEvent: 'space.workflowRun.updated',
     channel: () => Channels.global(),
   },
-  // Gate data and misc client-visible space events → global
-  {
-    event: 'space.gateData.updated',
-    clientEvent: 'space.gateData.updated',
-    channel: () => Channels.global(),
-  },
+  // Misc client-visible space events → global
   {
     event: 'space.hookState.updated',
     clientEvent: 'space.hookState.updated',
@@ -145,6 +140,11 @@ const SPACE_BRIDGE_MAPPINGS: BridgeMapping[] = [
   {
     event: 'space.workflowRun.cyclesReset',
     clientEvent: 'space.workflowRun.cyclesReset',
+    channel: () => Channels.global(),
+  },
+  {
+    event: 'space.workflowRun.deadLoop',
+    clientEvent: 'space.workflowRun.deadLoop',
     channel: () => Channels.global(),
   },
   // Space agent events → space-scoped

@@ -25,6 +25,7 @@ import {
   normalizeOverride,
 } from '../../../../src/lib/space/export-format.ts';
 import type { SpaceWorkerAgent, SpaceWorkflow } from '@hyperneo/shared';
+import { MAX_NODE_HANDOFF_TRANSITIONS } from '@hyperneo/shared';
 
 // ---------------------------------------------------------------------------
 // Test fixtures
@@ -111,7 +112,7 @@ describe('exportAgent', () => {
     const agent = makeAgent();
     const exported = exportAgent(agent);
 
-    expect(exported.version).toBe(2);
+    expect(exported.version).toBe(3);
     expect(exported.type).toBe('agent');
     expect(exported.name).toBe('My Coder');
     // role field was removed from SpaceWorkerAgent in M71
@@ -276,7 +277,7 @@ describe('exportWorkflow', () => {
 
   test('has version 1 and type workflow', () => {
     const exported = exportWorkflow(makeWorkflow(), []);
-    expect(exported.version).toBe(2);
+    expect(exported.version).toBe(3);
     expect(exported.type).toBe('workflow');
   });
 });
@@ -294,7 +295,7 @@ describe('exportBundle', () => {
       exportedFrom: '/workspace/foo',
     });
 
-    expect(bundle.version).toBe(2);
+    expect(bundle.version).toBe(3);
     expect(bundle.type).toBe('bundle');
     expect(bundle.name).toBe('My Bundle');
     expect(bundle.description).toBe('A test bundle');
@@ -330,7 +331,7 @@ describe('validateExportedAgent', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.name).toBe('My Coder');
-      expect(result.value.version).toBe(2);
+      expect(result.value.version).toBe(3);
     }
   });
 
@@ -386,8 +387,8 @@ describe('validateExportedAgent', () => {
     }
   });
 
-  test('rejects version > 2 with "requires newer version" message', () => {
-    const data = { version: 3, type: 'agent', name: 'Bot', role: 'general' };
+  test('rejects version > 3 with "requires newer version" message', () => {
+    const data = { version: 4, type: 'agent', name: 'Bot', role: 'general' };
     const result = validateExportedAgent(data);
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -446,7 +447,7 @@ describe('validateExportedWorkflow', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.name).toBe('CI Workflow');
-      expect(result.value.version).toBe(2);
+      expect(result.value.version).toBe(3);
       expect(result.value.startNode).toBe('Code step');
     }
   });
@@ -543,9 +544,9 @@ describe('validateExportedWorkflow', () => {
     }
   });
 
-  test('rejects version > 1 with "requires newer version"', () => {
+  test('rejects version > 3 with "requires newer version"', () => {
     const data = {
-      version: 3,
+      version: 4,
       type: 'workflow',
       name: 'Simple',
       nodes: [],
@@ -710,7 +711,7 @@ describe('validateExportBundle', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.name).toBe('Bundle');
-      expect(result.value.version).toBe(2);
+      expect(result.value.version).toBe(3);
       expect(result.value.agents).toHaveLength(3);
       expect(result.value.workflows).toHaveLength(1);
     }
@@ -737,12 +738,12 @@ describe('validateExportBundle', () => {
     expect(validateExportBundle([]).ok).toBe(false);
   });
 
-  test('rejects bundle whose nested agent has version > 2', () => {
+  test('rejects bundle whose nested agent has version > 3', () => {
     const bundle = exportBundle([makeAgent()], [], 'B') as Record<string, unknown>;
     // Override the nested agent's version to simulate an unsupported agent
-    // embedded in a current (v2) bundle.
+    // embedded in a current (v3) bundle.
     const agents = bundle.agents as Array<Record<string, unknown>>;
-    agents[0] = { ...agents[0], version: 3 };
+    agents[0] = { ...agents[0], version: 4 };
     const result = validateExportBundle(bundle);
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -751,10 +752,10 @@ describe('validateExportBundle', () => {
     }
   });
 
-  test('rejects bundle whose nested workflow has version > 2', () => {
+  test('rejects bundle whose nested workflow has version > 3', () => {
     const bundle = exportBundle([], [makeWorkflow()], 'B') as Record<string, unknown>;
     const workflows = bundle.workflows as Array<Record<string, unknown>>;
-    workflows[0] = { ...workflows[0], version: 3 };
+    workflows[0] = { ...workflows[0], version: 4 };
     const result = validateExportBundle(bundle);
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -882,11 +883,11 @@ describe('round-trip: export → JSON → validate', () => {
 
     // Workflow round-trip.
     const exported = exportWorkflow(workflow, agents);
-    expect(exported.version).toBe(2);
+    expect(exported.version).toBe(3);
     const result = validateExportedWorkflow(JSON.parse(JSON.stringify(exported)) as unknown);
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value.version).toBe(2);
+      expect(result.value.version).toBe(3);
       expect(result.value.nodes[0].agents[0].eventInterests?.[0]?.topicFrom).toEqual({
         source: 'primaryLink',
         pattern: 'github/{owner}/{repo}/pull_request/{number}.*',
@@ -898,7 +899,7 @@ describe('round-trip: export → JSON → validate', () => {
     const bundleResult = validateExportBundle(JSON.parse(JSON.stringify(bundle)) as unknown);
     expect(bundleResult.ok).toBe(true);
     if (bundleResult.ok) {
-      expect(bundleResult.value.version).toBe(2);
+      expect(bundleResult.value.version).toBe(3);
       expect(
         bundleResult.value.workflows[0].nodes[0].agents[0].eventInterests?.[0]?.topicFrom
       ).toBeDefined();
@@ -2351,5 +2352,205 @@ describe('exportWorkflow — disabled', () => {
     const workflow = makeWorkflow();
     const exported = exportWorkflow(workflow, []);
     expect(exported.disabled).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Handoff transitions (first-class handoff contract)
+// ---------------------------------------------------------------------------
+
+describe('exportWorkflow — handoff transitions', () => {
+  test('exports node transitions and omits them when absent', () => {
+    const workflow = makeWorkflow({
+      nodes: [
+        {
+          id: 'node-uuid-1',
+          name: 'Code step',
+          agents: [{ agentId: 'agent-uuid-1', name: 'coder' }],
+          transitions: [
+            { id: 'to-review', target: 'Review step', maxCycles: 3 },
+            { id: 'broadcast', target: '*' },
+          ],
+        },
+        {
+          id: 'node-uuid-2',
+          name: 'Review step',
+          agents: [{ agentId: 'agent-uuid-3', name: 'reviewer' }],
+        },
+      ],
+    });
+    const agents = [makeAgent(), makeReviewerAgent()];
+    const exported = exportWorkflow(workflow, agents);
+
+    expect(exported.nodes[0].transitions).toEqual([
+      { id: 'to-review', target: 'Review step', maxCycles: 3 },
+      { id: 'broadcast', target: '*' },
+    ]);
+    // A node without transitions omits the field entirely.
+    expect(exported.nodes[1].transitions).toBeUndefined();
+  });
+
+  test('round-trips transitions through export → validate', () => {
+    const workflow = makeWorkflow({
+      nodes: [
+        {
+          id: 'node-uuid-1',
+          name: 'Code step',
+          agents: [{ agentId: 'agent-uuid-1', name: 'coder' }],
+          transitions: [{ id: 'to-review', target: 'Review step', label: 'hand off' }],
+        },
+        {
+          id: 'node-uuid-2',
+          name: 'Review step',
+          agents: [{ agentId: 'agent-uuid-3', name: 'reviewer' }],
+        },
+        {
+          id: 'node-uuid-3',
+          name: 'Plan step',
+          agents: [{ agentId: 'agent-uuid-2', name: 'planner' }],
+        },
+      ],
+    });
+    const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
+    const exported = exportWorkflow(workflow, agents);
+    const result = validateExportedWorkflow(exported);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.nodes[0].transitions).toEqual([
+        { id: 'to-review', target: 'Review step', label: 'hand off' },
+      ]);
+    }
+  });
+});
+
+describe('validateExportedWorkflow — handoff transitions', () => {
+  function wfWithTransitions(
+    transitions: Array<Record<string, unknown>>,
+    hooks?: Array<Record<string, unknown>>
+  ) {
+    return {
+      version: 3,
+      type: 'workflow',
+      name: 'W',
+      nodes: [
+        { name: 'Code', agents: [{ agentRef: 'coder', name: 'coder' }], transitions },
+        { name: 'Review', agents: [{ agentRef: 'reviewer', name: 'reviewer' }] },
+      ],
+      startNode: 'Code',
+      tags: [],
+      ...(hooks ? { hooks } : {}),
+    };
+  }
+
+  test('accepts valid transitions including broadcast and agent-slot targets', () => {
+    const result = validateExportedWorkflow(
+      wfWithTransitions([
+        { id: 'a', target: 'Review' },
+        { id: 'b', target: 'reviewer' },
+        { id: 'c', target: '*' },
+      ])
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  test('rejects a transition target that references no known node/agent', () => {
+    const result = validateExportedWorkflow(wfWithTransitions([{ id: 'a', target: 'Ghost' }]));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('does not reference a known node name');
+  });
+
+  test('rejects an ambiguous target whose name matches multiple destinations', () => {
+    // Two nodes share the slot name 'shared'; a transition targeting 'shared'
+    // must be rejected at bundle validation, not only when execute rolls back.
+    const result = validateExportedWorkflow({
+      version: 3,
+      type: 'workflow',
+      name: 'W',
+      nodes: [
+        {
+          name: 'A',
+          agents: [{ agentRef: 'coder', name: 'shared' }],
+          transitions: [{ id: 't', target: 'shared' }],
+        },
+        { name: 'B', agents: [{ agentRef: 'coder', name: 'shared' }] },
+      ],
+      startNode: 'A',
+      tags: [],
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('ambiguous');
+  });
+
+  test('rejects a duplicate transition id within a node', () => {
+    const result = validateExportedWorkflow(
+      wfWithTransitions([
+        { id: 'dup', target: 'Review' },
+        { id: 'dup', target: 'reviewer' },
+      ])
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('duplicate transition id "dup"');
+  });
+
+  test('rejects a duplicate transition target within a node', () => {
+    const result = validateExportedWorkflow(
+      wfWithTransitions([
+        { id: 'a', target: 'Review' },
+        { id: 'b', target: 'Review' },
+      ])
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('duplicate transition target "Review"');
+  });
+
+  test('rejects a hookId that references no known hook', () => {
+    const result = validateExportedWorkflow(
+      wfWithTransitions([{ id: 'a', target: 'Review', hookId: 'ghost' }])
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(result.error).toContain('hookId "ghost" does not reference a known hook');
+  });
+
+  test('trims and rejects whitespace-only id/target (mirrors eventInterestTopicFrom)', () => {
+    const idResult = validateExportedWorkflow(wfWithTransitions([{ id: '   ', target: 'Review' }]));
+    expect(idResult.ok).toBe(false);
+    const targetResult = validateExportedWorkflow(wfWithTransitions([{ id: 'a', target: '   ' }]));
+    expect(targetResult.ok).toBe(false);
+  });
+
+  test('rejects more than MAX_NODE_HANDOFF_TRANSITIONS transitions on a node', () => {
+    const tooMany = Array.from({ length: MAX_NODE_HANDOFF_TRANSITIONS + 1 }, (_, i) => ({
+      id: `t${i}`,
+      target: 'Review',
+    }));
+    const result = validateExportedWorkflow(wfWithTransitions(tooMany));
+    expect(result.ok).toBe(false);
+  });
+});
+
+describe('export format — v3 version gating (transitions)', () => {
+  function v2WorkflowWithTransitions() {
+    return {
+      version: 2,
+      type: 'workflow',
+      name: 'W',
+      nodes: [
+        {
+          name: 'Code',
+          agents: [{ agentRef: 'coder', name: 'coder' }],
+          transitions: [{ id: 't', target: 'Review' }],
+        },
+        { name: 'Review', agents: [{ agentRef: 'reviewer', name: 'reviewer' }] },
+      ],
+      startNode: 'Code',
+      tags: [],
+    };
+  }
+
+  test('rejects a v2 workflow carrying transitions', () => {
+    const result = validateExportedWorkflow(v2WorkflowWithTransitions());
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('require version 3');
   });
 });

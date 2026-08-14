@@ -1,22 +1,17 @@
 /**
  * Shared test helpers for Space online integration tests.
  *
- * These helpers drive the workflow gate machinery directly via RPC without
- * spinning up real LLM agent sessions. This lets gate-open/close and node-
- * activation logic be exercised deterministically and quickly with dev proxy.
+ * These helpers drive workflow runs directly via RPC without spinning up real
+ * LLM agent sessions, so node-activation and run-status logic can be exercised
+ * deterministically and quickly with the dev proxy.
  *
  * ## Key helpers
  *
  * - createTestSpace        — create a Space with a deterministic full-cycle test workflow
  * - startWorkflowRun       — start a run and return its ID + initial tasks
- * - writeGateData          — write arbitrary data to a gate (simulates agent write_gate call)
- * - readGateData           — read current gate data for a (runId, gateId) pair
- * - approveGate            — human-approve a gate (writes approved:true + triggers activation)
- * - rejectGate             — human-reject a gate (writes approved:false, run → blocked)
  * - markRunFailed          — mark run as blocked with a specific failureReason
  * - waitForNodeStatus      — poll until a node execution reaches a target status
  * - waitForRunStatus       — poll until the workflow run reaches a target status
- * - getGateArtifacts       — fetch gate artifacts (changed files + diff) for a run
  * - mockAgentDone          — mark a canonical task or node execution as done
  * - restartDaemon          — kill the daemon and restart it with the same workspace/database
  *
@@ -47,20 +42,6 @@ export interface TestSpaceFixture {
   agents: SpaceWorkerAgent[];
   /** Deterministic full-cycle workflow fixture used by online space tests */
   workflow: SpaceWorkflow;
-}
-
-export interface GateDataRecord {
-  runId: string;
-  gateId: string;
-  data: Record<string, unknown>;
-  updatedAt: number;
-}
-
-export interface GateArtifacts {
-  files: Array<{ path: string; additions: number; deletions: number }>;
-  totalAdditions: number;
-  totalDeletions: number;
-  prUrl?: string;
 }
 
 type NodeExecutionTask = SpaceTask & {
@@ -503,82 +484,6 @@ export async function startWorkflowRun(
 }
 
 // ---------------------------------------------------------------------------
-// Gate data helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Write (merge) data into a gate's runtime record and trigger channel
- * re-evaluation via spaceWorkflowRun.writeGateData RPC.
- *
- * Simulates what an agent does when it calls the write_gate MCP tool —
- * without requiring a real LLM session.
- */
-export async function writeGateData(
-  daemon: DaemonServerContext,
-  runId: string,
-  gateId: string,
-  data: Record<string, unknown>
-): Promise<GateDataRecord> {
-  const result = (await daemon.messageHub.request('spaceWorkflowRun.writeGateData', {
-    runId,
-    gateId,
-    data,
-  })) as { gateData: GateDataRecord };
-  return result.gateData;
-}
-
-/**
- * Read current gate data for a (runId, gateId) pair.
- * Returns null when no data has been written to the gate yet.
- */
-export async function readGateData(
-  daemon: DaemonServerContext,
-  runId: string,
-  gateId: string
-): Promise<GateDataRecord | null> {
-  const { gateData } = (await daemon.messageHub.request('spaceWorkflowRun.listGateData', {
-    runId,
-  })) as { gateData: GateDataRecord[] };
-  return gateData.find((g) => g.gateId === gateId) ?? null;
-}
-
-/**
- * Human-approve a gate: writes approved:true and triggers downstream node activation.
- * If the run was previously in blocked+humanRejected, it resumes to in_progress.
- */
-export async function approveGate(
-  daemon: DaemonServerContext,
-  runId: string,
-  gateId: string,
-  reason?: string
-): Promise<{ run: SpaceWorkflowRun; gateData: GateDataRecord }> {
-  return (await daemon.messageHub.request('spaceWorkflowRun.approveGate', {
-    runId,
-    gateId,
-    approved: true,
-    reason,
-  })) as { run: SpaceWorkflowRun; gateData: GateDataRecord };
-}
-
-/**
- * Human-reject a gate: writes approved:false and transitions run to blocked
- * with failureReason: 'humanRejected'.
- */
-export async function rejectGate(
-  daemon: DaemonServerContext,
-  runId: string,
-  gateId: string,
-  reason?: string
-): Promise<{ run: SpaceWorkflowRun; gateData: GateDataRecord }> {
-  return (await daemon.messageHub.request('spaceWorkflowRun.approveGate', {
-    runId,
-    gateId,
-    approved: false,
-    reason,
-  })) as { run: SpaceWorkflowRun; gateData: GateDataRecord };
-}
-
-// ---------------------------------------------------------------------------
 // Status polling helpers
 // ---------------------------------------------------------------------------
 
@@ -668,22 +573,6 @@ export async function waitForRunStatus(
   throw new Error(
     `Run "${runId}" did not reach status [${expectedStatuses.join(', ')}] within ${timeout}ms`
   );
-}
-
-// ---------------------------------------------------------------------------
-// Artifact helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Fetch gate artifacts (changed files and diff summary) for a workflow run.
- */
-export async function getGateArtifacts(
-  daemon: DaemonServerContext,
-  runId: string
-): Promise<GateArtifacts> {
-  return (await daemon.messageHub.request('spaceWorkflowRun.getGateArtifacts', {
-    runId,
-  })) as GateArtifacts;
 }
 
 // ---------------------------------------------------------------------------

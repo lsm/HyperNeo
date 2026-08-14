@@ -24,7 +24,6 @@ import type {
 import { isRateOrUsageLimited } from '@hyperneo/shared';
 import type { MessageRecord, ActorRef } from '../../../../../messaging/src/types';
 import { canonicalAgentHandle, SpaceActorRegistryAdapter } from '../actor-registry';
-import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service';
 import { SpaceMessageResolver } from '../messaging-adapter';
 import type { SpaceManager } from '../managers/space-manager';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
@@ -40,7 +39,6 @@ import type { SpaceWorkflowRepository } from '../../../storage/repositories/spac
 import type { SpaceAgentInboxRepository } from '../../../storage/repositories/space-agent-inbox-repository';
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import { SpaceWorkflowEventSubscriptionRepository } from '../../../storage/repositories/space-workflow-event-subscription-repository';
-import { GateDataRepository } from '../../../storage/repositories/gate-data-repository';
 import type { WorkflowArtifactProfile } from './artifact-profile';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
@@ -62,7 +60,6 @@ import { canTransition as canTransitionRunStatus } from './workflow-run-status-m
 import type { SelectWorkflowWithLlm } from './llm-workflow-selector';
 import { selectWorkflowWithLlmDefault } from './llm-workflow-selector';
 import { ChannelRouter } from './channel-router';
-import { GateRetryScheduler } from './gate-retry-scheduler';
 import { SpaceTaskManager } from '../managers/space-task-manager';
 import { createSpaceAgentMcpServer } from '../tools/space-agent-tools';
 import type { ReplyRoutingRegistry } from './reply-routing-registry';
@@ -139,16 +136,6 @@ export interface SpaceRuntimeServiceConfig {
    */
   taskAgentManager?: TaskAgentManager;
   tickIntervalMs?: number;
-  /**
-   * Optional gate data repository for onGateDataChanged support.
-   * When provided, notifyGateDataChanged() can be called to trigger lazy node
-   * activation after gate data is written externally (e.g. human approval via RPC).
-   */
-  gateDataRepo?: GateDataRepository;
-  /**
-   * Optional gate open state repository for persisting gate-open cache across daemon restarts.
-   */
-  gateOpenStateRepo?: import('../../../storage/repositories/gate-open-state-repository').GateOpenStateRepository;
   /**
    * Optional pending message repository for queueing messages to not-yet-spawned
    * workflow node agents.
@@ -269,12 +256,6 @@ export class SpaceRuntimeService {
    */
   private readonly spaceAgentNotificationUnsubs = new Map<string, () => void>();
   private readonly longTermAgentFlushes = new Map<string, Promise<void>>();
-  /**
-   * Shared retry scheduler for rate-limited gate-data refresh re-evaluations.
-   * Persisted at the service level so retries survive across the transient
-   * `ChannelRouter` instances built by `notifyGateDataChanged`.
-   */
-  private readonly gateRetryScheduler = new GateRetryScheduler();
   private resumeStalledRecoveryPromise: Promise<void> = Promise.resolve();
   /**
    * Resolves when startup-time session provisioning has completed:
@@ -298,7 +279,8 @@ export class SpaceRuntimeService {
   constructor(private readonly config: SpaceRuntimeServiceConfig) {
     // Ensure nodeExecutionRepo is available — create from db if not provided.
     this.nodeExecutionRepo =
-      this.config.nodeExecutionRepo ?? new NodeExecutionRepository(this.config.db);
+      this.config.nodeExecutionRepo ??
+      new NodeExecutionRepository(this.config.db, this.config.reactiveDb);
     // Durable workflow event subscription store — single shared instance for
     // the runtime's topic trie to rebuild from on rehydrate. Created here (and
     // passed into the runtime) so the service and runtime share one repo; the
@@ -358,7 +340,6 @@ export class SpaceRuntimeService {
         });
       },
       deliverLongHorizonExternalEvent: (args) => this.deliverLongHorizonExternalEvent(args),
-      onBlockedRunExternalEvent: (payload) => this.handleBlockedRunExternalEvent(payload),
     });
   }
 
@@ -1102,11 +1083,7 @@ export class SpaceRuntimeService {
       getRuntimeSession: (sid) =>
         this.taskAgentManager?.getCachedAgentSessionById(sid) ?? undefined,
       taskAgentManager: this.taskAgentManager ?? undefined,
-      gateDataRepo: this.config.gateDataRepo,
       internalEventBus: this.config.internalEventBus,
-      onGateChanged: (runId, gateId) => {
-        void this.notifyGateDataChanged(runId, gateId).catch(() => {});
-      },
       pendingMessageQueue: this.config.pendingMessageRepo,
       getSpaceAutonomyLevel: async (sid) => {
         const s = await this.config.spaceManager.getSpace(sid);
@@ -1148,6 +1125,18 @@ export class SpaceRuntimeService {
     topic: string
   ): { success: boolean; error?: string } {
     return this.runtime.unregisterSubscription(workflowRunId, taskId, nodeId, agentName, topic);
+  }
+
+  /**
+   * Read-only subscription diagnostic (Task #908). Delegates to
+   * {@link SpaceRuntime.listSubscriptions}; `spaceId` guards cross-space access.
+   */
+  listSubscriptions(
+    workflowRunId: string,
+    spaceId: string,
+    nodeId?: string
+  ): ReturnType<SpaceRuntime['listSubscriptions']> {
+    return this.runtime.listSubscriptions(workflowRunId, spaceId, nodeId);
   }
 
   /**
@@ -1204,7 +1193,7 @@ export class SpaceRuntimeService {
     }
     // Publish space.task.updated for each cancelled task so the task-owned
     // subscription cleanup (clearRunInterests) fires — the direct repo update
-    // above emits no event, and the run gate no longer clears interests itself.
+    // above emits no event otherwise.
     if (this.config.internalEventBus) {
       for (const task of [...activeTasks, ...reactivatedTasks]) {
         const cancelled = taskRepo.getTask(task.id);
@@ -1238,6 +1227,11 @@ export class SpaceRuntimeService {
       // Clear run interests explicitly so a later space start (which drops the
       // hold cache) cannot match events against cancelled-run targets.
       this.runtime.clearRunInterests(run.id);
+      // Dead-loop event history is intentionally retained here: `cancelled` is
+      // reopenable, so a resumed run must keep its rolling-window history (a
+      // reopened runaway still has to trip the rate gate). Rows age out of the
+      // window and are pruned at startup; the owning task's archive is the true
+      // tombstone that clears them (SpaceTaskManager.setTaskStatus).
     }
 
     log.info(
@@ -1273,6 +1267,16 @@ export class SpaceRuntimeService {
    * best-effort — whichever path wins the race fires first. Correctness is
    * enforced by `SpaceRuntime.recoveryDone`, which guarantees recovery runs
    * exactly once regardless of caller order.
+   *
+   * Known limitation: if the pre-provisioning first tick wins and recovery
+   * detects a dead-looped cyclic channel, the `space.workflowRun.deadLoop`
+   * event publishes before any `SpaceAgentNotificationService` subscriber
+   * exists and is dropped (the event is non-durable). The run is still
+   * surfaced as `blocked` via status polling + `workflow_run_blocked`, so the
+   * human sees the block; only the dead-loop-specific `[TASK_EVENT]` message
+   * can be lost in this narrow startup race. An earlier catch-up scan that
+   * re-emitted post-provisioning was removed — it was post-approval
+   * complexity for this rare edge and itself generated duplicate/retry issues.
    */
   start(): void {
     if (this.started) return;
@@ -1801,11 +1805,7 @@ export class SpaceRuntimeService {
       getRuntimeSession: (sid) =>
         this.taskAgentManager?.getCachedAgentSessionById(sid) ?? undefined,
       taskAgentManager: this.taskAgentManager ?? undefined,
-      gateDataRepo: this.config.gateDataRepo,
       internalEventBus: this.config.internalEventBus,
-      onGateChanged: (runId, gateId) => {
-        void this.notifyGateDataChanged(runId, gateId).catch(() => {});
-      },
       pendingMessageQueue: this.config.pendingMessageRepo,
       getSpaceAutonomyLevel: async (sid) => {
         const s = await spaceManagerForApproval.getSpace(sid);
@@ -2022,11 +2022,7 @@ export class SpaceRuntimeService {
       getRuntimeSession: (sid) =>
         this.taskAgentManager?.getCachedAgentSessionById(sid) ?? undefined,
       taskAgentManager: this.taskAgentManager ?? undefined,
-      gateDataRepo: this.config.gateDataRepo,
       internalEventBus: this.config.internalEventBus,
-      onGateChanged: (runId, gateId) => {
-        void this.notifyGateDataChanged(runId, gateId).catch(() => {});
-      },
       activateNode: async (runId, nodeId) => {
         await this.activateWorkflowNode(runId, nodeId);
       },
@@ -2258,170 +2254,15 @@ export class SpaceRuntimeService {
   }
 
   /**
-   * Called when a gate is waiting for human approval (gate data exists but
-   * `approved` hasn't been set yet). Transitions the canonical task to `review`
-   * so the task appears in the "Needs Attention" group in the UI.
-   *
-   * No-op when:
-   * - The run or its tasks cannot be found
-   * - No non-archived task is currently `in_progress` or `open`
-   */
-  async handleGatePendingApproval(runId: string, _gateId: string): Promise<void> {
-    const run = this.config.workflowRunRepo.getRun(runId);
-    if (!run) return;
-
-    const tasks = this.config.taskRepo.listByWorkflowRun(runId);
-    if (tasks.length === 0) return;
-
-    // Find the canonical task that is actively running. Gate pending approval
-    // happens while the agent is working or has just finished writing gate data.
-    const canonical =
-      tasks.find((t) => t.status === 'in_progress') ?? tasks.find((t) => t.status === 'open');
-    if (!canonical) return;
-
-    const updated = this.config.taskRepo.updateTask(canonical.id, {
-      status: 'review',
-      pendingCheckpointType: 'gate',
-    });
-    if (!updated) return;
-
-    if (this.config.internalEventBus) {
-      await this.config.internalEventBus.publish('space.task.updated', {
-        sessionId: 'global',
-        spaceId: run.spaceId,
-        taskId: updated.id,
-        task: updated,
-      });
-    }
-  }
-
-  /**
-   * Notify that gate data has changed for a given run/gate pair.
-   *
-   * Creates a temporary ChannelRouter and calls onGateDataChanged() to re-evaluate
-   * all channels referencing the gate and lazily activate any newly-unblocked nodes.
-   *
-   * Used by the approveGate RPC handler and the writeGateData RPC handler to trigger
-   * downstream node activation after gate data is written externally (i.e. without going
-   * through the write_gate MCP tool, which has its own onGateDataChanged wiring).
-   *
-   * No-op when gateDataRepo was not provided at construction time.
-   */
-  getGateRetryScheduler(): GateRetryScheduler {
-    return this.gateRetryScheduler;
-  }
-
-  async notifyGateDataChanged(runId: string, gateId: string): Promise<SpaceTask[]> {
-    if (!this.config.gateDataRepo) return [];
-    // Resolve workspacePath from run → space for script gate evaluation.
-    const run = this.config.workflowRunRepo.getRun(runId);
-    let workspacePath: string | undefined;
-    if (run) {
-      const space = await this.config.spaceManager.getSpace(run.spaceId);
-      workspacePath = space?.workspacePath;
-    }
-    const spaceManager = this.config.spaceManager;
-    const taskAgentManager = this.taskAgentManager;
-    const router = new ChannelRouter({
-      taskRepo: this.config.taskRepo,
-      workflowRunRepo: this.config.workflowRunRepo,
-      workflowManager: this.config.spaceWorkflowManager,
-      agentManager: this.config.spaceAgentManager,
-      nodeExecutionRepo: this.nodeExecutionRepo,
-      gateDataRepo: this.config.gateDataRepo,
-      gateOpenStateRepo: this.config.gateOpenStateRepo,
-      channelCycleRepo: this.config.channelCycleRepo,
-      db: this.config.db,
-      workspacePath,
-      gateRetryScheduler: this.gateRetryScheduler,
-      getSpaceAutonomyLevel: async (spaceId) => {
-        const s = await spaceManager.getSpace(spaceId);
-        return s?.autonomyLevel ?? 1;
-      },
-      isSessionAlive: taskAgentManager ? (sid) => taskAgentManager.isSessionAlive(sid) : undefined,
-      cancelSessionById: taskAgentManager
-        ? (sid) => taskAgentManager.cancelBySessionId(sid)
-        : undefined,
-      // Forward the runtime's current sink so a gate-driven reopen still
-      // surfaces `workflow_run_reopened` to the Space Agent session.
-      // Forward the InternalEventBus so gate-driven reopens also publish
-      // typed `space.workflowRun.reopened` events for bus subscribers.
-      internalEventBus: this.config.internalEventBus,
-      onGatePendingApproval: (runId, gateId) => this.handleGatePendingApproval(runId, gateId),
-      onGateDataChangedComplete: (runId, _gateId, activatedTasks, gateOpened) =>
-        this.handleGateDataChangedComplete(runId, activatedTasks, gateOpened),
-      getPrUrlForRun: (rid) => this.resolvePrUrlForRun(rid),
-    });
-    const activated = await router.onGateDataChanged(runId, gateId);
-    return activated;
-  }
-
-  /**
-   * Post-eval hook shared by both the immediate and deferred-retry
-   * `onGateDataChanged` paths. Triggered via the router's
-   * `onGateDataChangedComplete` config callback.
-   *
-   * When the gate opens and the run is currently `blocked`, fires the full
-   * resume chain (transitionBlockedRunToInProgress + notify session) so the
-   * deferred retry path does not silently leave the workflow stuck despite the
-   * open gate.
-   *
-   * Public so TaskAgentManager's nodeAgentChannelRouter can route deferred
-   * retries through the same chain — otherwise the retry fires
-   * `router.onGateDataChanged` directly and only hits this hook.
-   */
-  async handleGateDataChangedComplete(
-    runId: string,
-    activatedTasks: SpaceTask[],
-    gateOpened = activatedTasks.length > 0
-  ): Promise<void> {
-    // Resume the run only when EVERY gate is now open. Resuming on a partial
-    // opening (e.g. an unrelated gate A is already satisfied while blocking
-    // gate B is still closed) lets the tick loop immediately re-block the
-    // run because B's channel still cannot deliver. Without this check, the
-    // per-gate completion hook in handleBlockedRunExternalEvent's loop would
-    // resume the run as soon as gate A's re-eval reports open, before the
-    // post-loop allGatesOpen check can prevent it.
-    if (gateOpened && this.allWorkflowGatesOpen(runId)) {
-      const run = this.config.workflowRunRepo.getRun(runId);
-      if (run?.status === 'blocked') {
-        this.transitionBlockedRunToInProgress(runId);
-      }
-    }
-    // Replay retained events after any transition: for a gate-open resume
-    // the run is now in_progress so a retained event delivers to the resumed
-    // slot; when the gate stayed closed the replay re-evaluates the blocked
-    // gate.
-    this.runtime.redispatchRetainedExternalEvents();
-  }
-
-  /**
-   * Returns true when every gate declared on the run's workflow is currently
-   * cached open in the gate-open state repository. Used by the event-driven
-   * resume paths to decide whether the run can actually progress after a
-   * re-evaluation pass.
-   */
-  private allWorkflowGatesOpen(runId: string): boolean {
-    const run = this.config.workflowRunRepo.getRun(runId);
-    if (!run) return false;
-    const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
-    const gates = workflow?.gates ?? [];
-    if (gates.length === 0) return true;
-    return gates.every(
-      (gate) => this.config.gateOpenStateRepo?.isOpen(runId, gate.id).open === true
-    );
-  }
-
-  /**
    * Public entry point for code paths that transition a workflow run out of
    * `blocked` via direct repository calls. Resets blocked executions so the
    * tick loop re-drives the recovered slot.
    */
   notifyRunResumed(runId: string): void {
     try {
-      // Direct resume paths (spaceWorkflowRun.resume, approveGate after
-      // rejection) bypass transitionBlockedRunToInProgress, so reset any
-      // blocked executions so the next tick re-drives them.
+      // Direct resume paths (spaceWorkflowRun.resume) bypass the blocked→
+      // in_progress transition, so reset any blocked executions so the next tick
+      // re-drives them.
       this.resetBlockedExecutionsForRun(runId);
     } catch (err) {
       log.warn(
@@ -2431,197 +2272,16 @@ export class SpaceRuntimeService {
   }
 
   /**
-   * Event-driven gate re-evaluation entry point.
-   *
-   * Wired to `SpaceRuntimeConfig.onBlockedRunExternalEvent` so that whenever an
-   * external event is delivered to a workflow run currently in `blocked`
-   * status, every gate of the run's workflow is re-evaluated immediately. If
-   * any gate opens as a result, the active agent session for the run is
-   * notified with a human-readable summary so the workflow can continue
-   * without waiting for the next tick.
-   */
-  async handleBlockedRunExternalEvent(payload: {
-    runId: string;
-    event: ExternalEventPublishedPayload;
-  }): Promise<boolean | 'retry'> {
-    const { runId, event } = payload;
-    const run = this.config.workflowRunRepo.getRun(runId);
-    if (!run || run.status !== 'blocked') return false;
-    const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
-    if (!workflow) return false;
-
-    let anyOpened = false;
-    const gates = workflow.gates ?? [];
-    for (const gate of gates) {
-      try {
-        const wasOpenBefore = this.config.gateOpenStateRepo?.isOpen(runId, gate.id).open ?? false;
-        await this.notifyGateDataChanged(runId, gate.id);
-        const isOpenNow = this.config.gateOpenStateRepo?.isOpen(runId, gate.id).open ?? false;
-        if (!wasOpenBefore && isOpenNow) {
-          anyOpened = true;
-        }
-      } catch (err) {
-        log.warn(
-          `SpaceRuntimeService: event-driven gate re-evaluation for gate "${gate.id}" ` +
-            `on blocked run ${runId} failed: ${err instanceof Error ? err.message : String(err)}`
-        );
-      }
-    }
-
-    const allGatesOpen = gates.length > 0 && this.allWorkflowGatesOpen(runId);
-
-    if (anyOpened && allGatesOpen) {
-      this.transitionBlockedRunToInProgress(runId);
-      await this.notifyBlockedRunSessionGateResolved(runId, event);
-      return true;
-    }
-
-    // Check whether any deferred retry was scheduled during the loop — if so,
-    // signal 'retry' so the runtime keeps the event published instead of
-    // terminally marking it failed.
-    const scheduler = this.gateRetryScheduler;
-    const anyRetryScheduled = scheduler && gates.some((gate) => scheduler.has(runId, gate.id));
-    if (anyRetryScheduled) return 'retry';
-    return false;
-  }
-
-  /**
-   * Transition a `blocked` workflow run back to `in_progress` after an
-   * event-driven gate opening. Mirrors the resume RPC semantics: only fires
-   * when the run is actually `blocked`, and publishes the canonical
-   * `space.workflowRun.updated` event so UI subscribers stay in sync.
-   *
-   * Also promotes the canonical task out of `blocked` → `in_progress` so the
-   * UI does not keep showing a blocked task after the underlying run resumed.
-   * Only terminal-ish `blocked`/`review` tasks are touched; `open` tasks
-   * stay `open` so the normal tick-loop promotion path still runs.
-   */
-  private transitionBlockedRunToInProgress(runId: string): void {
-    const run = this.config.workflowRunRepo.getRun(runId);
-    if (!run || run.status !== 'blocked') return;
-    const updated = this.config.workflowRunRepo.transitionStatus(runId, 'in_progress');
-    if (updated) {
-      // Clear any stale failureReason left by the prior block path
-      // (agentCrash / humanRejected / execution_failed). Without this the
-      // resumed run — and later its terminal record — would still report
-      // the old failure reason, mismatching its in_progress / done status.
-      const cleanedRun = run.failureReason
-        ? (this.config.workflowRunRepo.updateRun(runId, { failureReason: null }) ?? updated)
-        : updated;
-      // Reset any blocked node executions back to pending so the next tick
-      // re-drives them instead of short-circuiting through the existing
-      // blocked-execution guard (which would re-block the run before the
-      // newly-activated target can make progress).
-      this.resetBlockedExecutionsForRun(runId);
-      this.promoteCanonicalTaskAfterRunResume(runId);
-      if (this.config.internalEventBus) {
-        this.config.internalEventBus
-          .publish('space.workflowRun.updated', {
-            sessionId: 'global',
-            spaceId: cleanedRun.spaceId,
-            runId: cleanedRun.id,
-            run: cleanedRun,
-          })
-          .catch((err) => {
-            log.warn(
-              `SpaceRuntimeService: failed to emit space.workflowRun.updated after blocked→in_progress: ${err instanceof Error ? err.message : String(err)}`
-            );
-          });
-      }
-    }
-  }
-
-  /**
    * Reset any `blocked` node executions for a run back to `pending` so the
-   * tick loop's executor will re-drive them. Called by
-   * {@link transitionBlockedRunToInProgress} so a run resumed via event-driven
-   * gate open does not get immediately re-blocked by the existing
-   * blocked-execution guard before the newly-activated target can progress.
+   * tick loop's executor will re-drive them. Ensures a resumed run is not
+   * immediately re-blocked by the existing blocked-execution guard before the
+   * recovered target can progress.
    *
    * Best-effort — errors are logged and swallowed.
    */
   private resetBlockedExecutionsForRun(runId: string): void {
     // Delegate to the runtime's single source of truth.
     this.runtime.resetBlockedExecutionsForRun(runId);
-  }
-
-  private promoteCanonicalTaskAfterRunResume(runId: string): void {
-    const tasks = this.config.taskRepo.listByWorkflowRun(runId);
-    if (tasks.length === 0) return;
-    // Mirror SpaceRuntime.pickCanonicalTaskForRun ordering without taking a
-    // cross-class dependency on the private helper: prefer title-matched tasks
-    // then lowest taskNumber, then earliest createdAt.
-    const run = this.config.workflowRunRepo.getRun(runId);
-    const runTitle = run?.title?.trim().toLowerCase() ?? '';
-    const titleMatches = runTitle
-      ? tasks.filter((task) => (task.title ?? '').trim().toLowerCase() === runTitle)
-      : [];
-    const pool = titleMatches.length > 0 ? titleMatches : tasks;
-    const sorted = [...pool].sort((a, b) => {
-      if (a.taskNumber !== b.taskNumber) return a.taskNumber - b.taskNumber;
-      if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
-      return a.id.localeCompare(b.id);
-    });
-    const target = sorted.find((task) => task.status === 'blocked' || task.status === 'review');
-    if (!target) return;
-    // Clear stale block metadata so the resumed task does not surface the old
-    // "Gate rejected" / crash result in the UI and API after the gate has
-    // been resolved. Mirrors the SpaceTaskManager.setTaskStatus recovery path
-    // which clears these fields when transitioning out of blocked.
-    const updatedTask = this.config.taskRepo.updateTask(target.id, {
-      status: 'in_progress',
-      pendingCheckpointType: null,
-      blockReason: null,
-      result: null,
-    });
-    if (!updatedTask || !this.config.internalEventBus) return;
-    this.config.internalEventBus
-      .publish('space.task.updated', {
-        sessionId: 'global',
-        spaceId: updatedTask.spaceId,
-        taskId: updatedTask.id,
-        task: updatedTask,
-      })
-      .catch((err) => {
-        log.warn(
-          `SpaceRuntimeService: failed to emit space.task.updated after task resume: ${err instanceof Error ? err.message : String(err)}`
-        );
-      });
-  }
-
-  /**
-   * Inject a courtesy notification into the active agent session for a blocked
-   * run whose gate just opened as a result of an external event. Best-effort:
-   * dispatch failures are logged and swallowed so they cannot destabilize the
-   * re-evaluation flow.
-   */
-  private async notifyBlockedRunSessionGateResolved(
-    runId: string,
-    event: ExternalEventPublishedPayload
-  ): Promise<void> {
-    const session = this.findActiveSessionForRun(runId);
-    if (!session?.sessionId || !this.taskAgentManager) return;
-    const actor = `[github:${event.topic}]`;
-    const summary = event.summary?.trim() || event.topic;
-    const message =
-      `[runtime] Gate re-evaluation triggered by external event ${actor} resolved ` +
-      `a blocking gate on this run. Summary: ${summary}`;
-    try {
-      await this.taskAgentManager.injectRuntimeRecoveryMessage(session.sessionId, message);
-    } catch (err) {
-      log.warn(
-        `SpaceRuntimeService: failed to notify blocked session ${session.sessionId} ` +
-          `for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
-      );
-    }
-  }
-
-  private findActiveSessionForRun(runId: string): { sessionId: string } | null {
-    const executions = this.nodeExecutionRepo.listByWorkflowRun(runId);
-    const active = executions
-      .filter((execution) => execution.status === 'in_progress' && execution.agentSessionId)
-      .sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0))[0];
-    return active?.agentSessionId ? { sessionId: active.agentSessionId } : null;
   }
 
   private async replayPendingMessagesAfterRuntimeProvisioning(session: {
@@ -2635,27 +2295,15 @@ export class SpaceRuntimeService {
   /**
    * Lazily activate a workflow node.
    *
-   * Builds a scoped ChannelRouter (same dependencies as `notifyGateDataChanged`)
-   * and delegates to `ChannelRouter.activateNode()`, which either reuses an
-   * existing node_execution for cyclic re-entry (preserving `agentSessionId` so
-   * history survives) or creates a pending execution for the tick loop to spawn.
+   * Builds a scoped ChannelRouter and delegates to `ChannelRouter.activateNode()`,
+   * which either reuses an existing node_execution for cyclic re-entry (preserving
+   * `agentSessionId` so history survives) or creates a pending execution for the
+   * tick loop to spawn.
    *
    * Exposed so the Space Agent's `send_message_to_task` tool can target a
    * specific node even when that node has no live session yet.
    */
   async activateWorkflowNode(runId: string, nodeId: string): Promise<SpaceTask[]> {
-    if (!this.config.gateDataRepo) {
-      throw new Error(
-        'activateWorkflowNode requires gateDataRepo to be configured on SpaceRuntimeService.'
-      );
-    }
-    const run = this.config.workflowRunRepo.getRun(runId);
-    let workspacePath: string | undefined;
-    if (run) {
-      const space = await this.config.spaceManager.getSpace(run.spaceId);
-      workspacePath = space?.workspacePath;
-    }
-    const spaceManager = this.config.spaceManager;
     const taskAgentManager = this.taskAgentManager;
     const router = new ChannelRouter({
       taskRepo: this.config.taskRepo,
@@ -2663,46 +2311,20 @@ export class SpaceRuntimeService {
       workflowManager: this.config.spaceWorkflowManager,
       agentManager: this.config.spaceAgentManager,
       nodeExecutionRepo: this.nodeExecutionRepo,
-      gateDataRepo: this.config.gateDataRepo,
-      gateOpenStateRepo: this.config.gateOpenStateRepo,
       channelCycleRepo: this.config.channelCycleRepo,
-      db: this.config.db,
-      workspacePath,
-      gateRetryScheduler: this.gateRetryScheduler,
-      getSpaceAutonomyLevel: async (spaceId) => {
-        const s = await spaceManager.getSpace(spaceId);
-        return s?.autonomyLevel ?? 1;
-      },
       isSessionAlive: taskAgentManager ? (sid) => taskAgentManager.isSessionAlive(sid) : undefined,
       cancelSessionById: taskAgentManager
         ? (sid) => taskAgentManager.cancelBySessionId(sid)
         : undefined,
-      // Forward the runtime's current sink so activation-driven reopens of
-      // terminal runs still surface `workflow_run_reopened` to the Space
-      // Agent session (mirrors `notifyGateDataChanged` above).
       // Forward the InternalEventBus so activation-driven reopens also publish
       // typed `space.workflowRun.reopened` events for bus subscribers.
       internalEventBus: this.config.internalEventBus,
-      onGateDataChangedComplete: (runId, _gateId, activatedTasks) =>
-        this.handleGateDataChangedComplete(runId, activatedTasks),
-      getPrUrlForRun: (rid) => this.resolvePrUrlForRun(rid),
     });
     return router.activateNode(runId, nodeId, {
       allowTerminalReopen: true,
       reopenBy: 'space-runtime-service',
       reopenReason: 'explicit workflow node activation',
     });
-  }
-
-  /**
-   * Resolves the PR URL for a workflow run by scanning gate data records
-   * and artifacts. Mirrors SpaceRuntime.resolvePrUrlForRun so temporary
-   * ChannelRouters built by notifyGateDataChanged / activateWorkflowNode
-   * can inject PR_URL into feature scripts.
-   */
-  private resolvePrUrlForRun(runId: string): string {
-    // Delegated to the domain artifact profile (coding: resolves the PR URL).
-    return this.config.artifactProfile?.resolvePrimaryLinkUrl(runId) ?? '';
   }
 
   /**

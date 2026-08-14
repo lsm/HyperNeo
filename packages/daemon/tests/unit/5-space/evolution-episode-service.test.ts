@@ -9,7 +9,6 @@ import {
 import { EvolutionScopeService } from '../../../src/lib/space/evolution-scope-service';
 import { clearModelsCache, setModelsCache } from '../../../src/lib/model-service';
 import { EvolutionRepository } from '../../../src/storage/repositories/evolution-repository';
-import { GateOpenStateRepository } from '../../../src/storage/repositories/gate-open-state-repository';
 import { SpaceGoalEventRepository } from '../../../src/storage/repositories/space-goal-event-repository';
 import { SpaceGoalRepository } from '../../../src/storage/repositories/space-goal-repository';
 import { SpaceRepository } from '../../../src/storage/repositories/space-repository';
@@ -41,10 +40,7 @@ describe('EvolutionEpisodeService', () => {
     evolutionRepo = new EvolutionRepository(db as never);
     taskRepo = new SpaceTaskRepository(db as never);
     goalRepo = new SpaceGoalRepository(db as never);
-    workflowRunRepo = new SpaceWorkflowRunRepository(
-      db as never,
-      new GateOpenStateRepository(db as never)
-    );
+    workflowRunRepo = new SpaceWorkflowRunRepository(db as never);
     artifactRepo = new WorkflowRunArtifactRepository(db as never);
     artifactProfile = new CodingArtifactProfile({ db: db as never, artifactRepo });
     workflowRepo = new SpaceWorkflowRepository(db as never);

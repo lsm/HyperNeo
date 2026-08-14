@@ -5,11 +5,14 @@
  */
 
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
-import { useEffect, useState } from 'preact/hooks';
+import type { MessageDeliveryRetryInfo, MessageDeliveryStatus } from '@hyperneo/shared';
+import { useCallback, useEffect, useState } from 'preact/hooks';
+import { retryMessageDelivery } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';
 import { borderRadius, messageColors, messageSpacing } from '../../lib/design-tokens.ts';
 import { cn, copyToClipboard } from '../../lib/utils.ts';
 import { Dropdown } from '../ui/Dropdown.tsx';
+import { DeliveryStateBadge } from '../ui/DeliveryStateBadge.tsx';
 import { IconButton } from '../ui/IconButton.tsx';
 import { Spinner } from '../ui/Spinner.tsx';
 import { Tooltip } from '../ui/Tooltip.tsx';
@@ -70,8 +73,146 @@ function renderMessageText(
   );
 }
 
-type UserMessage = Extract<SDKMessage, { type: 'user' }> & { sendStatus?: string };
+type UserMessage = Extract<SDKMessage, { type: 'user' }> & {
+  /** User-facing delivery lifecycle from sdk_messages.send_status (task #862). */
+  deliveryStatus?: MessageDeliveryStatus;
+  /** Active-job retry detail (count / next-attempt / max) when retrying. */
+  deliveryRetry?: MessageDeliveryRetryInfo;
+  /** Persisted row id (attached by the messages.bySession LiveQuery mapper). */
+  id?: string;
+};
 type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
+
+/**
+ * Per-status copy for the user-message delivery badge (task #862). "delivered"
+ * is intentionally NOT rendered here (the caller hides it) to avoid noisy
+ * indicators on normal fast delivery.
+ */
+const DELIVERY_BADGE_COPY: Record<
+  Exclude<MessageDeliveryStatus, 'delivered'>,
+  { label: string; tooltip: string }
+> = {
+  queued: { label: 'queued', tooltip: 'Waiting to be delivered' },
+  processing: { label: 'sending', tooltip: 'Sending to the active turn' },
+  retrying: { label: 'retrying', tooltip: 'Delivery stalled — retrying' },
+  failed: {
+    label: 'not delivered',
+    tooltip: 'Message was not delivered — the server crashed before Claude responded',
+  },
+};
+
+function UserMessageDeliveryBadge({
+  status,
+}: {
+  status: Exclude<MessageDeliveryStatus, 'delivered'>;
+}) {
+  const copy = DELIVERY_BADGE_COPY[status];
+  if (!copy) return null;
+  return (
+    <Tooltip content={copy.tooltip} position="left">
+      <DeliveryStateBadge state={status} label={copy.label} test-id="user-delivery-state" />
+    </Tooltip>
+  );
+}
+
+function formatRetryCountdown(ms: number): string {
+  if (ms <= 0) return 'now';
+  const totalSeconds = Math.ceil(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes > 0) return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  return `${seconds}s`;
+}
+
+/**
+ * Inline retry affordance for a user message:
+ *  - `retrying`: a live countdown to the next automatic attempt + "attempt N/M",
+ *    so a delivery-driven turn that died on a transient provider error shows
+ *    visible progress instead of silently idling.
+ *  - `failed`: a "Retry" button that reopens + re-enqueues the message.
+ */
+function UserMessageRetryControl({
+  sessionId,
+  messageDbId,
+  deliveryStatus,
+  deliveryRetry,
+}: {
+  sessionId?: string;
+  messageDbId?: string;
+  deliveryStatus?: MessageDeliveryStatus;
+  deliveryRetry?: MessageDeliveryRetryInfo;
+}) {
+  const [remaining, setRemaining] = useState(() =>
+    Math.max(0, (deliveryRetry?.runAt ?? 0) - Date.now())
+  );
+  const [retrying, setRetrying] = useState(false);
+
+  // Tick the countdown while retrying.
+  useEffect(() => {
+    if (deliveryStatus !== 'retrying' || !deliveryRetry?.runAt) return;
+    const interval = setInterval(() => {
+      setRemaining(Math.max(0, deliveryRetry.runAt! - Date.now()));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [deliveryStatus, deliveryRetry?.runAt]);
+
+  const handleRetry = useCallback(async () => {
+    if (!sessionId || !messageDbId) return;
+    setRetrying(true);
+    try {
+      const result = await retryMessageDelivery(sessionId, messageDbId);
+      if (!result.retried) {
+        toast.error('Message could not be retried — it may no longer be in a failed state.');
+      }
+    } catch {
+      toast.error('Failed to retry message. Please try again.');
+    } finally {
+      setRetrying(false);
+    }
+  }, [sessionId, messageDbId]);
+
+  if (deliveryStatus === 'retrying') {
+    // `count` is the active job's retry_count (completed failures), not the
+    // current attempt number — so label it "retry N/Max" (Nth retry of Max
+    // retries), not "attempt N/M", which would read off-by-one.
+    const attempt = deliveryRetry
+      ? `retry ${deliveryRetry.count}${deliveryRetry.maxRetries ? `/${deliveryRetry.maxRetries}` : ''}`
+      : '';
+    return (
+      <span
+        class="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-orange-200"
+        role="status"
+        aria-live="polite"
+        data-testid="user-delivery-retry-countdown"
+      >
+        retrying in {formatRetryCountdown(remaining)}
+        {attempt && <span class="text-orange-300/60 normal-case font-normal">· {attempt}</span>}
+      </span>
+    );
+  }
+
+  if (deliveryStatus === 'failed' && sessionId && messageDbId) {
+    return (
+      <button
+        type="button"
+        onClick={handleRetry}
+        disabled={retrying}
+        class="text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full border border-red-500/45 bg-red-500/10 text-red-200 hover:bg-red-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 focus-visible:ring-offset-dark-950"
+        data-testid="user-delivery-retry-button"
+      >
+        {retrying ? 'Retrying…' : 'Retry'}
+      </button>
+    );
+  }
+
+  return null;
+}
+
+/** True when a user message's delivery is terminal (settled) and rewind-safe. */
+function isDeliveryTerminal(status: MessageDeliveryStatus | undefined): boolean {
+  if (!status) return true; // legacy row without delivery metadata — treat as settled
+  return status === 'delivered' || status === 'failed';
+}
 
 interface Props {
   message: UserMessage;
@@ -351,20 +492,26 @@ export function SDKUserMessage({
         </Tooltip>
       )}
 
-      {message.sendStatus === 'failed' && (
-        <Tooltip
-          content="Message was not delivered — the server crashed before Claude responded"
-          position="left"
-        >
-          <span class="text-xs px-2 py-0.5 bg-red-500/20 text-red-400 rounded">not delivered</span>
-        </Tooltip>
+      {message.deliveryStatus && message.deliveryStatus !== 'delivered' && (
+        <UserMessageDeliveryBadge status={message.deliveryStatus} />
       )}
+
+      <UserMessageRetryControl
+        sessionId={sessionId}
+        messageDbId={typeof message.id === 'string' ? message.id : undefined}
+        deliveryStatus={message.deliveryStatus}
+        deliveryRetry={message.deliveryRetry}
+      />
 
       {/* Rewind button - only for non-replay user messages with valid UUID */}
       {!isReplay &&
         onRewind &&
         sessionId &&
         message.uuid &&
+        // Task #862 (review P1): only allow rewind on terminal (settled)
+        // deliveries — a queued/processing/retrying row's active message_delivery
+        // job would otherwise keep executing after the rewind deletes it.
+        isDeliveryTerminal(message.deliveryStatus) &&
         (rewindingMessageUuid === message.uuid ? (
           <Spinner size="sm" color="border-amber-500" />
         ) : (

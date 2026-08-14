@@ -138,6 +138,25 @@ function createSchema(db: Database): void {
 			FOREIGN KEY (to_node_id) REFERENCES space_workflow_nodes(id) ON DELETE CASCADE
 		)
 	`);
+  // Minimal runs/tasks tables so the deletion-safety predicate (RFC §4 #3) has
+  // real data to query on the replace path. Only the columns hasExecutableRuns
+  // touches are needed; the full schema lives in migrations.
+  db.exec(`
+		CREATE TABLE space_workflow_runs (
+			id TEXT PRIMARY KEY,
+			workflow_id TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'pending',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		)
+	`);
+  db.exec(`
+		CREATE TABLE space_tasks (
+			id TEXT PRIMARY KEY,
+			workflow_run_id TEXT,
+			archived_at INTEGER
+		)
+	`);
 }
 
 function insertSpace(db: Database, id: string, name = `Space ${id}`): void {
@@ -373,7 +392,7 @@ describe('Space Export/Import RPC Handlers', () => {
       expect(exported.tools).toEqual(['read_file']);
       expect(exported.id).toBeUndefined();
       expect(exported.spaceId).toBeUndefined();
-      expect(exported.version).toBe(2);
+      expect(exported.version).toBe(3);
       expect(exported.type).toBe('agent');
     });
 
@@ -676,6 +695,39 @@ describe('Space Export/Import RPC Handlers', () => {
       await expect(
         call(handlers, 'spaceImport.execute', { spaceId: SPACE_ID, bundle: { bad: true } })
       ).rejects.toThrow('Invalid bundle');
+    });
+
+    it('drops a legacy empty gate instead of rolling back the import', async () => {
+      // A v3 bundle carrying a legacy empty gate (no fields/script/validator/
+      // features) passes the permissive export schema but would fail validateGate
+      // at createWorkflow. The import boundary sanitizes it so the whole bundle
+      // imports instead of rolling back for one bad gate.
+      const bundle = {
+        version: 3,
+        type: 'bundle',
+        name: 'B',
+        agents: [{ version: 3, type: 'agent', name: 'Coder' }],
+        workflows: [
+          {
+            version: 3,
+            type: 'workflow',
+            name: 'Pipeline',
+            nodes: [{ agents: [{ agentRef: 'Coder', name: 'Coder' }], name: 'Code' }],
+            startNode: 'Code',
+            tags: [],
+            gates: [{ id: 'empty', resetOnCycle: false }],
+          },
+        ],
+        exportedAt: 1000,
+      };
+
+      const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+        spaceId: SPACE_ID,
+        bundle,
+      });
+      const workflow = workflowRepo.getWorkflow(result.workflows[0].id)!;
+      expect(workflow).toBeTruthy();
+      expect(workflow.gates ?? []).toEqual([]);
     });
 
     it('imports static external event interests for agent slots', async () => {
@@ -1137,6 +1189,51 @@ describe('Space Export/Import RPC Handlers', () => {
         const all = workflowRepo.listWorkflows(SPACE_ID);
         expect(all).toHaveLength(1);
         expect(all[0].nodes[0].name).toBe('NewStep');
+      });
+
+      it('SKIPS replace when the existing workflow has a non-archived run (RFC §4 #3)', async () => {
+        // Replacing would delete the definition and orphan the run's pinned
+        // version. Import must keep the existing workflow (and its name slot),
+        // skip creating the imported copy, and warn — not fail the whole import.
+        const agent = agentRepo.create({ spaceId: SPACE_ID, name: 'A' });
+        const existing = workflowManager.createWorkflow({
+          spaceId: SPACE_ID,
+          name: 'Pipeline',
+          nodes: [{ name: 'OldStep', agentId: agent.id }],
+          transitions: [],
+          completionAutonomyLevel: 3,
+        });
+        // Seed a run with a non-archived (executable) task for the existing workflow.
+        const now = Date.now();
+        const runId = 'run-with-live-task';
+        (db as unknown as { prepare: (s: string) => { run: (...a: unknown[]) => void } })
+          .prepare(
+            `INSERT INTO space_workflow_runs (id, workflow_id, created_at, updated_at) VALUES (?, ?, ?, ?)`
+          )
+          .run(runId, existing.id, now, now);
+        (db as unknown as { prepare: (s: string) => { run: (...a: unknown[]) => void } })
+          .prepare(`INSERT INTO space_tasks (id, workflow_run_id, archived_at) VALUES (?, ?, NULL)`)
+          .run('task-live', runId);
+
+        const bundle = makeBundle(
+          [{ name: 'A', role: 'coder' }],
+          [{ name: 'Pipeline', nodes: [{ agentRef: 'A', name: 'NewStep' }] }]
+        );
+
+        const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+          spaceId: SPACE_ID,
+          bundle,
+          conflictResolution: { agents: { A: 'skip' }, workflows: { Pipeline: 'replace' } },
+        });
+
+        // Skipped (kept existing), not replaced.
+        expect(result.workflows[0]).toMatchObject({ name: 'Pipeline', action: 'skipped' });
+        expect(result.warnings.some((w) => w.includes('not archived'))).toBe(true);
+        // The existing workflow is untouched (still the old node, still one row).
+        const all = workflowRepo.listWorkflows(SPACE_ID);
+        expect(all).toHaveLength(1);
+        expect(all[0].id).toBe(existing.id);
+        expect(all[0].nodes[0].name).toBe('OldStep');
       });
     });
 

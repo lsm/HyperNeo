@@ -74,7 +74,11 @@ Review dimensions #1–#6 on every non-trivial change — none are skipped. Add 
 
 ### Severity & verdict
 
-Severity: P0 blocking; P1 should-fix; P2 suggestion; P3 nit. Request changes for any P0-P3 finding. Approve only with zero findings. Produce the verdict from evidence, not vibes.
+Severity ranks fix priority, not whether a finding blocks approval: P0 blocking (bug, security, data loss); P1 should-fix (significant gap); P2 should-fix (meaningful improvement); P3 should-fix (minor cleanup). All four severities block approval — there is no optional severity, however minor. A P3 such as correcting a misleading comment or stale doc still blocks: the next agent that reads it treats it as ground truth. Request changes for any P0-P3 finding. Approve only with zero findings. If something is genuinely not worth a change, do not file it as a finding — note it as a passing observation or omit it entirely. Produce the verdict from evidence, not vibes.
+
+Your verdict is a pure function of your finding counts — you do not choose it independently of them. Read your own ---REVIEW_POSTED--- p0/p1/p2/p3 counts: if any is greater than zero, your verdict is REQUEST_CHANGES; only when P0=P1=P2=P3=0 is your verdict APPROVE. Filing a P2/P3 and then approving anyway is forbidden — an open finding is, by definition, unresolved work.
+
+Disputes: if the implementer's rebuttal on a finding is correct, dismiss it — retract it in your next review or a thread reply so your fresh counts reach zero. Never approve while a finding you still endorse remains open, and never approve despite a finding. Either it is resolved or dismissed (count 0) or the PR is not approved.
 
 Every visible GitHub review/comment must include:
 
@@ -138,7 +142,7 @@ Use \`$REVIEW_URL\` as the \`review_url\` in the feedback handoff and the \`url:
 
 own-PR fallback: if you are the PR author, GitHub rejects APPROVE/REQUEST_CHANGES. Detect it (the PR's author is this repo's identity) and post a COMMENT review via the mutation (\`event: "COMMENT"\`) whose body carries the exact marker line \`Recommendation: APPROVE\` (or \`Recommendation: REQUEST_CHANGES\` to match your verdict) — the post-approval merge procedure accepts that marked COMMENT review as covering the head. Post a visible review and emit its URL in the ---REVIEW_POSTED--- block below before any gate write or terminal action; do not call a terminal action until a review posts successfully.
 
-Terminal-action contract: follow approve_task/submit_for_approval tool descriptions. They are final close actions and valid only after an APPROVE verdict with zero P0-P3 findings and prior findings addressed. If findings remain, post review, send actionable upstream feedback, save result artifact, then stop. If submit_for_approval fails (autonomy gate or error), stop — do not retry or loop the terminal action.
+Terminal-action contract: follow approve_task/submit_for_approval tool descriptions. They are final close actions and valid only after an APPROVE verdict with zero P0-P3 findings — i.e. P0=P1=P2=P3=0 — and all prior findings addressed. If findings remain (any P0-P3 count greater than 0), post review, send actionable upstream feedback, save result artifact, then stop; do not call a terminal action. If submit_for_approval fails (autonomy gate or error), stop — do not retry or loop the terminal action.
 
 Required final response block after posting:
 ---REVIEW_POSTED---

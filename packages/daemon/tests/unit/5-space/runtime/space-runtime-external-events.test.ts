@@ -7,7 +7,6 @@ import { ExternalEventQueueMetrics } from '../../../../src/lib/external-events/q
 import type { ExternalEvent } from '../../../../src/lib/external-events/types';
 import { createInternalCommandBus } from '../../../../src/lib/internal-command-bus';
 import { createDaemonInternalEventBus } from '../../../../src/lib/internal-event-bus';
-import { GateDataRepository } from '../../../../src/storage/repositories/gate-data-repository';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
@@ -171,6 +170,12 @@ describe('SpaceRuntime external event subscriptions', () => {
   let eventStore: ExternalEventStore;
   let eventService: ExternalEventService;
   let injected: Array<{ sessionId: string; message: string; deliveryMode?: string }>;
+  /**
+   * When true, the registered `agent.message.inject` handler returns a
+   * recoverable (`ok: false`) failure so tests can exercise the delivery
+   * cool-down / retry paths. Reset to false in beforeEach.
+   */
+  let injectShouldFail: boolean;
   let longHorizonMessages: Array<{ agentId: string; message: string; idempotencyKey?: string }>;
   let tam: MockTaskAgentManager;
   let bus: ReturnType<typeof createDaemonInternalEventBus>;
@@ -229,6 +234,23 @@ describe('SpaceRuntime external event subscriptions', () => {
     return { workflow, run, task };
   }
 
+  /**
+   * Stamp a run's reviewed PR URL the way the production `pr_ready` hook does
+   * — as a `link kind:'pr'` artifact, which `CodingArtifactProfile.resolvePrimaryLinkUrl`
+   * reads for external-event PR-to-run coupling. (Replaces the former gate-data
+   * `'pr'` row written by the removed approval gate.)
+   */
+  function stampRunPr(runId: string, url: string): void {
+    artifactRepo.upsert({
+      id: `art-pr-${runId}`,
+      runId,
+      nodeId: 'code',
+      artifactType: 'link',
+      artifactKey: 'pr',
+      data: { kind: 'pr', url },
+    });
+  }
+
   beforeEach(() => {
     db = makeDb();
     workflowRunRepo = new SpaceWorkflowRunRepository(db);
@@ -240,6 +262,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     eventStore = new ExternalEventStore(db);
     eventService = new ExternalEventService(eventStore, bus);
     injected = [];
+    injectShouldFail = false;
     longHorizonMessages = [];
     commandBus.register('agent.message.inject', async (command) => {
       injected.push({
@@ -247,6 +270,9 @@ describe('SpaceRuntime external event subscriptions', () => {
         message: command.message,
         deliveryMode: command.deliveryMode,
       });
+      if (injectShouldFail) {
+        return { ok: false, error: 'recoverable injection failure' };
+      }
       return { ok: true };
     });
     tam = new MockTaskAgentManager();
@@ -998,6 +1024,52 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(deliveries[0]!.taskId).toBe(task.id);
   });
 
+  test('a shared-PR synchronize (commit push) does NOT stamp any co-subscriber lastActivityAt', async () => {
+    // Regression guard for the commit-push attribution bug (review P1):
+    // pull_request.synchronize is a PR-LEVEL event that fans out to EVERY
+    // subscriber (e.g. a coder run AND a reviewer run watching the same PR).
+    // lastActivityAt must not advance for any of them — a node's OWN push is
+    // already captured by its tool calls (the sdk.toolUse source, which is
+    // node-scoped), and a PR-level event cannot be attributed to one node.
+    // Stamping here would mark an idle co-subscriber active and suppress its
+    // stall nag for a full threshold window.
+    const PR_TOPIC = 'github/lsm/neokai/pull_request/42.*';
+
+    const { run: coderRun } = await startRunWithSubscription(PR_TOPIC, 'code');
+    const coderExec = nodeExecutionRepo.listByNode(coderRun.id, 'code')[0]!;
+    nodeExecutionRepo.update(coderExec.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-shared-coder',
+      startedAt: Date.now(),
+    });
+    tam.alive.add('session-shared-coder');
+
+    const { run: reviewerRun } = await startRunWithSubscription(PR_TOPIC, 'review');
+    const reviewerExec = nodeExecutionRepo.listByNode(reviewerRun.id, 'review')[0]!;
+    nodeExecutionRepo.update(reviewerExec.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-shared-reviewer',
+      startedAt: Date.now(),
+    });
+    tam.alive.add('session-shared-reviewer');
+
+    await eventService.publish(
+      makeEvent({
+        topic: 'github/lsm/neokai/pull_request/42.synchronize',
+        payload: { action: 'synchronize', prNumber: 42, headSha: 'abc123' },
+      })
+    );
+
+    // Sanity: the fan-out reached at least the coder target, so the delivery
+    // path that USED to stamp ran (under the old code coderExec.lastActivityAt
+    // would now be non-null).
+    expect(injected.some((i) => i.sessionId === 'session-shared-coder')).toBe(true);
+    // Neither the pushing node's run NOR the co-subscribed reviewer run is
+    // stamped as active by the PR-level event.
+    expect(nodeExecutionRepo.getById(coderExec.id)!.lastActivityAt).toBeNull();
+    expect(nodeExecutionRepo.getById(reviewerExec.id)!.lastActivityAt).toBeNull();
+  });
+
   test('delivers matching events to an idle node-agent session', async () => {
     const { run } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
@@ -1258,8 +1330,7 @@ describe('SpaceRuntime external event subscriptions', () => {
   test('delivers a linked-PR event after a matching subscription registers', async () => {
     const { workflow, run, task } = await startRunWithSubscription(DEFAULT_TOPIC);
     await runtime.executeTick();
-    const gateDataRepo = new GateDataRepository(db);
-    gateDataRepo.set(run.id, 'pr', { prUrl: 'https://github.com/lsm/neokai/pull/42' });
+    stampRunPr(run.id, 'https://github.com/lsm/neokai/pull/42');
 
     await runtime.stop();
     eventStore.store(
@@ -1321,8 +1392,7 @@ describe('SpaceRuntime external event subscriptions', () => {
   test('retains unmatched events without PR-to-run coupling until the TTL', async () => {
     const { run } = await startRunWithSubscription(DEFAULT_TOPIC);
     await runtime.executeTick();
-    const gateDataRepo = new GateDataRepository(db);
-    gateDataRepo.set(run.id, 'pr', { prUrl: 'https://github.com/lsm/neokai/pull/99' });
+    stampRunPr(run.id, 'https://github.com/lsm/neokai/pull/99');
 
     const event = makeEvent({ topic: 'github/lsm/neokai/pull_request/42.comment_created' });
     await eventService.publish(event);
@@ -1334,8 +1404,7 @@ describe('SpaceRuntime external event subscriptions', () => {
   test('fails unmatched events that stay unclaimed past the TTL', async () => {
     const { run } = await startRunWithSubscription(DEFAULT_TOPIC);
     await runtime.executeTick();
-    const gateDataRepo = new GateDataRepository(db);
-    gateDataRepo.set(run.id, 'pr', { prUrl: 'https://github.com/lsm/neokai/pull/42' });
+    stampRunPr(run.id, 'https://github.com/lsm/neokai/pull/42');
 
     await runtime.stop();
     eventStore.store(
@@ -1369,52 +1438,6 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     expect(eventStore.listDeliveries('evt-linked-pr-expired')).toHaveLength(0);
     expect(eventStore.getById('evt-linked-pr-expired')?.state).toBe('failed');
-  });
-
-  test('retains a subscribed event when the blocked-run hook fires but opens no gate', async () => {
-    // Rebuild the runtime with a blocked-run hook that reports no gate opened.
-    const hookRunIds: string[] = [];
-    runtime = new SpaceRuntime({
-      db,
-      spaceManager,
-      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
-      spaceWorkflowManager: workflowManager,
-      workflowRunRepo,
-      taskRepo,
-      nodeExecutionRepo,
-      artifactRepo,
-      artifactProfile,
-      internalEventBus: bus,
-      commandBus: createInternalCommandBus(),
-      externalEventStore: eventStore,
-      taskAgentManager: tam as never,
-      onBlockedRunExternalEvent: ({ runId }) => {
-        hookRunIds.push(runId);
-        return false;
-      },
-    });
-    const { run, task } = await startRunWithSubscription(DEFAULT_TOPIC);
-    await runtime.executeTick();
-    const gateDataRepo = new GateDataRepository(db);
-    gateDataRepo.set(run.id, 'pr', { prUrl: 'https://github.com/lsm/neokai/pull/42' });
-
-    // Cancel the only node execution and block the run. The task is still
-    // active, so the matching event must stay accepted — the gate outcome no
-    // longer decides whether a subscription receives the event.
-    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
-    nodeExecutionRepo.update(execution.id, {
-      status: 'cancelled',
-      completedAt: Date.now(),
-    });
-    workflowRunRepo.updateRun(run.id, { status: 'blocked', failureReason: 'agentCrash' });
-
-    const event = makeEvent();
-    await eventService.publish(event);
-
-    expect(hookRunIds).toContain(run.id);
-    expect(eventStore.getById(event.id)?.state).toBe('published');
-    expect(eventStore.listDeliveries(event.id)).toHaveLength(1);
-    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
   });
 
   test('fails queued deliveries when an execution is unregistered', async () => {
@@ -2108,6 +2131,139 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(injected.map((item) => JSON.parse(item.message).eventId)).toEqual(
       events.map((event) => event.id)
     );
+  });
+
+  test('skips re-injection of a failed delivery within the recoverable-failure cool-down', async () => {
+    const { run } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-cooldown-fail',
+      startedAt: Date.now(),
+    });
+    tam.alive.add('session-cooldown-fail');
+    // Simulate a recoverable dispatch failure (the storm trigger: a session
+    // stuck in a provider-error loop where injection throws non-terminally).
+    injectShouldFail = true;
+
+    const event = makeEvent({ id: 'evt-cooldown', dedupeKey: 'dedupe-cooldown' });
+    await eventService.publish(event);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // First injection attempted and failed recoverably → delivery cool-down
+    // armed. The event stays `published` (delivery non-terminal) so the source
+    // can re-poll and the bounded retry path can still drive recovery.
+    expect(injected).toHaveLength(1);
+    expect(eventStore.getById(event.id)?.state).toBe('published');
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+
+    // Re-publishing the SAME event while its delivery is in cool-down must NOT
+    // mint a fresh injection (no fresh `failed` row) — the gate skips and the
+    // event stays `published` to re-evaluate once the window lifts.
+    await eventService.publish(event);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(injected).toHaveLength(1);
+    expect(eventStore.getById(event.id)?.state).toBe('published');
+    expect(runtime.getQueueHealthSnapshot().counters.cooldownSkips).toBeGreaterThanOrEqual(1);
+  });
+
+  test('a distinct event still delivers while another delivery is in cool-down', async () => {
+    // Cool-down is per-delivery (event + target), not per-target: a fresh,
+    // distinct event must still flow (the burst rate-limit / digest coalesces
+    // distinct events); only re-dispatches of an already-failed delivery gate.
+    const { run } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-cooldown-distinct',
+      startedAt: Date.now(),
+    });
+    tam.alive.add('session-cooldown-distinct');
+    injectShouldFail = true;
+
+    const eventA = makeEvent({ id: 'evt-cooldown-distinct-a', dedupeKey: 'dedupe-distinct-a' });
+    await eventService.publish(eventA);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(injected).toHaveLength(1);
+
+    // A distinct event for the same (failing) target is NOT gated — it is a
+    // separate delivery and is attempted on its own. (Publishing B also flushes
+    // A's pending retry, so the exact injection count is not asserted; the
+    // guarantee under test is that B itself reaches the session and delivers.)
+    injectShouldFail = false;
+    const eventB = makeEvent({ id: 'evt-cooldown-distinct-b', dedupeKey: 'dedupe-distinct-b' });
+    await eventService.publish(eventB);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(injected.some((item) => JSON.parse(item.message).eventId === eventB.id)).toBe(true);
+    expect(eventStore.getById(eventB.id)?.state).toBe('delivered');
+  });
+
+  test('re-injects a delivery after the recoverable-failure cool-down lifts', async () => {
+    const { run } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-cooldown-lift',
+      startedAt: Date.now(),
+    });
+    tam.alive.add('session-cooldown-lift');
+    injectShouldFail = true;
+
+    const event = makeEvent({ id: 'evt-cooldown-lift', dedupeKey: 'dedupe-lift' });
+    await eventService.publish(event);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(injected).toHaveLength(1);
+
+    // Within the cool-down window a re-poll of the same event is gated.
+    await eventService.publish(event);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(injected).toHaveLength(1);
+    expect(runtime.getQueueHealthSnapshot().counters.cooldownSkips).toBeGreaterThanOrEqual(1);
+
+    // Advance past the default 30s cool-down window and let the target accept.
+    // The same event's delivery now re-injects and delivers normally.
+    injectShouldFail = false;
+    const realNow = Date.now;
+    Date.now = () => realNow.call(Date) + 35_000;
+    try {
+      await eventService.publish(event);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(injected).toHaveLength(2);
+      expect(injected.at(-1)!.sessionId).toBe('session-cooldown-lift');
+      expect(eventStore.getById(event.id)?.state).toBe('delivered');
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
+  test('bounds the delivery cool-down map — sweeps expired entries on arm', () => {
+    // A delivery that fails once and is never republished is only reaped lazily
+    // on re-query, so a long-running daemon could grow the map without bound.
+    // Once the map exceeds its cap, arming sweeps expired entries. White-box:
+    // the map + arm helper are private.
+    const rt = runtime as unknown as {
+      armDeliveryCooldown(key: string): void;
+      externalEventDeliveryCooldowns: Map<string, number>;
+      deliveryCooldownMs: number;
+      deliveryCooldownMapCap: number;
+    };
+    const cap = rt.deliveryCooldownMapCap;
+    expect(cap).toBeGreaterThan(0);
+    // Arm cap+1 distinct LIVE entries — the sweep runs but finds none expired.
+    for (let i = 0; i <= cap; i++) rt.armDeliveryCooldown(`dk-${i}`);
+    expect(rt.externalEventDeliveryCooldowns.size).toBe(cap + 1);
+    // Backdate every entry so they are all past the window.
+    const stale = Date.now() - rt.deliveryCooldownMs - 1;
+    for (const key of rt.externalEventDeliveryCooldowns.keys()) {
+      rt.externalEventDeliveryCooldowns.set(key, stale);
+    }
+    // One more arm triggers the sweep → all expired entries drop, only the new
+    // live entry remains.
+    rt.armDeliveryCooldown('dk-fresh');
+    expect(rt.externalEventDeliveryCooldowns.size).toBe(1);
+    expect(rt.externalEventDeliveryCooldowns.has('dk-fresh')).toBe(true);
   });
 
   test('drops queued deliveries older than ttl instead of delivering them', async () => {
@@ -4566,6 +4722,10 @@ describe('SpaceRuntime external event subscriptions', () => {
       commandBus,
       externalEventStore: eventStore,
       taskAgentManager: tam as never,
+      // This test exercises the retry-timer in-flight guard via an immediate
+      // duplicate publish; disable the per-delivery cool-down so the duplicate
+      // re-dispatches (the cool-down is covered by its own dedicated tests).
+      externalEventDeliveryCooldownMs: 0,
     });
     runtime.registerSubscription(
       run.id,

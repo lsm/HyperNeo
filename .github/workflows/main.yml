@@ -79,8 +79,8 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Validate online test matrix coverage
-        run: bash scripts/validate-online-test-matrix.sh
+      - name: Validate test matrix coverage (unit + web + online)
+        run: bash scripts/validate-test-matrix.sh
 
       - name: Validate daemon shard configuration
         run: |
@@ -190,7 +190,7 @@ jobs:
           #
           # Modules with directory-level test_path auto-discover new test files.
           # Split modules (rpc-*, room-*, features-*) use explicit file lists.
-          # Run `bash scripts/validate-online-test-matrix.sh` to verify all files are covered.
+          # Run `bash scripts/validate-test-matrix.sh` to verify all files are covered.
           - module: agent-sdk
             test_path: tests/online/agent/agent-session-sdk.test.ts
             mock_sdk: true
@@ -305,14 +305,9 @@ jobs:
           - module: space-1
             test_path: >-
               tests/online/space/space-chat-session.test.ts
-              tests/online/space/space-edge-cases.test.ts
-              tests/online/space/space-happy-path-code-review.test.ts
-              tests/online/space/space-happy-path-full-pipeline.test.ts
             mock_sdk: true
           - module: space-2
             test_path: >-
-              tests/online/space/space-happy-path-plan-to-approve.test.ts
-              tests/online/space/space-happy-path-qa-completion.test.ts
               tests/online/space/task-agent-lifecycle.test.ts
               tests/online/space/task-agent-skills.test.ts
               tests/online/space/prompt-too-long-kimi-recovery.test.ts
@@ -428,7 +423,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0-shared-handlers-workflow, 1-core, 4-space-storage, 4-space-migrations-a, 4-space-migrations-b, 5-space-agent-other, 5-space-runtime-a, 5-space-runtime-b]
+        shard: [shared, 0-shared-handlers-workflow, 1-core, 4-space-storage, 4-space-migrations-a, 4-space-migrations-b, 5-space-agent-other, 5-space-runtime-a, 5-space-runtime-b]
 
     steps:
       - uses: actions/checkout@v6
@@ -475,12 +470,28 @@ jobs:
           GLM_API_KEY: ""
           CLAUDE_CODE_OAUTH_TOKEN: ""
 
+      - name: Fix coverage paths for monorepo
+        if: always()
+        working-directory: packages/${{ matrix.shard == 'shared' && 'shared' || 'daemon' }}
+        run: |
+          # Vitest writes SF: paths relative to the package dir (src/...); Coveralls
+          # needs repo-root paths (packages/<pkg>/src/...). Mirror the online/web jobs.
+          PKG="${{ matrix.shard == 'shared' && 'shared' || 'daemon' }}"
+          LCOV=coverage/lcov.info
+          [ -f "$LCOV" ] || exit 0
+          sed -i "s|^SF:src/|SF:packages/${PKG}/src/|g" "$LCOV" || true
+          sed -i 's|^SF:\.\./shared/|SF:packages/shared/|g' "$LCOV" || true
+          sed -i 's|^SF:\.\./daemon/|SF:packages/daemon/|g' "$LCOV" || true
+
       - name: Upload coverage (parallel)
         if: always()
         uses: coverallsapp/github-action@v2
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          file: coverage/lcov.info
+          # test-daemon.sh runs each shard from its package dir (packages/daemon
+          # or packages/shared) with --coverage.reportsDirectory=coverage, so the
+          # report lands at packages/<pkg>/coverage/lcov.info — not the repo root.
+          file: packages/${{ matrix.shard == 'shared' && 'shared' || 'daemon' }}/coverage/lcov.info
           flag-name: daemon-${{ matrix.shard }}
           parallel: true
           fail-on-error: false

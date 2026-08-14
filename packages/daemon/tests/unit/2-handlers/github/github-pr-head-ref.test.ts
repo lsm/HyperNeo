@@ -6,6 +6,7 @@ import {
   headRepoFromPullRequest,
   headShaFromPullRequest,
   parseHeadRefKey,
+  pickPrNumbersByHeadSha,
   pullRequestNumberFrom,
 } from '../../../../src/lib/external-events/github/github-pr-head-ref';
 
@@ -234,5 +235,103 @@ describe('parseHeadRefKey', () => {
     // Git SHAs are hex (no @), so this never occurs in practice; the test pins
     // the boundary so a future caller does not assume full invertibility.
     expect(parseHeadRefKey(headRefKey('a', 'b@c'))).toEqual({ repoPath: 'a@b', headSha: 'c' });
+  });
+});
+
+describe('pickPrNumbersByHeadSha', () => {
+  it('returns [] for non-array pulls', () => {
+    expect(pickPrNumbersByHeadSha(null, 'abc')).toEqual([]);
+    expect(pickPrNumbersByHeadSha(undefined, 'abc')).toEqual([]);
+    expect(pickPrNumbersByHeadSha({}, 'abc')).toEqual([]);
+    expect(pickPrNumbersByHeadSha('not-an-array', 'abc')).toEqual([]);
+    expect(pickPrNumbersByHeadSha(42, 'abc')).toEqual([]);
+  });
+
+  it('returns [] for an empty array', () => {
+    expect(pickPrNumbersByHeadSha([], 'abc')).toEqual([]);
+  });
+
+  it('skips non-object entries (null / undefined / primitives)', () => {
+    expect(pickPrNumbersByHeadSha([null, undefined, 42, 'str', true], 'abc')).toEqual([]);
+  });
+
+  it('skips entries whose head.sha does not equal the queried SHA', () => {
+    // A different SHA.
+    expect(
+      pickPrNumbersByHeadSha([{ state: 'open', number: 7, head: { sha: 'other' } }], 'abc')
+    ).toEqual([]);
+    // A missing head object, or a non-string head.sha, both decode to '' (≠ 'abc').
+    expect(pickPrNumbersByHeadSha([{ state: 'open', number: 7 }], 'abc')).toEqual([]);
+    expect(
+      pickPrNumbersByHeadSha([{ state: 'open', number: 7, head: { sha: 123 } }], 'abc')
+    ).toEqual([]);
+  });
+
+  it('skips entries that are not in the open state (case-sensitive)', () => {
+    const row = (state: unknown) => [{ state, number: 7, head: { sha: 'abc' } }];
+    expect(pickPrNumbersByHeadSha(row('closed'), 'abc')).toEqual([]);
+    expect(pickPrNumbersByHeadSha(row('merged'), 'abc')).toEqual([]);
+    expect(pickPrNumbersByHeadSha(row(''), 'abc')).toEqual([]);
+    expect(pickPrNumbersByHeadSha(row('OPEN'), 'abc')).toEqual([]); // case-sensitive
+    expect(pickPrNumbersByHeadSha(row(undefined), 'abc')).toEqual([]); // missing state
+    expect(pickPrNumbersByHeadSha(row(123), 'abc')).toEqual([]); // non-string state
+  });
+
+  it('skips entries with a non-positive or non-numeric number', () => {
+    // A non-number coerces to 0; 0 and negatives then fail the > 0 guard.
+    expect(pickPrNumbersByHeadSha([{ state: 'open', head: { sha: 'abc' } }], 'abc')).toEqual([]);
+    expect(
+      pickPrNumbersByHeadSha([{ state: 'open', number: '7', head: { sha: 'abc' } }], 'abc')
+    ).toEqual([]);
+    expect(
+      pickPrNumbersByHeadSha([{ state: 'open', number: 0, head: { sha: 'abc' } }], 'abc')
+    ).toEqual([]);
+    expect(
+      pickPrNumbersByHeadSha([{ state: 'open', number: -1, head: { sha: 'abc' } }], 'abc')
+    ).toEqual([]);
+  });
+
+  it('returns the number of a single matching open PR', () => {
+    expect(
+      pickPrNumbersByHeadSha([{ state: 'open', number: 7, head: { sha: 'abc' } }], 'abc')
+    ).toEqual([7]);
+  });
+
+  it('returns every open PR sharing the head SHA (a commit can be head of several PRs)', () => {
+    const pulls = [
+      { state: 'open', number: 7, head: { sha: 'abc' } },
+      { state: 'open', number: 8, head: { sha: 'abc' } },
+    ];
+    expect(pickPrNumbersByHeadSha(pulls, 'abc')).toEqual([7, 8]);
+  });
+
+  it('dedupes by PR number when the same number appears more than once', () => {
+    const pulls = [
+      { state: 'open', number: 7, head: { sha: 'abc' } },
+      { state: 'open', number: 7, head: { sha: 'abc' } },
+    ];
+    expect(pickPrNumbersByHeadSha(pulls, 'abc')).toEqual([7]);
+  });
+
+  it('excludes a closed/merged PR whose head SHA still matches (stale-topic guard)', () => {
+    // A commit can be the retained head of a finished PR; only the open PR is
+    // attributed so a deploy never wakes a stale subscription. Mirrors the
+    // deployment-webhook guard pinned in github-event-extension.test.ts.
+    const pulls = [
+      { state: 'closed', number: 9, head: { sha: 'abc' } },
+      { state: 'open', number: 7, head: { sha: 'abc' } },
+    ];
+    expect(pickPrNumbersByHeadSha(pulls, 'abc')).toEqual([7]);
+  });
+
+  it('matches a headless open PR when the queried SHA is empty (boundary)', () => {
+    // headShaFromPullRequest decodes a missing/non-string head.sha to '', so an
+    // empty-SHA query matches a headless row. Real deployments always carry a
+    // SHA (resolveDeploymentPrNumbers returns early when !sha), so this never
+    // fires in practice — pinned to document the function boundary.
+    expect(pickPrNumbersByHeadSha([{ state: 'open', number: 5 }], '')).toEqual([5]);
+    expect(pickPrNumbersByHeadSha([{ state: 'open', number: 5, head: { sha: 123 } }], '')).toEqual([
+      5,
+    ]);
   });
 });

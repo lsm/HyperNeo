@@ -85,6 +85,7 @@ describe('SDKMessageHandler', () => {
   let emitSpy: ReturnType<typeof mock>;
   let detectPhaseFromMessageSpy: ReturnType<typeof mock>;
   let setIdleSpy: ReturnType<typeof mock>;
+  let beginTerminalIdleSpy: ReturnType<typeof mock>;
   let setCompactingSpy: ReturnType<typeof mock>;
   let getContextInfoSpy: ReturnType<typeof mock>;
   let updateWithDetailedBreakdownSpy: ReturnType<typeof mock>;
@@ -93,6 +94,7 @@ describe('SDKMessageHandler', () => {
   let lifecycleStopSpy: ReturnType<typeof mock>;
   let messageQueueClearSpy: ReturnType<typeof mock>;
   let getStateSpy: ReturnType<typeof mock>;
+  let bumpDeliveryTurnActivitySpy: ReturnType<typeof mock>;
 
   beforeEach(() => {
     resetProviderRegistry();
@@ -160,11 +162,13 @@ describe('SDKMessageHandler', () => {
     // StateManager spies
     detectPhaseFromMessageSpy = mock(async () => {});
     setIdleSpy = mock(async () => {});
+    beginTerminalIdleSpy = mock(() => {});
     setCompactingSpy = mock(async () => {});
     getStateSpy = mock(() => ({ phase: 'idle' }));
     mockStateManager = {
       detectPhaseFromMessage: detectPhaseFromMessageSpy,
       setIdle: setIdleSpy,
+      beginTerminalIdle: beginTerminalIdleSpy,
       setCompacting: setCompactingSpy,
       getState: getStateSpy,
     } as unknown as ProcessingStateManager;
@@ -201,6 +205,9 @@ describe('SDKMessageHandler', () => {
       stop: lifecycleStopSpy,
     } as unknown as QueryLifecycleManager;
 
+    // Delivery-turn stall watchdog liveness bump
+    bumpDeliveryTurnActivitySpy = mock(() => {});
+
     // Create context
     mockContext = {
       session: mockSession,
@@ -217,6 +224,7 @@ describe('SDKMessageHandler', () => {
       queryPromise: null,
       onInitSlashCommands: mock(async () => {}),
       onCommandsChanged: mock(async () => {}),
+      bumpDeliveryTurnActivity: bumpDeliveryTurnActivitySpy,
     };
 
     handler = new SDKMessageHandler(mockContext);
@@ -260,6 +268,58 @@ describe('SDKMessageHandler', () => {
       await handler.handleMessage(message);
 
       expect(detectPhaseFromMessageSpy).toHaveBeenCalledWith(message);
+    });
+
+    describe('stream_event liveness heartbeat', () => {
+      const makeStreamEvent = (): SDKMessage =>
+        ({
+          type: 'stream_event',
+          event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'tok' } },
+          parent_tool_use_id: null,
+          uuid: 'stream-uuid',
+          session_id: 'test-session-id',
+        }) as unknown as SDKMessage;
+
+      it('bumps the delivery-turn stall watchdog (liveness) on every token delta', async () => {
+        bumpDeliveryTurnActivitySpy.mockClear();
+        const delta = makeStreamEvent();
+
+        await handler.handleMessage(delta);
+
+        // A quiet generation is "alive" — the watchdog window is reset per token.
+        expect(bumpDeliveryTurnActivitySpy).toHaveBeenCalledTimes(1);
+      });
+
+      it('never persists or broadcasts partial tokens (avoids DB bloat)', async () => {
+        const delta = makeStreamEvent();
+
+        await handler.handleMessage(delta);
+
+        expect(saveSDKMessageSpy).not.toHaveBeenCalled();
+        // messageHub.event + internalEventBus.publish are both wired to publishSpy.
+        expect(publishSpy).not.toHaveBeenCalled();
+      });
+
+      it('still updates the streaming phase for a partial token', async () => {
+        const delta = makeStreamEvent();
+
+        await handler.handleMessage(delta);
+
+        expect(detectPhaseFromMessageSpy).toHaveBeenCalledWith(delta);
+      });
+
+      it('a stream_event heartbeating past the no-activity window keeps the watchdog alive', async () => {
+        // Mirrors the real wiring: each token delta calls bumpDeliveryTurnActivity,
+        // which resets the watchdog. Simulate a long quiet generation (> the window)
+        // that emits a steady token stream and assert the watchdog never fires.
+        bumpDeliveryTurnActivitySpy.mockClear();
+        for (let i = 0; i < 5; i++) {
+          await handler.handleMessage(makeStreamEvent());
+        }
+        // 5 deltas → 5 liveness bumps; the turn is alive, never stalled.
+        expect(bumpDeliveryTurnActivitySpy).toHaveBeenCalledTimes(5);
+        expect(saveSDKMessageSpy).not.toHaveBeenCalled();
+      });
     });
 
     it('should save message to database', async () => {
@@ -431,7 +491,11 @@ describe('SDKMessageHandler', () => {
       const message: SDKMessage = {
         type: 'user',
         uuid: 'tool-result-uuid',
-        session_id: 'test-session-id',
+        // The SDK conversation id (session.sdkSessionId) — deliberately DISTINCT
+        // from the application session.id ('test-session-id'). The consumed event
+        // must carry the app id so execution lookups (node_executions.agent_session_id)
+        // resolve; publishing the SDK conversation id would miss every tool-result.
+        session_id: 'sdk-conversation-id',
         message: {
           role: 'user',
           content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: 'ok' }],
@@ -1875,6 +1939,71 @@ describe('SDKMessageHandler', () => {
         apiUsage: null,
       };
     }
+
+    it('starts the terminal fence before publishing a persisted result', async () => {
+      let resolvePublish!: () => void;
+      emitSpy.mockImplementation(
+        (_event: string) =>
+          new Promise<void>((resolve) => {
+            resolvePublish = resolve;
+          })
+      );
+      const resultMessage: SDKMessage = {
+        type: 'result',
+        subtype: 'error_during_execution',
+        uuid: 'result-fence-uuid',
+        usage: {
+          input_tokens: 0,
+          output_tokens: 0,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        total_cost_usd: 0,
+        modelUsage: {},
+        is_error: true,
+      } as unknown as SDKMessage;
+
+      const handling = handler.handleMessage(resultMessage);
+      for (
+        let attempt = 0;
+        attempt < 20 && beginTerminalIdleSpy.mock.calls.length === 0;
+        attempt += 1
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+      expect(beginTerminalIdleSpy).toHaveBeenCalledTimes(1);
+      expect(setIdleSpy).not.toHaveBeenCalled();
+
+      resolvePublish();
+      await handling;
+      expect(setIdleSpy).toHaveBeenCalled();
+    });
+
+    it('does not finish the outer turn for nested subagent results', async () => {
+      const finishTurnSpy = mock(async () => {});
+      (handler as unknown as { finishTurn: () => Promise<void> }).finishTurn = finishTurnSpy;
+      const nestedResult: SDKMessage = {
+        type: 'result',
+        subtype: 'success',
+        uuid: 'nested-result-uuid',
+        parent_tool_use_id: 'outer-agent-tool-use',
+        usage: {
+          input_tokens: 0,
+          output_tokens: 0,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        total_cost_usd: 0,
+        modelUsage: {},
+        is_error: true,
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(nestedResult);
+
+      expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
+      expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(finishTurnSpy).not.toHaveBeenCalled();
+    });
 
     it('refreshes context at turn end for any result message (success)', async () => {
       const getContextUsageSpy = mock(async () => makeSdkContextResponse());

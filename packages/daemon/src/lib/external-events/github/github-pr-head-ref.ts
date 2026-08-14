@@ -1,18 +1,21 @@
 /**
  * GitHub pull-request head-ref identity — pure helpers that resolve the
  * identity of a pull request's head ref (the repo path it lives in and the
- * commit SHA it points at) and a stable `repoPath@sha` key for dedup /
- * comparison across polls.
+ * commit SHA it points at), a stable `repoPath@sha` key for dedup / comparison
+ * across polls, and a query that selects all open PRs whose head points at a
+ * given SHA.
  *
  * Canonical home. These helpers previously lived inline at the bottom of
- * {@link file://./github-event-extension.ts} (the pull-request polling
- * handler); that file now imports them from here.
+ * {@link file://./github-event-extension.ts} (the pull-request polling and
+ * deployment-webhook handlers); that file now imports them from here.
  *
  * Narrow capability surface: {@link gitHubRepoPath}, {@link pullRequestNumberFrom},
  * {@link headShaFromPullRequest}, {@link headRepoFromPullRequest},
- * {@link headRefKey}, and {@link parseHeadRefKey}. No module-private members.
- * The only internal edge is {@link headRepoFromPullRequest} → {@link gitHubRepoPath};
- * the rest are independent leaves.
+ * {@link headRefKey}, {@link parseHeadRefKey}, and {@link pickPrNumbersByHeadSha}.
+ * No module-private members. The internal edges are
+ * {@link headRepoFromPullRequest} → {@link gitHubRepoPath} and
+ * {@link pickPrNumbersByHeadSha} → {@link headShaFromPullRequest}; the rest are
+ * independent leaves.
  */
 
 import type { GitHubWatchedRepo } from './github-repository';
@@ -82,4 +85,33 @@ export function parseHeadRefKey(key: string): { repoPath: string; headSha: strin
     repoPath: separator > 0 ? key.slice(0, separator) : '',
     headSha: separator > 0 ? key.slice(separator + 1) : key,
   };
+}
+
+/**
+ * Returns the numbers of all OPEN PRs whose HEAD (`head.sha`) is exactly `sha`
+ * — every open match is published, because a commit can be the head of several
+ * PRs at once. The head.sha filter excludes PRs that merely contain the commit
+ * (e.g. the merged PR that introduced a default-branch tip), so a default-branch
+ * or stale-SHA deploy resolves to nothing and drops; the `state === 'open'`
+ * filter additionally excludes a closed/merged PR whose retained head.sha still
+ * equals the deployed SHA, so a deploy never publishes under a finished PR's
+ * topic and wakes a stale subscription. Dedupes by PR number. Mirrors the
+ * filter in `resolvePullRequestNumbersForCommit` (status webhook).
+ */
+export function pickPrNumbersByHeadSha(pulls: unknown, sha: string): number[] {
+  if (!Array.isArray(pulls)) return [];
+  const seen = new Set<number>();
+  const numbers: number[] = [];
+  for (const entry of pulls) {
+    if (!entry || typeof entry !== 'object') continue;
+    const row = entry as Record<string, unknown>;
+    if (headShaFromPullRequest(row) !== sha) continue;
+    if (row.state !== 'open') continue;
+    const number = typeof row.number === 'number' ? row.number : 0;
+    if (number > 0 && !seen.has(number)) {
+      seen.add(number);
+      numbers.push(number);
+    }
+  }
+  return numbers;
 }

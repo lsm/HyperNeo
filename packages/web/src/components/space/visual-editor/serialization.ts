@@ -28,7 +28,6 @@ import type {
   UpdateSpaceWorkflowParams,
   WorkflowNodeAgent,
   WorkflowChannel,
-  Gate,
   SpaceAutonomyLevel,
   WorkflowHook,
 } from '@hyperneo/shared';
@@ -89,13 +88,11 @@ export interface VisualEditorState {
   tags: string[];
   /** Directed messaging channels at the workflow level. */
   channels: WorkflowChannel[];
-  /** First-class workflow gates referenced by channel.gateId. */
-  gates: Gate[];
   /** Workflow hooks for MCP action validation and side effects. */
   hooks: WorkflowHook[];
   /**
    * Minimum space autonomy level required to run this workflow without
-   * human approval at each completion gate. Defaults to 3 when not set.
+   * human approval at each task completion. Defaults to 3 when not set.
    */
   completionAutonomyLevel?: SpaceAutonomyLevel;
   /** When true, the workflow is disabled and cannot be selected for new tasks. */
@@ -150,9 +147,9 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
           ?.requirePrMerge === true
           ? true
           : undefined,
-      requireCodexApproval: s.requireCodexApproval,
-      codexPollIntervalMs: s.codexPollIntervalMs,
-      codexTimeoutSeconds: s.codexTimeoutSeconds,
+      // Carry declared handoff transitions verbatim so a visual-editor save
+      // round-trips them instead of dropping them to undefined.
+      handoffTransitions: s.transitions,
     };
     return { step, position };
   });
@@ -182,7 +179,6 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
       id: channel.id ?? generateUUID(),
       to: Array.isArray(channel.to) ? [...channel.to] : channel.to,
     })),
-    gates: workflow.gates ?? [],
     hooks: workflow.hooks ?? [],
     completionAutonomyLevel: workflow.completionAutonomyLevel ?? (3 as SpaceAutonomyLevel),
     disabled: workflow.disabled,
@@ -208,7 +204,6 @@ interface BuiltWorkflowFields {
   layout: Record<string, { x: number; y: number }>;
   tags: string[];
   channels?: WorkflowChannel[];
-  gates?: Gate[];
   hooks?: WorkflowHook[];
 }
 
@@ -339,6 +334,28 @@ function buildWorkflowFields(state: VisualEditorState): {
     keyToPersistedId.set(entry.node.step.localId, entry.persistedId);
   }
 
+  // Distinct destinations a handoff target name can address in the CURRENT
+  // graph (node-name destinations and slot-name destinations counted separately,
+  // mirroring the daemon). The editor does not expose handoff transitions for
+  // editing, so a rename/delete can leave a carried transition pointing at a
+  // stale OR newly-ambiguous target — drop those so an unrelated visual-editor
+  // save is not rejected by validateTransitions.
+  const handoffTargetDestinations = new Map<string, Set<string>>();
+  const countDestination = (name: string, key: string) => {
+    if (!name) return;
+    const set = handoffTargetDestinations.get(name) ?? new Set<string>();
+    set.add(key);
+    handoffTargetDestinations.set(name, set);
+  };
+  for (const n of state.nodes) {
+    countDestination(n.step.name, `node:${n.step.localId}`);
+    for (const a of n.step.agents ?? []) countDestination(a.name, `slot:${n.step.localId}`);
+  }
+  // Current hook ids — a carried transition whose hookId was removed (e.g. the
+  // hook's source/target node was deleted) must be dropped, not emitted with a
+  // dangling reference that validateTransitions rejects.
+  const currentHookIds = new Set(state.hooks.map((h) => h.id));
+
   const nodes = persistableNodes.map((node, i) => {
     const key = node.step.id ?? node.step.localId;
     const persistedId = nodeMap.get(key)!.persistedId;
@@ -386,13 +403,24 @@ function buildWorkflowFields(state: VisualEditorState): {
       name: node.step.name || `Step ${i + 1}`,
       agents,
       ...(postApproval ? { postApproval } : {}),
-      ...(node.step.requireCodexApproval ? { requireCodexApproval: true } : {}),
-      ...(node.step.codexPollIntervalMs
-        ? { codexPollIntervalMs: node.step.codexPollIntervalMs }
-        : {}),
-      ...(node.step.codexTimeoutSeconds
-        ? { codexTimeoutSeconds: node.step.codexTimeoutSeconds }
-        : {}),
+      // Re-emit carried handoff transitions (mapped back to the backend field),
+      // dropping any whose target no longer resolves to exactly one destination
+      // — a renamed/deleted target (zero destinations) OR a renamed-slot
+      // collision (more than one) — so the save is not rejected by
+      // validateTransitions.
+      ...(() => {
+        const valid = (node.step.handoffTransitions ?? []).filter((t) => {
+          if (t.target !== '*') {
+            const dests = handoffTargetDestinations.get(t.target);
+            if (!dests || dests.size !== 1) return false;
+          }
+          // Drop transitions whose referenced hook was removed from the
+          // current graph (e.g. by a node deletion).
+          if (t.hookId !== undefined && !currentHookIds.has(t.hookId)) return false;
+          return true;
+        });
+        return valid.length > 0 ? { transitions: valid } : {};
+      })(),
     };
   });
 
@@ -423,10 +451,6 @@ function buildWorkflowFields(state: VisualEditorState): {
     endNodeId = endEntry?.persistedId;
   }
 
-  const referencedGateIds = new Set(
-    state.channels.map((channel) => channel.gateId).filter((gateId): gateId is string => !!gateId)
-  );
-  const gates = state.gates.filter((gate) => referencedGateIds.has(gate.id));
   const hookNodeNames = buildHookNodeNameMap(persistableNodes);
   const hooks = state.hooks
     .map((hook) => serializeHook(hook, hookNodeNames))
@@ -440,7 +464,6 @@ function buildWorkflowFields(state: VisualEditorState): {
       layout,
       tags: state.tags,
       channels: state.channels,
-      gates,
       hooks,
     },
     keyToPersistedId,
@@ -473,7 +496,6 @@ export function visualStateToCreateParams(
     layout: fields.layout,
     tags: fields.tags,
     channels: fields.channels && fields.channels.length > 0 ? fields.channels : undefined,
-    gates: fields.gates && fields.gates.length > 0 ? fields.gates : undefined,
     hooks: fields.hooks && fields.hooks.length > 0 ? fields.hooks : undefined,
     completionAutonomyLevel: state.completionAutonomyLevel,
     disabled: state.disabled,
@@ -500,7 +522,6 @@ export function visualStateToUpdateParams(
     layout: fields.layout,
     tags: fields.tags,
     channels: fields.channels && fields.channels.length > 0 ? fields.channels : null,
-    gates: fields.gates && fields.gates.length > 0 ? fields.gates : null,
     hooks: fields.hooks && fields.hooks.length > 0 ? fields.hooks : null,
     completionAutonomyLevel: state.completionAutonomyLevel,
     postApproval: null,

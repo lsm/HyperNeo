@@ -44,15 +44,15 @@ type IndexInfoRow = {
 };
 
 export const HELPER_SCHEMA_TABLES = [
+  'channel_cycle_events',
   'channel_cycles',
+  'delivery_consumed_seq',
   'evolution_episodes',
   'evolution_evidence',
   'evolution_lessons',
   'evolution_metric_snapshots',
   'evolution_scopes',
   'evolution_task_proposals',
-  'gate_data',
-  'gate_open_state',
   'goal_automation_cursors',
   'mcp_audit_log',
   'node_executions',

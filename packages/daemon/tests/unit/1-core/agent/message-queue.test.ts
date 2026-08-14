@@ -184,6 +184,29 @@ describe('MessageQueue', () => {
     });
   });
 
+  describe('hasPendingOrInFlight', () => {
+    it('reports false for an unknown id and true while queued/claimed/yielded', async () => {
+      expect(queue.hasPendingOrInFlight('nope')).toBe(false);
+
+      // In the queue (admitted, not yet yielded).
+      const acknowledgment = queue.enqueueWithId('in-flight-id', 'Message 1');
+      expect(queue.hasPendingOrInFlight('in-flight-id')).toBe(true);
+
+      // Claimed then yielded by a generator (still in flight pre-onSent).
+      queue.start();
+      const generator = queue.messageGenerator(testSessionId);
+      const result = await generator.next();
+      expect(result.done).toBe(false);
+      expect(queue.hasPendingOrInFlight('in-flight-id')).toBe(true);
+
+      // Acknowledged (onSent) — no longer pending/in-flight.
+      result.value.onSent();
+      await acknowledgment;
+      expect(queue.hasPendingOrInFlight('in-flight-id')).toBe(false);
+      queue.stop();
+    });
+  });
+
   describe('lifecycle', () => {
     it('should start in stopped state', () => {
       expect(queue.isRunning()).toBe(false);

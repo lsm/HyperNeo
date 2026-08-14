@@ -34,6 +34,7 @@ import {
   isSDKResultSuccess,
   isSDKSessionStateChangedMessage,
   isSDKStatusMessage,
+  isSDKStreamEvent,
   isSDKSystemInit,
   isSDKSystemMessage,
   isSDKThinkingTokensMessage,
@@ -88,6 +89,15 @@ export interface SDKMessageHandlerContext {
 
   // Called when the SDK pushes a mid-session slash command replacement list
   onCommandsChanged: (commands: string[]) => Promise<void>;
+
+  /**
+   * Notify the delivery layer that the SDK produced activity (any incoming
+   * message). Resets the no-progress stall watchdog for the in-flight delivery
+   * turn so a live, actively-streaming turn is never mistaken for a stall.
+   * Optional — a no-op when no delivery turn is in flight. See
+   * AgentSession.bumpDeliveryTurnActivity.
+   */
+  bumpDeliveryTurnActivity?(): void;
 }
 
 type PersistedUserMessage = SDKMessage & { dbId: string; timestamp: number };
@@ -681,13 +691,34 @@ export class SDKMessageHandler {
   }
 
   /**
-   * Main entry point - handle incoming SDK message
+   * Main entry point - handle incoming SDK message.
    *
-   * NOTE: Stream events removed - the SDK's query() with AsyncGenerator yields
-   * complete messages, not incremental stream_event tokens.
+   * The SDK's query() AsyncGenerator yields complete messages (assistant, user,
+   * result, …); when `includePartialMessages` is on it ALSO yields incremental
+   * `stream_event` token deltas. Those partials are intercepted below as a
+   * LIVENESS heartbeat for the delivery-turn stall watchdog and are never
+   * persisted or broadcast — only complete messages reach the DB / clients.
    */
   async handleMessage(message: SDKMessage): Promise<void> {
     const { session, db, messageHub, stateManager } = this.ctx;
+
+    // Any incoming SDK message is "activity" — reset the delivery turn's no-
+    // progress stall watchdog so an actively-streaming turn (even a multi-hour
+    // one) is never mistaken for a stall. No-op when no delivery turn is active.
+    this.ctx.bumpDeliveryTurnActivity?.();
+
+    // Partial/streaming token deltas (`stream_event`) are a LIVENESS heartbeat
+    // only. They prove the model is actively generating or extended-thinking
+    // during a long quiet generation that would otherwise exceed the stall
+    // watchdog's no-activity window and look like a hang — the bump above reset
+    // it. Update the streaming phase, but NEVER persist or broadcast partials:
+    // a single assistant turn can yield hundreds of token deltas, and persisting
+    // each would bloat the DB. The complete `assistant` message is still emitted
+    // and handled normally below, so persistence/rendering are unaffected.
+    if (isSDKStreamEvent(message)) {
+      await stateManager.detectPhaseFromMessage(message);
+      return;
+    }
 
     // Check for API error patterns that indicate an infinite loop
     // This MUST happen BEFORE any other processing to catch errors early
@@ -807,6 +838,18 @@ export class SDKMessageHandler {
       return;
     }
 
+    // A persisted terminal result proves this turn ended. Start the completion
+    // fence before publication or type-specific awaited work; the corresponding
+    // immediate/session-state idle consumes it after finalization. In-stream
+    // /clear results are internal and intentionally suppress that idle.
+    const parentToolUseId = (message as SDKMessage & { parent_tool_use_id?: string | null })
+      .parent_tool_use_id;
+    const isTopLevelResult =
+      isSDKResultMessage(message) && (parentToolUseId === null || parentToolUseId === undefined);
+    if (isTopLevelResult && !this.suppressIdleOnNextResult) {
+      stateManager.beginTerminalIdle();
+    }
+
     // Broadcast SDK message delta to frontend clients
     messageHub.event(
       'state.sdkMessages.delta',
@@ -834,7 +877,7 @@ export class SDKMessageHandler {
     // Terminal messages end the turn even when they represent errors.
     // Clear stale waiting_for_input state before type-specific handling so
     // interrupted AskUserQuestion turns cannot keep the composer locked.
-    if (isSDKResultMessage(message) && !this.usesSessionStateChangedTurnEnd) {
+    if (isTopLevelResult && !this.usesSessionStateChangedTurnEnd) {
       if (!this.suppressIdleOnNextResult) {
         await stateManager.setIdle();
       }
@@ -844,7 +887,7 @@ export class SDKMessageHandler {
       // cleared handoff is reviewed. The flag is consumed at finishTurn.
     }
 
-    if (isSDKResultMessage(message)) {
+    if (isTopLevelResult) {
       this.lastResultWasSuccess = isSDKResultSuccess(message);
       // Reset turn-level thinking token tracking now, before any turn-end
       // handler can trigger an immediate queued turn replay.
@@ -860,7 +903,7 @@ export class SDKMessageHandler {
       await this.handleSystemMessage(message);
     }
 
-    if (isSDKResultSuccess(message)) {
+    if (isTopLevelResult && isSDKResultSuccess(message)) {
       await this.handleResultMessage(message);
     }
 
@@ -1164,7 +1207,12 @@ export class SDKMessageHandler {
     for (const block of content) {
       if (block.type !== 'tool_result') continue;
       await internalEventBus.publish('sdk.toolUse.consumed', {
-        sessionId: message.session_id ?? this.ctx.session.id,
+        // Use the application session.id (as sdk.toolUse.created does), NOT
+        // message.session_id (the SDK conversation ID, a.k.a. session.sdkSessionId):
+        // node_executions.agent_session_id stores the app id, so consumers that
+        // resolve the event to an execution (e.g. lastActivityAt tracking) would
+        // otherwise miss every tool-result event.
+        sessionId: this.ctx.session.id,
         toolUseId: block.tool_use_id,
         timestamp: Date.now(),
       });

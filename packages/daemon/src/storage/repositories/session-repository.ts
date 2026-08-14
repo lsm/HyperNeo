@@ -357,10 +357,18 @@ export class SessionRepository {
           `DELETE FROM message_search_content WHERE kind = 'message' AND session_id = ?`
         )
       : null;
+    // delivery_turn_end has no FK on sessions.id (schema tables avoid FKs; the
+    // full space schema is migration-owned), so cascade it explicitly — the
+    // handler records a marker after every completed delivery turn, and hard-
+    // deleting sessions would otherwise leak those rows. See Codex (PR #2463).
+    const deleteTurnEndRows = this.tableExists('delivery_turn_end')
+      ? this.db.prepare(`DELETE FROM delivery_turn_end WHERE session_id = ?`)
+      : null;
     const deleteSession = this.db.prepare(`DELETE FROM sessions WHERE id = ?`);
     const tx = this.db.transaction((sessionId: string) => {
       deleteOverrides.run(sessionId);
       deleteSearchRows?.run(sessionId);
+      deleteTurnEndRows?.run(sessionId);
       deleteSession.run(sessionId);
     });
     tx(id);
