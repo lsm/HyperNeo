@@ -326,6 +326,24 @@ describe('voice transcript outbox', () => {
     stopVoiceTranscriptOutboxFlush();
   });
 
+  it('does not re-write the landed marker when handling a cross-tab storage event', () => {
+    // A storage event for a landed marker must update only the local signal —
+    // re-persisting the marker would fire another event in the writer and loop.
+    localStorage.setItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s4', '12345');
+    startVoiceTranscriptOutboxFlush();
+    window.dispatchEvent(
+      new StorageEvent('storage', {
+        key: 'hyperneo_voice_transcript_outbox_v1.entry.landed.s4',
+        newValue: '12345',
+      })
+    );
+    expect(voiceTranscriptLandedSignal.value.has('s4')).toBe(true);
+    expect(localStorage.getItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s4')).toBe(
+      '12345'
+    );
+    stopVoiceTranscriptOutboxFlush();
+  });
+
   it('removePendingTranscript drops a single entry', () => {
     enqueueTranscript('s1', 'a');
     enqueueTranscript('s1', 'b');

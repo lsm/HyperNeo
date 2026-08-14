@@ -59,15 +59,25 @@ export const voiceTranscriptLandedSignal = signal<ReadonlyMap<string, number>>(n
  * event, since the signal itself is process-local.
  */
 export function markVoiceTranscriptLanded(sessionId: string): void {
-  const current = voiceTranscriptLandedSignal.value;
-  const next = new Map(current);
-  next.set(sessionId, (next.get(sessionId) ?? 0) + 1);
-  voiceTranscriptLandedSignal.value = next;
+  markVoiceTranscriptLandedLocal(sessionId);
   try {
     localStorage.setItem(`${LANDED_PREFIX}${sessionId}`, String(Date.now()));
   } catch {
     /* mirror-only — this tab still refreshes via the signal */
   }
+}
+
+/**
+ * Update ONLY this tab's process-local landing state (no localStorage write).
+ * Used by the `storage` event handler: re-persisting the marker there would
+ * fire another storage event in the writing tab, which would write again —
+ * a cross-tab event/write loop that churns the generation counter.
+ */
+function markVoiceTranscriptLandedLocal(sessionId: string): void {
+  const current = voiceTranscriptLandedSignal.value;
+  const next = new Map(current);
+  next.set(sessionId, (next.get(sessionId) ?? 0) + 1);
+  voiceTranscriptLandedSignal.value = next;
 }
 
 /**
@@ -182,10 +192,12 @@ function prune(): void {
   } catch {
     /* storage unavailable */
   }
-  // Enforce the cap on the live (non-expired) set.
+  // Enforce the cap on the live (non-expired) set, leaving ONE free slot:
+  // prune runs immediately before a write, so a near-full localStorage at the
+  // cap would otherwise have no room for the new entry and setItem would fail.
   const live = allEntries();
-  if (live.length <= MAX_ENTRIES) return;
-  for (const entry of live.slice(0, live.length - MAX_ENTRIES)) {
+  if (live.length < MAX_ENTRIES) return;
+  for (const entry of live.slice(0, live.length - (MAX_ENTRIES - 1))) {
     removeEntry(entry.id);
   }
 }
@@ -350,7 +362,7 @@ function handleStorageEvent(event: StorageEvent): void {
       setTimeout(() => void flushPendingTranscripts(), FLUSH_DELAY_MS);
     }
   } else if (key.startsWith(LANDED_PREFIX) && event.newValue !== null) {
-    markVoiceTranscriptLanded(key.slice(LANDED_PREFIX.length));
+    markVoiceTranscriptLandedLocal(key.slice(LANDED_PREFIX.length));
   }
 }
 

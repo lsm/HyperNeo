@@ -458,6 +458,33 @@ describe('useInputDraft', () => {
       expect(voiceTranscriptLandedSignal.value.has('session-1')).toBe(false);
     });
 
+    it('lets an explicit clear through while a landing is pending', async () => {
+      mockHub.request.mockResolvedValue({ session: { metadata: { inputDraft: 'old text' } } });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      result.current.setContent('text to send');
+      voiceTranscriptLandedSignal.value = new Map([['session-1', 1]]);
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      // The user sends/clears — the empty-clear must NOT be suppressed, or the
+      // refresh's merge would resurrect the already-sent text onto the draft.
+      result.current.clear();
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      const clearCall = mockHub.request.mock.calls.find(
+        ([m, d]) => m === 'session.update' && d?.metadata?.inputDraft === null
+      );
+      expect(clearCall).toBeTruthy();
+    });
+
     it('cancels a scheduled save when a landing arrives before it fires', async () => {
       mockHub.request.mockResolvedValue({ session: { metadata: { inputDraft: '' } } });
       vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
