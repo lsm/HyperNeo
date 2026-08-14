@@ -17,6 +17,7 @@ import type { QueryLike } from './query-like';
 import type { Logger } from '../logger';
 import type { MessageQueue } from './message-queue';
 import type { ProcessingStateManager } from './processing-state-manager';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';
 import { withSessionLock } from './message-delivery';
 
@@ -31,11 +32,13 @@ export interface InterruptHandlerContext {
   readonly stateManager: ProcessingStateManager;
   readonly logger: Logger;
   readonly db: Database;
+  readonly internalEventBus: InternalEventBus<DaemonInternalEventMap>;
 
   // Mutable query state
   queryObject: QueryLike | null;
   queryPromise: Promise<void> | null;
   queryAbortController: AbortController | null;
+  processExitedPromise: Promise<void> | null;
 }
 
 /**
@@ -45,6 +48,12 @@ export class InterruptHandler {
   // Interrupt completion tracking
   private interruptPromise: Promise<void> | null = null;
   private interruptResolve: (() => void) | null = null;
+  // Replay suppression is shared across invocations: a teardown-bound
+  // interrupt (skipDeferredReplay) arriving while a user interrupt is
+  // already in flight early-returns on the shared 'interrupted' state, so
+  // the in-flight interrupt's scheduled replay must observe the later
+  // suppression at fire time.
+  private deferredReplaySuppressed = false;
 
   constructor(private ctx: InterruptHandlerContext) {}
 
@@ -67,8 +76,19 @@ export class InterruptHandler {
    * cleanup doesn't block); only the durable-job cancellation is skipped.
    * (Codex P1.)
    */
-  async handleInterrupt(opts?: { preserveDeliveryJobs?: boolean }): Promise<void> {
+  async handleInterrupt(opts?: {
+    preserveDeliveryJobs?: boolean;
+    skipDeferredReplay?: boolean;
+  }): Promise<void> {
     const { session, messageHub, messageQueue, stateManager, logger } = this.ctx;
+
+    // Snapshot the process-exit promise BEFORE the first await: the durable
+    // cancellation below yields, and the old query's finally may run in that
+    // window — QueryRunner clears ctx.processExitedPromise once the query
+    // settles (close() only initiates subprocess termination), so reading it
+    // later would miss the still-pending exit. Mirrors
+    // QueryLifecycleManager.stop's snapshot-before-await discipline.
+    const processExitSnapshot = this.ctx.processExitedPromise ?? Promise.resolve();
 
     // Durable-delivery cancel FIRST (message-delivery v2): revoke EVERY active
     // message_delivery job for the session and terminalize each still-enqueued
@@ -119,8 +139,18 @@ export class InterruptHandler {
 
     // Edge case: already idle or interrupted
     if (currentState.status === 'idle' || currentState.status === 'interrupted') {
+      // A teardown request arriving while another interrupt is in flight must
+      // still suppress that interrupt's pending replay — only ever set here,
+      // never cleared, so a concurrent user invocation cannot un-suppress.
+      if (opts?.skipDeferredReplay) {
+        this.deferredReplaySuppressed = true;
+      }
       return;
     }
+    // A proceeding invocation owns the flag: reset to its own intent. A
+    // session reused across workflow activations must not inherit a stale
+    // suppression from a previous quiesce.
+    this.deferredReplaySuppressed = opts?.skipDeferredReplay === true;
 
     // Create interrupt completion promise
     const interruptCompletePromise = new Promise<void>((resolve) => {
@@ -194,6 +224,34 @@ export class InterruptHandler {
 
       // Set state back to idle
       await stateManager.setIdle();
+      // Drive the deferred queue on interrupt completion, mirroring
+      // SDKMessageHandler.finishTurn: without this, a row persisted as
+      // 'deferred' while the session was processing (e.g. an external event
+      // in 'defer' mode) is never replayed — the interrupt path reaches idle
+      // without the query.trigger that finishTurn publishes on normal turn
+      // end, so the row would sit unconsumed indefinitely. No-op when no
+      // deferred rows exist. Skipped for teardown-bound interrupts (session
+      // stop/shutdown) — replaying there would promote deferred rows to
+      // enqueued and drive jobs for a session that is about to be cleaned
+      // up. The replay is gated on BOTH the old query settling AND the SDK
+      // subprocess exiting: query settlement is not an exit guarantee
+      // (QueryLifecycleManager.stop separately awaits processExitedPromise),
+      // so replaying earlier could launch a replacement query while the old
+      // process still holds workspace resources.
+      if (!opts?.skipDeferredReplay) {
+        const oldQuerySettled =
+          this.ctx.queryPromise?.then(undefined, () => {}) ?? Promise.resolve();
+        void Promise.all([oldQuerySettled, processExitSnapshot]).then(() => {
+          if (this.deferredReplaySuppressed) return;
+          // A newer turn may have started while we waited for the old query
+          // and subprocess to exit — the interrupt already exposed idle, so
+          // nothing gated a concurrent kickoff. Publishing now would steer
+          // the old deferred rows into that active turn; leave their replay
+          // to the newer turn's own completion.
+          if (this.ctx.stateManager.getState().status !== 'idle') return;
+          this.publishDeferredQueueTrigger();
+        });
+      }
     } finally {
       // Always resolve the interrupt promise
       if (this.interruptResolve) {
@@ -202,5 +260,17 @@ export class InterruptHandler {
       }
       this.interruptPromise = null;
     }
+  }
+
+  /**
+   * Publish the deferred-queue trigger for this session. Fire-and-forget:
+   * QueryModeHandler flips deferred rows to enqueued and the durable delivery
+   * job drives the replacement turn. No-op when no deferred rows exist.
+   */
+  private publishDeferredQueueTrigger(): void {
+    if (this.ctx.session.config.queryMode === 'manual') return;
+    this.ctx.internalEventBus.publishAsync('query.trigger', {
+      sessionId: this.ctx.session.id,
+    });
   }
 }

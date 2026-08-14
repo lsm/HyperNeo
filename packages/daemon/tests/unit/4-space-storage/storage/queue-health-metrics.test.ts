@@ -245,6 +245,13 @@ describe('categorizeFailureReason', () => {
     ['long-horizon agent unavailable', 'retry_exhausted'],
     ['long-horizon event delivery unavailable', 'retry_exhausted'],
     ['retry_exhausted; some arbitrary thrown error message', 'retry_exhausted'],
+    // Defer-prefixed activation/delivery reasons (SpaceRuntime parks deferred
+    // deliveries with these) must categorize by their stripped payload, not
+    // fall through to injection_error via the deliveryMode: prefix.
+    ['deliveryMode:defer; node_execution_not_active', 'retry_exhausted'],
+    ['deliveryMode:defer; node_execution_pending', 'retry_exhausted'],
+    ['deliveryMode:defer; activation_failed; spawn failed', 'retry_exhausted'],
+    ['deliveryMode:immediate; node_execution_not_active', 'retry_exhausted'],
     ['deliveryMode:immediate; inject failed', 'injection_error'],
     // blocked_run_gate_not_opened is event-level (markEventFailed) and never
     // reaches the delivery hook, so it cannot appear in finalFailuresByReason;
