@@ -9,17 +9,14 @@
  */
 
 import { useState, useCallback, useMemo } from 'preact/hooks';
-import type {
-  RuntimeState,
-  SpaceTask,
-  SpaceAutonomyLevel,
-  SpaceWorkflowSummary,
-} from '@hyperneo/shared';
+import type { SpaceTask, SpaceAutonomyLevel, SpaceWorkflowSummary } from '@hyperneo/shared';
 import { MAX_SPACE_CONCURRENT_TASKS, MIN_SPACE_CONCURRENT_TASKS } from '@hyperneo/shared';
 import { spaceStore } from '../../lib/space-store';
 import {
+  navigateToSpaceAgent,
   navigateToSpaceTask,
   navigateToSpaceSession,
+  navigateToSpaceSessions,
   navigateToSpaceTasks,
 } from '../../lib/router';
 import { createSession } from '../../lib/api-helpers';
@@ -28,7 +25,6 @@ import { toast } from '../../lib/toast';
 import { AUTONOMY_LABELS } from '../../lib/space-constants';
 import { isActionRequired } from '../../lib/task-filters';
 import { SpaceCreateTaskDialog } from './SpaceCreateTaskDialog';
-import { ConfirmModal } from '../ui/ConfirmModal';
 import { AutonomyWorkflowSummary } from './AutonomyWorkflowSummary';
 import {
   FLAT_SURFACE,
@@ -43,18 +39,20 @@ function StatCard({
   label,
   count,
   color,
+  hint,
   onClick,
 }: {
   label: string;
   count: number;
   color: string;
+  hint?: string;
   onClick?: () => void;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      aria-label={`${label} tasks: ${count}`}
+      aria-label={`${label}: ${count}${hint ? ` (${hint})` : ''}`}
       class={cn(
         'flex flex-col items-center gap-1 rounded-xl border px-5 py-4 transition-all duration-200',
         GLASS_SURFACE,
@@ -66,126 +64,8 @@ function StatCard({
     >
       <span class="text-2xl font-bold tabular-nums">{count}</span>
       <span class="text-xs text-gray-400 font-medium uppercase tracking-wider">{label}</span>
+      {hint ? <span class="text-[11px] font-medium text-amber-200/80">{hint}</span> : null}
     </button>
-  );
-}
-
-// ─── Runtime Controls ────────────────────────────────────────────────────────
-
-const RUNTIME_STYLES: Record<
-  RuntimeState,
-  { bg: string; border: string; dot: string; label: string }
-> = {
-  running: {
-    bg: 'bg-green-950/30',
-    border: 'border-green-800/40',
-    dot: 'bg-green-400',
-    label: 'Running',
-  },
-  paused: {
-    bg: 'bg-yellow-950/30',
-    border: 'border-yellow-800/40',
-    dot: 'bg-yellow-400',
-    label: 'Paused',
-  },
-  stopped: {
-    bg: 'bg-dark-850',
-    border: 'border-dark-600',
-    dot: 'bg-gray-500',
-    label: 'Stopped',
-  },
-};
-
-function RuntimeControlBar({
-  state,
-  actionLoading,
-  onPause,
-  onResume,
-  onStop,
-  onStart,
-}: {
-  state: RuntimeState;
-  actionLoading: boolean;
-  onPause: () => void;
-  onResume: () => void;
-  onStop: () => void;
-  onStart: () => void;
-}) {
-  const style = RUNTIME_STYLES[state];
-
-  return (
-    <div
-      class={cn(
-        'flex items-center justify-between rounded-xl border px-4 py-3 transition-colors sm:px-5',
-        GLASS_SURFACE,
-        style.border
-      )}
-    >
-      <div class="flex items-center gap-3">
-        <div class="relative">
-          <div class={cn('w-3.5 h-3.5 rounded-full', style.dot)} />
-          {state === 'running' && (
-            <div
-              class={cn(
-                'absolute inset-0 w-3.5 h-3.5 rounded-full animate-ping opacity-40',
-                style.dot
-              )}
-            />
-          )}
-        </div>
-        <div>
-          <span class="text-sm font-semibold text-gray-100">{style.label}</span>
-          {actionLoading && <span class="ml-2 text-xs text-gray-400 italic">Processing...</span>}
-        </div>
-      </div>
-      <div class="flex items-center gap-2">
-        {state === 'running' && (
-          <>
-            <button
-              onClick={onPause}
-              disabled={actionLoading}
-              class="px-3 py-1.5 text-xs font-medium text-yellow-300 bg-yellow-900/30 hover:bg-yellow-900/50 border border-yellow-700/40 rounded-lg transition-colors disabled:opacity-40"
-            >
-              Pause
-            </button>
-            <button
-              onClick={onStop}
-              disabled={actionLoading}
-              class="px-3 py-1.5 text-xs font-medium text-red-300 bg-red-900/20 hover:bg-red-900/40 border border-red-700/40 rounded-lg transition-colors disabled:opacity-40"
-            >
-              Stop
-            </button>
-          </>
-        )}
-        {state === 'paused' && (
-          <>
-            <button
-              onClick={onResume}
-              disabled={actionLoading}
-              class="px-3 py-1.5 text-xs font-medium text-green-300 bg-green-900/30 hover:bg-green-900/50 border border-green-700/40 rounded-lg transition-colors disabled:opacity-40"
-            >
-              Resume
-            </button>
-            <button
-              onClick={onStop}
-              disabled={actionLoading}
-              class="px-3 py-1.5 text-xs font-medium text-red-300 bg-red-900/20 hover:bg-red-900/40 border border-red-700/40 rounded-lg transition-colors disabled:opacity-40"
-            >
-              Stop
-            </button>
-          </>
-        )}
-        {state === 'stopped' && (
-          <button
-            onClick={onStart}
-            disabled={actionLoading}
-            class="px-3 py-1.5 text-xs font-medium text-green-300 bg-green-900/30 hover:bg-green-900/50 border border-green-700/40 rounded-lg transition-colors disabled:opacity-40"
-          >
-            Start
-          </button>
-        )}
-      </div>
-    </div>
   );
 }
 
@@ -319,45 +199,6 @@ interface SpaceOverviewProps {
 export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: SpaceOverviewProps) {
   const routeSpaceId = navigationSpaceId ?? spaceId;
   const [showCreateTask, setShowCreateTask] = useState(false);
-  const [actionLoading, setActionLoading] = useState(false);
-  const [showStopConfirm, setShowStopConfirm] = useState(false);
-
-  const handlePause = useCallback(async () => {
-    setActionLoading(true);
-    try {
-      await spaceStore.pauseSpace();
-    } finally {
-      setActionLoading(false);
-    }
-  }, []);
-
-  const handleResume = useCallback(async () => {
-    setActionLoading(true);
-    try {
-      await spaceStore.resumeSpace();
-    } finally {
-      setActionLoading(false);
-    }
-  }, []);
-
-  const handleStop = useCallback(async () => {
-    setActionLoading(true);
-    try {
-      await spaceStore.stopSpace();
-    } finally {
-      setActionLoading(false);
-      setShowStopConfirm(false);
-    }
-  }, []);
-
-  const handleStart = useCallback(async () => {
-    setActionLoading(true);
-    try {
-      await spaceStore.startSpace();
-    } finally {
-      setActionLoading(false);
-    }
-  }, []);
 
   const handleAutonomyChange = useCallback(async (level: SpaceAutonomyLevel) => {
     if (level === spaceStore.space.value?.autonomyLevel) return;
@@ -389,33 +230,22 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
   const space = spaceStore.space.value;
   const tasks = spaceStore.tasks.value;
   const workflows = spaceStore.workflows.value;
-  const runtimeState = spaceStore.runtimeState.value;
+  const agents = spaceStore.longHorizonAgents.value;
   const sessions = spaceStore.sessions.value;
 
-  // Memoize the full-array derivations so an unrelated signal tick (runtime
-  // state, autonomy, concurrency) doesn't re-run every task pass + the
-  // sessions sort on each render. All derivations are computed before the
-  // early returns so the hook order stays stable across renders.
+  // Memoize the full-array derivations so an unrelated signal tick (autonomy,
+  // concurrency) doesn't re-run every task pass + the sessions sort on each
+  // render. All derivations are computed before the early returns so the hook
+  // order stays stable across renders.
   const recentSessions = useMemo(
     () => [...sessions].sort((a, b) => b.lastActiveAt - a.lastActiveAt).slice(0, 5),
     [sessions]
   );
 
-  // Task counts
-  const activeTasks = useMemo(
-    () => tasks.filter((t) => t.status === 'open' || t.status === 'in_progress'),
-    [tasks]
-  );
-  // Matches the Action-tab predicate (isActionRequired) so the overview count
-  // and the Action list can't drift — rate/usage-limited tasks count here too.
-  const reviewTasks = useMemo(() => tasks.filter(isActionRequired), [tasks]);
-  const doneTasks = useMemo(
-    () =>
-      tasks.filter(
-        (t) => t.status === 'done' || t.status === 'cancelled' || t.status === 'archived'
-      ),
-    [tasks]
-  );
+  // Matches the Action-tab predicate (isActionRequired) so the Overview
+  // "need attention" hint and the Action list can't drift — rate/usage-limited
+  // tasks count here too.
+  const attentionTasks = useMemo(() => tasks.filter(isActionRequired), [tasks]);
 
   // Recent tasks — sorted by updatedAt, top 5
   const recentTasks = useMemo(
@@ -467,52 +297,35 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
               Operations
             </div>
             <h2 class="mt-2 text-lg font-semibold tracking-tight text-gray-50">
-              Current state · {tasks.length} {tasks.length === 1 ? 'task' : 'tasks'} tracked
+              Space at a glance
             </h2>
             <p class="mt-1 text-sm leading-5 text-gray-300">
-              Runtime status, throughput controls, and the latest activity across this Space.
+              Quick entry to your tasks, agents, and sessions, plus throughput controls and recent
+              activity.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => setShowCreateTask(true)}
-            class={GLASS_PRIMARY_BUTTON_CLASS}
-          >
-            Create task
-          </button>
         </section>
 
-        {/* Runtime state stays visible without delaying the operational summary. */}
-        {runtimeState && (
-          <RuntimeControlBar
-            state={runtimeState}
-            actionLoading={actionLoading}
-            onPause={() => void handlePause()}
-            onResume={() => void handleResume()}
-            onStop={() => setShowStopConfirm(true)}
-            onStart={() => void handleStart()}
-          />
-        )}
-
-        {/* Task state is the primary first-screen summary. */}
+        {/* Primary surfaces as count + navigation shortcuts. */}
         <div class="grid grid-cols-3 gap-3">
           <StatCard
-            label="Active"
-            count={activeTasks.length}
+            label="Tasks"
+            count={tasks.length}
             color="border-amber-800/40 text-amber-300"
-            onClick={() => navigateToSpaceTasks(routeSpaceId, 'active')}
+            hint={attentionTasks.length > 0 ? `${attentionTasks.length} need attention` : undefined}
+            onClick={() => navigateToSpaceTasks(routeSpaceId)}
           />
           <StatCard
-            label="Review"
-            count={reviewTasks.length}
+            label="Agents"
+            count={agents.length}
             color="border-purple-800/30 text-purple-300"
-            onClick={() => navigateToSpaceTasks(routeSpaceId, 'action')}
+            onClick={() => navigateToSpaceAgent(routeSpaceId)}
           />
           <StatCard
-            label="Done"
-            count={doneTasks.length}
-            color="border-emerald-800/40 text-emerald-300"
-            onClick={() => navigateToSpaceTasks(routeSpaceId, 'completed')}
+            label="Sessions"
+            count={sessions.length}
+            color="border-sky-800/30 text-sky-300"
+            onClick={() => navigateToSpaceSessions(routeSpaceId)}
           />
         </div>
 
@@ -544,6 +357,28 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
                 <h3 class="text-base font-semibold tracking-tight text-gray-50">Recent Tasks</h3>
                 <p class="mt-0.5 text-[11px] text-gray-500">Latest work across this Space</p>
               </div>
+              <button
+                type="button"
+                onClick={() => setShowCreateTask(true)}
+                class={`${GLASS_PRIMARY_BUTTON_CLASS} !h-9 !px-3 sm:!px-4`}
+                aria-label="Create task"
+              >
+                <svg
+                  class="h-4 w-4"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  aria-hidden="true"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width={2}
+                    d="M12 4v16m8-8H4"
+                  />
+                </svg>
+                <span class="ml-1.5 hidden sm:inline">Create task</span>
+              </button>
             </div>
             {recentTasks.length === 0 ? (
               <div class="flex flex-col items-center justify-center px-4 py-10 text-center">
@@ -609,17 +444,6 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
             </section>
           )}
         </div>
-
-        {/* Stop Confirmation */}
-        <ConfirmModal
-          isOpen={showStopConfirm}
-          onClose={() => setShowStopConfirm(false)}
-          onConfirm={() => void handleStop()}
-          title="Stop Space"
-          message="Stopping will immediately terminate all active sessions and cancel in-progress work. The space will not restart automatically. You can start it again at any time."
-          confirmText="Stop Space"
-          isLoading={actionLoading}
-        />
       </div>
     </div>
   );

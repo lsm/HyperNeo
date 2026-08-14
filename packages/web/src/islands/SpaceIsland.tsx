@@ -16,6 +16,7 @@ import { AgentOverlayChat } from '../components/space/AgentOverlayChat';
 import { SpaceCreateTaskDialog } from '../components/space/SpaceCreateTaskDialog';
 import { GLASS_PRIMARY_BUTTON_CLASS, GlassRouteShell } from '../components/space/glass-workspace';
 import { SpacePageHeader } from '../components/space/SpacePageHeader';
+import { SpaceRuntimeStatusControl } from '../components/space/SpaceRuntimeStatusControl';
 import { TaskAuxiliaryPanel } from '../components/space/TaskAuxiliaryPanel';
 import { createSession } from '../lib/api-helpers';
 import {
@@ -583,6 +584,7 @@ export default function SpaceIsland({
         testId="space-overview-view"
         baseLayerProps={baseLayerProps}
         fallback={lazyFallback}
+        actions={<SpaceRuntimeStatusControl />}
       >
         <SpaceOverview
           spaceId={spaceId}

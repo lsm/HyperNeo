@@ -6,21 +6,17 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { signal } from '@preact/signals';
-import type { RuntimeState, Space, SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
+import type { Space, SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 
 let mockSpace: ReturnType<typeof signal<Space | null>>;
 let mockLoading: ReturnType<typeof signal<boolean>>;
 let mockTasks: ReturnType<typeof signal<SpaceTask[]>>;
 let mockWorkflows: ReturnType<typeof signal<SpaceWorkflow[]>>;
-let mockRuntimeState: ReturnType<typeof signal<RuntimeState | null>>;
 let mockSessions: ReturnType<
   typeof signal<{ id: string; title?: string; status: string; lastActiveAt: number }[]>
 >;
+let mockAgents: ReturnType<typeof signal<{ id: string }[]>>;
 
-const mockPauseSpace = vi.fn().mockResolvedValue(undefined);
-const mockResumeSpace = vi.fn().mockResolvedValue(undefined);
-const mockStopSpace = vi.fn().mockResolvedValue(undefined);
-const mockStartSpace = vi.fn().mockResolvedValue(undefined);
 const mockUpdateSpace = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('../../../lib/space-store', () => ({
@@ -30,22 +26,21 @@ vi.mock('../../../lib/space-store', () => ({
       loading: mockLoading,
       tasks: mockTasks,
       workflows: mockWorkflows,
-      runtimeState: mockRuntimeState,
       sessions: mockSessions,
-      pauseSpace: mockPauseSpace,
-      resumeSpace: mockResumeSpace,
-      stopSpace: mockStopSpace,
-      startSpace: mockStartSpace,
+      longHorizonAgents: mockAgents,
       updateSpace: mockUpdateSpace,
     };
   },
 }));
 
 const navigateToSpaceTasksMock = vi.fn();
+const navigateToSpaceAgentMock = vi.fn();
+const navigateToSpaceSessionsMock = vi.fn();
 vi.mock('../../../lib/router', () => ({
   navigateToSpaceTask: vi.fn(),
-  navigateToSpaceAgent: vi.fn(),
+  navigateToSpaceAgent: (...args: unknown[]) => navigateToSpaceAgentMock(...args),
   navigateToSpaceSession: vi.fn(),
+  navigateToSpaceSessions: (...args: unknown[]) => navigateToSpaceSessionsMock(...args),
   navigateToSpaceTasks: (...args: unknown[]) => navigateToSpaceTasksMock(...args),
 }));
 
@@ -53,8 +48,8 @@ mockSpace = signal<Space | null>(null);
 mockLoading = signal(false);
 mockTasks = signal<SpaceTask[]>([]);
 mockWorkflows = signal<SpaceWorkflow[]>([]);
-mockRuntimeState = signal<RuntimeState | null>(null);
 mockSessions = signal([]);
+mockAgents = signal([]);
 
 import { SpaceOverview } from '../SpaceOverview';
 
@@ -109,13 +104,12 @@ describe('SpaceOverview', () => {
     mockLoading.value = false;
     mockTasks.value = [];
     mockWorkflows.value = [];
-    mockRuntimeState.value = null;
     mockSessions.value = [];
-    mockPauseSpace.mockClear();
-    mockResumeSpace.mockClear();
-    mockStopSpace.mockClear();
-    mockStartSpace.mockClear();
+    mockAgents.value = [];
     mockUpdateSpace.mockClear();
+    navigateToSpaceTasksMock.mockClear();
+    navigateToSpaceAgentMock.mockClear();
+    navigateToSpaceSessionsMock.mockClear();
   });
 
   afterEach(() => {
@@ -133,36 +127,29 @@ describe('SpaceOverview', () => {
     expect(getByText('Space not found')).toBeTruthy();
   });
 
-  it('renders stat cards with correct counts', () => {
+  it('renders Tasks/Agents/Sessions stat cards with counts', () => {
     mockSpace.value = makeSpace();
-    mockTasks.value = [
-      makeTask('t1', 'open'),
-      makeTask('t2', 'in_progress'),
-      makeTask('t3', 'blocked'),
-      makeTask('t4', 'done'),
-    ];
+    mockTasks.value = [makeTask('t1', 'open'), makeTask('t2', 'done')];
+    mockAgents.value = [{ id: 'a1' }, { id: 'a2' }, { id: 'a3' }];
+    mockSessions.value = [{ id: 's1' }];
 
     const { getByRole } = render(<SpaceOverview spaceId="space-1" />);
-    // Stats strip: Active (open + in_progress = 2), Review (blocked = 1), Done (done = 1)
-    expect(getByRole('button', { name: 'Active tasks: 2' })).toBeTruthy();
-    expect(getByRole('button', { name: 'Review tasks: 1' })).toBeTruthy();
-    expect(getByRole('button', { name: 'Done tasks: 1' })).toBeTruthy();
+    expect(getByRole('button', { name: /^Tasks: 2/ })).toBeTruthy();
+    expect(getByRole('button', { name: 'Agents: 3' })).toBeTruthy();
+    expect(getByRole('button', { name: 'Sessions: 1' })).toBeTruthy();
   });
 
   it('renders glass controls and flat activity surfaces', () => {
     mockSpace.value = makeSpace();
-    mockRuntimeState.value = 'running';
     mockTasks.value = [makeTask('t1', 'open')];
     mockSessions.value = [
       { id: 'session-1', title: 'Session one', status: 'active', lastActiveAt: Date.now() },
     ];
 
-    const { getByTestId, getByText } = render(<SpaceOverview spaceId="space-1" />);
-
+    const { getByTestId } = render(<SpaceOverview spaceId="space-1" />);
     expect(getByTestId('space-overview-dashboard')).toBeTruthy();
     expect(getByTestId('overview-recent-tasks')).toBeTruthy();
     expect(getByTestId('overview-recent-sessions')).toBeTruthy();
-    expect(getByText('Running').closest('.backdrop-blur-xl')).toBeTruthy();
   });
 
   it('renders recent tasks sorted by updatedAt', () => {
@@ -208,13 +195,13 @@ describe('SpaceOverview', () => {
     expect(onSelectTask).toHaveBeenCalledWith('t1');
   });
 
-  it('renders the Create Task button', () => {
+  it('renders the Create task button in the Recent Tasks header', () => {
     mockSpace.value = makeSpace();
     const { getByRole } = render(<SpaceOverview spaceId="space-1" />);
     expect(getByRole('button', { name: 'Create task' })).toBeTruthy();
   });
 
-  it('clicking Create Task button opens the Create Task dialog', () => {
+  it('clicking Create task opens the Create Task dialog', () => {
     mockSpace.value = makeSpace();
     const { getByRole } = render(<SpaceOverview spaceId="space-1" />);
     fireEvent.click(getByRole('button', { name: 'Create task' }));
@@ -223,20 +210,13 @@ describe('SpaceOverview', () => {
     expect(dialog?.querySelector('h2')?.textContent).toBe('Create Task');
   });
 
-  it('renders runtime control bar when runtimeState is set', () => {
+  it('does not render runtime controls (moved to the header control)', () => {
+    // Runtime status + Pause/Stop/Resume now live in SpaceRuntimeStatusControl
+    // (rendered in the page header), not in the Overview body.
     mockSpace.value = makeSpace();
-    mockRuntimeState.value = 'running';
-    const { getByText } = render(<SpaceOverview spaceId="space-1" />);
-    expect(getByText('Running')).toBeTruthy();
-  });
-
-  it('does not render runtime control bar when runtimeState is null', () => {
-    mockSpace.value = makeSpace();
-    mockRuntimeState.value = null;
     const { queryByText } = render(<SpaceOverview spaceId="space-1" />);
     expect(queryByText('Running')).toBeNull();
     expect(queryByText('Paused')).toBeNull();
-    expect(queryByText('Stopped')).toBeNull();
   });
 
   it('limits recent tasks to 5', () => {
@@ -253,149 +233,30 @@ describe('SpaceOverview', () => {
     expect(activityButtons.length).toBe(5);
   });
 
-  it('stat card counts update when tasks change', () => {
+  it('Tasks stat card count tracks the task total', () => {
     mockSpace.value = makeSpace();
     mockTasks.value = [makeTask('t1', 'open')];
+    const { rerender, getByRole } = render(<SpaceOverview spaceId="space-1" />);
+    expect(getByRole('button', { name: /^Tasks: 1/ })).toBeTruthy();
 
-    const { container, rerender } = render(<SpaceOverview spaceId="space-1" />);
-
-    // Active count should include the open task
-    const getStatText = () =>
-      Array.from(container.querySelectorAll('button')).map((b) => b.textContent);
-    let stats = getStatText();
-    expect(stats.some((t) => t?.includes('Active') && t?.includes('1'))).toBe(true);
-    expect(stats.some((t) => t?.includes('Review') && t?.includes('0'))).toBe(true);
-
-    // Add a blocked task
-    mockTasks.value = [makeTask('t1', 'open'), makeTask('t2', 'blocked')];
+    mockTasks.value = [makeTask('t1', 'open'), makeTask('t2', 'open'), makeTask('t3', 'done')];
     rerender(<SpaceOverview spaceId="space-1" />);
-
-    stats = getStatText();
-    expect(stats.some((t) => t?.includes('Active') && t?.includes('1'))).toBe(true);
-    expect(stats.some((t) => t?.includes('Review') && t?.includes('1'))).toBe(true);
+    expect(getByRole('button', { name: /^Tasks: 3/ })).toBeTruthy();
   });
 
-  describe('Runtime State Indicator', () => {
-    it('shows running state with green indicator and ping animation', () => {
-      mockSpace.value = makeSpace();
-      mockRuntimeState.value = 'running';
-      const { container, getByText } = render(<SpaceOverview spaceId="space-1" />);
-      expect(getByText('Running')).toBeTruthy();
-      expect(container.querySelector('.bg-green-400')).toBeTruthy();
-      expect(container.querySelector('.animate-ping')).toBeTruthy();
-    });
-
-    it('shows paused state with yellow indicator and no ping', () => {
-      mockSpace.value = makeSpace();
-      mockRuntimeState.value = 'paused';
-      const { container, getByText } = render(<SpaceOverview spaceId="space-1" />);
-      expect(getByText('Paused')).toBeTruthy();
-      expect(container.querySelector('.bg-yellow-400')).toBeTruthy();
-      expect(container.querySelector('.animate-ping')).toBeFalsy();
-    });
-
-    it('shows stopped state with gray indicator', () => {
-      mockSpace.value = makeSpace();
-      mockRuntimeState.value = 'stopped';
-      const { container, getByText } = render(<SpaceOverview spaceId="space-1" />);
-      expect(getByText('Stopped')).toBeTruthy();
-      expect(container.querySelector('.bg-gray-500')).toBeTruthy();
-    });
+  it('Tasks card shows a need-attention hint when actionable tasks exist', () => {
+    mockSpace.value = makeSpace();
+    mockTasks.value = [makeTask('t1', 'open'), makeTask('t2', 'review')];
+    const { getByRole } = render(<SpaceOverview spaceId="space-1" />);
+    // review tasks are "action required" → 1 need attention.
+    expect(getByRole('button', { name: /^Tasks: 2 \(1 need attention\)/ })).toBeTruthy();
   });
 
-  describe('Runtime Control Buttons', () => {
-    it('shows Pause and Stop buttons when running, no Resume button', () => {
-      mockSpace.value = makeSpace();
-      mockRuntimeState.value = 'running';
-      const { container } = render(<SpaceOverview spaceId="space-1" />);
-      const buttons = Array.from(container.querySelectorAll('button'));
-      expect(buttons.find((b) => b.textContent === 'Pause')).toBeTruthy();
-      expect(buttons.find((b) => b.textContent === 'Stop')).toBeTruthy();
-      expect(buttons.find((b) => b.textContent === 'Resume')).toBeFalsy();
-    });
-
-    it('shows Resume and Stop buttons when paused, no Pause button', () => {
-      mockSpace.value = makeSpace();
-      mockRuntimeState.value = 'paused';
-      const { container } = render(<SpaceOverview spaceId="space-1" />);
-      const buttons = Array.from(container.querySelectorAll('button'));
-      expect(buttons.find((b) => b.textContent === 'Resume')).toBeTruthy();
-      expect(buttons.find((b) => b.textContent === 'Stop')).toBeTruthy();
-      expect(buttons.find((b) => b.textContent === 'Pause')).toBeFalsy();
-    });
-
-    it('shows Start button when stopped, no Pause/Resume/Stop buttons', () => {
-      mockSpace.value = makeSpace();
-      mockRuntimeState.value = 'stopped';
-      const { container } = render(<SpaceOverview spaceId="space-1" />);
-      const buttons = Array.from(container.querySelectorAll('button'));
-      expect(buttons.find((b) => b.textContent === 'Start')).toBeTruthy();
-      expect(buttons.find((b) => b.textContent === 'Pause')).toBeFalsy();
-      expect(buttons.find((b) => b.textContent === 'Resume')).toBeFalsy();
-      expect(buttons.find((b) => b.textContent === 'Stop')).toBeFalsy();
-    });
-
-    it('calls pauseSpace when Pause is clicked', async () => {
-      mockSpace.value = makeSpace();
-      mockRuntimeState.value = 'running';
-      const { container } = render(<SpaceOverview spaceId="space-1" />);
-      const pauseBtn = Array.from(container.querySelectorAll('button')).find(
-        (b) => b.textContent === 'Pause'
-      )!;
-      await fireEvent.click(pauseBtn);
-      expect(mockPauseSpace).toHaveBeenCalledTimes(1);
-    });
-
-    it('calls resumeSpace when Resume is clicked', async () => {
-      mockSpace.value = makeSpace();
-      mockRuntimeState.value = 'paused';
-      const { container } = render(<SpaceOverview spaceId="space-1" />);
-      const resumeBtn = Array.from(container.querySelectorAll('button')).find(
-        (b) => b.textContent === 'Resume'
-      )!;
-      await fireEvent.click(resumeBtn);
-      expect(mockResumeSpace).toHaveBeenCalledTimes(1);
-    });
-
-    it('opens stop confirmation dialog when Stop is clicked while running', () => {
-      mockSpace.value = makeSpace();
-      mockRuntimeState.value = 'running';
-      const { container } = render(<SpaceOverview spaceId="space-1" />);
-      const stopBtn = Array.from(container.querySelectorAll('button')).find(
-        (b) => b.textContent === 'Stop'
-      )!;
-      fireEvent.click(stopBtn);
-      const dialog = document.body.querySelector('[role="dialog"]');
-      expect(dialog).toBeTruthy();
-      expect(dialog?.querySelector('h2')?.textContent).toBe('Stop Space');
-    });
-
-    it('calls stopSpace when Stop is confirmed', async () => {
-      mockSpace.value = makeSpace();
-      mockRuntimeState.value = 'running';
-      const { container } = render(<SpaceOverview spaceId="space-1" />);
-      const stopBtn = Array.from(container.querySelectorAll('button')).find(
-        (b) => b.textContent === 'Stop'
-      )!;
-      fireEvent.click(stopBtn);
-      // Find and click the confirm button in the dialog
-      const confirmBtn = Array.from(document.body.querySelectorAll('button')).find(
-        (b) => b.textContent === 'Stop Space'
-      )!;
-      await fireEvent.click(confirmBtn);
-      expect(mockStopSpace).toHaveBeenCalledTimes(1);
-    });
-
-    it('calls startSpace when Start is clicked while stopped', async () => {
-      mockSpace.value = makeSpace();
-      mockRuntimeState.value = 'stopped';
-      const { container } = render(<SpaceOverview spaceId="space-1" />);
-      const startBtn = Array.from(container.querySelectorAll('button')).find(
-        (b) => b.textContent === 'Start'
-      )!;
-      await fireEvent.click(startBtn);
-      expect(mockStartSpace).toHaveBeenCalledTimes(1);
-    });
+  it('Tasks card omits the hint when nothing needs attention', () => {
+    mockSpace.value = makeSpace();
+    mockTasks.value = [makeTask('t1', 'open'), makeTask('t2', 'done')];
+    const { getByRole } = render(<SpaceOverview spaceId="space-1" />);
+    expect(getByRole('button', { name: 'Tasks: 2' })).toBeTruthy();
   });
 
   describe('Autonomy Level Bar', () => {
@@ -439,61 +300,45 @@ describe('SpaceOverview', () => {
   describe('Stat Card Navigation', () => {
     beforeEach(() => {
       navigateToSpaceTasksMock.mockClear();
+      navigateToSpaceAgentMock.mockClear();
+      navigateToSpaceSessionsMock.mockClear();
       mockSpace.value = makeSpace();
-      mockTasks.value = [
-        makeTask('t1', 'open'),
-        makeTask('t2', 'in_progress'),
-        makeTask('t3', 'review'),
-        makeTask('t4', 'done'),
-        makeTask('t5', 'archived'),
-      ];
+      mockTasks.value = [makeTask('t1', 'open'), makeTask('t2', 'review')];
+      mockAgents.value = [{ id: 'a1' }];
+      mockSessions.value = [{ id: 's1' }];
     });
 
-    it('clicking Active stat card navigates to tasks with active tab', () => {
+    it('Tasks card navigates to the Tasks page', () => {
       const { getByRole } = render(<SpaceOverview spaceId="space-1" />);
-      fireEvent.click(getByRole('button', { name: 'Active tasks: 2' }));
-      expect(navigateToSpaceTasksMock).toHaveBeenCalledWith('space-1', 'active');
+      fireEvent.click(getByRole('button', { name: /^Tasks:/ }));
+      expect(navigateToSpaceTasksMock).toHaveBeenCalledWith('space-1');
     });
 
-    it('uses the route space id for stat card navigation', () => {
+    it('uses the route space id for navigation', () => {
       const { getByRole } = render(
         <SpaceOverview spaceId="space-1" navigationSpaceId="space-slug" />
       );
-      fireEvent.click(getByRole('button', { name: 'Active tasks: 2' }));
-      expect(navigateToSpaceTasksMock).toHaveBeenCalledWith('space-slug', 'active');
+      fireEvent.click(getByRole('button', { name: /^Tasks:/ }));
+      expect(navigateToSpaceTasksMock).toHaveBeenCalledWith('space-slug');
     });
 
-    it('clicking Review stat card navigates to tasks with action tab', () => {
+    it('Agents card navigates to the Agents page', () => {
       const { getByRole } = render(<SpaceOverview spaceId="space-1" />);
-      fireEvent.click(getByRole('button', { name: 'Review tasks: 1' }));
-      expect(navigateToSpaceTasksMock).toHaveBeenCalledWith('space-1', 'action');
+      fireEvent.click(getByRole('button', { name: 'Agents: 1' }));
+      expect(navigateToSpaceAgentMock).toHaveBeenCalledWith('space-1');
     });
 
-    it('clicking Done stat card navigates to tasks with completed tab', () => {
+    it('Sessions card navigates to the Sessions page', () => {
       const { getByRole } = render(<SpaceOverview spaceId="space-1" />);
-      fireEvent.click(getByRole('button', { name: 'Done tasks: 2' }));
-      expect(navigateToSpaceTasksMock).toHaveBeenCalledWith('space-1', 'completed');
-    });
-
-    it('Done count includes archived tasks to match the completed tab', () => {
-      // t4 (done) and t5 (archived) both count because the Completed tab now
-      // includes archived terminal tasks.
-      const { container } = render(<SpaceOverview spaceId="space-1" />);
-      const doneBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-        b.textContent?.includes('Done')
-      )!;
-      expect(doneBtn.textContent).toContain('2');
+      fireEvent.click(getByRole('button', { name: 'Sessions: 1' }));
+      expect(navigateToSpaceSessionsMock).toHaveBeenCalledWith('space-1');
     });
 
     it('stat cards have cursor-pointer class', () => {
       const { getByRole } = render(<SpaceOverview spaceId="space-1" />);
-      expect(getByRole('button', { name: 'Active tasks: 2' }).className).toContain(
-        'cursor-pointer'
-      );
-      expect(getByRole('button', { name: 'Review tasks: 1' }).className).toContain(
-        'cursor-pointer'
-      );
-      expect(getByRole('button', { name: 'Done tasks: 2' }).className).toContain('cursor-pointer');
+      expect(getByRole('button', { name: /^Tasks:/ }).className).toContain('cursor-pointer');
+      expect(getByRole('button', { name: 'Agents: 1' }).className).toContain('cursor-pointer');
+      expect(getByRole('button', { name: 'Sessions: 1' }).className).toContain('cursor-pointer');
     });
   });
 
