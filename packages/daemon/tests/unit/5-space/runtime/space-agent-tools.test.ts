@@ -5808,11 +5808,14 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     expect(parsed.success).toBe(true);
     expect(parsed.task.status).toBe('done');
     expect(parsed.task.result).toBe('Reviewed 3 episodes; all evidence scoped correctly.');
-    // review → done stamps approvalSource 'agent'.
+    // review → done stamps approvalSource 'agent' and approvalReason from `reason`.
     expect(parsed.task.approvalSource).toBe('agent');
+    expect(parsed.task.approvalReason).toBe('weekly self_nag');
+    expect(parsed.task.approvedAt).not.toBeNull();
     expect(ctx.taskRepo.getTask(taskId)?.result).toBe(
       'Reviewed 3 episodes; all evidence scoped correctly.'
     );
+    expect(ctx.taskRepo.getTask(taskId)?.approvalReason).toBe('weekly self_nag');
   });
 
   test('completes a no-PR task in_progress → done', async () => {

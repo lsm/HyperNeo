@@ -3446,15 +3446,22 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
      * expects a PR; this tool is the escape hatch for tasks that legitimately
      * produce none (#485 built the path; this exposes it to agents).
      *
-     * Audience: the Space leader (coordinator) and long-horizon/member sessions
-     * — the agents that hold `space-agent-tools`. Workflow node agents (coder,
-     * reviewer, QA) get `node-agent-tools`, not this tool, so its completion
-     * surface is intentionally separate from the PR-oriented node path.
+     * Reachable by every Space session that holds `space-agent-tools` — the
+     * leader (coordinator), long-horizon agents, member sessions, AND workflow
+     * worker sessions (each worker gets `node-agent` + `space-agent-tools` +
+     * agent-memory; see `TaskAgentManager`'s merged MCP servers). Worker-built
+     * servers pass no `myAgentId`, so workers are bounded only by the SPACE
+     * autonomy level — there is no per-agent ceiling for them. The tool's
+     * actual controls are therefore the guards below, not audience separation.
      *
      * It complements, rather than duplicates, the other completion tools:
-     *   - `approve_task` closes a task already in `review` (PR-oriented).
-     *   - `approve_pending_completion` is the human-approval review→approved path.
-     *   - Neither is reachable for a no-code task that never produced a PR.
+     *   - `approve_task` closes a task already in `review` — any review task,
+     *     PR or not. This tool's genuine deltas: `in_progress` eligibility,
+     *     explicit outcome capture, and a STRICTER review-path boundary (it
+     *     rejects runs whose PR was already recorded, forcing those through
+     *     the normal approve/merge path).
+     *   - `approve_pending_completion` is the human-approval review→approved
+     *     path, applicable only at a `task_completion` checkpoint.
      *
      * Guards (order is load-bearing — autonomy runs before any task-state
      * reveal, mirroring `approve_task`):

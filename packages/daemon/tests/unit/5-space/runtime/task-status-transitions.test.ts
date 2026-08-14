@@ -209,6 +209,48 @@ describe('SpaceTaskManager.setTaskStatus — approval-path transitions', () => {
     expect(done.approvalReason).toBe('approved by alice');
   });
 
+  test('in_progress → done without approval options leaves approval fields untouched (UI Mark Done compat)', async () => {
+    // The explicit-approvalSource stamping branch on in_progress → done exists
+    // solely for complete_validation_task. The UI/RPC path passes no approval
+    // options on this transition (space-task-handlers only supplies
+    // approvalSource for review → done), so a UI "Mark Done" from in_progress
+    // must leave the approval fields null. Locks the `approvalSource !== undefined`
+    // gate against accidental tightening (e.g. to approvalReason !== undefined,
+    // which stopWorkflowBackedTaskForStatus-style callers could trip).
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'in_progress',
+    });
+    const done = await taskManager.setTaskStatus(task.id, 'done', {
+      result: 'closed from UI',
+    });
+    expect(done.status).toBe('done');
+    expect(done.result).toBe('closed from UI');
+    expect(done.approvalSource).toBeNull();
+    expect(done.approvalReason).toBeNull();
+    expect(done.approvedAt).toBeNull();
+  });
+
+  test('in_progress → done with explicit approvalSource stamps approval fields atomically (complete_validation_task)', async () => {
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'in_progress',
+    });
+    const done = await taskManager.setTaskStatus(task.id, 'done', {
+      result: 'validation passed',
+      approvalSource: 'agent',
+      approvalReason: 'weekly self_nag',
+    });
+    expect(done.status).toBe('done');
+    expect(done.approvalSource).toBe('agent');
+    expect(done.approvalReason).toBe('weekly self_nag');
+    expect(done.approvedAt).not.toBeNull();
+  });
+
   test('approved → done nulls the durable source field (primed)', async () => {
     const task = taskRepo.createTask({
       spaceId: SPACE_ID,
