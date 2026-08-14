@@ -3498,11 +3498,20 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
      *     `postApproval` route are rejected — a direct done would silently skip
      *     the route (the tick loop treats an already-done task as resolved).
      *     They must close through submit_for_approval so the router fires.
+     *   - The no-PR and run-active (not cancelled/done) conditions are
+     *     re-asserted synchronously inside the terminal write's precondition
+     *     against the reread state, closing the window between the early
+     *     guards and the commit (e.g. `stopActiveWork` cancels a review task's
+     *     run while leaving the task row untouched).
      *
      * The validation outcome is captured as `task.result`; `approvalSource` is
      * stamped `'agent'` atomically with the done commit on every path
      * (`setTaskStatus` stamps it on review→done natively, and on in_progress→done
-     * when an explicit approvalSource is supplied).
+     * when an explicit approvalSource is supplied). When the caller's session
+     * resolves to a node execution in the task's run, its node is stamped as
+     * the durable `postApprovalSourceNodeId` after the commit so the tick
+     * loop's sibling-quiesce exempts the worker that submitted the verdict
+     * instead of falling back to the workflow end node.
      */
     async complete_validation_task(args: {
       task_id: string;
@@ -3698,11 +3707,58 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
                 `Task ${args.task_id} acquired a PR (${prUrl}) during completion; validation-only completion is for no-PR tasks. Use the normal approve/merge path instead.`
               );
             }
+            // Run-active recheck: `stopActiveWork` cancels a `review` task's RUN
+            // while deliberately excluding the task row itself from its
+            // task-cancellation pass (only in_progress/open/paused tasks are
+            // cancelled), so a run cancellation can land between the handler's
+            // early run read and this write with the task row still reading
+            // `review`/`in_progress` — invisible to the exact-status predicate.
+            // Reread the run inside the same synchronous reread→UPDATE window.
+            const runNow = workflowRunRepo.getRun(current.workflowRunId);
+            if (runNow && (runNow.status === 'cancelled' || runNow.status === 'done')) {
+              throw new Error(
+                `Task ${args.task_id} belongs to a ${runNow.status} workflow run (rechecked at the terminal write); validation-only completion is not applicable. Reconcile or retry the task instead.`
+              );
+            }
           },
           onCascadedTasks: async (cascadedTasks) => {
             for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
           },
         });
+
+        // Preserve the worker that reported the verdict. When a workflow
+        // worker on a NON-end node completes its own in_progress task, the
+        // completion state would otherwise record no source node: the tick
+        // loop's sibling-quiesce resolves its exclusion as
+        // `postApprovalSourceNodeId ?? pendingCompletionSubmittedByNodeId ??
+        // endNodeId`, falls back to `endNodeId`, interrupts the actual
+        // caller's session, and spares the unrelated end-node worker. Stamp
+        // the durable source field with the caller's node whenever the
+        // caller's session resolves to a node execution in the task's run
+        // (coordinator/task-agent callers resolve to none and are unchanged).
+        // Best-effort follow-up write: the review→done transition atomically
+        // clears the field, so the stamp must land after the done commit; a
+        // reconciliation tick racing between the two writes can still
+        // mis-exempt, bounded to the same window the no-route audit write
+        // accepts.
+        let finalTask = updated;
+        if (mySessionId && updated.workflowRunId) {
+          try {
+            const callerExecution = nodeExecutionRepo
+              .listByAgentSessionId(mySessionId)
+              .find((e) => e.workflowRunId === updated.workflowRunId);
+            if (callerExecution) {
+              finalTask =
+                taskRepo.updateTask(updated.id, {
+                  postApprovalSourceNodeId: callerExecution.workflowNodeId,
+                }) ?? updated;
+            }
+          } catch (err) {
+            log.warn(
+              `Failed to record validation-completion source node for task "${updated.id}": ${err instanceof Error ? err.message : String(err)}`
+            );
+          }
+        }
 
         // Best-effort goal terminal handling — must not block completion.
         try {
@@ -3723,9 +3779,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           args.task_id
         );
 
-        emitTaskUpdated(updated);
+        emitTaskUpdated(finalTask);
 
-        return jsonResult({ success: true, task: updated });
+        return jsonResult({ success: true, task: finalTask });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         return jsonResult({ success: false, error: message });

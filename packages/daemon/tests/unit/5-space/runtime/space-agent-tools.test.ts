@@ -5771,7 +5771,7 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     const nodeId = `node-${Math.random().toString(36).slice(2)}`;
     const workflow = ctx.workflowManager.createWorkflow({
       spaceId: ctx.spaceId,
-      name: `Validation gated workflow ${requiredLevel}`,
+      name: `Validation gated workflow ${requiredLevel} ${nodeId.slice(-6)}`,
       description: '',
       nodes: [{ id: nodeId, name: 'Review', agentId: ctx.agentId }],
       transitions: [],
@@ -5911,6 +5911,55 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     expect(parsed.success).toBe(false);
     expect(parsed.error).toContain('cancelled workflow run');
     expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
+  });
+
+  test('terminal precondition rechecks the run: a cancellation landing before the write aborts completion', async () => {
+    // Interleaving exercise for the terminal run-active recheck. `stopActiveWork`
+    // cancels a `review` task's RUN while deliberately excluding the task row
+    // from its task-cancellation pass, so the run flip is invisible to the
+    // exact-status predicate on the task UPDATE. Simulate that here: the run is
+    // still active at the handler's early guard, and flips to cancelled inside
+    // setTaskStatus' task reread — the last sync point before the precondition.
+    // Without the recheck the completion would commit and mark cancelled work
+    // done; with it, the write aborts and the review state survives.
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const task = createWorkflowTask(5, { status: 'review' });
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: task.workflowRunId!,
+      workflowNodeId: 'node-review',
+      agentName: 'Review',
+      agentId: ctx.agentId,
+      status: 'idle',
+    });
+    const runId = task.workflowRunId!;
+    const originalGetTask = ctx.taskManager.getTask.bind(ctx.taskManager);
+    let runFlipped = false;
+    const getTaskSpy = spyOn(ctx.taskManager, 'getTask').mockImplementation(
+      async (taskId: string) => {
+        if (taskId === task.id && !runFlipped) {
+          runFlipped = true;
+          ctx.workflowRunRepo.updateRun(runId, { status: 'cancelled' });
+        }
+        return originalGetTask(taskId);
+      }
+    );
+
+    try {
+      const result = await makeHandlers(ctx).complete_validation_task({
+        task_id: task.id,
+        validation_outcome: 'validated',
+      });
+      const parsed = JSON.parse(result.content[0].text);
+
+      expect(parsed.success).toBe(false);
+      expect(parsed.error).toContain('cancelled workflow run');
+      expect(parsed.error).toContain('rechecked at the terminal write');
+      // The review state (and its pending fields) survive the aborted write.
+      expect(ctx.taskRepo.getTask(task.id)?.status).toBe('review');
+      expect(ctx.taskRepo.getTask(task.id)?.result).toBeNull();
+    } finally {
+      getTaskSpy.mockRestore();
+    }
   });
 
   test('rejects a workflow-backed task whose workflow declares a post-approval route', async () => {
@@ -6212,6 +6261,78 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     );
     expect(broad.success).toBe(true);
     expect(ctx.taskRepo.getTask(taskB)?.status).toBe('done');
+  });
+
+  test('records the completing worker’s node so reconciliation quiesce spares the caller', async () => {
+    // A non-end-node worker completing its own workflow-backed task: the
+    // completion must carry the caller's node (stamped as the durable
+    // postApprovalSourceNodeId) so the tick loop's sibling-quiesce — which
+    // resolves its exclusion as postApprovalSourceNodeId ?? pending… ?? endNodeId
+    // — does not fall back to endNodeId, interrupt the actual caller, and spare
+    // the unrelated end-node worker. Callers with no node execution in the
+    // task's run (coordinator/task-agent, or a worker from another run) leave
+    // the field untouched.
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const task = createWorkflowTask(5, { status: 'in_progress' });
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: task.workflowRunId!,
+      // Deliberately NOT the workflow's end node — the fallback this test guards.
+      workflowNodeId: 'node-mid-worker',
+      agentName: 'Worker',
+      agentId: ctx.agentId,
+      status: 'in_progress',
+      agentSessionId: 'worker-session-mid',
+    });
+    ctx.db
+      .prepare(
+        `INSERT INTO sessions (
+            id, title, workspace_path, created_at, last_active_at, status, config, metadata,
+            is_worktree, git_branch, processing_state, type, session_context
+          ) VALUES (?, ?, ?, ?, ?, 'active', '{}', '{}', 1, 'feature/validation', ?, 'worker', ?)`
+      )
+      .run(
+        'worker-session-mid',
+        'Mid-node worker',
+        '/tmp/session-workspace',
+        new Date(0).toISOString(),
+        new Date().toISOString(),
+        JSON.stringify({ status: 'idle' }),
+        JSON.stringify({ spaceId: ctx.spaceId, taskId: task.id })
+      );
+
+    const result = await makeHandlers(ctx, {
+      mySessionId: 'worker-session-mid',
+    }).complete_validation_task({
+      task_id: task.id,
+      validation_outcome: 'validated from a non-end node',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(true);
+    expect(parsed.task.status).toBe('done');
+    // The caller's node is recorded both on the row and in the returned task.
+    expect(ctx.taskRepo.getTask(task.id)?.postApprovalSourceNodeId).toBe('node-mid-worker');
+    expect(parsed.task.postApprovalSourceNodeId).toBe('node-mid-worker');
+
+    // A caller whose session has NO execution in the task's run leaves the
+    // field untouched (no fabrication, no cross-run stamping).
+    const other = createWorkflowTask(5, { status: 'in_progress' });
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: other.workflowRunId!,
+      workflowNodeId: 'node-other',
+      agentName: 'Review',
+      agentId: ctx.agentId,
+      status: 'idle',
+    });
+    const coordinator = JSON.parse(
+      (
+        await makeHandlers(ctx).complete_validation_task({
+          task_id: other.id,
+          validation_outcome: 'coordinator completed; no node execution',
+        })
+      ).content[0].text
+    );
+    expect(coordinator.success).toBe(true);
+    expect(ctx.taskRepo.getTask(other.id)?.postApprovalSourceNodeId).toBeNull();
   });
 });
 
