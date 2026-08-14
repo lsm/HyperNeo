@@ -43,7 +43,15 @@ export interface PendingTranscript {
  * daemon during session.get, which the composer runs only on session change),
  * then consumes its own session via `consumeVoiceTranscriptLanded`.
  */
-export const voiceTranscriptLandedSignal = signal<ReadonlySet<string>>(new Set());
+/**
+ * Per-session GENERATION of landings awaiting a mounted-composer refresh. Two
+ * entries landing for the same session while one refresh is in flight would
+ * collapse into a single set membership; the generation lets the refresh
+ * consume exactly the count it observed, so a landing that arrived mid-refresh
+ * still gets its own refresh. A session key present = its composer should
+ * refresh; absent = nothing pending.
+ */
+export const voiceTranscriptLandedSignal = signal<ReadonlyMap<string, number>>(new Map());
 
 /**
  * Record that an entry landed for `sessionId` (called by the flush). The
@@ -51,7 +59,10 @@ export const voiceTranscriptLandedSignal = signal<ReadonlySet<string>>(new Set()
  * event, since the signal itself is process-local.
  */
 export function markVoiceTranscriptLanded(sessionId: string): void {
-  voiceTranscriptLandedSignal.value = new Set(voiceTranscriptLandedSignal.value).add(sessionId);
+  const current = voiceTranscriptLandedSignal.value;
+  const next = new Map(current);
+  next.set(sessionId, (next.get(sessionId) ?? 0) + 1);
+  voiceTranscriptLandedSignal.value = next;
   try {
     localStorage.setItem(`${LANDED_PREFIX}${sessionId}`, String(Date.now()));
   } catch {
@@ -60,12 +71,16 @@ export function markVoiceTranscriptLanded(sessionId: string): void {
 }
 
 /**
- * Forget a landing once its session's composer has refreshed for it, and drop
- * the cross-tab marker so a later storage event does not resurrect it.
+ * Forget the landing of generation `generation` once its session's composer
+ * has refreshed for it — but only if no NEWER landing arrived meanwhile (the
+ * count is unchanged), so a landing that landed mid-refresh keeps its own
+ * pending refresh. Also drops the cross-tab marker so a later storage event
+ * does not resurrect it.
  */
-export function consumeVoiceTranscriptLanded(sessionId: string): void {
+export function consumeVoiceTranscriptLanded(sessionId: string, generation: number): void {
   const current = voiceTranscriptLandedSignal.value;
-  const next = new Set(current);
+  if (current.get(sessionId) !== generation) return; // a newer landing arrived
+  const next = new Map(current);
   next.delete(sessionId);
   voiceTranscriptLandedSignal.value = next;
   try {
@@ -195,8 +210,11 @@ export function isPermanentAppendRefusal(error: unknown): boolean {
  * reuses the same id and the daemon's dedup set skips the double-append.
  */
 export function enqueueTranscript(sessionId: string, text: string, id?: string): void {
-  writeEntry({ id: id ?? generateUUID(), sessionId, text, createdAt: Date.now() });
+  // Prune BEFORE writing: dropping an expired/over-cap old entry frees the
+  // quota the new entry needs, so a near-full localStorage still persists it
+  // instead of leaving it only in the in-session mirror (which a reload loses).
   prune();
+  writeEntry({ id: id ?? generateUUID(), sessionId, text, createdAt: Date.now() });
   // A same-tab enqueue emits no `storage` event and the connection-state
   // effect does not re-run while already connected — so kick the first flush
   // here. The flush's own retained-entry logic then schedules the backoff
@@ -332,8 +350,7 @@ function handleStorageEvent(event: StorageEvent): void {
       setTimeout(() => void flushPendingTranscripts(), FLUSH_DELAY_MS);
     }
   } else if (key.startsWith(LANDED_PREFIX) && event.newValue !== null) {
-    const sessionId = key.slice(LANDED_PREFIX.length);
-    voiceTranscriptLandedSignal.value = new Set(voiceTranscriptLandedSignal.value).add(sessionId);
+    markVoiceTranscriptLanded(key.slice(LANDED_PREFIX.length));
   }
 }
 
@@ -381,5 +398,5 @@ export function resetVoiceTranscriptOutbox(): void {
   flushInProgress = false;
   clearRetryTimer();
   clearPendingTranscripts();
-  voiceTranscriptLandedSignal.value = new Set();
+  voiceTranscriptLandedSignal.value = new Map();
 }

@@ -17,9 +17,11 @@ vi.mock('../../connection-manager', () => ({
 }));
 
 import {
+  consumeVoiceTranscriptLanded,
   enqueueTranscript,
   flushPendingTranscripts,
   getPendingTranscripts,
+  markVoiceTranscriptLanded,
   removePendingTranscript,
   resetVoiceTranscriptOutbox,
   startVoiceTranscriptOutboxFlush,
@@ -154,6 +156,53 @@ describe('voice transcript outbox', () => {
     await vi.advanceTimersByTimeAsync(600);
     expect(hubRequest).toHaveBeenCalled();
     expect(getPendingTranscripts()).toHaveLength(0);
+  });
+
+  it('persists a new entry when pruning frees the quota it needs (prune-before-write)', () => {
+    // Seed 21 outbox keys directly (over the cap) in a quota-limited store: an
+    // outbox-entry setItem throws while at capacity, so the new entry persists
+    // only if prune() runs FIRST and removes an over-cap slot.
+    const backing = new Map<string, string>();
+    for (let i = 0; i < 21; i++) {
+      backing.set(
+        `hyperneo_voice_transcript_outbox_v1.entry.old-${i}`,
+        JSON.stringify({ id: `old-${i}`, sessionId: 's1', text: `t${i}`, createdAt: Date.now() })
+      );
+    }
+    const quotaStorage = {
+      get length() {
+        return backing.size;
+      },
+      clear: () => backing.clear(),
+      getItem: (k: string) => backing.get(k) ?? null,
+      key: (i: number) => [...backing.keys()][i] ?? null,
+      removeItem: (k: string) => void backing.delete(k),
+      setItem: (k: string, v: string) => {
+        if (k.startsWith('hyperneo_voice_transcript_outbox_v1.entry.') && backing.size >= 21) {
+          throw new DOMException('quota', 'QuotaExceededError');
+        }
+        backing.set(k, String(v));
+      },
+    } as Storage;
+    globalThis.localStorage = quotaStorage;
+
+    enqueueTranscript('s1', 'newest');
+    // The new entry survived in localStorage (a reload would keep it), not
+    // just the in-session mirror.
+    expect([...backing.values()].some((raw) => raw.includes('newest'))).toBe(true);
+  });
+
+  it('does not consume a landing superseded by a newer one', () => {
+    markVoiceTranscriptLanded('s1'); // generation 1
+    markVoiceTranscriptLanded('s1'); // generation 2
+    // A refresh that observed generation 1 finishing after the second landing
+    // must not consume the shared entry — generation 2 still needs a refresh.
+    consumeVoiceTranscriptLanded('s1', 1);
+    expect(voiceTranscriptLandedSignal.value.has('s1')).toBe(true);
+    expect(voiceTranscriptLandedSignal.value.get('s1')).toBe(2);
+    // The refresh that observed generation 2 consumes it.
+    consumeVoiceTranscriptLanded('s1', 2);
+    expect(voiceTranscriptLandedSignal.value.has('s1')).toBe(false);
   });
 
   it('cleans up stale landed markers even when the live queue is under the cap', () => {

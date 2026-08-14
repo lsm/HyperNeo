@@ -118,7 +118,7 @@ vi.mock('../../lib/connection-manager', () => ({
 }));
 
 const enqueueTranscript = vi.hoisted(() => vi.fn());
-const voiceTranscriptLandedSignal = vi.hoisted(() => ({ value: new Set() }));
+const voiceTranscriptLandedSignal = vi.hoisted(() => ({ value: new Map() }));
 const consumeVoiceTranscriptLanded = vi.hoisted(() => vi.fn());
 const isPermanentAppendRefusal = vi.hoisted(() => vi.fn(() => false));
 vi.mock('../../lib/voice/voice-transcript-outbox.ts', () => ({
