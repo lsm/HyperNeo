@@ -3566,6 +3566,20 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             error: `Task ${args.task_id} has a PR (${prUrl}); validation-only completion is for no-PR tasks. Use approve_task (if in review) or the normal PR merge path instead.`,
           });
         }
+        // Run-lifecycle guard: the tick loop's completion detection only runs
+        // when the run has node executions (`space-runtime.ts` early-returns on
+        // an empty list), so completing a run's task while zero executions
+        // exist would leave the run active forever — the same stranding shape
+        // the `archive_task` active-run guard rejects (task #849, G1). An
+        // execution-less run is degenerate (never initialized, or an import
+        // edge case): direct the caller to cancel it rather than strand it.
+        const executions = nodeExecutionRepo.listByWorkflowRun(task.workflowRunId);
+        if (executions.length === 0) {
+          return jsonResult({
+            success: false,
+            error: `Task ${args.task_id} belongs to a workflow run with no node executions (${task.workflowRunId}); completing it would strand the run. Cancel the run instead so its lifecycle is torn down.`,
+          });
+        }
       }
 
       try {

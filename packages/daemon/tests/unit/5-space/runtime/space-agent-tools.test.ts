@@ -5839,8 +5839,17 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
   test('completes a workflow-backed task whose run has no PR (real no-PR resolution)', async () => {
     // A workflow-backed task with no primary-link artifact: getApprovedPrUrlForRun
     // returns '' organically (no spyOn), so the no-PR guard is exercised for real.
+    // The run carries a node execution so it is not the degenerate execution-less
+    // shape the run-lifecycle guard rejects.
     await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
     const task = createWorkflowTask(5, { status: 'in_progress' });
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: task.workflowRunId!,
+      workflowNodeId: 'node-review',
+      agentName: 'Review',
+      agentId: ctx.agentId,
+      status: 'idle',
+    });
 
     const result = await makeHandlers(ctx).complete_validation_task({
       task_id: task.id,
@@ -5852,6 +5861,26 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     expect(parsed.task.status).toBe('done');
     expect(parsed.task.result).toBe('Reviewed Forge scope; no PR involved.');
     expect(ctx.taskRepo.getTask(task.id)?.status).toBe('done');
+  });
+
+  test('rejects a workflow-backed task whose run has no node executions (stranded-run guard)', async () => {
+    // Completing the task of an execution-less run would strand the run: the
+    // tick loop's completion detection early-returns when there are no node
+    // executions, so the run would stay active forever. Mirrors the archive_task
+    // active-run guard precedent (task #849, G1).
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const task = createWorkflowTask(5, { status: 'in_progress' });
+
+    const result = await makeHandlers(ctx).complete_validation_task({
+      task_id: task.id,
+      validation_outcome: 'validated',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('no node executions');
+    expect(parsed.error).toContain('Cancel the run instead');
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
   });
 
   test('rejects when space autonomy is below workflow completionAutonomyLevel', async () => {
@@ -5874,6 +5903,13 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
   test('allows completion when space autonomy meets workflow completionAutonomyLevel', async () => {
     await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
     const task = createWorkflowTask(5);
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: task.workflowRunId!,
+      workflowNodeId: 'node-review',
+      agentName: 'Review',
+      agentId: ctx.agentId,
+      status: 'idle',
+    });
 
     const result = await makeHandlers(ctx).complete_validation_task({
       task_id: task.id,
