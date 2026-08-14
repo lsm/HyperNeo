@@ -249,6 +249,19 @@ export class SpaceTaskManager {
       updates.approvalSource = options?.approvalSource ?? null;
       updates.approvalReason = options?.approvalReason ?? null;
       updates.approvedAt = Date.now();
+    } else if (
+      task.status === 'in_progress' &&
+      newStatus === 'done' &&
+      options?.approvalSource !== undefined
+    ) {
+      // Validation-only completion (`complete_validation_task`) stamps its
+      // agent-approval metadata atomically with the in_progress → done commit.
+      // Gated on an EXPLICIT approvalSource so every other caller of this
+      // transition (which passes no approval options) is unaffected — their
+      // approval fields stay untouched rather than being nulled or stamped.
+      updates.approvalSource = options.approvalSource;
+      updates.approvalReason = options.approvalReason ?? null;
+      updates.approvedAt = Date.now();
     }
 
     // Stamp approval metadata when transitioning into the `approved` status

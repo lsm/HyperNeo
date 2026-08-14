@@ -3465,17 +3465,18 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
      *     never surfaced to a caller below the threshold.
      *   - Task must be `review` or `in_progress`. `in_progress` is intentionally
      *     eligible (Forge review tasks complete while still in_progress); the
-     *     autonomy gate is the control.
+     *     autonomy gate is the control. A task in `review` with a pending GATE
+     *     checkpoint is rejected — it awaits human gate approval and completing
+     *     it would bypass the gate.
      *   - No-PR: a workflow-backed task whose run has a primary link (PR) is
      *     PR-bound and must use the normal approve/merge path. A task with no
      *     workflow run (standalone — the common Forge self_nag/review shape) is
      *     no-PR by definition and eligible.
      *
      * The validation outcome is captured as `task.result`; `approvalSource` is
-     * stamped `'agent'` on every path — for `review → done` `setTaskStatus`
-     * stamps it; for `in_progress → done` this handler stamps it via a follow-up
-     * update (setTaskStatus only stamps approval metadata on review→done /
-     * →approved / approved→done).
+     * stamped `'agent'` atomically with the done commit on every path
+     * (`setTaskStatus` stamps it on review→done natively, and on in_progress→done
+     * when an explicit approvalSource is supplied).
      */
     async complete_validation_task(args: {
       task_id: string;
@@ -3554,6 +3555,20 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         });
       }
 
+      // Gate-pending guard: a task in `review` with a `gate` checkpoint is
+      // paused for HUMAN gate approval (handleGatePendingApproval parks it
+      // there until the gate opens). Completing it here would clear the
+      // checkpoint and finalize the run, bypassing the gate's approval and
+      // writer rules entirely. The gate must be approved through its normal
+      // path (approve_gate / the UI gate controls); a `task_completion`
+      // checkpoint is fine — that task was submitted for completion review.
+      if (task.status === 'review' && task.pendingCheckpointType === 'gate') {
+        return jsonResult({
+          success: false,
+          error: `Task ${args.task_id} is paused at a human-approval gate (pendingCheckpointType='gate'); validation-only completion would bypass the gate. Use approve_gate (or the UI gate controls) to resolve the gate instead.`,
+        });
+      }
+
       // No-PR guard: a workflow-backed task whose run has a primary link (PR) is
       // PR-bound and must close through the normal approve/merge path. A task
       // with no workflow run (standalone) is no-PR by definition and eligible —
@@ -3583,7 +3598,12 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
 
       try {
-        let updated = await taskManager.setTaskStatus(args.task_id, 'done', {
+        // `approvalSource: 'agent'` is passed unconditionally: setTaskStatus
+        // stamps it atomically with the done commit on BOTH paths — review→done
+        // natively, and in_progress→done when an explicit approvalSource is
+        // supplied (validation-only completions only; other callers of that
+        // transition are unaffected).
+        const updated = await taskManager.setTaskStatus(args.task_id, 'done', {
           result: outcome,
           approvalSource: 'agent',
           approvalReason: args.reason,
@@ -3591,19 +3611,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
           },
         });
-
-        // setTaskStatus only stamps approvalSource/approvalReason/approvedAt on
-        // review→done / →approved / approved→done. For an in_progress→done
-        // validation completion, stamp them explicitly so the terminal task
-        // always records that it was agent-completed (audit parity with the
-        // review→done path that approve_task takes).
-        if (task.status === 'in_progress') {
-          updated = await taskManager.updateTask(args.task_id, {
-            approvalSource: 'agent',
-            approvalReason: args.reason ?? null,
-            approvedAt: Date.now(),
-          });
-        }
 
         // Best-effort goal terminal handling — must not block completion.
         try {

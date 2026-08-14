@@ -5827,13 +5827,36 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     expect(parsed.success).toBe(true);
     expect(parsed.task.status).toBe('done');
     expect(parsed.task.result).toBe('Diagnostic: no regression found in CI shard 4.');
-    // setTaskStatus does not stamp approval metadata on in_progress→done; the
-    // handler stamps it via a follow-up update so the terminal task records its
-    // agent-completion (audit parity with the review→done path).
+    // The approval metadata is stamped atomically with the in_progress→done
+    // commit (setTaskStatus honors an explicit approvalSource on that
+    // transition), so the terminal task records its agent-completion —
+    // audit parity with the review→done path.
     expect(parsed.task.approvalSource).toBe('agent');
     expect(ctx.taskRepo.getTask(taskId)?.approvalSource).toBe('agent');
     expect(ctx.taskRepo.getTask(taskId)?.approvedAt).not.toBeNull();
     expect(ctx.taskRepo.getTask(taskId)?.status).toBe('done');
+  });
+
+  test('rejects a task paused at a human-approval gate', async () => {
+    // handleGatePendingApproval parks a gate-paused canonical task in `review`
+    // with pendingCheckpointType='gate'. Validation-only completion must not
+    // clear the checkpoint and finalize the run — that bypasses the gate.
+    const taskId = await createTask('review');
+    ctx.taskRepo.updateTask(taskId, {
+      pendingCheckpointType: 'gate',
+      pendingCompletionReason: 'awaiting human gate approval',
+    });
+
+    const result = await makeHandlers(ctx).complete_validation_task({
+      task_id: taskId,
+      validation_outcome: 'validated',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain("pendingCheckpointType='gate'");
+    expect(ctx.taskRepo.getTask(taskId)?.status).toBe('review');
+    expect(ctx.taskRepo.getTask(taskId)?.pendingCheckpointType).toBe('gate');
   });
 
   test('completes a workflow-backed task whose run has no PR (real no-PR resolution)', async () => {
