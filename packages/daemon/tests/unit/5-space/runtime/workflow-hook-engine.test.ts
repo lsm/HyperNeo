@@ -513,6 +513,60 @@ describe('WorkflowHookEngine.executeAction', () => {
     expect(delivered).toBe(0);
   });
 
+  test('a failed deliver-path state persist blocks instead of delivering', async () => {
+    // The hooks APPROVED this action (flow continue), but the consolidated
+    // state write (decision record + any recordState payload) lost its version
+    // race or hit a SQLite error. Delivering anyway would run the protected
+    // handler while its owned state side effect was lost — a later readState()
+    // could repeat a one-shot effect or decide from the pre-action snapshot.
+    // Fail closed before delivery.
+    class FailingUpdateRepo extends WorkflowHookStateRepository {
+      updateWithRetry(): null {
+        return null;
+      }
+    }
+    const PASS_HOOK = scriptHook('deliver_persist_hook', '{"flow":"continue"}');
+    const workflow = makeWorkflow({
+      customHooks: [PASS_HOOK],
+      hookBindings: [
+        {
+          hookId: 'deliver_persist_hook',
+          sourceNode: 'Coding',
+          method: 'mark_complete',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: new NodeExecutionRepository(db),
+      artifactRepo,
+      hookStateRepo: new FailingUpdateRepo(db),
+      workspacePath: process.cwd(),
+    });
+    let delivered = 0;
+    const wrapped = wrapHandlerWithHooks(
+      'mark_complete',
+      async () => {
+        delivered += 1;
+        return { content: [{ type: 'text', text: 'ok' }] };
+      },
+      engine,
+      {},
+      META
+    );
+    const result = await wrapped({ goalUpdate: { summary: 's' } });
+    const parsed = JSON.parse((result.content?.[0] as { text: string }).text);
+    expect(parsed.success).toBe(false);
+    expect(parsed.hookStatus).toBe('blocked');
+    expect(parsed.error).toContain('could not be persisted before delivery');
+    // The protected handler never ran.
+    expect(delivered).toBe(0);
+  });
+
   test('the cooldown pre-check enforces the retry ceiling (agent-driven loop)', async () => {
     // Non-send_message methods have no engine timer: every attempt runs the
     // cooldown pre-check, so the ceiling must convert here — otherwise a

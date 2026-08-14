@@ -2368,13 +2368,39 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
     }
 
     // deliver — clear queued retries, dispatch follow-ups, call handler.
+    // Fail closed BEFORE the queue clear and the handler call: the patch
+    // carries the hook's recorded state (recordState) and the decision record
+    // (lastFlow/lastReason). Delivering with it unpersisted would report a
+    // successful action whose owned side effect was lost — a later readState()
+    // sees stale state and can repeat a one-shot effect or decide from the
+    // pre-action snapshot. Blocking here also leaves THIS action's queued
+    // replay record (if any) intact, so the engine timer re-evaluates the
+    // gate once the state store recovers.
+    let deliverPersistFailed = false;
     for (const [hookId, patch] of byHook) {
       patch.retryCount = 0;
       patch.nextRetryAt = null;
       patch.localState.__firstRetryAt = undefined; // fresh cycle on re-block
       if (!engine.persistStateUpdate(hookId, patch)) {
+        deliverPersistFailed = true;
         log.warn(`Failed to persist hook state for ${hookId} on deliver`);
       }
+    }
+    if (deliverPersistFailed) {
+      log.error('Failed to persist hook decision state before delivery; blocking.');
+      return hookResult(
+        {
+          success: false,
+          error:
+            'Hook state could not be persisted before delivery (state write failed); the ' +
+            'action is blocked — retry it. The hook decision and its recorded state must be ' +
+            'durable before the protected action runs.',
+          hookStatus: 'blocked',
+          hookId: outcome.userState.hookId,
+          hookReason: outcome.userState.reason,
+        },
+        true
+      );
     }
 
     // NOTE: no owner-wide clear here — queued actions are per-action-key now,
