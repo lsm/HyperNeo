@@ -828,6 +828,11 @@ export class AcpQueryRunner {
           this.ctx.queryAbortController = null;
         }
 
+        // Snapshot BEFORE resetProcessExitedPromise clears it: close() only
+        // initiates termination (SIGTERM, up to 5s before SIGKILL), so the
+        // deferred replay below must gate on the captured exit promise or
+        // the replacement turn can race the exiting child's workspace locks.
+        const processExitSnapshot = this.ctx.processExitedPromise ?? Promise.resolve();
         this.ctx.resetProcessExitedPromise();
         messageQueue.stop();
 
@@ -855,21 +860,19 @@ export class AcpQueryRunner {
           // 'deferred' while the ACP node was processing (e.g. an external
           // event in 'defer' mode) is never replayed — the automatic replay is
           // specific to the Claude SDK path. No-op when no deferred rows exist.
-          // Gated on normal completion: after a terminal error
-          // (handleRunError), replaying would promote deferred rows to
-          // enqueued and drive another turn that is likely to fail too.
-          if (
-            turnCompletedNormally &&
-            // Recheck at replay time: an interrupt may have started after the
-            // try-end snapshot — e.g. while this finally block awaited
-            // cleanup (proxyBridge.close()) — and publishing then would
-            // restart deferred work the (possibly teardown-bound) interrupt
-            // just stopped, bypassing skipDeferredReplay.
-            stateManager.getState().status !== 'interrupted' &&
-            session.config.queryMode !== 'manual'
-          ) {
-            this.ctx.internalEventBus.publishAsync('query.trigger', { sessionId: session.id });
-          }
+          // Gated on the captured process exit AND rechecked at fire time:
+          // after a terminal error (handleRunError) or an interrupt that
+          // started during cleanup awaits, replaying would restart deferred
+          // work that just stopped.
+          void processExitSnapshot.then(() => {
+            if (
+              turnCompletedNormally &&
+              stateManager.getState().status !== 'interrupted' &&
+              session.config.queryMode !== 'manual'
+            ) {
+              this.ctx.internalEventBus.publishAsync('query.trigger', { sessionId: session.id });
+            }
+          });
         }
 
         this.ctx.queryPromise = null;

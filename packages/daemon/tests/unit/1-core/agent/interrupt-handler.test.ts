@@ -379,9 +379,11 @@ describe('InterruptHandler', () => {
       handler = createHandler();
 
       await handler.handleInterrupt();
-      // The trigger is scheduled through the query-settled + process-exit
-      // gate, so it fires on the next tick even when both are already
-      // settled.
+      // The post-interrupt state is idle (setIdle just ran) — the fire-time
+      // recheck requires it. The trigger is scheduled through the
+      // query-settled + process-exit gate, so it fires on the next tick even
+      // when both are already settled.
+      getStateSpy.mockReturnValue({ status: 'idle' });
       await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(busPublishAsyncSpy).toHaveBeenCalledWith('query.trigger', {
@@ -449,10 +451,62 @@ describe('InterruptHandler', () => {
 
       settleOldQuery();
       await interrupted;
+      // Post-interrupt idle — required by the fire-time recheck.
+      getStateSpy.mockReturnValue({ status: 'idle' });
       await new Promise((resolve) => setTimeout(resolve, 20));
       expect(busPublishAsyncSpy).toHaveBeenCalledWith('query.trigger', {
         sessionId: 'test-session-id',
       });
+    });
+
+    it('lets a later teardown request suppress an in-flight interrupt replay', async () => {
+      // interruptBySessionId quiesce (skipDeferredReplay) arriving while a
+      // user interrupt is already in flight: the teardown invocation
+      // early-returns on the shared 'interrupted' state, so suppression must
+      // be recorded where the in-flight interrupt's scheduled replay can
+      // observe it at fire time.
+      let settleOldQuery!: () => void;
+      const queryPromise = new Promise<void>((resolve) => {
+        settleOldQuery = resolve;
+      });
+      let status = 'processing';
+      getStateSpy.mockImplementation(() => ({ status, phase: 'streaming' }));
+      setInterruptedSpy.mockImplementation(async () => {
+        status = 'interrupted';
+      });
+      handler = createHandler({ queryPromise });
+
+      const interrupted = handler.handleInterrupt(); // user interrupt, in flight
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      await handler.handleInterrupt({ skipDeferredReplay: true }); // teardown, early-returns
+
+      settleOldQuery();
+      await interrupted;
+      status = 'idle'; // interrupt resolved; no newer turn
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(busPublishAsyncSpy).not.toHaveBeenCalled();
+    });
+
+    it('skips the delayed replay when a newer turn started before the process exited', async () => {
+      // While the gate waits for the old subprocess to exit, the interrupt has
+      // already exposed idle — a newer turn can start. Publishing then would
+      // steer the old deferred rows into that active turn; replay is left to
+      // the newer turn's own completion.
+      let signalProcessExit!: () => void;
+      const processExitedPromise = new Promise<void>((resolve) => {
+        signalProcessExit = resolve;
+      });
+      let status = 'processing';
+      getStateSpy.mockImplementation(() => ({ status }));
+      handler = createHandler({ processExitedPromise });
+
+      await handler.handleInterrupt();
+      status = 'idle'; // post-interrupt idle; gate still pending on process exit
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      status = 'processing'; // a newer turn starts before the process exits
+      signalProcessExit();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(busPublishAsyncSpy).not.toHaveBeenCalled();
     });
 
     it('should delay query.trigger until the subprocess exits even when the query settled in time', async () => {
@@ -469,6 +523,7 @@ describe('InterruptHandler', () => {
       await handler.handleInterrupt();
       // The (absent) query settled instantly, but the subprocess has not
       // exited — no replay yet.
+      getStateSpy.mockReturnValue({ status: 'idle' });
       await new Promise((resolve) => setTimeout(resolve, 20));
       expect(busPublishAsyncSpy).not.toHaveBeenCalled();
 

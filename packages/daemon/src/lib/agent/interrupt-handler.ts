@@ -48,6 +48,12 @@ export class InterruptHandler {
   // Interrupt completion tracking
   private interruptPromise: Promise<void> | null = null;
   private interruptResolve: (() => void) | null = null;
+  // Replay suppression is shared across invocations: a teardown-bound
+  // interrupt (skipDeferredReplay) arriving while a user interrupt is
+  // already in flight early-returns on the shared 'interrupted' state, so
+  // the in-flight interrupt's scheduled replay must observe the later
+  // suppression at fire time.
+  private deferredReplaySuppressed = false;
 
   constructor(private ctx: InterruptHandlerContext) {}
 
@@ -125,8 +131,18 @@ export class InterruptHandler {
 
     // Edge case: already idle or interrupted
     if (currentState.status === 'idle' || currentState.status === 'interrupted') {
+      // A teardown request arriving while another interrupt is in flight must
+      // still suppress that interrupt's pending replay — only ever set here,
+      // never cleared, so a concurrent user invocation cannot un-suppress.
+      if (opts?.skipDeferredReplay) {
+        this.deferredReplaySuppressed = true;
+      }
       return;
     }
+    // A proceeding invocation owns the flag: reset to its own intent. A
+    // session reused across workflow activations must not inherit a stale
+    // suppression from a previous quiesce.
+    this.deferredReplaySuppressed = opts?.skipDeferredReplay === true;
 
     // Create interrupt completion promise
     const interruptCompletePromise = new Promise<void>((resolve) => {
@@ -224,9 +240,16 @@ export class InterruptHandler {
       if (!opts?.skipDeferredReplay) {
         const oldQuerySettled =
           this.ctx.queryPromise?.then(undefined, () => {}) ?? Promise.resolve();
-        void Promise.all([oldQuerySettled, processExitSnapshot]).then(() =>
-          this.publishDeferredQueueTrigger()
-        );
+        void Promise.all([oldQuerySettled, processExitSnapshot]).then(() => {
+          if (this.deferredReplaySuppressed) return;
+          // A newer turn may have started while we waited for the old query
+          // and subprocess to exit — the interrupt already exposed idle, so
+          // nothing gated a concurrent kickoff. Publishing now would steer
+          // the old deferred rows into that active turn; leave their replay
+          // to the newer turn's own completion.
+          if (this.ctx.stateManager.getState().status !== 'idle') return;
+          this.publishDeferredQueueTrigger();
+        });
       }
     } finally {
       // Always resolve the interrupt promise

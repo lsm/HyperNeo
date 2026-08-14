@@ -2366,6 +2366,13 @@ export class SpaceRuntime {
         const targetRun = this.config.workflowRunRepo.getRun(preparedTarget.workflowRunId);
         if (targetRun && this.pausedSpaceIds.has(targetRun.spaceId)) {
           this.queueHealthMetrics.recordPausedSpaceSkip();
+          // Persist the defer mode: onSpaceResumed requeues pending
+          // deliveries and reconstructs a null failureReason as 'immediate',
+          // which would steer the kickoff turn after resume.
+          store.markDeliveryFailed(payload.eventId, deliveryKey, {
+            terminal: false,
+            reason: 'deliveryMode:defer; space_paused',
+          });
           return;
         }
         const eventRecord = store.getById(payload.eventId);
