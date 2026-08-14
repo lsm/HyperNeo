@@ -62,22 +62,25 @@ export function SpaceRuntimeStatusControl() {
     'flex w-full items-center rounded-lg px-3 py-2 text-left text-sm text-gray-300 transition-colors hover:bg-white/[0.07] hover:text-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/55 disabled:cursor-not-allowed disabled:opacity-40';
 
   return (
-    <div ref={rootRef} class="relative">
+    <div ref={rootRef} class="relative flex items-center divide-x divide-white/10 text-sm">
+      {/* Status readout — display only (colored dot + label). Reads as status
+          metadata, not a button, so it sits quietly in the intro composition. */}
+      <span class={`flex items-center gap-2 pr-3 font-medium ${style.tone}`}>
+        <span class={`h-2 w-2 rounded-full ${style.dot}`} aria-hidden="true" />
+        {style.label}
+        {actionLoading && <span class="italic text-gray-400">…</span>}
+      </span>
+      {/* Rare controls live behind a kebab, set off by the hairline divider. */}
       <button
         ref={triggerRef}
         type="button"
         onClick={() => setIsOpen((open) => !open)}
         aria-haspopup="menu"
         aria-expanded={isOpen}
-        aria-label={`Space runtime: ${style.label}. Open runtime controls`}
-        class={`flex items-center gap-1.5 rounded-xl border border-white/15 bg-white/[0.07] px-2.5 py-1.5 text-xs font-medium backdrop-blur-xl transition hover:border-white/25 hover:bg-white/[0.1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/55 ${style.tone}`}
+        aria-label={`Open runtime controls (space ${style.label.toLowerCase()})`}
+        class="px-3 py-1 text-lg leading-none text-gray-400 transition hover:text-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/55 focus-visible:rounded-md"
       >
-        <span class={`h-2 w-2 rounded-full ${style.dot}`} aria-hidden="true" />
-        <span>{style.label}</span>
-        {actionLoading && <span class="italic text-gray-400">…</span>}
-        <span aria-hidden="true" class="ml-0.5 text-gray-400">
-          ⋯
-        </span>
+        <span aria-hidden="true">⋯</span>
       </button>
       {isOpen && (
         <div
