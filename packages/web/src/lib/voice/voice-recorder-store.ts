@@ -331,16 +331,16 @@ class VoiceRecorderStore {
 
   /**
    * Composer-unmount hand-off: the recording OUTLIVES its composer. If this
-   * instance owned the recording, ownership is cleared but capture stays live
-   * (mic, cap timer, buffered chunks) so the composer that next mounts for the
-   * same session can adopt() it. If nobody returns, the 5-minute/byte cap
-   * eventually stops the mic and the audio stays recoverable.
+   * instance owned the recording, ONLY its ownership is cleared — capture
+   * stays live (in-flight permission/setup included: the generation and
+   * starting state are preserved so a pending start() completes adoptably),
+   * and the composer that next mounts for the same session can adopt() it.
+   * A composer that never owned the recording changes nothing. If nobody
+   * returns, the 5-minute/byte cap eventually stops the mic and the audio
+   * stays recoverable.
    */
-  readonly orphan = (): void => {
-    if (this.recordingOwnerId.value === null) return;
-    this.startGeneration += 1;
-    this.starting = false;
-    this.isStarting.value = false;
+  readonly orphan = (ownerId: string): void => {
+    if (this.recordingOwnerId.value !== ownerId) return;
     this.recordingOwnerId.value = null;
   };
 

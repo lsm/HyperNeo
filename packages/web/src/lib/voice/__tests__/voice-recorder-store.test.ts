@@ -177,7 +177,7 @@ describe('voiceRecorderStore', () => {
 
   it('orphan() keeps capture alive across a composer unmount, and adopt() restores ownership', async () => {
     await voiceRecorderStore.start('owner-a', 's1');
-    voiceRecorderStore.orphan();
+    voiceRecorderStore.orphan('owner-a');
 
     // Capture is STILL live — mic graph untouched, recorder busy.
     expect(voiceRecorderStore.isRecording.value).toBe(true);
@@ -195,8 +195,41 @@ describe('voiceRecorderStore', () => {
     expect(recording.audioBase64.length).toBeGreaterThan(0);
   });
 
+  it('orphan() is scoped to the unmounting owner — another owner is untouched', async () => {
+    await voiceRecorderStore.start('owner-a', 's1');
+    // A non-owning composer (e.g. an overlay for another session) unmounts.
+    voiceRecorderStore.orphan('owner-b');
+    expect(voiceRecorderStore.recordingOwnerId.value).toBe('owner-a');
+    expect(voiceRecorderStore.isRecording.value).toBe(true);
+    // The real owner's unmount does orphan it.
+    voiceRecorderStore.orphan('owner-a');
+    expect(voiceRecorderStore.recordingOwnerId.value).toBeNull();
+    expect(voiceRecorderStore.isRecording.value).toBe(true);
+  });
+
+  it('orphan() preserves an in-flight start so it completes adoptably', async () => {
+    let resolvePermission!: (value: unknown) => void;
+    navigator.mediaDevices.getUserMedia.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolvePermission = resolve;
+      })
+    );
+    const startPromise = voiceRecorderStore.start('owner-a', 's1');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // The owner unmounts while the permission prompt is pending.
+    voiceRecorderStore.orphan('owner-a');
+    resolvePermission(fakeStream);
+    await startPromise;
+    // The start completed — the recording is live and adoptable.
+    expect(voiceRecorderStore.isRecording.value).toBe(true);
+    expect(voiceRecorderStore.recordingOwnerId.value).toBeNull();
+    expect(voiceRecorderStore.adopt('owner-b', 's1')).toBe(true);
+    const recording = await voiceRecorderStore.stop();
+    expect(recording.audioBase64.length).toBeGreaterThan(0);
+  });
+
   it('orphan() is a no-op when this store has no live recording', async () => {
-    voiceRecorderStore.orphan();
+    voiceRecorderStore.orphan('owner-a');
     expect(voiceRecorderStore.recordingOwnerId.value).toBeNull();
   });
 
