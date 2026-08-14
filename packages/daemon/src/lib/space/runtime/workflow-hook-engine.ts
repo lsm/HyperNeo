@@ -53,6 +53,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { ChannelResolver } from './channel-resolver';
+import { LEGACY_GUARD_HOOK_ID } from '../hook-reserved-ids';
 import { isBuiltInHook, resolveHook } from './hook-registry';
 import {
   GH_INFRA_ERROR_PREFIX,
@@ -1388,7 +1389,9 @@ export class WorkflowHookEngine {
           if (t.startsWith('#')) {
             sequentialBlocked = true;
             for (const resolved of resolvedTargets) {
-              if (nodeNames.has(resolved)) postFailureNodes.add(resolved);
+              if (nodeNames.has(resolved) && !arrayResolvedNodes.has(resolved)) {
+                postFailureNodes.add(resolved);
+              }
             }
             continue;
           }
@@ -1397,10 +1400,14 @@ export class WorkflowHookEngine {
             const authorizedReply = this.config.replyRoutingLookup?.(meta.agentName);
             if (authorizedReply !== sessionId) {
               // The router hard-returns when the session is not the recorded
-              // reply target — later entries never deliver.
+              // reply target — later entries never deliver. An
+              // earlier-delivered node keeps its gate (mirroring the
+              // entry-level failure guard structurally).
               sequentialBlocked = true;
               for (const resolved of resolvedTargets) {
-                if (nodeNames.has(resolved)) postFailureNodes.add(resolved);
+                if (nodeNames.has(resolved) && !arrayResolvedNodes.has(resolved)) {
+                  postFailureNodes.add(resolved);
+                }
               }
             }
             continue;
@@ -1516,9 +1523,12 @@ export class WorkflowHookEngine {
             sequentialBlocked = true;
           }
         }
-        // A node with an EARLIER DELIVERED occurrence (arrayResolvedNodes)
-        // keeps its gate even under wholeSendRefused from a LATER failing
-        // entry — the router's dedup means it delivered before the refusal.
+        // Post-failure nodes (never delivered) are suppressed. Under
+        // wholeSendRefused the MCP TRANSLATION rejected the send before the
+        // router ran, so NOTHING delivered — even nodes collected before the
+        // refusing entry are suppressed (the delivered-occurrence protection
+        // applies only to sequential router failures, not to pre-router
+        // refusals).
         for (const resolved of postFailureNodes) {
           nonRoutableResolvedNodes.add(resolved);
         }
@@ -2446,10 +2456,6 @@ export function createLegacyHookGuardEngine(
     }
   })(config);
 }
-
-/** Synthetic hook id attributing legacy-cutover guard stops. */
-import { LEGACY_GUARD_HOOK_ID } from '../hook-reserved-ids';
-export { LEGACY_GUARD_HOOK_ID };
 
 /**
  * Wrap an MCP tool handler with the workflow hook engine. Runs the hook chain

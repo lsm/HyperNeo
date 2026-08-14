@@ -746,6 +746,10 @@ describe('NodeConfigPanel', () => {
       expect(updatedStep.agents).toBeUndefined();
       expect(updatedStep.agentId).toBe('agent-2');
       expect(updatedStep.channels).toBeUndefined();
+      // The survivor's slot name is remembered so hook-binding callers
+      // referencing it survive the collapse (the editor's caller filter
+      // treats `agents: undefined` as every slot removed).
+      expect(updatedStep.singleAgentRole).toBe('coder');
     });
 
     it('preserves replaceAgentPrompt in shorthand when removing down to a single agent', () => {
@@ -763,6 +767,9 @@ describe('NodeConfigPanel', () => {
       const updatedStep = onUpdate.mock.calls[0][0];
       expect(updatedStep.agents).toBeUndefined();
       expect(updatedStep.replaceAgentPrompt).toBe(true);
+      // The surviving planner slot's name is remembered for serialization
+      // and hook-binding caller remap.
+      expect(updatedStep.singleAgentRole).toBe('planner');
     });
 
     it('removing one of three agents keeps multi-agent mode', () => {

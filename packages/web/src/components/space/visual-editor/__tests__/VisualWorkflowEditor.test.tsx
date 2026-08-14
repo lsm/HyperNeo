@@ -860,6 +860,52 @@ describe('VisualWorkflowEditor', () => {
       expect(params.hookBindings ?? []).toHaveLength(0);
     });
 
+    it('collapsing to the authorized survivor keeps the caller, not widens or drops it', async () => {
+      // Node has slots [planner, scribe]; the caller authorizes only
+      // 'planner'. Removing the scribe slot collapses the node to a single
+      // agent — the collapse remembers 'planner' as the survivor slot
+      // (singleAgentRole), so the caller must SURVIVE the save with its
+      // agentSlots intact (neither dropped nor widened to whole-node).
+      const workflow = makeHookedWorkflow();
+      workflow.nodes = [
+        {
+          id: STEP_1_ID,
+          name: 'Plan',
+          agents: [
+            { agentId: 'agent-1', name: 'planner' },
+            { agentId: 'agent-3', name: 'scribe' },
+          ],
+        },
+        workflow.nodes[1],
+      ];
+      workflow.hookBindings = [
+        {
+          hookId: 'pr_ready',
+          sourceNode: 'Plan',
+          targetNode: 'Code',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Plan', agentSlots: ['planner'] }],
+        },
+      ];
+      const { getByTestId, getAllByTestId } = render(
+        <VisualWorkflowEditor {...makeProps({ workflow })} />
+      );
+      fireEvent.click(getAllByTestId(/^workflow-node-/)[0]);
+      // Remove the second agent (the scribe) — the node collapses to planner.
+      fireEvent.click(getAllByTestId('remove-agent-button')[1]);
+      await act(async () => {
+        fireEvent.click(getByTestId('save-button'));
+      });
+      await waitFor(() => expect(mockUpdateWorkflow).toHaveBeenCalledOnce());
+
+      const binding = mockUpdateWorkflow.mock.calls[0][1].hookBindings?.[0];
+      expect(binding).toBeDefined();
+      expect(binding?.authorizedCallers?.[0]?.sourceNode).toBe('Plan');
+      expect(binding?.authorizedCallers?.[0]?.agentSlots).toEqual(['planner']);
+    });
+
     it('a slot rename remaps authorizedCallers agentSlots', async () => {
       // Two agents on the node so the multi-agent list (with editable slot
       // names) renders instead of the single-slot view.

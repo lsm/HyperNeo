@@ -298,11 +298,15 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
     const next = nodeAgents.filter((a) => a.name !== role);
     if (next.length === 0) {
       // Switch back to single-agent mode: restore agentId from the removed agent and
-      // clear channels (orphaned channels on a single-agent node are semantically invalid)
+      // clear channels (orphaned channels on a single-agent node are semantically invalid).
+      // Remember the survivor's slot name (mirrors NodeConfigPanel's collapse) so
+      // hook-binding callers referencing it survive the collapse.
+      const survivor = next[0] ?? removed;
       onUpdate({
         ...node,
         agents: undefined,
-        agentId: removed?.agentId ?? '',
+        singleAgentRole: survivor?.name,
+        agentId: survivor?.agentId ?? '',
         channels: undefined,
       });
     } else {
@@ -336,6 +340,9 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
               onUpdate({
                 ...node,
                 agents: undefined,
+                // Remember the survivor's slot name (mirrors the collapse
+                // paths) so hook-binding callers referencing it survive.
+                singleAgentRole: nodeAgents[0]?.name,
                 agentId: nodeAgents[0]?.agentId ?? '',
                 channels: undefined,
               })

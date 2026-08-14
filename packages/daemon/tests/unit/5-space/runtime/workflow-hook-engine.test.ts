@@ -792,9 +792,13 @@ describe('WorkflowHookEngine.executeAction', () => {
 
     // 4. Per-node scoping: a role resolving to TWO nodes where only one has
     // an authorized worker — the unauthorized node's gate is suppressed
-    // individually, the authorized node's runs.
+    // individually, the authorized node's runs. The two nodes get DIFFERENT
+    // hook ids and the log length is pinned at 1 so the suppression of
+    // Other's gate is load-bearing: if per-node scoping regressed to "a
+    // shared slot name authorizes every node," Other's gate would also run
+    // and the log would hold two entries.
     const multiWorkflow = makeWorkflow({
-      customHooks: [STOP_HOOK],
+      customHooks: [STOP_HOOK, scriptHook('other_hook', '{"flow":"stop","reason":"other"}')],
       nodes: [
         { id: 'n-coding', name: 'Coding', agents: [{ agentId: 'a1', name: 'coder' }] },
         { id: 'n-review', name: 'Review', agents: [{ agentId: 'a2', name: 'reviewer' }] },
@@ -812,11 +816,11 @@ describe('WorkflowHookEngine.executeAction', () => {
           authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
         },
         {
-          hookId: 'role_hook',
+          hookId: 'other_hook',
           sourceNode: 'Coding',
           targetNode: 'Other',
           method: 'send_message',
-          order: 0,
+          order: 1,
           enabled: true,
           authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
         },
@@ -828,9 +832,11 @@ describe('WorkflowHookEngine.executeAction', () => {
       { target: '@role:reviewer', message: 'shared role' },
       META
     );
-    // Review (authorized) gates; the send stops there.
+    // Review (authorized) gates; the send stops there — and ONLY there.
     expect(multi.decision).toBe('stop');
     expect(multi.blockingHookId).toBe('role_hook');
+    expect(multi.executionLog.length).toBe(1);
+    expect(multi.executionLog[0]?.hookId).toBe('role_hook');
   });
 
   test('a duplicate failing worker does not suppress the earlier delivered node', async () => {

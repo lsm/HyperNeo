@@ -110,9 +110,9 @@ describe('ghGetCodexApproval — pagination loop', () => {
     if (result.ok) expect(result.data.approved).toBe(false);
     // PIN the early exit: the decisive verdict on page 1 must stop the scan —
     // fetching page 2 (plus a head recheck) means the exit did not fire.
-    // Page 1 + head recheck = 2 calls; the decisive early-exit path skips
-    // neither.
-    expect(calls).toBeLessThanOrEqual(2);
+    // The decisive CHANGES_REQUESTED returns at the not-approved early return
+    // (before the head recheck): page 1 = exactly 1 call.
+    expect(calls).toBe(1);
   });
 
   test('follows endCursor across pages', async () => {
@@ -145,6 +145,162 @@ describe('ghGetCodexApproval — pagination loop', () => {
     if (!result.ok) {
       expect(result.retryable).toBe(true);
       expect(result.error).toContain('fail closed');
+    }
+  });
+});
+
+// ─── boundary path ──────────────────────────────────────────────────────────
+//
+// The reviews loop can break at the HEAD-PUSH WINDOW (a page whose oldest
+// review predates the head push) instead of at history exhaustion or a
+// decisive verdict. That lands in the boundary block: the last page's
+// reactions are walked backward with the same window stop + cap fail-closed
+// as the normal path, and the merged document is re-evaluated. These tests
+// pin that block's three outcomes.
+
+describe('ghGetCodexApproval — boundary path', () => {
+  /** A page whose oldest review predates the head push: the loop breaks at
+   * the head-push window with no decisive verdict → boundary block. */
+  const breakPage = (reactions: unknown, reactionPageInfo: unknown) => ({
+    data: {
+      repository: {
+        pullRequest: {
+          reviews: {
+            // APPROVED but on a STALE commit (not head-bound) and dated
+            // before the head push — not decisive, and the boundary break
+            // fires on the pre-push date.
+            nodes: [codexReview('APPROVED', '2026-08-11T10:00:00Z', 'b'.repeat(40))],
+            pageInfo: { hasPreviousPage: true, startCursor: 'Y3Vyc29yXzA' },
+          },
+          reactions: { nodes: reactions, pageInfo: reactionPageInfo },
+          commits: {
+            nodes: [{ commit: { oid: HEAD, pushedDate: '2026-08-12T00:00:00Z' } }],
+          },
+        },
+      },
+    },
+  });
+
+  test('a not-approved boundary result returns settled (no false head-changed retry)', async () => {
+    // The not-approved fall-through carries no evaluatedHeadOid — the early
+    // return before the head recheck is what keeps every settled negative
+    // from being misread as "PR head changed" and retried forever.
+    setGraphqlRunnerForTests(pagedRunner([breakPage([], { hasPreviousPage: false })]));
+    const result = await ghGetCodexApproval(CTX, PR_LINK);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.approved).toBe(false);
+  });
+
+  test('walks boundary reactions backward and approves on a fresh codex +1', async () => {
+    // The break page's reaction tail holds only a non-codex fresh +1 with
+    // more history behind it; page 2 of the reaction walk carries the fresh
+    // codex +1; the post-approval head recheck confirms the head is unmoved.
+    setGraphqlRunnerForTests(
+      pagedRunner([
+        breakPage([{ createdAt: '2026-08-13T12:00:00Z', user: { login: 'someone' } }], {
+          hasPreviousPage: true,
+          startCursor: 'Y3Vyc29yXzE',
+        }),
+        {
+          data: {
+            repository: {
+              pullRequest: {
+                reactions: {
+                  nodes: [
+                    {
+                      createdAt: '2026-08-13T11:00:00Z',
+                      user: { login: 'chatgpt-codex-connector[bot]' },
+                    },
+                  ],
+                  pageInfo: { hasPreviousPage: false },
+                },
+                commits: {
+                  nodes: [{ commit: { oid: HEAD, pushedDate: '2026-08-12T00:00:00Z' } }],
+                },
+              },
+            },
+          },
+        },
+        {
+          data: {
+            repository: {
+              pullRequest: {
+                commits: { nodes: [{ commit: { oid: HEAD } }] },
+              },
+            },
+          },
+        },
+      ])
+    );
+    const result = await ghGetCodexApproval(CTX, PR_LINK);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.approved).toBe(true);
+  });
+
+  test('a boundary approval against a moved head fails closed as retryable', async () => {
+    setGraphqlRunnerForTests(
+      pagedRunner([
+        breakPage(
+          [
+            {
+              createdAt: '2026-08-13T12:00:00Z',
+              user: { login: 'chatgpt-codex-connector[bot]' },
+            },
+          ],
+          { hasPreviousPage: false }
+        ),
+        {
+          data: {
+            repository: {
+              pullRequest: {
+                commits: { nodes: [{ commit: { oid: 'c'.repeat(40) } }] },
+              },
+            },
+          },
+        },
+      ])
+    );
+    const result = await ghGetCodexApproval(CTX, PR_LINK);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.retryable).toBe(true);
+      expect(result.error).toContain('PR head changed');
+    }
+  });
+
+  test('boundary reaction-walk cap exhaustion fails closed', async () => {
+    // Every walk page stays newer than the head push and claims more
+    // history: the walk hits MAX_CODEX_REVIEW_PAGES and must fail closed
+    // with the same cap error as the normal path — a partial window is an
+    // unprovable scan, not a settled negative.
+    setGraphqlRunnerForTests(
+      pagedRunner([
+        breakPage([{ createdAt: '2026-08-13T12:00:00Z', user: { login: 'someone' } }], {
+          hasPreviousPage: true,
+          startCursor: 'Y3Vyc29yXzE',
+        }),
+        {
+          data: {
+            repository: {
+              pullRequest: {
+                reactions: {
+                  nodes: [{ createdAt: '2026-08-13T11:00:00Z', user: { login: 'someone' } }],
+                  pageInfo: { hasPreviousPage: true, startCursor: 'Y3Vyc29yXzI' },
+                },
+                commits: {
+                  nodes: [{ commit: { oid: HEAD, pushedDate: '2026-08-12T00:00:00Z' } }],
+                },
+              },
+            },
+          },
+        },
+      ])
+    );
+    const result = await ghGetCodexApproval(CTX, PR_LINK);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.retryable).toBe(true);
+      expect(result.error).toContain('fresh reactions');
     }
   });
 });

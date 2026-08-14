@@ -1372,9 +1372,17 @@ export async function ghGetCodexApproval(
     ? [...boundaryReactionTail]
     : [];
   if (boundaryReactions.length > 0) {
+    // FULL parity with the normal-path walk: the same head-push window stop
+    // (a reaction older than the head push cannot qualify — stop instead of
+    // paging stale history) and the same cap fail-closed (a partial window is
+    // an unprovable scan, not a settled negative).
     let boundaryPageInfo = asRecord(asRecord(boundaryPrNode?.reactions)?.pageInfo);
+    let boundaryReactionsComplete = false;
     for (let page = 0; page < MAX_CODEX_REVIEW_PAGES; page++) {
-      if (boundaryPageInfo?.hasPreviousPage !== true) break;
+      if (boundaryPageInfo?.hasPreviousPage !== true) {
+        boundaryReactionsComplete = true;
+        break;
+      }
       const bcc = boundaryPageInfo.startCursor;
       if (typeof bcc !== 'string' || !CURSOR_RE.test(bcc)) break;
       const bRemaining = remainingBudget();
@@ -1402,8 +1410,38 @@ export async function ghGetCodexApproval(
           error: 'malformed reactions connection (missing nodes/hasPreviousPage); failing closed',
         };
       }
-      boundaryReactions.unshift(...(bConn.nodes as unknown[]));
+      const bNodes = bConn.nodes as unknown[];
+      boundaryReactions.unshift(...bNodes);
       boundaryPageInfo = bPageInfoRec;
+      // Head-push window stop: the oldest entry on this page predates the
+      // head push — older reactions cannot qualify.
+      const bOldest = bNodes.length > 0 ? asRecord(bNodes[0])?.createdAt : undefined;
+      const bCommitNodes = asRecord(bNode?.commits)?.nodes;
+      const bPushed = Array.isArray(bCommitNodes)
+        ? asRecord(asRecord(bCommitNodes[bCommitNodes.length - 1])?.commit)?.pushedDate
+        : undefined;
+      const bOldestMs = typeof bOldest === 'string' ? Date.parse(bOldest) : NaN;
+      const bPushedMs = typeof bPushed === 'string' ? Date.parse(bPushed) : NaN;
+      if (!Number.isFinite(bOldestMs) || !Number.isFinite(bPushedMs)) {
+        return {
+          ok: false,
+          retryable: true,
+          error: 'malformed reaction timestamp boundary; failing closed',
+        };
+      }
+      if (bOldestMs <= bPushedMs) {
+        boundaryReactionsComplete = true;
+        break;
+      }
+    }
+    if (!boundaryReactionsComplete) {
+      return {
+        ok: false,
+        retryable: true,
+        error:
+          `PR has more than ${MAX_CODEX_REVIEW_PAGES * CODEX_REVIEWS_PAGE_SIZE} fresh reactions; ` +
+          'unable to scan the full reaction window (fail closed).',
+      };
     }
   }
   const boundaryApproval = extractCodexApproval(
@@ -1423,6 +1461,11 @@ export async function ghGetCodexApproval(
   if (boundaryApproval.failClosedReason) {
     return { ok: false, retryable: true, error: boundaryApproval.failClosedReason };
   }
+  // Mirror the normal path (github.ts ~:1309): a NOT-APPROVED result returns
+  // immediately — the not-approved fall-through carries no evaluatedHeadOid,
+  // so routing it into the head recheck would misread every settled negative
+  // as "head changed" and retry forever.
+  if (!boundaryApproval.approved) return { ok: true, data: boundaryApproval };
   // Route an APPROVED boundary result through the same deadline-guarded head
   // recheck as the normal path: a commit pushed after the last pagination
   // response must not deliver on the previous head.
