@@ -5573,6 +5573,10 @@ export class TaskAgentManager {
                 execution.agentName === actionMeta.agentName &&
                 execution.workflowNodeId === actionMeta.nodeId
             )?.status,
+        replyRoutingLookup: (fromAgentName) => {
+          const registry = this.config.replyRoutingRegistry;
+          return registry ? registry.get(taskId, fromAgentName) : null;
+        },
         notifySourceSession: async (sessionId, message) => {
           // Hook-failure notice — a synthetic inject, but NOT a node→node
           // handoff, so it must not trigger a resetContextPerTurn clear.

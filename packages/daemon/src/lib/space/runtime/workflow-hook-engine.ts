@@ -54,7 +54,11 @@ import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { ChannelResolver } from './channel-resolver';
 import { isBuiltInHook, resolveHook } from './hook-registry';
-import { GH_INFRA_ERROR_PREFIX, VALIDATED_PR_ARTIFACT_KEY } from '@hyperneo/extensions-hooks';
+import {
+  GH_INFRA_ERROR_PREFIX,
+  samePrLink,
+  VALIDATED_PR_ARTIFACT_KEY,
+} from '@hyperneo/extensions-hooks';
 import { collectWithMaxBuffer, MAX_BUFFER_BYTES, parseJsonStdout } from './script-utils';
 
 // ---------------------------------------------------------------------------
@@ -113,6 +117,11 @@ export interface WorkflowHookEngineConfig {
   getWorkflowRunStatus?: (runId: string) => WorkflowRunStatus | undefined;
   getTaskStatus?: (taskId: string) => string | undefined;
   getSourceNodeExecutionStatus?: (meta: HookActionMeta) => string | undefined;
+  /** Resolves the authorized reply-session id for a sending agent (mirrors
+   * the router's replyRoutingLookup) — used to authorize '@session:' array
+   * entries, which the router hard-returns when they are not the recorded
+   * reply target. */
+  replyRoutingLookup?: (fromAgentName: string) => string | null | undefined;
   notifySourceSession?: (sessionId: string, message: string) => Promise<void>;
   onHookStateUpdated?: (
     hookId: string,
@@ -469,6 +478,14 @@ export class WorkflowHookEngine {
   ): Promise<HookActionOutcome> {
     const bindings = this.resolveMatchingBindings(methodName, params, meta);
 
+    // Overridden approvals whose consumption is DEFERRED until the chain
+    // delivers: consuming an override the moment its hook passes forces the
+    // operator to re-approve the SAME violation repeatedly when a LATER hook
+    // on the route also stops (approve A → B stops → approve B → A stops
+    // again...). An overridden approval stays armed until a chain actually
+    // delivers, then all deferred consumptions are persisted at once.
+    const deferredApprovalConsumes = new Set<string>();
+
     if (bindings.length === 0) {
       return {
         decision: 'deliver',
@@ -561,25 +578,17 @@ export class WorkflowHookEngine {
           (firstRetryAt !== undefined && elapsed >= MAX_RETRY_ELAPSED_MS)
         ) {
           if (hookState?.localState.humanApproved === true) {
-            // Operator approved the terminal ceiling stop: consume and let the
-            // hook run (the approval must not wait out the remaining backoff).
-            const consumed = this.persistStateUpdate(hookId, {
-              localState: {
-                humanApproved: undefined,
-                humanApprovedAt: undefined,
-                humanRejectionReason: undefined,
-              },
+            // Operator approved the terminal ceiling stop: let the hook run
+            // (the approval must not wait out the remaining backoff). The
+            // one-shot consumption is DEFERRED until the chain delivers.
+            deferredApprovalConsumes.add(hookId);
+            executionLog.push({
+              hookId,
+              flow: 'continue',
+              reason: 'Human override: retry-ceiling stop overridden by approval',
+              timestamp: Date.now(),
             });
-            if (consumed) {
-              executionLog.push({
-                hookId,
-                flow: 'continue',
-                reason: 'Human override: retry-ceiling stop overridden by approval',
-                timestamp: Date.now(),
-              });
-              continue;
-            }
-            // Consume-write failed: fall through to the terminal stop.
+            continue;
           }
           terminal = {
             kind: 'stop',
@@ -719,35 +728,10 @@ export class WorkflowHookEngine {
         if (approvalPending) {
           // Human override: the hook RAN (side effects — e.g. pr_ready's
           // identity stamp — landed), and its stop DECISION is overridden for
-          // this one action. Consume the one-shot approval first (undefined
-          // values drop under JSON serialization); if the consume-write loses
-          // a version race, fail closed and let the operator re-approve.
-          const consumed = this.persistStateUpdate(hookId, {
-            localState: {
-              humanApproved: undefined,
-              humanApprovedAt: undefined,
-              humanRejectionReason: undefined,
-            },
-          });
-          if (!consumed) {
-            log.warn(
-              `Failed to consume human approval for hook "${hookId}" (state write conflict); blocking.`
-            );
-            terminal = {
-              kind: 'stop',
-              hookId,
-              reason:
-                'Human approval could not be recorded (state conflict). The hook still applies — ' +
-                'approve it again and retry.',
-            };
-            executionLog.push({
-              hookId,
-              flow: 'stop',
-              reason: terminal.reason,
-              timestamp: Date.now(),
-            });
-            break;
-          }
+          // this one action. The one-shot consumption is DEFERRED until the
+          // chain delivers (see deferredApprovalConsumes): a later hook's
+          // stop must not force the operator to re-approve this one.
+          deferredApprovalConsumes.add(hookId);
           executionLog[executionLog.length - 1] = {
             hookId,
             flow: 'continue',
@@ -776,28 +760,19 @@ export class WorkflowHookEngine {
           (firstRetryAt !== undefined && Date.now() - firstRetryAt >= MAX_RETRY_ELAPSED_MS)
         ) {
           if (approvalPending) {
-            // An operator approved the ceiling stop: consume the one-shot and
-            // let this action through (the hook retried to its ceiling; the
-            // human is the recovery path). Without this, every displayed
-            // approval would convert back to the same terminal stop.
-            const consumed = this.persistStateUpdate(hookId, {
-              localState: {
-                humanApproved: undefined,
-                humanApprovedAt: undefined,
-                humanRejectionReason: undefined,
-              },
-            });
-            if (consumed) {
-              executionLog[executionLog.length - 1] = {
-                hookId,
-                flow: 'continue',
-                reason: 'Human override: retry-ceiling stop overridden by approval',
-                timestamp: Date.now(),
-              };
-              continue;
-            }
-            // Consume-write failed: fall through to the terminal stop (the
-            // approval stays pending for the next attempt).
+            // An operator approved the ceiling stop: let this action through
+            // (the hook retried to its ceiling; the human is the recovery
+            // path). Without this, every displayed approval would convert
+            // back to the same terminal stop. The one-shot consumption is
+            // DEFERRED until the chain delivers.
+            deferredApprovalConsumes.add(hookId);
+            executionLog[executionLog.length - 1] = {
+              hookId,
+              flow: 'continue',
+              reason: 'Human override: retry-ceiling stop overridden by approval',
+              timestamp: Date.now(),
+            };
+            continue;
           }
           const elapsedCapped =
             firstRetryAt !== undefined && Date.now() - firstRetryAt >= MAX_RETRY_ELAPSED_MS;
@@ -966,6 +941,46 @@ export class WorkflowHookEngine {
       };
     }
 
+    // The chain can DELIVER: persist the deferred approval consumptions now
+    // (an overridden approval is one-shot per delivery, not per override). A
+    // failed consume-write blocks the delivery — otherwise the approval would
+    // stay armed and let a later stop bypass (a standing bypass).
+    for (const hookId of deferredApprovalConsumes) {
+      const consumed = this.persistStateUpdate(hookId, {
+        localState: {
+          humanApproved: undefined,
+          humanApprovedAt: undefined,
+          humanRejectionReason: undefined,
+        },
+      });
+      if (!consumed) {
+        log.warn(
+          `Failed to consume human approval for hook "${hookId}" at delivery (state write conflict); blocking.`
+        );
+        executionLog.push({
+          hookId,
+          flow: 'stop',
+          reason:
+            'Human approval could not be recorded (state conflict). The hook still applies — ' +
+            'approve it again and retry.',
+          timestamp: Date.now(),
+        });
+        return {
+          decision: 'stop',
+          finalParams: currentParams,
+          followUpRequests: [],
+          stateUpdates,
+          executionLog,
+          userState: {
+            status: 'blocked',
+            hookId,
+            reason: 'Human approval could not be recorded (state conflict); the action is blocked.',
+          },
+          blockingHookId: hookId,
+        };
+      }
+    }
+
     return {
       decision: 'deliver',
       finalParams: currentParams,
@@ -1010,7 +1025,11 @@ export class WorkflowHookEngine {
           typeof artifact.data.link === 'string' ? (artifact.data.link as string) : undefined;
         // Idempotent re-stamp of the SAME identity is a no-op success; a
         // CONFLICTING identity is rejected so the caller blocks delivery.
-        return existingLink === incomingLink;
+        // Compare by NORMALIZED PR identity (same as the hook's swap check):
+        // an equivalent spelling (/files suffix, trailing slash, casing) is
+        // the same PR, not a conflict.
+        if (existingLink === undefined || incomingLink === undefined) return false;
+        return samePrLink(incomingLink, existingLink);
       }
       this.config.artifactRepo.upsert({
         id: generateUUID(),
@@ -1177,7 +1196,10 @@ export class WorkflowHookEngine {
               !target.startsWith('#') &&
               target.trim() !== '*' &&
               (resolver.canSend(fromNode, target) ||
-                nodeSlotNames.some((sl) => resolver.canSend(fromNode, sl)));
+                // First DECLARED slot only — the router aborts at the first
+                // unauthorized worker in expansion order, so a later slot's
+                // channel does not reach the node.
+                (nodeSlotNames.length > 0 && resolver.canSend(fromNode, nodeSlotNames[0])));
             if (
               nodeNames.has(resolved) &&
               !isBuiltInInterLevelTarget(target) &&
@@ -1271,8 +1293,21 @@ export class WorkflowHookEngine {
             }
             continue;
           }
-          // A generic non-worker address (@handle/@role/@session/@coordinator)
-          // is delivered separately per entry and does not abort the loop —
+          if (t.startsWith('@session:')) {
+            const sessionId = t.slice('@session:'.length);
+            const authorizedReply = this.config.replyRoutingLookup?.(meta.agentName);
+            if (authorizedReply !== sessionId) {
+              // The router hard-returns when the session is not the recorded
+              // reply target — later entries never deliver.
+              sequentialBlocked = true;
+              for (const resolved of resolvedTargets) {
+                if (nodeNames.has(resolved)) postFailureNodes.add(resolved);
+              }
+            }
+            continue;
+          }
+          // A generic non-worker address (@handle/@role/@coordinator) is
+          // delivered separately per entry and does not abort the loop —
           // no authorization, no block.
           if (isAddress && !isWorker) continue;
           // Authorization (mirrors the router's worker check):
@@ -1284,21 +1319,22 @@ export class WorkflowHookEngine {
           // resolved node (or the entry string itself as a slot) satisfies
           // canSend. This mirrors the string branch's bareSlotOk for the
           // array path (round-53 fixed the string branch only).
-          const entrySlots = isWorker
-            ? workerAgentOf(t) !== undefined
-              ? [workerAgentOf(t) as string]
-              : []
-            : [
-                t,
-                ...resolvedTargets.flatMap((r) =>
-                  nodeNames.has(r) ? (nodeSlots.get(r) ?? []) : []
-                ),
-              ];
-          const authorized = resolvedTargets.some(
-            (r) =>
-              nodeNames.has(r) &&
-              (isRoutableTarget(r) || entrySlots.some((sl) => resolver.canSend(fromNode, sl)))
-          );
+          // Worker expansion order matters for plain NODE entries: the adapter
+          // expands the node to one @worker per agent in DECLARATION order and
+          // the router aborts at the FIRST unauthorized worker — the node
+          // receives the message only when its first declared slot (or the
+          // entry string itself, for a bare slot) is authorized.
+          const authorized = resolvedTargets.some((r) => {
+            if (!nodeNames.has(r)) return false;
+            if (isRoutableTarget(r)) return true;
+            if (isWorker) {
+              const agent = workerAgentOf(t);
+              return agent !== undefined && resolver.canSend(fromNode, agent);
+            }
+            if (resolver.canSend(fromNode, t)) return true;
+            const slots = nodeSlots.get(r) ?? [];
+            return slots.length > 0 && resolver.canSend(fromNode, slots[0]);
+          });
           const resolvable = resolvedTargets.some((r) => nodeNames.has(r));
           if (!isAddress && !resolvable) {
             // Plain entry matching no node/slot: the MCP translation rejects

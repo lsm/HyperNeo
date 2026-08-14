@@ -681,6 +681,92 @@ describe('WorkflowHookEngine.executeAction', () => {
     expect(mixed.blockingHookId).toBe('array_node_slot_hook');
   });
 
+  test('worker expansion order gates multi-agent nodes (first slot decides)', async () => {
+    // The adapter expands a node to one @worker per agent in DECLARATION
+    // order; the router aborts at the first unauthorized worker. A node
+    // ordered [qa, reviewer] with a channel only to 'reviewer' receives
+    // NOTHING (qa is rejected first) — its gate must not run. Reordered
+    // [reviewer, qa], the first worker delivers and the gate must run.
+    const STOP_HOOK = scriptHook('order_hook', '{"flow":"stop","reason":"blocked"}');
+    const build = (agents: Array<{ agentId: string; name: string }>) =>
+      makeWorkflow({
+        customHooks: [STOP_HOOK],
+        nodes: [
+          { id: 'n-coding', name: 'Coding', agents: [{ agentId: 'a1', name: 'coder' }] },
+          { id: 'n-review', name: 'Review', agents },
+        ],
+        channels: [{ from: 'Coding', to: 'reviewer', label: 'Coding → reviewer' }],
+        hookBindings: [
+          {
+            hookId: 'order_hook',
+            sourceNode: 'Coding',
+            targetNode: 'Review',
+            method: 'send_message',
+            order: 0,
+            enabled: true,
+            authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+          },
+        ],
+      });
+    // [qa, reviewer]: qa unauthorized FIRST → router aborts before delivery.
+    const rejected = makeEngine(
+      build([
+        { agentId: 'a2', name: 'qa' },
+        { agentId: 'a3', name: 'reviewer' },
+      ])
+    );
+    const rejectedOutcome = await rejected.executeAction(
+      'send_message',
+      { target: 'Review', message: 'ordered' },
+      META
+    );
+    expect(rejectedOutcome.decision).toBe('deliver');
+    expect(rejectedOutcome.executionLog.length).toBe(0);
+
+    // [reviewer, qa]: reviewer authorized FIRST → delivers, then aborts at qa.
+    const delivered = makeEngine(
+      build([
+        { agentId: 'a3', name: 'reviewer' },
+        { agentId: 'a2', name: 'qa' },
+      ])
+    );
+    const deliveredOutcome = await delivered.executeAction(
+      'send_message',
+      { target: 'Review', message: 'ordered' },
+      META
+    );
+    expect(deliveredOutcome.decision).toBe('stop');
+    expect(deliveredOutcome.blockingHookId).toBe('order_hook');
+  });
+
+  test('an unauthorized @session reply aborts the multicast (later entries suppressed)', async () => {
+    // The router hard-returns when a session target is not the recorded
+    // reply route for the sender — later entries never deliver.
+    const STOP_HOOK = scriptHook('session_hook', '{"flow":"stop","reason":"blocked"}');
+    const workflow = makeWorkflow({
+      customHooks: [STOP_HOOK],
+      hookBindings: [
+        {
+          hookId: 'session_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    const engine = makeEngine(workflow);
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: ['@session:not-the-reply', 'Review'], message: 'session then node' },
+      META
+    );
+    expect(outcome.decision).toBe('deliver');
+    expect(outcome.executionLog.length).toBe(0);
+  });
+
   test('a "#" channel address aborts the multicast (later entries suppressed)', async () => {
     // The router unconditionally hard-returns at a '#' address before
     // anything after it delivers. A plain sibling after it must not run its
@@ -992,9 +1078,13 @@ describe('WorkflowHookEngine.executeAction', () => {
 
     const outcome = await engine.executeAction('send_message', sendParams(), META);
     expect(outcome.decision).toBe('stop');
-    expect(outcome.userState.reason).toContain('approve it again');
-    // The hook RAN first (its stop record), then the consume-conflict stop.
+    // Consumption is DEFERRED until the chain delivers; the conflicted
+    // consume-write blocks at that point (an approval that cannot be recorded
+    // must not arm a standing bypass).
+    expect(outcome.userState.reason).toContain('approval could not be recorded');
+    // The hook's override record first, then the deferred-consume stop.
     expect(outcome.executionLog.length).toBe(2);
+    expect(outcome.executionLog[0]?.flow).toBe('continue');
     expect(outcome.executionLog[1]?.flow).toBe('stop');
     expect(outcome.executionLog[1]?.reason).toContain('approve it again');
   });

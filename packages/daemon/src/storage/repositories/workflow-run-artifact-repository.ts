@@ -133,6 +133,9 @@ export class WorkflowRunArtifactRepository {
     });
     const result = tx();
     if (result.kind === 'inserted') {
+      // Notify like every other artifact write — live queries driving the
+      // run artifact list / timeline must see the first identity stamp.
+      this.reactiveDb?.notifyChange('workflow_run_artifacts');
       return { inserted: true, record: this.rowToRecord(result.row)! };
     }
     return { inserted: false, existing: this.rowToRecord(result.row) };
