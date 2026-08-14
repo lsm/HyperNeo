@@ -190,6 +190,18 @@ export class SpaceTaskManager {
       // existing approvalReason untouched on transitions that carry the
       // stamp forward (see the approved → done mirror below).
       approvalReason?: string | null;
+      /**
+       * When provided, the transition additionally requires the CURRENT
+       * (reread) source status to be one of these. Closes the TOCTOU window
+       * where a caller's eligibility check raced a concurrent transition:
+       * e.g. `cancelled → done` and `approved → done` are both valid edges,
+       * so a validation-only completion that validated against `in_progress`
+       * could otherwise overwrite a user cancellation or prematurely close a
+       * task whose post-approval work is still running. This method rereads
+       * the task immediately before the UPDATE, so the condition is evaluated
+       * against the persisted state the write will actually land on.
+       */
+      allowedSourceStatuses?: SpaceTaskStatus[];
       /** Optional callback invoked with tasks cascaded by this transition. */
       onCascadedTasks?: (cascaded: SpaceTask[]) => Promise<void>;
     }
@@ -197,6 +209,13 @@ export class SpaceTaskManager {
     const task = await this.getTask(taskId);
     if (!task) {
       throw new Error(`Task not found: ${taskId}`);
+    }
+
+    if (options?.allowedSourceStatuses && !options.allowedSourceStatuses.includes(task.status)) {
+      throw new Error(
+        `Task status changed concurrently to '${task.status}' (allowed source statuses: ${options.allowedSourceStatuses.join(', ')}). ` +
+          `Refusing the transition to '${newStatus}' — re-check the task and retry if still appropriate.`
+      );
     }
 
     if (!isValidSpaceTaskTransition(task.status, newStatus)) {

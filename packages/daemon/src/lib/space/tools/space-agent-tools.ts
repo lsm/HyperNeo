@@ -3594,10 +3594,20 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         // natively, and in_progress→done when an explicit approvalSource is
         // supplied (validation-only completions only; other callers of that
         // transition are unaffected).
+        //
+        // `allowedSourceStatuses` closes the TOCTOU window between the
+        // eligibility check above and this write: `cancelled → done` and
+        // `approved → done` are both VALID edges, so without the condition a
+        // concurrent user cancellation or human approval landing in between
+        // would let this completion overwrite the cancellation or prematurely
+        // close a task whose post-approval work is still running. setTaskStatus
+        // rereads the task right before the UPDATE, so the condition binds to
+        // the persisted state the write lands on.
         const updated = await taskManager.setTaskStatus(args.task_id, 'done', {
           result: outcome,
           approvalSource: 'agent',
           approvalReason: args.reason,
+          allowedSourceStatuses: ['review', 'in_progress'],
           onCascadedTasks: async (cascadedTasks) => {
             for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
           },

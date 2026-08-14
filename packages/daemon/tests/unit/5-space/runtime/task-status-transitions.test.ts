@@ -251,6 +251,30 @@ describe('SpaceTaskManager.setTaskStatus — approval-path transitions', () => {
     expect(done.approvedAt).not.toBeNull();
   });
 
+  test('allowedSourceStatuses refuses the write when the task moved concurrently (validation-completion TOCTOU)', async () => {
+    // cancelled → done and approved → done are both VALID edges; without the
+    // source-status condition a validation completion that passed eligibility
+    // against in_progress could overwrite a concurrent user cancellation or
+    // prematurely close a task mid-post-approval.
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'in_progress',
+    });
+    // The user cancels between the tool's eligibility check and the write.
+    await taskManager.setTaskStatus(task.id, 'cancelled');
+
+    await expect(
+      taskManager.setTaskStatus(task.id, 'done', {
+        result: 'validated',
+        approvalSource: 'agent',
+        allowedSourceStatuses: ['review', 'in_progress'],
+      })
+    ).rejects.toThrow(/concurrently to 'cancelled'/);
+    expect(taskRepo.getTask(task.id)?.status).toBe('cancelled');
+  });
+
   test('approved → done nulls the durable source field (primed)', async () => {
     const task = taskRepo.createTask({
       spaceId: SPACE_ID,
