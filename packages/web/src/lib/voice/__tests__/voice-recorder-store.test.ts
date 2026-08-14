@@ -54,6 +54,7 @@ vi.stubGlobal('navigator', {
   mediaDevices: { getUserMedia: vi.fn(async () => fakeStream) },
 });
 
+import { VOICE_MAX_AUDIO_BYTES } from '@hyperneo/shared';
 import { voiceRecorderStore, isVoiceRecordingSupported } from '../voice-recorder-store.ts';
 
 // Fixed pure functions imported by the store — verify they were used at least
@@ -86,14 +87,14 @@ describe('voiceRecorderStore', () => {
   });
 
   it('start() records the owning session and exposes it', async () => {
-    await voiceRecorderStore.start('s1');
+    await voiceRecorderStore.start('owner-a', 's1');
     expect(voiceRecorderStore.recordingSessionId.value).toBe('s1');
     await voiceRecorderStore.cancel();
     expect(voiceRecorderStore.recordingSessionId.value).toBeNull();
   });
 
   it('start() acquires the mic, wires the graph, and flips isRecording', async () => {
-    await voiceRecorderStore.start('s1');
+    await voiceRecorderStore.start('owner-a', 's1');
 
     expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledTimes(1);
     expect(fakeContext.createMediaStreamSource).toHaveBeenCalledWith(fakeStream);
@@ -105,15 +106,40 @@ describe('voiceRecorderStore', () => {
     expect(voiceRecorderStore.isRecording.value).toBe(true);
   });
 
-  it('start() is a no-op while already recording', async () => {
-    await voiceRecorderStore.start('s1');
-    await voiceRecorderStore.start('s1');
+  it('start() while occupied rejects instead of clobbering the live owner', async () => {
+    await voiceRecorderStore.start('owner-a', 's1');
+    await expect(voiceRecorderStore.start('owner-b', 's2')).rejects.toThrow('busy');
+    // The original owner is untouched.
+    expect(voiceRecorderStore.recordingOwnerId.value).toBe('owner-a');
+    expect(voiceRecorderStore.isRecording.value).toBe(true);
+  });
 
-    expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledTimes(1);
+  it('start() while limit-hit audio is buffered rejects (occupied, not idle)', async () => {
+    await voiceRecorderStore.start('owner-a', 's1');
+    // Fire the byte cap: capture stops but the audio stays buffered for the
+    // owner's stop(). Another composer must not be able to start in that
+    // window. Mirror the store's cap arithmetic exactly.
+    const handler = workletNode.onaudioprocess;
+    const samplesPerCallback = 4096;
+    const capSamples = Math.floor((((VOICE_MAX_AUDIO_BYTES - 44) / 2) * 0.92 * 48_000) / 16_000);
+    const needed = Math.ceil(capSamples / samplesPerCallback);
+    for (let i = 0; i < needed + 1; i++) {
+      handler({
+        inputBuffer: { getChannelData: () => new Float32Array(samplesPerCallback).fill(0.5) },
+      });
+      if (voiceRecorderStore.durationLimitHit.value) break;
+    }
+    expect(voiceRecorderStore.durationLimitHit.value).toBe(true);
+    expect(voiceRecorderStore.isRecording.value).toBe(false);
+    await expect(voiceRecorderStore.start('owner-b', 's2')).rejects.toThrow('busy');
+    // The buffered recording is still recoverable by its owner.
+    const recording = await voiceRecorderStore.stop();
+    expect(recording.audioBase64.length).toBeGreaterThan(0);
+    expect(recording.hitDurationLimit).toBe(true);
   });
 
   it('stop() tears capture down and returns a WAV payload with a peak level', async () => {
-    await voiceRecorderStore.start('s1');
+    await voiceRecorderStore.start('owner-a', 's1');
     // Feed one second of silence through the ScriptProcessor handler.
     const handler = workletNode.onaudioprocess;
     expect(handler).toBeTruthy();
@@ -141,7 +167,7 @@ describe('voiceRecorderStore', () => {
   });
 
   it('cancel() discards an active recording without producing a payload', async () => {
-    await voiceRecorderStore.start('s1');
+    await voiceRecorderStore.start('owner-a', 's1');
     await voiceRecorderStore.cancel();
 
     expect(voiceRecorderStore.isRecording.value).toBe(false);
@@ -150,13 +176,13 @@ describe('voiceRecorderStore', () => {
   });
 
   it('release() (composer unmount) discards an in-flight recording like cancel()', async () => {
-    await voiceRecorderStore.start('s1');
+    await voiceRecorderStore.start('owner-a', 's1');
     await voiceRecorderStore.release();
 
     expect(voiceRecorderStore.isRecording.value).toBe(false);
     expect(mediaStreamSource.disconnect).toHaveBeenCalled();
     // A start() after release is discarded until a NEW generation begins.
-    await voiceRecorderStore.start('s1');
+    await voiceRecorderStore.start('owner-a', 's1');
     expect(voiceRecorderStore.isRecording.value).toBe(true);
   });
 
@@ -167,7 +193,7 @@ describe('voiceRecorderStore', () => {
         resolvePermission = resolve;
       })
     );
-    const startPromise = voiceRecorderStore.start('s1');
+    const startPromise = voiceRecorderStore.start('owner-a', 's1');
     // Let start() progress to the pending permission request before cancelling.
     await new Promise((resolve) => setTimeout(resolve, 0));
     // User cancels while the permission prompt is up.

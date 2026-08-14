@@ -41,6 +41,13 @@ class VoiceRecorderStore {
    * on their own unmount.
    */
   readonly recordingSessionId = signal<string | null>(null);
+  /**
+   * Unique token of the COMPOSER INSTANCE that owns the current recording.
+   * Session IDs alone are insufficient: a Space task pane and an agent overlay
+   * can both be mounted for the same session, so ownership is per mounted
+   * composer (see useVoiceRecorder).
+   */
+  readonly recordingOwnerId = signal<string | null>(null);
 
   private context: AudioContext | null = null;
   private stream: MediaStream | null = null;
@@ -64,16 +71,20 @@ class VoiceRecorderStore {
   private startGeneration = 0;
 
   /**
-   * Begin a recording owned by `ownerSessionId`. The owner is recorded from the
-   * first awaited step so a cancel/release from another composer cannot race
-   * the assignment, and cleared on every teardown path.
+   * Begin a recording owned by the composer instance `ownerId` (bound to
+   * `ownerSessionId` for display/routing). The recorder is occupied while a
+   * recording is active, starting, OR sitting on limit-hit audio awaiting its
+   * owner's stop() — starting in that last window would destroy the buffered
+   * recording.
    */
-  readonly start = async (ownerSessionId: string): Promise<void> => {
-    if (this.isRecording.value || this.starting) return;
+  readonly start = async (ownerId: string, ownerSessionId: string): Promise<void> => {
+    if (this.isRecording.value || this.starting || this.stoppedByLimit)
+      throw new Error('Voice recorder is busy');
     this.starting = true;
     this.isStarting.value = true;
     this.stoppedByLimit = false;
     this.durationLimitHit.value = false;
+    this.recordingOwnerId.value = ownerId;
     this.recordingSessionId.value = ownerSessionId;
     const generation = ++this.startGeneration;
     const discarded = () => this.startGeneration !== generation;
@@ -259,6 +270,7 @@ class VoiceRecorderStore {
     const hitDurationLimit = this.stoppedByLimit;
     this.durationLimitHit.value = false;
     this.isRecording.value = false;
+    this.recordingOwnerId.value = null;
     this.recordingSessionId.value = null;
     const chunks = this.chunks;
     await this.teardown();
@@ -297,6 +309,7 @@ class VoiceRecorderStore {
     this.stoppedByLimit = false;
     this.durationLimitHit.value = false;
     this.isRecording.value = false;
+    this.recordingOwnerId.value = null;
     this.recordingSessionId.value = null;
     await this.teardown();
   };
@@ -315,6 +328,7 @@ class VoiceRecorderStore {
     this.stoppedByLimit = false;
     this.durationLimitHit.value = false;
     this.isRecording.value = false;
+    this.recordingOwnerId.value = null;
     this.recordingSessionId.value = null;
     await this.teardown();
   };
