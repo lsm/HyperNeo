@@ -350,7 +350,9 @@ function ActionToolbar({
           size="sm"
           title="Rename session"
           onClick={onRenameClick}
-          disabled={!canRename || !isConnected}
+          // Disabled while editing: re-clicking would blur-commit the draft
+          // and then reopen the editor seeded from the stale title prop.
+          disabled={!canRename || !isConnected || isRenaming}
         >
           <RenameIcon className="h-4 w-4" />
         </IconButton>
@@ -503,6 +505,7 @@ export function SessionInfoPanelButton({
   const {
     isEditing: isRenaming,
     startEditing,
+    commit: commitRename,
     inputProps: renameInputProps,
   } = useSessionRename(session?.id ?? '', session?.title ?? '');
   const todos = useMemo(() => extractLatestTodos(messages), [messages]);
@@ -531,6 +534,13 @@ export function SessionInfoPanelButton({
       window.removeEventListener('keydown', handleKeyDown);
     };
   }, [open]);
+
+  // Closing the panel unmounts the rename input before it can emit blur, so
+  // settle the edit explicitly — otherwise the draft is neither saved nor
+  // cancelled and a stale editor reappears on reopen.
+  useEffect(() => {
+    if (!open && isRenaming) commitRename();
+  }, [open, isRenaming, commitRename]);
 
   // Position the panel below the trigger, right-aligned to it, but clamp the
   // right offset so the panel never spills off the left of the viewport. This

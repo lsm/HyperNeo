@@ -259,6 +259,45 @@ describe('SessionInfoPanel', () => {
       expect(container.querySelector('[data-testid="session-info-rename-input"]')).toBeNull();
     });
 
+    it('commits an in-flight rename when the panel is closed mid-edit', () => {
+      // Closing the panel unmounts the input before blur fires — the edit
+      // must still settle, not silently drop (or leak a stale draft).
+      renameMocks.updateSession.mockClear();
+      const { container } = render(<SessionInfoPanelButton {...defaultProps} />);
+      openPanel(container);
+
+      fireEvent.click(container.querySelector('button[title="Rename session"]')!);
+      const input = container.querySelector(
+        '[data-testid="session-info-rename-input"]'
+      ) as HTMLInputElement;
+      fireEvent.input(input, { target: { value: 'Saved On Close' } });
+
+      // Toggle the trigger to close the panel while the edit is in flight.
+      fireEvent.click(container.querySelector('button[title="Session info"]')!);
+      expect(container.querySelector('[data-testid="session-info-panel"]')).toBeNull();
+
+      expect(renameMocks.updateSession).toHaveBeenCalledWith('session-1', {
+        title: 'Saved On Close',
+        metadata: { titleSetBy: 'user' },
+      });
+    });
+
+    it('disables the rename action while an edit is in flight', () => {
+      // Re-clicking the pencil mid-edit would blur-commit the draft and then
+      // reopen the editor seeded from the stale title prop.
+      renameMocks.updateSession.mockClear();
+      const { container } = render(<SessionInfoPanelButton {...defaultProps} />);
+      openPanel(container);
+
+      const renameButton = container.querySelector(
+        'button[title="Rename session"]'
+      ) as HTMLButtonElement;
+      fireEvent.click(renameButton);
+      expect(renameButton.disabled).toBe(true);
+
+      expect(renameMocks.updateSession).not.toHaveBeenCalled();
+    });
+
     it('hides the Rename action when readonly', () => {
       const { container } = render(<SessionInfoPanelButton {...defaultProps} readonly />);
       openPanel(container);

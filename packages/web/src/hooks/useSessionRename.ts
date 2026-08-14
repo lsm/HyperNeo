@@ -42,6 +42,12 @@ export interface UseSessionRenameResult {
   isEditing: boolean;
   /** Seed the draft from the current title and enter edit mode. */
   startEditing: () => void;
+  /**
+   * Commit the current draft (no-op if not editing, empty, or unchanged).
+   * Used by hosts that unmount the input without a blur event (e.g. a
+   * dropdown panel closing mid-edit).
+   */
+  commit: () => void;
   /** Spread onto the `<input>` rendered while editing. */
   inputProps: SessionRenameInputProps;
 }
@@ -107,6 +113,7 @@ export function useSessionRename(sessionId: string, currentTitle: string): UseSe
   return {
     isEditing,
     startEditing,
+    commit: () => void commit(),
     inputProps: {
       ref: (el: HTMLInputElement | null) => {
         inputElRef.current = el;
