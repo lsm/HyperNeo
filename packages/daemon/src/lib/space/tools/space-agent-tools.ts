@@ -3442,9 +3442,11 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
      * For tasks that complete via validation rather than a reviewed PR: Forge
      * review/automation tasks, diagnostics, already-complete work. Captures the
      * validation outcome as the task result and transitions `review`/`in_progress`
-     * → `done` WITHOUT requiring a `pr_url`. The coder workflow's completion gate
-     * expects a PR; this tool is the escape hatch for tasks that legitimately
-     * produce none (#485 built the path; this exposes it to agents).
+     * → `done` WITHOUT requiring a `pr_url` (#485 built the path; this exposes
+     * it to agents). NOTE: this is NOT a coder-workflow escape hatch — the
+     * built-in coding workflows intentionally route no-change CODING tasks to
+     * escalation (a coding task should produce a PR); this tool exists for
+     * work whose deliverable is the validation itself.
      *
      * Reachable by every Space session that holds `space-agent-tools` — the
      * leader (coordinator), long-horizon agents, member sessions, AND workflow
@@ -3462,6 +3464,15 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
      *     the normal approve/merge path).
      *   - `approve_pending_completion` is the human-approval review→approved
      *     path, applicable only at a `task_completion` checkpoint.
+     *
+     * Result precedence: the validation outcome is written as `task.result` at
+     * completion. For STANDALONE tasks it is durable. For workflow-backed
+     * tasks, the tick loop's run reconciliation may replace it with the run's
+     * structured outcome summary when one exists (terminal `decision` artifact
+     * or end-node execution summary) — the same precedence every completion
+     * path accepts (`approve_task`, post-approval no-route). In the typical
+     * no-PR case there IS no such artifact, so the outcome survives via the
+     * existing-result fallback.
      *
      * Guards (order is load-bearing — autonomy runs before any task-state
      * reveal, mirroring `approve_task`):
@@ -3545,8 +3556,8 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         return jsonResult({
           success: false,
           error: ceilingBinding
-            ? `complete_validation_task not permitted: agent autonomy ceiling ${agentLevel} (space ${spaceLevel}) < workflow completionAutonomyLevel ${completionAutonomyLevel}. Request human approval.`
-            : `complete_validation_task not permitted: space autonomy level ${spaceLevel} < workflow completionAutonomyLevel ${completionAutonomyLevel}. Request human approval.`,
+            ? `complete_validation_task not permitted: agent autonomy ceiling ${agentLevel} (space ${spaceLevel}) < workflow completionAutonomyLevel ${completionAutonomyLevel}. Use submit_for_approval to request human review.`
+            : `complete_validation_task not permitted: space autonomy level ${spaceLevel} < workflow completionAutonomyLevel ${completionAutonomyLevel}. Use submit_for_approval to request human review.`,
         });
       }
 
@@ -3609,11 +3620,15 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           approvalReason: args.reason,
           allowedSourceStatuses: ['review', 'in_progress'],
           // Re-assert the no-PR condition against the reread state right before
-          // the UPDATE: a concurrent `save_artifact` can record the run's PR in
-          // the window after the guard above, and without this the task would
-          // still finalize through the no-PR path. Runs inside setTaskStatus'
-          // critical section (after source-status + transition validation,
-          // immediately before the commit).
+          // the UPDATE. Runs synchronously (no event-loop yield) between the
+          // reread and the write. HONEST BOUNDS: this bounds the artifact-table
+          // race to the same narrow window every other completion path accepts
+          // — the PR lives in a different table (run artifacts), so a
+          // save_artifact committing between this check and the task UPDATE can
+          // still slip through, exactly as it can under `approve_task`. It does
+          // NOT claim full closure; the STATUS half of the race is closed
+          // atomically by the `WHERE status IN (…)` predicate on the UPDATE
+          // (allowedSourceStatuses above).
           precondition: (current) => {
             if (!current.workflowRunId) return;
             const prUrl = runtime.getApprovedPrUrlForRun(current.workflowRunId);
@@ -5002,7 +5017,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
     ),
     tool(
       'complete_validation_task',
-      "Validation-only (no-PR) task completion — for tasks that complete via validation rather than a reviewed PR (Forge review/automation, diagnostics, already-complete work). Captures the validation outcome as the task result and transitions review/in_progress → done WITHOUT requiring a pr_url. Autonomy-gated to the workflow's completionAutonomyLevel. Rejects tasks whose run already has a PR (use the normal approve/merge path for those).",
+      "Validation-only (no-PR) task completion — for tasks that complete via validation rather than a reviewed PR (Forge review/automation, diagnostics, already-complete work). Captures the validation outcome as the task result and transitions review/in_progress → done WITHOUT requiring a pr_url. Autonomy-gated to the workflow's completionAutonomyLevel. Rejects tasks whose run already has a PR (use the normal approve/merge path for those). The outcome is durable for standalone tasks; on workflow-backed tasks a recorded run outcome summary takes precedence (same as every completion path).",
       {
         task_id: z.string().describe('ID of the no-PR task to complete'),
         validation_outcome: z

@@ -1118,6 +1118,14 @@ export interface InternalUpdateSpaceTaskParams extends UpdateSpaceTaskParams {
   evolutionScopeId?: string | null;
   /** Per-task workflow node-agent model overrides; null clears all overrides. */
   workflowModelOverrides?: Record<string, string> | null;
+  /**
+   * Optimistic-concurrency guard: when provided, the UPDATE predicates on the
+   * row's CURRENT status being one of these (`WHERE id = ? AND status IN (…)`),
+   * making the check and the write one atomic SQL statement. A concurrent
+   * status change yields a 0-row update (repository returns null) instead of a
+   * lost update. Storage-only — never accepted from RPC/tool callers.
+   */
+  expectedStatuses?: SpaceTaskStatus[];
 }
 
 // ============================================================================

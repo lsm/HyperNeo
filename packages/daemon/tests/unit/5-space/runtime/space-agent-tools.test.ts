@@ -5954,9 +5954,42 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     expect(parsed.error).toContain('space 5');
     expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
 
-    // The ceiling block writes an attributable audit entry.
+    // The ceiling block writes an attributable audit entry with the blocked
+    // reason and the resolved levels.
     const entries = auditRepo.listByTask(task.id);
-    expect(entries.some((e) => e.toolName === 'complete_validation_task')).toBe(true);
+    const entry = entries.find((e) => e.toolName === 'complete_validation_task');
+    expect(entry).toBeDefined();
+    const details = JSON.parse(entry!.paramsSummary) as Record<string, unknown>;
+    expect(details.blocked).toBe(true);
+    expect(details.reason).toBe('agent_autonomy_ceiling');
+    expect(details.agentLevel).toBe(3);
+    expect(details.spaceLevel).toBe(5);
+    expect(details.required).toBe(5);
+  });
+
+  test('space-level autonomy rejection also writes an audit entry', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 3 });
+    const task = createWorkflowTask(5);
+    const auditRepo = new McpAuditLogRepository(ctx.db);
+
+    const result = await makeHandlers(ctx, { auditLogRepo: auditRepo }).complete_validation_task({
+      task_id: task.id,
+      validation_outcome: 'validated',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('space autonomy level 3');
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
+
+    const entries = auditRepo.listByTask(task.id);
+    const entry = entries.find((e) => e.toolName === 'complete_validation_task');
+    expect(entry).toBeDefined();
+    const details = JSON.parse(entry!.paramsSummary) as Record<string, unknown>;
+    expect(details.blocked).toBe(true);
+    expect(details.reason).toBe('space_autonomy');
+    expect(details.spaceLevel).toBe(3);
+    expect(details.required).toBe(5);
   });
 
   test('rejects a task whose workflow run already has a PR', async () => {

@@ -656,8 +656,27 @@ export class SpaceTaskRepository {
       fields.push('updated_at = ?');
       values.push(Date.now());
       values.push(id);
-      const stmt = this.db.prepare(`UPDATE space_tasks SET ${fields.join(', ')} WHERE id = ?`);
-      stmt.run(...values);
+      // `expectedStatuses` makes the status guard part of the UPDATE itself:
+      // `UPDATE … WHERE id = ? AND status IN (…)` is a single atomic SQL
+      // statement, so a concurrent writer that changes the status between the
+      // caller's read and this write causes a 0-row update instead of a lost
+      // update. (Codex P1: an in-JS check followed by a plain `WHERE id = ?`
+      // always leaves an interleaving window.)
+      let statusGuard = '';
+      if (params.expectedStatuses !== undefined) {
+        const placeholders = params.expectedStatuses.map(() => '?').join(', ');
+        statusGuard = ` AND status IN (${placeholders})`;
+        values.push(...params.expectedStatuses);
+      }
+      const stmt = this.db.prepare(
+        `UPDATE space_tasks SET ${fields.join(', ')} WHERE id = ?${statusGuard}`
+      );
+      const result = stmt.run(...values);
+      if (params.expectedStatuses !== undefined && result.changes === 0) {
+        // The row's status no longer matches — the caller raced a concurrent
+        // transition. Return null so the manager surfaces a clear error.
+        return null;
+      }
       this.upsertTaskSearchRow(id);
       if (params.status === 'archived') {
         this.deleteTaskMessageRows(id);

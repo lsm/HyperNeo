@@ -251,6 +251,27 @@ describe('SpaceTaskManager.setTaskStatus — approval-path transitions', () => {
     expect(done.approvedAt).not.toBeNull();
   });
 
+  test('in_progress → done with approvalReason but NO approvalSource leaves approval fields untouched (gate keys on approvalSource only)', async () => {
+    // Locks the gate's condition against the documented tightening risk: a
+    // caller that passes approvalReason without approvalSource (the shape
+    // stopWorkflowBackedTaskForStatus uses on its transitions) must NOT
+    // trigger stamping — approvalSource is the sole key.
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'in_progress',
+    });
+    const done = await taskManager.setTaskStatus(task.id, 'done', {
+      result: 'closed with a reason but no source',
+      approvalReason: 'should not stamp',
+    });
+    expect(done.status).toBe('done');
+    expect(done.approvalSource).toBeNull();
+    expect(done.approvalReason).toBeNull();
+    expect(done.approvedAt).toBeNull();
+  });
+
   test('allowedSourceStatuses refuses the write when the task moved concurrently (validation-completion TOCTOU)', async () => {
     // cancelled → done and approved → done are both VALID edges; without the
     // source-status condition a validation completion that passed eligibility
@@ -275,47 +296,86 @@ describe('SpaceTaskManager.setTaskStatus — approval-path transitions', () => {
     expect(taskRepo.getTask(task.id)?.status).toBe('cancelled');
   });
 
-  test('precondition is evaluated against the reread state before the UPDATE commits', async () => {
-    // Models the concurrent save_artifact PR race: the condition flips between
-    // the caller's own check and setTaskStatus' internal reread. The hook must
-    // see the flipped state and abort the transition.
+  test('precondition throw aborts the transition before any write (sync contract)', async () => {
     const task = taskRepo.createTask({
       spaceId: SPACE_ID,
       title: 'T',
       description: '',
       status: 'in_progress',
     });
-    let condition = false;
-    // Flip the domain condition after setTaskStatus rereads the task — the
-    // precondition observes it, proving it runs in the reread→UPDATE gap.
     await expect(
       taskManager.setTaskStatus(task.id, 'done', {
         result: 'validated',
         precondition: () => {
-          if (condition) throw new Error('PR appeared during completion');
-        },
-      })
-    ).resolves.toBeTruthy();
-    const done = taskRepo.getTask(task.id);
-    expect(done?.status).toBe('done');
-
-    // Now the flipped condition on a fresh task aborts before any write.
-    const task2 = taskRepo.createTask({
-      spaceId: SPACE_ID,
-      title: 'T2',
-      description: '',
-      status: 'in_progress',
-    });
-    condition = true;
-    await expect(
-      taskManager.setTaskStatus(task2.id, 'done', {
-        result: 'validated',
-        precondition: () => {
-          if (condition) throw new Error('PR appeared during completion');
+          throw new Error('PR appeared during completion');
         },
       })
     ).rejects.toThrow('PR appeared during completion');
-    expect(taskRepo.getTask(task2.id)?.status).toBe('in_progress');
+    expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
+  });
+
+  test('interleaving: a status change landing after the reread is NOT overwritten by the guarded UPDATE', async () => {
+    // Exercises the SQL guard's 0-row path specifically. The precondition
+    // callback runs AFTER setTaskStatus' reread and BEFORE the UPDATE — inside
+    // it, a concurrent writer flips the row to `cancelled`. The in-JS
+    // allowedSourceStatuses check already passed against the stale reread, so
+    // only the atomic `WHERE status IN (…)` predicate catches it: the UPDATE
+    // matches 0 rows and the cancellation survives.
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'in_progress',
+    });
+
+    await expect(
+      taskManager.setTaskStatus(task.id, 'done', {
+        result: 'validated',
+        approvalSource: 'agent',
+        allowedSourceStatuses: ['review', 'in_progress'],
+        precondition: () => {
+          // "Concurrent" writer: lands between the reread and the UPDATE.
+          // Direct repo write so no manager validation interferes; the row
+          // flips to cancelled exactly as a user cancel would.
+          taskRepo.updateTask(task.id, { status: 'cancelled' });
+        },
+      })
+    ).rejects.toThrow(/changed concurrently|Refusing the transition/);
+    // The concurrent cancellation was NOT lost.
+    expect(taskRepo.getTask(task.id)?.status).toBe('cancelled');
+    expect(taskRepo.getTask(task.id)?.result).toBeNull();
+    expect(taskRepo.getTask(task.id)?.approvalSource).toBeNull();
+  });
+
+  test('expectedStatuses is an atomic UPDATE guard: mismatched current status yields a 0-row update (no lost update)', async () => {
+    // Repo-level contract: the status check lives IN the UPDATE statement
+    // (`WHERE id = ? AND status IN (…)`), so a concurrent transition between
+    // the caller's read and this write cannot be overwritten — the statement
+    // simply matches 0 rows and returns null.
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'in_progress',
+    });
+    // Guard expecting `review` but the row is `in_progress` → no write.
+    const missed = taskRepo.updateTask(task.id, {
+      status: 'done',
+      result: 'raced',
+      expectedStatuses: ['review'],
+    });
+    expect(missed).toBeNull();
+    expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
+    expect(taskRepo.getTask(task.id)?.result).toBeNull();
+
+    // Matching guard → write lands.
+    const hit = taskRepo.updateTask(task.id, {
+      status: 'done',
+      result: 'validated',
+      expectedStatuses: ['review', 'in_progress'],
+    });
+    expect(hit?.status).toBe('done');
+    expect(hit?.result).toBe('validated');
   });
 
   test('approved → done nulls the durable source field (primed)', async () => {

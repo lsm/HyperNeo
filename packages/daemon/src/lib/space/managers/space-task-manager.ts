@@ -209,11 +209,16 @@ export class SpaceTaskManager {
        * Throwing aborts the transition. Lets a caller re-assert conditions
        * that live OUTSIDE the task row (e.g. a run's PR artifact recorded by
        * a concurrent `save_artifact` between the caller's own check and this
-       * write), collapsing that TOCTOU window into the reread→UPDATE gap —
-       * the same level of single-UPDATE atomicity every other guard here
-       * provides.
+       * write), collapsing that TOCTOU window into the reread→UPDATE gap.
+       *
+       * MUST be synchronous. An async hook yields the event loop between the
+       * check and the write, reopening the race it exists to close — enforce
+       * the type as `void`-returning and never await it. Cross-table invariants
+       * that need an await belong in the caller BEFORE this call; the status
+       * half of the race is closed atomically by `allowedSourceStatuses`
+       * (the UPDATE itself predicates `WHERE status IN (…)`).
        */
-      precondition?: (task: SpaceTask) => void | Promise<void>;
+      precondition?: (task: SpaceTask) => void;
       /** Optional callback invoked with tasks cascaded by this transition. */
       onCascadedTasks?: (cascaded: SpaceTask[]) => Promise<void>;
     }
@@ -238,10 +243,10 @@ export class SpaceTaskManager {
     }
 
     // Domain precondition — last gate before the UPDATE commits (see the
-    // option's doc). Evaluated here so its conditions bind to the same reread
-    // state the write lands on.
+    // option's doc). Synchronous by contract: no event-loop yield between the
+    // reread and the write.
     if (options?.precondition) {
-      await options.precondition(task);
+      options.precondition(task);
     }
 
     const updates: Parameters<SpaceTaskRepository['updateTask']>[1] = { status: newStatus };
@@ -399,8 +404,23 @@ export class SpaceTaskManager {
       updates.postApprovalSourceNodeId = null;
     }
 
+    // `allowedSourceStatuses` becomes an ATOMIC status guard: the UPDATE
+    // itself predicates `WHERE status IN (…)` on the same statuses already
+    // validated above, so a status change that lands between the reread and
+    // this statement yields 0 rows (repo returns null) instead of overwriting
+    // the concurrent transition. The in-JS check above stays for the clear
+    // error message on the common (non-raced) path.
+    if (options?.allowedSourceStatuses) {
+      updates.expectedStatuses = options.allowedSourceStatuses;
+    }
     const updated = this.taskRepo.updateTask(taskId, updates);
     if (!updated) {
+      if (options?.allowedSourceStatuses) {
+        throw new Error(
+          `Task status changed concurrently (allowed source statuses: ${options.allowedSourceStatuses.join(', ')}). ` +
+            `Refusing the transition to '${newStatus}' — re-check the task and retry if still appropriate.`
+        );
+      }
       throw new Error(`Failed to update task: ${taskId}`);
     }
 
