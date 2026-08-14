@@ -1,28 +1,24 @@
 import type { MessageDeliveryMode } from '@hyperneo/shared';
 
 /**
- * Prefix recorded on a persisted delivery that was explicitly handed off in
- * `immediate` mode. Only rows carrying this marker replay as `immediate`;
- * everything else — the `deliveryMode:defer;` marker SpaceRuntime writes on
- * parked deliveries, bare legacy reasons, and null — recovers as `defer`.
- */
-const IMMEDIATE_DELIVERY_MODE_PREFIX = 'deliveryMode:immediate;';
-
-/**
- * Recovers the delivery mode persisted in a pending external-event delivery's
- * `failureReason`.
+ * Recovers the delivery mode for a pending external-event delivery.
  *
- * Default is `defer`: a pending delivery whose reason carries no explicit
- * marker — `null`, a bare legacy reason (`node_execution_not_active`,
- * `activation_failed; …`), or any unrecognized string — must NOT replay as
- * `immediate`, which would steer an already-processing kickoff mid-turn (the
- * exact failure the defer-to-next-idle change exists to eliminate). This also
- * normalizes durable rows persisted by pre-upgrade code before the
- * `deliveryMode:` prefixes existed: they recovered as `immediate` under the
- * old null-fallback and could inject mid-work after deployment.
+ * Always `defer`. External events deliver on the "next" boundary — insert
+ * when idle, queue and replay at the next idle point, never inject
+ * mid-work — so there is no population for which `immediate` recovery is
+ * correct:
+ *
+ * - New dispatches are always handed off in `defer` mode.
+ * - Legacy rows persisted before the `deliveryMode:` prefixes existed carry
+ *   a null or bare reason and previously recovered as `immediate` — the
+ *   exact mid-work-injection failure this mode system exists to prevent.
+ * - Legacy rows carrying an explicit `deliveryMode:immediate;` prefix (the
+ *   old fresh-delivery failure encoding) are normalized too: the prefix
+ *   records how a PRE-upgrade dispatch was attempted, not an intent that
+ *   survives the always-next-idle behavior.
  */
 export function deliveryModeFromFailureReason(
-  failureReason: string | null | undefined
+  _failureReason: string | null | undefined
 ): MessageDeliveryMode {
-  return failureReason?.startsWith(IMMEDIATE_DELIVERY_MODE_PREFIX) ? 'immediate' : 'defer';
+  return 'defer';
 }

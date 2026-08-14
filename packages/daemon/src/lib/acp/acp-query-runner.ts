@@ -454,11 +454,13 @@ export class AcpQueryRunner {
     // gated on it so a terminal failure (handleRunError) does not drive the
     // next turn.
     let turnCompletedNormally = false;
-    // Captured at run start: an interrupt aborts this controller mid-run, and
-    // the finally block aborts (and nulls) it on EVERY non-stale completion —
-    // so only a snapshot taken before the try can distinguish "interrupted
-    // during the run" from "aborted during normal cleanup".
-    const queryAbortSignal = this.ctx.queryAbortController?.signal ?? null;
+    // THIS run's controller, retained when created inside the try. The ctx
+    // field cannot be snapshotted up front: it is assigned only at controller
+    // creation (a retry would otherwise capture the previous run's), and the
+    // finally block aborts (and nulls) it on every non-stale completion — so
+    // only the retained reference distinguishes "interrupted during the run"
+    // from "aborted during normal cleanup".
+    let runAbortController: AbortController | null = this.ctx.queryAbortController;
 
     try {
       const { initializeProviders, waitForOptionalProviderRegistration } = await import(
@@ -531,6 +533,7 @@ export class AcpQueryRunner {
       const startupTimeoutMs = getStartupTimeoutMs();
       const abortController = new AbortController();
       this.ctx.queryAbortController = abortController;
+      runAbortController = abortController;
       const instructionBlocks = acpInstructionBlocks(queryOptions);
       const hasInstructionBlocks = instructionBlocks.length > 0;
       const hasPriorAcpTurn = (session.metadata?.messageCount ?? 0) > 0;
@@ -796,7 +799,7 @@ export class AcpQueryRunner {
       // interrupt (user, sibling quiesce, or teardown) aborted it mid-run —
       // and the status check catches an interrupt still in flight.
       turnCompletedNormally =
-        !queryAbortSignal?.aborted && stateManager.getState().status !== 'interrupted';
+        !runAbortController?.signal.aborted && stateManager.getState().status !== 'interrupted';
     } catch (error) {
       restoreMessageEnqueuedHandler?.();
       const effectiveError =

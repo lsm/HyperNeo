@@ -15,9 +15,12 @@ describe('deliveryModeFromFailureReason', () => {
     expect(deliveryModeFromFailureReason('deliveryMode:defer;')).toBe('defer');
   });
 
-  test('defaults to immediate for deliveryMode:immediate; prefix', () => {
-    expect(deliveryModeFromFailureReason('deliveryMode:immediate; some failure')).toBe('immediate');
-    expect(deliveryModeFromFailureReason('deliveryMode:immediate;')).toBe('immediate');
+  test('normalizes legacy immediate-prefixed rows to defer', () => {
+    // The prefix records how a PRE-upgrade dispatch was attempted, not an
+    // intent that survives the always-next-idle behavior — recovered rows
+    // must never inject mid-work regardless of their historical encoding.
+    expect(deliveryModeFromFailureReason('deliveryMode:immediate; some failure')).toBe('defer');
+    expect(deliveryModeFromFailureReason('deliveryMode:immediate;')).toBe('defer');
   });
 
   test('defaults to defer for null or undefined (in-flight / no encoded mode)', () => {
@@ -34,7 +37,7 @@ describe('deliveryModeFromFailureReason', () => {
     expect(deliveryModeFromFailureReason('')).toBe('defer');
   });
 
-  test('only the explicit immediate prefix recovers immediate (look-alike stems defer)', () => {
+  test('look-alike stems also recover defer (uniform)', () => {
     expect(deliveryModeFromFailureReason('deliveryMode:deferred; …')).toBe('defer');
     expect(deliveryModeFromFailureReason('deliveryMode:deferrible; …')).toBe('defer');
   });
