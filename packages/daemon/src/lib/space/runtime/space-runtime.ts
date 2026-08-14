@@ -19,7 +19,6 @@
  * and `task.reportedStatus` — SpaceRuntime no longer calls advance() directly.
  */
 
-import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
 import type {
   CreateNodeExecutionParams,
   NodeExecution,
@@ -33,7 +32,6 @@ import type {
   WorkflowChannel,
   WorkflowNode,
 } from '@hyperneo/shared';
-import type { SDKMessage } from '@hyperneo/shared/sdk';
 import {
   isChannelCyclic,
   isRateOrUsageLimited,
@@ -43,39 +41,52 @@ import {
   MIN_SPACE_CONCURRENT_TASKS,
   resolveNodeAgents,
 } from '@hyperneo/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { isSDKResultError } from '@hyperneo/shared/sdk';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
-import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service';
-import { formatExternalEventEssence } from '../../external-events/event-essence';
-import type { ExternalEventStore } from '../../external-events/external-event-store';
-import {
-  type QueueHealthGauges,
-  type QueueHealthSnapshot,
-  ExternalEventQueueMetrics,
-  computeQueueAgeStats,
-} from '../../external-events/queue-health-metrics';
-import type { ExternalEvent } from '../../external-events/types';
-import { validateGlobPattern } from '../../external-events/topic-validator';
-import { legacyGitHubTopic } from '../../external-events/github-subscription-pattern';
-import { composeLongHorizonSubscriptionPattern } from '../../external-events/long-horizon-subscription-pattern';
 import {
   ChannelCycleRepository,
   DEAD_LOOP_THRESHOLD,
   DEAD_LOOP_WINDOW_MS,
 } from '../../../storage/repositories/channel-cycle-repository';
-import { normalizeMeaningfulTaskResult } from '../task-result-utils';
-import type { WorkflowArtifactProfile } from './artifact-profile';
-import { resolveTopicFromInterest } from './parse-pr-url';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
 import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
 import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository';
+import type { SpaceAgentInboxRepository } from '../../../storage/repositories/space-agent-inbox-repository';
+import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import { SpaceWorkflowEventSubscriptionRepository } from '../../../storage/repositories/space-workflow-event-subscription-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository';
-import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
+import { formatExternalEventEssence } from '../../external-events/event-essence';
+import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service';
+import type { ExternalEventStore } from '../../external-events/external-event-store';
+import { legacyGitHubTopic } from '../../external-events/github-subscription-pattern';
+import { composeLongHorizonSubscriptionPattern } from '../../external-events/long-horizon-subscription-pattern';
+import {
+  computeQueueAgeStats,
+  ExternalEventQueueMetrics,
+  type QueueHealthGauges,
+  type QueueHealthSnapshot,
+} from '../../external-events/queue-health-metrics';
+import { TopicTrie } from '../../external-events/topic-trie';
+import { validateGlobPattern } from '../../external-events/topic-validator';
+import type { ExternalEvent } from '../../external-events/types';
+import {
+  type DaemonCommandMap,
+  type InternalCommandBus,
+  MissingCommandHandlerError,
+} from '../../internal-command-bus';
+import type {
+  DaemonInternalEventMap,
+  InternalEventBus,
+  InternalEventPayload,
+} from '../../internal-event-bus';
 import { Logger } from '../../logger';
-import { isSDKResultError } from '@hyperneo/shared/sdk';
+import type { SpaceActorRegistryAdapter } from '../actor-registry';
+import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format';
 import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import type { SpaceManager } from '../managers/space-manager';
 import { isValidSpaceTaskTransition, SpaceTaskManager } from '../managers/space-task-manager';
@@ -83,8 +94,8 @@ import {
   isReservedWorkflowAgentName,
   type SpaceWorkflowManager,
 } from '../managers/space-workflow-manager';
-import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format';
-import { deliveryModeFromFailureReason } from './delivery-mode';
+import { normalizeMeaningfulTaskResult } from '../task-result-utils';
+import type { WorkflowArtifactProfile } from './artifact-profile';
 import { CompletionDetector } from './completion-detector';
 import {
   DEFAULT_AGENT_NO_PROGRESS_THRESHOLD_MS,
@@ -96,48 +107,36 @@ import {
   MAX_TASK_AGENT_CRASH_RETRIES,
   MAX_TERMINAL_ERROR_CONTINUE_RETRIES,
 } from './constants';
+import { deliveryModeFromFailureReason } from './delivery-mode';
 import { classifyLastMessageForIdleAgent } from './last-message-classifier';
-import {
-  COMPACT_RESULT_TIMEOUT_MS,
-  MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS,
-  buildPromptTooLongContinueNag,
-  createPromptTooLongRecoveryState,
-  isPromptTooLongErrorMessage,
-  type PromptTooLongRecoveryState,
-} from './prompt-too-long-recovery';
 import type { SelectWorkflowWithLlm } from './llm-workflow-selector';
-import type {
-  InternalEventBus,
-  DaemonInternalEventMap,
-  InternalEventPayload,
-} from '../../internal-event-bus';
+import { resolveTopicFromInterest } from './parse-pr-url';
 import {
-  MissingCommandHandlerError,
-  type DaemonCommandMap,
-  type InternalCommandBus,
-} from '../../internal-command-bus';
-import {
+  clearPendingCompletionState,
   type PostApprovalRouteContext,
   type PostApprovalRouteResult,
   PostApprovalRouter,
-  clearPendingCompletionState,
 } from './post-approval-router';
-
+import {
+  buildPromptTooLongContinueNag,
+  COMPACT_RESULT_TIMEOUT_MS,
+  createPromptTooLongRecoveryState,
+  isPromptTooLongErrorMessage,
+  MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS,
+  type PromptTooLongRecoveryState,
+} from './prompt-too-long-recovery';
 import type { TaskAgentManager } from './task-agent-manager';
-import type { SpaceActorRegistryAdapter } from '../actor-registry';
-import type { SpaceAgentInboxRepository } from '../../../storage/repositories/space-agent-inbox-repository';
-import { TopicTrie } from '../../external-events/topic-trie';
 import { WorkflowExecutor } from './workflow-executor';
 import {
+  findMissingNodeAgentReferences,
+  formatMissingAgentReference,
   isMissingWorkflowAgentError,
   isPermanentSpawnError,
   isTransientSpawnError,
   MissingWorkflowAgentError,
-  findMissingNodeAgentReferences,
-  formatMissingAgentReference,
 } from './workflow-node-execution-validation';
-import { selectWorkflow } from './workflow-selector';
 import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine';
+import { selectWorkflow } from './workflow-selector';
 
 const log = new Logger('space-runtime');
 const PRIORITY_ORDER: Record<SpaceTaskPriority, number> = {
@@ -439,6 +438,14 @@ interface SubscriptionDeclaredInterest {
   agentName: string;
   topic: string | null;
   topicFrom: { source: 'primaryLink'; pattern: string } | null;
+  /**
+   * The topic this declaration's `topicFrom` template currently resolves to
+   * (against the run's primary link, same helper as the materializer), or null
+   * when there is no link / the template cannot resolve. A non-null value with
+   * no live trie entry is drift (the link changed but no re-materialization
+   * followed); null means inert-by-design.
+   */
+  resolvedTopic: string | null;
   label: string | null;
   active: boolean;
 }
@@ -1906,6 +1913,12 @@ export class SpaceRuntime {
       canonicalTask.status !== 'cancelled';
 
     // Layer 1 — declared static interests, re-derived from the definition.
+    // `topicFrom` declarations resolve against the run's CURRENT primary link
+    // (same helper the materializer uses): when a link is recorded, a resolved
+    // declaration is reconcilable and reports active iff its derived static sub
+    // is live; without a link it is inert (active: false, expected — not drift).
+    const primaryLink = staticMaterializable ? this.resolvePrUrlForRun(workflowRunId) : '';
+    const topicFromAllowedHosts = primaryLink ? this.topicFromAllowedHosts() : new Set<string>();
     const declared: SubscriptionDeclaredInterest[] = [];
     if (workflow) {
       for (const node of workflow.nodes) {
@@ -1919,6 +1932,10 @@ export class SpaceRuntime {
         for (const agent of agents) {
           for (const interest of agent.eventInterests ?? []) {
             const topic = typeof interest.topic === 'string' ? interest.topic : null;
+            const resolvedTopicFrom =
+              topic === null && interest.topicFrom !== undefined && primaryLink
+                ? resolveTopicFromInterest(interest, primaryLink, topicFromAllowedHosts)
+                : null;
             declared.push({
               nodeId: node.id,
               nodeName: node.name,
@@ -1926,7 +1943,10 @@ export class SpaceRuntime {
               topic,
               topicFrom: interest.topicFrom ?? null,
               label: interest.label ?? null,
-              // topicFrom interests are inert (no resolver yet) → never active.
+              // A topicFrom declaration is active iff its resolved topic has a
+              // live static trie entry (resolvedTopicFrom mirrors the sub the
+              // materializer registered); unresolved ones are inert by design.
+              resolvedTopic: resolvedTopicFrom,
               active: false,
             });
           }
@@ -2003,8 +2023,11 @@ export class SpaceRuntime {
     }
     const declaredKeys = new Set<string>();
     for (const d of declared) {
-      if (d.topic === null) continue; // topicFrom is not reconcilable yet.
-      const key = subscriptionReconcileKey(d.nodeId, d.agentName, d.topic);
+      // topicFrom declarations reconcile through their resolved topic (null
+      // when no link / unresolvable — inert, excluded, not drift).
+      const reconcileTopic = d.topic ?? d.resolvedTopic;
+      if (reconcileTopic === null) continue;
+      const key = subscriptionReconcileKey(d.nodeId, d.agentName, reconcileTopic);
       declaredKeys.add(key);
       d.active = activeStaticKeys.has(key);
     }
@@ -2050,7 +2073,8 @@ export class SpaceRuntime {
           // Only count as drift when a static entry should be live; for terminal
           // tasks static interests are intentionally cleared (see above).
           declaredNotActive: staticMaterializable
-            ? declared.filter((d) => d.topic !== null && !d.active).length
+            ? declared.filter((d) => (d.topic !== null || d.resolvedTopic !== null) && !d.active)
+                .length
             : 0,
           persistedNotActive: persisted.filter((p) => !p.active).length,
           orphanActive,
@@ -5570,29 +5594,18 @@ export class SpaceRuntime {
     }
     // Drain fire-and-forget replay tasks (retained-event redispatch + new-target
     // delivery) so a task that started just before shutdown — and may be awaiting
-    // the blocked-run hook or a delivery resolution — finishes its DB work before
-    // the caller closes the database. The in-task isStopped check prevents
-    // further delivery, but cannot prevent the in-flight hook's own writes.
-    // Bounded: tasks resolve their deliveries/short-circuit on isStopped, and
-    // the retained replay is re-entrancy-guarded.
-    if (this.replayTasksInFlight.size > 0) {
-      const MAX_REPLAY_DRAIN_MS = 5_000;
-      const drainStart = Date.now();
-      await new Promise<void>((resolve) => {
-        const check = () => {
-          if (this.replayTasksInFlight.size === 0) {
-            resolve();
-          } else if (Date.now() - drainStart > MAX_REPLAY_DRAIN_MS) {
-            log.warn(
-              `SpaceRuntime: timed out draining ${this.replayTasksInFlight.size} replay task(s) after ${MAX_REPLAY_DRAIN_MS}ms — proceeding with shutdown`
-            );
-            resolve();
-          } else {
-            setTimeout(check, 10);
-          }
-        };
-        check();
-      });
+    // a delivery resolution — finishes its DB work before the caller closes the
+    // database. Settlement is awaited to completion with NO time cutoff: a task
+    // resumed after stop() would read/write a closed SQLite handle, which is
+    // exactly what the tracking exists to prevent. Bounded anyway — every replay
+    // task checks isStopped before dispatching further work (so no NEW tasks are
+    // spawned after stop) and the retained replay is re-entrancy-guarded, so the
+    // drain converges once the in-flight continuations settle. The drain is
+    // wave-based rather than Promise.all to also cover tasks tracked by a
+    // concurrently-settling task's continuation.
+    while (this.replayTasksInFlight.size > 0) {
+      const pending = [...this.replayTasksInFlight];
+      await Promise.allSettled(pending);
     }
   }
 

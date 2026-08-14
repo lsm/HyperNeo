@@ -16,8 +16,10 @@
  * See docs/plans/design-external-event-bus-for-space-workflow-nodes.md.
  */
 
-import type { Database as BunDatabase } from '../../storage/sqlite-compat';
 import type { ReactiveDatabase } from '../../storage/reactive-database';
+import type { Database as BunDatabase } from '../../storage/sqlite-compat';
+import type { DeliveryTerminalEvent, QueueAgeStats } from './queue-health-metrics';
+import { validateLiteralTopic, validateSource } from './topic-validator';
 import {
   type DeliveryFailure,
   type DeliveryTarget,
@@ -32,8 +34,6 @@ import {
   TERMINAL_DELIVERY_STATES,
   TERMINAL_EVENT_STATES,
 } from './types';
-import type { DeliveryTerminalEvent, QueueAgeStats } from './queue-health-metrics';
-import { validateLiteralTopic, validateSource } from './topic-validator';
 
 interface ExternalEventRow {
   id: string;
@@ -709,17 +709,32 @@ export class ExternalEventStore {
    * to skip rows older than a TTL cutoff at the SQL layer (the new-target replay
    * re-checks expiry in JS regardless, but this keeps expired-but-not-terminalized
    * rows out of the result set so the scoped index scan doesn't fetch them).
+   *
+   * When `createdAfterMs` is provided, RECENT `delivered` rows are also included:
+   * an event that matched a live target before a topicFrom target materialized
+   * terminalizes to `delivered` once that delivery settles, and a PR link
+   * recorded moments later must still be able to register + deliver the event to
+   * the late target within the retention window. Publishing-only scans would
+   * silently drop it. Without the cutoff (unbounded global flush) delivered rows
+   * are excluded — replaying the full delivered history is both unbounded and
+   * redundant with restart requeue.
    */
   listPublishedEventsWithDeliveries(
     spaceId?: string,
     createdAfterMs?: number
   ): ExternalEventRecord[] {
     const cutoff = typeof createdAfterMs === 'number' ? createdAfterMs : null;
+    // Delivered rows are eligible only inside the TTL window; published rows
+    // scan as before (the JS expiry guard still applies to them).
+    const stateFilter =
+      cutoff !== null
+        ? `(e.state = 'published' OR (e.state = 'delivered' AND e.created_at > ?))`
+        : `e.state = 'published'`;
     const rows = spaceId
       ? (this.db
           .prepare(
             `SELECT e.* FROM space_external_events e
- 				 WHERE e.state = 'published'
+ 				 WHERE ${stateFilter}
  				   AND e.space_id = ?
  				   ${cutoff !== null ? 'AND e.created_at > ?' : ''}
  				   AND EXISTS (
@@ -727,18 +742,18 @@ export class ExternalEventStore {
  				   )
  				 ORDER BY e.updated_at, e.id`
           )
-          .all(...(cutoff !== null ? [spaceId, cutoff] : [spaceId])) as ExternalEventRow[])
+          .all(...(cutoff !== null ? [cutoff, spaceId, cutoff] : [spaceId])) as ExternalEventRow[])
       : (this.db
           .prepare(
             `SELECT e.* FROM space_external_events e
- 				 WHERE e.state = 'published'
+ 				 WHERE ${stateFilter}
  				   ${cutoff !== null ? 'AND e.created_at > ?' : ''}
  				   AND EXISTS (
  				     SELECT 1 FROM space_external_event_deliveries d WHERE d.event_id = e.id
  				   )
  				 ORDER BY e.updated_at, e.id`
           )
-          .all(...(cutoff !== null ? [cutoff] : [])) as ExternalEventRow[]);
+          .all(...(cutoff !== null ? [cutoff, cutoff] : [])) as ExternalEventRow[]);
     return rows.map(rowToRecord);
   }
 

@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from 'bun:test';
-import { Database } from '../../../../src/storage/sqlite-compat';
 import { deriveArtifactKey, type SpaceTask, type SpaceWorkflow } from '@hyperneo/shared';
 import { ExternalEventService } from '../../../../src/lib/external-events/external-event-service';
 import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store';
@@ -10,20 +9,21 @@ import { createDaemonInternalEventBus } from '../../../../src/lib/internal-event
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
+import type { WorkflowArtifactProfile } from '../../../../src/lib/space/runtime/artifact-profile';
 import {
   parsePositiveIntegerEnv,
   SpaceRuntime,
 } from '../../../../src/lib/space/runtime/space-runtime';
+import { CodingArtifactProfile } from '../../../../src/lib/space/workflows/coding-artifact-profile';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
-import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository';
 import { WorkflowHookStateRepository } from '../../../../src/storage/repositories/workflow-hook-state-repository';
-import { CodingArtifactProfile } from '../../../../src/lib/space/workflows/coding-artifact-profile';
-import type { WorkflowArtifactProfile } from '../../../../src/lib/space/runtime/artifact-profile';
+import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 setDefaultTimeout(10_000);
@@ -6935,6 +6935,96 @@ describe('SpaceRuntime external event subscriptions', () => {
       .listDeliveries(event.id)
       .filter((d) => d.agentName === 'watcher');
     expect(watchDeliveries).toHaveLength(1);
+  });
+
+  test('delivers a recently terminalized (delivered) event to a late topicFrom target', async () => {
+    // R18 regression: when the FIRST target is live, its delivery settles and
+    // markEventDeliveredIfAllDeliveriesDelivered terminalizes the source event
+    // to `delivered` before the coder records its PR link. The late-target
+    // replay must still include recent delivered rows (inside the retention
+    // window) so the newly materialized target receives the event; a
+    // published-only scan would silently drop it.
+    const workflow = workflowManager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: `Workflow ${Math.random()}`,
+      description: '',
+      nodes: [
+        {
+          id: 'code',
+          name: 'Code',
+          agents: [
+            {
+              agentId: AGENT_ID,
+              name: 'coder',
+              eventInterests: [
+                { topicFrom: { source: 'primaryLink', pattern: TOPIC_FROM_PATTERN } },
+              ],
+            },
+          ],
+        },
+        {
+          id: 'watch',
+          name: 'Watch',
+          agents: [
+            {
+              agentId: `${AGENT_ID}-watcher`,
+              name: 'watcher',
+              eventInterests: [{ topic: 'github/lsm/neokai/pull_request/*' }],
+            },
+          ],
+        },
+      ],
+      transitions: [],
+      startNodeId: 'code',
+      rules: [],
+      tags: [],
+    });
+    const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    const task = tasks[0]!;
+    runtime.registerRunInterests(run.id, task.id, workflow.nodes);
+    markCoderLive(run.id, 'session-coder-late');
+    // The watch node is not the start node — create its execution and mark it
+    // LIVE, so the first delivery settles immediately and terminalizes the
+    // source event before the coder records its link.
+    const watchExecution = nodeExecutionRepo.createOrIgnore({
+      workflowRunId: run.id,
+      workflowNodeId: 'watch',
+      agentName: 'watcher',
+      status: 'in_progress',
+      agentSessionId: 'session-watcher-live',
+      startedAt: Date.now(),
+    });
+    nodeExecutionRepo.update(watchExecution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-watcher-live',
+      startedAt: Date.now(),
+    });
+    tam.alive.add('session-watcher-live');
+
+    const event = makeEvent();
+    await eventService.publish(event);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // The watcher's live delivery settled → the source event terminalized.
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-watcher-live');
+
+    // NOW the coder records its PR link: the late-target replay must pick the
+    // recently delivered event up and deliver it to the materialized target.
+    recordPrLinkArtifact(run.id, 'code', PR_URL);
+    materializeAndReplay(run.id);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(injected).toHaveLength(2);
+    expect(injected[1]!.sessionId).toBe('session-coder-late');
+    const coderDelivery = eventStore.listDeliveries(event.id).find((d) => d.agentName === 'coder');
+    expect(coderDelivery?.state).toBe('delivered');
+    // The settled watcher target is not re-disturbed.
+    const watchDeliveries = eventStore
+      .listDeliveries(event.id)
+      .filter((d) => d.agentName === 'watcher');
+    expect(watchDeliveries).toHaveLength(1);
+    expect(watchDeliveries[0]!.state).toBe('delivered');
   });
 
   test('does not deliver an expired routed event to a newly materialized target', async () => {

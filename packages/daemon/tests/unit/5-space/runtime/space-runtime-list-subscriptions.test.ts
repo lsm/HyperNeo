@@ -23,6 +23,8 @@ import { NodeExecutionRepository } from '../../../../src/storage/repositories/no
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowEventSubscriptionRepository } from '../../../../src/storage/repositories/space-workflow-event-subscription-repository.ts';
+import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';
+import { deriveArtifactKey } from '@hyperneo/shared';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -63,7 +65,8 @@ describe('SpaceRuntime.listSubscriptions', () => {
   let subscriptionRepo: SpaceWorkflowEventSubscriptionRepository;
 
   function makeRuntime(overrides?: Partial<SpaceRuntimeConfig>): SpaceRuntime {
-    const artifactProfile = new CodingArtifactProfile({ db });
+    const artifactRepo = new WorkflowRunArtifactRepository(db);
+    const artifactProfile = new CodingArtifactProfile({ db, artifactRepo });
     return new SpaceRuntime({
       db,
       spaceManager,
@@ -72,6 +75,7 @@ describe('SpaceRuntime.listSubscriptions', () => {
       workflowRunRepo,
       taskRepo,
       nodeExecutionRepo: new NodeExecutionRepository(db),
+      artifactRepo,
       artifactProfile,
       ...overrides,
     });
@@ -337,6 +341,81 @@ describe('SpaceRuntime.listSubscriptions', () => {
     });
     // topicFrom is inert (no resolver yet) → not active, but NOT a drift signal.
     expect(result.declared[0].active).toBe(false);
+    expect(result.mismatches.declaredNotActive).toBe(0);
+  });
+
+  test('materialized topicFrom sub reconciles: declared active, entry not orphan', () => {
+    // R18 regression: after a PR link is recorded and the topicFrom interest
+    // materializes, listSubscriptions must resolve the declaration's pattern
+    // against the current primary link, report the declaration active, and back
+    // the live trie entry as `declared` — NOT a false orphan.
+    const runtime = makeRuntime();
+    const { workflow, runId, taskId } = createRun({
+      coderInterests: [
+        {
+          topicFrom: {
+            source: 'primaryLink',
+            pattern: 'github/{owner}/{repo}/pull_request/{number}.*',
+          },
+        },
+      ],
+    });
+
+    // Record the run's primary link, then materialize (the production trigger).
+    const artifactRepo = new WorkflowRunArtifactRepository(db);
+    artifactRepo.upsert({
+      id: crypto.randomUUID(),
+      runId,
+      nodeId: 'code',
+      artifactType: 'link',
+      artifactKey: deriveArtifactKey('link', { kind: 'pr' }),
+      data: { kind: 'pr', url: 'https://github.com/lsm/neokai/pull/42' },
+    });
+    runtime.invalidatePrimaryLinkForRun(runId);
+    expect(runtime.materializeRunTopicFromInterests(runId)).toBe(true);
+
+    const res = runtime.listSubscriptions(runId, SPACE_ID);
+    expect(res.success).toBe(true);
+    if (!res.success) return;
+    const { result } = res;
+
+    // The declaration resolved and reports active.
+    expect(result.declared).toHaveLength(1);
+    expect(result.declared[0].resolvedTopic).toBe('github/lsm/neokai/pull_request/42.*');
+    expect(result.declared[0].active).toBe(true);
+    // The live static entry is backed by the resolved declaration — not orphan.
+    expect(result.active).toHaveLength(1);
+    expect(result.active[0].subscriptionKind).toBe('static');
+    expect(result.active[0].source).toBe('declared');
+    expect(result.mismatches.orphanActive).toBe(0);
+    expect(result.mismatches.declaredNotActive).toBe(0);
+    void workflow;
+    void taskId;
+  });
+
+  test('topicFrom with no link stays inert: unresolved, excluded, not drift', () => {
+    // Complement: with NO primary link, resolvedTopic is null, the entry list is
+    // empty, and neither mismatch counter reports drift.
+    const runtime = makeRuntime();
+    const { runId } = createRun({
+      coderInterests: [
+        {
+          topicFrom: {
+            source: 'primaryLink',
+            pattern: 'github/{owner}/{repo}/pull_request/{number}.*',
+          },
+        },
+      ],
+    });
+
+    const res = runtime.listSubscriptions(runId, SPACE_ID);
+    expect(res.success).toBe(true);
+    if (!res.success) return;
+    const { result } = res;
+    expect(result.declared[0].resolvedTopic).toBeNull();
+    expect(result.declared[0].active).toBe(false);
+    expect(result.active).toHaveLength(0);
+    expect(result.mismatches.orphanActive).toBe(0);
     expect(result.mismatches.declaredNotActive).toBe(0);
   });
 
