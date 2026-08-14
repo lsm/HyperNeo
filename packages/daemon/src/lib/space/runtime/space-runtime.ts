@@ -2508,7 +2508,9 @@ export class SpaceRuntime {
         } else if (activatedTarget) {
           store.markDeliveryFailed(payload.eventId, deliveryKey, {
             terminal: false,
-            reason: 'node_execution_not_active',
+            // Defer-encoded so a daemon restart reconstructs 'defer' — a bare
+            // reason recovers as 'immediate' and would steer a busy kickoff.
+            reason: 'deliveryMode:defer; node_execution_not_active',
           });
           // The persisted retryable delivery plus the activation retry timer
           // are sufficient; do not duplicate it in the in-memory queue.
@@ -2519,7 +2521,7 @@ export class SpaceRuntime {
               activatedTarget,
               payload,
               deliveryKey,
-              'node_execution_not_active'
+              'deliveryMode:defer; node_execution_not_active'
             );
           }
         } else {
@@ -2536,7 +2538,8 @@ export class SpaceRuntime {
               resolved,
               payload,
               deliveryKey,
-              'node_execution_not_active'
+              // Defer-encoded — same restart-recovery rationale as above.
+              'deliveryMode:defer; node_execution_not_active'
             );
           }
         }
@@ -2943,7 +2946,16 @@ export class SpaceRuntime {
           eventRecord?.createdAt ?? createdAt
         );
         if (!(await this.isTargetSpacePausedOrStopped(refreshed))) {
-          this.scheduleActivationRetry(refreshed, event, deliveryKey, 'node_execution_not_active');
+          this.scheduleActivationRetry(
+            refreshed,
+            event,
+            deliveryKey,
+            // Encode the recovered mode so a daemon restart reconstructs it
+            // (deliveryModeFromFailureReason only distinguishes the defer
+            // prefix; an immediate encoding recovers 'immediate', same as a
+            // bare reason).
+            `deliveryMode:${deliveryMode}; node_execution_not_active`
+          );
         }
       }
       this.scheduleExternalEventRateLimitCleanup(rateLimitKey);

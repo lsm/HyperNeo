@@ -1416,7 +1416,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(injected).toHaveLength(0);
     const delivery = eventStore.listDeliveries(event.id)[0]!;
     expect(delivery.state).toBe('pending');
-    expect(delivery.failureReason).toBe('node_execution_not_active');
+    expect(delivery.failureReason).toBe('deliveryMode:defer; node_execution_not_active');
   });
 
   test('queues matching events for pending nodes and flushes after session creation', async () => {
@@ -2923,7 +2923,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(injected).toHaveLength(0);
     const delivery = eventStore.listDeliveries(event.id)[0]!;
     expect(delivery.state).toBe('pending');
-    expect(delivery.failureReason).toBe('node_execution_not_active');
+    expect(delivery.failureReason).toBe('deliveryMode:defer; node_execution_not_active');
     expect(eventStore.listPendingDeliveries()).toContainEqual(delivery);
     expect(eventStore.getById(event.id)?.state).toBe('published');
   });
@@ -3053,7 +3053,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(tam.activationCalls).toHaveLength(0);
     const pending = eventStore.listDeliveries(event.id)[0]!;
     expect(pending.state).toBe('pending');
-    expect(pending.failureReason).toBe('node_execution_not_active');
+    expect(pending.failureReason).toBe('deliveryMode:defer; node_execution_not_active');
 
     db.prepare(`UPDATE spaces SET paused = 0 WHERE id = ?`).run(SPACE_ID);
     nodeExecutionRepo.update(execution.id, {
@@ -3305,7 +3305,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     await eventService.publish(idleEvent);
     expect(eventStore.listDeliveries(idleEvent.id)[0]!.state).toBe('pending');
     expect(eventStore.listDeliveries(idleEvent.id)[0]!.failureReason).toBe(
-      'node_execution_not_active'
+      'deliveryMode:defer; node_execution_not_active'
     );
 
     // Simulate a separate in-memory queued delivery (from a transient failure
@@ -4414,7 +4414,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     const codeDelivery = deliveries.find((d) => d.nodeId === 'code')!;
     expect(codeDelivery).toBeDefined();
     expect(codeDelivery.state).toBe('pending');
-    expect(codeDelivery.failureReason).toBe('node_execution_not_active');
+    expect(codeDelivery.failureReason).toBe('deliveryMode:defer; node_execution_not_active');
   });
 
   test('preserves queued deliveries while re-registering unchanged interests', async () => {
@@ -5446,7 +5446,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     await eventService.publish(event);
     const persisted = eventStore.listDeliveries(event.id)[0]!;
     expect(persisted.state).toBe('pending');
-    expect(persisted.failureReason).toBe('node_execution_not_active');
+    expect(persisted.failureReason).toBe('deliveryMode:defer; node_execution_not_active');
 
     // Run transitions to terminal, but the task is still active and the node
     // reactivates with a live session — run status no longer gates delivery.
@@ -5475,7 +5475,9 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     const event = makeEvent();
     await eventService.publish(event);
-    expect(eventStore.listDeliveries(event.id)[0]!.failureReason).toBe('node_execution_not_active');
+    expect(eventStore.listDeliveries(event.id)[0]!.failureReason).toBe(
+      'deliveryMode:defer; node_execution_not_active'
+    );
 
     // Run becomes blocked with no active execution, but the task is still
     // active and the node reactivates with a live session.
@@ -5504,7 +5506,9 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     const event = makeEvent();
     await eventService.publish(event);
-    expect(eventStore.listDeliveries(event.id)[0]!.failureReason).toBe('node_execution_not_active');
+    expect(eventStore.listDeliveries(event.id)[0]!.failureReason).toBe(
+      'deliveryMode:defer; node_execution_not_active'
+    );
 
     // Reactivate the node execution, then leave the run blocked — a blocked run
     // with an active execution is still externally deliverable.
@@ -5744,13 +5748,15 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     const event = makeEvent();
     await eventService.publish(event);
-    expect(eventStore.listDeliveries(event.id)[0]!.failureReason).toBe('node_execution_not_active');
+    expect(eventStore.listDeliveries(event.id)[0]!.failureReason).toBe(
+      'deliveryMode:defer; node_execution_not_active'
+    );
 
     await new Promise((resolve) => setTimeout(resolve, 5_600));
 
     const delivery = eventStore.listDeliveries(event.id)[0]!;
     expect(delivery.state).toBe('failed');
-    expect(delivery.failureReason).toBe('node_execution_not_active');
+    expect(delivery.failureReason).toBe('deliveryMode:defer; node_execution_not_active');
     expect(eventStore.getById(event.id)?.state).toBe('failed');
     expect(tam.activationCalls.length).toBeGreaterThanOrEqual(5);
     expect(tam.activationCalls.length).toBeLessThanOrEqual(6);
@@ -5959,7 +5965,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(tam.activationCalls).toHaveLength(0);
     const pending = eventStore.listDeliveries(event.id)[0]!;
     expect(pending.state).toBe('pending');
-    expect(pending.failureReason).toBe('node_execution_not_active');
+    expect(pending.failureReason).toBe('deliveryMode:defer; node_execution_not_active');
 
     // Resume the space. The runtime's onSpaceResumed hook must schedule an
     // activation retry for the sessionless pending delivery.
@@ -6072,7 +6078,9 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     const event = makeEvent({ id: 'evt-exclude-retry' });
     await eventService.publish(event);
-    expect(eventStore.listDeliveries(event.id)[0]!.failureReason).toBe('node_execution_not_active');
+    expect(eventStore.listDeliveries(event.id)[0]!.failureReason).toBe(
+      'deliveryMode:defer; node_execution_not_active'
+    );
 
     // Before the activation retry fires, make activation succeed. The retry
     // calls flushPendingNodeQueueAsync with the current deliveryKey excluded;
@@ -6109,7 +6117,9 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     const event = makeEvent({ id: 'evt-sessionless-rehydrate' });
     await eventService.publish(event);
-    expect(eventStore.listDeliveries(event.id)[0]!.failureReason).toBe('node_execution_not_active');
+    expect(eventStore.listDeliveries(event.id)[0]!.failureReason).toBe(
+      'deliveryMode:defer; node_execution_not_active'
+    );
     await runtime.stop();
 
     const commandBus = createInternalCommandBus();

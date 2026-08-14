@@ -3361,7 +3361,11 @@ export class TaskAgentManager {
     const session = this.agentSessionIndex.get(agentSessionId);
     if (!session) return;
     try {
-      await session.handleInterrupt();
+      // Called to quiesce in-progress siblings when an end node finishes — a
+      // workflow-completion interrupt, not a user interrupt. Suppress the
+      // deferred replay so an event deferred while the sibling was processing
+      // isn't promoted into a new turn after the workflow has finished.
+      await session.handleInterrupt({ skipDeferredReplay: true });
     } catch (err) {
       log.warn(
         `TaskAgentManager.interruptBySessionId: failed to interrupt session ${agentSessionId}:`,

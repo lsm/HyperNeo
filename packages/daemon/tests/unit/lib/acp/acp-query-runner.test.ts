@@ -639,6 +639,29 @@ describe('AcpQueryRunner', () => {
     expect(publishAsync).not.toHaveBeenCalledWith('query.trigger', { sessionId: 'session-1' });
   });
 
+  test('does not publish query.trigger when an interrupt starts during cleanup', async () => {
+    // The success classification is snapshotted at try-end; an interrupt that
+    // starts while the finally block awaits cleanup (proxyBridge.close())
+    // must still suppress the replay — checked live at publish time, not
+    // just from the stale snapshot.
+    const { runner, ctx } = createRunnerFixture();
+    const publishAsync = ctx.internalEventBus.publishAsync as unknown as ReturnType<typeof mock>;
+    let status = 'processing';
+    (ctx.stateManager as unknown as { getState: () => { status: string } }).getState = () => ({
+      status,
+    });
+    // Simulate the interrupt landing mid-cleanup: the finally block stops the
+    // message queue before publishing — flip the state there.
+    (ctx.messageQueue as unknown as { stop: () => void }).stop = () => {
+      status = 'interrupted';
+    };
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    expect(publishAsync).not.toHaveBeenCalledWith('query.trigger', { sessionId: 'session-1' });
+  });
+
   test('aborts ACP submission when remove/defer already revoked the row (#3744696846)', async () => {
     const client = createMockClient();
     let promptBodyRan = false;

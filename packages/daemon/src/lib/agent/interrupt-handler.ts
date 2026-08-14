@@ -135,6 +135,13 @@ export class InterruptHandler {
     this.interruptPromise = interruptCompletePromise;
 
     try {
+      // Snapshot the process-exit promise BEFORE any await: QueryRunner's
+      // finally clears ctx.processExitedPromise once the old query settles
+      // (close() only initiates subprocess termination), so reading it later
+      // would miss the still-pending exit and let the deferred replay race
+      // the terminating process. Mirrors QueryLifecycleManager.stop().
+      const processExitSnapshot = this.ctx.processExitedPromise ?? Promise.resolve();
+
       // Set state to 'interrupted' immediately
       await stateManager.setInterrupted();
 
@@ -217,8 +224,7 @@ export class InterruptHandler {
       if (!opts?.skipDeferredReplay) {
         const oldQuerySettled =
           this.ctx.queryPromise?.then(undefined, () => {}) ?? Promise.resolve();
-        const processExit = this.ctx.processExitedPromise ?? Promise.resolve();
-        void Promise.all([oldQuerySettled, processExit]).then(() =>
+        void Promise.all([oldQuerySettled, processExitSnapshot]).then(() =>
           this.publishDeferredQueueTrigger()
         );
       }

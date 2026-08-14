@@ -858,7 +858,16 @@ export class AcpQueryRunner {
           // Gated on normal completion: after a terminal error
           // (handleRunError), replaying would promote deferred rows to
           // enqueued and drive another turn that is likely to fail too.
-          if (turnCompletedNormally && session.config.queryMode !== 'manual') {
+          if (
+            turnCompletedNormally &&
+            // Recheck at replay time: an interrupt may have started after the
+            // try-end snapshot — e.g. while this finally block awaited
+            // cleanup (proxyBridge.close()) — and publishing then would
+            // restart deferred work the (possibly teardown-bound) interrupt
+            // just stopped, bypassing skipDeferredReplay.
+            stateManager.getState().status !== 'interrupted' &&
+            session.config.queryMode !== 'manual'
+          ) {
             this.ctx.internalEventBus.publishAsync('query.trigger', { sessionId: session.id });
           }
         }
