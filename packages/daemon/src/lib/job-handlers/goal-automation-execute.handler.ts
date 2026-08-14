@@ -553,7 +553,7 @@ function hasQuantitativeOutcome(text: string): boolean {
   // prospective target ("800 ms to 200 ms is planned") must not count.
   for (const match of text.matchAll(QUANTITATIVE_OUTCOME_RE)) {
     const prefix = text.slice(Math.max(0, match.index - 48), match.index);
-    if (NON_AFFIRMATIVE_PREFIX_RE.test(prefix)) continue;
+    if (prefixHasQualifier(prefix)) continue;
     const end = match.index + match[0].length;
     if (suffixHasQualifier(text.slice(end, end + 48))) continue;
     return true;
@@ -566,11 +566,33 @@ function hasQuantitativeOutcome(text: string): boolean {
  * prospective mention rather than an affirmative one — "CI has not run yet",
  * "waiting for tests to pass", "build still pending", "no meaningful
  * failures", "tests will pass after the patch". The prefix must sit within
- * the same clause: commas, semicolons, colons, and line breaks end it, so
- * "No errors; tests passed" still counts "passed" as affirmative.
+ * the same clause: commas, semicolons, colons, line breaks, and coordinating
+ * conjunctions that introduce a new clause all end it, so "No errors; tests
+ * passed" and "No errors and tests passed" both count "passed" as affirmative.
  */
 const NON_AFFIRMATIVE_PREFIX_RE =
   /\b(?:not|never|no|hasn'?t|haven'?t|hadn'?t|didn'?t|doesn'?t|won'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|cannot|without|yet|still|pending|wait(?:ing)?|queued|incomplete|unfinished|planned|scheduled|upcoming|will|would|should|could|might|expect(?:ed|s)? to|hop(?:e|es|ing) to|plan(?:s|ned)? to)\b[^.!?;:,\n]{0,32}$/i;
+
+/**
+ * Coordinating conjunctions that can introduce a new clause. A qualifier on
+ * the far side of one ("No errors AND tests passed") describes that earlier
+ * clause, not the outcome being tested.
+ */
+const CONJUNCTION_RE = /\b(?:and|but|while|whereas|although|though)\b/gi;
+
+/**
+ * Whether a prefix (the text before an outcome match) carries a qualifier
+ * that belongs to THIS outcome's clause. The qualifier must appear after the
+ * last conjunction in the prefix — one introduced earlier scoped a different
+ * clause.
+ */
+function prefixHasQualifier(prefix: string): boolean {
+  let segment = prefix;
+  let cut = -1;
+  for (const match of prefix.matchAll(CONJUNCTION_RE)) cut = match.index;
+  if (cut >= 0) segment = segment.slice(cut);
+  return NON_AFFIRMATIVE_PREFIX_RE.test(segment);
+}
 
 /**
  * Suffix qualifier words that make a matched outcome reference still pending,
@@ -631,7 +653,7 @@ function hasAffirmativeOutcomeText(text: string): boolean {
   if (hasArtifactOutcome(text)) return true;
   for (const match of text.matchAll(AFFIRMATIVE_OUTCOME_RE)) {
     const prefix = text.slice(Math.max(0, match.index - 48), match.index);
-    if (NON_AFFIRMATIVE_PREFIX_RE.test(prefix)) continue;
+    if (prefixHasQualifier(prefix)) continue;
     const suffix = text.slice(match.index + match[0].length, match.index + match[0].length + 48);
     if (suffixHasQualifier(suffix)) continue;
     return true;
@@ -645,7 +667,7 @@ function hasArtifactOutcome(text: string): boolean {
   // "Built v2.4.1 is still pending") must not count as completed work.
   for (const match of text.matchAll(ARTIFACT_REFERENCE_RE)) {
     const prefix = text.slice(Math.max(0, match.index - 48), match.index);
-    if (NON_AFFIRMATIVE_PREFIX_RE.test(prefix)) continue;
+    if (prefixHasQualifier(prefix)) continue;
     if (!ARTIFACT_CONTEXT_RE.test(prefix)) continue;
     const end = match.index + match[0].length;
     if (suffixHasQualifier(text.slice(end, end + 48))) continue;
