@@ -3,7 +3,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
-import { execSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -13,25 +13,28 @@ const SCRIPT = path.join(REPO_ROOT, 'scripts/validate-test-matrix.sh');
 // slow/loaded runner does not time out a mutation test and report a false pass.
 const TIMEOUT = 90_000;
 
-// Committed workflow/config files these tests mutate in place. A hard kill
-// (OOM/SIGKILL, or the CI cancel-in-progress that main.yml sets) skips a test's
-// try/finally, leaving a bypass injected into the working tree that would then
-// poison every future local `bun run check`. Restore them from git HEAD before
-// AND after the file runs so each run starts from a known-clean state and a
-// killed prior run is cleaned up on the next one.
+// Committed workflow/config files these tests mutate in place. Snapshot the
+// EXACT working-tree bytes in beforeAll and restore them in afterAll. This must
+// NOT use `git checkout HEAD --`: that would irreversibly discard a developer's
+// uncommitted edits to these files (data loss). Snapshotting the working tree
+// preserves those edits (we restore to the beforeAll state), and each test's
+// try/finally still restores on normal exit.
 const MUTATED_TARGETS = [
   '.github/workflows/main.yml',
   '.github/workflows/real-api-tests.yml',
   'packages/web/vitest.config.ts',
 ];
-function restoreTargetsFromGit(): void {
-  execSync(`git checkout HEAD -- ${MUTATED_TARGETS.map((t) => `'${t}'`).join(' ')}`, {
-    cwd: REPO_ROOT,
-    stdio: 'ignore',
-  });
-}
-beforeAll(restoreTargetsFromGit);
-afterAll(restoreTargetsFromGit);
+const _snapshots = new Map<string, string>();
+beforeAll(() => {
+  for (const rel of MUTATED_TARGETS) {
+    _snapshots.set(rel, fs.readFileSync(path.join(REPO_ROOT, rel), 'utf-8'));
+  }
+});
+afterAll(() => {
+  for (const [rel, original] of _snapshots) {
+    fs.writeFileSync(path.join(REPO_ROOT, rel), original);
+  }
+});
 
 function runGuard(): { exitCode: number; stdout: string; stderr: string } {
   const r = spawnSync('/bin/bash', [SCRIPT], {
@@ -326,12 +329,13 @@ describe('validate-test-matrix.sh', () => {
   );
 
   it(
-    'rejects a data-command wrapper (test -n) over the web marker (P2)',
+    'rejects a double-quoted data wrapper (test -n) over the web marker',
     () => {
-      // `test -n "<marker>"` (double-quoted) exits 0 without running Vitest;
-      // marker_executed treats the double-quoted marker as executed, and a
-      // data-command blacklist cannot enumerate `test`/`[`/`[[`. Pin the token
-      // after the flaky-runner separator to the expected `bash -lc` runner.
+      // `test -n "<marker>"` (double-quoted) exits 0 without running Vitest.
+      // executed_text now treats a double-quoted arg as DATA unless it is the
+      // `bash -lc` command body, so the marker is not executed → caught by
+      // marker_executed (a data-command blacklist could not enumerate
+      // `test`/`[`/`[[`).
       expectGuardRejects(
         path.join(REPO_ROOT, '.github/workflows/main.yml'),
         (s) =>
@@ -339,7 +343,27 @@ describe('validate-test-matrix.sh', () => {
             "bash -lc 'cd packages/web && bunx vitest run",
             'test -n "cd packages/web && bunx vitest run'
           ),
-        "after the flaky-runner separator is not 'bash -lc'"
+        'does not EXECUTE'
+      );
+    },
+    TIMEOUT
+  );
+
+  it(
+    'rejects a bash -lc command whose marker is a $0 positional (P2)',
+    () => {
+      // `bash -lc "true" "<marker>"` runs only `true`; the marker-bearing string
+      // is $0 (not executed), but the old executed_text copied any double-quoted
+      // arg. Now the second double-quoted arg is data, so the marker is not
+      // executed.
+      expectGuardRejects(
+        path.join(REPO_ROOT, '.github/workflows/main.yml'),
+        (s) =>
+          s.replace(
+            "bash -lc 'cd packages/daemon && node_modules/.bin/vitest run",
+            'bash -lc "true" "cd packages/daemon && node_modules/.bin/vitest run'
+          ),
+        'does not EXECUTE'
       );
     },
     TIMEOUT
@@ -456,6 +480,47 @@ describe('validate-test-matrix.sh', () => {
       try {
         const { exitCode } = runGuard();
         expect(exitCode).toBe(0);
+      } finally {
+        fs.writeFileSync(wf, original);
+      }
+    },
+    TIMEOUT
+  );
+
+  it(
+    'rejects a module axis item with invalid characters (P2)',
+    () => {
+      // `- comp_onents` is a distinct value to GitHub (no test_path → unfiltered
+      // run) while the include record makes a separate `components` combo; the
+      // axis parser must validate the RAW item, not its normalized form.
+      expectGuardRejects(
+        path.join(REPO_ROOT, '.github/workflows/main.yml'),
+        (s) => s.replace('          - components\n', '          - comp_onents\n'),
+        'module axis item'
+      );
+    },
+    TIMEOUT
+  );
+
+  it(
+    'rejects a real-API include row without a module (P2)',
+    () => {
+      // A moduleless include row is still scheduled (empty module name); a
+      // duplicate test_path then runs the paid real-API test twice while this
+      // guard reports it covered.
+      const wf = path.join(REPO_ROOT, '.github/workflows/real-api-tests.yml');
+      const original = fs.readFileSync(wf, 'utf-8');
+      const anchor = '          - module: cross-provider-2\n';
+      expect(original.includes(anchor)).toBe(true);
+      // Insert a moduleless row (test_path, no module) right after the anchor row.
+      const idx = original.indexOf(anchor) + anchor.length;
+      const moduleless =
+        '          - test_path: tests/online/cross-provider/cross-provider-model-switch.test.ts\n';
+      fs.writeFileSync(wf, original.slice(0, idx) + moduleless + original.slice(idx));
+      try {
+        const { exitCode, stderr } = runGuard();
+        expect(exitCode).toBe(1);
+        expect(stderr).toContain('without a non-empty module');
       } finally {
         fs.writeFileSync(wf, original);
       }

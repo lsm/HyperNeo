@@ -90,14 +90,22 @@ enabled_run_cmd() {
 # executed command, so the step runs zero tests while the guard stays green.
 marker_executed() {
 	awk -v runval="$1" -v marker="$2" '
-		function executed_text(s,   i,n,c,out,inq,qstart,before,content) {
-			n=length(s); out=""; inq=0
+		function executed_text(s,   i,n,c,out,sq,dq,qstart,before,content) {
+			# Track single (sq) and double (dq) quote regions separately. A quoted
+			# string is an ARGUMENT (data) unless it is the body of a `bash/sh -lc/-c`
+			# command — so `bash -lc 'vitest'` keeps vitest (executed), but
+			# `bash -lc "true" "vitest"` keeps only `true` (the command); the second
+			# arg is $0, NOT executed, even though it is double-quoted.
+			n=length(s); out=""; sq=0; dq=0
 			for (i=1; i<=n; i++) {
 				c=substr(s,i,1)
-				if (c == "'\''") {
-					if (!inq) { inq=1; qstart=i; before=substr(s,1,i-1) }
-					else { inq=0; content=substr(s,qstart+1,i-qstart-1); if (before ~ /(bash|sh)[[:space:]]+-l?c[[:space:]]*$/) out=out content }
-				} else if (!inq) { out=out c }
+				if (c == "'\''" && !dq) {
+					if (!sq) { sq=1; qstart=i; before=substr(s,1,i-1) }
+					else { sq=0; content=substr(s,qstart+1,i-qstart-1); if (before ~ /(bash|sh)[[:space:]]+-l?c[[:space:]]*$/) out=out content }
+				} else if (c == "\"" && !sq) {
+					if (!dq) { dq=1; qstart=i; before=substr(s,1,i-1) }
+					else { dq=0; content=substr(s,qstart+1,i-qstart-1); if (before ~ /(bash|sh)[[:space:]]+-l?c[[:space:]]*$/) out=out content }
+				} else if (!sq && !dq) { out=out c }
 			}
 			return out
 		}
@@ -153,14 +161,22 @@ runner_post_sep_starts_with() {
 # -lc/-c body), so an operator inside a quoted data argument is not misread.
 runner_has_dead_prefix() {
 	awk -v runval="$1" -v marker="$2" '
-		function executed_text(s,   i,n,c,out,inq,qstart,before,content) {
-			n=length(s); out=""; inq=0
+		function executed_text(s,   i,n,c,out,sq,dq,qstart,before,content) {
+			# Track single (sq) and double (dq) quote regions separately. A quoted
+			# string is an ARGUMENT (data) unless it is the body of a `bash/sh -lc/-c`
+			# command — so `bash -lc 'vitest'` keeps vitest (executed), but
+			# `bash -lc "true" "vitest"` keeps only `true` (the command); the second
+			# arg is $0, NOT executed, even though it is double-quoted.
+			n=length(s); out=""; sq=0; dq=0
 			for (i=1; i<=n; i++) {
 				c=substr(s,i,1)
-				if (c == "'\''") {
-					if (!inq) { inq=1; qstart=i; before=substr(s,1,i-1) }
-					else { inq=0; content=substr(s,qstart+1,i-qstart-1); if (before ~ /(bash|sh)[[:space:]]+-l?c[[:space:]]*$/) out=out content }
-				} else if (!inq) { out=out c }
+				if (c == "'\''" && !dq) {
+					if (!sq) { sq=1; qstart=i; before=substr(s,1,i-1) }
+					else { sq=0; content=substr(s,qstart+1,i-qstart-1); if (before ~ /(bash|sh)[[:space:]]+-l?c[[:space:]]*$/) out=out content }
+				} else if (c == "\"" && !sq) {
+					if (!dq) { dq=1; qstart=i; before=substr(s,1,i-1) }
+					else { dq=0; content=substr(s,qstart+1,i-qstart-1); if (before ~ /(bash|sh)[[:space:]]+-l?c[[:space:]]*$/) out=out content }
+				} else if (!sq && !dq) { out=out c }
 			}
 			return out
 		}
@@ -200,14 +216,22 @@ runner_has_noexec_interp() {
 # before the runval is assembled, so only a whitespace-preceded `#` matters.
 runner_has_comment_before_marker() {
 	awk -v runval="$1" -v marker="$2" '
-		function executed_text(s,   i,n,c,out,inq,qstart,before,content) {
-			n=length(s); out=""; inq=0
+		function executed_text(s,   i,n,c,out,sq,dq,qstart,before,content) {
+			# Track single (sq) and double (dq) quote regions separately. A quoted
+			# string is an ARGUMENT (data) unless it is the body of a `bash/sh -lc/-c`
+			# command — so `bash -lc 'vitest'` keeps vitest (executed), but
+			# `bash -lc "true" "vitest"` keeps only `true` (the command); the second
+			# arg is $0, NOT executed, even though it is double-quoted.
+			n=length(s); out=""; sq=0; dq=0
 			for (i=1; i<=n; i++) {
 				c=substr(s,i,1)
-				if (c == "'\''") {
-					if (!inq) { inq=1; qstart=i; before=substr(s,1,i-1) }
-					else { inq=0; content=substr(s,qstart+1,i-qstart-1); if (before ~ /(bash|sh)[[:space:]]+-l?c[[:space:]]*$/) out=out content }
-				} else if (!inq) { out=out c }
+				if (c == "'\''" && !dq) {
+					if (!sq) { sq=1; qstart=i; before=substr(s,1,i-1) }
+					else { sq=0; content=substr(s,qstart+1,i-qstart-1); if (before ~ /(bash|sh)[[:space:]]+-l?c[[:space:]]*$/) out=out content }
+				} else if (c == "\"" && !sq) {
+					if (!dq) { dq=1; qstart=i; before=substr(s,1,i-1) }
+					else { dq=0; content=substr(s,qstart+1,i-qstart-1); if (before ~ /(bash|sh)[[:space:]]+-l?c[[:space:]]*$/) out=out content }
+				} else if (!sq && !dq) { out=out c }
 			}
 			return out
 		}
@@ -457,6 +481,34 @@ reject_invalid_module_values() {
 	done <<< "$_bad_modules"
 }
 
+# Reject a `module:` AXIS list item (block form: `module:` then `- item`) whose
+# RAW scalar (after stripping optional YAML quotes) does not match
+# ^[a-z0-9][a-z0-9-]*$. _axis_modules normalizes items (strips non-token chars)
+# before use, so `- comp_onents` would silently become `components` and the guard
+# exits 0 — but GitHub treats `comp_onents` as a DISTINCT value (no test_path →
+# unfiltered run) while the include record makes a separate `components` combo.
+# Validate the raw scalar the way reject_invalid_module_values does for scalars.
+reject_invalid_axis_items() {
+	local file="$1" job="$2" _bad
+	_bad=$(awk -v job="$job" '
+		$0 ~ "^  " job ":" { injob=1; next }
+		injob && /^  [a-z]/ { injob=0; inaxis=0; next }
+		!injob { next }
+		injob && /^[[:space:]]*module:[[:space:]]*$/ { inaxis=1; next }
+		inaxis && !/^[[:space:]]*#/ && !/^[[:space:]]*- / { inaxis=0; next }
+		inaxis && /^[[:space:]]+- [^[:space:]#]/ {
+			v=$0; sub(/^[[:space:]]+- [[:space:]]*/, "", v); sub(/[[:space:]].*/, "", v)
+			gsub(/^['"'"'"]+|['"'"'"]+$/, "", v)
+			if (v != "" && v !~ /^[a-z0-9][a-z0-9-]*$/) print v
+		}
+	' "$file" | sort -u)
+	while IFS= read -r bad; do
+		[ -n "$bad" ] || continue
+		err "$job matrix has a module axis item '$bad' with invalid characters — GitHub treats it as a distinct value, so it gets no test_path (unfiltered run) while the include record creates a separate combination, and this guard cannot soundly match it"
+		echo "     → use only lowercase letters, digits, and hyphens in module axis items" >&2
+	done <<< "$_bad"
+}
+
 # Reject a matrix include row carrying a key NOT in the allowlist ($3, space-
 # separated). An include row with an extra key (e.g. `replica: b`) introduces an
 # ADDITIONAL matrix combination GitHub schedules — evading the module-axis and
@@ -489,6 +541,40 @@ reject_include_extra_keys() {
 			   echo "     → use only the allowed include-row keys ($allowed) in $job" >&2 ;;
 		esac
 	done <<< "$_keys"
+}
+
+# Reject a matrix include row that has NO non-empty `module`. GitHub still
+# schedules a moduleless include row as a combination (with an empty module
+# name); if its test_path duplicates another row's, the test runs TWICE (for
+# real-api that is a duplicate paid provider run). The per-record test_path
+# check and _include_modules only iterate rows that HAVE a module, so a
+# moduleless row is otherwise invisible.
+reject_moduleless_include_rows() {
+	local file="$1" job="$2" _hit
+	_hit=$(awk -v job="$job" '
+		function flush() { if (in_rec && !has_mod) bad=1 }
+		$0 ~ "^  " job ":" { injob=1; next }
+		injob && /^  [a-z]/ { flush(); injob=0; ininc=0; in_rec=0; next }
+		!injob { next }
+		injob && /^[[:space:]]*include:[[:space:]]*$/ { ininc=1; in_rec=0; has_mod=0; next }
+		ininc {
+			n=0; while (substr($0,n+1,1)==" ") n++
+			if (n <= 8 && $0 !~ /^[[:space:]]*$/) { flush(); ininc=0; next }
+			if (/^[[:space:]]*#/) next
+			if (/^[[:space:]]*- /) {
+				flush(); in_rec=1; has_mod=0
+				line=$0; sub(/^[[:space:]]*- [[:space:]]*/, "", line); sub(/^[[:space:]]+/, "", line)
+				if (line ~ /^module:[[:space:]]*[^[:space:]]/) has_mod=1
+				next
+			}
+			if (in_rec && /^[[:space:]]*module:[[:space:]]*[^[:space:]]/) has_mod=1
+		}
+		END { flush(); if (bad) print "yes" }
+	' "$file")
+	if [ -n "$_hit" ]; then
+		err "$job has an include row without a non-empty module — GitHub still schedules it as a matrix combination (empty module name), so a duplicate test_path runs the test twice while this guard reports it covered"
+		echo "     → add a module to every $job include row" >&2
+	fi
 }
 
 # True (exit 0 = BAD) if the guarded runner step (run contains marker, in job)
@@ -1038,9 +1124,16 @@ _check_job_gate daemon-real-api "$REAL_API_WORKFLOW" "github.event.inputs.run_e2
 # distinct module to GitHub — splits a combination while this guard cannot match).
 reject_invalid_module_values "$MAIN_WORKFLOW" test-daemon-online
 reject_invalid_module_values "$REAL_API_WORKFLOW" daemon-real-api
+# A module axis item with invalid chars is a distinct value to GitHub (no
+# test_path → unfiltered run) while the include record makes a separate combo.
+reject_invalid_axis_items "$MAIN_WORKFLOW" test-daemon-online
+reject_invalid_axis_items "$REAL_API_WORKFLOW" daemon-real-api
 # An include row carrying an extra key adds a hidden combination (duplicate runs).
 reject_include_extra_keys "$MAIN_WORKFLOW" test-daemon-online "module test_path mock_sdk timeout"
 reject_include_extra_keys "$REAL_API_WORKFLOW" daemon-real-api "module test_path default_provider secrets_used reason"
+# A moduleless include row is still scheduled (empty module name) → dup runs.
+reject_moduleless_include_rows "$MAIN_WORKFLOW" test-daemon-online
+reject_moduleless_include_rows "$REAL_API_WORKFLOW" daemon-real-api
 
 # Online matrix test_path values must reach an ENABLED runner that forwards
 # ${{ matrix.test_path }}. The marker picks the runner step itself
