@@ -188,14 +188,8 @@ describe('MessageInput — recording UI', () => {
     );
 
     const onSend = vi.fn(async () => true);
-    // The user already typed some draft text before voice-Sending. The server
-    // draft still matches it, so the post-send clear applies.
+    // The user already typed some draft text before voice-Sending.
     draft.value = 'note:';
-    hubRequest.mockImplementation(async (method: string, payload?: unknown) => {
-      if (method === 'voice.transcribe') return transcribeRequest(method, payload);
-      if (method === 'session.get') return { session: { metadata: { inputDraft: 'note:' } } };
-      return {};
-    });
     const { unmount } = render(<MessageInput sessionId="s1" onSend={onSend} />);
 
     fireEvent.click(screen.getByLabelText('Stop, transcribe and send'));
@@ -214,22 +208,15 @@ describe('MessageInput — recording UI', () => {
     await waitFor(() =>
       expect(onSend).toHaveBeenCalledWith('hello world note:', undefined, 'immediate')
     );
-    // The consumed click-time draft is cleared server-side (parity with the
-    // mounted submit clearing the composer) because the persisted draft still
-    // matches the click-time snapshot — so reopening doesn't re-send it.
+    // The consumed click-time draft is cleared ATOMICALLY server-side, only if
+    // the persisted draft still matches the complete click-time snapshot — so
+    // reopening doesn't re-send it, and newer edits elsewhere win.
     await waitFor(() => {
-      const clearCall = hubRequest.mock.calls.find(
-        ([m, p]) => m === 'session.update' && p && p.metadata && p.metadata.inputDraft === null
-      );
+      const clearCall = hubRequest.mock.calls.find(([m]) => m === 'session.clearInputDraftIf');
       expect(clearCall).toBeTruthy();
+      expect(clearCall[1]).toEqual({ sessionId: 's1', expected: 'note:' });
     });
     await waitFor(() => expect(toast.info).toHaveBeenCalledWith('Voice transcript sent'));
-
-    // Restore the default dispatch so later tests aren't affected.
-    hubRequest.mockImplementation(async (method: string, ...rest: unknown[]) => {
-      if (method === 'voice.transcribe') return transcribeRequest(method, ...rest);
-      return {};
-    });
   });
 
   it('retains the transcript in the pending draft instead of sending when the composer is at the character limit', async () => {
@@ -322,9 +309,7 @@ describe('MessageInput — recording UI', () => {
     );
     expect(toast.info).not.toHaveBeenCalled();
     // The draft is NOT cleared when the send failed — the text is still staged.
-    const clearCall = hubRequest.mock.calls.find(
-      ([m, p]) => m === 'session.update' && p && p.metadata && p.metadata.inputDraft === null
-    );
+    const clearCall = hubRequest.mock.calls.find(([m]) => m === 'session.clearInputDraftIf');
     expect(clearCall).toBeFalsy();
   });
 

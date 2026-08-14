@@ -373,6 +373,12 @@ describe('useInputDraft', () => {
 
       const { result } = renderHook(() => useInputDraft('session-1'));
 
+      // Let the initial draft load settle — the transient pre-load '' must not
+      // trigger the immediate clear (it would wipe the server-side draft).
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
       act(() => {
         result.current.setContent('Some content');
       });
@@ -535,12 +541,51 @@ describe('useInputDraft', () => {
 
       const { result } = renderHook(() => useInputDraft('session-1'));
 
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
       act(() => {
         result.current.setContent('   ');
       });
 
       // Should clear immediately
       expect(mockHub.request).toHaveBeenCalledWith('session.update', {
+        sessionId: 'session-1',
+        metadata: { inputDraft: null },
+      });
+    });
+
+    it('does not send the mount-time empty clear before the initial load settles', async () => {
+      let resolveGet!: (value: unknown) => void;
+      mockHub.request.mockImplementation(() => {
+        let resolve!: (value: unknown) => void;
+        const promise = new Promise((r) => {
+          resolve = r;
+        });
+        resolveGet = resolve;
+        return promise;
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      renderHook(() => useInputDraft('session-1'));
+
+      // The initial load is still in flight and the signal is transiently ''.
+      // The save effect must NOT clear the server-side draft in that window.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(50);
+      });
+      expect(mockHub.request).not.toHaveBeenCalledWith('session.update', {
+        sessionId: 'session-1',
+        metadata: { inputDraft: null },
+      });
+
+      // Once the load settles, subsequent user deletions clear normally.
+      await act(async () => {
+        resolveGet({ session: { metadata: { inputDraft: 'saved' } } });
+        await vi.runAllTimersAsync();
+      });
+      expect(mockHub.request).not.toHaveBeenCalledWith('session.update', {
         sessionId: 'session-1',
         metadata: { inputDraft: null },
       });

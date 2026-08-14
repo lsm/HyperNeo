@@ -53,6 +53,12 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   const contentSignal = useSignal('');
   const draftSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevSessionIdRef = useRef<string | null>(null);
+  // The sessionId whose initial draft load has settled. While a session's
+  // initial load is still in flight, the signal is transiently '' — letting the
+  // save effect issue its immediate "empty → clear" write in that window can
+  // wipe the server-side draft (including a voice transcript the daemon merged
+  // while serving the load) before the loaded value is re-persisted.
+  const initialLoadSettledRef = useRef<string | null>(null);
 
   // Load draft on session change
   useEffect(() => {
@@ -71,7 +77,10 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     let cancelled = false;
     const loadDraft = async () => {
       const hub = connectionManager.getHubIfConnected();
-      if (!hub) return;
+      if (!hub) {
+        initialLoadSettledRef.current = sessionId;
+        return;
+      }
 
       try {
         const response = await hub.request<{
@@ -87,6 +96,8 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         }
       } catch {
         // Ignore errors loading draft
+      } finally {
+        if (!cancelled) initialLoadSettledRef.current = sessionId;
       }
     };
 
@@ -131,8 +142,13 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
 
     const trimmedContent = content.trim();
 
-    // Empty content: save immediately to clear draft
+    // Empty content: save immediately to clear draft — EXCEPT while this
+    // session's initial load is still in flight, when the empty signal is the
+    // transient pre-load state, not a user deletion. Clearing then can wipe a
+    // server-side draft (including a just-merged voice transcript) before the
+    // loaded value lands.
     if (trimmedContent === '') {
+      if (initialLoadSettledRef.current !== sessionId) return;
       const hub = connectionManager.getHubIfConnected();
       if (hub) {
         hub

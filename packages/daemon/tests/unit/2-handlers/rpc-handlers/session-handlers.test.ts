@@ -785,6 +785,15 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     expect(sessionManager.getSessionFromDB).not.toHaveBeenCalled();
     expect(sessionManager.updateSession).not.toHaveBeenCalled();
   });
+
+  it('rejects instead of truncating when the pending field is at the character limit', async () => {
+    existingPending = 'p'.repeat(100_000);
+    const handler = messageHubData.handlers.get('session.appendVoiceDraft');
+    await expect(handler!({ sessionId: 's1', text: 'more' }, {})).rejects.toThrow(
+      'Pending voice draft is at the character limit'
+    );
+    expect(sessionManager.updateSession).not.toHaveBeenCalled();
+  });
 });
 
 describe('Session RPC Handlers — session.get voice draft merge', () => {
@@ -841,11 +850,63 @@ describe('Session RPC Handlers — session.get voice draft merge', () => {
     const fullDraft = 'x'.repeat(100_000);
     const handler = await setup({ inputDraft: fullDraft, inputDraftVoicePending: 'hello' });
     await handler!({ sessionId: 's1' }, {});
-    // The draft update lands, but the staging field is NOT cleared — clearing
-    // it here would deterministically lose the transcript the client's toast
-    // promised was saved. It retries on the next get.
+    // A partial merge writes NOTHING — writing the prefix would duplicate it
+    // once room appears and the merge retries. The staged transcript survives.
+    expect(sessionManager.updateSession).not.toHaveBeenCalled();
+  });
+});
+
+describe('Session RPC Handlers — session.clearInputDraftIf', () => {
+  let messageHubData: ReturnType<typeof createMockMessageHub>;
+  let eventBus: ReturnType<typeof createMockInternalEventBus>;
+  let sessionManager: {
+    getSessionFromDB: ReturnType<typeof mock>;
+    updateSession: ReturnType<typeof mock>;
+  };
+  let persistedDraft: string | null;
+
+  beforeEach(async () => {
+    messageHubData = createMockMessageHub();
+    eventBus = createMockInternalEventBus();
+    persistedDraft = 'snapshot';
+    sessionManager = {
+      getSessionFromDB: mock(() => ({ id: 's1', metadata: { inputDraft: persistedDraft } })),
+      updateSession: mock(async () => {}),
+    } as unknown as SessionManager;
+    const { setupSessionHandlers } = await import(
+      '../../../../src/lib/rpc-handlers/session-handlers'
+    );
+    setupSessionHandlers(messageHubData.hub, sessionManager, eventBus, {} as SpaceManager);
+  });
+
+  it('clears the draft when it still equals the expected click-time snapshot', async () => {
+    const handler = messageHubData.handlers.get('session.clearInputDraftIf');
+    expect(handler).toBeDefined();
+    const result = (await handler!({ sessionId: 's1', expected: 'snapshot' }, {})) as {
+      cleared: boolean;
+    };
+    expect(result.cleared).toBe(true);
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
-      metadata: { inputDraft: fullDraft },
+      metadata: { inputDraft: null },
     });
+  });
+
+  it('does not clear when the persisted draft has newer edits', async () => {
+    persistedDraft = 'newer edits';
+    const handler = messageHubData.handlers.get('session.clearInputDraftIf');
+    const result = (await handler!({ sessionId: 's1', expected: 'snapshot' }, {})) as {
+      cleared: boolean;
+    };
+    expect(result.cleared).toBe(false);
+    expect(sessionManager.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('trims both sides before comparing', async () => {
+    persistedDraft = '  snapshot  ';
+    const handler = messageHubData.handlers.get('session.clearInputDraftIf');
+    const result = (await handler!({ sessionId: 's1', expected: ' snapshot ' }, {})) as {
+      cleared: boolean;
+    };
+    expect(result.cleared).toBe(true);
   });
 });

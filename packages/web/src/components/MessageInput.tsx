@@ -520,6 +520,7 @@ export default function MessageInput({
       payload: {
         before: string;
         after: string;
+        full: string;
         images?: MessageImage[];
         send: MessageInputProps['onSend'];
       }
@@ -572,22 +573,17 @@ export default function MessageInput({
       if (sent === false) return { ok: false, message: '' };
       // Consume the click-time draft so reopening the session doesn't show —
       // and re-send — text that was just delivered. Parity with the mounted
-      // submit, which clears the composer. Clear ONLY if the persisted draft
-      // still matches the click-time snapshot: if the user edited it after we
-      // snapshotted (reopened the session, another client), their newer text
-      // wins. Best-effort — a failure here doesn't undo the send.
-      if ((payload.before + payload.after).trim().length > 0) {
+      // submit, which clears the composer. The daemon-side clearInputDraftIf
+      // compares and clears ATOMICALLY and only when the persisted draft still
+      // equals the complete click-time snapshot (selection included) — newer
+      // edits saved after the snapshot win. Best-effort: a failure here doesn't
+      // undo the send.
+      if (payload.full.trim().length > 0) {
         try {
-          const response = await hub.request<{
-            session?: { metadata?: { inputDraft?: string | null } };
-          }>('session.get', { sessionId: targetSessionId });
-          const persisted = response.session?.metadata?.inputDraft ?? '';
-          if (persisted === payload.before + payload.after) {
-            await hub.request('session.update', {
-              sessionId: targetSessionId,
-              metadata: { inputDraft: null },
-            });
-          }
+          await hub.request('session.clearInputDraftIf', {
+            sessionId: targetSessionId,
+            expected: payload.full,
+          });
         } catch {
           /* ignore — the send already succeeded */
         }
@@ -630,6 +626,9 @@ export default function MessageInput({
       const payloadSnapshot = {
         before: snapshotContent.slice(0, snapshotStart),
         after: snapshotContent.slice(snapshotEnd),
+        // Complete click-time content (includes any selected text) — compared
+        // against the persisted draft by the atomic post-send clear.
+        full: snapshotContent,
         images: getImagesForSend(),
         // The composer's own send function — invoked post-unmount through this
         // closure, it reproduces the FULL mounted send semantics (worktree

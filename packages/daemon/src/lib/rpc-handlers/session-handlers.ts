@@ -373,11 +373,14 @@ export function setupSessionHandlers(
       const merged = appendDraftText(draft, voicePending);
       const fullyMerged =
         merged === `${draft}${voicePending}` || merged === `${draft} ${voicePending}`;
-      await sessionManager.updateSession(targetSessionId, {
-        metadata: fullyMerged
-          ? { inputDraft: merged, inputDraftVoicePending: null }
-          : { inputDraft: merged },
-      } as Partial<Session>);
+      // Only consume on a FULL merge. On a partial fit, write nothing and keep
+      // the staged transcript: writing the prefix would duplicate it once room
+      // appears and the merge retries.
+      if (fullyMerged) {
+        await sessionManager.updateSession(targetSessionId, {
+          metadata: { inputDraft: merged, inputDraftVoicePending: null },
+        } as Partial<Session>);
+      }
     }
 
     const session = agentSession.getSessionData();
@@ -468,7 +471,14 @@ export function setupSessionHandlers(
     }
     const session = sessionManager.getSessionFromDB(sessionId);
     if (!session) throw new Error('Session not found');
-    const pending = appendDraftText(session.metadata?.inputDraftVoicePending ?? '', text);
+    const existingPending = session.metadata?.inputDraftVoicePending ?? '';
+    const pending = appendDraftText(existingPending, text);
+    // Reject (rather than silently truncate) when the staged value is at the
+    // character limit and the new transcript cannot fit whole — the client
+    // reports the failure instead of claiming a save that dropped its tail.
+    const fits =
+      pending === `${existingPending}${text}` || pending === `${existingPending} ${text}`;
+    if (!fits) throw new Error('Pending voice draft is at the character limit');
     const updates: UpdateSessionRequest = { metadata: { inputDraftVoicePending: pending } };
     await sessionManager.updateSession(sessionId, updates as Partial<Session>);
     messageHub.event(
@@ -479,6 +489,32 @@ export function setupSessionHandlers(
       }
     );
     return { success: true };
+  });
+
+  // Atomically clear the input draft ONLY if it still equals `expected`. The
+  // unmounted voice send uses this to consume its click-time draft snapshot
+  // without wiping newer edits persisted after the snapshot (the user reopened
+  // the session, or another client saved). Read+write is one synchronous step
+  // (getFromDB + updateSession's DB write both run before the first `await`),
+  // so no concurrent draft save can land between the comparison and the clear.
+  messageHub.onRequest('session.clearInputDraftIf', async (data, _ctx) => {
+    const { sessionId, expected } = data as { sessionId: string; expected: string };
+    if (typeof expected !== 'string') throw new Error('Expected draft value is required');
+    const session = sessionManager.getSessionFromDB(sessionId);
+    if (!session) throw new Error('Session not found');
+    if ((session.metadata?.inputDraft ?? '').trim() !== expected.trim()) {
+      return { cleared: false };
+    }
+    const updates: UpdateSessionRequest = { metadata: { inputDraft: null } };
+    await sessionManager.updateSession(sessionId, updates as Partial<Session>);
+    messageHub.event(
+      'session.updated',
+      { ...updates, sessionId },
+      {
+        channel: `session:${sessionId}`,
+      }
+    );
+    return { cleared: true };
   });
 
   messageHub.onRequest('session.delete', async (data, _ctx) => {
