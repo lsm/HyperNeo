@@ -2713,14 +2713,14 @@ describe('handleGoalAutomationExecute', () => {
       scopeId: scope.id,
       kind: 'manual_note',
       sourceId: 'first',
-      summary: 'First note',
+      summary: 'PR #1 merged',
       createdAt: 10,
     });
     evolutionRepo.createEvidence({
       scopeId: scope.id,
       kind: 'manual_note',
       sourceId: 'second',
-      summary: 'Second note',
+      summary: 'PR #2 merged',
       createdAt: 20,
     });
     const deps = {
@@ -3108,6 +3108,208 @@ describe('handleGoalAutomationExecute', () => {
     expect(result).toMatchObject({ skipped: true, skipReason: 'low_evidence_noop' });
     expect(episodeCreated).toBe(false);
     expect(evolutionRepo.listEpisodes(scope.id)).toHaveLength(0);
+  });
+
+  it('skips a manual note whose outcome claims are prospective', async () => {
+    const goal = goalRepo.create({ spaceId, title: 'Prospective', type: 'recurring' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Prospective',
+      objective: 'Future-tense outcome claims are not results',
+      policy: { automation: { selfNagCronExpression: '0 * * * *' } },
+    });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'manual_note',
+      sourceId: null,
+      summary: 'Tests will pass after the patch; PR #123 will merge after approval',
+      createdAt: 30,
+    });
+    let episodeCreated = false;
+
+    const result = await handleGoalAutomationExecute(
+      createAutomationJob({
+        goalId: goal.id,
+        scopeId: scope.id,
+        triggerKind: 'self_nag',
+        triggerKey: 'schedule-prospective',
+        reason: 'self_nag',
+        scheduleId: 'schedule-prospective',
+      }),
+      {
+        goalRepo,
+        taskRepo,
+        evolutionRepo,
+        cursorRepo,
+        goalEventRepo: new SpaceGoalEventRepository(db as never),
+        episodeService: {
+          createFromEvidence: async () => {
+            episodeCreated = true;
+            throw new Error('should not create episode for prospective outcome claims');
+          },
+          preflightEvidence: () =>
+            makePreflight({
+              level: 'low',
+              score: 8,
+              requiresConfirmation: true,
+              counts: {
+                total: 1,
+                manualNotes: 1,
+                taskResults: 0,
+                workflowArtifacts: 0,
+                metricSnapshots: 0,
+                outcomes: 2,
+              },
+            }),
+        },
+      }
+    );
+
+    expect(result).toMatchObject({ skipped: true, skipReason: 'low_evidence_noop' });
+    expect(episodeCreated).toBe(false);
+    expect(evolutionRepo.listEpisodes(scope.id)).toHaveLength(0);
+  });
+
+  it('skips a thin batch even when the preflight inflates to medium', async () => {
+    const goal = goalRepo.create({ spaceId, title: 'Inflated preflight', type: 'recurring' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Inflated preflight',
+      objective: 'Scope metric and keyword outcomes inflate the score',
+      policy: { automation: { selfNagCronExpression: '0 * * * *' } },
+    });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'manual_note',
+      sourceId: null,
+      summary: 'PR pending; CI waiting; merge not done; no errors',
+      createdAt: 30,
+    });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'session',
+      sourceId: null,
+      summary: 'Conversation trace: no friction detected',
+      metadata: { traceDiagnostic: true, status: 'no_friction' },
+      createdAt: 31,
+    });
+    let episodeCreated = false;
+
+    const result = await handleGoalAutomationExecute(
+      createAutomationJob({
+        goalId: goal.id,
+        scopeId: scope.id,
+        triggerKind: 'self_nag',
+        triggerKey: 'schedule-inflated',
+        reason: 'self_nag',
+        scheduleId: 'schedule-inflated',
+      }),
+      {
+        goalRepo,
+        taskRepo,
+        evolutionRepo,
+        cursorRepo,
+        goalEventRepo: new SpaceGoalEventRepository(db as never),
+        episodeService: {
+          createFromEvidence: async () => {
+            episodeCreated = true;
+            throw new Error('should not create episode from inflated thin evidence');
+          },
+          // Medium from non-manual + keyword-outcome + scope-metric points, but
+          // every selected row is thin and no claimed outcome is affirmative —
+          // the content test decides, not the score.
+          preflightEvidence: () =>
+            makePreflight({
+              level: 'medium',
+              score: 50,
+              requiresConfirmation: false,
+              counts: {
+                total: 2,
+                manualNotes: 1,
+                taskResults: 0,
+                workflowArtifacts: 0,
+                metricSnapshots: 1,
+                outcomes: 4,
+              },
+            }),
+        },
+      }
+    );
+
+    expect(result).toMatchObject({ skipped: true, skipReason: 'low_evidence_noop' });
+    expect(episodeCreated).toBe(false);
+    expect(evolutionRepo.listEpisodes(scope.id)).toHaveLength(0);
+  });
+
+  it('still produces an episode when a second quantitative change is genuine', async () => {
+    const goal = goalRepo.create({ spaceId, title: 'Second change', type: 'recurring' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Second change',
+      objective: 'A negated first measurement must not hide a real second',
+      policy: { automation: { selfNagCronExpression: '0 * * * *' } },
+    });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'manual_note',
+      sourceId: null,
+      summary: 'No change from 800 ms to 800 ms; latency fell from 800 ms to 200 ms',
+      createdAt: 30,
+    });
+
+    const result = await handleGoalAutomationExecute(
+      createAutomationJob({
+        goalId: goal.id,
+        scopeId: scope.id,
+        triggerKind: 'self_nag',
+        triggerKey: 'schedule-second-change',
+        reason: 'self_nag',
+        scheduleId: 'schedule-second-change',
+      }),
+      {
+        goalRepo,
+        taskRepo,
+        evolutionRepo,
+        cursorRepo,
+        episodeService: {
+          createFromEvidence: async ({ evidenceIds }) => ({
+            episode: evolutionRepo.createEpisode({
+              scopeId: scope.id,
+              title: 'Second change retrospective',
+              evidenceIds,
+              outcomeSummary: 'Second change outcome',
+              findings: [],
+            }),
+            proposals: [],
+            lessons: [],
+          }),
+          preflightEvidence: () =>
+            makePreflight({
+              level: 'low',
+              score: 0,
+              requiresConfirmation: true,
+              counts: {
+                total: 1,
+                manualNotes: 1,
+                taskResults: 0,
+                workflowArtifacts: 0,
+                metricSnapshots: 0,
+                outcomes: 0,
+              },
+            }),
+        },
+      }
+    );
+
+    expect(result.skipped).toBe(false);
+    expect(result.episodeId).toBeString();
+    expect(evolutionRepo.listEpisodes(scope.id)).toHaveLength(1);
   });
 
   it('skips a manual note whose metadata only has non-affirmative key names', async () => {
@@ -3888,7 +4090,7 @@ describe('handleGoalAutomationExecute', () => {
     evolutionRepo.createEvidence({
       scopeId: scope.id,
       kind: 'manual_note',
-      summary: 'Early evidence',
+      summary: 'Early evidence: PR merged',
       createdAt: t0,
     });
 
@@ -3934,7 +4136,7 @@ describe('handleGoalAutomationExecute', () => {
     evolutionRepo.createEvidence({
       scopeId: scope.id,
       kind: 'manual_note',
-      summary: 'Later evidence',
+      summary: 'Later evidence: tests passed',
       createdAt: t0 + 1,
     });
     const job2 = createAutomationJob(payload, 'job-2');

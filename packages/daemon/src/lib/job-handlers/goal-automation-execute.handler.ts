@@ -157,22 +157,24 @@ export async function handleGoalAutomationExecute(
   }
 
   // self_nag: skip no-op episodes on thin, process-level evidence. When the
-  // preflight is low-confidence AND the selection carries no substantive signal
-  // (no affirmative outcome — a PR reference or merge/pass/fail result, not a
-  // negated or pending mention like "CI has not run yet" — and every row is
-  // thin: a manual note or an auto-generated session trace diagnostic marked
-  // `metadata.traceDiagnostic`), record a lightweight no-op note on the goal and
-  // advance the cursor without spending an episode-judge call or creating a
-  // review task. Substantive manual notes, genuine session summaries, and any
-  // task result, friction trace, artifact, error, or in-batch metric still
-  // produces an episode. Honors the goal guardrail: "if evidence is
+  // selection carries no substantive signal — no affirmative outcome (a PR
+  // reference or merge/pass/fail/quantitative result, not a negated, pending,
+  // or prospective mention like "CI has not run yet" or "tests will pass") and
+  // every row is thin (a manual note or an auto-generated session trace
+  // diagnostic marked `metadata.traceDiagnostic`) — record a lightweight no-op
+  // note on the goal and advance the cursor without spending an episode-judge
+  // call or creating a review task. The selection-aware content test decides
+  // (the preflight score can be inflated by scope-wide metrics or loose
+  // keyword outcomes). Substantive manual notes, genuine session summaries,
+  // and any task result, friction trace, artifact, error, or in-batch metric
+  // still produces an episode. Honors the goal guardrail: "if evidence is
   // insufficient, finish without inventing work." (#919)
   if (payload.triggerKind === 'self_nag' && deps.episodeService.preflightEvidence) {
     const preflight = deps.episodeService.preflightEvidence({
       scopeId: scope.id,
       evidenceIds: evidence.map((item) => item.id),
     });
-    if (shouldSkipSelfNagNoOp(preflight, evidence)) {
+    if (shouldSkipSelfNagNoOp(evidence)) {
       runWriteTransaction(deps, () => {
         recordSelfNagNoOpNote(deps, goal, preflight);
         advanceCursor(deps, payload, evidence, goal.spaceId, null, {
@@ -521,33 +523,37 @@ const AFFIRMATIVE_OUTCOME_RE =
  * observation, not an outcome.
  */
 const QUANTITATIVE_OUTCOME_RE =
-  /\b\d+(?:\.\d+)?\s*(?:ms|s|sec|seconds?|min|minutes?|hours?|h|b|kb|mb|gb|tb|%|x|fps|rps|qps|req\/s|us|µs|ns)(?![a-z0-9])[^.;:!?]{0,24}\b(?:to|→|-|–)\s*\d+(?:\.\d+)?/i;
+  /\b\d+(?:\.\d+)?\s*(?:ms|s|sec|seconds?|min|minutes?|hours?|h|b|kb|mb|gb|tb|%|x|fps|rps|qps|req\/s|us|µs|ns)(?![a-z0-9])[^.;:!?]{0,24}\b(?:to|→|-|–)\s*\d+(?:\.\d+)?/gi;
 
 function hasQuantitativeOutcome(text: string): boolean {
-  const match = QUANTITATIVE_OUTCOME_RE.exec(text);
-  if (!match) return false;
-  const prefix = text.slice(Math.max(0, match.index - 48), match.index);
-  return !NON_AFFIRMATIVE_PREFIX_RE.test(prefix);
+  // Every measured change is examined — an earlier negated one ("no change
+  // from 800 ms to 800 ms") must not hide a genuine later result.
+  for (const match of text.matchAll(QUANTITATIVE_OUTCOME_RE)) {
+    const prefix = text.slice(Math.max(0, match.index - 48), match.index);
+    if (!NON_AFFIRMATIVE_PREFIX_RE.test(prefix)) return true;
+  }
+  return false;
 }
 
 /**
- * Prefixes that make an outcome keyword a negated or still-pending mention
- * rather than an affirmative one — "CI has not run yet", "waiting for tests
- * to pass", "build still pending", "no meaningful failures". The prefix must
- * sit within the same clause: commas, semicolons, colons, and line breaks
- * end it, so "No errors; tests passed" still counts "passed" as affirmative.
+ * Prefixes that make an outcome keyword a negated, still-pending, or merely
+ * prospective mention rather than an affirmative one — "CI has not run yet",
+ * "waiting for tests to pass", "build still pending", "no meaningful
+ * failures", "tests will pass after the patch". The prefix must sit within
+ * the same clause: commas, semicolons, colons, and line breaks end it, so
+ * "No errors; tests passed" still counts "passed" as affirmative.
  */
 const NON_AFFIRMATIVE_PREFIX_RE =
-  /\b(?:not|never|no|hasn'?t|haven'?t|hadn'?t|didn'?t|doesn'?t|won'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|cannot|without|yet|still|pending|waiting|queued|incomplete|unfinished)\b[^.!?;:,\n]{0,32}$/i;
+  /\b(?:not|never|no|hasn'?t|haven'?t|hadn'?t|didn'?t|doesn'?t|won'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|cannot|without|yet|still|pending|wait(?:ing)?|queued|incomplete|unfinished|will|would|should|could|might|expect(?:ed|s)? to|hop(?:e|es|ing) to|plan(?:s|ned)? to)\b[^.!?;:,\n]{0,32}$/i;
 
 /**
- * Suffixes that make a matched outcome reference still pending or negated —
- * "PR #123 is still pending", "tests passing tomorrow", "merge waiting on
- * review". Like the prefix, the qualifier must sit within the same clause
- * after the match.
+ * Suffixes that make a matched outcome reference still pending, negated, or
+ * prospective — "PR #123 is still pending", "tests passing tomorrow",
+ * "merge waiting on review". Like the prefix, the qualifier must sit within
+ * the same clause after the match.
  */
 const NON_AFFIRMATIVE_SUFFIX_RE =
-  /^[^.!?;:,\n]{0,32}\b(?:not|never|no|hasn'?t|haven'?t|hadn'?t|didn'?t|doesn'?t|won'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|cannot|without|yet|still|pending|wait(?:ing)?|queued|incomplete|unfinished|tomorrow|scheduled|planned)\b/i;
+  /^[^.!?;:,\n]{0,32}\b(?:not|never|no|hasn'?t|haven'?t|hadn'?t|didn'?t|doesn'?t|won'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|cannot|without|yet|still|pending|wait(?:ing)?|queued|incomplete|unfinished|tomorrow|scheduled|planned|will|would|should|could|might)\b/i;
 
 /**
  * Whether the selection carries an affirmative outcome signal (see
@@ -580,20 +586,17 @@ function hasAffirmativeOutcomeText(text: string): boolean {
 }
 
 /**
- * A self_nag tick is a no-op worth skipping when the preflight is low-confidence
- * AND the selection carries no substantive signal. Substantive means either an
- * affirmative outcome (a PR reference or a merge/pass/fail result — not a
- * negated or pending mention) or any structural/task-linked evidence kind (task
- * results, friction traces like slow_tool_call/permission_block that resolve to
- * task context, workflow artifacts, errors, in-batch metrics, or a genuine
- * session summary). Only a batch with no affirmative outcome where every row is
- * thin is skipped.
+ * A self_nag tick is a no-op worth skipping when the selection itself carries
+ * no substantive signal: no affirmative outcome (a PR reference or a
+ * merge/pass/fail/quantitative result — not a negated, pending, or prospective
+ * mention) and every row thin (manual notes and marked session diagnostics).
+ * The preflight level is advisory only — scope-wide metrics and loose keyword
+ * outcomes can inflate a thin batch to medium, so the selection-aware content
+ * test decides rather than the score. Any structural/task-linked evidence
+ * kind (task results, friction traces, artifacts, errors, in-batch metrics,
+ * genuine session summaries) keeps its retrospective.
  */
-function shouldSkipSelfNagNoOp(
-  preflight: EvidenceQualityPreflight,
-  evidence: EvidenceRef[]
-): boolean {
-  if (preflight.level !== 'low') return false;
+function shouldSkipSelfNagNoOp(evidence: EvidenceRef[]): boolean {
   if (hasAffirmativeOutcome(evidence)) return false;
   return evidence.length > 0 && evidence.every(isThinEvidence);
 }
