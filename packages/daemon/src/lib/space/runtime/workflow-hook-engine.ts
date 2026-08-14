@@ -974,21 +974,29 @@ export class WorkflowHookEngine {
       // so a different action reaching the same hook after the operator
       // approved a displayed stop cannot spend that override on its own
       // violation. Recorded via stateUpdates so it persists with the stop.
+      // Also stamp the ROUTE that blocked (a hook bound to several routes
+      // shares one state row; the banner must label the route that actually
+      // stopped, not whichever binding the UI dedup happens to pick first).
+      const blockingRoute =
+        blockingBinding !== undefined
+          ? { sourceNode: blockingBinding.sourceNode, targetNode: blockingBinding.targetNode }
+          : undefined;
       const stampedUpdates = [...stateUpdates];
       const stampIdx = stampedUpdates.findIndex((u) => u.hookId === terminal.hookId);
+      const stopStamp: Record<string, unknown> = {
+        __blockedActionKey: actionIdentity,
+        ...(blockingRoute !== undefined ? { __blockingRoute: blockingRoute } : {}),
+      };
       if (stampIdx >= 0) {
         stampedUpdates[stampIdx] = {
           ...stampedUpdates[stampIdx],
           state: {
             ...stampedUpdates[stampIdx].state,
-            __blockedActionKey: actionIdentity,
+            ...stopStamp,
           },
         };
       } else {
-        stampedUpdates.push({
-          hookId: terminal.hookId,
-          state: { __blockedActionKey: actionIdentity },
-        });
+        stampedUpdates.push({ hookId: terminal.hookId, state: stopStamp });
       }
       return {
         decision: 'stop',

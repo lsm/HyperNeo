@@ -155,7 +155,23 @@ function parseHookColumn<T>(
   }
 }
 
-/** Structural check for a decoded HookBinding row value. */
+/** Structural check for a decoded HookAuthorizedCallers entry. */
+function isAuthorizedCallerElement(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const c = value as Record<string, unknown>;
+  return (
+    typeof c.sourceNode === 'string' &&
+    c.sourceNode.trim().length > 0 &&
+    (c.agentSlots === undefined ||
+      (Array.isArray(c.agentSlots) && c.agentSlots.every((slot) => typeof slot === 'string')))
+  );
+}
+
+/** Structural check for a decoded HookBinding row value. The method must be
+ * a real HookMethod and every authorizedCallers entry a well-formed caller —
+ * a typo'd method or a shapeless caller entry would otherwise load as a
+ * "valid" binding that resolveMatchingBindings silently never matches,
+ * gating nothing. */
 function isHookBindingElement(value: unknown): boolean {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const b = value as Record<string, unknown>;
@@ -165,10 +181,12 @@ function isHookBindingElement(value: unknown): boolean {
     typeof b.sourceNode === 'string' &&
     b.sourceNode.trim().length > 0 &&
     typeof b.method === 'string' &&
+    ALL_HOOK_METHODS.includes(b.method as (typeof ALL_HOOK_METHODS)[number]) &&
     (b.targetNode === undefined || typeof b.targetNode === 'string') &&
     typeof b.enabled === 'boolean' &&
     (b.order === undefined || typeof b.order === 'number') &&
-    (b.authorizedCallers === undefined || Array.isArray(b.authorizedCallers))
+    (b.authorizedCallers === undefined ||
+      (Array.isArray(b.authorizedCallers) && b.authorizedCallers.every(isAuthorizedCallerElement)))
   );
 }
 

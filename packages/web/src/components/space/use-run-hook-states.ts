@@ -197,10 +197,29 @@ export function useRunHookStates(runId: string | null | undefined): {
               return [summary];
             })
             // Hook state is keyed (runId, hookId): a hook bound to multiple
-            // routes shares ONE state snapshot, so render it once (labelled by
-            // its first binding) — one stop must not spawn duplicate blocked
-            // banners for every route, whose Approve buttons would all write the
-            // same shared override.
+            // routes shares ONE state snapshot, so render it once — one stop
+            // must not spawn duplicate blocked banners for every route, whose
+            // Approve buttons would all write the same shared override. The
+            // engine stamps the state with the ROUTE that actually blocked
+            // (__blockingRoute): re-label the kept summary with the matching
+            // binding so the banner describes the blocked handoff, not an
+            // arbitrary first route.
+            .map((summary, _index, all) => {
+              // Relabel BEFORE the dedup below so `all` still carries every
+              // route's binding summary (the dedup keeps the FIRST slot per
+              // hookId — its content must be the matched route's).
+              const route = summary.state.localState?.__blockingRoute as
+                | { sourceNode?: string; targetNode?: string }
+                | undefined;
+              if (!route) return summary;
+              const match = all.find(
+                (other) =>
+                  other.hookId === summary.hookId &&
+                  (route.sourceNode === undefined || other.sourceNode === route.sourceNode) &&
+                  (route.targetNode === undefined || other.targetNode === route.targetNode)
+              );
+              return match ?? summary;
+            })
             .filter((summary, index, all) => {
               return all.findIndex((other) => other.hookId === summary.hookId) === index;
             }),

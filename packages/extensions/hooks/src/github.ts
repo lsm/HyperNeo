@@ -293,7 +293,15 @@ async function runGhGraphqlImpl(
       .join(' | ');
     const text = JSON.stringify(errors);
     const retryable = isRateLimit(messages) || TRANSIENT_FAILURE.test(messages);
-    return { ok: false, retryable, error: `GraphQL errors: ${text}` };
+    return {
+      ok: false,
+      retryable,
+      error: `GraphQL errors: ${text}`,
+      // Rate-limit envelopes carry the same reset-derived backoff as the
+      // stderr path — without it the engine paces retries at its 30s default
+      // and hammers the API while the limit is active.
+      ...(isRateLimit(messages) ? { retryAfterMs: rateLimitRetryAfterMs(messages) } : {}),
+    };
   }
   return { ok: true, data: parsed };
 }
@@ -1099,7 +1107,12 @@ export async function ghGetCodexApproval(
     `query { repository(owner:"${pr.owner}",name:"${pr.repo}") { pullRequest(number:${pr.number}) { ` +
     `reviews(last: ${CODEX_REVIEWS_PAGE_SIZE}${before ? `, before:"${before}"` : ''}) { ` +
     'pageInfo { hasPreviousPage startCursor } ' +
-    'nodes { state author { login } commit { oid } body submittedAt } } ' +
+    // NOTE: no `body` — free-form review bodies are unbounded, and >1MiB of
+    // them across 50 reviews silently truncates gh's JSON at the output cap
+    // into a terminal infrastructure failure. Decisive reviews bind by
+    // commit oid alone; the body was only ever the (now-removed) SHA-mention
+    // fallback.
+    'nodes { state author { login } commit { oid } submittedAt } } ' +
     // Reaction connection: walked BACKWARD from the tail while the oldest
     // entry is still newer than the head push (bounded cap, fail-closed) —
     // `first:` returns the earliest page, and a fixed tail can omit the codex
@@ -1177,9 +1190,11 @@ export async function ghGetCodexApproval(
         decisiveHeadBoundFound = nodes.some((n) => {
           const review = asRecord(n);
           if (!isCodexActor(review?.author)) return false;
-          const oid = asRecord(review?.commit)?.oid;
-          const body = typeof review?.body === 'string' ? review.body : '';
-          if (oid !== headOid0 && !body.includes(headOid0)) return false;
+          // STRICT head binding by the review's commit oid — a body-SHA
+          // mention would let a STALE review (its own commit differs) pass
+          // for the current head. A codex review with no commit oid cannot
+          // bind to any head and never counts as decisive.
+          if (asRecord(review?.commit)?.oid !== headOid0) return false;
           const state = review?.state;
           return state === 'APPROVED' || state === 'CHANGES_REQUESTED';
         });
@@ -1763,9 +1778,14 @@ export function extractCodexApproval(value: unknown, prLink: string): GithubCode
       const review = asRecord(node);
       if (!isCodexActor(review?.author)) continue;
       const reviewOid = asRecord(review?.commit)?.oid;
-      const body = typeof review?.body === 'string' ? review.body : '';
-      const onHead = reviewOid === headOid || body.includes(headOid);
-      if (!onHead) continue;
+      // STRICT head binding: only the review's own commit oid counts. The
+      // retired body-SHA-mention fallback let a STALE APPROVED (commit oid
+      // differs) authorize a newer, unreviewed head merely because its
+      // free-form text mentioned the SHA — the head recheck only proves the
+      // head stayed unchanged during the scan, not the association. A review
+      // with no commit oid cannot bind and is skipped (fail-closed: it may
+      // not approve via the decisive path).
+      if (reviewOid !== headOid) continue;
       const submittedAt = typeof review?.submittedAt === 'string' ? review.submittedAt : '';
       const state = typeof review?.state === 'string' ? review.state : '';
       // A codex-authored HEAD-BOUND review too malformed to evaluate must

@@ -346,6 +346,46 @@ describe('ghGetCodexApproval — boundary path', () => {
     if (result.ok) expect(result.data.approved).toBe(true);
   });
 
+  test('a stale-commit APPROVED whose body mentions the head does NOT approve', async () => {
+    // STRICT head binding: the review's commit oid differs from the head —
+    // a body-SHA mention must not associate it with the current head (the
+    // retired fallback let a stale APPROVED authorize a newer, unreviewed
+    // head). No decisive review → the reaction path runs → no fresh +1 →
+    // settled not-approved.
+    setGraphqlRunnerForTests(
+      pagedRunner([
+        {
+          data: {
+            repository: {
+              pullRequest: {
+                reviews: {
+                  nodes: [
+                    {
+                      state: 'APPROVED',
+                      submittedAt: '2026-08-13T12:00:00Z',
+                      // STALE commit, but the body names the current head.
+                      commit: { oid: 'b'.repeat(40) },
+                      body: `reviewing ${HEAD} lgtm`,
+                      author: { login: 'chatgpt-codex-connector' },
+                    },
+                  ],
+                  pageInfo: { hasPreviousPage: false },
+                },
+                reactions: { nodes: [], pageInfo: { hasPreviousPage: false } },
+                commits: {
+                  nodes: [{ commit: { oid: HEAD, pushedDate: '2026-08-12T00:00:00Z' } }],
+                },
+              },
+            },
+          },
+        },
+      ])
+    );
+    const result = await ghGetCodexApproval(CTX, PR_LINK);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.approved).toBe(false);
+  });
+
   test('a not-approved boundary result returns settled (no false head-changed retry)', async () => {
     // The not-approved fall-through carries no evaluatedHeadOid — the early
     // return before the head recheck is what keeps every settled negative

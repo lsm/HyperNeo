@@ -87,6 +87,28 @@ describe('SpaceWorkflowRepository — corrupt hook columns', () => {
     expect(wf?.hookBindings?.[0]?.hookId).toBe(CORRUPT_HOOK_BINDINGS_HOOK_ID);
   });
 
+  test("a typo'd method or shapeless caller fails closed (not silently unmatched)", () => {
+    // A binding with method "send_messag" or authorizedCallers [{}] loads as
+    // "valid" shape but NEVER matches in resolveMatchingBindings — silently
+    // ungated. Both must route through the marker.
+    repo.createWorkflow({ spaceId, name: 'WF', nodes: [{ name: 'Only', agentId: 'a1' }] });
+    corruptColumn(
+      'hook_bindings',
+      '[{"hookId":"pr_ready","sourceNode":"Only","method":"send_messag","enabled":true}]'
+    );
+    let wf = repo.getWorkflow(
+      db.prepare('SELECT id FROM space_workflows LIMIT 1').get()?.id as string
+    );
+    expect(wf?.hookBindings?.[0]?.hookId).toBe(CORRUPT_HOOK_BINDINGS_HOOK_ID);
+
+    corruptColumn(
+      'hook_bindings',
+      '[{"hookId":"pr_ready","sourceNode":"Only","method":"send_message","enabled":true,"authorizedCallers":[{}]}]'
+    );
+    wf = repo.getWorkflow(db.prepare('SELECT id FROM space_workflows LIMIT 1').get()?.id as string);
+    expect(wf?.hookBindings?.[0]?.hookId).toBe(CORRUPT_HOOK_BINDINGS_HOOK_ID);
+  });
+
   test('a malformed custom hook entry fails closed', () => {
     repo.createWorkflow({ spaceId, name: 'WF', nodes: [{ name: 'Only', agentId: 'a1' }] });
     corruptColumn('custom_hooks', '[{"id":"x"}]');
