@@ -214,6 +214,25 @@ describe('voiceRecorderStore', () => {
     expect(voiceRecorderStore.isRecording.value).toBe(true);
   });
 
+  it('treats an in-flight stop teardown as busy — no ownerless takeover', async () => {
+    await voiceRecorderStore.start('owner-a', 's1');
+    let resolveClose!: () => void;
+    fakeContext.close.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        resolveClose = resolve;
+      })
+    );
+    const stopPromise = voiceRecorderStore.stop();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // Teardown still pending: a second composer must not be able to start.
+    await expect(voiceRecorderStore.start('owner-b', 's2')).rejects.toThrow('busy');
+    resolveClose();
+    await stopPromise;
+    // Now idle — the new start takes ownership cleanly.
+    await voiceRecorderStore.start('owner-b', 's2');
+    expect(voiceRecorderStore.recordingOwnerId.value).toBe('owner-b');
+  });
+
   it('cancel() during a pending getUserMedia discards the stream without recording', async () => {
     let resolvePermission!: (value: unknown) => void;
     navigator.mediaDevices.getUserMedia.mockReturnValueOnce(

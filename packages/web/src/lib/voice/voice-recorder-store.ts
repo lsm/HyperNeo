@@ -58,6 +58,10 @@ class VoiceRecorderStore {
   private sampleRate: number = TARGET_SAMPLE_RATE;
   private smoothedLevel = 0;
   private starting = false;
+  // A stop() is between snapshotting its chunks and finishing teardown.
+  // Another composer's start() in that window would be assigned ownership and
+  // then have its IDs wiped when the stop's post-teardown cleanup runs.
+  private stopping = false;
   private stoppedByLimit = false;
   private maxDurationTimer: ReturnType<typeof setTimeout> | null = null;
   // In-flight teardown, shared so the limit path (fire-and-forget) and a
@@ -78,7 +82,7 @@ class VoiceRecorderStore {
    * recording.
    */
   readonly start = async (ownerId: string, ownerSessionId: string): Promise<void> => {
-    if (this.isRecording.value || this.starting || this.stoppedByLimit)
+    if (this.isRecording.value || this.starting || this.stopping || this.stoppedByLimit)
       throw new Error('Voice recorder is busy');
     this.starting = true;
     this.isStarting.value = true;
@@ -270,17 +274,25 @@ class VoiceRecorderStore {
     const hitDurationLimit = this.stoppedByLimit;
     this.durationLimitHit.value = false;
     this.isRecording.value = false;
+    this.stopping = true;
     const chunks = this.chunks;
-    await this.teardown();
-    // Ownership and the limit guard are cleared only AFTER teardown settles:
-    // if teardown rejects, the original owner must still be able to cancel()
-    // the recorder, and a busy store must never end up ownerless.
-    this.recordingOwnerId.value = null;
-    this.recordingSessionId.value = null;
-    // Clear the guard only after capture callbacks are detached and chunks are
-    // snapshotted, so queued onmessage/onaudioprocess callbacks don't resume
-    // appending during teardown.
-    this.stoppedByLimit = false;
+    try {
+      await this.teardown();
+      // Ownership and the limit guard are cleared only AFTER teardown settles:
+      // if teardown rejects, the original owner must still be able to cancel()
+      // the recorder, and a busy store must never end up ownerless.
+      this.recordingOwnerId.value = null;
+      this.recordingSessionId.value = null;
+      // Clear the guard only after capture callbacks are detached and chunks
+      // are snapshotted, so queued onmessage/onaudioprocess callbacks don't
+      // resume appending during teardown.
+      this.stoppedByLimit = false;
+    } finally {
+      // Even if the post-snapshot encoding throws, never wedge the recorder
+      // busy — though note this finally covers the teardown+cleanup span; the
+      // encoding below runs with the store already idle.
+      this.stopping = false;
+    }
 
     const totalSamples = chunks.reduce((total, chunk) => total + chunk.length, 0);
     // Downsample straight from the chunk list (no giant intermediate concat of
