@@ -39,6 +39,7 @@ import {
   CODING_WORKFLOW as STABLE_CODING_WORKFLOW,
   CODING_WITH_QA_WORKFLOW,
   CODER_OWNED_PR_SUBSCRIBE_GUIDANCE,
+  REVIEWER_ZERO_FINDINGS_GATE,
   builtInWorkflowRequiresPrMerge,
   LEGACY_CODING_TEMPLATE_IDENTITIES,
   mergeChannelsFromTemplate,
@@ -1589,6 +1590,68 @@ describe('seedBuiltInWorkflows()', () => {
     // Exact convergence: stored prompt is restored to the template (with subscribe).
     expect(afterCodingNode.agents[0].customPrompt?.value).toBe(templatePrompt);
     expect(afterCodingNode.agents[0].customPrompt?.value).toContain('subscribe_pr_events');
+  });
+
+  test('re-stamp restores the zero-findings verdict gate to the stable reviewer prompt', () => {
+    // Existing live spaces store the pre-gate CODER_OWNED_REVIEW_PROMPT (before
+    // the P2/P3 approval-leak fix). The [REVIEWER_ZERO_FINDINGS_GATE, ''] retired
+    // patch must converge that stored prompt to the current template on re-seed.
+    // This is the lever that reaches existing spaces, since the persona contract
+    // is not auto-restamped.
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+    const reviewNode = coding.nodes.find((n) => n.name === 'Review')!;
+
+    const templatePrompt = reviewNode.agents[0].customPrompt!.value;
+    expect(templatePrompt).toContain('Verdict gate');
+    // Reconstruct the pre-gate retired form by dropping the gate.
+    const retiredPrompt = templatePrompt.replace(REVIEWER_ZERO_FINDINGS_GATE, '');
+    expect(retiredPrompt).not.toContain('Verdict gate');
+
+    // Simulate a live space that stored the retired prompt with a stale hash.
+    manager.updateWorkflow(coding.id, {
+      nodes: coding.nodes.map((n) =>
+        n.id !== reviewNode.id
+          ? n
+          : {
+              ...n,
+              agents: n.agents.map((a, i) =>
+                i === 0 ? { ...a, customPrompt: { value: retiredPrompt } } : a
+              ),
+            }
+      ),
+    });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'stale-pre-verdict-gate-hash',
+      coding.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(CODING_WORKFLOW.name);
+
+    const after = manager.getWorkflow(coding.id)!;
+    const afterReviewNode = after.nodes.find((n) => n.id === reviewNode.id)!;
+    // Exact convergence: stored prompt is restored to the template (with the gate).
+    expect(afterReviewNode.agents[0].customPrompt?.value).toBe(templatePrompt);
+    expect(afterReviewNode.agents[0].customPrompt?.value).toContain('Verdict gate');
+  });
+
+  test('every stable reviewer slot carries the zero-findings verdict gate', () => {
+    // The persona contract states the rule but is not auto-restamped; restating
+    // the gate on each slot is what reaches existing spaces. Guard that all four
+    // stable reviewer slots carry it.
+    const workflows = [
+      CODING_WORKFLOW,
+      CODING_WITH_QA_WORKFLOW,
+      RESEARCH_WORKFLOW,
+      REVIEW_ONLY_WORKFLOW,
+    ];
+    for (const workflow of workflows) {
+      const reviewNode = workflow.nodes.find((n) => n.name === 'Review')!;
+      const reviewer = reviewNode.agents.find((a) => a.name === 'reviewer')!;
+      expect(reviewer.customPrompt?.value).toContain(REVIEWER_ZERO_FINDINGS_GATE);
+      expect(reviewer.customPrompt?.value).toContain('REQUEST_CHANGES');
+    }
   });
 
   test('restamp prompt migration operates on legacy slot prompts, not the stable behavioral prompts', () => {
