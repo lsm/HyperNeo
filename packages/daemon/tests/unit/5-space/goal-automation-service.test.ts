@@ -3589,6 +3589,68 @@ describe('handleGoalAutomationExecute', () => {
     expect(evolutionRepo.listEpisodes(scope.id)).toHaveLength(1);
   });
 
+  it('skips a manual note whose artifact reference is prospective', async () => {
+    const goal = goalRepo.create({ spaceId, title: 'Prospective artifact', type: 'recurring' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Prospective artifact',
+      objective: 'A planned release is not a completed deploy',
+      policy: { automation: { selfNagCronExpression: '0 * * * *' } },
+    });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'manual_note',
+      sourceId: null,
+      summary: 'Release v2.4.1 is planned',
+      createdAt: 30,
+    });
+    let episodeCreated = false;
+
+    const result = await handleGoalAutomationExecute(
+      createAutomationJob({
+        goalId: goal.id,
+        scopeId: scope.id,
+        triggerKind: 'self_nag',
+        triggerKey: 'schedule-prospective-artifact',
+        reason: 'self_nag',
+        scheduleId: 'schedule-prospective-artifact',
+      }),
+      {
+        goalRepo,
+        taskRepo,
+        evolutionRepo,
+        cursorRepo,
+        goalEventRepo: new SpaceGoalEventRepository(db as never),
+        episodeService: {
+          createFromEvidence: async () => {
+            episodeCreated = true;
+            throw new Error('should not create episode for a prospective artifact reference');
+          },
+          preflightEvidence: () =>
+            makePreflight({
+              level: 'low',
+              score: 0,
+              requiresConfirmation: true,
+              counts: {
+                total: 1,
+                manualNotes: 1,
+                taskResults: 0,
+                workflowArtifacts: 0,
+                metricSnapshots: 0,
+                outcomes: 0,
+              },
+            }),
+        },
+      }
+    );
+
+    expect(result).toMatchObject({ skipped: true, skipReason: 'low_evidence_noop' });
+    expect(episodeCreated).toBe(false);
+    expect(evolutionRepo.listEpisodes(scope.id)).toHaveLength(0);
+  });
+
   it('does not compute the preflight for substantive self_nag selections', async () => {
     const goal = goalRepo.create({ spaceId, title: 'Lazy preflight', type: 'recurring' });
     const scope = evolutionRepo.createScope({

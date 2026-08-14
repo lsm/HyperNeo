@@ -640,10 +640,16 @@ function hasAffirmativeOutcomeText(text: string): boolean {
 }
 
 function hasArtifactOutcome(text: string): boolean {
+  // Same prefix and suffix qualifier checks as keyword and quantitative
+  // outcomes — a prospective artifact ("Release v2.4.1 is planned",
+  // "Built v2.4.1 is still pending") must not count as completed work.
   for (const match of text.matchAll(ARTIFACT_REFERENCE_RE)) {
     const prefix = text.slice(Math.max(0, match.index - 48), match.index);
     if (NON_AFFIRMATIVE_PREFIX_RE.test(prefix)) continue;
-    if (ARTIFACT_CONTEXT_RE.test(prefix)) return true;
+    if (!ARTIFACT_CONTEXT_RE.test(prefix)) continue;
+    const end = match.index + match[0].length;
+    if (suffixHasQualifier(text.slice(end, end + 48))) continue;
+    return true;
   }
   return false;
 }
