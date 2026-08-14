@@ -54,8 +54,14 @@ import {
 
 export function VoiceRecordingIndicator({ inOverlay = false }: { inOverlay?: boolean }) {
   const surface = useContext(VoiceSurfaceContext);
+  // Include STARTUP: a pending getUserMedia/AudioContext setup survives its
+  // composer's unmount (permission prompts can block it indefinitely), and
+  // dropping the chip for that window would leave the originating recording
+  // UI undiscoverable until startup finishes.
   const isRecording =
-    voiceRecorderStore.isRecording.value || voiceRecorderStore.durationLimitHit.value;
+    voiceRecorderStore.isRecording.value ||
+    voiceRecorderStore.durationLimitHit.value ||
+    voiceRecorderStore.isStarting.value;
   const recordingSessionId = voiceRecorderStore.recordingSessionId.value;
   const recordingSpaceId = voiceRecorderStore.recordingSpaceId.value;
   // Displayed session across both routing surfaces. A Space session view
@@ -143,7 +149,11 @@ export function VoiceRecordingIndicator({ inOverlay = false }: { inOverlay?: boo
       class={`fixed bottom-20 right-4 sm:bottom-6 sm:right-6 ${inOverlay ? 'z-[55]' : 'z-40'} flex items-center gap-2 rounded-full
         bg-gray-900/90 backdrop-blur border border-red-500/40 pl-3 pr-4 py-2 shadow-lg
         text-sm text-gray-100 hover:bg-gray-800/90 transition-colors`}
-      aria-label="Voice recording in progress in another session — click to return"
+      aria-label={
+        recordingBehindThisOverlay
+          ? 'Voice recording in progress in this session — click to return'
+          : 'Voice recording in progress in another session — click to return'
+      }
       data-testid="voice-recording-elsewhere"
     >
       <span class="relative flex h-2.5 w-2.5">

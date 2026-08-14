@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const voiceRecorderStore = vi.hoisted(() => ({
   isRecording: { value: false },
+  isStarting: { value: false },
   durationLimitHit: { value: false },
   recordingSessionId: { value: null },
   recordingSpaceId: { value: null },
@@ -99,6 +100,7 @@ const renderInOverlay = () =>
 describe('VoiceRecordingIndicator', () => {
   beforeEach(() => {
     voiceRecorderStore.isRecording.value = false;
+    voiceRecorderStore.isStarting.value = false;
     voiceRecorderStore.durationLimitHit.value = false;
     voiceRecorderStore.recordingSessionId.value = null;
     voiceRecorderStore.recordingSpaceId.value = null;
@@ -179,6 +181,14 @@ describe('VoiceRecordingIndicator', () => {
     fireEvent.click(chip);
     expect(navigateToSession).toHaveBeenCalledWith('session-other', false);
     expect(routerState.navigatedTo).toBe('session-other');
+  });
+
+  it('renders while recording startup is still pending (survivable permission prompt)', () => {
+    voiceRecorderStore.isRecording.value = false;
+    voiceRecorderStore.isStarting.value = true;
+    voiceRecorderStore.recordingSessionId.value = 'session-other';
+    const { container } = renderBase();
+    expect(container.querySelector('[data-testid="voice-recording-elsewhere"]')).toBeTruthy();
   });
 
   it('renders for a limit-hit recording (buffered audio awaiting its owner)', () => {
@@ -274,7 +284,11 @@ describe('VoiceRecordingIndicator', () => {
     routerState.spaceId = 'space-9';
     routerState.overlaySessionId = 'overlay-session-7';
     renderInOverlay();
-    expect(screen.getByTestId('voice-recording-elsewhere')).toBeTruthy();
+    const chip = screen.getByTestId('voice-recording-elsewhere');
+    expect(chip).toBeTruthy();
+    // The accessible name must match the visible "in this session" wording —
+    // a fixed "another session" label would mislead screen-reader users.
+    expect(chip.getAttribute('aria-label')).toContain('in this session');
   });
 
   it('closing from that state only dismisses the overlay (re-revealing the owning waveform)', () => {
