@@ -523,7 +523,7 @@ const AFFIRMATIVE_OUTCOME_RE =
  * observation, not an outcome.
  */
 const QUANTITATIVE_OUTCOME_RE =
-  /\b\d+(?:\.\d+)?\s*(?:ms|s|sec|seconds?|min|minutes?|hours?|h|b|kb|mb|gb|tb|%|x|fps|rps|qps|req\/s|us|µs|ns)(?![a-z0-9])[^.;:!?]{0,24}\b(?:to|→|-|–)\s*\d+(?:\.\d+)?/gi;
+  /\b\d+(?:\.\d+)?\s*(?:ms|s|sec|seconds?|min|minutes?|hours?|h|b|kb|mb|gb|tb|%|x|fps|rps|qps|req\/s|us|µs|ns)(?![a-z0-9])[^.;:!?]{0,24}\b(?:to|→|-|–)\s*\d+(?:\.\d+)?(?:\s*(?:ms|s|sec|seconds?|min|minutes?|hours?|h|b|kb|mb|gb|tb|%|x|fps|rps|qps|req\/s|us|µs|ns)(?![a-z0-9]))?/gi;
 
 function hasQuantitativeOutcome(text: string): boolean {
   // Every measured change is examined with the same prefix AND suffix
@@ -553,15 +553,17 @@ const NON_AFFIRMATIVE_PREFIX_RE =
   /\b(?:not|never|no|hasn'?t|haven'?t|hadn'?t|didn'?t|doesn'?t|won'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|cannot|without|yet|still|pending|wait(?:ing)?|queued|incomplete|unfinished|will|would|should|could|might|expect(?:ed|s)? to|hop(?:e|es|ing) to|plan(?:s|ned)? to)\b[^.!?;:,\n]{0,32}$/i;
 
 /**
- * Suffixes that make a matched outcome reference still pending, negated, or
- * prospective — "PR #123 is still pending", "tests passing tomorrow",
- * "800 ms to 200 ms is planned", "measured, still pending validation".
- * The scan may cross commas/semicolons/colons (a qualifier in a following
- * coordinate clause still applies) but stops at sentence end or a newline,
- * so "tests passed. Still improving." keeps its affirmative match.
+ * Suffix qualifiers that make a matched outcome reference still pending,
+ * negated, or prospective — "PR #123 is still pending", "800 ms to 200 ms is
+ * planned". The qualifier applies when it continues the SAME clause as the
+ * match, either directly ("is planned", "not yet") or across a comma followed
+ * by a linking verb/participle that has no new subject of its own
+ * (", still pending validation"). A qualifier in a new independent clause
+ * with its own subject ("Tests passed; deployment pending") does NOT apply —
+ * that is a different outcome's status, not this one's.
  */
 const NON_AFFIRMATIVE_SUFFIX_RE =
-  /^[^.!?\n]{0,32}\b(?:not|never|no|hasn'?t|haven'?t|hadn'?t|didn'?t|doesn'?t|won'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|cannot|without|yet|still|pending|wait(?:ing)?|queued|incomplete|unfinished|tomorrow|scheduled|planned|will|would|should|could|might|goal|target(?:ed)?|aim)\b/i;
+  /^(?:[^,;:!?.\n]{0,32}\b(?:not|never|no|hasn'?t|haven'?t|hadn'?t|didn'?t|doesn'?t|won'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|cannot|without|yet|still|pending|wait(?:ing)?|queued|incomplete|unfinished|tomorrow|scheduled|planned|will|would|should|could|might|goal|target(?:ed)?|aim)\b|,\s*(?:still|yet|pending|wait(?:ing)?|incomplete|unfinished|planned|scheduled|queued|without)\b)/i;
 
 /**
  * Whether the selection carries an affirmative outcome signal (see

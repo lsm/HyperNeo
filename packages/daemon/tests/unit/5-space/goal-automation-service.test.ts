@@ -3384,6 +3384,75 @@ describe('handleGoalAutomationExecute', () => {
     expect(evolutionRepo.listEpisodes(scope.id)).toHaveLength(0);
   });
 
+  it('still produces an episode when a pending status belongs to another clause', async () => {
+    const goal = goalRepo.create({ spaceId, title: 'Other clause', type: 'recurring' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Other clause',
+      objective: 'A pending status in an independent clause is not this outcome status',
+      policy: { automation: { selfNagCronExpression: '0 * * * *' } },
+    });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'manual_note',
+      sourceId: null,
+      // The pending status belongs to "deployment", not "Tests passed" — the
+      // suffix check must stop at the independent-clause boundary.
+      summary: 'Tests passed; deployment pending',
+      createdAt: 30,
+    });
+
+    const result = await handleGoalAutomationExecute(
+      createAutomationJob({
+        goalId: goal.id,
+        scopeId: scope.id,
+        triggerKind: 'self_nag',
+        triggerKey: 'schedule-other-clause',
+        reason: 'self_nag',
+        scheduleId: 'schedule-other-clause',
+      }),
+      {
+        goalRepo,
+        taskRepo,
+        evolutionRepo,
+        cursorRepo,
+        episodeService: {
+          createFromEvidence: async ({ evidenceIds }) => ({
+            episode: evolutionRepo.createEpisode({
+              scopeId: scope.id,
+              title: 'Other clause retrospective',
+              evidenceIds,
+              outcomeSummary: 'Other clause outcome',
+              findings: [],
+            }),
+            proposals: [],
+            lessons: [],
+          }),
+          preflightEvidence: () =>
+            makePreflight({
+              level: 'low',
+              score: 0,
+              requiresConfirmation: true,
+              counts: {
+                total: 1,
+                manualNotes: 1,
+                taskResults: 0,
+                workflowArtifacts: 0,
+                metricSnapshots: 0,
+                outcomes: 2,
+              },
+            }),
+        },
+      }
+    );
+
+    expect(result.skipped).toBe(false);
+    expect(result.episodeId).toBeString();
+    expect(evolutionRepo.listEpisodes(scope.id)).toHaveLength(1);
+  });
+
   it('skips a manual note whose metadata only has non-affirmative key names', async () => {
     const goal = goalRepo.create({ spaceId, title: 'Metadata keys', type: 'recurring' });
     const scope = evolutionRepo.createScope({
