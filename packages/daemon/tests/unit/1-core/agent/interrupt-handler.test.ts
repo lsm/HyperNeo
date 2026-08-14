@@ -38,6 +38,8 @@ describe('InterruptHandler', () => {
   let cancelForSessionSpy: ReturnType<typeof mock>;
   let markFailedSpy: ReturnType<typeof mock>;
   let mockDb: InterruptHandlerContext['db'];
+  let busPublishAsyncSpy: ReturnType<typeof mock>;
+  let mockEventBus: InterruptHandlerContext['internalEventBus'];
 
   beforeEach(() => {
     mockSession = {
@@ -101,7 +103,15 @@ describe('InterruptHandler', () => {
     mockDb = {
       getJobQueueRepo: mock(() => ({ cancelForSessionWithMessages: cancelForSessionSpy })),
       getSDKMessageRepo: mock(() => ({ markDeliveryFailedByUuid: markFailedSpy })),
+      getMessagesByStatus: mock(() => []),
+      notifyChange: mock(() => {}),
     } as unknown as InterruptHandlerContext['db'];
+
+    busPublishAsyncSpy = mock(async () => {});
+    mockEventBus = {
+      publishAsync: busPublishAsyncSpy,
+      publish: mock(async () => {}),
+    } as unknown as InterruptHandlerContext['internalEventBus'];
   });
 
   function createContext(
@@ -114,6 +124,7 @@ describe('InterruptHandler', () => {
       stateManager: mockStateManager,
       logger: mockLogger,
       db: mockDb,
+      internalEventBus: mockEventBus,
       queryObject: mockQueryObject,
       queryPromise: mockQueryPromise,
       queryAbortController: mockAbortController,
@@ -356,6 +367,34 @@ describe('InterruptHandler', () => {
       await handler.handleInterrupt();
 
       expect(setIdleSpy).toHaveBeenCalled();
+    });
+
+    it('should publish query.trigger after interrupt completion to replay deferred rows', async () => {
+      // The interrupt path reaches idle WITHOUT the query.trigger that
+      // SDKMessageHandler.finishTurn publishes on normal turn end, so a row
+      // persisted as 'deferred' while the session was processing (e.g. an
+      // external event in 'defer' mode) would sit unconsumed indefinitely.
+      // The interrupt→idle transition must drive the deferred queue itself.
+      handler = createHandler();
+
+      await handler.handleInterrupt();
+
+      expect(busPublishAsyncSpy).toHaveBeenCalledWith('query.trigger', {
+        sessionId: 'test-session-id',
+      });
+    });
+
+    it('should not publish query.trigger in manual query mode', async () => {
+      handler = createHandler({
+        session: {
+          ...mockSession,
+          config: { ...mockSession.config, queryMode: 'manual' },
+        } as Session,
+      });
+
+      await handler.handleInterrupt();
+
+      expect(busPublishAsyncSpy).not.toHaveBeenCalled();
     });
 
     it('should resolve interrupt promise in finally block', async () => {

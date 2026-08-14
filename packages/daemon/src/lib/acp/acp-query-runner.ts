@@ -835,6 +835,14 @@ export class AcpQueryRunner {
 
         if (!this.ctx.isCleaningUp() && !recoveryState.rateLimitCooldownScheduled) {
           await stateManager.setIdle();
+          // Drive the deferred queue on ACP turn completion, mirroring
+          // SDKMessageHandler.finishTurn: without this, a message persisted as
+          // 'deferred' while the ACP node was processing (e.g. an external
+          // event in 'defer' mode) is never replayed — the automatic replay is
+          // specific to the Claude SDK path. No-op when no deferred rows exist.
+          if (session.config.queryMode !== 'manual') {
+            this.ctx.internalEventBus.publishAsync('query.trigger', { sessionId: session.id });
+          }
         }
 
         this.ctx.queryPromise = null;

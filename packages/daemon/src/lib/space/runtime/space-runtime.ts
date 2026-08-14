@@ -2413,11 +2413,16 @@ export class SpaceRuntime {
         currentExecution?.status === 'waiting_rebind'
       ) {
         const eventRecord = store.getById(payload.eventId);
+        // Queue in 'defer' mode: the stored mode is forwarded unchanged at
+        // flush time, and an 'immediate' item flushed into an
+        // already-processing session would steer it mid-turn — violating the
+        // never-inject-mid-work intent. Defer is a no-op difference for a
+        // fresh idle session (defer + idle delivers now).
         this.queueForPendingNode(
           preparedTarget,
           payload,
           deliveryKey,
-          'immediate',
+          'defer',
           eventRecord?.createdAt ?? Date.now()
         );
         this.scheduleActivationRetry(
@@ -2441,7 +2446,7 @@ export class SpaceRuntime {
             resolved,
             payload,
             deliveryKey,
-            'immediate',
+            'defer',
             eventRecord?.createdAt ?? Date.now()
           );
           this.scheduleActivationRetry(
@@ -2508,7 +2513,7 @@ export class SpaceRuntime {
             resolved,
             payload,
             deliveryKey,
-            'immediate',
+            'defer',
             eventRecord?.createdAt ?? Date.now()
           );
           if (!(await this.isTargetSpacePausedOrStopped(resolved))) {

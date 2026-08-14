@@ -1396,6 +1396,11 @@ describe('SpaceRuntime external event subscriptions', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(injected).toHaveLength(1);
     expect(injected[0]!.sessionId).toBe('session-flush');
+    // Pre-activation queued events flush in 'defer' mode too: the stored mode
+    // is forwarded unchanged, and 'immediate' would steer an already-processing
+    // session mid-turn. Defer + idle at flush delivers now (no difference for
+    // a fresh session).
+    expect(injected[0]!.deliveryMode).toBe('defer');
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
   });
 

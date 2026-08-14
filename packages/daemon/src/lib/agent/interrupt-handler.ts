@@ -17,6 +17,7 @@ import type { QueryLike } from './query-like';
 import type { Logger } from '../logger';
 import type { MessageQueue } from './message-queue';
 import type { ProcessingStateManager } from './processing-state-manager';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';
 import { withSessionLock } from './message-delivery';
 
@@ -31,6 +32,7 @@ export interface InterruptHandlerContext {
   readonly stateManager: ProcessingStateManager;
   readonly logger: Logger;
   readonly db: Database;
+  readonly internalEventBus: InternalEventBus<DaemonInternalEventMap>;
 
   // Mutable query state
   queryObject: QueryLike | null;
@@ -194,6 +196,18 @@ export class InterruptHandler {
 
       // Set state back to idle
       await stateManager.setIdle();
+      // Drive the deferred queue on interrupt completion, mirroring
+      // SDKMessageHandler.finishTurn: without this, a row persisted as
+      // 'deferred' while the session was processing (e.g. an external event
+      // in 'defer' mode) is never replayed — the interrupt path reaches idle
+      // without the query.trigger that finishTurn publishes on normal turn
+      // end, so the row would sit unconsumed indefinitely. No-op when no
+      // deferred rows exist.
+      if (this.ctx.session.config.queryMode !== 'manual') {
+        this.ctx.internalEventBus.publishAsync('query.trigger', {
+          sessionId: this.ctx.session.id,
+        });
+      }
     } finally {
       // Always resolve the interrupt promise
       if (this.interruptResolve) {

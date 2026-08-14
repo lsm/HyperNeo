@@ -576,6 +576,20 @@ describe('AcpQueryRunner', () => {
     expect(stopSpy).toHaveBeenCalled();
   });
 
+  test('publishes query.trigger on normal turn completion to replay deferred rows', async () => {
+    // The automatic deferred-row replay in SDKMessageHandler.finishTurn is
+    // specific to the Claude SDK path; without an equivalent trigger on ACP
+    // turn completion, a row persisted as 'deferred' while the ACP node was
+    // processing (e.g. an external event in 'defer' mode) is never replayed.
+    const { runner, ctx } = createRunnerFixture();
+    const publishAsync = ctx.internalEventBus.publishAsync as unknown as ReturnType<typeof mock>;
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    expect(publishAsync).toHaveBeenCalledWith('query.trigger', { sessionId: 'session-1' });
+  });
+
   test('aborts ACP submission when remove/defer already revoked the row (#3744696846)', async () => {
     const client = createMockClient();
     let promptBodyRan = false;
