@@ -363,6 +363,15 @@ class VoiceRecorderStore {
             clearTimeout(this.maxDurationTimer);
             this.maxDurationTimer = null;
           }
+          // Detach the capture handlers BEFORE disconnecting: an already-queued
+          // worklet/ScriptProcessor callback that runs after stop()/cancel()/
+          // release() cleared the limit guard would otherwise re-enter
+          // hitLimit() and wedge the recorder busy (or tear down a newer
+          // recording).
+          if (this.node) {
+            if ('port' in this.node) this.node.port.onmessage = null;
+            else this.node.onaudioprocess = null;
+          }
           this.source?.disconnect();
           this.node?.disconnect();
           this.stream?.getTracks().forEach((track) => track.stop());

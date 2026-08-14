@@ -233,6 +233,23 @@ describe('voiceRecorderStore', () => {
     expect(voiceRecorderStore.recordingOwnerId.value).toBe('owner-b');
   });
 
+  it('a stale capture callback after cancel cannot re-enter the limit state', async () => {
+    await voiceRecorderStore.start('owner-a', 's1');
+    const handler = workletNode.onaudioprocess;
+    await voiceRecorderStore.cancel();
+    // A queued callback fires AFTER the cancel completed.
+    expect(handler).toBeTruthy();
+    handler({
+      inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.5) },
+    });
+    expect(voiceRecorderStore.durationLimitHit.value).toBe(false);
+    expect(voiceRecorderStore.isRecording.value).toBe(false);
+    expect(voiceRecorderStore.recordingOwnerId.value).toBeNull();
+    // And the recorder is freely reusable.
+    await voiceRecorderStore.start('owner-b', 's2');
+    expect(voiceRecorderStore.recordingOwnerId.value).toBe('owner-b');
+  });
+
   it('cancel() during a pending getUserMedia discards the stream without recording', async () => {
     let resolvePermission!: (value: unknown) => void;
     navigator.mediaDevices.getUserMedia.mockReturnValueOnce(
