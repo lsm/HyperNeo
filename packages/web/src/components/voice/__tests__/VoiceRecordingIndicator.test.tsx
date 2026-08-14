@@ -76,7 +76,8 @@ vi.mock('../../../lib/router.ts', () => ({
   createSessionPath: (sessionId: string) => `/chat/${sessionId}`,
   createSpaceSessionPath: (spaceId: string, sessionId: string) =>
     `/space/${spaceId}/session/${sessionId}`,
-  createSpaceTaskPath: (spaceId: string, taskId: string) => `/space/${spaceId}/task/${taskId}`,
+  createSpaceTaskPath: (spaceId: string, taskId: string, view?: string) =>
+    view ? `/space/${spaceId}/task/${taskId}/${view}` : `/space/${spaceId}/task/${taskId}`,
   getCurrentPath: () => routerState.currentPath,
 }));
 
@@ -85,6 +86,7 @@ import { VoiceSurfaceContext } from '../../../hooks/useVoiceRecorder';
 import {
   registerVoiceComposer,
   unregisterVoiceComposer,
+  voiceReturnTaskTargetSessionSignal,
 } from '../../../lib/voice/voice-composer-registry.ts';
 import {
   clearOverlaySignals,
@@ -124,6 +126,7 @@ describe('VoiceRecordingIndicator', () => {
     clearOverlaySignals.mockClear();
     routerState.navigatedSpace = null;
     routerState.navigatedTask = null;
+    voiceReturnTaskTargetSessionSignal.value = null;
   });
 
   afterEach(() => {
@@ -252,6 +255,9 @@ describe('VoiceRecordingIndicator', () => {
     expect(navigateToSpaceTask).toHaveBeenCalledWith('space-9', 'task-42', 'thread', false);
     expect(navigateToSpaceSession).not.toHaveBeenCalled();
     expect(navigateToSession).not.toHaveBeenCalled();
+    // The task thread must restore this target as recipient, or a non-default
+    // agent's recording could never be adopted.
+    expect(voiceReturnTaskTargetSessionSignal.value).toBe('task-agent-session');
   });
 
   it('routes a primary-chat recording through the chat route even while a Space is displayed', () => {
@@ -401,6 +407,26 @@ describe('VoiceRecordingIndicator', () => {
     // Navigation still runs (its same-path branch sets route signals without
     // a history write) with replace requested for the consumed entry.
     expect(navigateToSpaceSession).toHaveBeenCalledWith('space-9', 'space-session-1', true);
+  });
+
+  it('pops a task same-path overlay entry (thread view matches the navigation)', () => {
+    // The task thread's URL already matches (overlay keeps the base /thread
+    // URL); the comparison path must use the 'thread' view or this entry is
+    // missed and never popped, leaving a ghost Back entry.
+    voiceRecorderStore.isRecording.value = true;
+    voiceRecorderStore.recordingSessionId.value = 'task-agent-session';
+    voiceRecorderStore.recordingSpaceId.value = 'space-9';
+    voiceRecorderStore.recordingTaskId.value = 'task-42';
+    routerState.currentSessionId = null;
+    routerState.spaceSessionId = 'space-session-1';
+    routerState.spaceId = 'space-9';
+    routerState.overlaySessionId = 'overlay-session-7';
+    routerState.currentPath = '/space/space-9/task/task-42/thread';
+    renderInOverlay();
+    fireEvent.click(screen.getByTestId('voice-recording-elsewhere'));
+    expect(closeOverlayHistory).toHaveBeenCalledTimes(1);
+    expect(clearOverlaySignals).not.toHaveBeenCalled();
+    expect(navigateToSpaceTask).toHaveBeenCalledWith('space-9', 'task-42', 'thread', true);
   });
 
   it('routes through the Space surface when only spaceId remains (overview/task pages)', () => {

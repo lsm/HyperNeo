@@ -20,6 +20,18 @@
  * re-renders every observer and re-reads this map after each registration.
  */
 
+import { signal } from '@preact/signals';
+
+/**
+ * Session the global chip wants the returned-to task thread to select as its
+ * recipient. A task-scoped recording can belong to a NON-default agent target;
+ * SpaceTaskPane preselects the first/visible target on mount, so without this
+ * the returning composer may bind to a different session and fail to adopt.
+ * Set by the chip before it navigates to a task, consumed (and cleared) by
+ * SpaceTaskPane once it has preselected the matching target.
+ */
+export const voiceReturnTaskTargetSessionSignal = signal<string | null>(null);
+
 export interface VoiceComposerInfo {
   /** Rendering surface the composer is mounted in (VoiceSurfaceContext). */
   surfaceId: string;

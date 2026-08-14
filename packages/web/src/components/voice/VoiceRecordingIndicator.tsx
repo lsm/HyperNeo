@@ -34,6 +34,7 @@ import { voiceRecorderStore } from '../../lib/voice/voice-recorder-store.ts';
 import {
   hasAdoptableComposerOnSurface,
   voiceComposerSurfaceOf,
+  voiceReturnTaskTargetSessionSignal,
 } from '../../lib/voice/voice-composer-registry.ts';
 import { VoiceSurfaceContext } from '../../hooks/useVoiceRecorder.ts';
 import {
@@ -118,10 +119,13 @@ export function VoiceRecordingIndicator({ inOverlay = false }: { inOverlay?: boo
     // A task-scoped recording returns to the TASK thread — its composer
     // delivers through space.task.sendMessage with task/agent/node context —
     // never to a plain Space session chat, whose adopting composer would send
-    // the transcript down ordinary session messaging.
+    // the transcript down ordinary session messaging. The comparison path
+    // must use the SAME 'thread' view as navigateToSpaceTask below, or a
+    // same-path overlay entry (whose URL already ends in /thread) would be
+    // missed by the equality check and never popped.
     const targetPath =
       recordingTaskId !== null && recordingSpaceId !== null
-        ? createSpaceTaskPath(recordingSpaceId, recordingTaskId)
+        ? createSpaceTaskPath(recordingSpaceId, recordingTaskId, 'thread')
         : recordingSpaceId !== null
           ? createSpaceSessionPath(recordingSpaceId, recordingSessionId)
           : createSessionPath(recordingSessionId);
@@ -145,6 +149,10 @@ export function VoiceRecordingIndicator({ inOverlay = false }: { inOverlay?: boo
     // it with the target route (consuming it) instead of pushing above it.
     const replace = overlayOpen;
     if (recordingTaskId !== null && recordingSpaceId !== null) {
+      // Ask the task thread to preselect the target whose session owns the
+      // recording: SpaceTaskPane defaults to the first/visible agent, and a
+      // non-default recipient must be restored or the composer cannot adopt.
+      voiceReturnTaskTargetSessionSignal.value = recordingSessionId;
       navigateToSpaceTask(recordingSpaceId, recordingTaskId, 'thread', replace);
     } else if (recordingSpaceId !== null) {
       navigateToSpaceSession(recordingSpaceId, recordingSessionId, replace);
