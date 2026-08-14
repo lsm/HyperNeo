@@ -24,6 +24,21 @@ export type MessageDeliveryStatus =
   | 'failed'; // terminal failure
 
 /**
+ * Active-job retry detail attached to a user message in the `retrying` state
+ * (and, briefly, while a delivery-driven turn is being re-driven after a
+ * recoverable provider error). `runAt` is the next attempt time (epoch ms); the
+ * UI renders a countdown from `runAt - now` and "retry N/Max" from
+ * `count`/`maxRetries` (`count` is the job's retry_count — completed failures —
+ * so the label is "retry", not "attempt", which would read off-by-one). Omitted
+ * when no delivery job is active.
+ */
+export interface MessageDeliveryRetryInfo {
+  count: number;
+  runAt?: number;
+  maxRetries?: number;
+}
+
+/**
  * The raw `sdk_messages.send_status` column values. NULL (SDK / action rows)
  * is treated as `'consumed'` everywhere it is read.
  */
@@ -58,7 +73,11 @@ export function sendStatusToDeliveryStatus(
     case 'submitted':
       return retrying ? 'retrying' : 'processing';
     case 'consumed':
-      return 'delivered';
+      // A consumed message is normally delivered. But when its delivery-driven
+      // turn died on a recoverable provider error and is being re-driven, the
+      // active job holds it for retry — surface `retrying` (with a countdown)
+      // instead of a misleading "delivered".
+      return retrying ? 'retrying' : 'delivered';
     case 'failed':
       return 'failed';
     default:

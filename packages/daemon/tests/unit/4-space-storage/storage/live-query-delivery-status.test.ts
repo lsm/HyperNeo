@@ -24,7 +24,8 @@ import type { SDKMessage } from '@hyperneo/shared/sdk';
 interface MessageRow {
   id: string;
   sendStatus: string | null;
-  deliveryRetry: number;
+  /** Raw `json_object('count','runAt','max')` from the active delivery job, or null. */
+  deliveryRetryInfo: string | null;
 }
 
 function makeTempDbPath(): string {
@@ -82,8 +83,8 @@ describe('messages.bySession delivery-status reactive pipeline', () => {
   const sessionId = 'sess-delivery';
 
   // The registered query SQL (params: sessionId, limit). Subscribing at this
-  // layer yields raw rows (id / sendStatus / deliveryRetry); the send_status →
-  // deliveryStatus mapping is covered by the unit tests.
+  // layer yields raw rows (id / sendStatus / deliveryRetryInfo); the send_status
+  // → deliveryStatus mapping is covered by the unit tests.
   const SQL = NAMED_QUERY_REGISTRY.get('messages.bySession')!.sql;
 
   beforeEach(async () => {
@@ -213,7 +214,8 @@ describe('messages.bySession delivery-status reactive pipeline', () => {
     engine.subscribe<MessageRow>(SQL, [sessionId, 100], (diff) => diffs.push(diff));
     await flush();
     expect(diffs[0].type).toBe('snapshot');
-    expect(diffs[0].rows![0].deliveryRetry).toBe(0);
+    // No active delivery job yet → the raw retry-info scalar is null.
+    expect(diffs[0].rows![0].deliveryRetryInfo).toBeNull();
 
     // A reclaim re-drove the message — active job, retry_count > 0.
     insertDeliveryJob(bunDb, {
@@ -231,7 +233,10 @@ describe('messages.bySession delivery-status reactive pipeline', () => {
     expect(retryDelta.type).toBe('delta');
     expect(retryDelta.updated?.length).toBe(1);
     expect(retryDelta.updated?.[0].id).toBe(rowId);
-    expect(retryDelta.updated?.[0].deliveryRetry).toBe(1);
+    // deliveryRetryInfo is a raw json_object('count','runAt','max') from the
+    // now-active job — count reflects retry_count=1.
+    const info = JSON.parse(retryDelta.updated?.[0].deliveryRetryInfo ?? 'null');
+    expect(info?.count).toBe(1);
     // The same row was updated, not duplicated.
     expect(retryDelta.added ?? []).toHaveLength(0);
   });

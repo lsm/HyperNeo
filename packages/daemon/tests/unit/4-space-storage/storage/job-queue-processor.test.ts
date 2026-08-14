@@ -1,7 +1,10 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
-import { JobQueueProcessor } from '../../../../src/storage/job-queue-processor';
+import {
+  DeadLetterImmediatelyError,
+  JobQueueProcessor,
+} from '../../../../src/storage/job-queue-processor';
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 50));
 
@@ -237,6 +240,66 @@ describe('JobQueueProcessor', () => {
 
       const updated = repo.getJob(job.id);
       expect(updated?.error).toBe('something went wrong');
+    });
+
+    it('force-dead-letters on DeadLetterImmediatelyError without burning retries', async () => {
+      // A handler throws DeadLetterImmediatelyError for a non-recoverable failure
+      // (e.g. a delivery turn that ended in an auth/permission/quota error). The
+      // processor must send the job straight to `dead` — NOT back it off through
+      // the retry budget — and fire onDead so the lane terminalizes the message.
+      let deadJobId: string | null = null;
+      processor.register(
+        'test-queue',
+        async () => {
+          throw new DeadLetterImmediatelyError('non-recoverable turn error');
+        },
+        {
+          onDead: (job) => {
+            deadJobId = job.id;
+          },
+        }
+      );
+
+      // maxRetries > 0 so a plain Error would retry; DeadLetterImmediatelyError bypasses.
+      const job = repo.enqueue({ queue: 'test-queue', payload: {}, maxRetries: 3 });
+      await processor.tick();
+      await flush();
+
+      const updated = repo.getJob(job.id);
+      expect(updated?.status).toBe('dead');
+      expect(updated?.retryCount).toBe(0); // no retry budget consumed
+      expect(updated?.error).toBe('non-recoverable turn error');
+      expect(deadJobId).toBe(job.id); // onDead fired through the standard path
+    });
+  });
+
+  describe('steer park accounting (requeueParked / getParkCount)', () => {
+    it('getParkCount is 0 for a fresh job and after plain requeue', () => {
+      const job = repo.enqueue({ queue: 'steer-q', payload: { role: 'steer' } });
+      const [claimed] = repo.dequeue('steer-q', 1);
+      expect(claimed).toBeTruthy();
+      expect(repo.getParkCount(claimed!.id)).toBe(0);
+    });
+
+    it('requeueParked bumps __parkCount without touching retry_count, and getParkCount reads it', () => {
+      const job = repo.enqueue({ queue: 'steer-q', payload: { role: 'steer' }, maxRetries: 8 });
+      const [claimed] = repo.dequeue('steer-q', 1);
+      const token = claimed!.claimToken;
+
+      repo.requeueParked(claimed!.id, Date.now() + 5000, token);
+      expect(repo.getParkCount(claimed!.id)).toBe(1);
+      let updated = repo.getJob(claimed!.id);
+      expect(updated?.status).toBe('pending');
+      expect(updated?.retryCount).toBe(0); // parking is a wait, not a retry
+
+      // Re-claim and park again → count is 2. (requeueParked set run_at into the
+      // future; reset it so dequeue re-claims the same row.)
+      db.prepare(`UPDATE job_queue SET run_at = 0 WHERE id = ?`).run(claimed!.id);
+      const [r2] = repo.dequeue('steer-q', 1);
+      repo.requeueParked(r2!.id, Date.now() + 5000, r2!.claimToken);
+      expect(repo.getParkCount(claimed!.id)).toBe(2);
+      updated = repo.getJob(claimed!.id);
+      expect(updated?.retryCount).toBe(0);
     });
   });
 

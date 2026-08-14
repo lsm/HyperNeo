@@ -88,6 +88,15 @@ export interface SDKMessageHandlerContext {
 
   // Called when the SDK pushes a mid-session slash command replacement list
   onCommandsChanged: (commands: string[]) => Promise<void>;
+
+  /**
+   * Notify the delivery layer that the SDK produced activity (any incoming
+   * message). Resets the no-progress stall watchdog for the in-flight delivery
+   * turn so a live, actively-streaming turn is never mistaken for a stall.
+   * Optional — a no-op when no delivery turn is in flight. See
+   * AgentSession.bumpDeliveryTurnActivity.
+   */
+  bumpDeliveryTurnActivity?(): void;
 }
 
 type PersistedUserMessage = SDKMessage & { dbId: string; timestamp: number };
@@ -688,6 +697,11 @@ export class SDKMessageHandler {
    */
   async handleMessage(message: SDKMessage): Promise<void> {
     const { session, db, messageHub, stateManager } = this.ctx;
+
+    // Any incoming SDK message is "activity" — reset the delivery turn's no-
+    // progress stall watchdog so an actively-streaming turn (even a multi-hour
+    // one) is never mistaken for a stall. No-op when no delivery turn is active.
+    this.ctx.bumpDeliveryTurnActivity?.();
 
     // Check for API error patterns that indicate an infinite loop
     // This MUST happen BEFORE any other processing to catch errors early

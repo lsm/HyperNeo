@@ -87,6 +87,7 @@ import {
 import { createMessageDeliveryHandler } from './lib/job-handlers/message-delivery.handler';
 import { settleMessageDeliveryDeadLetter } from './lib/job-handlers/message-delivery-dead-letter';
 import { asMessageDeliveryPayload } from './lib/agent/message-delivery';
+import { deliveryMetrics } from './lib/agent/message-delivery-metrics';
 import { handleTaskScheduleFire } from './lib/job-handlers/task-schedule-fire.handler';
 import {
   backfillLongHorizonAgentReminderNextRunAt,
@@ -1032,6 +1033,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         // change. Without this the row stays `enqueued`, which pagination hides —
         // the user's prompt vanishes without a terminal error. See Codex (#2595).
         onDead: (job) => {
+          // Count every dead-lettered delivery for the retry-storm metric
+          // (sustained rise ⇒ a session/provider stuck in a recoverable error
+          // loop). Counted before the payload/repo guards so a dead job is
+          // always counted, regardless of whether settlement can proceed.
+          deliveryMetrics.recordDeadLetter();
           const payload = asMessageDeliveryPayload(job.payload);
           if (!payload) return;
           const sdkRepo = reactiveDb?.db.getSDKMessageRepo();
@@ -1042,7 +1048,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           // (session.error before the settlement idle) is load-bearing. See
           // message-delivery-dead-letter.ts. (Codex P1.)
           void settleMessageDeliveryDeadLetter(payload, {
-            markDeliveryFailedByUuid: (sid, uuid) => sdkRepo.markDeliveryFailedByUuid(sid, uuid),
+            // Inclusive: a driven turn that already reached `consumed` can also
+            // exhaust its retries (recoverable) or dead-letter at once
+            // (non-recoverable) — flip those rows too so the failed prompt is
+            // visible (pagination hides non-consumed) and the UI offers Retry.
+            markDeliveryFailedByUuid: (sid, uuid) =>
+              sdkRepo.markDeliveryFailedByUuidInclusive(sid, uuid),
             publishStatusChanged: (sid, messageIds) =>
               internalEventBus.publish('messages.statusChanged', {
                 sessionId: sid,

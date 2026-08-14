@@ -5,8 +5,9 @@
  */
 
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
-import type { MessageDeliveryStatus } from '@hyperneo/shared';
-import { useEffect, useState } from 'preact/hooks';
+import type { MessageDeliveryRetryInfo, MessageDeliveryStatus } from '@hyperneo/shared';
+import { useCallback, useEffect, useState } from 'preact/hooks';
+import { retryMessageDelivery } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';
 import { borderRadius, messageColors, messageSpacing } from '../../lib/design-tokens.ts';
 import { cn, copyToClipboard } from '../../lib/utils.ts';
@@ -75,6 +76,10 @@ function renderMessageText(
 type UserMessage = Extract<SDKMessage, { type: 'user' }> & {
   /** User-facing delivery lifecycle from sdk_messages.send_status (task #862). */
   deliveryStatus?: MessageDeliveryStatus;
+  /** Active-job retry detail (count / next-attempt / max) when retrying. */
+  deliveryRetry?: MessageDeliveryRetryInfo;
+  /** Persisted row id (attached by the messages.bySession LiveQuery mapper). */
+  id?: string;
 };
 type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
 
@@ -108,6 +113,99 @@ function UserMessageDeliveryBadge({
       <DeliveryStateBadge state={status} label={copy.label} test-id="user-delivery-state" />
     </Tooltip>
   );
+}
+
+function formatRetryCountdown(ms: number): string {
+  if (ms <= 0) return 'now';
+  const totalSeconds = Math.ceil(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes > 0) return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  return `${seconds}s`;
+}
+
+/**
+ * Inline retry affordance for a user message:
+ *  - `retrying`: a live countdown to the next automatic attempt + "attempt N/M",
+ *    so a delivery-driven turn that died on a transient provider error shows
+ *    visible progress instead of silently idling.
+ *  - `failed`: a "Retry" button that reopens + re-enqueues the message.
+ */
+function UserMessageRetryControl({
+  sessionId,
+  messageDbId,
+  deliveryStatus,
+  deliveryRetry,
+}: {
+  sessionId?: string;
+  messageDbId?: string;
+  deliveryStatus?: MessageDeliveryStatus;
+  deliveryRetry?: MessageDeliveryRetryInfo;
+}) {
+  const [remaining, setRemaining] = useState(() =>
+    Math.max(0, (deliveryRetry?.runAt ?? 0) - Date.now())
+  );
+  const [retrying, setRetrying] = useState(false);
+
+  // Tick the countdown while retrying.
+  useEffect(() => {
+    if (deliveryStatus !== 'retrying' || !deliveryRetry?.runAt) return;
+    const interval = setInterval(() => {
+      setRemaining(Math.max(0, deliveryRetry.runAt! - Date.now()));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [deliveryStatus, deliveryRetry?.runAt]);
+
+  const handleRetry = useCallback(async () => {
+    if (!sessionId || !messageDbId) return;
+    setRetrying(true);
+    try {
+      const result = await retryMessageDelivery(sessionId, messageDbId);
+      if (!result.retried) {
+        toast.error('Message could not be retried — it may no longer be in a failed state.');
+      }
+    } catch {
+      toast.error('Failed to retry message. Please try again.');
+    } finally {
+      setRetrying(false);
+    }
+  }, [sessionId, messageDbId]);
+
+  if (deliveryStatus === 'retrying') {
+    // `count` is the active job's retry_count (completed failures), not the
+    // current attempt number — so label it "retry N/Max" (Nth retry of Max
+    // retries), not "attempt N/M", which would read off-by-one.
+    const attempt = deliveryRetry
+      ? `retry ${deliveryRetry.count}${deliveryRetry.maxRetries ? `/${deliveryRetry.maxRetries}` : ''}`
+      : '';
+    return (
+      <span
+        class="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-orange-200"
+        role="status"
+        aria-live="polite"
+        data-testid="user-delivery-retry-countdown"
+      >
+        retrying in {formatRetryCountdown(remaining)}
+        {attempt && <span class="text-orange-300/60 normal-case font-normal">· {attempt}</span>}
+      </span>
+    );
+  }
+
+  if (deliveryStatus === 'failed' && sessionId && messageDbId) {
+    return (
+      <button
+        type="button"
+        onClick={handleRetry}
+        disabled={retrying}
+        class="text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full border border-red-500/45 bg-red-500/10 text-red-200 hover:bg-red-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 focus-visible:ring-offset-dark-950"
+        data-testid="user-delivery-retry-button"
+      >
+        {retrying ? 'Retrying…' : 'Retry'}
+      </button>
+    );
+  }
+
+  return null;
 }
 
 /** True when a user message's delivery is terminal (settled) and rewind-safe. */
@@ -397,6 +495,13 @@ export function SDKUserMessage({
       {message.deliveryStatus && message.deliveryStatus !== 'delivered' && (
         <UserMessageDeliveryBadge status={message.deliveryStatus} />
       )}
+
+      <UserMessageRetryControl
+        sessionId={sessionId}
+        messageDbId={typeof message.id === 'string' ? message.id : undefined}
+        deliveryStatus={message.deliveryStatus}
+        deliveryRetry={message.deliveryRetry}
+      />
 
       {/* Rewind button - only for non-replay user messages with valid UUID */}
       {!isReplay &&

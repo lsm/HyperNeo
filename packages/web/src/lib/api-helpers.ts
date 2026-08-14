@@ -106,6 +106,22 @@ export async function retryNowAfterRateLimit(sessionId: string): Promise<{ succe
   return await hub.request<{ success: boolean }>('session.retryNowAfterRateLimit', { sessionId });
 }
 
+/**
+ * Manually retry a failed user message: reopens the `failed` row and re-enqueues
+ * its durable delivery job. Backs the per-message "Retry" button shown when
+ * `deliveryStatus === 'failed'`.
+ */
+export async function retryMessageDelivery(
+  sessionId: string,
+  messageDbId: string
+): Promise<{ retried: boolean; messageId?: string; status?: string }> {
+  const hub = getHubOrThrow();
+  return await hub.request<{ retried: boolean; messageId?: string; status?: string }>(
+    'session.messages.retry',
+    { sessionId, messageDbId }
+  );
+}
+
 export async function switchCoordinatorMode(
   sessionId: string,
   coordinatorMode: boolean

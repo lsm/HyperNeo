@@ -39,10 +39,12 @@
  */
 
 import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository';
-import type { JobHandler } from '../../storage/job-queue-processor';
+import { DeadLetterImmediatelyError, type JobHandler } from '../../storage/job-queue-processor';
 import {
   asMessageDeliveryPayload,
   isUniqueConstraintError,
+  MAX_ACP_STEER_PARKS,
+  MAX_STEER_PARKS,
   MESSAGE_DELIVERY_PARK_MS,
   type DeliveryLoadResult,
   type MessageDeliverySession,
@@ -147,9 +149,26 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
     // NOT re-fed (see the module doc + §8). `deferred`/`failed` skip outright;
     // a `consumed` turn is re-driven without the feed (below). `submitted`
     // (ACP) means the prompt already reached the subprocess; a reclaimed attempt
-    // must NOT re-feed it (the subprocess may already be executing it). Skip —
-    // the live runner's finally (markACPDeliveryFailed) or cold recovery settles
-    // it. See Codex (#3744971821).
+    // must NOT re-feed it (the subprocess may already be executing it).
+    //
+    // For a `submitted` ACP STEER, the job is mid-await-acceptance: onSent fired
+    // (≡ onSubmitted → row `submitted`) but acceptance (markMessageAccepted) is
+    // async. Skip-completing here would strand the row as `submitted` with no job
+    // if acceptance never comes, defeating the awaiting-acceptance park. So keep
+    // parking (bounded by MAX_ACP_STEER_PARKS — sized to ACP's acceptance
+    // window, not the generic turn-blocked budget) until it flips to `consumed` (accepted
+    // → alreadyConsumed) or the budget exhausts (→ failed). A `submitted` TURN is
+    // left to the live runner / cold recovery as before. See Codex (#3744971821).
+    if (sendStatus === 'submitted' && payload.role === 'steer') {
+      if (deps.jobQueue.getParkCount(job.id) >= MAX_ACP_STEER_PARKS) {
+        throw new DeadLetterImmediatelyError(
+          'ACP steer awaited acceptance past its budget — subprocess never accepted'
+        );
+      }
+      const retryAt = Date.now() + MESSAGE_DELIVERY_PARK_MS;
+      deps.jobQueue.requeueParked(job.id, retryAt, job.claimToken);
+      return { parked: 'acp_awaiting_acceptance', retryAt };
+    }
     if (sendStatus === 'deferred' || sendStatus === 'failed' || sendStatus === 'submitted') {
       await session.settleSkippedDelivery?.(payload.messageUuid);
       return { outcome: 'skipped', sendStatus };
@@ -239,9 +258,51 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       // slot). Park it with the turn's delay so it is NOT reclaimed every poll
       // (unbounded hot loop); it re-evaluates (feed/promote) when reclaimed after
       // the delay. See Codex (#3742693683).
+      //
+      // Bounded: parking uses requeue (no retry_count bump), so without a cap a
+      // steer whose owning turn never unblocks re-parks every cycle forever.
+      // After MAX_STEER_PARKS, dead-letter (the owning turn was likely abandoned)
+      // so the message surfaces as `failed` with a Retry affordance instead of
+      // parking silently forever — EXCEPT while the human gate is genuinely open
+      // (an unanswered resume choice): a legitimately-blocked turn is not
+      // abandonment, so the steer keeps parking without burning its budget until
+      // the choice resolves or the session leaves the gate. (Codex #11.)
+      const waitingForInput = session.isWaitingForInput?.() ?? false;
+      if (!waitingForInput && deps.jobQueue.getParkCount(job.id) >= MAX_STEER_PARKS) {
+        throw new DeadLetterImmediatelyError(
+          'Steer parked past its budget — owning turn never unblocked'
+        );
+      }
       const retryAt = Date.now() + MESSAGE_DELIVERY_PARK_MS;
-      deps.jobQueue.requeue(job.id, retryAt, job.claimToken);
-      return { parked: 'turn_blocked', retryAt };
+      if (waitingForInput) {
+        // Gate-open re-park uses plain requeue so the open gate does not CHARGE
+        // the park budget: a long-open choice must not accumulate __parkCount
+        // past the cap (or past the ACP acceptance budget) and dead-letter the
+        // steer on its first post-resolution pass. (Codex review.)
+        deps.jobQueue.requeue(job.id, retryAt, job.claimToken);
+      } else {
+        deps.jobQueue.requeueParked(job.id, retryAt, job.claimToken);
+      }
+      return { parked: waitingForInput ? 'turn_blocked_gate_open' : 'turn_blocked', retryAt };
+    }
+    if (result.outcome === 'awaiting_acceptance') {
+      // ACP steer: the prompt reached the subprocess (onSent ≡ onSubmitted) but
+      // the consume boundary is acceptance, which fires async from the ACP
+      // runner. Park bounded so the job stays alive instead of auto-completing
+      // at submission — if acceptance never comes this dead-letters → `failed`
+      // (surfaces) rather than stranding the row with no job to retry it. On
+      // re-run the row is `submitted`/`consumed` (settled by the skip /
+      // alreadyConsumed paths above) or still `enqueued` with the message
+      // already admitted (the bridge suppresses the re-admit), so this path
+      // never re-feeds. Same bound as a turn-blocked park.
+      if (deps.jobQueue.getParkCount(job.id) >= MAX_ACP_STEER_PARKS) {
+        throw new DeadLetterImmediatelyError(
+          'ACP steer awaited acceptance past its budget — subprocess never accepted'
+        );
+      }
+      const retryAt = Date.now() + MESSAGE_DELIVERY_PARK_MS;
+      deps.jobQueue.requeueParked(job.id, retryAt, job.claimToken);
+      return { parked: 'acp_awaiting_acceptance', retryAt };
     }
     if (result.outcome === 'promote') {
       // The turn ended between enqueue and claim — convert THIS job to a turn

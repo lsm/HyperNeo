@@ -1315,6 +1315,110 @@ export function setupSessionHandlers(
     };
   });
 
+  // Retry a failed user message immediately (manual "Retry" affordance). Reopens
+  // the `failed` row to `enqueued` and re-enqueues its durable delivery job so
+  // the handler re-drives it. Mirrors the promotePending / Space idempotent
+  // retry pattern (reopenDeliveryByUuid + deliverAndMarkQueued). Used by the
+  // per-message Retry button shown on `deliveryStatus === 'failed'`.
+  messageHub.onRequest('session.messages.retry', async (data) => {
+    const { sessionId: targetSessionId, messageDbId } = data as {
+      sessionId?: string;
+      messageDbId?: string;
+    };
+
+    if (!targetSessionId || !messageDbId) {
+      throw new Error('sessionId and messageDbId are required');
+    }
+
+    const db = sessionManager.getDatabase();
+    // Terminal sessions cannot accept a retry: an `archived` session's worktree
+    // + subprocess are torn down (the delivery handler rejects it), and an
+    // `ended` session would otherwise start another provider turn the UI has
+    // disabled. Reject upfront so the RPC does not report success only to fail
+    // again (Codex #5). The check MUST precede getSessionAsync(): hydrating an
+    // EVICTED session constructs + caches a new AgentSession whose constructor
+    // schedules replayPendingMessagesForImmediateMode (microtask), which
+    // enqueues a durable delivery job for every pending row — and the delivery
+    // handler's archived barrier does not cover `ended`, so hydration alone
+    // would start provider turns for other pending prompts despite this RPC
+    // returning { retried: false }. (Codex P2.)
+    const persistedStatus = db.getSession(targetSessionId)?.status;
+    if (persistedStatus === 'archived' || persistedStatus === 'ended') {
+      return { retried: false };
+    }
+
+    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    if (!agentSession) {
+      throw new Error('Session not found');
+    }
+
+    const message = db
+      .getMessagesByStatus(targetSessionId, 'failed')
+      .find((queuedMessage) => queuedMessage.dbId === messageDbId);
+
+    if (!message || !isSDKUserMessage(message) || !message.uuid) {
+      return { retried: false };
+    }
+
+    const reopenedId = db.getSDKMessageRepo().reopenDeliveryByUuid(targetSessionId, message.uuid);
+    if (!reopenedId) {
+      return { retried: false };
+    }
+
+    // Roll the row back to `failed` if anything after the reopen throws — the
+    // status broadcast OR creating the new delivery owner — mirroring the
+    // ordinary-chat enqueue path's atomicity. Otherwise the row is left
+    // `enqueued` with no active job and no Retry button until an orphan-
+    // reconciler pass repairs it (Codex #6 + review).
+    const rollbackToFailed = async () => {
+      const rolledBack = db
+        .getSDKMessageRepo()
+        .markDeliveryFailedByUuid(targetSessionId, message.uuid!);
+      if (rolledBack) {
+        await internalEventBus.publish('messages.statusChanged', {
+          sessionId: targetSessionId,
+          messageIds: [rolledBack],
+          status: 'failed',
+        });
+      }
+    };
+
+    try {
+      // Inside the protected block: a rejecting messages.statusChanged
+      // subscriber throws AFTER the failed→enqueued flip but before the job
+      // exists — it must roll the row back too, not strand it (Codex review).
+      await internalEventBus.publish('messages.statusChanged', {
+        sessionId: targetSessionId,
+        messageIds: [reopenedId],
+        status: 'enqueued',
+      });
+
+      if (isMessageDeliveryV2Enabled()) {
+        await deliverAndMarkQueued({
+          jobQueue: db.getJobQueueRepo(),
+          stateManager: agentSession.stateManager,
+          sessionId: targetSessionId,
+          messageUuid: message.uuid,
+          origin: 'chat',
+        });
+      } else {
+        const replayContent = toReplayContent(message.message.content);
+        if (replayContent) {
+          await agentSession.startQueryAndEnqueue(message.uuid, replayContent);
+        }
+      }
+    } catch (err) {
+      await rollbackToFailed();
+      throw err;
+    }
+
+    return {
+      retried: true,
+      messageId: reopenedId,
+      status: 'enqueued',
+    };
+  });
+
   /**
    * Handle the user's response to an sdk_resume_choice action message.
    *

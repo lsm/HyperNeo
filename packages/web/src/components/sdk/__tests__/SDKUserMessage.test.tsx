@@ -46,8 +46,14 @@ vi.mock('../../../lib/toast.ts', () => ({
   },
 }));
 
+// Mock the api-helpers retry call (backs the per-message Retry button).
+vi.mock('../../../lib/api-helpers.ts', () => ({
+  retryMessageDelivery: vi.fn().mockResolvedValue({ retried: true }),
+}));
+
 import { copyToClipboard } from '../../../lib/utils.ts';
 import { toast } from '../../../lib/toast.ts';
+import { retryMessageDelivery } from '../../../lib/api-helpers.ts';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -562,6 +568,41 @@ describe('SDKUserMessage', () => {
 
       expect(container.textContent).not.toContain('not delivered');
       expect(container.textContent).not.toContain('queued');
+    });
+
+    it('shows a Retry button for a failed message and re-enqueues on click', async () => {
+      vi.mocked(retryMessageDelivery).mockResolvedValue({ retried: true });
+      const message = {
+        ...createTextMessage('Hello world'),
+        id: 'db-1',
+        deliveryStatus: 'failed' as const,
+      };
+
+      const { container } = render(<SDKUserMessage message={message} sessionId="sess-1" />);
+
+      const retryButton = container.querySelector('[data-testid="user-delivery-retry-button"]');
+      expect(retryButton).toBeTruthy();
+      fireEvent.click(retryButton!);
+
+      await waitFor(() => {
+        expect(retryMessageDelivery).toHaveBeenCalledWith('sess-1', 'db-1');
+      });
+    });
+
+    it('shows a retry countdown + retry N/Max for a retrying message', () => {
+      const message = {
+        ...createTextMessage('Hello world'),
+        deliveryStatus: 'retrying' as const,
+        // count = retry_count (completed failures); label is "retry N/Max".
+        deliveryRetry: { count: 2, runAt: Date.now() + 5000, maxRetries: 8 },
+      };
+
+      const { container } = render(<SDKUserMessage message={message} />);
+
+      const countdown = container.querySelector('[data-testid="user-delivery-retry-countdown"]');
+      expect(countdown).toBeTruthy();
+      expect(countdown?.textContent).toContain('retrying in');
+      expect(countdown?.textContent).toContain('retry 2/8');
     });
   });
 

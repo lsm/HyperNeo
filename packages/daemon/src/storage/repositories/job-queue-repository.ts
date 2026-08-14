@@ -175,6 +175,39 @@ export class JobQueueRepository {
   }
 
   /**
+   * Read a steer job's accumulated park count (stored in the payload as
+   * `__parkCount` by {@link requeueParked}). 0 when unset (fresh job / non-steer).
+   * Used by the message-delivery handler to bound how long a steer parks before
+   * dead-lettering (its owning turn may be blocked on `sdk_resume_choice`).
+   */
+  getParkCount(jobId: string): number {
+    const row = this.db
+      .prepare(`SELECT json_extract(payload, '$.__parkCount') AS c FROM job_queue WHERE id = ?`)
+      .get(jobId) as { c: number | null } | undefined;
+    return Number(row?.c ?? 0) || 0;
+  }
+
+  /**
+   * Like {@link requeue} but bumps the payload's `__parkCount` (used to bound
+   * steer parking — see {@link getParkCount}). No retry_count bump (parking is a
+   * wait, not a failure). The processor's auto-`complete()` on handler return is
+   * a no-op (the row is no longer `processing`).
+   */
+  requeueParked(jobId: string, runAt: number, claimToken?: string | null): Job | null {
+    const stmt = this.db.prepare(
+      `UPDATE job_queue
+         SET status = 'pending', run_at = ?, started_at = NULL,
+             payload = json_set(payload, '$.__parkCount',
+               COALESCE(json_extract(payload, '$.__parkCount'), 0) + 1)
+       WHERE id = ? AND status = 'processing'
+         AND (? IS NULL OR json_extract(payload, '$.__claimToken') = ?)`
+    );
+    const res = stmt.run(runAt, jobId, claimToken ?? null, claimToken ?? null);
+    if (res.changes === 0) return null;
+    return this.getJob(jobId);
+  }
+
+  /**
    * Requeue + change the job's role in place (e.g. a steer promoted to a turn),
    * atomically converting THIS job rather than completing it and enqueuing a
    * second. Avoids the crash-window double-deliver of a separate promote job
@@ -437,6 +470,28 @@ export class JobQueueRepository {
         .run(error, Date.now(), jobId);
     }
 
+    return this.getJob(jobId);
+  }
+
+  /**
+   * Force a claimed job straight to `dead`, bypassing the retry budget. Used
+   * when a handler throws `DeadLetterImmediatelyError` (e.g. a delivery turn
+   * that ended in a non-recoverable error — auth/permission/quota — where
+   * retrying won't help). Mirrors `fail`'s terminal branch but skips the
+   * retry-count check. Returns the dead row (or null if the claim was lost).
+   */
+  markDead(jobId: string, error: string, claimToken?: string | null): Job | null {
+    const row = this.db.prepare(`SELECT * FROM job_queue WHERE id = ?`).get(jobId) as
+      | Record<string, unknown>
+      | undefined;
+    if (!row) return null;
+    if (claimToken) {
+      const payload = JSON.parse(row.payload as string) as Record<string, unknown>;
+      if (row.status !== 'processing' || payload.__claimToken !== claimToken) return null;
+    }
+    this.db
+      .prepare(`UPDATE job_queue SET status = 'dead', error = ?, completed_at = ? WHERE id = ?`)
+      .run(error, Date.now(), jobId);
     return this.getJob(jobId);
   }
 

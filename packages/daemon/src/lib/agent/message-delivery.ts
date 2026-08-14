@@ -20,6 +20,7 @@
 import type { MessageContent } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
+import { DeadLetterImmediatelyError } from '../../storage/job-queue-processor';
 import { MESSAGE_DELIVERY } from '../job-queue-constants';
 
 /**
@@ -80,6 +81,24 @@ export function isMessageDeliveryV2Enabled(): boolean {
 }
 
 /**
+ * Retry budget for `message_delivery` jobs (shared by {@link deliverMessage} and
+ * the transactional outbox). Generous by default: a delivery job can span a full
+ * SDK turn (seconds→minutes), and a recoverable provider error (transient 5xx /
+ * "unexpected error") should retry the turn rather than dead-lettering a user
+ * message prematurely. This composes with the QueryRunner's own internal retry.
+ *
+ * Operator-tunable via `HYPERNEO_MESSAGE_DELIVERY_MAX_RETRIES` rather than
+ * reduced: the per-delivery cool-down in the external-event layer now caps
+ * re-injection storms at the source, so shrinking this mainly trades recovery
+ * headroom for faster `failed` surfacing — an operator decision, not a default.
+ * Read once at module load.
+ */
+export const MESSAGE_DELIVERY_MAX_RETRIES = (() => {
+  const raw = Number.parseInt(process.env.HYPERNEO_MESSAGE_DELIVERY_MAX_RETRIES ?? '', 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : 8;
+})();
+
+/**
  * Detect a SQLite UNIQUE-constraint failure. `deliverMessage` relies on the
  * `uq_message_delivery_active_turn` partial unique index as the atomic
  * turn-vs-steer arbiter: a `role:'turn'` insert either succeeds or hits this
@@ -92,6 +111,95 @@ export function isMessageDeliveryV2Enabled(): boolean {
 export function isUniqueConstraintError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   return /UNIQUE constraint/i.test(err.message);
+}
+
+/**
+ * Thrown by `driveDeliveryTurn` when the SDK turn ended in a RECOVERABLE error
+ * (e.g. a transient provider 5xx / "unexpected error", category SYSTEM). The
+ * handler does NOT catch it, so it propagates to the processor's `processJob`
+ * catch → `repo.fail` → exponential backoff → retry. Each retry re-claims the
+ * (now `consumed`) message and re-drives via `ensureQueryStarted`, which
+ * restarts the query — the same "send a new message and it works" recovery the
+ * user observed, now automatic. The message stays `consumed` throughout retries
+ * (the `deliveryRetry` LiveQuery signal surfaces "retrying" in the UI); on
+ * exhaustion the dead-letter path flips it to `failed`. See
+ * docs/features/message-delivery-v2.md.
+ */
+export class MessageDeliveryRecoverableTurnError extends Error {
+  constructor(
+    message: string,
+    readonly category?: string
+  ) {
+    super(message);
+    this.name = 'MessageDeliveryRecoverableTurnError';
+  }
+}
+
+/**
+ * Thrown by `driveDeliveryTurn` when the SDK turn ended in a NON-recoverable
+ * error (auth/permission/quota). Extends {@link DeadLetterImmediatelyError} so
+ * the processor force-dead-letters the job (no retry budget burned) and fires
+ * `onDead`, which terminalizes the persisted message as `failed` with a Retry
+ * affordance — retrying won't fix a credential/quota error, but the UI surfaces
+ * it honestly instead of silently idling on a `consumed` row.
+ */
+export class MessageDeliveryTerminalTurnError extends DeadLetterImmediatelyError {
+  constructor(
+    message: string,
+    readonly category?: string
+  ) {
+    super(message);
+    this.name = 'MessageDeliveryTerminalTurnError';
+  }
+}
+
+/**
+ * Categories that are terminal for DELIVERY regardless of the error's
+ * `recoverable` flag. `ErrorManager.isRecoverable` returns true for every
+ * AUTHENTICATION code except `INVALID_API_KEY` and for all
+ * `PROVIDER_AUTH_ERROR` — but a surfaced auth failure (401, expired token,
+ * unavailable credentials) needs a human to fix the credentials; retrying just
+ * re-invokes a provider that cannot authenticate for the full ~4min budget
+ * before dead-lettering. The manual Retry affordance covers the rare transient
+ * case (e.g. a token-refresh window), so auth is classified terminal here,
+ * matching {@link MessageDeliveryTerminalTurnError}'s documented
+ * "auth/permission/quota" intent. Scoped to the delivery bridge — the global
+ * `isRecoverable` is unchanged for every other consumer. (Codex #2.)
+ */
+const TERMINAL_TURN_ERROR_CATEGORIES: ReadonlySet<string> = new Set([
+  'authentication',
+  'provider_auth_error',
+]);
+
+/**
+ * Whether a turn-end error should dead-letter the delivery job immediately
+ * (no retry budget burned): either flagged non-recoverable, or an auth
+ * category per {@link TERMINAL_TURN_ERROR_CATEGORIES}.
+ */
+export function isTerminalTurnError(error: { recoverable: boolean; category?: string }): boolean {
+  if (!error.recoverable) return true;
+  return error.category !== undefined && TERMINAL_TURN_ERROR_CATEGORIES.has(error.category);
+}
+
+/**
+ * SDK terminal-result error subtypes where a retry can plausibly succeed —
+ * mirrors the Space runtime's retryable-subtype taxonomy (space-runtime
+ * terminal-error-continue): transient execution failures and turn-cap
+ * exhaustion. Cost exhaustion (`error_max_budget_usd`) and structured-output
+ * exhaustion are NOT retryable: re-driving repeats spend for a deterministic
+ * limit. The SDK persists error results WITHOUT emitting `session.error`, so
+ * the bridge consults the persisted subtype directly (see
+ * `getErrorTerminalResultSubtypeAfter`). (Codex review.)
+ */
+const RETRYABLE_ERROR_RESULT_SUBTYPES: ReadonlySet<string> = new Set([
+  'error_during_execution',
+  'error_max_turns',
+]);
+
+/** Whether a persisted terminal-result error subtype is worth retrying. */
+export function isRetryableErrorResultSubtype(subtype: string | null): boolean {
+  if (!subtype) return false;
+  return RETRYABLE_ERROR_RESULT_SUBTYPES.has(subtype);
 }
 
 export interface DeliverMessageOptions {
@@ -151,7 +259,7 @@ export function deliverMessage(
       // awaiting onSent). Give them ample retry budget so a transient failure
       // doesn't dead-letter a user message prematurely; `reclaimStale` covers
       // crashes. §15 measures actual pressure.
-      maxRetries: 8,
+      maxRetries: MESSAGE_DELIVERY_MAX_RETRIES,
     });
     return options.role;
   }
@@ -160,7 +268,7 @@ export function deliverMessage(
     jobQueue.enqueue({
       queue: MESSAGE_DELIVERY,
       payload: basePayload,
-      maxRetries: 8,
+      maxRetries: MESSAGE_DELIVERY_MAX_RETRIES,
     });
     return 'turn';
   } catch (err) {
@@ -170,7 +278,7 @@ export function deliverMessage(
     jobQueue.enqueue({
       queue: MESSAGE_DELIVERY,
       payload: { ...basePayload, role: 'steer' },
-      maxRetries: 8,
+      maxRetries: MESSAGE_DELIVERY_MAX_RETRIES,
     });
     return 'steer';
   }
@@ -289,6 +397,15 @@ export type DeliveryLoadResult = { content: DeliveryContent; sendStatus: string 
 export const MESSAGE_DELIVERY_PARK_MS = 5_000;
 
 /**
+ * Maximum times a STEER may park (owning turn blocked on `sdk_resume_choice`)
+ * before it dead-letters. Parking uses `requeue` (no retry_count bump), so
+ * without this bound a steer whose owning turn never unblocks re-parks every
+ * {@link MESSAGE_DELIVERY_PARK_MS} indefinitely. ~5 min at the 5s park cadence;
+ * the user can re-send if the owning turn was abandoned.
+ */
+export const MAX_STEER_PARKS = 60;
+
+/**
  * Outcome of driving a turn.
  * - `completed` ⇒ the turn ran (or was already consumed and re-driven via history).
  * - `blocked` ⇒ query startup is blocked (sdk_resume_choice); park the job.
@@ -311,6 +428,15 @@ export type DriveTurnOutcome =
 /**
  * Outcome of feeding a steer.
  * - `consumed` ⇒ the SDK consumed it (steered into the live turn).
+ * - `awaiting_acceptance` ⇒ (ACP only) the prompt reached the subprocess (onSent
+ *   ≡ onSubmitted), but the consume boundary is acceptance, which fires async
+ *   from the ACP runner. The handler parks the job (bounded) so it stays alive
+ *   rather than auto-completing at submission — if acceptance never comes the
+ *   job dead-letters → `failed` (surfaces) instead of stranding the row with no
+ *   job to retry it. On re-run the row is `submitted`/`consumed` (settled by the
+ *   handler's skip/alreadyConsumed paths) or still `enqueued` with the message
+ *   already admitted (the bridge suppresses the re-admit), so this never
+ *   re-feeds.
  * - `promote` ⇒ no live turn; re-enqueue as a turn.
  * - `park` ⇒ the owning turn is BLOCKED (sdk_resume_choice, session `queued`),
  *   not actively processing — the steer can neither feed (no live generator) nor
@@ -320,6 +446,7 @@ export type DriveTurnOutcome =
  */
 export type FeedSteerOutcome =
   | { outcome: 'consumed' }
+  | { outcome: 'awaiting_acceptance' }
   | { outcome: 'promote' }
   | { outcome: 'park' }
   | { outcome: 'aborted' };
@@ -348,6 +475,14 @@ export interface MessageDeliverySession {
     parentToolUseId?: string | null,
     claimGuard?: () => boolean
   ): Promise<FeedSteerOutcome>;
+  /**
+   * True while the session's human gate is open (an unanswered
+   * `sdk_resume_choice` / `waiting_for_input`). Used by the handler to keep a
+   * parked steer parked (without burning its park budget) as long as the owning
+   * turn is legitimately blocked on a live choice — abandonment is based on the
+   * gate resolving, not elapsed parks. (Codex #11.)
+   */
+  isWaitingForInput?(): boolean;
   /** Clear queued state only if this skipped message still owns it. */
   settleSkippedDelivery?(messageUuid: string): Promise<void>;
 }
@@ -425,6 +560,21 @@ export function signalDeliveryConsumed(sessionId: string, messageUuid: string): 
  * timeout. (Codex review, P1.)
  */
 export const ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS = 12 * 60 * 1000;
+
+/**
+ * Park budget for an ACP steer awaiting subprocess acceptance. Valid ACP
+ * acceptance can lag submission by up to {@link ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS}
+ * (12min) while the subprocess executes, so the shared {@link MAX_STEER_PARKS}
+ * (~5min at the 5s park cadence) would dead-letter a still-executing request →
+ * `failed`, and a later markMessageAccepted cannot consume a failed row — the
+ * injector then times out and re-runs work the subprocess already accepted
+ * (duplicate execution). Sized to cover the full acceptance window at the park
+ * cadence PLUS a MAX_STEER_PARKS headroom for parks burned earlier in the
+ * job's lifetime (e.g. parked behind a blocked turn before submission).
+ * (Codex review.)
+ */
+export const MAX_ACP_STEER_PARKS =
+  Math.ceil(ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS / MESSAGE_DELIVERY_PARK_MS) + MAX_STEER_PARKS;
 
 /** Acceptance-sized consume timeout for ACP sessions; undefined → default. */
 export function deliveryConsumptionTimeoutMs(provider?: string): number | undefined {

@@ -358,7 +358,13 @@ the delivery path must handle.
 - **Consumed kickoff not re-fed (#2592):** the handler loads `send_status` and,
   on reclaim of a `consumed` turn, drives it with `alreadyConsumed` (no feed) —
   the SDK resume-from-history already holds it, so re-feeding would duplicate.
-  `deferred`/`failed` messages are skipped outright.
+  `deferred`/`failed` messages are skipped outright. **Caveat (Codex follow-up):**
+  this applies to CRASH RECLAIM only. When the bridge CONFIRMS a driven turn
+  produced no result (recoverable error or stall reset), it flips the row back to
+  `enqueued` (`markDeliveryRetryableByUuid`) so the automatic retry RE-FEEDS — a
+  resumed query only loads history; it does not continue an incomplete trailing
+  user turn, so a no-feed re-drive would burn the retry budget without another
+  provider attempt (the rate-limit recovery path re-enqueues for the same reason).
 - **Dead-letter → `failed` (#2595):** the lane's `onDead` hook marks the
   persisted message `send_status='failed'` + publishes, so an exhausted job
   surfaces a terminal error instead of vanishing behind pagination.

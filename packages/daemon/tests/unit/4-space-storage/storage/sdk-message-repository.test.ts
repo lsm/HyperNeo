@@ -1682,6 +1682,45 @@ describe('SDKMessageRepository', () => {
     });
   });
 
+  describe('markDeliveryRetryableByUuid (recoverable no-result turn → retry re-feed)', () => {
+    it('flips a consumed row back to enqueued and returns its db id', () => {
+      const id = repository.saveUserMessage(
+        'session-1',
+        createUserMessage('retry me', 'uuid-retry'),
+        'enqueued'
+      );
+      expect(repository.markDeliveryConsumedByUuid('session-1', 'uuid-retry')).toBe(id);
+
+      const reopened = repository.markDeliveryRetryableByUuid('session-1', 'uuid-retry');
+
+      expect(reopened).toBe(id);
+      expect(repository.getMessagesByStatus('session-1', 'enqueued').length).toBe(1);
+      expect(repository.getMessagesByStatus('session-1', 'consumed').length).toBe(0);
+    });
+
+    it('leaves submitted (ACP, pending acceptance) and failed rows alone', () => {
+      repository.saveUserMessage(
+        'session-1',
+        createUserMessage('acp prompt', 'uuid-submitted'),
+        'submitted'
+      );
+      repository.saveUserMessage(
+        'session-1',
+        createUserMessage('already dead', 'uuid-failed'),
+        'failed'
+      );
+
+      expect(repository.markDeliveryRetryableByUuid('session-1', 'uuid-submitted')).toBeNull();
+      expect(repository.markDeliveryRetryableByUuid('session-1', 'uuid-failed')).toBeNull();
+      expect(repository.getMessagesByStatus('session-1', 'submitted').length).toBe(1);
+      expect(repository.getMessagesByStatus('session-1', 'failed').length).toBe(1);
+    });
+
+    it('returns null when the uuid is unknown', () => {
+      expect(repository.markDeliveryRetryableByUuid('session-1', 'no-such-uuid')).toBeNull();
+    });
+  });
+
   describe('hasTerminalResultAfter', () => {
     function insertMessage(
       sessionId: string,
@@ -1717,7 +1756,10 @@ describe('SDKMessageRepository', () => {
         crypto.randomUUID(),
         sessionId,
         type,
-        opts.subtype ?? null,
+        // hasTerminalResultAfter counts only `subtype = 'success'` results, so a
+        // terminal result without an explicit subtype defaults to success (the
+        // common case); tests that exercise error results pass subtype explicitly.
+        opts.subtype ?? (type === 'result' && opts.terminal ? 'success' : null),
         '{}',
         opts.timestamp,
         effectiveStatus,
@@ -1727,7 +1769,20 @@ describe('SDKMessageRepository', () => {
       );
     }
 
-    it('is true when a terminal result exists after the message', () => {
+    it('is true when a SUCCESS terminal result exists after the message', () => {
+      insertMessage('session-1', 'user', {
+        uuid: 'msg-uuid',
+        timestamp: '2026-08-11T15:25:00.000Z',
+      });
+      insertMessage('session-1', 'result', {
+        timestamp: '2026-08-11T15:25:53.000Z',
+        terminal: true,
+        subtype: 'success',
+      });
+      expect(repository.hasTerminalResultAfter('session-1', 'msg-uuid')).toBe(true);
+    });
+
+    it('is FALSE for an error result — a failed turn must retry, not complete (Codex #9)', () => {
       insertMessage('session-1', 'user', {
         uuid: 'msg-uuid',
         timestamp: '2026-08-11T15:25:00.000Z',
@@ -1737,7 +1792,64 @@ describe('SDKMessageRepository', () => {
         terminal: true,
         subtype: 'error_during_execution',
       });
-      expect(repository.hasTerminalResultAfter('session-1', 'msg-uuid')).toBe(true);
+      expect(repository.hasTerminalResultAfter('session-1', 'msg-uuid')).toBe(false);
+    });
+
+    it('getErrorTerminalResultSubtypeAfter returns the error subtype (null for success/none)', () => {
+      insertMessage('session-1', 'user', {
+        uuid: 'msg-budget',
+        timestamp: '2026-08-11T15:25:00.000Z',
+      });
+      insertMessage('session-1', 'result', {
+        timestamp: '2026-08-11T15:25:53.000Z',
+        terminal: true,
+        subtype: 'error_max_budget_usd',
+      });
+      // The SDK persists error results WITHOUT emitting session.error — the
+      // bridge uses this lookup to classify budget exhaustion as terminal.
+      expect(repository.getErrorTerminalResultSubtypeAfter('session-1', 'msg-budget')).toBe(
+        'error_max_budget_usd'
+      );
+
+      insertMessage('session-1', 'user', {
+        uuid: 'msg-ok',
+        timestamp: '2026-08-11T15:26:00.000Z',
+      });
+      insertMessage('session-1', 'result', {
+        timestamp: '2026-08-11T15:26:53.000Z',
+        terminal: true,
+        subtype: 'success',
+      });
+      expect(repository.getErrorTerminalResultSubtypeAfter('session-1', 'msg-ok')).toBeNull();
+
+      insertMessage('session-1', 'user', {
+        uuid: 'msg-none',
+        timestamp: '2026-08-11T15:27:00.000Z',
+      });
+      expect(repository.getErrorTerminalResultSubtypeAfter('session-1', 'msg-none')).toBeNull();
+    });
+
+    it('getErrorTerminalResultSubtypeAfter classifies the LATEST attempt outcome (Codex review)', () => {
+      // Retries do not restamp the user row's consumed_seq, so error results
+      // from every attempt are in range — an initial retryable error followed
+      // by a terminal one must classify terminal, not keep the oldest subtype.
+      insertMessage('session-1', 'user', {
+        uuid: 'msg-multi',
+        timestamp: '2026-08-11T15:28:00.000Z',
+      });
+      insertMessage('session-1', 'result', {
+        timestamp: '2026-08-11T15:28:53.000Z',
+        terminal: true,
+        subtype: 'error_during_execution',
+      });
+      insertMessage('session-1', 'result', {
+        timestamp: '2026-08-11T15:29:53.000Z',
+        terminal: true,
+        subtype: 'error_max_budget_usd',
+      });
+      expect(repository.getErrorTerminalResultSubtypeAfter('session-1', 'msg-multi')).toBe(
+        'error_max_budget_usd'
+      );
     });
 
     it('ignores NESTED subagent results when detecting turn completion (P1)', () => {
@@ -1829,6 +1941,7 @@ describe('SDKMessageRepository', () => {
       insertMessage('session-1', 'result', {
         timestamp: consumedTs,
         terminal: true,
+        subtype: 'success',
       });
       expect(repository.hasTerminalResultAfter('session-1', 'tie-msg')).toBe(true);
     });

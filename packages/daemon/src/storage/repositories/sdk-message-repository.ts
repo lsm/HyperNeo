@@ -1928,13 +1928,17 @@ export class SDKMessageRepository {
   }
 
   /**
-   * True when the session's transcript has a TERMINAL `result` message after the
-   * message identified by `uuid` — i.e. the turn that consumed it has fully ended
-   * (normal completion, `error_during_execution`, or an interrupt). A re-claimed
-   * `consumed` delivery turn in this state has nothing to resume: re-driving it
-   * would start a fresh streaming query that waits for input forever, holding the
-   * active-turn slot and parking every subsequent message as a steer. See
-   * message-delivery-v2.md + the handler's turn_terminated skip.
+   * True when the session's transcript has a SUCCESS terminal `result` message
+   * after the message identified by `uuid` — i.e. the turn that consumed it ran
+   * to a successful completion. Only `subtype = 'success'` matches: an error
+   * result (`error_during_execution`, `error_max_turns`, …) is NOT success, so
+   * it does not match here and the bridge falls through to the retry / dead-
+   * letter path instead of completing the job over a failed turn (Codex #9). A
+   * re-claimed `consumed` delivery turn that ended successfully has nothing to
+   * resume: re-driving it would start a fresh streaming query that waits for
+   * input forever, holding the active-turn slot and parking every subsequent
+   * message as a steer. See message-delivery-v2.md + the handler's
+   * turn_terminated skip.
    *
    * The boundary is the message's CONSUMPTION timestamp (T_consumed, aligned by
    * `markDeliveryConsumedByUuid`), not its original persistence time — a message
@@ -1952,6 +1956,7 @@ export class SDKMessageRepository {
           WHERE r.session_id = ?
             AND r.message_type = 'result'
             AND r.is_terminal = 1
+            AND r.message_subtype = 'success'
             AND r.parent_tool_use_id IS NULL
             AND r.consumed_seq IS NOT NULL
             AND r.consumed_seq >= (
@@ -1962,6 +1967,42 @@ export class SDKMessageRepository {
       )
       .get(sessionId, sessionId, uuid) as { 1: number } | undefined | null;
     return row != null;
+  }
+
+  /**
+   * The subtype of the MOST RECENT NON-success terminal `result` after the
+   * message identified by `uuid` (e.g. `error_max_budget_usd`), or null when
+   * none exists. Companion of {@link hasTerminalResultAfter}: the bridge uses
+   * it to classify a turn that ended in an error result — the SDK persists such
+   * results WITHOUT emitting `session.error`, so without this lookup a terminal
+   * error result (budget/limit exhaustion) would be treated as a recoverable
+   * no-result stall and retried, repeating spend. MOST RECENT because retries
+   * do not restamp the user row's consumed_seq, so error results from every
+   * attempt are in range — the latest attempt's outcome is the one to classify
+   * (an initial `error_during_execution` followed by `error_max_budget_usd`
+   * must dead-letter, not keep retrying). (Codex review.)
+   */
+  getErrorTerminalResultSubtypeAfter(sessionId: string, uuid: string): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT r.message_subtype AS subtype
+           FROM sdk_messages r
+          WHERE r.session_id = ?
+            AND r.message_type = 'result'
+            AND r.is_terminal = 1
+            AND r.message_subtype IS NOT NULL
+            AND r.message_subtype != 'success'
+            AND r.parent_tool_use_id IS NULL
+            AND r.consumed_seq IS NOT NULL
+            AND r.consumed_seq >= (
+              SELECT m.consumed_seq FROM sdk_messages m
+               WHERE m.session_id = ? AND m.sdk_uuid = ? LIMIT 1
+            )
+          ORDER BY r.consumed_seq DESC
+          LIMIT 1`
+      )
+      .get(sessionId, sessionId, uuid) as { subtype: string | null } | undefined | null;
+    return row?.subtype ?? null;
   }
 
   /**
@@ -2066,6 +2107,31 @@ export class SDKMessageRepository {
   }
 
   /**
+   * Like {@link markDeliveryFailedByUuid} but ALSO flips a `consumed` row. Used
+   * ONLY by the message-delivery dead-letter settlement when a driven turn that
+   * already reached `consumed` (the SDK accepted the prompt) then died on a
+   * provider error and exhausted its retries (or hit a non-recoverable error).
+   * The narrow method deliberately excludes `consumed` (other callers — archive
+   * barriers, enqueue failures, interrupts — must not fail a message that WAS
+   * delivered), so this sibling exists for the one path where a consumed row
+   * genuinely failed. Returns the flipped db id, else null. See
+   * `message-delivery-dead-letter.ts` + docs/features/message-delivery-v2.md.
+   */
+  markDeliveryFailedByUuidInclusive(sessionId: string, uuid: string): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT id FROM sdk_messages
+           WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
+             AND send_status IN ('enqueued', 'deferred', 'submitted', 'consumed')
+           ORDER BY timestamp ASC LIMIT 1`
+      )
+      .get(sessionId, uuid) as { id: string } | undefined;
+    if (!row) return null;
+    this.updateMessageStatus([row.id], 'failed');
+    return row.id;
+  }
+
+  /**
    * Flip a pending delivery row to `consumed` at the earliest SDK-consume
    * signal (the onSent/started-acknowledgment, before the turn runs) — the
    * at-least-once quality hardening (task #861 item 12). Delivery is
@@ -2146,6 +2212,34 @@ export class SDKMessageRepository {
    * would leave SDKMessageHandler unable to match its acceptance, so the row
    * replays later and the handoff executes twice. (Codex P1.)
    */
+  /**
+   * Flip a `consumed` delivery row back to `enqueued` after its turn was
+   * CONFIRMED to have produced no result (the delivery bridge's recoverable
+   * no-result path). The automatic retry must re-feed the prompt: a resumed SDK
+   * query only LOADS the conversation history — it does not continue an
+   * incomplete trailing user turn — so a no-feed re-drive would sit silent
+   * until the stall watchdog fires again and burn the retry budget without ever
+   * making another provider attempt. The rate-limit recovery path re-enqueues
+   * the saved message for exactly this reason. Contrast the crash-reclaim path,
+   * which leaves `consumed` alone (the SDK may already be mid-execution there;
+   * re-feeding could duplicate the prompt). Only flips `consumed` rows —
+   * `submitted` (ACP, still pending acceptance) and terminal states are left
+   * to their own paths. Returns the flipped db id, else null.
+   */
+  markDeliveryRetryableByUuid(sessionId: string, uuid: string): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT id FROM sdk_messages
+           WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
+             AND send_status = 'consumed'
+           ORDER BY timestamp ASC LIMIT 1`
+      )
+      .get(sessionId, uuid) as { id: string } | undefined;
+    if (!row) return null;
+    this.updateMessageStatus([row.id], 'enqueued');
+    return row.id;
+  }
+
   markDeliveryDeferredByUuid(sessionId: string, uuid: string): string | null {
     const row = this.db
       .prepare(

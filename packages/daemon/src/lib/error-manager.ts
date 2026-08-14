@@ -8,6 +8,7 @@
 import type { MessageHub } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from './internal-event-bus';
 import { Logger } from './logger';
+import { isTerminalTurnError } from './agent/message-delivery';
 
 export enum ErrorCategory {
   AUTHENTICATION = 'authentication',
@@ -504,8 +505,17 @@ export class ErrorManager {
     // Update API connection status (for connection/timeout errors)
     await this.updateApiConnectionStatus(error.category, error.code, error.message);
 
-    // Check if this error should be throttled
-    if (this.shouldThrottleError(sessionId, error.category, error.code)) {
+    // Check if this error should be throttled. Delivery-terminal errors
+    // (auth/permission/quota — see isTerminalTurnError) are NEVER throttled:
+    // the message-delivery bridge classifies the turn from this event, and a
+    // throttled 4th rapid failure would misclassify as recoverable, burning the
+    // retry budget against a credential that cannot succeed. Terminal turns
+    // dead-letter on the first occurrence (no retry storm to damp), so
+    // unthrottling them cannot flood the client. (Codex P2.)
+    if (
+      !isTerminalTurnError(error) &&
+      this.shouldThrottleError(sessionId, error.category, error.code)
+    ) {
       // Don't broadcast throttled errors
       return;
     }

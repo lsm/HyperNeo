@@ -170,6 +170,12 @@ describe('SpaceRuntime external event subscriptions', () => {
   let eventStore: ExternalEventStore;
   let eventService: ExternalEventService;
   let injected: Array<{ sessionId: string; message: string; deliveryMode?: string }>;
+  /**
+   * When true, the registered `agent.message.inject` handler returns a
+   * recoverable (`ok: false`) failure so tests can exercise the delivery
+   * cool-down / retry paths. Reset to false in beforeEach.
+   */
+  let injectShouldFail: boolean;
   let longHorizonMessages: Array<{ agentId: string; message: string; idempotencyKey?: string }>;
   let tam: MockTaskAgentManager;
   let bus: ReturnType<typeof createDaemonInternalEventBus>;
@@ -256,6 +262,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     eventStore = new ExternalEventStore(db);
     eventService = new ExternalEventService(eventStore, bus);
     injected = [];
+    injectShouldFail = false;
     longHorizonMessages = [];
     commandBus.register('agent.message.inject', async (command) => {
       injected.push({
@@ -263,6 +270,9 @@ describe('SpaceRuntime external event subscriptions', () => {
         message: command.message,
         deliveryMode: command.deliveryMode,
       });
+      if (injectShouldFail) {
+        return { ok: false, error: 'recoverable injection failure' };
+      }
       return { ok: true };
     });
     tam = new MockTaskAgentManager();
@@ -2121,6 +2131,139 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(injected.map((item) => JSON.parse(item.message).eventId)).toEqual(
       events.map((event) => event.id)
     );
+  });
+
+  test('skips re-injection of a failed delivery within the recoverable-failure cool-down', async () => {
+    const { run } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-cooldown-fail',
+      startedAt: Date.now(),
+    });
+    tam.alive.add('session-cooldown-fail');
+    // Simulate a recoverable dispatch failure (the storm trigger: a session
+    // stuck in a provider-error loop where injection throws non-terminally).
+    injectShouldFail = true;
+
+    const event = makeEvent({ id: 'evt-cooldown', dedupeKey: 'dedupe-cooldown' });
+    await eventService.publish(event);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // First injection attempted and failed recoverably → delivery cool-down
+    // armed. The event stays `published` (delivery non-terminal) so the source
+    // can re-poll and the bounded retry path can still drive recovery.
+    expect(injected).toHaveLength(1);
+    expect(eventStore.getById(event.id)?.state).toBe('published');
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+
+    // Re-publishing the SAME event while its delivery is in cool-down must NOT
+    // mint a fresh injection (no fresh `failed` row) — the gate skips and the
+    // event stays `published` to re-evaluate once the window lifts.
+    await eventService.publish(event);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(injected).toHaveLength(1);
+    expect(eventStore.getById(event.id)?.state).toBe('published');
+    expect(runtime.getQueueHealthSnapshot().counters.cooldownSkips).toBeGreaterThanOrEqual(1);
+  });
+
+  test('a distinct event still delivers while another delivery is in cool-down', async () => {
+    // Cool-down is per-delivery (event + target), not per-target: a fresh,
+    // distinct event must still flow (the burst rate-limit / digest coalesces
+    // distinct events); only re-dispatches of an already-failed delivery gate.
+    const { run } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-cooldown-distinct',
+      startedAt: Date.now(),
+    });
+    tam.alive.add('session-cooldown-distinct');
+    injectShouldFail = true;
+
+    const eventA = makeEvent({ id: 'evt-cooldown-distinct-a', dedupeKey: 'dedupe-distinct-a' });
+    await eventService.publish(eventA);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(injected).toHaveLength(1);
+
+    // A distinct event for the same (failing) target is NOT gated — it is a
+    // separate delivery and is attempted on its own. (Publishing B also flushes
+    // A's pending retry, so the exact injection count is not asserted; the
+    // guarantee under test is that B itself reaches the session and delivers.)
+    injectShouldFail = false;
+    const eventB = makeEvent({ id: 'evt-cooldown-distinct-b', dedupeKey: 'dedupe-distinct-b' });
+    await eventService.publish(eventB);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(injected.some((item) => JSON.parse(item.message).eventId === eventB.id)).toBe(true);
+    expect(eventStore.getById(eventB.id)?.state).toBe('delivered');
+  });
+
+  test('re-injects a delivery after the recoverable-failure cool-down lifts', async () => {
+    const { run } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-cooldown-lift',
+      startedAt: Date.now(),
+    });
+    tam.alive.add('session-cooldown-lift');
+    injectShouldFail = true;
+
+    const event = makeEvent({ id: 'evt-cooldown-lift', dedupeKey: 'dedupe-lift' });
+    await eventService.publish(event);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(injected).toHaveLength(1);
+
+    // Within the cool-down window a re-poll of the same event is gated.
+    await eventService.publish(event);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(injected).toHaveLength(1);
+    expect(runtime.getQueueHealthSnapshot().counters.cooldownSkips).toBeGreaterThanOrEqual(1);
+
+    // Advance past the default 30s cool-down window and let the target accept.
+    // The same event's delivery now re-injects and delivers normally.
+    injectShouldFail = false;
+    const realNow = Date.now;
+    Date.now = () => realNow.call(Date) + 35_000;
+    try {
+      await eventService.publish(event);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(injected).toHaveLength(2);
+      expect(injected.at(-1)!.sessionId).toBe('session-cooldown-lift');
+      expect(eventStore.getById(event.id)?.state).toBe('delivered');
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
+  test('bounds the delivery cool-down map — sweeps expired entries on arm', () => {
+    // A delivery that fails once and is never republished is only reaped lazily
+    // on re-query, so a long-running daemon could grow the map without bound.
+    // Once the map exceeds its cap, arming sweeps expired entries. White-box:
+    // the map + arm helper are private.
+    const rt = runtime as unknown as {
+      armDeliveryCooldown(key: string): void;
+      externalEventDeliveryCooldowns: Map<string, number>;
+      deliveryCooldownMs: number;
+      deliveryCooldownMapCap: number;
+    };
+    const cap = rt.deliveryCooldownMapCap;
+    expect(cap).toBeGreaterThan(0);
+    // Arm cap+1 distinct LIVE entries — the sweep runs but finds none expired.
+    for (let i = 0; i <= cap; i++) rt.armDeliveryCooldown(`dk-${i}`);
+    expect(rt.externalEventDeliveryCooldowns.size).toBe(cap + 1);
+    // Backdate every entry so they are all past the window.
+    const stale = Date.now() - rt.deliveryCooldownMs - 1;
+    for (const key of rt.externalEventDeliveryCooldowns.keys()) {
+      rt.externalEventDeliveryCooldowns.set(key, stale);
+    }
+    // One more arm triggers the sweep → all expired entries drop, only the new
+    // live entry remains.
+    rt.armDeliveryCooldown('dk-fresh');
+    expect(rt.externalEventDeliveryCooldowns.size).toBe(1);
+    expect(rt.externalEventDeliveryCooldowns.has('dk-fresh')).toBe(true);
   });
 
   test('drops queued deliveries older than ttl instead of delivering them', async () => {
@@ -4579,6 +4722,10 @@ describe('SpaceRuntime external event subscriptions', () => {
       commandBus,
       externalEventStore: eventStore,
       taskAgentManager: tam as never,
+      // This test exercises the retry-timer in-flight guard via an immediate
+      // duplicate publish; disable the per-delivery cool-down so the duplicate
+      // re-dispatches (the cool-down is covered by its own dedicated tests).
+      externalEventDeliveryCooldownMs: 0,
     });
     runtime.registerSubscription(
       run.id,
