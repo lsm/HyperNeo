@@ -200,21 +200,64 @@ describe('MessageInput — recording UI', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     resolveTranscribe({ text: 'hello world' });
 
-    // send mode delivers the FULL click-time payload (draft + transcript), not
-    // just the transcript — matching the mounted path that submits the whole
-    // composer.
+    // send mode delivers the FULL click-time payload (draft + transcript
+    // spliced at the captured caret), not just the transcript. This harness
+    // never captures a caret (no input events fire), so the insertion point
+    // defaults to the start of the draft.
     await waitFor(() => {
       const sendCall = hubRequest.mock.calls.find(([m]) => m === 'message.send');
       expect(sendCall).toBeTruthy();
       expect(sendCall[1]).toEqual({
         sessionId: 's1',
-        content: 'note: hello world',
+        content: 'hello world note:',
         deliveryMode: 'immediate',
       });
+    });
+    // The consumed click-time draft is cleared server-side (parity with the
+    // mounted submit clearing the composer) so reopening doesn't re-send it.
+    await waitFor(() => {
+      const clearCall = hubRequest.mock.calls.find(
+        ([m, p]) => m === 'session.update' && p && p.metadata && p.metadata.inputDraft === null
+      );
+      expect(clearCall).toBeTruthy();
     });
     await waitFor(() => expect(toast.info).toHaveBeenCalledWith('Voice transcript sent'));
     // The mounted composer's onSend is bypassed (no composer to drive it); the
     // transcript is delivered directly via message.send instead.
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it('retains the transcript in the pending draft instead of sending when the composer is at the character limit', async () => {
+    let resolveTranscribe!: (value: { text: string }) => void;
+    transcribeRequest.mockReturnValueOnce(
+      new Promise<{ text: string }>((resolve) => {
+        resolveTranscribe = resolve;
+      })
+    );
+
+    const onSend = vi.fn(async () => {});
+    // Draft already at the composer's 100k character limit.
+    draft.value = 'x'.repeat(100_000);
+    const { unmount } = render(<MessageInput sessionId="s1" onSend={onSend} />);
+
+    fireEvent.click(screen.getByLabelText('Stop, transcribe and send'));
+    await waitFor(() => expect(transcribeRequest).toHaveBeenCalledTimes(1));
+    unmount();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    resolveTranscribe({ text: 'hello world' });
+
+    // Nothing fits — do not silently send an incomplete payload; retain the
+    // transcript in the pending draft field and say so.
+    await waitFor(() =>
+      expect(toast.info).toHaveBeenCalledWith(
+        'Composer draft is full — voice transcript saved to the session draft'
+      )
+    );
+    const sendCall = hubRequest.mock.calls.find(([m]) => m === 'message.send');
+    expect(sendCall).toBeFalsy();
+    const stageCall = hubRequest.mock.calls.find(([m]) => m === 'session.appendVoiceDraft');
+    expect(stageCall).toBeTruthy();
+    expect(stageCall[1]).toEqual({ sessionId: 's1', text: 'hello world' });
     expect(onSend).not.toHaveBeenCalled();
   });
 

@@ -17,7 +17,6 @@ import type {
 } from '@hyperneo/shared';
 import type { ComponentChildren } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { appendDraftText } from '@hyperneo/shared';
 import {
   useCommandAutocomplete,
   useFileAttachments,
@@ -100,6 +99,32 @@ function suppressLeadingSpace(before: string): boolean {
 // Matches InputTextarea's default maxChars; transcripts are capped to it so a
 // misbehaving backend cannot push the draft past the composer limit.
 const COMPOSER_CHAR_LIMIT = 100000;
+
+/**
+ * Splice `transcript` between the draft text before/after the caret (or
+ * selection — a selection gets replaced), applying the spacing/CJK rules at
+ * both boundaries and capping to the composer character limit. Shared by the
+ * live mounted insert and the unmounted delivery so both place the transcript
+ * identically.
+ */
+function buildTranscriptInsertion(before: string, after: string, transcript: string): string {
+  const needsLeadingSpace =
+    before.length > 0 &&
+    !suppressLeadingSpace(before) &&
+    !/^\s/.test(transcript) &&
+    !isCjk(before.slice(-1)) &&
+    !isCjk(transcript[0]);
+  const needsTrailingSpace =
+    after.length > 0 &&
+    !isNonJoiningBoundary(after[0]) &&
+    !/\s$/.test(transcript) &&
+    !isCjk(after[0]) &&
+    !isCjk(transcript.slice(-1));
+  const inserted = `${needsLeadingSpace ? ' ' : ''}${transcript}${needsTrailingSpace ? ' ' : ''}`;
+  const remaining = COMPOSER_CHAR_LIMIT - before.length - after.length;
+  const cappedInserted = remaining <= 0 ? '' : inserted.slice(0, remaining);
+  return before + cappedInserted + after;
+}
 
 function getPlaceholderForSessionType(sessionType?: SessionType): string {
   switch (sessionType) {
@@ -406,27 +431,9 @@ export default function MessageInput({
         Math.max(selectionStart, lastSelectionEndRef.current);
       const before = currentContent.slice(0, selectionStart);
       const after = currentContent.slice(selectionEnd);
-      const needsLeadingSpace =
-        before.length > 0 &&
-        !suppressLeadingSpace(before) &&
-        !/^\s/.test(transcript) &&
-        !isCjk(before.slice(-1)) &&
-        !isCjk(transcript[0]);
-      const needsTrailingSpace =
-        after.length > 0 &&
-        !isNonJoiningBoundary(after[0]) &&
-        !/\s$/.test(transcript) &&
-        !isCjk(after[0]) &&
-        !isCjk(transcript.slice(-1));
-      const inserted = `${needsLeadingSpace ? ' ' : ''}${transcript}${needsTrailingSpace ? ' ' : ''}`;
-      // Enforce the composer character limit (matches InputTextarea's maxChars)
-      // so a misbehaving backend cannot push a transcript past it via direct
-      // state update.
-      const remaining = COMPOSER_CHAR_LIMIT - before.length - after.length;
-      const cappedInserted = remaining <= 0 ? '' : inserted.slice(0, remaining);
-      const nextValue = before + cappedInserted + after;
+      const nextValue = buildTranscriptInsertion(before, after, transcript);
       setContent(nextValue);
-      const nextCursor = selectionStart + cappedInserted.length;
+      const nextCursor = selectionStart + (nextValue.length - before.length - after.length);
       setTimeout(() => {
         textareaInputRef.current?.focus();
         textareaInputRef.current?.setSelectionRange(nextCursor, nextCursor);
@@ -495,39 +502,72 @@ export default function MessageInput({
       transcript: string,
       mode: 'stay' | 'send' | 'queue',
       // Snapshot of the composer payload taken at click time (while still
-      // mounted). The unmounted delivery can't read the live draft/attachments,
-      // so it sends what was here when the user clicked — matching the mounted
-      // path, which submits the complete composer. The transcript is appended
-      // (the caret position is unknown once unmounted).
-      payload: { content: string; images?: MessageImage[] }
+      // mounted): the draft split at the captured caret/selection, plus
+      // images. The unmounted delivery can't read the live
+      // draft/attachments, so it sends what was here when the user clicked,
+      // matching the mounted path that submits the complete composer.
+      payload: { before: string; after: string; images?: MessageImage[] }
     ): Promise<{ ok: boolean; message: string }> => {
       const hub = connectionManager.getHubIfConnected();
       if (!hub) return { ok: false, message: '' };
-      try {
-        if (mode === 'stay') {
-          await hub.request('session.appendVoiceDraft', {
-            sessionId: targetSessionId,
-            text: transcript,
-          });
+      const stageToDraft = async () => {
+        await hub.request('session.appendVoiceDraft', {
+          sessionId: targetSessionId,
+          text: transcript,
+        });
+      };
+      if (mode === 'stay') {
+        try {
+          await stageToDraft();
           return { ok: true, message: 'Voice transcript saved to the session draft' };
+        } catch {
+          return { ok: false, message: '' };
         }
-        const deliveryMode: MessageDeliveryMode = mode === 'queue' ? 'defer' : 'immediate';
+      }
+      // Splice the transcript at the captured selection like the mounted path;
+      // if the composer was already at its character limit the transcript
+      // cannot fit — do not silently send an incomplete payload, retain the
+      // transcript in the pending draft field instead.
+      const content = buildTranscriptInsertion(payload.before, payload.after, transcript);
+      if (!content.includes(transcript)) {
+        try {
+          await stageToDraft();
+          return {
+            ok: true,
+            message: 'Composer draft is full — voice transcript saved to the session draft',
+          };
+        } catch {
+          return { ok: false, message: '' };
+        }
+      }
+      const deliveryMode: MessageDeliveryMode = mode === 'queue' ? 'defer' : 'immediate';
+      try {
         await hub.request('message.send', {
           sessionId: targetSessionId,
-          content: appendDraftText(payload.content, transcript),
+          content,
           images: payload.images,
           deliveryMode,
         });
-        return {
-          ok: true,
-          message:
-            mode === 'queue'
-              ? 'Voice transcript queued for the next turn'
-              : 'Voice transcript sent',
-        };
       } catch {
         return { ok: false, message: '' };
       }
+      // Consume the click-time draft so reopening the session doesn't show —
+      // and re-send — text that was just delivered. Parity with the mounted
+      // submit, which clears the composer. Best-effort: a failure here doesn't
+      // undo the send above.
+      try {
+        await hub.request('session.update', {
+          sessionId: targetSessionId,
+          metadata: { inputDraft: null },
+        });
+      } catch {
+        /* ignore — the send already succeeded */
+      }
+      return {
+        ok: true,
+        message:
+          mode === 'queue' ? 'Voice transcript queued for the next turn' : 'Voice transcript sent',
+      };
     },
     []
   );
@@ -546,11 +586,23 @@ export default function MessageInput({
       // composer has since been re-targeted, the transcript is discarded with a
       // toast instead of landing in — or auto-sending to — another session.
       const targetSessionId = recordingSessionRef.current ?? sessionId;
-      // Snapshot the full outgoing payload NOW (mounted, click time). If the
-      // user navigates away during transcription, the unmounted delivery path
-      // can't read the live draft/attachments — it must send what was here when
-      // they clicked, matching the mounted path that submits the whole composer.
-      const payloadSnapshot = { content: contentRef.current, images: getImagesForSend() };
+      // Snapshot the full outgoing payload NOW (mounted, click time), split at
+      // the captured caret/selection exactly like insertTranscript would splice
+      // it — the textarea is already replaced by the recording panel, so fall
+      // back to the cursor refs snapshotted at recording start. If the user
+      // navigates away during transcription, the unmounted delivery path can't
+      // read the live draft/attachments — it must send what was here when they
+      // clicked, matching the mounted path that submits the whole composer.
+      const snapshotContent = textareaInputRef.current?.value ?? contentRef.current;
+      const snapshotStart = textareaInputRef.current?.selectionStart ?? lastCursorRef.current;
+      const snapshotEnd =
+        textareaInputRef.current?.selectionEnd ??
+        Math.max(snapshotStart, lastSelectionEndRef.current);
+      const payloadSnapshot = {
+        before: snapshotContent.slice(0, snapshotStart),
+        after: snapshotContent.slice(snapshotEnd),
+        images: getImagesForSend(),
+      };
       setIsTranscribing(true);
       try {
         const recording = await voiceRecorder.stop();
@@ -592,7 +644,10 @@ export default function MessageInput({
             payloadSnapshot
           );
           if (delivered.ok) toast.info(delivered.message);
-          else toast.error('Voice transcript could not be delivered — it was lost');
+          else
+            toast.error(
+              delivered.message || 'Voice transcript could not be delivered — it was lost'
+            );
         } else if (mountedRef.current) {
           // Backend heard nothing it could transcribe — say so instead of
           // silently returning to an empty composer.
