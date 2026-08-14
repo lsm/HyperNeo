@@ -6122,6 +6122,71 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     expect(parsed.success).toBe(false);
     expect(parsed.error).toContain('Task not found');
   });
+
+  test('worker sessions may only complete their own task; unbound callers are broad', async () => {
+    // Two no-PR in_progress tasks; the caller is a worker session spawned for
+    // task A (session_context.taskId bound). It must not complete task B.
+    const seedBoundSession = (id: string, context: Record<string, unknown>) => {
+      ctx.db
+        .prepare(
+          `INSERT INTO sessions (
+            id, title, workspace_path, created_at, last_active_at, status, config, metadata,
+            is_worktree, git_branch, processing_state, type, session_context
+          ) VALUES (?, ?, ?, ?, ?, 'active', '{}', '{}', 1, 'feature/validation', ?, 'worker', ?)`
+        )
+        .run(
+          id,
+          `Session ${id}`,
+          '/tmp/session-workspace',
+          new Date(0).toISOString(),
+          new Date().toISOString(),
+          JSON.stringify({ status: 'idle' }),
+          JSON.stringify({ spaceId: ctx.spaceId, ...context })
+        );
+    };
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const taskA = await createTask('in_progress');
+    const taskB = await createTask('in_progress');
+    seedBoundSession('worker-session-a', { taskId: taskA });
+
+    const denied = JSON.parse(
+      (
+        await makeHandlers(ctx, { mySessionId: 'worker-session-a' }).complete_validation_task({
+          task_id: taskB,
+          validation_outcome: 'should be refused',
+        })
+      ).content[0].text
+    );
+    expect(denied.success).toBe(false);
+    expect(denied.error).toContain('own task');
+    expect(ctx.taskRepo.getTask(taskB)?.status).toBe('in_progress');
+
+    // Same worker completing ITS OWN task is fine.
+    const allowed = JSON.parse(
+      (
+        await makeHandlers(ctx, { mySessionId: 'worker-session-a' }).complete_validation_task({
+          task_id: taskA,
+          validation_outcome: 'own task validated',
+        })
+      ).content[0].text
+    );
+    expect(allowed.success).toBe(true);
+    expect(allowed.task.status).toBe('done');
+
+    // A caller session with NO taskId binding (coordinator / ad-hoc member)
+    // keeps broad access.
+    seedBoundSession('coordinator-session', {});
+    const broad = JSON.parse(
+      (
+        await makeHandlers(ctx, { mySessionId: 'coordinator-session' }).complete_validation_task({
+          task_id: taskB,
+          validation_outcome: 'coordinator override validated',
+        })
+      ).content[0].text
+    );
+    expect(broad.success).toBe(true);
+    expect(ctx.taskRepo.getTask(taskB)?.status).toBe('done');
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -3480,6 +3480,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
      * Guards (order is load-bearing — autonomy runs before any task-state
      * reveal, mirroring `approve_task`):
      *   - Task must belong to this space.
+     *   - Caller binding: a WORKER session (session_context.taskId bound) may
+     *     only complete its own task; coordinators / long-horizon agents /
+     *     ad-hoc members retain broad access.
      *   - Autonomy-gated to the workflow's `completionAutonomyLevel` (default 5)
      *     — the same capability-vs-autonomy framing as `approve_task`. The gate
      *     runs BEFORE the status/no-PR checks so a task's status or PR URL is
@@ -3523,6 +3526,32 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           success: false,
           error: `Task ${args.task_id} does not belong to this space.`,
         });
+      }
+
+      // Caller-binding guard: a WORKER session (spawned for one task — its
+      // session_context carries that taskId) may only complete ITS OWN task.
+      // Without this, a worker for task A in a high-autonomy space could close
+      // an unrelated in_progress task B, and the next tick would finalize B's
+      // run and quiesce its workers. Coordinators, long-horizon agents, and
+      // ad-hoc member sessions carry no taskId binding — they retain broad
+      // access (they are the roles that manage arbitrary tasks).
+      if (mySessionId) {
+        const callerSession = getSpaceSessionRow(mySessionId);
+        if (callerSession) {
+          const callerContext = parseJsonValue(callerSession.session_context) as {
+            taskId?: unknown;
+          } | null;
+          if (
+            callerContext?.taskId !== undefined &&
+            callerContext?.taskId !== null &&
+            callerContext.taskId !== args.task_id
+          ) {
+            return jsonResult({
+              success: false,
+              error: `Worker sessions may only complete their own task; task ${args.task_id} belongs to another task's workers. Escalate to the coordinator if it needs closing.`,
+            });
+          }
+        }
       }
 
       // Autonomy gate FIRST — mirrors `approve_task`'s ordering. Resolve the
