@@ -158,23 +158,26 @@ export async function handleGoalAutomationExecute(
 
   // self_nag: skip no-op episodes on thin, process-level evidence. When the
   // selection carries no substantive signal — no affirmative outcome (a PR
-  // reference or merge/pass/fail/quantitative result, not a negated, pending,
-  // or prospective mention like "CI has not run yet" or "tests will pass") and
-  // every row is thin (a manual note or an auto-generated session trace
-  // diagnostic marked `metadata.traceDiagnostic`) — record a lightweight no-op
-  // note on the goal and advance the cursor without spending an episode-judge
-  // call or creating a review task. The selection-aware content test decides
-  // (the preflight score can be inflated by scope-wide metrics or loose
-  // keyword outcomes). Substantive manual notes, genuine session summaries,
-  // and any task result, friction trace, artifact, error, or in-batch metric
-  // still produces an episode. Honors the goal guardrail: "if evidence is
-  // insufficient, finish without inventing work." (#919)
+  // reference, merge/pass/fail/quantitative result, or deploy verb with a
+  // concrete artifact reference — not a negated, pending, or prospective
+  // mention like "CI has not run yet" or "tests will pass") and every row is
+  // thin (a manual note or an auto-generated session trace diagnostic marked
+  // `metadata.traceDiagnostic`) — record a lightweight no-op note on the goal
+  // and advance the cursor without spending an episode-judge call or creating
+  // a review task. The selection-aware content test decides (the preflight
+  // score can be inflated by scope-wide metrics or loose keyword outcomes);
+  // the preflight is computed only on the skip path for the audit note, so
+  // substantive ticks don't pay a duplicate buildEpisodeInput. Substantive
+  // manual notes, genuine session summaries, and any task result, friction
+  // trace, artifact, error, or in-batch metric still produces an episode.
+  // Honors the goal guardrail: "if evidence is insufficient, finish without
+  // inventing work." (#919)
   if (payload.triggerKind === 'self_nag' && deps.episodeService.preflightEvidence) {
-    const preflight = deps.episodeService.preflightEvidence({
-      scopeId: scope.id,
-      evidenceIds: evidence.map((item) => item.id),
-    });
     if (shouldSkipSelfNagNoOp(evidence)) {
+      const preflight = deps.episodeService.preflightEvidence({
+        scopeId: scope.id,
+        evidenceIds: evidence.map((item) => item.id),
+      });
       runWriteTransaction(deps, () => {
         recordSelfNagNoOpNote(deps, goal, preflight);
         advanceCursor(deps, payload, evidence, goal.spaceId, null, {
@@ -517,6 +520,24 @@ const AFFIRMATIVE_OUTCOME_RE =
   /\b(?:pr\s*#?\d+|pull\s+request|github\.com\/[^\s]+\/pull\/\d+|merged?|landed|shipped|pass(?:ed|ing)?|green|succeed(?:ed|ing)?|success|failed|failures?|errors?|exceptions?|crashed|fixed|closed)\b/gi;
 
 /**
+ * Structural artifact references: commit SHAs, release/semantic versions,
+ * http(s) URLs, and issue references. Unlike outcome keywords — whose meaning
+ * depends on surrounding negation or tense — a SHA or version token is an
+ * unambiguous pointer at a concrete work artifact, so free-form results like
+ * "Deployed release v2.4.1 from commit a1b2c3d" stay substantive without
+ * whitelisting their wording.
+ */
+const ARTIFACT_REFERENCE_RE =
+  /\b(?:[0-9a-f]{7,40}|v\d+(?:\.\d+)+(?:[-.][\w.]+)?|https?:\/\/[^\s]+|(?:issue|fixes|closes|resolves)\s*#?\d+)\b/gi;
+
+/**
+ * Deploy/release verbs that make a following artifact reference clearly an
+ * outcome someone produced, filtering bare mentions. Kept small and past-tense.
+ */
+const ARTIFACT_CONTEXT_RE =
+  /\b(?:deployed?|released?|published?|tagged?|built|commit(?:ted)?|bumped?|rolled? out|cut)\b[^.!?]{0,48}$/i;
+
+/**
  * Quantitative outcome signal: a measured value changing to another measured
  * value ("800 ms to 200 ms", "3% to 5%", "1.2 GB → 900 MB"). A bare
  * measurement without a change ("800 ms") does not count — it is an
@@ -534,8 +555,7 @@ function hasQuantitativeOutcome(text: string): boolean {
     const prefix = text.slice(Math.max(0, match.index - 48), match.index);
     if (NON_AFFIRMATIVE_PREFIX_RE.test(prefix)) continue;
     const end = match.index + match[0].length;
-    const suffix = text.slice(end, end + 48);
-    if (NON_AFFIRMATIVE_SUFFIX_RE.test(suffix)) continue;
+    if (suffixHasQualifier(text.slice(end, end + 48))) continue;
     return true;
   }
   return false;
@@ -550,20 +570,41 @@ function hasQuantitativeOutcome(text: string): boolean {
  * "No errors; tests passed" still counts "passed" as affirmative.
  */
 const NON_AFFIRMATIVE_PREFIX_RE =
-  /\b(?:not|never|no|hasn'?t|haven'?t|hadn'?t|didn'?t|doesn'?t|won'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|cannot|without|yet|still|pending|wait(?:ing)?|queued|incomplete|unfinished|will|would|should|could|might|expect(?:ed|s)? to|hop(?:e|es|ing) to|plan(?:s|ned)? to)\b[^.!?;:,\n]{0,32}$/i;
+  /\b(?:not|never|no|hasn'?t|haven'?t|hadn'?t|didn'?t|doesn'?t|won'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|cannot|without|yet|still|pending|wait(?:ing)?|queued|incomplete|unfinished|planned|scheduled|upcoming|will|would|should|could|might|expect(?:ed|s)? to|hop(?:e|es|ing) to|plan(?:s|ned)? to)\b[^.!?;:,\n]{0,32}$/i;
 
 /**
- * Suffix qualifiers that make a matched outcome reference still pending,
+ * Suffix qualifier words that make a matched outcome reference still pending,
  * negated, or prospective — "PR #123 is still pending", "800 ms to 200 ms is
- * planned". The qualifier applies when it continues the SAME clause as the
- * match, either directly ("is planned", "not yet") or across a comma followed
- * by a linking verb/participle that has no new subject of its own
- * (", still pending validation"). A qualifier in a new independent clause
- * with its own subject ("Tests passed; deployment pending") does NOT apply —
- * that is a different outcome's status, not this one's.
+ * planned". A qualifier applies only when it continues the SAME clause as the
+ * match: directly within it, or immediately after a comma. A qualifier in a
+ * new independent clause — punctuated ("Tests passed; deployment pending") or
+ * introduced by a conjunction with its own subject ("Tests passed and
+ * deployment is still pending") — describes a different outcome's status and
+ * does not apply.
  */
-const NON_AFFIRMATIVE_SUFFIX_RE =
+const SUFFIX_QUALIFIER_RE =
   /^(?:[^,;:!?.\n]{0,32}\b(?:not|never|no|hasn'?t|haven'?t|hadn'?t|didn'?t|doesn'?t|won'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|cannot|without|yet|still|pending|wait(?:ing)?|queued|incomplete|unfinished|tomorrow|scheduled|planned|will|would|should|could|might|goal|target(?:ed)?|aim)\b|,\s*(?:still|yet|pending|wait(?:ing)?|incomplete|unfinished|planned|scheduled|queued|without)\b)/i;
+
+/**
+ * A coordinating conjunction followed by its own subject + linking verb
+ * ("and deployment is", "but the build was") — the start of a new independent
+ * clause whose qualifiers must not attach to a preceding outcome match.
+ */
+const NEW_CLAUSE_CONJUNCTION_RE =
+  /\b(?:and|but|while|whereas|although|though)\s+(?:the\s+)?\w+\s+(?:is|are|was|were|has|have|had|remains?|stays?|seems?)\b/i;
+
+/**
+ * Whether a suffix (the text after an outcome match) carries a qualifier that
+ * belongs to THIS outcome rather than a new independent clause.
+ */
+function suffixHasQualifier(suffix: string): boolean {
+  const match = SUFFIX_QUALIFIER_RE.exec(suffix);
+  if (!match) return false;
+  const segment = suffix.slice(0, match.index + match[0].length);
+  // The qualifier sits in a new clause with its own subject — not ours.
+  if (NEW_CLAUSE_CONJUNCTION_RE.test(segment)) return false;
+  return true;
+}
 
 /**
  * Whether the selection carries an affirmative outcome signal (see
@@ -585,12 +626,24 @@ function hasAffirmativeOutcome(evidence: EvidenceRef[]): boolean {
 
 function hasAffirmativeOutcomeText(text: string): boolean {
   if (hasQuantitativeOutcome(text)) return true;
+  // A deploy/release verb followed by a concrete artifact reference (SHA,
+  // version, URL, issue) is an unambiguous free-form outcome.
+  if (hasArtifactOutcome(text)) return true;
   for (const match of text.matchAll(AFFIRMATIVE_OUTCOME_RE)) {
     const prefix = text.slice(Math.max(0, match.index - 48), match.index);
     if (NON_AFFIRMATIVE_PREFIX_RE.test(prefix)) continue;
     const suffix = text.slice(match.index + match[0].length, match.index + match[0].length + 48);
-    if (NON_AFFIRMATIVE_SUFFIX_RE.test(suffix)) continue;
+    if (suffixHasQualifier(suffix)) continue;
     return true;
+  }
+  return false;
+}
+
+function hasArtifactOutcome(text: string): boolean {
+  for (const match of text.matchAll(ARTIFACT_REFERENCE_RE)) {
+    const prefix = text.slice(Math.max(0, match.index - 48), match.index);
+    if (NON_AFFIRMATIVE_PREFIX_RE.test(prefix)) continue;
+    if (ARTIFACT_CONTEXT_RE.test(prefix)) return true;
   }
   return false;
 }
