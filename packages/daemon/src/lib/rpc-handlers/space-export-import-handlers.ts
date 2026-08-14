@@ -76,10 +76,25 @@ export interface ImportPreview {
   existingId?: string;
 }
 
+/** An executable custom hook carried by an import bundle — surfaced in the
+ * preview so the operator can review the source BEFORE confirming an import
+ * that would persist it (hook scripts run via the daemon's shell with the
+ * daemon's OS privileges; they are NOT sandboxed). */
+export interface ImportExecutableHook {
+  workflowName: string;
+  hookId: string;
+  interpreter: string;
+  source: string;
+  bytes: number;
+}
+
 export interface ImportPreviewResult {
   agents: ImportPreview[];
   workflows: ImportPreview[];
   validationErrors: string[];
+  /** Executable custom hooks in the bundle; empty when none. The execute
+   * RPC refuses to persist them without an explicit confirmation. */
+  executableHooks: ImportExecutableHook[];
 }
 
 export type ConflictResolutionStrategy = 'skip' | 'rename' | 'replace';
@@ -558,6 +573,7 @@ export function setupSpaceExportImportHandlers(
         agents: [],
         workflows: [],
         validationErrors: [validation.error],
+        executableHooks: [],
       };
       return result;
     }
@@ -607,10 +623,24 @@ export function setupSpaceExportImportHandlers(
       }
     }
 
+    // Executable hook disclosure: every custom hook's source is arbitrary
+    // code the daemon will execute on bound actions — the preview must show
+    // it so the operator can make an informed trust decision.
+    const executableHooks: ImportExecutableHook[] = bundle.workflows.flatMap((wf) =>
+      (wf.customHooks ?? []).map((h) => ({
+        workflowName: wf.name,
+        hookId: h.id,
+        interpreter: h.run.interpreter,
+        source: h.run.source,
+        bytes: new TextEncoder().encode(h.run.source).length,
+      }))
+    );
+
     const result: ImportPreviewResult = {
       agents: agentPreviews,
       workflows: workflowPreviews,
       validationErrors,
+      executableHooks,
     };
     return result;
   });
@@ -621,6 +651,12 @@ export function setupSpaceExportImportHandlers(
       spaceId: string;
       bundle: unknown;
       conflictResolution?: ImportConflictResolution;
+      /** Explicit trust confirmation for EXECUTABLE custom hooks: the
+       * bundle's hook scripts run via the daemon's shell with its OS
+       * privileges and are not sandboxed, so persisting them requires the
+       * operator to have reviewed the sources (the preview discloses them)
+       * and opted in. Absent/undefined → refuse the whole import. */
+      allowExecutableHooks?: boolean;
     };
     // Space check is async — must happen outside the synchronous transaction
     await requireSpace(spaceManager, params.spaceId);
@@ -632,6 +668,27 @@ export function setupSpaceExportImportHandlers(
     }
     const bundle = validation.value;
     const resolution = params.conflictResolution ?? {};
+
+    // EXECUTABLE-HOOK TRUST GATE: a bundle can carry arbitrary
+    // customHooks[].run.source that runCustomHookScript() would execute
+    // through bash as the daemon's OS user. Persisting them without an
+    // explicit, informed confirmation turns any untrusted .hyperneo.json
+    // into arbitrary code execution. Refuse (the WHOLE import — a partial
+    // import with the hooks silently dropped would misrepresent the
+    // workflow's behavior) unless the caller passed the confirmation.
+    const executableHooks = bundle.workflows.flatMap((wf) =>
+      (wf.customHooks ?? []).map((h) => ({ workflowName: wf.name, hookId: h.id }))
+    );
+    if (executableHooks.length > 0 && params.allowExecutableHooks !== true) {
+      const listing = executableHooks
+        .map((h) => `"${h.hookId}" (workflow "${h.workflowName}")`)
+        .join(', ');
+      throw new Error(
+        `This bundle contains ${executableHooks.length} executable hook script(s): ${listing}. ` +
+          "Hook scripts run with the daemon's OS privileges and are not sandboxed — review their " +
+          'source in the import preview and confirm "Allow hook scripts" to import them.'
+      );
+    }
 
     // All DB mutations are wrapped in a single transaction so that any failure
     // (unresolved agent ref, workflow validation error, etc.) rolls back the

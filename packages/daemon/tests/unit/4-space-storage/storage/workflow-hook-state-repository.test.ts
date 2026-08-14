@@ -183,3 +183,70 @@ describe('lastReason clear semantics', () => {
     expect(repo.get('run-1', 'hook-1')?.lastReason).toBe('waiting');
   });
 });
+
+describe('WorkflowHookStateRepository.consumeApprovalsIfCurrentBatch', () => {
+  let db: Database;
+  let repo: WorkflowHookStateRepository;
+  const runId = 'run-batch';
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    createSpaceTables(db);
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO spaces (id, slug, name, workspace_path, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run('sp-b', 'sp-b', 'Space', '/tmp/sp-b', now, now);
+    db.prepare(
+      `INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(runId, 'sp-b', 'wf-b', 'Run', 'in_progress', now, now);
+    repo = new WorkflowHookStateRepository(db);
+  });
+
+  afterEach(() => db.close());
+
+  function arm(hookId: string, approvedAt: number): void {
+    repo.update(runId, hookId, {
+      expectedVersion: 0,
+      localState: { humanApproved: true, humanApprovedAt: approvedAt },
+    });
+  }
+
+  test('clears every approval when all tokens are current', () => {
+    arm('hook_a', 1);
+    arm('hook_b', 2);
+    const result = repo.consumeApprovalsIfCurrentBatch(runId, [
+      { hookId: 'hook_a', approvedAt: 1 },
+      { hookId: 'hook_b', approvedAt: 2 },
+    ]);
+    expect(result).toBe('consumed');
+    expect(repo.get(runId, 'hook_a')?.localState.humanApproved).toBeUndefined();
+    expect(repo.get(runId, 'hook_b')?.localState.humanApproved).toBeUndefined();
+  });
+
+  test('a later token mismatch clears NOTHING (atomic)', () => {
+    arm('hook_a', 1);
+    arm('hook_b', 2);
+    const result = repo.consumeApprovalsIfCurrentBatch(runId, [
+      { hookId: 'hook_a', approvedAt: 1 },
+      { hookId: 'hook_b', approvedAt: 999 }, // replaced mid-chain
+    ]);
+    expect(result).toBe('token-mismatch');
+    // The EARLIER approval survives — the operator does not re-approve an
+    // unchanged violation.
+    expect(repo.get(runId, 'hook_a')?.localState.humanApproved).toBe(true);
+    expect(repo.get(runId, 'hook_a')?.localState.humanApprovedAt).toBe(1);
+    expect(repo.get(runId, 'hook_b')?.localState.humanApproved).toBe(true);
+  });
+
+  test('not-pending aborts the whole batch', () => {
+    arm('hook_a', 1);
+    const result = repo.consumeApprovalsIfCurrentBatch(runId, [
+      { hookId: 'hook_a', approvedAt: 1 },
+      { hookId: 'hook_missing', approvedAt: 1 },
+    ]);
+    expect(result).toBe('not-pending');
+    expect(repo.get(runId, 'hook_a')?.localState.humanApproved).toBe(true);
+  });
+});

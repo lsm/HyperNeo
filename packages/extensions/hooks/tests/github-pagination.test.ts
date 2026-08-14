@@ -566,6 +566,30 @@ describe('ghGetUnresolvedReviewThreads — pagination loop', () => {
     if (result.ok) expect(result.data).toEqual(['https://gb/threads/9']);
   });
 
+  test('stops paging once an unresolved thread is found', async () => {
+    // Page 1 carries the unresolved thread but claims more history; page 2
+    // errors. The definitive blocker must return immediately — paging on
+    // would let the later failure convert it into a retryable error.
+    let calls = 0;
+    setGraphqlRunnerForTests(async () => {
+      calls += 1;
+      if (calls === 1) {
+        return {
+          ok: true,
+          data: threadPage(
+            [{ isResolved: false, comments: { nodes: [{ url: 'https://gb/threads/1' }] } }],
+            true
+          ),
+        };
+      }
+      return { ok: false, retryable: true, error: 'unexpected extra page request' };
+    });
+    const result = await ghGetUnresolvedReviewThreads(CTX, PR_LINK);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data).toEqual(['https://gb/threads/1']);
+    expect(calls).toBe(1);
+  });
+
   test('cap exhaustion fails closed with a retryable error', async () => {
     setGraphqlRunnerForTests(pagedRunner([threadPage([], true)]));
     const result = await ghGetUnresolvedReviewThreads(CTX, PR_LINK);

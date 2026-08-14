@@ -198,6 +198,58 @@ export class WorkflowHookStateRepository {
     return 'conflict';
   }
 
+  /**
+   * Atomic BATCH consume for a delivery with MULTIPLE overridden hooks:
+   * validate EVERY token first, then clear them all in one transaction —
+   * either every observed approval is still current and all are cleared, or
+   * none is touched (a per-hook loop could clear hook A's approval and then
+   * block on hook B's token mismatch, forcing the operator to re-approve
+   * A's unchanged violation). Returns the first failure outcome, or
+   * 'consumed' when all cleared.
+   */
+  consumeApprovalsIfCurrentBatch(
+    runId: string,
+    entries: Array<{ hookId: string; approvedAt: unknown }>
+  ): 'consumed' | 'not-pending' | 'token-mismatch' | 'conflict' {
+    if (entries.length === 0) return 'consumed';
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        // Phase 1 (inside the tx): validate every token against the current
+        // rows — any failure aborts with NOTHING cleared.
+        for (const { hookId, approvedAt } of entries) {
+          const current = this.get(runId, hookId);
+          if (!current || current.localState.humanApproved !== true) return 'not-pending';
+          if (current.localState.humanApprovedAt !== approvedAt) return 'token-mismatch';
+        }
+        // Phase 2 (same tx): clear them all. The version guards re-check the
+        // rows this transaction just read; a concurrent writer between the
+        // phases would fail an update and roll the whole transaction back.
+        let cleared = false;
+        const tx = this.db.transaction(() => {
+          for (const { hookId } of entries) {
+            const current = this.get(runId, hookId);
+            if (!current) throw new Error('row vanished during batch consume');
+            const result = this.update(runId, hookId, {
+              expectedVersion: current.version,
+              localState: {
+                humanApproved: undefined,
+                humanApprovedAt: undefined,
+                humanRejectionReason: undefined,
+              },
+            });
+            if (!result) throw new Error('version conflict during batch consume');
+          }
+          cleared = true;
+        });
+        tx();
+        if (cleared) return 'consumed';
+      } catch {
+        // retry on version conflict or transient repo error
+      }
+    }
+    return 'conflict';
+  }
+
   update(runId: string, hookId: string, patch: WorkflowHookStatePatch): HookStateSnapshot | null {
     const tx = this.db.transaction(() => {
       let current = this.get(runId, hookId);

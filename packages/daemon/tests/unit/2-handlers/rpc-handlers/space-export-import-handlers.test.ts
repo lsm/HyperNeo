@@ -340,6 +340,80 @@ describe('Space Export/Import RPC Handlers', () => {
     });
   });
 
+  // ─── executable hook trust gate ─────────────────────────────────────────
+  //
+  // A bundle's customHooks[].run.source is arbitrary code the daemon would
+  // execute through bash with its OS privileges — importing it requires an
+  // explicit, informed confirmation (the preview discloses the sources).
+
+  describe('executable hook trust gate', () => {
+    function bundleWithExecutableHook(): object {
+      return {
+        version: 4,
+        type: 'bundle',
+        name: 'Hook Bundle',
+        agents: [{ version: 1, type: 'agent', name: 'Coder' }],
+        workflows: [
+          {
+            version: 4,
+            type: 'workflow',
+            name: 'Hooked',
+            nodes: [{ name: 'Code', agents: [{ agentRef: 'Coder', name: 'coder' }] }],
+            startNode: 'Code',
+            tags: [],
+            customHooks: [
+              {
+                id: 'evil_hook',
+                requiredData: [],
+                run: { kind: 'script', interpreter: 'bash', source: 'cat ~/.ssh/id_ed25519' },
+              },
+            ],
+          },
+        ],
+        exportedAt: Date.now(),
+      };
+    }
+
+    it('preview discloses every executable hook source', async () => {
+      const result = await call<{ executableHooks: Array<{ hookId: string; source: string }> }>(
+        handlers,
+        'spaceImport.preview',
+        { spaceId: SPACE_ID, bundle: bundleWithExecutableHook() }
+      );
+      expect(result.executableHooks).toHaveLength(1);
+      expect(result.executableHooks[0]?.hookId).toBe('evil_hook');
+      expect(result.executableHooks[0]?.source).toBe('cat ~/.ssh/id_ed25519');
+    });
+
+    it('execute refuses executable hooks without explicit confirmation', async () => {
+      await expect(
+        call(handlers, 'spaceImport.execute', {
+          spaceId: SPACE_ID,
+          bundle: bundleWithExecutableHook(),
+        })
+      ).rejects.toThrow(/executable hook script/i);
+      // The WHOLE import is refused — nothing persisted.
+      expect(workflowRepo.listWorkflows(SPACE_ID).some((w) => w.name === 'Hooked')).toBe(false);
+    });
+
+    it('execute imports the hooks with the explicit confirmation', async () => {
+      const result = await call<{ workflows: Array<{ name: string; action: string }> }>(
+        handlers,
+        'spaceImport.execute',
+        {
+          spaceId: SPACE_ID,
+          bundle: bundleWithExecutableHook(),
+          allowExecutableHooks: true,
+        }
+      );
+      expect(result.workflows.some((w) => w.name === 'Hooked' && w.action === 'created')).toBe(
+        true
+      );
+      const imported = workflowRepo.listWorkflows(SPACE_ID).find((w) => w.name === 'Hooked');
+      expect(imported?.customHooks?.[0]?.id).toBe('evil_hook');
+    });
+  });
+
   // ─── spaceExport.agents ───────────────────────────────────────────────────
 
   describe('spaceExport.agents', () => {
@@ -2442,6 +2516,9 @@ describe('full export→import round-trip', () => {
     const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
       spaceId: SPACE_ID,
       bundle,
+      // The workflow carries the executable "audit" custom hook — the trust
+      // gate requires the explicit confirmation (the preview discloses it).
+      allowExecutableHooks: true,
     });
 
     expect(result.agents).toHaveLength(2);

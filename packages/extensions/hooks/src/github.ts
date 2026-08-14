@@ -532,6 +532,11 @@ export async function ghGetUnresolvedReviewThreads(
       }
     }
     urls.push(...extractUnresolvedThreads(result.data));
+    // Positive-only evidence: any unresolved thread on a fetched page is a
+    // definitive actionable blocker — older pages cannot change the verdict,
+    // and continuing to page would let a later page failure or the deadline
+    // convert the known blocker into a retryable infrastructure error.
+    if (urls.length > 0) return { ok: true, data: urls };
     if (info.hasNextPage !== true) return { ok: true, data: urls };
     if (typeof info.endCursor !== 'string' || !CURSOR_RE.test(info.endCursor)) break;
     cursor = info.endCursor;

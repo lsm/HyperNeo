@@ -1514,6 +1514,47 @@ describe('WorkflowHookEngine.executeAction', () => {
     expect(failingRepo.get('run-1', 'stop_hook')?.localState.humanApproved).toBe(true);
   });
 
+  test('an approval matches a reissued action with reordered object fields', async () => {
+    // The action identity canonicalizes args (sorted object keys): the agent
+    // reissuing the approved blocked action with data fields in a different
+    // insertion order must still hit the armed approval's key.
+    const workflow = makeWorkflow({
+      customHooks: [STOP_HOOK],
+      hookBindings: [
+        {
+          hookId: 'stop_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    const original = sendParams({ alpha: 1, beta: 2, nested: { x: 1, y: 2 } });
+    const reordered = {
+      target: 'Review',
+      message: 'handoff',
+      data: { nested: { y: 2, x: 1 }, beta: 2, alpha: 1 },
+    };
+    expect(buildRetryableActionKey('send_message', reordered, META)).toBe(actionKeyFor(original));
+    hookStateRepo.updateWithRetry('run-1', 'stop_hook', {
+      localState: {
+        humanApproved: true,
+        humanApprovedAt: 1,
+        __approvedActionKey: actionKeyFor(original),
+      },
+      lastFlow: 'stop',
+    });
+    const engine = makeEngine(workflow);
+    // Through the wrapper: the reordered re-issue overrides, delivers, and
+    // consumes the approval.
+    const result = await wrappedSend(engine, reordered);
+    expect(result.success).toBe(true);
+    expect(hookStateRepo.get('run-1', 'stop_hook')?.localState.humanApproved).toBeUndefined();
+  });
+
   test('a delivery does not consume a NEWER approval granted mid-chain', async () => {
     // The P1 TOCTOU: action A observes approval (token approvedAt=123) and
     // runs its async hook; while it runs, ANOTHER action consumes that
@@ -1547,16 +1588,15 @@ describe('WorkflowHookEngine.executeAction', () => {
     // Simulate the concurrent world advancing AFTER the engine observed the
     // approval: at the delivery-time consume, the observed approval has been
     // consumed and a NEWER one (approvedAt=456) is armed.
-    const origConsume = hookStateRepo.consumeApprovalIfCurrent.bind(hookStateRepo);
-    hookStateRepo.consumeApprovalIfCurrent = (
+    const origBatch = hookStateRepo.consumeApprovalsIfCurrentBatch.bind(hookStateRepo);
+    hookStateRepo.consumeApprovalsIfCurrentBatch = (
       runId: string,
-      hookId: string,
-      observed?: { approvedAt: unknown }
+      entries: Array<{ hookId: string; approvedAt: unknown }>
     ) => {
       hookStateRepo.updateWithRetry('run-1', 'stop_hook', {
         localState: { humanApprovedAt: 456 },
       });
-      return origConsume(runId, hookId, observed);
+      return origBatch(runId, entries);
     };
     const engine = makeEngine(workflow);
 
@@ -1580,7 +1620,7 @@ describe('WorkflowHookEngine.executeAction', () => {
       // rather than deliver on an approval it could not exclusively claim.
       // Only the CONSUME fails: the wrapper's pre-delivery persistence must
       // succeed so the delivery reaches the consume point at all.
-      override consumeApprovalIfCurrent(): 'conflict' {
+      override consumeApprovalsIfCurrentBatch(): 'conflict' {
         return 'conflict';
       }
     }

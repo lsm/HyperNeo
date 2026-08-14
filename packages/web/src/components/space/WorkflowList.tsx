@@ -653,7 +653,7 @@ export function WorkflowList({
     }
   }
 
-  async function executeImport(resolution: ImportConflictResolution) {
+  async function executeImport(resolution: ImportConflictResolution, allowExecutableHooks = false) {
     if (!importBundle) return;
     const hub = connectionManager.getHubIfConnected();
     if (!hub) {
@@ -666,7 +666,12 @@ export function WorkflowList({
         agents: Array<{ name: string; id: string; action: string }>;
         workflows: Array<{ name: string; id: string; action: string }>;
         warnings: string[];
-      }>('spaceImport.execute', { spaceId, bundle: importBundle, conflictResolution: resolution });
+      }>('spaceImport.execute', {
+        spaceId,
+        bundle: importBundle,
+        conflictResolution: resolution,
+        allowExecutableHooks,
+      });
 
       const createdWorkflows = result.workflows.filter((w) => w.action !== 'skipped').length;
       toast.success(

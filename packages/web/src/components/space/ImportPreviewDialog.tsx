@@ -21,10 +21,22 @@ export interface ImportPreview {
   existingId?: string;
 }
 
+export interface ImportExecutableHook {
+  workflowName: string;
+  hookId: string;
+  interpreter: string;
+  source: string;
+  bytes: number;
+}
+
 export interface ImportPreviewResult {
   agents: ImportPreview[];
   workflows: ImportPreview[];
   validationErrors: string[];
+  /** Executable custom hooks in the bundle (their scripts run with the
+   * daemon's OS privileges); the Import button requires an explicit
+   * allow-checkbox when non-empty. */
+  executableHooks?: ImportExecutableHook[];
 }
 
 export interface ImportConflictResolution {
@@ -35,7 +47,7 @@ export interface ImportConflictResolution {
 interface ImportPreviewDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  onConfirm: (resolution: ImportConflictResolution) => void;
+  onConfirm: (resolution: ImportConflictResolution, allowExecutableHooks: boolean) => void;
   preview: ImportPreviewResult;
   bundle: SpaceExportBundle;
   isExecuting: boolean;
@@ -133,6 +145,7 @@ export function ImportPreviewDialog({
   const [workflowResolutions, setWorkflowResolutions] = useState<
     Record<string, ConflictResolutionStrategy>
   >({});
+  const [allowExecutableHooks, setAllowExecutableHooks] = useState(false);
 
   const getAgentStrategy = (name: string): ConflictResolutionStrategy =>
     agentResolutions[name] ?? 'skip';
@@ -158,6 +171,7 @@ export function ImportPreviewDialog({
     newWorkflows + conflictWorkflows.filter((w) => getWorkflowStrategy(w.name) !== 'skip').length;
 
   const hasValidationErrors = preview.validationErrors.length > 0;
+  const executableHooks = preview.executableHooks ?? [];
 
   const handleConfirm = () => {
     const resolution: ImportConflictResolution = {};
@@ -171,7 +185,7 @@ export function ImportPreviewDialog({
     }
     if (Object.keys(agentConflictRes).length) resolution.agents = agentConflictRes;
     if (Object.keys(workflowConflictRes).length) resolution.workflows = workflowConflictRes;
-    onConfirm(resolution);
+    onConfirm(resolution, allowExecutableHooks);
   };
 
   return (
@@ -245,6 +259,42 @@ export function ImportPreviewDialog({
           </div>
         )}
 
+        {/* Executable hook disclosure + explicit trust confirmation */}
+        {executableHooks.length > 0 && (
+          <div class="rounded-lg border border-amber-700/60 bg-amber-950/30 p-3 space-y-2">
+            <p class="text-xs font-semibold text-amber-400">
+              This bundle contains {executableHooks.length} executable hook script
+              {executableHooks.length === 1 ? '' : 's'} — review before importing
+            </p>
+            <p class="text-xs text-amber-200/80">
+              Hook scripts run with the daemon's OS privileges and are not sandboxed. Each script's
+              full source is shown below; importing requires your explicit confirmation.
+            </p>
+            {executableHooks.map((h) => (
+              <div key={`${h.workflowName}/${h.hookId}`} class="space-y-1">
+                <p class="text-xs text-gray-300 font-mono">
+                  {h.hookId} <span class="text-gray-500">· {h.workflowName}</span> · {h.interpreter}{' '}
+                  · {h.bytes}B
+                </p>
+                <pre class="text-[11px] text-gray-400 bg-dark-900 border border-dark-700 rounded p-2 max-h-40 overflow-auto whitespace-pre-wrap">
+                  {h.source}
+                </pre>
+              </div>
+            ))}
+            <label class="flex items-start gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                class="mt-0.5"
+                checked={allowExecutableHooks}
+                onChange={(e) => setAllowExecutableHooks((e.target as HTMLInputElement).checked)}
+              />
+              <span class="text-xs text-amber-200">
+                I have reviewed these hook scripts and allow them to run on this machine.
+              </span>
+            </label>
+          </div>
+        )}
+
         {/* Summary */}
         <div class="flex items-center justify-between pt-2 border-t border-dark-700">
           <p class="text-sm text-gray-400">
@@ -265,7 +315,11 @@ export function ImportPreviewDialog({
             <button
               type="button"
               onClick={handleConfirm}
-              disabled={isExecuting || (willCreateAgents === 0 && willCreateWorkflows === 0)}
+              disabled={
+                isExecuting ||
+                (willCreateAgents === 0 && willCreateWorkflows === 0) ||
+                (executableHooks.length > 0 && !allowExecutableHooks)
+              }
               class="px-4 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {isExecuting && (

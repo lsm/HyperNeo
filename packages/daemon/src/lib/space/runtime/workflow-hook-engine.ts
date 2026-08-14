@@ -1057,19 +1057,19 @@ export class WorkflowHookEngine {
   }
 
   /**
-   * Apply a delivery-time one-shot approval consume (called by the wrapper
-   * after its pre-delivery prerequisites succeed). Returns the repo's
-   * four-way outcome; the CALLER blocks the delivery on anything but
-   * 'consumed'.
+   * Apply the delivery-time one-shot approval consumptions as ONE atomic
+   * batch (called by the wrapper after its pre-delivery prerequisites
+   * succeed): every token is validated before any approval is cleared, so a
+   * later token mismatch cannot leave an earlier approval already spent —
+   * either all clear or none does. Returns the repo's four-way outcome; the
+   * CALLER blocks the delivery on anything but 'consumed'.
    */
-  consumeApproval(
-    hookId: string,
-    observed: { approvedAt: unknown }
+  consumeApprovals(
+    entries: Array<{ hookId: string; approvedAt: unknown }>
   ): 'consumed' | 'not-pending' | 'token-mismatch' | 'conflict' {
-    return this.config.hookStateRepo.consumeApprovalIfCurrent(
+    return this.config.hookStateRepo.consumeApprovalsIfCurrentBatch(
       this.config.workflowRunId,
-      hookId,
-      observed
+      entries
     );
   }
 
@@ -2356,6 +2356,27 @@ function sameRetryableActionOwner(left: HookActionMeta, right: HookActionMeta): 
   );
 }
 
+/**
+ * Recursively canonicalize a value for identity comparison: object keys are
+ * sorted (stable across insertion orders) and arrays keep their order. Two
+ * semantically identical tool calls must produce the SAME action identity —
+ * an agent reissuing an approved blocked action with differently ordered
+ * object fields would otherwise get a different key, and the one-shot
+ * approval would refuse the override.
+ */
+function canonicalizeActionValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalizeActionValue);
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    const sorted: Record<string, unknown> = {};
+    for (const key of Object.keys(record).sort()) {
+      sorted[key] = canonicalizeActionValue(record[key]);
+    }
+    return sorted;
+  }
+  return value;
+}
+
 export function buildRetryableActionKey(
   methodName: string,
   args: Record<string, unknown>,
@@ -2367,7 +2388,7 @@ export function buildRetryableActionKey(
     sessionId: meta.sessionId,
     agentName: meta.agentName,
     methodName,
-    args,
+    args: canonicalizeActionValue(args),
   });
 }
 
@@ -2968,11 +2989,16 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
     // mismatch (a NEWER approval granted to a different action mid-chain) —
     // blocks: delivering would spend an approval intended for another
     // violation.
-    for (const { hookId, approvedAt } of outcome.pendingApprovalConsumes ?? []) {
-      const consumed = engine.consumeApproval(hookId, { approvedAt });
+    if (outcome.pendingApprovalConsumes && outcome.pendingApprovalConsumes.length > 0) {
+      const consumed = engine.consumeApprovals(
+        outcome.pendingApprovalConsumes.map(({ hookId, approvedAt }) => ({
+          hookId,
+          approvedAt,
+        }))
+      );
       if (consumed !== 'consumed') {
         log.warn(
-          `Failed to consume human approval for hook "${hookId}" at delivery (${consumed}); blocking.`
+          `Failed to consume human approval(s) ${outcome.pendingApprovalConsumes.map((e) => e.hookId).join(', ')} at delivery (${consumed}); blocking.`
         );
         return hookResult(
           {
@@ -2981,7 +3007,7 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
               'Human approval could not be recorded (state conflict). The hook still applies — ' +
               'approve it again and retry.',
             hookStatus: 'blocked',
-            hookId,
+            hookId: outcome.pendingApprovalConsumes[0]?.hookId,
             hookReason: 'Human approval could not be recorded (state conflict).',
           },
           true
