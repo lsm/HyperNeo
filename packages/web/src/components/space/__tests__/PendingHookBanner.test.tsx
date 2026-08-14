@@ -219,6 +219,50 @@ describe('PendingHookBanner', () => {
     expect(retry).toHaveBeenCalled();
   });
 
+  it('a stale pre-RPC event does not overwrite the newer fetched snapshot', async () => {
+    // An event queued before listHookStates returns can carry an OLDER
+    // version than the RPC read (a newer write landed between them). The
+    // merge must retain the higher-version fetched snapshot — otherwise the
+    // banner regresses to the obsolete stop state and the next approval
+    // submits the stale expectedVersion.
+    workflowsSignal.value = [makeWorkflow([{ id: 'h1' }])];
+    let onHookStateUpdated: ((event: unknown) => void) | undefined;
+    mockOnEvent.mockImplementation((eventName: string, cb: (event: unknown) => void) => {
+      if (eventName === 'space.hookState.updated') onHookStateUpdated = cb;
+      return () => {};
+    });
+    // The RPC returns version 2 (continue — newer state resolved the stop).
+    const newer = makeHookState('h1', 'continue');
+    newer.version = 2;
+    let resolveList: ((v: unknown) => void) | undefined;
+    mockRequest.mockImplementation((method: string) => {
+      if (method === 'spaceWorkflowRun.listHookStates')
+        return new Promise((resolve) => {
+          resolveList = resolve;
+        });
+      return Promise.resolve({});
+    });
+    const { queryByTestId, findByTestId } = render(<PendingHookBanner runId="r1" spaceId="s1" />);
+    await waitFor(() => expect(onHookStateUpdated).toBeTruthy());
+
+    // Stale event (version 1, stop) lands BEFORE the RPC resolves. The
+    // bindings from the same RPC response drive the banner; without them the
+    // event snapshot alone renders nothing (the run-scoped bindings arrive
+    // with the fetch). Provide them via a separately-resolved promise so the
+    // event lands strictly first.
+    onHookStateUpdated?.({ runId: 'r1', hookId: 'h1', hookState: makeHookState('h1', 'stop') });
+    resolveList?.({
+      hookStates: [newer],
+      hookBindings: makeWorkflow([{ id: 'h1' }]).hookBindings,
+    });
+
+    // The fetched snapshot (version 2, continue) must win the merge: the
+    // banner never appears, and any later approval reads version 2.
+    await waitFor(() => expect(mockRequest).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 50));
+    expect(queryByTestId('pending-hook-banner')).toBeNull();
+  });
+
   it('updates from hook state subscription events', async () => {
     workflowsSignal.value = [makeWorkflow([{ id: 'h1' }])];
     let onHookStateUpdated: ((event: unknown) => void) | undefined;

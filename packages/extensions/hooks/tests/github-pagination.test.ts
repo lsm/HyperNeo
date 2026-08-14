@@ -237,6 +237,71 @@ describe('ghGetCodexApproval — boundary path', () => {
     if (result.ok) expect(result.data.approved).toBe(true);
   });
 
+  test('stops boundary reaction paging once approval is proven', async () => {
+    // Page 2 carries the fresh codex +1 but claims MORE history behind it.
+    // The accumulated window is evaluated after every page, so the proven
+    // approval must stop the walk immediately — page 3 (which errors here)
+    // must never be requested; only the post-approval head recheck runs.
+    let calls = 0;
+    setGraphqlRunnerForTests(async () => {
+      calls += 1;
+      if (calls === 1) {
+        return {
+          ok: true,
+          data: breakPage([{ createdAt: '2026-08-13T12:00:00Z', user: { login: 'someone' } }], {
+            hasPreviousPage: true,
+            startCursor: 'Y3Vyc29yXzE',
+          }),
+        };
+      }
+      if (calls === 2) {
+        return {
+          ok: true,
+          data: {
+            data: {
+              repository: {
+                pullRequest: {
+                  reactions: {
+                    nodes: [
+                      {
+                        createdAt: '2026-08-13T11:00:00Z',
+                        user: { login: 'chatgpt-codex-connector[bot]' },
+                      },
+                    ],
+                    // More history claimed behind a valid cursor.
+                    pageInfo: { hasPreviousPage: true, startCursor: 'Y3Vyc29yXzI' },
+                  },
+                  commits: {
+                    nodes: [{ commit: { oid: HEAD, pushedDate: '2026-08-12T00:00:00Z' } }],
+                  },
+                },
+              },
+            },
+          },
+        };
+      }
+      if (calls === 3) {
+        // The head recheck (expected) — serve the unmoved head.
+        return {
+          ok: true,
+          data: {
+            data: {
+              repository: {
+                pullRequest: { commits: { nodes: [{ commit: { oid: HEAD } }] } },
+              },
+            },
+          },
+        };
+      }
+      return { ok: false, retryable: true, error: 'unexpected extra page request' };
+    });
+    const result = await ghGetCodexApproval(CTX, PR_LINK);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.approved).toBe(true);
+    // Page 1 (reviews) + page 2 (reaction walk, proven) + head recheck = 3.
+    expect(calls).toBe(3);
+  });
+
   test('a boundary approval against a moved head fails closed as retryable', async () => {
     setGraphqlRunnerForTests(
       pagedRunner([

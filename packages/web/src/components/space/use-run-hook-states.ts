@@ -138,7 +138,17 @@ export function useRunHookStates(runId: string | null | undefined): {
         setHookStateMap((prev) => {
           const merged = new Map<string, HookStateSnapshot>();
           for (const hs of result.hookStates) merged.set(hs.hookId, hs);
-          for (const [hookId, data] of prev ?? []) merged.set(hookId, data);
+          for (const [hookId, data] of prev ?? []) {
+            // An event snapshot queued before the RPC response can be OLDER
+            // than the fetched state (a newer write landed between them).
+            // Unconditionally overwriting would regress the banner to an
+            // obsolete state whose expectedVersion then conflicts on the
+            // next approval — retain whichever snapshot has the higher
+            // version (the fetched one on a true tie, matching the RPC's
+            // authoritative read).
+            const fetched = merged.get(hookId);
+            if (!fetched || fetched.version < data.version) merged.set(hookId, data);
+          }
           return merged;
         });
         setHookBindings(result.hookBindings);

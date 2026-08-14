@@ -1413,6 +1413,33 @@ export async function ghGetCodexApproval(
       const bNodes = bConn.nodes as unknown[];
       boundaryReactions.unshift(...bNodes);
       boundaryPageInfo = bPageInfoRec;
+      // Positive-only evidence: evaluate the accumulated window after EVERY
+      // page — a fresh codex +1 already collected is a proven approval, and
+      // continuing to page would let a later GitHub error or deadline
+      // expiry return a retry instead of the established verdict.
+      {
+        const bProbe = extractCodexApproval(
+          {
+            data: {
+              repository: {
+                pullRequest: {
+                  ...bNode,
+                  reviews: { nodes: allReviewNodes },
+                  reactions: { nodes: boundaryReactions },
+                },
+              },
+            },
+          },
+          link
+        );
+        if (bProbe.failClosedReason) {
+          return { ok: false, retryable: true, error: bProbe.failClosedReason };
+        }
+        if (bProbe.approved) {
+          boundaryReactionsComplete = true;
+          break;
+        }
+      }
       // Head-push window stop: the oldest entry on this page predates the
       // head push — older reactions cannot qualify.
       const bOldest = bNodes.length > 0 ? asRecord(bNodes[0])?.createdAt : undefined;
