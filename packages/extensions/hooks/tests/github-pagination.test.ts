@@ -423,6 +423,50 @@ describe('ghGetCodexApproval — boundary path', () => {
     }
   });
 
+  test('a boundary page missing the reactions connection fails closed', async () => {
+    // The break page's reactions connection is ABSENT — previously read as
+    // "no reactions to scan" and reported a settled negative that could hide
+    // a fresh codex +1 on an unread page.
+    const page = breakPage([], { hasPreviousPage: false }) as {
+      data?: { repository?: { pullRequest?: Record<string, unknown> } };
+    };
+    delete page.data?.repository?.pullRequest?.reactions;
+    setGraphqlRunnerForTests(pagedRunner([page]));
+    const result = await ghGetCodexApproval(CTX, PR_LINK);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.retryable).toBe(true);
+      expect(result.error).toContain('reactions connection');
+    }
+  });
+
+  test('a boundary page with non-boolean reactions hasPreviousPage fails closed', async () => {
+    const page = breakPage([{ createdAt: '2026-08-13T12:00:00Z', user: { login: 'x' } }], {
+      hasPreviousPage: 'yes',
+    } as never);
+    setGraphqlRunnerForTests(pagedRunner([page]));
+    const result = await ghGetCodexApproval(CTX, PR_LINK);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.retryable).toBe(true);
+      expect(result.error).toContain('hasPreviousPage');
+    }
+  });
+
+  test('a boundary codex seed reaction with a malformed timestamp fails closed', async () => {
+    const page = breakPage(
+      [{ createdAt: 'not-a-date', user: { login: 'chatgpt-codex-connector' } }],
+      { hasPreviousPage: false }
+    );
+    setGraphqlRunnerForTests(pagedRunner([page]));
+    const result = await ghGetCodexApproval(CTX, PR_LINK);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.retryable).toBe(true);
+      expect(result.error).toContain('codex reaction timestamp');
+    }
+  });
+
   test('boundary reaction-walk cap exhaustion fails closed', async () => {
     // Every walk page stays newer than the head push and claims more
     // history: the walk hits MAX_CODEX_REVIEW_PAGES and must fail closed

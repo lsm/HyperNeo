@@ -152,16 +152,36 @@ export class WorkflowHookStateRepository {
   }
 
   /**
-   * Atomic one-shot approval consume: clears the human-approval keys ONLY if
-   * humanApproved is still set at the observed version — exactly one of two
-   * overlapping gated actions wins the consume (a refresh-to-latest update
-   * would let both see the flag and both deliver).
+   * Atomic one-shot approval consume. Outcomes:
+   * - `consumed` — the approval keys were cleared (this caller won).
+   * - `not-pending` — no approval is armed at all.
+   * - `token-mismatch` — an approval IS armed, but it is not the one the
+   *   caller observed: `humanApprovedAt` differs from the token captured
+   *   before hook execution. This happens when a concurrent action consumed
+   *   the observed approval and the operator approved a NEWER stop while
+   *   this action was inside its async hook — delivering this action on the
+   *   newer approval would spend an approval intended for a different
+   *   violation, so the caller must NOT treat it as consumed.
+   * - `conflict` — the write could not persist (retry-safe failure).
+   *
+   * The binding token is `humanApprovedAt` (not the state version): the
+   * hook's own `recordState` writes bump the version between observation
+   * and delivery, which would make a version-bound CAS fail spuriously on
+   * the single-action path, while a re-approval always stamps a fresh
+   * `humanApprovedAt`.
    */
-  consumeApprovalIfCurrent(runId: string, hookId: string): boolean {
+  consumeApprovalIfCurrent(
+    runId: string,
+    hookId: string,
+    observed?: { approvedAt: unknown }
+  ): 'consumed' | 'not-pending' | 'token-mismatch' | 'conflict' {
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         const current = this.get(runId, hookId);
-        if (!current || current.localState.humanApproved !== true) return false;
+        if (!current || current.localState.humanApproved !== true) return 'not-pending';
+        if (observed && current.localState.humanApprovedAt !== observed.approvedAt) {
+          return 'token-mismatch';
+        }
         const result = this.update(runId, hookId, {
           expectedVersion: current.version,
           localState: {
@@ -170,12 +190,12 @@ export class WorkflowHookStateRepository {
             humanRejectionReason: undefined,
           },
         });
-        if (result) return true;
+        if (result) return 'consumed';
       } catch {
         // retry on version conflict or transient repo error
       }
     }
-    return false;
+    return 'conflict';
   }
 
   update(runId: string, hookId: string, patch: WorkflowHookStatePatch): HookStateSnapshot | null {

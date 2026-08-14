@@ -9,3 +9,14 @@
 
 /** Synthetic hook id reserved by the legacy-cutover fail-closed guard. */
 export const LEGACY_GUARD_HOOK_ID = '__legacy_hooks__';
+
+/**
+ * Synthetic hook id for the corrupt-hook-column fail-closed marker emitted
+ * by SpaceWorkflowRepository when hook_bindings/custom_hooks cannot be
+ * decoded. Never registered — the engine's "hook not registered" path blocks
+ * every matched action with this id.
+ */
+export const CORRUPT_HOOK_BINDINGS_HOOK_ID = '__corrupt_hook_bindings__';
+
+/** All reserved `__`-prefixed synthetic hook ids a custom hook must not use. */
+export const RESERVED_HOOK_IDS = [LEGACY_GUARD_HOOK_ID, CORRUPT_HOOK_BINDINGS_HOOK_ID] as const;

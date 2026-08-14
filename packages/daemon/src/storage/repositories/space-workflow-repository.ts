@@ -31,6 +31,7 @@ import type {
   UpdateSpaceWorkflowParams,
 } from '@hyperneo/shared';
 import { Logger } from '../../lib/logger';
+import { CORRUPT_HOOK_BINDINGS_HOOK_ID } from '../../lib/space/hook-reserved-ids';
 import {
   computeDefinitionVersion,
   stableVersionTimestamp,
@@ -126,6 +127,54 @@ function parseJson<T>(raw: string | null | undefined, fallback: T): T {
 }
 
 /**
+ * Strict decode for the v2 hook columns: a NON-NULL value that fails to
+ * parse or is not an array is CORRUPTION, not "no hooks" — falling back to
+ * null there would load the workflow with no bindings, and TaskAgentManager
+ * would construct no engine, running every protected action ungated.
+ * Callers translate `{ ok: false }` into a fail-closed marker binding.
+ */
+function parseHookColumn<T>(
+  raw: string | null | undefined
+): { ok: true; value: T[] | null } | { ok: false } {
+  if (raw == null || raw === '') return { ok: true, value: null };
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (Array.isArray(parsed)) return { ok: true, value: parsed as T[] };
+    return { ok: false };
+  } catch {
+    return { ok: false };
+  }
+}
+
+/** Every (node × method) marker binding: guarantees each hookable action
+ * from each node hits an unregistered hook id and stops. */
+function corruptBindingsMarker(nodes: WorkflowNode[]): HookBinding[] {
+  const methods = [
+    'send_message',
+    'save_artifact',
+    'create_standalone_task',
+    'mark_complete',
+    'submit_for_approval',
+    'approve_task',
+  ] as const;
+  const bindings: HookBinding[] = [];
+  for (const node of nodes) {
+    for (const method of methods) {
+      bindings.push({
+        hookId: CORRUPT_HOOK_BINDINGS_HOOK_ID,
+        sourceNode: node.name,
+        method,
+        order: 0,
+        enabled: true,
+        // Whole-node caller authorization so no caller mismatch can skip it.
+        authorizedCallers: [{ sourceNode: node.name }],
+      });
+    }
+  }
+  return bindings;
+}
+
+/**
  * Per-load migration accumulator. `rowToNode` pushes the names of any
  * deprecated fields it strips into `strippedFields` so the caller can emit a
  * single workflow-level `workflow.migrated` structured log line covering every
@@ -172,8 +221,8 @@ function rowToWorkflow(row: WorkflowRow, nodes: WorkflowNode[]): SpaceWorkflow {
   const tags = parseJson<string[]>(row.tags, []);
   const layout = parseJson<Record<string, { x: number; y: number }> | null>(row.layout, null);
   const channels = parseJson<WorkflowChannel[] | null>(row.channels, null);
-  const hookBindings = parseJson<HookBinding[] | null>(row.hook_bindings, null);
-  const customHooks = parseJson<CustomHook[] | null>(row.custom_hooks, null);
+  const hookBindingsResult = parseHookColumn<HookBinding>(row.hook_bindings);
+  const customHooksResult = parseHookColumn<CustomHook>(row.custom_hooks);
 
   const wf: SpaceWorkflow = {
     id: row.id,
@@ -189,8 +238,23 @@ function rowToWorkflow(row: WorkflowRow, nodes: WorkflowNode[]): SpaceWorkflow {
   };
   if (row.end_node_id) wf.endNodeId = row.end_node_id;
   if (channels && channels.length > 0) wf.channels = channels;
-  if (hookBindings && hookBindings.length > 0) wf.hookBindings = hookBindings;
-  if (customHooks && customHooks.length > 0) wf.customHooks = customHooks;
+  if (!hookBindingsResult.ok || !customHooksResult.ok) {
+    // FAIL CLOSED on a corrupt hook column: load the workflow with a marker
+    // binding whose hook id is never registered — every hookable action
+    // stops with a diagnosable id instead of the workflow loading as
+    // "no hooks" and running ungated. Logged once per load.
+    log.error(
+      `Workflow ${row.id}: hook_bindings/custom_hooks column is corrupt (${!hookBindingsResult.ok ? 'hook_bindings' : 'custom_hooks'}); loading with fail-closed marker binding ${CORRUPT_HOOK_BINDINGS_HOOK_ID}.`
+    );
+    wf.hookBindings = corruptBindingsMarker(nodes);
+  } else {
+    if (hookBindingsResult.value && hookBindingsResult.value.length > 0) {
+      wf.hookBindings = hookBindingsResult.value;
+    }
+    if (customHooksResult.value && customHooksResult.value.length > 0) {
+      wf.customHooks = customHooksResult.value;
+    }
+  }
   if (layout) wf.layout = layout;
   if (row.template_name) wf.templateName = row.template_name;
   if (row.template_hash) wf.templateHash = row.template_hash;

@@ -519,13 +519,16 @@ function buildHookValidatedHandoffLines(
   // require (e.g. pr_link for pr_ready; pr_link + reason for post_approval_only)
   // and removes the stale-prompt drift of naming a fixed field set.
   const lines: string[] = [];
-  // The runtime matches a channel's `from` against BOTH the node name and its
-  // agent-slot names — include both here so a slot-authored channel still
-  // surfaces its contract.
-  const fromNames = new Set<string>([
-    currentNode.name,
-    ...(currentNode.agents ?? []).map((agent) => agent.name),
-  ]);
+  // These lines prescribe an ORDINARY node send
+  // (send_message(target="<node>")) — the node-agent router authorizes those
+  // translated worker targets by canSend(fromNodeName, ...) alone, NOT from
+  // the sending slot. A slot-authored channel (e.g. 'coder → Review') is
+  // therefore NOT exercisable in that form by ANY slot of the node (not even
+  // the authoring slot), so advertising it would prescribe a call the router
+  // rejects. Only node-level (and '*') channels are listed; a slot-authored
+  // gated handoff is surfaced nowhere rather than prescribed in an unusable
+  // form.
+  const fromNames = new Set<string>([currentNode.name]);
   for (const channel of workflow.channels ?? []) {
     if (channel.from !== '*' && !fromNames.has(channel.from)) continue;
     const targets = Array.isArray(channel.to) ? channel.to : [channel.to];

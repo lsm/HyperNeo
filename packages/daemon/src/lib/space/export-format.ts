@@ -23,7 +23,7 @@ import { z } from 'zod';
 import { validateGlobPattern } from '../external-events/topic-validator';
 import { MAX_NODE_HANDOFF_TRANSITIONS } from '@hyperneo/shared';
 import { BUILT_IN_HOOKS } from '@hyperneo/extensions-hooks';
-import { LEGACY_GUARD_HOOK_ID } from './hook-reserved-ids';
+import { RESERVED_HOOK_IDS } from './hook-reserved-ids';
 
 const BUILT_IN_HOOK_IDS = new Set(BUILT_IN_HOOKS.map((h) => h.id));
 import type {
@@ -732,7 +732,7 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
           error: `invalid: customHooks[${ci}].id "${custom.id}" shadows a registered built-in hook`,
         };
       }
-      if (custom.id === LEGACY_GUARD_HOOK_ID) {
+      if (RESERVED_HOOK_IDS.includes(custom.id as (typeof RESERVED_HOOK_IDS)[number])) {
         return {
           ok: false,
           error: `invalid: customHooks[${ci}].id "${custom.id}" is reserved`,

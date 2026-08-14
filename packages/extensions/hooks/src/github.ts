@@ -1405,10 +1405,57 @@ export async function ghGetCodexApproval(
   // — then evaluate the reaction fallback on the accumulated window.
   const boundaryPrNode = asRecord(asRecord(asRecord(lastPage?.data)?.repository)?.pullRequest);
   const boundaryReactionTail = asRecord(boundaryPrNode?.reactions)?.nodes;
-  const boundaryReactions: unknown[] = Array.isArray(boundaryReactionTail)
-    ? [...boundaryReactionTail]
-    : [];
+  // Structural validation BEFORE the walk gate (mirroring the normal path):
+  // an absent/malformed reactions connection would otherwise read as "no
+  // reactions to scan" and report a settled negative; a non-boolean
+  // hasPreviousPage cannot prove the history is exhausted. Both fail closed.
+  if (!Array.isArray(boundaryReactionTail)) {
+    return {
+      ok: false,
+      retryable: true,
+      error: 'malformed reactions connection (missing nodes); failing closed',
+    };
+  }
+  const boundarySeedPageInfo = asRecord(asRecord(boundaryPrNode?.reactions)?.pageInfo);
+  if (typeof boundarySeedPageInfo?.hasPreviousPage !== 'boolean') {
+    return {
+      ok: false,
+      retryable: true,
+      error: 'malformed reactions pageInfo (missing/non-boolean hasPreviousPage); failing closed',
+    };
+  }
+  const boundaryReactions: unknown[] = [...boundaryReactionTail];
   if (boundaryReactions.length > 0) {
+    // Head pushedDate anchors reaction freshness; an absent/unparseable value
+    // would silently ignore a valid codex +1 (same as the normal path).
+    const boundaryPushedNodes = asRecord(boundaryPrNode?.commits)?.nodes;
+    const boundaryPushedDate = Array.isArray(boundaryPushedNodes)
+      ? asRecord(asRecord(boundaryPushedNodes[boundaryPushedNodes.length - 1])?.commit)?.pushedDate
+      : undefined;
+    if (
+      typeof boundaryPushedDate !== 'string' ||
+      !Number.isFinite(Date.parse(boundaryPushedDate))
+    ) {
+      return {
+        ok: false,
+        retryable: true,
+        error: 'malformed head pushedDate for reaction freshness; failing closed',
+      };
+    }
+    // Codex-authored seed reactions must carry parseable createdAt values —
+    // a malformed one would be silently skipped as no evidence.
+    for (const bSeed of boundaryReactions) {
+      const seed = asRecord(bSeed);
+      if (!isCodexActor(seed?.user)) continue;
+      const bSeedAt = seed?.createdAt;
+      if (typeof bSeedAt !== 'string' || !Number.isFinite(Date.parse(bSeedAt))) {
+        return {
+          ok: false,
+          retryable: true,
+          error: 'malformed codex reaction timestamp; failing closed',
+        };
+      }
+    }
     // FULL parity with the normal-path walk: the same head-push window stop
     // (a reaction older than the head push cannot qualify — stop instead of
     // paging stale history) and the same cap fail-closed (a partial window is

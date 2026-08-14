@@ -645,6 +645,36 @@ describe('buildCustomAgentTaskMessage', () => {
     expect(message).toContain('`save_artifact` alone does not deliver this gated handoff');
   });
 
+  it('omits slot-authored gated channels from the handoff instructions', () => {
+    // A channel authored from a SLOT ('coder → Review') cannot be exercised
+    // as an ordinary node send: the router authorizes translated worker
+    // targets by canSend(fromNodeName, ...) alone, not from the sending
+    // slot — so prescribing send_message(target="Review") would advertise a
+    // call the router rejects, to every slot of the node.
+    const workflow = structuredClone(CODING_WORKFLOW);
+    const codingNode = workflow.nodes.find((node) => node.name === 'Coding')!;
+    // Make the node multi-agent and re-author the gated channel from a slot.
+    codingNode.agents = [
+      { agentId: 'agent-1', name: 'coder' },
+      { agentId: 'agent-2', name: 'qa' },
+    ];
+    const gated = workflow.channels?.find((ch) => ch.label === 'Coding → Review');
+    expect(gated).toBeDefined();
+    gated!.from = 'coder';
+
+    const message = buildCustomAgentTaskMessage(
+      makeConfig({
+        workflow,
+        workflowRun: makeWorkflowRun({ workflowId: workflow.id }),
+        nodeId: codingNode.id,
+        agentSlotName: 'qa',
+      })
+    );
+    // No slot-authored gated-handoff instruction for EITHER slot.
+    expect(message).not.toContain('Outbound handoffs:');
+    expect(message).not.toContain('send_message(target="Review"');
+  });
+
   it('renders number/boolean required-data placeholders unquoted per declared type', () => {
     const workflow = structuredClone(CODING_WORKFLOW);
     const codingNode = workflow.nodes.find((node) => node.name === 'Coding')!;

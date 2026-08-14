@@ -890,6 +890,63 @@ describe('WorkflowHookEngine.executeAction', () => {
     expect(outcome.executionLog[0]?.hookId).toBe('review_hook');
   });
 
+  test('a scalar bare slot fans out sequentially — nodes after the abort are suppressed', async () => {
+    // SCALAR target 'reviewer' resolving in order to A(=Review),
+    // B(=Blocker), C(=Other): node-level routes to Review and Other but NOT
+    // Blocker. The adapter expands the bare slot to one worker per node; the
+    // router delivers Review, hard-returns at Blocker's unauthorized worker —
+    // Other is NEVER reached, so its gate must not run (the pre-fix string
+    // branch evaluated Other independently via its own valid route).
+    const workflow = makeWorkflow({
+      customHooks: [
+        scriptHook('review_hook', '{"flow":"stop","reason":"review"}'),
+        scriptHook('other_hook', '{"flow":"stop","reason":"other"}'),
+      ],
+      nodes: [
+        { id: 'n-coding', name: 'Coding', agents: [{ agentId: 'a1', name: 'coder' }] },
+        { id: 'n-review', name: 'Review', agents: [{ agentId: 'a2', name: 'reviewer' }] },
+        { id: 'n-blocker', name: 'Blocker', agents: [{ agentId: 'a3', name: 'reviewer' }] },
+        { id: 'n-other', name: 'Other', agents: [{ agentId: 'a4', name: 'reviewer' }] },
+      ],
+      channels: [
+        { from: 'Coding', to: 'Review', label: 'Coding → Review' },
+        { from: 'Coding', to: 'Other', label: 'Coding → Other' },
+      ],
+      hookBindings: [
+        {
+          hookId: 'review_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+        {
+          hookId: 'other_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Other',
+          method: 'send_message',
+          order: 1,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    const engine = makeEngine(workflow);
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: 'reviewer', message: 'scalar fan-out' },
+      META
+    );
+    // Review (delivered first) gates; Other (after the Blocker abort) is
+    // suppressed — pinned by log length 1 and the specific hook id.
+    expect(outcome.decision).toBe('stop');
+    expect(outcome.blockingHookId).toBe('review_hook');
+    expect(outcome.executionLog.length).toBe(1);
+    expect(outcome.executionLog[0]?.hookId).toBe('review_hook');
+  });
+
   test('a duplicate failing worker does not suppress the earlier delivered node', async () => {
     // ['@worker:Review/good', '@worker:Review/bad'] with a channel to 'good'
     // only: the router delivers good BEFORE aborting at bad — Review received
@@ -1267,6 +1324,54 @@ describe('WorkflowHookEngine.executeAction', () => {
     expect(second.blockingHookId).toBe('stop_hook');
   });
 
+  test('a delivery does not consume a NEWER approval granted mid-chain', async () => {
+    // The P1 TOCTOU: action A observes approval (token approvedAt=123) and
+    // runs its async hook; while it runs, ANOTHER action consumes that
+    // approval and the operator approves a NEWER stop (approvedAt=456) for a
+    // different violation. A's delivery-time consume must refuse the newer
+    // approval (token mismatch) and block — delivering would spend an
+    // approval intended for the other violation.
+    const workflow = makeWorkflow({
+      customHooks: [STOP_HOOK],
+      hookBindings: [
+        {
+          hookId: 'stop_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    hookStateRepo.updateWithRetry('run-1', 'stop_hook', {
+      localState: { humanApproved: true, humanApprovedAt: 123 },
+      lastFlow: 'continue',
+      lastReason: 'Approved by human',
+    });
+    // Simulate the concurrent world advancing AFTER the engine observed the
+    // approval: at the delivery-time consume, the observed approval has been
+    // consumed and a NEWER one (approvedAt=456) is armed.
+    const origConsume = hookStateRepo.consumeApprovalIfCurrent.bind(hookStateRepo);
+    hookStateRepo.consumeApprovalIfCurrent = (
+      runId: string,
+      hookId: string,
+      observed?: { approvedAt: unknown }
+    ) => {
+      hookStateRepo.updateWithRetry('run-1', 'stop_hook', {
+        localState: { humanApprovedAt: 456 },
+      });
+      return origConsume(runId, hookId, observed);
+    };
+    const engine = makeEngine(workflow);
+
+    const outcome = await engine.executeAction('send_message', sendParams(), META);
+    expect(outcome.decision).toBe('stop');
+    // The NEWER approval survives for the action it belongs to.
+    expect(hookStateRepo.get('run-1', 'stop_hook')?.localState.humanApprovedAt).toBe(456);
+  });
+
   test('a failed approval-consume write blocks instead of force-skipping the gate', async () => {
     // The consume-write loses a version race (updateWithRetry returns null).
     // Skipping anyway would leave the persisted flag set after this action,
@@ -1279,8 +1384,8 @@ describe('WorkflowHookEngine.executeAction', () => {
       // The atomic consume path loses its version race (someone else removed
       // the approval between the read and the write) — the action must block
       // rather than deliver on an approval it could not exclusively claim.
-      override consumeApprovalIfCurrent(): boolean {
-        return false;
+      override consumeApprovalIfCurrent(): 'conflict' {
+        return 'conflict';
       }
     }
     const workflow = makeWorkflow({

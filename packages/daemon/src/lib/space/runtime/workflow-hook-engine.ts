@@ -485,7 +485,7 @@ export class WorkflowHookEngine {
     // on the route also stops (approve A → B stops → approve B → A stops
     // again...). An overridden approval stays armed until a chain actually
     // delivers, then all deferred consumptions are persisted at once.
-    const deferredApprovalConsumes = new Set<string>();
+    const deferredApprovalConsumes = new Map<string, { approvedAt: unknown }>();
 
     if (bindings.length === 0) {
       return {
@@ -581,8 +581,11 @@ export class WorkflowHookEngine {
           if (hookState?.localState.humanApproved === true) {
             // Operator approved the terminal ceiling stop: let the hook run
             // (the approval must not wait out the remaining backoff). The
-            // one-shot consumption is DEFERRED until the chain delivers.
-            deferredApprovalConsumes.add(hookId);
+            // one-shot consumption is DEFERRED until the chain delivers,
+            // bound to THIS approval's token.
+            deferredApprovalConsumes.set(hookId, {
+              approvedAt: hookState.localState.humanApprovedAt,
+            });
             executionLog.push({
               hookId,
               flow: 'continue',
@@ -668,6 +671,11 @@ export class WorkflowHookEngine {
         break;
       }
       const approvalPending = hookState?.localState.humanApproved === true;
+      // Token identifying WHICH approval was observed (re-approvals stamp a
+      // fresh humanApprovedAt): the delivery-time consume accepts only this
+      // approval — a newer approval granted to a different action/violation
+      // while this action ran its async hook must not be spent here.
+      const approvalToken = { approvedAt: hookState?.localState.humanApprovedAt };
 
       const built = this.buildHookContext(binding, meta, ctxArtifacts);
       const action: HookAction = {
@@ -732,7 +740,7 @@ export class WorkflowHookEngine {
           // this one action. The one-shot consumption is DEFERRED until the
           // chain delivers (see deferredApprovalConsumes): a later hook's
           // stop must not force the operator to re-approve this one.
-          deferredApprovalConsumes.add(hookId);
+          deferredApprovalConsumes.set(hookId, approvalToken);
           executionLog[executionLog.length - 1] = {
             hookId,
             flow: 'continue',
@@ -766,7 +774,7 @@ export class WorkflowHookEngine {
             // path). Without this, every displayed approval would convert
             // back to the same terminal stop. The one-shot consumption is
             // DEFERRED until the chain delivers.
-            deferredApprovalConsumes.add(hookId);
+            deferredApprovalConsumes.set(hookId, approvalToken);
             executionLog[executionLog.length - 1] = {
               hookId,
               flow: 'continue',
@@ -800,14 +808,16 @@ export class WorkflowHookEngine {
           // exactly like a natural continue: otherwise the approval survives
           // into a LATER, different stop (or the ceiling override) and
           // bypasses a violation the operator never saw or approved.
+          // Token-bound like the continue path: a mismatched token is a NEWER
+          // approval belonging to another action — not this one's to clear —
+          // so proceed to the retry; only a write conflict blocks.
           if (approvalPending) {
-            const cleared = this.persistStateUpdate(hookId, {
-              localState: {
-                humanApproved: undefined,
-                humanApprovedAt: undefined,
-                humanRejectionReason: undefined,
-              },
-            });
+            const clearResult = this.config.hookStateRepo.consumeApprovalIfCurrent(
+              this.config.workflowRunId,
+              hookId,
+              approvalToken
+            );
+            const cleared = clearResult !== 'conflict';
             if (!cleared) {
               log.warn(
                 `Failed to clear human approval for hook "${hookId}" after a retry; blocking.`
@@ -835,16 +845,19 @@ export class WorkflowHookEngine {
 
       // flow === 'continue' — the hook passed on its own. A PENDING approval
       // must still be consumed: otherwise it lingers and a later stop for a
-      // NEW violation would ride the stale one-shot. Fail closed if the
-      // consume-write cannot persist (same discipline as the stop-override).
+      // NEW violation would ride the stale one-shot. Token-bound: a
+      // token-MISMATCH means the observed approval was already consumed and
+      // a NEWER approval (belonging to a different action) is now armed —
+      // that approval is not this action's to clear, so PROCEED without
+      // clearing. A write conflict still fails closed (same discipline as
+      // the stop-override).
       if (approvalPending) {
-        const consumed = this.persistStateUpdate(hookId, {
-          localState: {
-            humanApproved: undefined,
-            humanApprovedAt: undefined,
-            humanRejectionReason: undefined,
-          },
-        });
+        const consume = this.config.hookStateRepo.consumeApprovalIfCurrent(
+          this.config.workflowRunId,
+          hookId,
+          approvalToken
+        );
+        const consumed = consume !== 'conflict';
         if (!consumed) {
           log.warn(
             `Failed to consume human approval for hook "${hookId}" after a natural continue; blocking.`
@@ -976,20 +989,24 @@ export class WorkflowHookEngine {
 
     // The chain can DELIVER: persist the deferred approval consumptions now
     // (an overridden approval is one-shot per delivery, not per override). A
-    // failed consume-write blocks the delivery — otherwise the approval would
-    // stay armed and let a later stop bypass (a standing bypass).
-    for (const hookId of deferredApprovalConsumes) {
-      // ATOMIC one-shot consume: clears only if humanApproved is still set at
-      // the observed version — exactly one of two overlapping gated actions
-      // can win (a refresh-to-latest persist would let both consume and both
-      // deliver on one approval).
+    // failed consume — write conflict, no approval armed, or a TOKEN MISMATCH
+    // (the observed approval was consumed and a NEWER approval granted to a
+    // different action/violation while this chain ran its async hooks) —
+    // blocks the delivery: delivering on the newer approval would spend an
+    // approval intended for a different violation.
+    for (const [hookId, token] of deferredApprovalConsumes) {
+      // ATOMIC one-shot consume: clears only if the approval the chain
+      // OBSERVED is still armed — exactly one of two overlapping gated
+      // actions can win (a refresh-to-latest persist would let both consume
+      // and both deliver on one approval).
       const consumed = this.config.hookStateRepo.consumeApprovalIfCurrent(
         this.config.workflowRunId,
-        hookId
+        hookId,
+        token
       );
-      if (!consumed) {
+      if (consumed !== 'consumed') {
         log.warn(
-          `Failed to consume human approval for hook "${hookId}" at delivery (state write conflict); blocking.`
+          `Failed to consume human approval for hook "${hookId}" at delivery (${consumed}); blocking.`
         );
         executionLog.push({
           hookId,
@@ -1267,7 +1284,26 @@ export class WorkflowHookEngine {
           };
           const roleUnauthorized =
             target.startsWith('@role:') && !resolvedTargets.some((r) => roleNodeRoutable(r));
+          // SEQUENTIAL fan-out for plain translated targets: a bare slot
+          // (or node) entry expands to one @worker per resolution IN ORDER,
+          // and the router hard-returns at the first unauthorized worker —
+          // resolutions AFTER the abort never receive the message, so their
+          // gates are suppressed (mirroring the array branch's post-failure
+          // semantics; without this, a valid later node's gate would run
+          // side effects off an undelivered send).
+          const plainFanout =
+            !target.startsWith('@') &&
+            !target.startsWith('#') &&
+            target.trim() !== '*' &&
+            !isBuiltInInterLevelTarget(target);
+          let fanoutAborted = false;
           for (const resolved of resolvedTargets) {
+            if (plainFanout && nodeNames.has(resolved) && fanoutAborted) {
+              // The router already returned at an earlier node's worker —
+              // this resolution was never reached.
+              nonRoutableResolvedNodes.add(resolved);
+              continue;
+            }
             const workerSlotOk =
               !foreignWorkerMiss &&
               target.startsWith('@worker:') &&
@@ -1307,6 +1343,17 @@ export class WorkflowHookEngine {
                 (target.startsWith('@role:') && !roleNodeRoutable(resolved)))
             ) {
               nonRoutableResolvedNodes.add(resolved);
+              // A plain fan-out node that fails its own delivery ABORTS the
+              // router at its worker — every LATER resolution of this same
+              // target never receives the message either.
+              if (
+                plainFanout &&
+                !roleUnauthorized &&
+                !foreignWorkerMiss &&
+                !target.startsWith('@role:')
+              ) {
+                fanoutAborted = true;
+              }
             }
           }
         }
