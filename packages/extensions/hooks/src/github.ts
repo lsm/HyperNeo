@@ -1373,7 +1373,7 @@ export async function ghGetCodexApproval(
       data: {
         repository: {
           pullRequest: {
-            ...(boundaryPrNode ?? {}),
+            ...boundaryPrNode,
             reviews: { nodes: allReviewNodes },
             reactions: { nodes: boundaryReactions },
           },
