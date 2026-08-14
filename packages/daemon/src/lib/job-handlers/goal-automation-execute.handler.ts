@@ -581,17 +581,70 @@ const NON_AFFIRMATIVE_PREFIX_RE =
 const CONJUNCTION_RE = /\b(?:and|but|while|whereas|although|though)\b/gi;
 
 /**
+ * Verbs that commonly appear in coordinated predicates ("will run and report
+ * failures"). When one directly follows a conjunction, the predicate shares
+ * the earlier qualifier rather than starting a new clause. Ambiguous
+ * noun/verb words ("tests", "pass") are excluded — they are read as the new
+ * clause's subject, so the conjunction stays a boundary.
+ */
+const COORDINATED_VERBS = new Set([
+  'run',
+  'runs',
+  'report',
+  'reports',
+  'fail',
+  'fails',
+  'merge',
+  'merges',
+  'ship',
+  'ships',
+  'build',
+  'builds',
+  'land',
+  'lands',
+  'close',
+  'closes',
+  'fix',
+  'fixes',
+  'deploy',
+  'deploys',
+  'release',
+  'releases',
+  'publish',
+  'publishes',
+  'validate',
+  'validates',
+  'verify',
+  'verifies',
+  'review',
+  'reviews',
+]);
+
+/**
  * Whether a prefix (the text before an outcome match) carries a qualifier
- * that belongs to THIS outcome's clause. The qualifier must appear after the
- * last conjunction in the prefix — one introduced earlier scoped a different
- * clause.
+ * that belongs to THIS outcome's clause. A conjunction is a clause boundary
+ * when it introduces a new subject ("No errors and tests passed" — "no"
+ * scopes only the errors clause), but NOT when it coordinates verbs under a
+ * shared modal ("Tests will run and pass", "CI will run and report
+ * failures" — "will" still applies).
  */
 function prefixHasQualifier(prefix: string): boolean {
-  let segment = prefix;
   let cut = -1;
-  for (const match of prefix.matchAll(CONJUNCTION_RE)) cut = match.index;
-  if (cut >= 0) segment = segment.slice(cut);
-  return NON_AFFIRMATIVE_PREFIX_RE.test(segment);
+  let conjunctionLength = 0;
+  for (const match of prefix.matchAll(CONJUNCTION_RE)) {
+    cut = match.index;
+    conjunctionLength = match[0].length;
+  }
+  if (cut >= 0) {
+    const afterConjunction = prefix.slice(cut + conjunctionLength).trimStart();
+    if (afterConjunction) {
+      const firstWord = afterConjunction.split(/\s+/)[0]?.toLowerCase() ?? '';
+      if (!COORDINATED_VERBS.has(firstWord)) {
+        return NON_AFFIRMATIVE_PREFIX_RE.test(prefix.slice(cut));
+      }
+    }
+  }
+  return NON_AFFIRMATIVE_PREFIX_RE.test(prefix);
 }
 
 /**
@@ -608,12 +661,13 @@ const SUFFIX_QUALIFIER_RE =
   /^(?:[^,;:!?.\n]{0,32}\b(?:not|never|no|hasn'?t|haven'?t|hadn'?t|didn'?t|doesn'?t|won'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|cannot|without|yet|still|pending|wait(?:ing)?|queued|incomplete|unfinished|tomorrow|scheduled|planned|will|would|should|could|might|goal|target(?:ed)?|aim)\b|,\s*(?:still|yet|pending|wait(?:ing)?|incomplete|unfinished|planned|scheduled|queued|without)\b)/i;
 
 /**
- * A coordinating conjunction followed by its own subject + linking verb
- * ("and deployment is", "but the build was") — the start of a new independent
- * clause whose qualifiers must not attach to a preceding outcome match.
+ * A coordinating conjunction followed by its own (possibly multiword) subject
+ * + linking verb ("and deployment is", "and the build pipeline is", "but the
+ * build was") — the start of a new independent clause whose qualifiers must
+ * not attach to a preceding outcome match.
  */
 const NEW_CLAUSE_CONJUNCTION_RE =
-  /\b(?:and|but|while|whereas|although|though)\s+(?:the\s+)?\w+\s+(?:is|are|was|were|has|have|had|remains?|stays?|seems?)\b/i;
+  /\b(?:and|but|while|whereas|although|though)\s+(?:the\s+|a\s+|an\s+)?(?:\w+\s+){0,3}(?:is|are|was|were|has|have|had|remains?|stays?|seems?)\b/i;
 
 /**
  * Whether a suffix (the text after an outcome match) carries a qualifier that

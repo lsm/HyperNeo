@@ -3591,6 +3591,138 @@ describe('handleGoalAutomationExecute', () => {
     expect(evolutionRepo.listEpisodes(scope.id)).toHaveLength(1);
   });
 
+  it('skips a manual note whose coordinated verbs share one future modal', async () => {
+    const goal = goalRepo.create({ spaceId, title: 'Coordinated future', type: 'recurring' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Coordinated future',
+      objective: 'Coordinated predicates share the modal of their clause',
+      policy: { automation: { selfNagCronExpression: '0 * * * *' } },
+    });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'manual_note',
+      sourceId: null,
+      // "will" scopes the whole coordinated predicate "run and pass".
+      summary: 'Tests will run and pass',
+      createdAt: 30,
+    });
+    let episodeCreated = false;
+
+    const result = await handleGoalAutomationExecute(
+      createAutomationJob({
+        goalId: goal.id,
+        scopeId: scope.id,
+        triggerKind: 'self_nag',
+        triggerKey: 'schedule-coordinated-future',
+        reason: 'self_nag',
+        scheduleId: 'schedule-coordinated-future',
+      }),
+      {
+        goalRepo,
+        taskRepo,
+        evolutionRepo,
+        cursorRepo,
+        goalEventRepo: new SpaceGoalEventRepository(db as never),
+        episodeService: {
+          createFromEvidence: async () => {
+            episodeCreated = true;
+            throw new Error('should not create episode for coordinated future predicates');
+          },
+          preflightEvidence: () =>
+            makePreflight({
+              level: 'low',
+              score: 0,
+              requiresConfirmation: true,
+              counts: {
+                total: 1,
+                manualNotes: 1,
+                taskResults: 0,
+                workflowArtifacts: 0,
+                metricSnapshots: 0,
+                outcomes: 1,
+              },
+            }),
+        },
+      }
+    );
+
+    expect(result).toMatchObject({ skipped: true, skipReason: 'low_evidence_noop' });
+    expect(episodeCreated).toBe(false);
+    expect(evolutionRepo.listEpisodes(scope.id)).toHaveLength(0);
+  });
+
+  it('still produces an episode when a multiword subject follows a conjunction', async () => {
+    const goal = goalRepo.create({ spaceId, title: 'Multiword subject', type: 'recurring' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Multiword subject',
+      objective: 'A multiword subject after a conjunction starts a new clause',
+      policy: { automation: { selfNagCronExpression: '0 * * * *' } },
+    });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'manual_note',
+      sourceId: null,
+      // "build pipeline" (multiword subject) + "is" starts a new clause, so
+      // its "pending" must not suppress the completed "Tests passed".
+      summary: 'Tests passed and build pipeline is pending',
+      createdAt: 30,
+    });
+
+    const result = await handleGoalAutomationExecute(
+      createAutomationJob({
+        goalId: goal.id,
+        scopeId: scope.id,
+        triggerKind: 'self_nag',
+        triggerKey: 'schedule-multiword-subject',
+        reason: 'self_nag',
+        scheduleId: 'schedule-multiword-subject',
+      }),
+      {
+        goalRepo,
+        taskRepo,
+        evolutionRepo,
+        cursorRepo,
+        episodeService: {
+          createFromEvidence: async ({ evidenceIds }) => ({
+            episode: evolutionRepo.createEpisode({
+              scopeId: scope.id,
+              title: 'Multiword subject retrospective',
+              evidenceIds,
+              outcomeSummary: 'Multiword subject outcome',
+              findings: [],
+            }),
+            proposals: [],
+            lessons: [],
+          }),
+          preflightEvidence: () =>
+            makePreflight({
+              level: 'low',
+              score: 0,
+              requiresConfirmation: true,
+              counts: {
+                total: 1,
+                manualNotes: 1,
+                taskResults: 0,
+                workflowArtifacts: 0,
+                metricSnapshots: 0,
+                outcomes: 2,
+              },
+            }),
+        },
+      }
+    );
+
+    expect(result.skipped).toBe(false);
+    expect(result.episodeId).toBeString();
+    expect(evolutionRepo.listEpisodes(scope.id)).toHaveLength(1);
+  });
+
   it('still produces an episode for a free-form deploy note with artifact references', async () => {
     const goal = goalRepo.create({ spaceId, title: 'Deploy artifact', type: 'recurring' });
     const scope = evolutionRepo.createScope({
