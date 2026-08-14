@@ -867,6 +867,11 @@ export class AcpQueryRunner {
           void processExitSnapshot.then(() => {
             if (
               turnCompletedNormally &&
+              // Recheck cleanup at fire time too: teardown can complete its
+              // interrupt and return the session to idle while we waited for
+              // the process exit — publishing then would promote deferred
+              // rows for a session that is being cancelled/shut down.
+              !this.ctx.isCleaningUp() &&
               stateManager.getState().status !== 'interrupted' &&
               session.config.queryMode !== 'manual'
             ) {

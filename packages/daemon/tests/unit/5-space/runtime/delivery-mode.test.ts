@@ -20,20 +20,22 @@ describe('deliveryModeFromFailureReason', () => {
     expect(deliveryModeFromFailureReason('deliveryMode:immediate;')).toBe('immediate');
   });
 
-  test('defaults to immediate for null or undefined (in-flight / no encoded mode)', () => {
-    expect(deliveryModeFromFailureReason(null)).toBe('immediate');
-    expect(deliveryModeFromFailureReason(undefined)).toBe('immediate');
+  test('defaults to defer for null or undefined (in-flight / no encoded mode)', () => {
+    // An unmarked pending delivery must not replay as 'immediate' — that
+    // would steer an already-processing kickoff mid-turn. This also
+    // normalizes durable rows persisted by pre-upgrade code (whose reasons
+    // predate the deliveryMode: prefixes).
+    expect(deliveryModeFromFailureReason(null)).toBe('defer');
+    expect(deliveryModeFromFailureReason(undefined)).toBe('defer');
   });
 
-  test('defaults to immediate for an unrelated failure reason', () => {
-    expect(deliveryModeFromFailureReason('node_execution_not_active')).toBe('immediate');
-    expect(deliveryModeFromFailureReason('')).toBe('immediate');
+  test('defaults to defer for an unrelated failure reason (legacy rows)', () => {
+    expect(deliveryModeFromFailureReason('node_execution_not_active')).toBe('defer');
+    expect(deliveryModeFromFailureReason('')).toBe('defer');
   });
 
-  test('does not match look-alikes that only share a stem (no semicolon boundary)', () => {
-    // The parser keys on the `deliveryMode:defer;` boundary, so a longer mode
-    // label that happens to start with "defer" must not be mistaken for defer.
-    expect(deliveryModeFromFailureReason('deliveryMode:deferred; …')).toBe('immediate');
-    expect(deliveryModeFromFailureReason('deliveryMode:deferrible; …')).toBe('immediate');
+  test('only the explicit immediate prefix recovers immediate (look-alike stems defer)', () => {
+    expect(deliveryModeFromFailureReason('deliveryMode:deferred; …')).toBe('defer');
+    expect(deliveryModeFromFailureReason('deliveryMode:deferrible; …')).toBe('defer');
   });
 });

@@ -1,25 +1,28 @@
 import type { MessageDeliveryMode } from '@hyperneo/shared';
 
 /**
- * Prefix SpaceRuntime writes onto a parked external-event delivery's
- * `failureReason` when it must be re-dispatched in `defer` mode after
- * rehydration. Only this marker is opt-in — the reader treats every other
- * value (including `deliveryMode:immediate;…` and `null`) as `immediate`.
+ * Prefix recorded on a persisted delivery that was explicitly handed off in
+ * `immediate` mode. Only rows carrying this marker replay as `immediate`;
+ * everything else — the `deliveryMode:defer;` marker SpaceRuntime writes on
+ * parked deliveries, bare legacy reasons, and null — recovers as `defer`.
  */
-const DEFER_DELIVERY_MODE_PREFIX = 'deliveryMode:defer;';
+const IMMEDIATE_DELIVERY_MODE_PREFIX = 'deliveryMode:immediate;';
 
 /**
  * Recovers the delivery mode persisted in a pending external-event delivery's
  * `failureReason`.
  *
- * When SpaceRuntime parks a delivery for later re-dispatch it encodes the mode
- * as a `deliveryMode:<mode>; …` prefix. Only `defer` is distinguished; anything
- * else (`null`, `deliveryMode:immediate;…`, or an unrelated failure reason)
- * resolves to the `immediate` default — matching the inline check previously
- * duplicated across the activation flush and requeue paths.
+ * Default is `defer`: a pending delivery whose reason carries no explicit
+ * marker — `null`, a bare legacy reason (`node_execution_not_active`,
+ * `activation_failed; …`), or any unrecognized string — must NOT replay as
+ * `immediate`, which would steer an already-processing kickoff mid-turn (the
+ * exact failure the defer-to-next-idle change exists to eliminate). This also
+ * normalizes durable rows persisted by pre-upgrade code before the
+ * `deliveryMode:` prefixes existed: they recovered as `immediate` under the
+ * old null-fallback and could inject mid-work after deployment.
  */
 export function deliveryModeFromFailureReason(
   failureReason: string | null | undefined
 ): MessageDeliveryMode {
-  return failureReason?.startsWith(DEFER_DELIVERY_MODE_PREFIX) ? 'defer' : 'immediate';
+  return failureReason?.startsWith(IMMEDIATE_DELIVERY_MODE_PREFIX) ? 'immediate' : 'defer';
 }
