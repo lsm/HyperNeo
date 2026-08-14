@@ -195,7 +195,7 @@ describe('MessageInput — recording UI', () => {
     // silently lost, and no client read-modify-write that could clobber the
     // draft. The spacing/merge lives in the daemon.
     await waitFor(() => {
-      const appendCall = hubRequest.mock.calls.find(([m]) => m === 'session.appendInputDraft');
+      const appendCall = hubRequest.mock.calls.find(([m]) => m === 'session.appendVoiceDraft');
       expect(appendCall).toBeTruthy();
       expect(appendCall[1]).toEqual({ sessionId: 's1', text: 'hello world' });
     });
@@ -218,7 +218,7 @@ describe('MessageInput — recording UI', () => {
     // claim success, and there is no mounted composer to fall back to.
     hubRequest.mockImplementation(async (method: string, payload?: unknown) => {
       if (method === 'voice.transcribe') return transcribeRequest(method, payload);
-      if (method === 'session.appendInputDraft') throw new Error('boom');
+      if (method === 'session.appendVoiceDraft') throw new Error('boom');
       return {};
     });
 

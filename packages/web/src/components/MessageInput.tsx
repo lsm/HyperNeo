@@ -481,16 +481,18 @@ export default function MessageInput({
   // A transcription can complete AFTER the composer unmounted — the user clicked
   // Send/Stop then navigated to another session while the (up to 125s) RPC was
   // in flight. insertTranscript writes through the live draft signal + textarea,
-  // neither of which exists once the keyed ChatContainer is gone. Delegate to the
-  // daemon's atomic `session.appendInputDraft` (not a client read-modify-write,
-  // which could clobber a draft the user edited after returning) and report
-  // success/failure so the toast never claims a save that did not happen.
+  // neither of which exists once the keyed ChatContainer is gone. Stage the
+  // transcript into the session's dedicated `inputDraftVoicePending` field (via
+  // `session.appendVoiceDraft`) — NOT the live inputDraft, which the client's
+  // debounced saves could clobber — and report success/failure so the toast
+  // never claims a save that did not happen. useInputDraft merges the pending
+  // field into the draft once when the session is next loaded.
   const persistTranscriptToDraft = useCallback(
     async (targetSessionId: string, transcript: string): Promise<boolean> => {
       const hub = connectionManager.getHubIfConnected();
       if (!hub) return false;
       try {
-        await hub.request('session.appendInputDraft', {
+        await hub.request('session.appendVoiceDraft', {
           sessionId: targetSessionId,
           text: transcript,
         });

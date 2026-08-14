@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { generateUUID, parseJson, parseJsonOptional } from '../src/utils.ts';
+import { appendDraftText, generateUUID, parseJson, parseJsonOptional } from '../src/utils.ts';
 
 describe('generateUUID', () => {
   test('generates valid UUID format', () => {
@@ -167,5 +167,42 @@ describe('parseJsonOptional', () => {
 
   test('returns undefined for empty string', () => {
     expect(parseJsonOptional('')).toBeUndefined();
+  });
+});
+
+describe('appendDraftText', () => {
+  test('appends with a separating space between two latin words', () => {
+    expect(appendDraftText('hello', 'world')).toBe('hello world');
+  });
+
+  test('does not prepend a space when existing is empty', () => {
+    expect(appendDraftText('', 'hello')).toBe('hello');
+  });
+
+  test('does not insert a space across a CJK boundary (either side)', () => {
+    expect(appendDraftText('你好', '世界')).toBe('你好世界');
+    expect(appendDraftText('hello', '世界')).toBe('hello世界');
+    expect(appendDraftText('你好', 'world')).toBe('你好world');
+  });
+
+  test('suppresses the space when existing already ends in whitespace', () => {
+    expect(appendDraftText('hello ', 'world')).toBe('hello world');
+    expect(appendDraftText('hello\n', 'world')).toBe('hello\nworld');
+  });
+
+  test('suppresses the space after an opening bracket or quote', () => {
+    expect(appendDraftText('note (', 'detail')).toBe('note (detail');
+    expect(appendDraftText('he said "', 'hi')).toBe('he said "hi');
+  });
+
+  test('keeps the space after sentence punctuation', () => {
+    expect(appendDraftText('Hello.', 'World')).toBe('Hello. World');
+    expect(appendDraftText('Stop!', 'go')).toBe('Stop! go');
+  });
+
+  test('caps the result at the draft character limit', () => {
+    const big = 'a'.repeat(100_000);
+    expect(appendDraftText(big, 'more').length).toBe(100_000);
+    expect(appendDraftText('x', 'y'.repeat(200_000)).length).toBe(100_000);
   });
 });

@@ -241,6 +241,44 @@ describe('useInputDraft', () => {
       expect(result.current.content).toBe('Saved draft');
     });
 
+    it('merges a pending voice transcript into the draft on load and clears it', async () => {
+      mockHub.request.mockResolvedValue({
+        session: {
+          metadata: { inputDraft: 'existing', inputDraftVoicePending: 'hello world' },
+        },
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      // The staged voice transcript is appended to the loaded draft...
+      expect(result.current.content).toBe('existing hello world');
+      // ...and the staging field is cleared so it merges only once.
+      expect(mockHub.request).toHaveBeenCalledWith('session.update', {
+        sessionId: 'session-1',
+        metadata: { inputDraftVoicePending: null },
+      });
+    });
+
+    it('uses just the pending transcript when the draft is empty', async () => {
+      mockHub.request.mockResolvedValue({
+        session: { metadata: { inputDraft: null, inputDraftVoicePending: 'hello' } },
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      expect(result.current.content).toBe('hello');
+    });
+
     it('should not load draft when hub is not connected', async () => {
       vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(null);
 
