@@ -116,6 +116,9 @@ vi.mock('../../lib/connection-manager', () => ({
   connectionManager: { getHubIfConnected: vi.fn(() => ({ request: hubRequest })) },
 }));
 
+const enqueueTranscript = vi.hoisted(() => vi.fn());
+vi.mock('../../lib/voice/voice-transcript-outbox.ts', () => ({ enqueueTranscript }));
+
 import { toast } from '../../lib/toast.ts';
 import { connectionManager } from '../../lib/connection-manager.ts';
 import MessageInput from '../MessageInput';
@@ -130,6 +133,7 @@ describe('MessageInput — recording UI', () => {
     voiceCancel.mockClear();
     transcribeRequest.mockClear();
     hubRequest.mockClear();
+    enqueueTranscript.mockClear();
     // Timer-backed rAF so deferred hook work actually runs and can be drained
     // before the stubs are removed. A no-op stub leaves Preact cleanup pending
     // until after unstubAllGlobals, where cancelAnimationFrame no longer exists
@@ -286,6 +290,38 @@ describe('MessageInput — recording UI', () => {
     await waitFor(() =>
       expect(toast.info).toHaveBeenCalledWith('Voice transcript saved to the session draft')
     );
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it('parks the transcript in the durable outbox when staging needs a dead socket', async () => {
+    let resolveTranscribe!: (value: { text: string }) => void;
+    transcribeRequest.mockReturnValueOnce(
+      new Promise<{ text: string }>((resolve) => {
+        resolveTranscribe = resolve;
+      })
+    );
+
+    const onSend = vi.fn(async () => true);
+    const { unmount } = render(<MessageInput sessionId="s1" onSend={onSend} />);
+
+    fireEvent.click(screen.getByLabelText('Stop recording and transcribe'));
+    await waitFor(() => expect(transcribeRequest).toHaveBeenCalledTimes(1));
+    unmount();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // The socket is down when the transcript completes — the appendVoiceDraft
+    // staging RPC cannot reach the daemon. The transcript must be parked in
+    // the durable outbox (not lost) and replayed on reconnect.
+    vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(null);
+    resolveTranscribe({ text: 'hello world' });
+
+    await waitFor(() => expect(enqueueTranscript).toHaveBeenCalledWith('s1', 'hello world'));
+    await waitFor(() =>
+      expect(toast.info).toHaveBeenCalledWith(
+        'Voice transcript saved — will be delivered when reconnected'
+      )
+    );
+    // No staging RPC was attempted (the socket is dead), and nothing was sent.
+    expect(hubRequest.mock.calls.find(([m]) => m === 'session.appendVoiceDraft')).toBeFalsy();
     expect(onSend).not.toHaveBeenCalled();
   });
 

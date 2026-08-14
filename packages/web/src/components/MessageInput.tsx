@@ -39,6 +39,7 @@ import { AttachmentPreview } from './AttachmentPreview.tsx';
 import { InputActionsMenu } from './InputActionsMenu.tsx';
 import { InputTextarea } from './InputTextarea.tsx';
 import { VoiceWaveform } from './voice/VoiceWaveform.tsx';
+import { enqueueTranscript } from '../lib/voice/voice-transcript-outbox.ts';
 import { QueuePreviewTray, type QueuePreviewMessage } from './QueuePreviewTray.tsx';
 import { ContentContainer } from './ui/ContentContainer.tsx';
 
@@ -604,7 +605,15 @@ export default function MessageInput({
           await stageToDraft();
           return { ok: true, message };
         } catch {
-          return { ok: false, message: '' };
+          // The staging RPC needs a live socket — when it's down (or refused),
+          // park the transcript in the durable localStorage outbox instead of
+          // dropping the only copy. It replays through the same append RPC on
+          // reconnect, deduplicated by the daemon.
+          enqueueTranscript(targetSessionId, transcript);
+          return {
+            ok: true,
+            message: 'Voice transcript saved — will be delivered when reconnected',
+          };
         }
       };
       if (mode === 'stay') {

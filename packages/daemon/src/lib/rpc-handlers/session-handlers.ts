@@ -17,6 +17,7 @@ import type {
   MessageImage,
   ModelInfo,
   Session,
+  SessionMetadata,
   HyperNeoActionMessage,
   RuntimeMcpServerEntry,
 } from '@hyperneo/shared';
@@ -465,13 +466,28 @@ export function setupSessionHandlers(
   // DB write both run before the first `await`), so concurrent writers cannot
   // interleave. Returns success/failure so the client's toast is honest.
   messageHub.onRequest('session.appendVoiceDraft', async (data, _ctx) => {
-    const { sessionId, text } = data as { sessionId: string; text: string };
+    const { sessionId, text, dedupId } = data as {
+      sessionId: string;
+      text: string;
+      dedupId?: string;
+    };
     if (typeof text !== 'string' || text.trim().length === 0) {
       throw new Error('Text to append is required');
     }
     const session = sessionManager.getSessionFromDB(sessionId);
     if (!session) throw new Error('Session not found');
-    const existingPending = session.metadata?.inputDraftVoicePending ?? '';
+    const metadata = session.metadata ?? {};
+    // Idempotent replay guard for the client's durable outbox: the socket can
+    // drop just after a successful write but before the ack, and a retry would
+    // merge the transcript a second time. Skip when this entry's id already
+    // merged. Only consulted when the client passes a dedupId — the live
+    // one-shot staging path passes none and behaves exactly as before. The
+    // read→write stays one synchronous step (no await between the check and
+    // the updateSession DB write), so concurrent writers cannot interleave.
+    if (dedupId && metadata.inputDraftVoiceAppendId === dedupId) {
+      return { success: true, deduped: true };
+    }
+    const existingPending = metadata.inputDraftVoicePending ?? '';
     const pending = appendDraftText(existingPending, text);
     // Reject (rather than silently truncate) when the staged value is at the
     // character limit and the new transcript cannot fit whole — the client
@@ -479,7 +495,9 @@ export function setupSessionHandlers(
     const fits =
       pending === `${existingPending}${text}` || pending === `${existingPending} ${text}`;
     if (!fits) throw new Error('Pending voice draft is at the character limit');
-    const updates: UpdateSessionRequest = { metadata: { inputDraftVoicePending: pending } };
+    const metadataUpdate: Partial<SessionMetadata> = { inputDraftVoicePending: pending };
+    if (dedupId) metadataUpdate.inputDraftVoiceAppendId = dedupId;
+    const updates: UpdateSessionRequest = { metadata: metadataUpdate };
     await sessionManager.updateSession(sessionId, updates as Partial<Session>);
     messageHub.event(
       'session.updated',

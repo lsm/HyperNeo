@@ -42,6 +42,10 @@ import { createDeferred } from './timeout';
 import { currentSessionIdSignal, slashCommandsSignal } from './signals';
 import { isAuthError } from './user-error';
 import { startAutoFlush, stopAutoFlush } from './outbound-queue';
+import {
+  startVoiceTranscriptOutboxFlush,
+  stopVoiceTranscriptOutboxFlush,
+} from './voice/voice-transcript-outbox';
 
 // Expose signals immediately when module loads (for E2E testing)
 if (typeof window !== 'undefined') {
@@ -335,6 +339,7 @@ export class ConnectionManager {
         // Stop transport and outbound queue before redirect to prevent
         // reconnect loop firing between href assignment and navigation
         stopAutoFlush();
+        stopVoiceTranscriptOutboxFlush();
         if (this.transport) {
           this.transport.close();
         }
@@ -401,6 +406,10 @@ export class ConnectionManager {
     // Start auto-flush for queued outbound actions
     startAutoFlush();
 
+    // Start auto-flush for the durable voice-transcript outbox (entries staged
+    // when the socket was down during an unmounted voice delivery).
+    startVoiceTranscriptOutboxFlush();
+
     // Mark ready for testing
     if (typeof window !== 'undefined' && window.__messageHub) {
       window.__messageHubReady = true;
@@ -462,6 +471,7 @@ export class ConnectionManager {
 
     // Stop outbound queue auto-flush
     stopAutoFlush();
+    stopVoiceTranscriptOutboxFlush();
 
     // Update connection state
     connectionState.value = 'disconnected';

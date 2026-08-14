@@ -608,6 +608,13 @@ export interface SessionMetadata {
    * then clears it. null/absent = nothing pending.
    */
   inputDraftVoicePending?: string | null;
+  /**
+   * Id of the LAST voice-transcript outbox entry merged into
+   * `inputDraftVoicePending` (see session.appendVoiceDraft). The client's
+   * durable outbox replays entries after a socket drop and uses this to skip a
+   * retry that already committed — otherwise the transcript would merge twice.
+   */
+  inputDraftVoiceAppendId?: string | null;
   removedOutputs?: string[]; // UUIDs of messages whose tool_result outputs were removed from SDK session file
   resolvedQuestions?: Record<string, ResolvedQuestion>; // Resolved AskUserQuestion responses, keyed by toolUseId
   // Cost tracking: SDK reports cumulative cost per run, but resets on agent restart
