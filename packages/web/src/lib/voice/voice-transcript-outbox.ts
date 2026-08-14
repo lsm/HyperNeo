@@ -107,11 +107,34 @@ function removeEntry(id: string): void {
 
 /** Enforce the cap (oldest dropped) and clear expired entries. */
 function prune(): void {
-  const entries = allEntries();
-  if (entries.length <= MAX_ENTRIES) return;
-  for (const entry of entries.slice(0, entries.length - MAX_ENTRIES)) {
+  const now = Date.now();
+  const stored = collectFromStorage();
+  // Remove TTL-expired keys outright: allEntries() filters them from reads, so
+  // without this they would accumulate in localStorage unboundedly despite the
+  // entry cap.
+  for (const [id, entry] of stored) {
+    if (now - (entry.createdAt ?? 0) >= MAX_AGE_MS) removeEntry(id);
+  }
+  for (const [id, entry] of mirror) {
+    if (now - (entry.createdAt ?? 0) >= MAX_AGE_MS) removeEntry(id);
+  }
+  // Enforce the cap on the live (non-expired) set.
+  const live = allEntries();
+  if (live.length <= MAX_ENTRIES) return;
+  for (const entry of live.slice(0, live.length - MAX_ENTRIES)) {
     removeEntry(entry.id);
   }
+}
+
+/**
+ * A `Request timeout: …` rejection is AMBIGUOUS: the socket dropped after the
+ * request was sent, so the append may have committed (ack lost) or never
+ * arrived. The safe retry keeps the entry — the daemon's dedup set makes a
+ * re-append idempotent — whereas a refusal delivered while connected (session
+ * gone, character limit) is permanent and the entry is dropped.
+ */
+function isRequestTimeout(error: unknown): boolean {
+  return error instanceof Error && error.message.startsWith('Request timeout:');
 }
 
 /** Park a transcript for delivery once the daemon is reachable again. */
@@ -172,11 +195,15 @@ export async function flushPendingTranscripts(): Promise<void> {
         });
         removePendingTranscript(entry.id);
         voiceTranscriptLandedSignal.value = { sessionId: entry.sessionId };
-      } catch {
+      } catch (error) {
         // If the socket dropped mid-flush, keep the entry for the next
-        // reconnect. If it is still up, the daemon refused the append — that
-        // is permanent, so drop the entry instead of retrying forever.
+        // reconnect. A TIMEOUT is ambiguous (the append may have committed with
+        // a lost ack) — keep it too; the daemon's dedup makes the retry safe.
+        // Only a refusal delivered while connected (session gone, character
+        // limit) is permanent, and that entry is dropped rather than retried
+        // forever.
         if (!connectionManager.getHubIfConnected()) break;
+        if (isRequestTimeout(error)) continue;
         removePendingTranscript(entry.id);
       }
     }

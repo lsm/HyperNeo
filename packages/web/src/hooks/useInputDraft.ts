@@ -134,12 +134,15 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   // is otherwise merged only during session.get, which runs on session change —
   // without this, a replay into an already-open composer stays invisible until
   // the next navigation. Guard on an IDLE composer: the get overwrites the
-  // local signal, so reloading over in-progress typing would lose keystrokes
-  // (.peek() keeps the effect subscribed to the landed signal only).
+  // local signal, so reloading over in-progress typing would lose keystrokes.
+  // Reading contentSignal (not peek()) subscribes the effect to typing, so a
+  // landing while the composer has text DEFERS until it clears, and a keystroke
+  // that lands mid-get re-runs the effect whose cleanup aborts the stale get —
+  // the server draft can never clobber newer keystrokes.
   useSignalEffect(() => {
     const landed = voiceTranscriptLandedSignal.value;
     if (!landed || landed.sessionId !== sessionId) return;
-    if (contentSignal.peek().trim() !== '') return;
+    if (contentSignal.value.trim() !== '') return;
     let cancelled = false;
     loadDraft(sessionId, () => cancelled);
     return () => {

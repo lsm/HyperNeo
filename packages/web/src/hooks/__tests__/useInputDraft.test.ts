@@ -302,6 +302,34 @@ describe('useInputDraft', () => {
       expect(result.current.content).toBe('user typing');
     });
 
+    it('defers the outbox refresh until an active composer is cleared, then applies it', async () => {
+      mockHub.request.mockResolvedValueOnce({ session: { metadata: { inputDraft: '' } } });
+      mockHub.request.mockResolvedValue({ session: { metadata: { inputDraft: 'transcript' } } });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      // The replay lands while the composer has text — no reload yet.
+      result.current.setContent('user typing');
+      voiceTranscriptLandedSignal.value = { sessionId: 'session-1' };
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(result.current.content).toBe('user typing');
+      expect(mockHub.request.mock.calls.filter(([m]) => m === 'session.get')).toHaveLength(1);
+
+      // Once the composer is idle again, the deferred refresh runs.
+      result.current.clear();
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(mockHub.request.mock.calls.filter(([m]) => m === 'session.get')).toHaveLength(2);
+      expect(result.current.content).toBe('transcript');
+    });
+
     it('does not apply a draft whose session.get resolved after the session changed', async () => {
       // Each session.get gets its own deferred promise so we can resolve
       // session-1's slow get only after the hook has moved on to session-2.

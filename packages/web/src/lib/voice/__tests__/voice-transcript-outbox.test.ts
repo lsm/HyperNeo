@@ -123,6 +123,37 @@ describe('voice transcript outbox', () => {
     expect(getPendingTranscripts()).toHaveLength(0);
   });
 
+  it('keeps an entry on an ambiguous Request timeout (append may have committed)', async () => {
+    enqueueTranscript('s1', 'ambiguous');
+    // The socket dropped after the request was sent — the append may have
+    // committed with a lost ack, or never arrived. Retain the entry; the
+    // daemon's dedup set makes the eventual retry idempotent either way.
+    hubRequest.mockRejectedValueOnce(
+      new Error('Request timeout: session.appendVoiceDraft (10000ms)')
+    );
+    await flushPendingTranscripts();
+    expect(getPendingTranscripts()).toHaveLength(1);
+  });
+
+  it('prunes expired keys even when the live set is under the cap', () => {
+    // Seed a stale entry directly (createdAt beyond the TTL) so allEntries()
+    // hides it from reads — but prune() must still remove the key from storage,
+    // or expired entries would accumulate unboundedly.
+    const stale = {
+      id: 'stale-1',
+      sessionId: 's1',
+      text: 'old',
+      createdAt: Date.now() - 25 * 60 * 60 * 1000,
+    };
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.entry.stale-1',
+      JSON.stringify(stale)
+    );
+    enqueueTranscript('s1', 'fresh');
+    expect(getPendingTranscripts().map((e) => e.text)).toEqual(['fresh']);
+    expect(localStorage.getItem('hyperneo_voice_transcript_outbox_v1.entry.stale-1')).toBeNull();
+  });
+
   it('keeps entries for retry when the socket drops mid-flush', async () => {
     enqueueTranscript('s1', 'a');
     enqueueTranscript('s1', 'b');
