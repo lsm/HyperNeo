@@ -2870,3 +2870,38 @@ describe('portable non-routed targetNode rule', () => {
     if (!result.ok) expect(result.error).toContain('not allowed for non-routed method');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Deferred legacy-hook export guard (round 48)
+// ---------------------------------------------------------------------------
+
+describe('exportWorkflow — deferred legacy-hook workflows', () => {
+  test('refuses to export surfaced legacy hooks without v2 bindings', () => {
+    const workflow = makeWorkflow();
+    // Simulate the deferred-upgrade repository surface: the legacy `hooks`
+    // column still carries definitions and the restamp has not landed v2
+    // bindings (active runs / approved post-approval work).
+    (workflow as { hooks?: unknown[] }).hooks = [{ id: 'pr_ready' }];
+    expect(() => exportWorkflow(workflow, [])).toThrow(/legacy v1 hooks/);
+  });
+
+  test('exports once v2 bindings exist alongside the surviving legacy column', () => {
+    const workflow = makeWorkflow({
+      hookBindings: [
+        {
+          hookId: 'pr_ready',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    (workflow as { hooks?: unknown[] }).hooks = [{ id: 'pr_ready' }];
+    const exported = exportWorkflow(workflow, []);
+    expect(exported.hookBindings).toHaveLength(1);
+    expect((exported as { hooks?: unknown[] }).hooks).toBeUndefined();
+  });
+});

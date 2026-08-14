@@ -623,6 +623,7 @@ export async function ghGetReviewEvidence(
   const REVIEWS_PAGE = 50;
   const MAX_REVIEW_PAGES = 10;
   const deadline = Date.now() + DEFAULT_TIMEOUT_MS;
+  const sinceMs = Date.parse(sinceIso);
   const allReviewNodes: unknown[] = [];
   let lastCommentsPage: unknown;
   let before: string | null = null;
@@ -641,7 +642,7 @@ export async function ghGetReviewEvidence(
       `query { viewer { login } repository(owner:"${pr.owner}",name:"${pr.repo}") { pullRequest(number:${pr.number}) { ` +
       `author { login } reviews(last: ${REVIEWS_PAGE}${beforeClause}) { ` +
       'pageInfo { hasPreviousPage startCursor } nodes { state publishedAt } } ' +
-      'comments(last: 50) { nodes { createdAt } } } } }';
+      'comments(last: 50) { pageInfo { hasPreviousPage startCursor } nodes { createdAt } } } } }';
     const result = await runGhGraphql(ctx, query, pr.host, { timeoutMs: remaining });
     if (!result.ok) return result;
     lastCommentsPage = result.data;
@@ -678,7 +679,6 @@ export async function ghGetReviewEvidence(
     const oldest = Array.isArray(nodes) && nodes.length > 0 ? asRecord(nodes[0]) : undefined;
     const oldestAt = typeof oldest?.publishedAt === 'string' ? oldest.publishedAt : '';
     const oldestMs = oldestAt ? Date.parse(oldestAt) : NaN;
-    const sinceMs = Date.parse(sinceIso);
     if (
       !pageInfo?.hasPreviousPage ||
       (oldestAt !== '' &&
@@ -704,12 +704,86 @@ export async function ghGetReviewEvidence(
         'unable to scan the full evidence window (fail closed).',
     };
   }
-  // Rebuild the envelope with the merged review history (object spread of a
-  // possibly-undefined value is a no-op, so no fallbacks are needed).
+  // Comments back-pagination: the reviews walk re-fetches the same comments
+  // TAIL every page, so a qualifying own-PR comment buried under >50 newer
+  // comments would never enter the window and review_posted would block a
+  // valid handoff. Walk the comments connection backward through the
+  // run-start boundary with the same bounded fail-closed discipline.
   const lastRecord = lastCommentsPage as Record<string, unknown> | undefined;
   const lastData = asRecord(lastRecord?.data);
   const lastRepository = asRecord(lastData?.repository);
   const lastPullRequest = asRecord(lastRepository?.pullRequest);
+  const seedComments = asRecord(lastPullRequest?.comments);
+  const seedCommentNodes = seedComments?.nodes;
+  if (seedComments && !Array.isArray(seedCommentNodes)) {
+    return {
+      ok: false,
+      retryable: true,
+      error: 'malformed comments connection (missing nodes); failing closed',
+    };
+  }
+  const allCommentNodes: unknown[] = [];
+  if (Array.isArray(seedCommentNodes)) allCommentNodes.unshift(...seedCommentNodes);
+  let commentPageInfo = asRecord(seedComments?.pageInfo);
+  let commentsComplete = false;
+  for (let page = 0; page < MAX_REVIEW_PAGES; page++) {
+    if (commentPageInfo?.hasPreviousPage !== true) {
+      commentsComplete = true;
+      break;
+    }
+    const cc = commentPageInfo.startCursor;
+    if (typeof cc !== 'string' || !CURSOR_RE.test(cc)) break;
+    const remainingC = deadline - Date.now();
+    if (remainingC <= 0) {
+      return {
+        ok: false,
+        retryable: true,
+        error: 'review-evidence scan exceeded its overall deadline (fail closed)',
+      };
+    }
+    const q =
+      `query { repository(owner:"${pr.owner}",name:"${pr.repo}") { pullRequest(number:${pr.number}) { ` +
+      `comments(last: 50, before:"${cc}") { pageInfo { hasPreviousPage startCursor } ` +
+      'nodes { createdAt } } } } }';
+    const result = await runGhGraphql(ctx, q, pr.host, { timeoutMs: remainingC });
+    if (!result.ok) return result;
+    const cNode = asRecord(
+      asRecord(asRecord(asRecord(result.data)?.data)?.repository)?.pullRequest
+    );
+    const cConn = asRecord(cNode?.comments);
+    if (!Array.isArray(cConn?.nodes) || !asRecord(cConn?.pageInfo)) {
+      return {
+        ok: false,
+        retryable: true,
+        error: 'malformed comments connection (missing nodes/pageInfo); failing closed',
+      };
+    }
+    const cNodes = cConn.nodes;
+    allCommentNodes.unshift(...cNodes);
+    commentPageInfo = asRecord(cConn.pageInfo);
+    // Boundary: the page has reached past the run-start window — everything
+    // older cannot contribute fresh evidence.
+    const oldestC = cNodes.length > 0 ? asRecord(cNodes[0]) : undefined;
+    const oldestCAt = typeof oldestC?.createdAt === 'string' ? oldestC.createdAt : '';
+    const cMs = oldestCAt ? Date.parse(oldestCAt) : NaN;
+    if (oldestCAt !== '' && Number.isFinite(cMs) && Number.isFinite(sinceMs) && cMs < sinceMs) {
+      commentsComplete = true;
+      break;
+    }
+  }
+  if (!commentsComplete) {
+    // Cap exhausted while still inside the fresh window — the scan cannot
+    // prove absence/presence of comment evidence; fail closed.
+    return {
+      ok: false,
+      retryable: true,
+      error:
+        `PR has more than ${MAX_REVIEW_PAGES * 50} comments since the run started; ` +
+        'unable to scan the full evidence window (fail closed).',
+    };
+  }
+  // Rebuild the envelope with the merged review history (object spread of a
+  // possibly-undefined value is a no-op, so no fallbacks are needed).
   const merged = {
     ...lastRecord,
     data: {
@@ -719,6 +793,7 @@ export async function ghGetReviewEvidence(
         pullRequest: {
           ...lastPullRequest,
           reviews: { nodes: allReviewNodes },
+          comments: { nodes: allCommentNodes },
         },
       },
     },
@@ -1126,14 +1201,20 @@ export function extractCodexApproval(value: unknown, prLink: string): GithubCode
       // decisive reviews at the same instant are ordered by their position
       // in the (chronological, pagination-merged) connection.
       const submittedMs = Date.parse(submittedAt);
-      if (Number.isFinite(submittedMs)) {
-        if (!latest || submittedMs >= latest.submittedMs) {
-          latest = { submittedMs, state };
-        }
-      } else if (!latest) {
-        // Unparseable timestamp: keep it only as a floor candidate so a
-        // later well-formed review can still supersede it.
-        latest = { submittedMs: -Infinity, state };
+      // A DECISIVE verdict with an unparseable timestamp is malformed
+      // evidence: retaining it as a floor candidate would let any parseable
+      // APPROVED outrank a CHANGES_REQUESTED whose order we cannot read, and
+      // the approval gate would pass. Fail the lookup closed instead.
+      if (!Number.isFinite(submittedMs)) {
+        return {
+          approved: false,
+          prLink,
+          evaluatedHeadOid: headOid,
+          failClosedReason: 'malformed codex review timestamp on the head; failing closed',
+        };
+      }
+      if (!latest || submittedMs >= latest.submittedMs) {
+        latest = { submittedMs, state };
       }
     }
     if (latest) return { approved: latest.state === 'APPROVED', prLink, evaluatedHeadOid: headOid };

@@ -283,6 +283,35 @@ describe('extractCodexApproval', () => {
     expect(r.failClosedReason).toContain('failing closed');
   });
 
+  test('a decisive verdict with an unparseable timestamp fails closed', () => {
+    // Retaining it as a floor candidate would let any parseable APPROVED
+    // outrank a CHANGES_REQUESTED whose order we cannot read — the approval
+    // gate would pass. The lookup must fail closed instead.
+    const r = extractCodexApproval(
+      base({
+        reviews: {
+          nodes: [
+            {
+              state: 'APPROVED',
+              author: codexAuthor('chatgpt-codex-connector'),
+              commit: { oid: HEAD },
+              submittedAt: '2026-02-02T00:00:00Z',
+            },
+            {
+              state: 'CHANGES_REQUESTED',
+              author: codexAuthor('chatgpt-codex-connector'),
+              commit: { oid: HEAD },
+              submittedAt: 'not-a-date',
+            },
+          ],
+        },
+      }),
+      'https://github.com/o/r/pull/1'
+    );
+    expect(r.approved).toBe(false);
+    expect(r.failClosedReason).toContain('timestamp');
+  });
+
   test('a PENDING codex review (null submittedAt is legitimate) does not fail closed', () => {
     const r = extractCodexApproval(
       base({

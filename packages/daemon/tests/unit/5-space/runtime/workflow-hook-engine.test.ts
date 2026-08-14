@@ -475,6 +475,52 @@ describe('WorkflowHookEngine.executeAction', () => {
     expect(hookStateRepo.get('run-1', 'slot_channel_hook')).toBeNull();
   });
 
+  test('a mixed node multicast with one unauthorized target runs no gates', async () => {
+    // Router parity: a plain-entry array takes the TOPOLOGY path, which is
+    // ALL-OR-NOTHING — one unauthorized entry ('Other', no channel) rejects
+    // the whole multicast before anything delivers, so the routable
+    // sibling's gate must not run either (pr_ready would stamp the run's
+    // immutable PR identity off an undelivered send).
+    const STOP_HOOK = scriptHook('mixed_node_hook', '{"flow":"stop","reason":"blocked"}');
+    const workflow = makeWorkflow({
+      customHooks: [STOP_HOOK],
+      nodes: [
+        { id: 'n-coding', name: 'Coding', agents: [{ agentId: 'a1', name: 'coder' }] },
+        { id: 'n-review', name: 'Review', agents: [{ agentId: 'a2', name: 'reviewer' }] },
+        { id: 'n-other', name: 'Other', agents: [{ agentId: 'a3', name: 'other' }] },
+      ],
+      channels: [{ from: 'Coding', to: 'Review', label: 'Coding → Review' }],
+      hookBindings: [
+        {
+          hookId: 'mixed_node_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    const engine = makeEngine(workflow);
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: ['Review', 'Other'], message: 'mixed nodes' },
+      META
+    );
+    expect(outcome.decision).toBe('deliver');
+    expect(hookStateRepo.get('run-1', 'mixed_node_hook')).toBeNull();
+
+    // All-routable multicasts keep their gates (nothing was refused).
+    const allRoutable = await engine.executeAction(
+      'send_message',
+      { target: ['Review'], message: 'single node' },
+      META
+    );
+    expect(allRoutable.decision).toBe('stop');
+    expect(allRoutable.blockingHookId).toBe('mixed_node_hook');
+  });
+
   test("an array '*' over a slot-only channel runs no gates (whole multicast refused)", async () => {
     // Router parity: '*' expands ONLY as the entire string target. Inside an
     // array it is a literal entry the router cannot authorize without a

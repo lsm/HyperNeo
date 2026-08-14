@@ -298,6 +298,86 @@ describe('ghGetReviewEvidence — back-pagination past the fresh window', () => 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.retryable).toBe(true);
   });
+
+  test('an own-PR comment buried under >50 newer comments is found', async () => {
+    // The reviews walk re-fetches the same comments TAIL every page; without
+    // comments back-pagination the qualifying comment never enters the
+    // window and review_posted blocks a valid handoff.
+    const tail = Array.from({ length: 50 }, (_, i) => ({
+      createdAt: `2026-08-13T12:${String(i).padStart(2, '0')}:00Z`,
+    }));
+    const page1 = {
+      data: {
+        viewer: { login: 'reviewer' },
+        repository: {
+          pullRequest: {
+            author: { login: 'reviewer' },
+            reviews: { nodes: [], pageInfo: { hasPreviousPage: false } },
+            comments: {
+              nodes: tail,
+              pageInfo: { hasPreviousPage: true, startCursor: 'cGFnZTE' },
+            },
+          },
+        },
+      },
+    };
+    const page2 = {
+      data: {
+        repository: {
+          pullRequest: {
+            comments: {
+              // The qualifying comment (after since) plus an older one that
+              // closes the run-start boundary.
+              nodes: [{ createdAt: '2026-08-13T11:30:00Z' }, { createdAt: '2026-08-13T10:00:00Z' }],
+              pageInfo: { hasPreviousPage: false },
+            },
+          },
+        },
+      },
+    };
+    setGraphqlRunnerForTests(pagedRunner([page1, page2]));
+    const result = await ghGetReviewEvidence(CTX, PR_LINK, '2026-08-13T11:00:00Z');
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.commentEvidenceCount).toBe(51);
+  });
+
+  test('comments cap exhaustion inside the fresh window fails closed', async () => {
+    const tail = Array.from({ length: 50 }, (_, i) => ({
+      createdAt: `2026-08-13T12:${String(i).padStart(2, '0')}:00Z`,
+    }));
+    // Every comments page claims more history — the scan cannot prove the
+    // window complete, so it must fail closed rather than under-count.
+    const commentsConn = {
+      nodes: tail,
+      pageInfo: { hasPreviousPage: true, startCursor: 'cGFnZTE' },
+    };
+    const page1 = {
+      data: {
+        viewer: { login: 'reviewer' },
+        repository: {
+          pullRequest: {
+            author: { login: 'coder' },
+            reviews: { nodes: [], pageInfo: { hasPreviousPage: false } },
+            comments: commentsConn,
+          },
+        },
+      },
+    };
+    const endless = {
+      data: {
+        repository: {
+          pullRequest: { comments: commentsConn },
+        },
+      },
+    };
+    setGraphqlRunnerForTests(pagedRunner([page1, endless]));
+    const result = await ghGetReviewEvidence(CTX, PR_LINK, '2026-08-13T00:00:00Z');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.retryable).toBe(true);
+      expect(result.error).toContain('comments since the run started');
+    }
+  });
 });
 
 describe('ghGetCodexApproval — reaction back-pagination', () => {

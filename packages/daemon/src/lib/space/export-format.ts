@@ -462,6 +462,27 @@ export function exportWorkflow(
   workflow: SpaceWorkflow,
   agents: SpaceWorkerAgent[]
 ): ExportedSpaceWorkflow {
+  // Deferred-upgrade guard: while migration 197 and the built-in restamp
+  // defer (active runs / approved post-approval work), the repository can
+  // still surface a head carrying legacy `hooks` with no v2 `hookBindings`.
+  // Exporting it would silently emit a valid v4 workflow with NEITHER — the
+  // import-side legacy guard cannot detect the loss (v4 carries no `hooks`
+  // field), and importing the bundle would recreate an ungated workflow.
+  // Refuse, mirroring the incoming-legacy-bundle guidance.
+  const legacyHooks = (workflow as { hooks?: unknown[] }).hooks;
+  if (
+    Array.isArray(legacyHooks) &&
+    legacyHooks.length > 0 &&
+    !(workflow.hookBindings && workflow.hookBindings.length > 0)
+  ) {
+    throw new Error(
+      `Workflow "${workflow.name}" still carries legacy v1 hooks that have not been ` +
+        'converted to v2 hook bindings (a deferred post-upgrade state — its runs may still ' +
+        'be active). Exporting now would silently drop its gates. Let its runs finish and ' +
+        'restart the daemon so the conversion completes, or re-create the hooks as v2 ' +
+        'bindings, then re-export.'
+    );
+  }
   // Support both `nodes` (new) and `steps` (legacy, during migration) for backward compat
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const nodes = workflow.nodes ?? (workflow as any).steps ?? [];

@@ -1120,12 +1120,21 @@ export class WorkflowHookEngine {
           }
         }
       } else if (Array.isArray(target)) {
-        // The router expands '*' ONLY as the entire target (string form);
-        // inside an array it is a literal entry the router can neither
-        // resolve nor authorize, and ONE unauthorized entry fails the WHOLE
-        // multicast — nothing delivers, so no gate may run off this send.
-        // Track it and suppress every target the other entries resolved.
-        let wildcardEntry = false;
+        // Router parity — arrays dispatch through one of two router paths:
+        //
+        // 1. EVERY string entry parses as an address ('@worker:...',
+        //    '@coordinator', ...) → the router's GENERIC path delivers per
+        //    entry (partial delivery is possible), so per-target gating and
+        //    per-target suppression apply.
+        // 2. ANY plain entry (node/slot name, '*') → the TOPOLOGY path,
+        //    which is ALL-OR-NOTHING: one unauthorized entry rejects the
+        //    whole multicast before anything delivers, so one unauthorized
+        //    target must suppress EVERY node binding of this send — running
+        //    a routable sibling's gate (pr_ready stamps the run's immutable
+        //    PR identity) off a send the router never delivers.
+        const allAddresses =
+          target.length > 0 && target.every((t) => typeof t === 'string' && parsesAsAddress(t));
+        let wholeSendRefused = false;
         const arrayResolvedNodes = new Set<string>();
         for (const t of target) {
           if (typeof t !== 'string') {
@@ -1134,33 +1143,22 @@ export class WorkflowHookEngine {
             // the valid parts of the multicast.
             continue;
           }
-          if (t.trim() === '*') {
-            if (resolver.getPermittedTargets(fromNode).includes('*')) {
-              // A wildcard-'to' channel authorizes '*' literally at the
-              // router; it resolves to no workflow node, so it contributes
-              // no targets and suppresses nothing (the sibling entries keep
-              // their gates, matching what the router delivers).
-              continue;
-            }
-            wildcardEntry = true;
-            continue;
-          } else {
-            const resolvedTargets = this.resolveTargetEntries(
-              t,
-              nodeIdToName,
-              slotToNodes,
-              nodeNames
-            );
-            for (const resolved of resolvedTargets) {
-              actionTargets.add(resolved);
-            }
-            // Only a requested target that RESOLVES to a non-routable
-            // WORKFLOW NODE disqualifies target-scoped bindings (the ambiguity
-            // the guard exists for). Generic addresses (e.g. '@coordinator')
-            // fall through resolveTargetEntries as their raw string — they
-            // name no node, the router delivers them separately, and they
-            // must not suppress the gate on the node-addressed part of a
-            // mixed multicast.
+          const resolvedTargets = this.resolveTargetEntries(
+            t,
+            nodeIdToName,
+            slotToNodes,
+            nodeNames
+          );
+          for (const resolved of resolvedTargets) {
+            actionTargets.add(resolved);
+            if (nodeNames.has(resolved)) arrayResolvedNodes.add(resolved);
+          }
+          if (allAddresses) {
+            // Generic path: per-target suppression only. Generic addresses
+            // (e.g. '@coordinator') fall through resolveTargetEntries as
+            // their raw string — they name no node, the router delivers them
+            // separately, and they must not suppress the gate on the
+            // node-addressed part of the multicast.
             for (const resolved of resolvedTargets) {
               const slotOk =
                 t.startsWith('@worker:') && isRoutableWorkerOnSlot(workerAgentOf(t), resolved);
@@ -1170,21 +1168,31 @@ export class WorkflowHookEngine {
                 !slotOk &&
                 !isRoutableTarget(resolved)
               ) {
-                // Per-target suppression: a non-routable resolution
-                // disqualifies only bindings for THAT node — the router
-                // processes multicast entries sequentially, so unrelated
-                // routable parts must keep their gates.
+                // A non-routable resolution disqualifies only bindings for
+                // THAT node — the generic path delivers the remaining
+                // entries, so unrelated routable parts keep their gates.
                 nonRoutableResolvedNodes.add(resolved);
               }
             }
-            for (const resolved of resolvedTargets) {
-              if (nodeNames.has(resolved)) arrayResolvedNodes.add(resolved);
-            }
+            continue;
           }
+          // Topology path: does THIS entry pass the router's authorization?
+          // The router checks canSend(fromNodeName, resolveNodeName(entry))
+          // on the RAW entry — an address string or an unauthorized '*' (no
+          // wildcard-'to' channel) cannot pass; a plain entry passes when a
+          // resolution names a routable node. Built-in inter-level targets
+          // are excluded from the router's authorization set.
+          const entryAuthorized = isBuiltInInterLevelTarget(t)
+            ? true
+            : t.trim() === '*'
+              ? resolver.getPermittedTargets(fromNode).includes('*')
+              : !parsesAsAddress(t) &&
+                resolvedTargets.some((r) => nodeNames.has(r) && isRoutableTarget(r));
+          if (!entryAuthorized) wholeSendRefused = true;
         }
-        if (wildcardEntry) {
-          // Router parity: the whole multicast is refused — suppress the
-          // gates on every node the sibling entries resolved.
+        if (!allAddresses && wholeSendRefused) {
+          // The whole multicast is refused — suppress the gates on every
+          // node the entries resolved.
           for (const resolved of arrayResolvedNodes) {
             nonRoutableResolvedNodes.add(resolved);
           }
@@ -1867,6 +1875,17 @@ function isHookActionMeta(value: unknown): value is HookActionMeta {
     typeof record.taskId === 'string' &&
     (record.targetNode === undefined || typeof record.targetNode === 'string')
   );
+}
+
+/** Whether a target entry parses as a generic/worker address (the router's
+ * generic dispatch precondition — see the array-multicast branch). */
+function parsesAsAddress(value: string): boolean {
+  try {
+    parseAddress(value);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function sameRetryableActionOwner(left: HookActionMeta, right: HookActionMeta): boolean {
