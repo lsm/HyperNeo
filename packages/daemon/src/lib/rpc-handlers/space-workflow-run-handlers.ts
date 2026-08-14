@@ -881,6 +881,14 @@ export function setupSpaceWorkflowRunHandlers(
         humanApproved: params.approved,
         humanApprovedAt: Date.now(),
         humanRejectionReason: params.approved ? undefined : rejectionReason,
+        // Bind the approval to the ACTION that was stopped (the engine
+        // stamped __blockedActionKey when the chain stopped; copied here so
+        // the engine only bypasses a stop of THAT action — a different
+        // action reaching the same hook afterwards cannot spend this
+        // override on its own, unrelated violation).
+        __approvedActionKey: params.approved
+          ? existingState?.localState.__blockedActionKey
+          : undefined,
         // Reset the elapsed-ceiling cycle stamp (retryCount/nextRetryAt) so
         // the next attempt runs, but KEEP the __retryCeilingTerminal marker:
         // if the hook still returns retry (e.g. pr_merged while the PR is
@@ -935,6 +943,23 @@ export function setupSpaceWorkflowRunHandlers(
       throw new Error(`Cannot retry hook on a ${workflowRunAttemptLabel(run.status)} workflow run`);
     }
 
+    // STALE-SNAPSHOT GUARD: the UI may still show a retrying snapshot while
+    // a concurrent retry-timer re-evaluated the hook to a terminal STOP (the
+    // terminal path already cleared the queued action). Overwriting that
+    // newer stop with `lastFlow: 'continue'` here would report success, hide
+    // the actionable blocked banner, and re-arm nothing (the key list read
+    // from the stale snapshot can be empty) — the workflow would wait with
+    // its stop silently suppressed. Require the CURRENT state to still be
+    // retrying; otherwise surface the conflict to the operator.
+    const preCheck = hookStateRepo.get(params.runId, params.hookId);
+    if (!preCheck || preCheck.lastFlow !== 'retry') {
+      throw new Error(
+        !preCheck
+          ? 'Cannot retry a hook that has not run yet — no hook state exists for this run/hook.'
+          : `Hook state changed since the retry was displayed (lastFlow is now "${preCheck.lastFlow ?? 'unset'}") — refresh and act on the CURRENT state.`
+      );
+    }
+
     // Queued actions persist as a per-action-key map; surface every key so a
     // "retry now" re-arms all of this hook's pending actions.
     const existing = hookStateRepo.get(params.runId, params.hookId);
@@ -949,16 +974,21 @@ export function setupSpaceWorkflowRunHandlers(
             .map((entry) => entry.actionKey)
             .filter((key): key is string => typeof key === 'string')
         : [];
-    // updateWithRetry refreshes the expected version per attempt — a concurrent
-    // retry-timer bumping the version must not fail the "retry now" button.
-    // Patch ONLY the scalar decision fields (mirroring approveHook): the
-    // queued records are NOT cleared here. The triggered replay owns its own
-    // lifecycle — deliver clears its record by key, retry re-queues it — and
-    // a key with no live in-memory timer (e.g. its source session failed to
-    // rehydrate) must KEEP its durable record so a later successful
-    // rehydration can still schedule it; deleting first would permanently
-    // lose an accepted send.
-    const updateResult = hookStateRepo.updateWithRetry(params.runId, params.hookId, {
+    // SINGLE version-guarded update (NOT updateWithRetry, which refreshes to
+    // whatever state is current): a concurrent timer write between the
+    // pre-check above and this update bumps the version, so a retry-timer
+    // RETRY write conflicts harmlessly (the operator can click again — the
+    // timer just re-ran the action anyway) and a terminal STOP write can
+    // never be overwritten by the stale "retry now" click. Patch ONLY the
+    // scalar decision fields (mirroring approveHook): the queued records
+    // are NOT cleared here. The triggered replay owns its own lifecycle —
+    // deliver clears its record by key, retry re-queues it — and a key with
+    // no live in-memory timer (e.g. its source session failed to rehydrate)
+    // must KEEP its durable record so a later successful rehydration can
+    // still schedule it; deleting first would permanently lose an accepted
+    // send.
+    const updateResult = hookStateRepo.update(params.runId, params.hookId, {
+      expectedVersion: preCheck.version,
       localState: {
         // Reset the elapsed-ceiling cycle stamp AND the terminal marker (see
         // approveHook — "retry now" is an operator recovery event).

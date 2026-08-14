@@ -25,6 +25,7 @@ import {
   type HookActionMeta,
 } from '../../../../src/lib/space/runtime/workflow-hook-engine';
 import { createSpaceTables } from '../../helpers/space-test-db.ts';
+import { buildRetryableActionKey } from '../../../../src/lib/space/runtime/workflow-hook-engine.ts';
 import type { CustomHook, HookArtifact, SpaceWorkflow } from '@hyperneo/shared';
 
 function scriptHook(id: string, body: string, timeoutMs?: number): CustomHook {
@@ -106,6 +107,13 @@ describe('WorkflowHookEngine.executeAction', () => {
     return { target: 'Review', message: 'handoff', ...(data ? { data } : {}) };
   }
 
+  /** Arm an approval the way production does: approveHook copies the stop's
+   * __blockedActionKey into __approvedActionKey, and the engine bypasses a
+   * stop only when that key matches THIS action's identity. */
+  function actionKeyFor(params: Record<string, unknown>): string {
+    return buildRetryableActionKey('send_message', params, META);
+  }
+
   test('a stop hook blocks delivery with the hook reason surfaced', async () => {
     const engine = makeEngine(
       makeWorkflow({
@@ -149,7 +157,11 @@ describe('WorkflowHookEngine.executeAction', () => {
       ],
     });
     hookStateRepo.updateWithRetry('run-1', 'pass_hook', {
-      localState: { humanApproved: true, humanApprovedAt: 1 },
+      localState: {
+        humanApproved: true,
+        humanApprovedAt: 1,
+        __approvedActionKey: actionKeyFor(sendParams()),
+      },
       lastFlow: 'stop',
     });
     const engine = makeEngine(workflow);
@@ -1300,7 +1312,11 @@ describe('WorkflowHookEngine.executeAction', () => {
       ],
     });
     hookStateRepo.updateWithRetry('run-1', 'stop_hook', {
-      localState: { humanApproved: true, humanApprovedAt: 123 },
+      localState: {
+        humanApproved: true,
+        humanApprovedAt: 123,
+        __approvedActionKey: actionKeyFor(sendParams()),
+      },
       lastFlow: 'continue',
       lastReason: 'Approved by human',
     });
@@ -1322,6 +1338,56 @@ describe('WorkflowHookEngine.executeAction', () => {
     const second = await engine.executeAction('send_message', sendParams(), META);
     expect(second.decision).toBe('stop');
     expect(second.blockingHookId).toBe('stop_hook');
+  });
+
+  test("an approval bound to action A does not bypass action B's stop", async () => {
+    // The P1 cross-action case: the operator approves a displayed stop of
+    // action A; a DIFFERENT action (different target) reaching the same hook
+    // produces its own stop — the approval must NOT be spent on it. The
+    // engine stamps __blockedActionKey at stop, approveHook copies it into
+    // __approvedActionKey, and the override fires only on a match.
+    const workflow = makeWorkflow({
+      customHooks: [STOP_HOOK],
+      hookBindings: [
+        {
+          hookId: 'stop_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    const actionA = sendParams();
+    hookStateRepo.updateWithRetry('run-1', 'stop_hook', {
+      localState: {
+        humanApproved: true,
+        humanApprovedAt: 1,
+        __approvedActionKey: actionKeyFor(actionA),
+      },
+      lastFlow: 'stop',
+    });
+    const engine = makeEngine(workflow);
+
+    // Action B — same route, different payload (a different handoff) —
+    // stops WITHOUT the override.
+    const actionB = { target: 'Review', message: 'different handoff', data: { x: 1 } };
+    const outcomeB = await engine.executeAction('send_message', actionB, META);
+    expect(outcomeB.decision).toBe('stop');
+    expect(
+      outcomeB.executionLog.some(
+        (e) => e.reason === 'Human override: hook stop overridden by approval'
+      )
+    ).toBe(false);
+    // The approval stays armed for action A.
+    expect(hookStateRepo.get('run-1', 'stop_hook')?.localState.humanApproved).toBe(true);
+
+    // Action A re-issued — the approval overrides its stop and delivers.
+    const outcomeA = await engine.executeAction('send_message', actionA, META);
+    expect(outcomeA.decision).toBe('deliver');
+    expect(hookStateRepo.get('run-1', 'stop_hook')?.localState.humanApproved).toBeUndefined();
   });
 
   test('a delivery does not consume a NEWER approval granted mid-chain', async () => {
@@ -1346,7 +1412,11 @@ describe('WorkflowHookEngine.executeAction', () => {
       ],
     });
     hookStateRepo.updateWithRetry('run-1', 'stop_hook', {
-      localState: { humanApproved: true, humanApprovedAt: 123 },
+      localState: {
+        humanApproved: true,
+        humanApprovedAt: 123,
+        __approvedActionKey: actionKeyFor(sendParams()),
+      },
       lastFlow: 'continue',
       lastReason: 'Approved by human',
     });
@@ -1405,7 +1475,11 @@ describe('WorkflowHookEngine.executeAction', () => {
     const conflictedRepo = new ConflictedStateRepo(db);
     conflictedRepo.update('run-1', 'stop_hook', {
       expectedVersion: 0,
-      localState: { humanApproved: true, humanApprovedAt: 123 },
+      localState: {
+        humanApproved: true,
+        humanApprovedAt: 123,
+        __approvedActionKey: actionKeyFor(sendParams()),
+      },
     });
     const engine = new WorkflowHookEngine({
       workflow,

@@ -479,6 +479,17 @@ export class WorkflowHookEngine {
   ): Promise<HookActionOutcome> {
     const bindings = this.resolveMatchingBindings(methodName, params, meta);
 
+    // Identity of THIS action — the same fingerprint the wrapper stamps as
+    // `__blockedActionKey` when the chain stops, and approveHook copies into
+    // `__approvedActionKey`. An approval bypasses a stop ONLY when both
+    // match: approvals are per (run, hook, ACTION), not per (run, hook), so
+    // a DIFFERENT action reaching the same hook after the operator approved
+    // a displayed stop cannot spend that override on its own violation.
+    const actionIdentity = buildRetryableActionKey(methodName, params, meta);
+    const approvalMatchesAction = (state: { localState: Record<string, unknown> }): boolean =>
+      state.localState.humanApproved === true &&
+      state.localState.__approvedActionKey === actionIdentity;
+
     // Overridden approvals whose consumption is DEFERRED until the chain
     // delivers: consuming an override the moment its hook passes forces the
     // operator to re-approve the SAME violation repeatedly when a LATER hook
@@ -578,7 +589,7 @@ export class WorkflowHookEngine {
           attempts >= MAX_RETRY_ATTEMPTS ||
           (firstRetryAt !== undefined && elapsed >= MAX_RETRY_ELAPSED_MS)
         ) {
-          if (hookState?.localState.humanApproved === true) {
+          if (hookState && approvalMatchesAction(hookState)) {
             // Operator approved the terminal ceiling stop: let the hook run
             // (the approval must not wait out the remaining backoff). The
             // one-shot consumption is DEFERRED until the chain delivers,
@@ -670,7 +681,7 @@ export class WorkflowHookEngine {
         executionLog.push({ hookId, flow: 'stop', reason, timestamp: Date.now() });
         break;
       }
-      const approvalPending = hookState?.localState.humanApproved === true;
+      const approvalPending = !!hookState && approvalMatchesAction(hookState);
       // Token identifying WHICH approval was observed (re-approvals stamp a
       // fresh humanApprovedAt): the delivery-time consume accepts only this
       // approval — a newer approval granted to a different action/violation
@@ -948,11 +959,33 @@ export class WorkflowHookEngine {
     const blockingBinding = sorted.find((b) => b.hookId === (terminal?.hookId ?? retry?.hookId));
 
     if (terminal) {
+      // Stamp the stop with THIS action's identity: the approve RPC copies
+      // it into __approvedActionKey, and the override gates above bypass a
+      // stop only when both match — an approval is per (run, hook, ACTION),
+      // so a different action reaching the same hook after the operator
+      // approved a displayed stop cannot spend that override on its own
+      // violation. Recorded via stateUpdates so it persists with the stop.
+      const stampedUpdates = [...stateUpdates];
+      const stampIdx = stampedUpdates.findIndex((u) => u.hookId === terminal.hookId);
+      if (stampIdx >= 0) {
+        stampedUpdates[stampIdx] = {
+          ...stampedUpdates[stampIdx],
+          state: {
+            ...stampedUpdates[stampIdx].state,
+            __blockedActionKey: actionIdentity,
+          },
+        };
+      } else {
+        stampedUpdates.push({
+          hookId: terminal.hookId,
+          state: { __blockedActionKey: actionIdentity },
+        });
+      }
       return {
         decision: 'stop',
         finalParams: currentParams,
         followUpRequests: [],
-        stateUpdates,
+        stateUpdates: stampedUpdates,
         executionLog,
         userState: {
           status: 'blocked',
@@ -2312,7 +2345,7 @@ function sameRetryableActionOwner(left: HookActionMeta, right: HookActionMeta): 
   );
 }
 
-function buildRetryableActionKey(
+export function buildRetryableActionKey(
   methodName: string,
   args: Record<string, unknown>,
   meta: HookActionMeta

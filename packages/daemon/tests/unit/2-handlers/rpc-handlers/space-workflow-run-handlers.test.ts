@@ -1433,6 +1433,71 @@ describe('space-workflow-run-handlers', () => {
     });
   });
 
+  describe('spaceWorkflowRun.retryHook — stale-snapshot guard', () => {
+    it('rejects a retry when the current state is a terminal stop', async () => {
+      // The UI shows a retrying snapshot, but a concurrent timer already
+      // re-evaluated the hook to stop — overwriting would hide the
+      // actionable blocked banner and re-arm nothing.
+      setup({
+        hookState: {
+          runId: 'run-1',
+          hookId: 'pr_ready',
+          version: 6,
+          localState: {},
+          lastFlow: 'stop',
+          lastReason: 'Hook retry limit exceeded.',
+          retryCount: 7,
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      });
+      await expect(
+        call('spaceWorkflowRun.retryHook', { runId: 'run-1', hookId: 'pr_ready' })
+      ).rejects.toThrow(/lastFlow is now "stop"/);
+      expect(hookStateRepo.patches).toHaveLength(0);
+    });
+
+    it('rejects a retry when no hook state exists', async () => {
+      setup({ hookState: null });
+      await expect(
+        call('spaceWorkflowRun.retryHook', { runId: 'run-1', hookId: 'pr_ready' })
+      ).rejects.toThrow(/has not run yet/);
+    });
+
+    it('loses the version race to a concurrent timer write instead of overwriting it', async () => {
+      setup({
+        hookState: {
+          runId: 'run-1',
+          hookId: 'pr_ready',
+          version: 5,
+          localState: {},
+          lastFlow: 'retry',
+          lastReason: 'Waiting for GitHub mergeability.',
+          retryCount: 3,
+          nextRetryAt: 9_999,
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      });
+      // A timer write lands BETWEEN the handler's read and its update: bump
+      // the version on the next get() — the version-guarded update must
+      // fail rather than refresh and overwrite whatever landed.
+      let bumped = false;
+      const originalGet = hookStateRepo.repo.get.bind(hookStateRepo.repo);
+      hookStateRepo.repo.get = mock(() => {
+        const snapshot = originalGet();
+        if (snapshot && !bumped) {
+          bumped = true;
+          return { ...snapshot, version: snapshot.version + 1 };
+        }
+        return snapshot;
+      }) as unknown as typeof hookStateRepo.repo.get;
+      await expect(
+        call('spaceWorkflowRun.retryHook', { runId: 'run-1', hookId: 'pr_ready' })
+      ).rejects.toThrow(/version conflict/i);
+    });
+  });
+
   describe('spaceWorkflowRun.retryHook — ceiling recovery clears', () => {
     it('clears the ceiling stamp, terminal marker, and queued-action map', async () => {
       setup({
