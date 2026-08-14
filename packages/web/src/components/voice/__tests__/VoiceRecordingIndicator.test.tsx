@@ -44,7 +44,13 @@ vi.mock('../../../lib/signals.ts', () => ({
       return routerState.overlaySessionId;
     },
   },
+  spaceOverlayPendingAgentNameSignal: {
+    get value() {
+      return routerState.overlayPending;
+    },
+  },
 }));
+const closeOverlayHistory = vi.hoisted(() => vi.fn());
 vi.mock('../../../lib/router.ts', () => ({
   navigateToSession: vi.fn((sessionId: string) => {
     routerState.navigatedTo = sessionId;
@@ -52,10 +58,15 @@ vi.mock('../../../lib/router.ts', () => ({
   navigateToSpaceSession: vi.fn((spaceId: string, sessionId: string) => {
     routerState.navigatedSpace = { spaceId, sessionId };
   }),
+  closeOverlayHistory,
 }));
 
 import { VoiceRecordingIndicator } from '../VoiceRecordingIndicator.tsx';
-import { navigateToSession, navigateToSpaceSession } from '../../../lib/router.ts';
+import {
+  closeOverlayHistory,
+  navigateToSession,
+  navigateToSpaceSession,
+} from '../../../lib/router.ts';
 
 describe('VoiceRecordingIndicator', () => {
   beforeEach(() => {
@@ -66,7 +77,9 @@ describe('VoiceRecordingIndicator', () => {
     routerState.spaceSessionId = null;
     routerState.spaceId = null;
     routerState.overlaySessionId = null;
+    routerState.overlayPending = null;
     routerState.navigatedTo = null;
+    closeOverlayHistory.mockClear();
     routerState.navigatedSpace = null;
   });
 
@@ -161,6 +174,30 @@ describe('VoiceRecordingIndicator', () => {
     fireEvent.click(screen.getByTestId('voice-recording-elsewhere'));
     expect(navigateToSpaceSession).toHaveBeenCalledWith('space-9', 'space-session-2');
     expect(navigateToSession).not.toHaveBeenCalled();
+  });
+
+  it('shows the chip when a PENDING overlay covers the recording base session', () => {
+    voiceRecorderStore.isRecording.value = true;
+    voiceRecorderStore.recordingSessionId.value = 'space-session-1';
+    routerState.currentSessionId = null;
+    routerState.spaceSessionId = 'space-session-1';
+    routerState.spaceId = 'space-9';
+    routerState.overlayPending = 'pending-agent';
+    render(<VoiceRecordingIndicator />);
+    expect(screen.getByTestId('voice-recording-elsewhere')).toBeTruthy();
+  });
+
+  it('closes an open overlay before returning to the recording session', () => {
+    voiceRecorderStore.isRecording.value = true;
+    voiceRecorderStore.recordingSessionId.value = 'space-session-2';
+    routerState.currentSessionId = null;
+    routerState.spaceSessionId = 'space-session-1';
+    routerState.spaceId = 'space-9';
+    routerState.overlaySessionId = 'overlay-session-7';
+    render(<VoiceRecordingIndicator />);
+    fireEvent.click(screen.getByTestId('voice-recording-elsewhere'));
+    expect(closeOverlayHistory).toHaveBeenCalledTimes(1);
+    expect(navigateToSpaceSession).toHaveBeenCalledWith('space-9', 'space-session-2');
   });
 
   it('renders when no session is displayed but a recording is live', () => {

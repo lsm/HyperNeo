@@ -13,6 +13,7 @@ import { useEffect, useRef } from 'preact/hooks';
 import type { MessageDeliveryMode, MessageImage } from '@hyperneo/shared';
 import { Portal } from '../ui/Portal';
 import { setupFocusTrap } from '../ui/Modal';
+import { VoiceRecordingIndicator } from '../voice/VoiceRecordingIndicator.tsx';
 import ChatContainer from '../../islands/ChatContainer';
 import { SessionStore } from '../../lib/session-store';
 import type { SpaceOverlayTaskContext } from '../../lib/signals';
@@ -223,6 +224,11 @@ export function AgentOverlayChat({
           onClick={onClose}
           aria-hidden="true"
         />
+
+        {/* Global recording-elsewhere chip INSIDE the panel's focus boundary:
+            keyboard users must be able to Tab to Return while the overlay's
+            focus trap is active. */}
+        <VoiceRecordingIndicator />
 
         {/* Slide-over panel */}
         <div
