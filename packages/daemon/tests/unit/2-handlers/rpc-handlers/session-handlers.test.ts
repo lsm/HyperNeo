@@ -836,4 +836,16 @@ describe('Session RPC Handlers — session.get voice draft merge', () => {
     await handler!({ sessionId: 's1' }, {});
     expect(sessionManager.updateSession).not.toHaveBeenCalled();
   });
+
+  it('retains the pending transcript when a full draft leaves no room for it', async () => {
+    const fullDraft = 'x'.repeat(100_000);
+    const handler = await setup({ inputDraft: fullDraft, inputDraftVoicePending: 'hello' });
+    await handler!({ sessionId: 's1' }, {});
+    // The draft update lands, but the staging field is NOT cleared — clearing
+    // it here would deterministically lose the transcript the client's toast
+    // promised was saved. It retries on the next get.
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: { inputDraft: fullDraft },
+    });
+  });
 });

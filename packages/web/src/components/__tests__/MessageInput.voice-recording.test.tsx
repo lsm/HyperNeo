@@ -187,9 +187,15 @@ describe('MessageInput — recording UI', () => {
       })
     );
 
-    const onSend = vi.fn(async () => {});
-    // The user already typed some draft text before voice-Sending.
+    const onSend = vi.fn(async () => true);
+    // The user already typed some draft text before voice-Sending. The server
+    // draft still matches it, so the post-send clear applies.
     draft.value = 'note:';
+    hubRequest.mockImplementation(async (method: string, payload?: unknown) => {
+      if (method === 'voice.transcribe') return transcribeRequest(method, payload);
+      if (method === 'session.get') return { session: { metadata: { inputDraft: 'note:' } } };
+      return {};
+    });
     const { unmount } = render(<MessageInput sessionId="s1" onSend={onSend} />);
 
     fireEvent.click(screen.getByLabelText('Stop, transcribe and send'));
@@ -201,20 +207,16 @@ describe('MessageInput — recording UI', () => {
     resolveTranscribe({ text: 'hello world' });
 
     // send mode delivers the FULL click-time payload (draft + transcript
-    // spliced at the captured caret), not just the transcript. This harness
-    // never captures a caret (no input events fire), so the insertion point
-    // defaults to the start of the draft.
-    await waitFor(() => {
-      const sendCall = hubRequest.mock.calls.find(([m]) => m === 'message.send');
-      expect(sendCall).toBeTruthy();
-      expect(sendCall[1]).toEqual({
-        sessionId: 's1',
-        content: 'hello world note:',
-        deliveryMode: 'immediate',
-      });
-    });
+    // spliced at the captured caret) through the composer's OWN captured
+    // onSend — so worktree-choice setup and task-composer routing apply, not a
+    // bare message.send RPC. This harness never captures a caret (no input
+    // events fire), so the insertion point defaults to the start of the draft.
+    await waitFor(() =>
+      expect(onSend).toHaveBeenCalledWith('hello world note:', undefined, 'immediate')
+    );
     // The consumed click-time draft is cleared server-side (parity with the
-    // mounted submit clearing the composer) so reopening doesn't re-send it.
+    // mounted submit clearing the composer) because the persisted draft still
+    // matches the click-time snapshot — so reopening doesn't re-send it.
     await waitFor(() => {
       const clearCall = hubRequest.mock.calls.find(
         ([m, p]) => m === 'session.update' && p && p.metadata && p.metadata.inputDraft === null
@@ -222,9 +224,12 @@ describe('MessageInput — recording UI', () => {
       expect(clearCall).toBeTruthy();
     });
     await waitFor(() => expect(toast.info).toHaveBeenCalledWith('Voice transcript sent'));
-    // The mounted composer's onSend is bypassed (no composer to drive it); the
-    // transcript is delivered directly via message.send instead.
-    expect(onSend).not.toHaveBeenCalled();
+
+    // Restore the default dispatch so later tests aren't affected.
+    hubRequest.mockImplementation(async (method: string, ...rest: unknown[]) => {
+      if (method === 'voice.transcribe') return transcribeRequest(method, ...rest);
+      return {};
+    });
   });
 
   it('retains the transcript in the pending draft instead of sending when the composer is at the character limit', async () => {
@@ -235,7 +240,7 @@ describe('MessageInput — recording UI', () => {
       })
     );
 
-    const onSend = vi.fn(async () => {});
+    const onSend = vi.fn(async () => true);
     // Draft already at the composer's 100k character limit.
     draft.value = 'x'.repeat(100_000);
     const { unmount } = render(<MessageInput sessionId="s1" onSend={onSend} />);
@@ -253,8 +258,6 @@ describe('MessageInput — recording UI', () => {
         'Composer draft is full — voice transcript saved to the session draft'
       )
     );
-    const sendCall = hubRequest.mock.calls.find(([m]) => m === 'message.send');
-    expect(sendCall).toBeFalsy();
     const stageCall = hubRequest.mock.calls.find(([m]) => m === 'session.appendVoiceDraft');
     expect(stageCall).toBeTruthy();
     expect(stageCall[1]).toEqual({ sessionId: 's1', text: 'hello world' });
@@ -299,15 +302,11 @@ describe('MessageInput — recording UI', () => {
         resolveTranscribe = resolve;
       })
     );
-    // The send RPC fails (e.g. socket dropped) — the toast must NOT claim
-    // success, and there is no mounted composer to fall back to.
-    hubRequest.mockImplementation(async (method: string, payload?: unknown) => {
-      if (method === 'voice.transcribe') return transcribeRequest(method, payload);
-      if (method === 'message.send') throw new Error('boom');
-      return {};
+    // The composer's own send path fails (e.g. socket dropped) — the toast
+    // must NOT claim success, and there is no mounted composer to retry in.
+    const onSend = vi.fn(async () => {
+      throw new Error('boom');
     });
-
-    const onSend = vi.fn(async () => {});
     const { unmount } = render(<MessageInput sessionId="s1" onSend={onSend} />);
 
     fireEvent.click(screen.getByLabelText('Stop, transcribe and send'));
@@ -322,13 +321,11 @@ describe('MessageInput — recording UI', () => {
       )
     );
     expect(toast.info).not.toHaveBeenCalled();
-    expect(onSend).not.toHaveBeenCalled();
-
-    // Restore the default dispatch so later tests aren't affected.
-    hubRequest.mockImplementation(async (method: string, ...rest: unknown[]) => {
-      if (method === 'voice.transcribe') return transcribeRequest(method, ...rest);
-      return {};
-    });
+    // The draft is NOT cleared when the send failed — the text is still staged.
+    const clearCall = hubRequest.mock.calls.find(
+      ([m, p]) => m === 'session.update' && p && p.metadata && p.metadata.inputDraft === null
+    );
+    expect(clearCall).toBeFalsy();
   });
 
   it('Cancel discards the recording without transcribing', async () => {

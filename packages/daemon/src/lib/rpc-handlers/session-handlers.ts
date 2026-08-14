@@ -362,12 +362,21 @@ export function setupSessionHandlers(
     // no window for a stale client snapshot or a cancelled debounce to lose the
     // transcript. The client just reads inputDraft, already merged. See
     // session.appendVoiceDraft for how the pending field is populated.
+    // The staging field is cleared ONLY when the entire staged value merged: a
+    // draft already at the character limit truncates it, and clearing then
+    // would deterministically lose the transcript the client's toast promised
+    // was saved — retain it instead so it survives until there is room.
     const beforeMerge = agentSession.getSessionData();
     const voicePending = beforeMerge.metadata?.inputDraftVoicePending;
     if (voicePending && voicePending.trim()) {
-      const merged = appendDraftText(beforeMerge.metadata?.inputDraft ?? '', voicePending);
+      const draft = beforeMerge.metadata?.inputDraft ?? '';
+      const merged = appendDraftText(draft, voicePending);
+      const fullyMerged =
+        merged === `${draft}${voicePending}` || merged === `${draft} ${voicePending}`;
       await sessionManager.updateSession(targetSessionId, {
-        metadata: { inputDraft: merged, inputDraftVoicePending: null },
+        metadata: fullyMerged
+          ? { inputDraft: merged, inputDraftVoicePending: null }
+          : { inputDraft: merged },
       } as Partial<Session>);
     }
 

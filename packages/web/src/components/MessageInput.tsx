@@ -105,9 +105,15 @@ const COMPOSER_CHAR_LIMIT = 100000;
  * selection — a selection gets replaced), applying the spacing/CJK rules at
  * both boundaries and capping to the composer character limit. Shared by the
  * live mounted insert and the unmounted delivery so both place the transcript
- * identically.
+ * identically. `fullyInserted` reports whether the whole transcript fit —
+ * never infer that from the result string, which may already contain the same
+ * phrase elsewhere in the draft.
  */
-function buildTranscriptInsertion(before: string, after: string, transcript: string): string {
+function buildTranscriptInsertion(
+  before: string,
+  after: string,
+  transcript: string
+): { value: string; fullyInserted: boolean } {
   const needsLeadingSpace =
     before.length > 0 &&
     !suppressLeadingSpace(before) &&
@@ -123,7 +129,10 @@ function buildTranscriptInsertion(before: string, after: string, transcript: str
   const inserted = `${needsLeadingSpace ? ' ' : ''}${transcript}${needsTrailingSpace ? ' ' : ''}`;
   const remaining = COMPOSER_CHAR_LIMIT - before.length - after.length;
   const cappedInserted = remaining <= 0 ? '' : inserted.slice(0, remaining);
-  return before + cappedInserted + after;
+  return {
+    value: before + cappedInserted + after,
+    fullyInserted: cappedInserted === inserted,
+  };
 }
 
 function getPlaceholderForSessionType(sessionType?: SessionType): string {
@@ -431,7 +440,7 @@ export default function MessageInput({
         Math.max(selectionStart, lastSelectionEndRef.current);
       const before = currentContent.slice(0, selectionStart);
       const after = currentContent.slice(selectionEnd);
-      const nextValue = buildTranscriptInsertion(before, after, transcript);
+      const { value: nextValue } = buildTranscriptInsertion(before, after, transcript);
       setContent(nextValue);
       const nextCursor = selectionStart + (nextValue.length - before.length - after.length);
       setTimeout(() => {
@@ -502,11 +511,18 @@ export default function MessageInput({
       transcript: string,
       mode: 'stay' | 'send' | 'queue',
       // Snapshot of the composer payload taken at click time (while still
-      // mounted): the draft split at the captured caret/selection, plus
-      // images. The unmounted delivery can't read the live
-      // draft/attachments, so it sends what was here when the user clicked,
-      // matching the mounted path that submits the complete composer.
-      payload: { before: string; after: string; images?: MessageImage[] }
+      // mounted): the draft split at the captured caret/selection, images, and
+      // the composer's own bound `onSend`. The unmounted delivery can't read
+      // the live draft/attachments — it sends what was here when the user
+      // clicked, through the SAME send function the mounted path uses (so
+      // worktree-choice setup, task-composer routing, and error handling all
+      // apply), rather than a bare message.send RPC that would bypass them.
+      payload: {
+        before: string;
+        after: string;
+        images?: MessageImage[];
+        send: MessageInputProps['onSend'];
+      }
     ): Promise<{ ok: boolean; message: string }> => {
       const hub = connectionManager.getHubIfConnected();
       if (!hub) return { ok: false, message: '' };
@@ -527,9 +543,15 @@ export default function MessageInput({
       // Splice the transcript at the captured selection like the mounted path;
       // if the composer was already at its character limit the transcript
       // cannot fit — do not silently send an incomplete payload, retain the
-      // transcript in the pending draft field instead.
-      const content = buildTranscriptInsertion(payload.before, payload.after, transcript);
-      if (!content.includes(transcript)) {
+      // transcript in the pending draft field instead. fullyInserted comes
+      // from the insertion helper, not a substring search of the draft (which
+      // the same phrase elsewhere in the draft would defeat).
+      const { value: content, fullyInserted } = buildTranscriptInsertion(
+        payload.before,
+        payload.after,
+        transcript
+      );
+      if (!fullyInserted) {
         try {
           await stageToDraft();
           return {
@@ -541,27 +563,34 @@ export default function MessageInput({
         }
       }
       const deliveryMode: MessageDeliveryMode = mode === 'queue' ? 'defer' : 'immediate';
+      let sent: void | boolean;
       try {
-        await hub.request('message.send', {
-          sessionId: targetSessionId,
-          content,
-          images: payload.images,
-          deliveryMode,
-        });
+        sent = await payload.send(content, payload.images, deliveryMode);
       } catch {
         return { ok: false, message: '' };
       }
+      if (sent === false) return { ok: false, message: '' };
       // Consume the click-time draft so reopening the session doesn't show —
       // and re-send — text that was just delivered. Parity with the mounted
-      // submit, which clears the composer. Best-effort: a failure here doesn't
-      // undo the send above.
-      try {
-        await hub.request('session.update', {
-          sessionId: targetSessionId,
-          metadata: { inputDraft: null },
-        });
-      } catch {
-        /* ignore — the send already succeeded */
+      // submit, which clears the composer. Clear ONLY if the persisted draft
+      // still matches the click-time snapshot: if the user edited it after we
+      // snapshotted (reopened the session, another client), their newer text
+      // wins. Best-effort — a failure here doesn't undo the send.
+      if ((payload.before + payload.after).trim().length > 0) {
+        try {
+          const response = await hub.request<{
+            session?: { metadata?: { inputDraft?: string | null } };
+          }>('session.get', { sessionId: targetSessionId });
+          const persisted = response.session?.metadata?.inputDraft ?? '';
+          if (persisted === payload.before + payload.after) {
+            await hub.request('session.update', {
+              sessionId: targetSessionId,
+              metadata: { inputDraft: null },
+            });
+          }
+        } catch {
+          /* ignore — the send already succeeded */
+        }
       }
       return {
         ok: true,
@@ -602,6 +631,10 @@ export default function MessageInput({
         before: snapshotContent.slice(0, snapshotStart),
         after: snapshotContent.slice(snapshotEnd),
         images: getImagesForSend(),
+        // The composer's own send function — invoked post-unmount through this
+        // closure, it reproduces the FULL mounted send semantics (worktree
+        // choice setup, task-composer routing) instead of a bare RPC.
+        send: onSend,
       };
       setIsTranscribing(true);
       try {
@@ -666,6 +699,7 @@ export default function MessageInput({
       deliverUnmountedTranscript,
       getImagesForSend,
       isTranscribing,
+      onSend,
       voiceRecorder,
       sessionId,
     ]
