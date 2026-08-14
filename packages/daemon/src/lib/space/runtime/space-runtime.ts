@@ -2369,12 +2369,27 @@ export class SpaceRuntime {
           return;
         }
         const eventRecord = store.getById(payload.eventId);
+        // A session mid-interrupt cannot replay a deferred row (P2): park the
+        // delivery and retry once the interrupt resolves to a true idle.
+        if (
+          this.parkDeliveryForInterruptedSession(
+            preparedTarget,
+            payload,
+            deliveryKey,
+            eventRecord?.createdAt ?? Date.now()
+          )
+        ) {
+          return;
+        }
         // External events ALWAYS deliver on the "next" boundary: insert when
         // idle, defer/queue when busy and deliver at the next idle point — never
         // inject mid-work. Force 'defer' and let the inject layer
         // (injectMessageIntoSession) decide idle→deliver-now vs busy→replay-at-
         // idle. resolveIncludeCurrentDeliveryMode defaulted to 'immediate' for
         // fresh deliveries, which derailed an actively-processing session.
+        // Known gap deferred to message-delivery-v2 (task #951): the replayed
+        // turn's completion is not tracked by the node execution (the one-shot
+        // completion callback fires on the pre-replay idle).
         await this.flushPendingNodeQueueAsync(preparedTarget, deliveryKey, {
           event: payload,
           deliveryKey,
@@ -2439,6 +2454,17 @@ export class SpaceRuntime {
         }
         if (activatedTarget?.sessionId && this.isTargetSessionLive(activatedTarget.sessionId)) {
           const eventRecord = store.getById(payload.eventId);
+          // Same mid-interrupt park as the pre-activation branch above (P2).
+          if (
+            this.parkDeliveryForInterruptedSession(
+              activatedTarget,
+              payload,
+              deliveryKey,
+              eventRecord?.createdAt ?? Date.now()
+            )
+          ) {
+            return;
+          }
           await this.flushPendingNodeQueueAsync(activatedTarget, deliveryKey, {
             event: payload,
             deliveryKey,
@@ -3811,6 +3837,40 @@ export class SpaceRuntime {
 
   private isTargetSessionLive(sessionId: string): boolean {
     return this.config.taskAgentManager?.isSessionAlive(sessionId) ?? false;
+  }
+
+  /**
+   * Whether the target's live session is mid-interrupt. A deferred row handed
+   * to a session in this state is never replayed: InterruptHandler completes
+   * via `setIdle` without publishing `query.trigger` (the trigger `finishTurn`
+   * uses to drain deferred rows), so a defer handoff would mark the delivery
+   * delivered while the row sits unconsumed indefinitely.
+   */
+  private isTargetSessionInterrupted(sessionId: string): boolean {
+    const session = this.config.taskAgentManager?.getAgentSessionById?.(sessionId);
+    return session?.getProcessingState().status === 'interrupted';
+  }
+
+  /**
+   * Park an external-event delivery when its target's live session is
+   * mid-interrupt (P2): queue it for the pending node and arm a retry instead
+   * of handing it off in 'defer' mode. The interrupt resolves to a true idle
+   * within seconds, and the retry delivers at that idle boundary. Returns true
+   * when the delivery was parked — the caller must not also hand it off.
+   */
+  private parkDeliveryForInterruptedSession(
+    target: WorkflowSubscriptionTarget,
+    payload: ExternalEventPublishedPayload,
+    deliveryKey: string,
+    createdAt: number
+  ): boolean {
+    if (!target.sessionId || !this.isTargetSessionInterrupted(target.sessionId)) return false;
+    this.queueForPendingNode(target, payload, deliveryKey, 'defer', createdAt);
+    this.scheduleActivationRetry(target, payload, deliveryKey, 'target_session_interrupted', {
+      preserveAttemptCount: true,
+      markFailure: false,
+    });
+    return true;
   }
 
   /**

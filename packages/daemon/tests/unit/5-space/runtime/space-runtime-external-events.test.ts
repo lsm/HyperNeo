@@ -86,6 +86,8 @@ function makeEvent(overrides: Partial<ExternalEvent> = {}): ExternalEvent {
 
 class MockTaskAgentManager {
   alive = new Set<string>();
+  /** sessionId → processing-state status (unset = not interrupted). */
+  processingStates = new Map<string, string>();
   spawned: string[] = [];
   activationCalls: Array<{
     taskId: string;
@@ -101,8 +103,9 @@ class MockTaskAgentManager {
     return this.alive.has(sessionId);
   }
 
-  getAgentSessionById(_sessionId: string): null {
-    return null;
+  getAgentSessionById(sessionId: string): { getProcessingState: () => { status: string } } | null {
+    const status = this.processingStates.get(sessionId);
+    return status === undefined ? null : { getProcessingState: () => ({ status }) };
   }
 
   async rehydrate(): Promise<void> {}
@@ -1080,6 +1083,47 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(idleEvent.id)?.state).toBe('delivered');
     expect(eventStore.listDeliveries(busyEvent.id)[0]!.taskId).toBe(busyTask.id);
     expect(eventStore.listDeliveries(idleEvent.id)[0]!.taskId).toBe(idleTask.id);
+  });
+
+  test('keeps an external event pending while the live session is mid-interrupt, delivering after the interrupt resolves', async () => {
+    // P2 regression guard: InterruptHandler completes via setIdle WITHOUT
+    // publishing query.trigger, so a deferred row handed to a mid-interrupt
+    // session is never replayed — the delivery would be marked delivered while
+    // the row sits unconsumed indefinitely. The runtime must park the delivery
+    // (queue + retry) instead of handing it off in 'defer' mode, then deliver
+    // at the true idle once the interrupt resolves.
+    const { run } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-interrupted',
+      startedAt: Date.now(),
+    });
+    tam.alive.add('session-interrupted');
+    tam.processingStates.set('session-interrupted', 'interrupted');
+
+    const event = makeEvent();
+    await eventService.publish(event);
+
+    // Not handed off while mid-interrupt: no injection, delivery still pending.
+    expect(injected).toHaveLength(0);
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('pending');
+    // Parked, not failed — preserveAttemptCount + markFailure:false keep the
+    // pending row owned by the in-memory queue with a null failureReason.
+    expect(delivery.failureReason).toBeNull();
+
+    // The interrupt resolves — the session reaches a true idle.
+    tam.processingStates.set('session-interrupted', 'idle');
+
+    // The parked retry fires and delivers at the true idle boundary.
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-interrupted');
+    expect(injected[0]!.deliveryMode).toBe('defer');
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+    await runtime.stop();
   });
 
   test('a shared-PR synchronize (commit push) does NOT stamp any co-subscriber lastActivityAt', async () => {
