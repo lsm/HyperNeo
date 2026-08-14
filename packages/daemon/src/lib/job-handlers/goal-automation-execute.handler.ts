@@ -526,11 +526,17 @@ const QUANTITATIVE_OUTCOME_RE =
   /\b\d+(?:\.\d+)?\s*(?:ms|s|sec|seconds?|min|minutes?|hours?|h|b|kb|mb|gb|tb|%|x|fps|rps|qps|req\/s|us|µs|ns)(?![a-z0-9])[^.;:!?]{0,24}\b(?:to|→|-|–)\s*\d+(?:\.\d+)?/gi;
 
 function hasQuantitativeOutcome(text: string): boolean {
-  // Every measured change is examined — an earlier negated one ("no change
-  // from 800 ms to 800 ms") must not hide a genuine later result.
+  // Every measured change is examined with the same prefix AND suffix
+  // qualifier checks as keyword outcomes — an earlier negated one ("no change
+  // from 800 ms to 800 ms") must not hide a genuine later result, and a
+  // prospective target ("800 ms to 200 ms is planned") must not count.
   for (const match of text.matchAll(QUANTITATIVE_OUTCOME_RE)) {
     const prefix = text.slice(Math.max(0, match.index - 48), match.index);
-    if (!NON_AFFIRMATIVE_PREFIX_RE.test(prefix)) return true;
+    if (NON_AFFIRMATIVE_PREFIX_RE.test(prefix)) continue;
+    const end = match.index + match[0].length;
+    const suffix = text.slice(end, end + 48);
+    if (NON_AFFIRMATIVE_SUFFIX_RE.test(suffix)) continue;
+    return true;
   }
   return false;
 }
@@ -549,11 +555,13 @@ const NON_AFFIRMATIVE_PREFIX_RE =
 /**
  * Suffixes that make a matched outcome reference still pending, negated, or
  * prospective — "PR #123 is still pending", "tests passing tomorrow",
- * "merge waiting on review". Like the prefix, the qualifier must sit within
- * the same clause after the match.
+ * "800 ms to 200 ms is planned", "measured, still pending validation".
+ * The scan may cross commas/semicolons/colons (a qualifier in a following
+ * coordinate clause still applies) but stops at sentence end or a newline,
+ * so "tests passed. Still improving." keeps its affirmative match.
  */
 const NON_AFFIRMATIVE_SUFFIX_RE =
-  /^[^.!?;:,\n]{0,32}\b(?:not|never|no|hasn'?t|haven'?t|hadn'?t|didn'?t|doesn'?t|won'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|cannot|without|yet|still|pending|wait(?:ing)?|queued|incomplete|unfinished|tomorrow|scheduled|planned|will|would|should|could|might)\b/i;
+  /^[^.!?\n]{0,32}\b(?:not|never|no|hasn'?t|haven'?t|hadn'?t|didn'?t|doesn'?t|won'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|cannot|without|yet|still|pending|wait(?:ing)?|queued|incomplete|unfinished|tomorrow|scheduled|planned|will|would|should|could|might|goal|target(?:ed)?|aim)\b/i;
 
 /**
  * Whether the selection carries an affirmative outcome signal (see
@@ -617,7 +625,7 @@ function recordSelfNagNoOpNote(
     previousState: null,
     newState: null,
     diff: null,
-    note: `Self-nag retrospective skipped: evidence-quality preflight is low (score ${preflight.score}/${preflight.maxScore}) with no substantive task, artifact, or metric evidence. No episode or review task generated.`,
+    note: `Self-nag retrospective skipped: evidence-quality preflight is ${preflight.level} (score ${preflight.score}/${preflight.maxScore}) and the selection carries no affirmative outcome signal — every evidence row is a manual note or an empty session trace diagnostic. No episode or review task generated.`,
   });
 }
 

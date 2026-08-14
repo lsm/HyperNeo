@@ -3198,6 +3198,7 @@ describe('handleGoalAutomationExecute', () => {
       createdAt: 31,
     });
     let episodeCreated = false;
+    let goalEventRepoRef: SpaceGoalEventRepository | null = null;
 
     const result = await handleGoalAutomationExecute(
       createAutomationJob({
@@ -3213,7 +3214,11 @@ describe('handleGoalAutomationExecute', () => {
         taskRepo,
         evolutionRepo,
         cursorRepo,
-        goalEventRepo: new SpaceGoalEventRepository(db as never),
+        goalEventRepo: ((): Pick<SpaceGoalEventRepository, 'create' | 'listByGoal'> => {
+          const repo = new SpaceGoalEventRepository(db as never);
+          goalEventRepoRef = repo;
+          return repo;
+        })(),
         episodeService: {
           createFromEvidence: async () => {
             episodeCreated = true;
@@ -3243,6 +3248,11 @@ describe('handleGoalAutomationExecute', () => {
     expect(result).toMatchObject({ skipped: true, skipReason: 'low_evidence_noop' });
     expect(episodeCreated).toBe(false);
     expect(evolutionRepo.listEpisodes(scope.id)).toHaveLength(0);
+    // The persisted no-op note must report the actual preflight level, not
+    // claim "low" for a medium-preflight thin batch.
+    const note = goalEventRepoRef?.listByGoal(goal.id)[0]?.note ?? '';
+    expect(note).toContain('preflight is medium');
+    expect(note).not.toContain('preflight is low');
   });
 
   it('still produces an episode when a second quantitative change is genuine', async () => {
@@ -3310,6 +3320,68 @@ describe('handleGoalAutomationExecute', () => {
     expect(result.skipped).toBe(false);
     expect(result.episodeId).toBeString();
     expect(evolutionRepo.listEpisodes(scope.id)).toHaveLength(1);
+  });
+
+  it('skips a manual note whose quantitative change is a planned target', async () => {
+    const goal = goalRepo.create({ spaceId, title: 'Quantified target', type: 'recurring' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Quantified target',
+      objective: 'A measured target is not an achieved result',
+      policy: { automation: { selfNagCronExpression: '0 * * * *' } },
+    });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'manual_note',
+      sourceId: null,
+      summary: 'Benchmark target: 800 ms to 200 ms is planned',
+      createdAt: 30,
+    });
+    let episodeCreated = false;
+
+    const result = await handleGoalAutomationExecute(
+      createAutomationJob({
+        goalId: goal.id,
+        scopeId: scope.id,
+        triggerKind: 'self_nag',
+        triggerKey: 'schedule-quantified-target',
+        reason: 'self_nag',
+        scheduleId: 'schedule-quantified-target',
+      }),
+      {
+        goalRepo,
+        taskRepo,
+        evolutionRepo,
+        cursorRepo,
+        goalEventRepo: new SpaceGoalEventRepository(db as never),
+        episodeService: {
+          createFromEvidence: async () => {
+            episodeCreated = true;
+            throw new Error('should not create episode for a planned quantitative target');
+          },
+          preflightEvidence: () =>
+            makePreflight({
+              level: 'low',
+              score: 0,
+              requiresConfirmation: true,
+              counts: {
+                total: 1,
+                manualNotes: 1,
+                taskResults: 0,
+                workflowArtifacts: 0,
+                metricSnapshots: 0,
+                outcomes: 0,
+              },
+            }),
+        },
+      }
+    );
+
+    expect(result).toMatchObject({ skipped: true, skipReason: 'low_evidence_noop' });
+    expect(episodeCreated).toBe(false);
+    expect(evolutionRepo.listEpisodes(scope.id)).toHaveLength(0);
   });
 
   it('skips a manual note whose metadata only has non-affirmative key names', async () => {
