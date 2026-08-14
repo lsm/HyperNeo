@@ -117,7 +117,11 @@ vi.mock('../../lib/connection-manager', () => ({
 }));
 
 const enqueueTranscript = vi.hoisted(() => vi.fn());
-vi.mock('../../lib/voice/voice-transcript-outbox.ts', () => ({ enqueueTranscript }));
+const voiceTranscriptLandedSignal = vi.hoisted(() => ({ value: null }));
+vi.mock('../../lib/voice/voice-transcript-outbox.ts', () => ({
+  enqueueTranscript,
+  voiceTranscriptLandedSignal,
+}));
 
 import { toast } from '../../lib/toast.ts';
 import { connectionManager } from '../../lib/connection-manager.ts';

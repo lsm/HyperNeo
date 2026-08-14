@@ -605,15 +605,19 @@ export default function MessageInput({
           await stageToDraft();
           return { ok: true, message };
         } catch {
-          // The staging RPC needs a live socket — when it's down (or refused),
-          // park the transcript in the durable localStorage outbox instead of
-          // dropping the only copy. It replays through the same append RPC on
-          // reconnect, deduplicated by the daemon.
-          enqueueTranscript(targetSessionId, transcript);
-          return {
-            ok: true,
-            message: 'Voice transcript saved — will be delivered when reconnected',
-          };
+          // The staging RPC needs a live socket. A REFUSAL while the socket is
+          // still up (session gone, character limit) is permanent — enqueueing
+          // it as a disconnect would claim reconnect will deliver something it
+          // never can. Only when the socket is genuinely down do we park the
+          // transcript in the durable outbox for replay on reconnect.
+          if (!connectionManager.getHubIfConnected()) {
+            enqueueTranscript(targetSessionId, transcript);
+            return {
+              ok: true,
+              message: 'Voice transcript saved — will be delivered when reconnected',
+            };
+          }
+          return { ok: false, message: '' };
         }
       };
       if (mode === 'stay') {

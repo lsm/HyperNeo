@@ -11,6 +11,7 @@ import { renderHook, act } from '@testing-library/preact';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { useInputDraft } from '../useInputDraft.ts';
 import { connectionManager } from '../../lib/connection-manager.ts';
+import { voiceTranscriptLandedSignal } from '../../lib/voice/voice-transcript-outbox.ts';
 
 // Mock the connection manager
 vi.mock('../../lib/connection-manager.ts', () => ({
@@ -35,6 +36,7 @@ describe('useInputDraft', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
+    voiceTranscriptLandedSignal.value = null;
     // Default: no hub connected
     vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(null);
   });
@@ -252,6 +254,52 @@ describe('useInputDraft', () => {
 
       expect(mockHub.request).not.toHaveBeenCalled();
       expect(result.current.content).toBe('');
+    });
+
+    it('refreshes the mounted draft when the outbox lands a transcript for its session', async () => {
+      // The initial get sees no draft; the replay's get returns the landed one.
+      mockHub.request.mockResolvedValueOnce({ session: { metadata: { inputDraft: '' } } });
+      mockHub.request.mockResolvedValue({ session: { metadata: { inputDraft: 'transcript' } } });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      // The composer is mounted with an empty draft when the outbox replays.
+      expect(result.current.content).toBe('');
+
+      voiceTranscriptLandedSignal.value = { sessionId: 'session-1' };
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      // The replay triggered a second session.get, whose merge surfaced the
+      // landed transcript into the draft — no navigation required.
+      expect(mockHub.request).toHaveBeenCalledWith('session.get', { sessionId: 'session-1' });
+      expect(result.current.content).toBe('transcript');
+    });
+
+    it('does not clobber in-progress typing when a replay lands for its session', async () => {
+      mockHub.request.mockResolvedValue({
+        session: { metadata: { inputDraft: 'server text' } },
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      result.current.setContent('user typing');
+      voiceTranscriptLandedSignal.value = { sessionId: 'session-1' };
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      // The get overwrites the local signal — reloading over typing would lose
+      // keystrokes, so an idle-only refresh leaves the draft untouched.
+      expect(result.current.content).toBe('user typing');
     });
 
     it('does not apply a draft whose session.get resolved after the session changed', async () => {

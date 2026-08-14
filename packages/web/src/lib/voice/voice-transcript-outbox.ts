@@ -8,16 +8,22 @@
  * needs a live socket; if the connection drops in the moment of delivery, the
  * staging fails and — before this module — the transcript was lost. This
  * outbox parks the TEXT (the audio is already transcribed; only the result
- * and its landing session remain at risk) in localStorage so it survives a
- * page reload, and replays it through the same append RPC on reconnect.
+ * and its landing session remain at risk) so it survives a page reload, and
+ * replays it through the same append RPC on reconnect.
  *
- * Replay is idempotent via a per-entry `dedupId`: the daemon records the last
- * merged outbox id per session and skips a re-append that already committed
- * (the socket can drop between the daemon's write and its ack). Mirrors the
- * outbound-queue reconnect-flush pattern.
+ * Storage: each entry lives under its OWN localStorage key (no shared array),
+ * so two tabs enqueueing/removing concurrently cannot clobber each other's
+ * read-modify-write. An in-session memory mirror always holds the entries, so
+ * a localStorage failure (disabled, over quota) degrades to "preserved for
+ * this session" instead of silently dropping the only copy.
+ *
+ * Replay is idempotent via a per-entry `dedupId`: the daemon records the set
+ * of merged outbox ids per session and skips a re-append that already
+ * committed (the socket can drop between the daemon's write and its ack).
+ * Mirrors the outbound-queue reconnect-flush pattern.
  */
 
-import { effect } from '@preact/signals';
+import { effect, signal } from '@preact/signals';
 import { generateUUID } from '@hyperneo/shared';
 import { connectionManager } from '../connection-manager';
 import { connectionState } from '../state';
@@ -29,52 +35,112 @@ export interface PendingTranscript {
   createdAt: number;
 }
 
-const STORAGE_KEY = 'hyperneo_voice_transcript_outbox_v1';
+/**
+ * Fired (non-null) whenever the outbox successfully lands an entry for a
+ * session, so a MOUNTED composer for that session can refresh its draft —
+ * the pending field is otherwise only merged by the daemon during session.get,
+ * which the composer runs only on session change.
+ */
+export const voiceTranscriptLandedSignal = signal<{ sessionId: string } | null>(null);
+
+const STORAGE_PREFIX = 'hyperneo_voice_transcript_outbox_v1.entry.';
 const MAX_ENTRIES = 20;
 const MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24h — a transcript older than this is stale
 const FLUSH_DELAY_MS = 500; // let subscriptions settle, like outbound-queue
 
-function readStored(): PendingTranscript[] {
+/** In-session mirror — always authoritative for THIS session's reads. */
+const mirror = new Map<string, PendingTranscript>();
+
+function entryKey(id: string): string {
+  return `${STORAGE_PREFIX}${id}`;
+}
+
+/** Collect entries from localStorage (each under its own key — no RMW races). */
+function collectFromStorage(): Map<string, PendingTranscript> {
+  const out = new Map<string, PendingTranscript>();
   try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (!stored) return [];
-    const entries: PendingTranscript[] = JSON.parse(stored);
-    if (!Array.isArray(entries)) return [];
-    return entries
-      .filter((e) => typeof e.id === 'string' && typeof e.sessionId === 'string')
-      .filter((e) => Date.now() - (e.createdAt ?? 0) < MAX_AGE_MS);
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith(STORAGE_PREFIX)) continue;
+      try {
+        const entry = JSON.parse(localStorage.getItem(key) ?? '') as PendingTranscript;
+        if (entry && typeof entry.id === 'string' && typeof entry.sessionId === 'string') {
+          out.set(entry.id, entry);
+        }
+      } catch {
+        /* corrupt entry — skip */
+      }
+    }
   } catch {
-    return [];
+    /* storage unavailable — mirror only */
+  }
+  return out;
+}
+
+function allEntries(): PendingTranscript[] {
+  const merged = collectFromStorage();
+  // The mirror wins on conflict: it reflects this session's most recent write,
+  // including an entry localStorage refused to persist.
+  for (const [id, entry] of mirror) merged.set(id, entry);
+  return [...merged.values()]
+    .filter((e) => Date.now() - (e.createdAt ?? 0) < MAX_AGE_MS)
+    .sort((a, b) => a.createdAt - b.createdAt);
+}
+
+function writeEntry(entry: PendingTranscript): void {
+  mirror.set(entry.id, entry);
+  try {
+    localStorage.setItem(entryKey(entry.id), JSON.stringify(entry));
+  } catch {
+    /* storage unavailable/full — the mirror holds the entry for this session */
   }
 }
 
-function writeStored(entries: PendingTranscript[]): void {
+function removeEntry(id: string): void {
+  mirror.delete(id);
   try {
-    // Keep the NEWEST cap — the oldest are the most likely to be stale.
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(entries.slice(-MAX_ENTRIES)));
+    localStorage.removeItem(entryKey(id));
   } catch {
-    /* storage unavailable/full — the in-memory fallback is best-effort */
+    /* mirror already dropped it */
+  }
+}
+
+/** Enforce the cap (oldest dropped) and clear expired entries. */
+function prune(): void {
+  const entries = allEntries();
+  if (entries.length <= MAX_ENTRIES) return;
+  for (const entry of entries.slice(0, entries.length - MAX_ENTRIES)) {
+    removeEntry(entry.id);
   }
 }
 
 /** Park a transcript for delivery once the daemon is reachable again. */
 export function enqueueTranscript(sessionId: string, text: string): void {
-  const entries = readStored();
-  entries.push({ id: generateUUID(), sessionId, text, createdAt: Date.now() });
-  writeStored(entries);
+  writeEntry({ id: generateUUID(), sessionId, text, createdAt: Date.now() });
+  prune();
 }
 
 export function getPendingTranscripts(): PendingTranscript[] {
-  return readStored();
+  return allEntries().slice(-MAX_ENTRIES);
 }
 
 export function removePendingTranscript(id: string): void {
-  writeStored(readStored().filter((e) => e.id !== id));
+  removeEntry(id);
 }
 
 /** Drop everything (tests / user clear). */
 export function clearPendingTranscripts(): void {
-  writeStored([]);
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(STORAGE_PREFIX)) keys.push(key);
+    }
+    for (const key of keys) localStorage.removeItem(key);
+  } catch {
+    /* mirror cleared below */
+  }
+  mirror.clear();
 }
 
 let flushInProgress = false;
@@ -82,8 +148,10 @@ let flushInProgress = false;
 /**
  * Replay all outbox entries through `session.appendVoiceDraft`, removing each
  * once the daemon acks (including an idempotent `deduped` ack — the entry
- * already merged). Stops early if the connection drops mid-flush; entries are
- * kept on any error and retried on the next reconnect, bounded by the TTL.
+ * already merged). Stops early if the connection drops mid-flush. A REFUSAL
+ * while the socket is still up (session gone, character limit) is permanent —
+ * the entry is dropped rather than retried forever; only transport failures
+ * keep the entry for the next reconnect.
  */
 export async function flushPendingTranscripts(): Promise<void> {
   if (flushInProgress) return;
@@ -103,10 +171,13 @@ export async function flushPendingTranscripts(): Promise<void> {
           dedupId: entry.id,
         });
         removePendingTranscript(entry.id);
+        voiceTranscriptLandedSignal.value = { sessionId: entry.sessionId };
       } catch {
+        // If the socket dropped mid-flush, keep the entry for the next
+        // reconnect. If it is still up, the daemon refused the append — that
+        // is permanent, so drop the entry instead of retrying forever.
         if (!connectionManager.getHubIfConnected()) break;
-        // Daemon reachable but refused (session gone, limit) — keep the entry;
-        // TTL bounds how long a permanently-dead entry retries.
+        removePendingTranscript(entry.id);
       }
     }
   } finally {

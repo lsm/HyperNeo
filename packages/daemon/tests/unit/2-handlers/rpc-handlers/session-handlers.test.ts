@@ -717,14 +717,14 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     updateSession: ReturnType<typeof mock>;
   };
   let existingPending: string | null;
-  let existingAppendId: string | null;
+  let existingAppendIds: string[] | null;
   let sessionExists: boolean;
 
   beforeEach(async () => {
     messageHubData = createMockMessageHub();
     eventBus = createMockInternalEventBus();
     existingPending = 'existing';
-    existingAppendId = null;
+    existingAppendIds = null;
     sessionExists = true;
     sessionManager = {
       getSessionFromDB: mock(() =>
@@ -733,7 +733,7 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
               id: 's1',
               metadata: {
                 inputDraftVoicePending: existingPending,
-                inputDraftVoiceAppendId: existingAppendId,
+                inputDraftVoiceAppendIds: existingAppendIds,
               },
             }
           : null
@@ -813,14 +813,14 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     expect(result.success).toBe(true);
     // The append and the dedup marker land in ONE atomic write.
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
-      metadata: { inputDraftVoicePending: 'existing hello', inputDraftVoiceAppendId: 'entry-1' },
+      metadata: { inputDraftVoicePending: 'existing hello', inputDraftVoiceAppendIds: ['entry-1'] },
     });
   });
 
   it('skips a re-append whose dedupId already merged (idempotent replay)', async () => {
     // The socket dropped after the daemon wrote but before the client ack — the
     // outbox retries the same entry; it must NOT merge the transcript twice.
-    existingAppendId = 'entry-1';
+    existingAppendIds = ['entry-1'];
     const handler = messageHubData.handlers.get('session.appendVoiceDraft');
     const result = (await handler!({ sessionId: 's1', text: 'hello', dedupId: 'entry-1' }, {})) as {
       success: boolean;
@@ -830,8 +830,34 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     expect(sessionManager.updateSession).not.toHaveBeenCalled();
   });
 
+  it('dedups an out-of-order replay even after a later entry committed', async () => {
+    // Entry A committed but its ack was lost; the loop advanced to B (which
+    // overwrote a single last-id marker). A retry of A must still be skipped —
+    // the processed-id SET retains A alongside B.
+    existingAppendIds = ['entry-1', 'entry-2'];
+    const handler = messageHubData.handlers.get('session.appendVoiceDraft');
+    const result = (await handler!({ sessionId: 's1', text: 'hello', dedupId: 'entry-1' }, {})) as {
+      success: boolean;
+      deduped: boolean;
+    };
+    expect(result).toEqual({ success: true, deduped: true });
+    expect(sessionManager.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('accumulates processed ids, bounding the set to the most recent', async () => {
+    existingAppendIds = ['entry-1', 'entry-2'];
+    const handler = messageHubData.handlers.get('session.appendVoiceDraft');
+    await handler!({ sessionId: 's1', text: 'hello', dedupId: 'entry-3' }, {});
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: {
+        inputDraftVoicePending: 'existing hello',
+        inputDraftVoiceAppendIds: ['entry-1', 'entry-2', 'entry-3'],
+      },
+    });
+  });
+
   it('ignores the dedup guard when no dedupId is supplied (live one-shot path)', async () => {
-    existingAppendId = 'entry-1';
+    existingAppendIds = ['entry-1'];
     const handler = messageHubData.handlers.get('session.appendVoiceDraft');
     await handler!({ sessionId: 's1', text: 'hello' }, {});
     // No dedupId → normal append, no dedup marker written.

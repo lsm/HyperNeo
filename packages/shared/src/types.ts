@@ -609,12 +609,14 @@ export interface SessionMetadata {
    */
   inputDraftVoicePending?: string | null;
   /**
-   * Id of the LAST voice-transcript outbox entry merged into
-   * `inputDraftVoicePending` (see session.appendVoiceDraft). The client's
+   * Bounded (oldest-pruned) set of voice-transcript outbox entry ids merged
+   * into `inputDraftVoicePending` (see session.appendVoiceDraft). The client's
    * durable outbox replays entries after a socket drop and uses this to skip a
-   * retry that already committed — otherwise the transcript would merge twice.
+   * retry that already committed — a single last-id marker would let an
+   * out-of-order replay (two tabs flushing, or a timed-out entry retried after
+   * a later one committed) double-merge the transcript.
    */
-  inputDraftVoiceAppendId?: string | null;
+  inputDraftVoiceAppendIds?: string[] | null;
   removedOutputs?: string[]; // UUIDs of messages whose tool_result outputs were removed from SDK session file
   resolvedQuestions?: Record<string, ResolvedQuestion>; // Resolved AskUserQuestion responses, keyed by toolUseId
   // Cost tracking: SDK reports cumulative cost per run, but resets on agent restart

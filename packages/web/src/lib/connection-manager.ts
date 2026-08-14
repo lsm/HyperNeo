@@ -391,6 +391,13 @@ export class ConnectionManager {
     // Register transport
     this.messageHub.registerTransport(this.transport);
 
+    // Install the outbox auto-flush BEFORE initialize(): if the daemon is
+    // unavailable at page load, initialize() rejects and connect() never
+    // resumes — but the transport keeps auto-reconnecting and the effect
+    // reacts to the connectionState signal, so transcripts persisted from a
+    // previous page still flush once a reconnect succeeds.
+    startVoiceTranscriptOutboxFlush();
+
     // Initialize transport (establishes WebSocket connection)
     await this.transport.initialize();
 
@@ -405,10 +412,6 @@ export class ConnectionManager {
 
     // Start auto-flush for queued outbound actions
     startAutoFlush();
-
-    // Start auto-flush for the durable voice-transcript outbox (entries staged
-    // when the socket was down during an unmounted voice delivery).
-    startVoiceTranscriptOutboxFlush();
 
     // Mark ready for testing
     if (typeof window !== 'undefined' && window.__messageHub) {

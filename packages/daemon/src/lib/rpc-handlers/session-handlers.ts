@@ -480,11 +480,15 @@ export function setupSessionHandlers(
     // Idempotent replay guard for the client's durable outbox: the socket can
     // drop just after a successful write but before the ack, and a retry would
     // merge the transcript a second time. Skip when this entry's id already
-    // merged. Only consulted when the client passes a dedupId — the live
+    // merged. A SET (not just the last id) is retained so an out-of-order
+    // replay — two tabs flushing the shared outbox, or an entry that timed out
+    // after committing and is retried after a later one committed — still
+    // dedups. Only consulted when the client passes a dedupId; the live
     // one-shot staging path passes none and behaves exactly as before. The
     // read→write stays one synchronous step (no await between the check and
     // the updateSession DB write), so concurrent writers cannot interleave.
-    if (dedupId && metadata.inputDraftVoiceAppendId === dedupId) {
+    const processedIds = metadata.inputDraftVoiceAppendIds ?? [];
+    if (dedupId && processedIds.includes(dedupId)) {
       return { success: true, deduped: true };
     }
     const existingPending = metadata.inputDraftVoicePending ?? '';
@@ -496,7 +500,12 @@ export function setupSessionHandlers(
       pending === `${existingPending}${text}` || pending === `${existingPending} ${text}`;
     if (!fits) throw new Error('Pending voice draft is at the character limit');
     const metadataUpdate: Partial<SessionMetadata> = { inputDraftVoicePending: pending };
-    if (dedupId) metadataUpdate.inputDraftVoiceAppendId = dedupId;
+    if (dedupId) {
+      // Keep only the most recent ids — far beyond the client's 20-entry cap,
+      // while bounding the metadata so it cannot grow without limit.
+      const appendIds = [...processedIds, dedupId].slice(-50);
+      metadataUpdate.inputDraftVoiceAppendIds = appendIds;
+    }
     const updates: UpdateSessionRequest = { metadata: metadataUpdate };
     await sessionManager.updateSession(sessionId, updates as Partial<Session>);
     messageHub.event(

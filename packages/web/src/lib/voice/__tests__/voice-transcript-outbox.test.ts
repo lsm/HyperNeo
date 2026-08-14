@@ -2,8 +2,11 @@
 /**
  * Tests for the durable voice-transcript outbox: transcripts staged when the
  * daemon was unreachable during an unmounted voice delivery are parked in
- * localStorage and replayed through session.appendVoiceDraft (with a per-entry
- * dedupId) once the connection is restored.
+ * localStorage (each entry under its own key) and replayed through
+ * session.appendVoiceDraft (with a per-entry dedupId) once the connection is
+ * restored. A localStorage failure degrades to the in-session mirror instead
+ * of dropping the copy, and a permanent RPC refusal while connected drops the
+ * entry rather than retrying it forever.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -21,6 +24,7 @@ import {
   resetVoiceTranscriptOutbox,
   startVoiceTranscriptOutboxFlush,
   stopVoiceTranscriptOutboxFlush,
+  voiceTranscriptLandedSignal,
 } from '../voice-transcript-outbox.ts';
 import { connectionManager } from '../../connection-manager.ts';
 import { connectionState } from '../../state.ts';
@@ -47,6 +51,7 @@ describe('voice transcript outbox', () => {
   beforeEach(() => {
     globalThis.localStorage = createMemoryStorage();
     resetVoiceTranscriptOutbox();
+    voiceTranscriptLandedSignal.value = null;
     hubRequest.mockClear();
     vi.mocked(connectionManager.getHubIfConnected).mockReturnValue({
       request: hubRequest,
@@ -56,11 +61,6 @@ describe('voice transcript outbox', () => {
 
   afterEach(() => {
     globalThis.localStorage = originalStorage;
-    stopVoiceTranscriptOutboxFlush();
-    vi.useRealTimers();
-  });
-
-  afterEach(() => {
     stopVoiceTranscriptOutboxFlush();
     vi.useRealTimers();
   });
@@ -82,6 +82,21 @@ describe('voice transcript outbox', () => {
     expect(entries[entries.length - 1].text).toBe('t24');
   });
 
+  it('preserves the entry in the in-session mirror when localStorage rejects writes', () => {
+    // Storage disabled / over quota: setItem throws. The mirror must still hold
+    // the entry so the user's "saved" toast is true for this session.
+    const throwStorage = createMemoryStorage();
+    throwStorage.setItem = () => {
+      throw new DOMException('quota', 'QuotaExceededError');
+    };
+    globalThis.localStorage = throwStorage;
+
+    enqueueTranscript('s1', 'survives storage failure');
+    const entries = getPendingTranscripts();
+    expect(entries).toHaveLength(1);
+    expect(entries[0].text).toBe('survives storage failure');
+  });
+
   it('flushes entries through appendVoiceDraft with a dedupId and removes on ack', async () => {
     enqueueTranscript('s1', 'first');
     enqueueTranscript('s1', 'second');
@@ -94,11 +109,33 @@ describe('voice transcript outbox', () => {
     expect(getPendingTranscripts()).toHaveLength(0);
   });
 
-  it('keeps an entry the daemon refused (retry later, bounded by TTL)', async () => {
-    enqueueTranscript('s1', 'stuck');
+  it('fires the landed signal after a successful replay', async () => {
+    enqueueTranscript('s1', 'landed');
+    await flushPendingTranscripts();
+    expect(voiceTranscriptLandedSignal.value).toEqual({ sessionId: 's1' });
+  });
+
+  it('drops an entry the daemon refuses while connected (permanent, no infinite retry)', async () => {
+    enqueueTranscript('s1', 'refused');
     hubRequest.mockRejectedValueOnce(new Error('Pending voice draft is at the character limit'));
     await flushPendingTranscripts();
+    // The socket was up and the daemon refused — replaying forever is futile.
+    expect(getPendingTranscripts()).toHaveLength(0);
+  });
+
+  it('keeps entries for retry when the socket drops mid-flush', async () => {
+    enqueueTranscript('s1', 'a');
+    enqueueTranscript('s1', 'b');
+    // The second append's RPC drops (socket goes down) after the first landed.
+    hubRequest.mockImplementationOnce(async () => ({ success: true }));
+    hubRequest.mockRejectedValueOnce(new Error('socket closed'));
+    vi.mocked(connectionManager.getHubIfConnected)
+      .mockReturnValueOnce({ request: hubRequest }) // first flush loop hub check
+      .mockReturnValueOnce({ request: hubRequest }) // second flush loop hub check
+      .mockReturnValue(null); // connection dropped after the RPC failed
+    await flushPendingTranscripts();
     expect(getPendingTranscripts()).toHaveLength(1);
+    expect(getPendingTranscripts()[0].text).toBe('b');
   });
 
   it('removes an entry that the daemon reports as already merged (deduped ack)', async () => {
