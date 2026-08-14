@@ -1796,6 +1796,26 @@ export class SessionStore {
   }
 }
 
+/**
+ * Optimistically patch `sessionInfo` fields for the given session in every
+ * live store where it is the active session (singleton chat + overlays).
+ *
+ * Lets optimistic mutations that already update globalStore/spaceStore (e.g.
+ * the inline rename in `useSessionRename`) also reach surfaces that render
+ * from `SessionStore.sessionInfo` (active chat header/info panel) instead of
+ * waiting for the daemon's broadcast to confirm. Revision gating is left
+ * untouched: the next daemon push still applies (its revision is newer) and
+ * reconciles this surface with the server-confirmed value.
+ */
+export function applyOptimisticSessionInfo(sessionId: string, patch: Partial<Session>): void {
+  for (const store of activeStores) {
+    if (store.activeSessionId.value !== sessionId) continue;
+    const state = store.sessionState.value;
+    if (!state?.sessionInfo) continue;
+    store.sessionState.value = { ...state, sessionInfo: { ...state.sessionInfo, ...patch } };
+  }
+}
+
 /** Singleton session store instance */
 export const sessionStore = new SessionStore();
 

@@ -19,6 +19,7 @@ import {
   refreshAllSessionStores,
   mergeSnapshotIntoTranscript,
   markAllSessionStoresRecovering,
+  applyOptimisticSessionInfo,
 } from '../session-store';
 
 // A single controllable hub that connectionManager.getHub() resolves to. Both
@@ -234,6 +235,22 @@ describe('SessionStore multi-instance isolation', () => {
 
     expect(storeA.activeSessionId.value).toBe('session-a');
     expect(storeB.activeSessionId.value).toBe('session-b');
+  });
+
+  it('applyOptimisticSessionInfo patches only stores where the session is active', async () => {
+    await storeA.select('session-a');
+    await storeB.select('session-b');
+
+    applyOptimisticSessionInfo('session-a', { title: 'Renamed A' });
+
+    // The store rendering session-a sees the optimistic title immediately…
+    expect(storeA.sessionInfo.value?.title).toBe('Renamed A');
+    // …and a different session's store is untouched, as is an inactive one.
+    expect(storeB.sessionInfo.value?.title).toBeUndefined();
+
+    // Non-active session ids (e.g. sidebar-only rows) are a no-op everywhere.
+    applyOptimisticSessionInfo('session-idle', { title: 'Ignored' });
+    expect(storeA.sessionInfo.value?.title).toBe('Renamed A');
   });
 
   it('keeps transcripts independent — B never renders A messages', async () => {

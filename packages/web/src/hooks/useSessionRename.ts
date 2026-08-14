@@ -26,6 +26,7 @@ import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import type { JSX } from 'preact';
 import { globalStore } from '../lib/global-store';
 import { spaceStore } from '../lib/space-store';
+import { applyOptimisticSessionInfo } from '../lib/session-store';
 import { updateSession } from '../lib/api-helpers';
 import { toast } from '../lib/toast';
 
@@ -95,12 +96,16 @@ export function useSessionRename(sessionId: string, currentTitle: string): UseSe
     // Update both stores: chat rows read globalStore, space rows read spaceStore.
     globalStore.updateSession(sessionId, { title: trimmed });
     spaceStore.updateSession(sessionId, { title: trimmed });
+    // Surfaces rendering the ACTIVE session (chat header/info panel) read
+    // SessionStore.sessionInfo, not the list stores — patch those too.
+    applyOptimisticSessionInfo(sessionId, { title: trimmed });
     try {
       await updateSession(sessionId, { title: trimmed, metadata: { titleSetBy: 'user' } });
     } catch {
       // Roll back to the prior title and surface the failure.
       globalStore.updateSession(sessionId, { title: currentTitle });
       spaceStore.updateSession(sessionId, { title: currentTitle });
+      applyOptimisticSessionInfo(sessionId, { title: currentTitle });
       toast.error('Failed to rename');
     }
   }, [draft, currentTitle, sessionId]);

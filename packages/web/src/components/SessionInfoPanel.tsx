@@ -515,16 +515,30 @@ export function SessionInfoPanelButton({
   );
   const sources = useMemo(() => extractSources(messages), [messages]);
 
+  // Latest commit callback without resubscribing the listeners on every draft
+  // keystroke (its identity changes with the draft).
+  const commitRenameRef = useRef(commitRename);
+  commitRenameRef.current = commitRename;
+
   useEffect(() => {
     if (!open) return;
 
+    const closePanel = () => {
+      // Settle an in-flight rename synchronously: a click on a control that
+      // also navigates (another sidebar session, the overlay Back button)
+      // replaces the keyed ChatContainer on the subsequent click event —
+      // unmounting this component before a passive effect could run and
+      // silently dropping the edit.
+      commitRenameRef.current();
+      setOpen(false);
+    };
     const handlePointerDown = (event: MouseEvent) => {
       const target = event.target;
       if (target instanceof Node && rootRef.current?.contains(target)) return;
-      setOpen(false);
+      closePanel();
     };
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false);
+      if (event.key === 'Escape') closePanel();
     };
 
     window.addEventListener('mousedown', handlePointerDown);
@@ -535,9 +549,10 @@ export function SessionInfoPanelButton({
     };
   }, [open]);
 
-  // Closing the panel unmounts the rename input before it can emit blur, so
-  // settle the edit explicitly — otherwise the draft is neither saved nor
-  // cancelled and a stale editor reappears on reopen.
+  // Backstop for any other close path: closing the panel unmounts the rename
+  // input before it can emit blur, so settle the edit explicitly — otherwise
+  // the draft is neither saved nor cancelled and a stale editor reappears on
+  // reopen.
   useEffect(() => {
     if (!open && isRenaming) commitRename();
   }, [open, isRenaming, commitRename]);
@@ -579,7 +594,13 @@ export function SessionInfoPanelButton({
     <div ref={rootRef} class="relative">
       <IconButton
         title="Session info"
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => {
+          // Toggle-closing must also settle an in-flight rename synchronously
+          // (the close-effect backstop is passive and can be skipped by an
+          // unmount). No-op when no edit is in flight.
+          commitRename();
+          setOpen((value) => !value);
+        }}
         class={cn('flex-shrink-0 text-gray-400', open && 'bg-white/10 text-gray-100')}
       >
         <InfoIcon />

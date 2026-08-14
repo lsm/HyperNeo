@@ -282,6 +282,28 @@ describe('SessionInfoPanel', () => {
       });
     });
 
+    it('commits an in-flight rename when an outside mousedown closes the panel', () => {
+      // A mousedown on a navigating control (another sidebar session) closes
+      // the panel AND may unmount this component on the following click —
+      // the commit must happen synchronously in the close path.
+      renameMocks.updateSession.mockClear();
+      const { container } = render(<SessionInfoPanelButton {...defaultProps} />);
+      openPanel(container);
+
+      fireEvent.click(container.querySelector('button[title="Rename session"]')!);
+      const input = container.querySelector(
+        '[data-testid="session-info-rename-input"]'
+      ) as HTMLInputElement;
+      fireEvent.input(input, { target: { value: 'Outside Close' } });
+
+      fireEvent.mouseDown(document.body);
+      expect(container.querySelector('[data-testid="session-info-panel"]')).toBeNull();
+      expect(renameMocks.updateSession).toHaveBeenCalledWith('session-1', {
+        title: 'Outside Close',
+        metadata: { titleSetBy: 'user' },
+      });
+    });
+
     it('disables the rename action while an edit is in flight', () => {
       // Re-clicking the pencil mid-edit would blur-commit the draft and then
       // reopen the editor seeded from the stale title prop.
