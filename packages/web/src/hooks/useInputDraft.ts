@@ -29,7 +29,10 @@
 import { useEffect, useRef, useCallback, useMemo } from 'preact/hooks';
 import { useSignal, useSignalEffect } from '@preact/signals';
 import { connectionManager } from '../lib/connection-manager';
-import { voiceTranscriptLandedSignal } from '../lib/voice/voice-transcript-outbox';
+import {
+  consumeVoiceTranscriptLanded,
+  voiceTranscriptLandedSignal,
+} from '../lib/voice/voice-transcript-outbox';
 
 export interface UseInputDraftResult {
   /** Current content value */
@@ -136,15 +139,22 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   // the next navigation. Guard on an IDLE composer: the get overwrites the
   // local signal, so reloading over in-progress typing would lose keystrokes.
   // Reading contentSignal (not peek()) subscribes the effect to typing, so a
-  // landing while the composer has text DEFERS until it clears, and a keystroke
-  // that lands mid-get re-runs the effect whose cleanup aborts the stale get —
-  // the server draft can never clobber newer keystrokes.
+  // landing while the composer has text DEFERS (the session stays in the set)
+  // until it clears, and a keystroke that lands mid-get re-runs the effect
+  // whose cleanup aborts the stale get — the server draft can never clobber
+  // newer keystrokes. The landing is consumed only once the refresh settled.
   useSignalEffect(() => {
     const landed = voiceTranscriptLandedSignal.value;
-    if (!landed || landed.sessionId !== sessionId) return;
+    if (!landed.has(sessionId)) return;
     if (contentSignal.value.trim() !== '') return;
     let cancelled = false;
-    loadDraft(sessionId, () => cancelled);
+    loadDraft(
+      sessionId,
+      () => cancelled,
+      () => {
+        consumeVoiceTranscriptLanded(sessionId);
+      }
+    );
     return () => {
       cancelled = true;
     };

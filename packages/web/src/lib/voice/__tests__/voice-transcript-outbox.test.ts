@@ -51,9 +51,10 @@ describe('voice transcript outbox', () => {
   beforeEach(() => {
     globalThis.localStorage = createMemoryStorage();
     resetVoiceTranscriptOutbox();
-    voiceTranscriptLandedSignal.value = null;
-    hubRequest.mockClear();
-    vi.mocked(connectionManager.getHubIfConnected).mockReturnValue({
+    // mockReset (not clear) so a mockRejectedValueOnce left unconsumed by one
+    // test cannot leak into the next as its first hubRequest call.
+    hubRequest.mockReset().mockImplementation(async () => ({ success: true }));
+    vi.mocked(connectionManager.getHubIfConnected).mockReset().mockReturnValue({
       request: hubRequest,
     });
     connectionState.value = 'disconnected';
@@ -112,15 +113,25 @@ describe('voice transcript outbox', () => {
   it('fires the landed signal after a successful replay', async () => {
     enqueueTranscript('s1', 'landed');
     await flushPendingTranscripts();
-    expect(voiceTranscriptLandedSignal.value).toEqual({ sessionId: 's1' });
+    expect(voiceTranscriptLandedSignal.value.has('s1')).toBe(true);
   });
 
-  it('drops an entry the daemon refuses while connected (permanent, no infinite retry)', async () => {
-    enqueueTranscript('s1', 'refused');
+  it('drops only an entry whose session no longer exists (permanent, no infinite retry)', async () => {
+    enqueueTranscript('s1', 'gone');
+    hubRequest.mockRejectedValueOnce(new Error('Session not found'));
+    await flushPendingTranscripts();
+    // A missing session can never recover — dropping avoids retrying forever.
+    expect(getPendingTranscripts()).toHaveLength(0);
+  });
+
+  it('retains an entry the daemon refuses for a RETRYABLE reason (full pending draft)', async () => {
+    enqueueTranscript('s1', 'blocked');
     hubRequest.mockRejectedValueOnce(new Error('Pending voice draft is at the character limit'));
     await flushPendingTranscripts();
-    // The socket was up and the daemon refused — replaying forever is futile.
-    expect(getPendingTranscripts()).toHaveLength(0);
+    // The refusal is not permanent — the user can send/clear the draft to make
+    // room, so a transcript promised as saved must not be dropped. The follow-up
+    // retry timer is cleared by afterEach.
+    expect(getPendingTranscripts()).toHaveLength(1);
   });
 
   it('keeps an entry on an ambiguous Request timeout (append may have committed)', async () => {
@@ -161,8 +172,9 @@ describe('voice transcript outbox', () => {
     hubRequest.mockImplementationOnce(async () => ({ success: true }));
     hubRequest.mockRejectedValueOnce(new Error('socket closed'));
     vi.mocked(connectionManager.getHubIfConnected)
-      .mockReturnValueOnce({ request: hubRequest }) // first flush loop hub check
-      .mockReturnValueOnce({ request: hubRequest }) // second flush loop hub check
+      .mockReturnValueOnce({ request: hubRequest }) // flush start
+      .mockReturnValueOnce({ request: hubRequest }) // loop check for 'a'
+      .mockReturnValueOnce({ request: hubRequest }) // loop check for 'b'
       .mockReturnValue(null); // connection dropped after the RPC failed
     await flushPendingTranscripts();
     expect(getPendingTranscripts()).toHaveLength(1);

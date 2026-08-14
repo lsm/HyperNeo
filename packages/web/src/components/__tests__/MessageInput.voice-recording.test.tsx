@@ -117,10 +117,12 @@ vi.mock('../../lib/connection-manager', () => ({
 }));
 
 const enqueueTranscript = vi.hoisted(() => vi.fn());
-const voiceTranscriptLandedSignal = vi.hoisted(() => ({ value: null }));
+const voiceTranscriptLandedSignal = vi.hoisted(() => ({ value: new Set() }));
+const consumeVoiceTranscriptLanded = vi.hoisted(() => vi.fn());
 vi.mock('../../lib/voice/voice-transcript-outbox.ts', () => ({
   enqueueTranscript,
   voiceTranscriptLandedSignal,
+  consumeVoiceTranscriptLanded,
 }));
 
 import { toast } from '../../lib/toast.ts';
@@ -262,7 +264,7 @@ describe('MessageInput — recording UI', () => {
     );
     const stageCall = hubRequest.mock.calls.find(([m]) => m === 'session.appendVoiceDraft');
     expect(stageCall).toBeTruthy();
-    expect(stageCall[1]).toEqual({ sessionId: 's1', text: 'hello world' });
+    expect(stageCall[1]).toEqual(expect.objectContaining({ sessionId: 's1', text: 'hello world' }));
     expect(onSend).not.toHaveBeenCalled();
   });
 
@@ -289,7 +291,9 @@ describe('MessageInput — recording UI', () => {
     await waitFor(() => {
       const stageCall = hubRequest.mock.calls.find(([m]) => m === 'session.appendVoiceDraft');
       expect(stageCall).toBeTruthy();
-      expect(stageCall[1]).toEqual({ sessionId: 's1', text: 'hello world' });
+      expect(stageCall[1]).toEqual(
+        expect.objectContaining({ sessionId: 's1', text: 'hello world' })
+      );
     });
     await waitFor(() =>
       expect(toast.info).toHaveBeenCalledWith('Voice transcript saved to the session draft')
@@ -318,7 +322,9 @@ describe('MessageInput — recording UI', () => {
     vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(null);
     resolveTranscribe({ text: 'hello world' });
 
-    await waitFor(() => expect(enqueueTranscript).toHaveBeenCalledWith('s1', 'hello world'));
+    await waitFor(() =>
+      expect(enqueueTranscript).toHaveBeenCalledWith('s1', 'hello world', expect.any(String))
+    );
     await waitFor(() =>
       expect(toast.info).toHaveBeenCalledWith(
         'Voice transcript saved — will be delivered when reconnected'
@@ -358,7 +364,7 @@ describe('MessageInput — recording UI', () => {
     // The only copy was staged into the pending field, not lost.
     const stageCall = hubRequest.mock.calls.find(([m]) => m === 'session.appendVoiceDraft');
     expect(stageCall).toBeTruthy();
-    expect(stageCall[1]).toEqual({ sessionId: 's1', text: 'hello world' });
+    expect(stageCall[1]).toEqual(expect.objectContaining({ sessionId: 's1', text: 'hello world' }));
     // The draft is NOT cleared when the send failed — the text is still staged.
     const clearCall = hubRequest.mock.calls.find(([m]) => m === 'session.clearInputDraftIf');
     expect(clearCall).toBeFalsy();

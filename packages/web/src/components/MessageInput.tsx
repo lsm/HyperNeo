@@ -7,6 +7,7 @@
  * Refactored to use shared hooks for better separation of concerns.
  */
 
+import { generateUUID } from '@hyperneo/shared';
 import type {
   MessageDeliveryMode,
   MessageImage,
@@ -588,13 +589,19 @@ export default function MessageInput({
       // NOTE: no upfront hub gate here. The captured `payload.send` owns its
       // offline delivery (useSendMessage queues disconnected sends for retry),
       // so a missing hub must not prevent attempting it — only the staging and
-      // clearing RPCs below require a connection.
+      // clearing RPCs below require a connection. The outbox id is minted ONCE
+      // per delivery and reused by the initial staging RPC AND any queued
+      // retry: if the first append commits but its ack is lost in a disconnect,
+      // the replay carries the same id and the daemon's dedup set skips the
+      // double-merge instead of appending the transcript a second time.
+      const outboxId = generateUUID();
       const stageToDraft = async () => {
         const hub = connectionManager.getHubIfConnected();
         if (!hub) throw new Error('Not connected');
         await hub.request('session.appendVoiceDraft', {
           sessionId: targetSessionId,
           text: transcript,
+          dedupId: outboxId,
         });
       };
       // Last-resort preservation: stage the transcript into the pending draft
@@ -611,7 +618,7 @@ export default function MessageInput({
           // never can. Only when the socket is genuinely down do we park the
           // transcript in the durable outbox for replay on reconnect.
           if (!connectionManager.getHubIfConnected()) {
-            enqueueTranscript(targetSessionId, transcript);
+            enqueueTranscript(targetSessionId, transcript, outboxId);
             return {
               ok: true,
               message: 'Voice transcript saved — will be delivered when reconnected',

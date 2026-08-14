@@ -36,7 +36,7 @@ describe('useInputDraft', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
-    voiceTranscriptLandedSignal.value = null;
+    voiceTranscriptLandedSignal.value = new Set();
     // Default: no hub connected
     vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(null);
   });
@@ -269,7 +269,7 @@ describe('useInputDraft', () => {
       // The composer is mounted with an empty draft when the outbox replays.
       expect(result.current.content).toBe('');
 
-      voiceTranscriptLandedSignal.value = { sessionId: 'session-1' };
+      voiceTranscriptLandedSignal.value = new Set(['session-1']);
       await act(async () => {
         await vi.runAllTimersAsync();
       });
@@ -292,7 +292,7 @@ describe('useInputDraft', () => {
       });
 
       result.current.setContent('user typing');
-      voiceTranscriptLandedSignal.value = { sessionId: 'session-1' };
+      voiceTranscriptLandedSignal.value = new Set(['session-1']);
       await act(async () => {
         await vi.runAllTimersAsync();
       });
@@ -314,7 +314,7 @@ describe('useInputDraft', () => {
 
       // The replay lands while the composer has text — no reload yet.
       result.current.setContent('user typing');
-      voiceTranscriptLandedSignal.value = { sessionId: 'session-1' };
+      voiceTranscriptLandedSignal.value = new Set(['session-1']);
       await act(async () => {
         await vi.runAllTimersAsync();
       });

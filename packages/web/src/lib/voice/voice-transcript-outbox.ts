@@ -36,17 +36,35 @@ export interface PendingTranscript {
 }
 
 /**
- * Fired (non-null) whenever the outbox successfully lands an entry for a
- * session, so a MOUNTED composer for that session can refresh its draft —
- * the pending field is otherwise only merged by the daemon during session.get,
- * which the composer runs only on session change.
+ * Sessions for which the outbox landed an entry since the last time a mounted
+ * composer refreshed for them — a SET so later landings for other sessions
+ * cannot erase a deferred one. A mounted composer for a session in the set
+ * refreshes its draft (the pending field is otherwise only merged by the
+ * daemon during session.get, which the composer runs only on session change),
+ * then consumes its own session via `consumeVoiceTranscriptLanded`.
  */
-export const voiceTranscriptLandedSignal = signal<{ sessionId: string } | null>(null);
+export const voiceTranscriptLandedSignal = signal<ReadonlySet<string>>(new Set());
+
+/** Record that an entry landed for `sessionId` (called by the flush). */
+export function markVoiceTranscriptLanded(sessionId: string): void {
+  voiceTranscriptLandedSignal.value = new Set(voiceTranscriptLandedSignal.value).add(sessionId);
+}
+
+/** Forget a landing once its session's composer has refreshed for it. */
+export function consumeVoiceTranscriptLanded(sessionId: string): void {
+  const current = voiceTranscriptLandedSignal.value;
+  if (!current.has(sessionId)) return;
+  const next = new Set(current);
+  next.delete(sessionId);
+  voiceTranscriptLandedSignal.value = next;
+}
 
 const STORAGE_PREFIX = 'hyperneo_voice_transcript_outbox_v1.entry.';
 const MAX_ENTRIES = 20;
 const MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24h — a transcript older than this is stale
 const FLUSH_DELAY_MS = 500; // let subscriptions settle, like outbound-queue
+const RETRY_DELAY_MS = 5_000; // base delay before a retained-entry retry
+const MAX_RETRY_DELAY_MS = 60_000; // backoff ceiling for retained-entry retries
 
 /** In-session mirror — always authoritative for THIS session's reads. */
 const mirror = new Map<string, PendingTranscript>();
@@ -127,19 +145,24 @@ function prune(): void {
 }
 
 /**
- * A `Request timeout: …` rejection is AMBIGUOUS: the socket dropped after the
- * request was sent, so the append may have committed (ack lost) or never
- * arrived. The safe retry keeps the entry — the daemon's dedup set makes a
- * re-append idempotent — whereas a refusal delivered while connected (session
- * gone, character limit) is permanent and the entry is dropped.
+ * The only GENUINELY permanent refusal: the session no longer exists, so no
+ * retry can ever merge the transcript. Everything else the daemon can reject
+ * while connected (e.g. a pending draft at the character limit — room appears
+ * once the user sends or clears it, or a `Request timeout` whose append may
+ * have committed with a lost ack) is retryable and must not be dropped.
  */
-function isRequestTimeout(error: unknown): boolean {
-  return error instanceof Error && error.message.startsWith('Request timeout:');
+function isPermanentRefusal(error: unknown): boolean {
+  return error instanceof Error && /Session not found/.test(error.message);
 }
 
-/** Park a transcript for delivery once the daemon is reachable again. */
-export function enqueueTranscript(sessionId: string, text: string): void {
-  writeEntry({ id: generateUUID(), sessionId, text, createdAt: Date.now() });
+/**
+ * Park a transcript for delivery once the daemon is reachable again. `id`
+ * (optional) is the dedup id used by the INITIAL staging attempt, so when that
+ * attempt commits but its ack is lost in a disconnect, the queued retry
+ * reuses the same id and the daemon's dedup set skips the double-append.
+ */
+export function enqueueTranscript(sessionId: string, text: string, id?: string): void {
+  writeEntry({ id: id ?? generateUUID(), sessionId, text, createdAt: Date.now() });
   prune();
 }
 
@@ -167,14 +190,47 @@ export function clearPendingTranscripts(): void {
 }
 
 let flushInProgress = false;
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
+let retryDelayMs = RETRY_DELAY_MS;
+let consecutiveRetries = 0;
+const MAX_CONSECUTIVE_RETRIES = 12; // ~2-3 min of backoff, then wait for a reconnect/reload
+
+function clearRetryTimer(): void {
+  if (retryTimer) {
+    clearTimeout(retryTimer);
+    retryTimer = null;
+  }
+  retryDelayMs = RETRY_DELAY_MS;
+  consecutiveRetries = 0;
+}
+
+/**
+ * Schedule a follow-up flush for entries retained on a retryable rejection
+ * (timeout, character limit). The connection-state effect does not re-fire
+ * while already connected, so without this a retained entry would wait for an
+ * unrelated reconnect or reload. Backs off exponentially, bounded by a retry
+ * cap (a permanently-stuck entry then waits for a reconnect/reload; the TTL
+ * bounds it overall).
+ */
+function scheduleFollowUpFlush(): void {
+  if (retryTimer) return;
+  if (consecutiveRetries >= MAX_CONSECUTIVE_RETRIES) return;
+  consecutiveRetries += 1;
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    void flushPendingTranscripts();
+  }, retryDelayMs);
+  retryDelayMs = Math.min(retryDelayMs * 2, MAX_RETRY_DELAY_MS);
+}
 
 /**
  * Replay all outbox entries through `session.appendVoiceDraft`, removing each
  * once the daemon acks (including an idempotent `deduped` ack — the entry
- * already merged). Stops early if the connection drops mid-flush. A REFUSAL
- * while the socket is still up (session gone, character limit) is permanent —
- * the entry is dropped rather than retried forever; only transport failures
- * keep the entry for the next reconnect.
+ * already merged). Stops early if the connection drops mid-flush. Only a
+ * GENUINELY permanent refusal (session not found) drops an entry; timeouts
+ * and other refusals (e.g. a pending draft at the character limit — room
+ * appears once the user sends or clears it) are retained and re-flushed with
+ * backoff.
  */
 export async function flushPendingTranscripts(): Promise<void> {
   if (flushInProgress) return;
@@ -184,6 +240,7 @@ export async function flushPendingTranscripts(): Promise<void> {
   if (pending.length === 0) return;
 
   flushInProgress = true;
+  let delivered = 0;
   try {
     for (const entry of pending) {
       if (!connectionManager.getHubIfConnected()) break; // dropped mid-flush
@@ -194,21 +251,28 @@ export async function flushPendingTranscripts(): Promise<void> {
           dedupId: entry.id,
         });
         removePendingTranscript(entry.id);
-        voiceTranscriptLandedSignal.value = { sessionId: entry.sessionId };
+        delivered += 1;
+        markVoiceTranscriptLanded(entry.sessionId);
       } catch (error) {
-        // If the socket dropped mid-flush, keep the entry for the next
-        // reconnect. A TIMEOUT is ambiguous (the append may have committed with
-        // a lost ack) — keep it too; the daemon's dedup makes the retry safe.
-        // Only a refusal delivered while connected (session gone, character
-        // limit) is permanent, and that entry is dropped rather than retried
-        // forever.
+        // Socket dropped mid-flush: keep for the next reconnect. Otherwise the
+        // daemon answered while connected: a timeout is ambiguous (the append
+        // may have committed with a lost ack), and any non-permanent refusal is
+        // retryable — keep those. Only a missing session can never recover.
         if (!connectionManager.getHubIfConnected()) break;
-        if (isRequestTimeout(error)) continue;
-        removePendingTranscript(entry.id);
+        if (isPermanentRefusal(error)) removePendingTranscript(entry.id);
       }
     }
   } finally {
     flushInProgress = false;
+  }
+  // Retained entries (timeout / retryable refusal) need another pass; the
+  // connection-state effect won't re-fire while already connected. Progress
+  // resets the retry budget.
+  if (delivered > 0) consecutiveRetries = 0;
+  if (getPendingTranscripts().length > 0 && connectionManager.getHubIfConnected()) {
+    scheduleFollowUpFlush();
+  } else {
+    clearRetryTimer();
   }
 }
 
@@ -225,6 +289,7 @@ export function startVoiceTranscriptOutboxFlush(): void {
 }
 
 export function stopVoiceTranscriptOutboxFlush(): void {
+  clearRetryTimer();
   if (cleanupAutoFlush) {
     cleanupAutoFlush();
     cleanupAutoFlush = null;
@@ -238,11 +303,14 @@ if (import.meta.hot) {
       cleanupAutoFlush();
       cleanupAutoFlush = null;
     }
+    clearRetryTimer();
   });
 }
 
 /** For tests: reset module state. */
 export function resetVoiceTranscriptOutbox(): void {
   flushInProgress = false;
+  clearRetryTimer();
   clearPendingTranscripts();
+  voiceTranscriptLandedSignal.value = new Set();
 }
