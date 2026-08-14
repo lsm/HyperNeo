@@ -3640,6 +3640,17 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         // Route-declaring workflows must close through the approval path
         // (submit_for_approval → approve), which fires the router.
         const run = workflowRunRepo.getRun(task.workflowRunId);
+        // Run-status guard: a task can linger in review/in_progress while its
+        // run is already cancelled (cancellation/recovery edge — e.g. shutdown
+        // leaves the task unreconciled). Completing it would mark cancelled
+        // work done, capture success evidence, and unblock dependents. Only
+        // non-terminal runs are eligible.
+        if (run && (run.status === 'cancelled' || run.status === 'done')) {
+          return jsonResult({
+            success: false,
+            error: `Task ${args.task_id} belongs to a ${run.status} workflow run; validation-only completion is not applicable. Reconcile or retry the task instead.`,
+          });
+        }
         const routeWorkflow = run?.workflowId ? workflowManager.getWorkflowForRun(run) : null;
         if (collectDispatchablePostApprovalRoutes(routeWorkflow).length > 0) {
           return jsonResult({
