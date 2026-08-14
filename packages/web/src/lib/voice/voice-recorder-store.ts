@@ -90,41 +90,24 @@ class VoiceRecorderStore {
   readonly start = async (ownerId: string, ownerSessionId: string): Promise<void> => {
     if (this.isRecording.value || this.starting || this.stopping)
       throw new Error('Voice recorder is busy');
-    if (this.stoppedByLimit) {
-      // Capped audio awaiting its owner's stop(). An OWNED buffer stays busy;
-      // an ORPHANED one (owner unmounted — temporary navigation or a terminal
-      // session end, which the store cannot distinguish) is evicted: it stays
-      // recoverable for an adopter for as long as nobody else needs the mic,
-      // and can never wedge the recorder busy forever.
-      if (this.recordingOwnerId.value !== null) throw new Error('Voice recorder is busy');
-      // Mark busy BEFORE the eviction so a concurrent start() cannot slip
-      // through the checks and silently lose the generation race — and evict
-      // WITHOUT cancel(), which would synchronously reset `starting` and
-      // reopen the window for the duration of the teardown await.
-      this.starting = true;
-      this.isStarting.value = true;
-      this.startGeneration += 1;
-      this.chunks = [];
-      this.stoppedByLimit = false;
-      this.durationLimitHit.value = false;
-      this.isRecording.value = false;
-      this.recordingOwnerId.value = null;
-      this.recordingSessionId.value = null;
-      await this.teardown();
-    } else {
-      this.starting = true;
-      this.isStarting.value = true;
+    if (this.stoppedByLimit && this.recordingOwnerId.value !== null) {
+      // Capped audio still owned — its owner's stop() is pending.
+      throw new Error('Voice recorder is busy');
     }
+    // Claim ownership and the startup reservation BEFORE any await, so a
+    // composer that unmounts or retargets mid-start is properly orphaned
+    // (orphan() finds its ownerId here) and a concurrent start() stays busy
+    // throughout.
+    this.starting = true;
     this.isStarting.value = true;
     this.stoppedByLimit = false;
     this.durationLimitHit.value = false;
-    // Claim ownership UP FRONT (before any await, including the eviction
-    // teardown above): a composer that unmounts or retargets mid-start must
-    // find its ownerId here so orphan() actually hands the recording off,
-    // instead of leaving a departed instance as owner after the awaits.
     this.recordingOwnerId.value = ownerId;
     this.recordingSessionId.value = ownerSessionId;
     const generation = ++this.startGeneration;
+    // Eviction of an orphaned capped buffer (if any): drop its audio up front.
+    // The shared teardown inside the try below reclaims its mic graph.
+    this.chunks = [];
     const discarded = () => this.startGeneration !== generation;
     // Cleanup for a DISCARDED start. If the shared fields still belong to this
     // generation, defer to the shared (idempotent) teardown; if a NEWER
