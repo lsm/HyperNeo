@@ -356,6 +356,62 @@ export async function reconcileStrandedDeliveries(args: {
 }
 
 /**
+ * Reclaim decision for an already-consumed delivery turn whose turn may have
+ * already ended — a restart reclaim (the job was `processing` when the daemon
+ * exited) or a live reclaim after a stale lease. Pure so the crash-consistency
+ * logic is unit-testable independent of the AgentSession/provider wiring.
+ *
+ * Inputs (all durable / observable at reclaim time):
+ *  - `successResult`: a SUCCESS terminal `result` row exists after the message's
+ *    consumption (`SDKMessageRepository.hasTerminalResultAfter`, subtype
+ *    `'success'` only — an error result is NOT success).
+ *  - `markerExists`: a durable `delivery_turn_end` marker exists for the message
+ *    (recorded by the idle waiter when a driven turn ends while its job is still
+ *    `processing`). The marker proves the turn ENDED, not that it SUCCEEDED.
+ *  - `terminalIdleInFlight`: a terminal-idle drain is still running (the result
+ *    row precedes `finishTurn`'s awaited `setIdle`).
+ *
+ * Decision:
+ *  - `'live'` — the turn has not settled (or a terminal idle is still draining);
+ *    reclaim it as a normal drive. During the drain, durable turn ownership is
+ *    kept so a newly promoted message cannot feed the old query.
+ *  - `'terminated'` — the turn ended AND succeeded; the reclaim has nothing to
+ *    resume and nothing to retry, so the handler completes the job
+ *    (`turn_terminated`), freeing the active-turn slot.
+ *  - `'redrive'` — the turn ended but NOT via success: the ONLY signal is a bare
+ *    `delivery_turn_end` marker (no success result). On a restart reclaim this is
+ *    the tell-tale of the crash window — the daemon exited AFTER the idle waiter
+ *    recorded the marker but BEFORE the producedResult/retry decision ran (and
+ *    cleared it). Completing here would silently drop a recoverable failure
+ *    (never retried) and bury a non-recoverable one (never surfaced as `failed`).
+ *    The caller clears the stale marker and re-drives so the producedResult /
+ *    stall-retry path decides instead of silently completing.
+ *
+ * This is the "settled decision keys off the success-subtype result" fix
+ * (task #946, PR #2471 review r3772035811): a bare `delivery_turn_end` marker
+ * alone can never cause a silent complete.
+ */
+export type ReclaimTerminationDecision = 'terminated' | 'redrive' | 'live';
+
+export function classifyReclaimTermination(args: {
+  successResult: boolean;
+  markerExists: boolean;
+  terminalIdleInFlight: boolean;
+}): ReclaimTerminationDecision {
+  // Keep durable turn ownership while the terminal idle is still draining, or a
+  // newly promoted message could feed the old query and be released by the old
+  // turn's drain. (Mirrors the original hasSettledTurnTermination guard.)
+  if (args.terminalIdleInFlight) return 'live';
+  // Only a SUCCESS result is safe to complete silently.
+  if (args.successResult) return 'terminated';
+  // A bare marker (turn ended via a result-less path) is NOT proof of success —
+  // clear it and re-drive so the retry/dead-letter path decides.
+  if (args.markerExists) return 'redrive';
+  // The turn has not ended; reclaim drives it normally.
+  return 'live';
+}
+
+/**
  * Narrow an unknown payload to a {@link MessageDeliveryPayload}. The handler
  * validates its own job's payload shape before acting.
  */

@@ -240,6 +240,7 @@ import {
   MESSAGE_DELIVERY_PARK_MS,
   MessageDeliveryRecoverableTurnError,
   MessageDeliveryTerminalTurnError,
+  classifyReclaimTermination,
   deliverMessage,
   isMessageDeliveryV2Enabled,
   isRetryableErrorResultSubtype,
@@ -2064,11 +2065,15 @@ export class AgentSession
       if (claimGuard && !claimGuard()) {
         return { kind: 'aborted' as const };
       }
-      // A re-claimed consumed turn whose turn already ended (a terminal result
-      // after its consumption) has nothing to resume. Check BEFORE provider
-      // startup so we don't start a fresh query that would idle waiting for
-      // input forever. See Codex (PR #2463, P1/P2).
-      if (alreadyConsumed && this.hasSettledTurnTermination(messageUuid)) {
+      // A re-claimed consumed turn whose turn already ended has nothing to
+      // resume — but only an ended-and-SUCCEEDED turn is safe to complete
+      // silently (see reclaimTurnAlreadySucceeded). A bare delivery_turn_end
+      // marker (the turn ended via a result-less path) is cleared and re-driven
+      // so the producedResult/stall-retry path decides; this check still runs
+      // BEFORE provider startup so a SUCCESS-terminated reclaim does not start a
+      // fresh query that would idle waiting for input forever. See Codex
+      // (PR #2463, P1/P2) + task #946 (PR #2471 review r3772035811).
+      if (alreadyConsumed && this.reclaimTurnAlreadySucceeded(messageUuid)) {
         return { kind: 'turn_terminated' as const };
       }
       const queryStartResult = await this.lifecycleManager.ensureQueryStarted();
@@ -2082,12 +2087,12 @@ export class AgentSession
       // Re-check termination AFTER startup, immediately before arming the
       // turn-end waiter — the two statements are adjacent (no await between), so
       // a turn that terminates in the check→arm window cannot be missed: if it
-      // ended before the check, we abort here; if it ends after the waiter is
-      // armed, the waiter resolves it. Without this, a live-but-stale consumed
-      // turn that finishes during ensureQueryStarted's await would leak a query
-      // waiting for input and hold the active-turn slot forever. See Codex
-      // (PR #2463, P2).
-      if (alreadyConsumed && this.hasSettledTurnTermination(messageUuid)) {
+      // ended before the check, we abort here (on success) or clear+re-drive
+      // (bare marker); if it ends after the waiter is armed, the waiter resolves
+      // it. Without this, a live-but-stale consumed turn that finishes during
+      // ensureQueryStarted's await would leak a query waiting for input and hold
+      // the active-turn slot forever. See Codex (PR #2463, P2) + task #946.
+      if (alreadyConsumed && this.reclaimTurnAlreadySucceeded(messageUuid)) {
         return { kind: 'turn_terminated' as const };
       }
       // Arm the turn-end wait AFTER ensureQueryStarted: ensureQueryStarted awaits
@@ -2558,24 +2563,36 @@ export class AgentSession
   }
 
   /**
-   * True when a `consumed` message's turn already ended — i.e. there is nothing
-   * left to resume. Recognized two ways: a terminal SDK `result` row after its
-   * consumption (boundary = consumption timestamp, see `hasTerminalResultAfter`),
-   * OR a durable delivery-turn completion marker for a result-less terminal path
-   * (query error / interrupt; see `hasDeliveryTurnEnd`). Checked inside the
-   * per-session lock so it is coordinated with the turn-start/waiter
-   * registration (Codex P2).
+   * Reclaim decision for an already-consumed turn whose turn may have already
+   * ended. Delegates to the pure {@link classifyReclaimTermination}: only a turn
+   * that ended AND succeeded (`'terminated'`) completes silently; a bare
+   * `delivery_turn_end` marker with no success result (`'redrive'`) is cleared
+   * here and the caller falls through to re-drive so the producedResult /
+   * stall-retry path decides. Returns `true` only for `'terminated'`.
+   *
+   * Why the success gate: a bare marker proves the turn ENDED, not that it
+   * SUCCEEDED. On a restart reclaim such a marker is the tell-tale of the crash
+   * window — the daemon exited AFTER the idle waiter recorded the marker but
+   * BEFORE the producedResult/retry decision ran (and cleared it). Completing on
+   * the marker alone would silently drop a recoverable failure (never retried)
+   * and bury a non-recoverable one (never surfaced as `failed`). (Task #946,
+   * PR #2471 review r3772035811.)
    */
-  private hasSettledTurnTermination(messageUuid: string): boolean {
-    // Result persistence precedes finishTurn's awaited setIdle. Keep durable turn
-    // ownership while that terminal idle is still running, or a newly promoted
-    // message could feed the old query and be released by the old turn's drain.
-    if (this.stateManager.isTerminalIdleInFlight()) return false;
+  private reclaimTurnAlreadySucceeded(messageUuid: string): boolean {
     const repo = this.db.getSDKMessageRepo();
-    return (
-      repo.hasTerminalResultAfter(this.session.id, messageUuid) ||
-      repo.hasDeliveryTurnEnd(this.session.id, messageUuid)
-    );
+    if (!repo) return false;
+    const decision = classifyReclaimTermination({
+      successResult: repo.hasTerminalResultAfter(this.session.id, messageUuid),
+      markerExists: repo.hasDeliveryTurnEnd(this.session.id, messageUuid),
+      terminalIdleInFlight: this.stateManager.isTerminalIdleInFlight(),
+    });
+    if (decision === 'redrive') {
+      // Clear the stale marker so the re-drive's own reclaim (if it re-crashes)
+      // does not loop on `turn_terminated`; the producedResult check below is
+      // the single retry/dead-letter authority.
+      repo.clearDeliveryTurnEnd(this.session.id, messageUuid);
+    }
+    return decision === 'terminated';
   }
 
   /**

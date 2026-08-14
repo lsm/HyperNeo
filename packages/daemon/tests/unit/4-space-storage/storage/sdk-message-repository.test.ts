@@ -10,6 +10,7 @@ import {
   SDKMessageRepository,
   type SendStatus,
 } from '../../../../src/storage/repositories/sdk-message-repository';
+import { classifyReclaimTermination } from '../../../../src/lib/agent/message-delivery';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { HyperNeoActionMessage } from '@hyperneo/shared';
 
@@ -2233,6 +2234,168 @@ describe('SDKMessageRepository', () => {
         repository.deleteMessagesAtAndAfter('session-1', Date.parse('2026-08-11T16:00:00.000Z'));
         expect(repository.hasDeliveryTurnEnd('session-1', 'rewound-uuid')).toBe(false);
       });
+    });
+  });
+
+  describe('classifyReclaimTermination — crash-window reclaim decision (task #946)', () => {
+    // Mirrors saveSDKMessage/markDeliveryConsumedByUuid: stamp the shared
+    // monotonic counter for consumed user rows and terminal results so
+    // hasTerminalResultAfter orders them counter-to-counter.
+    function bumpSeq(): number {
+      return (
+        db
+          .prepare(
+            `UPDATE delivery_consumed_seq SET next_seq = next_seq + 1 WHERE singleton = 1
+             RETURNING next_seq`
+          )
+          .get() as { next_seq: number }
+      ).next_seq;
+    }
+
+    function insertConsumedUser(uuid: string, at: string): void {
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid, consumed_seq)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        crypto.randomUUID(),
+        'session-1',
+        'user',
+        null,
+        '{}',
+        at,
+        'consumed',
+        0,
+        uuid,
+        bumpSeq()
+      );
+    }
+
+    function insertTerminalResult(at: string, subtype: string): void {
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid, consumed_seq)
+         VALUES (?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?)`
+      ).run(crypto.randomUUID(), 'session-1', 'result', subtype, '{}', at, 1, bumpSeq());
+    }
+
+    // The decision the bridge makes at the top of a consumed reclaim, given the
+    // durable repo signals. This is the exact composition agent-session.ts wires
+    // up in reclaimTurnAlreadySucceeded.
+    function decisionFor(uuid: string): ReturnType<typeof classifyReclaimTermination> {
+      return classifyReclaimTermination({
+        successResult: repository.hasTerminalResultAfter('session-1', uuid),
+        markerExists: repository.hasDeliveryTurnEnd('session-1', uuid),
+        terminalIdleInFlight: false,
+      });
+    }
+
+    it('pure matrix: only a SUCCESS result terminates; a bare marker redrives; idle keeps ownership', () => {
+      expect(
+        classifyReclaimTermination({
+          successResult: true,
+          markerExists: false,
+          terminalIdleInFlight: false,
+        })
+      ).toBe('terminated');
+      // A success result wins even if a marker also exists.
+      expect(
+        classifyReclaimTermination({
+          successResult: true,
+          markerExists: true,
+          terminalIdleInFlight: false,
+        })
+      ).toBe('terminated');
+      // THE CRASH WINDOW: a bare marker (no success result) must NOT terminate.
+      expect(
+        classifyReclaimTermination({
+          successResult: false,
+          markerExists: true,
+          terminalIdleInFlight: false,
+        })
+      ).toBe('redrive');
+      // Nothing ended → drive normally.
+      expect(
+        classifyReclaimTermination({
+          successResult: false,
+          markerExists: false,
+          terminalIdleInFlight: false,
+        })
+      ).toBe('live');
+      // A terminal-idle drain keeps durable turn ownership even with a success
+      // result / marker (mirrors the original hasSettledTurnTermination guard).
+      // Covers all remaining idleInFlight=true combos: the drain short-circuits
+      // to 'live' before success/marker are even consulted.
+      expect(
+        classifyReclaimTermination({
+          successResult: true,
+          markerExists: true,
+          terminalIdleInFlight: true,
+        })
+      ).toBe('live');
+      expect(
+        classifyReclaimTermination({
+          successResult: true,
+          markerExists: false,
+          terminalIdleInFlight: true,
+        })
+      ).toBe('live');
+      expect(
+        classifyReclaimTermination({
+          successResult: false,
+          markerExists: true,
+          terminalIdleInFlight: true,
+        })
+      ).toBe('live');
+      expect(
+        classifyReclaimTermination({
+          successResult: false,
+          markerExists: false,
+          terminalIdleInFlight: true,
+        })
+      ).toBe('live');
+    });
+
+    it('CRASH WINDOW (end-to-end data flow): a consumed turn with a bare marker and NO success result is cleared and re-driven, not silently completed', () => {
+      // Setup: the kickoff was consumed, the turn ended via a result-less path
+      // (query error / interrupt) so the idle waiter recorded a bare marker, and
+      // the daemon then exited BEFORE the producedResult/retry decision ran.
+      const uuid = 'msg-crash-window';
+      insertConsumedUser(uuid, '2026-08-11T17:00:00.000Z');
+      repository.recordDeliveryTurnEnd('session-1', uuid, '2026-08-11T17:00:42.000Z');
+      // No success result exists.
+      expect(repository.hasTerminalResultAfter('session-1', uuid)).toBe(false);
+      expect(repository.hasDeliveryTurnEnd('session-1', uuid)).toBe(true);
+
+      // Pre-fix this was 'terminated' (silent complete). Now it must redrive.
+      expect(decisionFor(uuid)).toBe('redrive');
+
+      // The bridge clears the stale marker on the redrive decision so a re-crash
+      // cannot loop on turn_terminated...
+      repository.clearDeliveryTurnEnd('session-1', uuid);
+      expect(repository.hasDeliveryTurnEnd('session-1', uuid)).toBe(false);
+      // ...and with the marker gone the reclaim now drives normally (the
+      // producedResult/stall-retry path decides the retry/dead-letter outcome).
+      expect(decisionFor(uuid)).toBe('live');
+    });
+
+    it('a consumed turn that ended in SUCCESS still terminates (no regression)', () => {
+      const uuid = 'msg-succeeded';
+      insertConsumedUser(uuid, '2026-08-11T17:10:00.000Z');
+      insertTerminalResult('2026-08-11T17:10:53.000Z', 'success');
+      // A marker may also exist (the idle waiter fires on every turn end); the
+      // success result still wins → terminate (silent complete is correct here).
+      repository.recordDeliveryTurnEnd('session-1', uuid, '2026-08-11T17:10:54.000Z');
+      expect(decisionFor(uuid)).toBe('terminated');
+    });
+
+    it('a consumed turn whose only result is an ERROR does not terminate (retry, do not silently complete)', () => {
+      // An error result is NOT success (hasTerminalResultAfter filters subtype).
+      // Even with a marker, this must redrive so the failure surfaces/retries.
+      const uuid = 'msg-error-result';
+      insertConsumedUser(uuid, '2026-08-11T17:20:00.000Z');
+      insertTerminalResult('2026-08-11T17:20:53.000Z', 'error_during_execution');
+      repository.recordDeliveryTurnEnd('session-1', uuid, '2026-08-11T17:20:54.000Z');
+      expect(repository.hasTerminalResultAfter('session-1', uuid)).toBe(false);
+      expect(decisionFor(uuid)).toBe('redrive');
     });
   });
 
