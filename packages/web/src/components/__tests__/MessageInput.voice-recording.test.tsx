@@ -128,19 +128,25 @@ describe('MessageInput — recording UI', () => {
     voiceCancel.mockClear();
     transcribeRequest.mockClear();
     hubRequest.mockClear();
-    vi.stubGlobal(
-      'requestAnimationFrame',
-      vi.fn(() => 0)
+    // Timer-backed rAF so deferred hook work actually runs and can be drained
+    // before the stubs are removed. A no-op stub leaves Preact cleanup pending
+    // until after unstubAllGlobals, where cancelAnimationFrame no longer exists
+    // — an unhandled ReferenceError that blocks CI even with green tests.
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) =>
+      setTimeout(() => cb(0), 0)
     );
-    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    vi.stubGlobal('cancelAnimationFrame', (id: ReturnType<typeof setTimeout>) => clearTimeout(id));
     Object.defineProperty(window, 'matchMedia', {
       writable: true,
       value: vi.fn().mockReturnValue({ matches: false }),
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     cleanup();
+    // Drain rAF-backed timers while the stubs are still installed so pending
+    // hook cleanups settle before unstubAllGlobals removes cancelAnimationFrame.
+    await new Promise((resolve) => setTimeout(resolve, 0));
     vi.unstubAllGlobals();
   });
 
