@@ -78,6 +78,66 @@ export class WorkflowRunArtifactRepository {
     return this.rowToRecord(row)!;
   }
 
+  /**
+   * First-writer-wins claim for a RESERVED identity stamp: insert a new row
+   * only if NO row exists for (runId, artifactType, artifactKey) across ANY
+   * node. Returns the inserted row, or the pre-existing row (the engine
+   * decides whether an existing identity is an idempotent re-stamp or a
+   * conflicting one to reject). The unique (run, NODE, type, key) constraint
+   * would otherwise let a second node's stamp overwrite within its own key
+   * while a first node's row survives — leaving two identity rows; this makes
+   * the FIRST stamp authoritative.
+   */
+  claimIdentityStamp(params: {
+    id: string;
+    runId: string;
+    nodeId: string;
+    artifactType: string;
+    artifactKey: string;
+    data: Record<string, unknown>;
+  }):
+    | { inserted: true; record: WorkflowRunArtifactRecord }
+    | { inserted: false; existing: WorkflowRunArtifactRecord | null } {
+    const tx = this.db.transaction(() => {
+      const existing = this.db
+        .prepare(
+          `SELECT * FROM workflow_run_artifacts
+              WHERE run_id = ? AND artifact_type = ? AND artifact_key = ?
+              ORDER BY created_at ASC LIMIT 1`
+        )
+        .get(params.runId, params.artifactType, params.artifactKey) as
+        | Record<string, unknown>
+        | undefined;
+      if (existing) {
+        return { kind: 'existing' as const, row: existing };
+      }
+      const now = Date.now();
+      const row = this.db
+        .prepare(
+          `INSERT INTO workflow_run_artifacts
+             (id, run_id, node_id, artifact_type, artifact_key, data, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           RETURNING *`
+        )
+        .get(
+          params.id,
+          params.runId,
+          params.nodeId,
+          params.artifactType,
+          params.artifactKey,
+          JSON.stringify(params.data),
+          now,
+          now
+        ) as Record<string, unknown>;
+      return { kind: 'inserted' as const, row };
+    });
+    const result = tx();
+    if (result.kind === 'inserted') {
+      return { inserted: true, record: this.rowToRecord(result.row)! };
+    }
+    return { inserted: false, existing: this.rowToRecord(result.row) };
+  }
+
   /** List artifacts for a run, optionally filtered by nodeId and/or artifactType. */
   listByRun(
     runId: string,

@@ -754,7 +754,24 @@ export async function ghGetReviewEvidence(
   const seedCommentNodes = seedComments?.nodes;
   const allCommentNodes: unknown[] = [];
   if (Array.isArray(seedCommentNodes)) allCommentNodes.unshift(...seedCommentNodes);
+  // When no formal review exists, comment evidence could decide the gate —
+  // but only on an own PR, which requires a resolvable viewer identity. A
+  // missing/corrupt viewer.login would silently set ownPr false, skip the
+  // comments walk, and report success with no evidence (blocking valid own-PR
+  // feedback). Fail closed in that case.
+  const viewerLogin = asRecord(asRecord(lastData)?.viewer)?.login;
+  const lastAuthorLogin = asRecord(lastPullRequest?.author)?.login;
   let evidence = extractReviewEvidence(buildMerged(allCommentNodes), sinceIso);
+  if (
+    evidence.formalReviewCount === 0 &&
+    (typeof viewerLogin !== 'string' || typeof lastAuthorLogin !== 'string')
+  ) {
+    return {
+      ok: false,
+      retryable: true,
+      error: 'malformed viewer/author identity for comment evidence; failing closed',
+    };
+  }
   if (evidence.formalReviewCount === 0 && evidence.ownPr) {
     // Comment evidence is the ONLY remaining path — the connection must
     // EXIST and carry a nodes array (an absent connection would read as "no
@@ -1087,7 +1104,12 @@ export async function ghGetCodexApproval(
         return { ok: false, retryable: true, error: preliminary.failClosedReason };
       }
       let approval = preliminary;
-      if (!preliminary.hadDecisiveReview) {
+      if (!preliminary.hadDecisiveReview && !preliminary.approved) {
+        // A decisive review is the only authoritative approval, but the tail
+        // reactions may already contain a fresh codex +1 (positive-only
+        // fallback satisfied). Walk only when neither is true — otherwise an
+        // older-page failure or >cap reactions could turn a proven approval
+        // into a retryable error. The final head recheck still applies.
         // No decisive review — the reaction path needs the full window.
         // Validate the connection BEFORE the walk: an absent/malformed
         // reactions connection would otherwise read as 'no reactions to
@@ -1101,6 +1123,27 @@ export async function ghGetCodexApproval(
             ok: false,
             retryable: true,
             error: 'malformed reactions connection (missing nodes/hasPreviousPage); failing closed',
+          };
+        }
+        // The head pushedDate anchors every reaction's freshness; an
+        // absent/unparseable value would silently ignore a valid codex +1
+        // and report no approval. Fail closed whenever reactions exist.
+        const reactionSeedNodes = asRecord(prNode?.reactions)?.nodes;
+        const reactionPushedNode = asRecord(prNode?.commits)?.nodes;
+        const reactionPushedDate = Array.isArray(reactionPushedNode)
+          ? asRecord(asRecord(reactionPushedNode[reactionPushedNode.length - 1])?.commit)
+              ?.pushedDate
+          : undefined;
+        if (
+          Array.isArray(reactionSeedNodes) &&
+          reactionSeedNodes.length > 0 &&
+          (typeof reactionPushedDate !== 'string' ||
+            !Number.isFinite(Date.parse(reactionPushedDate)))
+        ) {
+          return {
+            ok: false,
+            retryable: true,
+            error: 'malformed head pushedDate for reaction freshness; failing closed',
           };
         }
         // Walk backward while its oldest entry is still newer than the head

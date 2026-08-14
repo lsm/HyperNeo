@@ -239,3 +239,52 @@ describe('WorkflowRunArtifactRepository', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// claimIdentityStamp — first-writer-wins identity stamp (round 54)
+// ---------------------------------------------------------------------------
+
+describe('WorkflowRunArtifactRepository.claimIdentityStamp', () => {
+  let repo: WorkflowRunArtifactRepository;
+  let db: Database;
+  beforeEach(() => {
+    db = new Database(':memory:');
+    createSpaceTables(db);
+    db.prepare(
+      'INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run('sp-1', 'sp-1', '/tmp', 'S', 1, 1);
+    db.prepare(
+      'INSERT INTO space_workflows (id, space_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)'
+    ).run('wf-1', 'sp-1', 'W', 1, 1);
+    db.prepare(
+      'INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run('run-1', 'sp-1', 'wf-1', 'R', 1, 1);
+    repo = new WorkflowRunArtifactRepository(db);
+  });
+  afterEach(() => db.close());
+
+  it('first claim inserts; a second with a DIFFERENT link is rejected', () => {
+    const first = repo.claimIdentityStamp({
+      id: 'a1',
+      runId: 'run-1',
+      nodeId: 'n-coding',
+      artifactType: 'link',
+      artifactKey: '__pr_validated__',
+      data: { link: 'https://gb/pull/1', kind: 'pr' },
+    });
+    expect(first.inserted).toBe(true);
+
+    // A second node's stamp for the same run/key (cross-node race) does NOT
+    // overwrite — the first stamp is authoritative.
+    const second = repo.claimIdentityStamp({
+      id: 'a2',
+      runId: 'run-1',
+      nodeId: 'n-review',
+      artifactType: 'link',
+      artifactKey: '__pr_validated__',
+      data: { link: 'https://gb/pull/2', kind: 'pr' },
+    });
+    expect(second.inserted).toBe(false);
+    expect(second.existing?.data.link).toBe('https://gb/pull/1');
+  });
+});

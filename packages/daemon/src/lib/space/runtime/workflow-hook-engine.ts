@@ -54,7 +54,7 @@ import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { ChannelResolver } from './channel-resolver';
 import { isBuiltInHook, resolveHook } from './hook-registry';
-import { GH_INFRA_ERROR_PREFIX } from '@hyperneo/extensions-hooks';
+import { GH_INFRA_ERROR_PREFIX, VALIDATED_PR_ARTIFACT_KEY } from '@hyperneo/extensions-hooks';
 import { collectWithMaxBuffer, MAX_BUFFER_BYTES, parseJsonStdout } from './script-utils';
 
 // ---------------------------------------------------------------------------
@@ -984,6 +984,34 @@ export class WorkflowHookEngine {
   private writeArtifact(artifact: HookArtifactWrite, meta: HookActionMeta): boolean {
     if (!this.config.artifactRepo) return true;
     try {
+      // The run's validated-PR identity stamp is FIRST-writer-wins: two
+      // overlapping pr_ready evaluations (same run, possibly different source
+      // nodes) both read 'no identity yet' before either persists. The repo's
+      // unique (run, NODE, type, key) constraint would otherwise let each
+      // node stamp its own row, and getPrimaryLink would pick one — binding
+      // downstream gates to whichever identity won the race. The atomic claim
+      // makes the first stamp authoritative; a conflicting existing identity
+      // rejects the write (the caller blocks delivery on it).
+      if (artifact.artifactType === 'link' && artifact.artifactKey === VALIDATED_PR_ARTIFACT_KEY) {
+        const claim = this.config.artifactRepo.claimIdentityStamp({
+          id: generateUUID(),
+          runId: this.config.workflowRunId,
+          nodeId: artifact.nodeId ?? meta.nodeId,
+          artifactType: artifact.artifactType,
+          artifactKey: artifact.artifactKey,
+          data: artifact.data,
+        });
+        if (claim.inserted) return true;
+        const existingLink =
+          typeof claim.existing?.data?.link === 'string'
+            ? (claim.existing.data.link as string)
+            : undefined;
+        const incomingLink =
+          typeof artifact.data.link === 'string' ? (artifact.data.link as string) : undefined;
+        // Idempotent re-stamp of the SAME identity is a no-op success; a
+        // CONFLICTING identity is rejected so the caller blocks delivery.
+        return existingLink === incomingLink;
+      }
       this.config.artifactRepo.upsert({
         id: generateUUID(),
         runId: this.config.workflowRunId,
@@ -1016,7 +1044,14 @@ export class WorkflowHookEngine {
     const nodeName = workflow.nodes.find((n) => n.id === meta.nodeId)?.name ?? meta.agentName;
 
     const slotToNodes = new Map<string, string[]>();
+    // nodeSlots: node name → its declared agent slot names (for the slot
+    // fallback the router uses when a plain node entry is translated to
+    // @worker:<node>/<agent> — a slot-authored channel 'Coding → reviewer'
+    // authorizes canSend(fromNode, agentName)).
+    const nodeSlots = new Map<string, string[]>();
     for (const node of workflow.nodes) {
+      const slots = (node.agents ?? []).map((a) => a.name);
+      nodeSlots.set(node.name, slots);
       for (const agent of node.agents ?? []) {
         const arr = slotToNodes.get(agent.name) ?? [];
         if (!arr.includes(node.name)) {
@@ -1080,7 +1115,15 @@ export class WorkflowHookEngine {
         if (target.trim() === '*') {
           // Router parity: '*' resolves against the SENDER NODE's permitted
           // targets only (agent-message-router.ts:750-752) — no slot union.
-          const permitted = resolver.getPermittedTargets(fromNode);
+          // Match translateLegacyNodeTargets' '*' expansion EXACTLY: it
+          // includes only nodes the sender reaches via canSend(fromNode,
+          // node.name) (node-level), NOT slot-authored channels — those
+          // yield no worker targets and the send is rejected. Expanding slot
+          // routes here would run a side-effecting gate off a broadcast that
+          // delivers nowhere.
+          const permitted = workflow.nodes
+            .filter((n) => resolver.canSend(fromNode, n.name))
+            .map((n) => n.name);
           if (permitted.includes('*')) {
             for (const node of workflow.nodes) {
               actionTargets.add(node.name);
@@ -1121,11 +1164,20 @@ export class WorkflowHookEngine {
             // authored to the SLOT (e.g. 'Coding → reviewer'). Mirror that
             // bare-slot authorization (the entry string is the slot name) so
             // a slot-only-authored route is not mis-read as non-routable.
+            // The node-agent MCP path translates a bare slot OR node target
+            // to @worker:<node>/<agent> for every agent of the resolved node;
+            // the router authorizes via canSend(fromNode, agentName) for a
+            // slot-authored channel (e.g. 'Coding → reviewer'). Authorize
+            // when the entry string OR any slot of the resolved node
+            // satisfies canSend — otherwise a node-name entry ('Review')
+            // under a slot-only-authored channel is mis-read as non-routable.
+            const nodeSlotNames = nodeSlots.get(resolved) ?? [];
             const bareSlotOk =
               !target.startsWith('@') &&
               !target.startsWith('#') &&
               target.trim() !== '*' &&
-              resolver.canSend(fromNode, target);
+              (resolver.canSend(fromNode, target) ||
+                nodeSlotNames.some((sl) => resolver.canSend(fromNode, sl)));
             if (
               nodeNames.has(resolved) &&
               !isBuiltInInterLevelTarget(target) &&
@@ -1162,10 +1214,15 @@ export class WorkflowHookEngine {
             continue;
           }
           if (t.trim() === '*') {
-            // Expands to the sender node's permitted worker targets —
-            // authorized by construction; contributes those nodes and never
-            // blocks (matches translateLegacyNodeTarget's '*' handling).
-            for (const pt of resolver.getPermittedTargets(fromNode)) {
+            // Expand to the sender node's NODE-LEVEL permitted targets only
+            // (canSend(fromNode, node.name)) — translateLegacyNodeTarget
+            // honors slot routes inconsistently and yields no worker targets
+            // for a slot-only-authored channel, so the send is rejected;
+            // expanding slot routes here would run a gate off an undelivered
+            // broadcast.
+            for (const pt of workflow.nodes
+              .filter((n) => resolver.canSend(fromNode, n.name))
+              .map((n) => n.name)) {
               for (const resolved of this.resolveTargetEntries(
                 pt,
                 nodeIdToName,
@@ -1202,21 +1259,45 @@ export class WorkflowHookEngine {
           }
           if (wholeSendRefused || sequentialBlocked) continue;
           if (isBuiltInInterLevelTarget(t)) continue;
-          // A generic non-worker address is delivered separately per entry
-          // and never aborts the router loop — no authorization, no block.
           const isAddress = parsesAsAddress(t);
           const isWorker = t.startsWith('@worker:');
+          // A '#' channel address unconditionally hard-returns the router
+          // loop (agent-message-router.ts:421-430) before anything after it
+          // delivers — model it as a sequential failure point.
+          if (t.startsWith('#')) {
+            sequentialBlocked = true;
+            for (const resolved of resolvedTargets) {
+              if (nodeNames.has(resolved)) postFailureNodes.add(resolved);
+            }
+            continue;
+          }
+          // A generic non-worker address (@handle/@role/@session/@coordinator)
+          // is delivered separately per entry and does not abort the loop —
+          // no authorization, no block.
           if (isAddress && !isWorker) continue;
           // Authorization (mirrors the router's worker check):
-          // canSend(fromNode, resolvedNode) OR canSend(fromNode, agentSlot)
-          // — for a plain entry the entry string itself is the slot name; for
-          // a @worker entry it is the decoded agent name.
-          const slotName = isWorker ? workerAgentOf(t) : t;
+          // canSend(fromNode, resolvedNode) OR canSend(fromNode, agentSlot).
+          // For a @worker entry the slot is the decoded agent name; for a
+          // PLAIN entry the adapter expands it to @worker:<node>/<agent> for
+          // EVERY agent of the resolved node, and the router authorizes via
+          // canSend(fromNode, agentName) — so authorize when ANY slot of the
+          // resolved node (or the entry string itself as a slot) satisfies
+          // canSend. This mirrors the string branch's bareSlotOk for the
+          // array path (round-53 fixed the string branch only).
+          const entrySlots = isWorker
+            ? workerAgentOf(t) !== undefined
+              ? [workerAgentOf(t) as string]
+              : []
+            : [
+                t,
+                ...resolvedTargets.flatMap((r) =>
+                  nodeNames.has(r) ? (nodeSlots.get(r) ?? []) : []
+                ),
+              ];
           const authorized = resolvedTargets.some(
             (r) =>
               nodeNames.has(r) &&
-              (isRoutableTarget(r) ||
-                (slotName !== undefined && resolver.canSend(fromNode, slotName)))
+              (isRoutableTarget(r) || entrySlots.some((sl) => resolver.canSend(fromNode, sl)))
           );
           const resolvable = resolvedTargets.some((r) => nodeNames.has(r));
           if (!isAddress && !resolvable) {
@@ -2277,19 +2358,14 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
       const blockingId = outcome.blockingHookId;
 
       if (methodName === 'send_message') {
-        // A hook's durable record holds ONE queued action; when the new
-        // action REPLACES a prior one, reap the old timer. A DIFFERENT action
-        // key means a second gated send while the first is pending — do NOT
-        // reap its timer: the durable record replacement is unavoidable
-        // (single slot per hook, the shared-key limitation), but the in-memory
-        // timer for a distinct action must survive so it is not silently
-        // abandoned (its replay re-evaluates against current state).
-        // Detect a PRIOR queued record for THIS action (the hook re-blocks the
-        // same send): its timer must be reaped and replaced with a fresh one
-        // at the new backoff. Defer the reap until the replacement patch
-        // persists — if the persist fails the durable record survives, and
-        // cancelling the timer now would leave an accepted send with no
-        // in-memory retry (lost until a manual attempt or daemon restart).
+        // A hook's durable record holds ONE queued action. When the hook
+        // re-blocks the SAME action, the prior timer must be replaced with a
+        // fresh one at the new backoff — but the reap is DEFERRED until the
+        // replacement patch persists: if the persist fails the durable record
+        // survives, and cancelling the timer first would leave an accepted
+        // send with no in-memory retry (lost until a manual attempt or daemon
+        // restart). A different action key means a second gated send while the
+        // first is pending — leave its timer alone.
         const existingActionKeyToReap =
           blockingId && engine.getQueuedRetryableAction(blockingId)?.actionKey === actionKey
             ? actionKey

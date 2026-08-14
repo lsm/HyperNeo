@@ -618,6 +618,135 @@ describe('WorkflowHookEngine.executeAction', () => {
     expect(outcome.blockingHookId).toBe('array_wild_ok_hook');
   });
 
+  test('a plain NODE entry in an array authorizes via a slot-authored channel', async () => {
+    // Adapter expands 'Review' → @worker:<run>/Review/reviewer; the router
+    // authorizes canSend(fromNode, agentName) for the slot-authored channel
+    // 'Coding → reviewer'. The array branch must mirror that (round-53 fixed
+    // the string branch only): otherwise Review's gate is suppressed on a
+    // delivered send.
+    const STOP_HOOK = scriptHook('array_node_slot_hook', '{"flow":"stop","reason":"blocked"}');
+    const workflow = makeWorkflow({
+      customHooks: [STOP_HOOK],
+      channels: [{ from: 'Coding', to: 'reviewer', label: 'Coding → reviewer' }],
+      hookBindings: [
+        {
+          hookId: 'array_node_slot_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    const engine = makeEngine(workflow);
+    const single = await engine.executeAction(
+      'send_message',
+      { target: ['Review'], message: 'slot-authored' },
+      META
+    );
+    expect(single.decision).toBe('stop');
+    expect(single.blockingHookId).toBe('array_node_slot_hook');
+
+    // Mixed: Review authorized via slot before an unauthorized Other →
+    // Review's gate still runs (sequential delivery).
+    const otherWorkflow = makeWorkflow({
+      customHooks: [STOP_HOOK],
+      nodes: [
+        { id: 'n-coding', name: 'Coding', agents: [{ agentId: 'a1', name: 'coder' }] },
+        { id: 'n-review', name: 'Review', agents: [{ agentId: 'a2', name: 'reviewer' }] },
+        { id: 'n-other', name: 'Other', agents: [{ agentId: 'a3', name: 'other' }] },
+      ],
+      channels: [{ from: 'Coding', to: 'reviewer', label: 'Coding → reviewer' }],
+      hookBindings: [
+        {
+          hookId: 'array_node_slot_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    const otherEngine = makeEngine(otherWorkflow);
+    const mixed = await otherEngine.executeAction(
+      'send_message',
+      { target: ['Review', 'Other'], message: 'mixed' },
+      META
+    );
+    expect(mixed.decision).toBe('stop');
+    expect(mixed.blockingHookId).toBe('array_node_slot_hook');
+  });
+
+  test('a "#" channel address aborts the multicast (later entries suppressed)', async () => {
+    // The router unconditionally hard-returns at a '#' address before
+    // anything after it delivers. A plain sibling after it must not run its
+    // gate off an undelivered send.
+    const STOP_HOOK = scriptHook('hash_hook', '{"flow":"stop","reason":"blocked"}');
+    const workflow = makeWorkflow({
+      customHooks: [STOP_HOOK],
+      hookBindings: [
+        {
+          hookId: 'hash_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    const engine = makeEngine(workflow);
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: ['#some-channel', 'Review'], message: 'channel then node' },
+      META
+    );
+    expect(outcome.decision).toBe('deliver');
+    expect(outcome.executionLog.length).toBe(0);
+  });
+
+  test('a "*" broadcast over a slot-only-authored channel runs no gates', async () => {
+    // permittedWorkerTargets yields nothing for a slot-only channel (the
+    // translator throws), so the send is refused — Review's gate must not run.
+    const STOP_HOOK = scriptHook('star_slot_hook', '{"flow":"stop","reason":"blocked"}');
+    const workflow = makeWorkflow({
+      customHooks: [STOP_HOOK],
+      channels: [{ from: 'coder', to: 'Review', label: 'coder → Review' }],
+      hookBindings: [
+        {
+          hookId: 'star_slot_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    const engine = makeEngine(workflow);
+    const star = await engine.executeAction(
+      'send_message',
+      { target: '*', message: 'bcast' },
+      META
+    );
+    expect(star.decision).toBe('deliver');
+    expect(star.executionLog.length).toBe(0);
+
+    const arr = await engine.executeAction(
+      'send_message',
+      { target: ['*'], message: 'bcast arr' },
+      META
+    );
+    expect(arr.decision).toBe('deliver');
+    expect(arr.executionLog.length).toBe(0);
+  });
+
   test('a percent-encoded slot name resolves its slot route (router decode parity)', async () => {
     // Channel 'Coding → reviewer:lead' names an AGENT SLOT; the canonical
     // worker address percent-encodes the colon ('reviewer%3Alead'). The
