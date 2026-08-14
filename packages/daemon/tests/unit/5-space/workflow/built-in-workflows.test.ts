@@ -38,6 +38,7 @@ import {
   CODING_WORKFLOW,
   CODING_WORKFLOW as STABLE_CODING_WORKFLOW,
   CODING_WITH_QA_WORKFLOW,
+  CODER_OWNED_PR_SUBSCRIBE_GUIDANCE,
   builtInWorkflowRequiresPrMerge,
   LEGACY_CODING_TEMPLATE_IDENTITIES,
   mergeChannelsFromTemplate,
@@ -381,9 +382,11 @@ describe('stable CODING_WORKFLOW template structure', () => {
     // Behavioral: does not hard-code the Review peer or pr_url gate field.
     expect(prompt).not.toContain('send_message(target="Review"');
     expect(prompt).not.toContain('code-ready-gate');
-    // Does not tell the coder to subscribe_pr_events / detail external_event
-    // handles — that is the legacy prompt text (see LEGACY_CODING_SLOT_PROMPTS).
-    expect(prompt).not.toContain('subscribe_pr_events');
+    // The imperative subscribe instruction lives in the stable coder prompt as a
+    // backstop while the declarative eventInterests resolver is inert
+    // (see CODER_OWNED_PR_SUBSCRIBE_GUIDANCE). It uses the explicit prUrl form.
+    expect(prompt).toContain('subscribe_pr_events');
+    expect(prompt).toContain('prUrl');
   });
 
   test('reviewer prompt instructs a visible GitHub review per the system contract', () => {
@@ -1546,6 +1549,48 @@ describe('seedBuiltInWorkflows()', () => {
     );
   });
 
+  test('re-stamp restores the imperative subscribe instruction to the stable coder prompt', () => {
+    // Existing live spaces store the pre-subscribe CODER_OWNED_MERGE_PROMPT. The
+    // [CODER_OWNED_PR_SUBSCRIBE_GUIDANCE, ''] retired patch must converge that
+    // stored prompt to the current template (with subscribe) on the next seed.
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+    const codingNode = coding.nodes.find((n) => n.name === 'Coding')!;
+
+    const templatePrompt = codingNode.agents[0].customPrompt!.value;
+    expect(templatePrompt).toContain('subscribe_pr_events');
+    // Reconstruct the pre-subscribe retired form by dropping the guidance.
+    const retiredPrompt = templatePrompt.replace(CODER_OWNED_PR_SUBSCRIBE_GUIDANCE, '');
+    expect(retiredPrompt).not.toContain('subscribe_pr_events');
+
+    // Simulate a live space that stored the retired prompt with a stale hash.
+    manager.updateWorkflow(coding.id, {
+      nodes: coding.nodes.map((n) =>
+        n.id !== codingNode.id
+          ? n
+          : {
+              ...n,
+              agents: n.agents.map((a, i) =>
+                i === 0 ? { ...a, customPrompt: { value: retiredPrompt } } : a
+              ),
+            }
+      ),
+    });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'stale-pre-subscribe-hash',
+      coding.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(CODING_WORKFLOW.name);
+
+    const after = manager.getWorkflow(coding.id)!;
+    const afterCodingNode = after.nodes.find((n) => n.id === codingNode.id)!;
+    // Exact convergence: stored prompt is restored to the template (with subscribe).
+    expect(afterCodingNode.agents[0].customPrompt?.value).toBe(templatePrompt);
+    expect(afterCodingNode.agents[0].customPrompt?.value).toContain('subscribe_pr_events');
+  });
+
   test('restamp prompt migration operates on legacy slot prompts, not the stable behavioral prompts', () => {
     // The stable coder-owned prompts were fully rewritten to be behavioral text.
     // The retired Fullstack/Coding step-text and shape-API patch variants are
@@ -1561,7 +1606,11 @@ describe('seedBuiltInWorkflows()', () => {
     const qaCoderPrompt = CODING_WITH_QA_WORKFLOW.nodes.find((n) => n.name === 'Coding')!.agents[0]
       .customPrompt!.value;
     expect(qaCoderPrompt).not.toContain('3. Open or update the PR');
-    expect(qaCoderPrompt).not.toContain('subscribe_pr_events');
+    // subscribe_pr_events now lives in the stable coder prompt too
+    // (CODER_OWNED_PR_SUBSCRIBE_GUIDANCE), so it no longer distinguishes legacy
+    // from stable — the numbered-step and gate-field markers are the real legacy
+    // discriminators asserted above/below.
+    expect(qaCoderPrompt).toContain('subscribe_pr_events');
     expect(qaCoderPrompt).not.toContain('code-pr-gate');
     expect(qaCoderPrompt).toContain('Runtime Execution Contract');
     expect(qaCoderPrompt).toContain('`gh pr merge`');

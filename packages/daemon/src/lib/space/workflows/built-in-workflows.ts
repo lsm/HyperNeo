@@ -276,8 +276,33 @@ const IMPLEMENTER_PR_EVENT_INTEREST: EventInterest = {
   label: 'My PR events',
 };
 
+/**
+ * Imperative PR-event subscription backstop for the coder-owned prompts.
+ *
+ * The declarative `IMPLEMENTER_PR_EVENT_INTEREST` on the implementer slots is
+ * the intended subscription path, but its `topicFrom` resolver is not yet wired
+ * into run-interest registration (`registerRunInterests` skips `topicFrom`
+ * interests as inert — see `space-runtime.ts`), so without this instruction a
+ * coder on a Coding / Coding-with-QA flow never subscribes and receives no
+ * review-comment / CI / reaction events for its own PR. The explicit `prUrl`
+ * form dodges the #886 timing bug: the run's primary link is not recorded until
+ * the gated handoff, so the no-arg `subscribe_pr_events({})` form fails to
+ * resolve right after `gh pr create`.
+ *
+ * Worded to match the surviving Research/legacy step wording. Registered as a
+ * retired→current patch (`[GUIDANCE, '']` in BUILT_IN_PROMPT_PATCH_VARIANTS) so
+ * existing live spaces storing the pre-subscribe `CODER_OWNED_MERGE_PROMPT`
+ * restamp to this wording on the next seed.
+ */
+export const CODER_OWNED_PR_SUBSCRIBE_GUIDANCE =
+  'After `gh pr create`, call `subscribe_pr_events({ prUrl: "<PR URL>" })`, passing the PR URL from the ' +
+  '`gh pr create` output explicitly (it is not auto-resolved from the run until the PR is recorded). ' +
+  'This subscribes you to review comments, CI failures, and reactions for your PR so you receive them ' +
+  'directly and can act on them. Do this once per PR. ';
+
 const CODER_OWNED_MERGE_PROMPT =
   'You are the Coder. Implement the task, add focused tests, and keep one pull request updated. ' +
+  CODER_OWNED_PR_SUBSCRIBE_GUIDANCE +
   'When the PR is ready for review, hand it off via the gated handoff described in Your Role in This ' +
   'Workflow — the runtime supplies the target and the pr_url field, so follow that contract exactly ' +
   'and do not restate or assume it here. Address each valid review comment, reply on the PR, resolve ' +
@@ -1218,7 +1243,15 @@ export function mergeNodeStructuralFieldsFromTemplate(
             ? {}
             : { resetContextPerTurn: templateAgent.resetContextPerTurn }),
           ...(eventInterestsMatchesTemplate ? {} : { eventInterests: templateEventInterests }),
-          ...(finalPrompt === existingCustomPrompt ? {} : { customPrompt: finalPrompt }),
+          // Spread customPrompt only when the merged prompt actually changed from
+          // the stored value. A reference check (=== existingCustomPrompt) misses
+          // convergence: patchKnownBuiltInPromptDrift returns a NEW object on
+          // convergence, so finalPrompt === existingCustomPrompt yet the value
+          // differs from the stored prompt. Compare values so retired-variant
+          // restamps (BUILT_IN_PROMPT_PATCH_VARIANTS) actually persist.
+          ...(finalPrompt?.value === agent.customPrompt?.value
+            ? {}
+            : { customPrompt: finalPrompt }),
         };
       }),
     };
@@ -1477,6 +1510,11 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
   [[CURRENT_CODING_WORKFLOW_PR_STEP_PROMPT, RETIRED_NOARG_CODING_WORKFLOW_PR_STEP_PROMPT]],
   [[CURRENT_FULLSTACK_CODING_PR_STEP_PROMPT, RETIRED_NOARG_FULLSTACK_CODING_PR_STEP_PROMPT]],
   [[CURRENT_RESEARCH_PR_STEP_PROMPT, RETIRED_NOARG_RESEARCH_PR_STEP_PROMPT]],
+  // Restored the imperative subscribe instruction to the stable coder-owned
+  // prompts (CODER_OWNED_MERGE_PROMPT) as a backstop while the declarative
+  // IMPLEMENTER_PR_EVENT_INTEREST resolver stays inert. Dropping the guidance
+  // reconstructs the pre-subscribe prompt, so live spaces storing it restamp.
+  [[CODER_OWNED_PR_SUBSCRIBE_GUIDANCE, '']],
   // Gate-era Coding Workflow: PR step + handoff + rehandoff all differ.
   [
     [CURRENT_CODING_WORKFLOW_PR_STEP_PROMPT, RETIRED_CODING_WORKFLOW_PR_STEP_PROMPT],
