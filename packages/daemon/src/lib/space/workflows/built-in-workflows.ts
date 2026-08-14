@@ -155,6 +155,29 @@ const REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE =
   'auto-merge is not allowed.';
 
 /**
+ * Shared zero-findings verdict gate appended to every stable reviewer slot.
+ *
+ * The Reviewer System Contract already states the verdict is a pure function
+ * of the finding counts (approve only when P0+P1+P2+P3 are all zero), but the
+ * agent-persona contract is NOT auto-restamped, so existing seeded spaces keep
+ * the old leaky persona until a manual `syncFromTemplate`. Restating the gate
+ * behaviorally here lets it travel with the auto-restamping slot prompt — the
+ * lever that actually closes the P2/P3 approval leak in existing spaces.
+ *
+ * The leading `\n\n` is load-bearing: it is the exact separator dropped by the
+ * `[GATE, '']` patch variant in BUILT_IN_PROMPT_PATCH_VARIANTS, so a stored
+ * pre-gate prompt reconstructs byte-for-byte. Keep it stable.
+ */
+export const REVIEWER_ZERO_FINDINGS_GATE =
+  '\n\nVerdict gate (hard rule, no exceptions): approve, or forward an approved PR, ONLY ' +
+  'when your P0, P1, P2, and P3 counts are all zero. If any finding count is greater than ' +
+  'zero, your verdict is REQUEST_CHANGES — send the findings back to the implementer and ' +
+  'stop; do not approve, do not hand off an approval, and do not call approve_task or ' +
+  'submit_for_approval. There is no optional severity: a filed P2 or P3 is unresolved work ' +
+  'that blocks approval exactly like a P0. (If a nit is genuinely not worth a change, do ' +
+  'not file it as a finding — note it as a passing observation or omit it.)';
+
+/**
  * Post-approval re-approval paragraph appended to the QA end-node prompt (Fullstack).
  *
  * Appended AFTER the QA slot procedure (the workflow-specific steps that end with
@@ -328,7 +351,8 @@ const CODER_OWNED_REVIEW_PROMPT =
   'stop. When the current head is clean and all review threads are resolved, save the PR link artifact ' +
   'and call approve_task, or submit_for_approval when autonomy requires human approval. Do not merge. ' +
   'If the implementer later reports a post-approval merge blocker, re-check the current head, ' +
-  'coordinate any fix, post a fresh approval, and signal them to continue.';
+  'coordinate any fix, post a fresh approval, and signal them to continue.' +
+  REVIEWER_ZERO_FINDINGS_GATE;
 
 // Reviewer prompt for the stable `Coding with QA` workflow, where Review is an
 // INTERMEDIATE node (QA is the end node / approval authority). Behavioral only:
@@ -351,7 +375,8 @@ const CODER_OWNED_QA_REVIEW_PROMPT =
   'runtime supplies the channel, target, and gate field, so follow that contract exactly and do not ' +
   'restate or assume it here. Then stop and wait. Do not merge. If the implementer later reports a ' +
   'post-approval merge blocker, re-check the current head, coordinate any fix, post a fresh approval, ' +
-  'and signal them to continue.';
+  'and signal them to continue.' +
+  REVIEWER_ZERO_FINDINGS_GATE;
 
 /**
  * Legacy built-in slot prompts from the pre-split era, keyed by
@@ -715,7 +740,8 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
               'APPROVE" marker), then signal the Research agent to continue via the runtime-supplied ' +
               'handoff in Your Role in This Workflow. You are the re-approval authority for changed ' +
               'heads; the Research agent merges. Do not mark the task complete — only the Research ' +
-              'agent merges and closes.',
+              'agent merges and closes.' +
+              REVIEWER_ZERO_FINDINGS_GATE,
           },
         },
       ],
@@ -788,7 +814,8 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
               'PR or codebase directly. Follow the Reviewer System Contract and terminal-action tool ' +
               'contract: post a visible GitHub review (per the Reviewer System Contract procedure) before terminal actions; ' +
               'call save_artifact({ shape: "link", kind: "pr", data: { url: "<url>" } }) to record the PR, then approve_task() or submit_for_approval only on APPROVE, otherwise stop. ' +
-              'Do NOT attempt to merge the PR yourself. Never set a PR to auto-merge.',
+              'Do NOT attempt to merge the PR yourself. Never set a PR to auto-merge.' +
+              REVIEWER_ZERO_FINDINGS_GATE,
           },
         },
       ],
@@ -1515,6 +1542,12 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
   // IMPLEMENTER_PR_EVENT_INTEREST resolver stays inert. Dropping the guidance
   // reconstructs the pre-subscribe prompt, so live spaces storing it restamp.
   [[CODER_OWNED_PR_SUBSCRIBE_GUIDANCE, '']],
+  // P2/P3 approval leak: the stable reviewer slots gained the hard zero-findings
+  // verdict gate (REVIEWER_ZERO_FINDINGS_GATE). The persona contract carries the
+  // same rule but is not auto-restamped, so restating it on the slot is what
+  // reaches existing seeded spaces. Dropping the gate reconstructs the pre-gate
+  // prompt byte-for-byte (the const owns its leading `\n\n` separator).
+  [[REVIEWER_ZERO_FINDINGS_GATE, '']],
   // Gate-era Coding Workflow: PR step + handoff + rehandoff all differ.
   [
     [CURRENT_CODING_WORKFLOW_PR_STEP_PROMPT, RETIRED_CODING_WORKFLOW_PR_STEP_PROMPT],

@@ -285,6 +285,11 @@ describe('seedPresetAgents', () => {
     // Decision rule: request changes when any P0-P3 finding exists.
     expect(reviewer?.customPrompt).toContain('P0-P3');
     expect(reviewer?.customPrompt).toContain('Request changes for any P0-P3 finding');
+    // No P2/P3 approval leak: every severity blocks, verdict is count-derived.
+    expect(reviewer?.customPrompt).toContain('All four severities block approval');
+    expect(reviewer?.customPrompt).toContain('no optional severity');
+    expect(reviewer?.customPrompt).toContain('pure function of your finding counts');
+    expect(reviewer?.customPrompt).toContain('P0=P1=P2=P3=0');
   });
 
   it('Reviewer custom prompt fences terminal actions while findings are open (Task #136 regression)', async () => {
