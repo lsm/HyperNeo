@@ -31,7 +31,10 @@
 
 import { useContext } from 'preact/hooks';
 import { voiceRecorderStore } from '../../lib/voice/voice-recorder-store.ts';
-import { voiceComposerSurfaceOf } from '../../lib/voice/voice-composer-registry.ts';
+import {
+  hasAdoptableComposerOnSurface,
+  voiceComposerSurfaceOf,
+} from '../../lib/voice/voice-composer-registry.ts';
 import { VoiceSurfaceContext } from '../../hooks/useVoiceRecorder.ts';
 import {
   currentSessionIdSignal,
@@ -42,6 +45,9 @@ import {
 import {
   clearOverlaySignals,
   closeOverlayHistory,
+  createSessionPath,
+  createSpaceSessionPath,
+  getCurrentPath,
   navigateToSession,
   navigateToSpaceSession,
 } from '../../lib/router.ts';
@@ -73,15 +79,19 @@ export function VoiceRecordingIndicator({ inOverlay = false }: { inOverlay?: boo
     overlaySessionId ?? (overlayPending ? null : spaceSessionId) ?? primarySessionId;
 
   // The recording is visible HERE when its owning composer is mounted on this
-  // surface; an ORPHANED recording is visible here when this surface displays
-  // its session (the freshly-mounted composer adopts it). Owner unregistered
-  // (e.g. between unmount and adoption) reads as "not here" — the safe
-  // default keeps the recording discoverable.
+  // surface; an ORPHANED recording is visible here only when a composer on
+  // this surface displays its session AND may adopt it — a mid-transcription
+  // composer deliberately refuses adoption, and session equality alone would
+  // suppress the only Return affordance while the capture continues unseen.
+  // An owner unregistered (e.g. between unmount and adoption) reads as "not
+  // here" — the safe default keeps the recording discoverable.
   const ownerSurface = voiceComposerSurfaceOf(voiceRecorderStore.recordingOwnerId.value);
   const recordingVisibleHere =
     ownerSurface !== null
       ? ownerSurface === surface.surfaceId
-      : displayedSessionId !== null && displayedSessionId === recordingSessionId;
+      : displayedSessionId !== null &&
+        displayedSessionId === recordingSessionId &&
+        hasAdoptableComposerOnSurface(surface.surfaceId, recordingSessionId);
 
   if (!isRecording || !recordingSessionId || recordingVisibleHere) return null;
 
@@ -96,11 +106,25 @@ export function VoiceRecordingIndicator({ inOverlay = false }: { inOverlay?: boo
       closeOverlayHistory();
       return;
     }
+    const targetPath =
+      recordingSpaceId !== null
+        ? createSpaceSessionPath(recordingSpaceId, recordingSessionId)
+        : createSessionPath(recordingSessionId);
     if (overlayOpen) {
-      // Clear the overlay SYNCHRONOUSLY: closeOverlayHistory()'s
-      // window.history.back() resolves asynchronously, and a route pushed in
-      // the same tick races that pending popstate onto a stale entry.
-      clearOverlaySignals();
+      if (getCurrentPath() === targetPath) {
+        // Destination URL already matches (an overlay keeps the base URL) and
+        // the navigate fast-path performs no history write for a same-path
+        // target, so replace=true could not consume the overlay's duplicate
+        // entry — pop it with back() instead. Safe here because no push
+        // follows: the async traversal cannot race a navigation.
+        closeOverlayHistory();
+      } else {
+        // Clear the overlay SYNCHRONOUSLY: closeOverlayHistory()'s
+        // window.history.back() resolves asynchronously, and a route pushed
+        // in the same tick races that pending popstate onto a stale entry.
+        // The still-top overlay entry is then consumed by the replace below.
+        clearOverlaySignals();
+      }
     }
     // When an overlay was open, its history entry is still on top — REPLACE
     // it with the target route (consuming it) instead of pushing above it.

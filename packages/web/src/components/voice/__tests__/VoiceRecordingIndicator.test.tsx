@@ -22,6 +22,8 @@ const routerState = vi.hoisted(() => ({
   spaceSessionId: null,
   spaceId: null,
   overlaySessionId: null,
+  overlayPending: null,
+  currentPath: '/',
   navigatedTo: null,
   navigatedSpace: null,
 }));
@@ -65,6 +67,10 @@ vi.mock('../../../lib/router.ts', () => ({
   }),
   closeOverlayHistory,
   clearOverlaySignals,
+  createSessionPath: (sessionId: string) => `/chat/${sessionId}`,
+  createSpaceSessionPath: (spaceId: string, sessionId: string) =>
+    `/space/${spaceId}/session/${sessionId}`,
+  getCurrentPath: () => routerState.currentPath,
 }));
 
 import { VoiceRecordingIndicator } from '../VoiceRecordingIndicator.tsx';
@@ -102,6 +108,7 @@ describe('VoiceRecordingIndicator', () => {
     routerState.spaceId = null;
     routerState.overlaySessionId = null;
     routerState.overlayPending = null;
+    routerState.currentPath = '/';
     routerState.navigatedTo = null;
     closeOverlayHistory.mockClear();
     clearOverlaySignals.mockClear();
@@ -124,15 +131,40 @@ describe('VoiceRecordingIndicator', () => {
   it('renders nothing when the displayed session shows an orphaned recording (it adopts)', () => {
     voiceRecorderStore.isRecording.value = true;
     voiceRecorderStore.recordingSessionId.value = 'session-current';
+    // The displayed composer displays the recording's session and may adopt.
+    registerVoiceComposer('owner-base', {
+      surfaceId: 'primary',
+      sessionId: 'session-current',
+      canAdopt: true,
+    });
     const { container } = renderBase();
     expect(container.querySelector('[data-testid="voice-recording-elsewhere"]')).toBeNull();
+  });
+
+  it('keeps the chip when the only same-session composer refuses adoption (mid-transcription)', () => {
+    voiceRecorderStore.isRecording.value = true;
+    voiceRecorderStore.recordingSessionId.value = 'session-current';
+    // The displayed composer is mid-transcription: adoption is deliberately
+    // disabled, so the orphaned recording is NOT visible here — the chip is
+    // the only Return affordance while the capture continues.
+    registerVoiceComposer('owner-base', {
+      surfaceId: 'primary',
+      sessionId: 'session-current',
+      canAdopt: false,
+    });
+    const { container } = renderBase();
+    expect(container.querySelector('[data-testid="voice-recording-elsewhere"]')).toBeTruthy();
   });
 
   it('renders nothing when this surface owns the displayed recording', () => {
     voiceRecorderStore.isRecording.value = true;
     voiceRecorderStore.recordingSessionId.value = 'session-current';
     voiceRecorderStore.recordingOwnerId.value = 'owner-base';
-    registerVoiceComposer('owner-base', 'primary');
+    registerVoiceComposer('owner-base', {
+      surfaceId: 'primary',
+      sessionId: 'session-current',
+      canAdopt: true,
+    });
     const { container } = renderBase();
     expect(container.querySelector('[data-testid="voice-recording-elsewhere"]')).toBeNull();
   });
@@ -164,6 +196,11 @@ describe('VoiceRecordingIndicator', () => {
     routerState.currentSessionId = null;
     routerState.spaceSessionId = 'space-session-1';
     routerState.spaceId = 'space-9';
+    registerVoiceComposer('owner-base', {
+      surfaceId: 'primary',
+      sessionId: 'space-session-1',
+      canAdopt: true,
+    });
     const { container } = renderBase();
     expect(container.querySelector('[data-testid="voice-recording-elsewhere"]')).toBeNull();
   });
@@ -227,7 +264,11 @@ describe('VoiceRecordingIndicator', () => {
     voiceRecorderStore.isRecording.value = true;
     voiceRecorderStore.recordingSessionId.value = 'overlay-session-7';
     voiceRecorderStore.recordingOwnerId.value = 'owner-base';
-    registerVoiceComposer('owner-base', 'primary');
+    registerVoiceComposer('owner-base', {
+      surfaceId: 'primary',
+      sessionId: 'overlay-session-7',
+      canAdopt: true,
+    });
     routerState.currentSessionId = null;
     routerState.spaceSessionId = 'space-session-1';
     routerState.spaceId = 'space-9';
@@ -240,7 +281,11 @@ describe('VoiceRecordingIndicator', () => {
     voiceRecorderStore.isRecording.value = true;
     voiceRecorderStore.recordingSessionId.value = 'overlay-session-7';
     voiceRecorderStore.recordingOwnerId.value = 'owner-base';
-    registerVoiceComposer('owner-base', 'primary');
+    registerVoiceComposer('owner-base', {
+      surfaceId: 'primary',
+      sessionId: 'overlay-session-7',
+      canAdopt: true,
+    });
     routerState.currentSessionId = null;
     routerState.spaceSessionId = 'space-session-1';
     routerState.spaceId = 'space-9';
@@ -257,7 +302,11 @@ describe('VoiceRecordingIndicator', () => {
     voiceRecorderStore.isRecording.value = true;
     voiceRecorderStore.recordingSessionId.value = 'overlay-session-7';
     voiceRecorderStore.recordingOwnerId.value = 'owner-overlay';
-    registerVoiceComposer('owner-overlay', 'agent-overlay');
+    registerVoiceComposer('owner-overlay', {
+      surfaceId: 'agent-overlay',
+      sessionId: 'overlay-session-7',
+      canAdopt: true,
+    });
     routerState.currentSessionId = null;
     routerState.spaceSessionId = 'space-session-1';
     routerState.spaceId = 'space-9';
@@ -292,6 +341,28 @@ describe('VoiceRecordingIndicator', () => {
     expect(clearOverlaySignals).toHaveBeenCalledTimes(1);
     expect(closeOverlayHistory).not.toHaveBeenCalled();
     expect(navigateToSpaceSession).toHaveBeenCalledWith('space-9', 'space-session-2', true);
+  });
+
+  it('pops the duplicate overlay entry when the destination URL already matches', () => {
+    // Recording belongs to the base Space session UNDER a different overlay:
+    // overlays keep the base URL, so the target path equals the current one
+    // and the navigate fast-path would perform no history write — the chip
+    // must pop the overlay's duplicate entry instead of relying on replace.
+    voiceRecorderStore.isRecording.value = true;
+    voiceRecorderStore.recordingSessionId.value = 'space-session-1';
+    voiceRecorderStore.recordingSpaceId.value = 'space-9';
+    routerState.currentSessionId = null;
+    routerState.spaceSessionId = 'space-session-1';
+    routerState.spaceId = 'space-9';
+    routerState.overlaySessionId = 'overlay-session-7';
+    routerState.currentPath = '/space/space-9/session/space-session-1';
+    renderInOverlay();
+    fireEvent.click(screen.getByTestId('voice-recording-elsewhere'));
+    expect(closeOverlayHistory).toHaveBeenCalledTimes(1);
+    expect(clearOverlaySignals).not.toHaveBeenCalled();
+    // Navigation still runs (its same-path branch sets route signals without
+    // a history write) with replace requested for the consumed entry.
+    expect(navigateToSpaceSession).toHaveBeenCalledWith('space-9', 'space-session-1', true);
   });
 
   it('routes through the Space surface when only spaceId remains (overview/task pages)', () => {

@@ -58,16 +58,18 @@ export function useVoiceRecorder(sessionId: string, options?: { autoAdopt?: bool
   const autoAdopt = options?.autoAdopt !== false;
   const surface = useContext(VoiceSurfaceContext);
 
-  // Register this composer's surface FIRST (effects run in definition order,
-  // so this precedes the adoption effect below): whenever ownership lands on
-  // this instance, the registry already maps its token to this surface and
-  // the global chip can attribute the recording correctly.
+  // Register this composer FIRST (effects run in definition order, so this
+  // precedes the adoption effect below): whenever ownership lands on this
+  // instance, the registry already maps its token to this surface and the
+  // global chip can attribute the recording correctly. canAdopt re-registers
+  // when transcription starts/ends — the chip must not treat a temporarily
+  // adoption-refusing composer as "will show the recording".
   const surfaceId = surface.surfaceId;
   const surfaceSpaceId = surface.spaceId;
   useEffect(() => {
-    registerVoiceComposer(ownerId, surfaceId);
+    registerVoiceComposer(ownerId, { surfaceId, sessionId, canAdopt: autoAdopt });
     return () => unregisterVoiceComposer(ownerId);
-  }, [ownerId, surfaceId]);
+  }, [ownerId, surfaceId, sessionId, autoAdopt]);
 
   // Session changes (mount + retarget) drive both the retarget guard and
   // adoption; ownership transitions re-trigger adoption so a recording freed

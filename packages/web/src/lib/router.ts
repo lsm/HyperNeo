@@ -247,7 +247,8 @@ export function getSpaceTaskViewFromPath(
   };
 }
 
-function getCurrentPath(): string {
+/** Current location pathname — exported for callers that mirror route decisions. */
+export function getCurrentPath(): string {
   return window.location.pathname;
 }
 
