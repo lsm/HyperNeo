@@ -1,11 +1,14 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { ChatMessage, Session, SessionFeatures } from '@hyperneo/shared';
 import { DEFAULT_WORKER_FEATURES, normalizeThinkingLevel } from '@hyperneo/shared';
+import { useSessionRename } from '../hooks/useSessionRename';
+import type { SessionRenameInputProps } from '../hooks/useSessionRename';
 import { extractBackgroundTasks, type BackgroundTask } from '../hooks/useRunningToolUseIds.ts';
 import { connectionState } from '../lib/state';
 import { cn } from '../lib/utils.ts';
 import { IconButton } from './ui/IconButton.tsx';
 import { InfoRow, InfoSection } from './ui/InfoRow.tsx';
+import { RenameIcon } from './icons/RenameIcon.tsx';
 
 interface SessionInfoPanelButtonProps {
   session: Session | null;
@@ -303,6 +306,10 @@ function ActionToolbar({
   resettingAgent,
   readonly,
   archived,
+  canRename,
+  isRenaming,
+  renameInputProps,
+  onRenameClick,
   onToolsClick,
   onExportClick,
   onResetClick,
@@ -315,6 +322,10 @@ function ActionToolbar({
   resettingAgent: boolean;
   readonly: boolean;
   archived: boolean;
+  canRename: boolean;
+  isRenaming: boolean;
+  renameInputProps: SessionRenameInputProps;
+  onRenameClick: () => void;
   onToolsClick: () => void;
   onExportClick: () => void;
   onResetClick: () => void;
@@ -334,6 +345,24 @@ function ActionToolbar({
       <IconButton size="sm" title="Export chat" onClick={onExportClick} disabled={!isConnected}>
         <ExportIcon />
       </IconButton>
+      {!readonly && (
+        <IconButton
+          size="sm"
+          title="Rename session"
+          onClick={onRenameClick}
+          disabled={!canRename || !isConnected}
+        >
+          <RenameIcon className="h-4 w-4" />
+        </IconButton>
+      )}
+      {isRenaming && (
+        <input
+          {...renameInputProps}
+          data-testid="session-info-rename-input"
+          placeholder="Session title"
+          class="basis-full rounded-md border border-white/20 bg-dark-900/80 px-2.5 py-1.5 text-sm text-gray-100 outline-none focus:border-gray-500"
+        />
+      )}
       <IconButton
         size="sm"
         title={resettingAgent ? 'Resetting agent...' : 'Reset agent'}
@@ -468,6 +497,14 @@ export function SessionInfoPanelButton({
     top: 0,
     right: 0,
   });
+  // Inline rename lives entirely inside the panel (optimistic store update +
+  // rollback handled by the hook), so no callback needs threading through
+  // ChatHeader/ChatContainer.
+  const {
+    isEditing: isRenaming,
+    startEditing,
+    inputProps: renameInputProps,
+  } = useSessionRename(session?.id ?? '', session?.title ?? '');
   const todos = useMemo(() => extractLatestTodos(messages), [messages]);
   const tasks = useMemo(
     () => extractBackgroundTasks(backgroundTaskMessages, toolInputsMap),
@@ -552,6 +589,10 @@ export function SessionInfoPanelButton({
             resettingAgent={resettingAgent}
             readonly={readonly}
             archived={archived}
+            canRename={!!session}
+            isRenaming={isRenaming}
+            renameInputProps={renameInputProps}
+            onRenameClick={startEditing}
             onToolsClick={onToolsClick}
             onExportClick={onExportClick}
             onResetClick={onResetClick}

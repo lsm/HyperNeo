@@ -120,6 +120,10 @@ export function useSessionRename(sessionId: string, currentTitle: string): UseSe
           void commit();
         } else if (e.key === 'Escape') {
           e.preventDefault();
+          // Stop bubbling so outer Escape handlers (e.g. the session info
+          // panel's close-on-Escape) don't also dismiss their surface while
+          // the edit is being cancelled.
+          e.stopPropagation();
           cancel();
         }
       },

@@ -14,6 +14,14 @@ import { extractBackgroundTasks } from '../../hooks/useRunningToolUseIds.ts';
 import type { ChatMessage, Session } from '@hyperneo/shared';
 import { connectionState } from '../../lib/state';
 
+// useSessionRename commits through api-helpers.updateSession; stub it (and
+// keep the rest of the module real — other imports rely on it).
+const renameMocks = vi.hoisted(() => ({ updateSession: vi.fn() }));
+vi.mock('../../lib/api-helpers', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  updateSession: renameMocks.updateSession,
+}));
+
 import {
   SessionInfoPanelButton,
   getSDKProjectDir,
@@ -191,6 +199,7 @@ describe('SessionInfoPanel', () => {
       expect(toolbar).toBeTruthy();
       expect(toolbar.querySelector('button[title="Tools"]')).toBeTruthy();
       expect(toolbar.querySelector('button[title="Export chat"]')).toBeTruthy();
+      expect(toolbar.querySelector('button[title="Rename session"]')).toBeTruthy();
       expect(toolbar.querySelector('button[title="Reset agent"]')).toBeTruthy();
       expect(toolbar.querySelector('button[title="Archive session"]')).toBeTruthy();
       expect(toolbar.querySelector('button[title="Delete chat"]')).toBeTruthy();
@@ -204,6 +213,67 @@ describe('SessionInfoPanel', () => {
       expect(toolbar.querySelector('button[title="Tools"]')).toBeNull();
       // Export/Reset remain available.
       expect(toolbar.querySelector('button[title="Export chat"]')).toBeTruthy();
+    });
+
+    it('renames the session inline from the toolbar', () => {
+      renameMocks.updateSession.mockClear();
+      const { container } = render(<SessionInfoPanelButton {...defaultProps} />);
+      openPanel(container);
+
+      const toolbar = container.querySelector('[data-testid="session-info-toolbar"]')!;
+      expect(toolbar.querySelector('[data-testid="session-info-rename-input"]')).toBeNull();
+
+      fireEvent.click(toolbar.querySelector('button[title="Rename session"]')!);
+      const input = toolbar.querySelector(
+        '[data-testid="session-info-rename-input"]'
+      ) as HTMLInputElement;
+      expect(input).toBeTruthy();
+      expect(input.value).toBe('Test Session');
+
+      fireEvent.input(input, { target: { value: 'Renamed Title' } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+
+      expect(renameMocks.updateSession).toHaveBeenCalledWith('session-1', {
+        title: 'Renamed Title',
+        metadata: { titleSetBy: 'user' },
+      });
+      // Input is removed once the edit settles.
+      expect(toolbar.querySelector('[data-testid="session-info-rename-input"]')).toBeNull();
+    });
+
+    it('keeps the rename input open (cancel-only) when Escape is pressed', () => {
+      renameMocks.updateSession.mockClear();
+      const { container } = render(<SessionInfoPanelButton {...defaultProps} />);
+      openPanel(container);
+
+      fireEvent.click(container.querySelector('button[title="Rename session"]')!);
+      const input = container.querySelector(
+        '[data-testid="session-info-rename-input"]'
+      ) as HTMLInputElement;
+      fireEvent.input(input, { target: { value: 'Discarded' } });
+      fireEvent.keyDown(input, { key: 'Escape' });
+
+      expect(renameMocks.updateSession).not.toHaveBeenCalled();
+      // Escape cancels the edit without dismissing the whole panel.
+      expect(container.querySelector('[data-testid="session-info-panel"]')).toBeTruthy();
+      expect(container.querySelector('[data-testid="session-info-rename-input"]')).toBeNull();
+    });
+
+    it('hides the Rename action when readonly', () => {
+      const { container } = render(<SessionInfoPanelButton {...defaultProps} readonly />);
+      openPanel(container);
+
+      const toolbar = container.querySelector('[data-testid="session-info-toolbar"]')!;
+      expect(toolbar.querySelector('button[title="Rename session"]')).toBeNull();
+    });
+
+    it('disables the Rename action when disconnected', () => {
+      connectionState.value = 'connecting';
+      const { container } = render(<SessionInfoPanelButton {...defaultProps} />);
+      openPanel(container);
+
+      const toolbar = container.querySelector('[data-testid="session-info-toolbar"]')!;
+      expect(toolbar.querySelector('button[title="Rename session"]')?.disabled).toBe(true);
     });
 
     it('hides Archive and Delete when features.archive is false', () => {

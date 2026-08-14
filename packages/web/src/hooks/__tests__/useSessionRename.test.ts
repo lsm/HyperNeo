@@ -32,7 +32,8 @@ import { useSessionRename } from '../useSessionRename';
 
 // Lightweight synthetic-event builders (tests bypass strict Preact event types).
 const inputEvent = (value: string) => ({ currentTarget: { value } }) as any;
-const keyEvent = (key: string) => ({ key, preventDefault: () => {} }) as any;
+const keyEvent = (key: string) =>
+  ({ key, preventDefault: () => {}, stopPropagation: () => {} }) as any;
 
 describe('useSessionRename', () => {
   beforeEach(() => {
