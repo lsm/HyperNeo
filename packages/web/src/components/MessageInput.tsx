@@ -1280,6 +1280,7 @@ export default function MessageInput({
                     isTranscribing={isTranscribing}
                     isStarting={voiceRecorder.isStarting}
                     onCancel={cancelRecording}
+                    startedAt={voiceRecorder.recordingStartedAt}
                   />
                 ) : undefined
               }

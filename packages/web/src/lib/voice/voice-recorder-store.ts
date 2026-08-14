@@ -48,6 +48,12 @@ class VoiceRecorderStore {
    * composer (see useVoiceRecorder).
    */
   readonly recordingOwnerId = signal<string | null>(null);
+  /**
+   * Wall-clock start time of the current recording, so an ADOPTING composer's
+   * waveform can display the true remaining time against the unchanged cap
+   * deadline instead of restarting its timer from the adoption mount.
+   */
+  readonly recordingStartedAt = signal<number | null>(null);
 
   private context: AudioContext | null = null;
   private stream: MediaStream | null = null;
@@ -91,15 +97,20 @@ class VoiceRecorderStore {
       // recoverable for an adopter for as long as nobody else needs the mic,
       // and can never wedge the recorder busy forever.
       if (this.recordingOwnerId.value !== null) throw new Error('Voice recorder is busy');
-      // Mark busy BEFORE awaiting the eviction so a concurrent start() cannot
-      // slip through the checks and silently lose the generation race.
+      // Mark busy BEFORE the eviction so a concurrent start() cannot slip
+      // through the checks and silently lose the generation race — and evict
+      // WITHOUT cancel(), which would synchronously reset `starting` and
+      // reopen the window for the duration of the teardown await.
       this.starting = true;
       this.isStarting.value = true;
-      await this.cancel();
-      // The cancel above cleared our flags along with the recording; restore
-      // them for the setup below (this call still owns the transition).
-      this.starting = true;
-      this.isStarting.value = true;
+      this.startGeneration += 1;
+      this.chunks = [];
+      this.stoppedByLimit = false;
+      this.durationLimitHit.value = false;
+      this.isRecording.value = false;
+      this.recordingOwnerId.value = null;
+      this.recordingSessionId.value = null;
+      await this.teardown();
     } else {
       this.starting = true;
       this.isStarting.value = true;
@@ -109,6 +120,7 @@ class VoiceRecorderStore {
     this.durationLimitHit.value = false;
     this.recordingOwnerId.value = ownerId;
     this.recordingSessionId.value = ownerSessionId;
+    this.recordingStartedAt.value = Date.now();
     const generation = ++this.startGeneration;
     const discarded = () => this.startGeneration !== generation;
     // Cleanup for a DISCARDED start. If the shared fields still belong to this
@@ -345,6 +357,7 @@ class VoiceRecorderStore {
     this.isRecording.value = false;
     this.recordingOwnerId.value = null;
     this.recordingSessionId.value = null;
+    this.recordingStartedAt.value = null;
     await this.teardown();
   };
 

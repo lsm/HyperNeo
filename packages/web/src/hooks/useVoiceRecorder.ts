@@ -77,6 +77,10 @@ export function useVoiceRecorder(sessionId: string) {
     get recordingSessionId() {
       return owns() ? voiceRecorderStore.recordingSessionId.value : null;
     },
+    /** Wall-clock start of the owned recording (for accurate remaining-time UI). */
+    get recordingStartedAt() {
+      return owns() ? voiceRecorderStore.recordingStartedAt.value : null;
+    },
     start: () => voiceRecorderStore.start(ownerId, sessionId),
     stop: voiceRecorderStore.stop,
     /** Cancels only this instance's recording; a no-op for anyone else's. */
