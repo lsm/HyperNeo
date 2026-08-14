@@ -591,6 +591,44 @@ describe('useInputDraft', () => {
       });
     });
 
+    it('re-arms the load guard when revisiting a session (A -> B -> A)', async () => {
+      // Each session.get gets its own deferred so we control resolution order.
+      const gets: Array<{ resolve: (value: unknown) => void }> = [];
+      mockHub.request.mockImplementation(() => {
+        let resolve!: (value: unknown) => void;
+        const promise = new Promise((r) => {
+          resolve = r;
+        });
+        gets.push({ resolve });
+        return promise;
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { rerender } = renderHook(({ sessionId }) => useInputDraft(sessionId), {
+        initialProps: { sessionId: 'session-A' },
+      });
+
+      // A's first load settles (marker = A).
+      await act(async () => {
+        gets[0]?.resolve({ session: { metadata: { inputDraft: 'a-draft' } } });
+        await vi.runAllTimersAsync();
+      });
+
+      // Switch to B (get pending), then back to A (get pending). The stale
+      // marker for A must have been invalidated — no empty-clear may fire for
+      // A while its fresh get is in flight.
+      rerender({ sessionId: 'session-B' });
+      rerender({ sessionId: 'session-A' });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100);
+      });
+
+      const clearCalls = mockHub.request.mock.calls.filter(
+        (call) => call[0] === 'session.update' && call[1]?.metadata?.inputDraft === null
+      );
+      expect(clearCalls).toEqual([]);
+    });
+
     it('should handle clear error gracefully', async () => {
       mockHub.request.mockResolvedValue({});
       mockHub.request.mockRejectedValue(new Error('Clear error'));
