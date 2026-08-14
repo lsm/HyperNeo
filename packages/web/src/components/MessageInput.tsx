@@ -40,7 +40,10 @@ import { AttachmentPreview } from './AttachmentPreview.tsx';
 import { InputActionsMenu } from './InputActionsMenu.tsx';
 import { InputTextarea } from './InputTextarea.tsx';
 import { VoiceWaveform } from './voice/VoiceWaveform.tsx';
-import { enqueueTranscript } from '../lib/voice/voice-transcript-outbox.ts';
+import {
+  enqueueTranscript,
+  isPermanentAppendRefusal,
+} from '../lib/voice/voice-transcript-outbox.ts';
 import { QueuePreviewTray, type QueuePreviewMessage } from './QueuePreviewTray.tsx';
 import { ContentContainer } from './ui/ContentContainer.tsx';
 
@@ -611,13 +614,14 @@ export default function MessageInput({
         try {
           await stageToDraft();
           return { ok: true, message };
-        } catch {
-          // The staging RPC needs a live socket. A REFUSAL while the socket is
-          // still up (session gone, character limit) is permanent — enqueueing
-          // it as a disconnect would claim reconnect will deliver something it
-          // never can. Only when the socket is genuinely down do we park the
-          // transcript in the durable outbox for replay on reconnect.
-          if (!connectionManager.getHubIfConnected()) {
+        } catch (error) {
+          // Enqueue everything EXCEPT a genuinely permanent refusal (the
+          // session no longer exists — nothing can ever deliver it). A dead
+          // socket, a `Request timeout` whose append may have committed with a
+          // lost ack, or a character-limit refusal (room appears once the user
+          // sends/clears) are all retryable, and the flush replays them with
+          // backoff, deduplicated by the shared outbox id.
+          if (!isPermanentAppendRefusal(error)) {
             enqueueTranscript(targetSessionId, transcript, outboxId);
             return {
               ok: true,

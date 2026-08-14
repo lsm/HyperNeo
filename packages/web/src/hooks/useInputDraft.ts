@@ -70,14 +70,18 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   // refresh below. The daemon merges any staged voice transcript
   // (inputDraftVoicePending) into inputDraft atomically while serving the
   // request, so the draft here already includes it — no client-side merge.
-  // `onSettled` runs once the load has resolved (or when no hub is available),
-  // letting the initial load mark itself settled so the empty-clear guard can
-  // pass; the replay refresh omits it.
+  // `onResult` runs once the load has settled with whether the get succeeded
+  // (no hub counts as a failure). The initial load marks itself settled
+  // regardless; the replay refresh consumes its landing only on success.
   const loadDraft = useCallback(
-    (targetSessionId: string, isCancelled: () => boolean, onSettled?: () => void): void => {
+    (
+      targetSessionId: string,
+      isCancelled: () => boolean,
+      onResult?: (ok: boolean) => void
+    ): void => {
       const hub = connectionManager.getHubIfConnected();
       if (!hub) {
-        onSettled?.();
+        onResult?.(false);
         return;
       }
       hub
@@ -88,12 +92,10 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           if (isCancelled()) return;
           const draft = response.session?.metadata?.inputDraft;
           if (draft) contentSignal.value = draft;
+          onResult?.(true);
         })
         .catch(() => {
-          /* ignore draft load errors */
-        })
-        .then(() => {
-          if (!isCancelled()) onSettled?.();
+          onResult?.(false);
         });
     },
     [contentSignal]
@@ -142,7 +144,8 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   // landing while the composer has text DEFERS (the session stays in the set)
   // until it clears, and a keystroke that lands mid-get re-runs the effect
   // whose cleanup aborts the stale get — the server draft can never clobber
-  // newer keystrokes. The landing is consumed only once the refresh settled.
+  // newer keystrokes. The landing is consumed only after a SUCCESSFUL refresh,
+  // so a failed get (socket drop) keeps it pending for the next retry.
   useSignalEffect(() => {
     const landed = voiceTranscriptLandedSignal.value;
     if (!landed.has(sessionId)) return;
@@ -151,8 +154,8 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     loadDraft(
       sessionId,
       () => cancelled,
-      () => {
-        consumeVoiceTranscriptLanded(sessionId);
+      (ok) => {
+        if (ok) consumeVoiceTranscriptLanded(sessionId);
       }
     );
     return () => {

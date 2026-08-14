@@ -206,6 +206,40 @@ describe('voice transcript outbox', () => {
     expect(getPendingTranscripts()).toHaveLength(0);
   });
 
+  it('flushes an entry another tab wrote to shared storage (storage event)', async () => {
+    vi.useFakeTimers();
+    // Another tab wrote the entry to the shared localStorage, then the storage
+    // event fired here — this connected tab must flush it rather than wait for
+    // an unrelated reconnect.
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.entry.other',
+      JSON.stringify({ id: 'other', sessionId: 's2', text: 'hi', createdAt: Date.now() })
+    );
+    startVoiceTranscriptOutboxFlush();
+    connectionState.value = 'connected';
+    window.dispatchEvent(
+      new StorageEvent('storage', { key: 'hyperneo_voice_transcript_outbox_v1.entry.other' })
+    );
+    await vi.advanceTimersByTimeAsync(600);
+    expect(hubRequest).toHaveBeenCalledWith(
+      'session.appendVoiceDraft',
+      expect.objectContaining({ sessionId: 's2', text: 'hi' })
+    );
+    stopVoiceTranscriptOutboxFlush();
+  });
+
+  it('adds a landing to the signal when another tab writes a landed marker', () => {
+    startVoiceTranscriptOutboxFlush();
+    window.dispatchEvent(
+      new StorageEvent('storage', {
+        key: 'hyperneo_voice_transcript_outbox_v1.entry.landed.s3',
+        newValue: String(Date.now()),
+      })
+    );
+    expect(voiceTranscriptLandedSignal.value.has('s3')).toBe(true);
+    stopVoiceTranscriptOutboxFlush();
+  });
+
   it('removePendingTranscript drops a single entry', () => {
     enqueueTranscript('s1', 'a');
     enqueueTranscript('s1', 'b');

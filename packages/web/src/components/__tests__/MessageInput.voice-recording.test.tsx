@@ -119,10 +119,12 @@ vi.mock('../../lib/connection-manager', () => ({
 const enqueueTranscript = vi.hoisted(() => vi.fn());
 const voiceTranscriptLandedSignal = vi.hoisted(() => ({ value: new Set() }));
 const consumeVoiceTranscriptLanded = vi.hoisted(() => vi.fn());
+const isPermanentAppendRefusal = vi.hoisted(() => vi.fn(() => false));
 vi.mock('../../lib/voice/voice-transcript-outbox.ts', () => ({
   enqueueTranscript,
   voiceTranscriptLandedSignal,
   consumeVoiceTranscriptLanded,
+  isPermanentAppendRefusal,
 }));
 
 import { toast } from '../../lib/toast.ts';
@@ -138,7 +140,12 @@ describe('MessageInput — recording UI', () => {
     voiceStop.mockClear();
     voiceCancel.mockClear();
     transcribeRequest.mockClear();
-    hubRequest.mockClear();
+    // mockReset (not clear) so a per-test mockImplementation (e.g. a staging
+    // timeout) cannot leak into the next test as its first hubRequest call.
+    hubRequest.mockReset().mockImplementation(async (method: string, ...rest: unknown[]) => {
+      if (method === 'voice.transcribe') return transcribeRequest(method, ...rest);
+      return {};
+    });
     enqueueTranscript.mockClear();
     // Timer-backed rAF so deferred hook work actually runs and can be drained
     // before the stubs are removed. A no-op stub leaves Preact cleanup pending
@@ -333,6 +340,41 @@ describe('MessageInput — recording UI', () => {
     // No staging RPC was attempted (the socket is dead), and nothing was sent.
     expect(hubRequest.mock.calls.find(([m]) => m === 'session.appendVoiceDraft')).toBeFalsy();
     expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it('enqueues an AMBIGUOUS staging timeout (append may have committed) even while reconnected', async () => {
+    let resolveTranscribe!: (value: { text: string }) => void;
+    transcribeRequest.mockReturnValueOnce(
+      new Promise<{ text: string }>((resolve) => {
+        resolveTranscribe = resolve;
+      })
+    );
+
+    const onSend = vi.fn(async () => true);
+    const { unmount } = render(<MessageInput sessionId="s1" onSend={onSend} />);
+
+    fireEvent.click(screen.getByLabelText('Stop recording and transcribe'));
+    await waitFor(() => expect(transcribeRequest).toHaveBeenCalledTimes(1));
+    unmount();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // The socket reconnects BEFORE the staging RPC reaches its timeout: the
+    // append may have committed with a lost ack, or never arrived. Enqueue the
+    // transcript (reusing the shared outbox id) instead of dropping the only
+    // copy — the daemon's dedup skips it if the original append did land.
+    hubRequest.mockImplementation(async (method: string) => {
+      if (method === 'voice.transcribe') return transcribeRequest(method);
+      throw new Error('Request timeout: session.appendVoiceDraft (10000ms)');
+    });
+    resolveTranscribe({ text: 'hello world' });
+
+    await waitFor(() =>
+      expect(enqueueTranscript).toHaveBeenCalledWith('s1', 'hello world', expect.any(String))
+    );
+    await waitFor(() =>
+      expect(toast.info).toHaveBeenCalledWith(
+        'Voice transcript saved — will be delivered when reconnected'
+      )
+    );
   });
 
   it('surfaces a failure toast (not a false "sent") when the unmounted delivery fails', async () => {

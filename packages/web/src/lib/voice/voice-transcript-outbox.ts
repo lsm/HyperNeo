@@ -45,21 +45,38 @@ export interface PendingTranscript {
  */
 export const voiceTranscriptLandedSignal = signal<ReadonlySet<string>>(new Set());
 
-/** Record that an entry landed for `sessionId` (called by the flush). */
+/**
+ * Record that an entry landed for `sessionId` (called by the flush). The
+ * localStorage marker lets OTHER tabs learn of the landing via the `storage`
+ * event, since the signal itself is process-local.
+ */
 export function markVoiceTranscriptLanded(sessionId: string): void {
   voiceTranscriptLandedSignal.value = new Set(voiceTranscriptLandedSignal.value).add(sessionId);
+  try {
+    localStorage.setItem(`${LANDED_PREFIX}${sessionId}`, String(Date.now()));
+  } catch {
+    /* mirror-only — this tab still refreshes via the signal */
+  }
 }
 
-/** Forget a landing once its session's composer has refreshed for it. */
+/**
+ * Forget a landing once its session's composer has refreshed for it, and drop
+ * the cross-tab marker so a later storage event does not resurrect it.
+ */
 export function consumeVoiceTranscriptLanded(sessionId: string): void {
   const current = voiceTranscriptLandedSignal.value;
-  if (!current.has(sessionId)) return;
   const next = new Set(current);
   next.delete(sessionId);
   voiceTranscriptLandedSignal.value = next;
+  try {
+    localStorage.removeItem(`${LANDED_PREFIX}${sessionId}`);
+  } catch {
+    /* marker best-effort */
+  }
 }
 
 const STORAGE_PREFIX = 'hyperneo_voice_transcript_outbox_v1.entry.';
+const LANDED_PREFIX = `${STORAGE_PREFIX}landed.`;
 const MAX_ENTRIES = 20;
 const MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24h — a transcript older than this is stale
 const FLUSH_DELAY_MS = 500; // let subscriptions settle, like outbound-queue
@@ -142,6 +159,18 @@ function prune(): void {
   for (const entry of live.slice(0, live.length - MAX_ENTRIES)) {
     removeEntry(entry.id);
   }
+  // Drop stale cross-tab landed markers (older than the TTL) so they cannot
+  // accumulate; a fresh landing rewrites its marker.
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith(LANDED_PREFIX)) continue;
+      const ts = Number(localStorage.getItem(key) ?? 0);
+      if (now - ts >= MAX_AGE_MS) localStorage.removeItem(key);
+    }
+  } catch {
+    /* storage unavailable */
+  }
 }
 
 /**
@@ -150,8 +179,10 @@ function prune(): void {
  * while connected (e.g. a pending draft at the character limit — room appears
  * once the user sends or clears it, or a `Request timeout` whose append may
  * have committed with a lost ack) is retryable and must not be dropped.
+ * Shared by the flush (drop only these) and MessageInput's staging fallback
+ * (enqueue everything except these).
  */
-function isPermanentRefusal(error: unknown): boolean {
+export function isPermanentAppendRefusal(error: unknown): boolean {
   return error instanceof Error && /Session not found/.test(error.message);
 }
 
@@ -259,7 +290,7 @@ export async function flushPendingTranscripts(): Promise<void> {
         // may have committed with a lost ack), and any non-permanent refusal is
         // retryable — keep those. Only a missing session can never recover.
         if (!connectionManager.getHubIfConnected()) break;
-        if (isPermanentRefusal(error)) removePendingTranscript(entry.id);
+        if (isPermanentAppendRefusal(error)) removePendingTranscript(entry.id);
       }
     }
   } finally {
@@ -277,10 +308,34 @@ export async function flushPendingTranscripts(): Promise<void> {
 }
 
 let cleanupAutoFlush: (() => void) | null = null;
+let cleanupStorageListener: (() => void) | null = null;
+
+/**
+ * Cross-tab coordination via the `storage` event (fires in OTHER tabs when
+ * this tab writes localStorage, and vice versa):
+ * - an entry key was written/removed by another tab → that tab's disconnected
+ *   enqueue is now visible here — schedule a flush while this tab is connected
+ * - a landed marker appeared (another tab's flush succeeded) → add the session
+ *   to the landed set so THIS tab's mounted composer refreshes its draft
+ */
+function handleStorageEvent(event: StorageEvent): void {
+  const key = event.key;
+  if (!key) return; // localStorage.clear()
+  if (key.startsWith(STORAGE_PREFIX) && !key.startsWith(LANDED_PREFIX)) {
+    if (connectionState.value === 'connected') {
+      setTimeout(() => void flushPendingTranscripts(), FLUSH_DELAY_MS);
+    }
+  } else if (key.startsWith(LANDED_PREFIX) && event.newValue !== null) {
+    const sessionId = key.slice(LANDED_PREFIX.length);
+    voiceTranscriptLandedSignal.value = new Set(voiceTranscriptLandedSignal.value).add(sessionId);
+  }
+}
 
 /** Flush when the connection (re)establishes. Mirrors outbound-queue. */
 export function startVoiceTranscriptOutboxFlush(): void {
   if (cleanupAutoFlush) return;
+  window.addEventListener('storage', handleStorageEvent);
+  cleanupStorageListener = () => window.removeEventListener('storage', handleStorageEvent);
   cleanupAutoFlush = effect(() => {
     if (connectionState.value === 'connected' && getPendingTranscripts().length > 0) {
       setTimeout(() => void flushPendingTranscripts(), FLUSH_DELAY_MS);
@@ -294,6 +349,10 @@ export function stopVoiceTranscriptOutboxFlush(): void {
     cleanupAutoFlush();
     cleanupAutoFlush = null;
   }
+  if (cleanupStorageListener) {
+    cleanupStorageListener();
+    cleanupStorageListener = null;
+  }
 }
 
 // HMR cleanup: tear down the old effect subscription before module re-eval.
@@ -302,6 +361,10 @@ if (import.meta.hot) {
     if (cleanupAutoFlush) {
       cleanupAutoFlush();
       cleanupAutoFlush = null;
+    }
+    if (cleanupStorageListener) {
+      cleanupStorageListener();
+      cleanupStorageListener = null;
     }
     clearRetryTimer();
   });

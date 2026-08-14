@@ -330,6 +330,37 @@ describe('useInputDraft', () => {
       expect(result.current.content).toBe('transcript');
     });
 
+    it('keeps the landing pending when the refresh get fails, then applies it on a later trigger', async () => {
+      mockHub.request
+        .mockResolvedValueOnce({ session: { metadata: { inputDraft: '' } } }) // initial
+        .mockRejectedValueOnce(new Error('socket closed')) // replay get fails
+        .mockResolvedValue({ session: { metadata: { inputDraft: 'transcript' } } }); // retry
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(result.current.content).toBe('');
+
+      // Landing fires; the refresh get fails — the landing must NOT be consumed,
+      // or a reconnect could never retry the refresh for the mounted composer.
+      voiceTranscriptLandedSignal.value = new Set(['session-1']);
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(result.current.content).toBe('');
+      expect(voiceTranscriptLandedSignal.value.has('session-1')).toBe(true);
+
+      // A later landing event re-triggers the effect; the retry succeeds.
+      voiceTranscriptLandedSignal.value = new Set(['session-1']);
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(result.current.content).toBe('transcript');
+      expect(voiceTranscriptLandedSignal.value.has('session-1')).toBe(false);
+    });
+
     it('does not apply a draft whose session.get resolved after the session changed', async () => {
       // Each session.get gets its own deferred promise so we can resolve
       // session-1's slow get only after the hook has moved on to session-2.
