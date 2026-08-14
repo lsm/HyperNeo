@@ -571,16 +571,24 @@ export function exportWorkflow(
     });
     result.channels = exportedChannels;
   }
+  // REFUSE the export when the synthetic corrupt-column marker is present
+  // (mirroring the legacy-hook refusal above): the marker means the
+  // workflow's persisted hook configuration could not be decoded — every
+  // hookable action fails closed. Filtering it out and exporting would turn
+  // that protected-but-corrupt workflow into a VALID hook-less bundle whose
+  // import permanently loses both the original gates and the fail-closed
+  // marker, running ungated.
+  if (workflow.hookBindings?.some((b) => b.hookId === CORRUPT_HOOK_BINDINGS_HOOK_ID)) {
+    throw new Error(
+      `Workflow "${workflow.name}" has a corrupt persisted hook configuration ` +
+        '(its hook_bindings/custom_hooks column could not be decoded — every hookable ' +
+        'action currently fails closed). Exporting would silently drop its gates. ' +
+        'Repair the workflow first: re-author its hook bindings in the editor (or clear ' +
+        'them deliberately), then re-export.'
+    );
+  }
   if (workflow.hookBindings && workflow.hookBindings.length > 0) {
-    // Skip the synthetic corrupt-column marker: it is repository-level
-    // fail-closed STATE (this workflow's hook column could not be decoded),
-    // not configuration — exporting it would re-import as a binding whose
-    // reserved hook id the portable validator rejects, with a confusing
-    // error that misdescribes the workflow.
-    result.hookBindings = workflow.hookBindings
-      .filter((binding) => binding.hookId !== CORRUPT_HOOK_BINDINGS_HOOK_ID)
-      .map((binding) => ({ ...binding }));
-    if (result.hookBindings.length === 0) delete result.hookBindings;
+    result.hookBindings = workflow.hookBindings.map((binding) => ({ ...binding }));
   }
   if (workflow.customHooks && workflow.customHooks.length > 0) {
     result.customHooks = workflow.customHooks.map((hook) => ({ ...hook }));

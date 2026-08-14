@@ -25,7 +25,10 @@ import {
   type HookActionMeta,
 } from '../../../../src/lib/space/runtime/workflow-hook-engine';
 import { createSpaceTables } from '../../helpers/space-test-db.ts';
-import { buildRetryableActionKey } from '../../../../src/lib/space/runtime/workflow-hook-engine.ts';
+import {
+  buildRetryableActionKey,
+  backoffDelayMs,
+} from '../../../../src/lib/space/runtime/workflow-hook-engine.ts';
 import type { CustomHook, HookArtifact, SpaceWorkflow } from '@hyperneo/shared';
 
 function scriptHook(id: string, body: string, timeoutMs?: number): CustomHook {
@@ -1555,9 +1558,11 @@ describe('WorkflowHookEngine.executeAction', () => {
     const engine = makeEngine(workflow);
     const result = await wrappedSend(engine, sendParams());
     expect(result.success).toBe(true);
-    // The override ran and the approval was consumed at delivery.
+    // The approval bypassed the COOLDOWN but the hook STILL RAN (its stop
+    // decision was overridden post-run — a fresh evaluation, not a skip);
+    // the approval was consumed at the wrapper's delivery point.
     expect(hookStateRepo.get('run-1', 'stop_hook')?.lastReason).toBe(
-      'Human override: retry-ceiling stop overridden by approval'
+      'Human override: hook stop overridden by approval'
     );
     expect(hookStateRepo.get('run-1', 'stop_hook')?.localState.humanApproved).toBeUndefined();
   });
@@ -2789,5 +2794,17 @@ describe('WorkflowHookEngine.executeAction', () => {
         Date.now() - 1000
       );
     });
+  });
+});
+
+describe('backoffDelayMs — nonnegative jitter', () => {
+  test('the delay never drops below the requested floor', () => {
+    // A hook-supplied floor (e.g. a GitHub rate-limit reset hint) must not
+    // be defeated by symmetric ±25% jitter firing the retry early.
+    for (let i = 0; i < 200; i++) {
+      const delay = backoffDelayMs(60_000, 0);
+      expect(delay).toBeGreaterThanOrEqual(60_000);
+      expect(delay).toBeLessThanOrEqual(75_000);
+    }
   });
 });

@@ -2606,6 +2606,27 @@ describe('custom hooks — export schema parity with runtime validation', () => 
   });
 });
 
+describe('corrupt-marker export refusal', () => {
+  test('a marker-loaded workflow refuses to export with a repair message', () => {
+    // The marker means the persisted hook configuration is undecodable and
+    // every action fails closed — exporting a filtered hook-less bundle
+    // would silently drop the gates on re-import.
+    const workflow = makeWorkflow({
+      hookBindings: [
+        {
+          hookId: '__corrupt_hook_bindings__',
+          sourceNode: 'Coding',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding' }],
+        },
+      ],
+    });
+    expect(() => exportWorkflow(workflow, [])).toThrow(/corrupt persisted hook configuration/);
+  });
+});
+
 describe('legacy v3 hooks rejection', () => {
   test('a v3 export carrying a legacy hooks array is rejected with an actionable error', () => {
     const workflow = makeWorkflow();

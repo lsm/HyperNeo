@@ -586,7 +586,19 @@ export class WorkflowHookEngine {
       // approving) loops forever while the count climbs unbounded.
       const hookState = this.config.hookStateRepo.get(this.config.workflowRunId, hookId);
       const nextRetryAt = hookState?.nextRetryAt;
-      if (nextRetryAt !== undefined && Date.now() < nextRetryAt) {
+      // CEILING-APPROVAL BYPASS: an action-matching approval on a terminal
+      // ceiling cooldown skips the ENTIRE cooldown pre-check below — the
+      // hook runs immediately and the post-hook override applies the
+      // approval to the FRESH decision (bypassing the cooldown must not
+      // mean skipping the gate: a ceiling reached through transient GitHub
+      // failures would otherwise deliver with no successful evaluation and
+      // none of the hook's side effects).
+      const ceilingApprovalBypass =
+        nextRetryAt !== undefined &&
+        Date.now() < nextRetryAt &&
+        hookState?.localState.__retryCeilingTerminal === true &&
+        approvalMatchesAction(hookState);
+      if (nextRetryAt !== undefined && Date.now() < nextRetryAt && !ceilingApprovalBypass) {
         const attempts = hookState?.retryCount ?? 0;
         const firstRetryAt =
           typeof hookState?.localState.__firstRetryAt === 'number'
@@ -598,22 +610,9 @@ export class WorkflowHookEngine {
           attempts >= MAX_RETRY_ATTEMPTS ||
           (firstRetryAt !== undefined && elapsed >= MAX_RETRY_ELAPSED_MS)
         ) {
-          if (hookState && approvalMatchesAction(hookState)) {
-            // Operator approved the terminal ceiling stop: let the hook run
-            // (the approval must not wait out the remaining backoff). The
-            // one-shot consumption is DEFERRED until the chain delivers,
-            // bound to THIS approval's token.
-            deferredApprovalConsumes.set(hookId, {
-              approvedAt: hookState.localState.humanApprovedAt,
-            });
-            executionLog.push({
-              hookId,
-              flow: 'continue',
-              reason: 'Human override: retry-ceiling stop overridden by approval',
-              timestamp: Date.now(),
-            });
-            continue;
-          }
+          // (An action-matching approval never reaches here — the
+          // ceilingApprovalBypass above skipped the whole cooldown block so
+          // the hook runs and the post-hook override applies the approval.)
           terminal = {
             kind: 'stop',
             hookId,
@@ -2461,12 +2460,17 @@ const TERMINAL_CLEAR_REARM_MS = 5 * 60_000;
  * hook's retryAfterMs (or the engine default), so GitHub-advertised
  * rate-limit delays are still respected as a floor.
  */
-function backoffDelayMs(baseMs: number, attempts: number): number {
+/** Exported for tests: the retry-backoff delay computation. */
+export function backoffDelayMs(baseMs: number, attempts: number): number {
   const safeBase = Number.isFinite(baseMs) && baseMs > 0 ? baseMs : DEFAULT_RETRY_AFTER_MS;
   const exponent = Math.min(Math.max(attempts, 0), 6);
   const scaled = Math.min(safeBase * 2 ** exponent, MAX_RETRY_BACKOFF_MS);
+  // NONNEGATIVE jitter only: symmetric ±25% could schedule the first retry
+  // 25% BELOW the requested floor — e.g. a GitHub rate-limit reset hint of
+  // 60s firing another API call at 45s while the limit is still active,
+  // burning another retry attempt. The delay never drops under safeBase.
   const jitter = scaled * 0.25;
-  return Math.round(scaled + (Math.random() * 2 - 1) * jitter);
+  return Math.round(Math.min(scaled + Math.random() * jitter, MAX_RETRY_BACKOFF_MS));
 }
 
 function scheduleRetryableAction(options: PendingRetryableHookAction): void {
