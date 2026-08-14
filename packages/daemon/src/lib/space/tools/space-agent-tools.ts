@@ -3508,8 +3508,8 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
      * stamped `'agent'` atomically with the done commit on every path
      * (`setTaskStatus` stamps it on review→done natively, and on in_progress→done
      * when an explicit approvalSource is supplied). When the caller's session
-     * resolves to a node execution in the task's run, its node is stamped as
-     * the durable `postApprovalSourceNodeId` after the commit so the tick
+     * resolves to a node execution in the task's run, its node is committed in
+     * the SAME UPDATE as the durable `postApprovalSourceNodeId` so the tick
      * loop's sibling-quiesce exempts the worker that submitted the verdict
      * instead of falling back to the workflow end node.
      */
@@ -3670,6 +3670,25 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
 
       try {
+        // Resolve the completing worker's node BEFORE the transition so the
+        // source can be committed atomically with `done` (no follow-up write,
+        // no observable terminal-without-source window). The tick loop's
+        // sibling-quiesce resolves its exclusion as `postApprovalSourceNodeId
+        // ?? pendingCompletionSubmittedByNodeId ?? endNodeId`; without the
+        // stamp a non-end-node worker completing its own in_progress task
+        // would leave all three unset, and reconciliation would fall back to
+        // endNodeId — interrupting the actual caller and sparing the
+        // unrelated end-node worker. Callers with no node execution in the
+        // task's run (coordinator/task-agent, or a worker from another run)
+        // resolve to none and pass no option.
+        let completionSourceNodeId: string | undefined;
+        if (mySessionId && task.workflowRunId) {
+          const callerExecution = nodeExecutionRepo
+            .listByAgentSessionId(mySessionId)
+            .find((e) => e.workflowRunId === task.workflowRunId);
+          completionSourceNodeId = callerExecution?.workflowNodeId;
+        }
+
         // `approvalSource: 'agent'` is passed unconditionally: setTaskStatus
         // stamps it atomically with the done commit on BOTH paths — review→done
         // natively, and in_progress→done when an explicit approvalSource is
@@ -3689,6 +3708,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           approvalSource: 'agent',
           approvalReason: args.reason,
           allowedSourceStatuses: ['review', 'in_progress'],
+          ...(completionSourceNodeId !== undefined ? { completionSourceNodeId } : {}),
           // Re-assert the no-PR condition against the reread state right before
           // the UPDATE. Runs synchronously (no event-loop yield) between the
           // reread and the write. HONEST BOUNDS: this bounds the artifact-table
@@ -3726,40 +3746,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           },
         });
 
-        // Preserve the worker that reported the verdict. When a workflow
-        // worker on a NON-end node completes its own in_progress task, the
-        // completion state would otherwise record no source node: the tick
-        // loop's sibling-quiesce resolves its exclusion as
-        // `postApprovalSourceNodeId ?? pendingCompletionSubmittedByNodeId ??
-        // endNodeId`, falls back to `endNodeId`, interrupts the actual
-        // caller's session, and spares the unrelated end-node worker. Stamp
-        // the durable source field with the caller's node whenever the
-        // caller's session resolves to a node execution in the task's run
-        // (coordinator/task-agent callers resolve to none and are unchanged).
-        // Best-effort follow-up write: the review→done transition atomically
-        // clears the field, so the stamp must land after the done commit; a
-        // reconciliation tick racing between the two writes can still
-        // mis-exempt, bounded to the same window the no-route audit write
-        // accepts.
-        let finalTask = updated;
-        if (mySessionId && updated.workflowRunId) {
-          try {
-            const callerExecution = nodeExecutionRepo
-              .listByAgentSessionId(mySessionId)
-              .find((e) => e.workflowRunId === updated.workflowRunId);
-            if (callerExecution) {
-              finalTask =
-                taskRepo.updateTask(updated.id, {
-                  postApprovalSourceNodeId: callerExecution.workflowNodeId,
-                }) ?? updated;
-            }
-          } catch (err) {
-            log.warn(
-              `Failed to record validation-completion source node for task "${updated.id}": ${err instanceof Error ? err.message : String(err)}`
-            );
-          }
-        }
-
         // Best-effort goal terminal handling — must not block completion.
         try {
           config.goalService?.handleTaskTerminal(updated.id);
@@ -3779,9 +3765,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           args.task_id
         );
 
-        emitTaskUpdated(finalTask);
+        emitTaskUpdated(updated);
 
-        return jsonResult({ success: true, task: finalTask });
+        return jsonResult({ success: true, task: updated });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         return jsonResult({ success: false, error: message });

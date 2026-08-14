@@ -6265,13 +6265,14 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
 
   test('records the completing worker’s node so reconciliation quiesce spares the caller', async () => {
     // A non-end-node worker completing its own workflow-backed task: the
-    // completion must carry the caller's node (stamped as the durable
-    // postApprovalSourceNodeId) so the tick loop's sibling-quiesce — which
-    // resolves its exclusion as postApprovalSourceNodeId ?? pending… ?? endNodeId
-    // — does not fall back to endNodeId, interrupt the actual caller, and spare
-    // the unrelated end-node worker. Callers with no node execution in the
-    // task's run (coordinator/task-agent, or a worker from another run) leave
-    // the field untouched.
+    // completion must carry the caller's node (committed atomically with done
+    // as the durable postApprovalSourceNodeId) so the tick loop's
+    // sibling-quiesce — which resolves its exclusion as
+    // postApprovalSourceNodeId ?? pending… ?? endNodeId — does not fall back to
+    // endNodeId, interrupt the actual caller, and spare the unrelated end-node
+    // worker. Callers with no node execution in the task's run
+    // (coordinator/task-agent, or a worker from another run) leave the field
+    // untouched.
     await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
     const task = createWorkflowTask(5, { status: 'in_progress' });
     ctx.nodeExecutionRepo.create({
@@ -6333,6 +6334,32 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     );
     expect(coordinator.success).toBe(true);
     expect(ctx.taskRepo.getTask(other.id)?.postApprovalSourceNodeId).toBeNull();
+
+    // The atomic stamp OVERRIDES the review→done review-exit clear: a worker
+    // completing its own review-status task still records its node — proving
+    // source and status commit in one UPDATE (no terminal-without-source
+    // window even on the path that clears the field).
+    const reviewTask = createWorkflowTask(5, { status: 'review' });
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: reviewTask.workflowRunId!,
+      workflowNodeId: 'node-mid-worker',
+      agentName: 'Worker',
+      agentId: ctx.agentId,
+      status: 'in_progress',
+      agentSessionId: 'worker-session-review',
+    });
+    const reviewed = JSON.parse(
+      (
+        await makeHandlers(ctx, {
+          mySessionId: 'worker-session-review',
+        }).complete_validation_task({
+          task_id: reviewTask.id,
+          validation_outcome: 'validated from review by a mid-node worker',
+        })
+      ).content[0].text
+    );
+    expect(reviewed.success).toBe(true);
+    expect(ctx.taskRepo.getTask(reviewTask.id)?.postApprovalSourceNodeId).toBe('node-mid-worker');
   });
 });
 

@@ -219,6 +219,18 @@ export class SpaceTaskManager {
        * (the UPDATE itself predicates `WHERE status IN (…)`).
        */
       precondition?: (task: SpaceTask) => void;
+      /**
+       * Workflow node ID of the agent session completing this task
+       * (`complete_validation_task`). Stamped in the SAME UPDATE that commits
+       * the transition — placed after the review-exit clear of
+       * `postApprovalSourceNodeId` so a direct validation-only `done` carries
+       * its submitter durably and the tick loop's sibling-quiesce exempts the
+       * worker that reported the verdict instead of falling back to
+       * `endNodeId`. The caller resolves the node BEFORE invoking this method;
+       * there is no separate follow-up write, so no observer can see the
+       * terminal status without the source.
+       */
+      completionSourceNodeId?: string;
       /** Optional callback invoked with tasks cascaded by this transition. */
       onCascadedTasks?: (cascaded: SpaceTask[]) => Promise<void>;
     }
@@ -402,6 +414,14 @@ export class SpaceTaskManager {
       updates.postApprovalStartedAt = null;
       updates.postApprovalBlockedReason = null;
       updates.postApprovalSourceNodeId = null;
+    }
+
+    // Stamp the completing worker's source node AFTER every clear above so a
+    // validation-only `done` commits its submitter atomically — the stamp
+    // overrides the review-exit clear for exactly the transition it describes
+    // (complete_validation_task; see the option's doc).
+    if (options?.completionSourceNodeId !== undefined) {
+      updates.postApprovalSourceNodeId = options.completionSourceNodeId;
     }
 
     // `allowedSourceStatuses` becomes an ATOMIC status guard: the UPDATE

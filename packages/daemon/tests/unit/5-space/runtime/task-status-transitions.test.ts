@@ -272,6 +272,50 @@ describe('SpaceTaskManager.setTaskStatus — approval-path transitions', () => {
     expect(done.approvedAt).toBeNull();
   });
 
+  test('completionSourceNodeId stamps the source in the SAME UPDATE as done, overriding the review-exit clear', async () => {
+    // complete_validation_task commits the completing worker's node with the
+    // terminal status so the tick loop's sibling-quiesce exempts the worker
+    // that reported the verdict. The stamp must land AFTER (and win over) the
+    // review→done review-abort clear of postApprovalSourceNodeId — a worker
+    // completing its own review-status task keeps its provenance.
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'in_progress',
+    });
+    await taskManager.setTaskStatus(task.id, 'review');
+    // Prime a prior submitter exactly as submitTaskForReview does.
+    taskRepo.updateTask(task.id, { postApprovalSourceNodeId: 'old-submitter' });
+
+    const done = await taskManager.setTaskStatus(task.id, 'done', {
+      approvalSource: 'agent',
+      completionSourceNodeId: 'mid-worker',
+    });
+    expect(done.status).toBe('done');
+    // The completing worker replaces the prior submitter atomically with the
+    // commit — no terminal-without-source window.
+    expect(done.postApprovalSourceNodeId).toBe('mid-worker');
+  });
+
+  test('review → done WITHOUT completionSourceNodeId still clears the durable source field', async () => {
+    // The override is opt-in: absent the option, the review-abort clear keeps
+    // its existing semantics (a stale submitter must not survive an aborted
+    // review attempt).
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'in_progress',
+    });
+    await taskManager.setTaskStatus(task.id, 'review');
+    taskRepo.updateTask(task.id, { postApprovalSourceNodeId: 'old-submitter' });
+
+    const done = await taskManager.setTaskStatus(task.id, 'done', { approvalSource: 'human' });
+    expect(done.status).toBe('done');
+    expect(done.postApprovalSourceNodeId).toBeNull();
+  });
+
   test('allowedSourceStatuses refuses the write when the task moved concurrently (validation-completion TOCTOU)', async () => {
     // cancelled → done and approved → done are both VALID edges; without the
     // source-status condition a validation completion that passed eligibility
