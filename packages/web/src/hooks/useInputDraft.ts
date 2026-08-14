@@ -162,19 +162,28 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   // `generation` is consumed only after a refresh that observed exactly that
   // generation AND saw the pending fully merged — a newer landing or a
   // retained pending (draft too full) keeps a refresh pending.
-  const prevReplayContentRef = useRef('');
+  // Per-session previous content: the clear-detection below must be scoped to
+  // the CURRENT session — a deferred landing in another session must not make
+  // this session's freshly-loading empty composer look like an explicit clear
+  // (which would delete its persisted draft before the merge).
+  const prevReplayContentRef = useRef<{ sessionId: string | null; content: string }>({
+    sessionId: null,
+    content: '',
+  });
   useSignalEffect(() => {
     const generation = voiceTranscriptLandedSignal.value.get(sessionId);
     if (generation === undefined) return;
     void connectionState.value;
     const content = contentSignal.value;
-    // The composer just emptied (a send/clear) when its previous content was
-    // non-empty: clear the possibly-stale server draft BEFORE the get merges
-    // the pending transcript — the two RPCs must not race, or the clear could
-    // erase the just-merged transcript (or the merge resurrect already-sent
-    // text). A fresh-mount empty composer keeps the get only.
-    const justCleared = prevReplayContentRef.current.trim() !== '';
-    prevReplayContentRef.current = content;
+    // The composer just emptied (a send/clear) when ITS OWN previous content
+    // was non-empty: clear the possibly-stale server draft BEFORE the get
+    // merges the pending transcript — the two RPCs must not race, or the clear
+    // could erase the just-merged transcript (or the merge resurrect
+    // already-sent text). A fresh-mount empty composer keeps the get only.
+    const justCleared =
+      prevReplayContentRef.current.sessionId === sessionId &&
+      prevReplayContentRef.current.content.trim() !== '';
+    prevReplayContentRef.current = { sessionId, content };
     if (content.trim() !== '') return;
     let cancelled = false;
     const refresh = () => {
@@ -230,33 +239,26 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       clearTimeout(draftSaveTimeoutRef.current);
       draftSaveTimeoutRef.current = null;
     }
-    // While a landing is pending for THIS session — or the PREVIOUS session
-    // being flushed on a switch — the server draft may have been updated (this
-    // tab's or another tab's refresh merged the landed transcript), so this
-    // tab's local copy is stale and a debounced save or the switch flush would
-    // overwrite the transcript. Suppress those until the landing is consumed by
-    // the idle refresh. The refresh itself owns the clear-before-merge for an
-    // explicit send/clear (see the replay effect), so nothing is suppressed
-    // here that would otherwise resurrect already-sent text.
-    if (
-      voiceTranscriptLandedSignal.value.has(sessionId) ||
-      (prevSessionIdRef.current !== null &&
-        voiceTranscriptLandedSignal.value.has(prevSessionIdRef.current))
-    ) {
-      return;
-    }
-
     // If sessionId changed, flush the previous session's draft immediately —
     // its LAST KNOWN state. Skip only when nothing is known to flush: content,
     // or an explicit deletion whose clear should be retried. The transient
-    // pre-load '' is never recorded, so it cannot wipe the previous draft.
+    // pre-load '' is never recorded, so it cannot wipe the previous draft. A
+    // departed session with a PENDING landing is also skipped — its merged
+    // transcript must not be overwritten by stale local text — but the session
+    // ref still advances below so the active session is not stuck matching an
+    // old landing.
     if (prevSessionIdRef.current && prevSessionIdRef.current !== sessionId) {
       const prevSessionId = prevSessionIdRef.current;
       const last = lastSeenContentRef.current;
       const trimmedContent = last.sessionId === prevSessionId ? last.content.trim() : '';
+      const prevHasLanding = voiceTranscriptLandedSignal.value.has(prevSessionId);
 
       const hub = connectionManager.getHubIfConnected();
-      if (hub && (trimmedContent || (last.sessionId === prevSessionId && last.cleared))) {
+      if (
+        !prevHasLanding &&
+        hub &&
+        (trimmedContent || (last.sessionId === prevSessionId && last.cleared))
+      ) {
         hub
           .request('session.update', {
             sessionId: prevSessionId,
@@ -270,6 +272,14 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       }
     }
     prevSessionIdRef.current = sessionId;
+
+    // While a landing is pending for THIS session, the server draft may have
+    // been updated (this tab's or another tab's refresh merged the landed
+    // transcript), so this tab's local copy is stale and a debounced save would
+    // overwrite the transcript. Suppress until the landing is consumed by the
+    // idle refresh, which itself owns the clear-before-merge for an explicit
+    // send/clear — so nothing suppressed here resurrects already-sent text.
+    if (voiceTranscriptLandedSignal.value.has(sessionId)) return;
 
     const trimmedContent = content.trim();
 

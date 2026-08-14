@@ -513,6 +513,75 @@ describe('useInputDraft', () => {
       expect(after).toBe(before);
     });
 
+    it('does not clear a freshly-loaded session because ANOTHER session deferred a landing', async () => {
+      mockHub.request.mockResolvedValue({ session: { metadata: { inputDraft: 'B draft' } } });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result, rerender } = renderHook(({ s }) => useInputDraft(s), {
+        initialProps: { s: 'session-A' },
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      // A has a deferred landing + non-empty text; B also has a landing.
+      result.current.setContent('A text');
+      voiceTranscriptLandedSignal.value = new Map([
+        ['session-A', 1],
+        ['session-B', 1],
+      ]);
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      // Switching to B must NOT treat B's freshly-loading empty composer as an
+      // explicit clear — that would delete B's persisted draft before its
+      // pending transcript is merged.
+      rerender({ s: 'session-B' });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      const clears = mockHub.request.mock.calls.filter(
+        ([m, d]) =>
+          m === 'session.update' && d?.sessionId === 'session-B' && d?.metadata?.inputDraft === null
+      );
+      expect(clears).toHaveLength(0);
+      expect(result.current.content).toBe('B draft');
+    });
+
+    it('advances the session ref past a deferred landing so edits in a new session save', async () => {
+      mockHub.request.mockResolvedValue({ session: { metadata: { inputDraft: '' } } });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result, rerender } = renderHook(({ s }) => useInputDraft(s), {
+        initialProps: { s: 'session-A' },
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      result.current.setContent('A text');
+      voiceTranscriptLandedSignal.value = new Map([['session-A', 1]]);
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      // Switch to B — the suppressed switch flush must still advance the ref.
+      rerender({ s: 'session-B' });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      // Editing B must save — it must not stay suppressed by A's stale landing.
+      const before = mockHub.request.mock.calls.filter(([m]) => m === 'session.update').length;
+      result.current.setContent('B draft');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      const after = mockHub.request.mock.calls.filter(([m]) => m === 'session.update').length;
+      expect(after).toBeGreaterThan(before);
+    });
+
     it('cancels a scheduled save when a landing arrives before it fires', async () => {
       mockHub.request.mockResolvedValue({ session: { metadata: { inputDraft: '' } } });
       vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
