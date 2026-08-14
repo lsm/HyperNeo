@@ -22,7 +22,7 @@ import type {
 } from '@hyperneo/shared';
 import { normalizeThinkingLevel } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import { generateUUID } from '@hyperneo/shared';
+import { appendDraftText, generateUUID } from '@hyperneo/shared';
 import type { SessionManager } from '../session-manager';
 import type { CreateSessionRequest, UpdateSessionRequest } from '@hyperneo/shared';
 import { isSDKUserMessage } from '@hyperneo/shared/sdk/type-guards';
@@ -355,6 +355,34 @@ export function setupSessionHandlers(
       throw new Error('Session not found');
     }
 
+    // Consume any staged voice transcript atomically: merge
+    // inputDraftVoicePending into inputDraft and clear the staging field in one
+    // synchronous write. Doing the merge server-side (rather than in the
+    // client's debounced useInputDraft hook) means there is a single writer and
+    // no window for a stale client snapshot or a cancelled debounce to lose the
+    // transcript. The client just reads inputDraft, already merged. See
+    // session.appendVoiceDraft for how the pending field is populated.
+    // The staging field is cleared ONLY when the entire staged value merged: a
+    // draft already at the character limit truncates it, and clearing then
+    // would deterministically lose the transcript the client's toast promised
+    // was saved — retain it instead so it survives until there is room.
+    const beforeMerge = agentSession.getSessionData();
+    const voicePending = beforeMerge.metadata?.inputDraftVoicePending;
+    if (voicePending && voicePending.trim()) {
+      const draft = beforeMerge.metadata?.inputDraft ?? '';
+      const merged = appendDraftText(draft, voicePending);
+      const fullyMerged =
+        merged === `${draft}${voicePending}` || merged === `${draft} ${voicePending}`;
+      // Only consume on a FULL merge. On a partial fit, write nothing and keep
+      // the staged transcript: writing the prefix would duplicate it once room
+      // appears and the merge retries.
+      if (fullyMerged) {
+        await sessionManager.updateSession(targetSessionId, {
+          metadata: { inputDraft: merged, inputDraftVoicePending: null },
+        } as Partial<Session>);
+      }
+    }
+
     const session = agentSession.getSessionData();
 
     return {
@@ -424,6 +452,69 @@ export function setupSessionHandlers(
     // Room channel broadcasts removed with legacy Room feature retirement.
 
     return { success: true };
+  });
+
+  // Stage a voice transcript that completed AFTER its composer unmounted (the
+  // user navigated to another session mid-transcription) into a dedicated
+  // `inputDraftVoicePending` metadata field. We must NOT write the live
+  // inputDraft: the client's debounced draft save (useInputDraft) can still be
+  // holding a stale local snapshot and would clobber an append made to
+  // inputDraft. A separate field is never touched by those saves, so the
+  // transcript survives until useInputDraft merges it into the draft once on
+  // load. The read→write is one synchronous step (getFromDB + updateSession's
+  // DB write both run before the first `await`), so concurrent writers cannot
+  // interleave. Returns success/failure so the client's toast is honest.
+  messageHub.onRequest('session.appendVoiceDraft', async (data, _ctx) => {
+    const { sessionId, text } = data as { sessionId: string; text: string };
+    if (typeof text !== 'string' || text.trim().length === 0) {
+      throw new Error('Text to append is required');
+    }
+    const session = sessionManager.getSessionFromDB(sessionId);
+    if (!session) throw new Error('Session not found');
+    const existingPending = session.metadata?.inputDraftVoicePending ?? '';
+    const pending = appendDraftText(existingPending, text);
+    // Reject (rather than silently truncate) when the staged value is at the
+    // character limit and the new transcript cannot fit whole — the client
+    // reports the failure instead of claiming a save that dropped its tail.
+    const fits =
+      pending === `${existingPending}${text}` || pending === `${existingPending} ${text}`;
+    if (!fits) throw new Error('Pending voice draft is at the character limit');
+    const updates: UpdateSessionRequest = { metadata: { inputDraftVoicePending: pending } };
+    await sessionManager.updateSession(sessionId, updates as Partial<Session>);
+    messageHub.event(
+      'session.updated',
+      { ...updates, sessionId },
+      {
+        channel: `session:${sessionId}`,
+      }
+    );
+    return { success: true };
+  });
+
+  // Atomically clear the input draft ONLY if it still equals `expected`. The
+  // unmounted voice send uses this to consume its click-time draft snapshot
+  // without wiping newer edits persisted after the snapshot (the user reopened
+  // the session, or another client saved). Read+write is one synchronous step
+  // (getFromDB + updateSession's DB write both run before the first `await`),
+  // so no concurrent draft save can land between the comparison and the clear.
+  messageHub.onRequest('session.clearInputDraftIf', async (data, _ctx) => {
+    const { sessionId, expected } = data as { sessionId: string; expected: string };
+    if (typeof expected !== 'string') throw new Error('Expected draft value is required');
+    const session = sessionManager.getSessionFromDB(sessionId);
+    if (!session) throw new Error('Session not found');
+    if ((session.metadata?.inputDraft ?? '').trim() !== expected.trim()) {
+      return { cleared: false };
+    }
+    const updates: UpdateSessionRequest = { metadata: { inputDraft: null } };
+    await sessionManager.updateSession(sessionId, updates as Partial<Session>);
+    messageHub.event(
+      'session.updated',
+      { ...updates, sessionId },
+      {
+        channel: `session:${sessionId}`,
+      }
+    );
+    return { cleared: true };
   });
 
   messageHub.onRequest('session.delete', async (data, _ctx) => {

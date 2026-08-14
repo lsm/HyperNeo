@@ -100,6 +100,41 @@ function suppressLeadingSpace(before: string): boolean {
 // misbehaving backend cannot push the draft past the composer limit.
 const COMPOSER_CHAR_LIMIT = 100000;
 
+/**
+ * Splice `transcript` between the draft text before/after the caret (or
+ * selection — a selection gets replaced), applying the spacing/CJK rules at
+ * both boundaries and capping to the composer character limit. Shared by the
+ * live mounted insert and the unmounted delivery so both place the transcript
+ * identically. `fullyInserted` reports whether the whole transcript fit —
+ * never infer that from the result string, which may already contain the same
+ * phrase elsewhere in the draft.
+ */
+function buildTranscriptInsertion(
+  before: string,
+  after: string,
+  transcript: string
+): { value: string; fullyInserted: boolean } {
+  const needsLeadingSpace =
+    before.length > 0 &&
+    !suppressLeadingSpace(before) &&
+    !/^\s/.test(transcript) &&
+    !isCjk(before.slice(-1)) &&
+    !isCjk(transcript[0]);
+  const needsTrailingSpace =
+    after.length > 0 &&
+    !isNonJoiningBoundary(after[0]) &&
+    !/\s$/.test(transcript) &&
+    !isCjk(after[0]) &&
+    !isCjk(transcript.slice(-1));
+  const inserted = `${needsLeadingSpace ? ' ' : ''}${transcript}${needsTrailingSpace ? ' ' : ''}`;
+  const remaining = COMPOSER_CHAR_LIMIT - before.length - after.length;
+  const cappedInserted = remaining <= 0 ? '' : inserted.slice(0, remaining);
+  return {
+    value: before + cappedInserted + after,
+    fullyInserted: cappedInserted === inserted,
+  };
+}
+
 function getPlaceholderForSessionType(sessionType?: SessionType): string {
   switch (sessionType) {
     case 'worker':
@@ -405,27 +440,9 @@ export default function MessageInput({
         Math.max(selectionStart, lastSelectionEndRef.current);
       const before = currentContent.slice(0, selectionStart);
       const after = currentContent.slice(selectionEnd);
-      const needsLeadingSpace =
-        before.length > 0 &&
-        !suppressLeadingSpace(before) &&
-        !/^\s/.test(transcript) &&
-        !isCjk(before.slice(-1)) &&
-        !isCjk(transcript[0]);
-      const needsTrailingSpace =
-        after.length > 0 &&
-        !isNonJoiningBoundary(after[0]) &&
-        !/\s$/.test(transcript) &&
-        !isCjk(after[0]) &&
-        !isCjk(transcript.slice(-1));
-      const inserted = `${needsLeadingSpace ? ' ' : ''}${transcript}${needsTrailingSpace ? ' ' : ''}`;
-      // Enforce the composer character limit (matches InputTextarea's maxChars)
-      // so a misbehaving backend cannot push a transcript past it via direct
-      // state update.
-      const remaining = COMPOSER_CHAR_LIMIT - before.length - after.length;
-      const cappedInserted = remaining <= 0 ? '' : inserted.slice(0, remaining);
-      const nextValue = before + cappedInserted + after;
+      const { value: nextValue } = buildTranscriptInsertion(before, after, transcript);
       setContent(nextValue);
-      const nextCursor = selectionStart + cappedInserted.length;
+      const nextCursor = selectionStart + (nextValue.length - before.length - after.length);
       setTimeout(() => {
         textareaInputRef.current?.focus();
         textareaInputRef.current?.setSelectionRange(nextCursor, nextCursor);
@@ -478,6 +495,121 @@ export default function MessageInput({
   // The session the CURRENT recording was started for (null when idle).
   const recordingSessionRef = useRef<string | null>(null);
 
+  // Deliver a transcript whose composer has already unmounted (the user clicked
+  // Send/Stop then navigated to another session while the up-to-125s RPC was in
+  // flight). Auto-send can't run with no mounted composer, so route by mode:
+  //  - send/queue: send straight to the session as a real message. No draft is
+  //    involved, so there is nothing for a stale client snapshot to clobber —
+  //    this is the reported "I clicked Send then switched sessions" case.
+  //  - stay: stage in the `inputDraftVoicePending` field; the daemon merges it
+  //    into the draft atomically on the next session.get.
+  // Reports success/failure so the toast never claims a delivery that did not
+  // happen.
+  const deliverUnmountedTranscript = useCallback(
+    async (
+      targetSessionId: string,
+      transcript: string,
+      mode: 'stay' | 'send' | 'queue',
+      // Snapshot of the composer payload taken at click time (while still
+      // mounted): the draft split at the captured caret/selection, images, and
+      // the composer's own bound `onSend`. The unmounted delivery can't read
+      // the live draft/attachments — it sends what was here when the user
+      // clicked, through the SAME send function the mounted path uses (so
+      // worktree-choice setup, task-composer routing, and error handling all
+      // apply), rather than a bare message.send RPC that would bypass them.
+      payload: {
+        before: string;
+        after: string;
+        full: string;
+        images?: MessageImage[];
+        send: MessageInputProps['onSend'];
+      }
+    ): Promise<{ ok: boolean; message: string }> => {
+      // NOTE: no upfront hub gate here. The captured `payload.send` owns its
+      // offline delivery (useSendMessage queues disconnected sends for retry),
+      // so a missing hub must not prevent attempting it — only the staging and
+      // clearing RPCs below require a connection.
+      const stageToDraft = async () => {
+        const hub = connectionManager.getHubIfConnected();
+        if (!hub) throw new Error('Not connected');
+        await hub.request('session.appendVoiceDraft', {
+          sessionId: targetSessionId,
+          text: transcript,
+        });
+      };
+      // Last-resort preservation: stage the transcript into the pending draft
+      // field. Used for 'stay', for a composer too full to splice into, and as
+      // the fallback when the send path fails — never destroy the only copy.
+      const stageFallback = async (message: string): Promise<{ ok: boolean; message: string }> => {
+        try {
+          await stageToDraft();
+          return { ok: true, message };
+        } catch {
+          return { ok: false, message: '' };
+        }
+      };
+      if (mode === 'stay') {
+        return stageFallback('Voice transcript saved to the session draft');
+      }
+      // Splice the transcript at the captured selection like the mounted path;
+      // if the composer was already at its character limit the transcript
+      // cannot fit — do not silently send an incomplete payload, retain the
+      // transcript in the pending draft field instead. fullyInserted comes
+      // from the insertion helper, not a substring search of the draft (which
+      // the same phrase elsewhere in the draft would defeat).
+      const { value: content, fullyInserted } = buildTranscriptInsertion(
+        payload.before,
+        payload.after,
+        transcript
+      );
+      if (!fullyInserted) {
+        return stageFallback(
+          'Composer draft is full — voice transcript saved to the session draft'
+        );
+      }
+      const deliveryMode: MessageDeliveryMode = mode === 'queue' ? 'defer' : 'immediate';
+      let sent: void | boolean;
+      try {
+        sent = await payload.send(content, payload.images, deliveryMode);
+      } catch {
+        // The send path failed (e.g. a task composer declining while its
+        // target agent is still starting). Preserve the only copy of the
+        // transcript by staging it into the session draft rather than
+        // destroying it.
+        return stageFallback('Voice send failed — transcript saved to the session draft');
+      }
+      if (sent === false) {
+        return stageFallback('Voice send failed — transcript saved to the session draft');
+      }
+      // Consume the click-time draft so reopening the session doesn't show —
+      // and re-send — text that was just delivered. Parity with the mounted
+      // submit, which clears the composer. The daemon-side clearInputDraftIf
+      // compares and clears ATOMICALLY and only when the persisted draft still
+      // equals the complete click-time snapshot (selection included) — newer
+      // edits saved after the snapshot win. Best-effort: a failure here doesn't
+      // undo the send.
+      if (payload.full.trim().length > 0) {
+        const hub = connectionManager.getHubIfConnected();
+        if (hub) {
+          try {
+            await hub.request('session.clearInputDraftIf', {
+              sessionId: targetSessionId,
+              expected: payload.full,
+            });
+          } catch {
+            /* ignore — the send already succeeded */
+          }
+        }
+      }
+      return {
+        ok: true,
+        message:
+          mode === 'queue' ? 'Voice transcript queued for the next turn' : 'Voice transcript sent',
+      };
+    },
+    []
+  );
+
   const stopAndTranscribe = useCallback(
     // 'stay' leaves the transcript in the composer; 'send' auto-submits it
     // (immediate send, or steer when the agent is working); 'queue' defers it
@@ -492,6 +624,30 @@ export default function MessageInput({
       // composer has since been re-targeted, the transcript is discarded with a
       // toast instead of landing in — or auto-sending to — another session.
       const targetSessionId = recordingSessionRef.current ?? sessionId;
+      // Snapshot the full outgoing payload NOW (mounted, click time), split at
+      // the captured caret/selection exactly like insertTranscript would splice
+      // it — the textarea is already replaced by the recording panel, so fall
+      // back to the cursor refs snapshotted at recording start. If the user
+      // navigates away during transcription, the unmounted delivery path can't
+      // read the live draft/attachments — it must send what was here when they
+      // clicked, matching the mounted path that submits the whole composer.
+      const snapshotContent = textareaInputRef.current?.value ?? contentRef.current;
+      const snapshotStart = textareaInputRef.current?.selectionStart ?? lastCursorRef.current;
+      const snapshotEnd =
+        textareaInputRef.current?.selectionEnd ??
+        Math.max(snapshotStart, lastSelectionEndRef.current);
+      const payloadSnapshot = {
+        before: snapshotContent.slice(0, snapshotStart),
+        after: snapshotContent.slice(snapshotEnd),
+        // Complete click-time content (includes any selected text) — compared
+        // against the persisted draft by the atomic post-send clear.
+        full: snapshotContent,
+        images: getImagesForSend(),
+        // The composer's own send function — invoked post-unmount through this
+        // closure, it reproduces the FULL mounted send semantics (worktree
+        // choice setup, task-composer routing) instead of a bare RPC.
+        send: onSend,
+      };
       setIsTranscribing(true);
       try {
         const recording = await voiceRecorder.stop();
@@ -520,6 +676,23 @@ export default function MessageInput({
           // Only queue an auto-send when the transcript produced text; the
           // effect below fires it after isTranscribing flips false.
           if (mode !== 'stay') pendingAutoSendRef.current = { sessionId: targetSessionId, mode };
+        } else if (transcript) {
+          // Composer unmounted (user navigated away) while this transcription
+          // was in flight. Deliver the transcript directly to the target session
+          // — send/queue as a real message, stay staged into the pending field
+          // (merged into the draft atomically by the daemon on next get) — so it
+          // is never silently lost. Await so the toast reflects the outcome.
+          const delivered = await deliverUnmountedTranscript(
+            targetSessionId,
+            transcript,
+            mode,
+            payloadSnapshot
+          );
+          if (delivered.ok) toast.info(delivered.message);
+          else
+            toast.error(
+              delivered.message || 'Voice transcript could not be delivered — it was lost'
+            );
         } else if (mountedRef.current) {
           // Backend heard nothing it could transcribe — say so instead of
           // silently returning to an empty composer.
@@ -533,7 +706,15 @@ export default function MessageInput({
         setIsTranscribing(false);
       }
     },
-    [insertTranscript, isTranscribing, voiceRecorder, sessionId]
+    [
+      insertTranscript,
+      deliverUnmountedTranscript,
+      getImagesForSend,
+      isTranscribing,
+      onSend,
+      voiceRecorder,
+      sessionId,
+    ]
   );
 
   // Cancel discards the recording AND its pinned target session.

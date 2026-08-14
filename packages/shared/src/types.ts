@@ -600,6 +600,14 @@ export interface SessionMetadata {
   workspaceInitialized?: boolean; // Flag to track if workspace (title + worktree) has been initialized
   lastContextInfo?: ContextInfo | null; // Last known context info (persisted)
   inputDraft?: string | null; // Draft input text (null to clear; persisted across sessions and devices)
+  /**
+   * Voice transcript that completed after its composer unmounted (the user
+   * navigated to another session mid-transcription). Held in a separate field
+   * so the client's debounced inputDraft saves — which carry a stale snapshot —
+   * can never clobber it; useInputDraft merges it into inputDraft once on load,
+   * then clears it. null/absent = nothing pending.
+   */
+  inputDraftVoicePending?: string | null;
   removedOutputs?: string[]; // UUIDs of messages whose tool_result outputs were removed from SDK session file
   resolvedQuestions?: Record<string, ResolvedQuestion>; // Resolved AskUserQuestion responses, keyed by toolUseId
   // Cost tracking: SDK reports cumulative cost per run, but resets on agent restart

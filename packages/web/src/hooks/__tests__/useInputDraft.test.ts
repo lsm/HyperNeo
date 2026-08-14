@@ -254,6 +254,37 @@ describe('useInputDraft', () => {
       expect(result.current.content).toBe('');
     });
 
+    it('does not apply a draft whose session.get resolved after the session changed', async () => {
+      // Each session.get gets its own deferred promise so we can resolve
+      // session-1's slow get only after the hook has moved on to session-2.
+      const gets: Array<{ resolve: (value: unknown) => void }> = [];
+      mockHub.request.mockImplementation(() => {
+        let resolve!: (value: unknown) => void;
+        const promise = new Promise((r) => {
+          resolve = r;
+        });
+        gets.push({ resolve });
+        return promise;
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result, rerender } = renderHook(({ sessionId }) => useInputDraft(sessionId), {
+        initialProps: { sessionId: 'session-1' },
+      });
+
+      // Switch to session-2 BEFORE session-1's get resolves.
+      rerender({ sessionId: 'session-2' });
+
+      await act(async () => {
+        // session-1's get finally resolves with its (now stale) draft.
+        gets[0]?.resolve({ session: { metadata: { inputDraft: 'session-1 draft' } } });
+        await vi.runAllTimersAsync();
+      });
+
+      // The stale session-1 draft must not bleed into the session-2 composer.
+      expect(result.current.content).not.toBe('session-1 draft');
+    });
+
     it('should handle load error gracefully', async () => {
       mockHub.request.mockRejectedValue(new Error('Network error'));
       vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
@@ -341,6 +372,12 @@ describe('useInputDraft', () => {
       vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
 
       const { result } = renderHook(() => useInputDraft('session-1'));
+
+      // Let the initial draft load settle — the transient pre-load '' must not
+      // trigger the immediate clear (it would wipe the server-side draft).
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
 
       act(() => {
         result.current.setContent('Some content');
@@ -504,6 +541,10 @@ describe('useInputDraft', () => {
 
       const { result } = renderHook(() => useInputDraft('session-1'));
 
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
       act(() => {
         result.current.setContent('   ');
       });
@@ -513,6 +554,158 @@ describe('useInputDraft', () => {
         sessionId: 'session-1',
         metadata: { inputDraft: null },
       });
+    });
+
+    it('does not send the mount-time empty clear before the initial load settles', async () => {
+      let resolveGet!: (value: unknown) => void;
+      mockHub.request.mockImplementation(() => {
+        let resolve!: (value: unknown) => void;
+        const promise = new Promise((r) => {
+          resolve = r;
+        });
+        resolveGet = resolve;
+        return promise;
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      renderHook(() => useInputDraft('session-1'));
+
+      // The initial load is still in flight and the signal is transiently ''.
+      // The save effect must NOT clear the server-side draft in that window.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(50);
+      });
+      expect(mockHub.request).not.toHaveBeenCalledWith('session.update', {
+        sessionId: 'session-1',
+        metadata: { inputDraft: null },
+      });
+
+      // Once the load settles, subsequent user deletions clear normally.
+      await act(async () => {
+        resolveGet({ session: { metadata: { inputDraft: 'saved' } } });
+        await vi.runAllTimersAsync();
+      });
+      expect(mockHub.request).not.toHaveBeenCalledWith('session.update', {
+        sessionId: 'session-1',
+        metadata: { inputDraft: null },
+      });
+    });
+
+    it('re-arms the load guard when revisiting a session (A -> B -> A)', async () => {
+      // Each session.get gets its own deferred so we control resolution order.
+      const gets: Array<{ resolve: (value: unknown) => void }> = [];
+      mockHub.request.mockImplementation(() => {
+        let resolve!: (value: unknown) => void;
+        const promise = new Promise((r) => {
+          resolve = r;
+        });
+        gets.push({ resolve });
+        return promise;
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { rerender } = renderHook(({ sessionId }) => useInputDraft(sessionId), {
+        initialProps: { sessionId: 'session-A' },
+      });
+
+      // A's first load settles (marker = A).
+      await act(async () => {
+        gets[0]?.resolve({ session: { metadata: { inputDraft: 'a-draft' } } });
+        await vi.runAllTimersAsync();
+      });
+
+      // Switch to B (get pending), then back to A (get pending). The stale
+      // marker for A must have been invalidated — no empty-clear may fire for
+      // A while its fresh get is in flight.
+      rerender({ sessionId: 'session-B' });
+      rerender({ sessionId: 'session-A' });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100);
+      });
+
+      const clearCalls = mockHub.request.mock.calls.filter(
+        (call) => call[0] === 'session.update' && call[1]?.metadata?.inputDraft === null
+      );
+      expect(clearCalls).toEqual([]);
+    });
+
+    it('retries an explicit draft deletion via the switch flush when the clear failed', async () => {
+      // First null-clear (the user's deletion) fails; later calls succeed.
+      let deletionRejected = false;
+      mockHub.request.mockImplementation(async (method: string, payload: unknown) => {
+        if (method === 'session.get')
+          return { session: { metadata: { inputDraft: 'loaded draft' } } };
+        const meta = (payload as { metadata?: { inputDraft?: string | null } })?.metadata;
+        if (method === 'session.update' && meta && meta.inputDraft === null && !deletionRejected) {
+          deletionRejected = true;
+          throw new Error('offline');
+        }
+        return {};
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result, rerender } = renderHook(({ sessionId }) => useInputDraft(sessionId), {
+        initialProps: { sessionId: 'session-A' },
+      });
+
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(result.current.content).toBe('loaded draft');
+      act(() => {
+        result.current.setContent('');
+      });
+      // Let the (failing) immediate clear settle — the retry marker stays.
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      mockHub.request.mockClear();
+
+      // Switch away — the flush retries inputDraft: null for session-A because
+      // the deletion was never confirmed.
+      rerender({ sessionId: 'session-B' });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      expect(mockHub.request).toHaveBeenCalledWith('session.update', {
+        sessionId: 'session-A',
+        metadata: { inputDraft: null },
+      });
+    });
+
+    it('does not retry a deletion that was already confirmed', async () => {
+      mockHub.request.mockResolvedValue({
+        session: { metadata: { inputDraft: 'loaded draft' } },
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result, rerender } = renderHook(({ sessionId }) => useInputDraft(sessionId), {
+        initialProps: { sessionId: 'session-A' },
+      });
+
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      act(() => {
+        result.current.setContent('');
+      });
+      // The immediate clear SUCCEEDS — the retry marker is dropped.
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      mockHub.request.mockClear();
+
+      rerender({ sessionId: 'session-B' });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      // No flush retry: a newer draft saved elsewhere must survive.
+      const nullClears = mockHub.request.mock.calls.filter(
+        (call) => call[0] === 'session.update' && call[1]?.metadata?.inputDraft === null
+      );
+      expect(nullClears).toEqual([]);
     });
 
     it('should handle clear error gracefully', async () => {

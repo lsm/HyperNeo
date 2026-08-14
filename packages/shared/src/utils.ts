@@ -62,3 +62,43 @@ export function generateUUID(): string {
     return v.toString(16);
   });
 }
+
+/** Composer/draft character cap shared by the web input and daemon draft writes. */
+export const DRAFT_CHAR_LIMIT = 100_000;
+
+const CJK_SCRIPT = /[\p{sc=Han}\p{sc=Hiragana}\p{sc=Katakana}\p{sc=Hangul}]/u;
+const ASCII_QUOTE = /['"`]/;
+
+// Suppress a separating space when the preceding text ends in whitespace or an
+// opening bracket/quote (ASCII straight quotes count as opening only when they
+// follow whitespace or start-of-text).
+function suppressLeadingSpace(before: string): boolean {
+  if (before.length === 0) return false;
+  const last = before.slice(-1);
+  if (/\s/.test(last)) return true;
+  if (/\p{Ps}|\p{Pi}/u.test(last)) return true;
+  if (ASCII_QUOTE.test(last)) {
+    const prev = before.slice(-2, -1);
+    return prev === '' || /\s/.test(prev);
+  }
+  return false;
+}
+
+/**
+ * Append `text` to an existing draft string, inserting a single separating
+ * space only when both sides are non-empty and neither boundary is CJK or a
+ * join-suppressing character. CJK scripts need no inter-character space
+ * (你好 + 世界 -> 你好世界). Capped to the shared draft character limit.
+ *
+ * Shared so the daemon's atomic draft append and the client's pending-voice
+ * merge apply identical spacing rules.
+ */
+export function appendDraftText(existing: string, text: string): string {
+  const needsSpace =
+    existing.length > 0 &&
+    !suppressLeadingSpace(existing) &&
+    !/^\s/.test(text) &&
+    !CJK_SCRIPT.test(existing.slice(-1)) &&
+    !(text.length > 0 && CJK_SCRIPT.test(text[0] ?? ''));
+  return `${existing}${needsSpace ? ' ' : ''}${text}`.slice(0, DRAFT_CHAR_LIMIT);
+}
