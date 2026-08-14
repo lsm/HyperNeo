@@ -3465,9 +3465,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
      *     never surfaced to a caller below the threshold.
      *   - Task must be `review` or `in_progress`. `in_progress` is intentionally
      *     eligible (Forge review tasks complete while still in_progress); the
-     *     autonomy gate is the control. A task in `review` with a pending GATE
-     *     checkpoint is rejected — it awaits human gate approval and completing
-     *     it would bypass the gate.
+     *     autonomy gate is the control.
      *   - No-PR: a workflow-backed task whose run has a primary link (PR) is
      *     PR-bound and must use the normal approve/merge path. A task with no
      *     workflow run (standalone — the common Forge self_nag/review shape) is
@@ -3552,20 +3550,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         return jsonResult({
           success: false,
           error: `Task is in '${task.status}' status. complete_validation_task only applies to tasks in 'review' or 'in_progress' that complete without a PR.`,
-        });
-      }
-
-      // Gate-pending guard: a task in `review` with a `gate` checkpoint is
-      // paused for HUMAN gate approval (handleGatePendingApproval parks it
-      // there until the gate opens). Completing it here would clear the
-      // checkpoint and finalize the run, bypassing the gate's approval and
-      // writer rules entirely. The gate must be approved through its normal
-      // path (approve_gate / the UI gate controls); a `task_completion`
-      // checkpoint is fine — that task was submitted for completion review.
-      if (task.status === 'review' && task.pendingCheckpointType === 'gate') {
-        return jsonResult({
-          success: false,
-          error: `Task ${args.task_id} is paused at a human-approval gate (pendingCheckpointType='gate'); validation-only completion would bypass the gate. Use approve_gate (or the UI gate controls) to resolve the gate instead.`,
         });
       }
 

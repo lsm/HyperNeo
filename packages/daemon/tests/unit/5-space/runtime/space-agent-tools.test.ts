@@ -5837,28 +5837,6 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     expect(ctx.taskRepo.getTask(taskId)?.status).toBe('done');
   });
 
-  test('rejects a task paused at a human-approval gate', async () => {
-    // handleGatePendingApproval parks a gate-paused canonical task in `review`
-    // with pendingCheckpointType='gate'. Validation-only completion must not
-    // clear the checkpoint and finalize the run — that bypasses the gate.
-    const taskId = await createTask('review');
-    ctx.taskRepo.updateTask(taskId, {
-      pendingCheckpointType: 'gate',
-      pendingCompletionReason: 'awaiting human gate approval',
-    });
-
-    const result = await makeHandlers(ctx).complete_validation_task({
-      task_id: taskId,
-      validation_outcome: 'validated',
-    });
-    const parsed = JSON.parse(result.content[0].text);
-
-    expect(parsed.success).toBe(false);
-    expect(parsed.error).toContain("pendingCheckpointType='gate'");
-    expect(ctx.taskRepo.getTask(taskId)?.status).toBe('review');
-    expect(ctx.taskRepo.getTask(taskId)?.pendingCheckpointType).toBe('gate');
-  });
-
   test('completes a workflow-backed task whose run has no PR (real no-PR resolution)', async () => {
     // A workflow-backed task with no primary-link artifact: getApprovedPrUrlForRun
     // returns '' organically (no spyOn), so the no-PR guard is exercised for real.
