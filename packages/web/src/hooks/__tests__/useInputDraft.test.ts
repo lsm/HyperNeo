@@ -241,44 +241,6 @@ describe('useInputDraft', () => {
       expect(result.current.content).toBe('Saved draft');
     });
 
-    it('merges a pending voice transcript into the draft on load and clears it', async () => {
-      mockHub.request.mockResolvedValue({
-        session: {
-          metadata: { inputDraft: 'existing', inputDraftVoicePending: 'hello world' },
-        },
-      });
-      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
-
-      const { result } = renderHook(() => useInputDraft('session-1'));
-
-      await act(async () => {
-        await vi.runAllTimersAsync();
-      });
-
-      // The staged voice transcript is appended to the loaded draft...
-      expect(result.current.content).toBe('existing hello world');
-      // ...and the staging field is cleared so it merges only once.
-      expect(mockHub.request).toHaveBeenCalledWith('session.update', {
-        sessionId: 'session-1',
-        metadata: { inputDraftVoicePending: null },
-      });
-    });
-
-    it('uses just the pending transcript when the draft is empty', async () => {
-      mockHub.request.mockResolvedValue({
-        session: { metadata: { inputDraft: null, inputDraftVoicePending: 'hello' } },
-      });
-      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
-
-      const { result } = renderHook(() => useInputDraft('session-1'));
-
-      await act(async () => {
-        await vi.runAllTimersAsync();
-      });
-
-      expect(result.current.content).toBe('hello');
-    });
-
     it('should not load draft when hub is not connected', async () => {
       vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(null);
 
@@ -290,6 +252,37 @@ describe('useInputDraft', () => {
 
       expect(mockHub.request).not.toHaveBeenCalled();
       expect(result.current.content).toBe('');
+    });
+
+    it('does not apply a draft whose session.get resolved after the session changed', async () => {
+      // Each session.get gets its own deferred promise so we can resolve
+      // session-1's slow get only after the hook has moved on to session-2.
+      const gets: Array<{ resolve: (value: unknown) => void }> = [];
+      mockHub.request.mockImplementation(() => {
+        let resolve!: (value: unknown) => void;
+        const promise = new Promise((r) => {
+          resolve = r;
+        });
+        gets.push({ resolve });
+        return promise;
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result, rerender } = renderHook(({ sessionId }) => useInputDraft(sessionId), {
+        initialProps: { sessionId: 'session-1' },
+      });
+
+      // Switch to session-2 BEFORE session-1's get resolves.
+      rerender({ sessionId: 'session-2' });
+
+      await act(async () => {
+        // session-1's get finally resolves with its (now stale) draft.
+        gets[0]?.resolve({ session: { metadata: { inputDraft: 'session-1 draft' } } });
+        await vi.runAllTimersAsync();
+      });
+
+      // The stale session-1 draft must not bleed into the session-2 composer.
+      expect(result.current.content).not.toBe('session-1 draft');
     });
 
     it('should handle load error gracefully', async () => {

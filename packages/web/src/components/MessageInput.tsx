@@ -478,27 +478,47 @@ export default function MessageInput({
   // The session the CURRENT recording was started for (null when idle).
   const recordingSessionRef = useRef<string | null>(null);
 
-  // A transcription can complete AFTER the composer unmounted — the user clicked
-  // Send/Stop then navigated to another session while the (up to 125s) RPC was
-  // in flight. insertTranscript writes through the live draft signal + textarea,
-  // neither of which exists once the keyed ChatContainer is gone. Stage the
-  // transcript into the session's dedicated `inputDraftVoicePending` field (via
-  // `session.appendVoiceDraft`) — NOT the live inputDraft, which the client's
-  // debounced saves could clobber — and report success/failure so the toast
-  // never claims a save that did not happen. useInputDraft merges the pending
-  // field into the draft once when the session is next loaded.
-  const persistTranscriptToDraft = useCallback(
-    async (targetSessionId: string, transcript: string): Promise<boolean> => {
+  // Deliver a transcript whose composer has already unmounted (the user clicked
+  // Send/Stop then navigated to another session while the up-to-125s RPC was in
+  // flight). Auto-send can't run with no mounted composer, so route by mode:
+  //  - send/queue: send straight to the session as a real message. No draft is
+  //    involved, so there is nothing for a stale client snapshot to clobber —
+  //    this is the reported "I clicked Send then switched sessions" case.
+  //  - stay: stage in the `inputDraftVoicePending` field; the daemon merges it
+  //    into the draft atomically on the next session.get.
+  // Reports success/failure so the toast never claims a delivery that did not
+  // happen.
+  const deliverUnmountedTranscript = useCallback(
+    async (
+      targetSessionId: string,
+      transcript: string,
+      mode: 'stay' | 'send' | 'queue'
+    ): Promise<{ ok: boolean; message: string }> => {
       const hub = connectionManager.getHubIfConnected();
-      if (!hub) return false;
+      if (!hub) return { ok: false, message: '' };
       try {
-        await hub.request('session.appendVoiceDraft', {
+        if (mode === 'stay') {
+          await hub.request('session.appendVoiceDraft', {
+            sessionId: targetSessionId,
+            text: transcript,
+          });
+          return { ok: true, message: 'Voice transcript saved to the session draft' };
+        }
+        const deliveryMode: MessageDeliveryMode = mode === 'queue' ? 'defer' : 'immediate';
+        await hub.request('message.send', {
           sessionId: targetSessionId,
-          text: transcript,
+          content: transcript,
+          deliveryMode,
         });
-        return true;
+        return {
+          ok: true,
+          message:
+            mode === 'queue'
+              ? 'Voice transcript queued for the next turn'
+              : 'Voice transcript sent',
+        };
       } catch {
-        return false;
+        return { ok: false, message: '' };
       }
     },
     []
@@ -548,14 +568,13 @@ export default function MessageInput({
           if (mode !== 'stay') pendingAutoSendRef.current = { sessionId: targetSessionId, mode };
         } else if (transcript) {
           // Composer unmounted (user navigated away) while this transcription
-          // was in flight. Append the transcript to the target session's draft
-          // atomically on the server so it survives navigation instead of being
-          // silently dropped. Auto-send can't fire with no mounted composer; for
-          // now the text lands as a ready-to-send draft. Await the result so the
-          // toast reflects whether the save actually happened.
-          const saved = await persistTranscriptToDraft(targetSessionId, transcript);
-          if (saved) toast.info('Voice transcript saved to the session draft');
-          else toast.error('Voice transcript could not be saved — it was lost');
+          // was in flight. Deliver the transcript directly to the target session
+          // — send/queue as a real message, stay staged into the pending field
+          // (merged into the draft atomically by the daemon on next get) — so it
+          // is never silently lost. Await so the toast reflects the outcome.
+          const delivered = await deliverUnmountedTranscript(targetSessionId, transcript, mode);
+          if (delivered.ok) toast.info(delivered.message);
+          else toast.error('Voice transcript could not be delivered — it was lost');
         } else if (mountedRef.current) {
           // Backend heard nothing it could transcribe — say so instead of
           // silently returning to an empty composer.
@@ -569,7 +588,7 @@ export default function MessageInput({
         setIsTranscribing(false);
       }
     },
-    [insertTranscript, persistTranscriptToDraft, isTranscribing, voiceRecorder, sessionId]
+    [insertTranscript, deliverUnmountedTranscript, isTranscribing, voiceRecorder, sessionId]
   );
 
   // Cancel discards the recording AND its pinned target session.

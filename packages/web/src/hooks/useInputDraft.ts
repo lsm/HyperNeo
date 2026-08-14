@@ -28,7 +28,6 @@
 
 import { useEffect, useRef, useCallback, useMemo } from 'preact/hooks';
 import { useSignal, useSignalEffect } from '@preact/signals';
-import { appendDraftText } from '@hyperneo/shared';
 import { connectionManager } from '../lib/connection-manager';
 
 export interface UseInputDraftResult {
@@ -66,33 +65,24 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     // Clear content immediately to prevent showing stale draft
     contentSignal.value = '';
 
+    // Stale-load guard: if the session changes (or the hook unmounts) while this
+    // get is in flight, the cleanup flips `cancelled` so the resolved draft is
+    // not written into a signal now backing a different session.
+    let cancelled = false;
     const loadDraft = async () => {
       const hub = connectionManager.getHubIfConnected();
       if (!hub) return;
 
       try {
         const response = await hub.request<{
-          session: {
-            metadata?: { inputDraft?: string | null; inputDraftVoicePending?: string | null };
-          };
+          session: { metadata?: { inputDraft?: string } };
         }>('session.get', { sessionId });
-        const draft = response.session?.metadata?.inputDraft ?? '';
-        const voicePending = response.session?.metadata?.inputDraftVoicePending;
-        if (voicePending && voicePending.trim()) {
-          // A voice transcript completed after its composer unmounted and was
-          // staged in a separate field so the debounced inputDraft saves could
-          // not clobber it. Merge it into the draft now (single-threaded on
-          // load, so no race) and clear the staging field so it merges once.
-          contentSignal.value = appendDraftText(draft, voicePending);
-          hub
-            .request('session.update', {
-              sessionId,
-              metadata: { inputDraftVoicePending: null },
-            })
-            .catch(() => {
-              /* ignore clear errors — will retry on next load */
-            });
-        } else if (draft) {
+        if (cancelled) return;
+        // The daemon merges any staged voice transcript (inputDraftVoicePending)
+        // into inputDraft atomically while serving this request, so the draft
+        // here already includes it — no client-side merge needed.
+        const draft = response.session?.metadata?.inputDraft;
+        if (draft) {
           contentSignal.value = draft;
         }
       } catch {
@@ -101,6 +91,9 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     };
 
     loadDraft();
+    return () => {
+      cancelled = true;
+    };
   }, [sessionId, contentSignal]);
 
   // Save draft with debouncing - uses useSignalEffect to react to signal changes

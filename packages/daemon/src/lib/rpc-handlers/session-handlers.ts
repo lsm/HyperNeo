@@ -355,6 +355,22 @@ export function setupSessionHandlers(
       throw new Error('Session not found');
     }
 
+    // Consume any staged voice transcript atomically: merge
+    // inputDraftVoicePending into inputDraft and clear the staging field in one
+    // synchronous write. Doing the merge server-side (rather than in the
+    // client's debounced useInputDraft hook) means there is a single writer and
+    // no window for a stale client snapshot or a cancelled debounce to lose the
+    // transcript. The client just reads inputDraft, already merged. See
+    // session.appendVoiceDraft for how the pending field is populated.
+    const beforeMerge = agentSession.getSessionData();
+    const voicePending = beforeMerge.metadata?.inputDraftVoicePending;
+    if (voicePending && voicePending.trim()) {
+      const merged = appendDraftText(beforeMerge.metadata?.inputDraft ?? '', voicePending);
+      await sessionManager.updateSession(targetSessionId, {
+        metadata: { inputDraft: merged, inputDraftVoicePending: null },
+      } as Partial<Session>);
+    }
+
     const session = agentSession.getSessionData();
 
     return {

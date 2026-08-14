@@ -786,3 +786,54 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     expect(sessionManager.updateSession).not.toHaveBeenCalled();
   });
 });
+
+describe('Session RPC Handlers — session.get voice draft merge', () => {
+  let messageHubData: ReturnType<typeof createMockMessageHub>;
+  let eventBus: ReturnType<typeof createMockInternalEventBus>;
+  let sessionManager: {
+    getSessionAsync: ReturnType<typeof mock>;
+    updateSession: ReturnType<typeof mock>;
+  };
+
+  async function setup(metadata: Record<string, unknown>) {
+    messageHubData = createMockMessageHub();
+    eventBus = createMockInternalEventBus();
+    // getSessionData() returns the same live object both before and after the
+    // merge so the handler reads the pending value, then re-reads for its
+    // response — mirroring the real in-memory agent session.
+    const sessionData = { id: 's1', metadata };
+    sessionManager = {
+      getSessionAsync: mock(async () => ({ getSessionData: () => sessionData })),
+      updateSession: mock(async () => {}),
+    } as unknown as SessionManager;
+    const { setupSessionHandlers } = await import(
+      '../../../../src/lib/rpc-handlers/session-handlers'
+    );
+    setupSessionHandlers(messageHubData.hub, sessionManager, eventBus, {} as SpaceManager);
+    return messageHubData.handlers.get('session.get');
+  }
+
+  it('merges a pending voice transcript into the draft and clears the staging field', async () => {
+    const handler = await setup({
+      inputDraft: 'existing',
+      inputDraftVoicePending: 'hello world',
+    });
+    expect(handler).toBeDefined();
+    await handler!({ sessionId: 's1' }, {});
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: { inputDraft: 'existing hello world', inputDraftVoicePending: null },
+    });
+  });
+
+  it('leaves the draft untouched when there is no pending transcript', async () => {
+    const handler = await setup({ inputDraft: 'existing' });
+    await handler!({ sessionId: 's1' }, {});
+    expect(sessionManager.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('ignores a whitespace-only pending transcript', async () => {
+    const handler = await setup({ inputDraft: 'existing', inputDraftVoicePending: '   ' });
+    await handler!({ sessionId: 's1' }, {});
+    expect(sessionManager.updateSession).not.toHaveBeenCalled();
+  });
+});

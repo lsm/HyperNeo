@@ -170,55 +170,88 @@ describe('MessageInput — recording UI', () => {
     await waitFor(() => expect(onSend).toHaveBeenCalledWith('hello world', undefined, 'immediate'));
   });
 
-  it('appends the transcript to the session draft when the composer unmounts mid-transcription', async () => {
+  it('delivers the transcript as a sent message (send) when the composer unmounts mid-transcription', async () => {
     // Slow transcription: resolve only after the composer has unmounted, so the
     // completion runs against mountedRef === false (the keyed ChatContainer is
     // gone), mirroring a user who clicks Send then navigates to another session.
-    let resolveTranscribe!: (value: { text: string }) => void;
-    const transcribePromise = new Promise<{ text: string }>((resolve) => {
-      resolveTranscribe = resolve;
-    });
-    transcribeRequest.mockReturnValueOnce(transcribePromise);
-
-    const onSend = vi.fn(async () => {});
-    const { unmount } = render(<MessageInput sessionId="s1" onSend={onSend} />);
-
-    fireEvent.click(screen.getByLabelText('Stop, transcribe and send'));
-    // Stop + transcribe request fire while the composer is still mounted...
-    await waitFor(() => expect(transcribeRequest).toHaveBeenCalledTimes(1));
-    // ...then the user navigates away BEFORE the slow transcription resolves.
-    unmount();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    resolveTranscribe({ text: 'hello world' });
-
-    // The transcript is appended server-side via the atomic append RPC — not
-    // silently lost, and no client read-modify-write that could clobber the
-    // draft. The spacing/merge lives in the daemon.
-    await waitFor(() => {
-      const appendCall = hubRequest.mock.calls.find(([m]) => m === 'session.appendVoiceDraft');
-      expect(appendCall).toBeTruthy();
-      expect(appendCall[1]).toEqual({ sessionId: 's1', text: 'hello world' });
-    });
-    await waitFor(() =>
-      expect(toast.info).toHaveBeenCalledWith('Voice transcript saved to the session draft')
-    );
-    // No mounted composer to auto-submit through, so it is preserved as a draft
-    // rather than sent. (Background send delivery is a follow-up.)
-    expect(onSend).not.toHaveBeenCalled();
-  });
-
-  it('surfaces a failure toast (not a false "saved") when draft persistence fails after unmount', async () => {
     let resolveTranscribe!: (value: { text: string }) => void;
     transcribeRequest.mockReturnValueOnce(
       new Promise<{ text: string }>((resolve) => {
         resolveTranscribe = resolve;
       })
     );
-    // The atomic append RPC fails (e.g. socket dropped) — the toast must NOT
-    // claim success, and there is no mounted composer to fall back to.
+
+    const onSend = vi.fn(async () => {});
+    const { unmount } = render(<MessageInput sessionId="s1" onSend={onSend} />);
+
+    fireEvent.click(screen.getByLabelText('Stop, transcribe and send'));
+    // Stop + transcribe fire while the composer is still mounted...
+    await waitFor(() => expect(transcribeRequest).toHaveBeenCalledTimes(1));
+    // ...then the user navigates away BEFORE the slow transcription resolves.
+    unmount();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    resolveTranscribe({ text: 'hello world' });
+
+    // send mode delivers straight to the session as a real message — no draft,
+    // so nothing for a stale client snapshot to clobber.
+    await waitFor(() => {
+      const sendCall = hubRequest.mock.calls.find(([m]) => m === 'message.send');
+      expect(sendCall).toBeTruthy();
+      expect(sendCall[1]).toEqual({
+        sessionId: 's1',
+        content: 'hello world',
+        deliveryMode: 'immediate',
+      });
+    });
+    await waitFor(() => expect(toast.info).toHaveBeenCalledWith('Voice transcript sent'));
+    // The mounted composer's onSend is bypassed (no composer to drive it); the
+    // transcript is delivered directly via message.send instead.
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it('stages the transcript (stay) into the pending draft field when the composer unmounts mid-transcription', async () => {
+    let resolveTranscribe!: (value: { text: string }) => void;
+    transcribeRequest.mockReturnValueOnce(
+      new Promise<{ text: string }>((resolve) => {
+        resolveTranscribe = resolve;
+      })
+    );
+
+    const onSend = vi.fn(async () => {});
+    const { unmount } = render(<MessageInput sessionId="s1" onSend={onSend} />);
+
+    // 'Stop' (not Send) — the user wanted to edit before sending.
+    fireEvent.click(screen.getByLabelText('Stop recording and transcribe'));
+    await waitFor(() => expect(transcribeRequest).toHaveBeenCalledTimes(1));
+    unmount();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    resolveTranscribe({ text: 'hello world' });
+
+    // stay stages into the pending field; the daemon merges it into the draft
+    // atomically on the next session.get.
+    await waitFor(() => {
+      const stageCall = hubRequest.mock.calls.find(([m]) => m === 'session.appendVoiceDraft');
+      expect(stageCall).toBeTruthy();
+      expect(stageCall[1]).toEqual({ sessionId: 's1', text: 'hello world' });
+    });
+    await waitFor(() =>
+      expect(toast.info).toHaveBeenCalledWith('Voice transcript saved to the session draft')
+    );
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a failure toast (not a false "sent") when the unmounted delivery fails', async () => {
+    let resolveTranscribe!: (value: { text: string }) => void;
+    transcribeRequest.mockReturnValueOnce(
+      new Promise<{ text: string }>((resolve) => {
+        resolveTranscribe = resolve;
+      })
+    );
+    // The send RPC fails (e.g. socket dropped) — the toast must NOT claim
+    // success, and there is no mounted composer to fall back to.
     hubRequest.mockImplementation(async (method: string, payload?: unknown) => {
       if (method === 'voice.transcribe') return transcribeRequest(method, payload);
-      if (method === 'session.appendVoiceDraft') throw new Error('boom');
+      if (method === 'message.send') throw new Error('boom');
       return {};
     });
 
@@ -232,7 +265,9 @@ describe('MessageInput — recording UI', () => {
     resolveTranscribe({ text: 'hello world' });
 
     await waitFor(() =>
-      expect(toast.error).toHaveBeenCalledWith('Voice transcript could not be saved — it was lost')
+      expect(toast.error).toHaveBeenCalledWith(
+        'Voice transcript could not be delivered — it was lost'
+      )
     );
     expect(toast.info).not.toHaveBeenCalled();
     expect(onSend).not.toHaveBeenCalled();
