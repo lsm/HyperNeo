@@ -275,6 +275,49 @@ describe('SpaceTaskManager.setTaskStatus — approval-path transitions', () => {
     expect(taskRepo.getTask(task.id)?.status).toBe('cancelled');
   });
 
+  test('precondition is evaluated against the reread state before the UPDATE commits', async () => {
+    // Models the concurrent save_artifact PR race: the condition flips between
+    // the caller's own check and setTaskStatus' internal reread. The hook must
+    // see the flipped state and abort the transition.
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'in_progress',
+    });
+    let condition = false;
+    // Flip the domain condition after setTaskStatus rereads the task — the
+    // precondition observes it, proving it runs in the reread→UPDATE gap.
+    await expect(
+      taskManager.setTaskStatus(task.id, 'done', {
+        result: 'validated',
+        precondition: () => {
+          if (condition) throw new Error('PR appeared during completion');
+        },
+      })
+    ).resolves.toBeTruthy();
+    const done = taskRepo.getTask(task.id);
+    expect(done?.status).toBe('done');
+
+    // Now the flipped condition on a fresh task aborts before any write.
+    const task2 = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T2',
+      description: '',
+      status: 'in_progress',
+    });
+    condition = true;
+    await expect(
+      taskManager.setTaskStatus(task2.id, 'done', {
+        result: 'validated',
+        precondition: () => {
+          if (condition) throw new Error('PR appeared during completion');
+        },
+      })
+    ).rejects.toThrow('PR appeared during completion');
+    expect(taskRepo.getTask(task2.id)?.status).toBe('in_progress');
+  });
+
   test('approved → done nulls the durable source field (primed)', async () => {
     const task = taskRepo.createTask({
       spaceId: SPACE_ID,

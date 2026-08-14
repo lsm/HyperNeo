@@ -3608,6 +3608,21 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           approvalSource: 'agent',
           approvalReason: args.reason,
           allowedSourceStatuses: ['review', 'in_progress'],
+          // Re-assert the no-PR condition against the reread state right before
+          // the UPDATE: a concurrent `save_artifact` can record the run's PR in
+          // the window after the guard above, and without this the task would
+          // still finalize through the no-PR path. Runs inside setTaskStatus'
+          // critical section (after source-status + transition validation,
+          // immediately before the commit).
+          precondition: (current) => {
+            if (!current.workflowRunId) return;
+            const prUrl = runtime.getApprovedPrUrlForRun(current.workflowRunId);
+            if (prUrl) {
+              throw new Error(
+                `Task ${args.task_id} acquired a PR (${prUrl}) during completion; validation-only completion is for no-PR tasks. Use the normal approve/merge path instead.`
+              );
+            }
+          },
           onCascadedTasks: async (cascadedTasks) => {
             for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
           },

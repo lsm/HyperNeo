@@ -202,6 +202,18 @@ export class SpaceTaskManager {
        * against the persisted state the write will actually land on.
        */
       allowedSourceStatuses?: SpaceTaskStatus[];
+      /**
+       * Domain precondition evaluated against the reread task state inside
+       * this method's critical section — after the source-status and
+       * transition validations, immediately before the UPDATE commits.
+       * Throwing aborts the transition. Lets a caller re-assert conditions
+       * that live OUTSIDE the task row (e.g. a run's PR artifact recorded by
+       * a concurrent `save_artifact` between the caller's own check and this
+       * write), collapsing that TOCTOU window into the reread→UPDATE gap —
+       * the same level of single-UPDATE atomicity every other guard here
+       * provides.
+       */
+      precondition?: (task: SpaceTask) => void | Promise<void>;
       /** Optional callback invoked with tasks cascaded by this transition. */
       onCascadedTasks?: (cascaded: SpaceTask[]) => Promise<void>;
     }
@@ -223,6 +235,13 @@ export class SpaceTaskManager {
         `Invalid status transition from '${task.status}' to '${newStatus}'. ` +
           `Allowed: ${VALID_SPACE_TASK_TRANSITIONS[task.status].join(', ') || 'none'}`
       );
+    }
+
+    // Domain precondition — last gate before the UPDATE commits (see the
+    // option's doc). Evaluated here so its conditions bind to the same reread
+    // state the write lands on.
+    if (options?.precondition) {
+      await options.precondition(task);
     }
 
     const updates: Parameters<SpaceTaskRepository['updateTask']>[1] = { status: newStatus };
