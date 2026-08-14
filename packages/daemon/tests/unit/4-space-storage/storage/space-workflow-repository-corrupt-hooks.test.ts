@@ -73,6 +73,29 @@ describe('SpaceWorkflowRepository — corrupt hook columns', () => {
     expect(wf?.hookBindings?.[0]?.hookId).toBe(CORRUPT_HOOK_BINDINGS_HOOK_ID);
   });
 
+  test('a valid array with malformed entries fails closed (not silently filtered)', () => {
+    // '[{}]' is a syntactically valid array whose single entry lacks every
+    // required field: resolveMatchingBindings treats missing `enabled` as
+    // false and would silently filter it, loading a "valid" binding list
+    // that gates nothing. The element-shape validation must route the row
+    // through the fail-closed marker instead.
+    repo.createWorkflow({ spaceId, name: 'WF', nodes: [{ name: 'Only', agentId: 'a1' }] });
+    corruptColumn('hook_bindings', '[{}]');
+    const wf = repo.getWorkflow(
+      db.prepare('SELECT id FROM space_workflows LIMIT 1').get()?.id as string
+    );
+    expect(wf?.hookBindings?.[0]?.hookId).toBe(CORRUPT_HOOK_BINDINGS_HOOK_ID);
+  });
+
+  test('a malformed custom hook entry fails closed', () => {
+    repo.createWorkflow({ spaceId, name: 'WF', nodes: [{ name: 'Only', agentId: 'a1' }] });
+    corruptColumn('custom_hooks', '[{"id":"x"}]');
+    const wf = repo.getWorkflow(
+      db.prepare('SELECT id FROM space_workflows LIMIT 1').get()?.id as string
+    );
+    expect(wf?.hookBindings?.[0]?.hookId).toBe(CORRUPT_HOOK_BINDINGS_HOOK_ID);
+  });
+
   test('null and empty-string columns still load as no hooks (intentional absence)', () => {
     repo.createWorkflow({
       spaceId,

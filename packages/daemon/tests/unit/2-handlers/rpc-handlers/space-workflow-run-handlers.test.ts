@@ -1524,7 +1524,9 @@ describe('space-workflow-run-handlers', () => {
         runId: 'run-1',
         hookId: 'pr_ready',
       })) as { hookState: HookStateSnapshot };
-      expect(hookStateRepo.patches).toHaveLength(1);
+      // Second patch: the queued record has no live in-memory timer in this
+      // test process, so the handler rescheduled its durable nextRetryAt.
+      expect(hookStateRepo.patches).toHaveLength(2);
       const patch = hookStateRepo.patches[0];
       expect(patch.localState?.__firstRetryAt).toBeUndefined();
       expect(patch.localState?.__retryCeilingTerminal).toBeUndefined();
@@ -1540,6 +1542,69 @@ describe('space-workflow-run-handlers', () => {
       expect(result.hookState.localState.__queuedRetryableActions).toEqual({
         'space.send_action-1': { actionKey: 'space.send_action-1' },
       });
+      // The reschedule patch pulls the record's deadline to NOW (deep-merged
+      // into the existing entry) so a later rehydration runs it immediately.
+      const reschedule = hookStateRepo.patches[1];
+      const map = reschedule.localState?.__queuedRetryableActions as Record<
+        string,
+        { nextRetryAt?: number }
+      >;
+      // Pulled to ~now (the handler reads the real clock; the mock freezes
+      // only updatedAt): strictly newer than the seeded stale deadline.
+      const pulled = map['space.send_action-1']?.nextRetryAt ?? 0;
+      expect(pulled).toBeGreaterThanOrEqual(NOW);
+      expect(pulled).toBeLessThan(NOW + 60_000);
+    });
+  });
+
+  describe('spaceWorkflowRun.retryHook — durable reschedule without a live timer', () => {
+    it('pulls the durable deadline to now when no in-memory timer exists', async () => {
+      setup({
+        hookState: {
+          runId: 'run-1',
+          hookId: 'pr_ready',
+          version: 3,
+          localState: {
+            __queuedRetryableActions: {
+              'space.send_action-1': {
+                actionKey: 'space.send_action-1',
+                hookId: 'pr_ready',
+                methodName: 'send_message',
+                args: { target: 'Review', message: 'x' },
+                meta: { sessionId: 's1', agentName: 'coder', nodeId: 'n1', taskId: 't1' },
+                isFollowUp: false,
+                nextRetryAt: 999_999,
+                retryAfterMs: 30_000,
+                queuedAt: 1,
+              },
+            },
+          },
+          lastFlow: 'retry',
+          lastReason: 'Waiting.',
+          retryCount: 2,
+          nextRetryAt: 888_888,
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      });
+      const result = (await call('spaceWorkflowRun.retryHook', {
+        runId: 'run-1',
+        hookId: 'pr_ready',
+      })) as { hookState: HookStateSnapshot };
+      expect(result.hookState.lastFlow).toBe('continue');
+      const reschedule = hookStateRepo.patches.find(
+        (p) => p.localState?.__queuedRetryableActions !== undefined
+      );
+      expect(reschedule).toBeDefined();
+      const map = reschedule?.localState?.__queuedRetryableActions as Record<
+        string,
+        { nextRetryAt?: number }
+      >;
+      // Pulled to ~now (the handler reads the real clock; the mock freezes
+      // only updatedAt): strictly newer than the seeded stale deadline.
+      const pulled = map['space.send_action-1']?.nextRetryAt ?? 0;
+      expect(pulled).toBeGreaterThanOrEqual(NOW);
+      expect(pulled).toBeLessThan(NOW + 60_000);
     });
   });
 });

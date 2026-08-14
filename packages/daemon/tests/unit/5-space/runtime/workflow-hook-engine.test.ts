@@ -869,6 +869,58 @@ describe('WorkflowHookEngine.executeAction', () => {
     expect(multi.executionLog[0]?.hookId).toBe('role_hook');
   });
 
+  test("a bare non-first slot does not authorize via the first slot's channel", async () => {
+    // Node Review declares [coder, reviewer]; the channel authorizes only
+    // 'coder'. A bare 'reviewer' target expands to JUST the reviewer worker
+    // (legacyBareTargetMatches omits the node's other slots), and the router
+    // rejects it — the node's gate must NOT run off the first-declared
+    // slot's channel (both string and array forms).
+    const workflow = makeWorkflow({
+      customHooks: [STOP_HOOK],
+      nodes: [
+        { id: 'n-coding', name: 'Coding', agents: [{ agentId: 'a1', name: 'coder' }] },
+        {
+          id: 'n-review',
+          name: 'Review',
+          agents: [
+            { agentId: 'a2', name: 'coder' },
+            { agentId: 'a3', name: 'reviewer' },
+          ],
+        },
+      ],
+      channels: [{ from: 'Coding', to: 'coder', label: 'Coding → coder' }],
+      hookBindings: [
+        {
+          hookId: 'stop_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    const engine = makeEngine(workflow);
+    // String form: the gate must not run (send is unauthorized) — the hook
+    // never executes, so the outcome delivers with an EMPTY execution log.
+    const scalar = await engine.executeAction(
+      'send_message',
+      { target: 'reviewer', message: 'named slot' },
+      META
+    );
+    expect(scalar.decision).toBe('deliver');
+    expect(scalar.executionLog.length).toBe(0);
+    // Array form: same.
+    const array = await engine.executeAction(
+      'send_message',
+      { target: ['reviewer'], message: 'named slot' },
+      META
+    );
+    expect(array.decision).toBe('deliver');
+    expect(array.executionLog.length).toBe(0);
+  });
+
   test('a shared bare slot suppresses the unauthorized node individually', async () => {
     // ['reviewer'] where BOTH Review and Other declare the 'reviewer' slot,
     // but only Review has a node-level channel: the adapter expands the bare

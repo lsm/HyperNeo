@@ -1005,8 +1005,32 @@ export function setupSpaceWorkflowRunHandlers(
       throw new Error('Hook state update failed due to version conflict');
     }
 
+    const notTriggeredKeys: string[] = [];
     for (const queuedActionKey of queuedActionKeys) {
-      triggerRetryableHookAction(queuedActionKey);
+      if (!triggerRetryableHookAction(queuedActionKey)) notTriggeredKeys.push(queuedActionKey);
+    }
+    if (notTriggeredKeys.length > 0) {
+      // A durable record with NO live in-memory timer (e.g. its source
+      // session has not rehydrated): nothing replayed, but the RPC has
+      // already flipped lastFlow to 'continue' — pull each record's
+      // nextRetryAt to NOW so the next rehydration schedules it immediately
+      // instead of honoring the stale pre-"Retry now" deadline. Without this,
+      // the retry banner is hidden while the queued send silently waits out
+      // its old cooldown.
+      const now = Date.now();
+      const rescheduled = hookStateRepo.updateWithRetry(params.runId, params.hookId, {
+        localState: {
+          [QUEUED_RETRYABLE_ACTION_STATE_KEY]: Object.fromEntries(
+            notTriggeredKeys.map((key) => [key, { nextRetryAt: now }])
+          ),
+        },
+      });
+      if (!rescheduled) {
+        throw new Error(
+          "Retry requested, but the queued action's durable deadline could not be updated " +
+            '(state conflict) — retry again.'
+        );
+      }
     }
 
     internalEventBus

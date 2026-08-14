@@ -1353,15 +1353,24 @@ export class WorkflowHookEngine {
             // satisfies canSend — otherwise a node-name entry ('Review')
             // under a slot-only-authored channel is mis-read as non-routable.
             const nodeSlotNames = nodeSlots.get(resolved) ?? [];
+            // A plain entry is either a NODE target (expansion = every agent
+            // in declaration order; the router authorizes via the FIRST
+            // declared slot's channel) or a BARE SLOT target (expansion =
+            // ONLY the named slot — legacyBareTargetMatches does not include
+            // the node's other slots, so the first-slot rule must NOT
+            // authorize a named non-first slot the router would reject).
+            const isPlainNodeTarget = nodeNames.has(target);
             const bareSlotOk =
               !target.startsWith('@') &&
               !target.startsWith('#') &&
               target.trim() !== '*' &&
               (resolver.canSend(fromNode, target) ||
-                // First DECLARED slot only — the router aborts at the first
-                // unauthorized worker in expansion order, so a later slot's
-                // channel does not reach the node.
-                (nodeSlotNames.length > 0 && resolver.canSend(fromNode, nodeSlotNames[0])));
+                (isPlainNodeTarget &&
+                  // First DECLARED slot only — the router aborts at the first
+                  // unauthorized worker in expansion order, so a later slot's
+                  // channel does not reach the node.
+                  nodeSlotNames.length > 0 &&
+                  resolver.canSend(fromNode, nodeSlotNames[0])));
             if (
               nodeNames.has(resolved) &&
               !isBuiltInInterLevelTarget(target) &&
@@ -1574,9 +1583,13 @@ export class WorkflowHookEngine {
               if (resolver.canSend(fromNode, t) && !nodeNames.has(t)) {
                 nodeDelivered = true;
               } else {
-                // Bare slot entry OR plain node entry: the adapter expands
-                // the node's slots in declaration order; walk them.
-                const orderedSlots = nodeNames.has(t) || !isAddress ? slots : [t];
+                // Plain NODE entry: the adapter expands the node's slots in
+                // declaration order; walk them with the first-slot rule.
+                // BARE SLOT entry: the adapter expands ONLY the named slot
+                // (legacyBareTargetMatches never includes the node's other
+                // slots) — authorize against that slot alone, never the
+                // node's first-declared one.
+                const orderedSlots = nodeNames.has(t) ? slots : [t];
                 for (let si = 0; si < orderedSlots.length; si++) {
                   const slotOk = resolver.canSend(fromNode, orderedSlots[si]);
                   if (si === 0 && slotOk) nodeDelivered = true;

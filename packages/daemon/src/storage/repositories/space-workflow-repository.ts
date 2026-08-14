@@ -134,16 +134,55 @@ function parseJson<T>(raw: string | null | undefined, fallback: T): T {
  * Callers translate `{ ok: false }` into a fail-closed marker binding.
  */
 function parseHookColumn<T>(
-  raw: string | null | undefined
+  raw: string | null | undefined,
+  isElement: (value: unknown) => boolean
 ): { ok: true; value: T[] | null } | { ok: false } {
   if (raw == null || raw === '') return { ok: true, value: null };
   try {
     const parsed: unknown = JSON.parse(raw);
-    if (Array.isArray(parsed)) return { ok: true, value: parsed as T[] };
+    // A syntactically valid array can still hold MALFORMED entries
+    // (e.g. '[{}]'): resolveMatchingBindings treats a missing `enabled` as
+    // false and silently filters such bindings, loading a "valid" list that
+    // gates nothing — validate every element's shape before trusting the
+    // array, and route the workflow through the fail-closed marker otherwise.
+    if (Array.isArray(parsed) && parsed.every(isElement)) {
+      return { ok: true, value: parsed as T[] };
+    }
     return { ok: false };
   } catch {
     return { ok: false };
   }
+}
+
+/** Structural check for a decoded HookBinding row value. */
+function isHookBindingElement(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const b = value as Record<string, unknown>;
+  return (
+    typeof b.hookId === 'string' &&
+    b.hookId.trim().length > 0 &&
+    typeof b.sourceNode === 'string' &&
+    b.sourceNode.trim().length > 0 &&
+    typeof b.method === 'string' &&
+    (b.targetNode === undefined || typeof b.targetNode === 'string') &&
+    typeof b.enabled === 'boolean' &&
+    (b.order === undefined || typeof b.order === 'number') &&
+    (b.authorizedCallers === undefined || Array.isArray(b.authorizedCallers))
+  );
+}
+
+/** Structural check for a decoded CustomHook row value. */
+function isCustomHookElement(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const h = value as Record<string, unknown>;
+  return (
+    typeof h.id === 'string' &&
+    h.id.trim().length > 0 &&
+    Array.isArray(h.requiredData) &&
+    !!h.run &&
+    typeof h.run === 'object' &&
+    !Array.isArray(h.run)
+  );
 }
 
 /** Every (node × method) marker binding: guarantees each hookable action
@@ -221,8 +260,8 @@ function rowToWorkflow(row: WorkflowRow, nodes: WorkflowNode[]): SpaceWorkflow {
   const tags = parseJson<string[]>(row.tags, []);
   const layout = parseJson<Record<string, { x: number; y: number }> | null>(row.layout, null);
   const channels = parseJson<WorkflowChannel[] | null>(row.channels, null);
-  const hookBindingsResult = parseHookColumn<HookBinding>(row.hook_bindings);
-  const customHooksResult = parseHookColumn<CustomHook>(row.custom_hooks);
+  const hookBindingsResult = parseHookColumn<HookBinding>(row.hook_bindings, isHookBindingElement);
+  const customHooksResult = parseHookColumn<CustomHook>(row.custom_hooks, isCustomHookElement);
 
   const wf: SpaceWorkflow = {
     id: row.id,
