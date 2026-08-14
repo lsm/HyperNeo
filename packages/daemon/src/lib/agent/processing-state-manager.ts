@@ -33,7 +33,16 @@ export class ProcessingStateManager {
    * that episode — not a newer turn's waiter armed after the generation bumped.
    * Drained in {@link setIdle} (terminal) / {@link releaseIdleWaiters}.
    */
-  private idleWaiters: Map<number, { resolve: () => void; gen?: number }> = new Map();
+  private idleWaiters: Map<
+    number,
+    {
+      resolve: () => void;
+      gen?: number;
+      fireEnd: () => void;
+      resolveOnce: () => void;
+      endOnce: () => void;
+    }
+  > = new Map();
   private nextIdleWaiterId = 0;
   /**
    * True while the deferred-restart `onIdleCallback` is running. A reentrant
@@ -43,6 +52,10 @@ export class ProcessingStateManager {
    * restart). (Codex P1.)
    */
   private idleCallbackInFlight = false;
+  /** Number of terminal transitions whose side effects have not settled. */
+  private terminalIdleTransitions = 0;
+  /** Pre-idle fences waiting to be consumed by their corresponding setIdle. */
+  private pendingTerminalIdleTransitions = 0;
 
   constructor(
     private sessionId: string,
@@ -70,18 +83,59 @@ export class ProcessingStateManager {
    * the next non-suppressed {@link setIdle} or never (if cancelled, it is
    * abandoned — nobody awaits it). Arm BEFORE the turn starts so a fast turn's
    * idle cannot be missed.
+   *
+   * `onEnd` fires on a GENUINE turn-end release — the terminal idle drain
+   * ({@link setIdle}) or an explicit {@link releaseIdleWaiters} (a superseded
+   * rate-limit retry / restart that abandons the durable turn as ended). It does
+   * NOT fire on `cancel()`: cancel is a cleanup/abandon path (the delivery
+   * bridge's `finally`, a rejected acknowledgment, a query-close with no idle),
+   * NOT proof the turn ended — firing the marker there would let a consumed-but-
+   * never-delivered prompt (e.g. a post-commit search-index throw that rejects
+   * the acknowledgment) be marked ended, so the retried job completes without
+   * delivering. The bridge derives the durable turn owner (kickoff UUID) from
+   * the closure, not from mutable processing state. See Codex (PR #2463, P2).
    */
-  waitForIdleTransition(episodeGen?: number): { promise: Promise<void>; cancel: () => void } {
+  waitForIdleTransition(
+    episodeGen?: number,
+    onEnd?: () => void
+  ): { promise: Promise<void>; cancel: () => void } {
     let resolve!: () => void;
     const promise = new Promise<void>((r) => {
       resolve = r;
     });
     const id = this.nextIdleWaiterId++;
-    this.idleWaiters.set(id, { resolve, gen: episodeGen });
+    let onEndFired = false;
+    let resolved = false;
+    // fireEnd persists the durable turn-completion state (the delivery_turn_end
+    // marker) WITHOUT resolving the waiter; resolveOnce releases the awaiting
+    // delivery job. Splitting the two lets setIdle write the marker
+    // synchronously before the awaited idle side effects while deferring waiter
+    // resolution to the finally. endOnce = fireEnd + resolve (releaseIdleWaiters
+    // — a genuine abandon). cancel() uses resolveOnce ONLY (no marker — see the
+    // doc above). Each is independently idempotent.
+    const fireEnd = (): void => {
+      if (onEndFired) return;
+      onEndFired = true;
+      onEnd?.();
+    };
+    const resolveOnce = (): void => {
+      if (resolved) return;
+      resolved = true;
+      this.idleWaiters.delete(id);
+      resolve();
+    };
+    const endOnce = (): void => {
+      fireEnd();
+      resolveOnce();
+    };
+    this.idleWaiters.set(id, { resolve, gen: episodeGen, fireEnd, resolveOnce, endOnce });
     return {
       promise,
       cancel: () => {
-        this.idleWaiters.delete(id);
+        // Cleanup/abandon, NOT a turn-end: release the awaiting job without
+        // persisting the turn-completion marker. The marker fires only on the
+        // genuine terminal paths (setIdle drain / releaseIdleWaiters).
+        resolveOnce();
       },
     };
   }
@@ -98,8 +152,18 @@ export class ProcessingStateManager {
     const matching = [...this.idleWaiters.entries()].filter(
       ([, w]) => episodeGen === undefined || w.gen === episodeGen
     );
-    for (const [id] of matching) this.idleWaiters.delete(id);
-    for (const [, w] of matching) w.resolve();
+    for (const [, w] of matching) w.endOnce();
+  }
+
+  /**
+   * Start a terminal-idle fence and persist turn-end markers without releasing
+   * delivery jobs. The corresponding setIdle consumes this fence after its side
+   * effects and waiter drain settle.
+   */
+  beginTerminalIdle(): void {
+    this.terminalIdleTransitions += 1;
+    this.pendingTerminalIdleTransitions += 1;
+    for (const waiter of this.idleWaiters.values()) waiter.fireEnd();
   }
 
   /**
@@ -173,6 +237,11 @@ export class ProcessingStateManager {
     return this.processingState.status === 'idle';
   }
 
+  /** True while a terminal idle transition is still running its side effects. */
+  isTerminalIdleInFlight(): boolean {
+    return this.terminalIdleTransitions > 0;
+  }
+
   /**
    * Set state to idle. Pass `{ suppressDeliveryWaiters: true }` on a
    * NON-terminal idle — one that is immediately followed by a query re-start
@@ -187,6 +256,23 @@ export class ProcessingStateManager {
     // stop/start), suppress the drain too — the outer call owns it, deferred
     // until the restart completes so durable turn ownership survives the restart.
     const suppressDrain = opts?.suppressDeliveryWaiters || this.idleCallbackInFlight;
+    const consumesTerminalFence = this.pendingTerminalIdleTransitions > 0;
+    const ownsTerminalTransition = !suppressDrain || consumesTerminalFence;
+    if (consumesTerminalFence) {
+      this.pendingTerminalIdleTransitions -= 1;
+    } else if (!suppressDrain) {
+      this.terminalIdleTransitions += 1;
+    }
+    // Persist the waiter-owned turn-completion markers SYNCHRONOUSLY, BEFORE any
+    // await (the idle DB persist + session.updated publish, the deferred-restart
+    // callback). A crash after the idle-state DB write but during those awaited
+    // side effects would otherwise leave a result-less consumed turn without a
+    // marker and re-drive it on recovery. Waiter RESOLUTION stays deferred to the
+    // finally so the awaiting delivery job still observes the fully-processed
+    // turn-end. See Codex (PR #2463, P2).
+    if (!suppressDrain) {
+      for (const w of this.idleWaiters.values()) w.fireEnd();
+    }
     // setState persists the idle state BEFORE publishing it, so drain the
     // turn-end waiters in a finally — the state IS idle even if the event
     // publication throws, and a waiting delivery job must not hang on a
@@ -212,9 +298,15 @@ export class ProcessingStateManager {
       }
     } finally {
       if (!suppressDrain) {
+        // Waiters armed while setState/onIdleCallback was suspended missed the
+        // initial fireEnd snapshot. Use the idempotent full end path so those late
+        // waiters also persist their marker before their jobs are released.
         const waiters = [...this.idleWaiters.values()];
         this.idleWaiters.clear();
-        for (const w of waiters) w.resolve();
+        for (const w of waiters) w.endOnce();
+      }
+      if (ownsTerminalTransition) {
+        this.terminalIdleTransitions -= 1;
       }
     }
   }
@@ -426,9 +518,31 @@ export class ProcessingStateManager {
     }
 
     if (message.type === 'stream_event') {
-      // We're actively streaming content deltas
-      if (this.streamingPhase !== 'streaming') {
-        await this.updatePhase('streaming');
+      // We're actively streaming — classify the RAW delta so an extended-
+      // thinking generation (thinking_delta / content_block_start of a
+      // thinking block) keeps the "Thinking" phase instead of flipping to
+      // "Streaming" for its entire duration. Text deltas are the only frames
+      // that prove visible output is being produced; other stream frames
+      // (message_start, content_block_stop, message_delta, ping, …) carry no
+      // phase signal and must not disturb the current phase. Heartbeat-only
+      // consumers (the delivery stall watchdog) are unaffected either way —
+      // they bump on the raw message, not the phase. (Codex review, #2476.)
+      const event = (message as Extract<SDKMessage, { type: 'stream_event' }>).event as {
+        type?: string;
+        delta?: { type?: string };
+        content_block?: { type?: string };
+      };
+      if (event?.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
+        if (this.streamingPhase !== 'streaming') {
+          await this.updatePhase('streaming');
+        }
+      } else if (
+        (event?.type === 'content_block_delta' && event.delta?.type === 'thinking_delta') ||
+        (event?.type === 'content_block_start' && event.content_block?.type === 'thinking')
+      ) {
+        if (this.streamingPhase !== 'thinking') {
+          await this.updatePhase('thinking');
+        }
       }
     } else if (message.type === 'assistant') {
       // Assistant message indicates thinking/tool use phase

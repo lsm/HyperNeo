@@ -5,7 +5,6 @@ import { EvolutionTraceEvidenceService } from '../../../src/lib/space/evolution-
 import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-manager';
 import { EvolutionRepository } from '../../../src/storage/repositories/evolution-repository';
 import { JobQueueRepository } from '../../../src/storage/repositories/job-queue-repository';
-import { GateOpenStateRepository } from '../../../src/storage/repositories/gate-open-state-repository';
 import { SpaceGoalRepository } from '../../../src/storage/repositories/space-goal-repository';
 import { SpaceRepository } from '../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository';
@@ -52,10 +51,7 @@ describe('Forge evidence capture on task completion', () => {
     goalRepo = new SpaceGoalRepository(db as never);
     taskRepo = new SpaceTaskRepository(db as never);
     workflowRepo = new SpaceWorkflowRepository(db as never);
-    workflowRunRepo = new SpaceWorkflowRunRepository(
-      db as never,
-      new GateOpenStateRepository(db as never)
-    );
+    workflowRunRepo = new SpaceWorkflowRunRepository(db as never);
     artifactRepo = new WorkflowRunArtifactRepository(db as never);
     evolutionRepo = new EvolutionRepository(db as never);
     jobQueue = new JobQueueRepository(db as never);

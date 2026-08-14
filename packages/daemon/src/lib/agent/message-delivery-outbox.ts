@@ -38,6 +38,7 @@ import { extractSdkUuid } from '../../storage/repositories/sdk-message-repositor
 import { MESSAGE_DELIVERY } from '../job-queue-constants';
 import {
   isUniqueConstraintError,
+  MESSAGE_DELIVERY_MAX_RETRIES,
   type MessageDeliveryOrigin,
   type MessageDeliveryRole,
 } from './message-delivery';
@@ -58,8 +59,8 @@ export interface PersistAndEnqueueDeliveryResult {
   role: MessageDeliveryRole;
 }
 
-/** Delivery jobs share the same ample retry budget as {@link deliverMessage}. */
-const DELIVERY_MAX_RETRIES = 8;
+/** Delivery jobs share the same retry budget as {@link deliverMessage}. */
+const DELIVERY_MAX_RETRIES = MESSAGE_DELIVERY_MAX_RETRIES;
 
 /**
  * Persist a user message and enqueue its durable delivery job in ONE

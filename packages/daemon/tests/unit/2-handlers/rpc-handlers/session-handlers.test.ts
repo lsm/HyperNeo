@@ -536,4 +536,377 @@ describe('Session RPC Handlers — models.list', () => {
       expect(job.role).toBe('turn');
     });
   });
+
+  // Manual "Retry" affordance for a failed user message — reopens failed→
+  // enqueued and re-enqueues the durable delivery job. Mirrors promotePending.
+  describe('Session RPC Handlers — session.messages.retry (v2)', () => {
+    let messageHubData: ReturnType<typeof createMockMessageHub>;
+    let eventBus: ReturnType<typeof createMockInternalEventBus>;
+    let db: Database;
+    let jobQueue: JobQueueRepository;
+    let v2Previous: string | undefined;
+    /** Persisted session status returned by the mock db; defaults to active. */
+    let sessionStatus: string;
+    /** Hydration spy — terminal statuses must reject BEFORE hydrating (Codex P2). */
+    let hydrateSpy: ReturnType<typeof mock>;
+
+    beforeEach(async () => {
+      messageHubData = createMockMessageHub();
+      eventBus = createMockInternalEventBus();
+      v2Previous = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+      process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '1';
+      sessionStatus = 'active';
+
+      db = new Database(':memory:');
+      db.exec(`
+        CREATE TABLE sdk_messages (
+          id TEXT PRIMARY KEY, session_id TEXT, message_type TEXT, message_subtype TEXT,
+          sdk_message TEXT, timestamp TEXT, send_status TEXT, origin TEXT,
+          is_renderable INTEGER DEFAULT 1, is_terminal INTEGER DEFAULT 0,
+          conversation_turn_index INTEGER, parent_tool_use_id TEXT, task_id TEXT,
+          sdk_uuid TEXT, replacement_metadata_normalized INTEGER DEFAULT 0
+        );
+        CREATE TABLE job_queue (
+          id TEXT PRIMARY KEY, queue TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending', payload TEXT NOT NULL DEFAULT '{}',
+          result TEXT, error TEXT, priority INTEGER NOT NULL DEFAULT 0,
+          max_retries INTEGER NOT NULL DEFAULT 3, retry_count INTEGER NOT NULL DEFAULT 0,
+          run_at INTEGER NOT NULL, created_at INTEGER NOT NULL, started_at INTEGER, completed_at INTEGER
+        );
+        CREATE UNIQUE INDEX uq_message_delivery_active_turn
+          ON job_queue (queue, json_extract(payload, '$.sessionId'))
+          WHERE queue = 'message_delivery'
+            AND json_extract(payload, '$.role') = 'turn'
+            AND status IN ('pending', 'processing');
+      `);
+      jobQueue = new JobQueueRepository(db as never);
+      // Seed one FAILED user message (a consumed-then-errored turn that exhausted).
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid)
+         VALUES (?, ?, 'user', ?, ?, 'failed', ?)`
+      ).run(
+        'db-failed',
+        'sess-1',
+        JSON.stringify({
+          type: 'user',
+          uuid: 'retry-me',
+          message: { role: 'user', content: 'please retry' },
+        }),
+        new Date().toISOString(),
+        'retry-me'
+      );
+
+      const dbFacade = {
+        getMessagesByStatus: (_sid: string, status: string) =>
+          (
+            db
+              .prepare(
+                `SELECT id AS dbId, sdk_message, timestamp FROM sdk_messages WHERE session_id = ? AND send_status = ?`
+              )
+              .all('sess-1', status) as Array<{
+              dbId: string;
+              sdk_message: string;
+              timestamp: string;
+            }>
+          ).map((row) => ({ ...JSON.parse(row.sdk_message), dbId: row.dbId, timestamp: 0 })),
+        updateMessageStatus: (ids: string[], status: string) =>
+          db
+            .prepare(
+              `UPDATE sdk_messages SET send_status = ? WHERE id IN (${ids.map(() => '?').join(',')})`
+            )
+            .run(status, ...ids),
+        getJobQueueRepo: () => jobQueue,
+        getSession: (sid: string) => ({ id: sid, status: sessionStatus }),
+        getSDKMessageRepo: () => ({
+          reopenDeliveryByUuid: (_sid: string, uuid: string) => {
+            const row = db
+              .prepare(
+                `SELECT id FROM sdk_messages WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ? AND send_status = 'failed'`
+              )
+              .get('sess-1', uuid) as { id: string } | undefined;
+            if (!row) return null;
+            db.prepare(`UPDATE sdk_messages SET send_status = 'enqueued' WHERE id = ?`).run(row.id);
+            return row.id;
+          },
+        }),
+      };
+      const sessionManager = {
+        // biome-ignore lint: test mock assignment — hydrateSpy captured for the
+        // terminal-status assertion (hydration must not happen at all there).
+        getSessionAsync: (hydrateSpy = mock(async () => ({
+          getSessionData: () => ({ id: 'sess-1', status: 'active' }),
+          startQueryAndEnqueue: mock(async () => {}),
+        }))),
+        getDatabase: () => dbFacade,
+      } as unknown as SessionManager;
+
+      const { setupSessionHandlers } = await import(
+        '../../../../src/lib/rpc-handlers/session-handlers'
+      );
+      setupSessionHandlers(messageHubData.hub, sessionManager, eventBus, {
+        removeSession: mock(async () => ({ id: '', sessionIds: [] })),
+      } as unknown as SpaceManager);
+    });
+
+    afterEach(() => {
+      if (v2Previous === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+      else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = v2Previous;
+      db.close();
+    });
+
+    it('reopens the failed row to enqueued and re-enqueues a durable turn job', async () => {
+      const handler = messageHubData.handlers.get('session.messages.retry');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ sessionId: 'sess-1', messageDbId: 'db-failed' }, {})) as {
+        retried: boolean;
+      };
+      expect(result.retried).toBe(true);
+
+      // The failed row was reopened to enqueued ...
+      const row = db
+        .prepare(`SELECT send_status FROM sdk_messages WHERE id = ?`)
+        .get('db-failed') as { send_status: string };
+      expect(row.send_status).toBe('enqueued');
+      // ... and a durable turn job was enqueued for it.
+      const job = db
+        .prepare(
+          `SELECT json_extract(payload, '$.role') AS role FROM job_queue WHERE queue = ? AND json_extract(payload, '$.messageUuid') = ?`
+        )
+        .get(MESSAGE_DELIVERY, 'retry-me') as { role: string };
+      expect(job.role).toBe('turn');
+    });
+
+    it('returns retried:false for a non-failed message (nothing to reopen)', async () => {
+      const result = (await messageHubData.handlers.get('session.messages.retry')!(
+        { sessionId: 'sess-1', messageDbId: 'does-not-exist' },
+        {}
+      )) as { retried: boolean };
+      expect(result.retried).toBe(false);
+    });
+
+    it('rejects retries for a terminal session (archived/ended) without reopening or hydrating (Codex #5 + P2)', async () => {
+      for (const terminalStatus of ['archived', 'ended'] as const) {
+        sessionStatus = terminalStatus;
+        hydrateSpy.mockClear();
+        const result = (await messageHubData.handlers.get('session.messages.retry')!(
+          { sessionId: 'sess-1', messageDbId: 'db-failed' },
+          {}
+        )) as { retried: boolean };
+        expect(result.retried).toBe(false);
+        // The session was never hydrated: constructing an AgentSession for an
+        // evicted terminal session schedules the pending-message replay, which
+        // enqueues delivery jobs for OTHER pending prompts (the archived
+        // barrier does not cover `ended`). (Codex P2.)
+        expect(hydrateSpy).not.toHaveBeenCalled();
+        // The failed row was NOT reopened to enqueued.
+        const row = db
+          .prepare(`SELECT send_status FROM sdk_messages WHERE id = ?`)
+          .get('db-failed') as { send_status: string };
+        expect(row.send_status).toBe('failed');
+      }
+    });
+  });
+});
+
+describe('Session RPC Handlers — session.appendVoiceDraft', () => {
+  let messageHubData: ReturnType<typeof createMockMessageHub>;
+  let eventBus: ReturnType<typeof createMockInternalEventBus>;
+  let sessionManager: {
+    getSessionFromDB: ReturnType<typeof mock>;
+    updateSession: ReturnType<typeof mock>;
+  };
+  let existingPending: string | null;
+  let sessionExists: boolean;
+
+  beforeEach(async () => {
+    messageHubData = createMockMessageHub();
+    eventBus = createMockInternalEventBus();
+    existingPending = 'existing';
+    sessionExists = true;
+    sessionManager = {
+      getSessionFromDB: mock(() =>
+        sessionExists ? { id: 's1', metadata: { inputDraftVoicePending: existingPending } } : null
+      ),
+      updateSession: mock(async () => {}),
+    } as unknown as SessionManager;
+
+    const { setupSessionHandlers } = await import(
+      '../../../../src/lib/rpc-handlers/session-handlers'
+    );
+    setupSessionHandlers(messageHubData.hub, sessionManager, eventBus, {} as SpaceManager);
+  });
+
+  it('appends the transcript to the pending voice-draft field with a separating space', async () => {
+    existingPending = 'existing';
+    const handler = messageHubData.handlers.get('session.appendVoiceDraft');
+    expect(handler).toBeDefined();
+    const result = (await handler!({ sessionId: 's1', text: 'hello world' }, {})) as {
+      success: boolean;
+    };
+    expect(result.success).toBe(true);
+    // Writes the dedicated pending field — never the live inputDraft, which the
+    // client's debounced saves could otherwise clobber.
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: { inputDraftVoicePending: 'existing hello world' },
+    });
+  });
+
+  it('does not insert a space across a CJK boundary', async () => {
+    existingPending = '你好';
+    const handler = messageHubData.handlers.get('session.appendVoiceDraft');
+    await handler!({ sessionId: 's1', text: '世界' }, {});
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: { inputDraftVoicePending: '你好世界' },
+    });
+  });
+
+  it('appends with no leading space when nothing is pending', async () => {
+    existingPending = null;
+    const handler = messageHubData.handlers.get('session.appendVoiceDraft');
+    await handler!({ sessionId: 's1', text: 'hello' }, {});
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: { inputDraftVoicePending: 'hello' },
+    });
+  });
+
+  it('throws when the session does not exist and does not write', async () => {
+    sessionExists = false;
+    const handler = messageHubData.handlers.get('session.appendVoiceDraft');
+    await expect(handler!({ sessionId: 'missing', text: 'hi' }, {})).rejects.toThrow(
+      'Session not found'
+    );
+    expect(sessionManager.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('rejects whitespace-only text before reading or writing the pending field', async () => {
+    const handler = messageHubData.handlers.get('session.appendVoiceDraft');
+    await expect(handler!({ sessionId: 's1', text: '   ' }, {})).rejects.toThrow();
+    expect(sessionManager.getSessionFromDB).not.toHaveBeenCalled();
+    expect(sessionManager.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('rejects instead of truncating when the pending field is at the character limit', async () => {
+    existingPending = 'p'.repeat(100_000);
+    const handler = messageHubData.handlers.get('session.appendVoiceDraft');
+    await expect(handler!({ sessionId: 's1', text: 'more' }, {})).rejects.toThrow(
+      'Pending voice draft is at the character limit'
+    );
+    expect(sessionManager.updateSession).not.toHaveBeenCalled();
+  });
+});
+
+describe('Session RPC Handlers — session.get voice draft merge', () => {
+  let messageHubData: ReturnType<typeof createMockMessageHub>;
+  let eventBus: ReturnType<typeof createMockInternalEventBus>;
+  let sessionManager: {
+    getSessionAsync: ReturnType<typeof mock>;
+    updateSession: ReturnType<typeof mock>;
+  };
+
+  async function setup(metadata: Record<string, unknown>) {
+    messageHubData = createMockMessageHub();
+    eventBus = createMockInternalEventBus();
+    // getSessionData() returns the same live object both before and after the
+    // merge so the handler reads the pending value, then re-reads for its
+    // response — mirroring the real in-memory agent session.
+    const sessionData = { id: 's1', metadata };
+    sessionManager = {
+      getSessionAsync: mock(async () => ({ getSessionData: () => sessionData })),
+      updateSession: mock(async () => {}),
+    } as unknown as SessionManager;
+    const { setupSessionHandlers } = await import(
+      '../../../../src/lib/rpc-handlers/session-handlers'
+    );
+    setupSessionHandlers(messageHubData.hub, sessionManager, eventBus, {} as SpaceManager);
+    return messageHubData.handlers.get('session.get');
+  }
+
+  it('merges a pending voice transcript into the draft and clears the staging field', async () => {
+    const handler = await setup({
+      inputDraft: 'existing',
+      inputDraftVoicePending: 'hello world',
+    });
+    expect(handler).toBeDefined();
+    await handler!({ sessionId: 's1' }, {});
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: { inputDraft: 'existing hello world', inputDraftVoicePending: null },
+    });
+  });
+
+  it('leaves the draft untouched when there is no pending transcript', async () => {
+    const handler = await setup({ inputDraft: 'existing' });
+    await handler!({ sessionId: 's1' }, {});
+    expect(sessionManager.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('ignores a whitespace-only pending transcript', async () => {
+    const handler = await setup({ inputDraft: 'existing', inputDraftVoicePending: '   ' });
+    await handler!({ sessionId: 's1' }, {});
+    expect(sessionManager.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('retains the pending transcript when a full draft leaves no room for it', async () => {
+    const fullDraft = 'x'.repeat(100_000);
+    const handler = await setup({ inputDraft: fullDraft, inputDraftVoicePending: 'hello' });
+    await handler!({ sessionId: 's1' }, {});
+    // A partial merge writes NOTHING — writing the prefix would duplicate it
+    // once room appears and the merge retries. The staged transcript survives.
+    expect(sessionManager.updateSession).not.toHaveBeenCalled();
+  });
+});
+
+describe('Session RPC Handlers — session.clearInputDraftIf', () => {
+  let messageHubData: ReturnType<typeof createMockMessageHub>;
+  let eventBus: ReturnType<typeof createMockInternalEventBus>;
+  let sessionManager: {
+    getSessionFromDB: ReturnType<typeof mock>;
+    updateSession: ReturnType<typeof mock>;
+  };
+  let persistedDraft: string | null;
+
+  beforeEach(async () => {
+    messageHubData = createMockMessageHub();
+    eventBus = createMockInternalEventBus();
+    persistedDraft = 'snapshot';
+    sessionManager = {
+      getSessionFromDB: mock(() => ({ id: 's1', metadata: { inputDraft: persistedDraft } })),
+      updateSession: mock(async () => {}),
+    } as unknown as SessionManager;
+    const { setupSessionHandlers } = await import(
+      '../../../../src/lib/rpc-handlers/session-handlers'
+    );
+    setupSessionHandlers(messageHubData.hub, sessionManager, eventBus, {} as SpaceManager);
+  });
+
+  it('clears the draft when it still equals the expected click-time snapshot', async () => {
+    const handler = messageHubData.handlers.get('session.clearInputDraftIf');
+    expect(handler).toBeDefined();
+    const result = (await handler!({ sessionId: 's1', expected: 'snapshot' }, {})) as {
+      cleared: boolean;
+    };
+    expect(result.cleared).toBe(true);
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: { inputDraft: null },
+    });
+  });
+
+  it('does not clear when the persisted draft has newer edits', async () => {
+    persistedDraft = 'newer edits';
+    const handler = messageHubData.handlers.get('session.clearInputDraftIf');
+    const result = (await handler!({ sessionId: 's1', expected: 'snapshot' }, {})) as {
+      cleared: boolean;
+    };
+    expect(result.cleared).toBe(false);
+    expect(sessionManager.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('trims both sides before comparing', async () => {
+    persistedDraft = '  snapshot  ';
+    const handler = messageHubData.handlers.get('session.clearInputDraftIf');
+    const result = (await handler!({ sessionId: 's1', expected: ' snapshot ' }, {})) as {
+      cleared: boolean;
+    };
+    expect(result.cleared).toBe(true);
+  });
 });

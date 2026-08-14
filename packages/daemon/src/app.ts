@@ -87,6 +87,7 @@ import {
 import { createMessageDeliveryHandler } from './lib/job-handlers/message-delivery.handler';
 import { settleMessageDeliveryDeadLetter } from './lib/job-handlers/message-delivery-dead-letter';
 import { asMessageDeliveryPayload } from './lib/agent/message-delivery';
+import { deliveryMetrics } from './lib/agent/message-delivery-metrics';
 import { handleTaskScheduleFire } from './lib/job-handlers/task-schedule-fire.handler';
 import {
   backfillLongHorizonAgentReminderNextRunAt,
@@ -373,11 +374,22 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     //       One-shot shutdown polling with hard timeout; not a recurring task.
     //   • ProcessWatchdog timer (process-watchdog.ts)
     //       Last-resort OS process leak safety net; intentionally independent from the job queue.
-    jobProcessor.setChangeNotifier((table) => {
-      reactiveDb.notifyChange(table);
-    });
-    messageDeliveryProcessor.setChangeNotifier((table) => {
-      reactiveDb.notifyChange(table);
+    // Task #862 (review P2): the transcript/task feeds depend on `job_queue`
+    // ONLY for the message_delivery retry signal (the EXISTS vs an active
+    // message_delivery job). The generic processor handles every non-delivery
+    // lane (schedules, cleanup, polling, workflow) — notifying `job_queue` there
+    // would re-run all open transcript queries on every unrelated job, so it is
+    // a no-op.
+    //
+    // INVARIANT: no non-delivery live query subscribes to `job_queue` today. If
+    // one ever does, give the generic notifier a session/task scope (the
+    // processor already threads it from job payloads) instead of making it a
+    // no-op, so unrelated lanes don't re-run open feeds.
+    jobProcessor.setChangeNotifier(() => {});
+    // The message_delivery processor notifies session-scoped so only that
+    // session's feed re-evaluates on a delivery job transition.
+    messageDeliveryProcessor.setChangeNotifier((table, scope) => {
+      reactiveDb.notifyChange(table, scope);
     });
     let sessionManager: SessionManager | null = null;
     let taskAgentManager: TaskAgentManager | null = null;
@@ -1021,6 +1033,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         // change. Without this the row stays `enqueued`, which pagination hides —
         // the user's prompt vanishes without a terminal error. See Codex (#2595).
         onDead: (job) => {
+          // Count every dead-lettered delivery for the retry-storm metric
+          // (sustained rise ⇒ a session/provider stuck in a recoverable error
+          // loop). Counted before the payload/repo guards so a dead job is
+          // always counted, regardless of whether settlement can proceed.
+          deliveryMetrics.recordDeadLetter();
           const payload = asMessageDeliveryPayload(job.payload);
           if (!payload) return;
           const sdkRepo = reactiveDb?.db.getSDKMessageRepo();
@@ -1031,7 +1048,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           // (session.error before the settlement idle) is load-bearing. See
           // message-delivery-dead-letter.ts. (Codex P1.)
           void settleMessageDeliveryDeadLetter(payload, {
-            markDeliveryFailedByUuid: (sid, uuid) => sdkRepo.markDeliveryFailedByUuid(sid, uuid),
+            // Inclusive: a driven turn that already reached `consumed` can also
+            // exhaust its retries (recoverable) or dead-letter at once
+            // (non-recoverable) — flip those rows too so the failed prompt is
+            // visible (pagination hides non-consumed) and the UI offers Retry.
+            markDeliveryFailedByUuid: (sid, uuid) =>
+              sdkRepo.markDeliveryFailedByUuidInclusive(sid, uuid),
             publishStatusChanged: (sid, messageIds) =>
               internalEventBus.publish('messages.statusChanged', {
                 sessionId: sid,

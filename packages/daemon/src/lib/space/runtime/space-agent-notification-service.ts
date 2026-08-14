@@ -116,6 +116,18 @@ export class SpaceAgentNotificationService {
         }
       ),
       this.internalEventBus.subscribe(
+        'space.workflowRun.deadLoop',
+        async (event) => {
+          if (event.spaceId !== this.spaceId) return;
+          // Await + propagate failures so the router's dedupe-after-success
+          // retry contract holds when the Space Agent session is unavailable.
+          await this.notifyStrict(formatWorkflowRunDeadLoop(event, this.autonomyLevel));
+        },
+        {
+          subscriberName: `SpaceAgentNotificationService:${this.spaceId}:space.workflowRun.deadLoop`,
+        }
+      ),
+      this.internalEventBus.subscribe(
         'space.agent.crashed',
         (event) => {
           if (event.spaceId !== this.spaceId) return;
@@ -174,6 +186,22 @@ export class SpaceAgentNotificationService {
         `[SpaceAgentNotificationService] Failed to inject notification into session ${this.sessionId}: ${err instanceof Error ? err.message : String(err)}`
       );
     }
+  }
+
+  /**
+   * Like {@link notify} but PROPAGATES injection failures instead of swallowing
+   * them. Used by the dead-loop subscriber: a failed injection must surface as
+   * a publish failure to `ChannelRouter.notifyDeadLoop` so its dedupe timestamp
+   * is NOT recorded (dedupe is set only after a successful publish), letting the
+   * next blocked send retry the notification once the Space Agent session
+   * recovers. Other notifications stay fire-and-forget — their publishers don't
+   * gate on delivery success.
+   */
+  private async notifyStrict(message: string): Promise<void> {
+    await this.sessionFactory.injectMessage(this.sessionId, message, {
+      deliveryMode: 'defer',
+      origin: 'system',
+    });
   }
 }
 
@@ -271,6 +299,45 @@ function formatWorkflowRunReopened(
     autonomyLevel,
   };
   return buildMessage('workflow_run_reopened', humanReadable, payload);
+}
+
+function formatWorkflowRunDeadLoop(
+  event: {
+    spaceId: string;
+    runId: string;
+    fromAgent: string;
+    toTarget: string;
+    channelIndex: number;
+    recentCount: number;
+    threshold: number;
+    windowMs: number;
+    reason: string;
+    timestamp: string;
+  },
+  autonomyLevel: SpaceAutonomyLevel
+): string {
+  const windowMin = Math.round(event.windowMs / 60000);
+  const humanReadable =
+    `Dead loop detected in workflow run ${event.runId} (space ${event.spaceId}): ` +
+    `agent "${event.fromAgent}" → "${event.toTarget}" sent ${event.recentCount} message round-trips ` +
+    `within ${windowMin} minute(s) (threshold ${event.threshold}), so the next send was blocked. ` +
+    `This looks like a runaway agent-to-agent ping-pong, not normal collaboration. ` +
+    `Investigate the two agents and break the loop.`;
+  const payload = {
+    kind: 'workflow_dead_loop',
+    spaceId: event.spaceId,
+    runId: event.runId,
+    fromAgent: event.fromAgent,
+    toTarget: event.toTarget,
+    channelIndex: event.channelIndex,
+    recentCount: event.recentCount,
+    threshold: event.threshold,
+    windowMs: event.windowMs,
+    reason: event.reason,
+    timestamp: event.timestamp,
+    autonomyLevel,
+  };
+  return buildMessage('workflow_dead_loop', humanReadable, payload);
 }
 
 function formatAgentCrash(

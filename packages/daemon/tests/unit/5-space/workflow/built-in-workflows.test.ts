@@ -8,7 +8,7 @@
  * - seedBuiltInWorkflows(): seeds all built-in templates with real agent IDs
  * - seedBuiltInWorkflows(): node IDs replaced with real UUIDs (not template placeholders)
  * - seedBuiltInWorkflows(): agent ID resolution from role names to UUIDs (case-insensitive)
- * - seedBuiltInWorkflows(): descriptions, tags, instructions, gates, timestamps preserved
+ * - seedBuiltInWorkflows(): descriptions, tags, instructions, timestamps preserved
  * - seedBuiltInWorkflows(): 2-layer prompt override modes (expand vs override) correctly seeded
  * - seedBuiltInWorkflows(): idempotent — no re-seed if workflows already exist
  * - seedBuiltInWorkflows(): per-workflow error isolation
@@ -21,8 +21,6 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type {
-  Gate,
-  GateScript,
   HandoffTransition,
   SpaceWorkerAgent,
   SpaceWorkflow,
@@ -33,25 +31,6 @@ import {
   exportWorkflow,
   validateExportedWorkflow,
 } from '../../../../src/lib/space/export-format.ts';
-import { validateGate } from '../../../../src/lib/space/runtime/gate-evaluator.ts';
-import { executeGateScript } from '../../../../src/lib/space/runtime/gate-script-executor.ts';
-import {
-  executeHookScript,
-  type HookExecutorContext,
-} from '../../../../src/lib/space/runtime/hook-executor.ts';
-import { ChannelResolver } from '../../../../src/lib/space/runtime/channel-resolver.ts';
-
-/**
- * Tests that execute gate scripts require `Bun.spawn` in production
- * (gate-script-executor.ts), which is unavailable under the Vitest/Node
- * runner. They are gated until the production module is de-Bun-ified.
- */
-const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
-import {
-  getEffectiveGate,
-  isApprovalGate,
-  resolveCodexPollIntervalMs,
-} from '../../../../src/lib/space/runtime/gate-features.ts';
 import { CODER_OWNED_MERGE_INSTRUCTIONS } from '../../../../src/lib/space/workflows/post-approval-merge-template.ts';
 import { PR_MERGE_POST_APPROVAL_INSTRUCTIONS } from './fixtures/retired-post-approval-merge-template.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
@@ -59,32 +38,20 @@ import {
   CODING_WORKFLOW,
   CODING_WORKFLOW as STABLE_CODING_WORKFLOW,
   CODING_WITH_QA_WORKFLOW,
+  CODER_OWNED_PR_SUBSCRIBE_GUIDANCE,
+  REVIEWER_ZERO_FINDINGS_GATE,
   builtInWorkflowRequiresPrMerge,
   LEGACY_CODING_TEMPLATE_IDENTITIES,
   mergeChannelsFromTemplate,
   mergeNodeStructuralFieldsFromTemplate,
-  applyTemplateGateScript,
-  GateScriptDiagnosticLedger,
-  gateScriptDiagnosticKey,
-  getBuiltInGateScript,
   getBuiltInWorkflows,
-  isGateScriptStatusEmitting,
-  logTemplateGateScriptReload,
-  mergeGateStructuralFieldsFromTemplate,
-  resolveTemplateGateScript,
-  PLAN_AND_DECOMPOSE_WORKFLOW,
-  validateWorkflowTemplateGateWriters,
-  type WorkflowMigrationWarning,
   RESEARCH_WORKFLOW,
   REVIEW_ONLY_WORKFLOW,
-  FULLSTACK_QA_POST_APPROVAL_PARAGRAPH,
-  REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH,
   RETIRED_PR_MERGER_SLOT_PROMPT,
   RETIRED_MERGER_RAW_MERGE_GUARD,
   seedBuiltInWorkflows,
 } from '../../../../src/lib/space/workflows/built-in-workflows.ts';
 import { computeWorkflowHash } from '../../../../src/lib/space/workflows/template-hash.ts';
-import { migrateWorkflowGateProgressionToHooks } from '../../../../src/lib/space/workflows/workflow-migration.ts';
 import { isWorkflowTerminalNode } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -115,21 +82,6 @@ function seedAgent(db: BunDatabase, agentId: string, spaceId: string, name: stri
     `INSERT INTO space_agents (id, space_id, name, description, model, tools, custom_prompt, created_at, updated_at)
      VALUES (?, ?, ?, '', null, '[]', null, ?, ?)`
   ).run(agentId, spaceId, name, Date.now(), Date.now());
-}
-
-/**
- * Helper that returns the effective gate for CODING_WITH_QA_WORKFLOW's
- * review-approval-gate with the Review node configured to require codex approval.
- * Used by tests that exercise the codex review bot script/poll.
- */
-function getFullstackReviewApprovalGateWithCodex() {
-  const rawGate = CODING_WITH_QA_WORKFLOW.gates!.find((g) => g.id === 'review-approval-gate')!;
-  return getEffectiveGate(rawGate, {
-    ...CODING_WITH_QA_WORKFLOW,
-    nodes: CODING_WITH_QA_WORKFLOW.nodes.map((n) =>
-      n.name === 'Review' ? { ...n, requireCodexApproval: true } : n
-    ),
-  });
 }
 
 /** Valid builtin roles — 'leader' must NOT appear in any template step. */
@@ -332,27 +284,14 @@ describe('stable coding workflow templates', () => {
     ).toBe(true);
   });
 
-  test('legacy template identities map to canonical stable templates that carry gates', () => {
-    // C4: SpaceWorkflowManager.BUILT_IN_TEMPLATE_GATES is keyed by every current
-    // built-in name PLUS the legacy aliases below, using the RAW template gates
-    // (pre gate→hook migration) so legacy review-posted-gate / review-approval-
-    // gate rows converge to hooks at load time instead of being left with a
-    // stale gated channel + a duplicated open route. Verify the single source of
-    // truth covers both legacy names and that each canonical stable template
-    // carries gates. (getBuiltInWorkflows() returns gate→hook-migrated copies
-    // with no gates, so check the raw consts the manager registers.)
+  test('legacy template identities map to canonical stable templates', () => {
+    // The legacy `Coding Workflow` / `Coding with QA Workflow` names (which
+    // carried the dedicated merger node) now resolve to the STABLE coder-owned
+    // templates. Verify the single source of truth covers both legacy names.
     expect(LEGACY_CODING_TEMPLATE_IDENTITIES.map((i) => i.legacyName)).toEqual([
       'Coding Workflow',
       'Coding with QA Workflow',
     ]);
-    const canonicalByName = new Map<string, SpaceWorkflow>([
-      [STABLE_CODING_WORKFLOW.name, STABLE_CODING_WORKFLOW],
-      [CODING_WITH_QA_WORKFLOW.name, CODING_WITH_QA_WORKFLOW],
-    ]);
-    for (const identity of LEGACY_CODING_TEMPLATE_IDENTITIES) {
-      const canonical = canonicalByName.get(identity.name)!;
-      expect(canonical.gates?.length ?? 0).toBeGreaterThan(0);
-    }
     // The legacy aliases resolve to the same names as the stable templates.
     expect(LEGACY_CODING_TEMPLATE_IDENTITIES.map((i) => i.name)).toEqual([
       STABLE_CODING_WORKFLOW.name,
@@ -444,9 +383,11 @@ describe('stable CODING_WORKFLOW template structure', () => {
     // Behavioral: does not hard-code the Review peer or pr_url gate field.
     expect(prompt).not.toContain('send_message(target="Review"');
     expect(prompt).not.toContain('code-ready-gate');
-    // Does not tell the coder to subscribe_pr_events / detail external_event
-    // handles — that is the legacy prompt text (see LEGACY_CODING_SLOT_PROMPTS).
-    expect(prompt).not.toContain('subscribe_pr_events');
+    // The imperative subscribe instruction lives in the stable coder prompt as a
+    // backstop while the declarative eventInterests resolver is inert
+    // (see CODER_OWNED_PR_SUBSCRIBE_GUIDANCE). It uses the explicit prUrl form.
+    expect(prompt).toContain('subscribe_pr_events');
+    expect(prompt).toContain('prUrl');
   });
 
   test('reviewer prompt instructs a visible GitHub review per the system contract', () => {
@@ -469,12 +410,12 @@ describe('stable CODING_WORKFLOW template structure', () => {
     expect(ch!.maxCycles).toBeUndefined();
   });
 
-  test('Review → Coding channel is gated by review-posted-gate with maxCycles', () => {
+  test('Review → Coding channel is ungated (plain handoff) with maxCycles', () => {
     const ch = CODING_WORKFLOW.channels!.find((c) => c.from === 'Review' && c.to === 'Coding');
     expect(ch).toBeDefined();
-    // The review-posted-gate closes the feedback-loop gap where the reviewer
-    // summarizes feedback internally without posting to GitHub.
-    expect(ch!.gateId).toBe('review-posted-gate');
+    // Review → Coding is now a plain ungated handoff; the review-posted gate
+    // was replaced by a route-scoped `review_posted` send_message hook.
+    expect(ch!.gateId).toBeUndefined();
     // direction field removed from WorkflowChannel
     expect(ch!.maxCycles).toBe(5);
   });
@@ -493,14 +434,6 @@ describe('stable CODING_WORKFLOW template structure', () => {
     }
   });
 
-  test('has one gate: review-posted-gate', () => {
-    expect(CODING_WORKFLOW.gates).toHaveLength(1);
-    const gateIds = CODING_WORKFLOW.gates!.map((g) => g.id).sort();
-    expect(gateIds).toEqual(['review-posted-gate']);
-    const reviewPostedGate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
-    expect(reviewPostedGate.fields).toHaveLength(2);
-  });
-
   test('has a send_message hook for Coding → Review using pr_ready validator', () => {
     const hooks = CODING_WORKFLOW.hooks ?? [];
     expect(hooks.length).toBeGreaterThanOrEqual(1);
@@ -515,59 +448,19 @@ describe('stable CODING_WORKFLOW template structure', () => {
     expect(hook!.authorizedCallers).toEqual([{ sourceNode: 'Coding', agentSlots: ['coder'] }]);
   });
 
-  test('review feedback cycle is gated by fresh GitHub review evidence', () => {
-    const channel = CODING_WORKFLOW.channels!.find(
-      (c) => c.from === 'Review' && c.to === 'Coding'
-    )!;
-    const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
-
-    expect(channel.gateId).toBe('review-posted-gate');
-    expect(channel.maxCycles).toBe(5);
-    // The gate backs its check with the `review_posted` built-in validator (an
-    // external_state preset over the github connector) — no hand-rolled bash.
-    expect(gate.validator).toEqual({ kind: 'built_in', id: 'review_posted' });
-    expect(gate.script).toBeUndefined();
-    expect(gate.fields?.map((field) => field.name)).toEqual(['pr_url', 'review_url']);
-  });
-
-  test('review-posted-gate has pr_url and review_url fields writable only by Review node', () => {
-    const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
-    expect(gate.fields).toHaveLength(2);
-
-    const prField = gate.fields.find((f) => f.name === 'pr_url')!;
-    expect(prField.type).toBe('string');
-    expect(prField.writers).toEqual(['Review']);
-    expect(prField.check.op).toBe('exists');
-
-    const reviewField = gate.fields.find((f) => f.name === 'review_url')!;
-    expect(reviewField.type).toBe('string');
-    expect(reviewField.writers).toEqual(['Review']);
-    expect(reviewField.check.op).toBe('exists');
-  });
-
-  test('review-posted-gate references the review_posted external_state primitive', () => {
-    const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
-    // No inline bash: the check is a declarative built-in validator reference.
-    // The since-workflow-start window, formal-review-first ordering, and own-PR
-    // fallback all live in the `review_posted` preset + its `getReviewEvidence`
-    // github op (see runtime/connectors/presets.ts + connectors/presets.test.ts).
-    expect(gate.validator).toEqual({ kind: 'built_in', id: 'review_posted' });
-    expect(gate.script).toBeUndefined();
-  });
-
-  test('review-posted-gate behavioral coverage lives in the review_posted preset tests', () => {
-    // The own-PR fallback, formal-review-first ordering, since-workflow-start
-    // window, and review_url fallback are exercised end-to-end against a mocked
-    // `gh` in runtime/connectors/presets.test.ts (the review_posted preset) and
-    // via the gate-evaluator dispatch test in other/gate-evaluator.test.ts.
-    // The gate here is a declarative reference to that primitive (no inline bash).
-    const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
-    expect(gate.validator).toEqual({ kind: 'built_in', id: 'review_posted' });
-  });
-
-  test('review-posted-gate resets on cycle so each feedback round is re-verified', () => {
-    const gate = CODING_WORKFLOW.gates!.find((g) => g.id === 'review-posted-gate')!;
-    expect(gate.resetOnCycle).toBe(true);
+  test('Review → Coding has a review_posted send_message hook', () => {
+    // The former review-posted-gate is now a route-scoped `review_posted`
+    // send_message hook on the Review → Coding channel.
+    const hook = (CODING_WORKFLOW.hooks ?? []).find(
+      (h) =>
+        h.sourceNode === 'Review' &&
+        h.targetNode === 'Coding' &&
+        h.method === 'send_message' &&
+        h.validator.kind === 'built_in' &&
+        h.validator.id === 'review_posted'
+    );
+    expect(hook).toBeDefined();
+    expect(hook!.enabled).toBe(true);
   });
 
   test('startNodeId points to the Coding step', () => {
@@ -790,304 +683,18 @@ describe('REVIEW_ONLY_WORKFLOW template', () => {
   });
 });
 
-describe('PLAN_AND_DECOMPOSE_WORKFLOW template', () => {
-  test('has three nodes', () => {
-    expect(PLAN_AND_DECOMPOSE_WORKFLOW.nodes).toHaveLength(3);
-  });
-
-  test('node names are correct', () => {
-    expect(PLAN_AND_DECOMPOSE_WORKFLOW.nodes.map((n) => n.name)).toEqual([
-      'Planning',
-      'Plan Review',
-      'Task Dispatcher',
-    ]);
-  });
-
-  test('node agent placeholders are correct', () => {
-    const nodes = PLAN_AND_DECOMPOSE_WORKFLOW.nodes;
-    // Planning: single Planner
-    expect(nodes[0].agents).toHaveLength(1);
-    expect(nodes[0].agents[0]?.agentId).toBe('Planner');
-    expect(nodes[0].agents[0]?.name).toBe('planner');
-    // Plan Review: four Reviewers (architecture, security, correctness, ux)
-    expect(nodes[1].agents).toHaveLength(4);
-    expect(nodes[1].agents.map((a) => a.agentId)).toEqual([
-      'Reviewer',
-      'Reviewer',
-      'Reviewer',
-      'Reviewer',
-    ]);
-    expect(nodes[1].agents.map((a) => a.name)).toEqual([
-      'architecture-reviewer',
-      'security-reviewer',
-      'correctness-reviewer',
-      'ux-reviewer',
-    ]);
-    // Task Dispatcher: single General agent
-    expect(nodes[2].agents).toHaveLength(1);
-    expect(nodes[2].agents[0]?.agentId).toBe('General');
-    expect(nodes[2].agents[0]?.name).toBe('task-dispatcher');
-  });
-
-  test('all nodes define explicit custom prompts', () => {
-    for (const node of PLAN_AND_DECOMPOSE_WORKFLOW.nodes) {
-      for (const agent of node.agents) {
-        expect((agent.customPrompt?.value?.trim().length ?? 0) > 0).toBe(true);
-      }
-    }
-  });
-
-  test('startNodeId points to the Planning node', () => {
-    const planningNode = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find((n) => n.name === 'Planning');
-    expect(PLAN_AND_DECOMPOSE_WORKFLOW.startNodeId).toBe(planningNode?.id);
-  });
-
-  test('endNodeId points to the Task Dispatcher node', () => {
-    const dispatcherNode = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find(
-      (n) => n.name === 'Task Dispatcher'
-    );
-    expect(PLAN_AND_DECOMPOSE_WORKFLOW.endNodeId).toBe(dispatcherNode?.id);
-  });
-
-  test('endNodeId references a valid node in the graph', () => {
-    const nodeIds = new Set(PLAN_AND_DECOMPOSE_WORKFLOW.nodes.map((n) => n.id));
-    expect(nodeIds.has(PLAN_AND_DECOMPOSE_WORKFLOW.endNodeId!)).toBe(true);
-  });
-
-  test('has one gate', () => {
-    expect(PLAN_AND_DECOMPOSE_WORKFLOW.gates).toHaveLength(1);
-  });
-
-  test('gate IDs are correct', () => {
-    const ids = PLAN_AND_DECOMPOSE_WORKFLOW.gates!.map((g) => g.id);
-    expect(ids).toContain('plan-approval-gate');
-  });
-
-  test('has a send_message hook for Planning → Plan Review using pr_ready validator', () => {
-    const hooks = PLAN_AND_DECOMPOSE_WORKFLOW.hooks ?? [];
-    expect(hooks.length).toBeGreaterThanOrEqual(1);
-    const hook = hooks.find((h) => h.id === 'plan-pr-ready');
-    expect(hook).toBeDefined();
-    expect(hook!.sourceNode).toBe('Planning');
-    expect(hook!.targetNode).toBe('Plan Review');
-    expect(hook!.method).toBe('send_message');
-    expect(hook!.validator).toEqual({ kind: 'built_in', id: 'pr_ready' });
-    expect(hook!.enabled).toBe(true);
-  });
-
-  test('plan-approval-gate requires all four reviewers to approve', () => {
-    const gate = PLAN_AND_DECOMPOSE_WORKFLOW.gates!.find((g) => g.id === 'plan-approval-gate')!;
-    expect(gate.fields).toHaveLength(1);
-    expect(gate.fields[0].name).toBe('approvals');
-    expect(gate.fields[0].type).toBe('map');
-    expect(gate.fields[0].check).toMatchObject({ op: 'count', match: 'approved', min: 4 });
-    expect(gate.fields[0].writers).toEqual(['Plan Review']);
-    // Codex is no longer hardcoded as a gate feature; it is opt-in via node-level config.
-    expect(gate.features?.codex_review_bot).toBeUndefined();
-    expect(gate.resetOnCycle).toBe(true);
-  });
-
-  test('plan review approval migration carries vote data and resets votes on revision feedback', () => {
-    const workflow = migrateWorkflowGateProgressionToHooks({
-      ...PLAN_AND_DECOMPOSE_WORKFLOW,
-      templateName: PLAN_AND_DECOMPOSE_WORKFLOW.name,
-      templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
-    }).workflow;
-    const approvalHook = workflow.hooks!.find(
-      (hook) => hook.sourceNode === 'Plan Review' && hook.targetNode === 'Task Dispatcher'
-    )!;
-    const resetHook = workflow.hooks!.find(
-      (hook) => hook.id === 'plan-approval-reset' && hook.targetNode === 'Planning'
-    )!;
-
-    expect(approvalHook).toMatchObject({
-      enabled: true,
-      sourceNode: 'Plan Review',
-      targetNode: 'Task Dispatcher',
-      method: 'send_message',
-      classification: 'validation',
-    });
-    expect(approvalHook.validator).toMatchObject({ kind: 'script', interpreter: 'bash' });
-    const approvalSource =
-      approvalHook.validator.kind === 'script' ? approvalHook.validator.source : '';
-    expect(approvalSource).toContain('HYPERNEO_HOOK_LOCAL_STATE_JSON');
-    expect(approvalSource).toContain('"approval_count":4');
-    expect(resetHook).toMatchObject({
-      enabled: true,
-      sourceNode: 'Plan Review',
-      targetNode: 'Planning',
-      method: 'send_message',
-      classification: 'validation',
-    });
-    const resetSource = resetHook.validator.kind === 'script' ? resetHook.validator.source : '';
-    expect(resetSource).toContain('"type":"record_state"');
-    expect(resetSource).toContain('"approvals":null');
-  });
-
-  test('has three channels', () => {
-    expect(PLAN_AND_DECOMPOSE_WORKFLOW.channels).toHaveLength(3);
-  });
-
-  test('main progression channels have correct gateIds', () => {
-    const ch = PLAN_AND_DECOMPOSE_WORKFLOW.channels!;
-
-    const planningToReview = ch.find((c) => c.from === 'Planning' && c.to === 'Plan Review');
-    expect(planningToReview?.gateId).toBeUndefined();
-
-    const reviewToDispatcher = ch.find(
-      (c) => c.from === 'Plan Review' && c.to === 'Task Dispatcher'
-    );
-    expect(reviewToDispatcher?.gateId).toBe('plan-approval-gate');
-  });
-
-  test('feedback channel Plan Review → Planning is ungated and cyclic', () => {
-    const ch = PLAN_AND_DECOMPOSE_WORKFLOW.channels!;
-    const reviewToPlanning = ch.find((c) => c.from === 'Plan Review' && c.to === 'Planning');
-    expect(reviewToPlanning).toBeDefined();
-    expect(reviewToPlanning?.gateId).toBeUndefined();
-    expect(reviewToPlanning?.maxCycles).toBe(5);
-  });
-
-  test('all channels have direction one-way', () => {
-    for (const ch of PLAN_AND_DECOMPOSE_WORKFLOW.channels!) {
-      expect('direction' in ch).toBe(false); // direction field removed
-    }
-  });
-
-  test('all channel from/to fields reference valid node names or agent slot names', () => {
-    const refs = new Set<string>();
-    for (const node of PLAN_AND_DECOMPOSE_WORKFLOW.nodes) {
-      refs.add(node.name);
-      for (const agent of node.agents ?? []) refs.add(agent.name);
-    }
-    for (const ch of PLAN_AND_DECOMPOSE_WORKFLOW.channels!) {
-      expect(refs.has(ch.from as string)).toBe(true);
-      if (Array.isArray(ch.to)) {
-        for (const target of ch.to) {
-          expect(refs.has(target)).toBe(true);
-        }
-      } else {
-        expect(refs.has(ch.to as string)).toBe(true);
-      }
-    }
-  });
-
-  test('Plan Review node lens names cover architecture / security / correctness / ux', () => {
-    const reviewNode = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find((n) => n.name === 'Plan Review')!;
-    expect(reviewNode.agents).toHaveLength(4);
-    const expected = [
-      { name: 'architecture-reviewer', lens: 'architecture' },
-      { name: 'security-reviewer', lens: 'security' },
-      { name: 'correctness-reviewer', lens: 'correctness' },
-      { name: 'ux-reviewer', lens: 'ux' },
-    ];
-    for (let i = 0; i < expected.length; i++) {
-      const slot = reviewNode.agents[i];
-      expect(slot.name).toBe(expected[i].name);
-      // Each reviewer's prompt should reference their lens name and the approval gate
-      expect(slot.customPrompt?.value.toLowerCase()).toContain(expected[i].lens);
-      expect(slot.customPrompt?.value).toContain('Task Dispatcher');
-    }
-  });
-
-  test('Task Dispatcher prompt instructs use of create_standalone_task and save_artifact', () => {
-    const dispatcherNode = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find(
-      (n) => n.name === 'Task Dispatcher'
-    )!;
-    const prompt = dispatcherNode.agents[0].customPrompt?.value ?? '';
-    expect(prompt).toContain('create_standalone_task');
-    expect(prompt).toContain('save_artifact');
-    expect(prompt).toContain('created_task_ids');
-  });
-
-  test('Task Dispatcher prompt embeds Stacked PR Instructions in task descriptions', () => {
-    const dispatcherNode = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find(
-      (n) => n.name === 'Task Dispatcher'
-    )!;
-    const prompt = dispatcherNode.agents[0].customPrompt?.value ?? '';
-    // Must embed stacked PR instructions in each task description
-    expect(prompt).toContain('Stacked PR Instructions');
-    // Must specify branch naming convention using plan/ prefix
-    expect(prompt).toContain('plan/');
-    // Evidence must include stack metadata
-    expect(prompt).toContain('stack_prefix');
-    expect(prompt).toContain('stack_branches');
-  });
-
-  test('Task Dispatcher prompt uses dev (not main) as the base branch for the bottom PR', () => {
-    const dispatcherNode = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find(
-      (n) => n.name === 'Task Dispatcher'
-    )!;
-    const prompt = dispatcherNode.agents[0].customPrompt?.value ?? '';
-    // Bottom item must target dev as base branch
-    expect(prompt).toContain('Base branch: dev');
-    // Must never reference main as the trunk
-    expect(prompt).not.toContain('Base branch: main');
-  });
-
-  test('Task Dispatcher prompt instructs building stacked PR chain bottom-up', () => {
-    const dispatcherNode = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find(
-      (n) => n.name === 'Task Dispatcher'
-    )!;
-    const prompt = dispatcherNode.agents[0].customPrompt?.value ?? '';
-    // Must instruct bottom-up ordering (item 1 first)
-    expect(prompt).toMatch(/BOTTOM.UP order|bottom.up/i);
-    // Subsequent items must reference the previous item's branch as base
-    expect(prompt).toContain('item-(N-1)-slug');
-  });
-
-  test('Task Dispatcher prompt instructs Task Dispatcher NOT to create branches or PRs itself', () => {
-    const dispatcherNode = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find(
-      (n) => n.name === 'Task Dispatcher'
-    )!;
-    const prompt = dispatcherNode.agents[0].customPrompt?.value ?? '';
-    // The dispatcher delegates branch/PR creation to downstream coders
-    expect(prompt).toContain('downstream coder');
-  });
-
-  test('workflow description describes stacked PR chain output', () => {
-    // The workflow description must convey that the output is a stacked PR chain
-    expect(PLAN_AND_DECOMPOSE_WORKFLOW.description).toMatch(/stacked PR/i);
-    // Must mention that PRs are built bottom-up from dev
-    expect(PLAN_AND_DECOMPOSE_WORKFLOW.description).toContain('dev');
-  });
-
-  test('does not reference leader', () => {
-    expect(hasLeaderAgentId(PLAN_AND_DECOMPOSE_WORKFLOW)).toBe(false);
-  });
-
-  test('template id and spaceId are empty (not space-specific)', () => {
-    expect(PLAN_AND_DECOMPOSE_WORKFLOW.id).toBe('');
-    expect(PLAN_AND_DECOMPOSE_WORKFLOW.spaceId).toBe('');
-  });
-
-  test('does NOT have the default tag — selected explicitly for planning goals', () => {
-    expect(PLAN_AND_DECOMPOSE_WORKFLOW.tags).not.toContain('default');
-  });
-
-  test('has the planning and decomposition tags', () => {
-    expect(PLAN_AND_DECOMPOSE_WORKFLOW.tags).toContain('planning');
-    expect(PLAN_AND_DECOMPOSE_WORKFLOW.tags).toContain('decomposition');
-  });
-});
-
 // ---------------------------------------------------------------------------
 // getBuiltInWorkflows()
 // ---------------------------------------------------------------------------
 
 describe('getBuiltInWorkflows()', () => {
-  test('returns exactly five templates', () => {
-    expect(getBuiltInWorkflows()).toHaveLength(5);
+  test('returns exactly four templates', () => {
+    expect(getBuiltInWorkflows()).toHaveLength(4);
   });
 
   test('includes CODING_WORKFLOW', () => {
     const names = getBuiltInWorkflows().map((w) => w.name);
     expect(names).toContain(CODING_WORKFLOW.name);
-  });
-
-  test('includes PLAN_AND_DECOMPOSE_WORKFLOW', () => {
-    const names = getBuiltInWorkflows().map((w) => w.name);
-    expect(names).toContain(PLAN_AND_DECOMPOSE_WORKFLOW.name);
   });
 
   test('does NOT include the legacy Full-Cycle Coding Workflow', () => {
@@ -1164,7 +771,7 @@ describe('getBuiltInWorkflows()', () => {
     }
   });
 
-  test('getBuiltInWorkflows returns migrated hook-backed templates', () => {
+  test('getBuiltInWorkflows returns hook-native templates', () => {
     const coding = getBuiltInWorkflows().find((w) => w.name === CODING_WORKFLOW.name)!;
     expect(coding.channels?.some((channel) => channel.gateId === 'review-posted-gate')).toBe(false);
     expect(
@@ -1172,46 +779,13 @@ describe('getBuiltInWorkflows()', () => {
         (hook) =>
           hook.sourceNode === 'Review' &&
           hook.targetNode === 'Coding' &&
-          hook.id.startsWith('review-posted:')
+          hook.id === 'review-posted'
       )
     ).toBe(true);
-    const reviewPostedHook = coding.hooks?.find((hook) => hook.id.startsWith('review-posted:'));
-    // The migrated review-posted hook references the review_posted built-in
+    const reviewPostedHook = coding.hooks?.find((hook) => hook.id === 'review-posted');
+    // The review-posted hook references the review_posted built-in
     // validator (an external_state preset) — no hand-rolled bash script.
     expect(reviewPostedHook?.validator).toEqual({ kind: 'built_in', id: 'review_posted' });
-    expect(computeWorkflowHash(coding)).toBe(
-      computeWorkflowHash(
-        migrateWorkflowGateProgressionToHooks({
-          ...CODING_WORKFLOW,
-          templateName: CODING_WORKFLOW.name,
-          templateGates: CODING_WORKFLOW.gates ?? [],
-        }).workflow
-      )
-    );
-  });
-
-  test('all gate fields have valid non-empty writer roles', () => {
-    for (const wf of getBuiltInWorkflows()) {
-      expect(validateWorkflowTemplateGateWriters(wf)).toEqual([]);
-    }
-  });
-
-  test('gate writer validation rejects empty writer arrays', () => {
-    const workflow = structuredClone(CODING_WORKFLOW);
-    workflow.gates![0].fields![0].writers = [];
-
-    expect(validateWorkflowTemplateGateWriters(workflow)).toEqual([
-      `${workflow.name}.gates.review-posted-gate.fields.pr_url.writers: must contain at least one writer role`,
-    ]);
-  });
-
-  test('gate writer validation rejects unknown writer roles', () => {
-    const workflow = structuredClone(CODING_WORKFLOW);
-    workflow.gates![0].fields![0].writers = ['Unknown Role'];
-
-    expect(validateWorkflowTemplateGateWriters(workflow)).toEqual([
-      `${workflow.name}.gates.review-posted-gate.fields.pr_url.writers: unknown writer role "Unknown Role"`,
-    ]);
   });
 });
 
@@ -1351,31 +925,16 @@ describe('seedBuiltInWorkflows()', () => {
   test('seeds all built-in templates for an empty space', async () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const workflows = manager.listWorkflows(SPACE_ID);
-    expect(workflows).toHaveLength(5);
+    expect(workflows).toHaveLength(4);
   });
 
   test('seeded workflow names match all templates', async () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const names = manager.listWorkflows(SPACE_ID).map((w) => w.name);
     expect(names).toContain(CODING_WORKFLOW.name);
-    expect(names).toContain(PLAN_AND_DECOMPOSE_WORKFLOW.name);
     expect(names).toContain(CODING_WITH_QA_WORKFLOW.name);
     expect(names).toContain(RESEARCH_WORKFLOW.name);
     expect(names).toContain(REVIEW_ONLY_WORKFLOW.name);
-  });
-
-  test('Plan & Decompose Workflow seeding preserves explicit node custom prompts', async () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    const wf = manager
-      .listWorkflows(SPACE_ID)
-      .find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name);
-    expect(wf).toBeDefined();
-    // customPrompt is on each WorkflowNodeAgent, not on WorkflowNode
-    for (const node of wf!.nodes) {
-      for (const agent of node.agents) {
-        expect((agent.customPrompt?.value?.trim().length ?? 0) > 0).toBe(true);
-      }
-    }
   });
 
   test('CODING_WORKFLOW seeding preserves node custom prompts with non-empty value', async () => {
@@ -1424,22 +983,15 @@ describe('seedBuiltInWorkflows()', () => {
 
     const reviewToCode = wf.channels!.find((c) => c.from === 'Review' && c.to === 'Coding');
     expect(reviewToCode).toBeDefined();
-    // The Review → Coding feedback is gated by the review-posted gate, which is
-    // migrated to a `review-posted` hook at seed time (no retained gate, and the
-    // channel carries the maxCycles cap so the review loop stays bounded).
+    // The Review → Coding feedback is validated by the route-scoped `review-posted`
+    // hook (the former review-posted gate), and the channel carries the maxCycles
+    // cap so the review loop stays bounded.
     expect(reviewToCode!.gateId).toBeUndefined();
     expect(reviewToCode!.maxCycles).toBe(5);
     const reviewPostedHook = (wf.hooks ?? []).find(
-      (h) =>
-        h.sourceNode === 'Review' && h.targetNode === 'Coding' && h.id.startsWith('review-posted:')
+      (h) => h.sourceNode === 'Review' && h.targetNode === 'Coding' && h.id === 'review-posted'
     );
     expect(reviewPostedHook).toBeDefined();
-  });
-
-  test('CODING_WORKFLOW seeded with no retained gates (all migrated to hooks)', async () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
-    expect(wf.gates ?? []).toHaveLength(0);
   });
 
   test('CODING_WORKFLOW seeded channels all have direction one-way', async () => {
@@ -1496,12 +1048,6 @@ describe('seedBuiltInWorkflows()', () => {
     }
   });
 
-  test('RESEARCH_WORKFLOW seeded with no gates', async () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
-    expect(wf.gates ?? []).toHaveLength(0);
-  });
-
   test('RESEARCH_WORKFLOW seeded with a pr_ready hook', async () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
@@ -1522,108 +1068,6 @@ describe('seedBuiltInWorkflows()', () => {
     expect(wf).toBeDefined();
     expect(wf!.nodes).toHaveLength(1);
     expect(wf!.nodes[0].agents[0]?.agentId).toBe(REVIEWER_ID);
-  });
-
-  test('PLAN_AND_DECOMPOSE_WORKFLOW seeded correctly — three nodes with 4 parallel reviewers', async () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    const wf = manager
-      .listWorkflows(SPACE_ID)
-      .find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name);
-    expect(wf).toBeDefined();
-    expect(wf!.nodes).toHaveLength(3);
-    expect(wf!.nodes[0].agents[0]?.agentId).toBe(PLANNER_ID); // Planning
-    // Plan Review has four agents (all reviewer)
-    expect(wf!.nodes[1].agents).toHaveLength(4);
-    expect(wf!.nodes[1].agents?.map((a) => a.agentId)).toEqual([
-      roleMap.reviewer,
-      roleMap.reviewer,
-      roleMap.reviewer,
-      roleMap.reviewer,
-    ]);
-    expect(wf!.nodes[1].agents?.map((a) => a.name)).toEqual([
-      'architecture-reviewer',
-      'security-reviewer',
-      'correctness-reviewer',
-      'ux-reviewer',
-    ]);
-    expect(wf!.nodes[2].agents[0]?.agentId).toBe(GENERAL_ID); // Task Dispatcher
-  });
-
-  test('PLAN_AND_DECOMPOSE_WORKFLOW seeded with 3 node-level channels', async () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    const wf = manager
-      .listWorkflows(SPACE_ID)
-      .find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
-    expect(wf.channels).toHaveLength(3);
-  });
-
-  test('PLAN_AND_DECOMPOSE_WORKFLOW seeded with 1 gate', async () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    const wf = manager
-      .listWorkflows(SPACE_ID)
-      .find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
-    expect(wf.gates ?? []).toHaveLength(0);
-  });
-
-  test('PLAN_AND_DECOMPOSE_WORKFLOW seeded channels split into 1 gated + 1 ungated feedback', async () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    const wf = manager
-      .listWorkflows(SPACE_ID)
-      .find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
-    const gatedChannels = wf.channels!.filter((c) => c.gateId !== undefined);
-    expect(gatedChannels).toHaveLength(0);
-    const cyclicChannels = wf.channels!.filter((c) => c.maxCycles !== undefined);
-    // One cyclic feedback channel: Plan Review → Planning
-    expect(cyclicChannels).toHaveLength(1);
-  });
-
-  test('PLAN_AND_DECOMPOSE_WORKFLOW seeded with a pr_ready hook', async () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    const wf = manager
-      .listWorkflows(SPACE_ID)
-      .find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
-    const hook = wf.hooks?.find((h) => h.id === 'plan-pr-ready');
-    expect(hook).toBeDefined();
-    expect(hook!.validator).toEqual({ kind: 'built_in', id: 'pr_ready' });
-  });
-
-  test('PLAN_AND_DECOMPOSE_WORKFLOW seeded channels reference node names or reviewer slot names', async () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    const wf = manager
-      .listWorkflows(SPACE_ID)
-      .find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
-    const refs = new Set<string>();
-    for (const node of wf.nodes) {
-      refs.add(node.name);
-      for (const slot of node.agents ?? []) refs.add(slot.name);
-    }
-    for (const ch of wf.channels!) {
-      expect(refs.has(ch.from as string)).toBe(true);
-      if (Array.isArray(ch.to)) {
-        for (const target of ch.to) {
-          expect(refs.has(target)).toBe(true);
-        }
-      } else {
-        expect(refs.has(ch.to as string)).toBe(true);
-      }
-    }
-  });
-
-  test('PLAN_AND_DECOMPOSE_WORKFLOW seeded without default tag — picked explicitly for planning', async () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    const wf = manager
-      .listWorkflows(SPACE_ID)
-      .find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
-    expect(wf.tags).not.toContain('default');
-    expect(wf.tags).toContain('planning');
-    expect(wf.tags).toContain('decomposition');
-  });
-
-  test('PLAN_AND_DECOMPOSE_WORKFLOW seeded alongside CODING_WORKFLOW — both present', async () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    const names = manager.listWorkflows(SPACE_ID).map((w) => w.name);
-    expect(names).toContain(CODING_WORKFLOW.name);
-    expect(names).toContain(PLAN_AND_DECOMPOSE_WORKFLOW.name);
   });
 
   test('all seeded workflows have the real spaceId assigned', async () => {
@@ -1647,7 +1091,6 @@ describe('seedBuiltInWorkflows()', () => {
     expect(byName.get('Coding')?.handle).toBe('coding');
     expect(byName.get('Research Workflow')?.handle).toBe('research-workflow');
     expect(byName.get('Review-Only Workflow')?.handle).toBe('review-only-workflow');
-    expect(byName.get('Plan & Decompose Workflow')?.handle).toBe('plan-decompose-workflow');
     expect(byName.get('Coding with QA')?.handle).toBe('coding-with-qa');
   });
 
@@ -1670,7 +1113,7 @@ describe('seedBuiltInWorkflows()', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const workflows = manager.listWorkflows(SPACE_ID);
-    expect(workflows).toHaveLength(5);
+    expect(workflows).toHaveLength(4);
   });
 
   // ─── Node-level postApproval threading ──────────────────────────────────
@@ -1699,15 +1142,13 @@ describe('seedBuiltInWorkflows()', () => {
     assertPostApproval('Coding with QA', 'coder');
   });
 
-  test('leaves postApproval undefined on Review-Only and Plan & Decompose', () => {
+  test('leaves postApproval undefined on Review-Only', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const workflows = manager.listWorkflows(SPACE_ID);
-    for (const name of ['Review-Only Workflow', 'Plan & Decompose Workflow']) {
-      const wf = workflows.find((w) => w.name === name);
-      expect(wf, `workflow "${name}" must be seeded`).toBeDefined();
-      expect(wf!.postApproval).toBeUndefined();
-      expect(wf!.nodes.some((node) => node.postApproval)).toBe(false);
-    }
+    const wf = workflows.find((w) => w.name === 'Review-Only Workflow');
+    expect(wf).toBeDefined();
+    expect(wf!.postApproval).toBeUndefined();
+    expect(wf!.nodes.some((node) => node.postApproval)).toBe(false);
   });
 
   // ─── PR 3/5: drift re-stamp path ────────────────────────────────────────
@@ -1715,7 +1156,7 @@ describe('seedBuiltInWorkflows()', () => {
   test('result exposes restamped=[] on a fresh seed', () => {
     const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     expect(result.skipped).toBe(false);
-    expect(result.seeded).toHaveLength(5);
+    expect(result.seeded).toHaveLength(4);
     expect(result.restamped).toEqual([]);
   });
 
@@ -2109,6 +1550,110 @@ describe('seedBuiltInWorkflows()', () => {
     );
   });
 
+  test('re-stamp restores the imperative subscribe instruction to the stable coder prompt', () => {
+    // Existing live spaces store the pre-subscribe CODER_OWNED_MERGE_PROMPT. The
+    // [CODER_OWNED_PR_SUBSCRIBE_GUIDANCE, ''] retired patch must converge that
+    // stored prompt to the current template (with subscribe) on the next seed.
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+    const codingNode = coding.nodes.find((n) => n.name === 'Coding')!;
+
+    const templatePrompt = codingNode.agents[0].customPrompt!.value;
+    expect(templatePrompt).toContain('subscribe_pr_events');
+    // Reconstruct the pre-subscribe retired form by dropping the guidance.
+    const retiredPrompt = templatePrompt.replace(CODER_OWNED_PR_SUBSCRIBE_GUIDANCE, '');
+    expect(retiredPrompt).not.toContain('subscribe_pr_events');
+
+    // Simulate a live space that stored the retired prompt with a stale hash.
+    manager.updateWorkflow(coding.id, {
+      nodes: coding.nodes.map((n) =>
+        n.id !== codingNode.id
+          ? n
+          : {
+              ...n,
+              agents: n.agents.map((a, i) =>
+                i === 0 ? { ...a, customPrompt: { value: retiredPrompt } } : a
+              ),
+            }
+      ),
+    });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'stale-pre-subscribe-hash',
+      coding.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(CODING_WORKFLOW.name);
+
+    const after = manager.getWorkflow(coding.id)!;
+    const afterCodingNode = after.nodes.find((n) => n.id === codingNode.id)!;
+    // Exact convergence: stored prompt is restored to the template (with subscribe).
+    expect(afterCodingNode.agents[0].customPrompt?.value).toBe(templatePrompt);
+    expect(afterCodingNode.agents[0].customPrompt?.value).toContain('subscribe_pr_events');
+  });
+
+  test('re-stamp restores the zero-findings verdict gate to the stable reviewer prompt', () => {
+    // Existing live spaces store the pre-gate CODER_OWNED_REVIEW_PROMPT (before
+    // the P2/P3 approval-leak fix). The [REVIEWER_ZERO_FINDINGS_GATE, ''] retired
+    // patch must converge that stored prompt to the current template on re-seed.
+    // This is the lever that reaches existing spaces, since the persona contract
+    // is not auto-restamped.
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
+    const reviewNode = coding.nodes.find((n) => n.name === 'Review')!;
+
+    const templatePrompt = reviewNode.agents[0].customPrompt!.value;
+    expect(templatePrompt).toContain('Verdict gate');
+    // Reconstruct the pre-gate retired form by dropping the gate.
+    const retiredPrompt = templatePrompt.replace(REVIEWER_ZERO_FINDINGS_GATE, '');
+    expect(retiredPrompt).not.toContain('Verdict gate');
+
+    // Simulate a live space that stored the retired prompt with a stale hash.
+    manager.updateWorkflow(coding.id, {
+      nodes: coding.nodes.map((n) =>
+        n.id !== reviewNode.id
+          ? n
+          : {
+              ...n,
+              agents: n.agents.map((a, i) =>
+                i === 0 ? { ...a, customPrompt: { value: retiredPrompt } } : a
+              ),
+            }
+      ),
+    });
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'stale-pre-verdict-gate-hash',
+      coding.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    expect(result.restamped).toContain(CODING_WORKFLOW.name);
+
+    const after = manager.getWorkflow(coding.id)!;
+    const afterReviewNode = after.nodes.find((n) => n.id === reviewNode.id)!;
+    // Exact convergence: stored prompt is restored to the template (with the gate).
+    expect(afterReviewNode.agents[0].customPrompt?.value).toBe(templatePrompt);
+    expect(afterReviewNode.agents[0].customPrompt?.value).toContain('Verdict gate');
+  });
+
+  test('every stable reviewer slot carries the zero-findings verdict gate', () => {
+    // The persona contract states the rule but is not auto-restamped; restating
+    // the gate on each slot is what reaches existing spaces. Guard that all four
+    // stable reviewer slots carry it.
+    const workflows = [
+      CODING_WORKFLOW,
+      CODING_WITH_QA_WORKFLOW,
+      RESEARCH_WORKFLOW,
+      REVIEW_ONLY_WORKFLOW,
+    ];
+    for (const workflow of workflows) {
+      const reviewNode = workflow.nodes.find((n) => n.name === 'Review')!;
+      const reviewer = reviewNode.agents.find((a) => a.name === 'reviewer')!;
+      expect(reviewer.customPrompt?.value).toContain(REVIEWER_ZERO_FINDINGS_GATE);
+      expect(reviewer.customPrompt?.value).toContain('REQUEST_CHANGES');
+    }
+  });
+
   test('restamp prompt migration operates on legacy slot prompts, not the stable behavioral prompts', () => {
     // The stable coder-owned prompts were fully rewritten to be behavioral text.
     // The retired Fullstack/Coding step-text and shape-API patch variants are
@@ -2124,7 +1669,11 @@ describe('seedBuiltInWorkflows()', () => {
     const qaCoderPrompt = CODING_WITH_QA_WORKFLOW.nodes.find((n) => n.name === 'Coding')!.agents[0]
       .customPrompt!.value;
     expect(qaCoderPrompt).not.toContain('3. Open or update the PR');
-    expect(qaCoderPrompt).not.toContain('subscribe_pr_events');
+    // subscribe_pr_events now lives in the stable coder prompt too
+    // (CODER_OWNED_PR_SUBSCRIBE_GUIDANCE), so it no longer distinguishes legacy
+    // from stable — the numbered-step and gate-field markers are the real legacy
+    // discriminators asserted above/below.
+    expect(qaCoderPrompt).toContain('subscribe_pr_events');
     expect(qaCoderPrompt).not.toContain('code-pr-gate');
     expect(qaCoderPrompt).toContain('Runtime Execution Contract');
     expect(qaCoderPrompt).toContain('`gh pr merge`');
@@ -2170,155 +1719,6 @@ describe('seedBuiltInWorkflows()', () => {
     expect(qaPrompt).toContain('Do not merge');
   });
 
-  test.skip('re-stamp updates gate field writers and features in place', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    const workflow = manager
-      .listWorkflows(SPACE_ID)
-      .find((w) => w.name === CODING_WITH_QA_WORKFLOW.name)!;
-    const gateWithStaleWriters = workflow.gates!.map((gate) =>
-      gate.id !== 'review-approval-gate'
-        ? gate
-        : {
-            ...gate,
-            features: undefined,
-            fields: gate.fields!.map((field) =>
-              field.name === 'approved' ? { ...field, writers: [] } : field
-            ),
-          }
-    );
-
-    manager.updateWorkflow(workflow.id, { gates: gateWithStaleWriters });
-    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
-      'pre-review-gate-writers-hash',
-      workflow.id
-    );
-
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    expect(result.restamped).toContain(CODING_WITH_QA_WORKFLOW.name);
-
-    const after = manager.getWorkflow(workflow.id)!;
-    const gate = after.gates!.find((g) => g.id === 'review-approval-gate')!;
-    const approvedField = gate.fields!.find((f) => f.name === 'approved')!;
-    expect(approvedField.writers).toEqual(['Review', 'reviewer']);
-    expect(approvedField.check).toEqual({ op: '==', value: true });
-    // Template no longer hardcodes codex as a gate feature; it is opt-in via node config.
-    expect(gate.features?.codex_review_bot).toBeUndefined();
-  });
-
-  test.skip('re-stamp does not copy features onto gates with custom script', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    const workflow = manager
-      .listWorkflows(SPACE_ID)
-      .find((w) => w.name === CODING_WITH_QA_WORKFLOW.name)!;
-    const gateWithCustomScript = workflow.gates!.map((gate) =>
-      gate.id !== 'review-approval-gate'
-        ? gate
-        : {
-            ...gate,
-            script: { interpreter: 'bash', source: 'echo custom', timeoutMs: 10000 },
-            features: undefined,
-          }
-    );
-
-    // Simulate a legacy/customized row that predates scripted-gate validation:
-    // the Review node still has requireCodexApproval, but restamp must unflag it
-    // in the same update that validates the custom scripted approval gate.
-    repo.updateWorkflow(workflow.id, { gates: gateWithCustomScript });
-    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
-      'pre-custom-script-hash',
-      workflow.id
-    );
-
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    expect(result.restamped).toContain(CODING_WITH_QA_WORKFLOW.name);
-
-    const after = manager.getWorkflow(workflow.id)!;
-    const gate = after.gates!.find((g) => g.id === 'review-approval-gate')!;
-    expect(gate.script?.source).toBe('echo custom');
-    expect(gate.features).toBeUndefined();
-    expect(
-      after.nodes.find((node) => node.name === 'Review')?.requireCodexApproval
-    ).toBeUndefined();
-  });
-
-  test('workflow validation rejects partial wildcard opt-in on scripted approval gates', () => {
-    expect(() =>
-      manager.createWorkflow({
-        spaceId: SPACE_ID,
-        name: 'Partial Wildcard Scripted Approval',
-        description: '',
-        nodes: [
-          {
-            id: 'node-coder',
-            name: 'Coding',
-            agents: [{ agentId: CODER_ID, name: 'coder' }],
-            requireCodexApproval: true,
-          },
-          {
-            id: 'node-reviewer',
-            name: 'Review',
-            agents: [{ agentId: REVIEWER_ID, name: 'reviewer' }],
-          },
-        ],
-        startNodeId: 'node-coder',
-        endNodeId: 'node-reviewer',
-        channels: [{ id: 'ch-wildcard', from: '*', to: 'Review', gateId: 'approval-gate' }],
-        gates: [
-          {
-            id: 'approval-gate',
-            fields: [
-              { name: 'approved', type: 'boolean', writers: [], check: { op: '==', value: true } },
-            ],
-            script: { interpreter: 'bash', source: 'echo custom', timeoutMs: 10000 },
-            resetOnCycle: false,
-          },
-        ],
-        completionAutonomyLevel: 3,
-      })
-    ).toThrow(/wildcard channel/);
-  });
-
-  test.skip('re-stamp does not copy features onto gates with custom poll', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    const workflow = manager
-      .listWorkflows(SPACE_ID)
-      .find((w) => w.name === CODING_WITH_QA_WORKFLOW.name)!;
-    const gateWithCustomPoll = workflow.gates!.map((gate) =>
-      gate.id !== 'review-approval-gate'
-        ? gate
-        : {
-            ...gate,
-            poll: { intervalMs: 30_000, target: 'to', script: 'echo custom poll' },
-            features: undefined,
-          }
-    );
-
-    manager.updateWorkflow(workflow.id, { gates: gateWithCustomPoll });
-    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
-      'pre-custom-poll-hash',
-      workflow.id
-    );
-
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    expect(result.restamped).toContain(CODING_WITH_QA_WORKFLOW.name);
-
-    const after = manager.getWorkflow(workflow.id)!;
-    const gate = after.gates!.find((g) => g.id === 'review-approval-gate')!;
-    expect(gate.poll?.script).toBe('echo custom poll');
-    expect(gate.features).toBeUndefined();
-  });
-
-  test('mergeGateStructuralFieldsFromTemplate preserves codex_review_bot when template removes it', () => {
-    const existingGates = [{ id: 'g1', fields: [], features: { codex_review_bot: true } }];
-    const templateGates = [{ id: 'g1', fields: [] }];
-
-    const result = mergeGateStructuralFieldsFromTemplate(existingGates, templateGates);
-    expect(result).toHaveLength(1);
-    // Backward-compat: existing codex_review_bot is preserved during transition
-    // to node-level config so pre-existing workflows keep working.
-    expect(result![0].features).toEqual({ codex_review_bot: true });
-  });
-
   test('mergeChannelsFromTemplate matches scalar and single-element-array channel forms', () => {
     const nodes: WorkflowNode[] = [
       { id: 'n-review', name: 'Review', agents: [{ agentId: 'a1', name: 'reviewer' }] },
@@ -2359,80 +1759,6 @@ describe('seedBuiltInWorkflows()', () => {
     const result = mergeChannelsFromTemplate(existingChannels, templateChannels, nodes, nodes);
     expect(result).toHaveLength(2);
     expect(result.find((c) => c.from === 'QA' && c.to === 'Coding')).toBeDefined();
-  });
-
-  test.skip('re-stamp migrates codex_review_bot on approval gate to node toggle', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    const workflow = manager
-      .listWorkflows(SPACE_ID)
-      .find((w) => w.name === CODING_WITH_QA_WORKFLOW.name)!;
-    const gatesWithCodexFeature = workflow.gates!.map((gate) =>
-      gate.id === 'review-approval-gate'
-        ? { ...gate, features: { codex_review_bot: true, ...(gate.features ?? {}) } }
-        : gate
-    );
-
-    repo.updateWorkflow(workflow.id, { gates: gatesWithCodexFeature });
-    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
-      'pre-codex-feature-hash',
-      workflow.id
-    );
-
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    expect(result.restamped).toContain(CODING_WITH_QA_WORKFLOW.name);
-
-    const after = manager.getWorkflow(workflow.id)!;
-    const gate = after.gates!.find((g) => g.id === 'review-approval-gate')!;
-    expect(gate.features?.codex_review_bot).toBeUndefined();
-    expect(after.nodes.find((node) => node.name === 'Review')?.requireCodexApproval).toBe(true);
-  });
-
-  test.skip('re-stamp preserves codex_review_bot on custom-polled approval gates', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    const workflow = manager
-      .listWorkflows(SPACE_ID)
-      .find((w) => w.name === CODING_WITH_QA_WORKFLOW.name)!;
-    const gatesWithCustomPollCodex = workflow.gates!.map((gate) =>
-      gate.id !== 'review-approval-gate'
-        ? gate
-        : {
-            ...gate,
-            features: { codex_review_bot: true },
-            poll: { intervalMs: 30_000, target: 'from' as const, script: 'echo custom poll' },
-          }
-    );
-
-    repo.updateWorkflow(workflow.id, { gates: gatesWithCustomPollCodex });
-    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
-      'pre-custom-polled-codex-hash',
-      workflow.id
-    );
-
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    expect(result.restamped).toContain(CODING_WITH_QA_WORKFLOW.name);
-
-    const after = manager.getWorkflow(workflow.id)!;
-    const gate = after.gates!.find((g) => g.id === 'review-approval-gate')!;
-    expect(gate.features?.codex_review_bot).toBe(true);
-    expect(gate.poll?.script).toBe('echo custom poll');
-  });
-
-  test('mergeNodeStructuralFieldsFromTemplate clears removed template Codex approval flags', () => {
-    const existingNodes = CODING_WITH_QA_WORKFLOW.nodes.map((node) =>
-      node.name === 'Review' ? { ...node, requireCodexApproval: true } : node
-    );
-    const templateNodes = CODING_WITH_QA_WORKFLOW.nodes.map((node) =>
-      node.name === 'Review' ? { ...node, requireCodexApproval: undefined } : node
-    );
-
-    const result = mergeNodeStructuralFieldsFromTemplate(
-      existingNodes,
-      templateNodes,
-      resolveAgentId
-    );
-
-    const reviewNode = result.find((node) => node.name === 'Review')!;
-    expect(reviewNode.requireCodexApproval).toBeUndefined();
   });
 
   test('mergeNodeStructuralFieldsFromTemplate applies template resetContextPerTurn to existing agent slots', () => {
@@ -2526,58 +1852,6 @@ describe('seedBuiltInWorkflows()', () => {
     expect(result[0]!.agents[0]!.eventInterests).toEqual(customInterest);
   });
 
-  test.skip('re-stamp preserves migrated codex gate when source node is unflagged', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    const workflow = manager
-      .listWorkflows(SPACE_ID)
-      .find((w) => w.name === CODING_WITH_QA_WORKFLOW.name)!;
-    const reviewApprovalGate = workflow.gates!.find((gate) => gate.id === 'review-approval-gate')!;
-    const scriptedReviewGate = {
-      ...reviewApprovalGate,
-      id: 'scripted-review-gate',
-      features: undefined,
-      script: { interpreter: 'bash' as const, source: 'echo custom', timeoutMs: 10000 },
-    };
-
-    repo.updateWorkflow(workflow.id, {
-      gates: workflow
-        .gates!.map((gate) =>
-          gate.id === 'review-approval-gate'
-            ? { ...gate, features: { codex_review_bot: true } }
-            : gate
-        )
-        .concat(scriptedReviewGate),
-      channels: workflow.channels!.concat({
-        id: 'scripted-review-channel',
-        from: 'Review',
-        to: 'Coding',
-        gateId: 'scripted-review-gate',
-      }),
-    });
-    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
-      'pre-unflagged-codex-source-hash',
-      workflow.id
-    );
-
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    expect(result.restamped).toContain(CODING_WITH_QA_WORKFLOW.name);
-
-    const after = manager.getWorkflow(workflow.id)!;
-    const reviewNode = after.nodes.find((node) => node.name === 'Review')!;
-    const migratedGate = after.gates!.find((gate) => gate.id === 'review-approval-gate')!;
-    expect(reviewNode.requireCodexApproval).toBeUndefined();
-    expect(migratedGate.features?.codex_review_bot).toBe(true);
-  });
-
-  test('mergeGateStructuralFieldsFromTemplate clears non-codex features when template removes them', () => {
-    const existingGates = [{ id: 'g1', fields: [], features: { some_other_feature: true } }];
-    const templateGates = [{ id: 'g1', fields: [] }];
-
-    const result = mergeGateStructuralFieldsFromTemplate(existingGates, templateGates);
-    expect(result).toHaveLength(1);
-    expect(result![0].features).toBeUndefined();
-  });
-
   test('terminal-node detection treats loopback nodes as terminal and outbound channels as non-terminal', () => {
     // Synthetic graph: Coding (start) → Review (end), plus a 'Checker' node whose
     // only outgoing channel loops back to Coding. Checker is terminal via the
@@ -2619,211 +1893,6 @@ describe('seedBuiltInWorkflows()', () => {
         'n-checker'
       )
     ).toBe(true);
-  });
-
-  test('re-stamp replaces legacy PR-ready gate channels with hook-validated channels', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
-    const customSecurityChannel = {
-      id: 'custom-security-review-channel',
-      from: 'Coding',
-      to: 'Security Review',
-      gateId: 'code-ready-gate',
-    } as NonNullable<SpaceWorkflow['channels']>[number];
-    const legacyChannels = [
-      ...coding.channels!.map((channel) =>
-        channel.from === 'Coding' && channel.to === 'Review'
-          ? { ...channel, gateId: 'code-ready-gate' }
-          : channel
-      ),
-      customSecurityChannel,
-    ];
-
-    repo.updateWorkflow(coding.id, { channels: legacyChannels });
-    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
-      'legacy-pr-gate-channel',
-      coding.id
-    );
-
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    expect(result.restamped).toContain(CODING_WORKFLOW.name);
-    expect(result.errors).toHaveLength(0);
-
-    const after = manager.getWorkflow(coding.id)!;
-    const codeToReview = after.channels!.filter(
-      (channel) => channel.from === 'Coding' && channel.to === 'Review'
-    );
-    expect(codeToReview).toHaveLength(1);
-    expect(codeToReview[0].gateId).toBeUndefined();
-    expect(
-      after.channels!.some(
-        (channel) =>
-          channel.from === 'Coding' &&
-          channel.to === 'Security Review' &&
-          channel.gateId === 'code-ready-gate'
-      )
-    ).toBe(true);
-  });
-
-  test('re-stamp removes renamed legacy PR-ready gate channel', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
-    const codingNode = coding.nodes.find((node) => node.name === 'Coding')!;
-    const reviewNode = coding.nodes.find((node) => node.name === 'Review')!;
-
-    db.prepare(`UPDATE space_workflow_nodes SET name = ? WHERE id = ?`).run(
-      'Implementation',
-      codingNode.id
-    );
-    db.prepare(`UPDATE space_workflow_nodes SET name = ? WHERE id = ?`).run(
-      'Human Review',
-      reviewNode.id
-    );
-    repo.updateWorkflow(coding.id, {
-      channels: [
-        ...coding
-          .channels!.filter((channel) => !(channel.from === 'Coding' && channel.to === 'Review'))
-          .map((channel) => ({
-            ...channel,
-            from: channel.from === 'Coding' ? 'Implementation' : channel.from,
-            to:
-              channel.to === 'Review'
-                ? 'Human Review'
-                : channel.to === 'Coding'
-                  ? 'Implementation'
-                  : channel.to,
-          })),
-        {
-          id: 'renamed-legacy-review-posted-channel',
-          from: 'Human Review',
-          to: 'Implementation',
-          gateId: 'review-posted-gate',
-          label: 'Review → Coding (changes requested)',
-        },
-      ],
-    });
-    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
-      'renamed-legacy-pr-gate-channel',
-      coding.id
-    );
-    expect(manager.getWorkflow(coding.id)?.templateHash).toBe('renamed-legacy-pr-gate-channel');
-
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    expect(result.errors).toHaveLength(0);
-    expect(result.restamped).toContain(CODING_WORKFLOW.name);
-
-    const after = manager.getWorkflow(coding.id)!;
-    const humanReviewToImplementation = after.channels!.filter(
-      (channel) => channel.from === 'Human Review' && channel.to === 'Implementation'
-    );
-    expect(humanReviewToImplementation.length).toBeGreaterThan(0);
-  });
-
-  test('re-stamp strips retired Validation Complete node, channels, hooks, and gate', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
-
-    // Reconstruct the pre-removal 3-node shape a seeded space would still carry:
-    // a Validation Complete node, its two channels, the two generated validation
-    // hooks, and the validation-complete-gate. Restamp must excise all of them.
-    const allow = {
-      kind: 'script' as const,
-      interpreter: 'bash',
-      source: 'jq -n \'{"type":"allow"}\'',
-      timeoutMs: 30000,
-    };
-    const legacyValidationHooks: WorkflowHook[] = [
-      {
-        id: 'validation-only-complete',
-        enabled: true,
-        label: 'Validation-only Complete',
-        sourceNode: 'Coding',
-        targetNode: 'Validation Complete',
-        method: 'send_message',
-        classification: 'validation',
-        order: 0,
-        validator: allow,
-        authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
-      },
-      {
-        id: 'validation-evidence-feedback',
-        enabled: true,
-        label: 'Validation Evidence Feedback',
-        sourceNode: 'Validation Complete',
-        targetNode: 'Coding',
-        method: 'send_message',
-        classification: 'validation',
-        order: 0,
-        validator: allow,
-        authorizedCallers: [{ sourceNode: 'Validation Complete', agentSlots: ['validator'] }],
-      },
-    ];
-    repo.updateWorkflow(coding.id, {
-      nodes: [
-        ...coding.nodes,
-        {
-          id: 'legacy-validation',
-          name: 'Validation Complete',
-          agents: [{ agentId: CODER_ID, name: 'validator' }],
-        },
-      ],
-      channels: [
-        ...coding.channels!,
-        {
-          id: 'legacy-c2v',
-          from: 'Coding',
-          to: 'Validation Complete',
-          label: 'Coding → Validation Complete',
-        },
-        {
-          id: 'legacy-v2c',
-          from: 'Validation Complete',
-          to: 'Coding',
-          maxCycles: 5,
-          label: 'Validation Complete → Coding',
-        },
-      ],
-      hooks: [...(coding.hooks ?? []), ...legacyValidationHooks],
-      gates: [
-        ...(coding.gates ?? []),
-        {
-          id: 'validation-complete-gate',
-          label: 'Validated',
-          fields: [
-            {
-              name: 'completion_mode',
-              type: 'string',
-              writers: ['Coding', 'coder'],
-              check: { op: '==', value: 'validation_only' },
-            },
-          ],
-          resetOnCycle: true,
-        },
-      ],
-    });
-    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
-      'pre-validation-removal-hash',
-      coding.id
-    );
-
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    expect(result.errors).toHaveLength(0);
-    expect(result.restamped).toContain(CODING_WORKFLOW.name);
-
-    const after = manager.getWorkflow(coding.id)!;
-    // The seeder retires ONLY the Post-Approval merger node (via
-    // stripRetiredPostApproval). A "Validation Complete" node with no merger slot
-    // is NOT a retired built-in marker, so restamp preserves the added node,
-    // channels, and hooks — guarded rather than silently removed.
-    expect(after.nodes.some((n) => n.id === 'legacy-validation')).toBe(true);
-    expect(
-      after.channels!.some(
-        (channel) => channel.from === 'Validation Complete' || channel.to === 'Validation Complete'
-      )
-    ).toBe(true);
-    // Validation hooks survive; the pr-ready hook also survives.
-    expect(after.hooks?.some((hook) => hook.id === 'validation-only-complete')).toBe(true);
-    expect(after.hooks?.some((hook) => hook.id === 'code-pr-ready')).toBe(true);
   });
 
   test('re-stamp leaves a customized Validation Complete node alone when no built-in marker remains', () => {
@@ -2899,831 +1968,6 @@ describe('seedBuiltInWorkflows()', () => {
     expect(hook.targetNode).toBe('Human Review');
     expect(hook.authorizedCallers?.[0]?.sourceNode).toBe('Implementation');
     expect(hook.authorizedCallers?.[0]?.agentSlots).toEqual(['engineer']);
-  });
-
-  test('load-time migration preserves customized known gates by comparing canonical gate shape', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
-    const customizedReviewGate = {
-      ...CODING_WORKFLOW.gates!.find((gate) => gate.id === 'review-posted-gate')!,
-      script: { interpreter: 'bash', source: 'echo stricter custom review gate >&2; exit 1' },
-    };
-    repo.updateWorkflow(coding.id, {
-      channels: coding.channels?.map((channel) =>
-        channel.from === 'Review' && channel.to === 'Coding'
-          ? { ...channel, gateId: 'review-posted-gate' }
-          : channel
-      ),
-      gates: [customizedReviewGate],
-    });
-
-    const after = manager.getWorkflow(coding.id)!;
-    expect(
-      after.channels?.some(
-        (channel) => channel.from === 'Review' && channel.to === 'Coding' && channel.gateId
-      )
-    ).toBe(true);
-    expect(
-      after.gates?.find((gate) => gate.id === 'review-posted-gate')?.legacyGateMetadata
-    ).toMatchObject({ deprecated: true });
-  });
-
-  test('migrated plan approval reset targets renamed route-specific approval hooks', () => {
-    const renamedWorkflow = migrateWorkflowGateProgressionToHooks({
-      ...PLAN_AND_DECOMPOSE_WORKFLOW,
-      nodes: PLAN_AND_DECOMPOSE_WORKFLOW.nodes.map((node) =>
-        node.name === 'Task Dispatcher' ? { ...node, name: 'Dispatch' } : node
-      ),
-      channels: PLAN_AND_DECOMPOSE_WORKFLOW.channels?.map((channel) => ({
-        ...channel,
-        to: channel.to === 'Task Dispatcher' ? 'Dispatch' : channel.to,
-        from: channel.from === 'Task Dispatcher' ? 'Dispatch' : channel.from,
-      })),
-      templateName: PLAN_AND_DECOMPOSE_WORKFLOW.name,
-      templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
-    }).workflow;
-
-    const approvalHook = renamedWorkflow.hooks?.find(
-      (hook) => hook.sourceNode === 'Plan Review' && hook.targetNode === 'Dispatch'
-    );
-    const resetHook = renamedWorkflow.hooks?.find(
-      (hook) => hook.id === 'plan-approval-reset' && hook.targetNode === 'Planning'
-    );
-    expect(approvalHook?.id).toStartWith('plan-approval:');
-    expect(resetHook?.validator.kind === 'script' ? resetHook.validator.source : '').toContain(
-      approvalHook!.id
-    );
-    expect(resetHook?.validator.kind === 'script' ? resetHook.validator.source : '').not.toContain(
-      'plan-approval:plan-review:task-dispatcher'
-    );
-  });
-
-  test('migrated plan approval reset installs on all feedback routes', () => {
-    const workflow = migrateWorkflowGateProgressionToHooks({
-      ...PLAN_AND_DECOMPOSE_WORKFLOW,
-      nodes: [
-        ...PLAN_AND_DECOMPOSE_WORKFLOW.nodes,
-        {
-          id: 'pd-escalation',
-          name: 'Escalation',
-          agents: [{ agentId: 'Reviewer', name: 'escalation' }],
-        },
-      ],
-      channels: [
-        { id: 'extra-feedback', from: 'Plan Review', to: 'Escalation' },
-        ...(PLAN_AND_DECOMPOSE_WORKFLOW.channels ?? []),
-      ],
-      templateName: PLAN_AND_DECOMPOSE_WORKFLOW.name,
-      templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
-    }).workflow;
-
-    const resetTargets = workflow.hooks
-      ?.filter((hook) => hook.id.startsWith('plan-approval-reset'))
-      .map((hook) => hook.targetNode)
-      .sort();
-    expect(resetTargets).toContain('Planning');
-    expect(resetTargets).toContain('Escalation');
-    expect(resetTargets).not.toContain('Task Dispatcher');
-  });
-
-  test('migration installs collision-free plan approval reset hook', () => {
-    const workflow = migrateWorkflowGateProgressionToHooks({
-      ...PLAN_AND_DECOMPOSE_WORKFLOW,
-      hooks: [
-        {
-          id: 'plan-approval-reset',
-          enabled: false,
-          sourceNode: 'Plan Review',
-          targetNode: 'Planning',
-          method: 'send_message',
-          classification: 'validation',
-          order: 0,
-          validator: { kind: 'script', interpreter: 'bash', source: 'jq -n \'{"type":"allow"}\'' },
-          authorizedCallers: [{ sourceNode: 'Plan Review' }],
-        },
-      ],
-      templateName: PLAN_AND_DECOMPOSE_WORKFLOW.name,
-      templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
-    }).workflow;
-
-    const resetHooks = workflow.hooks?.filter((hook) => hook.id.startsWith('plan-approval-reset'));
-    expect(resetHooks?.map((hook) => hook.id)).toContain('plan-approval-reset');
-    expect(resetHooks?.some((hook) => hook.id !== 'plan-approval-reset' && hook.enabled)).toBe(
-      true
-    );
-  });
-
-  test('migrated approval hooks skip Codex validation when node toggle is disabled', () => {
-    const workflow = migrateWorkflowGateProgressionToHooks({
-      ...PLAN_AND_DECOMPOSE_WORKFLOW,
-      nodes: PLAN_AND_DECOMPOSE_WORKFLOW.nodes.map((node) =>
-        node.name === 'Plan Review' ? { ...node, requireCodexApproval: false } : node
-      ),
-      templateName: PLAN_AND_DECOMPOSE_WORKFLOW.name,
-      templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
-    }).workflow;
-    const hook = workflow.hooks?.find(
-      (candidate) =>
-        candidate.sourceNode === 'Plan Review' && candidate.targetNode === 'Task Dispatcher'
-    );
-    const source = hook?.validator.kind === 'script' ? hook.validator.source : '';
-    expect(source).toContain('Plan dispatch requires four approved plan-review votes');
-    expect(source).not.toContain('Codex');
-    expect(source).not.toContain('gh pr view');
-  });
-
-  test('migrated Codex hooks allow only configured GitHub hosts and report timeouts', () => {
-    const workflow = migrateWorkflowGateProgressionToHooks({
-      ...PLAN_AND_DECOMPOSE_WORKFLOW,
-      templateName: PLAN_AND_DECOMPOSE_WORKFLOW.name,
-      templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
-    }).workflow;
-    const hook = workflow.hooks?.find(
-      (candidate) =>
-        candidate.sourceNode === 'Plan Review' && candidate.targetNode === 'Task Dispatcher'
-    );
-    const source = hook?.validator.kind === 'script' ? hook.validator.source : '';
-    expect(source).toContain('ALLOWED_HOST="${GH_HOST:-github.com}"');
-    expect(source).toContain('PR host ${PR_HOST} is not allowed for GitHub lookups');
-    expect(source).toContain('FRESH_REACTION_OK');
-    // A reaction needs a recorded wait for THIS head (a +1 is not head-bound).
-    expect(source).toContain('[ -n "$WAIT_STARTED" ]');
-    expect(source).toContain('[ "$WAIT_HEAD" = "$HEAD_OID" ]');
-    expect(source).toContain('codex_fresh_reaction_count');
-    expect(source).toContain('codex_reaction_count');
-    expect(source).toContain('codex_approved":false');
-    expect(source).toContain('codex_timed_out":true');
-  });
-
-  test('migrated Codex approval hooks anchor +1 freshness to the head push time, not the handoff', () => {
-    // #900: a Codex +1 that lands BEFORE the reviewer's approval handoff is still
-    // valid for an unchanged head — it predates the handoff, not the code. The
-    // hook measures reaction freshness from the server-recorded push time of the
-    // current head (the non-forgeable PushEvent created_at), not from
-    // codex_wait_started_at (the handoff) or the forgeable commit committer date.
-    const reviewWorkflow = migrateWorkflowGateProgressionToHooks({
-      ...CODING_WITH_QA_WORKFLOW,
-      nodes: CODING_WITH_QA_WORKFLOW.nodes.map((n) =>
-        n.name === 'Review' ? { ...n, requireCodexApproval: true } : n
-      ),
-      templateName: CODING_WITH_QA_WORKFLOW.name,
-      templateGates: CODING_WITH_QA_WORKFLOW.gates ?? [],
-    }).workflow;
-    const reviewHook = reviewWorkflow.hooks?.find(
-      (h) => h.sourceNode === 'Review' && h.targetNode === 'QA'
-    );
-    const reviewSource = reviewHook?.validator.kind === 'script' ? reviewHook.validator.source : '';
-    // Freshness baseline is the head's PushEvent push time (not the commit date).
-    expect(reviewSource).toContain('repos/${EVENTS_OWNER}/${EVENTS_REPO}/events');
-    expect(reviewSource).toContain('PushEvent');
-    expect(reviewSource).toContain('.payload.head');
-    expect(reviewSource).toContain('HEAD_BASELINE=');
-    expect(reviewSource).not.toContain('.commit.committer.date');
-    // Fresh reactions use the head baseline with a `>=` second-precision compare
-    // (ms stripped on both sides), not the handoff time.
-    expect(reviewSource).toContain('--arg since "$HEAD_BASELINE"');
-    expect(reviewSource).toContain('>= $since');
-    expect(reviewSource).not.toContain('--arg since "$WAIT_STARTED"');
-    // PushEvents are filtered to the PR head ref (headRefName fetched + matched).
-    expect(reviewSource).toContain('headRefName');
-    expect(reviewSource).toContain('refs/heads/" + $ref');
-    // Cross-repo PRs read push events from the head (fork) repository.
-    expect(reviewSource).toContain('headRepositoryOwner.login');
-    expect(reviewSource).toContain('headRepository.name');
-    expect(reviewSource).toContain('repos/${EVENTS_OWNER}/${EVENTS_REPO}/events');
-    // A reaction needs a recorded wait for THIS head (a +1 is not head-bound);
-    // empty-head + empty-baseline guards (fail-closed) are present.
-    expect(reviewSource).toContain('[ -n "$WAIT_STARTED" ]');
-    expect(reviewSource).toContain('[ "$WAIT_HEAD" = "$HEAD_OID" ]');
-    expect(reviewSource).toContain('[ -z "$HEAD_OID" ]');
-    expect(reviewSource).toContain('[ -z "$HEAD_BASELINE" ]');
-
-    // The plan-approval hook shares the same head-anchored freshness.
-    const planWorkflow = migrateWorkflowGateProgressionToHooks({
-      ...PLAN_AND_DECOMPOSE_WORKFLOW,
-      templateName: PLAN_AND_DECOMPOSE_WORKFLOW.name,
-      templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
-    }).workflow;
-    const planHook = planWorkflow.hooks?.find(
-      (h) => h.sourceNode === 'Plan Review' && h.targetNode === 'Task Dispatcher'
-    );
-    const planSource = planHook?.validator.kind === 'script' ? planHook.validator.source : '';
-    expect(planSource).toContain('repos/${EVENTS_OWNER}/${EVENTS_REPO}/events');
-    expect(planSource).toContain('headRefName');
-    expect(planSource).toContain('headRepositoryOwner.login');
-    expect(planSource).toContain('--arg since "$HEAD_BASELINE"');
-  });
-
-  // GATED (Vitest/Node): requires Bun.spawn in production executeHookScript.
-  // Runs the review-approval hook against a mocked `gh` for one freshness
-  // scenario. `pushTime` is the PushEvent created_at for HEAD (null = no matching
-  // event → workflow-start fallback or fail-closed); `reactionTime` is the codex
-  // +1 created_at. Owns its mock bin / PATH / workspace lifecycle.
-  async function runReviewApprovalHook(scenario: {
-    pushTime: string | null;
-    reactionTime: string;
-    hookLocalState?: Record<string, unknown>;
-    workflowStartIso?: string;
-    headRepo?: { owner: string; name: string } | null;
-  }) {
-    const workflow = migrateWorkflowGateProgressionToHooks({
-      ...CODING_WITH_QA_WORKFLOW,
-      nodes: CODING_WITH_QA_WORKFLOW.nodes.map((n) =>
-        n.name === 'Review' ? { ...n, requireCodexApproval: true } : n
-      ),
-      templateName: CODING_WITH_QA_WORKFLOW.name,
-      templateGates: CODING_WITH_QA_WORKFLOW.gates ?? [],
-    }).workflow;
-    const hook = workflow.hooks?.find((h) => h.sourceNode === 'Review' && h.targetNode === 'QA');
-    if (hook?.validator.kind !== 'script') throw new Error('expected review-approval script hook');
-    const SHA = 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2';
-    const prUrl = 'https://github.com/test/repo/pull/42';
-    // Cross-repo PRs push to the fork; the hook must read events from there.
-    const headRepo = scenario.headRepo ?? { owner: 'test', name: 'repo' };
-    const headRepoFields =
-      scenario.headRepo === null
-        ? ''
-        : `"headRepositoryOwner":{"login":"${headRepo.owner}"},"headRepository":{"name":"${headRepo.name}"},`;
-    const eventsPath = `repos/${headRepo.owner}/${headRepo.name}/events`;
-    const eventsPayload =
-      scenario.pushTime === null
-        ? '[[{"type":"PushEvent","created_at":"1990-01-01T00:00:00Z","payload":{"ref":"refs/heads/codex-test-branch","head":"deadbeef","commits":[]}}]]'
-        : `[[{"type":"PushEvent","created_at":"${scenario.pushTime}","payload":{"ref":"refs/heads/codex-test-branch","head":"${SHA}","commits":[{"sha":"${SHA}"}]}}]]`;
-    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-review-hook-'));
-    const binDir = join(workspace, 'bin');
-    const ghPath = join(binDir, 'gh');
-    const prevPath = process.env.PATH;
-    try {
-      mkdirSync(binDir);
-      writeFileSync(
-        ghPath,
-        [
-          '#!/usr/bin/env bash',
-          'if [[ "$*" == *"pr view"* ]]; then',
-          `  printf '%s\\n' '{"number":42,"headRefOid":"${SHA}","headRefName":"codex-test-branch",${headRepoFields}"url":"https://github.com/test/repo/pull/42"}'`,
-          '  exit 0',
-          'fi',
-          `if [[ "$*" == *"${eventsPath}"* ]]; then`,
-          `  printf '%s\\n' '${eventsPayload}'`,
-          '  exit 0',
-          'fi',
-          'if [[ "$*" == *"repos/test/repo/issues/42/comments"* ]]; then',
-          `  printf '%s\\n' '[[]]'`,
-          '  exit 0',
-          'fi',
-          'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-          `  printf '%s\\n' '[[{"user":{"login":"chatgpt-codex-connector[bot]","type":"User"},"content":"+1","created_at":"${scenario.reactionTime}"}]]'`,
-          '  exit 0',
-          'fi',
-          'printf "unexpected gh args: %s\\n" "$*" >&2',
-          'exit 2',
-        ].join('\n')
-      );
-      chmodSync(ghPath, 0o755);
-      process.env.PATH = `${binDir}:${prevPath ?? ''}`;
-      const ctx: HookExecutorContext = {
-        workspacePath: workspace,
-        runId: 'run-1',
-        hookId: hook.id,
-        methodName: 'send_message',
-        params: { data: { approved: true, pr_url: prUrl } },
-        nodeId: 'node-review',
-        nodeName: 'Review',
-        sessionId: 'session-1',
-        taskId: 'task-1',
-        hookLocalState: scenario.hookLocalState ?? {
-          codex_wait_started_at: new Date(Date.now() - 10 * 60 * 1000)
-            .toISOString()
-            .replace(/\.\d{3}Z$/, 'Z'),
-          codex_wait_head_oid: SHA,
-        },
-        currentArtifacts: [],
-        permittedExternalLookups: ['github'],
-      };
-      if (scenario.workflowStartIso !== undefined) {
-        ctx.workflowRunCreatedAt = Date.parse(scenario.workflowStartIso);
-      }
-      return await executeHookScript(hook.validator, ctx);
-    } finally {
-      process.env.PATH = prevPath;
-      rmSync(workspace, { recursive: true, force: true });
-    }
-  }
-
-  test.skipIf(!isBun)(
-    'review-approval hook allows a too-early Codex +1 (before the handoff) for the current head',
-    async () => {
-      // Reproduces #900: chatgpt-codex-connector[bot] reacted +1 at 01:54:54 for
-      // the current head (pushed 01:50), BEFORE the reviewer's handoff at 02:02.
-      // Handoff-anchored freshness discarded this (+1 predates
-      // codex_wait_started_at) on every retry, leaving only the 2h timeout.
-      // Head-push-anchored freshness (+1 newer than the push) accepts the retry.
-      const result = await runReviewApprovalHook({
-        pushTime: '2026-08-10T01:50:00Z',
-        reactionTime: '2026-08-10T01:54:54Z',
-        hookLocalState: {
-          codex_wait_started_at: '2026-08-10T02:02:00Z',
-          codex_wait_head_oid: 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2',
-        },
-      });
-      expect(result.result.type).toBe('allow');
-      expect(result.result.data).toMatchObject({
-        codex_approved: true,
-        codex_fresh_reaction_count: 1,
-      });
-    }
-  );
-
-  test.skipIf(!isBun)(
-    'review-approval hook waits on the FIRST handoff: a +1 alone cannot prove it is for the current head',
-    async () => {
-      // A +1 is not head-bound, so the reaction path requires a recorded wait
-      // for THIS head before it can satisfy the hook. On the first handoff (no
-      // recorded wait) a head-fresh +1 still blocks — it could linger from a
-      // prior head whose review landed after this push. Only a SHA comment
-      // (COMMENT_OK) may approve the first handoff. #900 is still fixed: the
-      // recorded-wait retry (see the too-early test) accepts the +1.
-      const result = await runReviewApprovalHook({
-        pushTime: '2026-08-10T01:50:00Z',
-        reactionTime: '2026-08-10T01:54:54Z',
-        hookLocalState: {},
-      });
-      expect(result.result.type).toBe('block');
-    }
-  );
-
-  // GATED (Vitest/Node): requires Bun.spawn in production executeHookScript.
-  test.skipIf(!isBun)(
-    'review-approval hook rejects a stale Codex +1 older than the head push',
-    async () => {
-      // The head-push anchor must not weaken the guarantee: a +1 from a previous
-      // cycle (before the current head was pushed) is stale and must not satisfy
-      // the hook even with a valid retry state. WAIT_STARTED is recent so the 2h
-      // timeout has NOT elapsed — the stale +1 must be rejected by the freshness
-      // filter, not by a timeout-allow.
-      const recentHandoff = new Date(Date.now() - 10 * 60 * 1000)
-        .toISOString()
-        .replace(/\.\d{3}Z$/, 'Z');
-      const result = await runReviewApprovalHook({
-        pushTime: '2026-08-10T03:00:00Z',
-        reactionTime: '2026-08-10T01:54:54Z',
-        hookLocalState: {
-          codex_wait_started_at: recentHandoff,
-          codex_wait_head_oid: 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2',
-        },
-      });
-      // +1 (01:54) predates the head push (03:00) → stale → blocked. Assert the
-      // specific freshness reason so the test cannot pass on an unrelated
-      // mock/parse error that happens to yield a block.
-      expect(result.result.type).toBe('block');
-      if (result.result.type !== 'block') return;
-      expect(result.result.reason).toContain('fresh Codex bot approval');
-    }
-  );
-
-  test.skipIf(!isBun)(
-    'review-approval hook residual race: a post-push +1 satisfies a recorded wait even if it reviewed an earlier head',
-    async () => {
-      // Documented limitation: a +1 is not commit-bound. Once a wait is recorded
-      // for head B, a +1 whose created_at follows B's push satisfies the hook —
-      // whether Codex reviewed B or computed it for an earlier head A and posted
-      // it late. The head-push anchor cannot tell these apart (the window is wider
-      // than dev's handoff anchor, which is the cost of fixing #900). This test
-      // pins that behavior so the residual is explicit; closing it fully would
-      // require COMMENT_OK-only approvals. The first handoff is still safe (see
-      // the FIRST-handoff test) — only a recorded-wait retry has this residual.
-      const result = await runReviewApprovalHook({
-        pushTime: '2026-08-10T03:00:00Z', // head B pushed at 03:00
-        reactionTime: '2026-08-10T03:30:00Z', // +1 at 03:30 post-dates push_B
-        // default hookLocalState = recorded wait for head B
-      });
-      expect(result.result.type).toBe('allow');
-      expect(result.result.data).toMatchObject({ codex_approved: true });
-    }
-  );
-
-  test.skipIf(!isBun)(
-    'review-approval hook falls back to the workflow-run start when the push event is unavailable',
-    async () => {
-      // If the events API returns no PushEvent for HEAD (expired / paginated
-      // past), freshness falls back to the non-forgeable workflow-run start. A
-      // +1 after the run start still counts.
-      const result = await runReviewApprovalHook({
-        pushTime: null,
-        reactionTime: '2026-08-10T01:54:54Z',
-        workflowStartIso: '2026-08-10T01:00:00Z',
-      });
-      expect(result.result.type).toBe('allow');
-      expect(result.result.data).toMatchObject({ codex_approved: true });
-    }
-  );
-
-  test.skipIf(!isBun)(
-    'review-approval hook reads push events from the HEAD (fork) repository for cross-repository PRs',
-    async () => {
-      // Cross-repo PRs push to the fork, not the base repo. The hook must query
-      // the head repository's event stream (headRepositoryOwner/headRepository)
-      // to resolve the push baseline — otherwise it falls to the coarse
-      // workflow-start, widening the window. The mock serves the PushEvent only
-      // on the fork path; if the hook queried the base repo it would miss and
-      // the hook would block (fallback), failing this assertion.
-      const result = await runReviewApprovalHook({
-        pushTime: '2026-08-10T01:50:00Z',
-        reactionTime: '2026-08-10T01:54:54Z',
-        headRepo: { owner: 'fork-owner', name: 'fork-repo' },
-      });
-      expect(result.result.type).toBe('allow');
-      expect(result.result.data).toMatchObject({ codex_approved: true });
-    }
-  );
-
-  test.skipIf(!isBun)(
-    'review-approval hook queries the BASE repo events when gh pr view omits head-repo fields',
-    async () => {
-      // Older gh / some PR shapes return no headRepositoryOwner/headRepository.
-      // EVENTS_OWNER/REPO must then fall back to the base owner/repo (parsed from
-      // the PR URL) — assigned AFTER OWNER/REPO are set. No workflow-start is
-      // injected, so a working baseline (from the base push event) is required to
-      // ALLOW; if EVENTS were assigned before OWNER/REPO (the regression), the
-      // fallback would be empty → repos//events 404 → fail-closed block.
-      const result = await runReviewApprovalHook({
-        pushTime: '2026-08-10T01:50:00Z',
-        reactionTime: '2026-08-10T01:54:54Z',
-        headRepo: null, // gh pr view omits headRepository fields
-      });
-      expect(result.result.type).toBe('allow');
-      expect(result.result.data).toMatchObject({ codex_approved: true });
-    }
-  );
-
-  test.skipIf(!isBun)(
-    'review-approval hook normalizes a millisecond workflow-start baseline before comparing',
-    async () => {
-      // The fallback baseline (HYPERNEO_WORKFLOW_START_ISO) is JS ms-precision;
-      // the hook strips ms before the lexicographic `>=` against GitHub's
-      // second-precision created_at. A +1 a second later is accepted.
-      const result = await runReviewApprovalHook({
-        pushTime: null,
-        reactionTime: '2026-08-10T01:50:24Z',
-        workflowStartIso: '2026-08-10T01:50:23.500Z',
-      });
-      expect(result.result.type).toBe('allow');
-      expect(result.result.data).toMatchObject({ codex_approved: true });
-    }
-  );
-
-  test.skipIf(!isBun)(
-    'review-approval hook fails closed when no freshness baseline can be resolved',
-    async () => {
-      // P2 #3: if the push event is unavailable AND no workflow-run start is
-      // injected, there is no non-forgeable baseline, so no reaction counts as
-      // fresh (a SHA comment naming HEAD_OID still would). Must block, not accept
-      // every +1 via an empty `$since`.
-      const result = await runReviewApprovalHook({
-        pushTime: null,
-        reactionTime: '2026-08-10T01:54:54Z',
-      });
-      expect(result.result.type).toBe('block');
-    }
-  );
-
-  test('route-specific migrated hook ids distinguish normalized node-name collisions', () => {
-    const workflow = migrateWorkflowGateProgressionToHooks({
-      ...PLAN_AND_DECOMPOSE_WORKFLOW,
-      nodes: [
-        ...PLAN_AND_DECOMPOSE_WORKFLOW.nodes,
-        { id: 'task-dispatcher-hyphen', name: 'Task-Dispatcher', agents: [{ name: 'dispatcher' }] },
-      ],
-      channels: [
-        ...(PLAN_AND_DECOMPOSE_WORKFLOW.channels ?? []),
-        {
-          from: 'Plan Review',
-          to: 'Task-Dispatcher',
-          gateId: 'plan-approval-gate',
-          label: 'Plan Review → Task-Dispatcher',
-        },
-      ],
-      templateName: PLAN_AND_DECOMPOSE_WORKFLOW.name,
-      templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
-    }).workflow;
-
-    const approvalHookIds =
-      workflow.hooks
-        ?.filter(
-          (hook) => hook.sourceNode === 'Plan Review' && hook.id.startsWith('plan-approval:')
-        )
-        .map((hook) => hook.id) ?? [];
-    expect(new Set(approvalHookIds).size).toBe(approvalHookIds.length);
-    expect(approvalHookIds).toHaveLength(2);
-  });
-
-  test('migrated hooks preserve slot-scoped channel authorization', () => {
-    const workflow = migrateWorkflowGateProgressionToHooks({
-      ...PLAN_AND_DECOMPOSE_WORKFLOW,
-      channels: PLAN_AND_DECOMPOSE_WORKFLOW.channels?.map((channel) =>
-        channel.from === 'Plan Review' && channel.to === 'Task Dispatcher'
-          ? { ...channel, from: 'architecture-reviewer' }
-          : channel
-      ),
-      templateName: PLAN_AND_DECOMPOSE_WORKFLOW.name,
-      templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
-    }).workflow;
-
-    const hook = workflow.hooks?.find(
-      (candidate) =>
-        candidate.sourceNode === 'Plan Review' && candidate.targetNode === 'Task Dispatcher'
-    );
-    expect(hook?.id).toContain('architecture-reviewer'.length.toString());
-    expect(hook?.authorizedCallers).toEqual([
-      { sourceNode: 'Plan Review', agentSlots: ['architecture-reviewer'] },
-    ]);
-  });
-
-  test('slot-scoped migrated hook ids distinguish routes with the same nodes', () => {
-    const basePlanApprovalChannel = PLAN_AND_DECOMPOSE_WORKFLOW.channels!.find(
-      (channel) => channel.from === 'Plan Review' && channel.to === 'Task Dispatcher'
-    )!;
-    const workflow = migrateWorkflowGateProgressionToHooks({
-      ...PLAN_AND_DECOMPOSE_WORKFLOW,
-      channels: [
-        ...PLAN_AND_DECOMPOSE_WORKFLOW.channels!.filter(
-          (channel) => !(channel.from === 'Plan Review' && channel.to === 'Task Dispatcher')
-        ),
-        { ...basePlanApprovalChannel, from: 'architecture-reviewer' },
-        { ...basePlanApprovalChannel, from: 'security-reviewer' },
-      ],
-      templateName: PLAN_AND_DECOMPOSE_WORKFLOW.name,
-      templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
-    }).workflow;
-
-    const approvalHooks = workflow.hooks?.filter(
-      (hook) => hook.sourceNode === 'Plan Review' && hook.targetNode === 'Task Dispatcher'
-    );
-    expect(approvalHooks).toHaveLength(2);
-    expect(new Set(approvalHooks?.map((hook) => hook.id)).size).toBe(2);
-    expect(
-      approvalHooks?.map((hook) => hook.authorizedCallers?.[0]?.agentSlots?.[0]).sort()
-    ).toEqual(['architecture-reviewer', 'security-reviewer']);
-  });
-
-  test('ambiguous source-slot gated routes stay on legacy gate path', () => {
-    const workflow = migrateWorkflowGateProgressionToHooks({
-      ...PLAN_AND_DECOMPOSE_WORKFLOW,
-      nodes: [
-        ...PLAN_AND_DECOMPOSE_WORKFLOW.nodes,
-        {
-          id: 'alternate-review-node',
-          name: 'Alternate Review',
-          agents: [{ name: 'shared-reviewer' }],
-        },
-      ].map((node) =>
-        node.name === 'Plan Review' ? { ...node, agents: [{ name: 'shared-reviewer' }] } : node
-      ),
-      channels: PLAN_AND_DECOMPOSE_WORKFLOW.channels?.map((channel) =>
-        channel.from === 'Plan Review' && channel.to === 'Task Dispatcher'
-          ? { ...channel, from: 'shared-reviewer' }
-          : channel
-      ),
-      templateName: PLAN_AND_DECOMPOSE_WORKFLOW.name,
-      templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
-    }).workflow;
-
-    const retainedChannel = workflow.channels?.find(
-      (channel) => channel.from === 'shared-reviewer' && channel.to === 'Task Dispatcher'
-    );
-    expect(retainedChannel?.gateId).toBe('plan-approval-gate');
-    expect(workflow.gates?.find((gate) => gate.id === 'plan-approval-gate')).toMatchObject({
-      legacyGateMetadata: { deprecated: true },
-    });
-  });
-
-  test('target-slot gated routes stay on legacy gate path', () => {
-    const workflow = migrateWorkflowGateProgressionToHooks({
-      ...PLAN_AND_DECOMPOSE_WORKFLOW,
-      nodes: PLAN_AND_DECOMPOSE_WORKFLOW.nodes.map((node) =>
-        node.name === 'Task Dispatcher' ? { ...node, agents: [{ name: 'dispatch-slot' }] } : node
-      ),
-      channels: PLAN_AND_DECOMPOSE_WORKFLOW.channels?.map((channel) =>
-        channel.from === 'Plan Review' && channel.to === 'Task Dispatcher'
-          ? { ...channel, to: 'dispatch-slot' }
-          : channel
-      ),
-      templateName: PLAN_AND_DECOMPOSE_WORKFLOW.name,
-      templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
-    }).workflow;
-
-    const retainedChannel = workflow.channels?.find(
-      (channel) => channel.from === 'Plan Review' && channel.to === 'dispatch-slot'
-    );
-    expect(retainedChannel?.gateId).toBe('plan-approval-gate');
-    expect(workflow.gates?.find((gate) => gate.id === 'plan-approval-gate')).toMatchObject({
-      legacyGateMetadata: { deprecated: true },
-    });
-    expect(
-      workflow.hooks?.some(
-        (hook) => hook.sourceNode === 'Plan Review' && hook.targetNode === 'Task Dispatcher'
-      )
-    ).toBe(false);
-  });
-
-  test('migration reuses generated route hooks during restamp', () => {
-    const template = getBuiltInWorkflows().find(
-      (workflow) => workflow.name === PLAN_AND_DECOMPOSE_WORKFLOW.name
-    )!;
-    const workflow = migrateWorkflowGateProgressionToHooks({
-      ...PLAN_AND_DECOMPOSE_WORKFLOW,
-      hooks: template.hooks,
-      channels: PLAN_AND_DECOMPOSE_WORKFLOW.channels?.map((channel, index) => ({
-        ...channel,
-        id: `legacy-channel-${index}`,
-      })),
-      templateName: PLAN_AND_DECOMPOSE_WORKFLOW.name,
-      templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
-    }).workflow;
-
-    const approvalHooks = workflow.hooks?.filter(
-      (hook) => hook.sourceNode === 'Plan Review' && hook.targetNode === 'Task Dispatcher'
-    );
-    expect(approvalHooks).toHaveLength(1);
-  });
-
-  test('migration does not reuse hooks with edited external lookup permissions', () => {
-    const template = getBuiltInWorkflows().find(
-      (workflow) => workflow.name === PLAN_AND_DECOMPOSE_WORKFLOW.name
-    )!;
-    const generatedHook = template.hooks!.find(
-      (hook) => hook.sourceNode === 'Plan Review' && hook.targetNode === 'Task Dispatcher'
-    )!;
-    const workflow = migrateWorkflowGateProgressionToHooks({
-      ...PLAN_AND_DECOMPOSE_WORKFLOW,
-      hooks: [
-        {
-          ...generatedHook,
-          id: 'edited-generated-hook',
-          validator:
-            generatedHook.validator.kind === 'script'
-              ? { ...generatedHook.validator, externalLookups: undefined }
-              : generatedHook.validator,
-        },
-      ],
-      templateName: PLAN_AND_DECOMPOSE_WORKFLOW.name,
-      templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
-    }).workflow;
-
-    const approvalHooks = workflow.hooks?.filter(
-      (hook) => hook.sourceNode === 'Plan Review' && hook.targetNode === 'Task Dispatcher'
-    );
-    expect(approvalHooks?.map((hook) => hook.id)).toContain('edited-generated-hook');
-    expect(approvalHooks?.some((hook) => hook.id.startsWith('plan-approval:'))).toBe(true);
-  });
-
-  test('migration does not reuse user route hooks as generated gate equivalents', () => {
-    const workflow = migrateWorkflowGateProgressionToHooks({
-      ...PLAN_AND_DECOMPOSE_WORKFLOW,
-      hooks: [
-        {
-          id: 'custom-plan-review-hook',
-          enabled: true,
-          sourceNode: 'Plan Review',
-          targetNode: 'Task Dispatcher',
-          method: 'send_message',
-          classification: 'validation',
-          order: 0,
-          validator: { kind: 'script', interpreter: 'bash', source: 'jq -n \'{"type":"allow"}\'' },
-          authorizedCallers: [{ sourceNode: 'Plan Review' }],
-        },
-      ],
-      templateName: PLAN_AND_DECOMPOSE_WORKFLOW.name,
-      templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
-    }).workflow;
-
-    const approvalHooks = workflow.hooks?.filter(
-      (hook) => hook.sourceNode === 'Plan Review' && hook.targetNode === 'Task Dispatcher'
-    );
-    expect(approvalHooks?.map((hook) => hook.id)).toContain('custom-plan-review-hook');
-    expect(approvalHooks?.some((hook) => hook.id.startsWith('plan-approval:'))).toBe(true);
-  });
-
-  test('migration replaces disabled predictable-id hooks with generated validators', () => {
-    const template = getBuiltInWorkflows().find(
-      (workflow) => workflow.name === PLAN_AND_DECOMPOSE_WORKFLOW.name
-    )!;
-    const generatedHook = template.hooks!.find(
-      (hook) => hook.sourceNode === 'Plan Review' && hook.targetNode === 'Task Dispatcher'
-    )!;
-    const workflow = migrateWorkflowGateProgressionToHooks({
-      ...PLAN_AND_DECOMPOSE_WORKFLOW,
-      hooks: [{ ...generatedHook, enabled: false, validator: { ...generatedHook.validator } }],
-      templateName: PLAN_AND_DECOMPOSE_WORKFLOW.name,
-      templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
-    }).workflow;
-
-    const generatedHooks = workflow.hooks?.filter((hook) => hook.id === generatedHook.id);
-    expect(generatedHooks).toHaveLength(1);
-    expect(generatedHooks?.[0]?.enabled).toBe(true);
-  });
-
-  test('Codex approval migration only follows source node toggle', () => {
-    const workflow = migrateWorkflowGateProgressionToHooks({
-      ...PLAN_AND_DECOMPOSE_WORKFLOW,
-      nodes: PLAN_AND_DECOMPOSE_WORKFLOW.nodes.map((node) =>
-        node.name === 'Plan Review'
-          ? { ...node, requireCodexApproval: false }
-          : node.name === 'Task Dispatcher'
-            ? { ...node, requireCodexApproval: true }
-            : node
-      ),
-      templateName: PLAN_AND_DECOMPOSE_WORKFLOW.name,
-      templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
-    }).workflow;
-
-    const hook = workflow.hooks?.find(
-      (candidate) =>
-        candidate.sourceNode === 'Plan Review' && candidate.targetNode === 'Task Dispatcher'
-    );
-    const source = hook?.validator.kind === 'script' ? hook.validator.source : '';
-    expect(source).not.toContain('gh pr view');
-  });
-
-  test('re-stamp installs generated hooks when replacing legacy template channels', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
-    repo.updateWorkflow(coding.id, {
-      hooks: coding.hooks?.filter((hook) => hook.id === 'code-pr-ready'),
-      channels: coding.channels?.map((channel) =>
-        channel.from === 'Review' && channel.to === 'Coding'
-          ? { ...channel, gateId: 'review-posted-gate' }
-          : channel
-      ),
-      gates: CODING_WORKFLOW.gates,
-    });
-    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
-      'legacy-gated-review-feedback',
-      coding.id
-    );
-
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    expect(result.restamped).toContain(CODING_WORKFLOW.name);
-    expect(result.errors).toHaveLength(0);
-
-    const after = manager.getWorkflow(coding.id)!;
-    expect(after.hooks?.some((hook) => hook.id === 'code-pr-ready')).toBe(true);
-    expect(
-      after.hooks?.some(
-        (hook) =>
-          hook.sourceNode === 'Review' &&
-          hook.targetNode === 'Coding' &&
-          hook.id.startsWith('review-posted:')
-      )
-    ).toBe(true);
-  });
-
-  test('re-stamp reuses renamed generated route hooks', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    const plan = manager
-      .listWorkflows(SPACE_ID)
-      .find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
-    const planReviewNode = plan.nodes.find((node) => node.name === 'Plan Review')!;
-    const dispatcherNode = plan.nodes.find((node) => node.name === 'Task Dispatcher')!;
-    db.prepare(`UPDATE space_workflow_nodes SET name = ? WHERE id = ?`).run(
-      'Plan Review Renamed',
-      planReviewNode.id
-    );
-    db.prepare(`UPDATE space_workflow_nodes SET name = ? WHERE id = ?`).run(
-      'Dispatch Renamed',
-      dispatcherNode.id
-    );
-    const remappedTemplateHook = getBuiltInWorkflows()
-      .find((workflow) => workflow.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!
-      .hooks!.find(
-        (hook) => hook.sourceNode === 'Plan Review' && hook.targetNode === 'Task Dispatcher'
-      )!;
-    repo.updateWorkflow(plan.id, {
-      hooks: [
-        {
-          ...remappedTemplateHook,
-          id: 'plan-approval:renamed-route',
-          sourceNode: 'Plan Review Renamed',
-          targetNode: 'Dispatch Renamed',
-          authorizedCallers: [{ sourceNode: 'Plan Review Renamed' }],
-        },
-      ],
-    });
-
-    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
-      'renamed-generated-hook-restamp',
-      plan.id
-    );
-
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    expect(result.restamped).toContain(PLAN_AND_DECOMPOSE_WORKFLOW.name);
-    expect(result.errors).toHaveLength(0);
-
-    const after = manager.getWorkflow(plan.id)!;
-    const approvalHooks = after.hooks?.filter(
-      (hook) => hook.sourceNode === 'Plan Review Renamed' && hook.targetNode === 'Dispatch Renamed'
-    );
-    expect(approvalHooks).toHaveLength(1);
   });
 
   test('re-stamp preserves user-added custom hooks while updating template hooks', () => {
@@ -3929,9 +2173,9 @@ describe('seedBuiltInWorkflows()', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 
     const workflows = manager.listWorkflows(SPACE_ID);
-    expect(workflows).toHaveLength(6);
+    expect(workflows).toHaveLength(5);
     expect(workflows.some((workflow) => workflow.name === 'My Custom Workflow')).toBe(true);
-    expect(workflows.filter((workflow) => workflow.templateName)).toHaveLength(5);
+    expect(workflows.filter((workflow) => workflow.templateName)).toHaveLength(4);
   });
 
   // ─── Legacy identity migration (Coding Workflow → stable Coding) ──────────
@@ -4258,13 +2502,13 @@ describe('seedBuiltInWorkflows()', () => {
 
     // The `Coding` template could not be created (handle clash); every other
     // template still seeded, no throw, no partial DB mess.
-    expect(result.seeded).toHaveLength(4);
+    expect(result.seeded).toHaveLength(3);
     expect(result.seeded).not.toContain(STABLE_CODING_WORKFLOW.name);
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0].name).toBe(STABLE_CODING_WORKFLOW.name);
     expect(result.errors[0].error).toContain('coding');
-    // 1 user + 4 built-ins (5 templates minus the colliding 'Coding').
-    expect(manager.listWorkflows(SPACE_ID)).toHaveLength(5);
+    // 1 user + 3 built-ins (4 templates minus the colliding 'Coding').
+    expect(manager.listWorkflows(SPACE_ID)).toHaveLength(4);
   });
 
   test('partial legacy migration: a rename collision stamps templateName so the row still groups for cleanup', () => {
@@ -4497,9 +2741,8 @@ describe('seedBuiltInWorkflows()', () => {
 
     expect(result.skipped).toBe(false);
     expect(result.errors).toHaveLength(0);
-    expect(result.seeded).toHaveLength(5);
+    expect(result.seeded).toHaveLength(4);
     expect(result.seeded).toContain('Coding');
-    expect(result.seeded).toContain('Plan & Decompose Workflow');
     expect(result.seeded).toContain('Coding with QA');
     expect(result.seeded).toContain('Research Workflow');
     expect(result.seeded).toContain('Review-Only Workflow');
@@ -4528,15 +2771,15 @@ describe('seedBuiltInWorkflows()', () => {
 
     const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 
-    // 4 of 5 succeed, 1 fails
-    expect(result.seeded).toHaveLength(4);
+    // 3 of 4 succeed, 1 fails
+    expect(result.seeded).toHaveLength(3);
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0].error).toContain('Simulated DB constraint error');
     expect(result.skipped).toBe(false);
 
-    // Verify 4 workflows were actually persisted
+    // Verify 3 workflows were actually persisted
     const workflows = manager.listWorkflows(SPACE_ID);
-    expect(workflows).toHaveLength(4);
+    expect(workflows).toHaveLength(3);
   });
 
   test('per-workflow error isolation — captures error name correctly', () => {
@@ -4568,7 +2811,7 @@ describe('seedBuiltInWorkflows()', () => {
     const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 
     expect(result.seeded).toHaveLength(0);
-    expect(result.errors).toHaveLength(5);
+    expect(result.errors).toHaveLength(4);
     expect(result.skipped).toBe(false);
     for (const err of result.errors) {
       expect(err.error).toContain('DB is read-only');
@@ -4659,20 +2902,6 @@ describe('seedBuiltInWorkflows()', () => {
     expect(reviewNode?.agents[0].customPrompt?.value).toContain('post a visible GitHub review');
   });
 
-  test('PLAN_AND_DECOMPOSE_WORKFLOW seeded nodes preserve customPrompt content', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    const wf = manager
-      .listWorkflows(SPACE_ID)
-      .find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
-    const planNode = wf.nodes.find((n) => n.name === 'Planning');
-    expect(planNode?.agents[0].customPrompt?.value).toContain('hook validates');
-    const planReviewNode = wf.nodes.find((n) => n.name === 'Plan Review');
-    expect(planReviewNode?.agents[0].customPrompt?.value).toContain('Task Dispatcher');
-    const dispatcherNode = wf.nodes.find((n) => n.name === 'Task Dispatcher');
-    expect(dispatcherNode?.agents[0].customPrompt?.value).toContain('create_standalone_task');
-    expect(dispatcherNode?.agents[0].customPrompt?.value).toContain('save_artifact');
-  });
-
   test('RESEARCH_WORKFLOW seeded nodes preserve customPrompt content', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
@@ -4680,23 +2909,6 @@ describe('seedBuiltInWorkflows()', () => {
     expect(researchNode?.agents[0].customPrompt?.value).toContain('gh pr create');
     const reviewNode = wf.nodes.find((n) => n.name === 'Review');
     expect(reviewNode?.agents[0].customPrompt?.value).toContain('save_artifact');
-  });
-
-  // ─── Gate preservation per workflow ──────────────────────────────────────
-
-  test('REVIEW_ONLY_WORKFLOW seeded with no gates', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === REVIEW_ONLY_WORKFLOW.name)!;
-    expect(wf.gates ?? []).toHaveLength(0);
-  });
-
-  test.skip('PLAN_AND_DECOMPOSE_WORKFLOW gate resetOnCycle flags are preserved', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    const wf = manager
-      .listWorkflows(SPACE_ID)
-      .find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
-    const planApproval = wf.gates!.find((g) => g.id === 'plan-approval-gate')!;
-    expect(planApproval.resetOnCycle).toBe(true);
   });
 
   // ─── Channel ID assignment ──────────────────────────────────────────────
@@ -4725,36 +2937,12 @@ describe('seedBuiltInWorkflows()', () => {
     // direction field removed from WorkflowChannel schema
   });
 
-  // ─── plan-approval-gate auto-approval via requiredLevel ──────────────────
-
-  test('PLAN_AND_DECOMPOSE_WORKFLOW plan-approval-gate requires four reviewer approvals', () => {
-    const gate = PLAN_AND_DECOMPOSE_WORKFLOW.gates!.find((g) => g.id === 'plan-approval-gate')!;
-    const approvalsField = gate.fields.find((f) => f.name === 'approvals')!;
-    expect(approvalsField.type).toBe('map');
-    expect(approvalsField.writers).toEqual(['Plan Review']);
-    expect(approvalsField.check).toMatchObject({ op: 'count', match: 'approved', min: 4 });
-    // Codex is no longer hardcoded as a gate feature; it is opt-in via node-level config.
-    expect(gate.features?.codex_review_bot).toBeUndefined();
-  });
-
-  test.skip('seeded plan-approval-gate preserves map-count check with min=4', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    const wf = manager
-      .listWorkflows(SPACE_ID)
-      .find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
-    const gate = wf.gates!.find((g) => g.id === 'plan-approval-gate')!;
-    const approvalsField = gate.fields.find((f) => f.name === 'approvals')!;
-    expect(approvalsField.type).toBe('map');
-    expect(approvalsField.writers).toEqual(['Plan Review']);
-    expect(approvalsField.check).toMatchObject({ op: 'count', match: 'approved', min: 4 });
-  });
-
   // ─── getBuiltInWorkflows ordering ────────────────────────────────────────
 
   test('getBuiltInWorkflows returns CODING_WORKFLOW first', () => {
     // CODING_WORKFLOW is first so spaceWorkflowRun.start (which picks
     // workflows[0] ordered by created_at ASC) defaults to the single-task
-    // coding loop. PLAN_AND_DECOMPOSE_WORKFLOW is opt-in (no `default` tag).
+    // coding loop.
     const templates = getBuiltInWorkflows();
     expect(templates[0].name).toBe(STABLE_CODING_WORKFLOW.name);
   });
@@ -4769,11 +2957,9 @@ describe('seedBuiltInWorkflows()', () => {
     expect(workflows[0].name).toBe(STABLE_CODING_WORKFLOW.name);
   });
 
-  test('getBuiltInWorkflows returns all five templates', () => {
+  test('getBuiltInWorkflows returns all templates', () => {
     const templates = getBuiltInWorkflows();
-    expect(templates).toHaveLength(5);
     const names = templates.map((t) => t.name);
-    expect(names).toContain(PLAN_AND_DECOMPOSE_WORKFLOW.name);
     expect(names).toContain(CODING_WORKFLOW.name);
     expect(names).toContain(CODING_WITH_QA_WORKFLOW.name);
     expect(names).toContain(RESEARCH_WORKFLOW.name);
@@ -4798,12 +2984,12 @@ describe('seedBuiltInWorkflows()', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const wf = manager
       .listWorkflows(SPACE_ID)
-      .find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
+      .find((w) => w.name === CODING_WITH_QA_WORKFLOW.name)!;
     // Templates use title-case role placeholders that must resolve case-insensitively.
-    // Plan & Decompose: Planning(Planner) → Plan Review(4×Reviewer) → Task Dispatcher(General)
-    expect(wf.nodes[0].agents[0]?.agentId).toBe(PLANNER_ID);
+    // Coding with QA: Coding(Coder) → Review(Reviewer) → QA(QA)
+    expect(wf.nodes[0].agents[0]?.agentId).toBe(CODER_ID);
     expect(wf.nodes[1].agents[0]?.agentId).toBe(REVIEWER_ID);
-    expect(wf.nodes[2].agents[0]?.agentId).toBe(GENERAL_ID);
+    expect(wf.nodes[2].agents[0]?.agentId).toBe(QA_ID);
   });
 
   test('no seeded agent IDs contain template placeholder names', () => {
@@ -4865,55 +3051,6 @@ describe('seedBuiltInWorkflows()', () => {
     const agent = wf.nodes[0].agents[0];
     expect(agent.customPrompt).toBeDefined();
     expect(agent.customPrompt!.value.trim().length).toBeGreaterThan(0);
-  });
-
-  test('PLAN_AND_DECOMPOSE_WORKFLOW seeded with non-empty customPrompt on all agent slots', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    const wf = manager
-      .listWorkflows(SPACE_ID)
-      .find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
-    for (const node of wf.nodes) {
-      for (const agent of node.agents) {
-        expect(agent.customPrompt).toBeDefined();
-        expect(agent.customPrompt!.value.trim().length).toBeGreaterThan(0);
-      }
-    }
-  });
-
-  test('PLAN_AND_DECOMPOSE_WORKFLOW Plan Review node reviewer slots have lens-specific customPrompt', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    const wf = manager
-      .listWorkflows(SPACE_ID)
-      .find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
-    const planReviewNode = wf.nodes.find((n) => n.name === 'Plan Review')!;
-    expect(planReviewNode.agents).toHaveLength(4);
-    const seenLenses = new Set<string>();
-    for (const agent of planReviewNode.agents) {
-      expect(agent.customPrompt).toBeDefined();
-      expect(agent.customPrompt!.value.trim().length).toBeGreaterThan(0);
-      // Each reviewer's lens should be embedded as reviewer_name "<lens>" inside the prompt
-      for (const lens of ['architecture', 'security', 'correctness', 'ux']) {
-        if (agent.customPrompt!.value.includes(`"${lens}"`)) {
-          seenLenses.add(lens);
-        }
-      }
-    }
-    expect(seenLenses.size).toBe(4);
-  });
-
-  test('PLAN_AND_DECOMPOSE_WORKFLOW non-Plan-Review nodes have non-empty customPrompt', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    const wf = manager
-      .listWorkflows(SPACE_ID)
-      .find((w) => w.name === PLAN_AND_DECOMPOSE_WORKFLOW.name)!;
-    const otherNodes = wf.nodes.filter((n) => n.name !== 'Plan Review');
-    expect(otherNodes.length).toBe(2); // Planning, Task Dispatcher
-    for (const node of otherNodes) {
-      for (const agent of node.agents) {
-        expect(agent.customPrompt).toBeDefined();
-        expect(agent.customPrompt!.value.trim().length).toBeGreaterThan(0);
-      }
-    }
   });
 
   test('all seeded workflows have non-empty customPrompt on all agent slots', () => {
@@ -5155,326 +3292,6 @@ describe('Coding Workflow export/import round-trip', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// getBuiltInGateScript()
-// ---------------------------------------------------------------------------
-// Tests for the live gate-script resolution helper. This function returns the
-// *current* script for a given built-in template + gate ID combination so that
-// gate evaluations always use the latest script rather than the version that was
-// baked into the database at seed time.
-
-describe('getBuiltInGateScript()', () => {
-  test('getBuiltInGateScript returns undefined for removed code-ready-gate', () => {
-    const script = getBuiltInGateScript(CODING_WORKFLOW.name, 'code-ready-gate');
-    expect(script).toBeUndefined();
-  });
-
-  test.skip('returns the bash script for review-posted-gate in Coding Workflow', () => {
-    const script = getBuiltInGateScript(CODING_WORKFLOW.name, 'review-posted-gate');
-    expect(script).toBeDefined();
-    expect(script?.interpreter).toBe('bash');
-    // The review-posted script should include the PR comment fallback path
-    expect(script?.source).toContain('gh pr view');
-    expect(script?.source).toContain('comments');
-    // Confirm the current fallback message is present (not the stale "No review submitted on…")
-    expect(script?.source).toContain('No review or PR comment found on');
-  });
-
-  test('getBuiltInGateScript returns undefined for removed plan-pr-gate', () => {
-    const script = getBuiltInGateScript(PLAN_AND_DECOMPOSE_WORKFLOW.name, 'plan-pr-gate');
-    expect(script).toBeUndefined();
-  });
-
-  test('returns undefined for a field-only gate (plan-approval-gate has no script)', () => {
-    const script = getBuiltInGateScript(PLAN_AND_DECOMPOSE_WORKFLOW.name, 'plan-approval-gate');
-    expect(script).toBeUndefined();
-  });
-
-  test('returns undefined when the template name does not match any built-in', () => {
-    const script = getBuiltInGateScript('Unknown Template', 'nonexistent-gate');
-    expect(script).toBeUndefined();
-  });
-
-  test('returns undefined when the gate ID does not exist in the template', () => {
-    const script = getBuiltInGateScript(CODING_WORKFLOW.name, 'nonexistent-gate-id');
-    expect(script).toBeUndefined();
-  });
-
-  test('returns undefined for review-posted-gate (now a validator gate, no script)', () => {
-    // The review-posted-gate was converted from inline bash to a `review_posted`
-    // built-in validator reference, so it has no script for getBuiltInGateScript
-    // to resolve. The check runs via the gate-on-external-state primitive.
-    const script = getBuiltInGateScript(CODING_WORKFLOW.name, 'review-posted-gate');
-    expect(script).toBeUndefined();
-  });
-
-  test('returns scripts for all script-based gates in all templates', () => {
-    // Every gate that has a script in any built-in template should be resolvable
-    for (const template of getBuiltInWorkflows()) {
-      for (const gate of template.gates ?? []) {
-        if (!gate.script) continue;
-        const script = getBuiltInGateScript(template.name, gate.id);
-        expect(script).toBeDefined();
-        expect(script?.interpreter).toBe(gate.script.interpreter);
-        expect(script?.source).toBe(gate.script.source);
-      }
-    }
-  });
-
-  test('review-posted-gate since-start window is handled by the review_posted op', () => {
-    // Formerly a bash script consulting HYPERNEO_WORKFLOW_START_ISO; the window
-    // now lives in the getReviewEvidence github op + review_posted preset, fed by
-    // the gate evaluator's context (workflowStartIso). Covered by the preset
-    // tests in runtime/connectors/presets.test.ts.
-    const gate = [
-      ...CODING_WORKFLOW.gates!,
-      ...getBuiltInWorkflows().flatMap((w) => w.gates ?? []),
-    ].find((g) => g.id === 'review-posted-gate');
-    expect(gate?.validator).toEqual({ kind: 'built_in', id: 'review_posted' });
-  });
-});
-
-// ---------------------------------------------------------------------------
-// resolveTemplateGateScript() + logTemplateGateScriptReload()
-// ---------------------------------------------------------------------------
-// The reload helper is the single source of truth for "always evaluate with the
-// current template gate script." These tests pin its effective-gate behavior
-// (identical to the former inline logic) and each diagnostic status, including
-// the silent footgun where a live script is ignored because the stored gate is
-// scriptless.
-
-describe('resolveTemplateGateScript() + applyTemplateGateScript()', () => {
-  const LIVE_SCRIPT: GateScript = { interpreter: 'bash', source: 'echo live', timeoutMs: 5000 };
-
-  function makeGate(script?: GateScript): Gate {
-    return {
-      id: 'test-gate',
-      fields: [{ name: 'pr_url', type: 'string', writers: ['*'], check: { op: 'exists' } }],
-      ...(script ? { script } : {}),
-      resetOnCycle: false,
-    };
-  }
-
-  function makeWorkflow(templateName?: string): SpaceWorkflow {
-    return {
-      id: 'wf',
-      spaceId: 'space',
-      name: 'Workflow',
-      handle: 'workflow',
-      description: '',
-      nodes: [],
-      startNodeId: '',
-      endNodeId: '',
-      tags: [],
-      channels: [],
-      createdAt: 0,
-      updatedAt: 0,
-      ...(templateName ? { templateName } : {}),
-    };
-  }
-
-  test('returns no-template and the stored gate when the workflow has no templateName', () => {
-    const gate = makeGate(LIVE_SCRIPT);
-    const result = resolveTemplateGateScript(gate, makeWorkflow(undefined));
-    expect(result.status).toBe('no-template');
-    expect(result.gate).toBe(gate);
-  });
-
-  test('returns no-live-script for a genuinely scriptless gate under a template', () => {
-    // Stored gate has no script and the template carries none for it either.
-    const gate = makeGate(undefined);
-    const result = resolveTemplateGateScript(gate, makeWorkflow(CODING_WORKFLOW.name));
-    expect(result.status).toBe('no-live-script');
-    expect(result.gate).toBe(gate);
-  });
-
-  test('returns no-live-script when the template has no live script (stored gate may still carry one)', () => {
-    // No live script is resolvable for this gate. A stored gate that still
-    // carries a script (e.g. a retired template script, or an operator-added
-    // custom script) is NOT flagged here: that case is ambiguous and cannot be
-    // distinguished from a legitimate customization at runtime, so it stays the
-    // quiet no-live-script rather than risking a false "resync" warning.
-    const gate = makeGate(LIVE_SCRIPT);
-    const result = resolveTemplateGateScript(gate, makeWorkflow(CODING_WORKFLOW.name));
-    expect(result.status).toBe('no-live-script');
-    expect(result.gate).toBe(gate);
-  });
-
-  test('applyTemplateGateScript: no-live-script for any stored gate when no live script is supplied', () => {
-    // Scriptless stored gate, no live script.
-    expect(applyTemplateGateScript(makeGate(undefined), undefined).status).toBe('no-live-script');
-    // Stored gate WITH a script but no live script — still no-live-script (see
-    // the resolveTemplateGateScript test above for why this is not flagged).
-    expect(applyTemplateGateScript(makeGate(LIVE_SCRIPT), undefined).status).toBe('no-live-script');
-  });
-
-  test('applyTemplateGateScript: live-ignored-no-stored footgun (live script present, stored scriptless)', () => {
-    const scriptlessGate = makeGate(undefined);
-    const result = applyTemplateGateScript(scriptlessGate, LIVE_SCRIPT);
-    expect(result.status).toBe('live-ignored-no-stored');
-    // The live script is NOT applied — the stored gate stays scriptless.
-    expect(result.gate).toBe(scriptlessGate);
-    expect(result.gate.script).toBeUndefined();
-  });
-
-  test('applyTemplateGateScript: in-sync when all executable fields match', () => {
-    const stored = makeGate({ ...LIVE_SCRIPT });
-    const result = applyTemplateGateScript(stored, LIVE_SCRIPT);
-    expect(result.status).toBe('in-sync');
-    expect(result.gate.script?.source).toBe(LIVE_SCRIPT.source);
-  });
-
-  test('applyTemplateGateScript: reloaded when only the source differs (drift)', () => {
-    const stale: GateScript = { ...LIVE_SCRIPT, source: 'echo stale drifted' };
-    const stored = makeGate(stale);
-    const result = applyTemplateGateScript(stored, LIVE_SCRIPT);
-    expect(result.status).toBe('reloaded');
-    // Effective gate uses the live template script, not the stale stored one.
-    expect(result.gate.script?.source).toBe(LIVE_SCRIPT.source);
-    expect(result.gate.script).not.toBe(stored.script);
-  });
-
-  test('applyTemplateGateScript: reloaded when only the interpreter differs', () => {
-    const stored = makeGate({ ...LIVE_SCRIPT, interpreter: 'node' });
-    const result = applyTemplateGateScript(stored, LIVE_SCRIPT);
-    expect(result.status).toBe('reloaded');
-    expect(result.gate.script?.interpreter).toBe(LIVE_SCRIPT.interpreter);
-  });
-
-  test('applyTemplateGateScript: reloaded when only the timeout differs', () => {
-    const stored = makeGate({ ...LIVE_SCRIPT, timeoutMs: 99999 });
-    const result = applyTemplateGateScript(stored, LIVE_SCRIPT);
-    expect(result.status).toBe('reloaded');
-    expect(result.gate.script?.timeoutMs).toBe(LIVE_SCRIPT.timeoutMs);
-  });
-});
-
-describe('logTemplateGateScriptReload()', () => {
-  function makeLogger() {
-    const calls: { level: 'warn' | 'debug'; message: string }[] = [];
-    return {
-      log: {
-        warn: (...args: unknown[]) => calls.push({ level: 'warn', message: args.join(' ') }),
-        debug: (...args: unknown[]) => calls.push({ level: 'debug', message: args.join(' ') }),
-      },
-      calls,
-    };
-  }
-
-  test('warns on the live-ignored-no-stored footgun and includes the gate id and template', () => {
-    const { log, calls } = makeLogger();
-    logTemplateGateScriptReload({
-      log,
-      status: 'live-ignored-no-stored',
-      templateName: 'Coding',
-      gateId: 'review-posted-gate',
-      runId: 'run-42',
-    });
-    expect(calls).toHaveLength(1);
-    expect(calls[0].level).toBe('warn');
-    expect(calls[0].message).toContain('review-posted-gate');
-    expect(calls[0].message).toContain('Coding');
-    expect(calls[0].message).toContain('run-42');
-    expect(calls[0].message).toContain('NOT applied');
-  });
-
-  test('logs drift at debug level for reloaded', () => {
-    const { log, calls } = makeLogger();
-    logTemplateGateScriptReload({
-      log,
-      status: 'reloaded',
-      templateName: 'Coding',
-      gateId: 'g1',
-    });
-    expect(calls).toHaveLength(1);
-    expect(calls[0].level).toBe('debug');
-    expect(calls[0].message).toContain('g1');
-    expect(calls[0].message).toContain('reloaded');
-  });
-
-  test('stays quiet for the common no-template / no-live-script / in-sync paths', () => {
-    for (const status of ['no-template', 'no-live-script', 'in-sync'] as const) {
-      const { log, calls } = makeLogger();
-      logTemplateGateScriptReload({ log, status, templateName: 'Coding', gateId: 'g1' });
-      expect(calls).toHaveLength(0);
-    }
-  });
-
-  test('tolerates a missing templateName and runId in the warning', () => {
-    const { log, calls } = makeLogger();
-    logTemplateGateScriptReload({
-      log,
-      status: 'live-ignored-no-stored',
-      gateId: 'g1',
-    });
-    expect(calls).toHaveLength(1);
-    expect(calls[0].message).toContain('g1');
-    expect(calls[0].message).toContain('?');
-  });
-});
-
-describe('gateScriptDiagnosticKey() + GateScriptDiagnosticLedger', () => {
-  test('isGateScriptStatusEmitting is true only for statuses that log', () => {
-    // Only these consume ledger capacity at the call sites.
-    for (const status of ['live-ignored-no-stored', 'reloaded'] as const) {
-      expect(isGateScriptStatusEmitting(status)).toBe(true);
-    }
-    // Quiet statuses must not consume the ledger.
-    for (const status of ['no-template', 'no-live-script', 'in-sync'] as const) {
-      expect(isGateScriptStatusEmitting(status)).toBe(false);
-    }
-  });
-
-  test('gateScriptDiagnosticKey combines runId, gateId, and status (empty runId when absent)', () => {
-    expect(gateScriptDiagnosticKey('run-1', 'g', 'reloaded')).toBe('run-1|g|reloaded');
-    expect(gateScriptDiagnosticKey(undefined, 'g', 'in-sync')).toBe('|g|in-sync');
-  });
-
-  test('ledger emits once per key and again for a different key or status', () => {
-    const ledger = new GateScriptDiagnosticLedger();
-    const key = gateScriptDiagnosticKey('run-1', 'g', 'live-ignored-no-stored');
-    expect(ledger.shouldEmit(key)).toBe(true);
-    expect(ledger.shouldEmit(key)).toBe(false); // deduped
-    // Same run+gate, different status (e.g. after a resync) re-emits.
-    expect(ledger.shouldEmit(gateScriptDiagnosticKey('run-1', 'g', 'in-sync'))).toBe(true);
-    // Different run re-emits.
-    expect(ledger.shouldEmit(gateScriptDiagnosticKey('run-2', 'g', 'live-ignored-no-stored'))).toBe(
-      true
-    );
-  });
-
-  test('ledger stops growing past its capacity (emits without recording once full)', () => {
-    const ledger = new GateScriptDiagnosticLedger(2);
-    expect(ledger.shouldEmit('a')).toBe(true);
-    expect(ledger.shouldEmit('b')).toBe(true);
-    // At capacity: emits but does not record, so memory is bounded.
-    expect(ledger.shouldEmit('c')).toBe(true);
-    expect(ledger.shouldEmit('c')).toBe(true); // not recorded, so still true
-  });
-
-  test('ledger.reset() clears recorded keys', () => {
-    const ledger = new GateScriptDiagnosticLedger();
-    const key = gateScriptDiagnosticKey('run-x', 'g', 'reloaded');
-    expect(ledger.shouldEmit(key)).toBe(true);
-    ledger.reset();
-    expect(ledger.shouldEmit(key)).toBe(true);
-  });
-});
-
-describe('all built-in workflow gates pass creation-time validation', () => {
-  const workflows = getBuiltInWorkflows();
-
-  test('every built-in gate is structurally valid', () => {
-    for (const wf of workflows) {
-      for (const gate of wf.gates ?? []) {
-        const errors = validateGate(gate);
-        expect(errors).toHaveLength(0);
-      }
-    }
-  });
-});
-
-// ---------------------------------------------------------------------------
 // Agent slot prompt completeness tests
 // ---------------------------------------------------------------------------
 
@@ -5601,75 +3418,6 @@ describe('REVIEW_ONLY_WORKFLOW agent slot customPrompt', () => {
   });
 });
 
-describe('PLAN_AND_DECOMPOSE_WORKFLOW agent slot customPrompt', () => {
-  test('Planning node planner has non-empty customPrompt referencing PR-ready hook', () => {
-    const node = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find((n) => n.name === 'Planning')!;
-    const agent = node.agents[0];
-    expect(agent.customPrompt?.value).toBeDefined();
-    expect(agent.customPrompt?.value).toContain('hook validates');
-  });
-
-  test('Plan Review node has 4 lens-specific reviewers, each referencing plan-approval-gate and its lens', () => {
-    const node = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find((n) => n.name === 'Plan Review')!;
-    expect(node.agents).toHaveLength(4);
-    const lenses = ['architecture', 'security', 'correctness', 'ux'];
-    const seenLenses: string[] = [];
-    for (const agent of node.agents) {
-      expect(agent.customPrompt?.value).toBeDefined();
-      expect(agent.customPrompt?.value).toContain('Task Dispatcher');
-      // Each reviewer's prompt references its specific lens
-      const lensForAgent = lenses.find((l) => agent.customPrompt!.value.includes(`"${l}"`));
-      expect(lensForAgent).toBeDefined();
-      seenLenses.push(lensForAgent!);
-    }
-    // All four lenses must be represented exactly once
-    expect(seenLenses.sort()).toEqual([...lenses].sort());
-  });
-
-  test('Plan Review prompt instructs waiting for codex reaction before voting', () => {
-    const node = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find((n) => n.name === 'Plan Review')!;
-    const prompt = node.agents[0].customPrompt!.value;
-    expect(prompt).toContain('any login containing `codex`');
-    // The reaction lookup is run-scoped GraphQL (the Reviewer contract forbids
-    // direct `gh api repos/...` REST reads against other repos), not the legacy REST issues/.../reactions.
-    expect(prompt).toContain('gh api graphql');
-    expect(prompt).toContain('reactions(first:100)');
-    expect(prompt).not.toContain('issues/{number}/reactions');
-    expect(prompt).toContain('poll every 60 seconds');
-    expect(prompt).toContain('2 hours by default');
-  });
-
-  test('Plan Review prompt reads the PR diff via gh pr diff/view', () => {
-    // The Plan Reviewer reads the plan PR diff with `gh pr diff` / `gh pr view`
-    // (the github CLI), not the retired get_pr_diff node-agent tool.
-    const node = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find((n) => n.name === 'Plan Review')!;
-    const prompt = node.agents[0].customPrompt!.value;
-    expect(prompt).toContain('gh pr diff');
-    expect(prompt).toContain('gh pr view');
-    expect(prompt).not.toContain('get_pr_diff');
-  });
-
-  test('Task Dispatcher node prompt references create_standalone_task and save_artifact', () => {
-    const node = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find((n) => n.name === 'Task Dispatcher')!;
-    expect(node.agents).toHaveLength(1);
-    const agent = node.agents[0];
-    expect(agent.customPrompt?.value).toBeDefined();
-    expect(agent.customPrompt?.value).toContain('create_standalone_task');
-    expect(agent.customPrompt?.value).toMatch(/save(_| a result )artifact/);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Reviewer Terminal Action Pre-conditions
-//
-// Regression coverage for Task #136: Reviewer agents were calling
-// `submit_for_approval` / `approve_task` mid-loop while their own posted review
-// still contained pending P0–P3 findings, prematurely closing the iterative
-// Coding ↔ Review loop. Every Reviewer / review-style end-node prompt must now
-// contain an explicit Terminal Action Pre-conditions block establishing the
-// hard gate: zero pending P0–P3 findings AND verdict = APPROVE.
-// ---------------------------------------------------------------------------
-
 describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () => {
   /**
    * Asserts that a review-style prompt contains the canonical pre-conditions
@@ -5792,1413 +3540,9 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     );
   });
 
-  test('CODING_WITH_QA_WORKFLOW review-approval-gate requires reviewer and codex approval', () => {
-    const gate = CODING_WITH_QA_WORKFLOW.gates!.find((g) => g.id === 'review-approval-gate')!;
-    const approvalField = gate.fields!.find((f) => f.name === 'approved')!;
-
-    expect(approvalField.type).toBe('boolean');
-    expect(approvalField.writers).toEqual(['Review', 'reviewer']);
-    expect(approvalField.check).toEqual({ op: '==', value: true });
-    // Codex is no longer hardcoded as a gate feature; it is opt-in via node-level config.
-    expect(gate.features?.codex_review_bot).toBeUndefined();
-    expect(gate.script).toBeUndefined();
-    expect(gate.poll).toBeUndefined();
-
-    const effectiveGate = getFullstackReviewApprovalGateWithCodex();
-    // Matcher accepts any GitHub login whose name contains "codex" (case-insensitive)
-    // so both `codex[bot]` and `chatgpt-codex-connector[bot]` are recognized.
-    expect(effectiveGate.script?.source).toContain('test("codex"; "i")');
-    expect(effectiveGate.script?.source).toContain('issues/${NUMBER}/reactions?per_page=100');
-    expect(effectiveGate.script?.source).toContain('--paginate');
-    expect(effectiveGate.script?.source).toContain("jq -s 'add // []'");
-    expect(effectiveGate.script?.source).toContain('.content == "+1"');
-    expect(effectiveGate.script?.source).toContain('bun -e');
-    expect(effectiveGate.script?.source).toContain('HYPERNEO_GATE_DATA_UPDATED_ISO');
-    expect(effectiveGate.script?.source).toContain('PR_URL="${GATE_PR_URL:-${PR_URL:-}}"');
-    expect(effectiveGate.script?.source).toContain("comment '@codex review'");
-    expect(effectiveGate.script?.source).not.toContain('node -e');
-    expect(effectiveGate.script?.source).toContain('.head.sha');
-    expect(effectiveGate.script?.source).toContain('head_sha');
-    expect(effectiveGate.script?.source).toContain('^https://([^/]+)/');
-    expect(effectiveGate.script?.source).not.toContain('github\\.com');
-    expect(effectiveGate.poll?.intervalMs).toBe(300_000);
-  });
-
-  test('dynamic codex injection honors wildcard source node opt-in', () => {
-    const gate = {
-      id: 'wildcard-approval-gate',
-      fields: [
-        { name: 'approved', type: 'boolean', writers: [], check: { op: '==', value: true } },
-      ],
-      resetOnCycle: false,
-    };
-    const effectiveGate = getEffectiveGate(
-      gate,
-      {
-        id: 'wf-wildcard-codex',
-        spaceId: 'space-1',
-        name: 'Wildcard Codex Workflow',
-        tags: [],
-        nodes: [
-          { id: 'node-coder', name: 'Coder', agents: [], requireCodexApproval: true },
-          { id: 'node-reviewer', name: 'Reviewer', agents: [] },
-        ],
-        startNodeId: 'node-coder',
-        endNodeId: 'node-reviewer',
-        channels: [{ id: 'ch-1', from: '*', to: 'Reviewer', gateId: gate.id }],
-        gates: [gate],
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        completionAutonomyLevel: 3,
-      },
-      'Coder'
-    );
-
-    expect(effectiveGate.script?.source).toContain('test("codex"; "i")');
-  });
-
-  test('isApprovalGate recognizes vote-map approvals by check semantics', () => {
-    expect(
-      isApprovalGate({
-        id: 'semantic-approval-gate',
-        fields: [
-          {
-            name: 'votes',
-            type: 'map',
-            writers: [],
-            check: { op: 'count', match: 'approved', min: 1 },
-          },
-        ],
-        resetOnCycle: false,
-      })
-    ).toBe(true);
-  });
-
-  test('isApprovalGate recognizes boolean approval checks independent of field name', () => {
-    expect(
-      isApprovalGate({
-        id: 'semantic-boolean-approval-gate',
-        fields: [
-          {
-            name: 'signoff',
-            type: 'boolean',
-            writers: [],
-            check: { op: '==', value: true },
-          },
-        ],
-        resetOnCycle: false,
-      })
-    ).toBe(true);
-  });
-
-  test('invalid Codex poll interval env values fall back to default', () => {
-    expect(resolveCodexPollIntervalMs(undefined)).toBe(300000);
-    expect(resolveCodexPollIntervalMs('5m')).toBe(300000);
-    expect(resolveCodexPollIntervalMs('0')).toBe(300000);
-    expect(resolveCodexPollIntervalMs(30000)).toBe(30000);
-  });
-
-  test('dynamic Codex injection handles node and agent source name collision', () => {
-    const gate = {
-      id: 'agent-source-gate',
-      fields: [
-        {
-          name: 'signoff',
-          type: 'boolean' as const,
-          writers: [],
-          check: { op: '==', value: true },
-        },
-      ],
-      resetOnCycle: false,
-    };
-    const workflow = {
-      id: 'wf-agent-source-collision',
-      spaceId: 'space-1',
-      name: 'Agent Source Collision',
-      tags: [],
-      nodes: [
-        {
-          id: 'node-source',
-          name: 'SourceNode',
-          agents: [{ agentId: 'agent-coder', name: 'Reviewer' }],
-        },
-        {
-          id: 'node-collision',
-          name: 'Reviewer',
-          requireCodexApproval: true,
-          agents: [{ agentId: 'agent-reviewer', name: 'reviewer' }],
-        },
-      ],
-      channels: [{ id: 'ch-node-source', from: 'Reviewer', to: 'reviewer', gateId: gate.id }],
-      gates: [gate],
-      startNodeId: 'node-source',
-      endNodeId: 'node-collision',
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      completionAutonomyLevel: 3,
-    };
-
-    expect(getEffectiveGate(gate, workflow, 'Reviewer').script?.source).toContain(
-      'test("codex"; "i")'
-    );
-
-    workflow.nodes[0] = { ...workflow.nodes[0], requireCodexApproval: true };
-    workflow.nodes[1] = { ...workflow.nodes[1], requireCodexApproval: undefined };
-
-    expect(getEffectiveGate(gate, workflow, 'Reviewer').script?.source).toContain(
-      'test("codex"; "i")'
-    );
-  });
-
-  test('codex feature script and poll override custom script and poll consistently', () => {
-    const gate = getEffectiveGate({
-      id: 'custom-codex-gate',
-      resetOnCycle: false,
-      features: { codex_review_bot: true },
-      script: { interpreter: 'bash', source: 'echo custom', timeoutMs: 10000 },
-      poll: { intervalMs: 30_000, target: 'to', script: 'echo custom poll' },
-    });
-
-    expect(gate.script?.source).toContain('test("codex"; "i")');
-    expect(gate.poll?.script).toContain('test("codex"; "i")');
-    expect(gate.script?.source).not.toContain('echo custom');
-    expect(gate.poll?.script).not.toContain('echo custom poll');
-  });
-
-  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
-  test.skipIf(!isBun)(
-    'CODING_WITH_QA_WORKFLOW review-approval-gate blocks without codex thumbs-up',
-    async () => {
-      const gate = getFullstackReviewApprovalGateWithCodex();
-      const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-gate-blocked-'));
-      const binDir = join(workspace, 'bin');
-      const ghPath = join(binDir, 'gh');
-      const prUrl = 'https://github.com/test/repo/pull/42';
-
-      try {
-        mkdirSync(binDir);
-        writeFileSync(
-          ghPath,
-          [
-            '#!/usr/bin/env bash',
-            'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-            `  printf '%s\n' '[{"user":{"login":"codex[bot]","type":"Bot"},"content":"eyes","created_at":"2026-05-29T00:00:00Z"}]'`,
-            '  exit 0',
-            'fi',
-            'printf "unexpected gh args: %s\n" "$*" >&2',
-            'exit 2',
-          ].join('\n')
-        );
-        chmodSync(ghPath, 0o755);
-
-        const result = await executeGateScript(
-          gate.script!,
-          {
-            workspacePath: workspace,
-            gateId: 'review-approval-gate',
-            runId: 'run-1',
-            gateData: { pr_url: prUrl, approved: true },
-          },
-          { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-        );
-
-        expect(result.success).toBe(false);
-        expect(result.error).toContain('still in progress');
-      } finally {
-        rmSync(workspace, { recursive: true, force: true });
-      }
-    }
-  );
-
-  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
-  test.skipIf(!isBun)(
-    'CODING_WITH_QA_WORKFLOW review-approval-gate passes with codex thumbs-up',
-    async () => {
-      const gate = getFullstackReviewApprovalGateWithCodex();
-      const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-gate-passed-'));
-      const binDir = join(workspace, 'bin');
-      const ghPath = join(binDir, 'gh');
-      const prUrl = 'https://github.com/test/repo/pull/42';
-
-      try {
-        mkdirSync(binDir);
-        writeFileSync(
-          ghPath,
-          [
-            '#!/usr/bin/env bash',
-            'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-            `  printf '%s\n' '[{"user":{"login":"chatgpt-codex-connector[bot]","type":"Bot"},"content":"+1","created_at":"2026-05-29T00:00:00Z"}]'`,
-            '  exit 0',
-            'fi',
-            'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
-            `  printf '%s\n' 'sha-pass'`,
-            '  exit 0',
-            'fi',
-            'printf "unexpected gh args: %s\n" "$*" >&2',
-            'exit 2',
-          ].join('\n')
-        );
-        chmodSync(ghPath, 0o755);
-
-        const result = await executeGateScript(
-          gate.script!,
-          {
-            workspacePath: workspace,
-            gateId: 'review-approval-gate',
-            runId: 'run-1',
-            gateData: { pr_url: prUrl, approved: true },
-          },
-          { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-        );
-
-        expect(result.success).toBe(true);
-        expect(result.data).toEqual({
-          pr_url: prUrl,
-          codex_bot_reaction: '+1',
-          head_sha: 'sha-pass',
-        });
-      } finally {
-        rmSync(workspace, { recursive: true, force: true });
-      }
-    }
-  );
-
-  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
-  test.skipIf(!isBun)(
-    'CODING_WITH_QA_WORKFLOW review-approval-gate still blocks before gate-data timeout even when workflow is old',
-    async () => {
-      const gate = getFullstackReviewApprovalGateWithCodex();
-      const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-gate-fresh-approval-'));
-      const binDir = join(workspace, 'bin');
-      const ghPath = join(binDir, 'gh');
-      const prUrl = 'https://github.com/test/repo/pull/42';
-
-      try {
-        mkdirSync(binDir);
-        writeFileSync(
-          ghPath,
-          [
-            '#!/usr/bin/env bash',
-            'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-            `  printf '%s\n' '[]'`,
-            '  exit 0',
-            'fi',
-            'printf "unexpected gh args: %s\n" "$*" >&2',
-            'exit 2',
-          ].join('\n')
-        );
-        chmodSync(ghPath, 0o755);
-
-        const result = await executeGateScript(
-          gate.script!,
-          {
-            workspacePath: workspace,
-            gateId: 'review-approval-gate',
-            runId: 'run-1',
-            gateData: { pr_url: prUrl, approved: true },
-            workflowStartIso: '2026-05-01T00:00:00Z',
-            gateDataUpdatedIso: new Date().toISOString(),
-          },
-          { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-        );
-
-        expect(result.success).toBe(false);
-        expect(result.error).toContain('@codex review');
-        expect(result.error).not.toContain('command not found');
-      } finally {
-        rmSync(workspace, { recursive: true, force: true });
-      }
-    }
-  );
-
-  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
-  test.skipIf(!isBun)(
-    'CODING_WITH_QA_WORKFLOW review-approval-gate passes after codex timeout',
-    async () => {
-      const gate = getFullstackReviewApprovalGateWithCodex();
-      const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-gate-timeout-'));
-      const binDir = join(workspace, 'bin');
-      const ghPath = join(binDir, 'gh');
-      const prUrl = 'https://github.com/test/repo/pull/42';
-
-      try {
-        mkdirSync(binDir);
-        writeFileSync(
-          ghPath,
-          [
-            '#!/usr/bin/env bash',
-            'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-            `  printf '%s\n' '[]'`,
-            '  exit 0',
-            'fi',
-            'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
-            `  printf '%s\n' 'sha-timeout'`,
-            '  exit 0',
-            'fi',
-            'printf "unexpected gh args: %s\n" "$*" >&2',
-            'exit 2',
-          ].join('\n')
-        );
-        chmodSync(ghPath, 0o755);
-
-        const result = await executeGateScript(
-          gate.script!,
-          {
-            workspacePath: workspace,
-            gateId: 'review-approval-gate',
-            runId: 'run-1',
-            gateData: { pr_url: prUrl, approved: true },
-            workflowStartIso: '2026-05-01T00:00:00Z',
-            gateDataUpdatedIso: '2026-05-01T00:00:00Z',
-          },
-          { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-        );
-
-        expect(result.success).toBe(true);
-        expect(result.data).toEqual({
-          pr_url: prUrl,
-          codex_bot_reaction: 'timeout',
-          head_sha: 'sha-timeout',
-          codex_bot_warning: 'codex review bot +1 reaction missing after timeout; allowing gate',
-        });
-      } finally {
-        rmSync(workspace, { recursive: true, force: true });
-      }
-    }
-  );
-
-  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
-  test.skipIf(!isBun)(
-    'CODING_WITH_QA_WORKFLOW review-approval-gate returns +1 even when timeout has elapsed',
-    async () => {
-      const gate = getFullstackReviewApprovalGateWithCodex();
-      const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-gate-timeout-plus-one-'));
-      const binDir = join(workspace, 'bin');
-      const ghPath = join(binDir, 'gh');
-      const prUrl = 'https://github.com/test/repo/pull/42';
-
-      try {
-        mkdirSync(binDir);
-        writeFileSync(
-          ghPath,
-          [
-            '#!/usr/bin/env bash',
-            'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-            `  printf '%s\\n' '[{"user":{"login":"codex[bot]","type":"Bot"},"content":"+1","created_at":"2026-05-01T00:00:00Z"}]'`,
-            '  exit 0',
-            'fi',
-            'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
-            `  printf '%s\\n' 'sha-timeout-plus-one'`,
-            '  exit 0',
-            'fi',
-            'printf "unexpected gh args: %s\\n" "$*" >&2',
-            'exit 2',
-          ].join('\n')
-        );
-        chmodSync(ghPath, 0o755);
-
-        const result = await executeGateScript(
-          gate.script!,
-          {
-            workspacePath: workspace,
-            gateId: 'review-approval-gate',
-            runId: 'run-1',
-            gateData: { pr_url: prUrl, approved: true },
-            // Timeout has elapsed, but +1 is present — +1 should win.
-            workflowStartIso: '2026-05-01T00:00:00Z',
-            gateDataUpdatedIso: '2026-05-01T00:00:00Z',
-          },
-          { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-        );
-
-        expect(result.success).toBe(true);
-        expect(result.data).toEqual({
-          pr_url: prUrl,
-          codex_bot_reaction: '+1',
-          head_sha: 'sha-timeout-plus-one',
-        });
-      } finally {
-        rmSync(workspace, { recursive: true, force: true });
-      }
-    }
-  );
-
-  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
-  test.skipIf(!isBun)(
-    'CODING_WITH_QA_WORKFLOW review-approval-gate blocks +1 from before cycle_start_at',
-    async () => {
-      const gate = getFullstackReviewApprovalGateWithCodex();
-      const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-gate-stale-plus-one-'));
-      const binDir = join(workspace, 'bin');
-      const ghPath = join(binDir, 'gh');
-      const prUrl = 'https://github.com/test/repo/pull/42';
-
-      try {
-        mkdirSync(binDir);
-        writeFileSync(
-          ghPath,
-          [
-            '#!/usr/bin/env bash',
-            'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-            `  printf '%s\n' '[{"user":{"login":"codex[bot]","type":"Bot"},"content":"+1","created_at":"2026-05-01T00:00:00Z"}]'`,
-            '  exit 0',
-            'fi',
-            'printf "unexpected gh args: %s\n" "$*" >&2',
-            'exit 2',
-          ].join('\n')
-        );
-        chmodSync(ghPath, 0o755);
-
-        const result = await executeGateScript(
-          gate.script!,
-          {
-            workspacePath: workspace,
-            gateId: 'review-approval-gate',
-            runId: 'run-1',
-            // Reaction is before cycle_start_at — should be filtered as stale.
-            // Timeout anchor is gateDataUpdatedIso (the approval-handoff write),
-            // so it must be recent to keep this test focused on the freshness
-            // filter rather than the timeout path.
-            gateData: {
-              pr_url: prUrl,
-              approved: true,
-              cycle_start_at: new Date('2026-05-02T00:00:00Z').getTime(),
-            },
-            gateDataUpdatedIso: new Date().toISOString(),
-          },
-          { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-        );
-
-        expect(result.success).toBe(false);
-        expect(result.error).toContain('@codex review');
-      } finally {
-        rmSync(workspace, { recursive: true, force: true });
-      }
-    }
-  );
-
-  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
-  test.skipIf(!isBun)(
-    'CODING_WITH_QA_WORKFLOW review-approval-gate outputs head_sha on success',
-    async () => {
-      const gate = getFullstackReviewApprovalGateWithCodex();
-      const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-gate-head-sha-output-'));
-      const binDir = join(workspace, 'bin');
-      const ghPath = join(binDir, 'gh');
-      const prUrl = 'https://github.com/test/repo/pull/42';
-
-      try {
-        mkdirSync(binDir);
-        writeFileSync(
-          ghPath,
-          [
-            '#!/usr/bin/env bash',
-            'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-            `  printf '%s\\n' '[{"user":{"login":"codex[bot]","type":"Bot"},"content":"+1","created_at":"2026-05-02T00:00:00Z"}]'`,
-            '  exit 0',
-            'fi',
-            'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
-            `  printf '%s\\n' 'abc123'`,
-            '  exit 0',
-            'fi',
-            'printf "unexpected gh args: %s\\n" "$*" >&2',
-            'exit 2',
-          ].join('\n')
-        );
-        chmodSync(ghPath, 0o755);
-
-        const result = await executeGateScript(
-          gate.script!,
-          {
-            workspacePath: workspace,
-            gateId: 'review-approval-gate',
-            runId: 'run-1',
-            gateData: { pr_url: prUrl, approved: true },
-            gateDataUpdatedIso: '2026-05-01T00:00:00Z',
-          },
-          { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-        );
-
-        expect(result.success).toBe(true);
-        expect(result.data).toEqual({
-          pr_url: prUrl,
-          codex_bot_reaction: '+1',
-          head_sha: 'abc123',
-        });
-      } finally {
-        rmSync(workspace, { recursive: true, force: true });
-      }
-    }
-  );
-
-  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
-  test.skipIf(!isBun)('codex script accepts GitHub Enterprise PR URLs', async () => {
-    const gate = getFullstackReviewApprovalGateWithCodex();
-    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-gate-gh-enterprise-'));
-    const binDir = join(workspace, 'bin');
-    const ghPath = join(binDir, 'gh');
-    const prUrl = 'https://github.enterprise.example.com/test/repo/pull/42';
-
-    try {
-      mkdirSync(binDir);
-      writeFileSync(
-        ghPath,
-        [
-          '#!/usr/bin/env bash',
-          'if [[ "$*" != *"--hostname github.enterprise.example.com"* ]]; then',
-          '  echo "Missing --hostname for GHE URL: $*" >&2',
-          '  exit 2',
-          'fi',
-          'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-          `  printf '%s\\n' '[{"user":{"login":"codex[bot]","type":"Bot"},"content":"+1","created_at":"2026-05-29T00:00:00Z"}]'`,
-          '  exit 0',
-          'fi',
-          'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
-          `  printf '%s\\n' 'ent123'`,
-          '  exit 0',
-          'fi',
-          'fi',
-          'printf "unexpected gh args: %s\\n" "$*" >&2',
-          'exit 2',
-        ].join('\n')
-      );
-      chmodSync(ghPath, 0o755);
-
-      const result = await executeGateScript(
-        gate.script!,
-        {
-          workspacePath: workspace,
-          gateId: 'review-approval-gate',
-          runId: 'run-1',
-          gateData: { pr_url: prUrl, approved: true },
-        },
-        { PATH: `${binDir}:${process.env.PATH ?? ''}`, GH_HOST: 'github.enterprise.example.com' }
-      );
-
-      expect(result.success).toBe(true);
-      expect(result.data).toEqual({ pr_url: prUrl, codex_bot_reaction: '+1', head_sha: 'ent123' });
-    } finally {
-      rmSync(workspace, { recursive: true, force: true });
-    }
-  });
-
-  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
-  test.skipIf(!isBun)('codex script fails closed when gh api reactions fetch fails', async () => {
-    const gate = getFullstackReviewApprovalGateWithCodex();
-    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-gate-pipefail-'));
-    const binDir = join(workspace, 'bin');
-    const ghPath = join(binDir, 'gh');
-    const prUrl = 'https://github.com/test/repo/pull/42';
-
-    try {
-      mkdirSync(binDir);
-      writeFileSync(
-        ghPath,
-        [
-          '#!/usr/bin/env bash',
-          'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-          '  echo "API rate limit exceeded" >&2',
-          '  exit 1',
-          'fi',
-          'printf "unexpected gh args: %s\\n" "$*" >&2',
-          'exit 2',
-        ].join('\n')
-      );
-      chmodSync(ghPath, 0o755);
-
-      const result = await executeGateScript(
-        gate.script!,
-        {
-          workspacePath: workspace,
-          gateId: 'review-approval-gate',
-          runId: 'run-1',
-          gateData: { pr_url: prUrl, approved: true },
-        },
-        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-      );
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('Failed to fetch PR reactions');
-    } finally {
-      rmSync(workspace, { recursive: true, force: true });
-    }
-  });
-
-  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
-  test.skipIf(!isBun)(
-    'codex timeout does not trigger when only workflowStartIso is old',
-    async () => {
-      const gate = getFullstackReviewApprovalGateWithCodex();
-      const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-gate-timeout-suppressed-'));
-      const binDir = join(workspace, 'bin');
-      const ghPath = join(binDir, 'gh');
-      const prUrl = 'https://github.com/test/repo/pull/42';
-
-      try {
-        mkdirSync(binDir);
-        writeFileSync(
-          ghPath,
-          [
-            '#!/usr/bin/env bash',
-            'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-            `  printf '%s\\n' '[]'`,
-            '  exit 0',
-            'fi',
-            'printf "unexpected gh args: %s\\n" "$*" >&2',
-            'exit 2',
-          ].join('\n')
-        );
-        chmodSync(ghPath, 0o755);
-
-        const result = await executeGateScript(
-          gate.script!,
-          {
-            workspacePath: workspace,
-            gateId: 'review-approval-gate',
-            runId: 'run-1',
-            gateData: { pr_url: prUrl, approved: true },
-            // Only workflowStartIso is old; gateDataUpdatedIso is missing.
-            // Timeout should not trigger because it only uses gateDataUpdatedIso.
-            workflowStartIso: '2026-05-01T00:00:00Z',
-          },
-          { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-        );
-
-        expect(result.success).toBe(false);
-        expect(result.error).toContain('@codex review');
-        expect(result.error).not.toContain('timeout');
-      } finally {
-        rmSync(workspace, { recursive: true, force: true });
-      }
-    }
-  );
-
-  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
-  test.skipIf(!isBun)(
-    'codex poll script exits 0 with pending status when no reaction exists',
-    async () => {
-      const gate = getFullstackReviewApprovalGateWithCodex();
-      const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-poll-pending-'));
-      const binDir = join(workspace, 'bin');
-      const ghPath = join(binDir, 'gh');
-      const prUrl = 'https://github.com/test/repo/pull/42';
-
-      try {
-        mkdirSync(binDir);
-        writeFileSync(
-          ghPath,
-          [
-            '#!/usr/bin/env bash',
-            'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-            `  printf '%s\\n' '[]'`,
-            '  exit 0',
-            'fi',
-            'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
-            `  printf '%s\\n' 'sha-poll-pending'`,
-            '  exit 0',
-            'fi',
-            'printf "unexpected gh args: %s\\n" "$*" >&2',
-            'exit 2',
-          ].join('\n')
-        );
-        chmodSync(ghPath, 0o755);
-
-        const result = await executeGateScript(
-          { interpreter: 'bash', source: gate.poll!.script },
-          {
-            workspacePath: workspace,
-            gateId: 'review-approval-gate',
-            runId: 'run-1',
-            gateData: { pr_url: prUrl, approved: true },
-          },
-          { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-        );
-
-        // Poll must exit 0 even when pending so GatePollManager continues polling.
-        expect(result.success).toBe(true);
-        expect(result.data).toEqual({});
-      } finally {
-        rmSync(workspace, { recursive: true, force: true });
-      }
-    }
-  );
-
-  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
-  test.skipIf(!isBun)(
-    'codex matcher accepts any login containing "codex" (substring, case-insensitive)',
-    async () => {
-      // Regression for #596, #604: the repo's codex bot login is
-      // `chatgpt-codex-connector[bot]`, not `codex[bot]`. The matcher uses a
-      // case-insensitive substring test so future renames are also accepted
-      // without code changes.
-      const gate = getFullstackReviewApprovalGateWithCodex();
-      const source = gate.script?.source ?? '';
-      expect(source).toContain('test("codex"; "i")');
-      expect(source).toContain('endswith("[bot]")');
-      expect(source).not.toContain('.user.login == "codex[bot]"');
-
-      // Behavioral check: an unknown codex variant (e.g. a future rename to
-      // `codex-cli[bot]`) is recognized as a +1 pass.
-      const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-matcher-substring-'));
-      const binDir = join(workspace, 'bin');
-      const ghPath = join(binDir, 'gh');
-      const prUrl = 'https://github.com/test/repo/pull/42';
-      try {
-        mkdirSync(binDir);
-        writeFileSync(
-          ghPath,
-          [
-            '#!/usr/bin/env bash',
-            'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-            `  printf '%s\\n' '[{"user":{"login":"codex-cli[bot]","type":"Bot"},"content":"+1","created_at":"2026-05-29T00:00:00Z"}]'`,
-            '  exit 0',
-            'fi',
-            'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
-            `  printf '%s\\n' 'sha-substring'`,
-            '  exit 0',
-            'fi',
-            'printf "unexpected gh args: %s\\n" "$*" >&2',
-            'exit 2',
-          ].join('\n')
-        );
-        chmodSync(ghPath, 0o755);
-
-        const result = await executeGateScript(
-          gate.script!,
-          {
-            workspacePath: workspace,
-            gateId: 'review-approval-gate',
-            runId: 'run-1',
-            gateData: { pr_url: prUrl, approved: true },
-          },
-          { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-        );
-
-        expect(result.success).toBe(true);
-        expect(result.data).toEqual({
-          pr_url: prUrl,
-          codex_bot_reaction: '+1',
-          head_sha: 'sha-substring',
-        });
-      } finally {
-        rmSync(workspace, { recursive: true, force: true });
-      }
-    }
-  );
-
-  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
-  test.skipIf(!isBun)(
-    'codex timeout is measured from gate-data updated_at (approval handoff), not cycle_start_at',
-    async () => {
-      // Two anchors exist:
-      //   - cycle_start_at: filters stale reactions; set by initializeForRun at
-      //     workflow-run start (NOT the timeout anchor).
-      //   - HYPERNEO_GATE_DATA_UPDATED_ISO: advances on the approval-handoff write;
-      //     metadata writes (head_sha) use mergePreserveTimestamp so they do not
-      //     advance it. This is the timeout anchor.
-      // Why not cycle_start_at for the timeout: initializeForRun stamps it at
-      // run start, so for a workflow that takes hours to reach Review, the
-      // window would already have elapsed when the reviewer first hands off —
-      // the first poll would immediately emit the timeout result without giving
-      // Codex any time to react.
-      // After the fix: an old cycle_start_at with a fresh approval-handoff
-      // (updated_at) does NOT time out; an old approval-handoff does.
-      const gate = getFullstackReviewApprovalGateWithCodex();
-      const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-timeout-anchor-'));
-      const binDir = join(workspace, 'bin');
-      const ghPath = join(binDir, 'gh');
-      const prUrl = 'https://github.com/test/repo/pull/42';
-
-      try {
-        mkdirSync(binDir);
-        writeFileSync(
-          ghPath,
-          [
-            '#!/usr/bin/env bash',
-            'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-            `  printf '%s\\n' '[]'`,
-            '  exit 0',
-            'fi',
-            'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
-            `  printf '%s\\n' 'sha-anchor'`,
-            '  exit 0',
-            'fi',
-            'printf "unexpected gh args: %s\\n" "$*" >&2',
-            'exit 2',
-          ].join('\n')
-        );
-        chmodSync(ghPath, 0o755);
-
-        // Long-running workflow: cycle_start_at is 3 hours old (Coding/QA took
-        // a while), but the reviewer only just handed off approval —
-        // gateDataUpdatedIso is fresh. Timeout must NOT fire.
-        const freshHandoff = await executeGateScript(
-          gate.script!,
-          {
-            workspacePath: workspace,
-            gateId: 'review-approval-gate',
-            runId: 'run-1',
-            gateData: {
-              pr_url: prUrl,
-              approved: true,
-              cycle_start_at: Date.now() - 3 * 60 * 60 * 1000,
-            },
-            gateDataUpdatedIso: new Date().toISOString(),
-          },
-          { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-        );
-        expect(freshHandoff.success).toBe(false);
-        expect(freshHandoff.error).toContain('@codex review');
-        expect(freshHandoff.error).not.toContain('timeout');
-
-        // Now the approval handoff itself is older than the window — timeout
-        // fires regardless of how recently cycle_start_at was reset.
-        const staleHandoff = await executeGateScript(
-          gate.script!,
-          {
-            workspacePath: workspace,
-            gateId: 'review-approval-gate',
-            runId: 'run-1',
-            gateData: {
-              pr_url: prUrl,
-              approved: true,
-              cycle_start_at: Date.now() - 3 * 60 * 60 * 1000,
-            },
-            gateDataUpdatedIso: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
-          },
-          { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-        );
-        expect(staleHandoff.success).toBe(true);
-        expect(staleHandoff.data).toMatchObject({
-          pr_url: prUrl,
-          codex_bot_reaction: 'timeout',
-          head_sha: 'sha-anchor',
-        });
-      } finally {
-        rmSync(workspace, { recursive: true, force: true });
-      }
-    }
-  );
-
-  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
-  test.skipIf(!isBun)(
-    'codex gate with 2-hour timeout does not expire after 10 minutes',
-    async () => {
-      // Regression for the 600s default that timed out before Codex finished
-      // large-PR reviews (20–30 min). After the fix, the default is 7200s, so a
-      // 10-minute-old approval handoff is still within the window.
-      const gate = getFullstackReviewApprovalGateWithCodex();
-      const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-timeout-2h-window-'));
-      const binDir = join(workspace, 'bin');
-      const ghPath = join(binDir, 'gh');
-      const prUrl = 'https://github.com/test/repo/pull/42';
-
-      try {
-        mkdirSync(binDir);
-        writeFileSync(
-          ghPath,
-          [
-            '#!/usr/bin/env bash',
-            'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-            `  printf '%s\\n' '[]'`,
-            '  exit 0',
-            'fi',
-            'printf "unexpected gh args: %s\\n" "$*" >&2',
-            'exit 2',
-          ].join('\n')
-        );
-        chmodSync(ghPath, 0o755);
-
-        const result = await executeGateScript(
-          gate.script!,
-          {
-            workspacePath: workspace,
-            gateId: 'review-approval-gate',
-            runId: 'run-1',
-            gateData: { pr_url: prUrl, approved: true },
-            // Approval handoff 10 minutes ago — would have timed out under the
-            // old 600s default.
-            gateDataUpdatedIso: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
-          },
-          { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-        );
-
-        expect(result.success).toBe(false);
-        expect(result.error).toContain('@codex review');
-        expect(result.data).toEqual({});
-        expect(result.error).not.toContain('timeout');
-      } finally {
-        rmSync(workspace, { recursive: true, force: true });
-      }
-    }
-  );
-
-  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
-  test.skipIf(!isBun)(
-    'codex matcher rejects +1 from non-bot users whose login contains "codex"',
-    async () => {
-      // P1 hardening: a human GitHub account named e.g. "codex-fan" must NOT
-      // satisfy the +1 check. The login must end with "[bot]" to count —
-      // human accounts don't carry the "[bot]" suffix.
-      const gate = getFullstackReviewApprovalGateWithCodex();
-      const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-matcher-bot-only-'));
-      const binDir = join(workspace, 'bin');
-      const ghPath = join(binDir, 'gh');
-      const prUrl = 'https://github.com/test/repo/pull/42';
-
-      try {
-        mkdirSync(binDir);
-        writeFileSync(
-          ghPath,
-          [
-            '#!/usr/bin/env bash',
-            'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-            `  printf '%s\\n' '[{"user":{"login":"codex-fan","type":"User"},"content":"+1","created_at":"2026-05-29T00:00:00Z"}]'`,
-            '  exit 0',
-            'fi',
-            'printf "unexpected gh args: %s\\n" "$*" >&2',
-            'exit 2',
-          ].join('\n')
-        );
-        chmodSync(ghPath, 0o755);
-
-        const result = await executeGateScript(
-          gate.script!,
-          {
-            workspacePath: workspace,
-            gateId: 'review-approval-gate',
-            runId: 'run-1',
-            gateData: { pr_url: prUrl, approved: true },
-            gateDataUpdatedIso: new Date().toISOString(),
-          },
-          { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-        );
-
-        // Non-bot reaction is ignored — gate blocks (no timeout because
-        // gateDataUpdatedIso is fresh).
-        expect(result.success).toBe(false);
-        expect(result.error).toContain('@codex review');
-      } finally {
-        rmSync(workspace, { recursive: true, force: true });
-      }
-    }
-  );
-
-  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
-  test.skipIf(!isBun)(
-    'codex matcher accepts [bot] login even when GitHub reports type "User"',
-    async () => {
-      // GitHub inconsistently reports App bots with type "User" in reaction
-      // payloads. The matcher now checks the login suffix ("[bot]") instead of
-      // user.type, so chatgpt-codex-connector[bot] with type "User" must still
-      // pass the +1 check.
-      const gate = getFullstackReviewApprovalGateWithCodex();
-      const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-matcher-user-type-'));
-      const binDir = join(workspace, 'bin');
-      const ghPath = join(binDir, 'gh');
-      const prUrl = 'https://github.com/test/repo/pull/42';
-
-      try {
-        mkdirSync(binDir);
-        writeFileSync(
-          ghPath,
-          [
-            '#!/usr/bin/env bash',
-            'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-            `  printf '%s\\n' '[{"user":{"login":"chatgpt-codex-connector[bot]","type":"User"},"content":"+1","created_at":"2026-05-29T00:00:00Z"}]'`,
-            '  exit 0',
-            'fi',
-            'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
-            `  printf '%s\\n' 'sha-bot-user'`,
-            '  exit 0',
-            'fi',
-            'printf "unexpected gh args: %s\\n" "$*" >&2',
-            'exit 2',
-          ].join('\n')
-        );
-        chmodSync(ghPath, 0o755);
-
-        const result = await executeGateScript(
-          gate.script!,
-          {
-            workspacePath: workspace,
-            gateId: 'review-approval-gate',
-            runId: 'run-1',
-            gateData: { pr_url: prUrl, approved: true },
-          },
-          { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-        );
-
-        // [bot]-suffixed login passes even with type "User".
-        expect(result.success).toBe(true);
-        expect(result.data).toEqual({
-          pr_url: prUrl,
-          codex_bot_reaction: '+1',
-          head_sha: 'sha-bot-user',
-        });
-      } finally {
-        rmSync(workspace, { recursive: true, force: true });
-      }
-    }
-  );
-
-  test('per-node codexTimeoutSeconds overrides the global default in the injected script', () => {
-    // The default gate uses CODEX_REVIEW_BOT_TIMEOUT_SECONDS (7200s). A node
-    // with codexTimeoutSeconds=300 should produce a script whose timeout
-    // comparison uses 300, not 7200.
-    const rawGate = CODING_WITH_QA_WORKFLOW.gates!.find((g) => g.id === 'review-approval-gate')!;
-    const workflow: SpaceWorkflow = {
-      ...CODING_WITH_QA_WORKFLOW,
-      nodes: CODING_WITH_QA_WORKFLOW.nodes.map((n) =>
-        n.name === 'Review' ? { ...n, requireCodexApproval: true, codexTimeoutSeconds: 300 } : n
-      ),
-    };
-    const effective = getEffectiveGate(rawGate, workflow);
-    expect(effective.script?.source).toContain('-ge 300 ');
-    expect(effective.script?.source).not.toContain('-ge 7200 ');
-  });
-
-  // GATED (Vitest/Node): requires Bun.spawn in production executeGateScript.
-  test.skipIf(!isBun)('codex matcher ignores reaction entries with null user', async () => {
-    // P2 null-safety: GitHub may return a reaction whose `user` is null
-    // (e.g. deleted account). Without coalescing, `null | test(...)` raises
-    // in jq and aborts the matcher before reaching a later valid Codex +1.
-    const gate = getFullstackReviewApprovalGateWithCodex();
-    const workspace = mkdtempSync(join(tmpdir(), 'hyperneo-codex-matcher-null-user-'));
-    const binDir = join(workspace, 'bin');
-    const ghPath = join(binDir, 'gh');
-    const prUrl = 'https://github.com/test/repo/pull/42';
-
-    try {
-      mkdirSync(binDir);
-      writeFileSync(
-        ghPath,
-        [
-          '#!/usr/bin/env bash',
-          'if [[ "$*" == *"repos/test/repo/issues/42/reactions"* ]]; then',
-          // First entry has null user (must be skipped silently); second is a
-          // valid Codex bot +1 that must still be recognized.
-          `  printf '%s\\n' '[{"user":null,"content":"+1","created_at":"2026-05-29T00:00:00Z"},{"user":{"login":"codex[bot]","type":"Bot"},"content":"+1","created_at":"2026-05-29T00:00:00Z"}]'`,
-          '  exit 0',
-          'fi',
-          'if [[ "$*" =~ repos/test/repo/pulls/42 ]]; then',
-          `  printf '%s\\n' 'sha-null-user'`,
-          '  exit 0',
-          'fi',
-          'printf "unexpected gh args: %s\\n" "$*" >&2',
-          'exit 2',
-        ].join('\n')
-      );
-      chmodSync(ghPath, 0o755);
-
-      const result = await executeGateScript(
-        gate.script!,
-        {
-          workspacePath: workspace,
-          gateId: 'review-approval-gate',
-          runId: 'run-1',
-          gateData: { pr_url: prUrl, approved: true },
-        },
-        { PATH: `${binDir}:${process.env.PATH ?? ''}` }
-      );
-
-      expect(result.success).toBe(true);
-      expect(result.data).toEqual({
-        pr_url: prUrl,
-        codex_bot_reaction: '+1',
-        head_sha: 'sha-null-user',
-      });
-    } finally {
-      rmSync(workspace, { recursive: true, force: true });
-    }
-  });
-
-  test('migrated review-approval hook honors per-node codexTimeoutSeconds override', () => {
-    // P2: migration must source the timeout from the source node's
-    // codexTimeoutSeconds when set, not bake in the default 7200.
-    const workflow = migrateWorkflowGateProgressionToHooks({
-      ...CODING_WITH_QA_WORKFLOW,
-      nodes: CODING_WITH_QA_WORKFLOW.nodes.map((n) =>
-        n.name === 'Review'
-          ? {
-              ...n,
-              requireCodexApproval: true,
-              codexTimeoutSeconds: 300,
-            }
-          : n
-      ),
-      templateName: CODING_WITH_QA_WORKFLOW.name,
-      templateGates: CODING_WITH_QA_WORKFLOW.gates ?? [],
-    }).workflow;
-    const hook = workflow.hooks?.find((h) => h.sourceNode === 'Review');
-    expect(hook).toBeDefined();
-    const source = hook?.validator.kind === 'script' ? hook.validator.source : '';
-    expect(source).toContain('-lt 300 ');
-    expect(source).not.toContain('-lt 7200 ');
-    expect(source).toContain('5-minute timeout');
-  });
-
-  test('patchKnownBuiltInPromptDrift rewrites persisted Plan Review prompt with retired codex guidance', () => {
-    // P2: existing seeded spaces still carry the retired shared Codex
-    // guidance (codex[bot] + 10 minutes). Restamp must recognize the retired
-    // text and swap to the current guidance.
-    const templateNode = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find((n) => n.name === 'Plan Review')!;
-    const templatePrompt = templateNode.agents[0].customPrompt!;
-    const retiredGuidance =
-      'After posting your approval review, verify codex[bot] reaction status before ' +
-      'closing or handing off. Use `gh api repos/{owner}/{repo}/issues/{number}/reactions` ' +
-      'and inspect reactions from `user.login == "codex[bot]"`: content `+1` means ' +
-      'Codex passed, content `eyes` means Codex is still reviewing, and no codex[bot] ' +
-      'reaction means it has not started or has not reported yet. If codex[bot] has not ' +
-      'reacted at all, comment `@codex review` on the PR to trigger its review, then wait ' +
-      'for an `eyes` or `+1` reaction. ' +
-      'Only a +1 newer than the current PR head commit counts — after a revision push, ' +
-      'an older +1 from a previous cycle is stale and will not satisfy the hook. If the +1 ' +
-      'looks old, retrigger Codex with a fresh `@codex review` comment. ' +
-      'Send the approval handoff to start the Codex timeout (10 minutes). If the hook ' +
-      'blocks because Codex has not yet posted `+1`, poll every 60 seconds and retry the ' +
-      'handoff. If codex[bot] still has not posted `+1` after the timeout, proceed ' +
-      'only with a warning recorded in your result artifact. Do not close the task ' +
-      'before codex[bot] has `+1` unless that timeout has elapsed.';
-    const stalePromptValue = templatePrompt.value.replace(
-      // The current guidance is embedded in the template prompt; swap it out
-      // for the retired text to simulate a persisted pre-fix prompt.
-      /After posting your approval review, verify the Codex review bot reaction status[\s\S]*?unless that timeout window has elapsed\./,
-      retiredGuidance
-    );
-    expect(stalePromptValue).not.toBe(templatePrompt.value);
-
-    const existingNode: WorkflowNode = {
-      ...templateNode,
-      agents: templateNode.agents.map((a, i) =>
-        i === 0 ? { ...a, customPrompt: { value: stalePromptValue } } : a
-      ),
-    };
-
-    const merged = mergeNodeStructuralFieldsFromTemplate(
-      [existingNode],
-      PLAN_AND_DECOMPOSE_WORKFLOW.nodes,
-      () => 'agent-plan-review'
-    );
-    const mergedPlanReview = merged.find((n) => n.name === 'Plan Review')!;
-    const mergedPrompt = mergedPlanReview.agents[0].customPrompt!.value;
-    // A non-exact custom prompt (the retired-codex stale text we simulated) is
-    // preserved — legacy patch is exact-match only. The load-bearing contract is
-    // that the CURRENT Plan Review template prompt carries the modern codex
-    // guidance (case-insensitive login matching, 2-hour timeout), not the retired
-    // `codex[bot]` / 10-minute wording.
-    expect(mergedPrompt).toBe(stalePromptValue);
-    expect(templatePrompt.value).toContain('any login containing `codex`');
-    expect(templatePrompt.value).toContain('2 hours by default');
-    expect(templatePrompt.value).toContain('@codex review');
-    expect(templatePrompt.value).not.toContain('codex[bot] reaction status');
-  });
-
-  test('stable Coding-with-QA Review prompt carries no retired codex handoff text', () => {
-    // The stable reviewer prompt (CODER_OWNED_QA_REVIEW_PROMPT) is behavioral and
-    // does not carry the retired Fullstack "10-minute Codex timeout / codex[bot]"
-    // handoff prose. Restamp patches legacy Fullstack prompt text via the legacy
-    // slot-prompt path; this guards that the STABLE prompt has no such markers.
-    const templateNode = CODING_WITH_QA_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
-    const templatePrompt = templateNode.agents[0].customPrompt!.value;
-    expect(templatePrompt).not.toContain('10-minute Codex timeout');
-    expect(templatePrompt).not.toContain('codex[bot] reaction status');
-    expect(templatePrompt).not.toContain('data: { approved: true, pr_url: "<url>" }');
-    // The stable reviewer defers final approval to the central gated handoff.
-    expect(templatePrompt).toMatch(/final approval authority/i);
-    expect(templatePrompt).toContain('post a visible GitHub review');
-  });
-
-  test('stable Coding coder prompt carries no retired step-7 markers (no empty-PR / Validation Complete text)', () => {
-    // The stable coder prompt (CODER_OWNED_MERGE_PROMPT) was rewritten to be
-    // behavioral and carries none of the retired numbered-step markers (no
-    // "7. If the task requires no code changes", no Validation Complete handoff,
-    // no hard-coded space-agent). The retired `BUILT_IN_PROMPT_PATCH_VARIANTS`
-    // operate on legacy slot prompts, so the stable prompt must be clean of
-    // their keys.
-    const templateNode = CODING_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
-    const templatePrompt = templateNode.agents[0].customPrompt!.value;
-    expect(templatePrompt).not.toMatch(/7\. If the task requires no code changes/);
-    expect(templatePrompt).not.toContain('send_message(target="Validation Complete"');
-    expect(templatePrompt).not.toContain('send a message to `space-agent`');
-    // The behavioral prompt defers no-change escalation to the runtime contract.
-    expect(templatePrompt).toContain('Runtime Execution Contract');
-    expect(templatePrompt).toContain('`gh pr merge`');
-  });
-
-  test('migrated review-approval hook with per-node timeout preserves GitHub auth lookup', () => {
-    // P2: when codexTimeoutSeconds differs from the default, migration builds
-    // a fresh script string (not REVIEW_APPROVAL_SCRIPT identity). The hook
-    // must still declare externalLookups=['github'] so hook-executor preserves
-    // GH_TOKEN/GITHUB_TOKEN/GH_HOST/GH_CONFIG_DIR. Coverage comes from
-    // pattern.githubLookup, not script identity.
-    const workflow = migrateWorkflowGateProgressionToHooks({
-      ...CODING_WITH_QA_WORKFLOW,
-      nodes: CODING_WITH_QA_WORKFLOW.nodes.map((n) =>
-        n.name === 'Review' ? { ...n, requireCodexApproval: true, codexTimeoutSeconds: 300 } : n
-      ),
-      templateName: CODING_WITH_QA_WORKFLOW.name,
-      templateGates: CODING_WITH_QA_WORKFLOW.gates ?? [],
-    }).workflow;
-    const hook = workflow.hooks?.find((h) => h.sourceNode === 'Review');
-    expect(hook?.validator.kind).toBe('script');
-    if (hook?.validator.kind === 'script') {
-      expect(hook.validator.externalLookups).toEqual(['github']);
-    }
-  });
-
-  test('migrateWorkflowGateProgressionToHooks regenerates plan/review approval hooks when codexTimeoutSeconds changes', () => {
-    // P2: once a channel is migrated to a hook, its gateId is stripped, so
-    // the main migration loop can no longer reach it. A later RPC/import
-    // update that changes codexTimeoutSeconds would otherwise leave the
-    // existing hook baked with the old timeout. Post-pass must detect the
-    // drift and rebuild the script.
-    //
-    // Step 1: migrate with codexTimeoutSeconds=300 -> hook source has -lt 300.
-    const initial = migrateWorkflowGateProgressionToHooks({
-      ...CODING_WITH_QA_WORKFLOW,
-      nodes: CODING_WITH_QA_WORKFLOW.nodes.map((n) =>
-        n.name === 'Review' ? { ...n, requireCodexApproval: true, codexTimeoutSeconds: 300 } : n
-      ),
-      templateName: CODING_WITH_QA_WORKFLOW.name,
-      templateGates: CODING_WITH_QA_WORKFLOW.gates ?? [],
-    }).workflow;
-    const initialHook = initial.hooks?.find((h) => h.sourceNode === 'Review');
-    expect(initialHook?.validator.kind).toBe('script');
-    if (initialHook?.validator.kind === 'script') {
-      expect(initialHook.validator.source).toContain('-lt 300 ');
-    }
-
-    // Step 2: re-run migration on the already-migrated workflow (channels
-    // now have gateId stripped) with codexTimeoutSeconds bumped to 900.
-    // Post-pass must rebuild the hook source with -lt 900.
-    const reMigrated = migrateWorkflowGateProgressionToHooks({
-      ...initial,
-      nodes: initial.nodes.map((n) =>
-        n.name === 'Review' ? { ...n, requireCodexApproval: true, codexTimeoutSeconds: 900 } : n
-      ),
-      templateName: CODING_WITH_QA_WORKFLOW.name,
-      templateGates: CODING_WITH_QA_WORKFLOW.gates ?? [],
-    }).workflow;
-    const reMigratedHook = reMigrated.hooks?.find((h) => h.sourceNode === 'Review');
-    expect(reMigratedHook?.validator.kind).toBe('script');
-    if (reMigratedHook?.validator.kind === 'script') {
-      expect(reMigratedHook.validator.source).toContain('-lt 900 ');
-      expect(reMigratedHook.validator.source).not.toContain('-lt 300 ');
-      expect(reMigratedHook.validator.source).toContain('15-minute timeout');
-    }
-  });
-
-  test('migrateWorkflowGateProgressionToHooks rebuilds hook to default when codexTimeoutSeconds is cleared', () => {
-    // P2: when codexTimeoutSeconds is removed (undefined) on a previously
-    // custom-timeout node, the hook must revert to the default window
-    // (7200s) rather than staying baked at the prior custom value.
-    const initial = migrateWorkflowGateProgressionToHooks({
-      ...CODING_WITH_QA_WORKFLOW,
-      nodes: CODING_WITH_QA_WORKFLOW.nodes.map((n) =>
-        n.name === 'Review' ? { ...n, requireCodexApproval: true, codexTimeoutSeconds: 300 } : n
-      ),
-      templateName: CODING_WITH_QA_WORKFLOW.name,
-      templateGates: CODING_WITH_QA_WORKFLOW.gates ?? [],
-    }).workflow;
-    const initialHook = initial.hooks?.find((h) => h.sourceNode === 'Review');
-    if (initialHook?.validator.kind === 'script') {
-      expect(initialHook.validator.source).toContain('-lt 300 ');
-    }
-
-    // Re-run migration with codexTimeoutSeconds cleared (undefined). Node
-    // still requires codex approval, so hook must remain, but script source
-    // should revert to the 7200s default.
-    const reMigrated = migrateWorkflowGateProgressionToHooks({
-      ...initial,
-      nodes: initial.nodes.map((n) =>
-        n.name === 'Review'
-          ? { ...n, requireCodexApproval: true, codexTimeoutSeconds: undefined }
-          : n
-      ),
-      templateName: CODING_WITH_QA_WORKFLOW.name,
-      templateGates: CODING_WITH_QA_WORKFLOW.gates ?? [],
-    }).workflow;
-    const reMigratedHook = reMigrated.hooks?.find((h) => h.sourceNode === 'Review');
-    expect(reMigratedHook?.validator.kind).toBe('script');
-    if (reMigratedHook?.validator.kind === 'script') {
-      expect(reMigratedHook.validator.source).toContain('-lt 7200 ');
-      expect(reMigratedHook.validator.source).not.toContain('-lt 300 ');
-    }
-  });
-
-  test('migrateWorkflowGateProgressionToHooks leaves custom plan/review-approval hooks alone', () => {
-    // P2: hook IDs are user-supplied. A custom script hook whose id starts
-    // with `review-approval:` (or `plan-approval:`) must NOT be replaced
-    // with the built-in Codex script just because the source node has
-    // requireCodexApproval + codexTimeoutSeconds set. Scope guard: only
-    // generated scripts with the `-lt N` marker are rebuilt.
-    const baseWorkflow = migrateWorkflowGateProgressionToHooks({
-      ...CODING_WITH_QA_WORKFLOW,
-      templateName: CODING_WITH_QA_WORKFLOW.name,
-      templateGates: CODING_WITH_QA_WORKFLOW.gates ?? [],
-    }).workflow;
-
-    const customHook: WorkflowHook = {
-      id: 'review-approval:custom-audit',
-      enabled: true,
-      label: 'Custom Audit',
-      sourceNode: 'Review',
-      targetNode: 'QA',
-      method: 'send_message',
-      classification: 'validation',
-      order: 0,
-      validator: {
-        kind: 'script',
-        interpreter: 'bash',
-        // No `-lt N` marker — this is a user-authored script.
-        source: 'echo custom audit script',
-        timeoutMs: 30_000,
-      },
-      authorizedCallers: [{ sourceNode: 'Review' }],
-    };
-
-    const reMigrated = migrateWorkflowGateProgressionToHooks({
-      ...baseWorkflow,
-      nodes: baseWorkflow.nodes.map((n) =>
-        n.name === 'Review' ? { ...n, requireCodexApproval: true, codexTimeoutSeconds: 300 } : n
-      ),
-      hooks: [...(baseWorkflow.hooks ?? []), customHook],
-      templateName: CODING_WITH_QA_WORKFLOW.name,
-      templateGates: CODING_WITH_QA_WORKFLOW.gates ?? [],
-    }).workflow;
-
-    const preserved = reMigrated.hooks?.find((h) => h.id === 'review-approval:custom-audit');
-    expect(preserved?.validator.kind).toBe('script');
-    if (preserved?.validator.kind === 'script') {
-      expect(preserved.validator.source).toBe('echo custom audit script');
-    }
-  });
-
-  test('mergeNodeStructuralFieldsFromTemplate preserves operator-configured codexTimeoutSeconds when template omits it', () => {
-    // P2: built-in templates leave codexTimeoutSeconds undefined. Restamp
-    // must not silently delete an operator- or RPC-configured non-default
-    // timeout on a seeded node.
-    const templateNode = CODING_WITH_QA_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
-    expect(templateNode.codexTimeoutSeconds).toBeUndefined();
-    const existingNode: WorkflowNode = {
-      ...templateNode,
-      codexTimeoutSeconds: 900,
-    };
-
-    const merged = mergeNodeStructuralFieldsFromTemplate(
-      [existingNode],
-      CODING_WITH_QA_WORKFLOW.nodes,
-      () => 'agent-review'
-    );
-    const mergedReview = merged.find((n) => n.name === 'Review')!;
-    expect(mergedReview.codexTimeoutSeconds).toBe(900);
-  });
-
   test('mergeNodeStructuralFieldsFromTemplate preserves operator-configured handoff transitions when the template is silent', () => {
     // Built-in templates do not declare transitions today. Restamp must NOT wipe
-    // operator-/RPC-installed transitions on a seeded node — mirrors the
-    // codexTimeoutSeconds preserve-when-template-silent rule directly above.
+    // operator-/RPC-installed transitions on a seeded node.
     const templateNode = CODING_WITH_QA_WORKFLOW.nodes.find((n) => n.name === 'Coding')!;
     expect(templateNode.transitions).toBeUndefined();
     const installed: HandoffTransition[] = [{ id: 'to-review', target: 'Review' }];
@@ -7238,8 +3582,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
 
   test('mergeNodeStructuralFieldsFromTemplate preserves transitions for a node renamed away from the template', () => {
     // When the template no longer has a matching node, the existing node is
-    // treated as user-owned; its transitions are preserved (consistent with
-    // codexTimeoutSeconds), not cleared.
+    // treated as user-owned; its transitions are preserved, not cleared.
     const installed: HandoffTransition[] = [{ id: 'to-review', target: 'Review' }];
     const orphan: WorkflowNode = {
       id: 'orphan-1',
@@ -7330,186 +3673,13 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     expect(mergedCoding.transitions?.[0].target).toBe('Senior Reviewer');
   });
 
-  test('migrateWorkflowGateProgressionToHooks post-pass is idempotent on plan-approval hooks', () => {
-    // Regression: a naive `/-lt (\d+) /` regex matched the FIRST `-lt N` in
-    // the script source. buildApprovalsScript emits TWO:
-    //   `if [ "$COUNT" -lt 4 ]`  (approval-vote count, line 83)
-    //   `if ((NOW_EPOCH - START_EPOCH)) -lt ${timeoutSeconds}`  (timeout, line 107)
-    // The naive regex returned 4, so plan-approval hooks rebuilt on every
-    // migration call (4 !== expectedTimeout, always). The anchored regex
-    // must match the timeout comparison only, so re-running migration on an
-    // already-migrated workflow produces byte-identical hook source.
-    const baseProps = {
-      ...PLAN_AND_DECOMPOSE_WORKFLOW,
-      templateName: PLAN_AND_DECOMPOSE_WORKFLOW.name,
-      templateGates: PLAN_AND_DECOMPOSE_WORKFLOW.gates ?? [],
-    };
-    const first = migrateWorkflowGateProgressionToHooks(baseProps).workflow;
-    const firstHook = first.hooks?.find(
-      (h) => h.sourceNode === 'Plan Review' && h.targetNode === 'Task Dispatcher'
-    );
-    expect(firstHook?.validator.kind).toBe('script');
-    if (firstHook?.validator.kind !== 'script') return;
-
-    // Run migration again on the already-migrated workflow.
-    const second = migrateWorkflowGateProgressionToHooks({
-      ...baseProps,
-      channels: first.channels,
-      gates: first.gates,
-      hooks: first.hooks,
-    }).workflow;
-    const secondHook = second.hooks?.find((h) => h.id === firstHook.id);
-    expect(secondHook?.validator.kind).toBe('script');
-    if (secondHook?.validator.kind === 'script') {
-      expect(secondHook.validator.source).toBe(firstHook.validator.source);
-    }
-  });
-
-  test('migrateWorkflowGateProgressionToHooks leaves custom hooks with unrelated -lt N comparisons alone', () => {
-    // Regression: a naive `/-lt (\d+) /` regex matched any `-lt N` shell
-    // comparison in a custom hook source, misclassifying it as a generated
-    // codex script and replacing it with the built-in approval script. The
-    // anchored regex (`((NOW_EPOCH - START_EPOCH)) -lt N`) must NOT match
-    // unrelated comparisons like `[ "$COUNT" -lt 5 ]`.
-    const baseWorkflow = migrateWorkflowGateProgressionToHooks({
-      ...CODING_WITH_QA_WORKFLOW,
-      templateName: CODING_WITH_QA_WORKFLOW.name,
-      templateGates: CODING_WITH_QA_WORKFLOW.gates ?? [],
-    }).workflow;
-
-    const customSource = [
-      '#!/usr/bin/env bash',
-      'COUNT=$(jq ". | length" <<< "$INPUT")',
-      'if [ "$COUNT" -lt 5 ]; then exit 1; fi',
-      'echo custom approval gate with -lt 5 check',
-    ].join('\n');
-    const customHook: WorkflowHook = {
-      id: 'review-approval:custom-count-check',
-      enabled: true,
-      label: 'Custom Count Check',
-      sourceNode: 'Review',
-      targetNode: 'QA',
-      method: 'send_message',
-      classification: 'validation',
-      order: 0,
-      validator: {
-        kind: 'script',
-        interpreter: 'bash',
-        source: customSource,
-        timeoutMs: 30_000,
-      },
-      authorizedCallers: [{ sourceNode: 'Review' }],
-    };
-
-    const reMigrated = migrateWorkflowGateProgressionToHooks({
-      ...baseWorkflow,
-      nodes: baseWorkflow.nodes.map((n) =>
-        n.name === 'Review' ? { ...n, requireCodexApproval: true, codexTimeoutSeconds: 300 } : n
-      ),
-      hooks: [...(baseWorkflow.hooks ?? []), customHook],
-      templateName: CODING_WITH_QA_WORKFLOW.name,
-      templateGates: CODING_WITH_QA_WORKFLOW.gates ?? [],
-    }).workflow;
-
-    const preserved = reMigrated.hooks?.find((h) => h.id === 'review-approval:custom-count-check');
-    expect(preserved?.validator.kind).toBe('script');
-    if (preserved?.validator.kind === 'script') {
-      expect(preserved.validator.source).toBe(customSource);
-      expect(preserved.validator.source).toContain('-lt 5');
-    }
-  });
-
-  test('migrateWorkflowGateProgressionToHooks post-pass rebuilds deployed approval hooks whose source drifted from the builder output', () => {
-    // #900: once a channel is migrated its gateId is stripped, so the main loop
-    // can no longer reach it. A deployed review-approval hook still carrying the
-    // PRE-fix source (handoff-anchored freshness) must be rebuilt to the current
-    // (head-anchored) source on the next load — otherwise a builder-logic fix
-    // never reaches already-deployed spaces. The post-pass rebuilds on ANY
-    // source drift, not only a timeout change.
-    const baseWorkflow = migrateWorkflowGateProgressionToHooks({
-      ...CODING_WITH_QA_WORKFLOW,
-      nodes: CODING_WITH_QA_WORKFLOW.nodes.map((n) =>
-        n.name === 'Review' ? { ...n, requireCodexApproval: true } : n
-      ),
-      templateName: CODING_WITH_QA_WORKFLOW.name,
-      templateGates: CODING_WITH_QA_WORKFLOW.gates ?? [],
-    }).workflow;
-    const freshHook = baseWorkflow.hooks?.find(
-      (h) => h.sourceNode === 'Review' && h.targetNode === 'QA'
-    );
-    expect(freshHook?.validator.kind).toBe('script');
-    if (freshHook?.validator.kind !== 'script') return;
-    const canonicalSource = freshHook.validator.source;
-    expect(canonicalSource).toContain('--arg since "$HEAD_BASELINE"');
-
-    // Deployed hook baked with stale (handoff-anchored) freshness. The timeout
-    // marker is untouched, so the post-pass scope guard still recognizes it as a
-    // generated codex script — only the freshness anchor differs.
-    const staleSource = canonicalSource.replace(
-      '--arg since "$HEAD_BASELINE"',
-      '--arg since "$WAIT_STARTED"'
-    );
-    expect(staleSource).not.toBe(canonicalSource);
-
-    const reMigrated = migrateWorkflowGateProgressionToHooks({
-      ...baseWorkflow,
-      nodes: baseWorkflow.nodes.map((n) =>
-        n.name === 'Review' ? { ...n, requireCodexApproval: true } : n
-      ),
-      hooks: baseWorkflow.hooks!.map((h) =>
-        h.id === freshHook.id && h.validator.kind === 'script'
-          ? { ...h, validator: { ...h.validator, source: staleSource } }
-          : h
-      ),
-      templateName: CODING_WITH_QA_WORKFLOW.name,
-      templateGates: CODING_WITH_QA_WORKFLOW.gates ?? [],
-    }).workflow;
-    const rebuiltHook = reMigrated.hooks?.find((h) => h.id === freshHook.id);
-    expect(rebuiltHook?.validator.kind).toBe('script');
-    if (rebuiltHook?.validator.kind !== 'script') return;
-    // Post-pass rebuilt the drifted source back to the current builder output.
-    expect(rebuiltHook.validator.source).toBe(canonicalSource);
-    expect(rebuiltHook.validator.source).toContain('--arg since "$HEAD_BASELINE"');
-  });
-
-  test('migrateWorkflowGateProgressionToHooks post-pass is idempotent on review-approval hooks', () => {
-    // Mirror of the plan-approval idempotency check for the review-approval hook:
-    // re-running migration over its own output (review-approval channel already
-    // migrated) must be byte-identical. The post-pass full-source comparison must
-    // not churn a hook already at the current builder output.
-    const baseProps = {
-      ...CODING_WITH_QA_WORKFLOW,
-      nodes: CODING_WITH_QA_WORKFLOW.nodes.map((n) =>
-        n.name === 'Review' ? { ...n, requireCodexApproval: true } : n
-      ),
-      templateName: CODING_WITH_QA_WORKFLOW.name,
-      templateGates: CODING_WITH_QA_WORKFLOW.gates ?? [],
-    };
-    const first = migrateWorkflowGateProgressionToHooks(baseProps).workflow;
-    const firstHook = first.hooks?.find((h) => h.sourceNode === 'Review' && h.targetNode === 'QA');
-    expect(firstHook?.validator.kind).toBe('script');
-    if (firstHook?.validator.kind !== 'script') return;
-
-    const second = migrateWorkflowGateProgressionToHooks({
-      ...baseProps,
-      channels: first.channels,
-      gates: first.gates,
-      hooks: first.hooks,
-    }).workflow;
-    const secondHook = second.hooks?.find((h) => h.id === firstHook.id);
-    expect(secondHook?.validator.kind).toBe('script');
-    if (secondHook?.validator.kind !== 'script') return;
-    expect(secondHook.validator.source).toBe(firstHook.validator.source);
-  });
-
   test('CODING_WITH_QA_WORKFLOW reviewer prompt defers to the central gated handoff', () => {
     const reviewNode = CODING_WITH_QA_WORKFLOW.nodes.find((n) => n.name === 'Review')!;
     const prompt = reviewNode.agents[0].customPrompt!.value;
 
     // The stable reviewer prompt is behavioral: it does NOT hard-code the QA
     // target or review-approval-gate field (those are injected centrally), and
-    // it does not embed the retired Fullstack codex handoff prose either — codex
-    // enforcement lives in the review-approval hook / requireCodexApproval flag.
+    // it does not embed the retired Fullstack codex handoff prose either.
     expect(prompt).not.toContain('any login containing `codex`');
     expect(prompt).not.toContain('2 hours by default');
     // It does defer the final-approval handoff to the injected contract.
@@ -7708,46 +3878,4 @@ test('CODING_WITH_QA_WORKFLOW cyclic back-channels permit more than 6 review/QA 
   // Behavioral guard: both channels must permit more than 6 cycles.
   expect(reviewToCoding!.maxCycles).toBeGreaterThan(6);
   expect(qaToCoding!.maxCycles).toBeGreaterThan(6);
-});
-
-test('PLAN_AND_DECOMPOSE_WORKFLOW Plan Review reviewers carry Terminal Action Pre-conditions', () => {
-  const reviewNode = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find((n) => n.name === 'Plan Review')!;
-  expect(reviewNode.agents).toHaveLength(4);
-  for (const agent of reviewNode.agents) {
-    const prompt = agent.customPrompt!.value;
-    // Plan reviewers are not end-node agents but the same gating
-    // principle applies — voting `approved: true` while P0–P3 findings
-    // are open is the gate-write equivalent of `approve_task`.
-    expect(prompt).toMatch(
-      /terminal-action tool contract|Terminal-action contract|terminal hand-off|terminal action|terminal calls|terminal actions|terminal-action tool descriptions/
-    );
-    expect(prompt).toMatch(
-      /P0[–-]P3|zero findings|zero P0-P3|findings remain|blocking findings|QA passes|Reviewer System Contract/i
-    );
-    expect(prompt).toContain('approve_task');
-    expect(prompt).toContain('submit_for_approval');
-  }
-});
-
-test('PLAN_AND_DECOMPOSE_WORKFLOW Task Dispatcher prompt forbids terminal calls while dispatch incomplete', () => {
-  const dispatcherNode = PLAN_AND_DECOMPOSE_WORKFLOW.nodes.find(
-    (n) => n.name === 'Task Dispatcher'
-  )!;
-  const prompt = dispatcherNode.agents[0].customPrompt!.value;
-  expect(prompt).toMatch(
-    /terminal-action tool contract|Terminal-action contract|terminal hand-off|terminal action|terminal calls|terminal actions|terminal-action tool descriptions/
-  );
-  expect(prompt).toContain('approve_task');
-  expect(prompt).toContain('submit_for_approval');
-  // Dispatcher's REQUEST_CHANGES analogue: dispatch incomplete.
-  expect(prompt).toMatch(
-    /do not .*approve_task|Never use.*findings|If findings remain|If changes needed|If dispatch is incomplete|If QA fails|only on APPROVE|If requesting changes|If more research is needed/i
-  );
-  expect(prompt).toMatch(
-    /do not .*submit_for_approval|Never use.*findings|If findings remain|If changes needed|If dispatch is incomplete|If QA fails|only on APPROVE|If requesting changes|If more research is needed/i
-  );
-  // Same approval semantic clarifier.
-  expect(prompt).toMatch(
-    /same approval semantic|terminal-action tool contract|terminal hand-off|terminal.*contract/i
-  );
 });

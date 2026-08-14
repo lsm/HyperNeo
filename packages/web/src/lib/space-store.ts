@@ -33,6 +33,7 @@ import type {
   LiveQueryDeltaEvent,
   LiveQuerySnapshotEvent,
   MessageImage,
+  MessageDeliveryMode,
   NodeExecution,
   PaginatedSpaceTaskResult,
   RuntimeState,
@@ -130,6 +131,7 @@ export interface QueueHealthCounters {
   claimConflicts: number;
   staleSessionSkips: number;
   pausedSpaceSkips: number;
+  cooldownSkips: number;
 }
 
 /** Live queue gauges computed at read time. */
@@ -2450,7 +2452,8 @@ class SpaceStore {
       workflowNodeId?: string;
       sessionId?: string;
     },
-    images?: MessageImage[]
+    images?: MessageImage[],
+    deliveryMode?: MessageDeliveryMode
   ): Promise<{
     ok: boolean;
     routedTo?: string[];
@@ -2470,6 +2473,7 @@ class SpaceStore {
       message,
       ...(target ? { target } : {}),
       ...(images && images.length > 0 ? { images } : {}),
+      ...(deliveryMode ? { deliveryMode } : {}),
     });
   }
 
@@ -2523,32 +2527,6 @@ class SpaceStore {
       queued: response?.queued ?? false,
       ...(response?.queuedMessageId ? { queuedMessageId: response.queuedMessageId } : {}),
     };
-  }
-
-  // ========================================
-  // Gate Methods
-  // ========================================
-
-  /**
-   * List all gate data records for a workflow run.
-   */
-  async listGateData(
-    runId: string
-  ): Promise<
-    Array<{ runId: string; gateId: string; data: Record<string, unknown>; updatedAt: number }>
-  > {
-    const hub = connectionManager.getHubIfConnected();
-    if (!hub) throw new Error('Not connected');
-
-    const result = await hub.request<{
-      gateData: Array<{
-        runId: string;
-        gateId: string;
-        data: Record<string, unknown>;
-        updatedAt: number;
-      }>;
-    }>('spaceWorkflowRun.listGateData', { runId });
-    return result?.gateData ?? [];
   }
 
   async listExternalEventDeliveries(

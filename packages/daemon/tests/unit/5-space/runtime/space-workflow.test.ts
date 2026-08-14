@@ -20,6 +20,7 @@ import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/sp
 import {
   SpaceWorkflowManager,
   WorkflowValidationError,
+  WorkflowDeletionBlockedError,
 } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import type { SpaceAgentLookup } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import type { WorkflowNodeInput } from '@hyperneo/shared';
@@ -652,45 +653,6 @@ describe('SpaceWorkflowManager', () => {
     expect(updated?.name).toBe('WF');
   });
 
-  test('updateWorkflow validates Codex scripted-gate conflicts against null clears', () => {
-    const wf = repo.createWorkflow({
-      spaceId: 'space-1',
-      name: 'Legacy Invalid Codex Workflow',
-      nodes: [
-        {
-          id: 'node-code',
-          name: 'Code',
-          agents: [{ agentId: 'agent-coder', name: 'coder' }],
-          requireCodexApproval: true,
-        },
-        {
-          id: 'node-review',
-          name: 'Review',
-          agents: [{ agentId: 'agent-general', name: 'reviewer' }],
-        },
-      ],
-      channels: [{ id: 'ch-code-review', from: 'Code', to: 'Review', gateId: 'approval-gate' }],
-      gates: [
-        {
-          id: 'approval-gate',
-          fields: [
-            { name: 'approved', type: 'boolean', writers: [], check: { op: '==', value: true } },
-          ],
-          script: { interpreter: 'bash', source: 'echo custom', timeoutMs: 10000 },
-          resetOnCycle: false,
-        },
-      ],
-      startNodeId: 'node-code',
-      endNodeId: 'node-review',
-      completionAutonomyLevel: 3,
-    });
-
-    const updated = manager.updateWorkflow(wf.id, { channels: null, gates: null });
-
-    expect(updated?.channels).toBeUndefined();
-    expect(updated?.gates).toBeUndefined();
-  });
-
   test('name is trimmed before storage — whitespace variants collide', () => {
     manager.createWorkflow({
       spaceId: 'space-1',
@@ -871,6 +833,76 @@ describe('SpaceWorkflowManager', () => {
 
   test('deleteWorkflow returns false for non-existent workflow', () => {
     expect(manager.deleteWorkflow('no-such-id')).toBe(false);
+  });
+
+  // -------------------------------------------------------------------------
+  // Deletion-safety (RFC §4 #3): a workflow with a non-archived run cannot be
+  // deleted — that run is still executable (done/cancelled reopen; only an
+  // archived task is a tombstone), so deleting the definition would orphan its
+  // pinned version and strand it.
+  // -------------------------------------------------------------------------
+  function seedRunWithTask(
+    workflowId: string,
+    opts: { archived?: boolean; status?: string } = {}
+  ): string {
+    const now = Date.now();
+    const runId = `run-${Math.random().toString(36).slice(2)}`;
+    db.prepare(
+      `INSERT INTO space_workflow_runs
+         (id, space_id, workflow_id, definition_version, title, status, created_at, updated_at)
+       VALUES (?, 'space-1', ?, NULL, 'R', ?, ?, ?)`
+    ).run(runId, workflowId, opts.status ?? 'in_progress', now, now);
+    db.prepare(
+      `INSERT INTO space_tasks
+         (id, space_id, task_number, title, status, workflow_run_id, archived_at, created_at, updated_at)
+       VALUES (?, 'space-1', ?, 'T', 'open', ?, ?, ?, ?)`
+    ).run(`task-${runId}`, runId, runId, opts.archived ? now : null, now, now);
+    return runId;
+  }
+
+  test('deleteWorkflow throws WorkflowDeletionBlockedError when a non-archived run exists', () => {
+    const wf = manager.createWorkflow({
+      spaceId: 'space-1',
+      name: 'WithRun',
+      nodes: [coderNode],
+      completionAutonomyLevel: 3,
+    });
+    seedRunWithTask(wf.id); // non-archived task → executable run
+    expect(() => manager.deleteWorkflow(wf.id)).toThrow(WorkflowDeletionBlockedError);
+    // The workflow is kept (not deleted) — the run is not orphaned.
+    expect(manager.getWorkflow(wf.id)).not.toBeNull();
+  });
+
+  test('deleteWorkflow throws for a non-terminal run with no task yet (startup window)', () => {
+    // startWorkflowRun inserts the run before attaching its task; during that
+    // gap the run is executable and must block deletion.
+    const wf = manager.createWorkflow({
+      spaceId: 'space-1',
+      name: 'Starting',
+      nodes: [coderNode],
+      completionAutonomyLevel: 3,
+    });
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO space_workflow_runs
+         (id, space_id, workflow_id, definition_version, title, status, created_at, updated_at)
+       VALUES (?, 'space-1', ?, NULL, 'R', 'in_progress', ?, ?)`
+    ).run(`run-${wf.id}`, wf.id, now, now); // no task seeded
+    expect(() => manager.deleteWorkflow(wf.id)).toThrow(WorkflowDeletionBlockedError);
+    expect(manager.getWorkflow(wf.id)).not.toBeNull();
+  });
+
+  test('deleteWorkflow succeeds once the executable run is a tombstone', () => {
+    const wf = manager.createWorkflow({
+      spaceId: 'space-1',
+      name: 'Archivable',
+      nodes: [coderNode],
+      completionAutonomyLevel: 3,
+    });
+    // Terminal status + archived task = non-reopenable tombstone → safe to delete.
+    seedRunWithTask(wf.id, { archived: true, status: 'cancelled' });
+    expect(manager.deleteWorkflow(wf.id)).toBe(true);
+    expect(manager.getWorkflow(wf.id)).toBeNull();
   });
 
   // -------------------------------------------------------------------------

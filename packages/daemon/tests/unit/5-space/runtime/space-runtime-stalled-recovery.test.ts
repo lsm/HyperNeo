@@ -45,10 +45,14 @@ import {
   PendingAgentMessageRepository,
   DEFAULT_PENDING_MESSAGE_RETENTION_MS,
 } from '../../../../src/storage/repositories/pending-agent-message-repository.ts';
-import { ChannelCycleRepository } from '../../../../src/storage/repositories/channel-cycle-repository.ts';
+import {
+  ChannelCycleRepository,
+  DEAD_LOOP_WINDOW_MS,
+} from '../../../../src/storage/repositories/channel-cycle-repository.ts';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
+import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { PermanentSpawnError } from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
@@ -113,10 +117,9 @@ function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string): void {
 function buildLinearWorkflow(
   spaceId: string,
   workflowManager: SpaceWorkflowManager,
-  nodes: Array<{ id: string; name: string; agentId: string; requireCodexApproval?: boolean }>,
+  nodes: Array<{ id: string; name: string; agentId: string }>,
   opts: {
     channels?: SpaceWorkflow['channels'];
-    gates?: SpaceWorkflow['gates'];
     endNodeId?: string;
   } = {}
 ): SpaceWorkflow {
@@ -139,7 +142,6 @@ function buildLinearWorkflow(
         from: step.name,
         to: nodes[i + 1].name,
       })),
-    gates: opts.gates,
     startNodeId: nodes[0].id,
     endNodeId: opts.endNodeId ?? nodes.at(-1)?.id,
     rules: [],
@@ -176,6 +178,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
     'space.workflowRun.retry': 'task_retry',
     'space.workflowRun.needsAttention': 'workflow_run_needs_attention',
     'space.task.awaitingApproval': 'task_awaiting_approval',
+    'space.workflowRun.deadLoop': 'workflow_run_dead_loop',
   };
 
   const SPACE_ID = 'space-recovery-1';
@@ -1137,105 +1140,6 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       expect(pendingRepo.listAllForRun(run.id)[0].status).toBe('delivered');
     });
 
-    test('coder idle with blocked coder→reviewer gate → run blocked', async () => {
-      const workflow = buildLinearWorkflow(
-        SPACE_ID,
-        workflowManager,
-        [
-          { id: STEP_A, name: 'Coding', agentId: AGENT },
-          { id: STEP_B, name: 'Review', agentId: AGENT },
-        ],
-        {
-          channels: [{ id: 'coding-to-review', from: 'Coding', to: 'Review', gateId: 'ready' }],
-          gates: [
-            {
-              id: 'ready',
-              resetOnCycle: false,
-              fields: [
-                { name: 'pr_url', type: 'string', writers: [], check: { op: 'exists' as const } },
-              ],
-            },
-          ],
-        }
-      );
-      const run = workflowRunRepo.createRun({
-        spaceId: SPACE_ID,
-        workflowId: workflow.id,
-        title: 'Gate blocked handoff',
-      });
-      workflowRunRepo.transitionStatus(run.id, 'in_progress');
-      const task = taskRepo.createTask({
-        spaceId: SPACE_ID,
-        title: 'Gate blocked handoff',
-        description: '',
-        workflowRunId: run.id,
-        workflowNodeId: STEP_A,
-        status: 'in_progress',
-      });
-      seedExec(run.id, STEP_A, 'Coding', 'idle');
-
-      await makeRuntime({
-        pendingMessageRepo: new PendingAgentMessageRepository(db),
-      }).recoverStalledRuns();
-
-      expect(findExec(run.id, STEP_B)).toBeUndefined();
-      expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
-      expect(taskRepo.getTask(task.id)?.blockReason).toBe('execution_failed');
-    });
-
-    test('coder idle with open coder→reviewer gate → reviewer is activated', async () => {
-      const workflow = buildLinearWorkflow(
-        SPACE_ID,
-        workflowManager,
-        [
-          { id: STEP_A, name: 'Coding', agentId: AGENT },
-          { id: STEP_B, name: 'Review', agentId: AGENT },
-        ],
-        {
-          channels: [{ id: 'coding-to-review', from: 'Coding', to: 'Review', gateId: 'ready' }],
-          gates: [
-            {
-              id: 'ready',
-              resetOnCycle: false,
-              fields: [
-                { name: 'pr_url', type: 'string', writers: [], check: { op: 'exists' as const } },
-              ],
-            },
-          ],
-        }
-      );
-      const run = workflowRunRepo.createRun({
-        spaceId: SPACE_ID,
-        workflowId: workflow.id,
-        title: 'Gate open handoff',
-      });
-      workflowRunRepo.transitionStatus(run.id, 'in_progress');
-      taskRepo.createTask({
-        spaceId: SPACE_ID,
-        title: 'Gate open handoff',
-        description: '',
-        workflowRunId: run.id,
-        workflowNodeId: STEP_A,
-        status: 'in_progress',
-      });
-      seedExec(run.id, STEP_A, 'Coding', 'idle');
-      db.prepare(
-        `INSERT INTO gate_data (run_id, gate_id, data, updated_at) VALUES (?, ?, ?, ?)`
-      ).run(
-        run.id,
-        'ready',
-        JSON.stringify({ pr_url: 'https://github.com/acme/repo/pull/1' }),
-        Date.now()
-      );
-
-      await makeRuntime({
-        pendingMessageRepo: new PendingAgentMessageRepository(db),
-      }).recoverStalledRuns();
-
-      expect(findExec(run.id, STEP_B).status).toBe('pending');
-      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
-    });
-
     test('coder idle and reviewer cancelled from prior activation → reviewer resets pending', async () => {
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Coding', agentId: AGENT },
@@ -1522,72 +1426,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
     });
 
-    test('cyclic recovery increments cycle count and resets cycle gates', async () => {
-      const workflow = buildLinearWorkflow(
-        SPACE_ID,
-        workflowManager,
-        [
-          { id: STEP_A, name: 'Coding', agentId: AGENT },
-          { id: STEP_B, name: 'Review', agentId: AGENT },
-        ],
-        {
-          channels: [
-            { id: 'coding-to-review', from: 'Coding', to: 'Review' },
-            { id: 'review-to-coding', from: 'Review', to: 'Coding', maxCycles: 2 },
-          ],
-          gates: [
-            {
-              id: 'cycle-votes',
-              resetOnCycle: true,
-              fields: [
-                {
-                  name: 'votes',
-                  type: 'map',
-                  writers: [],
-                  check: { op: 'count', match: 'approved', min: 1 },
-                },
-              ],
-            },
-          ],
-          endNodeId: STEP_B,
-        }
-      );
-      const run = workflowRunRepo.createRun({
-        spaceId: SPACE_ID,
-        workflowId: workflow.id,
-        title: 'Recover cyclic handoff',
-      });
-      workflowRunRepo.transitionStatus(run.id, 'in_progress');
-      taskRepo.createTask({
-        spaceId: SPACE_ID,
-        title: 'Recover cyclic handoff',
-        description: '',
-        workflowRunId: run.id,
-        workflowNodeId: STEP_A,
-        status: 'in_progress',
-      });
-      seedExec(run.id, STEP_B, 'Review', 'idle');
-      db.prepare(
-        `INSERT INTO gate_data (run_id, gate_id, data, updated_at) VALUES (?, ?, ?, ?)`
-      ).run(run.id, 'cycle-votes', JSON.stringify({ votes: { reviewer: true } }), Date.now());
-
-      await makeRuntime({
-        pendingMessageRepo: new PendingAgentMessageRepository(db),
-      }).recoverStalledRuns();
-
-      expect(findExec(run.id, STEP_A).status).toBe('pending');
-      expect(new ChannelCycleRepository(db).get(run.id, 1)?.count).toBe(1);
-      expect(
-        JSON.parse(
-          db
-            .prepare(`SELECT data FROM gate_data WHERE run_id = ? AND gate_id = ?`)
-            .get(run.id, 'cycle-votes')?.data as string
-        )
-      ).toMatchObject({ votes: {} });
-      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
-    });
-
-    test('cyclic channel at maxCycles → run blocked', async () => {
+    test('cyclic channel in a dead loop → run blocked', async () => {
       const workflow = buildLinearWorkflow(
         SPACE_ID,
         workflowManager,
@@ -1606,19 +1445,25 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       const run = workflowRunRepo.createRun({
         spaceId: SPACE_ID,
         workflowId: workflow.id,
-        title: 'Cycle cap handoff',
+        title: 'Dead-loop handoff',
       });
       workflowRunRepo.transitionStatus(run.id, 'in_progress');
       const task = taskRepo.createTask({
         spaceId: SPACE_ID,
-        title: 'Cycle cap handoff',
+        title: 'Dead-loop handoff',
         description: '',
         workflowRunId: run.id,
         workflowNodeId: STEP_A,
         status: 'in_progress',
       });
       seedExec(run.id, STEP_B, 'Review', 'idle');
-      new ChannelCycleRepository(db).incrementCycleCount(run.id, 1, 1);
+      // Seed a dead-loop state on the cyclic Review→Coding channel: 15 rapid
+      // traversals within the rate window. Recovery must refuse to re-activate
+      // it. (A single lifetime increment no longer blocks — only a true
+      // runaway rate does.)
+      const cycleRepo = new ChannelCycleRepository(db);
+      const now = Date.now();
+      for (let i = 0; i < 15; i++) cycleRepo.recordCycleEvent(run.id, 1, now - i * 1000);
 
       await makeRuntime({
         pendingMessageRepo: new PendingAgentMessageRepository(db),
@@ -1628,9 +1473,19 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       expect(findExec(run.id, STEP_B).status).toBe('idle');
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
       expect(taskRepo.getTask(task.id)?.blockReason).toBe('execution_failed');
+
+      // The dead loop is surfaced to the UI (not just logged as a generic stall).
+      const deadLoopNotes = notifications.filter((n) => n.kind === 'workflow_run_dead_loop');
+      expect(deadLoopNotes).toHaveLength(1);
+      expect(deadLoopNotes[0].payload.runId).toBe(run.id);
+      expect(deadLoopNotes[0].payload.recentCount).toBe(15);
     });
 
-    test('coder idle with closed script gate → run blocked', async () => {
+    test('cyclic channel one short of the dead-loop threshold → recovery activates and records exactly one traversal', async () => {
+      // Pins the recovery off-by-one: at 14 in-window traversals the channel is
+      // still open, so recovery activates the downstream node and records
+      // exactly one more traversal (14 → 15). At 15 it is closed — recorded 0,
+      // run blocked — covered by the test above.
       const workflow = buildLinearWorkflow(
         SPACE_ID,
         workflowManager,
@@ -1640,44 +1495,51 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         ],
         {
           channels: [
-            { id: 'coding-to-review', from: 'Coding', to: 'Review', gateId: 'script-ready' },
+            { id: 'coding-to-review', from: 'Coding', to: 'Review' },
+            { id: 'review-to-coding', from: 'Review', to: 'Coding', maxCycles: 1 },
           ],
-          gates: [
-            {
-              id: 'script-ready',
-              resetOnCycle: false,
-              fields: [],
-              script: { interpreter: 'bash', source: 'exit 1' },
-            },
-          ],
+          endNodeId: STEP_B,
         }
       );
       const run = workflowRunRepo.createRun({
         spaceId: SPACE_ID,
         workflowId: workflow.id,
-        title: 'Script gate blocked handoff',
+        title: 'Boundary Run',
       });
       workflowRunRepo.transitionStatus(run.id, 'in_progress');
-      const task = taskRepo.createTask({
+      taskRepo.createTask({
         spaceId: SPACE_ID,
-        title: 'Script gate blocked handoff',
+        title: 'Boundary Run',
         description: '',
         workflowRunId: run.id,
         workflowNodeId: STEP_A,
         status: 'in_progress',
       });
-      seedExec(run.id, STEP_A, 'Coding', 'idle');
+      seedExec(run.id, STEP_B, 'Review', 'idle');
+      const cycleRepo = new ChannelCycleRepository(db);
+      const now = Date.now();
+      for (let i = 0; i < 14; i++) cycleRepo.recordCycleEvent(run.id, 1, now - i * 1000);
 
       await makeRuntime({
         pendingMessageRepo: new PendingAgentMessageRepository(db),
       }).recoverStalledRuns();
 
-      expect(findExec(run.id, STEP_B)).toBeUndefined();
-      expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
-      expect(taskRepo.getTask(task.id)?.blockReason).toBe('execution_failed');
+      // Channel was open → recovery activated Coding and recorded exactly one
+      // traversal (14 → 15). The run is recovered, not blocked.
+      expect(findExec(run.id, STEP_A)).toBeDefined();
+      expect(cycleRepo.countRecentCycleEvents(run.id, 1)).toBe(15);
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+      // Not a dead loop → no dead-loop notification.
+      expect(notifications.filter((n) => n.kind === 'workflow_run_dead_loop')).toHaveLength(0);
     });
 
-    test('coder idle with feature-backed gate whose script blocks → run blocked', async () => {
+    test('done/cancelled are reopenable → rate window retained; archiving the task clears it', async () => {
+      // Regression guard for the reopen/rate-window interaction: a run that
+      // reaches done/cancelled can be reopened by a peer send within the
+      // 5-minute window (ChannelRouter flips it back to `in_progress`), so its
+      // dead-loop history must survive the terminal transition — otherwise a
+      // reopened runaway gets a fresh 15 traversals in the same window. Only the
+      // true tombstone, task archive, may clear it.
       const workflow = buildLinearWorkflow(
         SPACE_ID,
         workflowManager,
@@ -1687,107 +1549,161 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         ],
         {
           channels: [
-            { id: 'coding-to-review', from: 'Coding', to: 'Review', gateId: 'feature-ready' },
+            { id: 'coding-to-review', from: 'Coding', to: 'Review' },
+            { id: 'review-to-coding', from: 'Review', to: 'Coding', maxCycles: 1 },
           ],
-          gates: [
-            {
-              id: 'feature-ready',
-              resetOnCycle: false,
-              fields: [
-                {
-                  name: 'approved',
-                  type: 'boolean',
-                  writers: [],
-                  check: { op: '==', value: true },
-                },
-              ],
-              features: { codex_review_bot: true },
-            },
-          ],
+          endNodeId: STEP_B,
         }
       );
       const run = workflowRunRepo.createRun({
         spaceId: SPACE_ID,
         workflowId: workflow.id,
-        title: 'Feature gate blocked handoff',
+        title: 'Reopen retain',
       });
       workflowRunRepo.transitionStatus(run.id, 'in_progress');
       const task = taskRepo.createTask({
         spaceId: SPACE_ID,
-        title: 'Feature gate blocked handoff',
+        title: 'Reopen retain',
         description: '',
         workflowRunId: run.id,
         workflowNodeId: STEP_A,
         status: 'in_progress',
       });
-      seedExec(run.id, STEP_A, 'Coding', 'idle');
-      db.prepare(
-        `INSERT INTO gate_data (run_id, gate_id, data, updated_at) VALUES (?, ?, ?, ?)`
-      ).run(run.id, 'feature-ready', JSON.stringify({ approved: true }), Date.now());
+      const cycleRepo = new ChannelCycleRepository(db);
+      const now = Date.now();
+      for (let i = 0; i < 5; i++) cycleRepo.recordCycleEvent(run.id, 1, now - i * 1000);
+      expect(cycleRepo.countRecentCycleEvents(run.id, 1)).toBe(5);
 
-      await makeRuntime({
+      const runtime = makeRuntime({
         pendingMessageRepo: new PendingAgentMessageRepository(db),
-      }).recoverStalledRuns();
+      });
 
-      expect(findExec(run.id, STEP_B)).toBeUndefined();
-      expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
-      expect(taskRepo.getTask(task.id)?.blockReason).toBe('execution_failed');
+      // Cancel the run. done/cancelled are reopenable, so the rolling-window
+      // history must be retained across the terminal transition.
+      await runtime.cancelWorkflowRun(SPACE_ID, run.id);
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('cancelled');
+      expect(cycleRepo.countRecentCycleEvents(run.id, 1)).toBe(5);
+
+      // Archive the (now cancelled) task — the true tombstone, and the only
+      // status from which ChannelRouter hard-blocks further sends. setTaskStatus
+      // is the chokepoint for tool- and RPC-driven archives; the cleanup lives
+      // there, so archiving clears the retained window.
+      const taskManager = new SpaceTaskManager(db, SPACE_ID);
+      await taskManager.setTaskStatus(task.id, 'archived');
+      expect(cycleRepo.countRecentCycleEvents(run.id, 1)).toBe(0);
     });
 
-    test('wildcard feature-backed gate uses recovered source node during restart recovery', async () => {
+    test('clearing run dead-loop history waits until ALL its tasks are archived', async () => {
+      // A legacy/inconsistent run can carry more than one task. ChannelRouter
+      // keeps the run reopenable until every task is archived, so the dead-loop
+      // cleanup must wait for the last task too — otherwise a still-live sibling
+      // could resume a runaway with a fresh budget.
       const workflow = buildLinearWorkflow(
         SPACE_ID,
         workflowManager,
         [
-          { id: STEP_A, name: 'Coding', agentId: AGENT, requireCodexApproval: true },
+          { id: STEP_A, name: 'Coding', agentId: AGENT },
           { id: STEP_B, name: 'Review', agentId: AGENT },
         ],
         {
           channels: [
-            { id: 'wildcard-to-review', from: '*', to: 'Review', gateId: 'feature-ready' },
+            { id: 'coding-to-review', from: 'Coding', to: 'Review' },
+            { id: 'review-to-coding', from: 'Review', to: 'Coding', maxCycles: 1 },
           ],
-          gates: [
-            {
-              id: 'feature-ready',
-              resetOnCycle: false,
-              fields: [
-                {
-                  name: 'approved',
-                  type: 'boolean',
-                  writers: [],
-                  check: { op: '==', value: true },
-                },
-              ],
-            },
-          ],
+          endNodeId: STEP_B,
         }
       );
       const run = workflowRunRepo.createRun({
         spaceId: SPACE_ID,
         workflowId: workflow.id,
-        title: 'Wildcard feature gate blocked handoff',
+        title: 'Multi-task run',
       });
       workflowRunRepo.transitionStatus(run.id, 'in_progress');
-      const task = taskRepo.createTask({
+      const taskA = taskRepo.createTask({
         spaceId: SPACE_ID,
-        title: 'Wildcard feature gate blocked handoff',
+        title: 'Multi-task A',
+        description: '',
+        workflowRunId: run.id,
+        workflowNodeId: STEP_A,
+        status: 'open',
+      });
+      const taskB = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Multi-task B',
+        description: '',
+        workflowRunId: run.id,
+        workflowNodeId: STEP_B,
+        status: 'open',
+      });
+      const cycleRepo = new ChannelCycleRepository(db);
+      const now = Date.now();
+      for (let i = 0; i < 3; i++) cycleRepo.recordCycleEvent(run.id, 1, now - i * 1000);
+      expect(cycleRepo.countRecentCycleEvents(run.id, 1)).toBe(3);
+
+      const taskManager = new SpaceTaskManager(db, SPACE_ID);
+      // Archive one of two tasks → a live sibling remains → history retained.
+      await taskManager.setTaskStatus(taskA.id, 'archived');
+      expect(cycleRepo.countRecentCycleEvents(run.id, 1)).toBe(3);
+      // Archive the remaining task → all archived (true tombstone) → cleared.
+      await taskManager.setTaskStatus(taskB.id, 'archived');
+      expect(cycleRepo.countRecentCycleEvents(run.id, 1)).toBe(0);
+    });
+
+    test('pruneExpiredCycleEvents drops window-aged retained history (throttled)', async () => {
+      // Reopenable done/cancelled runs are never traversed again, so their
+      // retained rows are never lazy-pruned. The periodic tick sweep must
+      // physically delete window-aged rows so the table cannot grow unbounded
+      // between restarts — without touching in-window rows.
+      const workflow = buildLinearWorkflow(
+        SPACE_ID,
+        workflowManager,
+        [
+          { id: STEP_A, name: 'Coding', agentId: AGENT },
+          { id: STEP_B, name: 'Review', agentId: AGENT },
+        ],
+        {
+          channels: [
+            { id: 'coding-to-review', from: 'Coding', to: 'Review' },
+            { id: 'review-to-coding', from: 'Review', to: 'Coding', maxCycles: 1 },
+          ],
+          endNodeId: STEP_B,
+        }
+      );
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Prune sweep',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+      taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Prune sweep',
         description: '',
         workflowRunId: run.id,
         workflowNodeId: STEP_A,
         status: 'in_progress',
       });
-      seedExec(run.id, STEP_A, 'Coding', 'idle');
-      db.prepare(
-        `INSERT INTO gate_data (run_id, gate_id, data, updated_at) VALUES (?, ?, ?, ?)`
-      ).run(run.id, 'feature-ready', JSON.stringify({ approved: true }), Date.now());
+      const cycleRepo = new ChannelCycleRepository(db);
+      const now = Date.now();
+      cycleRepo.recordCycleEvent(run.id, 1, now - 1000); // in-window (fresh)
+      cycleRepo.recordCycleEvent(run.id, 1, now - DEAD_LOOP_WINDOW_MS - 60_000); // stale
 
-      await makeRuntime({
+      const runtime = makeRuntime({
         pendingMessageRepo: new PendingAgentMessageRepository(db),
-      }).recoverStalledRuns();
+      });
+      // Cancel the run (reopenable) → both rows retained.
+      await runtime.cancelWorkflowRun(SPACE_ID, run.id);
 
-      expect(findExec(run.id, STEP_B)).toBeUndefined();
-      expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
-      expect(taskRepo.getTask(task.id)?.blockReason).toBe('execution_failed');
+      // First sweep drops only the stale row; the fresh row stays.
+      runtime.pruneExpiredCycleEvents(now);
+      expect(cycleRepo.countRecentCycleEvents(run.id, 1)).toBe(1);
+
+      // Throttle: a second sweep inside the window is a no-op, so a newly
+      // seeded stale row survives until the next window. resetAllForRun returns
+      // the total deleted (fresh + the new stale row = 2), proving no prune.
+      cycleRepo.recordCycleEvent(run.id, 1, now - DEAD_LOOP_WINDOW_MS - 60_000);
+      runtime.pruneExpiredCycleEvents(now + 1000);
+      expect(cycleRepo.resetAllForRun(run.id)).toBe(2);
     });
 
     test('single-node run with idle execution → run blocked, task blocked, notifications emitted', async () => {
@@ -2135,7 +2051,11 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       const execution = seedExec(run.id, STEP_A, 'Step A', 'in_progress', {
         agentSessionId: 'session:missing-workflow',
       });
-      workflowManager.deleteWorkflow(workflow.id);
+      // Simulate a workflow deleted out from under an active run — a legacy
+      // orphan that the deletion guard (RFC §4 #3) now prevents in normal
+      // operation, but which recoverStalledRuns must still tolerate. Bypass the
+      // manager guard by deleting at the repo level (no active-run check).
+      new SpaceWorkflowRepository(db).deleteWorkflow(workflow.id);
       const cancelledSessions: string[] = [];
       const tam = {
         rehydrate: async () => {},
@@ -2593,67 +2513,6 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
       expect(findExec(run.id, STEP_B).status).toBe('pending');
       expect(findExec(run.id, STEP_B).agentId).toBe(STALE_AGENT);
-    });
-
-    test('a stale agent behind a closed gate does not block recovery of an open branch', async () => {
-      // Source node has two outgoing channels: one open to a valid target, one
-      // gated (closed) to a target whose agent was deleted. Recovery must
-      // activate the open branch and NOT block the run over the unreachable,
-      // stale-agent target — the gate check runs before the agent check.
-      const VALID_AGENT = 'agent-valid-open-branch';
-      seedAgentRow(db, STALE_AGENT, SPACE_ID);
-      seedAgentRow(db, VALID_AGENT, SPACE_ID);
-      const workflow = buildLinearWorkflow(
-        SPACE_ID,
-        workflowManager,
-        [
-          { id: 'src', name: 'Coding', agentId: AGENT },
-          { id: 'open-target', name: 'OpenTarget', agentId: VALID_AGENT },
-          { id: 'gated-target', name: 'GatedTarget', agentId: STALE_AGENT },
-        ],
-        {
-          channels: [
-            { id: 'to-open', from: 'Coding', to: 'OpenTarget' },
-            { id: 'to-gated', from: 'Coding', to: 'GatedTarget', gateId: 'closed-gate' },
-          ],
-          gates: [
-            {
-              id: 'closed-gate',
-              resetOnCycle: false,
-              fields: [
-                { name: 'pr_url', type: 'string', writers: [], check: { op: 'exists' as const } },
-              ],
-            },
-          ],
-        }
-      );
-      // Delete the agent on the gated branch AFTER the workflow pinned it.
-      db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(STALE_AGENT);
-
-      const run = workflowRunRepo.createRun({
-        spaceId: SPACE_ID,
-        workflowId: workflow.id,
-        title: 'Stale behind closed gate',
-      });
-      workflowRunRepo.transitionStatus(run.id, 'in_progress');
-      taskRepo.createTask({
-        spaceId: SPACE_ID,
-        title: 'Stale behind closed gate',
-        description: '',
-        workflowRunId: run.id,
-        workflowNodeId: 'src',
-        status: 'in_progress',
-      });
-      seedExec(run.id, 'src', 'Coding', 'idle');
-
-      await makeRuntime({
-        pendingMessageRepo: new PendingAgentMessageRepository(db),
-      }).recoverStalledRuns();
-
-      // Open branch recovered; gated (stale) branch never created; run NOT blocked.
-      expect(findExec(run.id, 'open-target').status).toBe('pending');
-      expect(findExec(run.id, 'gated-target')).toBeUndefined();
-      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
     });
   });
 });

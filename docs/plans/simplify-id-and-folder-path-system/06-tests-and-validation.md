@@ -86,10 +86,10 @@ By this milestone, all coding work from Milestones 1–5 is complete. This miles
    e. Fetch `room.overview` — assert task summaries include `shortId`
    f. Create another room and create a task — assert its `shortId` is also `t-1` (independent counter)
    g. Clean up rooms via `room.delete`
-3. Add the test module to CI in **two places**:
+3. Add the test module to CI in **two places** (keep them consistent):
    - In `.github/workflows/` YAML (the online test matrix), add an entry for the new test file under the `room` module group
-   - In `validate-online-test-matrix.sh` (if it exists), add `short-id-flow.test.ts` to the `ROOM_FILES` array so the validation script doesn't fail
-   - **Note**: Check whether existing room online tests in the YAML matrix are commented out (they may be disabled due to resource usage). If so, add the new test as commented-out too — consistent with the team's decision to gate those tests. Document this in the test file header comment.
+   - In `scripts/validate-test-matrix.sh` (the universal test-coverage guard, wired into `bun run check` and CI), add `short-id-flow.test.ts` to the `ROOM_FILES` array so the guard recognizes it as covered by the `room` shard — an uncovered file fails the build rather than being silently skipped
+   - **The YAML row and the `ROOM_FILES` entry must agree.** The guard's `check_split_module "room"` requires an ACTIVE `room` matrix `test_path` for every file in `ROOM_FILES`; pairing a `ROOM_FILES` entry with a commented-out YAML row fails `bun run check` (the guard sees the file but no active coverage). So: if room online tests are intentionally disabled (commented out for resource reasons), do NOT add the file to `ROOM_FILES` yet — leave it out until the room shard is re-enabled, and record the gating in the test file header comment.
 4. Run with `cd packages/daemon && HYPERNEO_USE_DEV_PROXY=1 bun test ./tests/online/room/short-id-flow.test.ts`
 
 **Acceptance Criteria**:

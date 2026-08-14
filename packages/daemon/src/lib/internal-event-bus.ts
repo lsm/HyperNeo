@@ -543,6 +543,33 @@ export interface SpaceWorkflowRunReopenedEvent {
   timestamp: string;
 }
 
+/**
+ * A cyclic channel between two agents has tripped the rate-based dead-loop
+ * detector — too many messages within a short rolling window. The send that
+ * would have exceeded the threshold was blocked. Emitted so the human sees the
+ * block in the UI rather than the send failing silently.
+ */
+export interface SpaceWorkflowRunDeadLoopEvent {
+  sessionId?: string;
+  namespaceId?: string;
+  spaceId: string;
+  runId: string;
+  /** Sending agent name. */
+  fromAgent: string;
+  /** Receiving agent name (or node name for fan-out). */
+  toTarget: string;
+  /** Index of the cyclic channel in the workflow's `channels` array. */
+  channelIndex: number;
+  /** Traversals recorded within the rolling window at the time of the trip. */
+  recentCount: number;
+  /** Max traversals permitted within the window (the threshold that was met). */
+  threshold: number;
+  /** Window length in milliseconds. */
+  windowMs: number;
+  reason: string;
+  timestamp: string;
+}
+
 /** A blocked execution is being automatically retried by the runtime. */
 export interface SpaceWorkflowRunRetryEvent {
   sessionId: string;
@@ -604,6 +631,7 @@ export interface SpaceEvents {
   'space.workflowRun.failed': SpaceWorkflowRunFailedEvent;
   'space.workflowRun.blocked': SpaceWorkflowRunBlockedEvent;
   'space.workflowRun.reopened': SpaceWorkflowRunReopenedEvent;
+  'space.workflowRun.deadLoop': SpaceWorkflowRunDeadLoopEvent;
   'space.workflowRun.retry': SpaceWorkflowRunRetryEvent;
   'space.workflowRun.needsAttention': SpaceWorkflowRunNeedsAttentionEvent;
   'space.task.awaitingApproval': SpaceTaskAwaitingApprovalEvent;
@@ -692,13 +720,6 @@ interface ClientForwardingEvents {
     spaceId: string;
     runId: string;
     run?: Partial<import('@hyperneo/shared').SpaceWorkflowRun>;
-  };
-  'space.gateData.updated': {
-    sessionId: string;
-    spaceId: string;
-    runId: string;
-    gateId: string;
-    data: Record<string, unknown>;
   };
   'space.hookState.updated': {
     sessionId: string;

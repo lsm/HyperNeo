@@ -15,8 +15,6 @@ export { SpaceTaskPane } from './SpaceTaskPane';
 export { filterAgents } from './workflow-templates';
 export { WorkflowList } from './WorkflowList';
 
-export { GateArtifactsView } from './GateArtifactsView';
-export type { GateArtifactsViewProps } from './GateArtifactsView';
 export { FileDiffView, parseDiff } from './FileDiffView';
 export type { FileDiffViewProps } from './FileDiffView';
 export { TaskArtifactsPanel } from './TaskArtifactsPanel';

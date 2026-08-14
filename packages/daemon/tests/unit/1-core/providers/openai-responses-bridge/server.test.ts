@@ -517,6 +517,50 @@ describe('openai-responses-bridge server', () => {
   });
 
   it.skipIf(!isBun)(
+    'estimates tokens without throwing when a tool lacks input_schema',
+    async () => {
+      // Regression: a tool arriving without input_schema left ResponsesTool.parameters
+      // undefined; stableStringify(undefined) returned undefined (JSON.stringify(undefined)
+      // is undefined, not a throw), crashing estimateTextTokens on text.length during the
+      // request's pre-flight token estimation and failing the whole request. The request
+      // must now succeed instead of throwing.
+      let capturedBody: Record<string, unknown> | undefined;
+      server = createOpenAIResponsesBridgeServer({
+        auth: { source: 'api_key', apiKey: 'sk-test' },
+        models,
+        fetchImpl: async (_url, init) => {
+          capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          return sse([
+            {
+              event: 'response.completed',
+              data: {
+                type: 'response.completed',
+                response: { usage: { input_tokens: 1, output_tokens: 0 }, output: [] },
+              },
+            },
+          ]);
+        },
+      });
+
+      const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-5.3-codex',
+          max_tokens: 128,
+          messages: [{ role: 'user', content: 'Use the tool.' }],
+          // input_schema intentionally omitted — malformed/runtime-generated tool.
+          tools: [{ name: 'parameterless' }],
+        }),
+      });
+
+      expect(resp.status).toBe(200);
+      // The tool is forwarded (parameters drops out of the JSON body) — no crash.
+      expect(capturedBody?.tools).toEqual([{ type: 'function', name: 'parameterless' }]);
+    }
+  );
+
+  it.skipIf(!isBun)(
     'forwards real Codex model IDs directly (no alias resolution needed)',
     async () => {
       let capturedBody: Record<string, unknown> | undefined;

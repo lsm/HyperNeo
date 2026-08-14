@@ -10,6 +10,7 @@ import {
   SDKMessageRepository,
   type SendStatus,
 } from '../../../../src/storage/repositories/sdk-message-repository';
+import { classifyReclaimTermination } from '../../../../src/lib/agent/message-delivery';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { HyperNeoActionMessage } from '@hyperneo/shared';
 
@@ -73,6 +74,7 @@ describe('SDKMessageRepository', () => {
 				is_renderable INTEGER NOT NULL DEFAULT 1,
 				is_terminal INTEGER NOT NULL DEFAULT 0,
 				conversation_turn_index INTEGER,
+				consumed_seq INTEGER,
 				parent_tool_use_id TEXT,
 				task_id TEXT,
 				sdk_uuid TEXT,
@@ -87,6 +89,17 @@ describe('SDKMessageRepository', () => {
 				PRIMARY KEY (source_message_id, target_uuid, kind),
 				FOREIGN KEY (source_message_id) REFERENCES sdk_messages(id) ON DELETE CASCADE
 			);
+			CREATE TABLE delivery_turn_end (
+				session_id TEXT NOT NULL,
+				message_uuid TEXT NOT NULL,
+				ended_at TEXT NOT NULL,
+				PRIMARY KEY (session_id, message_uuid)
+			);
+			CREATE TABLE delivery_consumed_seq (
+				singleton INTEGER PRIMARY KEY DEFAULT 1,
+				next_seq INTEGER NOT NULL DEFAULT 1
+			);
+			INSERT OR IGNORE INTO delivery_consumed_seq (singleton, next_seq) VALUES (1, 1);
 			CREATE INDEX idx_sdk_messages_session ON sdk_messages(session_id);
 			CREATE INDEX idx_sdk_messages_timestamp ON sdk_messages(timestamp);
 			CREATE INDEX idx_sdk_messages_task_id ON sdk_messages(task_id);
@@ -311,7 +324,8 @@ describe('SDKMessageRepository', () => {
             is_renderable INTEGER NOT NULL DEFAULT 1,
             is_terminal INTEGER NOT NULL DEFAULT 0,
             parent_tool_use_id TEXT,
-            task_id TEXT
+            task_id TEXT,
+            consumed_seq INTEGER
           )
         `);
         const legacyRepository = new SDKMessageRepository(legacyDb as any);
@@ -1333,6 +1347,7 @@ describe('SDKMessageRepository', () => {
           parent_tool_use_id TEXT,
           task_id TEXT,
           conversation_turn_index INTEGER,
+          consumed_seq INTEGER,
           sdk_uuid TEXT,
           replacement_metadata_normalized INTEGER NOT NULL DEFAULT 0
         );
@@ -1477,7 +1492,7 @@ describe('SDKMessageRepository', () => {
           message_subtype TEXT, sdk_message TEXT NOT NULL, timestamp TEXT NOT NULL,
           send_status TEXT, origin TEXT, is_renderable INTEGER NOT NULL DEFAULT 1,
           is_terminal INTEGER NOT NULL DEFAULT 0, parent_tool_use_id TEXT, task_id TEXT,
-          conversation_turn_index INTEGER,
+          conversation_turn_index INTEGER, consumed_seq INTEGER,
           sdk_uuid TEXT, replacement_metadata_normalized INTEGER NOT NULL DEFAULT 0
         );
         CREATE TABLE sdk_message_replacements (
@@ -1665,6 +1680,722 @@ describe('SDKMessageRepository', () => {
 
     it('returns null when the uuid is unknown', () => {
       expect(repository.markDeliveryConsumedByUuid('session-1', 'no-such-uuid')).toBeNull();
+    });
+  });
+
+  describe('markDeliveryRetryableByUuid (recoverable no-result turn → retry re-feed)', () => {
+    it('flips a consumed row back to enqueued and returns its db id', () => {
+      const id = repository.saveUserMessage(
+        'session-1',
+        createUserMessage('retry me', 'uuid-retry'),
+        'enqueued'
+      );
+      expect(repository.markDeliveryConsumedByUuid('session-1', 'uuid-retry')).toBe(id);
+
+      const reopened = repository.markDeliveryRetryableByUuid('session-1', 'uuid-retry');
+
+      expect(reopened).toBe(id);
+      expect(repository.getMessagesByStatus('session-1', 'enqueued').length).toBe(1);
+      expect(repository.getMessagesByStatus('session-1', 'consumed').length).toBe(0);
+    });
+
+    it('leaves submitted (ACP, pending acceptance) and failed rows alone', () => {
+      repository.saveUserMessage(
+        'session-1',
+        createUserMessage('acp prompt', 'uuid-submitted'),
+        'submitted'
+      );
+      repository.saveUserMessage(
+        'session-1',
+        createUserMessage('already dead', 'uuid-failed'),
+        'failed'
+      );
+
+      expect(repository.markDeliveryRetryableByUuid('session-1', 'uuid-submitted')).toBeNull();
+      expect(repository.markDeliveryRetryableByUuid('session-1', 'uuid-failed')).toBeNull();
+      expect(repository.getMessagesByStatus('session-1', 'submitted').length).toBe(1);
+      expect(repository.getMessagesByStatus('session-1', 'failed').length).toBe(1);
+    });
+
+    it('returns null when the uuid is unknown', () => {
+      expect(repository.markDeliveryRetryableByUuid('session-1', 'no-such-uuid')).toBeNull();
+    });
+  });
+
+  describe('hasTerminalResultAfter', () => {
+    function insertMessage(
+      sessionId: string,
+      type: string,
+      opts: {
+        uuid?: string;
+        timestamp: string;
+        terminal?: boolean;
+        subtype?: string;
+        sendStatus?: string;
+      }
+    ): void {
+      // Stamp the shared monotonic counter for consumed user rows AND terminal
+      // results (mirrors saveSDKMessage/markDeliveryConsumedByUuid), so
+      // hasTerminalResultAfter compares counter-to-counter. NULL otherwise.
+      const effectiveStatus = opts.sendStatus ?? (type === 'user' ? 'consumed' : null);
+      const needsSeq =
+        (type === 'user' && effectiveStatus === 'consumed') || (type === 'result' && opts.terminal);
+      const consumedSeq = needsSeq
+        ? (
+            db
+              .prepare(
+                `UPDATE delivery_consumed_seq SET next_seq = next_seq + 1 WHERE singleton = 1
+                 RETURNING next_seq`
+              )
+              .get() as { next_seq: number }
+          ).next_seq
+        : null;
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid, consumed_seq)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        crypto.randomUUID(),
+        sessionId,
+        type,
+        // hasTerminalResultAfter counts only `subtype = 'success'` results, so a
+        // terminal result without an explicit subtype defaults to success (the
+        // common case); tests that exercise error results pass subtype explicitly.
+        opts.subtype ?? (type === 'result' && opts.terminal ? 'success' : null),
+        '{}',
+        opts.timestamp,
+        effectiveStatus,
+        opts.terminal ? 1 : 0,
+        opts.uuid ?? null,
+        consumedSeq
+      );
+    }
+
+    it('is true when a SUCCESS terminal result exists after the message', () => {
+      insertMessage('session-1', 'user', {
+        uuid: 'msg-uuid',
+        timestamp: '2026-08-11T15:25:00.000Z',
+      });
+      insertMessage('session-1', 'result', {
+        timestamp: '2026-08-11T15:25:53.000Z',
+        terminal: true,
+        subtype: 'success',
+      });
+      expect(repository.hasTerminalResultAfter('session-1', 'msg-uuid')).toBe(true);
+    });
+
+    it('is FALSE for an error result — a failed turn must retry, not complete (Codex #9)', () => {
+      insertMessage('session-1', 'user', {
+        uuid: 'msg-uuid',
+        timestamp: '2026-08-11T15:25:00.000Z',
+      });
+      insertMessage('session-1', 'result', {
+        timestamp: '2026-08-11T15:25:53.000Z',
+        terminal: true,
+        subtype: 'error_during_execution',
+      });
+      expect(repository.hasTerminalResultAfter('session-1', 'msg-uuid')).toBe(false);
+    });
+
+    it('getErrorTerminalResultSubtypeAfter returns the error subtype (null for success/none)', () => {
+      insertMessage('session-1', 'user', {
+        uuid: 'msg-budget',
+        timestamp: '2026-08-11T15:25:00.000Z',
+      });
+      insertMessage('session-1', 'result', {
+        timestamp: '2026-08-11T15:25:53.000Z',
+        terminal: true,
+        subtype: 'error_max_budget_usd',
+      });
+      // The SDK persists error results WITHOUT emitting session.error — the
+      // bridge uses this lookup to classify budget exhaustion as terminal.
+      expect(repository.getErrorTerminalResultSubtypeAfter('session-1', 'msg-budget')).toBe(
+        'error_max_budget_usd'
+      );
+
+      insertMessage('session-1', 'user', {
+        uuid: 'msg-ok',
+        timestamp: '2026-08-11T15:26:00.000Z',
+      });
+      insertMessage('session-1', 'result', {
+        timestamp: '2026-08-11T15:26:53.000Z',
+        terminal: true,
+        subtype: 'success',
+      });
+      expect(repository.getErrorTerminalResultSubtypeAfter('session-1', 'msg-ok')).toBeNull();
+
+      insertMessage('session-1', 'user', {
+        uuid: 'msg-none',
+        timestamp: '2026-08-11T15:27:00.000Z',
+      });
+      expect(repository.getErrorTerminalResultSubtypeAfter('session-1', 'msg-none')).toBeNull();
+    });
+
+    it('getErrorTerminalResultSubtypeAfter classifies the LATEST attempt outcome (Codex review)', () => {
+      // Retries do not restamp the user row's consumed_seq, so error results
+      // from every attempt are in range — an initial retryable error followed
+      // by a terminal one must classify terminal, not keep the oldest subtype.
+      insertMessage('session-1', 'user', {
+        uuid: 'msg-multi',
+        timestamp: '2026-08-11T15:28:00.000Z',
+      });
+      insertMessage('session-1', 'result', {
+        timestamp: '2026-08-11T15:28:53.000Z',
+        terminal: true,
+        subtype: 'error_during_execution',
+      });
+      insertMessage('session-1', 'result', {
+        timestamp: '2026-08-11T15:29:53.000Z',
+        terminal: true,
+        subtype: 'error_max_budget_usd',
+      });
+      expect(repository.getErrorTerminalResultSubtypeAfter('session-1', 'msg-multi')).toBe(
+        'error_max_budget_usd'
+      );
+    });
+
+    it('ignores NESTED subagent results when detecting turn completion (P1)', () => {
+      // A subagent result carries a non-null parent_tool_use_id. If the daemon
+      // crashes after the subagent finishes but before the outer turn ends, that
+      // nested result must NOT be accepted as proof the whole delivery turn
+      // terminated — recovery would wrongly complete the owning job.
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid, consumed_seq, parent_tool_use_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        crypto.randomUUID(),
+        'session-1',
+        'user',
+        null,
+        '{}',
+        '2026-08-11T15:25:00.000Z',
+        'consumed',
+        0,
+        'outer-msg',
+        1,
+        null
+      );
+      // A nested result (subagent) persisted after consumption.
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid, consumed_seq, parent_tool_use_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        crypto.randomUUID(),
+        'session-1',
+        'result',
+        'subagent_result',
+        '{}',
+        '2026-08-11T15:26:00.000Z',
+        null,
+        1,
+        null,
+        null,
+        'tool-use-123' // nested under a subagent tool_use
+      );
+      expect(repository.hasTerminalResultAfter('session-1', 'outer-msg')).toBe(false);
+    });
+
+    it('treats a missing consumption watermark (migrated row) as unknown/live, not completed (P1)', () => {
+      // On an upgrade, in-flight consumed rows have NULL consumed_seq. Falling
+      // back to insertion rowid could match the PREVIOUS turn's result and
+      // wrongly complete the job. NULL must mean "unknown" → don't complete.
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid, consumed_seq)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        crypto.randomUUID(),
+        'session-1',
+        'user',
+        null,
+        '{}',
+        '2026-08-11T15:20:00.000Z',
+        'consumed',
+        0,
+        'migrated-msg',
+        null // migrated before the column existed
+      );
+      // A terminal result after it, but its consumption boundary is unknown.
+      insertMessage('session-1', 'result', {
+        timestamp: '2026-08-11T15:21:00.000Z',
+        terminal: true,
+      });
+      expect(repository.hasTerminalResultAfter('session-1', 'migrated-msg')).toBe(false);
+    });
+
+    it('is true when a terminal result shares the consumption millisecond but inserts after (P2 tiebreak)', () => {
+      // An immediate error/interrupt can persist its terminal result in the SAME
+      // millisecond as the consumed timestamp. The strict `>` on timestamps would
+      // miss it (equal strings); the rowid tiebreak (result inserts after the
+      // message's row) must still detect the turn ended.
+      insertMessage('session-1', 'user', {
+        uuid: 'tie-msg',
+        timestamp: '2026-08-11T15:25:00.000Z',
+        sendStatus: 'enqueued',
+      });
+      const flipped = repository.markDeliveryConsumedByUuid('session-1', 'tie-msg');
+      expect(flipped).not.toBeNull();
+      // Reuse the exact consumed timestamp so the two rows tie on the millisecond.
+      const consumedTs = (
+        db.prepare(`SELECT timestamp FROM sdk_messages WHERE id = ?`).get(flipped) as {
+          timestamp: string;
+        }
+      ).timestamp;
+      insertMessage('session-1', 'result', {
+        timestamp: consumedTs,
+        terminal: true,
+        subtype: 'success',
+      });
+      expect(repository.hasTerminalResultAfter('session-1', 'tie-msg')).toBe(true);
+    });
+
+    it('is false when no terminal result exists after the message', () => {
+      insertMessage('session-1', 'user', {
+        uuid: 'msg-uuid',
+        timestamp: '2026-08-11T15:25:00.000Z',
+      });
+      expect(repository.hasTerminalResultAfter('session-1', 'msg-uuid')).toBe(false);
+    });
+
+    it('is false when the only terminal result is before the message', () => {
+      insertMessage('session-1', 'result', {
+        timestamp: '2026-08-11T15:24:00.000Z',
+        terminal: true,
+      });
+      insertMessage('session-1', 'user', {
+        uuid: 'msg-uuid',
+        timestamp: '2026-08-11T15:25:00.000Z',
+      });
+      expect(repository.hasTerminalResultAfter('session-1', 'msg-uuid')).toBe(false);
+    });
+
+    it('uses the CONSUMPTION boundary, not the persistence time — a queued-then-consumed message ignores the prior turn result (P1)', () => {
+      // A message queued while turn T1 ran keeps its original persistence time;
+      // T1 ends with a terminal result AFTER that but BEFORE the message is
+      // consumed as the start of T2. After consumption the boundary must be the
+      // consumption moment so the previous turn's result is excluded.
+      insertMessage('session-1', 'user', {
+        uuid: 'queued-msg',
+        timestamp: '2026-08-11T15:20:00.000Z',
+        sendStatus: 'enqueued',
+      });
+      insertMessage('session-1', 'result', {
+        timestamp: '2026-08-11T15:21:00.000Z',
+        terminal: true,
+      });
+      // T2 consumes the message — the consumed-flip aligns the row to T_consumed.
+      const flipped = repository.markDeliveryConsumedByUuid('session-1', 'queued-msg');
+      expect(flipped).not.toBeNull();
+      // The prior result (15:21) is now before consumption → excluded; T2 hasn't
+      // ended → false (the reclaimed job must resume T2, not complete as done).
+      expect(repository.hasTerminalResultAfter('session-1', 'queued-msg')).toBe(false);
+    });
+
+    it('aligns the timestamp for a NON-RENDERABLE consumed message too (P1)', () => {
+      // A non-renderable user row (e.g. a tool-result response) is excluded from
+      // turn-index assignment but must still be aligned to T_consumed — otherwise
+      // a queued-then-promoted non-renderable message keeps its original time and
+      // matches the PREVIOUS turn's terminal result on a stale re-claim, losing
+      // the response. See Codex (PR #2463, P1).
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid, is_renderable)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        crypto.randomUUID(),
+        'session-1',
+        'user',
+        null,
+        '{}',
+        '2026-08-11T15:20:00.000Z',
+        'enqueued',
+        0,
+        'nr-msg',
+        0 // non-renderable
+      );
+      insertMessage('session-1', 'result', {
+        timestamp: '2026-08-11T15:21:00.000Z',
+        terminal: true,
+      });
+      const flipped = repository.markDeliveryConsumedByUuid('session-1', 'nr-msg');
+      expect(flipped).not.toBeNull();
+      const ts = (
+        db.prepare(`SELECT timestamp FROM sdk_messages WHERE id = ?`).get(flipped) as {
+          timestamp: string;
+        }
+      ).timestamp;
+      // Aligned to ~T_consumed, not the 15:20 queued time.
+      expect(Date.parse(ts)).toBeGreaterThan(Date.parse('2026-08-11T15:22:00.000Z'));
+      // The 15:21 prior result is now before consumption → the turn is NOT ended.
+      expect(repository.hasTerminalResultAfter('session-1', 'nr-msg')).toBe(false);
+    });
+
+    it('orders by the CONSUMPTION watermark, not the message rowid — a prior-turn result sharing the ms is excluded (P2)', () => {
+      // A message queued during turn A and consumed as turn B keeps its ORIGINAL
+      // rowid (insertion order). If A's result lands in the same millisecond as
+      // B's consumption, a rowid tiebreak would sort A's result AFTER the
+      // message's consumption and wrongly complete B's job. The consumption
+      // watermark (consumed_seq = MAX(rowid)+1) must exclude A's result.
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid, is_renderable)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        crypto.randomUUID(),
+        'session-1',
+        'user',
+        null,
+        '{}',
+        '2026-08-11T15:20:00.000Z', // queued during turn A
+        'enqueued',
+        0,
+        'promoted-msg',
+        1
+      );
+      // Turn A's result, persisted AFTER the message was queued but in the same
+      // millisecond as B's consumption below.
+      insertMessage('session-1', 'result', {
+        timestamp: '2026-08-11T15:30:00.000Z',
+        terminal: true,
+      });
+      const flipped = repository.markDeliveryConsumedByUuid('session-1', 'promoted-msg');
+      expect(flipped).not.toBeNull();
+      const seq = (
+        db.prepare(`SELECT consumed_seq FROM sdk_messages WHERE id = ?`).get(flipped) as {
+          consumed_seq: number;
+        }
+      ).consumed_seq;
+      expect(seq).toBeGreaterThan(0);
+      // A's result (rowid < consumed_seq) is NOT after the consumption → false.
+      expect(repository.hasTerminalResultAfter('session-1', 'promoted-msg')).toBe(false);
+      // Turn B's own terminal result (persisted after consumption, rowid >= seq)
+      // IS detected.
+      insertMessage('session-1', 'result', {
+        timestamp: '2026-08-11T15:31:00.000Z',
+        terminal: true,
+      });
+      expect(repository.hasTerminalResultAfter('session-1', 'promoted-msg')).toBe(true);
+    });
+
+    it('uses a genuinely monotonic counter — a terminal result stamped after multiple consumes is detected for all (P2)', () => {
+      // consumed_seq and terminal-result seq both come from the shared
+      // delivery_consumed_seq counter, so ordering is independent of SQLite
+      // rowid reuse (a deleted max rowid can be reused by a later insert).
+      // Consume two steers without intervening inserts, then stamp a terminal
+      // result: it must be detected for both (its counter value is higher).
+      const seed = db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid, is_renderable)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      );
+      seed.run(
+        crypto.randomUUID(),
+        's',
+        'user',
+        '{}',
+        '2026-08-11T15:00:00.000Z',
+        'enqueued',
+        'm1',
+        1
+      );
+      seed.run(
+        crypto.randomUUID(),
+        's',
+        'user',
+        '{}',
+        '2026-08-11T15:00:00.000Z',
+        'enqueued',
+        'm2',
+        1
+      );
+      // Consume both — each draws an increasing counter value.
+      repository.markDeliveryConsumedByUuid('s', 'm1');
+      repository.markDeliveryConsumedByUuid('s', 'm2');
+      // A terminal result stamped AFTER both consumptions (higher counter) is
+      // detected for both.
+      insertMessage('s', 'result', {
+        timestamp: '2026-08-11T15:05:00.000Z',
+        terminal: true,
+      });
+      expect(repository.hasTerminalResultAfter('s', 'm1')).toBe(true);
+      expect(repository.hasTerminalResultAfter('s', 'm2')).toBe(true);
+    });
+
+    it('is true after consumption when the SAME turn later ends (its own result)', () => {
+      insertMessage('session-1', 'user', {
+        uuid: 'own-turn-msg',
+        timestamp: '2026-08-11T15:20:00.000Z',
+        sendStatus: 'enqueued',
+      });
+      repository.markDeliveryConsumedByUuid('session-1', 'own-turn-msg');
+      // The consumed message's own turn ends normally.
+      insertMessage('session-1', 'result', {
+        timestamp: new Date(Date.now() + 60_000).toISOString(),
+        terminal: true,
+      });
+      expect(repository.hasTerminalResultAfter('session-1', 'own-turn-msg')).toBe(true);
+    });
+
+    it('is false when the terminal result belongs to another session', () => {
+      insertMessage('session-1', 'user', {
+        uuid: 'msg-uuid',
+        timestamp: '2026-08-11T15:25:00.000Z',
+      });
+      insertMessage('session-2', 'result', {
+        timestamp: '2026-08-11T15:25:53.000Z',
+        terminal: true,
+      });
+      expect(repository.hasTerminalResultAfter('session-1', 'msg-uuid')).toBe(false);
+    });
+
+    it('is false when the message uuid is unknown', () => {
+      insertMessage('session-1', 'result', {
+        timestamp: '2026-08-11T15:25:53.000Z',
+        terminal: true,
+      });
+      expect(repository.hasTerminalResultAfter('session-1', 'no-such-uuid')).toBe(false);
+    });
+
+    it('refresh: the search index reflects the consumption timestamp, not the queued time (P2)', () => {
+      // `updateMessageStatus` upserts the search row AFTER aligning the row to
+      // T_consumed (same transaction), so message_search must order this
+      // non-task message by its consumption moment, not when it was queued.
+      createSearchIndex();
+      const sdkMessage = createUserMessage('searchable body text', 'search-msg');
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        crypto.randomUUID(),
+        'session-1',
+        'user',
+        null,
+        JSON.stringify(sdkMessage),
+        '2020-01-01T00:00:00.000Z', // old queued time
+        'enqueued',
+        0,
+        'search-msg'
+      );
+      const before = Date.now();
+      const flipped = repository.markDeliveryConsumedByUuid('session-1', 'search-msg');
+      expect(flipped).not.toBeNull();
+      const after = Date.now();
+      const searchRow = db
+        .prepare(
+          `SELECT timestamp FROM message_search_content
+            WHERE kind = 'message'
+              AND source_id = (
+                SELECT id FROM sdk_messages
+                 WHERE session_id = 'session-1' AND sdk_uuid = 'search-msg' LIMIT 1
+              )`
+        )
+        .get() as { timestamp: number } | undefined;
+      expect(searchRow).toBeDefined();
+      // T_consumed (~now), not the 2020 queued time.
+      expect(searchRow!.timestamp).toBeGreaterThanOrEqual(before);
+      expect(searchRow!.timestamp).toBeLessThanOrEqual(after);
+    });
+
+    describe('delivery_turn_end markers (result-less terminal paths, P2)', () => {
+      it('recordDeliveryTurnEnd then hasDeliveryTurnEnd round-trips', () => {
+        expect(repository.hasDeliveryTurnEnd('session-1', 'm1')).toBe(false);
+        repository.recordDeliveryTurnEnd('session-1', 'm1', '2026-08-11T16:00:00.000Z');
+        expect(repository.hasDeliveryTurnEnd('session-1', 'm1')).toBe(true);
+        // Scoped by session + message.
+        expect(repository.hasDeliveryTurnEnd('session-1', 'm2')).toBe(false);
+        expect(repository.hasDeliveryTurnEnd('session-2', 'm1')).toBe(false);
+      });
+
+      it('recordDeliveryTurnEnd is idempotent (INSERT OR REPLACE by (session, message))', () => {
+        repository.recordDeliveryTurnEnd('session-1', 'm1', 't1');
+        repository.recordDeliveryTurnEnd('session-1', 'm1', 't2');
+        const rows = db
+          .prepare(
+            `SELECT ended_at FROM delivery_turn_end WHERE session_id='session-1' AND message_uuid='m1'`
+          )
+          .all();
+        expect(rows).toHaveLength(1);
+        expect(rows[0].ended_at).toBe('t2');
+      });
+
+      it('rewind (deleteMessagesAtAndAfter) clears markers for rewound UUIDs (P2)', () => {
+        // A long-horizon inbox retry can re-persist the same UUID after a rewind;
+        // a stale marker must not survive to mark the new turn as already ended.
+        repository.recordDeliveryTurnEnd('session-1', 'rewound-uuid', 't1');
+        expect(repository.hasDeliveryTurnEnd('session-1', 'rewound-uuid')).toBe(true);
+        // Seed a message at the rewind boundary so deleteMessagesAtAndAfter has a row.
+        db.prepare(
+          `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
+        ).run(
+          crypto.randomUUID(),
+          'session-1',
+          'user',
+          '{}',
+          '2026-08-11T16:00:00.000Z',
+          'consumed',
+          'rewound-uuid'
+        );
+        repository.deleteMessagesAtAndAfter('session-1', Date.parse('2026-08-11T16:00:00.000Z'));
+        expect(repository.hasDeliveryTurnEnd('session-1', 'rewound-uuid')).toBe(false);
+      });
+    });
+  });
+
+  describe('classifyReclaimTermination — crash-window reclaim decision (task #946)', () => {
+    // Mirrors saveSDKMessage/markDeliveryConsumedByUuid: stamp the shared
+    // monotonic counter for consumed user rows and terminal results so
+    // hasTerminalResultAfter orders them counter-to-counter.
+    function bumpSeq(): number {
+      return (
+        db
+          .prepare(
+            `UPDATE delivery_consumed_seq SET next_seq = next_seq + 1 WHERE singleton = 1
+             RETURNING next_seq`
+          )
+          .get() as { next_seq: number }
+      ).next_seq;
+    }
+
+    function insertConsumedUser(uuid: string, at: string): void {
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid, consumed_seq)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        crypto.randomUUID(),
+        'session-1',
+        'user',
+        null,
+        '{}',
+        at,
+        'consumed',
+        0,
+        uuid,
+        bumpSeq()
+      );
+    }
+
+    function insertTerminalResult(at: string, subtype: string): void {
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid, consumed_seq)
+         VALUES (?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?)`
+      ).run(crypto.randomUUID(), 'session-1', 'result', subtype, '{}', at, 1, bumpSeq());
+    }
+
+    // The decision the bridge makes at the top of a consumed reclaim, given the
+    // durable repo signals. This is the exact composition agent-session.ts wires
+    // up in reclaimTurnAlreadySucceeded.
+    function decisionFor(uuid: string): ReturnType<typeof classifyReclaimTermination> {
+      return classifyReclaimTermination({
+        successResult: repository.hasTerminalResultAfter('session-1', uuid),
+        markerExists: repository.hasDeliveryTurnEnd('session-1', uuid),
+        terminalIdleInFlight: false,
+      });
+    }
+
+    it('pure matrix: only a SUCCESS result terminates; a bare marker redrives; idle keeps ownership', () => {
+      expect(
+        classifyReclaimTermination({
+          successResult: true,
+          markerExists: false,
+          terminalIdleInFlight: false,
+        })
+      ).toBe('terminated');
+      // A success result wins even if a marker also exists.
+      expect(
+        classifyReclaimTermination({
+          successResult: true,
+          markerExists: true,
+          terminalIdleInFlight: false,
+        })
+      ).toBe('terminated');
+      // THE CRASH WINDOW: a bare marker (no success result) must NOT terminate.
+      expect(
+        classifyReclaimTermination({
+          successResult: false,
+          markerExists: true,
+          terminalIdleInFlight: false,
+        })
+      ).toBe('redrive');
+      // Nothing ended → drive normally.
+      expect(
+        classifyReclaimTermination({
+          successResult: false,
+          markerExists: false,
+          terminalIdleInFlight: false,
+        })
+      ).toBe('live');
+      // A terminal-idle drain keeps durable turn ownership even with a success
+      // result / marker (mirrors the original hasSettledTurnTermination guard).
+      // Covers all remaining idleInFlight=true combos: the drain short-circuits
+      // to 'live' before success/marker are even consulted.
+      expect(
+        classifyReclaimTermination({
+          successResult: true,
+          markerExists: true,
+          terminalIdleInFlight: true,
+        })
+      ).toBe('live');
+      expect(
+        classifyReclaimTermination({
+          successResult: true,
+          markerExists: false,
+          terminalIdleInFlight: true,
+        })
+      ).toBe('live');
+      expect(
+        classifyReclaimTermination({
+          successResult: false,
+          markerExists: true,
+          terminalIdleInFlight: true,
+        })
+      ).toBe('live');
+      expect(
+        classifyReclaimTermination({
+          successResult: false,
+          markerExists: false,
+          terminalIdleInFlight: true,
+        })
+      ).toBe('live');
+    });
+
+    it('CRASH WINDOW (end-to-end data flow): a consumed turn with a bare marker and NO success result is cleared and re-driven, not silently completed', () => {
+      // Setup: the kickoff was consumed, the turn ended via a result-less path
+      // (query error / interrupt) so the idle waiter recorded a bare marker, and
+      // the daemon then exited BEFORE the producedResult/retry decision ran.
+      const uuid = 'msg-crash-window';
+      insertConsumedUser(uuid, '2026-08-11T17:00:00.000Z');
+      repository.recordDeliveryTurnEnd('session-1', uuid, '2026-08-11T17:00:42.000Z');
+      // No success result exists.
+      expect(repository.hasTerminalResultAfter('session-1', uuid)).toBe(false);
+      expect(repository.hasDeliveryTurnEnd('session-1', uuid)).toBe(true);
+
+      // Pre-fix this was 'terminated' (silent complete). Now it must redrive.
+      expect(decisionFor(uuid)).toBe('redrive');
+
+      // The bridge clears the stale marker on the redrive decision so a re-crash
+      // cannot loop on turn_terminated...
+      repository.clearDeliveryTurnEnd('session-1', uuid);
+      expect(repository.hasDeliveryTurnEnd('session-1', uuid)).toBe(false);
+      // ...and with the marker gone the reclaim now drives normally (the
+      // producedResult/stall-retry path decides the retry/dead-letter outcome).
+      expect(decisionFor(uuid)).toBe('live');
+    });
+
+    it('a consumed turn that ended in SUCCESS still terminates (no regression)', () => {
+      const uuid = 'msg-succeeded';
+      insertConsumedUser(uuid, '2026-08-11T17:10:00.000Z');
+      insertTerminalResult('2026-08-11T17:10:53.000Z', 'success');
+      // A marker may also exist (the idle waiter fires on every turn end); the
+      // success result still wins → terminate (silent complete is correct here).
+      repository.recordDeliveryTurnEnd('session-1', uuid, '2026-08-11T17:10:54.000Z');
+      expect(decisionFor(uuid)).toBe('terminated');
+    });
+
+    it('a consumed turn whose only result is an ERROR does not terminate (retry, do not silently complete)', () => {
+      // An error result is NOT success (hasTerminalResultAfter filters subtype).
+      // Even with a marker, this must redrive so the failure surfaces/retries.
+      const uuid = 'msg-error-result';
+      insertConsumedUser(uuid, '2026-08-11T17:20:00.000Z');
+      insertTerminalResult('2026-08-11T17:20:53.000Z', 'error_during_execution');
+      repository.recordDeliveryTurnEnd('session-1', uuid, '2026-08-11T17:20:54.000Z');
+      expect(repository.hasTerminalResultAfter('session-1', uuid)).toBe(false);
+      expect(decisionFor(uuid)).toBe('redrive');
     });
   });
 

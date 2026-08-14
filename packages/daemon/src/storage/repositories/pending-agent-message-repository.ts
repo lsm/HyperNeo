@@ -60,6 +60,14 @@ export interface PendingAgentMessageRecord {
   deliveredSessionId: string | null;
   expiresAt: number;
   createdAt: number;
+  /**
+   * Delivery mode persisted with the row so `flushPendingMessagesForTarget`
+   * replays a deferred ("queue for next turn") human message with `'defer'`
+   * instead of defaulting to immediate and steering the kickoff turn. `null`
+   * for legacy rows and callers that don't pass it (immediate, the prior
+   * behavior).
+   */
+  deliveryMode: 'immediate' | 'defer' | null;
 }
 
 export interface EnqueuePendingMessageInput {
@@ -86,6 +94,13 @@ export interface EnqueuePendingMessageInput {
   expiresAt?: number;
   /** Optional max attempts cap (defaults to DEFAULT_PENDING_MESSAGE_MAX_ATTEMPTS). */
   maxAttempts?: number;
+  /**
+   * Optional delivery mode persisted with the row and replayed on flush. Pass
+   * `'defer'` for a "queue for next turn" human message so the spawned session
+   * defers it (instead of steering the kickoff). Omitted/`'immediate'` keeps
+   * the prior behavior.
+   */
+  deliveryMode?: 'immediate' | 'defer';
 }
 
 export interface EnqueueResult {
@@ -143,6 +158,7 @@ export class PendingAgentMessageRepository {
     const id = generateUUID();
     const sourceAgentName = input.sourceAgentName ?? 'task-agent';
     const maxAttempts = input.maxAttempts ?? DEFAULT_PENDING_MESSAGE_MAX_ATTEMPTS;
+    const deliveryMode = input.deliveryMode ?? null;
 
     this.db
       .prepare(
@@ -153,8 +169,8 @@ export class PendingAgentMessageRepository {
 					attempts, max_attempts,
 					last_attempt_at, last_error,
 					status, delivered_at, delivered_session_id,
-					expires_at, created_at
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NULL, NULL, 'pending', NULL, NULL, ?, ?)`
+					expires_at, created_at, delivery_mode
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NULL, NULL, 'pending', NULL, NULL, ?, ?, ?)`
       )
       .run(
         id,
@@ -169,7 +185,8 @@ export class PendingAgentMessageRepository {
         idempotencyKey,
         maxAttempts,
         expiresAt,
-        now
+        now,
+        deliveryMode
       );
     this.notify();
 
@@ -308,6 +325,52 @@ export class PendingAgentMessageRepository {
 				 WHERE id = ? AND status = 'pending'`
       )
       .run(now, sessionId, now, id);
+    this.notify();
+  }
+
+  /**
+   * Rewrite a pending row's target scope to the bare agent name + resolved node
+   * id. Used by the queued-handoff sweep to normalize legacy compound / null-
+   * scoped rows (emitted by the previous router, e.g. actor-registry
+   * "<nodeId>/<agent>" with no workflowNodeId) into the pinned bare form the
+   * flush drains — so they aren't stranded when the compound drain alias is gone.
+   */
+  rescopeTarget(id: string, targetAgentName: string, workflowNodeId: string): void {
+    // Atomic check-then-act: if a bare retry row the new router inserted already
+    // occupies the new (run, target, idempotency_key) — sender retried the same
+    // message after upgrade — rescoping this legacy compound row into that tuple
+    // would violate idx_pending_agent_messages_idem and fail every sweep tick.
+    // Drop the superseded legacy row instead; otherwise rewrite it in place.
+    const tx = this.db.transaction(() => {
+      const row = this.getById(id);
+      if (!row || row.status !== 'pending') return;
+      if (row.idempotencyKey != null) {
+        // The unique index (idx_pending_agent_messages_idem_pending) and enqueue
+        // dedup only cover status = 'pending', so a failed/expired historical
+        // row with the same key is NOT a real conflict — restrict the check to
+        // pending rows or we'd silently drop the only retryable handoff.
+        const conflict = this.db
+          .prepare(
+            `SELECT 1 FROM pending_agent_messages
+					 WHERE workflow_run_id = ? AND target_agent_name = ? AND idempotency_key = ?
+					   AND status = 'pending' AND id != ? LIMIT 1`
+          )
+          .get(row.workflowRunId, targetAgentName, row.idempotencyKey, id);
+        if (conflict) {
+          this.db.prepare(`DELETE FROM pending_agent_messages WHERE id = ?`).run(id);
+          return;
+        }
+      }
+      this.db
+        .prepare(
+          `UPDATE pending_agent_messages
+				 SET target_agent_name = ?,
+				     workflow_node_id = ?
+				 WHERE id = ? AND status = 'pending'`
+        )
+        .run(targetAgentName, workflowNodeId, id);
+    });
+    tx();
     this.notify();
   }
 
@@ -534,6 +597,7 @@ interface PendingMessageRow {
   delivered_session_id: string | null;
   expires_at: number;
   created_at: number;
+  delivery_mode: 'immediate' | 'defer' | null;
 }
 
 function rowToRecord(row: PendingMessageRow): PendingAgentMessageRecord {
@@ -557,5 +621,6 @@ function rowToRecord(row: PendingMessageRow): PendingAgentMessageRecord {
     deliveredSessionId: row.delivered_session_id,
     expiresAt: row.expires_at,
     createdAt: row.created_at,
+    deliveryMode: row.delivery_mode ?? null,
   };
 }

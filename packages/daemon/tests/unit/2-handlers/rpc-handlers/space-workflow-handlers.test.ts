@@ -30,7 +30,10 @@ import {
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
 import type { SpaceWorkflowSummary } from '@hyperneo/shared';
-import { WorkflowValidationError } from '../../../../src/lib/space/managers/space-workflow-manager';
+import {
+  WorkflowValidationError,
+  WorkflowDeletionBlockedError,
+} from '../../../../src/lib/space/managers/space-workflow-manager';
 import type { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
 import type { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import type {
@@ -153,6 +156,7 @@ function createMockWorkflowManager(
     ),
     updateWorkflow: mock(() => ({ ...workflow!, name: 'Updated' })),
     deleteWorkflow: mock(() => true),
+    hasExecutableRuns: mock(() => false),
   } as unknown as SpaceWorkflowManager;
 }
 
@@ -593,6 +597,23 @@ describe('space-workflow-handlers', () => {
 
       await expect(call('spaceWorkflow.delete', { id: 'wf-1' })).rejects.toThrow(
         'Workflow not found: wf-1'
+      );
+    });
+
+    it('propagates WorkflowDeletionBlockedError and does NOT emit deleted (RFC §4 #3)', async () => {
+      // The primary failure mode for a workflow with an executable run: the
+      // manager throws, the handler surfaces it, and no spaceWorkflow.deleted
+      // event fires (the workflow is kept, not removed).
+      (workflowManager.deleteWorkflow as ReturnType<typeof mock>).mockImplementation(() => {
+        throw new WorkflowDeletionBlockedError('blocked: executable run', 'wf-1');
+      });
+
+      await expect(call('spaceWorkflow.delete', { id: 'wf-1' })).rejects.toThrow(
+        /executable|not archived/
+      );
+      expect(internalEventBus.publish).not.toHaveBeenCalledWith(
+        'spaceWorkflow.deleted',
+        expect.anything()
       );
     });
   });
@@ -1142,7 +1163,11 @@ describe('space-workflow-handlers', () => {
       expect(result.reports).toEqual([]);
     });
 
-    it('excludes groups whose rows all share the same hash (duplicates without drift)', async () => {
+    it('REPORTS uniform-hash duplicate groups (duplicates warrant cleanup, not only drift)', async () => {
+      // Any >1-row built-in group is surfaced for consolidation so the
+      // "Resync duplicates" badge stays until the group is actually reduced to
+      // one row — a partial resync (or a post-archival retry) never leaves the
+      // user without a cleanup path.
       const [t1] = getBuiltInWorkflows();
       setupWithWorkflows([
         {
@@ -1163,7 +1188,8 @@ describe('space-workflow-handlers', () => {
       const result = (await call('spaceWorkflow.detectDuplicateDrift', {
         spaceId: 'space-1',
       })) as { reports: DuplicateDriftReport[] };
-      expect(result.reports).toEqual([]);
+      expect(result.reports).toHaveLength(1);
+      expect(result.reports[0].templateName).toBe(t1.name);
     });
 
     it('excludes groups keyed on a non-built-in templateName', async () => {
@@ -1413,6 +1439,56 @@ describe('space-workflow-handlers', () => {
           sessionId: 'global',
           spaceId: 'space-1',
         })
+      );
+    });
+
+    it('KEEPS a duplicate whose deletion is blocked by a non-archived run (RFC §4 #3)', async () => {
+      // resync must never strand an in-flight/reopenable run. If deleteWorkflow
+      // refuses a duplicate (WorkflowDeletionBlockedError), resync skips it
+      // rather than aborting the whole operation, and reports it as skipped.
+      const [template] = getBuiltInWorkflows();
+      const agents = agentsForTemplate(template);
+      const older: SpaceWorkflow = {
+        ...mockWorkflow,
+        id: 'wf-older',
+        name: template.name,
+        templateName: template.name,
+        templateHash: 'old',
+        createdAt: 100,
+      };
+      const newer: SpaceWorkflow = {
+        ...mockWorkflow,
+        id: 'wf-newer',
+        name: template.name,
+        templateName: template.name,
+        templateHash: 'new',
+        createdAt: 200,
+      };
+      setupWithGroup([older, newer], agents);
+
+      (workflowManager.updateWorkflow as ReturnType<typeof mock>).mockReturnValue(newer);
+      // The older duplicate is blocked: it has an executable run. The pre-check
+      // (hasExecutableRuns) fires before any cleanup, so the duplicate is left
+      // untouched — neither deleteByWorkflowId nor deleteWorkflow runs for it.
+      (workflowManager.hasExecutableRuns as ReturnType<typeof mock>).mockImplementation(
+        (id: string) => id === 'wf-older'
+      );
+
+      const result = (await call('spaceWorkflow.resyncDuplicates', {
+        spaceId: 'space-1',
+        templateName: template.name,
+      })) as { deletedIds: string[]; skippedDueToExecutableRuns: string[] };
+
+      // The blocked duplicate was kept (not deleted), the kept row was resynced.
+      expect(result.deletedIds).toEqual([]);
+      expect(result.skippedDueToExecutableRuns).toEqual(['wf-older']);
+      // Neither the workflow row nor its runs were touched.
+      expect(workflowManager.deleteWorkflow).not.toHaveBeenCalledWith('wf-older');
+      expect(workflowRunRepo.deleteByWorkflowId).not.toHaveBeenCalledWith('wf-older');
+      // No spaceWorkflow.deleted emitted for a workflow that was never deleted.
+      expect(internalEventBus.publish).not.toHaveBeenCalledWith(
+        'spaceWorkflow.deleted',
+        expect.objectContaining({ workflowId: 'wf-older' })
       );
     });
 

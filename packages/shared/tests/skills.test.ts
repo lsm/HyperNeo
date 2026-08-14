@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'bun:test';
-import { isBuiltinSkillConfig, isMcpServerSkillConfig, isPluginSkillConfig } from './skills.ts';
+import {
+  isBuiltinSkillConfig,
+  isMcpServerSkillConfig,
+  isPluginSkillConfig,
+} from '../src/types/skills.ts';
 import type {
   AppSkill,
   AppSkillConfig,
@@ -10,7 +14,7 @@ import type {
   SkillSourceType,
   SkillValidationStatus,
   UpdateSkillParams,
-} from './skills.ts';
+} from '../src/types/skills.ts';
 
 // ---------------------------------------------------------------------------
 // Fixtures

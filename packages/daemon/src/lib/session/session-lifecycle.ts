@@ -607,12 +607,26 @@ export class SessionLifecycle {
       agentSession.updateMetadata(updates);
     }
 
-    // FIX: Emit event via InternalEventBus<DaemonInternalEventMap> - include data for decoupled state management
-    await this.internalEventBus.publish('session.updated', {
-      sessionId,
-      source: 'update',
-      session: updates,
-    });
+    // FIX: Emit event via InternalEventBus<DaemonInternalEventMap> - include data for decoupled state management.
+    // Best-effort: the durable SQLite write above has already committed, so a
+    // failing subscriber must NOT reject this call — callers (e.g. the voice
+    // draft RPCs) would report a committed write as lost, and a client retry
+    // would duplicate the already-persisted value.
+    await this.internalEventBus
+      .publish('session.updated', {
+        sessionId,
+        source: 'update',
+        session: updates,
+      })
+      .catch((err: unknown) => {
+        // Persistence already succeeded — the write stays valid. Log the failed
+        // subscriber though: the bus collects and throws without logging, and a
+        // silently failed state projection would leave consumers stale with no
+        // diagnostic trail.
+        this.logger.warn(
+          `session.updated publication failed after commit for ${sessionId}: ${err instanceof Error ? err.message : String(err)}`
+        );
+      });
   }
 
   // =========================================================================

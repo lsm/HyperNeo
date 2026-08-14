@@ -24,6 +24,12 @@
  *      duplicates-PREVENTED leading indicator; a spike means crashes-during-turn
  *      are rising. (A fresh claim feeds an `enqueued` row — counted in
  *      `feedsObserved`, not here, so it cannot dilute the skip signal.)
+ *      `turn_terminated` is a sub-signal of `alreadyConsumed`: the consumed
+ *      message's turn already produced a terminal result, so the job was
+ *      completed instead of re-driven (the "zombie turn" self-heal). A spike
+ *      means stale-consumed turns whose queries leaked are being detected and
+ *      freed — the deadlock this counter watches for would otherwise park every
+ *      new message as a steer behind the held active-turn slot.
  *  (c) residual-window latency — time from the SDK-consume signal (onSent) to
  *      the persisted consumed-flip, P50/P99. This is the exposure surface for a
  *      crash-duplicate; item 12's synchronous flip keeps it sub-ms.
@@ -32,7 +38,11 @@
  * restart. Every structure is bounded so a long-running daemon does not grow it.
  */
 
-export type ReclaimSkipOutcome = 'alreadyConsumed' | 'alreadySubmitted' | 'noContent';
+export type ReclaimSkipOutcome =
+  | 'alreadyConsumed'
+  | 'alreadySubmitted'
+  | 'noContent'
+  | 'turn_terminated';
 
 export interface DeliveryMetricsSnapshot {
   /** Total SDK handoffs observed (plain counter, O(1) memory). */
@@ -47,6 +57,14 @@ export interface DeliveryMetricsSnapshot {
   residualWindowP50: number | null;
   residualWindowP99: number | null;
   residualWindowSamples: number;
+  /**
+   * Cumulative `message_delivery` jobs that exhausted their retry budget and
+   * dead-lettered (→ the persisted message flipped to `failed`). A sustained
+   * rise is the retry-storm signal: a session or provider stuck in a recoverable
+   * error loop, burning the full retry budget per message. Counted from the
+   * lane's `onDead` hook — one increment per terminal `dead` job.
+   */
+  deadLetters: number;
 }
 
 /**
@@ -84,8 +102,10 @@ export class DeliveryMetrics {
     alreadyConsumed: 0,
     alreadySubmitted: 0,
     noContent: 0,
+    turn_terminated: 0,
   };
   private residualWindows: number[] = [];
+  private deadLetters = 0;
 
   /**
    * Record one SDK handoff of `messageUuid`. Call from the bridge at the point
@@ -110,6 +130,20 @@ export class DeliveryMetrics {
       const oldest = this.recentFeeds.keys().next().value as string | undefined;
       if (oldest !== undefined) this.recentFeeds.delete(oldest);
     }
+  }
+
+  /**
+   * Declare the prior feed of `messageUuid` void: its turn was confirmed to
+   * have produced no result and the delivery bridge reopened the row, so the
+   * NEXT feed of this UUID is an intentional recovery re-drive — not the
+   * exactly-once breach `duplicateUuids` exists to flag. Drops the UUID from
+   * the recent-feed window (a feed whose first attempt aged out needs no
+   * forget; the next feed reads as first either way). `feedsObserved` still
+   * counts every handoff — only duplicate attribution is reset. Call at the
+   * reopen, before the retry can feed again. (Codex P2.)
+   */
+  forgetFeed(messageUuid: string): void {
+    this.recentFeeds.delete(messageUuid);
   }
 
   /**
@@ -139,6 +173,15 @@ export class DeliveryMetrics {
     }
   }
 
+  /**
+   * Record a `message_delivery` job that dead-lettered (exhausted its retry
+   * budget). Call from the lane's `onDead` hook. A sustained rise is the
+   * retry-storm signal.
+   */
+  recordDeadLetter(): void {
+    this.deadLetters++;
+  }
+
   snapshot(): DeliveryMetricsSnapshot {
     return {
       feedsObserved: this.feedsObserved,
@@ -148,6 +191,7 @@ export class DeliveryMetrics {
       residualWindowP50: percentile(this.residualWindows, 0.5),
       residualWindowP99: percentile(this.residualWindows, 0.99),
       residualWindowSamples: this.residualWindows.length,
+      deadLetters: this.deadLetters,
     };
   }
 }

@@ -50,6 +50,7 @@ describe('QueryLifecycleManager', () => {
   let snapshotTrackedAgentProcessesSpy: ReturnType<typeof mock>;
   let internalPublishAsyncSpy: ReturnType<typeof mock>;
   let internalPublishSpy: ReturnType<typeof mock>;
+  let hasUnresolvedResumeChoice: boolean;
 
   function createMockContext(
     overrides: Partial<QueryLifecycleManagerContext> = {}
@@ -83,7 +84,11 @@ describe('QueryLifecycleManager', () => {
         },
       ];
     });
-    saveHyperNeoActionMessageSpy = mock(() => 'row-id-mock');
+    hasUnresolvedResumeChoice = false;
+    saveHyperNeoActionMessageSpy = mock(() => {
+      hasUnresolvedResumeChoice = true;
+      return 'row-id-mock';
+    });
     publishSpy = mock(async () => {});
     setIdleSpy = mock(async () => {});
     setQueuedSpy = mock(async () => {});
@@ -107,9 +112,9 @@ describe('QueryLifecycleManager', () => {
         updateMessageStatus: updateMessageStatusSpy,
         getMessagesByStatus: getMessagesByStatusSpy,
         saveHyperNeoActionMessage: saveHyperNeoActionMessageSpy,
-        // message-delivery v2 resume-choice dedup: no pre-existing unresolved
-        // action in these tests, so emitSdkResumeChoiceMessage proceeds.
-        getSDKMessageRepo: () => ({ hasUnresolvedHyperNeoAction: () => false }),
+        getSDKMessageRepo: () => ({
+          hasUnresolvedHyperNeoAction: () => hasUnresolvedResumeChoice,
+        }),
       } as unknown as Database,
       messageHub: {
         event: publishSpy,

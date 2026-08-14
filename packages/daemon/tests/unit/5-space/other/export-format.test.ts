@@ -2362,20 +2362,13 @@ describe('exportWorkflow — disabled', () => {
 describe('exportWorkflow — handoff transitions', () => {
   test('exports node transitions and omits them when absent', () => {
     const workflow = makeWorkflow({
-      gates: [
-        {
-          id: 'g1',
-          resetOnCycle: false,
-          fields: [{ name: 'ok', type: 'boolean', writers: [], check: { op: '==', value: true } }],
-        },
-      ],
       nodes: [
         {
           id: 'node-uuid-1',
           name: 'Code step',
           agents: [{ agentId: 'agent-uuid-1', name: 'coder' }],
           transitions: [
-            { id: 'to-review', target: 'Review step', gateId: 'g1', maxCycles: 3 },
+            { id: 'to-review', target: 'Review step', maxCycles: 3 },
             { id: 'broadcast', target: '*' },
           ],
         },
@@ -2390,39 +2383,11 @@ describe('exportWorkflow — handoff transitions', () => {
     const exported = exportWorkflow(workflow, agents);
 
     expect(exported.nodes[0].transitions).toEqual([
-      { id: 'to-review', target: 'Review step', gateId: 'g1', maxCycles: 3 },
+      { id: 'to-review', target: 'Review step', maxCycles: 3 },
       { id: 'broadcast', target: '*' },
     ]);
     // A node without transitions omits the field entirely.
     expect(exported.nodes[1].transitions).toBeUndefined();
-  });
-
-  test('strips transition AND channel gateIds whose gate was filtered out (legacy empty gate)', () => {
-    // A legacy empty gate is dropped at export; a transition AND a channel
-    // referencing it must have their gateId stripped at the same boundary — a
-    // dangling channel gateId makes isChannelOpen treat the route as closed.
-    const workflow = makeWorkflow({
-      gates: [{ id: 'g-empty', resetOnCycle: false } as never],
-      channels: [{ id: 'ch1', from: 'Code step', to: 'Review step', gateId: 'g-empty' }],
-      nodes: [
-        {
-          id: 'node-uuid-1',
-          name: 'Code step',
-          agents: [{ agentId: 'agent-uuid-1', name: 'coder' }],
-          transitions: [{ id: 'to-review', target: 'Review step', gateId: 'g-empty' }],
-        },
-        {
-          id: 'node-uuid-2',
-          name: 'Review step',
-          agents: [{ agentId: 'agent-uuid-3', name: 'reviewer' }],
-        },
-      ],
-    });
-    const exported = exportWorkflow(workflow, []);
-    expect(exported.gates).toBeUndefined();
-    expect(exported.nodes[0].transitions).toEqual([{ id: 'to-review', target: 'Review step' }]);
-    expect(exported.channels![0]).not.toHaveProperty('gateId');
-    expect(validateExportedWorkflow(exported).ok).toBe(true);
   });
 
   test('round-trips transitions through export → validate', () => {
@@ -2516,27 +2481,6 @@ describe('validateExportedWorkflow — handoff transitions', () => {
     if (!result.ok) expect(result.error).toContain('ambiguous');
   });
 
-  test('rejects a bundle with duplicate gate ids', () => {
-    const result = validateExportedWorkflow({
-      version: 3,
-      type: 'workflow',
-      name: 'W',
-      nodes: [{ name: 'A', agents: [{ agentRef: 'coder', name: 'coder' }] }],
-      startNode: 'A',
-      tags: [],
-      gates: [
-        {
-          id: 'g1',
-          resetOnCycle: false,
-          fields: [{ name: 'ok', type: 'boolean', writers: [], check: { op: '==', value: true } }],
-        },
-        { id: 'g1', resetOnCycle: false, fields: [{ name: 'x', type: 'boolean', writers: [] }] },
-      ],
-    });
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toContain('duplicate gate id "g1"');
-  });
-
   test('rejects a duplicate transition id within a node', () => {
     const result = validateExportedWorkflow(
       wfWithTransitions([
@@ -2585,7 +2529,7 @@ describe('validateExportedWorkflow — handoff transitions', () => {
   });
 });
 
-describe('export format — v3 version gating (transitions + gates)', () => {
+describe('export format — v3 version gating (transitions)', () => {
   function v2WorkflowWithTransitions() {
     return {
       version: 2,
@@ -2608,83 +2552,5 @@ describe('export format — v3 version gating (transitions + gates)', () => {
     const result = validateExportedWorkflow(v2WorkflowWithTransitions());
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toContain('require version 3');
-  });
-
-  test('rejects a v2 workflow carrying gates', () => {
-    const data = {
-      version: 2,
-      type: 'workflow',
-      name: 'W',
-      nodes: [{ name: 'Code', agents: [{ agentRef: 'coder', name: 'coder' }] }],
-      startNode: 'Code',
-      tags: [],
-      gates: [{ id: 'g1', resetOnCycle: false }],
-    };
-    const result = validateExportedWorkflow(data);
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toContain('require version 3');
-  });
-
-  test('exportWorkflow emits gates and a v3 version', () => {
-    const gate = {
-      id: 'g1',
-      resetOnCycle: false,
-      fields: [{ name: 'ok', type: 'boolean', writers: [], check: { op: '==', value: true } }],
-    };
-    const workflow = makeWorkflow({ gates: [gate] });
-    const exported = exportWorkflow(workflow, []);
-    expect(exported.version).toBe(3);
-    expect(exported.gates).toEqual([gate]);
-  });
-
-  test('exportWorkflow drops legacy empty gates that cannot round-trip', () => {
-    // An empty gate (no fields/script/validator/features) passes the permissive
-    // export schema but would fail validateGate at createWorkflow on re-import.
-    // Filter it at export so the bundle re-imports instead of rolling back.
-    const workflow = makeWorkflow({
-      gates: [{ id: 'empty', resetOnCycle: false } as never],
-    });
-    const exported = exportWorkflow(workflow, []);
-    expect(exported.gates).toBeUndefined();
-  });
-
-  test('a gated transition round-trips when its gate is exported', () => {
-    // The core of the gates-in-export fix: a transition referencing gateId 'g1'
-    // re-validates because the gate 'g1' is present in the exported bundle.
-    const workflow = makeWorkflow({
-      gates: [
-        {
-          id: 'g1',
-          resetOnCycle: false,
-          fields: [{ name: 'ok', type: 'boolean', writers: [], check: { op: '==', value: true } }],
-        },
-      ],
-      nodes: [
-        {
-          id: 'node-uuid-1',
-          name: 'Code step',
-          agents: [{ agentId: 'agent-uuid-1', name: 'coder' }],
-          transitions: [{ id: 'to-review', target: 'Review step', gateId: 'g1' }],
-        },
-        {
-          id: 'node-uuid-2',
-          name: 'Review step',
-          agents: [{ agentId: 'agent-uuid-3', name: 'reviewer' }],
-        },
-        {
-          id: 'node-uuid-3',
-          name: 'Plan step',
-          agents: [{ agentId: 'agent-uuid-2', name: 'planner' }],
-        },
-      ],
-    });
-    const agents = [makeAgent(), makeMinimalAgent(), makeReviewerAgent()];
-    const exported = exportWorkflow(workflow, agents);
-    const result = validateExportedWorkflow(exported);
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.value.gates?.[0].id).toBe('g1');
-      expect(result.value.nodes[0].transitions?.[0].gateId).toBe('g1');
-    }
   });
 });

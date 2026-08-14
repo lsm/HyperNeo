@@ -59,12 +59,7 @@ import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager';
 import type { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository';
 import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
-import {
-  exportBundle,
-  gatePassesValidation,
-  validateExportBundle,
-  normalizeOverride,
-} from '../space/export-format';
+import { exportBundle, validateExportBundle, normalizeOverride } from '../space/export-format';
 import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from '../space/slug';
 import { Logger } from '../logger';
 
@@ -244,12 +239,6 @@ export function buildWorkflowCreateParams(
   for (const node of exported.nodes) {
     nodeNameToId.set(node.name, generateUUID());
   }
-  // Gate ids that survive validation. A transition referencing a dropped gate
-  // (e.g. a legacy empty gate in a hand-crafted bundle) must have its gateId
-  // stripped here, or createWorkflow rejects it as a dangling reference.
-  const validGateIds = new Set(
-    (exported.gates ?? []).filter((g) => gatePassesValidation(g)).map((g) => g.id)
-  );
 
   // Build WorkflowNodeInput list — resolve agentRef names → UUIDs
   const nodes: WorkflowNodeInput[] = exported.nodes.map((exportedNode) => {
@@ -310,18 +299,9 @@ export function buildWorkflowCreateParams(
       name: exportedNode.name,
       agents,
       postApproval: exportedNode.postApproval,
-      requireCodexApproval: exportedNode.requireCodexApproval,
-      codexPollIntervalMs: exportedNode.codexPollIntervalMs,
-      codexTimeoutSeconds: exportedNode.codexTimeoutSeconds,
     };
     if (exportedNode.transitions && exportedNode.transitions.length > 0) {
-      // Strip gateIds whose gate was dropped above so createWorkflow does not
-      // reject a dangling reference.
-      node.transitions = exportedNode.transitions.map((t) =>
-        t.gateId !== undefined && !validGateIds.has(t.gateId)
-          ? { ...t, gateId: undefined }
-          : { ...t }
-      );
+      node.transitions = exportedNode.transitions.map((t) => ({ ...t }));
     }
 
     return node;
@@ -345,25 +325,9 @@ export function buildWorkflowCreateParams(
   if (endNodeId) params.endNodeId = endNodeId;
   if (exported.description !== undefined) params.description = exported.description;
   if (exported.channels && exported.channels.length > 0) {
-    // Strip gateIds whose gate was dropped above so a channel does not carry a
-    // dangling reference that isChannelOpen treats as closed.
-    params.channels = exported.channels.map((ch) =>
-      ch.gateId !== undefined && !validGateIds.has(ch.gateId)
-        ? { ...ch, gateId: undefined }
-        : { ...ch }
-    );
+    params.channels = exported.channels.map((ch) => ({ ...ch }));
   }
   if (exported.hooks && exported.hooks.length > 0) params.hooks = exported.hooks;
-  // Restore gates so channel/handoff-transition `gateId` references resolve at
-  // createWorkflow (a gated transition can only import when its gate does).
-  // Silently drop gates that fail current validation (e.g. legacy empty gates)
-  // so the import does not roll back createWorkflow for one bad gate. This
-  // `warnings` array is treated as BLOCKING agent-ref errors by execute, so a
-  // gate-drop is not pushed here; validateWorkflowForPreview surfaces it instead.
-  if (exported.gates && exported.gates.length > 0) {
-    const valid = exported.gates.filter((g) => gatePassesValidation(g));
-    if (valid.length > 0) params.gates = valid;
-  }
   if (exported.disabled !== undefined) params.disabled = exported.disabled;
   // Only preserve the exported handle when it is unique in the target space
   // and not already used by another workflow in the same import batch.
@@ -414,18 +378,6 @@ function validateWorkflowForPreview(
     }
   }
 
-  // ── 2a. Gate validity (non-blocking) ──────────────────────────────────────
-  // A legacy empty gate (no fields/script/validator/features) passes the export
-  // schema but would fail validateGate at createWorkflow. Surface it in preview
-  // (execute silently drops it so the bundle still imports).
-  for (const gate of exported.gates ?? []) {
-    if (!gatePassesValidation(gate)) {
-      errors.push(
-        `gate "${(gate as { id?: string }).id ?? '?'}" is malformed/empty and will be skipped on import`
-      );
-    }
-  }
-
   // ── 2. Workflow-level channel validation ──────────────────────────────────
   if (exported.channels && exported.channels.length > 0) {
     for (let ci = 0; ci < exported.channels.length; ci++) {
@@ -449,10 +401,6 @@ function validateWorkflowForPreview(
   const transitionHookIds = new Set<string>();
   for (const hook of exported.hooks ?? []) {
     if (hook?.id) transitionHookIds.add(hook.id);
-  }
-  const transitionGateIds = new Set<string>();
-  for (const gate of exported.gates ?? []) {
-    if (gate?.id) transitionGateIds.add(gate.id);
   }
   // Count distinct destinations per target name (node-name vs slot-name, as in
   // the manager) so an ambiguous target is surfaced here too.
@@ -487,9 +435,6 @@ function validateWorkflowForPreview(
       }
       if (t.hookId !== undefined && !transitionHookIds.has(t.hookId)) {
         errors.push(`${loc}.hookId "${t.hookId}" does not reference a known hook`);
-      }
-      if (t.gateId !== undefined && !transitionGateIds.has(t.gateId)) {
-        errors.push(`${loc}.gateId "${t.gateId}" does not reference a known gate`);
       }
     }
   }
@@ -844,7 +789,28 @@ export function setupSpaceExportImportHandlers(
           const strategy: ConflictResolutionStrategy =
             res.workflows?.[exportedWorkflow.name] ?? 'skip';
           if (strategy === 'replace') {
-            workflowRepo.deleteWorkflow(existing.id);
+            // Deletion-safe (RFC §4 #3): a workflow with a non-archived
+            // (executable) run cannot be replaced — deleting it would orphan the
+            // run's pinned version. Skip the replacement (keep the existing
+            // workflow and its name/handle slot). Phase 2 detects the missing
+            // replacedIdByName entry and records the workflow as skipped rather
+            // than failing the whole import.
+            if (workflowManager.hasExecutableRuns(existing.id)) {
+              allWarnings.push(
+                `Workflow "${exportedWorkflow.name}": replace skipped — existing ` +
+                  `workflow has executable run(s) (in progress or not archived); ` +
+                  `archive the task(s) and re-import to replace`
+              );
+              continue;
+            }
+            // Route through the manager (not the repo) so the deletion-safety
+            // guard is the fence even if the pre-check above is ever dropped —
+            // defense in depth mirroring the resync path. The pre-check already
+            // proved the workflow is deletable, so this does not throw here; if
+            // it ever did (e.g. a run appeared between the check and the delete)
+            // the WorkflowDeletionBlockedError propagates and rolls back the
+            // whole import transaction rather than orphaning the run.
+            workflowManager.deleteWorkflow(existing.id);
             replacedIdByName.set(exportedWorkflow.name, existing.id);
             usedWorkflowNames.delete(exportedWorkflow.name);
             if (existing.handle) usedWorkflowHandles.delete(existing.handle);
@@ -877,6 +843,17 @@ export function setupSpaceExportImportHandlers(
             }
 
             if (strategy === 'replace') {
+              if (!replacedIdByName.has(exportedWorkflow.name)) {
+                // Blocked in the pre-step: the existing workflow had a
+                // non-archived run, so it was kept rather than deleted. Keep it
+                // and skip creating the imported copy (already warned above).
+                workflowResults.push({
+                  name: exportedWorkflow.name,
+                  id: existing.id,
+                  action: 'skipped',
+                });
+                continue;
+              }
               // Already deleted in the pre-step above.
               replacedOldId = replacedIdByName.get(exportedWorkflow.name);
               action = 'replaced';

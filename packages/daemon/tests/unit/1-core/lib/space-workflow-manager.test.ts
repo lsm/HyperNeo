@@ -1092,69 +1092,6 @@ describe('SpaceWorkflowManager', () => {
     });
   });
 
-  describe('gate validation on create/update', () => {
-    it('createWorkflow rejects a gate with an unregistered feature', () => {
-      expect(() =>
-        manager.createWorkflow({
-          spaceId: 'space-1',
-          name: 'Bad Gate',
-          nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
-          gates: [{ id: 'g1', features: { codex_review_bto: true }, resetOnCycle: false }],
-          completionAutonomyLevel: 3,
-        })
-      ).toThrow('gates[0]');
-    });
-
-    it('createWorkflow rejects a gate with feature + custom script', () => {
-      expect(() =>
-        manager.createWorkflow({
-          spaceId: 'space-1',
-          name: 'Conflicting Gate',
-          nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
-          gates: [
-            {
-              id: 'g1',
-              features: { codex_review_bot: true },
-              script: { interpreter: 'bash', source: 'echo hi' },
-              resetOnCycle: false,
-            },
-          ],
-          completionAutonomyLevel: 3,
-        })
-      ).toThrow('cannot combine');
-    });
-
-    it('updateWorkflow rejects gates with invalid features', () => {
-      const wf = manager.createWorkflow({
-        spaceId: 'space-1',
-        name: 'Updatable',
-        nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
-        completionAutonomyLevel: 3,
-      });
-
-      expect(() =>
-        manager.updateWorkflow(wf.id, {
-          gates: [{ id: 'g1', features: { unknown_feature: true }, resetOnCycle: false }],
-        })
-      ).toThrow('gates[0]');
-    });
-
-    it('updateWorkflow accepts valid feature-only gates', () => {
-      const wf = manager.createWorkflow({
-        spaceId: 'space-1',
-        name: 'Updatable',
-        nodes: [{ id: 'n1', name: 'Step', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
-        completionAutonomyLevel: 3,
-      });
-
-      const updated = manager.updateWorkflow(wf.id, {
-        gates: [{ id: 'g1', features: { codex_review_bot: true }, resetOnCycle: false }],
-      });
-      expect(updated).not.toBeNull();
-      expect(updated!.gates![0].features).toEqual({ codex_review_bot: true });
-    });
-  });
-
   describe('getWorkflowForRun (Phase 1 read cutover)', () => {
     const VERSIONS_DDL = `
       CREATE TABLE space_workflow_definition_versions (
@@ -1278,7 +1215,6 @@ describe('SpaceWorkflowManager', () => {
       // (the version row's created_at) rather than the head's volatile values.
       expect(resolved.nodes).toEqual(live.nodes);
       expect(resolved.channels ?? []).toEqual(live.channels ?? []);
-      expect(resolved.gates ?? []).toEqual(live.gates ?? []);
       expect(resolved.completionAutonomyLevel).toBe(live.completionAutonomyLevel);
       expect(resolved.startNodeId).toBe(live.startNodeId);
       // updatedAt is derived from the immutable version hash, so the gate-open cache
@@ -1523,18 +1459,9 @@ describe('SpaceWorkflowManager', () => {
     });
 
     it('re-reads persisted transitions through the repository (DB round-trip)', () => {
-      const transitions = [{ id: 'to-review', target: 'Review', gateId: 'g1', hookId: 'h1' }];
+      const transitions = [{ id: 'to-review', target: 'Review', hookId: 'h1' }];
       const created = manager.createWorkflow({
         ...twoNodeParams(transitions),
-        gates: [
-          {
-            id: 'g1',
-            fields: [
-              { name: 'ok', type: 'boolean', writers: [], check: { op: '==', value: true } },
-            ],
-            resetOnCycle: false,
-          },
-        ],
         hooks: [
           {
             id: 'h1',
@@ -1557,18 +1484,9 @@ describe('SpaceWorkflowManager', () => {
       expect(reread?.nodes[0].transitions).toEqual(transitions);
     });
 
-    it('accepts gateId/hookId that reference known gates and hooks', () => {
+    it('accepts a hookId that references a known hook', () => {
       const result = manager.createWorkflow({
-        ...twoNodeParams([{ id: 'to-review', target: 'Review', gateId: 'g1', hookId: 'h1' }]),
-        gates: [
-          {
-            id: 'g1',
-            fields: [
-              { name: 'ok', type: 'boolean', writers: [], check: { op: '==', value: true } },
-            ],
-            resetOnCycle: false,
-          },
-        ],
+        ...twoNodeParams([{ id: 'to-review', target: 'Review', hookId: 'h1' }]),
         hooks: [
           {
             id: 'h1',
@@ -1585,41 +1503,7 @@ describe('SpaceWorkflowManager', () => {
           },
         ],
       });
-      expect(result.nodes[0].transitions?.[0]).toMatchObject({ gateId: 'g1', hookId: 'h1' });
-    });
-
-    it('defaults a missing resetOnCycle, rejects a non-boolean type, and rejects an empty id', () => {
-      // A missing resetOnCycle is defaulted to false at the boundary (matches
-      // the historical DB default); a present non-boolean is rejected; an empty
-      // id is rejected. So a malformed gate is never persisted.
-      const baseFields = [
-        { name: 'ok', type: 'boolean', writers: [], check: { op: '==', value: true } },
-      ];
-      // Missing resetOnCycle → defaulted to false, accepted.
-      const defaulted = manager.createWorkflow({
-        ...twoNodeParams([]),
-        name: 'Gate Default',
-        gates: [{ id: 'g1', fields: baseFields } as never],
-      });
-      expect(defaulted.gates![0].resetOnCycle).toBe(false);
-      // Non-boolean resetOnCycle → rejected.
-      expect(() =>
-        manager.createWorkflow({
-          ...twoNodeParams([]),
-          name: 'Gate Bad Type',
-          gates: [
-            { id: 'g2', resetOnCycle: 'no' as unknown as boolean, fields: baseFields } as never,
-          ],
-        })
-      ).toThrow('"resetOnCycle" must be a boolean');
-      // Empty id → rejected.
-      expect(() =>
-        manager.createWorkflow({
-          ...twoNodeParams([]),
-          name: 'Gate Bad Id',
-          gates: [{ id: '  ', resetOnCycle: false, fields: baseFields } as never],
-        })
-      ).toThrow('"id" must be a non-empty string');
+      expect(result.nodes[0].transitions?.[0]).toMatchObject({ hookId: 'h1' });
     });
 
     it('rejects more than MAX_NODE_HANDOFF_TRANSITIONS transitions on a node', () => {
@@ -1668,12 +1552,6 @@ describe('SpaceWorkflowManager', () => {
       ).toThrow('duplicate transition target "Review"');
     });
 
-    it('rejects a gateId that does not reference a known gate', () => {
-      expect(() =>
-        manager.createWorkflow(twoNodeParams([{ id: 't', target: 'Review', gateId: 'ghost' }]))
-      ).toThrow('gateId "ghost" does not reference a known gate');
-    });
-
     it('rejects a hookId that does not reference a known hook', () => {
       expect(() =>
         manager.createWorkflow(twoNodeParams([{ id: 't', target: 'Review', hookId: 'ghost' }]))
@@ -1717,7 +1595,7 @@ describe('SpaceWorkflowManager', () => {
       ).toThrow("'label' must be a string");
     });
 
-    it('rejects non-string id/target/gateId/hookId without throwing a TypeError', () => {
+    it('rejects non-string id/target/hookId without throwing a TypeError', () => {
       // Untyped RPC JSON could send numbers; field reads (.trim/.length) must
       // yield a clean WorkflowValidationError, not an uncaught TypeError.
       expect(() =>
@@ -1726,11 +1604,6 @@ describe('SpaceWorkflowManager', () => {
       expect(() =>
         manager.createWorkflow(twoNodeParams([{ id: 't', target: 42 as unknown as string }]))
       ).toThrow("'target' must be a string");
-      expect(() =>
-        manager.createWorkflow(
-          twoNodeParams([{ id: 't', target: 'Review', gateId: 7 as unknown as string }])
-        )
-      ).toThrow("'gateId' must be a string");
       expect(() =>
         manager.createWorkflow(
           twoNodeParams([{ id: 't', target: 'Review', hookId: 7 as unknown as string }])

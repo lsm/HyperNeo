@@ -87,6 +87,15 @@ export interface QueueHealthCounters {
    * stays pending and is requeued by `onSpaceResumed`.
    */
   pausedSpaceSkips: number;
+  /**
+   * Non-terminal skips: a delivery was skipped because its target is within the
+   * recoverable-failure cool-down window (its last dispatch threw
+   * non-terminally). The event stays `published` and re-evaluates once the
+   * window lifts, so a session stuck in a provider-error loop does not mint a
+   * fresh `failed` row on every re-poll. A sustained high rate is the
+   * external-event delivery storm signal.
+   */
+  cooldownSkips: number;
 }
 
 /** Live gauges computed at read time from in-memory + DB state. */
@@ -262,6 +271,7 @@ export class ExternalEventQueueMetrics {
   private claimConflicts = 0;
   private staleSessionSkips = 0;
   private pausedSpaceSkips = 0;
+  private cooldownSkips = 0;
 
   constructor(now: number = Date.now()) {
     this.since = now;
@@ -296,6 +306,14 @@ export class ExternalEventQueueMetrics {
   /** Record a non-terminal skip caused by the target's space being paused/stopped. */
   recordPausedSpaceSkip(): void {
     this.pausedSpaceSkips += 1;
+  }
+
+  /**
+   * Record a non-terminal skip caused by the target being within its
+   * recoverable-failure cool-down window (last dispatch threw non-terminally).
+   */
+  recordCooldownSkip(): void {
+    this.cooldownSkips += 1;
   }
 
   /**
@@ -347,6 +365,7 @@ export class ExternalEventQueueMetrics {
       claimConflicts: this.claimConflicts,
       staleSessionSkips: this.staleSessionSkips,
       pausedSpaceSkips: this.pausedSpaceSkips,
+      cooldownSkips: this.cooldownSkips,
     };
   }
 

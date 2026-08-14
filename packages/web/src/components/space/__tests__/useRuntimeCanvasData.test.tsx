@@ -6,17 +6,13 @@
  * 1. Returns empty nodeData/channelEdges when workflowId is null
  * 2. Correctly maps SpaceWorkflow nodes to WorkflowNodeData (step.id, stepIndex, isStartNode, isEndNode)
  * 3. Derives nodeTaskStates from nodeExecutionsByNodeId filtered by runId
- * 4. Calls spaceWorkflowRun.listGateData RPC when runId is provided
- * 5. Does NOT call listGateData when runId is null
- * 6. Computes runtimeStatus: 'open' when gate data shows approved=true
- * 7. Computes runtimeStatus: 'waiting_human' when gate data is empty and gate has a human approval field
- * 8. Computes runtimeStatus: 'blocked' when gate data shows approved=false
+ * 4. Builds channelEdges from workflow channels (fromStepId/toStepId/direction/isCyclic)
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, act, cleanup, waitFor } from '@testing-library/preact';
+import { renderHook, cleanup, waitFor } from '@testing-library/preact';
 import { signal, computed } from '@preact/signals';
-import type { SpaceWorkerAgent, SpaceWorkflow, NodeExecution, Gate } from '@hyperneo/shared';
+import type { SpaceWorkerAgent, SpaceWorkflow, NodeExecution } from '@hyperneo/shared';
 
 // ---- Signals for mocking ----
 
@@ -52,7 +48,7 @@ vi.mock('../../../lib/space-store', () => ({
 
 const mockEventListeners = new Map<string, Array<(data: unknown) => void>>();
 const mockHub = {
-  request: vi.fn().mockResolvedValue({ gateData: [] }),
+  request: vi.fn().mockResolvedValue({}),
   onEvent: vi.fn((event: string, handler: (data: unknown) => void) => {
     if (!mockEventListeners.has(event)) mockEventListeners.set(event, []);
     mockEventListeners.get(event)!.push(handler);
@@ -91,23 +87,6 @@ mockNodeExecutionsByNodeId = computed(() => {
 import { useRuntimeCanvasData } from '../useRuntimeCanvasData';
 
 // ---- Helpers ----
-
-function makeGate(overrides: Partial<Gate> = {}): Gate {
-  return {
-    id: 'gate-1',
-    fields: [
-      {
-        name: 'approved',
-        type: 'boolean',
-        writers: [],
-        check: { op: '==', value: true },
-      },
-    ],
-    description: 'Reviewer approval',
-    resetOnCycle: false,
-    ...overrides,
-  };
-}
 
 function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
   return {
@@ -156,7 +135,7 @@ describe('useRuntimeCanvasData', () => {
     mockNodeExecutions.value = [];
     mockEventListeners.clear();
     mockHub.request.mockClear();
-    mockHub.request.mockResolvedValue({ gateData: [] });
+    mockHub.request.mockResolvedValue({});
     mockHub.onEvent.mockClear();
   });
 
@@ -224,110 +203,30 @@ describe('useRuntimeCanvasData', () => {
     expect(n1?.nodeTaskStates?.[0].agentName).toBe('Planner');
   });
 
-  it('calls spaceWorkflowRun.listGateData RPC when runId is provided', async () => {
-    mockWorkflows.value = [makeWorkflow()];
-    renderHook(() => useRuntimeCanvasData('wf-1', 'run-1'));
-
-    // Wait for async effect
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    });
-
-    expect(mockHub.request).toHaveBeenCalledWith('spaceWorkflowRun.listGateData', {
-      runId: 'run-1',
-    });
-  });
-
-  it('does NOT call listGateData when runId is null', async () => {
-    mockWorkflows.value = [makeWorkflow()];
-    renderHook(() => useRuntimeCanvasData('wf-1', null));
-
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    });
-
-    expect(mockHub.request).not.toHaveBeenCalledWith(
-      'spaceWorkflowRun.listGateData',
-      expect.anything()
-    );
-  });
-
-  it('computes runtimeStatus: "open" when gate data shows approved=true', async () => {
-    const gate = makeGate({ id: 'gate-1' });
+  it('builds channelEdges from workflow channels with fromStepId/toStepId/direction/isCyclic', async () => {
     mockWorkflows.value = [
       makeWorkflow({
-        nodes: [
-          { id: 'n1', name: 'Planner', agents: [] },
-          { id: 'n2', name: 'Coder', agents: [] },
+        channels: [
+          {
+            id: 'ch-1',
+            from: 'Planner',
+            to: 'Coder',
+            label: 'Handoff',
+          },
         ],
-        channels: [{ id: 'ch-1', from: 'Planner', to: 'Coder', gateId: 'gate-1' }],
-        gates: [gate],
       }),
     ];
-
-    mockHub.request.mockResolvedValue({
-      gateData: [{ runId: 'run-1', gateId: 'gate-1', data: { approved: true }, updatedAt: 1000 }],
-    });
 
     const { result } = renderHook(() => useRuntimeCanvasData('wf-1', 'run-1'));
 
     await waitFor(() => {
-      const { channelEdges } = result.current;
-      const edge = channelEdges[0];
-      expect(edge?.runtimeStatus).toBe('open');
-    });
-  });
-
-  it('computes runtimeStatus: "waiting_human" when gate data is empty and gate has human approval field', async () => {
-    const gate = makeGate({ id: 'gate-1' });
-    mockWorkflows.value = [
-      makeWorkflow({
-        nodes: [
-          { id: 'n1', name: 'Planner', agents: [] },
-          { id: 'n2', name: 'Coder', agents: [] },
-        ],
-        channels: [{ id: 'ch-1', from: 'Planner', to: 'Coder', gateId: 'gate-1' }],
-        gates: [gate],
-      }),
-    ];
-
-    // Gate data is empty (no approved field yet)
-    mockHub.request.mockResolvedValue({
-      gateData: [{ runId: 'run-1', gateId: 'gate-1', data: {}, updatedAt: 1000 }],
+      expect(result.current.channelEdges.length).toBeGreaterThan(0);
     });
 
-    const { result } = renderHook(() => useRuntimeCanvasData('wf-1', 'run-1'));
-
-    await waitFor(() => {
-      const { channelEdges } = result.current;
-      const edge = channelEdges[0];
-      expect(edge?.runtimeStatus).toBe('waiting_human');
-    });
-  });
-
-  it('computes runtimeStatus: "blocked" when gate data shows approved=false', async () => {
-    const gate = makeGate({ id: 'gate-1' });
-    mockWorkflows.value = [
-      makeWorkflow({
-        nodes: [
-          { id: 'n1', name: 'Planner', agents: [] },
-          { id: 'n2', name: 'Coder', agents: [] },
-        ],
-        channels: [{ id: 'ch-1', from: 'Planner', to: 'Coder', gateId: 'gate-1' }],
-        gates: [gate],
-      }),
-    ];
-
-    mockHub.request.mockResolvedValue({
-      gateData: [{ runId: 'run-1', gateId: 'gate-1', data: { approved: false }, updatedAt: 1000 }],
-    });
-
-    const { result } = renderHook(() => useRuntimeCanvasData('wf-1', 'run-1'));
-
-    await waitFor(() => {
-      const { channelEdges } = result.current;
-      const edge = channelEdges[0];
-      expect(edge?.runtimeStatus).toBe('blocked');
-    });
+    const edge = result.current.channelEdges[0];
+    expect(edge.fromStepId).toBeDefined();
+    expect(edge.toStepId).toBeDefined();
+    expect(edge.direction).toMatch(/^(one-way|bidirectional)$/);
+    expect(edge.isCyclic).toBeDefined();
   });
 });

@@ -228,6 +228,13 @@ export function createTables(db: BunDatabase): void {
         parent_tool_use_id TEXT,
         task_id TEXT,
         sdk_uuid TEXT,
+        -- Monotonic consumption sequence (#2463 P2): assigned at consumption
+        -- (markDeliveryConsumedByUuid / updateMessageStatus consumed-flip). Rows
+        -- retain their original rowid, which only reflects INSERTION order — a
+        -- message queued in turn A and consumed in turn B keeps an old rowid, so
+        -- the delivery re-claim boundary (hasTerminalResultAfter) must order by
+        -- this consumption sequence, not rowid, to avoid matching turn A's result.
+        consumed_seq INTEGER,
         replacement_metadata_normalized INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
       )
@@ -761,6 +768,38 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
+  // Durable delivery-turn completion markers (message-delivery v2). Written when
+  // a delivery-driven turn ends via a result-less terminal path (query error,
+  // interrupt) that persists no SDK `result` row, so a stale re-claim can
+  // recognize the consumed turn ended instead of re-driving it into an
+  // indefinitely-waiting query. See message-delivery-v2.md + Codex (PR #2463).
+  db.exec(`
+      CREATE TABLE IF NOT EXISTS delivery_turn_end (
+        session_id TEXT NOT NULL,
+        message_uuid TEXT NOT NULL,
+        ended_at TEXT NOT NULL,
+        PRIMARY KEY (session_id, message_uuid)
+      )
+    `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_delivery_turn_end_session
+      ON delivery_turn_end(session_id)
+  `);
+  // Monotonic consumption-watermark counter for message-delivery v2. A singleton
+  // row holding the next sequence; consumed_seq is drawn from it at consume time
+  // so it is genuinely monotonic and independent of SQLite rowid reuse (a
+  // deleted max rowid can be reused by a later insert, which would break
+  // MAX(rowid)+1). See message-delivery-v2.md + Codex (PR #2463, P2).
+  db.exec(`
+      CREATE TABLE IF NOT EXISTS delivery_consumed_seq (
+        singleton INTEGER PRIMARY KEY DEFAULT 1,
+        next_seq INTEGER NOT NULL DEFAULT 1
+      )
+    `);
+  db.exec(`
+      INSERT OR IGNORE INTO delivery_consumed_seq (singleton, next_seq) VALUES (1, 1)
+    `);
+
   // Workspace history — persists recently-used workspace paths
   db.exec(`
       CREATE TABLE IF NOT EXISTS workspace_history (
@@ -967,6 +1006,10 @@ function createIndexes(db: BunDatabase): void {
       ON sdk_messages(session_id, message_subtype_norm, parent_tool_use_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_send_status
       ON sdk_messages(session_id, send_status)`);
+  // Consumption watermark — MAX(consumed_seq) on the consumed-flip hot path
+  // must be an index scan, not a full-table pass. See Codex (PR #2463, P2).
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_consumed_seq
+      ON sdk_messages(consumed_seq)`);
   // Task-scoped feeds and activity views read directly from this column.
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_id
       ON sdk_messages(task_id, timestamp)`);

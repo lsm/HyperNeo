@@ -13,7 +13,7 @@
 
 set -uo pipefail
 
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 export HYPERNEO_ALLOW_ROOT_TEST=1
@@ -306,7 +306,7 @@ shard_paths() {
 		printf '%s\n' "$REPO_ROOT/packages/shared/tests"
 		;;
 	1-core)
-		printf '%s\n' "$TEST_ROOT/1-core"
+		printf '%s\n' "$TEST_ROOT/1-core" "$TEST_ROOT/helpers" "$TEST_ROOT/lib"
 		;;
 	4-space-storage)
 		printf '%s\n' "$TEST_ROOT/4-space-storage"/*.test.ts "$TEST_ROOT/4-space-storage/app"
@@ -333,6 +333,15 @@ shard_paths() {
 		;;
 	esac
 }
+
+# When sourced (e.g. by scripts/validate-test-matrix.sh) expose only the shard
+# definitions above (SHARDS, HASH_SPLIT_SPECS, shard_paths, migration_shard_paths,
+# hash_split_resolve, TEST_ROOT) and skip the test-execution logic below.
+# Executing this file directly runs tests as before (BASH_SOURCE[0] == $0 → the
+# guard is skipped).
+if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
+	return 0
+fi
 
 # Parse arguments
 COVERAGE=false

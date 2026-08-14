@@ -369,6 +369,44 @@ describe('SpaceActorRegistryAdapter', () => {
     }
   });
 
+  it('scopes pending worker projection to the row workflowNodeId', () => {
+    const space = spaceRepo.createSpace({ workspacePath: '/w', slug: 'p', name: 'P' });
+    const workflow = workflowRepo.createWorkflow({
+      spaceId: space.id,
+      name: 'Two reviewers',
+      nodes: [
+        { id: 'rev-a', name: 'Review A', agents: [{ agentId: 'a1', name: 'reviewer' }] },
+        { id: 'rev-b', name: 'Review B', agents: [{ agentId: 'a2', name: 'reviewer' }] },
+      ],
+      transitions: [],
+      startNodeId: 'rev-a',
+      rules: [],
+      completionAutonomyLevel: 3,
+    });
+    const run = workflowRunRepo.createRun({
+      spaceId: space.id,
+      workflowId: workflow.id,
+      title: 'R',
+    });
+    // Pinned to the SECOND node that reuses the 'reviewer' slot.
+    pendingMessageRepo.enqueue({
+      workflowRunId: run.id,
+      spaceId: space.id,
+      targetKind: 'node_agent',
+      targetAgentName: 'reviewer',
+      workflowNodeId: 'rev-b',
+      message: 'for B',
+    });
+
+    const handles = registry
+      .listActors(space.id)
+      .filter((a) => a.kind === 'worker')
+      .map((a) => a.handle);
+    expect(handles).toContain(`@worker:${encodeURIComponent(run.id)}/rev-b/reviewer`);
+    // Must NOT project through the first node (rev-a) when the row is pinned to rev-b.
+    expect(handles).not.toContain(`@worker:${encodeURIComponent(run.id)}/rev-a/reviewer`);
+  });
+
   it('uses fallback and collision-safe handles for slug-derived agent handles', () => {
     const space = spaceRepo.createSpace({
       workspacePath: '/workspace/project',

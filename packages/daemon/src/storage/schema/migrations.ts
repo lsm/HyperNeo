@@ -951,11 +951,58 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // dev shipped M185 for workflow-event-subscriptions.
   run(migrationMarkerKey(186), () => runMigration186(db));
 
-  // Migration 187: composite (space_id, state) index on space_external_events
-  // for the space-scoped new-target replay (listPublishedEventsWithDeliveries).
-  // Renumbered 185→187: dev shipped M185 (workflow-event-subscriptions) and M186
-  // (message-delivery partial index) ahead of this branch.
+  // Migration 187: delivery_turn_end — durable delivery-turn completion markers
+  // for result-less terminal paths (query error / interrupt that persist no SDK
+  // `result` row). A stale re-claim consults this so it completes an
+  // already-ended consumed turn instead of re-driving it into an
+  // indefinitely-waiting query. Mirrored in the fresh-DB schema (index.ts).
+  // See Codex (PR #2463, P2 result-less terminal paths).
   run(migrationMarkerKey(187), () => runMigration187(db));
+
+  // Migration 188: sdk_messages.consumed_seq — a monotonic consumption sequence
+  // assigned at the consumed-flip, so the delivery re-claim boundary
+  // (`hasTerminalResultAfter`) can order a consumed message before a terminal
+  // result that lands in the same millisecond even when the message's original
+  // `rowid` predates it. Mirrored in the fresh-DB schema (index.ts).
+  // See Codex (PR #2463, P2).
+  run(migrationMarkerKey(188), () => runMigration188(db));
+
+  // Migration 189: delivery_consumed_seq — a dedicated monotonic counter for the
+  // consumption watermark. MAX(rowid)+1 is not strictly monotonic across deletes
+  // (SQLite may reuse a deleted max rowid for a later insert, moving a terminal
+  // result behind the watermark). A singleton counter row is genuinely monotonic.
+  // Mirrored in the fresh-DB schema (index.ts). See Codex (PR #2463, P2).
+  run(migrationMarkerKey(189), () => runMigration189(db));
+
+  // Migration 190: Remove the legacy workflow gate subsystem — drop the
+  // `gate_data` and `gate_open_state` tables and the `gates` column from
+  // `space_workflows`. Workflow progression is now enforced by MCP action hooks;
+  // gate storage is obsolete. Idempotent via existence guards. Renumbered from
+  // 187 (dev shipped M187–M189 for message-delivery-v2, #862).
+  run(migrationMarkerKey(190), () => runMigration190(db));
+
+  // Migration 191: node_executions.last_activity_at — dedicated agent-activity
+  // signal (refreshed by tool calls / message delivery / commit pushes,
+  // independent of updated_at) so stall detection is not keyed off updated_at.
+  run(migrationMarkerKey(191), () => runMigration191(db));
+
+  // Migration 192: Add `delivery_mode` to pending_agent_messages so a deferred
+  //   ("queue for next turn") human message that lands in the pending queue
+  //   (target not live yet) retains its mode when flushed after spawn — instead
+  //   of defaulting to immediate and steering the kickoff turn. NULL (legacy
+  //   rows + callers that don't pass it) behaves as before (immediate).
+  //   Idempotent ALTER TABLE ADD COLUMN; new DBs get it via this ALTER since
+  //   M92 creates the table.
+  run(migrationMarkerKey(192), () => runMigration192(db));
+
+  // Migration 193: channel_cycle_events — rate-based dead-loop detection.
+  run(migrationMarkerKey(193), () => runMigration193(db));
+
+  // Migration 194: composite (space_id, state) index on space_external_events
+  // for the space-scoped new-target replay (listPublishedEventsWithDeliveries).
+  // Renumbered through dev's M187-M193 (message-delivery-v2, gate-subsystem
+  // removal, dead-loop detection). Index name unchanged.
+  run(migrationMarkerKey(194), () => runMigration194(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -12257,7 +12304,186 @@ export function runMigration186(db: BunDatabase): void {
 }
 
 /**
- * Migration 187: composite (space_id, state) index on space_external_events.
+ * Migration 187: durable delivery-turn completion markers.
+ *
+ * The `delivery_turn_end` table records when a delivery-driven turn ended via a
+ * result-less terminal path (query-level error, interrupt) that persists no SDK
+ * `result` row. The delivery bridge (`hasTurnTerminated`) ORs a lookup here
+ * against the SDK-result-row check, so a stale re-claim of a `consumed` turn
+ * recognizes it already ended and completes instead of re-driving it into an
+ * indefinitely-waiting query. Idempotent (`CREATE TABLE IF NOT EXISTS`); no-op
+ * on tables that pre-date the lane.
+ */
+export function runMigration187(db: BunDatabase): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS delivery_turn_end (
+      session_id TEXT NOT NULL,
+      message_uuid TEXT NOT NULL,
+      ended_at TEXT NOT NULL,
+      PRIMARY KEY (session_id, message_uuid)
+    )
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_delivery_turn_end_session
+      ON delivery_turn_end(session_id)
+  `);
+}
+
+/**
+ * Migration 188: sdk_messages.consumed_seq — a monotonic consumption sequence.
+ *
+ * `rowid` reflects INSERTION order only. A message queued during turn A and
+ * consumed (promoted) as turn B keeps its original rowid, so a terminal result
+ * of A persisted in the same millisecond as B's consumption would sort AFTER the
+ * message by rowid, corrupting the delivery re-claim boundary. Assigning a
+ * monotonic sequence at the consumed-flip lets `hasTerminalResultAfter` order by
+ * (consumed_seq) instead of (timestamp, rowid). `ALTER TABLE ADD COLUMN` (no
+ * table rebuild; rows already consumed are backfilled as NULL — the query treats
+ * NULL as "no consumption recorded", i.e. an un-consumed message).
+ */
+export function runMigration188(db: BunDatabase): void {
+  if (!tableExists(db, 'sdk_messages')) return;
+  if (!tableHasColumn(db, 'sdk_messages', 'consumed_seq')) {
+    db.exec(`ALTER TABLE sdk_messages ADD COLUMN consumed_seq INTEGER`);
+  }
+  // MAX(consumed_seq) on the consumed-flip hot path must be an index scan, not
+  // a full-table pass. Idempotent (IF NOT EXISTS). See Codex (PR #2463, P2).
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_consumed_seq
+      ON sdk_messages(consumed_seq)`);
+}
+
+/**
+ * Migration 189: a dedicated monotonic counter for the consumption watermark.
+ *
+ * `MAX(rowid)+1` (migration 188's approach) is not strictly monotonic across
+ * deletes — SQLite may reuse a deleted max rowid for a later insert, which would
+ * place a terminal result's rowid BELOW a prior watermark and make
+ * `hasTerminalResultAfter` miss the completed turn. A singleton counter row
+ * (`delivery_consumed_seq`) is genuinely monotonic and independent of rowid
+ * reuse. Backfills existing NULL `consumed_seq` rows to 0 (treated as
+ * "unknown/live" by hasTerminalResultAfter, never matching a result) so a
+ * migrated in-flight job is not pre-completed. Idempotent.
+ */
+export function runMigration189(db: BunDatabase): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS delivery_consumed_seq (
+      singleton INTEGER PRIMARY KEY DEFAULT 1,
+      next_seq INTEGER NOT NULL DEFAULT 1
+    )
+  `);
+  db.exec(`
+      INSERT OR IGNORE INTO delivery_consumed_seq (singleton, next_seq) VALUES (1, 1)
+    `);
+}
+
+/**
+ * Migration 190: Remove the legacy workflow gate subsystem.
+ *
+ * Workflow progression is enforced by MCP action hooks; gate entities, gate
+ * data, and gate-open caching are obsolete. This drops:
+ *   - `gate_data` table (per-run gate runtime data)
+ *   - `gate_open_state` table (persisted gate-open cache)
+ *   - `space_workflows.gates` column (JSON gate definitions)
+ *
+ * Idempotent via existence guards (DROP TABLE IF EXISTS / column check).
+ */
+export function runMigration190(db: BunDatabase): void {
+  db.exec(`DROP TABLE IF EXISTS gate_open_state`);
+  db.exec(`DROP TABLE IF EXISTS gate_data`);
+  if (tableHasColumn(db, 'space_workflows', 'gates')) {
+    db.exec(`ALTER TABLE space_workflows DROP COLUMN gates`);
+  }
+}
+
+/**
+ * Migration 191: node_executions.last_activity_at — a dedicated agent-activity
+ * signal.
+ *
+ * `updated_at` advances only on runtime state-writes (status / session / data
+ * transitions) and so freezes while an agent is plainly working (pushing
+ * commits, exchanging messages, making tool calls) but no state transition
+ * occurs. That makes it unreliable as a liveness/activity signal, yet the
+ * runtime stall-detector and UI activity displays consume it as one — leading
+ * to misfires (active agents killed, or genuinely-stuck ones missed).
+ *
+ * `last_activity_at` is refreshed independently of `updated_at` by real agent
+ * work (SDK tool events, peer-message delivery, PR commit push) via
+ * `NodeExecutionRepository.touchLastActivity`, which intentionally does NOT
+ * bump `updated_at`. The stall-detector now keys off this column instead.
+ *
+ * Idempotent `ALTER TABLE ADD COLUMN` (no table rebuild). Existing rows are
+ * backfilled NULL; the detector treats NULL via its existing fallback chain, so
+ * pre-migration in-flight executions are not misclassified. Fresh DBs get the
+ * column here too (M74 creates the table without it; all migrations run on a
+ * fresh DB). (task #943.)
+ */
+export function runMigration191(db: BunDatabase): void {
+  if (!tableExists(db, 'node_executions')) return;
+  if (!tableHasColumn(db, 'node_executions', 'last_activity_at')) {
+    db.exec(`ALTER TABLE node_executions ADD COLUMN last_activity_at INTEGER`);
+  }
+}
+
+/**
+ * Migration 192: pending_agent_messages.delivery_mode — preserves a deferred
+ * ("queue for next turn") human message's delivery mode across the pending
+ * queue. When such a message targets an agent with no live session yet it is
+ * enqueued; `flushPendingMessagesForTarget` later replays it. Without this
+ * column the flush passes an undefined mode, defaulting to immediate, so a
+ * message the user queued for the next turn instead steers the kickoff turn
+ * if the spawned session is already processing. NULL (legacy rows + callers
+ * that don't pass a mode) keeps the prior immediate behavior. (task #949.)
+ */
+export function runMigration192(db: BunDatabase): void {
+  if (!tableExists(db, 'pending_agent_messages')) return;
+  if (!tableHasColumn(db, 'pending_agent_messages', 'delivery_mode')) {
+    db.exec(`ALTER TABLE pending_agent_messages ADD COLUMN delivery_mode TEXT`);
+  }
+}
+
+/**
+ * Migration 193: Rate-based dead-loop detection for cyclic workflow channels.
+ *
+ * Creates a `channel_cycle_events` table storing one timestamped row per
+ * traversal of a cyclic (backward) channel. Dead-loop detection counts these
+ * rows over a rolling time window (default >15 traversals per 5 minutes) so it
+ * catches a runaway tight ping-pong between two agents while never blocking a
+ * genuine extended review that is spread out over hours.
+ *
+ * The legacy `channel_cycles` lifetime counter (migration 69) is retained for
+ * observability but is no longer a blocking gate; it must not false-trip on
+ * long reviews. This new table is the primary dead-loop signal.
+ *
+ * Backward-compatible with in-flight runs: existing runs simply have an empty
+ * event history (count 0), so any run previously blocked by the lifetime cap
+ * becomes unblocked — which is correct, since those were overwhelmingly
+ * legitimate extended reviews (see PR #2473 / task #942).
+ */
+export function runMigration193(db: BunDatabase): void {
+  if (!tableExists(db, 'space_workflow_runs')) return;
+
+  // Create the table and its window index independently and idempotently. If
+  // the daemon exited after the CREATE TABLE but before the CREATE INDEX (and
+  // before the migration marker was written), re-running must still create the
+  // index — otherwise rate checks and pruning would scan the full cross-run
+  // event table indefinitely. IF NOT EXISTS makes both safe to re-run.
+  db.exec(`
+		CREATE TABLE IF NOT EXISTS channel_cycle_events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			run_id TEXT NOT NULL,
+			channel_index INTEGER NOT NULL,
+			sent_at INTEGER NOT NULL,
+			FOREIGN KEY (run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
+		)
+	`);
+  db.exec(`
+		CREATE INDEX IF NOT EXISTS idx_channel_cycle_events_window
+		ON channel_cycle_events(run_id, channel_index, sent_at)
+	`);
+}
+
+/**
+ * Migration 194: composite (space_id, state) index on space_external_events.
  *
  * `ExternalEventStore.listPublishedEventsWithDeliveries(spaceId)` filters on
  * both columns (a space-scoped replay for newly-materialized topicFrom subs),
@@ -12266,10 +12492,10 @@ export function runMigration186(db: BunDatabase): void {
  * lead with (space_id, state). Without this index the space-scoped scan reads
  * every published event across all spaces to apply the space filter. Low-impact
  * today (the result set is TTL-bounded), but the index makes the scoped query a
- * direct seek. Idempotent (`CREATE INDEX IF NOT EXISTS`). Renumbered 185→187:
- * dev shipped M185 (workflow-event-subscriptions) and M186 ahead of this branch.
+ * direct seek. Idempotent (`CREATE INDEX IF NOT EXISTS`). Renumbered through
+ * dev's M187-M193.
  */
-export function runMigration187(db: BunDatabase): void {
+export function runMigration194(db: BunDatabase): void {
   if (!tableExists(db, 'space_external_events')) return;
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_space_external_events_space_state

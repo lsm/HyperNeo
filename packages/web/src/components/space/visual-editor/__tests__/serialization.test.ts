@@ -169,36 +169,6 @@ describe('workflowToVisualState', () => {
     expect(state.tags).toEqual(['coding', 'review']);
   });
 
-  it('passes workflow gates through', () => {
-    const wf = makeWorkflow({
-      nodes: [makeStep('s1')],
-      startNodeId: 's1',
-      gates: [
-        {
-          id: 'review-votes-gate',
-          fields: [
-            {
-              name: 'votes',
-              type: 'map',
-              writers: ['*'],
-              check: { op: 'count', match: 'approved', min: 3 },
-            },
-          ],
-          resetOnCycle: true,
-        },
-      ],
-    });
-    const state = workflowToVisualState(wf);
-    expect(state.gates).toHaveLength(1);
-    expect(state.gates[0].id).toBe('review-votes-gate');
-    expect(state.gates[0].fields![0].name).toBe('votes');
-    expect(state.gates[0].fields![0].check).toMatchObject({
-      op: 'count',
-      match: 'approved',
-      min: 3,
-    });
-  });
-
   it('migrates legacy workflow postApproval onto the end node', () => {
     const wf = makeWorkflow({
       nodes: [makeStep('s1')],
@@ -285,7 +255,6 @@ describe('visualStateToCreateParams', () => {
       startNodeId: 's1',
       tags: [],
       channels: [],
-      gates: [],
       hooks: [],
       ...overrides,
     };
@@ -446,7 +415,6 @@ describe('visualStateToCreateParams', () => {
       startNodeId: 'local-new',
       tags: [],
       channels: [],
-      gates: [],
       hooks: [],
     };
     const params = visualStateToCreateParams(state, 'space-1', 'WF');
@@ -461,7 +429,6 @@ describe('visualStateToCreateParams', () => {
       startNodeId: '',
       tags: [],
       channels: [],
-      gates: [],
       hooks: [],
     };
     const params = visualStateToCreateParams(state, 'space-1', 'WF');
@@ -790,7 +757,7 @@ describe('handoff transition preservation', () => {
             id: 's1',
             name: 'Coder',
             agentId: 'a1',
-            handoffTransitions: [{ id: 't', target: 'Review', gateId: 'g1' }],
+            handoffTransitions: [{ id: 't', target: 'Review' }],
           },
           position: { x: 0, y: 0 },
         },
@@ -803,19 +770,10 @@ describe('handoff transition preservation', () => {
       startNodeId: 's1',
       tags: [],
       channels: [],
-      gates: [{ id: 'g1', resetOnCycle: false }],
       hooks: [],
       ...overrides,
     };
   }
-
-  it('retains a gate referenced only by a handoff transition', () => {
-    // A gate not attached to any channel but referenced by a handoff transition
-    // must survive the save (otherwise validateTransitions rejects the gateId).
-    const params = visualStateToUpdateParams(makeHandoffState());
-    expect(params.gates).toEqual([{ id: 'g1', resetOnCycle: false }]);
-    expect(params.nodes![0].transitions).toEqual([{ id: 't', target: 'Review', gateId: 'g1' }]);
-  });
 
   it('drops a handoff transition whose target no longer exists', () => {
     // The editor does not expose handoff transitions to correct a rename/delete,
@@ -860,7 +818,7 @@ describe('handoff transition preservation', () => {
               id: 's1',
               name: 'Coder',
               agentId: 'a1',
-              handoffTransitions: [{ id: 't', target: 'Review', gateId: 'g1' }],
+              handoffTransitions: [{ id: 't', target: 'Review' }],
             },
             position: { x: 0, y: 0 },
           },
@@ -921,10 +879,10 @@ describe('handoff transition preservation', () => {
     expect(params.nodes![0].transitions).toBeUndefined();
   });
 
-  it('drops handoff transitions whose referenced hook or gate was removed', () => {
-    // A node deletion prunes removed-node hooks/gates from state; a carried
-    // transition still referencing them must be dropped, not emitted with a
-    // dangling hookId/gateId that validateTransitions rejects.
+  it('drops handoff transitions whose referenced hook was removed', () => {
+    // A node deletion prunes removed-node hooks from state; a carried
+    // transition still referencing one must be dropped, not emitted with a
+    // dangling hookId that validateTransitions rejects.
     const params = visualStateToUpdateParams(
       makeHandoffState({
         nodes: [
@@ -936,7 +894,6 @@ describe('handoff transition preservation', () => {
               agentId: 'a1',
               handoffTransitions: [
                 { id: 'stale-hook', target: 'Review', hookId: 'gone-hook' },
-                { id: 'stale-gate', target: 'Review', gateId: 'gone-gate' },
                 { id: 'ok', target: 'Review' },
               ],
             },
@@ -947,7 +904,6 @@ describe('handoff transition preservation', () => {
             position: { x: 0, y: 0 },
           },
         ],
-        // state.gates has 'g1' only; 'gone-gate' is absent. hooks is empty.
       })
     );
     expect(params.nodes![0].transitions).toEqual([{ id: 'ok', target: 'Review' }]);
@@ -1104,7 +1060,6 @@ describe('visualStateToUpdateParams', () => {
       startNodeId: 's1',
       tags: [],
       channels: [],
-      gates: [],
       hooks: [],
     };
     const params = visualStateToUpdateParams(state, {
@@ -1132,7 +1087,6 @@ describe('visualStateToUpdateParams', () => {
       endNodeId: 's2',
       tags: [],
       channels: [],
-      gates: [],
       hooks: [],
     };
     const params = visualStateToUpdateParams(state);
@@ -1160,7 +1114,6 @@ describe('visualStateToUpdateParams', () => {
       startNodeId: 's1',
       tags: [],
       channels: [],
-      gates: [],
       hooks: [],
     };
     const params = visualStateToUpdateParams(state);
@@ -1183,7 +1136,6 @@ describe('visualStateToUpdateParams', () => {
       startNodeId: 's1',
       tags: [],
       channels: [],
-      gates: [],
       hooks: [],
     };
     const params = visualStateToUpdateParams(state);
@@ -1269,7 +1221,6 @@ describe('multi-agent step serialization', () => {
       startNodeId: 's1',
       tags: [],
       channels: [],
-      gates: [],
       hooks: [],
     };
     const params = visualStateToCreateParams(state, 'space-1', 'WF');
@@ -1299,74 +1250,11 @@ describe('multi-agent step serialization', () => {
       startNodeId: 's1',
       tags: [],
       channels: [],
-      gates: [],
       hooks: [],
     };
     const params = visualStateToCreateParams(state, 'space-1', 'WF');
     // Channels are not yet supported in visualStateToCreateParams output
     // (they are workflow-level, not editor state level)
-  });
-
-  it('visualStateToCreateParams persists only gates referenced by channels', () => {
-    const state: VisualEditorState = {
-      nodes: [
-        {
-          step: {
-            localId: 'local-1',
-            id: 's1',
-            name: 'Plan',
-            agentId: '',
-            agents: [{ agentId: 'a1', name: 'planner' }],
-          },
-          position: { x: 0, y: 0 },
-        },
-        {
-          step: {
-            localId: 'local-2',
-            id: 's2',
-            name: 'Code',
-            agentId: '',
-            agents: [{ agentId: 'a2', name: 'coder' }],
-          },
-          position: { x: 200, y: 0 },
-        },
-      ],
-      edges: [],
-      startNodeId: 's1',
-      tags: [],
-      channels: [
-        {
-          from: 'Plan',
-          to: 'Code',
-          gateId: 'review-votes-gate',
-        },
-      ],
-      gates: [
-        {
-          id: 'review-votes-gate',
-          fields: [
-            {
-              name: 'votes',
-              type: 'map',
-              writers: ['*'],
-              check: { op: 'count', match: 'approved', min: 3 },
-            },
-          ],
-          resetOnCycle: true,
-        },
-        {
-          id: 'unused-gate',
-          fields: [
-            { name: 'approved', type: 'boolean', writers: ['*'], check: { op: '==', value: true } },
-          ],
-          resetOnCycle: false,
-        },
-      ],
-      hooks: [],
-    };
-    const params = visualStateToCreateParams(state, 'space-1', 'WF');
-    expect(params.gates).toHaveLength(1);
-    expect(params.gates![0].id).toBe('review-votes-gate');
   });
 
   it('single-agent step round-trip: agents preserved through workflowToVisualState and serialized output', () => {

@@ -51,8 +51,8 @@ function insertWorkflow(
   db.prepare(
     `INSERT INTO space_workflows (
 			id, space_id, name, description, start_node_id, end_node_id,
-			tags, channels, gates, created_at, updated_at, template_name, template_hash
-		 ) VALUES (?, ?, ?, '', NULL, NULL, '[]', ?, '[]', ?, ?, ?, NULL)`
+			tags, channels, created_at, updated_at, template_name, template_hash
+		 ) VALUES (?, ?, ?, '', NULL, NULL, '[]', ?, ?, ?, ?, NULL)`
   ).run(
     opts.id,
     opts.spaceId,

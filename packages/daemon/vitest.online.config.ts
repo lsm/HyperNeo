@@ -7,6 +7,9 @@ const here = __dirname;
 
 // Online (real-API / dev-proxy) test config. Differs from the unit config:
 // - Includes tests/online/** (unit config excludes it).
+// - Matches both .test.ts and _test.ts suffixes (same as the unit config) so the
+//   coverage guard's both-suffix file enumeration agrees with what Vitest runs —
+//   otherwise a *_test.ts file counted as "covered" would be silently filtered out.
 // - Does NOT alias @anthropic-ai/claude-agent-sdk to the unit-test mock —
 //   online tests exercise the real SDK against the dev proxy or live API.
 // - bun:test is still shimmed to vitest so the existing imports resolve.
@@ -16,7 +19,7 @@ export default defineConfig({
     environment: 'node',
     globals: true,
     fileParallelism: false,
-    include: ['tests/online/**/*.test.ts'],
+    include: ['tests/online/**/*.test.ts', 'tests/online/**/*_test.ts'],
     exclude: ['node_modules', 'dist', 'tests/unit/**'],
     testTimeout: 60_000,
     hookTimeout: 60_000,
