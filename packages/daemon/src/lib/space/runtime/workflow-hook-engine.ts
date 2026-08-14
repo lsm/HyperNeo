@@ -1055,7 +1055,13 @@ export class WorkflowHookEngine {
       if (!rawTarget.startsWith('@worker:')) return undefined;
       try {
         const addr = parseAddress(rawTarget);
-        return addr.kind === 'worker' ? addr.agentName : undefined;
+        if (addr.kind !== 'worker' || !addr.agentName) return undefined;
+        // DECODE exactly as the router does (agent-message-router.ts decodes
+        // before canSend): a canonical slot name like 'reviewer:lead' arrives
+        // percent-encoded ('reviewer%3Alead'), and the slot-route check
+        // against the encoded form fails — suppressing a binding whose gate
+        // the router-authorized send must run.
+        return decodeURIComponent(addr.agentName);
       } catch {
         return undefined;
       }
@@ -2473,7 +2479,10 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
     // delivering while the persisted __queuedRetryableAction survives would
     // replay the already-delivered action after a restart.
     if (!engine.clearQueuedRetryableActionsForKey(actionKey)) {
-      clearRetryableHookActionTimer(actionKey);
+      // KEEP the in-memory timer: the durable record survived, and unlike
+      // the timer-driven replay path nothing here would re-arm it — the
+      // queued send must keep retrying. The timer's replay re-evaluates the
+      // gate and retries the clear once the state store recovers.
       return hookResult(
         {
           success: false,

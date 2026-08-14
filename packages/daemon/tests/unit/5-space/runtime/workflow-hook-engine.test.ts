@@ -606,6 +606,46 @@ describe('WorkflowHookEngine.executeAction', () => {
     expect(outcome.blockingHookId).toBe('array_wild_ok_hook');
   });
 
+  test('a percent-encoded slot name resolves its slot route (router decode parity)', async () => {
+    // Channel 'Coding → reviewer:lead' names an AGENT SLOT; the canonical
+    // worker address percent-encodes the colon ('reviewer%3Alead'). The
+    // router decodes before canSend — the engine must too, or the slot
+    // route check fails and the Review binding is suppressed (ungated
+    // handoff).
+    const STOP_HOOK = scriptHook('encoded_slot_hook', '{"flow":"stop","reason":"blocked"}');
+    const workflow = makeWorkflow({
+      customHooks: [STOP_HOOK],
+      nodes: [
+        { id: 'n-coding', name: 'Coding', agents: [{ agentId: 'a1', name: 'coder' }] },
+        {
+          id: 'n-review',
+          name: 'Review',
+          agents: [{ agentId: 'a2', name: 'reviewer:lead' }],
+        },
+      ],
+      channels: [{ from: 'Coding', to: 'reviewer:lead', label: 'Coding → reviewer:lead' }],
+      hookBindings: [
+        {
+          hookId: 'encoded_slot_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    const engine = makeEngine(workflow);
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: '@worker:n-review/reviewer%3Alead', message: 'encoded slot' },
+      META
+    );
+    expect(outcome.decision).toBe('stop');
+    expect(outcome.blockingHookId).toBe('encoded_slot_hook');
+  });
+
   test('a worker slot reachable only via a REVERSE channel does not run the gate', async () => {
     // Router parity: for '@worker:Review/reviewer' the router authorizes
     // canSend(fromNode, nodeName) or canSend(fromNode, agentName) — never a

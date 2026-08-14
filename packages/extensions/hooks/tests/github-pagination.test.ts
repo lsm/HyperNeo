@@ -341,6 +341,31 @@ describe('ghGetReviewEvidence — back-pagination past the fresh window', () => 
     if (result.ok) expect(result.data.commentEvidenceCount).toBe(51);
   });
 
+  test('a final page without a comments connection fails closed', async () => {
+    // An absent connection must not read as "no comments to scan": that
+    // would report zero own-PR evidence and block a valid handoff instead
+    // of surfacing the malformed response.
+    const page1 = {
+      data: {
+        viewer: { login: 'reviewer' },
+        repository: {
+          pullRequest: {
+            author: { login: 'coder' },
+            reviews: { nodes: [], pageInfo: { hasPreviousPage: false } },
+            // comments connection omitted entirely
+          },
+        },
+      },
+    };
+    setGraphqlRunnerForTests(pagedRunner([page1]));
+    const result = await ghGetReviewEvidence(CTX, PR_LINK, '2026-08-12T00:00:00Z');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.retryable).toBe(true);
+      expect(result.error).toContain('comments connection');
+    }
+  });
+
   test('comments cap exhaustion inside the fresh window fails closed', async () => {
     const tail = Array.from({ length: 50 }, (_, i) => ({
       createdAt: `2026-08-13T12:${String(i).padStart(2, '0')}:00Z`,

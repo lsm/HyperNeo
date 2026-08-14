@@ -715,11 +715,14 @@ export async function ghGetReviewEvidence(
   const lastPullRequest = asRecord(lastRepository?.pullRequest);
   const seedComments = asRecord(lastPullRequest?.comments);
   const seedCommentNodes = seedComments?.nodes;
-  if (seedComments && !Array.isArray(seedCommentNodes)) {
+  // The connection must EXIST and carry a nodes array: an absent connection
+  // would read as "no comments to scan" and report zero evidence, blocking a
+  // valid own-PR handoff instead of surfacing the malformed response.
+  if (!seedComments || !Array.isArray(seedCommentNodes)) {
     return {
       ok: false,
       retryable: true,
-      error: 'malformed comments connection (missing nodes); failing closed',
+      error: 'malformed comments connection (absent or missing nodes); failing closed',
     };
   }
   const allCommentNodes: unknown[] = [];
