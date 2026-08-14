@@ -533,13 +533,19 @@ export default function MessageInput({
           text: transcript,
         });
       };
-      if (mode === 'stay') {
+      // Last-resort preservation: stage the transcript into the pending draft
+      // field. Used for 'stay', for a composer too full to splice into, and as
+      // the fallback when the send path fails — never destroy the only copy.
+      const stageFallback = async (message: string): Promise<{ ok: boolean; message: string }> => {
         try {
           await stageToDraft();
-          return { ok: true, message: 'Voice transcript saved to the session draft' };
+          return { ok: true, message };
         } catch {
           return { ok: false, message: '' };
         }
+      };
+      if (mode === 'stay') {
+        return stageFallback('Voice transcript saved to the session draft');
       }
       // Splice the transcript at the captured selection like the mounted path;
       // if the composer was already at its character limit the transcript
@@ -553,24 +559,24 @@ export default function MessageInput({
         transcript
       );
       if (!fullyInserted) {
-        try {
-          await stageToDraft();
-          return {
-            ok: true,
-            message: 'Composer draft is full — voice transcript saved to the session draft',
-          };
-        } catch {
-          return { ok: false, message: '' };
-        }
+        return stageFallback(
+          'Composer draft is full — voice transcript saved to the session draft'
+        );
       }
       const deliveryMode: MessageDeliveryMode = mode === 'queue' ? 'defer' : 'immediate';
       let sent: void | boolean;
       try {
         sent = await payload.send(content, payload.images, deliveryMode);
       } catch {
-        return { ok: false, message: '' };
+        // The send path failed (e.g. a task composer declining while its
+        // target agent is still starting). Preserve the only copy of the
+        // transcript by staging it into the session draft rather than
+        // destroying it.
+        return stageFallback('Voice send failed — transcript saved to the session draft');
       }
-      if (sent === false) return { ok: false, message: '' };
+      if (sent === false) {
+        return stageFallback('Voice send failed — transcript saved to the session draft');
+      }
       // Consume the click-time draft so reopening the session doesn't show —
       // and re-send — text that was just delivered. Parity with the mounted
       // submit, which clears the composer. The daemon-side clearInputDraftIf

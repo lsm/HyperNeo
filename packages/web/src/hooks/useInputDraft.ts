@@ -114,14 +114,17 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   }, [sessionId, contentSignal]);
 
   // Save draft with debouncing - uses useSignalEffect to react to signal changes
-  // Last content observed for each session while it was active. The flush below
+  // Last state observed for each session while it was active. The flush below
   // must NOT read the live signal: by the time it runs, the session-change
   // effect has already cleared the signal to '', and flushing that transient
-  // value would wipe the previous session's draft on every switch.
-  const lastSeenContentRef = useRef<{ sessionId: string | null; content: string }>({
-    sessionId: null,
-    content: '',
-  });
+  // value would wipe the previous session's draft on every switch. `cleared`
+  // marks an EXPLICIT post-load deletion, which the switch flush retries (the
+  // immediate clear may have failed before reaching SQLite).
+  const lastSeenContentRef = useRef<{
+    sessionId: string | null;
+    content: string;
+    cleared?: boolean;
+  }>({ sessionId: null, content: '' });
   useSignalEffect(() => {
     const content = contentSignal.value;
 
@@ -134,22 +137,21 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     }
 
     // If sessionId changed, flush the previous session's draft immediately —
-    // its LAST KNOWN content. Skip when there is nothing to flush: real
-    // in-session deletions were already cleared immediately (post-settle), and
-    // an empty flush here would wipe the previous draft based only on the
-    // transient pre-load ''.
+    // its LAST KNOWN state. Skip only when nothing is known to flush: content,
+    // or an explicit deletion whose clear should be retried. The transient
+    // pre-load '' is never recorded, so it cannot wipe the previous draft.
     if (prevSessionIdRef.current && prevSessionIdRef.current !== sessionId) {
       const prevSessionId = prevSessionIdRef.current;
       const last = lastSeenContentRef.current;
       const trimmedContent = last.sessionId === prevSessionId ? last.content.trim() : '';
 
       const hub = connectionManager.getHubIfConnected();
-      if (hub && trimmedContent) {
+      if (hub && (trimmedContent || (last.sessionId === prevSessionId && last.cleared))) {
         hub
           .request('session.update', {
             sessionId: prevSessionId,
             metadata: {
-              inputDraft: trimmedContent,
+              inputDraft: trimmedContent || null,
             },
           })
           .catch(() => {
@@ -160,7 +162,6 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     prevSessionIdRef.current = sessionId;
 
     const trimmedContent = content.trim();
-    lastSeenContentRef.current = { sessionId, content };
 
     // Empty content: save immediately to clear draft — EXCEPT while this
     // session's initial load is still in flight, when the empty signal is the
@@ -169,6 +170,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     // loaded value lands.
     if (trimmedContent === '') {
       if (initialLoadSettledRef.current !== sessionId) return;
+      lastSeenContentRef.current = { sessionId, content: '', cleared: true };
       const hub = connectionManager.getHubIfConnected();
       if (hub) {
         hub
@@ -186,6 +188,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     }
 
     // Non-empty content: debounce save
+    lastSeenContentRef.current = { sessionId, content };
     draftSaveTimeoutRef.current = setTimeout(async () => {
       const hub = connectionManager.getHubIfConnected();
       if (!hub) return;

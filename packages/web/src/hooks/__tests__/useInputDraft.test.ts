@@ -629,6 +629,40 @@ describe('useInputDraft', () => {
       expect(clearCalls).toEqual([]);
     });
 
+    it('retries an explicit draft deletion via the switch flush', async () => {
+      mockHub.request.mockResolvedValue({
+        session: { metadata: { inputDraft: 'loaded draft' } },
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result, rerender } = renderHook(({ sessionId }) => useInputDraft(sessionId), {
+        initialProps: { sessionId: 'session-A' },
+      });
+
+      // Load settles with content, then the user explicitly deletes the draft.
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(result.current.content).toBe('loaded draft');
+      act(() => {
+        result.current.setContent('');
+      });
+      mockHub.request.mockClear();
+
+      // Switch away — the flush must retry inputDraft: null for session-A even
+      // though its last-known content is empty (it was an explicit deletion,
+      // not the transient pre-load '').
+      rerender({ sessionId: 'session-B' });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      expect(mockHub.request).toHaveBeenCalledWith('session.update', {
+        sessionId: 'session-A',
+        metadata: { inputDraft: null },
+      });
+    });
+
     it('should handle clear error gracefully', async () => {
       mockHub.request.mockResolvedValue({});
       mockHub.request.mockRejectedValue(new Error('Clear error'));

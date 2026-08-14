@@ -289,8 +289,9 @@ describe('MessageInput — recording UI', () => {
         resolveTranscribe = resolve;
       })
     );
-    // The composer's own send path fails (e.g. socket dropped) — the toast
-    // must NOT claim success, and there is no mounted composer to retry in.
+    // The composer's own send path fails (e.g. a task composer declining while
+    // its target agent is still starting) — the transcript must be PRESERVED
+    // via the staging fallback rather than destroyed.
     const onSend = vi.fn(async () => {
       throw new Error('boom');
     });
@@ -303,11 +304,14 @@ describe('MessageInput — recording UI', () => {
     resolveTranscribe({ text: 'hello world' });
 
     await waitFor(() =>
-      expect(toast.error).toHaveBeenCalledWith(
-        'Voice transcript could not be delivered — it was lost'
+      expect(toast.info).toHaveBeenCalledWith(
+        'Voice send failed — transcript saved to the session draft'
       )
     );
-    expect(toast.info).not.toHaveBeenCalled();
+    // The only copy was staged into the pending field, not lost.
+    const stageCall = hubRequest.mock.calls.find(([m]) => m === 'session.appendVoiceDraft');
+    expect(stageCall).toBeTruthy();
+    expect(stageCall[1]).toEqual({ sessionId: 's1', text: 'hello world' });
     // The draft is NOT cleared when the send failed — the text is still staged.
     const clearCall = hubRequest.mock.calls.find(([m]) => m === 'session.clearInputDraftIf');
     expect(clearCall).toBeFalsy();
