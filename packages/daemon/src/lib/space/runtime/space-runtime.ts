@@ -3118,6 +3118,7 @@ export class SpaceRuntime {
     deliveryKey: string,
     failureReason: string
   ): void {
+    if (this.isStopped) return; // stop() cleared the retry timers — do not re-arm.
     if (this.externalEventRetryTimers.has(deliveryKey)) return;
     const attempts = (this.externalEventRetryCounts.get(deliveryKey) ?? 0) + 1;
     this.externalEventRetryCounts.set(deliveryKey, attempts);
@@ -3161,6 +3162,9 @@ export class SpaceRuntime {
     const store = this.config.externalEventStore;
     if (
       !store ||
+      // stop() cleared the digest/rate-limit timers and the pending queue — a
+      // replay continuation resuming after stop must not re-arm them.
+      this.isStopped ||
       store.isDeliveryTerminal(event.eventId, deliveryKey) ||
       this.externalEventDeliveriesInFlight.has(deliveryKey)
     ) {
@@ -3672,6 +3676,7 @@ export class SpaceRuntime {
     failureReason: string,
     options: { preserveAttemptCount?: boolean; markFailure?: boolean } = {}
   ): void {
+    if (this.isStopped) return; // stop() cleared the retry timers — do not re-arm.
     if (this.externalEventRetryTimers.has(deliveryKey)) return;
     let attempts = this.externalEventRetryCounts.get(deliveryKey) ?? 0;
     if (!options.preserveAttemptCount) {
@@ -3746,6 +3751,7 @@ export class SpaceRuntime {
     failureReason: string,
     options: { preserveAttemptCount?: boolean; createdAt?: number } = {}
   ): void {
+    if (this.isStopped) return; // stop() cleared the retry timers — do not re-arm.
     if (!target.sessionId || this.externalEventRetryTimers.has(deliveryKey)) return;
     const currentAttempts = this.externalEventRetryCounts.get(deliveryKey) ?? 0;
     const attempts = options.preserveAttemptCount ? currentAttempts : currentAttempts + 1;
@@ -6187,15 +6193,17 @@ export class SpaceRuntime {
   /**
    * Whether a persisted pending delivery's source event may be requeued.
    *
-   * `published` sources always qualify (the normal retained case). A `delivered`
-   * source also qualifies while it still has pending deliveries AND is inside
-   * the retention window: the late-target replay can register a pending delivery
-   * on a source that already terminalized via its earlier target's settled
-   * delivery (listPublishedEventsWithDeliveries includes recent delivered rows).
+   * `published` sources always qualify (the normal retained case). A terminal
+   * source — `delivered` OR `failed` — also qualifies while it still has pending
+   * deliveries AND is inside the retention window: the late-target replay can
+   * register a pending delivery on a source that already terminalized via its
+   * earlier target (settled delivery, or per-target failure —
+   * listPublishedEventsWithDeliveries includes recent rows of both states).
    * Without this, a pause/daemon-restart before that late delivery settles
-   * strands it permanently — requeue would skip the non-published source. The
-   * callers' event-age TTL check still applies, so a stale delivered event fails
-   * as ttl_expired rather than being injected.
+   * strands it permanently — requeue would skip the non-published source, and a
+   * terminal source is never revived by duplicate ingestion. The callers'
+   * event-age TTL check still applies, so a stale terminal event fails as
+   * ttl_expired rather than being injected.
    */
   private isSourceEventRequeueable(
     eventRecord: ExternalEventRecord | null,
@@ -6204,7 +6212,7 @@ export class SpaceRuntime {
   ): eventRecord is ExternalEventRecord {
     if (!eventRecord) return false;
     if (eventRecord.state === 'published') return true;
-    if (eventRecord.state !== 'delivered') return false;
+    if (eventRecord.state !== 'delivered' && eventRecord.state !== 'failed') return false;
     // Terminalized with a still-pending delivery: eligible only within the TTL
     // window (mirrors the queued-item expiry the delivery will re-undergo).
     if (Date.now() - eventRecord.createdAt > EXTERNAL_EVENT_QUEUE_TTL_MS) return false;
@@ -6587,6 +6595,15 @@ export class SpaceRuntime {
       // benign no-op for the dispatch path's own terminal/in-flight guards.
       if (store.getDelivery(payload.eventId, deliveryKey)) continue;
       try {
+        // The source may already be terminal (delivered via an earlier target's
+        // settled delivery, or failed via per-target handling) — this scan
+        // includes recent terminal rows precisely so late targets can receive
+        // them. Reopen it to `published` BEFORE inserting the pending row: the
+        // aggregate transitions advance the source to reflect EVERY expected
+        // delivery, so leaving it terminal would freeze a false success/failure
+        // in dedup and event-level diagnostics while the late delivery is still
+        // outstanding. No-op for the normal (published) case.
+        store.reopenTerminalEvent(payload.eventId);
         store.registerExpectedDelivery(payload.eventId, deliveryKey, target);
       } catch (err) {
         log.warn(

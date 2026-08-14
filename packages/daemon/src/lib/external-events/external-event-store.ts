@@ -354,6 +354,24 @@ export class ExternalEventStore {
    * workflow runtime retries can prepare the same `(eventId, deliveryKey)` more than
    * once. Existing terminal rows are preserved.
    */
+  /**
+   * Reopen a TERMINAL source event (`delivered`/`failed`) back to `published`.
+   *
+   * Called by the late-target replay before it registers a new expected delivery:
+   * once a pending row exists, aggregate transitions
+   * (markEventDeliveredIfAllDeliveriesDelivered / markEventFailedIfAllDeliveries
+   * Terminal) advance the source to reflect EVERY expected delivery, so leaving
+   * it terminal would freeze a false success/failure — dedup and event-level
+   * diagnostics would report settled state while the late delivery is still
+   * outstanding. No-op for non-terminal sources (the normal retained case) and
+   * for unknown events.
+   */
+  reopenTerminalEvent(eventId: string): void {
+    const event = this.getById(eventId);
+    if (!event || !TERMINAL_EVENT_STATES.has(event.state)) return;
+    this.setEventState(eventId, 'published');
+  }
+
   registerExpectedDelivery(eventId: string, deliveryKey: string, target: DeliveryTarget): void {
     if (!this.getById(eventId)) {
       throw new Error(`registerExpectedDelivery: unknown source event id "${eventId}"`);

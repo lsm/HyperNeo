@@ -7030,6 +7030,96 @@ describe('SpaceRuntime external event subscriptions', () => {
     );
   });
 
+  test('requeues a pending late-target delivery whose source event terminalized to failed', async () => {
+    // R20-1 regression: the late-target replay can also register a pending
+    // delivery on a source that terminalized to `failed` via per-target delivery
+    // handling. A restart before the late delivery settles must requeue it — the
+    // predicate previously accepted only published/delivered sources.
+    const { run, task } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+
+    const event = makeEvent({
+      id: 'evt-failed-source-requeue',
+      dedupeKey: 'dedupe-failed-source-requeue',
+    });
+    eventStore.store(event);
+    const deliveryKey = JSON.stringify([
+      'github',
+      event.dedupeKey,
+      task.id,
+      'code',
+      'coder',
+      run.id,
+    ]);
+    eventStore.registerExpectedDelivery(event.id, deliveryKey, {
+      workflowRunId: run.id,
+      taskId: task.id,
+      nodeId: 'code',
+      agentName: 'coder',
+    });
+    // Terminalize the source to `failed` via its first (failed) delivery, then
+    // register the late pending row — the state R19-2's replay leaves behind.
+    eventStore.markDeliveryFailed(event.id, deliveryKey, {
+      terminal: true,
+      reason: 'subscription_no_longer_active',
+    });
+    eventStore.registerExpectedDelivery(event.id, `${deliveryKey}-late`, {
+      workflowRunId: run.id,
+      taskId: task.id,
+      nodeId: 'code',
+      agentName: 'coder',
+    });
+    eventStore.markEventFailed(event.id, { terminal: true, reason: 'delivery_failed' });
+    expect(eventStore.getById(event.id)?.state).toBe('failed');
+    expect(eventStore.getDelivery(event.id, `${deliveryKey}-late`)!.state).toBe('pending');
+
+    // Crash + restart: rebuild over the same DB, rehydrate, activate — the
+    // failed-source pending row must be recovered and delivered.
+    await runtime.stop();
+    const commandBus = createInternalCommandBus();
+    commandBus.register('agent.message.inject', async (command) => {
+      injected.push({
+        sessionId: command.sessionId,
+        message: command.message,
+        deliveryMode: command.deliveryMode,
+      });
+      return { ok: true };
+    });
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager:
+        new SpaceAgentRepository(db) && new SpaceAgentManager(new SpaceAgentRepository(db)),
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      commandBus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+    });
+    runtime.registerSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC);
+    await runtime.rehydrateExecutors();
+
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-failed-source-requeue',
+      completedAt: null,
+    });
+    tam.alive.add('session-failed-source-requeue');
+    runtime.flushPendingNodeQueue({
+      workflowRunId: run.id,
+      taskId: task.id,
+      nodeId: 'code',
+      agentName: 'coder',
+      sessionId: 'session-failed-source-requeue',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(injected.some((item) => item.sessionId === 'session-failed-source-requeue')).toBe(true);
+  });
+
   test('delivers a recently failed (per-target) event to a late topicFrom target', async () => {
     // R19-2 regression: when the FIRST target fails per-target delivery handling
     // (terminalizing the source via markEventFailedIfAllDeliveriesTerminal — which
@@ -7114,6 +7204,50 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(injected.some((item) => item.sessionId === 'session-coder-failed-src')).toBe(true);
     const coderDelivery = eventStore.listDeliveries(event.id).find((d) => d.agentName === 'coder');
     expect(coderDelivery?.state).toBe('delivered');
+  });
+
+  test('replay reopens a delivered source while a late delivery is outstanding', async () => {
+    // R20-2 regression: registering a late expected delivery on a terminal source
+    // must reopen it to `published`, so aggregate transitions/diagnostics reflect
+    // the outstanding delivery instead of freezing a false success.
+    const { run, task } = await startRunWithSubscription();
+    const event = makeEvent({
+      id: 'evt-reopen-late',
+      dedupeKey: 'dedupe-reopen-late',
+    });
+    eventStore.store(event);
+    const deliveryKey = JSON.stringify([
+      'github',
+      event.dedupeKey,
+      task.id,
+      'code',
+      'coder',
+      run.id,
+    ]);
+    eventStore.registerExpectedDelivery(event.id, deliveryKey, {
+      workflowRunId: run.id,
+      taskId: task.id,
+      nodeId: 'code',
+      agentName: 'coder',
+    });
+    eventStore.markDeliveryDelivered(event.id, deliveryKey);
+    eventStore.markEventDelivered(event.id);
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
+
+    // The late-target replay path (deliverPublishedEventToNewTargets) reopens
+    // the terminal source before inserting the new pending row.
+    eventStore.reopenTerminalEvent(event.id);
+    expect(eventStore.getById(event.id)?.state).toBe('published');
+    eventStore.registerExpectedDelivery(event.id, `${deliveryKey}-late`, {
+      workflowRunId: run.id,
+      taskId: task.id,
+      nodeId: 'code',
+      agentName: 'coder',
+    });
+    // Now the aggregate transition can actually run: the outstanding pending
+    // row keeps the source from falsely reporting delivered.
+    eventStore.markEventDeliveredIfAllDeliveriesDelivered(event.id);
+    expect(eventStore.getById(event.id)?.state).toBe('published');
   });
 
   test('delivers a recently terminalized (delivered) event to a late topicFrom target', async () => {
