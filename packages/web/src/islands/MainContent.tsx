@@ -15,6 +15,7 @@ import { spaceStore } from '../lib/space-store.ts';
 import { isActionRequired, isActiveTask } from '../lib/task-filters.ts';
 import { SpaceCreateDialog } from '../components/space/SpaceCreateDialog.tsx';
 import { BottomTabBar } from './BottomTabBar.tsx';
+import { VoiceRecordingIndicator } from '../components/voice/VoiceRecordingIndicator.tsx';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
 
 // Lazy-loaded route components — reduces initial module count in dev mode
@@ -455,6 +456,7 @@ export default function MainContent() {
       <div key={contentKey} class="flex-1 flex flex-col overflow-hidden animate-fadeIn-200">
         {renderContent()}
       </div>
+      <VoiceRecordingIndicator />
       <BottomTabBar inline />
     </>
   );
