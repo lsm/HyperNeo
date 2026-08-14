@@ -334,3 +334,20 @@ describe('authorizedCallers own-source rule', () => {
     expect(errors).toHaveLength(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Reserved legacy-guard id (round 57)
+// ---------------------------------------------------------------------------
+
+describe('custom hook id reservation', () => {
+  test('rejects the legacy-guard reserved id', () => {
+    const errors = validateCustomHooks([
+      {
+        id: '__legacy_hooks__',
+        requiredData: [],
+        run: { kind: 'script', interpreter: 'bash', source: 'echo ok' },
+      },
+    ]);
+    expect(errors.some((e) => e.includes('is reserved'))).toBe(true);
+  });
+});

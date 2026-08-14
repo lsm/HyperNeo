@@ -731,6 +731,14 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
           error: `invalid: customHooks[${ci}].id "${custom.id}" shadows a registered built-in hook`,
         };
       }
+      if (custom.id === '__legacy_hooks__') {
+        // Reserved by the legacy-cutover guard (see LEGACY_GUARD_HOOK_ID in
+        // the engine — not imported here to keep this module engine-free).
+        return {
+          ok: false,
+          error: `invalid: customHooks[${ci}].id "${custom.id}" is reserved`,
+        };
+      }
       if (seenCustomIds.has(custom.id)) {
         return {
           ok: false,

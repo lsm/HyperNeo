@@ -685,7 +685,10 @@ export async function ghGetReviewEvidence(
       },
     };
     const pageEvidence = extractReviewEvidence(pageMerged, sinceIso);
-    if (pageEvidence.formalReviewCount >= 1 || pageEvidence.ownPr) {
+    if (
+      pageEvidence.formalReviewCount >= 1 ||
+      (pageEvidence.ownPr && pageEvidence.commentEvidenceCount >= 1)
+    ) {
       reachedBoundary = true;
       lastCommentsPage = result.data;
       break;

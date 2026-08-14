@@ -77,6 +77,14 @@ The daemon executor branches on the hook kind: a built-in → call the registry'
 TS function; a custom → spawn the sandboxed bash. `requiredData` is authored
 alongside either.
 
+**Trust boundary.** Custom scripts run as the daemon's own OS user. The
+restricted environment, isolated `HOME`, process-group reaping, and bounded
+buffers are hygiene — NOT an OS sandbox: a script can resolve the account's
+real home via the passwd database and read daemon-owned files. Only run
+custom hooks from workflows you author; importing a bundle imports its
+scripts with the daemon's filesystem privileges. An OS-level sandbox for
+imported scripts is a tracked follow-up.
+
 **Custom script hooks are restricted to stateless flow decisions.** The
 script's only bridge to the run is a read-only snapshot environment
 (`HYPERNEO_PARAMS_JSON`, `HYPERNEO_CURRENT_ARTIFACTS_JSON`, run/node/task

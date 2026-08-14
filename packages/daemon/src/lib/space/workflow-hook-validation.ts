@@ -9,6 +9,7 @@
  */
 
 import { BUILT_IN_HOOKS } from '@hyperneo/extensions-hooks';
+import { LEGACY_GUARD_HOOK_ID } from './runtime/workflow-hook-engine';
 import type {
   CustomHook,
   HookDataFieldType,
@@ -149,6 +150,11 @@ export function validateCustomHooks(customHooks: unknown): string[] {
       // Bindings resolve built-ins first, so a custom hook shadowing a built-in
       // id is silently ignored — reject it so the author's script isn't dead.
       errors.push(`${loc}.id: custom hook id "${hook.id}" shadows a built-in hook`);
+    } else if (hook.id === LEGACY_GUARD_HOOK_ID) {
+      // Reserved by the legacy-cutover guard: a custom hook with this id
+      // would make the UI emit a duplicate synthetic legacy summary alongside
+      // its own banner row.
+      errors.push(`${loc}.id: custom hook id "${hook.id}" is reserved`);
     } else if (ids.has(hook.id)) {
       errors.push(`${loc}.id: duplicate custom hook id "${hook.id}"`);
     } else {
