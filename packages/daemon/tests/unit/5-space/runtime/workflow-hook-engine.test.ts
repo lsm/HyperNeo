@@ -251,9 +251,12 @@ describe('WorkflowHookEngine.executeAction', () => {
     expect(outcome.blockingHookId).toBe('stop_hook');
   });
 
-  test("a non-routable worker in a multicast does not suppress routable parts' gates", async () => {
+  test('a non-routable worker in a multicast refuses the whole send (no gates)', async () => {
     // ['@worker:Review/reviewer', '@worker:Other/other'] — Other is not
-    // channel-reachable; Review's gate must still run.
+    // channel-reachable. Router parity (round 48): an unauthorized WORKER
+    // entry fails the WHOLE generic-path multicast — the router returns
+    // before delivering anything, so no gate may run (previously Review's
+    // gate ran on a send that never delivered).
     const STOP_HOOK = scriptHook('mixed_hook', '{"flow":"stop","reason":"blocked by script"}');
     const workflow = makeWorkflow({
       customHooks: [STOP_HOOK],
@@ -284,8 +287,17 @@ describe('WorkflowHookEngine.executeAction', () => {
       { target: ['@worker:n-review/reviewer', '@worker:n-other/other'], message: 'mixed' },
       META
     );
-    expect(outcome.decision).toBe('stop');
-    expect(outcome.blockingHookId).toBe('mixed_hook');
+    expect(outcome.decision).toBe('deliver');
+    expect(hookStateRepo.get('run-1', 'mixed_hook')).toBeNull();
+
+    // An all-AUTHORIZED worker multicast keeps its gates (nothing refused).
+    const authorized = await engine.executeAction(
+      'send_message',
+      { target: ['@worker:n-review/reviewer'], message: 'authorized' },
+      META
+    );
+    expect(authorized.decision).toBe('stop');
+    expect(authorized.blockingHookId).toBe('mixed_hook');
   });
 
   test('queueing patches only the new action key (no sibling resurrection)', async () => {

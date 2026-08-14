@@ -1154,23 +1154,22 @@ export class WorkflowHookEngine {
             if (nodeNames.has(resolved)) arrayResolvedNodes.add(resolved);
           }
           if (allAddresses) {
-            // Generic path: per-target suppression only. Generic addresses
-            // (e.g. '@coordinator') fall through resolveTargetEntries as
-            // their raw string — they name no node, the router delivers them
-            // separately, and they must not suppress the gate on the
-            // node-addressed part of the multicast.
+            // Generic path: per-target suppression for generic addresses
+            // (e.g. '@coordinator' — the router delivers them separately and
+            // reports partial success). But an unauthorized WORKER entry
+            // fails the WHOLE generic-path multicast (the router returns
+            // before delivering anything), so it must suppress every node
+            // binding of this send too.
             for (const resolved of resolvedTargets) {
-              const slotOk =
-                t.startsWith('@worker:') && isRoutableWorkerOnSlot(workerAgentOf(t), resolved);
+              const isWorker = t.startsWith('@worker:');
+              const slotOk = isWorker && isRoutableWorkerOnSlot(workerAgentOf(t), resolved);
               if (
                 nodeNames.has(resolved) &&
                 !isBuiltInInterLevelTarget(t) &&
                 !slotOk &&
                 !isRoutableTarget(resolved)
               ) {
-                // A non-routable resolution disqualifies only bindings for
-                // THAT node — the generic path delivers the remaining
-                // entries, so unrelated routable parts keep their gates.
+                if (isWorker) wholeSendRefused = true;
                 nonRoutableResolvedNodes.add(resolved);
               }
             }
@@ -1190,9 +1189,10 @@ export class WorkflowHookEngine {
                 resolvedTargets.some((r) => nodeNames.has(r) && isRoutableTarget(r));
           if (!entryAuthorized) wholeSendRefused = true;
         }
-        if (!allAddresses && wholeSendRefused) {
-          // The whole multicast is refused — suppress the gates on every
-          // node the entries resolved.
+        if (wholeSendRefused) {
+          // The whole multicast is refused (topology path: any unauthorized
+          // entry; generic path: an unauthorized worker entry) — suppress
+          // the gates on every node the entries resolved.
           for (const resolved of arrayResolvedNodes) {
             nonRoutableResolvedNodes.add(resolved);
           }
