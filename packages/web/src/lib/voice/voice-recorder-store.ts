@@ -91,9 +91,19 @@ class VoiceRecorderStore {
       // recoverable for an adopter for as long as nobody else needs the mic,
       // and can never wedge the recorder busy forever.
       if (this.recordingOwnerId.value !== null) throw new Error('Voice recorder is busy');
+      // Mark busy BEFORE awaiting the eviction so a concurrent start() cannot
+      // slip through the checks and silently lose the generation race.
+      this.starting = true;
+      this.isStarting.value = true;
       await this.cancel();
+      // The cancel above cleared our flags along with the recording; restore
+      // them for the setup below (this call still owns the transition).
+      this.starting = true;
+      this.isStarting.value = true;
+    } else {
+      this.starting = true;
+      this.isStarting.value = true;
     }
-    this.starting = true;
     this.isStarting.value = true;
     this.stoppedByLimit = false;
     this.durationLimitHit.value = false;

@@ -60,7 +60,11 @@ export interface InputTextareaProps {
   agentMentionCandidates?: Array<{ id: string; name: string }>;
   selectedAgentMentionIndex?: number;
   onAgentMentionSelect?: (name: string) => void;
-  /** Fires on every caret/selection change (the textarea's `select` event). */
+  /**
+   * Fires on every caret/selection change of this textarea — including
+   * collapsed caret moves (arrow keys, clicks) that do NOT emit the native
+   * `select` event. Implemented via the document `selectionchange` event.
+   */
   onSelect?: () => void;
   onAgentMentionClose?: () => void;
   // Agent state - passed as prop to avoid direct signal reads that cause re-renders
@@ -186,6 +190,25 @@ export function InputTextarea({
     if (!recordingBody) textareaRef.current?.focus();
   }, [recordingBody]);
 
+  // Continuous caret/selection tracking. The native `select` event does not
+  // fire for collapsed caret moves (plain arrow keys or clicks), so we listen
+  // to the document-level `selectionchange` and forward only the events that
+  // belong to THIS textarea. Consumers rely on this for voice transcript
+  // placement whenever the textarea is (or is about to be) gone.
+  useEffect(() => {
+    if (!onSelect) return;
+    const handler = () => {
+      const active = document.activeElement;
+      if (active && textareaRef.current && active === textareaRef.current) {
+        onSelect();
+      }
+    };
+    document.addEventListener('selectionchange', handler);
+    return () => {
+      document.removeEventListener('selectionchange', handler);
+    };
+  }, [onSelect, textareaRef]);
+
   const charCount = content.length;
   const showCharCount = charCount > maxChars * 0.8;
   const hasContent = content.trim().length > 0;
@@ -295,7 +318,6 @@ export function InputTextarea({
           <textarea
             ref={textareaRef}
             onInput={(e) => onContentChange((e.target as HTMLTextAreaElement).value)}
-            onSelect={onSelect}
             onKeyDown={onKeyDown}
             onPaste={onPaste}
             disabled={disabled}
