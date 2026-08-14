@@ -79,7 +79,10 @@ import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types
 import type { ActorResolver } from '../../../../../messaging/src/contracts';
 import type { SpaceRuntime } from '../runtime/space-runtime';
 import type { TaskAgentManager } from '../runtime/task-agent-manager';
-import { mapPostApprovalDispatchWarning } from '../runtime/post-approval-router';
+import {
+  collectDispatchablePostApprovalRoutes,
+  mapPostApprovalDispatchWarning,
+} from '../runtime/post-approval-router';
 import type { SpaceMcpSessionRole } from '../runtime/space-mcp-session-policy';
 import type { ToolResult } from './tool-result';
 import { jsonResult } from './tool-result';
@@ -3488,6 +3491,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
      *     PR-bound and must use the normal approve/merge path. A task with no
      *     workflow run (standalone — the common Forge self_nag/review shape) is
      *     no-PR by definition and eligible.
+     *   - Workflow-backed tasks whose workflow declares a dispatchable
+     *     `postApproval` route are rejected — a direct done would silently skip
+     *     the route (the tick loop treats an already-done task as resolved).
+     *     They must close through submit_for_approval so the router fires.
      *
      * The validation outcome is captured as `task.result`; `approvalSource` is
      * stamped `'agent'` atomically with the done commit on every path
@@ -3595,6 +3602,20 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           return jsonResult({
             success: false,
             error: `Task ${args.task_id} belongs to a workflow run with no node executions (${task.workflowRunId}); completing it would strand the run. Cancel the run instead so its lifecycle is torn down.`,
+          });
+        }
+        // Post-approval route guard: if the workflow declares a dispatchable
+        // postApproval route (a publish/deploy step), completing the task
+        // directly to `done` would silently skip it — the tick loop treats an
+        // already-done task as resolved and never calls dispatchPostApproval.
+        // Route-declaring workflows must close through the approval path
+        // (submit_for_approval → approve), which fires the router.
+        const run = workflowRunRepo.getRun(task.workflowRunId);
+        const routeWorkflow = run?.workflowId ? workflowManager.getWorkflowForRun(run) : null;
+        if (collectDispatchablePostApprovalRoutes(routeWorkflow).length > 0) {
+          return jsonResult({
+            success: false,
+            error: `Task ${args.task_id} belongs to a workflow with a post-approval route; validation-only completion would skip it. Use submit_for_approval (then approval) so the route fires.`,
           });
         }
       }

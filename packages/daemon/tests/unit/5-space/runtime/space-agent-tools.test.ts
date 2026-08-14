@@ -5887,6 +5887,58 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
   });
 
+  test('rejects a workflow-backed task whose workflow declares a post-approval route', async () => {
+    // A direct done would silently skip the route: the tick loop treats an
+    // already-done task as resolved and never calls dispatchPostApproval.
+    // Route-declaring workflows must close via submit_for_approval so the
+    // router fires.
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const nodeId = `node-${Math.random().toString(36).slice(2)}`;
+    const workflow = ctx.workflowManager.createWorkflow({
+      spaceId: ctx.spaceId,
+      name: 'Publish-gated workflow',
+      description: '',
+      nodes: [{ id: nodeId, name: 'Review', agentId: ctx.agentId }],
+      transitions: [],
+      startNodeId: nodeId,
+      endNodeId: nodeId,
+      rules: [],
+      completionAutonomyLevel: 5,
+      postApproval: { targetAgent: 'Review', instructions: 'Publish it.' },
+    });
+    const run = ctx.workflowRunRepo.createRun({
+      spaceId: ctx.spaceId,
+      workflowId: workflow.id,
+      title: 'Publish run',
+      description: '',
+    });
+    const task = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'Publish task',
+      description: '',
+      status: 'in_progress',
+      workflowRunId: run.id,
+    });
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: run.id,
+      workflowNodeId: nodeId,
+      agentName: 'Review',
+      agentId: ctx.agentId,
+      status: 'idle',
+    });
+
+    const result = await makeHandlers(ctx).complete_validation_task({
+      task_id: task.id,
+      validation_outcome: 'validated',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('post-approval route');
+    expect(parsed.error).toContain('submit_for_approval');
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
+  });
+
   test('rejects when space autonomy is below workflow completionAutonomyLevel', async () => {
     await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 3 });
     const task = createWorkflowTask(5);

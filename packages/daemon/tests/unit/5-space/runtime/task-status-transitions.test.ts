@@ -319,8 +319,8 @@ describe('SpaceTaskManager.setTaskStatus — approval-path transitions', () => {
     // callback runs AFTER setTaskStatus' reread and BEFORE the UPDATE — inside
     // it, a concurrent writer flips the row to `cancelled`. The in-JS
     // allowedSourceStatuses check already passed against the stale reread, so
-    // only the atomic `WHERE status IN (…)` predicate catches it: the UPDATE
-    // matches 0 rows and the cancellation survives.
+    // only the atomic exact-status `WHERE status = ?` predicate catches it:
+    // the UPDATE matches 0 rows and the cancellation survives.
     const task = taskRepo.createTask({
       spaceId: SPACE_ID,
       title: 'T',
@@ -345,6 +345,43 @@ describe('SpaceTaskManager.setTaskStatus — approval-path transitions', () => {
     expect(taskRepo.getTask(task.id)?.status).toBe('cancelled');
     expect(taskRepo.getTask(task.id)?.result).toBeNull();
     expect(taskRepo.getTask(task.id)?.approvalSource).toBeNull();
+  });
+
+  test('interleaving BETWEEN allowed source statuses is also refused (exact-status predicate)', async () => {
+    // The guard predicates on the exact reread status, NOT the whole
+    // eligibility set: a concurrent submit_for_approval flipping the row
+    // in_progress → review mid-call must also miss the UPDATE. A set-keyed
+    // predicate would match `review`, commit a done built from the stale
+    // in_progress snapshot, and skip the review-exit pending-field cleanup.
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'in_progress',
+    });
+
+    await expect(
+      taskManager.setTaskStatus(task.id, 'done', {
+        result: 'validated',
+        approvalSource: 'agent',
+        allowedSourceStatuses: ['review', 'in_progress'],
+        precondition: () => {
+          // Concurrent submit_for_approval: flips to review (an allowed
+          // source status in the set) and stamps the pending-completion
+          // fields exactly as submitTaskForReview does.
+          taskRepo.updateTask(task.id, {
+            status: 'review',
+            pendingCheckpointType: 'task_completion',
+            pendingCompletionReason: 'needs human review',
+          });
+        },
+      })
+    ).rejects.toThrow(/changed concurrently|Refusing the transition/);
+    // The newly requested human review survives with its pending fields.
+    const after = taskRepo.getTask(task.id);
+    expect(after?.status).toBe('review');
+    expect(after?.pendingCheckpointType).toBe('task_completion');
+    expect(after?.result).toBeNull();
   });
 
   test('expectedStatuses is an atomic UPDATE guard: mismatched current status yields a 0-row update (no lost update)', async () => {

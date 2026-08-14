@@ -405,13 +405,17 @@ export class SpaceTaskManager {
     }
 
     // `allowedSourceStatuses` becomes an ATOMIC status guard: the UPDATE
-    // itself predicates `WHERE status IN (…)` on the same statuses already
-    // validated above, so a status change that lands between the reread and
-    // this statement yields 0 rows (repo returns null) instead of overwriting
-    // the concurrent transition. The in-JS check above stays for the clear
-    // error message on the common (non-raced) path.
+    // predicates `WHERE status = <the exact reread status>`. Keying on the
+    // SINGLE status this method validated (not the whole eligibility set) —
+    // a concurrent transition BETWEEN two allowed source statuses (e.g.
+    // in_progress → review via a concurrent submit_for_approval) changes the
+    // row, so the exact-match predicate fails with 0 rows. A set predicate
+    // would let the stale-snapshot update commit and skip the transition-
+    // specific cleanup (review-exit pending-field clearing) the new status
+    // requires. The in-JS check above stays for the clear error message on
+    // the common (non-raced) path.
     if (options?.allowedSourceStatuses) {
-      updates.expectedStatuses = options.allowedSourceStatuses;
+      updates.expectedStatuses = [task.status];
     }
     const updated = this.taskRepo.updateTask(taskId, updates);
     if (!updated) {
