@@ -267,6 +267,27 @@ describe('voice transcript outbox', () => {
     expect(getPendingTranscripts()[0].text).toBe('b');
   });
 
+  it('defers later entries for a session after an older one is retained (per-session FIFO)', async () => {
+    enqueueTranscript('s1', 'older');
+    enqueueTranscript('s1', 'newer');
+    enqueueTranscript('s2', 'other');
+    // The older s1 entry is retained (draft too full); the NEWER s1 entry must
+    // not be appended ahead of it, while s2 still proceeds.
+    hubRequest.mockRejectedValueOnce(new Error('Pending voice draft is at the character limit'));
+    await flushPendingTranscripts();
+    const sessions = hubRequest.mock.calls.map(([m, d]) => d?.sessionId);
+    expect(sessions.filter((s) => s === 's2')).toHaveLength(1);
+    expect(sessions.filter((s) => s === 's1')).toHaveLength(1); // only the older s1 was attempted
+    expect(getPendingTranscripts().map((e) => e.text)).toEqual(['older', 'newer']);
+  });
+
+  it('hydrates existing landed markers into the signal at startup', () => {
+    localStorage.setItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s9', String(Date.now()));
+    startVoiceTranscriptOutboxFlush();
+    expect(voiceTranscriptLandedSignal.value.has('s9')).toBe(true);
+    stopVoiceTranscriptOutboxFlush();
+  });
+
   it('removes an entry that the daemon reports as already merged (deduped ack)', async () => {
     enqueueTranscript('s1', 'already landed');
     hubRequest.mockResolvedValueOnce({ success: true, deduped: true });

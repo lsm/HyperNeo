@@ -485,6 +485,34 @@ describe('useInputDraft', () => {
       expect(clearCall).toBeTruthy();
     });
 
+    it('does not flush a departed session that has a pending landing', async () => {
+      mockHub.request.mockResolvedValue({ session: { metadata: { inputDraft: '' } } });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result, rerender } = renderHook(({ s }) => useInputDraft(s), {
+        initialProps: { s: 'session-1' },
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      result.current.setContent('stale text');
+      voiceTranscriptLandedSignal.value = new Map([['session-1', 1]]);
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      // Switch away — the flush of session-1's STALE local text must be
+      // suppressed, or it would overwrite the transcript another tab merged.
+      const before = mockHub.request.mock.calls.filter(([m]) => m === 'session.update').length;
+      rerender({ s: 'session-2' });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      const after = mockHub.request.mock.calls.filter(([m]) => m === 'session.update').length;
+      expect(after).toBe(before);
+    });
+
     it('cancels a scheduled save when a landing arrives before it fires', async () => {
       mockHub.request.mockResolvedValue({ session: { metadata: { inputDraft: '' } } });
       vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);

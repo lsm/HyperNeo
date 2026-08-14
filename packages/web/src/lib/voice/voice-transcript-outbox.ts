@@ -307,9 +307,15 @@ export async function flushPendingTranscripts(): Promise<void> {
 
   flushInProgress = true;
   let delivered = 0;
+  // Sessions whose older entry was retained on a retryable failure: later
+  // entries for the SAME session are deferred this pass so per-session FIFO is
+  // preserved (a long older transcript must not be overtaken by a newer short
+  // one that fits), while other sessions still proceed.
+  const deferredSessions = new Set<string>();
   try {
     for (const entry of pending) {
       if (!connectionManager.getHubIfConnected()) break; // dropped mid-flush
+      if (deferredSessions.has(entry.sessionId)) continue;
       try {
         await hub.request('session.appendVoiceDraft', {
           sessionId: entry.sessionId,
@@ -326,6 +332,7 @@ export async function flushPendingTranscripts(): Promise<void> {
         // retryable — keep those. Only a missing session can never recover.
         if (!connectionManager.getHubIfConnected()) break;
         if (isPermanentAppendRefusal(error)) removePendingTranscript(entry.id);
+        else deferredSessions.add(entry.sessionId);
       }
     }
   } finally {
@@ -366,9 +373,31 @@ function handleStorageEvent(event: StorageEvent): void {
   }
 }
 
+/**
+ * Load existing LANDED_PREFIX markers into the process-local signal at startup.
+ * A transcript delivered before this page loaded has no outbox entry left, so
+ * its marker is the ONLY trigger that reconnects a mounted composer to a
+ * failed initial load — without this, the listener (which only sees FUTURE
+ * events) would leave it unrefreshed.
+ */
+function hydrateLandedMarkers(): void {
+  const now = Date.now();
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith(LANDED_PREFIX)) continue;
+      const ts = Number(localStorage.getItem(key) ?? 0);
+      if (now - ts < MAX_AGE_MS) markVoiceTranscriptLandedLocal(key.slice(LANDED_PREFIX.length));
+    }
+  } catch {
+    /* storage unavailable */
+  }
+}
+
 /** Flush when the connection (re)establishes. Mirrors outbound-queue. */
 export function startVoiceTranscriptOutboxFlush(): void {
   if (cleanupAutoFlush) return;
+  hydrateLandedMarkers();
   window.addEventListener('storage', handleStorageEvent);
   cleanupStorageListener = () => window.removeEventListener('storage', handleStorageEvent);
   cleanupAutoFlush = effect(() => {
