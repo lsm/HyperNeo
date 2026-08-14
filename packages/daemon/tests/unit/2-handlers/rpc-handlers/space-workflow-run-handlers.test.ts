@@ -1394,7 +1394,12 @@ describe('space-workflow-run-handlers', () => {
       expect(hookStateRepo.patches).toHaveLength(0);
     });
 
-    it('approving a current stop clears the ceiling cycle stamp and terminal marker', async () => {
+    it('approving a current stop clears the cycle stamp but keeps the ceiling marker', async () => {
+      // The marker is cleared by retryHook (explicit recovery). approveHook
+      // KEEPS it: if the hook still returns retry, the next action must
+      // re-enter the ceiling branch and consume the approval there rather
+      // than queue another full cycle (the approval would otherwise wait
+      // until the ceiling is reached again).
       setup({ hookState: stoppedHookState() });
       const result = (await approve(true, 'human verified out-of-band')) as {
         hookState: HookStateSnapshot;
@@ -1402,14 +1407,14 @@ describe('space-workflow-run-handlers', () => {
       expect(hookStateRepo.patches).toHaveLength(1);
       const patch = hookStateRepo.patches[0];
       expect(patch.localState?.__firstRetryAt).toBeUndefined();
+      // The marker is NOT touched by the approval patch.
       expect(patch.localState?.__retryCeilingTerminal).toBeUndefined();
       expect(patch.localState?.humanApproved).toBe(true);
       expect(patch.lastFlow).toBe('continue');
       expect(patch.retryCount).toBe(0);
       expect(patch.nextRetryAt).toBeNull();
-      // The returned (post-write) snapshot no longer carries the terminal
-      // marker — the hook can run again on the next action.
-      expect(result.hookState.localState.__retryCeilingTerminal).toBeUndefined();
+      // The seeded terminal marker survives the approval.
+      expect(result.hookState.localState.__retryCeilingTerminal).toBe(true);
       expect(result.hookState.lastFlow).toBe('continue');
     });
   });

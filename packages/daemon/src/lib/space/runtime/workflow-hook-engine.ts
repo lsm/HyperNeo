@@ -1115,10 +1115,22 @@ export class WorkflowHookEngine {
             const workerSlotOk =
               target.startsWith('@worker:') &&
               isRoutableWorkerOnSlot(workerAgentOf(target), resolved);
+            // The node-agent MCP path translates a bare slot target like
+            // 'reviewer' to @worker:<node>/reviewer, which the router
+            // authorizes via canSend(fromNode, agentName) for a channel
+            // authored to the SLOT (e.g. 'Coding → reviewer'). Mirror that
+            // bare-slot authorization (the entry string is the slot name) so
+            // a slot-only-authored route is not mis-read as non-routable.
+            const bareSlotOk =
+              !target.startsWith('@') &&
+              !target.startsWith('#') &&
+              target.trim() !== '*' &&
+              resolver.canSend(fromNode, target);
             if (
               nodeNames.has(resolved) &&
               !isBuiltInInterLevelTarget(target) &&
               !workerSlotOk &&
+              !bareSlotOk &&
               !isRoutableTarget(resolved)
             ) {
               nonRoutableResolvedNodes.add(resolved);
@@ -1178,6 +1190,12 @@ export class WorkflowHookEngine {
           for (const resolved of resolvedTargets) {
             actionTargets.add(resolved);
             if (nodeNames.has(resolved)) {
+              // A node whose FIRST occurrence was delivered (pre-failure) keeps
+              // its gate even if a LATER raw occurrence lands after the block —
+              // translateLegacyNodeTargets dedupes, so the router delivers it
+              // once before the failure. Only an occurrence with no pre-failure
+              // delivery is suppressed.
+              if (arrayResolvedNodes.has(resolved)) continue;
               if (sequentialBlocked || wholeSendRefused) postFailureNodes.add(resolved);
               else arrayResolvedNodes.add(resolved);
             }

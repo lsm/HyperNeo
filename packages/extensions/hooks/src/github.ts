@@ -665,6 +665,24 @@ export async function ghGetReviewEvidence(
     }
     const nodes = reviewsConnection?.nodes;
     if (Array.isArray(nodes)) allReviewNodes.unshift(...nodes);
+    // Formal evidence decides the gate regardless of comments/reviews age —
+    // stop paging as soon as one qualifying APPROVED/CHANGES_REQUESTED review
+    // (in the run window) has been accumulated. Otherwise a >500-review PR or
+    // an older-page failure could block a handoff the first tail page proves.
+    if (
+      allReviewNodes.some((node) => {
+        const review = asRecord(node);
+        return (
+          (review?.state === 'APPROVED' || review?.state === 'CHANGES_REQUESTED') &&
+          typeof review?.publishedAt === 'string' &&
+          atOrAfter(review.publishedAt, sinceIso)
+        );
+      })
+    ) {
+      reachedBoundary = true;
+      lastCommentsPage = result.data;
+      break;
+    }
     const pageInfo = asRecord(reviewsConnection?.pageInfo);
     // Stop when the page reaches past the run-start window: everything older
     // cannot contribute fresh evidence. Compare EPOCHS, not lexical strings:
@@ -786,11 +804,16 @@ export async function ghGetReviewEvidence(
         asRecord(asRecord(asRecord(result.data)?.data)?.repository)?.pullRequest
       );
       const cConn = asRecord(cNode?.comments);
-      if (!Array.isArray(cConn?.nodes) || !asRecord(cConn?.pageInfo)) {
+      const cPageInfo = asRecord(cConn?.pageInfo);
+      if (
+        !Array.isArray(cConn?.nodes) ||
+        !cPageInfo ||
+        typeof cPageInfo.hasPreviousPage !== 'boolean'
+      ) {
         return {
           ok: false,
           retryable: true,
-          error: 'malformed comments connection (missing nodes/pageInfo); failing closed',
+          error: 'malformed comments connection (missing nodes/hasPreviousPage); failing closed',
         };
       }
       const cNodes = cConn.nodes;
@@ -1105,11 +1128,17 @@ export async function ghGetCodexApproval(
             asRecord(asRecord(asRecord(result.data)?.data)?.repository)?.pullRequest
           );
           const rConn = asRecord(rNode?.reactions);
-          if (!Array.isArray(rConn?.nodes) || !asRecord(rConn?.pageInfo)) {
+          const rPageInfo = asRecord(rConn?.pageInfo);
+          if (
+            !Array.isArray(rConn?.nodes) ||
+            !rPageInfo ||
+            typeof rPageInfo.hasPreviousPage !== 'boolean'
+          ) {
             return {
               ok: false,
               retryable: true,
-              error: 'malformed reactions connection (missing nodes/pageInfo); failing closed',
+              error:
+                'malformed reactions connection (missing nodes/hasPreviousPage); failing closed',
             };
           }
           const rNodes = rConn?.nodes;

@@ -880,12 +880,14 @@ export function setupSpaceWorkflowRunHandlers(
         humanApproved: params.approved,
         humanApprovedAt: Date.now(),
         humanRejectionReason: params.approved ? undefined : rejectionReason,
-        // Reset the elapsed-ceiling cycle stamp AND the terminal marker: an
-        // operator decision is the recovery path for a ceiling stop — the
-        // next attempt must be able to run (and re-approve/re-retry) rather
-        // than short-circuiting on the stale marker forever.
+        // Reset the elapsed-ceiling cycle stamp (retryCount/nextRetryAt) so
+        // the next attempt runs, but KEEP the __retryCeilingTerminal marker:
+        // if the hook still returns retry (e.g. pr_merged while the PR is
+        // open) the next action must re-enter the ceiling branch where the
+        // approval is consumed, not queue another full cycle (the approval
+        // would otherwise wait until the ceiling is reached again). The
+        // marker is cleared by retryHook, the explicit operator recovery.
         __firstRetryAt: undefined,
-        __retryCeilingTerminal: undefined,
       },
       lastFlow: params.approved ? 'continue' : 'stop',
       lastReason: params.approved ? 'Approved by human' : rejectionReason,
