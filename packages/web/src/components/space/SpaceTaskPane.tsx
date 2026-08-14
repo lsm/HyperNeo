@@ -40,6 +40,7 @@ import { ReadOnlyWorkflowCanvas } from './ReadOnlyWorkflowCanvas';
 import { SpaceTaskUnifiedThread } from './SpaceTaskUnifiedThread';
 import { SubmitForReviewModal } from './SubmitForReviewModal';
 import { TaskBlockedBanner } from './TaskBlockedBanner';
+import { VoiceSurfaceContext } from '../../hooks/useVoiceRecorder';
 import { TaskCanvasToggleButton, TaskSessionChatComposer } from './TaskSessionChatComposer';
 import { ImageDropOverlay } from '../ImageDropOverlay.tsx';
 import { getTransitionActions } from './TaskStatusActions';
@@ -1652,31 +1653,39 @@ export function SpaceTaskPane({
             )}
 
             {showInlineComposer && (
-              <TaskSessionChatComposer
-                mentionCandidates={mentionCandidates}
-                targets={composerTargets}
-                selectedTargetId={selectedTarget?.id ?? null}
-                canSend={canSendThreadMessage}
-                isSending={sendingThread}
-                autoScroll={autoScrollEnabled}
-                errorMessage={threadSendError}
-                activityMembers={activityMembers}
-                defaultAgentModels={defaultAgentModels}
-                taskId={task.id}
-                onAutoScrollChange={setAutoScrollEnabled}
-                onTargetSelect={(targetId) => {
-                  setSelectedTargetId(targetId);
-                  setTargetLocked(true);
+              <VoiceSurfaceContext.Provider
+                value={{
+                  surfaceId: 'primary',
+                  spaceId: spaceId ?? null,
+                  taskId: task.id,
                 }}
-                onDraftActiveChange={(hasDraft) => {
-                  setHasComposerDraft(hasDraft);
-                  if (draftWasActiveRef.current && !hasDraft) setTargetLocked(false);
-                  draftWasActiveRef.current = hasDraft;
-                }}
-                onComposerRef={setTaskComposerElement}
-                onSend={sendThreadMessage}
-                registerDropTarget={registerDropTarget}
-              />
+              >
+                <TaskSessionChatComposer
+                  mentionCandidates={mentionCandidates}
+                  targets={composerTargets}
+                  selectedTargetId={selectedTarget?.id ?? null}
+                  canSend={canSendThreadMessage}
+                  isSending={sendingThread}
+                  autoScroll={autoScrollEnabled}
+                  errorMessage={threadSendError}
+                  activityMembers={activityMembers}
+                  defaultAgentModels={defaultAgentModels}
+                  taskId={task.id}
+                  onAutoScrollChange={setAutoScrollEnabled}
+                  onTargetSelect={(targetId) => {
+                    setSelectedTargetId(targetId);
+                    setTargetLocked(true);
+                  }}
+                  onDraftActiveChange={(hasDraft) => {
+                    setHasComposerDraft(hasDraft);
+                    if (draftWasActiveRef.current && !hasDraft) setTargetLocked(false);
+                    draftWasActiveRef.current = hasDraft;
+                  }}
+                  onComposerRef={setTaskComposerElement}
+                  onSend={sendThreadMessage}
+                  registerDropTarget={registerDropTarget}
+                />
+              </VoiceSurfaceContext.Provider>
             )}
           </div>
         )}

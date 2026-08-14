@@ -212,13 +212,19 @@ export function AgentOverlayChat({
 
   // Voice surface identity for composers mounted inside this overlay: the
   // overlay is its own surface (the base composer for the SAME session can
-  // still own a recording underneath it), nested in the same Space.
+  // still own a recording underneath it), nested in the same Space. A
+  // task-context overlay (workflow node agent) scopes recordings to the task
+  // so Return reopens the task thread's task-messaging composer.
   const voiceSurfaceSpaceId = currentSpaceCanonicalIdSignal.value ?? currentSpaceIdSignal.value;
 
   return (
     <Portal into="body">
       <VoiceSurfaceContext.Provider
-        value={{ surfaceId: 'agent-overlay', spaceId: voiceSurfaceSpaceId }}
+        value={{
+          surfaceId: 'agent-overlay',
+          spaceId: voiceSurfaceSpaceId,
+          taskId: taskContext?.taskId ?? null,
+        }}
       >
         {/* Full-screen wrapper — backdrop on the left, panel on the right */}
         <div

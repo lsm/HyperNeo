@@ -458,7 +458,9 @@ export default function MainContent() {
   // the same session, and the recorder needs the surface's Space to stamp
   // recordings started here. The agent overlay provides its own context.
   return (
-    <VoiceSurfaceContext.Provider value={{ surfaceId: 'primary', spaceId: spaceId ?? null }}>
+    <VoiceSurfaceContext.Provider
+      value={{ surfaceId: 'primary', spaceId: spaceId ?? null, taskId: null }}
+    >
       <div key={contentKey} class="flex-1 flex flex-col overflow-hidden animate-fadeIn-200">
         {renderContent()}
       </div>

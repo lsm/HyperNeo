@@ -47,9 +47,11 @@ import {
   closeOverlayHistory,
   createSessionPath,
   createSpaceSessionPath,
+  createSpaceTaskPath,
   getCurrentPath,
   navigateToSession,
   navigateToSpaceSession,
+  navigateToSpaceTask,
 } from '../../lib/router.ts';
 
 export function VoiceRecordingIndicator({ inOverlay = false }: { inOverlay?: boolean }) {
@@ -64,6 +66,7 @@ export function VoiceRecordingIndicator({ inOverlay = false }: { inOverlay?: boo
     voiceRecorderStore.isStarting.value;
   const recordingSessionId = voiceRecorderStore.recordingSessionId.value;
   const recordingSpaceId = voiceRecorderStore.recordingSpaceId.value;
+  const recordingTaskId = voiceRecorderStore.recordingTaskId.value;
   // Displayed session across both routing surfaces. A Space session view
   // leaves currentSessionIdSignal null and keys its ChatContainer by the
   // space-session id instead.
@@ -112,10 +115,16 @@ export function VoiceRecordingIndicator({ inOverlay = false }: { inOverlay?: boo
       closeOverlayHistory();
       return;
     }
+    // A task-scoped recording returns to the TASK thread — its composer
+    // delivers through space.task.sendMessage with task/agent/node context —
+    // never to a plain Space session chat, whose adopting composer would send
+    // the transcript down ordinary session messaging.
     const targetPath =
-      recordingSpaceId !== null
-        ? createSpaceSessionPath(recordingSpaceId, recordingSessionId)
-        : createSessionPath(recordingSessionId);
+      recordingTaskId !== null && recordingSpaceId !== null
+        ? createSpaceTaskPath(recordingSpaceId, recordingTaskId)
+        : recordingSpaceId !== null
+          ? createSpaceSessionPath(recordingSpaceId, recordingSessionId)
+          : createSessionPath(recordingSessionId);
     if (overlayOpen) {
       if (getCurrentPath() === targetPath) {
         // Destination URL already matches (an overlay keeps the base URL) and
@@ -135,7 +144,9 @@ export function VoiceRecordingIndicator({ inOverlay = false }: { inOverlay?: boo
     // When an overlay was open, its history entry is still on top — REPLACE
     // it with the target route (consuming it) instead of pushing above it.
     const replace = overlayOpen;
-    if (recordingSpaceId !== null) {
+    if (recordingTaskId !== null && recordingSpaceId !== null) {
+      navigateToSpaceTask(recordingSpaceId, recordingTaskId, 'thread', replace);
+    } else if (recordingSpaceId !== null) {
       navigateToSpaceSession(recordingSpaceId, recordingSessionId, replace);
     } else {
       navigateToSession(recordingSessionId, replace);

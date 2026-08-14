@@ -51,6 +51,16 @@ class VoiceRecorderStore {
    */
   readonly recordingSpaceId = signal<string | null>(null);
   /**
+   * The Space TASK the recording was started for (from the starting composer's
+   * surface), or null for ordinary chat recordings. A task-scoped recording's
+   * transcript is delivered through `space.task.sendMessage` with task/agent/
+   * node context — routing Return to a plain Space session chat would let the
+   * adopting composer send it down ordinary session messaging instead. Kept
+   * with the ownership claim so it survives adoption, and used by the chip to
+   * reopen the task thread that speaks the originating messaging path.
+   */
+  readonly recordingTaskId = signal<string | null>(null);
+  /**
    * Unique token of the COMPOSER INSTANCE that owns the current recording.
    * Session IDs alone are insufficient: a Space task pane and an agent overlay
    * can both be mounted for the same session, so ownership is per mounted
@@ -107,7 +117,8 @@ class VoiceRecorderStore {
     ownerId: string,
     ownerSessionId: string,
     cursor?: { start: number; end: number } | null,
-    ownerSpaceId?: string | null
+    ownerSpaceId?: string | null,
+    ownerTaskId?: string | null
   ): Promise<void> => {
     if (this.isRecording.value || this.starting || this.stopping)
       throw new Error('Voice recorder is busy');
@@ -126,6 +137,7 @@ class VoiceRecorderStore {
     this.recordingOwnerId.value = ownerId;
     this.recordingSessionId.value = ownerSessionId;
     this.recordingSpaceId.value = ownerSpaceId ?? null;
+    this.recordingTaskId.value = ownerTaskId ?? null;
     // Insertion metadata supplied by the STARTING composer, stored with the
     // ownership claim (before any await) so it survives an unmount/adopt
     // handoff even if the composer departs mid-setup.
@@ -331,6 +343,7 @@ class VoiceRecorderStore {
       this.recordingOwnerId.value = null;
       this.recordingSessionId.value = null;
       this.recordingSpaceId.value = null;
+      this.recordingTaskId.value = null;
       // Clear the guard only after capture callbacks are detached and chunks
       // are snapshotted, so queued onmessage/onaudioprocess callbacks don't
       // resume appending during teardown.
@@ -375,6 +388,7 @@ class VoiceRecorderStore {
     this.recordingOwnerId.value = null;
     this.recordingSessionId.value = null;
     this.recordingSpaceId.value = null;
+    this.recordingTaskId.value = null;
     this.recordingStartedAt.value = null;
     await this.teardown();
   };

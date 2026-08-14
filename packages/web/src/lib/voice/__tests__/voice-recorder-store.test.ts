@@ -108,6 +108,18 @@ describe('voiceRecorderStore', () => {
     expect(voiceRecorderStore.recordingSpaceId.value).toBeNull();
   });
 
+  it('stamps a task-scoped recording with its task and clears it with ownership', async () => {
+    await voiceRecorderStore.start('owner-a', 's1', null, 'space-9', 'task-42');
+    expect(voiceRecorderStore.recordingTaskId.value).toBe('task-42');
+    // Survives adoption (task routing stays valid for the whole life).
+    voiceRecorderStore.orphan('owner-a');
+    voiceRecorderStore.adopt('owner-b', 's1');
+    expect(voiceRecorderStore.recordingTaskId.value).toBe('task-42');
+    const recording = await voiceRecorderStore.stop();
+    expect(recording.audioBase64.length).toBeGreaterThan(0);
+    expect(voiceRecorderStore.recordingTaskId.value).toBeNull();
+  });
+
   it('a primary-chat recording carries no Space stamp', async () => {
     await voiceRecorderStore.start('owner-a', 's1');
     expect(voiceRecorderStore.recordingSpaceId.value).toBeNull();

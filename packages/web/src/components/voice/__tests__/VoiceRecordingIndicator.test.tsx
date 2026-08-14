@@ -15,6 +15,7 @@ const voiceRecorderStore = vi.hoisted(() => ({
   durationLimitHit: { value: false },
   recordingSessionId: { value: null },
   recordingSpaceId: { value: null },
+  recordingTaskId: { value: null },
   recordingOwnerId: { value: null },
 }));
 
@@ -27,6 +28,7 @@ const routerState = vi.hoisted(() => ({
   currentPath: '/',
   navigatedTo: null,
   navigatedSpace: null,
+  navigatedTask: null,
 }));
 
 vi.mock('../../../lib/voice/voice-recorder-store.ts', () => ({ voiceRecorderStore }));
@@ -66,11 +68,15 @@ vi.mock('../../../lib/router.ts', () => ({
   navigateToSpaceSession: vi.fn((spaceId: string, sessionId: string) => {
     routerState.navigatedSpace = { spaceId, sessionId };
   }),
+  navigateToSpaceTask: vi.fn((spaceId: string, taskId: string, view: string) => {
+    routerState.navigatedTask = { spaceId, taskId, view };
+  }),
   closeOverlayHistory,
   clearOverlaySignals,
   createSessionPath: (sessionId: string) => `/chat/${sessionId}`,
   createSpaceSessionPath: (spaceId: string, sessionId: string) =>
     `/space/${spaceId}/session/${sessionId}`,
+  createSpaceTaskPath: (spaceId: string, taskId: string) => `/space/${spaceId}/task/${taskId}`,
   getCurrentPath: () => routerState.currentPath,
 }));
 
@@ -85,6 +91,7 @@ import {
   closeOverlayHistory,
   navigateToSession,
   navigateToSpaceSession,
+  navigateToSpaceTask,
 } from '../../../lib/router.ts';
 
 /** Render the base (MainContent) instance. */
@@ -104,6 +111,7 @@ describe('VoiceRecordingIndicator', () => {
     voiceRecorderStore.durationLimitHit.value = false;
     voiceRecorderStore.recordingSessionId.value = null;
     voiceRecorderStore.recordingSpaceId.value = null;
+    voiceRecorderStore.recordingTaskId.value = null;
     voiceRecorderStore.recordingOwnerId.value = null;
     routerState.currentSessionId = 'session-current';
     routerState.spaceSessionId = null;
@@ -115,6 +123,7 @@ describe('VoiceRecordingIndicator', () => {
     closeOverlayHistory.mockClear();
     clearOverlaySignals.mockClear();
     routerState.navigatedSpace = null;
+    routerState.navigatedTask = null;
   });
 
   afterEach(() => {
@@ -227,6 +236,21 @@ describe('VoiceRecordingIndicator', () => {
     renderBase();
     fireEvent.click(screen.getByTestId('voice-recording-elsewhere'));
     expect(navigateToSpaceSession).toHaveBeenCalledWith('space-9', 'space-session-2', false);
+    expect(navigateToSession).not.toHaveBeenCalled();
+  });
+
+  it('returns a task-scoped recording to the TASK thread (task messaging path)', () => {
+    voiceRecorderStore.isRecording.value = true;
+    voiceRecorderStore.recordingSessionId.value = 'task-agent-session';
+    voiceRecorderStore.recordingSpaceId.value = 'space-9';
+    voiceRecorderStore.recordingTaskId.value = 'task-42';
+    routerState.currentSessionId = null;
+    routerState.spaceSessionId = 'space-session-1';
+    routerState.spaceId = 'space-9';
+    renderBase();
+    fireEvent.click(screen.getByTestId('voice-recording-elsewhere'));
+    expect(navigateToSpaceTask).toHaveBeenCalledWith('space-9', 'task-42', 'thread', false);
+    expect(navigateToSpaceSession).not.toHaveBeenCalled();
     expect(navigateToSession).not.toHaveBeenCalled();
   });
 
