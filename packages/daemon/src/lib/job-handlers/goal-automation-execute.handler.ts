@@ -158,13 +158,14 @@ export async function handleGoalAutomationExecute(
 
   // self_nag: skip no-op episodes on thin, process-level evidence. When the
   // preflight is low-confidence AND the selection carries no substantive signal
-  // (no concrete outcomes such as PR/CI/merge/error, and every row is thin — a
-  // manual note or an auto-generated session trace diagnostic marked
+  // (no affirmative outcome — a PR reference or merge/pass/fail result, not a
+  // negated or pending mention like "CI has not run yet" — and every row is
+  // thin: a manual note or an auto-generated session trace diagnostic marked
   // `metadata.traceDiagnostic`), record a lightweight no-op note on the goal and
   // advance the cursor without spending an episode-judge call or creating a
-  // review task. Substantive manual notes (with real outcomes), genuine session
-  // summaries, and any task result, friction trace, artifact, error, or in-batch
-  // metric still produces an episode. Honors the goal guardrail: "if evidence is
+  // review task. Substantive manual notes, genuine session summaries, and any
+  // task result, friction trace, artifact, error, or in-batch metric still
+  // produces an episode. Honors the goal guardrail: "if evidence is
   // insufficient, finish without inventing work." (#919)
   if (payload.triggerKind === 'self_nag' && deps.episodeService.preflightEvidence) {
     const preflight = deps.episodeService.preflightEvidence({
@@ -501,21 +502,66 @@ function isThinEvidence(item: EvidenceRef): boolean {
 }
 
 /**
+ * Affirmative outcome signals for the self_nag no-op gate. Unlike the preflight
+ * scorer's outcome count — which matches bare keywords like "ci", "build", or
+ * "test" regardless of negation or pending state — these require an outcome
+ * that actually happened: a concrete PR reference, or a merge/pass/fail style
+ * result verb. Bare completion words ("done", "completed", "approved") are
+ * deliberately excluded: they describe process status, not work artifacts.
+ */
+const AFFIRMATIVE_OUTCOME_RE =
+  /\b(?:pr\s*#?\d+|pull\s+request|github\.com\/[^\s]+\/pull\/\d+|merged?|landed|shipped|pass(?:ed|ing)?|green|succeed(?:ed|ing)?|success|failed|failures?|errors?|exceptions?|crashed|fixed|closed)\b/gi;
+
+/**
+ * Prefixes that make an outcome keyword a negated or still-pending mention
+ * rather than an affirmative one — "CI has not run yet", "waiting for tests
+ * to pass", "build still pending", "no meaningful failures".
+ */
+const NON_AFFIRMATIVE_PREFIX_RE =
+  /\b(?:not|never|no|hasn'?t|haven'?t|hadn'?t|didn'?t|doesn'?t|won'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|cannot|without|yet|still|pending|waiting|queued|incomplete|unfinished)\b[^.!?]{0,32}$/i;
+
+/**
+ * Whether the selection carries an affirmative outcome signal (see
+ * {@link AFFIRMATIVE_OUTCOME_RE}) in any row's summary or metadata. The gate
+ * uses this instead of the preflight's `counts.outcomes`, which over-counts
+ * bare outcome keywords in negated or pending phrases.
+ */
+function hasAffirmativeOutcome(evidence: EvidenceRef[]): boolean {
+  return evidence.some((item) => {
+    let metadataText = '';
+    try {
+      metadataText = JSON.stringify(item.metadata ?? {});
+    } catch {
+      metadataText = '';
+    }
+    return [item.summary ?? '', metadataText].some(hasAffirmativeOutcomeText);
+  });
+}
+
+function hasAffirmativeOutcomeText(text: string): boolean {
+  for (const match of text.matchAll(AFFIRMATIVE_OUTCOME_RE)) {
+    const prefix = text.slice(Math.max(0, match.index - 48), match.index);
+    if (!NON_AFFIRMATIVE_PREFIX_RE.test(prefix)) return true;
+  }
+  return false;
+}
+
+/**
  * A self_nag tick is a no-op worth skipping when the preflight is low-confidence
- * AND the selection carries no substantive signal. Substantive means either a
- * concrete outcome (PR/CI/merge/error/completion/... — recognized by the scorer
- * in any row's text or metadata, so a detailed manual note still counts) or any
- * structural/task-linked evidence kind (task results, friction traces like
- * slow_tool_call/permission_block that resolve to task context, workflow
- * artifacts, errors, in-batch metrics, or a genuine session summary). Only a
- * batch with no outcomes where every row is thin is skipped.
+ * AND the selection carries no substantive signal. Substantive means either an
+ * affirmative outcome (a PR reference or a merge/pass/fail result — not a
+ * negated or pending mention) or any structural/task-linked evidence kind (task
+ * results, friction traces like slow_tool_call/permission_block that resolve to
+ * task context, workflow artifacts, errors, in-batch metrics, or a genuine
+ * session summary). Only a batch with no affirmative outcome where every row is
+ * thin is skipped.
  */
 function shouldSkipSelfNagNoOp(
   preflight: EvidenceQualityPreflight,
   evidence: EvidenceRef[]
 ): boolean {
   if (preflight.level !== 'low') return false;
-  if (preflight.counts.outcomes > 0) return false;
+  if (hasAffirmativeOutcome(evidence)) return false;
   return evidence.length > 0 && evidence.every(isThinEvidence);
 }
 

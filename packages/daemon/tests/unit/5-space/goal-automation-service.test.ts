@@ -2986,6 +2986,70 @@ describe('handleGoalAutomationExecute', () => {
     expect(evolutionRepo.listEpisodes(scope.id)).toHaveLength(1);
   });
 
+  it('skips a manual note whose outcome keywords are negated or still pending', async () => {
+    const goal = goalRepo.create({ spaceId, title: 'Pending keywords', type: 'recurring' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Pending keywords',
+      objective: 'Status notes that only mention outcome words',
+      policy: { automation: { selfNagCronExpression: '0 * * * *' } },
+    });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'manual_note',
+      sourceId: null,
+      summary: 'CI has not run yet; tests have not passed; build still pending',
+      createdAt: 30,
+    });
+    let episodeCreated = false;
+
+    const result = await handleGoalAutomationExecute(
+      createAutomationJob({
+        goalId: goal.id,
+        scopeId: scope.id,
+        triggerKind: 'self_nag',
+        triggerKey: 'schedule-pending-keywords',
+        reason: 'self_nag',
+        scheduleId: 'schedule-pending-keywords',
+      }),
+      {
+        goalRepo,
+        taskRepo,
+        evolutionRepo,
+        cursorRepo,
+        goalEventRepo: new SpaceGoalEventRepository(db as never),
+        episodeService: {
+          createFromEvidence: async () => {
+            episodeCreated = true;
+            throw new Error('should not create episode for negated/pending outcome mentions');
+          },
+          // Low confidence; the scorer's loose outcome count would be > 0 here
+          // (bare "ci"/"build"/"tests" keywords), but none is affirmative.
+          preflightEvidence: () =>
+            makePreflight({
+              level: 'low',
+              score: 8,
+              requiresConfirmation: true,
+              counts: {
+                total: 1,
+                manualNotes: 1,
+                taskResults: 0,
+                workflowArtifacts: 0,
+                metricSnapshots: 0,
+                outcomes: 3,
+              },
+            }),
+        },
+      }
+    );
+
+    expect(result).toMatchObject({ skipped: true, skipReason: 'low_evidence_noop' });
+    expect(episodeCreated).toBe(false);
+    expect(evolutionRepo.listEpisodes(scope.id)).toHaveLength(0);
+  });
+
   it('skips an empty auto-generated session trace diagnostic with no outcomes', async () => {
     const goal = goalRepo.create({ spaceId, title: 'Empty trace', type: 'recurring' });
     const scope = evolutionRepo.createScope({
