@@ -933,6 +933,31 @@ describe('QueryLifecycleManager', () => {
       expect(startStreamingCalled).toBe(true);
     });
 
+    test('terminates orphaned tracked processes when recovering stale running state', async () => {
+      // Clean-slate guard: stale running state (queue running, no queryPromise) is
+      // usually an SDK subprocess that died without the queue being stopped — but it
+      // may also be an orphan still holding the workspace lock. The recovery must
+      // force-terminate the tracked set before starting a fresh query.
+      messageQueue.start(async function* () {
+        yield 'test';
+      });
+      mockContext = createMockContext();
+      mockContext.queryPromise = null;
+      mockContext.queryObject = null;
+      manager = new QueryLifecycleManager(mockContext);
+
+      await manager.ensureQueryStarted();
+
+      // Snapshot was taken and the tracked process group was asked to terminate.
+      expect(snapshotTrackedAgentProcessesSpy).toHaveBeenCalled();
+      expect(terminateTrackedAgentProcessesSpy).toHaveBeenCalledWith({
+        forceDelayMs: 2000,
+        processes: [],
+      });
+      // Recovery still proceeds to start a fresh query.
+      expect(startStreamingCalled).toBe(true);
+    });
+
     test('starts streaming query when queue is not running', async () => {
       await manager.ensureQueryStarted();
 

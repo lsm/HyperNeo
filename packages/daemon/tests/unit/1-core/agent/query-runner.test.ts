@@ -66,6 +66,7 @@ describe('QueryRunner', () => {
   let onModelsFetchedSpy: ReturnType<typeof mock>;
   let onMarkApiSuccessSpy: ReturnType<typeof mock>;
   let trackAgentProcessSpy: ReturnType<typeof mock>;
+  let terminateTrackedAgentProcessesSpy: ReturnType<typeof mock>;
 
   beforeEach(() => {
     mockSession = {
@@ -95,6 +96,7 @@ describe('QueryRunner', () => {
 
     // Create callback spies
     trackAgentProcessSpy = mock(() => {});
+    terminateTrackedAgentProcessesSpy = mock(() => {});
     onSDKMessageSpy = mock(async () => {});
     onSlashCommandsFetchedSpy = mock(async () => {});
     onModelsFetchedSpy = mock(async () => {});
@@ -228,6 +230,7 @@ describe('QueryRunner', () => {
         this.processExitedPromise = null;
       }),
       trackAgentProcess: trackAgentProcessSpy,
+      terminateTrackedAgentProcesses: terminateTrackedAgentProcessesSpy,
 
       // Methods for state coordination
       incrementQueryGeneration: () => ++queryGeneration,
@@ -1484,6 +1487,21 @@ describe('QueryRunner', () => {
       // After the close, queryObject should be null (cleaned up by the fix).
       // The finally block may re-check it, but it will see null and skip redundant close.
       expect(ctx.queryObject).toBeNull();
+    });
+
+    it('should force-terminate orphaned SDK processes before retrying after startup timeout', async () => {
+      // Clean-slate guard: a startup-timeout spawn may be orphaned (spawned but
+      // never fed, or hung past cooperative close()) and collide with the retry's
+      // fresh spawn. The retry must force-kill the tracked set first so the retry
+      // starts from a clean process slate.
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      // The auto-retry path must have asked to terminate tracked subprocesses
+      // (SIGTERM + scheduled SIGKILL), not just cooperatively close queryObject.
+      expect(terminateTrackedAgentProcessesSpy).toHaveBeenCalled();
     });
 
     it('should await processExitedPromise before retrying after startup timeout', async () => {

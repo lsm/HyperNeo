@@ -367,6 +367,11 @@ export interface QueryRunnerContext {
   resetProcessExitedPromise(): void;
   trackAgentProcess(proc: TrackedAgentProcess): void;
   snapshotTrackedAgentProcesses(): Array<[number, TrackedAgentProcess]>;
+  /** Force-terminate tracked SDK subprocesses (SIGTERM + scheduled SIGKILL). */
+  terminateTrackedAgentProcesses(options?: {
+    forceDelayMs?: number;
+    processes?: Array<[number, TrackedAgentProcess]>;
+  }): void;
   // Methods for state coordination
   incrementQueryGeneration(): number;
   getQueryGeneration(): number;
@@ -1001,6 +1006,15 @@ export class QueryRunner {
         logger.warn('Auto-retrying query after startup timeout (1 retry).');
         await stateManager.setIdle({ suppressDeliveryWaiters: true });
 
+        // Clean-slate guard: a timed-out spawn may be orphaned (spawned but
+        // never fed, or hung past cooperative close()) and would collide with
+        // the retry's fresh spawn — producing repeated 0-message timeouts.
+        // Force-terminate the whole tracked set for this session first, then
+        // close the query object (cooperative teardown of MCP transports), so
+        // the retry starts from a genuinely clean slate. Order mirrors
+        // QueryLifecycleManager.stop() (terminate → close).
+        this.ctx.terminateTrackedAgentProcesses?.();
+
         // Close the current queryObject BEFORE retrying to prevent the
         // "Already connected to a transport" crash. The finally{} block has not
         // yet run (we are still in the catch block), so MCP transports are still
@@ -1039,6 +1053,11 @@ export class QueryRunner {
         this.ctx.consumePendingResumeSessionAt?.();
         logger.warn('Auto-retrying query without one-shot resumeSessionAt.');
         await stateManager.setIdle({ suppressDeliveryWaiters: true });
+
+        // Clean-slate guard (same rationale as the startup-timeout retry):
+        // force-terminate any orphaned tracked subprocess so the retry spawns
+        // against a clean process set.
+        this.ctx.terminateTrackedAgentProcesses?.();
 
         if (this.ctx.queryObject) {
           try {

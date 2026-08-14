@@ -666,6 +666,26 @@ export class QueryLifecycleManager {
         // Clear stale query reference to prevent concurrent callers from
         // seeing a dead query object during the restart window.
         this.ctx.queryObject = null;
+
+        // Clean-slate guard: the stale-running state usually means the SDK
+        // subprocess died without the queue being stopped — but the process may
+        // also be an orphan (spawned, never fed) still holding the workspace
+        // lock. Force-terminate the tracked set so the fresh query spawned below
+        // does not collide with a surviving subprocess, and wait (bounded) for it
+        // to exit before starting the replacement. Mirrors stop()'s ordering.
+        const orphanedProcesses = this.ctx.snapshotTrackedAgentProcesses();
+        this.ctx.terminateTrackedAgentProcesses({
+          forceDelayMs: FORCE_PROCESS_KILL_DELAY_MS,
+          processes: orphanedProcesses,
+        });
+        const orphanExit = this.ctx.processExitedPromise;
+        if (orphanExit) {
+          await Promise.race([
+            orphanExit,
+            new Promise((resolve) => setTimeout(resolve, DEFAULT_TERMINATION_TIMEOUT_MS)),
+          ]);
+          this.ctx.resetProcessExitedPromise();
+        }
         // Fall through to start a fresh query below
       } else {
         this.logger.debug(
