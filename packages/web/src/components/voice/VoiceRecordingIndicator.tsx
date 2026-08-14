@@ -8,73 +8,107 @@
  * offers a one-click jump back to the recording's session (where the composer
  * adopts it and the waveform re-attaches).
  *
- * Renders nothing unless a live recording exists for a session other than the
- * one currently displayed. The displayed session accounts for BOTH routing
- * surfaces: the primary chat (`currentSessionIdSignal`) and Space session
- * views (`currentSpaceSessionIdSignal` + its owning space), and the return
- * navigation targets whichever surface is active (any open Space surface
- * keeps spaceId populated — overview, task, goals, sessions pages alike). The
- * chip sits at z-[55]: above the z-50 agent overlay (whose portal appends to
- * document.body after the app root and therefore paints later at equal z),
- * but below blocking modals rendered later in body order at z-50+ so a modal's
- * confirmation flow cannot be bypassed through the chip.
+ * Two instances exist, one per rendering surface: MainContent renders the
+ * base instance (which stands down while an overlay is open), and the agent
+ * overlay renders one INSIDE its focus-trapped panel so keyboard users can
+ * Tab to it. Visibility is surface-aware: the chip hides only when the
+ * recording's OWNING composer is mounted on this surface — or, while
+ * orphaned, when this surface displays the recording's session — because an
+ * overlay can display the same session as the covered, still-owning base
+ * composer, and session equality alone cannot tell the two apart.
+ *
+ * Return navigation routes through the recording's OWNING surface (captured
+ * at recording start, `recordingSpaceId`), never the currently-displayed
+ * Space: a primary-chat recording must land on the chat route even when the
+ * user clicks Return from inside some Space.
+ *
+ * Stacking: the base instance sits at z-40 — above page chrome (z-30) but
+ * below z-50 blocking modals, whose confirmation flow must not be bypassed
+ * through the chip. The in-overlay instance lives inside the overlay's z-50
+ * stacking context, so it is above the panel yet still below modals portaled
+ * later into the body.
  */
 
+import { useContext } from 'preact/hooks';
 import { voiceRecorderStore } from '../../lib/voice/voice-recorder-store.ts';
+import { voiceComposerSurfaceOf } from '../../lib/voice/voice-composer-registry.ts';
+import { VoiceSurfaceContext } from '../../hooks/useVoiceRecorder.ts';
 import {
   currentSessionIdSignal,
-  currentSpaceIdSignal,
   currentSpaceSessionIdSignal,
   spaceOverlayPendingAgentNameSignal,
   spaceOverlaySessionIdSignal,
 } from '../../lib/signals.ts';
 import {
+  clearOverlaySignals,
   closeOverlayHistory,
   navigateToSession,
   navigateToSpaceSession,
 } from '../../lib/router.ts';
 
-export function VoiceRecordingIndicator() {
+export function VoiceRecordingIndicator({ inOverlay = false }: { inOverlay?: boolean }) {
+  const surface = useContext(VoiceSurfaceContext);
   const isRecording =
     voiceRecorderStore.isRecording.value || voiceRecorderStore.durationLimitHit.value;
   const recordingSessionId = voiceRecorderStore.recordingSessionId.value;
+  const recordingSpaceId = voiceRecorderStore.recordingSpaceId.value;
   // Displayed session across both routing surfaces. A Space session view
   // leaves currentSessionIdSignal null and keys its ChatContainer by the
   // space-session id instead.
   const primarySessionId = currentSessionIdSignal.value;
   const spaceSessionId = currentSpaceSessionIdSignal.value;
-  const spaceId = currentSpaceIdSignal.value;
   // An open agent overlay displays ITS session: the base Space session signal
   // still holds the underlying session, but the overlay is what the user sees.
   // A PENDING overlay (workflow peer not yet spawned) covers the base session
   // too, while its session id signal is still null.
   const overlaySessionId = spaceOverlaySessionIdSignal.value;
   const overlayPending = spaceOverlayPendingAgentNameSignal.value !== null;
+  const overlayOpen = overlaySessionId !== null || overlayPending;
+  // The base instance stands down while an overlay is open: the overlay
+  // renders its own instance inside its panel, and a second chip underneath
+  // would only duplicate the a11y tree.
+  if (!inOverlay && overlayOpen) return null;
+
   const displayedSessionId =
     overlaySessionId ?? (overlayPending ? null : spaceSessionId) ?? primarySessionId;
 
-  // Show only for a live recording belonging to some OTHER session (or with
-  // no session displayed at all).
-  if (
-    !isRecording ||
-    !recordingSessionId ||
-    (displayedSessionId !== null && displayedSessionId === recordingSessionId)
-  ) {
-    return null;
-  }
+  // The recording is visible HERE when its owning composer is mounted on this
+  // surface; an ORPHANED recording is visible here when this surface displays
+  // its session (the freshly-mounted composer adopts it). Owner unregistered
+  // (e.g. between unmount and adoption) reads as "not here" — the safe
+  // default keeps the recording discoverable.
+  const ownerSurface = voiceComposerSurfaceOf(voiceRecorderStore.recordingOwnerId.value);
+  const recordingVisibleHere =
+    ownerSurface !== null
+      ? ownerSurface === surface.surfaceId
+      : displayedSessionId !== null && displayedSessionId === recordingSessionId;
 
-  const overlayOpen = overlaySessionId !== null || overlayPending;
+  if (!isRecording || !recordingSessionId || recordingVisibleHere) return null;
+
+  // The overlay displays the recording's own session but its composer does
+  // not own the capture — the covered base composer does. Closing the overlay
+  // re-reveals that waveform; no navigation (so the async history.back() of a
+  // normal close cannot race a route push).
+  const recordingBehindThisOverlay = inOverlay && overlaySessionId === recordingSessionId;
+
   const returnToRecording = () => {
-    // Drop any open/pending overlay first: it covers the whole viewport, so
-    // navigating alone would only select the recording session BEHIND it.
-    if (overlayOpen) closeOverlayHistory();
-    // Stay within any open Space SURFACE (overview/task/session pages all keep
-    // spaceId populated even when the session signal is cleared) — routing to
-    // the generic chat view would exit the Space entirely.
-    if (spaceId !== null) {
-      navigateToSpaceSession(spaceId, recordingSessionId);
+    if (recordingBehindThisOverlay) {
+      closeOverlayHistory();
+      return;
+    }
+    if (overlayOpen) {
+      // Clear the overlay SYNCHRONOUSLY: closeOverlayHistory()'s
+      // window.history.back() resolves asynchronously, and a route pushed in
+      // the same tick races that pending popstate onto a stale entry.
+      clearOverlaySignals();
+    }
+    // When an overlay was open, its history entry is still on top — REPLACE
+    // it with the target route (consuming it) instead of pushing above it.
+    const replace = overlayOpen;
+    if (recordingSpaceId !== null) {
+      navigateToSpaceSession(recordingSpaceId, recordingSessionId, replace);
     } else {
-      navigateToSession(recordingSessionId);
+      navigateToSession(recordingSessionId, replace);
     }
   };
 
@@ -82,9 +116,9 @@ export function VoiceRecordingIndicator() {
     <button
       type="button"
       onClick={returnToRecording}
-      class="fixed bottom-20 right-4 sm:bottom-6 sm:right-6 z-[55] flex items-center gap-2 rounded-full
+      class={`fixed bottom-20 right-4 sm:bottom-6 sm:right-6 ${inOverlay ? 'z-[55]' : 'z-40'} flex items-center gap-2 rounded-full
         bg-gray-900/90 backdrop-blur border border-red-500/40 pl-3 pr-4 py-2 shadow-lg
-        text-sm text-gray-100 hover:bg-gray-800/90 transition-colors"
+        text-sm text-gray-100 hover:bg-gray-800/90 transition-colors`}
       aria-label="Voice recording in progress in another session — click to return"
       data-testid="voice-recording-elsewhere"
     >
@@ -92,7 +126,9 @@ export function VoiceRecordingIndicator() {
         <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
         <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500" />
       </span>
-      <span class="max-w-40 truncate">Recording in another session</span>
+      <span class="max-w-40 truncate">
+        {recordingBehindThisOverlay ? 'Recording in this session' : 'Recording in another session'}
+      </span>
       <span class="text-red-300 font-medium">Return</span>
     </button>
   );

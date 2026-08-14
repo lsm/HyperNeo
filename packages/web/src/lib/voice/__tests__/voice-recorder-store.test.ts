@@ -93,6 +93,28 @@ describe('voiceRecorderStore', () => {
     expect(voiceRecorderStore.recordingSessionId.value).toBeNull();
   });
 
+  it('stamps the recording with its owning Space and clears it with ownership', async () => {
+    await voiceRecorderStore.start('owner-a', 's1', null, 'space-9');
+    expect(voiceRecorderStore.recordingSpaceId.value).toBe('space-9');
+    // Survival keeps the stamp: the global chip routes an ORPHANED recording
+    // through the space it was started in, and adoption never crosses
+    // surfaces, so the stamp stays valid across the whole recording life.
+    voiceRecorderStore.orphan('owner-a');
+    expect(voiceRecorderStore.recordingSpaceId.value).toBe('space-9');
+    voiceRecorderStore.adopt('owner-b', 's1');
+    expect(voiceRecorderStore.recordingSpaceId.value).toBe('space-9');
+    const recording = await voiceRecorderStore.stop();
+    expect(recording.audioBase64.length).toBeGreaterThan(0);
+    expect(voiceRecorderStore.recordingSpaceId.value).toBeNull();
+  });
+
+  it('a primary-chat recording carries no Space stamp', async () => {
+    await voiceRecorderStore.start('owner-a', 's1');
+    expect(voiceRecorderStore.recordingSpaceId.value).toBeNull();
+    await voiceRecorderStore.cancel();
+    expect(voiceRecorderStore.recordingSpaceId.value).toBeNull();
+  });
+
   it('start() acquires the mic, wires the graph, and flips isRecording', async () => {
     await voiceRecorderStore.start('owner-a', 's1');
 
