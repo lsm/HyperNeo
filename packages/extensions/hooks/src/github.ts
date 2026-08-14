@@ -1154,6 +1154,19 @@ export function extractCodexApproval(value: unknown, prLink: string): GithubCode
     : undefined;
   const headOid = typeof headCommit?.oid === 'string' ? headCommit.oid : undefined;
   const pushedDate = typeof headCommit?.pushedDate === 'string' ? headCommit.pushedDate : undefined;
+  // The head commit anchors EVERYTHING here: head-binding of decisive
+  // reviews, the reaction-freshness boundary, and the post-scan head recheck.
+  // A valid-looking envelope without it would silently skip all head-bound
+  // reviews, return an ordinary approved:false, and leave the gate retrying
+  // toward its ceiling instead of reporting that GitHub state was never
+  // structurally validated. Fail the lookup closed.
+  if (typeof headOid !== 'string') {
+    return {
+      approved: false,
+      prLink,
+      failClosedReason: 'malformed envelope: PR head commit missing; failing closed',
+    };
+  }
 
   // Pass path 1: the LATEST DECISIVE head-bound codex review (APPROVED or
   // CHANGES_REQUESTED) is AUTHORITATIVE — a prior APPROVED must not satisfy the

@@ -1123,18 +1123,24 @@ export class WorkflowHookEngine {
         // Router parity — arrays dispatch through one of two router paths:
         //
         // 1. EVERY string entry parses as an address ('@worker:...',
-        //    '@coordinator', ...) → the router's GENERIC path delivers per
-        //    entry (partial delivery is possible), so per-target gating and
-        //    per-target suppression apply.
+        //    '@coordinator', ...) → the router's GENERIC path, which is
+        //    SEQUENTIAL: it delivers each authorized entry before
+        //    inspecting the next, and RETURNS at the first unauthorized
+        //    @worker entry — entries BEFORE the failure still deliver, the
+        //    failing and later entries never do. Gates therefore follow
+        //    entry order: pre-failure entries keep theirs, the failing and
+        //    subsequent entries are suppressed.
         // 2. ANY plain entry (node/slot name, '*') → the TOPOLOGY path,
-        //    which is ALL-OR-NOTHING: one unauthorized entry rejects the
-        //    whole multicast before anything delivers, so one unauthorized
-        //    target must suppress EVERY node binding of this send — running
-        //    a routable sibling's gate (pr_ready stamps the run's immutable
-        //    PR identity) off a send the router never delivers.
+        //    which is ALL-OR-NOTHING: authorization runs for every entry
+        //    BEFORE any delivery, so one unauthorized entry rejects the
+        //    whole multicast — every node binding of the send is
+        //    suppressed (running a routable sibling's gate off an
+        //    undelivered send lets pr_ready stamp the run's immutable PR
+        //    identity from an attempt that never reaches review).
         const allAddresses =
           target.length > 0 && target.every((t) => typeof t === 'string' && parsesAsAddress(t));
         let wholeSendRefused = false;
+        let sequentialBlocked = false;
         const arrayResolvedNodes = new Set<string>();
         for (const t of target) {
           if (typeof t !== 'string') {
@@ -1154,24 +1160,22 @@ export class WorkflowHookEngine {
             if (nodeNames.has(resolved)) arrayResolvedNodes.add(resolved);
           }
           if (allAddresses) {
-            // Generic path: per-target suppression for generic addresses
-            // (e.g. '@coordinator' — the router delivers them separately and
-            // reports partial success). But an unauthorized WORKER entry
-            // fails the WHOLE generic-path multicast (the router returns
-            // before delivering anything), so it must suppress every node
-            // binding of this send too.
-            for (const resolved of resolvedTargets) {
-              const isWorker = t.startsWith('@worker:');
-              const slotOk = isWorker && isRoutableWorkerOnSlot(workerAgentOf(t), resolved);
-              if (
-                nodeNames.has(resolved) &&
-                !isBuiltInInterLevelTarget(t) &&
-                !slotOk &&
-                !isRoutableTarget(resolved)
-              ) {
-                if (isWorker) wholeSendRefused = true;
-                nonRoutableResolvedNodes.add(resolved);
+            // Generic path, in entry order. Generic non-worker addresses
+            // ('@coordinator', ...) never abort the router loop — they
+            // deliver (or fail) per entry and must not suppress siblings.
+            const isWorker = t.startsWith('@worker:');
+            const workerAuthorized = resolvedTargets.some(
+              (r) =>
+                nodeNames.has(r) &&
+                (isRoutableTarget(r) || isRoutableWorkerOnSlot(workerAgentOf(t), r))
+            );
+            if (sequentialBlocked || (isWorker && !workerAuthorized)) {
+              // The router has returned (or returns at this entry): this
+              // entry and every later one never deliver.
+              for (const resolved of resolvedTargets) {
+                if (nodeNames.has(resolved)) nonRoutableResolvedNodes.add(resolved);
               }
+              sequentialBlocked = true;
             }
             continue;
           }
@@ -1190,9 +1194,8 @@ export class WorkflowHookEngine {
           if (!entryAuthorized) wholeSendRefused = true;
         }
         if (wholeSendRefused) {
-          // The whole multicast is refused (topology path: any unauthorized
-          // entry; generic path: an unauthorized worker entry) — suppress
-          // the gates on every node the entries resolved.
+          // The whole topology-path multicast is refused — suppress the
+          // gates on every node the entries resolved.
           for (const resolved of arrayResolvedNodes) {
             nonRoutableResolvedNodes.add(resolved);
           }

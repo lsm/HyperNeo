@@ -256,6 +256,9 @@ describe('PendingHookBanner', () => {
         runId: 'r1',
         hookId: 'h1',
         approved: true,
+        // The DISPLAYED snapshot's version — the daemon version-guards the
+        // approval against it.
+        expectedVersion: 1,
       })
     );
   });
@@ -278,6 +281,7 @@ describe('PendingHookBanner', () => {
         runId: 'r1',
         hookId: 'h1',
         approved: false,
+        expectedVersion: 1,
       })
     );
   });

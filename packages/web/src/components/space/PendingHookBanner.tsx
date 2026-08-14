@@ -55,7 +55,7 @@ export function PendingHookBanner({
   }, []);
 
   const handleApprove = useCallback(
-    async (hookId: string, approved: boolean) => {
+    async (hookId: string, approved: boolean, expectedVersion?: number) => {
       setBusyHookIds((prev) => {
         const next = new Set(prev);
         next.add(hookId);
@@ -70,7 +70,15 @@ export function PendingHookBanner({
       const runIdAtCall = runId;
       try {
         const hub = await connectionManager.getHub();
-        await hub.request('spaceWorkflowRun.approveHook', { runId, hookId, approved });
+        await hub.request('spaceWorkflowRun.approveHook', {
+          runId,
+          hookId,
+          approved,
+          // The DISPLAYED snapshot's version: the daemon performs a single
+          // version-guarded update, so an approval can never land on a
+          // state that changed after the operator saw it.
+          expectedVersion,
+        });
       } catch (err: unknown) {
         if (decisionCancelledRef.current) return;
         if (currentRunIdRef.current !== runIdAtCall) return;
@@ -192,14 +200,14 @@ export function PendingHookBanner({
                 actions.push(
                   {
                     label: 'Approve',
-                    onClick: () => void handleApprove(hook.hookId, true),
+                    onClick: () => void handleApprove(hook.hookId, true, hook.state?.version),
                     variant: 'primary',
                     disabled: busy,
                     testId: 'pending-hook-approve-btn',
                   },
                   {
                     label: 'Reject',
-                    onClick: () => void handleApprove(hook.hookId, false),
+                    onClick: () => void handleApprove(hook.hookId, false, hook.state?.version),
                     variant: 'danger',
                     disabled: busy,
                     testId: 'pending-hook-reject-btn',

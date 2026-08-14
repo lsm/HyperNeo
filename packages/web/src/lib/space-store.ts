@@ -2611,14 +2611,21 @@ class SpaceStore {
     runId: string,
     hookId: string,
     approved: boolean,
-    reason?: string | null
+    reason?: string | null,
+    expectedVersion?: number
   ): Promise<import('@hyperneo/shared').HookStateSnapshot> {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
     const result = await hub.request<{
       hookState: import('@hyperneo/shared').HookStateSnapshot;
-    }>('spaceWorkflowRun.approveHook', { runId, hookId, approved, reason: reason ?? null });
+    }>('spaceWorkflowRun.approveHook', {
+      runId,
+      hookId,
+      approved,
+      reason: reason ?? null,
+      expectedVersion,
+    });
     return (
       result?.hookState ?? {
         runId,

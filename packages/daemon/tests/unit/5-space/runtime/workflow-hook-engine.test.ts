@@ -251,12 +251,12 @@ describe('WorkflowHookEngine.executeAction', () => {
     expect(outcome.blockingHookId).toBe('stop_hook');
   });
 
-  test('a non-routable worker in a multicast refuses the whole send (no gates)', async () => {
+  test('a pre-failure authorized worker keeps its gate; later entries are suppressed', async () => {
     // ['@worker:Review/reviewer', '@worker:Other/other'] — Other is not
-    // channel-reachable. Router parity (round 48): an unauthorized WORKER
-    // entry fails the WHOLE generic-path multicast — the router returns
-    // before delivering anything, so no gate may run (previously Review's
-    // gate ran on a send that never delivered).
+    // channel-reachable. Router parity (round 49): the generic path is
+    // SEQUENTIAL — it delivers Review BEFORE reaching Other and returning,
+    // so Review's gate MUST run (suppressing it would deliver an ungated
+    // handoff); Other and later entries never deliver and are suppressed.
     const STOP_HOOK = scriptHook('mixed_hook', '{"flow":"stop","reason":"blocked by script"}');
     const workflow = makeWorkflow({
       customHooks: [STOP_HOOK],
@@ -287,8 +287,19 @@ describe('WorkflowHookEngine.executeAction', () => {
       { target: ['@worker:n-review/reviewer', '@worker:n-other/other'], message: 'mixed' },
       META
     );
-    expect(outcome.decision).toBe('deliver');
-    expect(hookStateRepo.get('run-1', 'mixed_hook')).toBeNull();
+    // Review (before the failure) keeps its gate; the send stops there.
+    expect(outcome.decision).toBe('stop');
+    expect(outcome.blockingHookId).toBe('mixed_hook');
+
+    // Reversed order: the unauthorized entry fails FIRST — nothing after it
+    // delivers, so no gate may run off this send.
+    const reversed = await engine.executeAction(
+      'send_message',
+      { target: ['@worker:n-other/other', '@worker:n-review/reviewer'], message: 'reversed' },
+      META
+    );
+    expect(reversed.decision).toBe('deliver');
+    expect(reversed.executionLog.length).toBe(0);
 
     // An all-AUTHORIZED worker multicast keeps its gates (nothing refused).
     const authorized = await engine.executeAction(

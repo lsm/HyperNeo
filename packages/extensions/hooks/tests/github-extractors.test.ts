@@ -283,6 +283,31 @@ describe('extractCodexApproval', () => {
     expect(r.failClosedReason).toContain('failing closed');
   });
 
+  test('an envelope without a current head commit fails closed', () => {
+    // The head anchors review binding, reaction freshness, and the recheck;
+    // without it the extractor would skip every head-bound review and return
+    // an ordinary approved:false — the gate would retry toward its ceiling
+    // instead of reporting structurally unvalidated GitHub state.
+    const r = extractCodexApproval(
+      base({
+        commits: { nodes: [] },
+        reviews: {
+          nodes: [
+            {
+              state: 'CHANGES_REQUESTED',
+              author: codexAuthor('chatgpt-codex-connector'),
+              commit: { oid: HEAD },
+              submittedAt: '2026-02-02T00:00:00Z',
+            },
+          ],
+        },
+      }),
+      'https://github.com/o/r/pull/1'
+    );
+    expect(r.approved).toBe(false);
+    expect(r.failClosedReason).toContain('head commit missing');
+  });
+
   test('a decisive verdict with an unparseable timestamp fails closed', () => {
     // Retaining it as a floor candidate would let any parseable APPROVED
     // outrank a CHANGES_REQUESTED whose order we cannot read — the approval

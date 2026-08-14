@@ -195,6 +195,20 @@ function createMockHookStateRepo(initial: HookStateSnapshot | null = null) {
     createdAt: NOW,
     updatedAt: NOW,
   });
+  const applyPatch = (patch: CapturedHookPatch) => {
+    if (!state) return null;
+    state = {
+      ...state,
+      version: state.version + 1,
+      localState: { ...state.localState, ...(patch.localState ?? {}) },
+      lastFlow: patch.lastFlow ?? state.lastFlow,
+      lastReason: patch.lastReason ?? state.lastReason,
+      retryCount: patch.retryCount ?? state.retryCount,
+      nextRetryAt: patch.nextRetryAt ?? state.nextRetryAt,
+      updatedAt: NOW,
+    };
+    return state;
+  };
   const repo = {
     get: mock(() => state),
     ensure: mock((_runId: string, _hookId: string) => {
@@ -202,21 +216,17 @@ function createMockHookStateRepo(initial: HookStateSnapshot | null = null) {
       return state;
     }),
     listByRun: mock(() => (state ? [state] : [])),
-    update: mock(() => null),
+    // Mirrors the real repo: a SINGLE version-guarded update (approveHook
+    // relies on the conflict, not a refresh-to-latest).
+    update: mock((_runId: string, _hookId: string, patch: CapturedHookPatch) => {
+      const expected = (patch as { expectedVersion?: number }).expectedVersion;
+      if (expected !== undefined && state && state.version !== expected) return null;
+      patches.push(patch);
+      return applyPatch(patch);
+    }),
     updateWithRetry: mock((_runId: string, _hookId: string, patch: CapturedHookPatch) => {
       patches.push(patch);
-      if (!state) return null;
-      state = {
-        ...state,
-        version: state.version + 1,
-        localState: { ...state.localState, ...(patch.localState ?? {}) },
-        lastFlow: patch.lastFlow ?? state.lastFlow,
-        lastReason: patch.lastReason ?? state.lastReason,
-        retryCount: patch.retryCount ?? state.retryCount,
-        nextRetryAt: patch.nextRetryAt ?? state.nextRetryAt,
-        updatedAt: NOW,
-      };
-      return state;
+      return applyPatch(patch);
     }),
   } as unknown as WorkflowHookStateRepository;
   return { repo, patches };
@@ -1298,11 +1308,15 @@ describe('space-workflow-run-handlers', () => {
 
   describe('spaceWorkflowRun.approveHook — decision CAS + ceiling recovery', () => {
     const stoppedHookState = (
-      overrides: { lastFlow?: HookFlow; localState?: Record<string, unknown> } = {}
+      overrides: {
+        lastFlow?: HookFlow;
+        localState?: Record<string, unknown>;
+        version?: number;
+      } = {}
     ): HookStateSnapshot => ({
       runId: 'run-1',
       hookId: 'pr_ready',
-      version: 3,
+      version: overrides.version ?? 3,
       localState: {
         __overrideEligible: true,
         __firstRetryAt: 1_000,
@@ -1336,6 +1350,34 @@ describe('space-workflow-run-handlers', () => {
         );
         expect(hookStateRepo.patches).toHaveLength(0);
       }
+    });
+
+    it('an approval with the DISPLAYED version is version-guarded', async () => {
+      // Stop A displayed (version 3); the same hook re-evaluated to stop B
+      // (version 4) before the click. The lastFlow guard passes (both stop),
+      // so ONLY the version guard prevents the approval landing on B.
+      // Seed version 4: the displayed banner was version 3, and the hook
+      // re-evaluated (to a different stop) before the click arrived.
+      setup({ hookState: stoppedHookState({ version: 4 }) });
+      hookStateRepo.patches.length = 0;
+      await expect(
+        call('spaceWorkflowRun.approveHook', {
+          runId: 'run-1',
+          hookId: 'pr_ready',
+          approved: true,
+          expectedVersion: 3,
+        })
+      ).rejects.toThrow(/version conflict/);
+      expect(hookStateRepo.patches).toHaveLength(0);
+
+      // Matching version: the approval lands.
+      const result = (await call('spaceWorkflowRun.approveHook', {
+        runId: 'run-1',
+        hookId: 'pr_ready',
+        approved: true,
+        expectedVersion: 4,
+      })) as { hookState: HookStateSnapshot };
+      expect(result.hookState.localState.humanApproved).toBe(true);
     });
 
     it('a rejection (approved=false) is not subject to the lastFlow CAS', async () => {

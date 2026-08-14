@@ -814,6 +814,11 @@ export function setupSpaceWorkflowRunHandlers(
       hookId: string;
       approved: boolean;
       reason?: string;
+      /** The DISPLAYED snapshot's version — the update is version-guarded
+       * against it so a decision can never land on state that changed after
+       * the operator saw it (a NEW violation would otherwise consume an
+       * approval recorded against the old one). */
+      expectedVersion?: number;
     };
 
     if (!params.runId) throw new Error('runId is required');
@@ -858,7 +863,19 @@ export function setupSpaceWorkflowRunHandlers(
     // Patch ONLY the decision keys: spreading a stale full localState snapshot
     // would deep-merge over concurrent writes (e.g. restore a queued action a
     // retry timer just cleared, replaying an already-delivered handoff).
-    const updateResult = hookStateRepo.updateWithRetry(params.runId, params.hookId, {
+    //
+    // SINGLE version-guarded update (NOT updateWithRetry, which refreshes to
+    // whatever state is current): when the client supplies the DISPLAYED
+    // snapshot's version, a hook re-evaluation between the banner render and
+    // this click loses the race and the approval is rejected — otherwise
+    // stop A displayed, stop B evaluated, and the approval would land on B.
+    // Without a client version, the version read above still guards the
+    // read-to-write window.
+    const updateResult = hookStateRepo.update(params.runId, params.hookId, {
+      expectedVersion:
+        typeof params.expectedVersion === 'number'
+          ? params.expectedVersion
+          : (existingState?.version ?? 0),
       localState: {
         humanApproved: params.approved,
         humanApprovedAt: Date.now(),
@@ -877,7 +894,10 @@ export function setupSpaceWorkflowRunHandlers(
     });
 
     if (!updateResult) {
-      throw new Error('Hook state update failed due to version conflict');
+      throw new Error(
+        'Hook state changed before the decision was recorded (version conflict) — ' +
+          'review and approve the CURRENT state.'
+      );
     }
 
     internalEventBus
