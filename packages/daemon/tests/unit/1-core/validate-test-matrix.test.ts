@@ -135,7 +135,31 @@ describe('validate-test-matrix.sh', () => {
       try {
         const { exitCode, stderr } = runGuard();
         expect(exitCode).toBe(1);
-        expect(stderr).toContain("places a '||'/'&&' before");
+        expect(stderr).toContain("dead prefix ('||'/'&&'/exit/exec)");
+      } finally {
+        fs.writeFileSync(wf, original);
+      }
+    },
+    TIMEOUT
+  );
+
+  it(
+    'rejects an `exit` before the marker (P2)',
+    () => {
+      // `exit 0; <marker>` terminates the shell before the marker — dead_prefix
+      // must catch process-terminating commands (exit/exec), not only ||/&&.
+      const wf = path.join(REPO_ROOT, '.github/workflows/main.yml');
+      const original = fs.readFileSync(wf, 'utf-8');
+      const anchor = "bash -lc 'cd packages/web && bunx vitest run";
+      expect(original.includes(anchor)).toBe(true);
+      fs.writeFileSync(
+        wf,
+        original.replace(anchor, "bash -lc 'exit 0; cd packages/web && bunx vitest run")
+      );
+      try {
+        const { exitCode, stderr } = runGuard();
+        expect(exitCode).toBe(1);
+        expect(stderr).toContain('dead prefix');
       } finally {
         fs.writeFileSync(wf, original);
       }

@@ -182,7 +182,12 @@ runner_has_dead_prefix() {
 		}
 		BEGIN {
 			txt=executed_text(runval); p=index(txt, marker)
-			exit (p > 0 && substr(txt, 1, p-1) ~ /(\|\||&&)/) ? 0 : 1
+			if (p == 0) exit 1
+			prefix = substr(txt, 1, p-1)
+			# A short-circuit `||`/`&&`, OR a process-terminating command (exit/exec)
+			# before the marker — `exit 0; <marker>` ends the shell before the marker
+			# is reached, so zero tests run while this guard reports them covered.
+			exit ((prefix ~ /(\|\||&&)/) || (prefix ~ /(^|[^[:alnum:]_])(exit|exec)([[:space:];|&]|$)/)) ? 0 : 1
 		}
 	'
 }
@@ -885,7 +890,7 @@ elif runner_is_data_cmd "$_unit_run"; then
 	err "test-daemon-shared-unit runner's first command token is a data command (echo/printf/cat) — the marker is an argument, not executed"
 	echo "     → invoke test-daemon.sh as a command, not via echo" >&2
 elif runner_has_dead_prefix "$_unit_run" 'test-daemon.sh ${{ matrix.shard }}'; then
-	err "test-daemon-shared-unit runner places a '||'/'&&' before test-daemon.sh (e.g. false && ... or true || ...) — Bash short-circuits, so the marker is never reached and zero tests run while this guard reports them covered"
+	err "test-daemon-shared-unit runner places a dead prefix ('||'/'&&'/exit/exec) before test-daemon.sh (e.g. false && ... or true || ...) — Bash short-circuits, so the marker is never reached and zero tests run while this guard reports them covered"
 	echo "     → remove the '||' prefix / dead branch before test-daemon.sh" >&2
 elif runner_has_noexec_interp "$_unit_run" 'test-daemon.sh ${{ matrix.shard }}'; then
 	err "test-daemon-shared-unit runner invokes a no-exec interpreter (e.g. bash -n) before test-daemon.sh — it would syntax-check the script and exit 0 having run ZERO tests while this guard reports them covered"
@@ -1020,7 +1025,7 @@ elif runner_is_data_cmd "$_web_cmd"; then
 	err "test-web runner's first command token is a data command (echo/printf/cat) — the marker is an argument, not executed"
 	echo "     → invoke 'bunx vitest run' as a command, not via echo" >&2
 elif runner_has_dead_prefix "$_web_cmd" 'cd packages/web && bunx vitest run'; then
-	err "test-web runner places a '||'/'&&' before the vitest invocation (e.g. bash -lc 'false && cd packages/web && bunx vitest run' or 'true || ...') — Bash short-circuits, so the marker is never reached and zero web tests run while this guard reports them covered"
+	err "test-web runner places a dead prefix ('||'/'&&'/exit/exec) before the vitest invocation (e.g. bash -lc 'false && cd packages/web && bunx vitest run' or 'true || ...') — Bash short-circuits, so the marker is never reached and zero web tests run while this guard reports them covered"
 	echo "     → remove the '||' prefix / dead branch before 'bunx vitest run'" >&2
 elif runner_has_noexec_interp "$_web_cmd" 'cd packages/web && bunx vitest run'; then
 	err "test-web runner invokes a no-exec interpreter (e.g. bash -n) before the vitest invocation — it would parse without executing and exit 0 having run ZERO web tests while this guard reports them covered"
@@ -1197,7 +1202,7 @@ elif runner_is_data_cmd "$_online_main"; then
 	err "main.yml online runner's first command token is a data command (echo/printf/cat) — the marker is an argument, not executed"
 	echo "     → invoke vitest as a command, not via echo" >&2
 elif runner_has_dead_prefix "$_online_main" 'cd packages/daemon && node_modules/.bin/vitest run'; then
-	err "main.yml online runner places a '||'/'&&' before vitest (e.g. bash -lc 'false && ... && vitest run' or 'true || ...') — Bash short-circuits, so the marker is never reached and zero online tests run while this guard reports them covered"
+	err "main.yml online runner places a dead prefix ('||'/'&&'/exit/exec) before vitest (e.g. bash -lc 'false && ... && vitest run' or 'true || ...') — Bash short-circuits, so the marker is never reached and zero online tests run while this guard reports them covered"
 	echo "     → remove the '||' prefix / dead branch before 'vitest run'" >&2
 elif runner_has_noexec_interp "$_online_main" 'cd packages/daemon && node_modules/.bin/vitest run'; then
 	err "main.yml online runner invokes a no-exec interpreter (e.g. bash -n) before vitest — it would parse without executing and exit 0 having run ZERO online tests while this guard reports them covered"
