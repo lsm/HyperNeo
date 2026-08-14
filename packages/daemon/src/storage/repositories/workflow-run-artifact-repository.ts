@@ -141,6 +141,58 @@ export class WorkflowRunArtifactRepository {
     return { inserted: false, existing: this.rowToRecord(result.row) };
   }
 
+  /**
+   * Verified identity REPLACEMENT: delete every row for (runId, type, key)
+   * and insert the new one, in one transaction. The caller (the engine) only
+   * invokes this when the hook has verified the prior identity is retired
+   * (pr_ready's swap check confirms the previously stamped PR is CLOSED) —
+   * the claim's first-writer-wins protection still blocks unverified swaps.
+   */
+  replaceIdentityStamp(params: {
+    id: string;
+    runId: string;
+    nodeId: string;
+    artifactType: string;
+    artifactKey: string;
+    data: Record<string, unknown>;
+  }): boolean {
+    const tx = this.db.transaction(() => {
+      this.db
+        .prepare(
+          `DELETE FROM workflow_run_artifacts
+            WHERE run_id = ? AND artifact_type = ? AND artifact_key = ?`
+        )
+        .run(params.runId, params.artifactType, params.artifactKey);
+      const now = Date.now();
+      this.db
+        .prepare(
+          `INSERT INTO workflow_run_artifacts
+             (id, run_id, node_id, artifact_type, artifact_key, data, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          params.id,
+          params.runId,
+          params.nodeId,
+          params.artifactType,
+          params.artifactKey,
+          JSON.stringify(params.data),
+          now,
+          now
+        );
+    });
+    try {
+      tx();
+      this.reactiveDb?.notifyChange('workflow_run_artifacts');
+      return true;
+    } catch (err) {
+      log.warn(
+        `Failed to replace identity stamp (${params.artifactKey}): ${err instanceof Error ? err.message : String(err)}`
+      );
+      return false;
+    }
+  }
+
   /** List artifacts for a run, optionally filtered by nodeId and/or artifactType. */
   listByRun(
     runId: string,

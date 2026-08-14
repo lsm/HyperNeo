@@ -665,20 +665,27 @@ export async function ghGetReviewEvidence(
     }
     const nodes = reviewsConnection?.nodes;
     if (Array.isArray(nodes)) allReviewNodes.unshift(...nodes);
-    // Formal evidence decides the gate regardless of comments/reviews age —
-    // stop paging as soon as one qualifying APPROVED/CHANGES_REQUESTED review
-    // (in the run window) has been accumulated. Otherwise a >500-review PR or
-    // an older-page failure could block a handoff the first tail page proves.
-    if (
-      allReviewNodes.some((node) => {
-        const review = asRecord(node);
-        return (
-          (review?.state === 'APPROVED' || review?.state === 'CHANGES_REQUESTED') &&
-          typeof review?.publishedAt === 'string' &&
-          atOrAfter(review.publishedAt, sinceIso)
-        );
-      })
-    ) {
+    // EITHER evidence path decides the gate — stop paging as soon as the
+    // accumulated history proves it: a qualifying formal review, or (on an
+    // own PR, where GitHub blocks self-approval) a fresh COMMENTED review /
+    // conversation comment in the tail this page re-fetched. Otherwise a
+    // >500-review PR or an older-page failure could block a handoff the
+    // first tail page proves.
+    const pagePullRequest = prNode ?? {};
+    const pageMerged = {
+      data: {
+        viewer: asRecord(asRecord(result.data)?.data)?.viewer,
+        repository: {
+          pullRequest: {
+            ...pagePullRequest,
+            reviews: { nodes: allReviewNodes },
+            comments: asRecord(pagePullRequest.comments) ?? { nodes: [] },
+          },
+        },
+      },
+    };
+    const pageEvidence = extractReviewEvidence(pageMerged, sinceIso);
+    if (pageEvidence.formalReviewCount >= 1 || pageEvidence.ownPr) {
       reachedBoundary = true;
       lastCommentsPage = result.data;
       break;
@@ -1145,6 +1152,23 @@ export async function ghGetCodexApproval(
             retryable: true,
             error: 'malformed head pushedDate for reaction freshness; failing closed',
           };
+        }
+        // Codex-authored seed reactions must carry parseable createdAt values:
+        // a malformed one would be silently skipped as no evidence (the gate
+        // reporting no approval instead of a retryable malformed response).
+        if (Array.isArray(reactionSeedNodes)) {
+          for (const rNode of reactionSeedNodes) {
+            const reaction = asRecord(rNode);
+            if (!isCodexActor(reaction?.user)) continue;
+            const createdAt = reaction?.createdAt;
+            if (typeof createdAt !== 'string' || !Number.isFinite(Date.parse(createdAt))) {
+              return {
+                ok: false,
+                retryable: true,
+                error: 'malformed codex reaction timestamp; failing closed',
+              };
+            }
+          }
         }
         // Walk backward while its oldest entry is still newer than the head
         // push: a valid codex +1 can sit under >50 newer thumbs. Bounded

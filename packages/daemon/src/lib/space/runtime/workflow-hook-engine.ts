@@ -795,6 +795,38 @@ export class WorkflowHookEngine {
             timestamp: Date.now(),
           };
         } else {
+          // An ordinary (non-ceiling) retry invalidates a pending approval,
+          // exactly like a natural continue: otherwise the approval survives
+          // into a LATER, different stop (or the ceiling override) and
+          // bypasses a violation the operator never saw or approved.
+          if (approvalPending) {
+            const cleared = this.persistStateUpdate(hookId, {
+              localState: {
+                humanApproved: undefined,
+                humanApprovedAt: undefined,
+                humanRejectionReason: undefined,
+              },
+            });
+            if (!cleared) {
+              log.warn(
+                `Failed to clear human approval for hook "${hookId}" after a retry; blocking.`
+              );
+              terminal = {
+                kind: 'stop',
+                hookId,
+                reason:
+                  'Human approval could not be cleared after the hook asked to retry (state ' +
+                  'conflict). The action is blocked — approve it again and retry.',
+              };
+              executionLog.push({
+                hookId,
+                flow: 'stop',
+                reason: terminal.reason,
+                timestamp: Date.now(),
+              });
+              break;
+            }
+          }
           retry = { hookId, reason: ret.reason, retryAfterMs: ret.retryAfterMs };
         }
         break;
@@ -1027,9 +1059,24 @@ export class WorkflowHookEngine {
         // CONFLICTING identity is rejected so the caller blocks delivery.
         // Compare by NORMALIZED PR identity (same as the hook's swap check):
         // an equivalent spelling (/files suffix, trailing slash, casing) is
-        // the same PR, not a conflict.
+        // the same PR, not a conflict. A VERIFIED replacement (the hook's
+        // swap check confirmed the previously stamped PR is CLOSED and names
+        // it in `replaces`) swaps atomically instead of conflicting forever.
         if (existingLink === undefined || incomingLink === undefined) return false;
-        return samePrLink(incomingLink, existingLink);
+        if (samePrLink(incomingLink, existingLink)) return true;
+        const replaces =
+          typeof artifact.data.replaces === 'string' ? artifact.data.replaces : undefined;
+        if (replaces !== undefined && samePrLink(replaces, existingLink)) {
+          return this.config.artifactRepo.replaceIdentityStamp({
+            id: generateUUID(),
+            runId: this.config.workflowRunId,
+            nodeId: artifact.nodeId ?? meta.nodeId,
+            artifactType: artifact.artifactType,
+            artifactKey: artifact.artifactKey,
+            data: artifact.data,
+          });
+        }
+        return false;
       }
       this.config.artifactRepo.upsert({
         id: generateUUID(),
@@ -1105,6 +1152,21 @@ export class WorkflowHookEngine {
     // canSend(agentName, nodeName): accepting the reverse here would run a
     // side-effecting gate (pr_ready can stamp the run's immutable PR
     // identity) on a send the router then refuses to deliver.
+    // A worker address whose run id differs from THIS run (or that names no
+    // agent) is a notFound MISS at the router: the entry delivers nothing but
+    // the loop CONTINUES (agent-message-router.ts:432-435) — later entries
+    // still deliver, so a miss must not become a sequential failure.
+    const isForeignWorkerMiss = (rawTarget: string): boolean => {
+      try {
+        const addr = parseAddress(rawTarget);
+        if (addr.kind !== 'worker') return false;
+        if (!addr.agentName) return true;
+        const entryRun = addr.workflowRunId;
+        return entryRun !== undefined && entryRun !== this.config.workflowRunId;
+      } catch {
+        return false;
+      }
+    };
     const workerAgentOf = (rawTarget: string): string | undefined => {
       if (!rawTarget.startsWith('@worker:')) return undefined;
       try {
@@ -1173,8 +1235,10 @@ export class WorkflowHookEngine {
           // only a resolution that IS a workflow node name can disqualify —
           // a generic address resolving to no node adds no targets and must
           // not suppress the gate (the router delivers it separately).
+          const foreignWorkerMiss = target.startsWith('@worker:') && isForeignWorkerMiss(target);
           for (const resolved of resolvedTargets) {
             const workerSlotOk =
+              !foreignWorkerMiss &&
               target.startsWith('@worker:') &&
               isRoutableWorkerOnSlot(workerAgentOf(target), resolved);
             // The node-agent MCP path translates a bare slot target like
@@ -1310,6 +1374,9 @@ export class WorkflowHookEngine {
           // delivered separately per entry and does not abort the loop —
           // no authorization, no block.
           if (isAddress && !isWorker) continue;
+          // Foreign-run / agent-less worker miss: the router skips the entry
+          // (notFound) without aborting — later entries keep their gates.
+          if (isWorker && isForeignWorkerMiss(t)) continue;
           // Authorization (mirrors the router's worker check):
           // canSend(fromNode, resolvedNode) OR canSend(fromNode, agentSlot).
           // For a @worker entry the slot is the decoded agent name; for a

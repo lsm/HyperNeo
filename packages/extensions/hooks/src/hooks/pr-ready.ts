@@ -77,6 +77,7 @@ export const prReadyHook: Hook = {
     // delivers the handoff, and downstream gates (post_approval_only, merge)
     // must still resolve the identity. Stamping here is safe: the link parsed
     // and passed the swap check below.
+    let replacesValidated: string | undefined;
     const validated = getPrimaryLink(ctx);
     if (validated && !samePrLink(validated, link)) {
       const prior = await ghGetPr(ctx, validated);
@@ -90,6 +91,10 @@ export const prReadyHook: Hook = {
             `or close it first if it genuinely needs replacing.`,
         };
       }
+      // The prior reviewed PR is CLOSED — a genuine replacement. Name it so
+      // the engine's first-writer identity claim performs a VERIFIED swap
+      // instead of rejecting the new identity as a conflict forever.
+      replacesValidated = validated;
     }
     // Stamp the run's authoritative PR identity under an ENGINE-RESERVED key
     // (`save_artifact` rejects `__`-prefixed keys, so a same-node agent cannot
@@ -97,7 +102,7 @@ export const prReadyHook: Hook = {
     ctx.writeArtifact({
       artifactType: 'link',
       artifactKey: VALIDATED_PR_ARTIFACT_KEY,
-      data: { link, kind: 'pr' },
+      data: { link, kind: 'pr', ...(replacesValidated ? { replaces: replacesValidated } : {}) },
     });
 
     if (pr.data.state !== 'OPEN') {

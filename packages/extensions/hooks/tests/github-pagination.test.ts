@@ -752,7 +752,9 @@ test('an unparseable reaction boundary timestamp fails closed', async () => {
   expect(result.ok).toBe(false);
   if (!result.ok) {
     expect(result.retryable).toBe(true);
-    expect(result.error).toContain('timestamp boundary');
+    // Either the seed validation (codex reaction timestamp) or the walk's
+    // boundary check fires — both are the fail-closed malformed-timestamp path.
+    expect(result.error).toMatch(/timestamp/);
   }
 });
 
