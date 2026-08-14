@@ -114,6 +114,24 @@ describe('WorkflowHookEngine.executeAction', () => {
     return buildRetryableActionKey('send_message', params, META);
   }
 
+  /** Invoke a gated send_message through the WRAPPER — the delivery-time
+   * approval consume lives there (after the fail-closed persistence
+   * prerequisites), so delivery/consume assertions must go through it. */
+  async function wrappedSend(
+    engine: WorkflowHookEngine,
+    params: Record<string, unknown>
+  ): Promise<Record<string, unknown>> {
+    const wrapped = wrapHandlerWithHooks(
+      'send_message',
+      async () => ({ content: [{ type: 'text', text: '{"success":true}' }] }),
+      engine,
+      {},
+      META
+    );
+    const result = await wrapped(params);
+    return JSON.parse((result.content?.[0] as { text: string }).text) as Record<string, unknown>;
+  }
+
   test('a stop hook blocks delivery with the hook reason surfaced', async () => {
     const engine = makeEngine(
       makeWorkflow({
@@ -1322,15 +1340,15 @@ describe('WorkflowHookEngine.executeAction', () => {
     });
     const engine = makeEngine(workflow);
 
-    // First attempt after approval: the hook RUNS (side effects land) and its
-    // stop DECISION is overridden — the action delivers.
-    const first = await engine.executeAction('send_message', sendParams(), META);
-    expect(first.decision).toBe('deliver');
-    expect(
-      first.executionLog.some(
-        (e) => e.reason === 'Human override: hook stop overridden by approval'
-      )
-    ).toBe(true);
+    // First attempt after approval (through the WRAPPER — the one-shot
+    // consume runs at its delivery-time point): the hook RUNS (side effects
+    // land) and its stop DECISION is overridden — the action delivers, and
+    // the persisted decision record shows the override.
+    const first = await wrappedSend(engine, sendParams());
+    expect(first.success).toBe(true);
+    expect(hookStateRepo.get('run-1', 'stop_hook')?.lastReason).toBe(
+      'Human override: hook stop overridden by approval'
+    );
     // The one-shot flag was consumed.
     expect(hookStateRepo.get('run-1', 'stop_hook')?.localState.humanApproved).toBeUndefined();
 
@@ -1384,10 +1402,64 @@ describe('WorkflowHookEngine.executeAction', () => {
     // The approval stays armed for action A.
     expect(hookStateRepo.get('run-1', 'stop_hook')?.localState.humanApproved).toBe(true);
 
-    // Action A re-issued — the approval overrides its stop and delivers.
-    const outcomeA = await engine.executeAction('send_message', actionA, META);
-    expect(outcomeA.decision).toBe('deliver');
+    // Action A re-issued (through the WRAPPER — the one-shot consume runs at
+    // its delivery-time point) — the approval overrides its stop, delivers,
+    // and is consumed.
+    const resultA = await wrappedSend(engine, actionA);
+    expect(resultA.success).toBe(true);
     expect(hookStateRepo.get('run-1', 'stop_hook')?.localState.humanApproved).toBeUndefined();
+  });
+
+  test('a pre-delivery persistence failure does not lose the one-shot approval', async () => {
+    // The delivery-time consume runs in the WRAPPER, only after the
+    // fail-closed pre-delivery persistence succeeds. When that persistence
+    // fails, the wrapper blocks WITHOUT calling the handler — and the
+    // approval must still be armed afterward (consuming inside the engine
+    // would spend the operator's approval on a delivery that never reached
+    // the protected handler).
+    class PersistFailsRepo extends WorkflowHookStateRepository {
+      override updateWithRetry(): null {
+        return null;
+      }
+    }
+    const workflow = makeWorkflow({
+      customHooks: [STOP_HOOK],
+      hookBindings: [
+        {
+          hookId: 'stop_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    const failingRepo = new PersistFailsRepo(db);
+    failingRepo.update('run-1', 'stop_hook', {
+      expectedVersion: 0,
+      localState: {
+        humanApproved: true,
+        humanApprovedAt: 123,
+        __approvedActionKey: actionKeyFor(sendParams()),
+      },
+    });
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: new NodeExecutionRepository(db),
+      artifactRepo,
+      hookStateRepo: failingRepo,
+      workspacePath: process.cwd(),
+    });
+
+    // The chain delivers (engine) but the wrapper's decision persistence
+    // fails — the action blocks and the approval SURVIVES for the retry.
+    const result = await wrappedSend(engine, sendParams());
+    expect(result.success).toBe(false);
+    expect(String(result.error)).toContain('could not be persisted');
+    expect(failingRepo.get('run-1', 'stop_hook')?.localState.humanApproved).toBe(true);
   });
 
   test('a delivery does not consume a NEWER approval granted mid-chain', async () => {
@@ -1436,8 +1508,11 @@ describe('WorkflowHookEngine.executeAction', () => {
     };
     const engine = makeEngine(workflow);
 
-    const outcome = await engine.executeAction('send_message', sendParams(), META);
-    expect(outcome.decision).toBe('stop');
+    // Through the WRAPPER (the consume runs at the delivery-time point): the
+    // mismatched token blocks the delivery with the conflict reason.
+    const result = await wrappedSend(engine, sendParams());
+    expect(result.success).toBe(false);
+    expect(String(result.error)).toContain('approval could not be recorded');
     // The NEWER approval survives for the action it belongs to.
     expect(hookStateRepo.get('run-1', 'stop_hook')?.localState.humanApprovedAt).toBe(456);
   });
@@ -1448,12 +1523,11 @@ describe('WorkflowHookEngine.executeAction', () => {
     // turning a one-shot approval into a standing bypass — so the engine must
     // fail closed. In-memory SQLite always succeeds, so force the conflict.
     class ConflictedStateRepo extends WorkflowHookStateRepository {
-      override updateWithRetry(): null {
-        return null;
-      }
       // The atomic consume path loses its version race (someone else removed
       // the approval between the read and the write) — the action must block
       // rather than deliver on an approval it could not exclusively claim.
+      // Only the CONSUME fails: the wrapper's pre-delivery persistence must
+      // succeed so the delivery reaches the consume point at all.
       override consumeApprovalIfCurrent(): 'conflict' {
         return 'conflict';
       }
@@ -1490,17 +1564,17 @@ describe('WorkflowHookEngine.executeAction', () => {
       workspacePath: process.cwd(),
     });
 
-    const outcome = await engine.executeAction('send_message', sendParams(), META);
-    expect(outcome.decision).toBe('stop');
-    // Consumption is DEFERRED until the chain delivers; the conflicted
-    // consume-write blocks at that point (an approval that cannot be recorded
-    // must not arm a standing bypass).
-    expect(outcome.userState.reason).toContain('approval could not be recorded');
-    // The hook's override record first, then the deferred-consume stop.
-    expect(outcome.executionLog.length).toBe(2);
-    expect(outcome.executionLog[0]?.flow).toBe('continue');
-    expect(outcome.executionLog[1]?.flow).toBe('stop');
-    expect(outcome.executionLog[1]?.reason).toContain('approve it again');
+    // Through the WRAPPER: the chain delivers, the pre-delivery persistence
+    // prerequisites succeed, and the conflicted consume-write blocks at the
+    // delivery-time point — an approval that cannot be recorded must not arm
+    // a standing bypass.
+    const result = await wrappedSend(engine, sendParams());
+    expect(result.success).toBe(false);
+    expect(String(result.error)).toContain('approval could not be recorded');
+    expect(String(result.error)).toContain('approve it again');
+    // The approval stays armed (the consume never landed).
+    const stateAfter = conflictedRepo.get('run-1', 'stop_hook');
+    expect(stateAfter?.localState.humanApproved).toBe(true);
   });
 
   test('a failed retry-bookkeeping persist blocks instead of advertising retryable', async () => {

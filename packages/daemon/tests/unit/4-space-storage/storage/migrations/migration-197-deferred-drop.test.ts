@@ -181,6 +181,36 @@ describe('Migration 194 deferred hooks drop', () => {
     }
   });
 
+  test('a deferred 197 skips the full-database backup on every retry', async () => {
+    // The deferral re-runs on EVERY startup; an unconditional ensureBackup
+    // before the migration callback would copy the whole database at each
+    // boot for as long as the deferral holds (permanently for a custom
+    // legacy workflow). The runner's precheck must skip the backup.
+    const db = makeLegacyDb();
+    try {
+      // Reset the 197 marker (makeLegacyDb's initial runMigrations marked it).
+      const keyRow = db
+        .prepare(`SELECT key FROM migration_markers WHERE key LIKE '%197%'`)
+        .all() as Array<{ key: string }>;
+      for (const row of keyRow) {
+        db.prepare(`DELETE FROM migration_markers WHERE key = ?`).run(row.key);
+      }
+      db.prepare(`UPDATE space_workflows SET hook_bindings = NULL WHERE id = 'wf-1'`).run();
+
+      let backups = 0;
+      runMigrations(db, () => {
+        backups += 1;
+      });
+      // Deferral guard held: column kept, unmarked, and NO backup was taken
+      // for the deferred migration (the in-memory DB never triggered other
+      // migrations — all are marked from the initial run).
+      expect(hasHooksColumn(db)).toBe(true);
+      expect(backups).toBe(0);
+    } finally {
+      db.close();
+    }
+  });
+
   test('legacy hooks WITHOUT v2 bindings block the drop even with no runs (restamp window)', () => {
     // The v2 bindings for existing built-ins are installed by the LATER
     // fire-and-forget startup restamp; dropping the column during DB

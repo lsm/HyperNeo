@@ -271,6 +271,52 @@ describe('ghGetCodexApproval — boundary path', () => {
     },
   });
 
+  test('a decisive head-bound review on the boundary page skips the reaction walk', async () => {
+    // The boundary break fires on the page's OLDEST entry (pre-push dated),
+    // which preempts the loop's decisive check — but the page ALSO carries a
+    // head-bound APPROVED review. The decisive verdict is authoritative: the
+    // reaction walk (whose errors/caps on irrelevant older pages could turn a
+    // proven approval into a retry) must not even start — here it would fail
+    // closed on a deliberately malformed reactions connection.
+    setGraphqlRunnerForTests(
+      pagedRunner([
+        {
+          data: {
+            repository: {
+              pullRequest: {
+                reviews: {
+                  nodes: [
+                    // NEWEST: head-bound APPROVED (decisive).
+                    codexReview('APPROVED', '2026-08-13T12:00:00Z'),
+                    // OLDEST: pre-push dated — triggers the boundary break.
+                    codexReview('COMMENTED', '2026-08-11T10:00:00Z'),
+                  ],
+                  pageInfo: { hasPreviousPage: true, startCursor: 'Y3Vyc29yXzA' },
+                },
+                // Malformed reactions connection: entering the walk would
+                // fail closed — proving the decisive short-circuit skips it.
+                reactions: {},
+                commits: {
+                  nodes: [{ commit: { oid: HEAD, pushedDate: '2026-08-12T00:00:00Z' } }],
+                },
+              },
+            },
+          },
+        },
+        {
+          data: {
+            repository: {
+              pullRequest: { commits: { nodes: [{ commit: { oid: HEAD } }] } },
+            },
+          },
+        },
+      ])
+    );
+    const result = await ghGetCodexApproval(CTX, PR_LINK);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.approved).toBe(true);
+  });
+
   test('a not-approved boundary result returns settled (no false head-changed retry)', async () => {
     // The not-approved fall-through carries no evaluatedHeadOid — the early
     // return before the head recheck is what keeps every settled negative

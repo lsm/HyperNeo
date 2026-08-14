@@ -104,6 +104,15 @@ export interface HookActionOutcome {
   blockingHookId?: string;
   /** Backoff hint surfaced from a `retry`. */
   retryAfterMs?: number;
+  /**
+   * One-shot approval consumptions the chain DEFERRED to delivery. Returned
+   * to the caller (the wrapper) instead of applied here: they must run only
+   * after the wrapper's fail-closed pre-delivery prerequisites (decision
+   * persistence, queued-record clear) succeed — consuming inside the engine
+   * and failing later in the wrapper would lose the one-shot approval for a
+   * delivery that never reached the protected handler.
+   */
+  pendingApprovalConsumes?: Array<{ hookId: string; approvedAt: unknown }>;
 }
 
 /** Dependencies for the workflow hook engine. */
@@ -1020,51 +1029,16 @@ export class WorkflowHookEngine {
       };
     }
 
-    // The chain can DELIVER: persist the deferred approval consumptions now
-    // (an overridden approval is one-shot per delivery, not per override). A
-    // failed consume — write conflict, no approval armed, or a TOKEN MISMATCH
-    // (the observed approval was consumed and a NEWER approval granted to a
+    // The chain can DELIVER: hand the deferred approval consumptions to the
+    // CALLER (the wrapper) — an overridden approval is one-shot per delivery,
+    // and the consume must not run until every fail-closed pre-delivery
+    // prerequisite (decision persistence, queued-record clear) has succeeded
+    // and the protected handler is actually about to run. A failed consume
+    // there — write conflict, no approval armed, or a TOKEN MISMATCH (the
+    // observed approval was consumed and a NEWER approval granted to a
     // different action/violation while this chain ran its async hooks) —
     // blocks the delivery: delivering on the newer approval would spend an
     // approval intended for a different violation.
-    for (const [hookId, token] of deferredApprovalConsumes) {
-      // ATOMIC one-shot consume: clears only if the approval the chain
-      // OBSERVED is still armed — exactly one of two overlapping gated
-      // actions can win (a refresh-to-latest persist would let both consume
-      // and both deliver on one approval).
-      const consumed = this.config.hookStateRepo.consumeApprovalIfCurrent(
-        this.config.workflowRunId,
-        hookId,
-        token
-      );
-      if (consumed !== 'consumed') {
-        log.warn(
-          `Failed to consume human approval for hook "${hookId}" at delivery (${consumed}); blocking.`
-        );
-        executionLog.push({
-          hookId,
-          flow: 'stop',
-          reason:
-            'Human approval could not be recorded (state conflict). The hook still applies — ' +
-            'approve it again and retry.',
-          timestamp: Date.now(),
-        });
-        return {
-          decision: 'stop',
-          finalParams: currentParams,
-          followUpRequests: [],
-          stateUpdates,
-          executionLog,
-          userState: {
-            status: 'blocked',
-            hookId,
-            reason: 'Human approval could not be recorded (state conflict); the action is blocked.',
-          },
-          blockingHookId: hookId,
-        };
-      }
-    }
-
     return {
       decision: 'deliver',
       finalParams: currentParams,
@@ -1072,7 +1046,31 @@ export class WorkflowHookEngine {
       stateUpdates,
       executionLog,
       userState: { status: 'allowed' },
+      pendingApprovalConsumes:
+        deferredApprovalConsumes.size > 0
+          ? [...deferredApprovalConsumes].map(([hookId, token]) => ({
+              hookId,
+              approvedAt: token.approvedAt,
+            }))
+          : undefined,
     };
+  }
+
+  /**
+   * Apply a delivery-time one-shot approval consume (called by the wrapper
+   * after its pre-delivery prerequisites succeed). Returns the repo's
+   * four-way outcome; the CALLER blocks the delivery on anything but
+   * 'consumed'.
+   */
+  consumeApproval(
+    hookId: string,
+    observed: { approvedAt: unknown }
+  ): 'consumed' | 'not-pending' | 'token-mismatch' | 'conflict' {
+    return this.config.hookStateRepo.consumeApprovalIfCurrent(
+      this.config.workflowRunId,
+      hookId,
+      observed
+    );
   }
 
   /**
@@ -2948,6 +2946,35 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
       );
     }
     clearRetryableHookActionTimer(actionKey);
+
+    // One-shot approval consumptions the chain deferred to delivery. They run
+    // HERE — after every fail-closed pre-delivery prerequisite (decision
+    // persistence, queued-record clear) has succeeded, so the approval is
+    // spent only when the protected handler is actually about to run. A
+    // failed consume — write conflict, approval no longer armed, or a token
+    // mismatch (a NEWER approval granted to a different action mid-chain) —
+    // blocks: delivering would spend an approval intended for another
+    // violation.
+    for (const { hookId, approvedAt } of outcome.pendingApprovalConsumes ?? []) {
+      const consumed = engine.consumeApproval(hookId, { approvedAt });
+      if (consumed !== 'consumed') {
+        log.warn(
+          `Failed to consume human approval for hook "${hookId}" at delivery (${consumed}); blocking.`
+        );
+        return hookResult(
+          {
+            success: false,
+            error:
+              'Human approval could not be recorded (state conflict). The hook still applies — ' +
+              'approve it again and retry.',
+            hookStatus: 'blocked',
+            hookId,
+            hookReason: 'Human approval could not be recorded (state conflict).',
+          },
+          true
+        );
+      }
+    }
 
     if (outcome.followUpRequests.length > 0 && isFollowUp) {
       log.warn('Nested follow-up emission suppressed during follow-up dispatch.');

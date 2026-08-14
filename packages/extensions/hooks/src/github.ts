@@ -1398,13 +1398,86 @@ export async function ghGetCodexApproval(
         'unable to scan the newest codex review window (fail closed).',
     };
   }
-  // Boundary reached without a decisive review and without the evaluation
-  // block running (the loop broke at the boundary instead of at history
-  // exhaustion): run the SAME reaction back-pagination the normal path uses —
-  // the tail alone can omit a still-fresh codex +1 under >50 newer reactions
-  // — then evaluate the reaction fallback on the accumulated window.
+  // Boundary reached: the loop broke at the head-push window instead of at
+  // history exhaustion or the decisive early exit. The boundary page may
+  // still carry a head-bound DECISIVE verdict among its newer entries (the
+  // boundary break fires on the page's OLDEST entry and can preempt the
+  // decisive check) — evaluate the accumulated reviews FIRST, mirroring the
+  // normal path: a decisive verdict is authoritative and the reaction walk
+  // (with its caps and fail-closed errors on irrelevant older pages) must
+  // not be able to turn a proven approval into a retry. Only without a
+  // decisive verdict does the reaction fallback run — the tail alone can
+  // omit a still-fresh codex +1 under >50 newer reactions.
   const boundaryPrNode = asRecord(asRecord(asRecord(lastPage?.data)?.repository)?.pullRequest);
+  const boundaryReviewsProbe = extractCodexApproval(
+    {
+      data: {
+        repository: {
+          pullRequest: {
+            ...boundaryPrNode,
+            reviews: { nodes: allReviewNodes },
+            reactions: { nodes: [] },
+          },
+        },
+      },
+    },
+    link
+  );
+  if (boundaryReviewsProbe.failClosedReason) {
+    return { ok: false, retryable: true, error: boundaryReviewsProbe.failClosedReason };
+  }
   const boundaryReactionTail = asRecord(boundaryPrNode?.reactions)?.nodes;
+  // Head recheck shared by the decisive short-circuit and the post-walk
+  // evaluation: a commit pushed after the last pagination response must not
+  // deliver on the previous head.
+  const boundaryApproveWithRecheck = async <T extends GithubCodexApproval>(
+    approval: T
+  ): Promise<GithubResult<T>> => {
+    const boundaryRemaining = remainingBudget();
+    if (boundaryRemaining <= 0) return deadlineError();
+    const boundaryHeadCheck = await runGhGraphql(
+      ctx,
+      `query { repository(owner:"${pr.owner}",name:"${pr.repo}") { pullRequest(number:${pr.number}) { ` +
+        'commits(last: 1) { nodes { commit { oid } } } } } }',
+      pr.host,
+      { timeoutMs: boundaryRemaining }
+    );
+    if (!boundaryHeadCheck.ok) return boundaryHeadCheck;
+    const boundaryHeadPr = asRecord(
+      asRecord(asRecord(asRecord(boundaryHeadCheck.data)?.data)?.repository)?.pullRequest
+    );
+    const boundaryHeadNodes = asRecord(boundaryHeadPr?.commits)?.nodes;
+    const boundaryCurrentOid = Array.isArray(boundaryHeadNodes)
+      ? asRecord(asRecord(boundaryHeadNodes[boundaryHeadNodes.length - 1])?.commit)?.oid
+      : undefined;
+    if (
+      typeof boundaryCurrentOid !== 'string' ||
+      typeof approval.evaluatedHeadOid !== 'string' ||
+      boundaryCurrentOid !== approval.evaluatedHeadOid
+    ) {
+      return {
+        ok: false,
+        retryable: true,
+        error:
+          'PR head changed while the codex approval was being evaluated; re-evaluating ' +
+          '(fail closed against the stale-head approval).',
+      };
+    }
+    return { ok: true, data: approval };
+  };
+  // A DECISIVE head-bound review on the boundary page decides authoritatively
+  // — skip the reaction validation and walk entirely (their caps and
+  // fail-closed errors on irrelevant older pages must not be reachable when
+  // the verdict is already proven).
+  const boundaryDecisive =
+    boundaryReviewsProbe.hadDecisiveReview === true ||
+    (boundaryReviewsProbe.approved && typeof boundaryReviewsProbe.evaluatedHeadOid === 'string');
+  if (boundaryDecisive) {
+    if (!boundaryReviewsProbe.approved) return { ok: true, data: boundaryReviewsProbe };
+    // APPROVED decisively — the same head recheck below applies; jump to it
+    // by short-circuiting the reaction walk with an empty, complete window.
+    return boundaryApproveWithRecheck(boundaryReviewsProbe);
+  }
   // Structural validation BEFORE the walk gate (mirroring the normal path):
   // an absent/malformed reactions connection would otherwise read as "no
   // reactions to scan" and report a settled negative; a non-boolean
@@ -1577,40 +1650,10 @@ export async function ghGetCodexApproval(
   // so routing it into the head recheck would misread every settled negative
   // as "head changed" and retry forever.
   if (!boundaryApproval.approved) return { ok: true, data: boundaryApproval };
-  // Route an APPROVED boundary result through the same deadline-guarded head
-  // recheck as the normal path: a commit pushed after the last pagination
-  // response must not deliver on the previous head.
-  const boundaryRemaining = remainingBudget();
-  if (boundaryRemaining <= 0) return deadlineError();
-  const boundaryHeadCheck = await runGhGraphql(
-    ctx,
-    `query { repository(owner:"${pr.owner}",name:"${pr.repo}") { pullRequest(number:${pr.number}) { ` +
-      'commits(last: 1) { nodes { commit { oid } } } } } }',
-    pr.host,
-    { timeoutMs: boundaryRemaining }
-  );
-  if (!boundaryHeadCheck.ok) return boundaryHeadCheck;
-  const boundaryHeadPr = asRecord(
-    asRecord(asRecord(asRecord(boundaryHeadCheck.data)?.data)?.repository)?.pullRequest
-  );
-  const boundaryHeadNodes = asRecord(boundaryHeadPr?.commits)?.nodes;
-  const boundaryCurrentOid = Array.isArray(boundaryHeadNodes)
-    ? asRecord(asRecord(boundaryHeadNodes[boundaryHeadNodes.length - 1])?.commit)?.oid
-    : undefined;
-  if (
-    typeof boundaryCurrentOid !== 'string' ||
-    typeof boundaryApproval.evaluatedHeadOid !== 'string' ||
-    boundaryCurrentOid !== boundaryApproval.evaluatedHeadOid
-  ) {
-    return {
-      ok: false,
-      retryable: true,
-      error:
-        'PR head changed while the codex approval was being evaluated; re-evaluating ' +
-        '(fail closed against the stale-head approval).',
-    };
-  }
-  return { ok: true, data: boundaryApproval };
+  // Route an APPROVED boundary result through the shared deadline-guarded
+  // head recheck (a commit pushed after the last pagination response must not
+  // deliver on the previous head).
+  return boundaryApproveWithRecheck(boundaryApproval);
 }
 
 export function extractCodexApproval(value: unknown, prLink: string): GithubCodexApproval {

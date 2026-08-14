@@ -46,8 +46,8 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
     createBackup();
     backupCreated = true;
   };
-  const run = (key: string, migration: () => void): void => {
-    runMarkedMigration(db, key, migration, ensureBackup);
+  const run = (key: string, migration: () => void, writesNothing?: () => boolean): void => {
+    runMarkedMigration(db, key, migration, ensureBackup, writesNothing);
   };
 
   // Migration 1: Add oauth_token_encrypted column if it doesn't exist
@@ -999,7 +999,15 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // Hook-v2 migrations renumbered past dev's 192/193.
   run(migrationMarkerKey(195), () => runMigration195(db));
   run(migrationMarkerKey(196), () => runMigration196(db));
-  run(migrationMarkerKey(197), () => runMigration197(db));
+  run(
+    migrationMarkerKey(197),
+    () => runMigration197(db),
+    // Backup only when the drop will actually run: no column (already
+    // migrated) or a deferral guard holding writes nothing.
+    () =>
+      !tableHasColumn(db, 'space_workflows', 'hooks') ||
+      (tableExists(db, 'space_workflows') && migration197Defers(db))
+  );
 }
 
 function migrationMarkerKey(version: number): string {
@@ -1030,11 +1038,16 @@ function runMarkedMigration(
   db: BunDatabase,
   key: string,
   migration: () => void | boolean,
-  ensureBackup: () => void
+  ensureBackup: () => void,
+  writesNothing?: () => boolean
 ): void {
   if (hasMigrationMarker(db, key)) return;
 
-  ensureBackup();
+  // A migration whose precheck says it will write nothing (deferred or
+  // no-op) skips the full-database backup: a deferred migration re-runs on
+  // every startup, and an unconditional backup there would copy the whole
+  // database at each boot for as long as the deferral holds.
+  if (!writesNothing?.()) ensureBackup();
   // A migration may return `false` to DEFER itself (its precondition is not
   // met yet — see migration 194's ordering guard). The marker is then left
   // unset so the migration re-runs on the next startup.
@@ -12565,6 +12578,22 @@ export function runMigration196(db: BunDatabase): void {
 export function runMigration197(db: BunDatabase): boolean {
   if (!tableExists(db, 'space_workflows')) return true;
   if (tableHasColumn(db, 'space_workflows', 'hooks')) {
+    if (migration197Defers(db)) return false;
+    db.exec(`ALTER TABLE space_workflows DROP COLUMN hooks`);
+  }
+  return true;
+}
+
+/**
+ * Whether migration 197 will DEFER on this database (either guard): exposed
+ * separately so the migration runner can skip its full-database backup when
+ * nothing will be written — a deferred migration re-runs on EVERY startup,
+ * and an unconditional backup there would copy the whole database at each
+ * boot for as long as the deferral holds (permanently, for a custom legacy
+ * workflow that is never converted).
+ */
+export function migration197Defers(db: BunDatabase): boolean {
+  {
     // RESTAMP-CONVERGENCE: any workflow with non-empty legacy hooks that has
     // not yet been populated with v2 bindings still NEEDS the column (the
     // legacy-hook guard reads it to fail such runs closed). `w.hooks` stays
@@ -12581,7 +12610,7 @@ export function runMigration197(db: BunDatabase): boolean {
             AND (w.hook_bindings IS NULL OR w.hook_bindings IN ('', '[]', 'null'))`
       )
       .get() as { n: number } | undefined;
-    if (unconverted && unconverted.n > 0) return false;
+    if (unconverted && unconverted.n > 0) return true;
     // Any non-terminal run (pinned OR NOT — the restamp also defers while
     // runs are active, so a pinned run's workflow head can be equally
     // ungated), OR any approved post-approval task (the run may already be
@@ -12610,12 +12639,10 @@ export function runMigration197(db: BunDatabase): boolean {
             AND w.hooks != ''`
       )
       .get() as { n: number } | undefined;
-    // Silently deferred (no logger exists at migration time): the dormant
+    // The risky-runs guard: defers while any non-terminal run or reopenable
+    // task references a workflow that still carries legacy hooks. The dormant
     // column is inert, and the drop completes on a later startup once the
-    // blocking runs are terminal or pinned. Returning false leaves the
-    // migration UNMARKED so the runner retries it next startup.
-    if (risky && risky.n > 0) return false;
-    db.exec(`ALTER TABLE space_workflows DROP COLUMN hooks`);
+    // blocking runs are terminal or pinned.
+    return !!risky && risky.n > 0;
   }
-  return true;
 }
