@@ -3112,6 +3112,75 @@ describe('handleGoalAutomationExecute', () => {
     expect(evolutionRepo.listEpisodes(scope.id)).toHaveLength(0);
   });
 
+  it('still produces an episode for a manual note with a quantitative outcome', async () => {
+    const goal = goalRepo.create({ spaceId, title: 'Quantified result', type: 'recurring' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Quantified result',
+      objective: 'Manual note with a measured change',
+      policy: { automation: { selfNagCronExpression: '0 * * * *' } },
+    });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'manual_note',
+      sourceId: null,
+      summary: 'Benchmark latency dropped from 800 ms to 200 ms',
+      createdAt: 30,
+    });
+
+    const result = await handleGoalAutomationExecute(
+      createAutomationJob({
+        goalId: goal.id,
+        scopeId: scope.id,
+        triggerKind: 'self_nag',
+        triggerKey: 'schedule-quantified',
+        reason: 'self_nag',
+        scheduleId: 'schedule-quantified',
+      }),
+      {
+        goalRepo,
+        taskRepo,
+        evolutionRepo,
+        cursorRepo,
+        episodeService: {
+          createFromEvidence: async ({ evidenceIds }) => ({
+            episode: evolutionRepo.createEpisode({
+              scopeId: scope.id,
+              title: 'Quantified retrospective',
+              evidenceIds,
+              outcomeSummary: 'Quantified outcome',
+              findings: [],
+            }),
+            proposals: [],
+            lessons: [],
+          }),
+          // A measured value changing to another measured value is a concrete
+          // outcome even though no outcome keyword appears in the note.
+          preflightEvidence: () =>
+            makePreflight({
+              level: 'low',
+              score: 0,
+              requiresConfirmation: true,
+              counts: {
+                total: 1,
+                manualNotes: 1,
+                taskResults: 0,
+                workflowArtifacts: 0,
+                metricSnapshots: 0,
+                outcomes: 0,
+              },
+            }),
+        },
+      }
+    );
+
+    expect(result.skipped).toBe(false);
+    expect(result.episodeId).toBeString();
+    expect(evolutionRepo.listEpisodes(scope.id)).toHaveLength(1);
+  });
+
   it('skips an empty auto-generated session trace diagnostic with no outcomes', async () => {
     const goal = goalRepo.create({ spaceId, title: 'Empty trace', type: 'recurring' });
     const scope = evolutionRepo.createScope({

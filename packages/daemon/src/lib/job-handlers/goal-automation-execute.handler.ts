@@ -505,12 +505,30 @@ function isThinEvidence(item: EvidenceRef): boolean {
  * Affirmative outcome signals for the self_nag no-op gate. Unlike the preflight
  * scorer's outcome count — which matches bare keywords like "ci", "build", or
  * "test" regardless of negation or pending state — these require an outcome
- * that actually happened: a concrete PR reference, or a merge/pass/fail style
- * result verb. Bare completion words ("done", "completed", "approved") are
- * deliberately excluded: they describe process status, not work artifacts.
+ * that actually happened: a concrete PR reference, a merge/pass/fail style
+ * result verb, or a quantitative result (a measured value changing to another
+ * measured value, e.g. "latency dropped from 800 ms to 200 ms"). Bare
+ * completion words ("done", "completed", "approved") are deliberately excluded:
+ * they describe process status, not work artifacts.
  */
 const AFFIRMATIVE_OUTCOME_RE =
   /\b(?:pr\s*#?\d+|pull\s+request|github\.com\/[^\s]+\/pull\/\d+|merged?|landed|shipped|pass(?:ed|ing)?|green|succeed(?:ed|ing)?|success|failed|failures?|errors?|exceptions?|crashed|fixed|closed)\b/gi;
+
+/**
+ * Quantitative outcome signal: a measured value changing to another measured
+ * value ("800 ms to 200 ms", "3% to 5%", "1.2 GB → 900 MB"). A bare
+ * measurement without a change ("800 ms") does not count — it is an
+ * observation, not an outcome.
+ */
+const QUANTITATIVE_OUTCOME_RE =
+  /\b\d+(?:\.\d+)?\s*(?:ms|s|sec|seconds?|min|minutes?|hours?|h|b|kb|mb|gb|tb|%|x|fps|rps|qps|req\/s|us|µs|ns)(?![a-z0-9])[^.;:!?]{0,24}\b(?:to|→|-|–)\s*\d+(?:\.\d+)?/i;
+
+function hasQuantitativeOutcome(text: string): boolean {
+  const match = QUANTITATIVE_OUTCOME_RE.exec(text);
+  if (!match) return false;
+  const prefix = text.slice(Math.max(0, match.index - 48), match.index);
+  return !NON_AFFIRMATIVE_PREFIX_RE.test(prefix);
+}
 
 /**
  * Prefixes that make an outcome keyword a negated or still-pending mention
@@ -541,6 +559,7 @@ function hasAffirmativeOutcome(evidence: EvidenceRef[]): boolean {
 }
 
 function hasAffirmativeOutcomeText(text: string): boolean {
+  if (hasQuantitativeOutcome(text)) return true;
   for (const match of text.matchAll(AFFIRMATIVE_OUTCOME_RE)) {
     const prefix = text.slice(Math.max(0, match.index - 48), match.index);
     if (!NON_AFFIRMATIVE_PREFIX_RE.test(prefix)) return true;
