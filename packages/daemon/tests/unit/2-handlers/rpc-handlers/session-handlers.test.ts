@@ -708,3 +708,79 @@ describe('Session RPC Handlers — models.list', () => {
     });
   });
 });
+
+describe('Session RPC Handlers — session.appendInputDraft', () => {
+  let messageHubData: ReturnType<typeof createMockMessageHub>;
+  let eventBus: ReturnType<typeof createMockInternalEventBus>;
+  let sessionManager: {
+    getSessionFromDB: ReturnType<typeof mock>;
+    updateSession: ReturnType<typeof mock>;
+  };
+  let existingDraft: string | null;
+  let sessionExists: boolean;
+
+  beforeEach(async () => {
+    messageHubData = createMockMessageHub();
+    eventBus = createMockInternalEventBus();
+    existingDraft = 'existing';
+    sessionExists = true;
+    sessionManager = {
+      getSessionFromDB: mock(() =>
+        sessionExists ? { id: 's1', metadata: { inputDraft: existingDraft } } : null
+      ),
+      updateSession: mock(async () => {}),
+    } as unknown as SessionManager;
+
+    const { setupSessionHandlers } = await import(
+      '../../../../src/lib/rpc-handlers/session-handlers'
+    );
+    setupSessionHandlers(messageHubData.hub, sessionManager, eventBus, {} as SpaceManager);
+  });
+
+  it('appends to the current draft with a separating space', async () => {
+    existingDraft = 'existing';
+    const handler = messageHubData.handlers.get('session.appendInputDraft');
+    expect(handler).toBeDefined();
+    const result = (await handler!({ sessionId: 's1', text: 'hello world' }, {})) as {
+      success: boolean;
+    };
+    expect(result.success).toBe(true);
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: { inputDraft: 'existing hello world' },
+    });
+  });
+
+  it('does not insert a space across a CJK boundary', async () => {
+    existingDraft = '你好';
+    const handler = messageHubData.handlers.get('session.appendInputDraft');
+    await handler!({ sessionId: 's1', text: '世界' }, {});
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: { inputDraft: '你好世界' },
+    });
+  });
+
+  it('appends to an empty draft with no leading space', async () => {
+    existingDraft = null;
+    const handler = messageHubData.handlers.get('session.appendInputDraft');
+    await handler!({ sessionId: 's1', text: 'hello' }, {});
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: { inputDraft: 'hello' },
+    });
+  });
+
+  it('throws when the session does not exist and does not write', async () => {
+    sessionExists = false;
+    const handler = messageHubData.handlers.get('session.appendInputDraft');
+    await expect(handler!({ sessionId: 'missing', text: 'hi' }, {})).rejects.toThrow(
+      'Session not found'
+    );
+    expect(sessionManager.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('rejects whitespace-only text before reading or writing the draft', async () => {
+    const handler = messageHubData.handlers.get('session.appendInputDraft');
+    await expect(handler!({ sessionId: 's1', text: '   ' }, {})).rejects.toThrow();
+    expect(sessionManager.getSessionFromDB).not.toHaveBeenCalled();
+    expect(sessionManager.updateSession).not.toHaveBeenCalled();
+  });
+});

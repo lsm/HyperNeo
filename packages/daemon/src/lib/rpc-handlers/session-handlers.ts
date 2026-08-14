@@ -166,6 +166,40 @@ function toReplayContent(
   return null;
 }
 
+const INPUT_DRAFT_CHAR_LIMIT = 100_000;
+const CJK_SCRIPT = /[\p{sc=Han}\p{sc=Hiragana}\p{sc=Katakana}\p{sc=Hangul}]/u;
+const ASCII_QUOTE = /['"`]/;
+
+// Mirrors the web composer's draft-insert spacing rules: suppress a separating
+// space when the preceding text ends in whitespace, an opening bracket/quote,
+// or nothing at all.
+function suppressLeadingSpace(before: string): boolean {
+  if (before.length === 0) return false;
+  const last = before.slice(-1);
+  if (/\s/.test(last)) return true;
+  if (/\p{Ps}|\p{Pi}/u.test(last)) return true;
+  if (ASCII_QUOTE.test(last)) {
+    const prev = before.slice(-2, -1);
+    return prev === '' || /\s/.test(prev);
+  }
+  return false;
+}
+
+/**
+ * Append `text` to an existing input draft, inserting a single separating space
+ * only when both sides are non-empty and neither boundary is CJK or a
+ * join-suppressing character. Capped to the composer's character limit.
+ */
+export function appendInputDraftText(existing: string, text: string): string {
+  const needsSpace =
+    existing.length > 0 &&
+    !suppressLeadingSpace(existing) &&
+    !/^\s/.test(text) &&
+    !CJK_SCRIPT.test(existing.slice(-1)) &&
+    !(text.length > 0 && CJK_SCRIPT.test(text[0]!));
+  return `${existing}${needsSpace ? ' ' : ''}${text}`.slice(0, INPUT_DRAFT_CHAR_LIMIT);
+}
+
 export function setupSessionHandlers(
   messageHub: MessageHub,
   sessionManager: SessionManager,
@@ -423,6 +457,34 @@ export function setupSessionHandlers(
 
     // Room channel broadcasts removed with legacy Room feature retirement.
 
+    return { success: true };
+  });
+
+  // Atomic server-side append to a session's input draft. The voice flow uses
+  // this when a transcription completes AFTER the composer unmounted (the user
+  // navigated to another session mid-transcription): the client cannot safely
+  // read-modify-write the draft, because a snapshot taken before navigation
+  // would clobber a draft the user edited after returning. Computing the append
+  // here keeps the read→write in one synchronous step (getFromDB and
+  // updateSession's DB write both run before the first `await`), so no
+  // concurrent draft write can land between them.
+  messageHub.onRequest('session.appendInputDraft', async (data, _ctx) => {
+    const { sessionId, text } = data as { sessionId: string; text: string };
+    if (typeof text !== 'string' || text.trim().length === 0) {
+      throw new Error('Text to append is required');
+    }
+    const session = sessionManager.getSessionFromDB(sessionId);
+    if (!session) throw new Error('Session not found');
+    const appended = appendInputDraftText(session.metadata?.inputDraft ?? '', text);
+    const updates: UpdateSessionRequest = { metadata: { inputDraft: appended } };
+    await sessionManager.updateSession(sessionId, updates as Partial<Session>);
+    messageHub.event(
+      'session.updated',
+      { ...updates, sessionId },
+      {
+        channel: `session:${sessionId}`,
+      }
+    );
     return { success: true };
   });
 

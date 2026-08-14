@@ -170,7 +170,7 @@ describe('MessageInput — recording UI', () => {
     await waitFor(() => expect(onSend).toHaveBeenCalledWith('hello world', undefined, 'immediate'));
   });
 
-  it('persists the transcript to the session draft when the composer unmounts mid-transcription', async () => {
+  it('appends the transcript to the session draft when the composer unmounts mid-transcription', async () => {
     // Slow transcription: resolve only after the composer has unmounted, so the
     // completion runs against mountedRef === false (the keyed ChatContainer is
     // gone), mirroring a user who clicks Send then navigates to another session.
@@ -179,14 +179,6 @@ describe('MessageInput — recording UI', () => {
       resolveTranscribe = resolve;
     });
     transcribeRequest.mockReturnValueOnce(transcribePromise);
-    // The target session already has a draft — the transcript must be appended
-    // to it, not replace it. Only voice.transcribe is deferred.
-    hubRequest.mockImplementation(async (method: string, payload?: unknown) => {
-      if (method === 'voice.transcribe') return transcribeRequest(method, payload);
-      if (method === 'session.get')
-        return { session: { metadata: { inputDraft: 'existing draft' } } };
-      return {};
-    });
 
     const onSend = vi.fn(async () => {});
     const { unmount } = render(<MessageInput sessionId="s1" onSend={onSend} />);
@@ -199,17 +191,50 @@ describe('MessageInput — recording UI', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     resolveTranscribe({ text: 'hello world' });
 
-    // The transcript is appended to s1's server-side draft — not silently lost.
+    // The transcript is appended server-side via the atomic append RPC — not
+    // silently lost, and no client read-modify-write that could clobber the
+    // draft. The spacing/merge lives in the daemon.
     await waitFor(() => {
-      const updateCall = hubRequest.mock.calls.find(([m]) => m === 'session.update');
-      expect(updateCall).toBeTruthy();
-      expect(updateCall[1]).toMatchObject({
-        sessionId: 's1',
-        metadata: { inputDraft: 'existing draft hello world' },
-      });
+      const appendCall = hubRequest.mock.calls.find(([m]) => m === 'session.appendInputDraft');
+      expect(appendCall).toBeTruthy();
+      expect(appendCall[1]).toEqual({ sessionId: 's1', text: 'hello world' });
     });
+    await waitFor(() =>
+      expect(toast.info).toHaveBeenCalledWith('Voice transcript saved to the session draft')
+    );
     // No mounted composer to auto-submit through, so it is preserved as a draft
     // rather than sent. (Background send delivery is a follow-up.)
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a failure toast (not a false "saved") when draft persistence fails after unmount', async () => {
+    let resolveTranscribe!: (value: { text: string }) => void;
+    transcribeRequest.mockReturnValueOnce(
+      new Promise<{ text: string }>((resolve) => {
+        resolveTranscribe = resolve;
+      })
+    );
+    // The atomic append RPC fails (e.g. socket dropped) — the toast must NOT
+    // claim success, and there is no mounted composer to fall back to.
+    hubRequest.mockImplementation(async (method: string, payload?: unknown) => {
+      if (method === 'voice.transcribe') return transcribeRequest(method, payload);
+      if (method === 'session.appendInputDraft') throw new Error('boom');
+      return {};
+    });
+
+    const onSend = vi.fn(async () => {});
+    const { unmount } = render(<MessageInput sessionId="s1" onSend={onSend} />);
+
+    fireEvent.click(screen.getByLabelText('Stop, transcribe and send'));
+    await waitFor(() => expect(transcribeRequest).toHaveBeenCalledTimes(1));
+    unmount();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    resolveTranscribe({ text: 'hello world' });
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith('Voice transcript could not be saved — it was lost')
+    );
+    expect(toast.info).not.toHaveBeenCalled();
     expect(onSend).not.toHaveBeenCalled();
 
     // Restore the default dispatch so later tests aren't affected.

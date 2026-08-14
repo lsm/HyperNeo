@@ -481,39 +481,22 @@ export default function MessageInput({
   // A transcription can complete AFTER the composer unmounted — the user clicked
   // Send/Stop then navigated to another session while the (up to 125s) RPC was
   // in flight. insertTranscript writes through the live draft signal + textarea,
-  // neither of which exists once the keyed ChatContainer is gone, so persist the
-  // transcript straight to the target session's server-side draft instead. That
-  // draft survives navigation and is reloaded by useInputDraft when they return,
-  // so the dictated text is waiting for them rather than silently dropped.
+  // neither of which exists once the keyed ChatContainer is gone. Delegate to the
+  // daemon's atomic `session.appendInputDraft` (not a client read-modify-write,
+  // which could clobber a draft the user edited after returning) and report
+  // success/failure so the toast never claims a save that did not happen.
   const persistTranscriptToDraft = useCallback(
-    async (targetSessionId: string, transcript: string) => {
+    async (targetSessionId: string, transcript: string): Promise<boolean> => {
       const hub = connectionManager.getHubIfConnected();
-      if (!hub) return;
+      if (!hub) return false;
       try {
-        const response = await hub.request<{ session?: { metadata?: { inputDraft?: string } } }>(
-          'session.get',
-          { sessionId: targetSessionId }
-        );
-        const existing = (response.session?.metadata?.inputDraft ?? '').trim();
-        // No live caret when unmounted, so append to the end of any existing
-        // draft using the same spacing/CJK rules as insertTranscript.
-        const needsSpace =
-          existing.length > 0 &&
-          !suppressLeadingSpace(existing) &&
-          !/^\s/.test(transcript) &&
-          !isCjk(existing.slice(-1)) &&
-          !isCjk(transcript[0]);
-        const merged = `${existing}${needsSpace ? ' ' : ''}${transcript}`.slice(
-          0,
-          COMPOSER_CHAR_LIMIT
-        );
-        await hub.request('session.update', {
+        await hub.request('session.appendInputDraft', {
           sessionId: targetSessionId,
-          metadata: { inputDraft: merged },
+          text: transcript,
         });
+        return true;
       } catch {
-        // Best-effort: if persistence fails there is no mounted UI to recover
-        // into, and the toast already told the user we saved it.
+        return false;
       }
     },
     []
@@ -563,12 +546,14 @@ export default function MessageInput({
           if (mode !== 'stay') pendingAutoSendRef.current = { sessionId: targetSessionId, mode };
         } else if (transcript) {
           // Composer unmounted (user navigated away) while this transcription
-          // was in flight. Persist the transcript to the target session's
-          // server-side draft so it survives navigation instead of being
-          // silently dropped. Auto-send can't fire with no mounted composer;
-          // for now the text lands as a ready-to-send draft.
-          void persistTranscriptToDraft(targetSessionId, transcript);
-          toast.info('Voice transcript saved to the session draft');
+          // was in flight. Append the transcript to the target session's draft
+          // atomically on the server so it survives navigation instead of being
+          // silently dropped. Auto-send can't fire with no mounted composer; for
+          // now the text lands as a ready-to-send draft. Await the result so the
+          // toast reflects whether the save actually happened.
+          const saved = await persistTranscriptToDraft(targetSessionId, transcript);
+          if (saved) toast.info('Voice transcript saved to the session draft');
+          else toast.error('Voice transcript could not be saved — it was lost');
         } else if (mountedRef.current) {
           // Backend heard nothing it could transcribe — say so instead of
           // silently returning to an empty composer.
