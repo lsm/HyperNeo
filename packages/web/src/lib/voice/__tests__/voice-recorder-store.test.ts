@@ -175,15 +175,29 @@ describe('voiceRecorderStore', () => {
     expect(mediaStreamSource.disconnect).toHaveBeenCalled();
   });
 
-  it('release() (composer unmount) discards an in-flight recording like cancel()', async () => {
+  it('orphan() keeps capture alive across a composer unmount, and adopt() restores ownership', async () => {
     await voiceRecorderStore.start('owner-a', 's1');
-    await voiceRecorderStore.release();
+    voiceRecorderStore.orphan();
 
-    expect(voiceRecorderStore.isRecording.value).toBe(false);
-    expect(mediaStreamSource.disconnect).toHaveBeenCalled();
-    // A start() after release is discarded until a NEW generation begins.
-    await voiceRecorderStore.start('owner-a', 's1');
+    // Capture is STILL live — mic graph untouched, recorder busy.
     expect(voiceRecorderStore.isRecording.value).toBe(true);
+    expect(mediaStreamSource.disconnect).not.toHaveBeenCalled();
+    expect(fakeContext.close).not.toHaveBeenCalled();
+    // No owner: another composer cannot start, and the recording is adoptable.
+    await expect(voiceRecorderStore.start('owner-b', 's2')).rejects.toThrow('busy');
+
+    // Adoption is session-scoped and refuses an already-owned recording.
+    expect(voiceRecorderStore.adopt('owner-b', 's2')).toBe(false);
+    expect(voiceRecorderStore.adopt('owner-b', 's1')).toBe(true);
+    expect(voiceRecorderStore.recordingOwnerId.value).toBe('owner-b');
+    // The adopter can stop and gets the full buffered audio.
+    const recording = await voiceRecorderStore.stop();
+    expect(recording.audioBase64.length).toBeGreaterThan(0);
+  });
+
+  it('orphan() is a no-op when this store has no live recording', async () => {
+    voiceRecorderStore.orphan();
+    expect(voiceRecorderStore.recordingOwnerId.value).toBeNull();
   });
 
   it('treats a pending getUserMedia as busy — a second composer cannot start', async () => {

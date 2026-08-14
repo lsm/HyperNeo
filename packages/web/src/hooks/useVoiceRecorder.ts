@@ -8,8 +8,12 @@
  * and its agent overlay can even share one sessionId — the singleton tracks
  * ownership by COMPOSER INSTANCE: each hook instance mints a stable owner
  * token, exposes the recording only while this instance owns it, and scopes
- * cancel/release so one composer can never stop or discard another's
- * recording.
+ * cancel so one composer can never discard another's recording.
+ *
+ * A recording SURVIVES its composer's unmount: the unmount orphans the
+ * recording (capture continues; ownership clears) and the next composer
+ * mounted for the same session adopts it — so switching sessions and coming
+ * back mid-recording keeps the mic running and the waveform re-attaches.
  */
 
 import { useEffect, useRef } from 'preact/hooks';
@@ -23,6 +27,13 @@ export function useVoiceRecorder(sessionId: string) {
   const ownerIdRef = useRef(`voice-owner-${Math.random().toString(36).slice(2)}`);
   const ownerId = ownerIdRef.current;
   const owns = () => voiceRecorderStore.recordingOwnerId.value === ownerId;
+
+  // Adopt on mount (and on session re-target): if a recording for THIS session
+  // was orphaned by a previous composer, this composer takes it over. A
+  // concurrently-mounted composer with an active owner is never disturbed.
+  useEffect(() => {
+    voiceRecorderStore.adopt(ownerId, sessionId);
+  }, [ownerId, sessionId]);
 
   // Reading these signals during render subscribes through @preact/signals —
   // same reactivity contract as the previous useState-based hook.
@@ -43,18 +54,13 @@ export function useVoiceRecorder(sessionId: string) {
     getLevel: voiceRecorderStore.getLevel,
   };
 
-  // Composer unmount discards a recording owned by THIS instance — identical
-  // to the pre-store behavior. Recordings owned by other concurrently-mounted
-  // composers are left alone.
+  // Composer unmount hands the recording to whoever opens this session next —
+  // capture stays live (orphaned), the cap timers still bound it, and the
+  // pending audio remains recoverable.
   useEffect(() => {
     return () => {
-      if (owns()) {
-        void voiceRecorderStore.release();
-      }
+      voiceRecorderStore.orphan();
     };
-    // ownerId is ref-backed and stable; sessionId changes must NOT re-run the
-    // cleanup (a mid-recording re-target keeps the recording until unmount).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return view;

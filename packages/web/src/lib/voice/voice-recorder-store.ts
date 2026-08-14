@@ -330,22 +330,31 @@ class VoiceRecorderStore {
   };
 
   /**
-   * Composer-unmount teardown: discards any in-flight or active recording.
-   * Identical to the pre-store hook's unmount effect — the follow-up change
-   * that keeps recordings alive across session switches removes this call from
-   * the adapter without touching the capture logic.
+   * Composer-unmount hand-off: the recording OUTLIVES its composer. If this
+   * instance owned the recording, ownership is cleared but capture stays live
+   * (mic, cap timer, buffered chunks) so the composer that next mounts for the
+   * same session can adopt() it. If nobody returns, the 5-minute/byte cap
+   * eventually stops the mic and the audio stays recoverable.
    */
-  readonly release = async (): Promise<void> => {
+  readonly orphan = (): void => {
+    if (this.recordingOwnerId.value === null) return;
     this.startGeneration += 1;
     this.starting = false;
     this.isStarting.value = false;
-    this.chunks = [];
-    this.stoppedByLimit = false;
-    this.durationLimitHit.value = false;
-    this.isRecording.value = false;
     this.recordingOwnerId.value = null;
-    this.recordingSessionId.value = null;
-    await this.teardown();
+  };
+
+  /**
+   * Claim an orphaned recording for a freshly-mounted composer. Succeeds only
+   * when the recording belongs to `ownerSessionId` AND has no live owner — a
+   * concurrently-mounted composer for the same session never steals ownership
+   * from an active one. Returns whether this composer now owns the recording.
+   */
+  readonly adopt = (ownerId: string, ownerSessionId: string): boolean => {
+    if (this.recordingSessionId.value !== ownerSessionId) return false;
+    if (this.recordingOwnerId.value !== null) return false;
+    this.recordingOwnerId.value = ownerId;
+    return true;
   };
 
   /**
