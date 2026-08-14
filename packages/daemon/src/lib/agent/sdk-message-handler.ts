@@ -34,6 +34,7 @@ import {
   isSDKResultSuccess,
   isSDKSessionStateChangedMessage,
   isSDKStatusMessage,
+  isSDKStreamEvent,
   isSDKSystemInit,
   isSDKSystemMessage,
   isSDKThinkingTokensMessage,
@@ -690,10 +691,13 @@ export class SDKMessageHandler {
   }
 
   /**
-   * Main entry point - handle incoming SDK message
+   * Main entry point - handle incoming SDK message.
    *
-   * NOTE: Stream events removed - the SDK's query() with AsyncGenerator yields
-   * complete messages, not incremental stream_event tokens.
+   * The SDK's query() AsyncGenerator yields complete messages (assistant, user,
+   * result, …); when `includePartialMessages` is on it ALSO yields incremental
+   * `stream_event` token deltas. Those partials are intercepted below as a
+   * LIVENESS heartbeat for the delivery-turn stall watchdog and are never
+   * persisted or broadcast — only complete messages reach the DB / clients.
    */
   async handleMessage(message: SDKMessage): Promise<void> {
     const { session, db, messageHub, stateManager } = this.ctx;
@@ -702,6 +706,19 @@ export class SDKMessageHandler {
     // progress stall watchdog so an actively-streaming turn (even a multi-hour
     // one) is never mistaken for a stall. No-op when no delivery turn is active.
     this.ctx.bumpDeliveryTurnActivity?.();
+
+    // Partial/streaming token deltas (`stream_event`) are a LIVENESS heartbeat
+    // only. They prove the model is actively generating or extended-thinking
+    // during a long quiet generation that would otherwise exceed the stall
+    // watchdog's no-activity window and look like a hang — the bump above reset
+    // it. Update the streaming phase, but NEVER persist or broadcast partials:
+    // a single assistant turn can yield hundreds of token deltas, and persisting
+    // each would bloat the DB. The complete `assistant` message is still emitted
+    // and handled normally below, so persistence/rendering are unaffected.
+    if (isSDKStreamEvent(message)) {
+      await stateManager.detectPhaseFromMessage(message);
+      return;
+    }
 
     // Check for API error patterns that indicate an infinite loop
     // This MUST happen BEFORE any other processing to catch errors early
