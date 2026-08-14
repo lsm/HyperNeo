@@ -341,6 +341,38 @@ describe('ghGetReviewEvidence — back-pagination past the fresh window', () => 
     if (result.ok) expect(result.data.commentEvidenceCount).toBe(51);
   });
 
+  test('an own-PR comments connection without a boolean hasPreviousPage fails closed', async () => {
+    // The page carries comment nodes but a missing/non-boolean flag — older
+    // pages may hold the qualifying comment, so the scan must fail closed
+    // rather than declare itself complete.
+    const page1 = {
+      data: {
+        viewer: { login: 'reviewer' },
+        repository: {
+          pullRequest: {
+            author: { login: 'reviewer' }, // own PR
+            reviews: { nodes: [], pageInfo: { hasPreviousPage: false } },
+            comments: {
+              nodes: [{ createdAt: '2026-08-13T12:00:00Z' }],
+              pageInfo: { hasPreviousPage: true }, // no startCursor below → would break; but the flag check fires first only if non-boolean
+            },
+          },
+        },
+      },
+    };
+    // Make the flag non-boolean to exercise the guard.
+    (
+      page1.data.repository.pullRequest.comments.pageInfo as { hasPreviousPage?: unknown }
+    ).hasPreviousPage = undefined;
+    setGraphqlRunnerForTests(pagedRunner([page1]));
+    const result = await ghGetReviewEvidence(CTX, PR_LINK, '2026-08-12T00:00:00Z');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.retryable).toBe(true);
+      expect(result.error).toContain('hasPreviousPage');
+    }
+  });
+
   test('decisive formal evidence skips the comments scan entirely', async () => {
     // A qualifying formal review decides the gate regardless of comments
     // (and comments are only eligible on an own PR) — a malformed or absent
@@ -667,6 +699,61 @@ describe('ghGetCodexApproval — decisive review skips the reaction walk', () =>
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.data.approved).toBe(true);
   });
+});
+
+test('a non-decisive response missing reactions hasPreviousPage fails closed', async () => {
+  // No decisive review → reaction path runs → a malformed reactions
+  // connection must fail closed rather than read as 'no reactions'.
+  setGraphqlRunnerForTests(async () => ({
+    ok: true,
+    data: {
+      data: {
+        repository: {
+          pullRequest: {
+            reviews: { nodes: [], pageInfo: { hasNextPage: false } },
+            reactions: { nodes: [] }, // pageInfo omitted
+            commits: {
+              nodes: [{ commit: { oid: HEAD, pushedDate: '2026-08-12T00:00:00Z' } }],
+            },
+          },
+        },
+      },
+    },
+  }));
+  const result = await ghGetCodexApproval(CTX, PR_LINK);
+  expect(result.ok).toBe(false);
+  if (!result.ok) {
+    expect(result.retryable).toBe(true);
+    expect(result.error).toContain('reactions connection');
+  }
+});
+
+test('an unparseable reaction boundary timestamp fails closed', async () => {
+  setGraphqlRunnerForTests(async () => ({
+    ok: true,
+    data: {
+      data: {
+        repository: {
+          pullRequest: {
+            reviews: { nodes: [], pageInfo: { hasNextPage: false } },
+            reactions: {
+              nodes: [{ createdAt: 'not-a-date', user: { login: 'chatgpt-codex-connector' } }],
+              pageInfo: { hasPreviousPage: true, startCursor: 'Y3Vyc29y' },
+            },
+            commits: {
+              nodes: [{ commit: { oid: HEAD, pushedDate: '2026-08-12T00:00:00Z' } }],
+            },
+          },
+        },
+      },
+    },
+  }));
+  const result = await ghGetCodexApproval(CTX, PR_LINK);
+  expect(result.ok).toBe(false);
+  if (!result.ok) {
+    expect(result.retryable).toBe(true);
+    expect(result.error).toContain('timestamp boundary');
+  }
 });
 
 describe('ghGetCodexApproval — overall deadline budget', () => {

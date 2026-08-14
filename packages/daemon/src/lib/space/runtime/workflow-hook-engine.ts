@@ -1126,33 +1126,47 @@ export class WorkflowHookEngine {
           }
         }
       } else if (Array.isArray(target)) {
-        // Router parity — arrays dispatch through one of two router paths:
-        //
-        // 1. EVERY string entry parses as an address ('@worker:...',
-        //    '@coordinator', ...) → the router's GENERIC path, which is
-        //    SEQUENTIAL: it delivers each authorized entry before
-        //    inspecting the next, and RETURNS at the first unauthorized
-        //    @worker entry — entries BEFORE the failure still deliver, the
-        //    failing and later entries never do. Gates therefore follow
-        //    entry order: pre-failure entries keep theirs, the failing and
-        //    subsequent entries are suppressed.
-        // 2. ANY plain entry (node/slot name, '*') → the TOPOLOGY path,
-        //    which is ALL-OR-NOTHING: authorization runs for every entry
-        //    BEFORE any delivery, so one unauthorized entry rejects the
-        //    whole multicast — every node binding of the send is
-        //    suppressed (running a routable sibling's gate off an
-        //    undelivered send lets pr_ready stamp the run's immutable PR
-        //    identity from an attempt that never reaches review).
-        const allAddresses =
-          target.length > 0 && target.every((t) => typeof t === 'string' && parsesAsAddress(t));
-        let wholeSendRefused = false;
+        // The node-agent MCP path TRANSLATES every entry before the router
+        // (messaging-adapter.translateLegacyNodeTargets): a plain node/slot
+        // name becomes @worker addresses (fan-out), '*' expands to the
+        // sender's permitted worker targets, a generic address passes
+        // through, and a plain entry matching nothing makes the translation
+        // reject the WHOLE send. The router's generic path then delivers
+        // SEQUENTIALLY — each authorized entry delivers before the next is
+        // inspected, returning at the first unauthorized @worker entry. So
+        // gates follow entry order: pre-failure entries keep theirs; the
+        // failing entry and everything after it is suppressed; a plain
+        // untranslatable entry refuses the whole send (nothing may run a
+        // side-effecting gate off a send the router never delivers).
         let sequentialBlocked = false;
+        let wholeSendRefused = false;
         const arrayResolvedNodes = new Set<string>();
+        const postFailureNodes = new Set<string>();
         for (const t of target) {
           if (typeof t !== 'string') {
             // A non-string entry contributes no resolvable node target — the
             // schema layer rejects it, and it must not suppress the gates on
             // the valid parts of the multicast.
+            continue;
+          }
+          if (t.trim() === '*') {
+            // Expands to the sender node's permitted worker targets —
+            // authorized by construction; contributes those nodes and never
+            // blocks (matches translateLegacyNodeTarget's '*' handling).
+            for (const pt of resolver.getPermittedTargets(fromNode)) {
+              for (const resolved of this.resolveTargetEntries(
+                pt,
+                nodeIdToName,
+                slotToNodes,
+                nodeNames
+              )) {
+                actionTargets.add(resolved);
+                if (nodeNames.has(resolved)) {
+                  if (sequentialBlocked || wholeSendRefused) postFailureNodes.add(resolved);
+                  else arrayResolvedNodes.add(resolved);
+                }
+              }
+            }
             continue;
           }
           const resolvedTargets = this.resolveTargetEntries(
@@ -1163,48 +1177,47 @@ export class WorkflowHookEngine {
           );
           for (const resolved of resolvedTargets) {
             actionTargets.add(resolved);
-            if (nodeNames.has(resolved)) arrayResolvedNodes.add(resolved);
-          }
-          if (allAddresses) {
-            // Generic path, in entry order. Generic non-worker addresses
-            // ('@coordinator', ...) never abort the router loop — they
-            // deliver (or fail) per entry and must not suppress siblings.
-            const isWorker = t.startsWith('@worker:');
-            const workerAuthorized = resolvedTargets.some(
-              (r) =>
-                nodeNames.has(r) &&
-                (isRoutableTarget(r) || isRoutableWorkerOnSlot(workerAgentOf(t), r))
-            );
-            if (sequentialBlocked || (isWorker && !workerAuthorized)) {
-              // The router has returned (or returns at this entry): this
-              // entry and every later one never deliver.
-              for (const resolved of resolvedTargets) {
-                if (nodeNames.has(resolved)) nonRoutableResolvedNodes.add(resolved);
-              }
-              sequentialBlocked = true;
+            if (nodeNames.has(resolved)) {
+              if (sequentialBlocked || wholeSendRefused) postFailureNodes.add(resolved);
+              else arrayResolvedNodes.add(resolved);
             }
-            continue;
           }
-          // Topology path: does THIS entry pass the router's authorization?
-          // The router checks canSend(fromNodeName, resolveNodeName(entry))
-          // on the RAW entry — an address string or an unauthorized '*' (no
-          // wildcard-'to' channel) cannot pass; a plain entry passes when a
-          // resolution names a routable node. Built-in inter-level targets
-          // are excluded from the router's authorization set.
-          const entryAuthorized = isBuiltInInterLevelTarget(t)
-            ? true
-            : t.trim() === '*'
-              ? resolver.getPermittedTargets(fromNode).includes('*')
-              : !parsesAsAddress(t) &&
-                resolvedTargets.some((r) => nodeNames.has(r) && isRoutableTarget(r));
-          if (!entryAuthorized) wholeSendRefused = true;
+          if (wholeSendRefused || sequentialBlocked) continue;
+          if (isBuiltInInterLevelTarget(t)) continue;
+          // A generic non-worker address is delivered separately per entry
+          // and never aborts the router loop — no authorization, no block.
+          const isAddress = parsesAsAddress(t);
+          const isWorker = t.startsWith('@worker:');
+          if (isAddress && !isWorker) continue;
+          // Authorization (mirrors the router's worker check):
+          // canSend(fromNode, resolvedNode) OR canSend(fromNode, agentSlot)
+          // — for a plain entry the entry string itself is the slot name; for
+          // a @worker entry it is the decoded agent name.
+          const slotName = isWorker ? workerAgentOf(t) : t;
+          const authorized = resolvedTargets.some(
+            (r) =>
+              nodeNames.has(r) &&
+              (isRoutableTarget(r) ||
+                (slotName !== undefined && resolver.canSend(fromNode, slotName)))
+          );
+          const resolvable = resolvedTargets.some((r) => nodeNames.has(r));
+          if (!isAddress && !resolvable) {
+            // Plain entry matching no node/slot: the MCP translation rejects
+            // the whole send before the router — nothing may deliver.
+            wholeSendRefused = true;
+          } else if (!authorized) {
+            // Sequential failure point: this entry and every later one never
+            // deliver (the router returns here).
+            sequentialBlocked = true;
+            for (const resolved of resolvedTargets) {
+              if (nodeNames.has(resolved)) postFailureNodes.add(resolved);
+            }
+          }
         }
-        if (wholeSendRefused) {
-          // The whole topology-path multicast is refused — suppress the
-          // gates on every node the entries resolved.
-          for (const resolved of arrayResolvedNodes) {
-            nonRoutableResolvedNodes.add(resolved);
-          }
+        for (const resolved of wholeSendRefused
+          ? new Set([...arrayResolvedNodes, ...postFailureNodes])
+          : postFailureNodes) {
+          nonRoutableResolvedNodes.add(resolved);
         }
       }
     }
@@ -2253,12 +2266,16 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
         // (single slot per hook, the shared-key limitation), but the in-memory
         // timer for a distinct action must survive so it is not silently
         // abandoned (its replay re-evaluates against current state).
-        if (blockingId) {
-          const existingQueued = engine.getQueuedRetryableAction(blockingId);
-          if (existingQueued && existingQueued.actionKey === actionKey) {
-            clearRetryableHookActionTimer(existingQueued.actionKey);
-          }
-        }
+        // Detect a PRIOR queued record for THIS action (the hook re-blocks the
+        // same send): its timer must be reaped and replaced with a fresh one
+        // at the new backoff. Defer the reap until the replacement patch
+        // persists — if the persist fails the durable record survives, and
+        // cancelling the timer now would leave an accepted send with no
+        // in-memory retry (lost until a manual attempt or daemon restart).
+        const existingActionKeyToReap =
+          blockingId && engine.getQueuedRetryableAction(blockingId)?.actionKey === actionKey
+            ? actionKey
+            : undefined;
 
         if (engine.isRetryableActionCancelled(meta)) {
           engine.clearQueuedRetryableActionsForKey(actionKey);
@@ -2350,6 +2367,12 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
           }
         }
 
+        // Persist succeeded — now safe to reap the prior timer (the
+        // replacement durable record is in place). scheduleRetryableAction
+        // installs a fresh timer at the new backoff.
+        if (existingActionKeyToReap) {
+          clearRetryableHookActionTimer(existingActionKeyToReap);
+        }
         scheduleRetryableAction({
           actionKey,
           delayMs, // same computed backoff that was persisted above

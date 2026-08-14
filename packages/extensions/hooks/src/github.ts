@@ -750,6 +750,16 @@ export async function ghGetReviewEvidence(
       };
     }
     let commentPageInfo = asRecord(seedComments?.pageInfo);
+    if (!commentPageInfo || typeof commentPageInfo.hasPreviousPage !== 'boolean') {
+      // A missing/non-boolean flag cannot prove the comments history is
+      // exhausted — older pages may hold the qualifying comment. Fail the
+      // lookup closed rather than declare the scan complete.
+      return {
+        ok: false,
+        retryable: true,
+        error: 'malformed comments pageInfo (missing/non-boolean hasPreviousPage); failing closed',
+      };
+    }
     let commentsComplete = false;
     for (let page = 0; page < MAX_REVIEW_PAGES; page++) {
       if (commentPageInfo?.hasPreviousPage !== true) {
@@ -1055,10 +1065,24 @@ export async function ghGetCodexApproval(
       }
       let approval = preliminary;
       if (!preliminary.hadDecisiveReview) {
-        // No decisive review — the reaction path needs the full window. Walk
-        // the reactions connection backward while its oldest entry is still
-        // newer than the head push: a valid codex +1 can sit under >50 newer
-        // thumbs. Bounded cap; exhaustion fails closed.
+        // No decisive review — the reaction path needs the full window.
+        // Validate the connection BEFORE the walk: an absent/malformed
+        // reactions connection would otherwise read as 'no reactions to
+        // scan' and report no approval, retrying the gate toward its
+        // ceiling instead of surfacing the malformed response.
+        if (
+          !Array.isArray(asRecord(prNode?.reactions)?.nodes) ||
+          typeof asRecord(asRecord(prNode?.reactions)?.pageInfo)?.hasPreviousPage !== 'boolean'
+        ) {
+          return {
+            ok: false,
+            retryable: true,
+            error: 'malformed reactions connection (missing nodes/hasPreviousPage); failing closed',
+          };
+        }
+        // Walk backward while its oldest entry is still newer than the head
+        // push: a valid codex +1 can sit under >50 newer thumbs. Bounded
+        // cap; exhaustion fails closed.
         let reactionsComplete = false;
         for (let page = 0; page < MAX_CODEX_REVIEW_PAGES; page++) {
           if (reactionPageInfo?.hasPreviousPage !== true) {
@@ -1102,7 +1126,17 @@ export async function ghGetCodexApproval(
             : undefined;
           const oldestRMs = oldestRAt ? Date.parse(oldestRAt) : NaN;
           const pushedMs = typeof pushed === 'string' ? Date.parse(pushed) : NaN;
-          if (!Number.isFinite(oldestRMs) || !Number.isFinite(pushedMs) || oldestRMs <= pushedMs) {
+          // Malformed timestamps cannot establish the boundary (older pages
+          // may still hold a qualifying reaction): fail closed instead of
+          // declaring the scan complete.
+          if (!Number.isFinite(oldestRMs) || !Number.isFinite(pushedMs)) {
+            return {
+              ok: false,
+              retryable: true,
+              error: 'malformed reaction timestamp boundary; failing closed',
+            };
+          }
+          if (oldestRMs <= pushedMs) {
             reactionsComplete = true;
             break;
           }

@@ -498,12 +498,13 @@ describe('WorkflowHookEngine.executeAction', () => {
     expect(hookStateRepo.get('run-1', 'slot_channel_hook')).toBeNull();
   });
 
-  test('a mixed node multicast with one unauthorized target runs no gates', async () => {
-    // Router parity: a plain-entry array takes the TOPOLOGY path, which is
-    // ALL-OR-NOTHING — one unauthorized entry ('Other', no channel) rejects
-    // the whole multicast before anything delivers, so the routable
-    // sibling's gate must not run either (pr_ready would stamp the run's
-    // immutable PR identity off an undelivered send).
+  test('a mixed node multicast keeps the pre-failure sibling gate (sequential)', async () => {
+    // The node-agent MCP path TRANSLATES plain node entries to @worker
+    // addresses before the router, which then delivers SEQUENTIALLY:
+    // ['Review','Other'] (Review authorized, Other not) delivers Review
+    // BEFORE rejecting Other, so Review's gate MUST run (suppressing it
+    // would deliver an ungated handoff). A plain entry matching nothing
+    // refuses the whole send (translation rejects it).
     const STOP_HOOK = scriptHook('mixed_node_hook', '{"flow":"stop","reason":"blocked"}');
     const workflow = makeWorkflow({
       customHooks: [STOP_HOOK],
@@ -526,22 +527,33 @@ describe('WorkflowHookEngine.executeAction', () => {
       ],
     });
     const engine = makeEngine(workflow);
-    const outcome = await engine.executeAction(
+    // Authorized entry BEFORE the failure: its gate runs (send stops there).
+    const forward = await engine.executeAction(
       'send_message',
       { target: ['Review', 'Other'], message: 'mixed nodes' },
       META
     );
-    expect(outcome.decision).toBe('deliver');
-    expect(hookStateRepo.get('run-1', 'mixed_node_hook')).toBeNull();
+    expect(forward.decision).toBe('stop');
+    expect(forward.blockingHookId).toBe('mixed_node_hook');
 
-    // All-routable multicasts keep their gates (nothing was refused).
-    const allRoutable = await engine.executeAction(
+    // Reversed order: the unauthorized entry fails FIRST — nothing after it
+    // delivers, so no gate may run.
+    const reversed = await engine.executeAction(
       'send_message',
-      { target: ['Review'], message: 'single node' },
+      { target: ['Other', 'Review'], message: 'reversed' },
       META
     );
-    expect(allRoutable.decision).toBe('stop');
-    expect(allRoutable.blockingHookId).toBe('mixed_node_hook');
+    expect(reversed.decision).toBe('deliver');
+    expect(reversed.executionLog.length).toBe(0);
+
+    // A plain entry matching no known node refuses the whole send.
+    const unknown = await engine.executeAction(
+      'send_message',
+      { target: ['Nope'], message: 'unknown' },
+      META
+    );
+    expect(unknown.decision).toBe('deliver');
+    expect(unknown.executionLog.length).toBe(0);
   });
 
   test("an array '*' over a slot-only channel runs no gates (whole multicast refused)", async () => {
