@@ -29,6 +29,7 @@
 import { useEffect, useRef, useCallback, useMemo } from 'preact/hooks';
 import { useSignal, useSignalEffect } from '@preact/signals';
 import { connectionManager } from '../lib/connection-manager';
+import { connectionState } from '../lib/state';
 import {
   consumeVoiceTranscriptLanded,
   voiceTranscriptLandedSignal,
@@ -95,6 +96,10 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           onResult?.(true);
         })
         .catch(() => {
+          // A stale request (session changed / hook unmounted while this get
+          // was in flight) must not report a failure that settles a NEWER
+          // load — mirror the success path's cancellation guard.
+          if (isCancelled()) return;
           onResult?.(false);
         });
     },
@@ -144,11 +149,14 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   // landing while the composer has text DEFERS (the session stays in the set)
   // until it clears, and a keystroke that lands mid-get re-runs the effect
   // whose cleanup aborts the stale get — the server draft can never clobber
-  // newer keystrokes. The landing is consumed only after a SUCCESSFUL refresh,
-  // so a failed get (socket drop) keeps it pending for the next retry.
+  // newer keystrokes. Reading connectionState re-runs the effect when the
+  // connection is restored, so a refresh that failed on a dropped socket
+  // retries once the session.get can succeed again. The landing is consumed
+  // only after a SUCCESSFUL refresh.
   useSignalEffect(() => {
     const landed = voiceTranscriptLandedSignal.value;
     if (!landed.has(sessionId)) return;
+    void connectionState.value;
     if (contentSignal.value.trim() !== '') return;
     let cancelled = false;
     loadDraft(
@@ -180,6 +188,12 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
 
     // Skip save logic entirely when there is no session — draft is ephemeral.
     if (!sessionId) return;
+    // While a landing is pending for this session, the server draft may have
+    // been updated (this tab's or another tab's refresh merged the landed
+    // transcript), so this tab's local draft is stale — a debounced save (or
+    // the session-switch flush) would overwrite the transcript. Suppress saves
+    // until the landing is consumed by the idle refresh above.
+    if (voiceTranscriptLandedSignal.value.has(sessionId)) return;
     // Clear existing timeout
     if (draftSaveTimeoutRef.current) {
       clearTimeout(draftSaveTimeoutRef.current);

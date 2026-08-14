@@ -34,6 +34,7 @@ vi.mock('../../lib/state.ts', () => ({
   globalSettings: {
     value: { voice: { enabled: true, endpoint: 'https://asr.example.com/v1', model: 'whisper-1' } },
   },
+  connectionState: { value: 'connected' },
   get isAgentWorking() {
     return {
       get value() {

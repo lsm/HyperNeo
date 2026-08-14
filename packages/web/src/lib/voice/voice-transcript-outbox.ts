@@ -223,8 +223,6 @@ export function clearPendingTranscripts(): void {
 let flushInProgress = false;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
 let retryDelayMs = RETRY_DELAY_MS;
-let consecutiveRetries = 0;
-const MAX_CONSECUTIVE_RETRIES = 12; // ~2-3 min of backoff, then wait for a reconnect/reload
 
 function clearRetryTimer(): void {
   if (retryTimer) {
@@ -232,21 +230,19 @@ function clearRetryTimer(): void {
     retryTimer = null;
   }
   retryDelayMs = RETRY_DELAY_MS;
-  consecutiveRetries = 0;
 }
 
 /**
  * Schedule a follow-up flush for entries retained on a retryable rejection
  * (timeout, character limit). The connection-state effect does not re-fire
  * while already connected, so without this a retained entry would wait for an
- * unrelated reconnect or reload. Backs off exponentially, bounded by a retry
- * cap (a permanently-stuck entry then waits for a reconnect/reload; the TTL
- * bounds it overall).
+ * unrelated reconnect or reload. Backs off exponentially up to a slow steady
+ * cadence that continues indefinitely while the entry remains — so a draft
+ * that later frees up (the user sends/clears it) is picked up without any
+ * external trigger. The TTL bounds the entry's overall lifetime.
  */
 function scheduleFollowUpFlush(): void {
   if (retryTimer) return;
-  if (consecutiveRetries >= MAX_CONSECUTIVE_RETRIES) return;
-  consecutiveRetries += 1;
   retryTimer = setTimeout(() => {
     retryTimer = null;
     void flushPendingTranscripts();
@@ -297,9 +293,10 @@ export async function flushPendingTranscripts(): Promise<void> {
     flushInProgress = false;
   }
   // Retained entries (timeout / retryable refusal) need another pass; the
-  // connection-state effect won't re-fire while already connected. Progress
-  // resets the retry budget.
-  if (delivered > 0) consecutiveRetries = 0;
+  // connection-state effect won't re-fire while already connected, and no
+  // storage change marks the session when its draft later frees up — so keep a
+  // slow periodic retry going (bounded by the TTL) instead of a hard stop.
+  if (delivered > 0) retryDelayMs = RETRY_DELAY_MS; // progress re-arms a fast first retry
   if (getPendingTranscripts().length > 0 && connectionManager.getHubIfConnected()) {
     scheduleFollowUpFlush();
   } else {

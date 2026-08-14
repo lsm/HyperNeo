@@ -146,6 +146,22 @@ describe('voice transcript outbox', () => {
     expect(getPendingTranscripts()).toHaveLength(1);
   });
 
+  it('resumes delivery once a full draft frees up (no hard retry cap)', async () => {
+    vi.useFakeTimers();
+    enqueueTranscript('s1', 'blocked');
+    // First flush: the pending draft is full → the entry is retained and a
+    // follow-up retry is scheduled.
+    hubRequest.mockRejectedValueOnce(new Error('Pending voice draft is at the character limit'));
+    await flushPendingTranscripts();
+    expect(getPendingTranscripts()).toHaveLength(1);
+    // The user sends/clears the draft → room appears → the steady backoff
+    // retry keeps checking and now succeeds, with no cap that permanently
+    // stops delivery.
+    hubRequest.mockResolvedValue({ success: true });
+    await vi.advanceTimersByTimeAsync(70_000);
+    expect(getPendingTranscripts()).toHaveLength(0);
+  });
+
   it('prunes expired keys even when the live set is under the cap', () => {
     // Seed a stale entry directly (createdAt beyond the TTL) so allEntries()
     // hides it from reads — but prune() must still remove the key from storage,
