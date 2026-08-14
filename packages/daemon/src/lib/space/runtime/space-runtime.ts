@@ -2369,6 +2369,11 @@ export class SpaceRuntime {
           return;
         }
         const eventRecord = store.getById(payload.eventId);
+        // Normalize a stale persisted 'interrupted' state (daemon crash
+        // between setInterrupted and setIdle) to idle first: the inject layer
+        // treats 'interrupted' as busy, so a defer handoff against it would
+        // persist a row nothing replays.
+        await this.normalizeStaleInterruptedSession(preparedTarget.sessionId);
         // A session mid-interrupt cannot replay a deferred row (P2): park the
         // delivery and retry once the interrupt resolves to a true idle.
         if (
@@ -2458,12 +2463,17 @@ export class SpaceRuntime {
             resolved,
             payload,
             deliveryKey,
-            `activation_failed; ${failureReason}`
+            // Defer-encoded prefix so a daemon restart before the retry
+            // succeeds reconstructs 'defer' (a bare activation_failed reason
+            // recovers as 'immediate', which would steer a busy kickoff).
+            `deliveryMode:defer; activation_failed; ${failureReason}`
           );
           return;
         }
         if (activatedTarget?.sessionId && this.isTargetSessionLive(activatedTarget.sessionId)) {
           const eventRecord = store.getById(payload.eventId);
+          // Same stale-state normalization as the pre-activation branch above.
+          await this.normalizeStaleInterruptedSession(activatedTarget.sessionId);
           // Same mid-interrupt park as the pre-activation branch above (P2).
           if (
             this.parkDeliveryForInterruptedSession(
@@ -3847,6 +3857,16 @@ export class SpaceRuntime {
 
   private isTargetSessionLive(sessionId: string): boolean {
     return this.config.taskAgentManager?.isSessionAlive(sessionId) ?? false;
+  }
+
+  /**
+   * Normalize a target's stale persisted `interrupted` state to idle before a
+   * defer handoff. Self-guarding: no-op unless the state is `interrupted`
+   * with no interrupt actually in flight.
+   */
+  private async normalizeStaleInterruptedSession(sessionId: string): Promise<void> {
+    const session = this.config.taskAgentManager?.getAgentSessionById?.(sessionId);
+    await session?.normalizeStaleInterruptedState();
   }
 
   /**

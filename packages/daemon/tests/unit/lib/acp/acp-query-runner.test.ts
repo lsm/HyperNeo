@@ -621,6 +621,24 @@ describe('AcpQueryRunner', () => {
     expect(publishAsync).not.toHaveBeenCalledWith('query.trigger', { sessionId: 'session-1' });
   });
 
+  test('does not publish query.trigger for an interrupted ACP run', async () => {
+    // An interrupted ACP turn breaks out of the abortable loop and returns
+    // NORMALLY (no catch) — so reaching the end of try is not proof of
+    // success. The gate must classify by the live processing state:
+    // replaying an interrupted run would restart deferred work the user or
+    // teardown just stopped.
+    const { runner, ctx } = createRunnerFixture();
+    const publishAsync = ctx.internalEventBus.publishAsync as unknown as ReturnType<typeof mock>;
+    (ctx.stateManager as unknown as { getState: () => { status: string } }).getState = () => ({
+      status: 'interrupted',
+    });
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    expect(publishAsync).not.toHaveBeenCalledWith('query.trigger', { sessionId: 'session-1' });
+  });
+
   test('aborts ACP submission when remove/defer already revoked the row (#3744696846)', async () => {
     const client = createMockClient();
     let promptBodyRan = false;

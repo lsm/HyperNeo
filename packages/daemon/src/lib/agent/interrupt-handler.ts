@@ -38,6 +38,7 @@ export interface InterruptHandlerContext {
   queryObject: QueryLike | null;
   queryPromise: Promise<void> | null;
   queryAbortController: AbortController | null;
+  processExitedPromise: Promise<void> | null;
 }
 
 /**
@@ -163,26 +164,15 @@ export class InterruptHandler {
         }
       }
 
-      // STEP 3: Wait for old query to finish. Track whether it actually
-      // settled within the wait — if it is still unwinding, the deferred-row
-      // replay must be delayed until it exits, or ensureQueryStarted() can
-      // launch a replacement query while the old subprocess is still alive
-      // (concurrent processes / workspace-lock failures).
-      let oldQuerySettledWithinWait = true;
+      // STEP 3: Wait for old query to finish
       if (this.ctx.queryPromise) {
-        const oldQuery = this.ctx.queryPromise.then(
-          () => true,
-          (error) => {
-            logger.warn('Error waiting for old query:', error);
-            return true; // settled (with error) — replay is safe
-          }
-        );
-        oldQuerySettledWithinWait = await Promise.race([
-          oldQuery,
-          new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 200)),
-        ]);
-        if (!oldQuerySettledWithinWait) {
-          void oldQuery.then(() => this.publishDeferredQueueTrigger());
+        try {
+          await Promise.race([
+            this.ctx.queryPromise,
+            new Promise((resolve) => setTimeout(resolve, 200)),
+          ]);
+        } catch (error) {
+          logger.warn('Error waiting for old query:', error);
         }
       }
 
@@ -219,9 +209,18 @@ export class InterruptHandler {
       // deferred rows exist. Skipped for teardown-bound interrupts (session
       // stop/shutdown) — replaying there would promote deferred rows to
       // enqueued and drive jobs for a session that is about to be cleaned
-      // up. Delayed until the old query exits when STEP 3's wait timed out.
-      if (!opts?.skipDeferredReplay && oldQuerySettledWithinWait) {
-        this.publishDeferredQueueTrigger();
+      // up. The replay is gated on BOTH the old query settling AND the SDK
+      // subprocess exiting: query settlement is not an exit guarantee
+      // (QueryLifecycleManager.stop separately awaits processExitedPromise),
+      // so replaying earlier could launch a replacement query while the old
+      // process still holds workspace resources.
+      if (!opts?.skipDeferredReplay) {
+        const oldQuerySettled =
+          this.ctx.queryPromise?.then(undefined, () => {}) ?? Promise.resolve();
+        const processExit = this.ctx.processExitedPromise ?? Promise.resolve();
+        void Promise.all([oldQuerySettled, processExit]).then(() =>
+          this.publishDeferredQueueTrigger()
+        );
       }
     } finally {
       // Always resolve the interrupt promise

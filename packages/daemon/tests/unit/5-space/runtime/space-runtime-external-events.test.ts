@@ -105,16 +105,24 @@ class MockTaskAgentManager {
     return this.alive.has(sessionId);
   }
 
-  getAgentSessionById(
-    sessionId: string
-  ): { getProcessingState: () => { status: string }; isInterruptInProgress: () => boolean } | null {
+  getAgentSessionById(sessionId: string): {
+    getProcessingState: () => { status: string };
+    isInterruptInProgress: () => boolean;
+    normalizeStaleInterruptedState: () => Promise<void>;
+  } | null {
     const status = this.processingStates.get(sessionId);
-    return status === undefined
-      ? null
-      : {
-          getProcessingState: () => ({ status }),
-          isInterruptInProgress: () => this.interrupting.has(sessionId),
-        };
+    if (status === undefined) return null;
+    return {
+      getProcessingState: () => ({ status }),
+      isInterruptInProgress: () => this.interrupting.has(sessionId),
+      // Mirror AgentSession.normalizeStaleInterruptedState: flip a stale
+      // persisted 'interrupted' state to idle.
+      normalizeStaleInterruptedState: async () => {
+        if (status === 'interrupted' && !this.interrupting.has(sessionId)) {
+          this.processingStates.set(sessionId, 'idle');
+        }
+      },
+    };
   }
 
   async rehydrate(): Promise<void> {}
@@ -3011,15 +3019,18 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     const event = makeEvent();
     await eventService.publish(event);
+    // Defer-encoded prefix so a daemon restart before the retry succeeds
+    // reconstructs 'defer' (a bare activation_failed reason recovers as
+    // 'immediate').
     expect(eventStore.listDeliveries(event.id)[0]!.failureReason).toBe(
-      'activation_failed; spawn failed'
+      'deliveryMode:defer; activation_failed; spawn failed'
     );
 
     await new Promise((resolve) => setTimeout(resolve, 5_600));
 
     const delivery = eventStore.listDeliveries(event.id)[0]!;
     expect(delivery.state).toBe('failed');
-    expect(delivery.failureReason).toBe('activation_failed; spawn failed');
+    expect(delivery.failureReason).toBe('deliveryMode:defer; activation_failed; spawn failed');
     expect(eventStore.getById(event.id)?.state).toBe('failed');
     expect(tam.activationCalls.length).toBeGreaterThanOrEqual(5);
     expect(tam.activationCalls.length).toBeLessThanOrEqual(6);

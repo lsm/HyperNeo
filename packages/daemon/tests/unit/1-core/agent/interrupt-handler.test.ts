@@ -128,6 +128,7 @@ describe('InterruptHandler', () => {
       queryObject: mockQueryObject,
       queryPromise: mockQueryPromise,
       queryAbortController: mockAbortController,
+      processExitedPromise: null,
       ...overrides,
     };
   }
@@ -378,6 +379,10 @@ describe('InterruptHandler', () => {
       handler = createHandler();
 
       await handler.handleInterrupt();
+      // The trigger is scheduled through the query-settled + process-exit
+      // gate, so it fires on the next tick even when both are already
+      // settled.
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(busPublishAsyncSpy).toHaveBeenCalledWith('query.trigger', {
         sessionId: 'test-session-id',
@@ -408,6 +413,24 @@ describe('InterruptHandler', () => {
       expect(busPublishAsyncSpy).not.toHaveBeenCalled();
     });
 
+    it('should honor teardown suppression in the delayed replay path', async () => {
+      // When the teardown-bound interrupt's 200ms settle wait times out, the
+      // delayed callback must ALSO honor skipDeferredReplay — otherwise it
+      // publishes query.trigger after teardown has proceeded, promoting
+      // deferred rows and creating delivery jobs for a dead session.
+      let settleOldQuery!: () => void;
+      const queryPromise = new Promise<void>((resolve) => {
+        settleOldQuery = resolve;
+      });
+      handler = createHandler({ queryPromise });
+
+      await handler.handleInterrupt({ skipDeferredReplay: true });
+
+      settleOldQuery();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(busPublishAsyncSpy).not.toHaveBeenCalled();
+    });
+
     it('should delay query.trigger until the old query exits when the wait times out', async () => {
       // The interrupt wait races the old queryPromise against 200ms; when the
       // query is still unwinding, replaying immediately could launch a
@@ -426,6 +449,30 @@ describe('InterruptHandler', () => {
 
       settleOldQuery();
       await interrupted;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(busPublishAsyncSpy).toHaveBeenCalledWith('query.trigger', {
+        sessionId: 'test-session-id',
+      });
+    });
+
+    it('should delay query.trigger until the subprocess exits even when the query settled in time', async () => {
+      // Query settlement is not a subprocess-exit guarantee
+      // (QueryLifecycleManager.stop separately awaits processExitedPromise);
+      // the replay must wait for both or the replacement query can race the
+      // old process holding workspace resources.
+      let signalProcessExit!: () => void;
+      const processExitedPromise = new Promise<void>((resolve) => {
+        signalProcessExit = resolve;
+      });
+      handler = createHandler({ processExitedPromise });
+
+      await handler.handleInterrupt();
+      // The (absent) query settled instantly, but the subprocess has not
+      // exited — no replay yet.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(busPublishAsyncSpy).not.toHaveBeenCalled();
+
+      signalProcessExit();
       await new Promise((resolve) => setTimeout(resolve, 20));
       expect(busPublishAsyncSpy).toHaveBeenCalledWith('query.trigger', {
         sessionId: 'test-session-id',

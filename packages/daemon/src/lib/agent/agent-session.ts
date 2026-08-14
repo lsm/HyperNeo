@@ -996,6 +996,19 @@ export class AgentSession
     return this.interruptHandler.getInterruptPromise() !== null;
   }
 
+  /**
+   * Normalize a stale persisted `interrupted` processing state: no interrupt
+   * is in flight (e.g. the daemon crashed between setInterrupted and
+   * setIdle), so nothing remains to transition the session to idle. Flips
+   * the state to idle so a defer-mode delivery delivers now instead of being
+   * persisted against a busy state that never resolves to a replay.
+   */
+  async normalizeStaleInterruptedState(): Promise<void> {
+    if (this.getProcessingState().status !== 'interrupted') return;
+    if (this.isInterruptInProgress()) return;
+    await this.stateManager.setIdle();
+  }
+
   async resetQuery(options?: {
     restartQuery?: boolean;
     hardReset?: boolean;

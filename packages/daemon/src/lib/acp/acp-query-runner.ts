@@ -787,8 +787,13 @@ export class AcpQueryRunner {
       // mark it completed normally so the finally-block deferred replay only
       // drives the next turn after a successful completion, not after a
       // terminal failure (auth rejection, provider unavailable, exhausted
-      // startup retries) handled by handleRunError.
-      turnCompletedNormally = true;
+      // startup retries) handled by handleRunError. An INTERRUPTED run also
+      // reaches here without throwing (createAbortableQuery breaks and
+      // returns normally on the abort signal), so classify by the live
+      // processing state: replaying an interrupted run would restart
+      // deferred work the user/teardown just stopped (and bypass
+      // skipDeferredReplay on teardown-bound interrupts).
+      turnCompletedNormally = stateManager.getState().status !== 'interrupted';
     } catch (error) {
       restoreMessageEnqueuedHandler?.();
       const effectiveError =
