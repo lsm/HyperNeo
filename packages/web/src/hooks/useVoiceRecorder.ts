@@ -89,6 +89,17 @@ export function useVoiceRecorder(sessionId: string, options?: { autoAdopt?: bool
     get recordingStartedAt() {
       return owns() ? voiceRecorderStore.recordingStartedAt.value : null;
     },
+    /**
+     * The caret/selection the owner captured at recording start, for consumers
+     * restoring the insertion point across an adoption handoff.
+     */
+    get recordingCursor() {
+      return owns() ? voiceRecorderStore.recordingCursor.value : null;
+    },
+    /** Attach insertion metadata to THIS instance's recording (owner-only). */
+    setRecordingCursor: (cursor: { start: number; end: number } | null) => {
+      if (owns()) voiceRecorderStore.recordingCursor.value = cursor;
+    },
     start: () => voiceRecorderStore.start(ownerId, sessionId),
     stop: voiceRecorderStore.stop,
     /** Cancels only this instance's recording; a no-op for anyone else's. */

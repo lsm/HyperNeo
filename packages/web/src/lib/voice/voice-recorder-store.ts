@@ -54,6 +54,13 @@ class VoiceRecorderStore {
    * deadline instead of restarting its timer from the adoption mount.
    */
   readonly recordingStartedAt = signal<number | null>(null);
+  /**
+   * Composer-supplied insertion metadata for the current recording (caret /
+   * selection endpoints in the owner's draft at recording start). The capture
+   * layer is draft-agnostic; the owner sets this so an ADOPTING composer can
+   * restore the original insertion point after a session-switch handoff.
+   */
+  readonly recordingCursor = signal<{ start: number; end: number } | null>(null);
 
   private context: AudioContext | null = null;
   private stream: MediaStream | null = null;

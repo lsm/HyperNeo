@@ -59,6 +59,7 @@ vi.mock('../../hooks', () => ({
     start: vi.fn(async () => {}),
     stop: voiceStop,
     cancel: voiceCancel,
+    setRecordingCursor: vi.fn(),
     getLevel: () => 0,
   }),
   useInputDraft: () => ({

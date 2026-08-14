@@ -280,10 +280,15 @@ export default function MessageInput({
   } = useFileAttachments();
   const { handleInterrupt } = useInterrupt({ sessionId });
   const [isTranscribing, setIsTranscribing] = useState(false);
-  // Mid-transcription, do NOT auto-adopt an orphaned same-session recording:
-  // the in-flight request's error path cancels "its" recording, which would
-  // destroy an unrelated capture adopted in that window.
-  const voiceRecorder = useVoiceRecorder(sessionId, { autoAdopt: !isTranscribing });
+  // A completed transcription is waiting for its auto-send effect to fire.
+  const [hasPendingAutoSend, setHasPendingAutoSend] = useState(false);
+  // Mid-transcription OR with a pending auto-send, do NOT auto-adopt an
+  // orphaned same-session recording: the in-flight request's error path could
+  // cancel an adopted capture, and adoption re-enables the recording guard
+  // that would swallow the pending auto-send of the user's original action.
+  const voiceRecorder = useVoiceRecorder(sessionId, {
+    autoAdopt: !isTranscribing && !hasPendingAutoSend,
+  });
   const voiceSettings = globalSettings.value?.voice;
   const voiceEnabled = voiceSettings?.enabled ?? false;
   const voiceConfigured = (() => {
@@ -492,6 +497,13 @@ export default function MessageInput({
         lastCursorRef.current = textarea.selectionStart ?? textarea.value.length;
         lastSelectionEndRef.current = textarea.selectionEnd ?? lastCursorRef.current;
       }
+      // Persist the insertion point WITH the recording: if this composer
+      // unmounts mid-recording and another composer for this session adopts
+      // it, the original caret survives the handoff instead of resetting to 0.
+      voiceRecorder.setRecordingCursor({
+        start: lastCursorRef.current,
+        end: lastSelectionEndRef.current,
+      });
       try {
         await voiceRecorder.start();
       } catch (error) {
@@ -708,7 +720,10 @@ export default function MessageInput({
           insertTranscript(transcript);
           // Only queue an auto-send when the transcript produced text; the
           // effect below fires it after isTranscribing flips false.
-          if (mode !== 'stay') pendingAutoSendRef.current = { sessionId: targetSessionId, mode };
+          if (mode !== 'stay') {
+            pendingAutoSendRef.current = { sessionId: targetSessionId, mode };
+            setHasPendingAutoSend(true);
+          }
         } else if (transcript) {
           // Composer unmounted (user navigated away) while this transcription
           // was in flight. Deliver the transcript directly to the target session
@@ -1063,6 +1078,7 @@ export default function MessageInput({
     if (pendingAutoSendRef.current !== null && !voiceActive) {
       const pending = pendingAutoSendRef.current;
       pendingAutoSendRef.current = null;
+      setHasPendingAutoSend(false);
       if (pending.sessionId === sessionId)
         void handleSubmit(pending.mode === 'queue' ? 'defer' : 'immediate');
     }
