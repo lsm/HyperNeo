@@ -25,7 +25,7 @@ import type { AgentMemoryEntry } from '@hyperneo/shared';
 import { Logger } from '@hyperneo/shared';
 import { connectionManager } from './connection-manager';
 
-const logger = new Logger('kai:web:memory-store');
+const logger = new Logger('hyperneo:web:memory-store');
 
 const PAGE_SIZE = 100;
 

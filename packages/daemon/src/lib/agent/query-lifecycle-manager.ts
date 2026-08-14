@@ -658,9 +658,19 @@ export class QueryLifecycleManager {
       // This check catches residual edge cases where queryPromise has already
       // been nulled but the queue wasn't stopped.
       if (!this.ctx.queryPromise) {
+        // Delivery observability: include the tracked-PID set in the stale-state
+        // warning — a non-empty set here means an orphaned SDK subprocess was
+        // alive while the queue had no consumer, the collision that produces
+        // 0-message startup timeouts.
+        const stalePids = this.ctx
+          .snapshotTrackedAgentProcesses()
+          .map(([pid]) => pid)
+          .join(',');
         this.logger.warn(
           `Stale running state detected for session ${session.id}: ` +
-            `messageQueue.isRunning()=true but queryPromise=null. Force-stopping and restarting.`
+            `messageQueue.isRunning()=true but queryPromise=null ` +
+            `(trackedPids=[${stalePids}] queueSize=${messageQueue.size()}). ` +
+            'Force-stopping and restarting.'
         );
         messageQueue.stop();
         // Clear stale query reference to prevent concurrent callers from

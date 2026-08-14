@@ -775,6 +775,13 @@ export class QueryRunner {
           originalSpawn ? originalSpawn(opts) : defaultSpawn(opts)
         ) as TrackedAgentProcess;
         this.ctx.trackAgentProcess(proc);
+        // Delivery observability: correlates the subprocess PID with the
+        // session + resume target so a later 0-message timeout can be matched
+        // to the exact process that stayed silent.
+        logger.info(
+          `SDK subprocess spawned (pid=${proc.pid} session=${session.id} ` +
+            `resume=${session.sdkSessionId ?? 'fresh'} model=${queryOptions.model})`
+        );
         return proc;
       };
 
@@ -821,6 +828,17 @@ export class QueryRunner {
                 ? ' — running on root workspace (not a worktree); check for other Claude Code sessions using this path'
                 : '') +
               ` (Hint: set HYPERNEO_SDK_STARTUP_TIMEOUT_MS to increase timeout, currently ${STARTUP_TIMEOUT_MS}ms)`
+          );
+          // Delivery diagnostics: distinguish "kickoff never reached the CLI"
+          // (queueRunning=true + queueSize>0 → feed starvation, e.g. orphaned
+          // generator) from "fed but CLI emitted nothing" (queueSize=0 →
+          // subprocess hang). trackedPids shows orphaned-process collisions.
+          logger.error(
+            `SDK startup timeout diagnostics: queueRunning=${messageQueue.isRunning()} ` +
+              `queueSize=${messageQueue.size()} trackedPids=[${this.ctx
+                .snapshotTrackedAgentProcesses()
+                .map(([pid]) => pid)
+                .join(',')}] sdkSessionId=${session.sdkSessionId ?? 'none'}`
           );
 
           // Actively abort a stuck startup so finally{} cleanup runs and the
@@ -1652,7 +1670,7 @@ export class QueryRunner {
    * Public for testing
    */
   async *createMessageGeneratorWrapper() {
-    const { session, messageQueue, stateManager } = this.ctx;
+    const { session, messageQueue, stateManager, logger } = this.ctx;
 
     for await (const { message, onSent } of messageQueue.messageGenerator(session.id)) {
       const queuedMessage = message as typeof message & { internal?: boolean };
@@ -1670,6 +1688,16 @@ export class QueryRunner {
           content: (message.message?.content ?? '') as unknown as string | MessageContent[],
         };
       }
+
+      // Delivery observability: this yield is the moment the kickoff actually
+      // reaches the CLI's stdin. When a 0-message startup timeout is later
+      // diagnosed, this line distinguishes "feed never happened" (absent) from
+      // "fed but CLI silent" (present, followed by no SDK output).
+      logger.debug(
+        `delivery-feed: yielding message to SDK transport (session=${session.id} ` +
+          `uuid=${message.uuid ?? 'unknown'} queueSizeAfter=${messageQueue.size()} ` +
+          `internal=${isInternal})`
+      );
 
       yield message;
       onSent();

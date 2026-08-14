@@ -66,11 +66,12 @@ describe('Logger', () => {
       const logger = new Logger('TestPrefix');
       logger.log('test message', { extra: 'data' });
 
-      // Logger uses namespace-based prefix
+      // Logger output: [timestamp, namespace prefix, message]
       expect(consoleSpy.info).toHaveBeenCalledTimes(1);
       const calls = consoleSpy.info.mock.calls[0];
-      expect(calls[0]).toContain('kai:daemon:testprefix');
-      expect(calls[1]).toBe('test message');
+      expect(calls[0]).toMatch(/^\d{4}-\d{2}-\d{2}T/); // ISO timestamp (default-on)
+      expect(calls[1]).toContain('hyperneo:daemon:testprefix');
+      expect(calls[2]).toBe('test message');
     });
 
     test('error should output to console.error', () => {
@@ -79,8 +80,9 @@ describe('Logger', () => {
 
       expect(consoleSpy.error).toHaveBeenCalledTimes(1);
       const calls = consoleSpy.error.mock.calls[0];
-      expect(calls[0]).toContain('kai:daemon:testprefix');
-      expect(calls[1]).toBe('error message');
+      expect(calls[0]).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      expect(calls[1]).toContain('hyperneo:daemon:testprefix');
+      expect(calls[2]).toBe('error message');
     });
 
     test('warn should output to console.warn', () => {
@@ -89,8 +91,9 @@ describe('Logger', () => {
 
       expect(consoleSpy.warn).toHaveBeenCalledTimes(1);
       const calls = consoleSpy.warn.mock.calls[0];
-      expect(calls[0]).toContain('kai:daemon:testprefix');
-      expect(calls[1]).toBe('warning message');
+      expect(calls[0]).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      expect(calls[1]).toContain('hyperneo:daemon:testprefix');
+      expect(calls[2]).toBe('warning message');
     });
 
     test('info should output to console.info', () => {
@@ -99,8 +102,9 @@ describe('Logger', () => {
 
       expect(consoleSpy.info).toHaveBeenCalledTimes(1);
       const calls = consoleSpy.info.mock.calls[0];
-      expect(calls[0]).toContain('kai:daemon:testprefix');
-      expect(calls[1]).toBe('info message');
+      expect(calls[0]).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      expect(calls[1]).toContain('hyperneo:daemon:testprefix');
+      expect(calls[2]).toBe('info message');
     });
 
     test('debug should NOT output at INFO level', () => {
@@ -262,7 +266,7 @@ describe('Logger', () => {
     beforeEach(() => {
       configureLogger({
         level: LogLevel.DEBUG,
-        filter: ['kai:daemon:*'],
+        filter: ['hyperneo:daemon:*'],
         excludeFilter: [],
       });
       consoleSpy.log.mockClear();
@@ -273,7 +277,7 @@ describe('Logger', () => {
     });
 
     test('matching namespace should log', () => {
-      const logger = new Logger('TestPrefix'); // becomes kai:daemon:testprefix
+      const logger = new Logger('TestPrefix'); // becomes hyperneo:daemon:testprefix
       logger.info('info message');
 
       expect(consoleSpy.info).toHaveBeenCalledTimes(1);
