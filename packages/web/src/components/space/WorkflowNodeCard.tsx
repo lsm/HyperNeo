@@ -32,6 +32,14 @@ export interface NodeDraft {
   name: string;
   /** Single-agent shorthand (backward compat). When agents is provided and non-empty, agents takes precedence. */
   agentId: string;
+  /**
+   * The slot NAME the single agent had before a multi-agent node was
+   * collapsed to one survivor. Kept so hook-binding callers referencing the
+   * survivor's slot survive the collapse (the editor's caller filter treats
+   * `agents: undefined` as every slot removed) and serialization reuses the
+   * prior role name instead of deriving a new one.
+   */
+  singleAgentRole?: string;
   /** Single-agent model override. Ignored when agents[] is present. */
   model?: string;
   /** Single-agent thinking-level override. Ignored when agents[] is present. */

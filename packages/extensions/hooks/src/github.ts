@@ -1363,11 +1363,49 @@ export async function ghGetCodexApproval(
   }
   // Boundary reached without a decisive review and without the evaluation
   // block running (the loop broke at the boundary instead of at history
-  // exhaustion): evaluate the reaction fallback on the accumulated window.
+  // exhaustion): run the SAME reaction back-pagination the normal path uses —
+  // the tail alone can omit a still-fresh codex +1 under >50 newer reactions
+  // — then evaluate the reaction fallback on the accumulated window.
   const boundaryPrNode = asRecord(asRecord(asRecord(lastPage?.data)?.repository)?.pullRequest);
-  const boundaryReactions = Array.isArray(asRecord(boundaryPrNode?.reactions)?.nodes)
-    ? (asRecord(boundaryPrNode?.reactions)?.nodes as unknown[])
+  const boundaryReactionTail = asRecord(boundaryPrNode?.reactions)?.nodes;
+  const boundaryReactions: unknown[] = Array.isArray(boundaryReactionTail)
+    ? [...boundaryReactionTail]
     : [];
+  if (boundaryReactions.length > 0) {
+    let boundaryPageInfo = asRecord(asRecord(boundaryPrNode?.reactions)?.pageInfo);
+    for (let page = 0; page < MAX_CODEX_REVIEW_PAGES; page++) {
+      if (boundaryPageInfo?.hasPreviousPage !== true) break;
+      const bcc = boundaryPageInfo.startCursor;
+      if (typeof bcc !== 'string' || !CURSOR_RE.test(bcc)) break;
+      const bRemaining = remainingBudget();
+      if (bRemaining <= 0) return deadlineError();
+      const bq =
+        `query { repository(owner:"${pr.owner}",name:"${pr.repo}") { pullRequest(number:${pr.number}) { ` +
+        `reactions(last: 50, content: THUMBS_UP, before:"${bcc}") { ` +
+        'pageInfo { hasPreviousPage startCursor } nodes { createdAt user { login } } } ' +
+        'commits(last: 1) { nodes { commit { oid pushedDate } } } } } }';
+      const bResult = await runGhGraphql(ctx, bq, pr.host, { timeoutMs: bRemaining });
+      if (!bResult.ok) return bResult;
+      const bNode = asRecord(
+        asRecord(asRecord(asRecord(bResult.data)?.data)?.repository)?.pullRequest
+      );
+      const bConn = asRecord(bNode?.reactions);
+      const bPageInfoRec = asRecord(bConn?.pageInfo);
+      if (
+        !Array.isArray(bConn?.nodes) ||
+        !bPageInfoRec ||
+        typeof bPageInfoRec.hasPreviousPage !== 'boolean'
+      ) {
+        return {
+          ok: false,
+          retryable: true,
+          error: 'malformed reactions connection (missing nodes/hasPreviousPage); failing closed',
+        };
+      }
+      boundaryReactions.unshift(...(bConn.nodes as unknown[]));
+      boundaryPageInfo = bPageInfoRec;
+    }
+  }
   const boundaryApproval = extractCodexApproval(
     {
       data: {
@@ -1386,6 +1424,39 @@ export async function ghGetCodexApproval(
     return { ok: false, retryable: true, error: boundaryApproval.failClosedReason };
   }
   if (!boundaryApproval.approved) return { ok: true, data: boundaryApproval };
+  // Route an APPROVED boundary result through the same deadline-guarded head
+  // recheck as the normal path: a commit pushed after the last pagination
+  // response must not deliver on the previous head.
+  const boundaryRemaining = remainingBudget();
+  if (boundaryRemaining <= 0) return deadlineError();
+  const boundaryHeadCheck = await runGhGraphql(
+    ctx,
+    `query { repository(owner:"${pr.owner}",name:"${pr.repo}") { pullRequest(number:${pr.number}) { ` +
+      'commits(last: 1) { nodes { commit { oid } } } } } }',
+    pr.host,
+    { timeoutMs: boundaryRemaining }
+  );
+  if (!boundaryHeadCheck.ok) return boundaryHeadCheck;
+  const boundaryHeadPr = asRecord(
+    asRecord(asRecord(asRecord(boundaryHeadCheck.data)?.data)?.repository)?.pullRequest
+  );
+  const boundaryHeadNodes = asRecord(boundaryHeadPr?.commits)?.nodes;
+  const boundaryCurrentOid = Array.isArray(boundaryHeadNodes)
+    ? asRecord(asRecord(boundaryHeadNodes[boundaryHeadNodes.length - 1])?.commit)?.oid
+    : undefined;
+  if (
+    typeof boundaryCurrentOid !== 'string' ||
+    typeof boundaryApproval.evaluatedHeadOid !== 'string' ||
+    boundaryCurrentOid !== boundaryApproval.evaluatedHeadOid
+  ) {
+    return {
+      ok: false,
+      retryable: true,
+      error:
+        'PR head changed while the codex approval was being evaluated; re-evaluating ' +
+        '(fail closed against the stale-head approval).',
+    };
+  }
   return { ok: true, data: boundaryApproval };
 }
 

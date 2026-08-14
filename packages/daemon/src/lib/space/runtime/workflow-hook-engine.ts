@@ -1351,6 +1351,7 @@ export class WorkflowHookEngine {
               )) {
                 actionTargets.add(resolved);
                 if (nodeNames.has(resolved)) {
+                  if (arrayResolvedNodes.has(resolved)) continue;
                   if (sequentialBlocked || wholeSendRefused) postFailureNodes.add(resolved);
                   else arrayResolvedNodes.add(resolved);
                 }
@@ -1364,14 +1365,14 @@ export class WorkflowHookEngine {
             slotToNodes,
             nodeNames
           );
+          // Delivered BEFORE this entry: nodes a PRIOR entry already delivered
+          // keep their gate even if THIS entry fails (the router dedupes and
+          // delivered them first). Nodes first collected in this very
+          // iteration are NOT protected — this entry is their only delivery.
+          const deliveredBefore = new Set(arrayResolvedNodes);
           for (const resolved of resolvedTargets) {
             actionTargets.add(resolved);
             if (nodeNames.has(resolved)) {
-              // A node whose FIRST occurrence was delivered (pre-failure) keeps
-              // its gate even if a LATER raw occurrence lands after the block —
-              // translateLegacyNodeTargets dedupes, so the router delivers it
-              // once before the failure. Only an occurrence with no pre-failure
-              // delivery is suppressed.
               if (arrayResolvedNodes.has(resolved)) continue;
               if (sequentialBlocked || wholeSendRefused) postFailureNodes.add(resolved);
               else arrayResolvedNodes.add(resolved);
@@ -1496,22 +1497,35 @@ export class WorkflowHookEngine {
             wholeSendRefused = true;
           } else if (!authorized) {
             // Sequential failure point: this entry and every later one never
-            // deliver (the router returns here).
+            // deliver (the router returns here). A node with an EARLIER
+            // delivered occurrence keeps its gate — the failing duplicate
+            // ('@worker:Review/bad' after '@worker:Review/good' delivered)
+            // must not retroactively suppress it.
             sequentialBlocked = true;
             for (const resolved of resolvedTargets) {
-              if (nodeNames.has(resolved)) postFailureNodes.add(resolved);
+              if (nodeNames.has(resolved) && !deliveredBefore.has(resolved)) {
+                postFailureNodes.add(resolved);
+              }
             }
           } else if (suffixAborts && authorized) {
             // This node delivered (first slot authorized) but a LATER slot
             // of it aborted the router — entries AFTER this node never
-            // deliver. Mark the block WITHOUT suppressing this node.
+            // deliver. Mark the block WITHOUT suppressing this node (a node
+            // with an earlier DELIVERED occurrence keeps its gate even when
+            // a later entry of the same node fails).
             sequentialBlocked = true;
           }
         }
-        for (const resolved of wholeSendRefused
-          ? new Set([...arrayResolvedNodes, ...postFailureNodes])
-          : postFailureNodes) {
+        // A node with an EARLIER DELIVERED occurrence (arrayResolvedNodes)
+        // keeps its gate even under wholeSendRefused from a LATER failing
+        // entry — the router's dedup means it delivered before the refusal.
+        for (const resolved of postFailureNodes) {
           nonRoutableResolvedNodes.add(resolved);
+        }
+        if (wholeSendRefused) {
+          for (const resolved of arrayResolvedNodes) {
+            nonRoutableResolvedNodes.add(resolved);
+          }
         }
       }
     }

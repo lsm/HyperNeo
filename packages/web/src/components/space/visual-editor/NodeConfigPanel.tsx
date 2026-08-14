@@ -261,6 +261,11 @@ function AgentsSection({
       onUpdate({
         ...step,
         agents: undefined,
+        // Remember the survivor's slot name for serialization and binding
+        // remap: collapsing to one agent clears `agents`, and the editor's
+        // caller filter would otherwise treat EVERY previous slot (including
+        // the survivor) as removed — silently dropping protected gates.
+        singleAgentRole: survivor?.name,
         agentId: survivor?.agentId ?? '',
         model: survivor?.model,
         thinkingLevel: survivor?.thinkingLevel,

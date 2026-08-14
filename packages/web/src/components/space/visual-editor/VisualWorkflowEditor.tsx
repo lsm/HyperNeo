@@ -673,6 +673,13 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
       const previousAgents = previousNode?.step.agents ?? [];
       const nextAgents = step.agents ?? [];
       const nextSlotNames = new Set(nextAgents.map((agent) => agent.name));
+      // A collapsed node (agents cleared, single agent kept) remembers its
+      // survivor's slot name: treat it as SURVIVING so a binding caller
+      // naming it is not dropped (which would silently remove a protected
+      // gate after deleting an unrelated agent).
+      if (nextAgents.length === 0 && step.singleAgentRole?.trim()) {
+        nextSlotNames.add(step.singleAgentRole.trim());
+      }
       // Pair slots by NAME survival, not array index: deleting the first slot
       // shifts indices, which an index pairing would misread as the deleted
       // slot being "renamed" to the next one — silently re-scoping a caller

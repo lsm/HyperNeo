@@ -236,12 +236,18 @@ function toRoleSlug(value: string): string {
 }
 
 function deriveSingleAgentRoleName(node: VisualNode, fallbackIndex: number): string {
+  // A remembered survivor role (multi-agent node collapsed to one agent)
+  // wins: binding callers authorize by slot name, and a derived name would
+  // orphan them.
+  const fromRemembered = node.step.singleAgentRole;
   const fromSingleSlot =
     Array.isArray(node.step.agents) && node.step.agents.length === 1
       ? node.step.agents[0]?.name
       : '';
   const fromNodeName = toRoleSlug(node.step.name);
-  return fromSingleSlot?.trim() || fromNodeName || `agent-${fallbackIndex + 1}`;
+  return (
+    fromRemembered?.trim() || fromSingleSlot?.trim() || fromNodeName || `agent-${fallbackIndex + 1}`
+  );
 }
 
 function derivePostApprovalTargetAgent(agents: WorkflowNodeAgent[], fallbackIndex: number): string {

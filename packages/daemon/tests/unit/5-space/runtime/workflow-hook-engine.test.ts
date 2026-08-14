@@ -739,6 +739,37 @@ describe('WorkflowHookEngine.executeAction', () => {
     expect(deliveredOutcome.blockingHookId).toBe('order_hook');
   });
 
+  test('a duplicate failing worker does not suppress the earlier delivered node', async () => {
+    // ['@worker:Review/good', '@worker:Review/bad'] with a channel to 'good'
+    // only: the router delivers good BEFORE aborting at bad — Review received
+    // the message, so its gate must run (a post-failure mark on the duplicate
+    // must not retroactively suppress the earlier delivered occurrence).
+    const STOP_HOOK = scriptHook('dup_hook', '{"flow":"stop","reason":"blocked"}');
+    const workflow = makeWorkflow({
+      customHooks: [STOP_HOOK],
+      channels: [{ from: 'Coding', to: 'good', label: 'Coding → good' }],
+      hookBindings: [
+        {
+          hookId: 'dup_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    const engine = makeEngine(workflow);
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: ['@worker:n-review/good', '@worker:n-review/bad'], message: 'dup' },
+      META
+    );
+    expect(outcome.decision).toBe('stop');
+    expect(outcome.blockingHookId).toBe('dup_hook');
+  });
+
   test('a mid-node worker abort blocks later array entries (not the node itself)', async () => {
     // Node Review ordered [reviewer, qa] with a channel only to 'reviewer':
     // the adapter expands BOTH slots; the router delivers reviewer then
