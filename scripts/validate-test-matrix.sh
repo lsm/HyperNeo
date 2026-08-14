@@ -109,21 +109,25 @@ count_enabled_run_cmds() {
 # executed command, so the step runs zero tests while the guard stays green.
 marker_executed() {
 	awk -v runval="$1" -v marker="$2" '
+		function strip_quotes(t,   i,c,out,q) {
+			out=""; q=0
+			for (i=1; i<=length(t); i++) {
+				c=substr(t,i,1)
+				if (c == "'\''" || c == "\"") q = (q ? 0 : 1)
+				else if (!q) out=out c
+			}
+			return out
+		}
 		function executed_text(s,   i,n,c,out,sq,dq,qstart,before,content) {
-			# Track single (sq) and double (dq) quote regions separately. A quoted
-			# string is an ARGUMENT (data) unless it is the body of a `bash/sh -lc/-c`
-			# command — so `bash -lc 'vitest'` keeps vitest (executed), but
-			# `bash -lc "true" "vitest"` keeps only `true` (the command); the second
-			# arg is $0, NOT executed, even though it is double-quoted.
 			n=length(s); out=""; sq=0; dq=0
 			for (i=1; i<=n; i++) {
 				c=substr(s,i,1)
 				if (c == "'\''" && !dq) {
 					if (!sq) { sq=1; qstart=i; before=substr(s,1,i-1) }
-					else { sq=0; content=substr(s,qstart+1,i-qstart-1); if (before ~ /(bash|sh)[[:space:]]+-l?c[[:space:]]*$/) out=out content }
+					else { sq=0; content=substr(s,qstart+1,i-qstart-1); if (before ~ /(bash|sh)[[:space:]]+-l?c[[:space:]]*$/) out=out strip_quotes(content) }
 				} else if (c == "\"" && !sq) {
 					if (!dq) { dq=1; qstart=i; before=substr(s,1,i-1) }
-					else { dq=0; content=substr(s,qstart+1,i-qstart-1); if (before ~ /(bash|sh)[[:space:]]+-l?c[[:space:]]*$/) out=out content }
+					else { dq=0; content=substr(s,qstart+1,i-qstart-1); if (before ~ /(bash|sh)[[:space:]]+-l?c[[:space:]]*$/) out=out strip_quotes(content) }
 				} else if (!sq && !dq) { out=out c }
 			}
 			return out
@@ -503,9 +507,12 @@ reject_effective_config_drift() {
 			// depth, reject such a hook on any plugin that is not a known framework
 			// internal (preact/vite/vitest/@vitejs/prefresh).
 			const plugins = ((m.default || m).plugins || []).flat();
-			const SAFE_PLUGIN = /^(preact|vite|vitest|@vitejs|prefresh)/;
+			// Exact known framework plugins only — a prefix match would let a local
+			// plugin like "vite-narrow-tests" sneak through. Update this set if the
+			// web plugin stack changes (the guard fails loudly to force a review).
+			const SAFE_PLUGIN = ["preact:config", "vite:preact-jsx", "preact:transform-hook-names", "preact:devtools", "prefresh"];
 			for (const p of plugins) {
-				if ((typeof p.config === "function" || typeof p.configResolved === "function") && !SAFE_PLUGIN.test(p.name || ""))
+				if ((typeof p.config === "function" || typeof p.configResolved === "function") && !SAFE_PLUGIN.includes(p.name))
 					drift.push("plugin " + (p.name || "?") + " has a config/configResolved hook that could alter test selection");
 			}
 			if (drift.length) { console.error(drift.join("; ")); process.exit(1); }

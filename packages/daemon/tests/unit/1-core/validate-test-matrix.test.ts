@@ -664,3 +664,48 @@ describe('validate-test-matrix.sh', () => {
     TIMEOUT
   );
 });
+
+it(
+  'rejects a marker nested in an echo inside a bash -lc body (P2)',
+  () => {
+    // bash -lc 'echo "<marker>"' — the marker is echo's data arg inside the
+    // -lc body, not executed. strip_quotes on the -lc body catches it.
+    const wf = path.join(REPO_ROOT, '.github/workflows/main.yml');
+    const original = fs.readFileSync(wf, 'utf-8');
+    const anchor = "bash -lc 'cd packages/daemon && node_modules/.bin/vitest run";
+    expect(original.includes(anchor)).toBe(true);
+    fs.writeFileSync(
+      wf,
+      original.replace(
+        anchor,
+        'bash -lc \'echo "cd packages/daemon && node_modules/.bin/vitest run'
+      )
+    );
+    try {
+      const { exitCode, stderr } = runGuard();
+      expect(exitCode).toBe(1);
+      expect(stderr).toContain('does not EXECUTE');
+    } finally {
+      fs.writeFileSync(wf, original);
+    }
+  },
+  TIMEOUT
+);
+
+it(
+  'rejects a non-allowlisted plugin named with a framework prefix (P2)',
+  () => {
+    // A plugin named "vite-narrow-tests" starts with "vite" but is NOT in the
+    // exact allowlist; its config hook must be rejected.
+    expectGuardRejects(
+      path.join(REPO_ROOT, 'packages/web/vitest.config.ts'),
+      (s) =>
+        s.replace(
+          '  plugins: [',
+          "  plugins: [\n    { name: 'vite-narrow-tests', config: () => ({ test: { include: ['x'] } }) },\n"
+        ),
+      'effective test config does not match'
+    );
+  },
+  TIMEOUT
+);
