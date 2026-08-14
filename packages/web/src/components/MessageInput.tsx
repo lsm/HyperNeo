@@ -17,6 +17,7 @@ import type {
 } from '@hyperneo/shared';
 import type { ComponentChildren } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { appendDraftText } from '@hyperneo/shared';
 import {
   useCommandAutocomplete,
   useFileAttachments,
@@ -492,7 +493,13 @@ export default function MessageInput({
     async (
       targetSessionId: string,
       transcript: string,
-      mode: 'stay' | 'send' | 'queue'
+      mode: 'stay' | 'send' | 'queue',
+      // Snapshot of the composer payload taken at click time (while still
+      // mounted). The unmounted delivery can't read the live draft/attachments,
+      // so it sends what was here when the user clicked — matching the mounted
+      // path, which submits the complete composer. The transcript is appended
+      // (the caret position is unknown once unmounted).
+      payload: { content: string; images?: MessageImage[] }
     ): Promise<{ ok: boolean; message: string }> => {
       const hub = connectionManager.getHubIfConnected();
       if (!hub) return { ok: false, message: '' };
@@ -507,7 +514,8 @@ export default function MessageInput({
         const deliveryMode: MessageDeliveryMode = mode === 'queue' ? 'defer' : 'immediate';
         await hub.request('message.send', {
           sessionId: targetSessionId,
-          content: transcript,
+          content: appendDraftText(payload.content, transcript),
+          images: payload.images,
           deliveryMode,
         });
         return {
@@ -538,6 +546,11 @@ export default function MessageInput({
       // composer has since been re-targeted, the transcript is discarded with a
       // toast instead of landing in — or auto-sending to — another session.
       const targetSessionId = recordingSessionRef.current ?? sessionId;
+      // Snapshot the full outgoing payload NOW (mounted, click time). If the
+      // user navigates away during transcription, the unmounted delivery path
+      // can't read the live draft/attachments — it must send what was here when
+      // they clicked, matching the mounted path that submits the whole composer.
+      const payloadSnapshot = { content: contentRef.current, images: getImagesForSend() };
       setIsTranscribing(true);
       try {
         const recording = await voiceRecorder.stop();
@@ -572,7 +585,12 @@ export default function MessageInput({
           // — send/queue as a real message, stay staged into the pending field
           // (merged into the draft atomically by the daemon on next get) — so it
           // is never silently lost. Await so the toast reflects the outcome.
-          const delivered = await deliverUnmountedTranscript(targetSessionId, transcript, mode);
+          const delivered = await deliverUnmountedTranscript(
+            targetSessionId,
+            transcript,
+            mode,
+            payloadSnapshot
+          );
           if (delivered.ok) toast.info(delivered.message);
           else toast.error('Voice transcript could not be delivered — it was lost');
         } else if (mountedRef.current) {
@@ -588,7 +606,14 @@ export default function MessageInput({
         setIsTranscribing(false);
       }
     },
-    [insertTranscript, deliverUnmountedTranscript, isTranscribing, voiceRecorder, sessionId]
+    [
+      insertTranscript,
+      deliverUnmountedTranscript,
+      getImagesForSend,
+      isTranscribing,
+      voiceRecorder,
+      sessionId,
+    ]
   );
 
   // Cancel discards the recording AND its pinned target session.

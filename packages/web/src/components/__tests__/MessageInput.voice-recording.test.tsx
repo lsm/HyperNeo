@@ -182,6 +182,8 @@ describe('MessageInput — recording UI', () => {
     );
 
     const onSend = vi.fn(async () => {});
+    // The user already typed some draft text before voice-Sending.
+    draft.value = 'note:';
     const { unmount } = render(<MessageInput sessionId="s1" onSend={onSend} />);
 
     fireEvent.click(screen.getByLabelText('Stop, transcribe and send'));
@@ -192,14 +194,15 @@ describe('MessageInput — recording UI', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     resolveTranscribe({ text: 'hello world' });
 
-    // send mode delivers straight to the session as a real message — no draft,
-    // so nothing for a stale client snapshot to clobber.
+    // send mode delivers the FULL click-time payload (draft + transcript), not
+    // just the transcript — matching the mounted path that submits the whole
+    // composer.
     await waitFor(() => {
       const sendCall = hubRequest.mock.calls.find(([m]) => m === 'message.send');
       expect(sendCall).toBeTruthy();
       expect(sendCall[1]).toEqual({
         sessionId: 's1',
-        content: 'hello world',
+        content: 'note: hello world',
         deliveryMode: 'immediate',
       });
     });
