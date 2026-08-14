@@ -454,6 +454,11 @@ export class AcpQueryRunner {
     // gated on it so a terminal failure (handleRunError) does not drive the
     // next turn.
     let turnCompletedNormally = false;
+    // Captured at run start: an interrupt aborts this controller mid-run, and
+    // the finally block aborts (and nulls) it on EVERY non-stale completion —
+    // so only a snapshot taken before the try can distinguish "interrupted
+    // during the run" from "aborted during normal cleanup".
+    const queryAbortSignal = this.ctx.queryAbortController?.signal ?? null;
 
     try {
       const { initializeProviders, waitForOptionalProviderRegistration } = await import(
@@ -784,16 +789,14 @@ export class AcpQueryRunner {
         messageQueue.stop();
       }
       // The turn consumed its input and ended without reaching the catch —
-      // mark it completed normally so the finally-block deferred replay only
-      // drives the next turn after a successful completion, not after a
-      // terminal failure (auth rejection, provider unavailable, exhausted
-      // startup retries) handled by handleRunError. An INTERRUPTED run also
-      // reaches here without throwing (createAbortableQuery breaks and
-      // returns normally on the abort signal), so classify by the live
-      // processing state: replaying an interrupted run would restart
-      // deferred work the user/teardown just stopped (and bypass
-      // skipDeferredReplay on teardown-bound interrupts).
-      turnCompletedNormally = stateManager.getState().status !== 'interrupted';
+      // classify completion for the finally-block deferred replay. A single
+      // status read is insufficient: an interrupt that completes before this
+      // line runs has already returned the session to idle, masquerading as
+      // a normal end. The captured abort signal is the durable evidence — an
+      // interrupt (user, sibling quiesce, or teardown) aborted it mid-run —
+      // and the status check catches an interrupt still in flight.
+      turnCompletedNormally =
+        !queryAbortSignal?.aborted && stateManager.getState().status !== 'interrupted';
     } catch (error) {
       restoreMessageEnqueuedHandler?.();
       const effectiveError =
@@ -872,7 +875,12 @@ export class AcpQueryRunner {
               // the process exit — publishing then would promote deferred
               // rows for a session that is being cancelled/shut down.
               !this.ctx.isCleaningUp() &&
-              stateManager.getState().status !== 'interrupted' &&
+              // Require a genuinely idle session, mirroring the interrupt
+              // replay path: a newer turn that started during the exit wait
+              // (the exit promise is the OLD child's, up to ~5s under
+              // SIGTERM→SIGKILL) must not have the old deferred rows steered
+              // into it — their replay is left to that turn's completion.
+              stateManager.getState().status === 'idle' &&
               session.config.queryMode !== 'manual'
             ) {
               this.ctx.internalEventBus.publishAsync('query.trigger', { sessionId: session.id });

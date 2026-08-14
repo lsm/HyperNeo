@@ -662,6 +662,53 @@ describe('AcpQueryRunner', () => {
     expect(publishAsync).not.toHaveBeenCalledWith('query.trigger', { sessionId: 'session-1' });
   });
 
+  test('does not publish query.trigger when cleanup starts during the exit wait', async () => {
+    // Between the turn-end snapshot and the process-exit resolution, teardown
+    // can begin (isCleaningUp flips) — the fire-time recheck must suppress
+    // the replay so no delivery jobs are inserted for a dying session.
+    let signalProcessExit!: () => void;
+    const processExitedPromise = new Promise<void>((resolve) => {
+      signalProcessExit = resolve;
+    });
+    const { runner, ctx } = createRunnerFixture();
+    const publishAsync = ctx.internalEventBus.publishAsync as unknown as ReturnType<typeof mock>;
+    (ctx as unknown as { processExitedPromise: Promise<void> }).processExitedPromise =
+      processExitedPromise;
+
+    await runner.start();
+    await ctx.queryPromise;
+    (ctx as unknown as { isCleaningUp: () => boolean }).isCleaningUp = () => true;
+
+    signalProcessExit();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(publishAsync).not.toHaveBeenCalledWith('query.trigger', { sessionId: 'session-1' });
+  });
+
+  test('does not publish query.trigger when a newer turn started during the exit wait', async () => {
+    // Mirrors the interrupt replay path: the exit promise is the OLD child's
+    // (up to ~5s under SIGTERM→SIGKILL); a newer turn starting in that window
+    // must not have the old deferred rows steered into it — require idle.
+    let signalProcessExit!: () => void;
+    const processExitedPromise = new Promise<void>((resolve) => {
+      signalProcessExit = resolve;
+    });
+    const { runner, ctx } = createRunnerFixture();
+    const publishAsync = ctx.internalEventBus.publishAsync as unknown as ReturnType<typeof mock>;
+    (ctx as unknown as { processExitedPromise: Promise<void> }).processExitedPromise =
+      processExitedPromise;
+
+    await runner.start();
+    await ctx.queryPromise;
+    // A newer turn starts while the old child is still exiting.
+    (ctx.stateManager as unknown as { getState: () => { status: string } }).getState = () => ({
+      status: 'processing',
+    });
+
+    signalProcessExit();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(publishAsync).not.toHaveBeenCalledWith('query.trigger', { sessionId: 'session-1' });
+  });
+
   test('aborts ACP submission when remove/defer already revoked the row (#3744696846)', async () => {
     const client = createMockClient();
     let promptBodyRan = false;

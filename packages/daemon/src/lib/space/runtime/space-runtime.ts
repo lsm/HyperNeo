@@ -2440,9 +2440,8 @@ export class SpaceRuntime {
         // Mark the persisted delivery with the defer-encoded reason (not
         // markFailure:false): after a daemon restart the in-memory queue is
         // gone and requeuePersistedPendingDeliveries reconstructs the mode
-        // via deliveryModeFromFailureReason — a null reason falls back to
-        // 'immediate', which would steer an already-processing kickoff
-        // mid-turn after recovery.
+        // via deliveryModeFromFailureReason. The explicit defer marker keeps
+        // the intent legible even though recovery's default is also defer.
         this.scheduleActivationRetry(
           preparedTarget,
           payload,
@@ -2471,8 +2470,8 @@ export class SpaceRuntime {
             payload,
             deliveryKey,
             // Defer-encoded prefix so a daemon restart before the retry
-            // succeeds reconstructs 'defer' (a bare activation_failed reason
-            // recovers as 'immediate', which would steer a busy kickoff).
+            // succeeds reconstructs 'defer' explicitly (recovery's default
+            // is also defer; the marker documents the queued intent).
             `deliveryMode:defer; activation_failed; ${failureReason}`
           );
           return;
@@ -2515,8 +2514,8 @@ export class SpaceRuntime {
         } else if (activatedTarget) {
           store.markDeliveryFailed(payload.eventId, deliveryKey, {
             terminal: false,
-            // Defer-encoded so a daemon restart reconstructs 'defer' — a bare
-            // reason recovers as 'immediate' and would steer a busy kickoff.
+            // Defer-encoded so a daemon restart reconstructs 'defer'
+            // explicitly (recovery's default is also defer).
             reason: 'deliveryMode:defer; node_execution_not_active',
           });
           // The persisted retryable delivery plus the activation retry timer
@@ -2938,6 +2937,15 @@ export class SpaceRuntime {
       }
       const refreshed = rechecked.target;
       if (refreshed.sessionId && this.isTargetSessionLive(refreshed.sessionId)) {
+        // Same stale-state normalization + mid-interrupt park as the fresh
+        // live-session branches: a check_failed reactivation can land while
+        // the target session is mid-interrupt, where a defer handoff would
+        // be marked delivered with nothing owning the row's replay (and a
+        // recovered immediate row would restart the interrupted session).
+        await this.normalizeStaleInterruptedSession(refreshed.sessionId);
+        if (this.parkDeliveryForInterruptedSession(refreshed, event, deliveryKey, createdAt)) {
+          return;
+        }
         await this.deliverToSession(refreshed, event, deliveryKey, deliveryMode, createdAt);
       } else {
         // Recovery resets the finished execution to pending with no live session.
@@ -2958,9 +2966,9 @@ export class SpaceRuntime {
             event,
             deliveryKey,
             // Encode the recovered mode so a daemon restart reconstructs it
-            // (deliveryModeFromFailureReason only distinguishes the defer
-            // prefix; an immediate encoding recovers 'immediate', same as a
-            // bare reason).
+            // faithfully: only the explicit immediate marker recovers
+            // 'immediate'; everything else (defer marker, bare, null)
+            // recovers the defer default.
             `deliveryMode:${deliveryMode}; node_execution_not_active`
           );
         }
@@ -3890,10 +3898,11 @@ export class SpaceRuntime {
 
   /**
    * Whether the target's live session is mid-interrupt. A deferred row handed
-   * to a session in this state is never replayed: InterruptHandler completes
-   * via `setIdle` without publishing `query.trigger` (the trigger `finishTurn`
-   * uses to drain deferred rows), so a defer handoff would mark the delivery
-   * delivered while the row sits unconsumed indefinitely.
+   * to a session in this state has no replay owner unless the interrupt's own
+   * completion publishes `query.trigger` — which the InterruptHandler now does
+   * for USER interrupts, but teardown-bound ones (session stop, sibling
+   * quiesce, shutdown) deliberately suppress. Parking keeps the delivery in
+   * the runtime's retry loop until the interrupt resolves to a true idle.
    */
   private isTargetSessionInterrupted(sessionId: string): boolean {
     const session = this.config.taskAgentManager?.getAgentSessionById?.(sessionId);
@@ -3921,8 +3930,8 @@ export class SpaceRuntime {
   ): boolean {
     if (!target.sessionId || !this.isTargetSessionInterrupted(target.sessionId)) return false;
     this.queueForPendingNode(target, payload, deliveryKey, 'defer', createdAt);
-    // Defer-encoded failure reason so a daemon restart reconstructs 'defer'
-    // (a null reason recovers as 'immediate' — see the pending-node branch).
+    // Defer-encoded failure reason documents the queued intent for a daemon
+    // restart (recovery's default is also defer).
     this.scheduleActivationRetry(
       target,
       payload,

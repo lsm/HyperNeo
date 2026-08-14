@@ -82,6 +82,14 @@ export class InterruptHandler {
   }): Promise<void> {
     const { session, messageHub, messageQueue, stateManager, logger } = this.ctx;
 
+    // Snapshot the process-exit promise BEFORE the first await: the durable
+    // cancellation below yields, and the old query's finally may run in that
+    // window — QueryRunner clears ctx.processExitedPromise once the query
+    // settles (close() only initiates subprocess termination), so reading it
+    // later would miss the still-pending exit. Mirrors
+    // QueryLifecycleManager.stop's snapshot-before-await discipline.
+    const processExitSnapshot = this.ctx.processExitedPromise ?? Promise.resolve();
+
     // Durable-delivery cancel FIRST (message-delivery v2): revoke EVERY active
     // message_delivery job for the session and terminalize each still-enqueued
     // SDK row. This must live here — the single chokepoint every interrupt path
@@ -151,13 +159,6 @@ export class InterruptHandler {
     this.interruptPromise = interruptCompletePromise;
 
     try {
-      // Snapshot the process-exit promise BEFORE any await: QueryRunner's
-      // finally clears ctx.processExitedPromise once the old query settles
-      // (close() only initiates subprocess termination), so reading it later
-      // would miss the still-pending exit and let the deferred replay race
-      // the terminating process. Mirrors QueryLifecycleManager.stop().
-      const processExitSnapshot = this.ctx.processExitedPromise ?? Promise.resolve();
-
       // Set state to 'interrupted' immediately
       await stateManager.setInterrupted();
 

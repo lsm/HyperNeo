@@ -1480,6 +1480,35 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(injected[0]!.sessionId).toBe('session-late-subscription');
   });
 
+  test('persists the defer mode when a live session is skipped while its space is paused', async () => {
+    // The paused-live early return must not leave a null failureReason:
+    // onSpaceResumed reconstructs the mode from it, so the defer intent is
+    // recorded explicitly rather than relying on the recovery default.
+    const { run } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-paused-live',
+      startedAt: Date.now(),
+    });
+    tam.alive.add('session-paused-live');
+    db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
+    // The paused check reads the synchronous delivery-hold cache (kept in
+    // sync by the space pause/stop registers), not the raw column.
+    runtime.holdSpaceDeliveries(SPACE_ID);
+
+    const event = makeEvent();
+    await eventService.publish(event);
+
+    expect(injected).toHaveLength(0);
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('pending');
+    expect(delivery.failureReason).toBe('deliveryMode:defer; space_paused');
+
+    db.prepare(`UPDATE spaces SET paused = 0 WHERE id = ?`).run(SPACE_ID);
+    await runtime.stop();
+  });
+
   test('delivers a linked-PR event after a matching subscription registers', async () => {
     const { workflow, run, task } = await startRunWithSubscription(DEFAULT_TOPIC);
     await runtime.executeTick();
