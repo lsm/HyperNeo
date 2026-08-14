@@ -77,6 +77,20 @@ The daemon executor branches on the hook kind: a built-in → call the registry'
 TS function; a custom → spawn the sandboxed bash. `requiredData` is authored
 alongside either.
 
+**Custom script hooks are restricted to stateless flow decisions.** The
+script's only bridge to the run is a read-only snapshot environment
+(`HYPERNEO_PARAMS_JSON`, `HYPERNEO_CURRENT_ARTIFACTS_JSON`, run/node/task
+identity — see `buildScriptEnv`), and its stdout is consumed as flow metadata
+only (`flow` / `reason` / `payload` / `retryAfterMs`); every other field,
+including `result`, is logged and ignored. There is deliberately **no script
+bridge to the `HookContext` side-effecting methods** (`readState`,
+`recordState`, `queueFollowUp`, `writeArtifact`) — bash cannot call the
+injected JS functions, and snapshots of mutable state would invite
+lost-update bugs. A hook that needs state, follow-ups, or artifacts must be a
+built-in (or a new built-in added to `@hyperneo/extensions-hooks`). A bounded
+file/stdout protocol for script side effects is a tracked follow-up; until it
+lands, the custom-hook contract is exactly "decide the flow".
+
 ## 4. Return contract — hooks own their side effects
 
 ```ts

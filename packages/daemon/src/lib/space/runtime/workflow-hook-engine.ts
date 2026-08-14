@@ -1384,9 +1384,20 @@ export class WorkflowHookEngine {
    * (full daemon env); custom scripts are user-authored bash and get a
    * RESTRICTED env — an allow-list without the daemon's credentials (spec §3:
    * the script sandbox stays; see buildScriptEnv).
-   * The script reads context via `HYPERNEO_*` env vars and emits a
-   * {@link HookReturn} JSON on stdout. A non-zero exit, timeout, or malformed
-   * stdout is a `stop` with the error as the reason.
+   *
+   * CONTRACT: custom scripts are STATELESS flow decisions. Their only bridge
+   * to the run is the read-only snapshot env (params, artifacts, run/node/
+   * task identity), and stdout is consumed as flow metadata only — `flow`,
+   * `reason`, `payload`, `retryAfterMs`; every other field (including
+   * `result`) is logged and ignored. There is deliberately no bridge to the
+   * HookContext side-effecting methods (readState/recordState/
+   * queueFollowUp/writeArtifact): bash cannot call the injected JS functions,
+   * and state snapshots would invite lost-update bugs. Hooks that need side
+   * effects must be built-ins; a bounded script side-effect protocol is a
+   * tracked follow-up (see docs/features/workflow-hooks-v2.md §3).
+   *
+   * A non-zero exit, timeout, or malformed stdout is a `stop` with the error
+   * as the reason.
    */
   private async runCustomHookScript(
     hook: CustomHook,

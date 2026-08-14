@@ -1,3 +1,9 @@
+> **Deprecated (hooks v2).** This document describes the removed v1 hook
+> model (`hooks[]`, connectors, `effects`/`side_effect` classification). It was
+> hard-cut in the v2 cutover — see [workflow-hooks-v2.md](./workflow-hooks-v2.md)
+> for the current two-layer model (`Hook` + `HookBinding`, `HookContext`,
+> flow-only returns).
+
 # Workflow hooks
 
 Workflow hooks replace legacy workflow gate polling for MCP action checks. They run inside the daemon before a node-agent MCP action such as `send_message`, `save_artifact`, or `approve_task`. Hook results are persisted before the underlying action handler runs, so `side_effect` classification means "non-blocking pre-action side effect", not post-success handling.
