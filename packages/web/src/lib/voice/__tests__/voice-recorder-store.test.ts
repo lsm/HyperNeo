@@ -228,6 +228,28 @@ describe('voiceRecorderStore', () => {
     expect(recording.audioBase64.length).toBeGreaterThan(0);
   });
 
+  it('discards an ownerless recording at the cap instead of wedging busy', async () => {
+    await voiceRecorderStore.start('owner-a', 's1');
+    voiceRecorderStore.orphan('owner-a');
+    // Nobody can adopt this recording (e.g. the session was archived). Fire the
+    // byte cap: the capture must be DISCARDED, not buffered ownerless.
+    const handler = workletNode.onaudioprocess;
+    const capSamples = Math.floor((((VOICE_MAX_AUDIO_BYTES - 44) / 2) * 0.92 * 48_000) / 16_000);
+    const needed = Math.ceil(capSamples / 4096);
+    for (let i = 0; i < needed + 1; i++) {
+      handler({
+        inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.5) },
+      });
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(voiceRecorderStore.isRecording.value).toBe(false);
+    expect(voiceRecorderStore.durationLimitHit.value).toBe(false);
+    expect(mediaStreamSource.disconnect).toHaveBeenCalled();
+    // The recorder is reusable — not stuck busy.
+    await voiceRecorderStore.start('owner-b', 's2');
+    expect(voiceRecorderStore.recordingOwnerId.value).toBe('owner-b');
+  });
+
   it('orphan() is a no-op when this store has no live recording', async () => {
     voiceRecorderStore.orphan('owner-a');
     expect(voiceRecorderStore.recordingOwnerId.value).toBeNull();

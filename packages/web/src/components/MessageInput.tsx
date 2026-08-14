@@ -462,7 +462,10 @@ export default function MessageInput({
       // composer can re-target sessionId without remounting while recording or
       // transcribing; pinning here (not at Stop/Send click) means a mid-recording
       // retarget is detected at completion and the transcript is discarded
-      // rather than delivered to the newly selected agent.
+      // rather than delivered to the newly selected agent. An ADOPTED recording
+      // (orphaned by this session's previous composer and picked up on mount)
+      // re-pins to this composer's session, which adopt() guarantees matches
+      // the recording's session — never a stale pin from an earlier recording.
       recordingSessionRef.current = sessionId;
       // The textarea unmounts while recording, so insertTranscript later falls
       // back to the cursor refs — snapshot the live selection now, including
@@ -494,6 +497,16 @@ export default function MessageInput({
   sessionIdRef.current = sessionId;
   // The session the CURRENT recording was started for (null when idle).
   const recordingSessionRef = useRef<string | null>(null);
+  // Keep the pinned delivery target synchronized with an ADOPTED recording:
+  // this composer never called startRecording for it, so the pin is either
+  // null (fresh mount) or stale from an earlier recording. Ownership is
+  // relinquished on retarget, so this never overrides the intentional
+  // retarget-discard safeguard.
+  useEffect(() => {
+    if (voiceRecorder.isRecording && voiceRecorder.recordingSessionId) {
+      recordingSessionRef.current = voiceRecorder.recordingSessionId;
+    }
+  });
 
   // Deliver a transcript whose composer has already unmounted (the user clicked
   // Send/Stop then navigated to another session while the up-to-125s RPC was in

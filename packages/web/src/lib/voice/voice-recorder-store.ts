@@ -180,6 +180,15 @@ class VoiceRecorderStore {
 
       const hitLimit = () => {
         if (this.stoppedByLimit) return;
+        // A recording with NO owner (its composer unmounted with no possible
+        // same-session adopter — e.g. the session was archived mid-recording)
+        // must not buffer capped audio forever: nobody can stop or adopt it,
+        // which would wedge the recorder busy for every other session. Discard
+        // it at the cap instead.
+        if (this.recordingOwnerId.value === null) {
+          void this.cancel();
+          return;
+        }
         this.stoppedByLimit = true;
         this.durationLimitHit.value = true;
         this.isRecording.value = false;

@@ -69,6 +69,14 @@ export function useVoiceRecorder(sessionId: string) {
     get durationLimitHit() {
       return voiceRecorderStore.durationLimitHit.value && owns();
     },
+    /**
+     * The session this recording actually belongs to while this instance owns
+     * it — consumers use it to keep a pinned delivery target synchronized
+     * with ADOPTED recordings (whose session this composer never started).
+     */
+    get recordingSessionId() {
+      return owns() ? voiceRecorderStore.recordingSessionId.value : null;
+    },
     start: () => voiceRecorderStore.start(ownerId, sessionId),
     stop: voiceRecorderStore.stop,
     /** Cancels only this instance's recording; a no-op for anyone else's. */
