@@ -32,6 +32,7 @@ import type {
 } from '@hyperneo/shared';
 import { Logger } from '../../lib/logger';
 import { CORRUPT_HOOK_BINDINGS_HOOK_ID } from '../../lib/space/hook-reserved-ids';
+import { ALL_HOOK_METHODS } from '@hyperneo/shared';
 import {
   computeDefinitionVersion,
   stableVersionTimestamp,
@@ -188,14 +189,9 @@ function isCustomHookElement(value: unknown): boolean {
 /** Every (node × method) marker binding: guarantees each hookable action
  * from each node hits an unregistered hook id and stops. */
 function corruptBindingsMarker(nodes: WorkflowNode[]): HookBinding[] {
-  const methods = [
-    'send_message',
-    'save_artifact',
-    'create_standalone_task',
-    'mark_complete',
-    'submit_for_approval',
-    'approve_task',
-  ] as const;
+  // Parity with the engine's hookable methods is structural: the list IS the
+  // shared HookMethod union — a new method lands in the marker automatically.
+  const methods = ALL_HOOK_METHODS;
   const bindings: HookBinding[] = [];
   for (const node of nodes) {
     for (const method of methods) {

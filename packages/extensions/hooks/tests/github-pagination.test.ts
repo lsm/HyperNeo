@@ -317,6 +317,35 @@ describe('ghGetCodexApproval — boundary path', () => {
     if (result.ok) expect(result.data.approved).toBe(true);
   });
 
+  test('a fresh codex +1 in the boundary SEED tail approves without any walk', async () => {
+    // The boundary probe evaluates reviews WITH the seed tail: an approval
+    // already in the tail must skip the walk entirely — here the walk would
+    // fail closed on an invalid cursor (hasPreviousPage true, no startCursor).
+    setGraphqlRunnerForTests(
+      pagedRunner([
+        breakPage(
+          [
+            {
+              createdAt: '2026-08-13T12:00:00Z',
+              user: { login: 'chatgpt-codex-connector[bot]' },
+            },
+          ],
+          { hasPreviousPage: true }
+        ),
+        {
+          data: {
+            repository: {
+              pullRequest: { commits: { nodes: [{ commit: { oid: HEAD } }] } },
+            },
+          },
+        },
+      ])
+    );
+    const result = await ghGetCodexApproval(CTX, PR_LINK);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.approved).toBe(true);
+  });
+
   test('a not-approved boundary result returns settled (no false head-changed retry)', async () => {
     // The not-approved fall-through carries no evaluatedHeadOid — the early
     // return before the head recheck is what keeps every settled negative

@@ -125,7 +125,13 @@ export function useRunHookStates(runId: string | null | undefined): {
           if (event.runId !== runId) return;
           setHookStateMap((prev) => {
             const next = new Map(prev ?? []);
-            next.set(event.hookId, event.hookState);
+            // Version guard (mirrors the fetch-merge below): an OUT-OF-ORDER
+            // delivery — an older event racing a newer snapshot — must not
+            // regress the banner to the stale state.
+            const existing = next.get(event.hookId);
+            if (!existing || existing.version <= event.hookState.version) {
+              next.set(event.hookId, event.hookState);
+            }
             return next;
           });
         });

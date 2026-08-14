@@ -1187,6 +1187,32 @@ export class WorkflowHookEngine {
     const nodeIdToName = new Map(workflow.nodes.map((n) => [n.id, n.name]));
     const nodeNames = new Set(workflow.nodes.map((n) => n.name));
     const resolver = new ChannelResolver(workflow.channels ?? []);
+    // ADAPTER PARITY for bare-slot resolution ORDER: the adapter's
+    // legacyBareTargetMatches prefers ACTOR matches — live worker executions
+    // (nodeExecutionRepo.listByWorkflowRun, ORDER BY created_at ASC) — over
+    // declaration-order agent matches, and RETURNS EARLY on the first
+    // non-empty actor set (declaration-only declarers are EXCLUDED). The
+    // router then delivers sequentially in that order and hard-returns at
+    // the first unauthorized worker, so the sequential fan-out walks below
+    // must see resolutions in the SAME order — declaration order here would
+    // diverge whenever a later-declared node's execution was created first,
+    // suppressing a gate for a handoff the router actually delivers
+    // (fail-open of the whole boundary this engine builds).
+    const slotExecutionNodes = new Map<string, string[]>();
+    try {
+      for (const exec of this.config.nodeExecutionRepo.listByWorkflowRun(
+        this.config.workflowRunId
+      )) {
+        const nodeNameForExec = nodeIdToName.get(exec.workflowNodeId) ?? exec.workflowNodeId;
+        const arr = slotExecutionNodes.get(exec.agentName) ?? [];
+        if (!arr.includes(nodeNameForExec)) {
+          arr.push(nodeNameForExec);
+          slotExecutionNodes.set(exec.agentName, arr);
+        }
+      }
+    } catch {
+      // Unreadable executions fall back to declaration order below.
+    }
 
     const actionTargets = new Set<string>();
     // Nodes whose requested resolution was NON-ROUTABLE (per-target, not
@@ -1271,7 +1297,8 @@ export class WorkflowHookEngine {
                 t,
                 nodeIdToName,
                 slotToNodes,
-                nodeNames
+                nodeNames,
+                slotExecutionNodes
               )) {
                 actionTargets.add(resolved);
               }
@@ -1282,7 +1309,8 @@ export class WorkflowHookEngine {
             target,
             nodeIdToName,
             slotToNodes,
-            nodeNames
+            nodeNames,
+            slotExecutionNodes
           );
           for (const resolved of resolvedTargets) {
             actionTargets.add(resolved);
@@ -1441,7 +1469,8 @@ export class WorkflowHookEngine {
                 pt,
                 nodeIdToName,
                 slotToNodes,
-                nodeNames
+                nodeNames,
+                slotExecutionNodes
               )) {
                 actionTargets.add(resolved);
                 if (nodeNames.has(resolved)) {
@@ -1457,7 +1486,8 @@ export class WorkflowHookEngine {
             t,
             nodeIdToName,
             slotToNodes,
-            nodeNames
+            nodeNames,
+            slotExecutionNodes
           );
           // Delivered BEFORE this entry: nodes a PRIOR entry already delivered
           // keep their gate even if THIS entry fails (the router dedupes and
@@ -2251,7 +2281,8 @@ export class WorkflowHookEngine {
     target: string,
     nodeIdToName: Map<string, string>,
     slotToNodes: Map<string, string[]>,
-    nodeNames: Set<string>
+    nodeNames: Set<string>,
+    slotExecutionNodes?: Map<string, string[]>
   ): string[] {
     const trimmed = target.trim();
     if (nodeIdToName.has(trimmed)) {
@@ -2259,6 +2290,13 @@ export class WorkflowHookEngine {
     }
     if (nodeNames.has(trimmed)) {
       return [trimmed];
+    }
+    // ADAPTER PARITY: live executions for the slot win outright (creation
+    // order, declaration-only declarers excluded) — mirroring
+    // legacyBareTargetMatches's actorMatches early return.
+    const executionMatches = slotExecutionNodes?.get(trimmed);
+    if (executionMatches && executionMatches.length > 0) {
+      return [...executionMatches];
     }
     const slotMatches = slotToNodes.get(trimmed);
     if (slotMatches) {
@@ -3006,11 +3044,20 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
         log.warn(
           `Failed to consume human approval(s) ${outcome.pendingApprovalConsumes.map((e) => e.hookId).join(', ')} at delivery (${consumed}); blocking.`
         );
+        // Diagnose the failure mode instead of a blanket "state conflict":
+        // conflict = the write raced; not-pending/token-mismatch = the
+        // approval is gone or was replaced by a newer one mid-chain.
+        const consumeDiagnosis =
+          consumed === 'conflict'
+            ? 'state conflict'
+            : consumed === 'token-mismatch'
+              ? 'the approval was replaced by a newer one while the hooks ran'
+              : 'the approval is no longer armed';
         return hookResult(
           {
             success: false,
             error:
-              'Human approval could not be recorded (state conflict). The hook still applies — ' +
+              `Human approval could not be recorded (${consumeDiagnosis}). The hook still applies — ` +
               'approve it again and retry.',
             hookStatus: 'blocked',
             hookId: outcome.pendingApprovalConsumes[0]?.hookId,

@@ -41,13 +41,19 @@ export interface HookDataField {
 // Action passed into a hook
 // ---------------------------------------------------------------------------
 
-export type HookMethod =
-  | 'send_message'
-  | 'save_artifact'
-  | 'create_standalone_task'
-  | 'mark_complete'
-  | 'submit_for_approval'
-  | 'approve_task';
+/** Every hookable MCP action method — the single source of truth the
+ * corrupt-bindings marker (and any per-method enumeration) must stay in
+ * parity with. */
+export const ALL_HOOK_METHODS = [
+  'send_message',
+  'save_artifact',
+  'create_standalone_task',
+  'mark_complete',
+  'submit_for_approval',
+  'approve_task',
+] as const;
+
+export type HookMethod = (typeof ALL_HOOK_METHODS)[number];
 
 /** The MCP action being hooked. */
 export interface HookAction {

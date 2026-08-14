@@ -38,6 +38,7 @@ import {
 } from '../workflows/post-approval-validator';
 import { KNOWN_TOPIC_FROM_SOURCES } from '../runtime/parse-pr-url';
 import { slugify, validateSlug } from '../slug';
+import { CORRUPT_HOOK_BINDINGS_HOOK_ID } from '../hook-reserved-ids';
 
 const logger = new Logger('SpaceWorkflowManager');
 const RESERVED_WORKFLOW_AGENT_NAMES = new Set(['space-agent', 'task-agent']);
@@ -440,10 +441,18 @@ export class SpaceWorkflowManager {
       this.validateChannels(params.channels);
     }
 
-    const effectiveBindings =
+    // The corrupt-column fail-closed MARKER is repository-level state, not
+    // configuration: without this filter it fails hook validation (its
+    // reserved id resolves to no hook) and WEDGES every edit of the workflow
+    // — even hook-unrelated ones — with a misleading "unknown hook" error.
+    // Filter it from validation: hook-unrelated edits proceed with the
+    // corrupt column untouched (the marker reloads); an edit that supplies
+    // real bindings or clears them replaces the marker wholesale.
+    const effectiveBindings = (
       params.hookBindings === undefined
         ? (existing.hookBindings ?? [])
-        : (params.hookBindings ?? []);
+        : (params.hookBindings ?? [])
+    ).filter((b) => b.hookId !== CORRUPT_HOOK_BINDINGS_HOOK_ID);
     const effectiveCustomHooks =
       params.customHooks === undefined ? (existing.customHooks ?? []) : (params.customHooks ?? []);
     this.validateHooks(effectiveBindings, effectiveCustomHooks, effectiveNodes);

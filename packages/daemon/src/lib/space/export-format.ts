@@ -23,7 +23,7 @@ import { z } from 'zod';
 import { validateGlobPattern } from '../external-events/topic-validator';
 import { MAX_NODE_HANDOFF_TRANSITIONS } from '@hyperneo/shared';
 import { BUILT_IN_HOOKS } from '@hyperneo/extensions-hooks';
-import { RESERVED_HOOK_IDS } from './hook-reserved-ids';
+import { CORRUPT_HOOK_BINDINGS_HOOK_ID, RESERVED_HOOK_IDS } from './hook-reserved-ids';
 
 const BUILT_IN_HOOK_IDS = new Set(BUILT_IN_HOOKS.map((h) => h.id));
 import type {
@@ -572,7 +572,15 @@ export function exportWorkflow(
     result.channels = exportedChannels;
   }
   if (workflow.hookBindings && workflow.hookBindings.length > 0) {
-    result.hookBindings = workflow.hookBindings.map((binding) => ({ ...binding }));
+    // Skip the synthetic corrupt-column marker: it is repository-level
+    // fail-closed STATE (this workflow's hook column could not be decoded),
+    // not configuration — exporting it would re-import as a binding whose
+    // reserved hook id the portable validator rejects, with a confusing
+    // error that misdescribes the workflow.
+    result.hookBindings = workflow.hookBindings
+      .filter((binding) => binding.hookId !== CORRUPT_HOOK_BINDINGS_HOOK_ID)
+      .map((binding) => ({ ...binding }));
+    if (result.hookBindings.length === 0) delete result.hookBindings;
   }
   if (workflow.customHooks && workflow.customHooks.length > 0) {
     result.customHooks = workflow.customHooks.map((hook) => ({ ...hook }));

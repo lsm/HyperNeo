@@ -1453,6 +1453,14 @@ export async function ghGetCodexApproval(
   // decisive verdict does the reaction fallback run — the tail alone can
   // omit a still-fresh codex +1 under >50 newer reactions.
   const boundaryPrNode = asRecord(asRecord(asRecord(lastPage?.data)?.repository)?.pullRequest);
+  const boundaryReactionTail = asRecord(boundaryPrNode?.reactions)?.nodes;
+  // SEED-LEVEL preliminary (mirrors the normal path's): evaluate the reviews
+  // WITH the boundary page's reaction TAIL — a fresh codex +1 already in the
+  // tail is a proven approval, and probing with reactions:[] would page
+  // older history whose failure/deadline/cap could turn it into a retry.
+  const boundarySeedReactions: unknown[] = Array.isArray(boundaryReactionTail)
+    ? [...boundaryReactionTail]
+    : [];
   const boundaryReviewsProbe = extractCodexApproval(
     {
       data: {
@@ -1460,7 +1468,7 @@ export async function ghGetCodexApproval(
           pullRequest: {
             ...boundaryPrNode,
             reviews: { nodes: allReviewNodes },
-            reactions: { nodes: [] },
+            reactions: { nodes: boundarySeedReactions },
           },
         },
       },
@@ -1470,7 +1478,6 @@ export async function ghGetCodexApproval(
   if (boundaryReviewsProbe.failClosedReason) {
     return { ok: false, retryable: true, error: boundaryReviewsProbe.failClosedReason };
   }
-  const boundaryReactionTail = asRecord(boundaryPrNode?.reactions)?.nodes;
   // Head recheck shared by the decisive short-circuit and the post-walk
   // evaluation: a commit pushed after the last pagination response must not
   // deliver on the previous head.
@@ -1509,6 +1516,17 @@ export async function ghGetCodexApproval(
     }
     return { ok: true, data: approval };
   };
+  // Positive-only preliminary: a fresh codex +1 already in the boundary
+  // page's reaction TAIL approves without ANY walk — jump straight to the
+  // head recheck (paging older history could only convert the proven
+  // approval into a retryable error).
+  if (
+    !boundaryReviewsProbe.hadDecisiveReview &&
+    boundaryReviewsProbe.approved &&
+    typeof boundaryReviewsProbe.evaluatedHeadOid === 'string'
+  ) {
+    return boundaryApproveWithRecheck(boundaryReviewsProbe);
+  }
   // A DECISIVE head-bound review on the boundary page decides authoritatively
   // — skip the reaction validation and walk entirely (their caps and
   // fail-closed errors on irrelevant older pages must not be reachable when

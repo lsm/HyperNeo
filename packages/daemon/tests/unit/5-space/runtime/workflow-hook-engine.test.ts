@@ -972,6 +972,66 @@ describe('WorkflowHookEngine.executeAction', () => {
     expect(outcome.executionLog[0]?.hookId).toBe('review_hook');
   });
 
+  test('bare-slot resolution follows EXECUTION creation order, not declaration order', async () => {
+    // ADAPTER PARITY: legacyBareTargetMatches prefers actorMatches (live
+    // worker executions, created_at ASC) and returns early — declaration-only
+    // declarers are excluded. The router delivers in that order, so the
+    // engine's sequential fan-out must too. Here declaration order is
+    // [Blocker, Other] but only Other has a live execution: the adapter
+    // expands 'reviewer' to ONLY Other's worker, the router delivers it
+    // (channel Coding→Other), and Other's gate MUST run — the pre-fix engine
+    // walked declaration order, aborted at Blocker, and suppressed Other's
+    // gate for a handoff the router actually delivered (fail-open).
+    const workflow = makeWorkflow({
+      customHooks: [scriptHook('other_hook', '{"flow":"stop","reason":"other gate"}')],
+      nodes: [
+        { id: 'n-coding', name: 'Coding', agents: [{ agentId: 'a1', name: 'coder' }] },
+        { id: 'n-blocker', name: 'Blocker', agents: [{ agentId: 'a2', name: 'reviewer' }] },
+        { id: 'n-other', name: 'Other', agents: [{ agentId: 'a3', name: 'reviewer' }] },
+      ],
+      channels: [{ from: 'Coding', to: 'Other', label: 'Coding → Other' }],
+      hookBindings: [
+        {
+          hookId: 'other_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Other',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    // Only OTHER has a live execution (created first) — the adapter's
+    // actorMatches set is exactly [Other].
+    new NodeExecutionRepository(db).create({
+      workflowRunId: 'run-1',
+      workflowNodeId: 'n-other',
+      agentName: 'reviewer',
+    });
+    const engine = makeEngine(workflow);
+
+    const scalar = await engine.executeAction(
+      'send_message',
+      { target: 'reviewer', message: 'creation-ordered fan-out' },
+      META
+    );
+    // Other delivered (its node-level route) → its gate runs and stops.
+    expect(scalar.decision).toBe('stop');
+    expect(scalar.blockingHookId).toBe('other_hook');
+    expect(scalar.executionLog.length).toBe(1);
+    expect(scalar.executionLog[0]?.hookId).toBe('other_hook');
+
+    // Array form: same order parity.
+    const array = await engine.executeAction(
+      'send_message',
+      { target: ['reviewer'], message: 'creation-ordered fan-out' },
+      META
+    );
+    expect(array.decision).toBe('stop');
+    expect(array.blockingHookId).toBe('other_hook');
+  });
+
   test('a scalar bare slot fans out sequentially — nodes after the abort are suppressed', async () => {
     // SCALAR target 'reviewer' resolving in order to A(=Review),
     // B(=Blocker), C(=Other): node-level routes to Review and Other but NOT
@@ -1460,6 +1520,176 @@ describe('WorkflowHookEngine.executeAction', () => {
     const resultA = await wrappedSend(engine, actionA);
     expect(resultA.success).toBe(true);
     expect(hookStateRepo.get('run-1', 'stop_hook')?.localState.humanApproved).toBeUndefined();
+  });
+
+  test('a ceiling-cooldown approval for THIS action bypasses the cooldown and delivers', async () => {
+    // The pre-hook ceiling branch: retryCount past the ceiling with
+    // __retryCeilingTerminal set and nextRetryAt in the FUTURE (cooldown) —
+    // an approval whose action key matches runs the hook immediately, the
+    // override defers the consume to the wrapper's delivery point.
+    const workflow = makeWorkflow({
+      customHooks: [STOP_HOOK],
+      hookBindings: [
+        {
+          hookId: 'stop_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    hookStateRepo.updateWithRetry('run-1', 'stop_hook', {
+      localState: {
+        humanApproved: true,
+        humanApprovedAt: 1,
+        __approvedActionKey: actionKeyFor(sendParams()),
+        __retryCeilingTerminal: true,
+      },
+      lastFlow: 'retry',
+      retryCount: 5000,
+      nextRetryAt: Date.now() + 3_600_000,
+    });
+    const engine = makeEngine(workflow);
+    const result = await wrappedSend(engine, sendParams());
+    expect(result.success).toBe(true);
+    // The override ran and the approval was consumed at delivery.
+    expect(hookStateRepo.get('run-1', 'stop_hook')?.lastReason).toBe(
+      'Human override: retry-ceiling stop overridden by approval'
+    );
+    expect(hookStateRepo.get('run-1', 'stop_hook')?.localState.humanApproved).toBeUndefined();
+  });
+
+  test('an ordinary-retry invalidates a pending SAME-action approval (conflict blocks)', async () => {
+    // Hook returns retry while an approval for THIS action is armed: the
+    // approval is invalidated (a later, different stop must not ride it).
+    // A WRITE CONFLICT during the clear blocks the action; a token mismatch
+    // (a newer grant) proceeds to the retry without touching it.
+    const RETRY_HOOK = scriptHook('retry_hook', '{"flow":"retry","reason":"waiting"}');
+    const workflow = makeWorkflow({
+      customHooks: [RETRY_HOOK],
+      hookBindings: [
+        {
+          hookId: 'retry_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+
+    // Arm, then force a consume CONFLICT: the clear fails → block.
+    hookStateRepo.updateWithRetry('run-1', 'retry_hook', {
+      localState: {
+        humanApproved: true,
+        humanApprovedAt: 1,
+        __approvedActionKey: actionKeyFor(sendParams()),
+      },
+      lastFlow: 'stop',
+    });
+    const origSingleA = hookStateRepo.consumeApprovalIfCurrent.bind(hookStateRepo);
+    hookStateRepo.consumeApprovalIfCurrent = () => 'conflict' as const;
+    const engineA = makeEngine(workflow);
+    const blocked = await engineA.executeAction('send_message', sendParams(), META);
+    expect(blocked.decision).toBe('stop');
+    expect(blocked.userState.reason).toContain('could not be cleared');
+    // The approval stays armed for the operator.
+    expect(hookStateRepo.get('run-1', 'retry_hook')?.localState.humanApproved).toBe(true);
+
+    // Mismatch arm: a newer grant is not ours to clear — proceed to retry.
+    hookStateRepo.consumeApprovalIfCurrent = (
+      runId: string,
+      hookId: string,
+      observed?: { approvedAt: unknown }
+    ) => {
+      void runId;
+      void hookId;
+      void observed;
+      return 'token-mismatch' as const;
+    };
+    const engineB = makeEngine(workflow);
+    const retried = await engineB.executeAction('send_message', sendParams(), META);
+    expect(retried.decision).toBe('retry');
+    expect(hookStateRepo.get('run-1', 'retry_hook')?.localState.humanApproved).toBe(true);
+    hookStateRepo.consumeApprovalIfCurrent = origSingleA;
+  });
+
+  test('a marker-loaded workflow fails every hookable action closed', async () => {
+    // End-to-end for the corrupt-column marker: the repository loads a
+    // corrupt hook_bindings column as per-(node × method) bindings whose
+    // reserved id resolves to NO hook — the engine must stop each action
+    // with that diagnosable id instead of running ungated.
+    const workflow = makeWorkflow({
+      hookBindings: [
+        {
+          hookId: '__corrupt_hook_bindings__',
+          sourceNode: 'Coding',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding' }],
+        },
+      ],
+    });
+    const engine = makeEngine(workflow);
+    const outcome = await engine.executeAction('send_message', sendParams(), META);
+    expect(outcome.decision).toBe('stop');
+    expect(outcome.blockingHookId).toBe('__corrupt_hook_bindings__');
+    expect(outcome.userState.reason).toContain('__corrupt_hook_bindings__');
+    expect(outcome.userState.humanOverrideEligible).toBe(false);
+  });
+
+  test('a natural-continue mismatched-token approval proceeds WITHOUT clearing', async () => {
+    // Hook passes on its own; the armed approval's token belongs to a NEWER
+    // grant (mismatch): it is not this action's to clear — proceed with the
+    // delivery and leave the newer approval armed.
+    const PASS = scriptHook('pass_hook', '{"flow":"continue"}');
+    const workflow = makeWorkflow({
+      customHooks: [PASS],
+      hookBindings: [
+        {
+          hookId: 'pass_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    hookStateRepo.updateWithRetry('run-1', 'pass_hook', {
+      localState: {
+        humanApproved: true,
+        humanApprovedAt: 999,
+        __approvedActionKey: actionKeyFor(sendParams()),
+      },
+      lastFlow: 'stop',
+    });
+    // Swap the token AFTER arming (a concurrent newer grant). The
+    // natural-continue clear uses the SINGLE consume — patch that seam.
+    const origSingle = hookStateRepo.consumeApprovalIfCurrent.bind(hookStateRepo);
+    hookStateRepo.consumeApprovalIfCurrent = (
+      runId: string,
+      hookId: string,
+      observed?: { approvedAt: unknown }
+    ) => {
+      hookStateRepo.updateWithRetry('run-1', 'pass_hook', {
+        localState: { humanApprovedAt: 1234 },
+      });
+      return origSingle(runId, hookId, observed);
+    };
+    const engine = makeEngine(workflow);
+    const result = await wrappedSend(engine, sendParams());
+    expect(result.success).toBe(true);
+    // The NEWER approval survives.
+    expect(hookStateRepo.get('run-1', 'pass_hook')?.localState.humanApproved).toBe(true);
+    expect(hookStateRepo.get('run-1', 'pass_hook')?.localState.humanApprovedAt).toBe(1234);
   });
 
   test('a pre-delivery persistence failure does not lose the one-shot approval', async () => {
