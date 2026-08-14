@@ -2263,21 +2263,24 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
             // Stamp the FIRST retry time once — the elapsed ceiling for
             // timer-driven retries reads it.
             if (blockingAttempts === 0) patch.localState.__firstRetryAt = now;
-            const queuedMap: Record<string, unknown> = {
-              ...engine.getQueuedRetryableActionsMap(hookId),
+            // Patch ONLY this action's entry: spreading a snapshot of the
+            // whole map would resurrect a sibling key that a concurrent
+            // write cleared between the read and this persist (deep-merge
+            // applies the patch to the CURRENT stored map, so unrelated
+            // entries survive without being named).
+            patch.localState[QUEUED_RETRYABLE_ACTION_STATE_KEY] = {
+              [actionKey]: {
+                actionKey,
+                hookId: blockingId,
+                methodName,
+                args: args as Record<string, unknown>,
+                meta,
+                isFollowUp,
+                nextRetryAt: now + delayMs,
+                retryAfterMs,
+                queuedAt: now,
+              },
             };
-            queuedMap[actionKey] = {
-              actionKey,
-              hookId: blockingId,
-              methodName,
-              args: args as Record<string, unknown>,
-              meta,
-              isFollowUp,
-              nextRetryAt: now + delayMs,
-              retryAfterMs,
-              queuedAt: now,
-            };
-            patch.localState[QUEUED_RETRYABLE_ACTION_STATE_KEY] = queuedMap;
           } else {
             patch.retryCount = 0;
             patch.nextRetryAt = null;

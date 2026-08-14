@@ -48,6 +48,15 @@ describe('fetchPrView — structural validation', () => {
     await expectTerminalInfraFailure(fetchPrView('/tmp/ws', PR_LINK));
   });
 
+  test('a body missing mergeStateStatus is a terminal infra failure', async () => {
+    // parsePrView would fabricate 'UNKNOWN', which pr_ready maps to a
+    // retryable "GitHub still computing" — an envelope missing the field
+    // must surface as an override-ineligible infrastructure failure instead
+    // of queueing an otherwise valid handoff indefinitely.
+    serveRaw(JSON.stringify({ state: 'OPEN', mergeable: 'MERGEABLE' }));
+    await expectTerminalInfraFailure(fetchPrView('/tmp/ws', PR_LINK));
+  });
+
   test('non-JSON output self-stamps the infra prefix (every terminal path ineligible)', async () => {
     serveRaw('<html>gateway error</html>');
     await expectTerminalInfraFailure(fetchPrView('/tmp/ws', PR_LINK));

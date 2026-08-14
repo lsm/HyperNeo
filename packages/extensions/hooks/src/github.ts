@@ -371,7 +371,17 @@ export async function fetchPrView(
     view.mergeable === 'CONFLICTING' ||
     view.mergeable === 'UNKNOWN';
   const raw = asRecord(parsed);
-  if (!stateOk || !mergeableOk || typeof raw?.state !== 'string') {
+  // mergeStateStatus must be a PRESENT string too: parsePrView fabricates
+  // 'UNKNOWN' for a missing value, and pr_ready maps UNKNOWN to a retryable
+  // "GitHub still computing" — an envelope missing the field would queue an
+  // otherwise valid handoff indefinitely instead of surfacing the malformed
+  // lookup as an override-ineligible infrastructure failure.
+  if (
+    !stateOk ||
+    !mergeableOk ||
+    typeof raw?.state !== 'string' ||
+    typeof raw?.mergeStateStatus !== 'string'
+  ) {
     return {
       ok: false,
       retryable: false,
@@ -506,6 +516,19 @@ export async function ghGetUnresolvedReviewThreads(
         error:
           'malformed reviewThreads connection (missing/corrupt pageInfo.hasNextPage); failing closed',
       };
+    }
+    // Node-level fail-closed: a thread without a BOOLEAN isResolved (e.g. {}
+    // or null) must not be skipped as though resolved — the extract loop
+    // treats non-false as resolved, so a malformed node would silently pass
+    // an unchecked conversation through pr_ready.
+    for (const node of threadsConnection.nodes) {
+      if (typeof asRecord(node)?.isResolved !== 'boolean') {
+        return {
+          ok: false,
+          retryable: true,
+          error: 'malformed review thread node (missing/non-boolean isResolved); failing closed',
+        };
+      }
     }
     urls.push(...extractUnresolvedThreads(result.data));
     if (info.hasNextPage !== true) return { ok: true, data: urls };

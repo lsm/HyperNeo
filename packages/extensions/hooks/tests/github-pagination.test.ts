@@ -180,6 +180,21 @@ describe('isTrustedGitHubHost — GHE Cloud tenants', () => {
 });
 
 describe('ghGetUnresolvedReviewThreads — structural fail-closed', () => {
+  test('a thread node missing boolean isResolved fails closed', async () => {
+    // A node without a boolean isResolved would be SKIPPED as though
+    // resolved — pr_ready could deliver without proving the conversation
+    // was checked. Both {} and { isResolved: null } must fail the lookup.
+    for (const node of [{}, { isResolved: null }]) {
+      setGraphqlRunnerForTests(pagedRunner([threadPage([node], false)]));
+      const result = await ghGetUnresolvedReviewThreads(CTX, PR_LINK);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.retryable).toBe(true);
+        expect(result.error).toContain('isResolved');
+      }
+    }
+  });
+
   test('a successful envelope missing the threads connection fails closed', async () => {
     setGraphqlRunnerForTests(async () => ({
       ok: true,

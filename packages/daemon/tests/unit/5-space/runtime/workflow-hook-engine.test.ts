@@ -12,7 +12,10 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository';
-import { WorkflowHookStateRepository } from '../../../../src/storage/repositories/workflow-hook-state-repository';
+import {
+  WorkflowHookStateRepository,
+  type WorkflowHookStatePatch,
+} from '../../../../src/storage/repositories/workflow-hook-state-repository';
 import {
   createLegacyHookGuardEngine,
   QUEUED_RETRYABLE_ACTION_STATE_KEY,
@@ -283,6 +286,82 @@ describe('WorkflowHookEngine.executeAction', () => {
     );
     expect(outcome.decision).toBe('stop');
     expect(outcome.blockingHookId).toBe('mixed_hook');
+  });
+
+  test('queueing patches only the new action key (no sibling resurrection)', async () => {
+    // The durable queue map is shared. Spreading a whole-map snapshot into
+    // the patch would resurrect a sibling key that a concurrent write
+    // cleared between the read and the persist (updateWithRetry refreshes
+    // to the latest version). The queue write must name ONLY the new key —
+    // deep-merge keeps the stored siblings.
+    const RETRY_HOOK = scriptHook('queue_scope_hook', '{"flow":"retry","reason":"waiting"}');
+    const workflow = makeWorkflow({
+      customHooks: [RETRY_HOOK],
+      hookBindings: [
+        {
+          hookId: 'queue_scope_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    // A sibling entry already lives in the durable map.
+    hookStateRepo.updateWithRetry('run-1', 'queue_scope_hook', {
+      localState: {
+        [QUEUED_RETRYABLE_ACTION_STATE_KEY]: {
+          'key-sibling': {
+            actionKey: 'key-sibling',
+            hookId: 'queue_scope_hook',
+            methodName: 'send_message',
+            args: { target: 'Review', message: 'sibling' },
+            meta: { sessionId: 's-x', agentName: 'coder', nodeId: 'n-coding', taskId: 'task-x' },
+            isFollowUp: false,
+            nextRetryAt: Date.now() + 60_000,
+            retryAfterMs: 60_000,
+            queuedAt: Date.now(),
+          },
+        },
+      },
+    });
+    const seenQueueKeys: string[][] = [];
+    class InspectQueueWrites extends WorkflowHookStateRepository {
+      update(runId: string, hookId: string, patch: WorkflowHookStatePatch) {
+        const queued = patch.localState?.[QUEUED_RETRYABLE_ACTION_STATE_KEY];
+        if (queued && typeof queued === 'object' && !Array.isArray(queued)) {
+          seenQueueKeys.push(Object.keys(queued as Record<string, unknown>));
+        }
+        return super.update(runId, hookId, patch);
+      }
+    }
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: new NodeExecutionRepository(db),
+      artifactRepo,
+      hookStateRepo: new InspectQueueWrites(db),
+      workspacePath: process.cwd(),
+    });
+    const wrapped = wrapHandlerWithHooks(
+      'send_message',
+      async () => ({ content: [{ type: 'text', text: 'ok' }] }),
+      engine,
+      {},
+      META
+    );
+    const result = await wrapped({ target: 'Review', message: 'handoff' });
+    // The action queued (retry flow).
+    expect(JSON.parse((result.content?.[0] as { text: string }).text).queued).toBe(true);
+    // Every queue write names EXACTLY the new action's key — never the
+    // sibling snapshot.
+    expect(seenQueueKeys.length).toBeGreaterThan(0);
+    for (const keys of seenQueueKeys) {
+      expect(keys).toHaveLength(1);
+      expect(keys[0]).not.toBe('key-sibling');
+    }
   });
 
   test("cancelled-owner rehydration clears only that owner's queued action", () => {
