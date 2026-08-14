@@ -7,12 +7,12 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import type { HookContext } from '@hyperneo/shared/types/workflow-hooks';
 import {
+  type GithubResult,
   ghGetCodexApproval,
   ghGetReviewEvidence,
   ghGetUnresolvedReviewThreads,
-  setGraphqlRunnerForTests,
   isTrustedGitHubHost,
-  type GithubResult,
+  setGraphqlRunnerForTests,
 } from '../src/github';
 
 const PR_LINK = 'https://github.com/org/repo/pull/42';
@@ -402,5 +402,59 @@ describe('ghGetCodexApproval — final head recheck', () => {
     const result = await ghGetCodexApproval(CTX, PR_LINK);
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.data.approved).toBe(true);
+  });
+});
+
+// ─── deadline budget ────────────────────────────────────────────────────────
+//
+// ghGetCodexApproval shares ONE deadline across reviews + reactions + the
+// final head recheck, checking remainingBudget() before each request. These
+// tests drive that boundary by faking the clock: without the budget checks an
+// off-by-one (or a silently ignored timeoutMs) would let the multi-request
+// scan page on unbounded with nothing catching it.
+
+describe('ghGetCodexApproval — overall deadline budget', () => {
+  const realNow = Date.now;
+
+  afterEach(() => {
+    Date.now = realNow;
+    setGraphqlRunnerForTests(null);
+  });
+
+  test('budget exhausted mid-pagination fails closed with a retryable deadline error', async () => {
+    let now = realNow();
+    Date.now = () => now;
+    setGraphqlRunnerForTests(async () => {
+      // Serve page 1, then advance the clock past the 30s overall budget: the
+      // pagination loop must observe the exhausted budget before requesting
+      // page 2 rather than paging on.
+      now += 31_000;
+      return { ok: true, data: codexPage([], { hasNext: true, cursor: 'Y3Vyc29yXzE' }) };
+    });
+    const result = await ghGetCodexApproval(CTX, PR_LINK);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.retryable).toBe(true);
+      expect(result.error).toContain('deadline');
+    }
+  });
+
+  test('budget exhausted before the final head recheck fails closed', async () => {
+    let now = realNow();
+    Date.now = () => now;
+    setGraphqlRunnerForTests(async () => {
+      // Serve the approving page, then burn the clock past the budget: the
+      // scan extracts an approval, and the head-recheck budget guard fires
+      // BEFORE the recheck request — the gate must retry (fail closed)
+      // instead of approving against a possibly-stale head.
+      now += 31_000;
+      return { ok: true, data: codexPage([codexReview('APPROVED', '2026-08-13T10:00:00Z')]) };
+    });
+    const result = await ghGetCodexApproval(CTX, PR_LINK);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.retryable).toBe(true);
+      expect(result.error).toContain('deadline');
+    }
   });
 });

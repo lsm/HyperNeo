@@ -10,29 +10,39 @@
  *   throws if completed; cancels pending/in_progress tasks; emits event
  */
 
-import { describe, expect, it, mock, beforeEach } from 'bun:test';
-import { MessageHub } from '@hyperneo/shared';
-import type { Space, SpaceWorkflow, SpaceWorkflowRun, SpaceTask } from '@hyperneo/shared';
-import {
-  setupSpaceWorkflowRunHandlers,
-  type SpaceWorkflowRunTaskManagerFactory,
-} from '../../../../src/lib/rpc-handlers/space-workflow-run-handlers.ts';
-import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
-import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
-import type { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
-import type { WorkflowHookStateRepository } from '../../../../src/storage/repositories/workflow-hook-state-repository.ts';
-import type { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
-import type { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
-import type { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
-import type { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
-import type { SpaceWorktreeManager } from '../../../../src/lib/space/managers/space-worktree-manager.ts';
-import type { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';
-import type { WorkflowRunArtifactCacheRepository } from '../../../../src/storage/repositories/workflow-run-artifact-cache-repository.ts';
-import type { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
+import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import type {
+  HookFlow,
+  HookStateSnapshot,
+  MessageHub,
+  Space,
+  SpaceTask,
+  SpaceWorkflow,
+  SpaceWorkflowRun,
+} from '@hyperneo/shared';
 import type {
   DaemonInternalEventMap,
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus.ts';
+import {
+  type SpaceWorkflowRunTaskManagerFactory,
+  setupSpaceWorkflowRunHandlers,
+} from '../../../../src/lib/rpc-handlers/space-workflow-run-handlers.ts';
+import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
+import type { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
+import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
+import type { SpaceWorktreeManager } from '../../../../src/lib/space/managers/space-worktree-manager.ts';
+import type { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
+import type { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
+import type { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
+import type { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
+import type { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
+import type {
+  WorkflowHookStatePatch,
+  WorkflowHookStateRepository,
+} from '../../../../src/storage/repositories/workflow-hook-state-repository.ts';
+import type { WorkflowRunArtifactCacheRepository } from '../../../../src/storage/repositories/workflow-run-artifact-cache-repository.ts';
+import type { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';
 
 type RequestHandler = (data: unknown) => Promise<unknown>;
 
@@ -165,24 +175,51 @@ function createMockRunRepo(
   } as unknown as SpaceWorkflowRunRepository;
 }
 
-function createMockHookStateRepo(): WorkflowHookStateRepository {
-  return {
-    get: mock(() => null),
-    ensure: mock((_runId: string, _hookId: string, defaults: Record<string, unknown> = {}) => ({
-      runId: _runId,
-      hookId: _hookId,
-      version: 0,
-      localState: defaults,
-      lastResult: undefined,
-      retryCount: 0,
-      nextRetryAt: undefined,
-      voteMaps: {},
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    })),
-    listByRun: mock(() => []),
+type CapturedHookPatch = Omit<WorkflowHookStatePatch, 'expectedVersion'>;
+
+/**
+ * A stateful hook-state repo mock: seeds a snapshot, records every
+ * updateWithRetry patch, and applies patches to the snapshot (shallow-merge
+ * localState, replace scalars) so handler return values reflect the write.
+ */
+function createMockHookStateRepo(initial: HookStateSnapshot | null = null) {
+  let state = initial;
+  const patches: CapturedHookPatch[] = [];
+  const base = (runId: string, hookId: string): HookStateSnapshot => ({
+    runId,
+    hookId,
+    version: 0,
+    localState: {},
+    retryCount: 0,
+    nextRetryAt: undefined,
+    createdAt: NOW,
+    updatedAt: NOW,
+  });
+  const repo = {
+    get: mock(() => state),
+    ensure: mock((_runId: string, _hookId: string) => {
+      if (!state) state = base(_runId, _hookId);
+      return state;
+    }),
+    listByRun: mock(() => (state ? [state] : [])),
     update: mock(() => null),
+    updateWithRetry: mock((_runId: string, _hookId: string, patch: CapturedHookPatch) => {
+      patches.push(patch);
+      if (!state) return null;
+      state = {
+        ...state,
+        version: state.version + 1,
+        localState: { ...state.localState, ...(patch.localState ?? {}) },
+        lastFlow: patch.lastFlow ?? state.lastFlow,
+        lastReason: patch.lastReason ?? state.lastReason,
+        retryCount: patch.retryCount ?? state.retryCount,
+        nextRetryAt: patch.nextRetryAt ?? state.nextRetryAt,
+        updatedAt: NOW,
+      };
+      return state;
+    }),
   } as unknown as WorkflowHookStateRepository;
+  return { repo, patches };
 }
 
 function createMockRuntime(run: SpaceWorkflowRun = mockRun): SpaceRuntime {
@@ -303,6 +340,7 @@ describe('space-workflow-run-handlers', () => {
   let taskManager: SpaceTaskManager;
   let spaceTaskRepo: SpaceTaskRepository;
   let spaceWorktreeManager: SpaceWorktreeManager;
+  let hookStateRepo: ReturnType<typeof createMockHookStateRepo>;
 
   function setup(
     opts: {
@@ -313,6 +351,7 @@ describe('space-workflow-run-handlers', () => {
       runs?: SpaceWorkflowRun[];
       tasks?: SpaceTask[];
       worktreePath?: string | null;
+      hookState?: HookStateSnapshot | null;
     } = {}
   ) {
     const mh = createMockMessageHub();
@@ -334,6 +373,7 @@ describe('space-workflow-run-handlers', () => {
     taskManagerFactory = mock(() => taskManager);
     spaceTaskRepo = createMockSpaceTaskRepo([mockTask]);
     spaceWorktreeManager = createMockSpaceWorktreeManager(opts.worktreePath ?? null);
+    hookStateRepo = createMockHookStateRepo('hookState' in opts ? (opts.hookState ?? null) : null);
 
     setupSpaceWorkflowRunHandlers(
       hub,
@@ -348,7 +388,7 @@ describe('space-workflow-run-handlers', () => {
       createMockArtifactRepo(),
       createMockArtifactCacheRepo(),
       createMockJobQueue(),
-      createMockHookStateRepo()
+      hookStateRepo.repo
     );
   }
 
@@ -1245,6 +1285,130 @@ describe('space-workflow-run-handlers', () => {
       expect(result.truncated).toBe(true);
       expect(result.originalSize).toBe(150 * 1024);
       expect(result.diff.length).toBe(100 * 1024);
+    });
+  });
+  // ─── spaceWorkflowRun.approveHook / retryHook ────────────────────────────
+  //
+  // The human-decision RPCs' fail-closed boundaries: the stale-decision CAS
+  // (an approval recorded against a hook state that has since changed must be
+  // rejected, or it would later bypass an unrelated violation), the
+  // override-ineligibility of infra blocks, and the ceiling recovery clears
+  // (an operator decision is the escape hatch for a retry-ceiling stop — the
+  // next attempt must be able to run, not short-circuit on the stale marker).
+
+  describe('spaceWorkflowRun.approveHook — decision CAS + ceiling recovery', () => {
+    const stoppedHookState = (
+      overrides: { lastFlow?: HookFlow; localState?: Record<string, unknown> } = {}
+    ): HookStateSnapshot => ({
+      runId: 'run-1',
+      hookId: 'pr_ready',
+      version: 3,
+      localState: {
+        __overrideEligible: true,
+        __firstRetryAt: 1_000,
+        __retryCeilingTerminal: true,
+        ...(overrides.localState ?? {}),
+      },
+      lastFlow: overrides.lastFlow ?? 'stop',
+      lastReason: 'PR is not ready for Review: merge checks not satisfied (DIRTY).',
+      retryCount: 2_880,
+      nextRetryAt: 9_999,
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+
+    const approve = (approved: boolean, reason?: string) =>
+      call('spaceWorkflowRun.approveHook', {
+        runId: 'run-1',
+        hookId: 'pr_ready',
+        approved,
+        reason,
+      });
+
+    it('rejects an approval recorded against a changed decision (lastFlow CAS)', async () => {
+      // The hook re-evaluated after the banner was rendered — it naturally
+      // continued, or a retry is pending. A stale approval must not be
+      // recorded against the new state.
+      for (const lastFlow of ['continue', 'retry'] as const) {
+        setup({ hookState: stoppedHookState({ lastFlow }) });
+        await expect(approve(true)).rejects.toThrow(
+          /Hook state changed since the block was displayed/
+        );
+        expect(hookStateRepo.patches).toHaveLength(0);
+      }
+    });
+
+    it('a rejection (approved=false) is not subject to the lastFlow CAS', async () => {
+      setup({ hookState: stoppedHookState({ lastFlow: 'continue' }) });
+      await expect(approve(false, 'not shipped')).resolves.toBeTruthy();
+      expect(hookStateRepo.patches).toHaveLength(1);
+    });
+
+    it('an override-ineligible infrastructure block cannot be approved', async () => {
+      setup({
+        hookState: stoppedHookState({ localState: { __overrideEligible: false } }),
+      });
+      await expect(approve(true)).rejects.toThrow(/cannot be approved/);
+      expect(hookStateRepo.patches).toHaveLength(0);
+    });
+
+    it('approving a current stop clears the ceiling cycle stamp and terminal marker', async () => {
+      setup({ hookState: stoppedHookState() });
+      const result = (await approve(true, 'human verified out-of-band')) as {
+        hookState: HookStateSnapshot;
+      };
+      expect(hookStateRepo.patches).toHaveLength(1);
+      const patch = hookStateRepo.patches[0];
+      expect(patch.localState?.__firstRetryAt).toBeUndefined();
+      expect(patch.localState?.__retryCeilingTerminal).toBeUndefined();
+      expect(patch.localState?.humanApproved).toBe(true);
+      expect(patch.lastFlow).toBe('continue');
+      expect(patch.retryCount).toBe(0);
+      expect(patch.nextRetryAt).toBeNull();
+      // The returned (post-write) snapshot no longer carries the terminal
+      // marker — the hook can run again on the next action.
+      expect(result.hookState.localState.__retryCeilingTerminal).toBeUndefined();
+      expect(result.hookState.lastFlow).toBe('continue');
+    });
+  });
+
+  describe('spaceWorkflowRun.retryHook — ceiling recovery clears', () => {
+    it('clears the ceiling stamp, terminal marker, and queued-action map', async () => {
+      setup({
+        hookState: {
+          runId: 'run-1',
+          hookId: 'pr_ready',
+          version: 5,
+          localState: {
+            __firstRetryAt: 1_000,
+            __retryCeilingTerminal: true,
+            __queuedRetryableActions: {
+              'space.send_action-1': { actionKey: 'space.send_action-1' },
+            },
+          },
+          lastFlow: 'retry',
+          lastReason: 'Waiting for GitHub mergeability.',
+          retryCount: 7,
+          nextRetryAt: 9_999,
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      });
+      const result = (await call('spaceWorkflowRun.retryHook', {
+        runId: 'run-1',
+        hookId: 'pr_ready',
+      })) as { hookState: HookStateSnapshot };
+      expect(hookStateRepo.patches).toHaveLength(1);
+      const patch = hookStateRepo.patches[0];
+      expect(patch.localState?.__firstRetryAt).toBeUndefined();
+      expect(patch.localState?.__retryCeilingTerminal).toBeUndefined();
+      // Explicit null tombstone — the repo deep-merges, so the clear must be
+      // an explicit null rather than an omitted key.
+      expect(patch.localState?.__queuedRetryableActions).toBeNull();
+      expect(patch.lastFlow).toBe('continue');
+      expect(patch.retryCount).toBe(0);
+      expect(result.hookState.localState.__retryCeilingTerminal).toBeUndefined();
+      expect(result.hookState.localState.__queuedRetryableActions).toBeNull();
     });
   });
 });

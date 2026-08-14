@@ -129,11 +129,28 @@ async function readUpTo(
   return new TextDecoder().decode(merged);
 }
 
-async function runGh(opts: {
+type GhRunnerOpts = {
   workspacePath: string;
   args: readonly string[];
   timeoutMs?: number;
-}): Promise<GithubResult<string>> {
+};
+
+/**
+ * The `gh` CLI transport the non-GraphQL helpers (fetchPrView & friends) call.
+ * Indirected through this binding so tests can substitute a mock and exercise
+ * the response-validation guards without spawning `gh` (mirroring the GraphQL
+ * seam above).
+ */
+let ghRunner: (opts: GhRunnerOpts) => Promise<GithubResult<string>> = runGh;
+
+/** Test seam: substitute (or restore) the `gh` CLI transport used by fetchPrView. */
+export function setGhRunnerForTests(
+  fn: ((opts: GhRunnerOpts) => Promise<GithubResult<string>>) | null
+): void {
+  ghRunner = fn ?? runGh;
+}
+
+async function runGh(opts: GhRunnerOpts): Promise<GithubResult<string>> {
   const { workspacePath, args, timeoutMs = DEFAULT_TIMEOUT_MS } = opts;
   let proc;
   try {
@@ -325,7 +342,7 @@ export async function fetchPrView(
       error: `refusing gh pr view on untrusted host: ${parsedLink.host}`,
     };
   }
-  const result = await runGh({
+  const result = await ghRunner({
     workspacePath,
     args: ['pr', 'view', link, '--json', 'state,mergeable,mergeStateStatus'],
   });
@@ -334,7 +351,14 @@ export async function fetchPrView(
   try {
     parsed = JSON.parse(result.data);
   } catch {
-    return { ok: false, retryable: false, error: 'gh pr view returned non-JSON output' };
+    // Self-stamp the infra prefix (defense-in-depth, matching the structural
+    // guard below): every terminal fetchPrView failure must be
+    // override-ineligible at the hook layer regardless of caller.
+    return {
+      ok: false,
+      retryable: false,
+      error: `${GH_INFRA_ERROR_PREFIX}gh pr view returned non-JSON output`,
+    };
   }
   // Structural validation: a successful exit with a malformed envelope must
   // NOT fabricate CLOSED/UNKNOWN fields — pr_ready/pr_merged would surface an
@@ -576,7 +600,7 @@ export async function ghGetReviewEvidence(
   const MAX_REVIEW_PAGES = 10;
   const deadline = Date.now() + DEFAULT_TIMEOUT_MS;
   const allReviewNodes: unknown[] = [];
-  let lastCommentsPage: unknown = undefined;
+  let lastCommentsPage: unknown;
   let before: string | null = null;
   let reachedBoundary = false;
   for (let page = 0; page < MAX_REVIEW_PAGES; page++) {
