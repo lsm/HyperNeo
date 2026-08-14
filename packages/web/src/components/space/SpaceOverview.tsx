@@ -286,7 +286,7 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
             (blue) theme; the primary CTA lives here, not as a card link. */}
         <section
           class={cn(
-            'flex flex-col gap-4 rounded-2xl border p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6',
+            'relative z-10 flex flex-col gap-4 rounded-2xl border p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6',
             GLASS_SURFACE
           )}
           data-testid="space-overview-introduction"
