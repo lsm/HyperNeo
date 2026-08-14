@@ -1055,7 +1055,7 @@ export function extractCodexApproval(value: unknown, prLink: string): GithubCode
   // the reaction path.
   const reviewNodes = asRecord(pr?.reviews)?.nodes;
   if (Array.isArray(reviewNodes) && typeof headOid === 'string') {
-    let latest: { submittedAt: string; state: string } | null = null;
+    let latest: { submittedMs: number; state: string } | null = null;
     for (const node of reviewNodes) {
       const review = asRecord(node);
       if (!isCodexActor(review?.author)) continue;
@@ -1066,11 +1066,23 @@ export function extractCodexApproval(value: unknown, prLink: string): GithubCode
       const submittedAt = typeof review?.submittedAt === 'string' ? review.submittedAt : '';
       const state = typeof review?.state === 'string' ? review.state : '';
       if (!submittedAt || (state !== 'APPROVED' && state !== 'CHANGES_REQUESTED')) continue;
-      // `>=` keeps connection order as the tie-breaker: two decisive reviews
-      // in the same timestamp second are ordered by their position in the
-      // (chronological, pagination-merged) connection, so a later
-      // CHANGES_REQUESTED correctly supersedes an earlier APPROVED.
-      if (!latest || submittedAt >= latest.submittedAt) latest = { submittedAt, state };
+      // Compare EPOCHS, not lexical strings: GitHub timestamps can carry
+      // fractional seconds, and lexically '...00.500Z' sorts BEFORE
+      // '...00Z' — an earlier same-second APPROVED would beat a later
+      // fractional CHANGES_REQUESTED and false-pass the gate. `>=` keeps
+      // connection order as the tie-breaker for TRUE timestamp ties: two
+      // decisive reviews at the same instant are ordered by their position
+      // in the (chronological, pagination-merged) connection.
+      const submittedMs = Date.parse(submittedAt);
+      if (Number.isFinite(submittedMs)) {
+        if (!latest || submittedMs >= latest.submittedMs) {
+          latest = { submittedMs, state };
+        }
+      } else if (!latest) {
+        // Unparseable timestamp: keep it only as a floor candidate so a
+        // later well-formed review can still supersede it.
+        latest = { submittedMs: -Infinity, state };
+      }
     }
     if (latest) return { approved: latest.state === 'APPROVED', prLink, evaluatedHeadOid: headOid };
   }

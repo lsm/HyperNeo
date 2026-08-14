@@ -928,22 +928,30 @@ export function setupSpaceWorkflowRunHandlers(
         : [];
     // updateWithRetry refreshes the expected version per attempt — a concurrent
     // retry-timer bumping the version must not fail the "retry now" button.
-    // Patch ONLY the queued-action key and the scalar decision fields
-    // (mirroring approveHook): spreading a stale full localState snapshot
-    // would deep-merge over concurrent writes — e.g. clobbering hook state
-    // recorded between the read above and this write, or restoring a queued
-    // action a timer just cleared and replaying an obsolete actionKey.
+    // Patch ONLY the CAPTURED queued-action keys and the scalar decision
+    // fields (mirroring approveHook): spreading a stale full localState
+    // snapshot would deep-merge over concurrent writes, and a MAP-WIDE clear
+    // would delete a send queued concurrently (after the read above, before
+    // this write lands) — its durable record would vanish while its in-memory
+    // timer lives on, losing the action entirely across a restart.
+    const queuedKeyClears: Record<string, null> = {};
+    for (const queuedActionKey of queuedActionKeys) {
+      queuedKeyClears[queuedActionKey] = null;
+    }
+    const localStatePatch: Record<string, unknown> = {
+      // Reset the elapsed-ceiling cycle stamp AND the terminal marker (see
+      // approveHook — "retry now" is an operator recovery event).
+      __firstRetryAt: undefined,
+      __retryCeilingTerminal: undefined,
+    };
+    if (queuedActionKeys.length > 0) {
+      // Explicit nulls: the repo's deep-merge DELETES null-valued keys, so
+      // each captured action key is physically removed (an omitted key would
+      // survive the merge and rehydrate after restart).
+      localStatePatch[QUEUED_RETRYABLE_ACTION_STATE_KEY] = queuedKeyClears;
+    }
     const updateResult = hookStateRepo.updateWithRetry(params.runId, params.hookId, {
-      localState: {
-        // Explicit null: the repo's deep-merge DELETES null-valued keys, so
-        // this physically removes the queued-action map (an omitted key
-        // would survive the merge and rehydrate after restart).
-        [QUEUED_RETRYABLE_ACTION_STATE_KEY]: null,
-        // Reset the elapsed-ceiling cycle stamp AND the terminal marker (see
-        // approveHook — "retry now" is an operator recovery event).
-        __firstRetryAt: undefined,
-        __retryCeilingTerminal: undefined,
-      },
+      localState: localStatePatch,
       lastFlow: 'continue',
       lastReason: 'Retry requested by human',
       retryCount: 0,

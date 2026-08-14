@@ -1402,13 +1402,19 @@ describe('space-workflow-run-handlers', () => {
       const patch = hookStateRepo.patches[0];
       expect(patch.localState?.__firstRetryAt).toBeUndefined();
       expect(patch.localState?.__retryCeilingTerminal).toBeUndefined();
-      // Explicit null clear — the repo's deep-merge deletes null-valued
-      // keys, so the handler must write null rather than omit the key.
-      expect(patch.localState?.__queuedRetryableActions).toBeNull();
+      // Per-key null clears — the repo's deep-merge deletes null-valued keys,
+      // and a MAP-WIDE null would also delete a send queued concurrently
+      // between the handler's read and its write (losing the new action's
+      // durable record while its in-memory timer lives on).
+      expect(patch.localState?.__queuedRetryableActions).toEqual({
+        'space.send_action-1': null,
+      });
       expect(patch.lastFlow).toBe('continue');
       expect(patch.retryCount).toBe(0);
       expect(result.hookState.localState.__retryCeilingTerminal).toBeUndefined();
-      expect(result.hookState.localState.__queuedRetryableActions).toBeNull();
+      expect(result.hookState.localState.__queuedRetryableActions).toEqual({
+        'space.send_action-1': null,
+      });
     });
   });
 });

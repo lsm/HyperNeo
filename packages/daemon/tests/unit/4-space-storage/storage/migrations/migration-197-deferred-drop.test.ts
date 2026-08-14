@@ -96,6 +96,32 @@ describe('Migration 194 deferred hooks drop', () => {
     }
   });
 
+  test('an APPROVED post-approval task on a DONE run blocks the drop', () => {
+    // The runtime marks the run `done` before dispatching post-approval work;
+    // the startup restamp defers on hasApprovedTaskForWorkflow, and the drop
+    // must mirror it — or the resumed post-approval worker would find neither
+    // v2 bindings nor the legacy hooks the fail-closed guard needs.
+    const db = makeLegacyDb();
+    try {
+      db.prepare(`UPDATE space_workflow_runs SET status = 'done' WHERE id = 'run-1'`).run();
+      db.prepare(
+        `INSERT INTO space_tasks (id, space_id, task_number, title, description, status, priority, labels, workflow_run_id, depends_on, created_at, updated_at)
+         VALUES ('task-1', 'sp-1', 1, 'T', '', 'approved', 'normal', '[]', 'run-1', '[]', 1, 1)`
+      ).run();
+
+      // Approved post-approval work: deferred.
+      runMigration197(db);
+      expect(hasHooksColumn(db)).toBe(true);
+
+      // Archived (no longer resumable): the drop completes.
+      db.prepare(`UPDATE space_tasks SET status = 'archived' WHERE id = 'task-1'`).run();
+      runMigration197(db);
+      expect(hasHooksColumn(db)).toBe(false);
+    } finally {
+      db.close();
+    }
+  });
+
   test('a PINNED non-terminal run also blocks the drop (the restamp defers too)', () => {
     // The built-in restamp defers adding v2 hookBindings while any run is
     // active, so a pinned run's workflow head can be equally ungated — the

@@ -182,6 +182,57 @@ describe('extractCodexApproval', () => {
     );
     expect(r.approved).toBe(false);
   });
+  test('a fractional-second CHANGES_REQUESTED supersedes a same-second APPROVED', () => {
+    // Lexical ISO ordering would keep the APPROVED: '...00Z' sorts AFTER
+    // '...00.500Z'. The verdict must be ordered by parsed epoch millis, with
+    // connection order breaking only TRUE ties.
+    const r = extractCodexApproval(
+      base({
+        reviews: {
+          nodes: [
+            {
+              state: 'APPROVED',
+              author: codexAuthor('chatgpt-codex-connector'),
+              commit: { oid: HEAD },
+              submittedAt: '2026-02-02T12:00:00Z',
+            },
+            {
+              state: 'CHANGES_REQUESTED',
+              author: codexAuthor('chatgpt-codex-connector'),
+              commit: { oid: HEAD },
+              submittedAt: '2026-02-02T12:00:00.500Z',
+            },
+          ],
+        },
+      }),
+      'https://github.com/o/r/pull/1'
+    );
+    expect(r.approved).toBe(false);
+  });
+  test('a true same-instant tie keeps connection order (later node wins)', () => {
+    const r = extractCodexApproval(
+      base({
+        reviews: {
+          nodes: [
+            {
+              state: 'CHANGES_REQUESTED',
+              author: codexAuthor('chatgpt-codex-connector'),
+              commit: { oid: HEAD },
+              submittedAt: '2026-02-02T12:00:00Z',
+            },
+            {
+              state: 'APPROVED',
+              author: codexAuthor('chatgpt-codex-connector'),
+              commit: { oid: HEAD },
+              submittedAt: '2026-02-02T12:00:00Z',
+            },
+          ],
+        },
+      }),
+      'https://github.com/o/r/pull/1'
+    );
+    expect(r.approved).toBe(true);
+  });
   test('ignores a codex APPROVED on a prior head (commit oid mismatch)', () => {
     const r = extractCodexApproval(
       base({

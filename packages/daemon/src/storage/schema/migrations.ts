@@ -12534,24 +12534,39 @@ export function runMigration196(db: BunDatabase): void {
  * the column NOW would therefore leave the live head with NEITHER legacy
  * hooks NOR v2 bindings while a run is active: an unpinned run's backfilled
  * pin would carry neither (invisible to the legacy-hook guard), and a NEW run
- * started from the ungated head would be pinned without its gates. So while
- * ANY non-terminal run exists — pinned or not — on a workflow that still
- * carries legacy hooks, the drop is deferred to a later startup; the dormant
- * column is harmless (nothing reads it once the workflows have
- * hook_bindings). On the next startup with no such runs, the drop completes.
+ * started from the ungated head would be pinned without its gates. The same
+ * deferral applies to APPROVED POST-APPROVAL WORK: the runtime marks the run
+ * `done` before dispatching post-approval, so a `done` run with a
+ * non-archived `approved` task still has a worker that will resume against
+ * the workflow head — the startup restamp defers exactly this case
+ * (hasApprovedTaskForWorkflow), and the drop must too, or the resumed worker
+ * has neither v2 bindings nor legacy metadata for the fail-closed guard. So
+ * while ANY non-terminal run OR approved post-approval task exists — pinned
+ * or not — on a workflow that still carries legacy hooks, the drop is
+ * deferred to a later startup; the dormant column is harmless (nothing reads
+ * it once the workflows have hook_bindings). On the next startup with no such
+ * runs/tasks, the drop completes.
  */
 export function runMigration197(db: BunDatabase): boolean {
   if (!tableExists(db, 'space_workflows')) return true;
   if (tableHasColumn(db, 'space_workflows', 'hooks')) {
     // Any non-terminal run (pinned OR NOT — the restamp also defers while
     // runs are active, so a pinned run's workflow head can be equally
-    // ungated), on a workflow whose legacy hooks JSON is non-empty?
+    // ungated), OR any approved post-approval task (the run may already be
+    // `done`), on a workflow whose legacy hooks JSON is non-empty?
+    // `t.status = 'approved'` excludes archived tasks (their status IS
+    // 'archived'), matching hasApprovedTaskForWorkflow.
     const risky = db
       .prepare(
         `SELECT COUNT(*) AS n
            FROM space_workflow_runs r
            JOIN space_workflows w ON w.id = r.workflow_id
-          WHERE r.status NOT IN ('done', 'cancelled', 'archived')
+          WHERE (r.status NOT IN ('done', 'cancelled', 'archived')
+                 OR EXISTS (
+                   SELECT 1 FROM space_tasks t
+                    WHERE t.workflow_run_id = r.id
+                      AND t.status = 'approved'
+                 ))
             AND w.hooks IS NOT NULL
             AND w.hooks != '[]'
             AND w.hooks != ''`
