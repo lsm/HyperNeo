@@ -85,8 +85,15 @@ describe('voiceRecorderStore', () => {
     expect(isVoiceRecordingSupported()).toBe(true);
   });
 
+  it('start() records the owning session and exposes it', async () => {
+    await voiceRecorderStore.start('s1');
+    expect(voiceRecorderStore.recordingSessionId.value).toBe('s1');
+    await voiceRecorderStore.cancel();
+    expect(voiceRecorderStore.recordingSessionId.value).toBeNull();
+  });
+
   it('start() acquires the mic, wires the graph, and flips isRecording', async () => {
-    await voiceRecorderStore.start();
+    await voiceRecorderStore.start('s1');
 
     expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledTimes(1);
     expect(fakeContext.createMediaStreamSource).toHaveBeenCalledWith(fakeStream);
@@ -99,14 +106,14 @@ describe('voiceRecorderStore', () => {
   });
 
   it('start() is a no-op while already recording', async () => {
-    await voiceRecorderStore.start();
-    await voiceRecorderStore.start();
+    await voiceRecorderStore.start('s1');
+    await voiceRecorderStore.start('s1');
 
     expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledTimes(1);
   });
 
   it('stop() tears capture down and returns a WAV payload with a peak level', async () => {
-    await voiceRecorderStore.start();
+    await voiceRecorderStore.start('s1');
     // Feed one second of silence through the ScriptProcessor handler.
     const handler = workletNode.onaudioprocess;
     expect(handler).toBeTruthy();
@@ -115,6 +122,7 @@ describe('voiceRecorderStore', () => {
     });
 
     const recording = await voiceRecorderStore.stop();
+    expect(voiceRecorderStore.recordingSessionId.value).toBeNull();
 
     expect(recording.mimeType).toBe('audio/wav');
     expect(typeof recording.audioBase64).toBe('string');
@@ -133,7 +141,7 @@ describe('voiceRecorderStore', () => {
   });
 
   it('cancel() discards an active recording without producing a payload', async () => {
-    await voiceRecorderStore.start();
+    await voiceRecorderStore.start('s1');
     await voiceRecorderStore.cancel();
 
     expect(voiceRecorderStore.isRecording.value).toBe(false);
@@ -142,13 +150,13 @@ describe('voiceRecorderStore', () => {
   });
 
   it('release() (composer unmount) discards an in-flight recording like cancel()', async () => {
-    await voiceRecorderStore.start();
+    await voiceRecorderStore.start('s1');
     await voiceRecorderStore.release();
 
     expect(voiceRecorderStore.isRecording.value).toBe(false);
     expect(mediaStreamSource.disconnect).toHaveBeenCalled();
     // A start() after release is discarded until a NEW generation begins.
-    await voiceRecorderStore.start();
+    await voiceRecorderStore.start('s1');
     expect(voiceRecorderStore.isRecording.value).toBe(true);
   });
 
@@ -159,7 +167,7 @@ describe('voiceRecorderStore', () => {
         resolvePermission = resolve;
       })
     );
-    const startPromise = voiceRecorderStore.start();
+    const startPromise = voiceRecorderStore.start('s1');
     // Let start() progress to the pending permission request before cancelling.
     await new Promise((resolve) => setTimeout(resolve, 0));
     // User cancels while the permission prompt is up.

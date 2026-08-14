@@ -1,12 +1,14 @@
 /**
- * useVoiceRecorder — thin adapter over the process-wide voiceRecorderStore.
+ * useVoiceRecorder — session-scoped adapter over the process-wide
+ * voiceRecorderStore.
  *
  * The capture logic lives in ../lib/voice/voice-recorder-store.ts (a
- * signals-backed singleton) so a recording can outlive the keyed composer that
- * started it. This hook preserves the previous per-composer semantics exactly,
- * including discarding an in-flight or active recording on unmount — the
- * follow-up change that keeps recordings alive across session switches only
- * removes the release effect below.
+ * signals-backed singleton). Because multiple composers can be mounted at once
+ * (an agent overlay keeps the base ChatContainer alive), the singleton tracks
+ * which session owns the current recording: this hook's view only exposes the
+ * recording while it belongs to THIS composer's session. Other composers see
+ * an idle recorder — they can neither stop/transcribe someone else's recording
+ * nor release it on their own unmount.
  */
 
 import { useEffect } from 'preact/hooks';
@@ -15,34 +17,44 @@ import { voiceRecorderStore } from '../lib/voice/voice-recorder-store.ts';
 export { isVoiceRecordingSupported } from '../lib/voice/voice-recorder-store.ts';
 export type { VoiceRecording } from '../lib/voice/voice-recorder-store.ts';
 
-// Stable view: reading these getters during render reads `signal.value`, which
-// subscribes the component through @preact/signals — same reactivity contract
-// as the previous useState-based hook, without recreating an object per render.
-const voiceRecorderView = {
-  get isRecording() {
-    return voiceRecorderStore.isRecording.value;
-  },
-  get isStarting() {
-    return voiceRecorderStore.isStarting.value;
-  },
-  get durationLimitHit() {
-    return voiceRecorderStore.durationLimitHit.value;
-  },
-  start: voiceRecorderStore.start,
-  stop: voiceRecorderStore.stop,
-  cancel: voiceRecorderStore.cancel,
-  getLevel: voiceRecorderStore.getLevel,
-};
+export function useVoiceRecorder(sessionId: string) {
+  // Reading these signals during render subscribes through @preact/signals —
+  // same reactivity contract as the previous useState-based hook.
+  const view = {
+    get isRecording() {
+      return (
+        voiceRecorderStore.isRecording.value &&
+        voiceRecorderStore.recordingSessionId.value === sessionId
+      );
+    },
+    get isStarting() {
+      return (
+        voiceRecorderStore.isStarting.value &&
+        voiceRecorderStore.recordingSessionId.value === sessionId
+      );
+    },
+    get durationLimitHit() {
+      return (
+        voiceRecorderStore.durationLimitHit.value &&
+        voiceRecorderStore.recordingSessionId.value === sessionId
+      );
+    },
+    start: () => voiceRecorderStore.start(sessionId),
+    stop: voiceRecorderStore.stop,
+    cancel: voiceRecorderStore.cancel,
+    getLevel: voiceRecorderStore.getLevel,
+  };
 
-export function useVoiceRecorder() {
-  // Composer unmount discards any recording this composer had in flight —
-  // identical to the pre-store behavior. (PR 4 removes this to let recordings
-  // survive session switches.)
+  // Composer unmount discards a recording owned by THIS composer's session —
+  // identical to the pre-store behavior. A recording owned by another session
+  // (e.g. the base chat while an overlay closes) is left alone.
   useEffect(() => {
     return () => {
-      void voiceRecorderStore.release();
+      if (voiceRecorderStore.recordingSessionId.value === sessionId) {
+        void voiceRecorderStore.release();
+      }
     };
-  }, []);
+  }, [sessionId]);
 
-  return voiceRecorderView;
+  return view;
 }

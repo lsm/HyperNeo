@@ -33,6 +33,14 @@ class VoiceRecorderStore {
   readonly isRecording = signal(false);
   readonly isStarting = signal(false);
   readonly durationLimitHit = signal(false);
+  /**
+   * The sessionId the current recording belongs to. Only the composer bound to
+   * this session sees the recording; other concurrently-mounted composers
+   * (e.g. an agent overlay over the base chat) observe an idle recorder, so
+   * they can neither stop/transcribe someone else's recording nor release it
+   * on their own unmount.
+   */
+  readonly recordingSessionId = signal<string | null>(null);
 
   private context: AudioContext | null = null;
   private stream: MediaStream | null = null;
@@ -55,12 +63,18 @@ class VoiceRecorderStore {
   // bail out instead of beginning a recording the user already cancelled.
   private startGeneration = 0;
 
-  readonly start = async (): Promise<void> => {
+  /**
+   * Begin a recording owned by `ownerSessionId`. The owner is recorded from the
+   * first awaited step so a cancel/release from another composer cannot race
+   * the assignment, and cleared on every teardown path.
+   */
+  readonly start = async (ownerSessionId: string): Promise<void> => {
     if (this.isRecording.value || this.starting) return;
     this.starting = true;
     this.isStarting.value = true;
     this.stoppedByLimit = false;
     this.durationLimitHit.value = false;
+    this.recordingSessionId.value = ownerSessionId;
     const generation = ++this.startGeneration;
     const discarded = () => this.startGeneration !== generation;
     // Cleanup for a DISCARDED start. If the shared fields still belong to this
@@ -245,6 +259,7 @@ class VoiceRecorderStore {
     const hitDurationLimit = this.stoppedByLimit;
     this.durationLimitHit.value = false;
     this.isRecording.value = false;
+    this.recordingSessionId.value = null;
     const chunks = this.chunks;
     await this.teardown();
     // Clear the guard only after capture callbacks are detached and chunks are
@@ -282,6 +297,7 @@ class VoiceRecorderStore {
     this.stoppedByLimit = false;
     this.durationLimitHit.value = false;
     this.isRecording.value = false;
+    this.recordingSessionId.value = null;
     await this.teardown();
   };
 
@@ -299,6 +315,7 @@ class VoiceRecorderStore {
     this.stoppedByLimit = false;
     this.durationLimitHit.value = false;
     this.isRecording.value = false;
+    this.recordingSessionId.value = null;
     await this.teardown();
   };
 

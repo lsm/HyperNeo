@@ -279,7 +279,7 @@ export default function MessageInput({
     handlePaste,
   } = useFileAttachments();
   const { handleInterrupt } = useInterrupt({ sessionId });
-  const voiceRecorder = useVoiceRecorder();
+  const voiceRecorder = useVoiceRecorder(sessionId);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const voiceSettings = globalSettings.value?.voice;
   const voiceEnabled = voiceSettings?.enabled ?? false;
