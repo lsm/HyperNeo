@@ -147,6 +147,15 @@ export class WorkflowRunArtifactRepository {
    * invokes this when the hook has verified the prior identity is retired
    * (pr_ready's swap check confirms the previously stamped PR is CLOSED) —
    * the claim's first-writer-wins protection still blocks unverified swaps.
+   *
+   * CAS on the PRIOR stamp: pass the row id of the identity the caller
+   * observed and verified (`expectedPriorId`). Two concurrent replacements
+   * can both verify the SAME closed prior stamp before either commits — the
+   * second would then unconditionally delete the FIRST's freshly-installed
+   * stamp and install its own, leaving both callers believing they set the
+   * run's identity. With the CAS, the loser observes the row has changed and
+   * refuses, so exactly one replacement wins and the run keeps a single
+   * authoritative PR identity.
    */
   replaceIdentityStamp(params: {
     id: string;
@@ -155,8 +164,25 @@ export class WorkflowRunArtifactRepository {
     artifactType: string;
     artifactKey: string;
     data: Record<string, unknown>;
+    /** Row id of the prior identity the caller verified; the replacement
+     * proceeds only when the current authoritative row is still that one. */
+    expectedPriorId?: string;
   }): boolean {
     const tx = this.db.transaction(() => {
+      if (params.expectedPriorId !== undefined) {
+        const current = this.db
+          .prepare(
+            `SELECT id FROM workflow_run_artifacts
+              WHERE run_id = ? AND artifact_type = ? AND artifact_key = ?
+              ORDER BY created_at ASC LIMIT 1`
+          )
+          .get(params.runId, params.artifactType, params.artifactKey) as { id: string } | undefined;
+        if (!current || current.id !== params.expectedPriorId) {
+          throw new Error(
+            `identity stamp CAS failed: prior row changed (expected ${params.expectedPriorId}, got ${current?.id ?? 'none'})`
+          );
+        }
+      }
       this.db
         .prepare(
           `DELETE FROM workflow_run_artifacts

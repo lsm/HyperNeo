@@ -62,6 +62,36 @@ function isRateLimit(stderr: string): boolean {
   return /rate limit|secondary rate limit/i.test(stderr);
 }
 
+/**
+ * Best-effort reset delay from a rate-limit stderr: gh and the API mention a
+ * retry timestamp (`... until 2026-08-14T12:00:00Z` or `retry at ...`) or an
+ * explicit seconds hint (`try again in 42s`, `retry after 60 seconds`). A
+ * parsed absolute timestamp is clamped to a sane window (1s..1h); an
+ * unparsable message falls back to the engine's DEFAULT_RETRY_AFTER_MS via
+ * undefined — same as before, but only when nothing could be extracted.
+ */
+/** Exported for tests: the rate-limit reset-delay parser. */
+export function rateLimitRetryAfterMs(stderr: string): number | undefined {
+  const iso = /(?:until|at|after)\s+(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)/i.exec(stderr);
+  if (iso) {
+    const resetMs = Date.parse(iso[1] as string);
+    if (Number.isFinite(resetMs)) {
+      const delta = resetMs - Date.now();
+      // A future reset yields the remaining window; one already in the past
+      // falls through to the conventional floor (never a negative delay).
+      if (delta > 0) return Math.min(Math.max(delta + 1_000, 1_000), 3_600_000);
+    }
+  }
+  const secs = /(?:try again in|retry after|wait)\s+(\d+)\s*(?:s|sec|seconds?)/i.exec(stderr);
+  if (secs) {
+    const ms = Number(secs[1]) * 1_000;
+    if (Number.isFinite(ms) && ms > 0) return Math.min(ms, 3_600_000);
+  }
+  // GitHub's conventional secondary-rate-limit guidance when nothing else
+  // parses — do not poll faster than the API asks.
+  return 60_000;
+}
+
 /** Transient gh CLI failures worth retrying (network blips, 5xx, DNS). */
 const TRANSIENT_FAILURE =
   /network|timeout|timed out|connection|econnreset|enotfound|ehostunreach|temporar|try again|\b5\d{2}\b|bad gateway|service unavailable|gateway timeout/i;
@@ -191,7 +221,16 @@ async function runGh(opts: GhRunnerOpts): Promise<GithubResult<string>> {
   if (exitCode === 0) return { ok: true, data: stdout };
   const errText = stderr.trim();
   if (isRateLimit(errText)) {
-    return { ok: false, retryable: true, error: errText || 'gh: rate limited' };
+    return {
+      ok: false,
+      retryable: true,
+      error: errText || 'gh: rate limited',
+      // Preserve the reset-derived backoff: without a retryAfterMs the hook
+      // engine queues the protected action at its 30s default and hammers
+      // the API while the limit is still active, burning the shared retry
+      // count toward the ceiling (the retired lookup layer probed this).
+      retryAfterMs: rateLimitRetryAfterMs(errText),
+    };
   }
   if (isTransientFailure(errText, exitCode)) {
     return {

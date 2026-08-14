@@ -288,3 +288,95 @@ describe('WorkflowRunArtifactRepository.claimIdentityStamp', () => {
     expect(second.existing?.data.link).toBe('https://gb/pull/1');
   });
 });
+
+// replaceIdentityStamp CAS — concurrent verified replacements (round 72)
+describe('WorkflowRunArtifactRepository.replaceIdentityStamp CAS', () => {
+  let db: Database;
+  let repo: WorkflowRunArtifactRepository;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    createSpaceTables(db);
+    db.prepare(
+      `INSERT INTO spaces (id, slug, name, workspace_path, created_at, updated_at)
+       VALUES ('sp-1', 'sp-1', 'S', '/tmp', 1, 1)`
+    ).run();
+    db.prepare(
+      `INSERT INTO space_workflows (id, space_id, name, created_at, updated_at)
+       VALUES ('wf-1', 'sp-1', 'W', 1, 1)`
+    ).run();
+    db.prepare(
+      `INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at, updated_at)
+       VALUES ('run-1', 'sp-1', 'wf-1', 'R', 'in_progress', 1, 1)`
+    ).run();
+    repo = new WorkflowRunArtifactRepository(db);
+  });
+  afterEach(() => db.close());
+
+  it('refuses the LOSER of two concurrent verified replacements', () => {
+    const prior = repo.claimIdentityStamp({
+      id: 'p1',
+      runId: 'run-1',
+      nodeId: 'n-a',
+      artifactType: 'link',
+      artifactKey: '__pr_validated__',
+      data: { link: 'https://gb/pull/1', kind: 'pr' },
+    });
+    expect(prior.inserted).toBe(true);
+
+    // Both replacements verified the SAME prior stamp (row p1) before either
+    // committed. The winner installs first...
+    const winner = repo.replaceIdentityStamp({
+      id: 'w1',
+      runId: 'run-1',
+      nodeId: 'n-a',
+      artifactType: 'link',
+      artifactKey: '__pr_validated__',
+      data: { link: 'https://gb/pull/2', kind: 'pr' },
+      expectedPriorId: 'p1',
+    });
+    expect(winner).toBe(true);
+
+    // ...then the loser's CAS observes the authoritative row has changed and
+    // REFUSES — it must not clobber the winner's stamp.
+    const loser = repo.replaceIdentityStamp({
+      id: 'l1',
+      runId: 'run-1',
+      nodeId: 'n-b',
+      artifactType: 'link',
+      artifactKey: '__pr_validated__',
+      data: { link: 'https://gb/pull/3', kind: 'pr' },
+      expectedPriorId: 'p1',
+    });
+    expect(loser).toBe(false);
+    const current = repo
+      .listByRun('run-1', { artifactKeyPrefix: '__pr_validated__' })
+      .find(() => true);
+    expect(current?.data.link).toBe('https://gb/pull/2');
+  });
+
+  it('proceeds when the observed prior stamp is still authoritative', () => {
+    repo.claimIdentityStamp({
+      id: 'p1',
+      runId: 'run-1',
+      nodeId: 'n-a',
+      artifactType: 'link',
+      artifactKey: '__pr_validated__',
+      data: { link: 'https://gb/pull/1', kind: 'pr' },
+    });
+    const ok = repo.replaceIdentityStamp({
+      id: 'w1',
+      runId: 'run-1',
+      nodeId: 'n-a',
+      artifactType: 'link',
+      artifactKey: '__pr_validated__',
+      data: { link: 'https://gb/pull/9', kind: 'pr' },
+      expectedPriorId: 'p1',
+    });
+    expect(ok).toBe(true);
+    const current = repo
+      .listByRun('run-1', { artifactKeyPrefix: '__pr_validated__' })
+      .find(() => true);
+    expect(current?.data.link).toBe('https://gb/pull/9');
+  });
+});

@@ -12,6 +12,7 @@ import {
   GH_INFRA_ERROR_PREFIX,
   type GithubResult,
   setGhRunnerForTests,
+  rateLimitRetryAfterMs,
 } from '../src/github';
 
 const PR_LINK = 'https://github.com/org/repo/pull/42';
@@ -81,5 +82,32 @@ describe('fetchPrView — structural validation', () => {
         mergeStateStatus: 'CLEAN',
       });
     }
+  });
+});
+
+// Rate-limit reset-delay parsing (round 72): a retryable rate-limit result
+// must carry a reset-derived retryAfterMs so the engine's retry queue does
+// not poll at its 30s default while the limit is active.
+describe('rateLimitRetryAfterMs', () => {
+  test('parses an absolute reset timestamp and clamps the wait', () => {
+    const future = new Date(Date.now() + 5 * 60_000).toISOString().replace('.000Z', 'Z');
+    const ms = rateLimitRetryAfterMs(`API rate limit exceeded until ${future}.`);
+    expect(ms).toBeDefined();
+    expect(ms as number).toBeGreaterThan(4 * 60_000);
+    expect(ms as number).toBeLessThanOrEqual(3_600_000);
+  });
+
+  test('parses an explicit seconds hint', () => {
+    const ms = rateLimitRetryAfterMs('secondary rate limit: try again in 42 seconds');
+    expect(ms).toBe(42_000);
+  });
+
+  test('falls back to the conventional secondary-limit floor', () => {
+    expect(rateLimitRetryAfterMs('You have exceeded a secondary rate limit')).toBe(60_000);
+  });
+
+  test('a reset timestamp already in the past falls back (no negative delay)', () => {
+    const past = new Date(Date.now() - 60_000).toISOString().replace('.000Z', 'Z');
+    expect(rateLimitRetryAfterMs(`rate limit until ${past}`)).toBe(60_000);
   });
 });

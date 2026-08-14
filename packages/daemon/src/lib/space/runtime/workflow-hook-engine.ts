@@ -1124,6 +1124,12 @@ export class WorkflowHookEngine {
             artifactType: artifact.artifactType,
             artifactKey: artifact.artifactKey,
             data: artifact.data,
+            // CAS on the PRIOR stamp this caller verified: a concurrent
+            // replacement that already swapped it makes this one refuse (its
+            // verification was of a stamp that is no longer authoritative),
+            // so exactly one replacement wins and the run keeps a single PR
+            // identity.
+            expectedPriorId: claim.existing?.id,
           });
         }
         return false;
